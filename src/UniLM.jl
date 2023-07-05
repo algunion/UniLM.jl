@@ -8,4 +8,6 @@ include("exceptions.jl")
 include("helpers.jl")
 include("types.jl")
 
+export  model
+
 end

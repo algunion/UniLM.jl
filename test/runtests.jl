@@ -24,7 +24,10 @@ end
     Aqua.test_all(UniLM)
 end
 
+include("helpers.jl")
+include("types.jl")
+
 
 @testset "UniLM.jl" begin
-    # Write your tests here.
+    
 end

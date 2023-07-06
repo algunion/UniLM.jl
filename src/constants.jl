@@ -7,6 +7,8 @@
 # /v1/embeddings	text-embedding-ada-002, text-search-ada-doc-001
 # /v1/moderations	text-moderation-stable, text-moderation-latest
 
+const OPENAI_API_KEY::String = ENV["OPENAI_API_KEY"]
+
 const _chat_completions = [
     "gpt-4",
     "gpt-4-0613",
@@ -19,25 +21,25 @@ const _chat_completions = [
 ]
 
 const _chat_completions_syn = [
-    :gpt4,
-    :gpt40613,
-    :gpt432k,
-    :gpt432k0613,
-    :gpt35turbo,
-    :gpt35turbo0613,
-    :gpt35turbo16k,
-    :gpt35turbo16k0613
+    :GPT4,
+    :GPT40613,
+    :GPT432k,
+    :GPT432k0613,
+    :GPT35turbo,
+    :GPT35turbo0613,
+    :GPT35turbo16k,
+    :GPT35turbo16k0613
 ]
 
 const _chat_complettions_dict_syn = Dict(
-    :gpt4 => "gpt-4",
-    :gpt40613 => "gpt-4-0613",
-    :gpt432k => "gpt-4-32k",
-    :gpt432k0613 => "gpt-4-32k-0613",
-    :gpt35turbo => "gpt-3.5-turbo",
-    :gpt35turbo0613 => "gpt-3.5-turbo-0613",
-    :gpt35turbo16k => "gpt-3.5-turbo-16k",
-    :gpt35turbo16k0613 => "gpt-3.5-turbo-16k-0613"
+    :GPT4 => "gpt-4",
+    :GPT40613 => "gpt-4-0613",
+    :GPT432k => "gpt-4-32k",
+    :GPT432k0613 => "gpt-4-32k-0613",
+    :GPT35turbo => "gpt-3.5-turbo",
+    :GPT35turbo0613 => "gpt-3.5-turbo-0613",
+    :GPT35turbo16k => "gpt-3.5-turbo-16k",
+    :GPT35turbo16k0613 => "gpt-3.5-turbo-16k-0613"    
 )
 
 const _completions = [

@@ -4,7 +4,6 @@ using JSON3
 using StructTypes
 using Accessors
 
-
 include("constants.jl")
 include("exceptions.jl")
 include("helpers.jl")

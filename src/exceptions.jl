@@ -1,1 +1,3 @@
-struct InvalidConversationError <: Exception end
+struct InvalidConversationError <: Exception
+    reason::String
+end

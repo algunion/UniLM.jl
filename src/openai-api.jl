@@ -3,6 +3,7 @@ const GPTUser = "user"
 const GPTAssistant = "assistant"
 const GPTFunction = "function"
 
+# to do: extend to all models/endpoints
 struct Model
     name::String
 end
@@ -70,8 +71,7 @@ function is_send_valid(conv::Conversation)::Bool
     length(conv) > 1 &&
         conv.messages[begin].role == GPTSystem &&
         conv.messages[end].role == GPTUser &&
-        all([v.role != conv.messages[i+1].role for (i, v) in collect(enumerate(conv.messages))[1:end-1]]) ||
-        throw(InvalidConversationError())
+        all([v.role != conv.messages[i+1].role for (i, v) in collect(enumerate(conv.messages))[1:end-1]])
 end
 
 """
@@ -80,9 +80,9 @@ end
     Add a message to the conversation. The goal here is to make invalid conversations unrepresentable.
 """
 function Base.push!(conv::Conversation, msg::Message)
-  msg.role == GPTSystem && isempty(conv) && return push!(conv.messages, msg)
-  msg.role != GPTSystem && conv.messages[end].role != msg.role && return push!(conv.messages, msg)  
-  error("Cannot add message $msg to conversation: $conv")
+    msg.role == GPTSystem && isempty(conv) && return push!(conv.messages, msg)
+    msg.role != GPTSystem && conv.messages[end].role != msg.role && return push!(conv.messages, msg)
+    InvalidConversationError("Cannot add message $msg to conversation: $conv")
 end
 
 

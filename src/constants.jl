@@ -8,6 +8,7 @@
 # /v1/moderations	text-moderation-stable, text-moderation-latest
 
 const OPENAI_API_KEY = get(ENV, "OPENAI_API_KEY", nothing)
+const OPENAI_BASE_URL = "https://api.openai.com/"
 
 const _chat_completions = [
     "gpt-4",
@@ -39,7 +40,7 @@ const _chat_complettions_dict_syn = Dict(
     :GPT35turbo => "gpt-3.5-turbo",
     :GPT35turbo0613 => "gpt-3.5-turbo-0613",
     :GPT35turbo16k => "gpt-3.5-turbo-16k",
-    :GPT35turbo16k0613 => "gpt-3.5-turbo-16k-0613"    
+    :GPT35turbo16k0613 => "gpt-3.5-turbo-16k-0613"
 )
 
 const _completions = [
@@ -80,7 +81,7 @@ const _moderations = [
     "text-moderation-latest"
 ]
 
-const _endpoints = [ 
+const _endpoints = [
     "/v1/chat/completions",
     "/v1/completions",
     "/v1/edits",
@@ -88,7 +89,7 @@ const _endpoints = [
     "/v1/audio/translations",
     "/v1/fine-tunes",
     "/v1/embeddings",
-    "/v1/moderations"    
+    "/v1/moderations"
 ]
 
 # sintactic sugar helper

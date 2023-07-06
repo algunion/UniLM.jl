@@ -7,14 +7,7 @@
 # /v1/embeddings	text-embedding-ada-002, text-search-ada-doc-001
 # /v1/moderations	text-moderation-stable, text-moderation-latest
 
-const OPENAI_API_KEY::String = let 
-    try
-        ENV["OPENAI_API_KEY"]
-    catch
-        @warn "OPENAI_API_KEY not found in environment variables"
-        ""
-    end
-end    
+const OPENAI_API_KEY = get(ENV, "OPENAI_API_KEY", nothing)
 
 const _chat_completions = [
     "gpt-4",

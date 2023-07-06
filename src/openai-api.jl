@@ -77,12 +77,12 @@ end
 """
     push!(conv::Conversation, msg::Message)
 
-    Add a message to the conversation.
+    Add a message to the conversation. The goal here is to make invalid conversations unrepresentable.
 """
 function Base.push!(conv::Conversation, msg::Message)
   msg.role == GPTSystem && isempty(conv) && return push!(conv.messages, msg)
-  msg.role != GPTSystem && conv.messages[end].role != msg.role && return push!(conv.messages, msg)
-  @error "Cannot add message $msg to conversation: $conv"
+  msg.role != GPTSystem && conv.messages[end].role != msg.role && return push!(conv.messages, msg)  
+  error("Cannot add message $msg to conversation: $conv")
 end
 
 

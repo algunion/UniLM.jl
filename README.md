@@ -2,7 +2,7 @@
 
 **! Highly experimental / WIP**
 
-UniLM.jl: Currently a Julia interface for OpenAI's language models, with the goal to become a unified solution for accessing multiple language models. While at the moment only OpenAI's models are supported, our vision is to evolve UniLM.jl into a versatile tool that simplifies the integration of diverse language models.
+UniLM.jl: Currently a Julia interface for OpenAI's language models (focus on `gpt-x` models), with the goal to become a unified solution for accessing multiple language models. While at the moment only OpenAI's models are supported, the vision is to evolve UniLM.jl into a versatile tool that simplifies the integration of diverse language models.
 
 ### Usage
 

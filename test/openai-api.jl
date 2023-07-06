@@ -14,5 +14,12 @@
 
     @test UniLM.is_send_valid(conv) == true
 
+    params = UniLM.ChatParams()
+
+    @test params.messages |> isempty
+
+    UniLM.chat_request(conv, params)
+    UniLM.chat_request(conv)
+
 
 end

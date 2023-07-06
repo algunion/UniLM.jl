@@ -35,7 +35,7 @@ StructTypes.omitempties(::Type{GPTFunctionSignature}) = (:description, :paramete
 
 @kwdef struct ChatParams
     model::String = "gpt-3.5-turbo"
-    messages::Vector{Message}
+    messages::Vector{Message}= Message[]
     functions::Union{Vector{GPTFunctionSignature},Nothing} = nothing
     function_call::Union{String,Dict{String,String}} = "auto" # "none" | Dict("name" => "my_function")
     temperature::Union{Float64,Nothing} = 1.0 # 0.0 - 2.0 - mutual exclusive with top_p
@@ -53,6 +53,7 @@ end
 StructTypes.StructType(::Type{ChatParams}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{ChatParams}) = fieldnames(ChatParams)
 
+
 @kwdef struct Conversation
     history::Bool = false
     messages::Vector{Message} = Message[]
@@ -60,6 +61,8 @@ end
 
 Base.length(conv::Conversation) = length(conv.messages)
 Base.isempty(conv::Conversation) = isempty(conv.messages)
+
+
 
 
 """

@@ -25,7 +25,7 @@ end
 end
 
 include("helpers.jl")
-include("types.jl")
+include("openai-api.jl")
 
 
 @testset "UniLM.jl" begin

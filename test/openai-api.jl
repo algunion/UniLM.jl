@@ -3,11 +3,11 @@
     push!(conv, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))
     @test length(conv) == 1
 
-    push!(conv, UniLM.Message(role=UniLM.GPTUser, content="What is the purpose of life?"))
+    push!(conv, UniLM.Message(role=UniLM.GPTUser, content="Please tell me a one-liner joke."))
     @test length(conv) == 2
 
     try
-        push!(conv, UniLM.Message(role=UniLM.GPTUser, content="What is the purpose of life?"))
+        push!(conv, UniLM.Message(role=UniLM.GPTUser, content="Please tell me a one-liner joke."))
     catch e
         @test e isa UniLM.InvalidConversationError
     end
@@ -18,8 +18,11 @@
 
     @test params.messages |> isempty
 
-    UniLM.chat_request(conv, params)
-    UniLM.chat_request(conv)
+    params_with_stream = UniLM.ChatParams(stream=true)
+    UniLM.chat_request(conv, params=params)
+    UniLM.chat_request(conv, params=params_with_stream)
+    @info "Sleeping for 20 seconds to allow the streaming work"
+    sleep(20)    
 
 
 end

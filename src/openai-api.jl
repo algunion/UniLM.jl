@@ -37,7 +37,7 @@ StructTypes.omitempties(::Type{GPTFunctionSignature}) = (:description, :paramete
     model::String = "gpt-3.5-turbo"
     messages::Vector{Message}= Message[]
     functions::Union{Vector{GPTFunctionSignature},Nothing} = nothing
-    function_call::Union{String,Dict{String,String}} = "auto" # "none" | Dict("name" => "my_function")
+    function_call::Union{String,Pair{String,String},Nothing} = nothing # "auto" | "none" | Dict("name" => "my_function")
     temperature::Union{Float64,Nothing} = 1.0 # 0.0 - 2.0 - mutual exclusive with top_p
     top_p::Union{Float64,Nothing} = nothing # 1 - 100 - mutual exclusive with temperature
     n::Union{Int64,Nothing} = nothing # 1 - 10

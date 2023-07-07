@@ -63,7 +63,7 @@ function chat_request(conv::Conversation; callback=nothing, params::ChatParams=C
         return m
     else
         @info "chat_request: stream"
-        _chat_request_stream(params, body)
+        _chat_request_stream(params, body, callback)
         @info "chat_request: stream task launched"
     end
 end

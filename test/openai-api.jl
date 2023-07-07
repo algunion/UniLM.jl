@@ -20,7 +20,11 @@
 
     params_with_stream = UniLM.ChatParams(stream=true)
     UniLM.chat_request(conv, params=params)
-    UniLM.chat_request(conv, params=params_with_stream)
+    callback = (msg, close) -> begin 
+        close[] = true
+        @info "from callback - echo: $msg" 
+    end
+    UniLM.chat_request(conv, params=params_with_stream, callback=callback)
     @info "Sleeping for 20 seconds to allow the streaming work"
     sleep(20)    
 

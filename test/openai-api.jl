@@ -26,7 +26,7 @@
     end
     UniLM.chat_request(conv, params=params_with_stream, callback=callback)
     @info "Sleeping for 20 seconds to allow the streaming work"
-    sleep(20)    
+    sleep(20)
 
 
 end

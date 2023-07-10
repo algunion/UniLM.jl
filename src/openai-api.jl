@@ -62,9 +62,6 @@ end
 Base.length(conv::Conversation) = length(conv.messages)
 Base.isempty(conv::Conversation) = isempty(conv.messages)
 
-
-
-
 """
     is_send_valid(conv::Conversation)::Bool
 
@@ -87,5 +84,12 @@ function Base.push!(conv::Conversation, msg::Message)
     msg.role != GPTSystem && conv.messages[end].role != msg.role && return push!(conv.messages, msg)
     InvalidConversationError("Cannot add message $msg to conversation: $conv")
 end
+
+function update!(conv::Conversation, msg::Message)
+    conv.history && push!(conv, msg)
+    conv
+end
+
+
 
 

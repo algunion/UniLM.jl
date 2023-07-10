@@ -1,3 +1,7 @@
+if isdefined(@__MODULE__,:LanguageServer)
+    include("../src/UniLM.jl")
+end
+
 using UniLM
 using Aqua
 using JET

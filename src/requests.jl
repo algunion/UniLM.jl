@@ -25,30 +25,33 @@ function _parse_chunk(chunk::String)
 end
 
 function _chat_request_stream(params, body, callback=nothing)    
-    Threads.@spawn HTTP.open("POST", get_url(params), auth_header()) do io
-        tmp = IOBuffer()
-        done = Ref(false)
-        close = Ref(false)
-        write(io, body)
-        HTTP.closewrite(io)
-        HTTP.startread(io)        
-        while !eof(io) && !close[] && !done[]
-            chunk = String(readavailable(io))  
-            @info "chunk: $chunk"
-            parsed = _parse_chunk(chunk)                    
-            
-            if isnothing(parsed) 
-                done[] = true
-                m = Message(role=GPTAssistant, content=String(take!(tmp)))
-                !isnothing(callback) && callback(m, close)
-            else
-                !isnothing(callback) && callback(parsed, close)
-                print(tmp, parsed)
-            end            
+    Threads.@spawn begin         
+        m = Ref{Union{Message, Nothing}}(nothing)
+        resp = HTTP.open("POST", get_url(params), auth_header()) do io
+            tmp = IOBuffer()
+            done = Ref(false)
+            close = Ref(false)
+            write(io, body)
+            HTTP.closewrite(io)
+            HTTP.startread(io)        
+            while !eof(io) && !close[] && !done[]
+                chunk = String(readavailable(io))  
+                @info "chunk: $chunk"
+                parsed = _parse_chunk(chunk)
+                if isnothing(parsed) 
+                    done[] = true
+                    m[] = Message(role=GPTAssistant, content=String(take!(tmp)))
+                    !isnothing(callback) && callback(m[], close)
+                else
+                    !isnothing(callback) && callback(parsed, close)
+                    print(tmp, parsed)
+                end            
+            end
+            close[] && @info "stream closed by user"
+            @info "Stream closing and returning"        
+            HTTP.closeread(io)             
         end
-        close[] && @info "stream closed by user"
-        @info "Stream closing and returning"        
-        HTTP.closeread(io)        
+        resp.status == 200 && m[]
     end        
 end
 

@@ -3,11 +3,11 @@
     push!(conv, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))
     @test length(conv) == 1
 
-    push!(conv, UniLM.Message(role=UniLM.GPTUser, content="Please offer 5 reasons why someone should program in Julia Programming Language."))
+    push!(conv, UniLM.Message(role=UniLM.GPTUser, content="Please tell me a one-liner joke."))
     @test length(conv) == 2
 
     try
-        push!(conv, UniLM.Message(role=UniLM.GPTUser, content="Please offer 5 reasons why someone should program in Julia Programming Language."))
+        push!(conv, UniLM.Message(role=UniLM.GPTUser, content="Please tell me a one-liner joke."))
     catch e
         @test e isa UniLM.InvalidConversationError
     end
@@ -24,8 +24,12 @@
         @info "from callback - echo: $msg" 
     end
     
-    m = UniLM.chat_request(conv, params=params_with_stream, callback=callback) |> wait
-    @info "awaited msg: $m"
+    # when stream=true, a task is returned
+    t = UniLM.chat_request(conv, params=params_with_stream, callback=callback)
+    wait(t)
+    @test t.state == :done
+    @info "t.result = $(t.result)"
+
 
  
 

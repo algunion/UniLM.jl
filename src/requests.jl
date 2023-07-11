@@ -14,14 +14,26 @@ function extract_message(resp::HTTP.Response)
     Message(role=GPTAssistant, content=content)
 end
 
-function _parse_chunk(chunk::String)
-    @info "parsing started for above chunk"
-    endswith(strip(chunk), "data: [DONE]") && return nothing
-    lines = split(chunk, "\n")
+# There is a variable chunk format (which is also incomplete from time to time) that can be received from the stream. There are also multiple complaints about this on the OpenAI API forum. I'll attempt a robust parsind approach here that can handle the variable chunk format.
+function _parse_chunk(chunk::String, iobuff)    
+    lines = strip.(split(chunk, "\n"))    
     lines = filter(!isempty, lines)
-    parsed = map(line -> JSON3.read(line[6:end])["choices"][1], lines)
-    parsed[end]["finish_reason"] == "stop" && return nothing
-    return join(map(x -> x["delta"]["content"], parsed))
+    eos = lines[end] == "data: [DONE]"
+    eos && length(lines) == 1 && return (;eos=true)
+    for line in lines[1:end-(eos ? 1 : 0)]
+        try
+            parsed = JSON3.read(line[6:end])["choices"][1]
+            if parsed["finish_reason"] == "stop"
+                eos = true
+            else
+                print(iobuff, parsed["delta"]["content"])
+            end            
+        catch e
+            @warn "JSON parsing failed for line: $line"
+            continue
+        end
+    end    
+    (;eos=eos)
 end
 
 function _chat_request_stream(params, body, callback=nothing)    
@@ -29,6 +41,7 @@ function _chat_request_stream(params, body, callback=nothing)
         m = Ref{Union{Message, Nothing}}(nothing)
         resp = HTTP.open("POST", get_url(params), auth_header()) do io
             tmp = IOBuffer()
+            chunk_buffer = IOBuffer()
             done = Ref(false)
             close = Ref(false)
             write(io, body)
@@ -37,8 +50,9 @@ function _chat_request_stream(params, body, callback=nothing)
             while !eof(io) && !close[] && !done[]
                 chunk = String(readavailable(io))  
                 @info "chunk: $chunk"
-                parsed = _parse_chunk(chunk)
-                if isnothing(parsed) 
+                streamstatus = _parse_chunk(chunk, chunk_buffer)
+                parsed = String(take!(chunk_buffer))
+                if streamstatus.eos 
                     done[] = true
                     m[] = Message(role=GPTAssistant, content=String(take!(tmp)))
                     !isnothing(callback) && callback(m[], close)
@@ -83,5 +97,3 @@ function chat_request(conv::Conversation; callback=nothing, params::ChatParams=C
         task
     end
 end
-
-

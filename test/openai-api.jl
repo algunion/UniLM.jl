@@ -18,7 +18,8 @@
 
     @test params.messages |> isempty
 
-    params_with_stream = UniLM.ChatParams(stream=true)
+    params_with_stream = UniLM.ChatParams(stream=true, temperature=1)
+
     UniLM.chat_request(conv, params=params)
     callback = (msg, close) -> begin         
         @info "from callback - echo: $msg" 

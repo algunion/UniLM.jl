@@ -65,7 +65,7 @@ function _chat_request_stream(params, body, callback=nothing)
             @info "Stream closing and returning"        
             HTTP.closeread(io)             
         end
-        resp.status == 200 && m[]
+        resp.status == 200 ? m[] : @error "Request staus: " resp.status; nothing
     end        
 end
 
@@ -80,13 +80,13 @@ The `callback` function is called for each chunk of the response. The `close` Re
     The signature of the callback function is:
         `callback(chunk::Union{String, Message}, close::Ref{Bool})`
 """
-function chat_request(conv::Conversation; callback=nothing, params::ChatParams=ChatParams())
+function chat_request(conv::Conversation; callback=nothing, params::ChatParams=ChatParams())::Union{Message, Task, Nothing}
     push!(params.messages, conv.messages...)
     body = JSON3.write(params)
     if isnothing(params.stream) || !something(params.stream)
         @info "chat_request: request/no-stream"
         resp = HTTP.post(get_url(params), body=body, headers=auth_header())
-        m = resp.status == 200 ? extract_message(resp) : nothing
+        m = resp.status == 200 ? extract_message(resp) : @error "Request staus: " resp.status; nothing
         m !== nothing && conv.history && push!(conv.messages, m)
         @info "chat_request: $m"
         return m
@@ -97,3 +97,4 @@ function chat_request(conv::Conversation; callback=nothing, params::ChatParams=C
         task
     end
 end
+

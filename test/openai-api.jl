@@ -18,7 +18,7 @@
 
     @test params.messages |> isempty
 
-    params_with_stream = UniLM.ChatParams(stream=true, temperature=1)
+    params_with_stream = UniLM.ChatParams(stream=true, temperature=0.2)
 
     UniLM.chat_request(conv, params=params)
     callback = (msg, close) -> begin         
@@ -30,9 +30,6 @@
     wait(t)
     @test t.state == :done
     @info "t.result = $(t.result)"
-
-
- 
 
 
 end

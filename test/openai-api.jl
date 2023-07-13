@@ -14,6 +14,13 @@
 
     @test UniLM.is_send_valid(conv) == true
 
+    try 
+        UniLM.ChatParams(temperature=0.2, top_p=0.5)
+    catch e
+        @error e
+        @test e isa ArgumentError
+    end
+    
     params = UniLM.ChatParams()
 
     @test params.messages |> isempty

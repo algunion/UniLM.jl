@@ -14,14 +14,16 @@ function extract_message(resp::HTTP.Response)
     Message(role=GPTAssistant, content=content)
 end
 
-# There is a variable chunk format (which is also incomplete from time to time) that can be received from the stream. There are also multiple complaints about this on the OpenAI API forum. I'll attempt a robust parsind approach here that can handle the variable chunk format.
-function _parse_chunk(chunk::String, iobuff)    
+# There is a variable chunk format (which is also incomplete from time to time) that can be received from the stream. 
+# There are also multiple complaints about this on the OpenAI API forum. 
+# I'll attempt a robust parsind approach here that can handle the variable chunk format.
+function _parse_chunk(chunk::String, iobuff, failbuff)    
     lines = strip.(split(chunk, "\n"))    
     lines = filter(!isempty, lines)
     eos = lines[end] == "data: [DONE]"
-    eos && length(lines) == 1 && return (;eos=true)
+    eos && length(lines) == 1 && return (;eos=true)    
     for line in lines[1:end-(eos ? 1 : 0)]
-        try
+        try            
             parsed = JSON3.read(line[6:end])["choices"][1]
             if parsed["finish_reason"] == "stop"
                 eos = true
@@ -30,6 +32,7 @@ function _parse_chunk(chunk::String, iobuff)
             end            
         catch e
             @warn "JSON parsing failed for line: $line"
+            print(failbuff, line)
             continue
         end
     end    
@@ -42,15 +45,16 @@ function _chat_request_stream(params, body, callback=nothing)
         resp = HTTP.open("POST", get_url(params), auth_header()) do io
             tmp = IOBuffer()
             chunk_buffer = IOBuffer()
+            fail_buffer = IOBuffer()
             done = Ref(false)
             close = Ref(false)
             write(io, body)
             HTTP.closewrite(io)
             HTTP.startread(io)        
             while !eof(io) && !close[] && !done[]
-                chunk = String(readavailable(io))  
+                chunk = join((String(take!(fail_buffer)),  String(readavailable(io)))) # JET doesn't like * operator 
                 @info "chunk: $chunk"
-                streamstatus = _parse_chunk(chunk, chunk_buffer)
+                streamstatus = _parse_chunk(chunk, chunk_buffer, fail_buffer)
                 parsed = String(take!(chunk_buffer))
                 if streamstatus.eos 
                     done[] = true
@@ -97,4 +101,3 @@ function chat_request(conv::Conversation; callback=nothing, params::ChatParams=C
         task
     end
 end
-

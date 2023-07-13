@@ -19,6 +19,11 @@ const GPT4 = Model("gpt-4")
     content::Union{String,Nothing}
     name::Union{String,Nothing} = nothing
     function_call::Union{Nothing,String} = nothing
+    function Message(role, content, name, function_call)
+        @info "Called inner constructor"
+        role == GPTFunction && isnothing(function_call) && throw(ArgumentError("function_call cannot be empty when role is GPTFunction"))
+        return new(role, content, name, function_call)
+    end
 end
 
 StructTypes.StructType(::Type{Message}) = StructTypes.Struct()
@@ -35,7 +40,7 @@ StructTypes.omitempties(::Type{GPTFunctionSignature}) = (:description, :paramete
 
 @kwdef struct ChatParams
     model::String = "gpt-3.5-turbo"
-    messages::Vector{Message}= Message[]
+    messages::Vector{Message} = Message[]
     functions::Union{Vector{GPTFunctionSignature},Nothing} = nothing
     function_call::Union{String,Pair{String,String},Nothing} = nothing # "auto" | "none" | Dict("name" => "my_function")
     temperature::Union{Float64,Nothing} = 1.0 # 0.0 - 2.0 - mutual exclusive with top_p
@@ -48,10 +53,47 @@ StructTypes.omitempties(::Type{GPTFunctionSignature}) = (:description, :paramete
     frequency_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
     logit_bias::Union{Dict{String,Float64},Nothing} = nothing
     user::Union{String,Nothing} = nothing
+    function ChatParams(
+        model,
+        messages,
+        functions,
+        function_call,
+        temperature,
+        top_p,
+        n,
+        stream,
+        stop,
+        max_tokens,
+        presence_penalty,
+        frequency_penalty,
+        logit_bias,
+        user
+    )
+        @info "Called inner constructor"
+        !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
+        return new(
+            model,
+            messages,
+            functions,
+            function_call,
+            temperature,
+            top_p,
+            n,
+            stream,
+            stop,
+            max_tokens,
+            presence_penalty,
+            frequency_penalty,
+            logit_bias,
+            user
+        )
+    end
 end
 
 StructTypes.StructType(::Type{ChatParams}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{ChatParams}) = fieldnames(ChatParams)
+
+
 
 
 @kwdef struct Conversation

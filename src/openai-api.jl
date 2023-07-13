@@ -16,12 +16,13 @@ const GPT4 = Model("gpt-4")
 
 @kwdef struct Message
     role::String
-    content::Union{String,Nothing}
+    content::Union{String,Nothing}=nothing
     name::Union{String,Nothing} = nothing
-    function_call::Union{Nothing,String} = nothing
+    function_call::Union{Nothing,String,Dict{String,Any}} = nothing
     function Message(role, content, name, function_call)
         @info "Called inner constructor"
-        role == GPTFunction && isnothing(function_call) && throw(ArgumentError("function_call cannot be empty when role is GPTFunction"))
+        isnothing(content) && isnothing(function_call) && throw(ArgumentError("content and function_call cannot both be nothing"))
+        role == GPTFunction && isnothing(name) && throw(ArgumentError("name cannot be empty when role is GPTFunction"))
         return new(role, content, name, function_call)
     end
 end

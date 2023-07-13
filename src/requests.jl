@@ -9,9 +9,17 @@ function auth_header(api_key::String=OPENAI_API_KEY)
 end
 
 function extract_message(resp::HTTP.Response)
-    received_message = JSON3.read(resp.body, Dict)
-    content = received_message["choices"][1]["message"]["content"]
-    Message(role=GPTAssistant, content=content)
+    received_message = JSON3.read(resp.body, Dict)    
+    message = received_message["choices"][1]["message"]   
+    if haskey(message, "function_call")                
+        fcall = message["function_call"]
+        if fcall["arguments"] isa String
+            fcall["arguments"] = JSON3.read(fcall["arguments"], Dict)
+        end
+        Message(role=GPTAssistant, function_call=fcall)
+    else        
+        Message(role=GPTAssistant, content=message["content"])
+    end    
 end
 
 # There is a variable chunk format (which is also incomplete from time to time) that can be received from the stream. 

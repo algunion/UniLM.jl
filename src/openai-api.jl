@@ -30,6 +30,13 @@ end
 StructTypes.StructType(::Type{Message}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{Message}) = (:name, :function_call) # content cannot be nothing when user generated
 
+function call_function(message::Message)
+    isnothing(message.function_call) && return nothing
+    @info "Calling function $(message.function_call["name"])"      
+        
+    
+end
+
 @kwdef struct GPTFunctionSignature
     name::String
     description::Union{String,Nothing} = nothing

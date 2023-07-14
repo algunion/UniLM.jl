@@ -39,7 +39,7 @@
     @test t.state == :done
     @info "t.result = $(t.result)"
 
-    function get_current_weather(location, unit="fahrenheit")
+    function get_current_weather(;location, unit="fahrenheit")
         weather_info = Dict(
             "location" => location,
             "temperature" => "72",
@@ -81,6 +81,8 @@
     @info "fun answer: " fanswer
     @test !isnothing(fanswer.function_call)
     @test isnothing(fanswer.content)
+
+    @info UniLM.call_function(fanswer)
 
 
     

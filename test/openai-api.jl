@@ -82,7 +82,7 @@
     @test !isnothing(fanswer.function_call)
     @test isnothing(fanswer.content)
 
-    @info UniLM.call_function(fanswer)
+    # @info UniLM.call_function(fanswer)
 
 
     

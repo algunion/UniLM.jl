@@ -79,7 +79,7 @@
     fanswer = UniLM.chat_request(conv2, params=funchatparams)
 
     @info "fun answer: " fanswer
-    @test !isnothing(fanswer.function_call)
+    @test UniLM.makecall(fanswer) isa Expr
     @test isnothing(fanswer.content)
 
     # @info UniLM.call_function(fanswer)

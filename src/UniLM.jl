@@ -8,6 +8,7 @@ include("constants.jl")
 include("exceptions.jl")
 include("helpers.jl")
 include("openai-api.jl")
+include("metaprog.jl")
 include("requests.jl")
 
 end

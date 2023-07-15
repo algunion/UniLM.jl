@@ -18,7 +18,7 @@ const GPT4 = Model("gpt-4")
     role::String
     content::Union{String,Nothing}=nothing
     name::Union{String,Nothing} = nothing
-    function_call::Union{Nothing,String,Dict{String,Any}} = nothing
+    function_call::Union{Nothing,Dict{String,Any}} = nothing
     function Message(role, content, name, function_call)
         @info "Called inner constructor"
         isnothing(content) && isnothing(function_call) && throw(ArgumentError("content and function_call cannot both be nothing"))
@@ -30,12 +30,6 @@ end
 StructTypes.StructType(::Type{Message}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{Message}) = (:name, :function_call) # content cannot be nothing when user generated
 
-# function call_function(message::Message)
-#     isnothing(message.function_call) && return nothing
-#     @info "Calling function $(message.function_call["name"])"      
-        
-    
-# end
 
 @kwdef struct GPTFunctionSignature
     name::String

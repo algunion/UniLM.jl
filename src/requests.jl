@@ -1,5 +1,5 @@
 get_url(model::String) = OPENAI_BASE_URL * _MODEL_ENDPOINTS[model]
-get_url(params::ChatParams) = get_url(params.model)
+get_url(params::Chat) = get_url(params.model)
 
 function auth_header(api_key::String=OPENAI_API_KEY)
     [
@@ -47,10 +47,10 @@ function _parse_chunk(chunk::String, iobuff, failbuff)
     (;eos=eos)
 end
 
-function _chat_request_stream(params, body, callback=nothing)    
+function _chat_request_stream(chat, body, callback=nothing)    
     Threads.@spawn begin         
         m = Ref{Union{Message, Nothing}}(nothing)
-        resp = HTTP.open("POST", get_url(params), auth_header()) do io
+        resp = HTTP.open("POST", get_url(chat), auth_header()) do io
             tmp = IOBuffer()
             chunk_buffer = IOBuffer()
             fail_buffer = IOBuffer()
@@ -77,7 +77,8 @@ function _chat_request_stream(params, body, callback=nothing)
             @info "Stream closing and returning"        
             HTTP.closeread(io)             
         end
-        resp.status == 200 ? m[] : @error "Request staus: " resp.status; nothing
+        @info "Finishing streaming with stutus: $(resp.status)"
+        resp.status == 200 ? (m[], chat) : nothing
     end        
 end
 
@@ -92,19 +93,18 @@ The `callback` function is called for each chunk of the response. The `close` Re
     The signature of the callback function is:
         `callback(chunk::Union{String, Message}, close::Ref{Bool})`
 """
-function chat_request(conv::Conversation; callback=nothing, params::ChatParams=ChatParams())::Union{Message, Task, Nothing}
-    push!(params.messages, conv.messages...)
-    body = JSON3.write(params)
-    if isnothing(params.stream) || !something(params.stream)
+function chat_request!(chat::Chat; callback=nothing)::Union{Task, Tuple{Union{Message, Nothing}, Chat}}
+    body = JSON3.write(chat)
+    if isnothing(chat.stream) || !something(chat.stream)
         @info "chat_request: request/no-stream"
-        resp = HTTP.post(get_url(params), body=body, headers=auth_header())
+        resp = HTTP.post(get_url(chat), body=body, headers=auth_header())
         m = resp.status == 200 ? extract_message(resp) : @error "Request staus: " resp.status; nothing
-        m !== nothing && conv.history && push!(conv.messages, m)
+        m !== nothing && update!(chat, m)
         @info "chat_request: $m"
-        return m
+        return (m, chat)
     else
         @info "chat_request: stream"
-        task = _chat_request_stream(params, body, callback)
+        task = _chat_request_stream(chat, body, callback)
         @info "chat_request: stream task launched"
         task
     end

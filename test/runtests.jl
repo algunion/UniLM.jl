@@ -3,6 +3,7 @@ if isdefined(@__MODULE__,:LanguageServer)
 end
 
 using UniLM
+using Accessors
 using Aqua
 using JET
 using JSON3

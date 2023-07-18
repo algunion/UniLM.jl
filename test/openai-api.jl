@@ -1,43 +1,55 @@
 @testset "openai-api.jl" begin
-    conv = UniLM.Conversation()
-    push!(conv, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))
-    @test length(conv) == 1
+    chat = UniLM.Chat()
+    push!(chat, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))
+    @test length(chat) == 1
 
-    push!(conv, UniLM.Message(role=UniLM.GPTUser, content="Please tell me a one-liner joke."))
-    @test length(conv) == 2
+    push!(chat, UniLM.Message(role=UniLM.GPTUser, content="Please tell me a one-liner joke."))
+    @test length(chat) == 2
 
     try
-        push!(conv, UniLM.Message(role=UniLM.GPTUser, content="Please tell me a one-liner joke."))
+        push!(chat, UniLM.Message(role=UniLM.GPTUser, content="Please tell me a one-liner joke."))
     catch e
         @test e isa UniLM.InvalidConversationError
     end
 
-    @test UniLM.is_send_valid(conv) == true
+    @test UniLM.is_send_valid(chat) == true
 
     try 
-        UniLM.ChatParams(temperature=0.2, top_p=0.5)
+        UniLM.Chat(temperature=0.2, top_p=0.5)
     catch e
         @error e
         @test e isa ArgumentError
     end
     
-    params = UniLM.ChatParams()
-
-    @test params.messages |> isempty
-
-    params_with_stream = UniLM.ChatParams(stream=true, temperature=0.2)
-
-    UniLM.chat_request(conv, params=params)
-
+    m, _ = UniLM.chat_request!(chat)
+    @info m
+    @test m isa UniLM.Message
+    @test m.role == UniLM.GPTAssistant
+    
+    
+    
+    # test streaming
     callback = (msg, close) -> begin         
         @info "from callback - echo: $msg"         
     end
-    
-    # when stream=true, a task is returned
-    t = UniLM.chat_request(conv, params=params_with_stream, callback=callback)
+
+    chat_with_stream = UniLM.Chat(stream=true, temperature=0.2)
+    push!(chat_with_stream, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))
+    @test length(chat_with_stream) == 1
+
+    push!(chat_with_stream, UniLM.Message(role=UniLM.GPTUser, content="Please tell me a one-liner joke."))
+    @test length(chat_with_stream) == 2
+
+    @info "Starting chat with stream"
+    t = UniLM.chat_request!(chat_with_stream, callback=callback)
     wait(t)
-    @test t.state == :done
-    @info "t.result = $(t.result)"
+    @test t.state == :done    
+    m, _ = t.result
+    @info m
+    @test m isa UniLM.Message
+    @test m.role == UniLM.GPTAssistant
+    
+    
 
     function get_current_weather(;location, unit="fahrenheit")
         weather_info = Dict(
@@ -70,19 +82,16 @@
 
     gptfsig = UniLM.GPTFunctionSignature(name=get_current_weather_schema["name"], description=get_current_weather_schema["description"], parameters=get_current_weather_schema["parameters"])
 
-    funchatparams = UniLM.ChatParams(functions=[gptfsig], function_call="auto")
+    funchat = UniLM.Chat(functions=[gptfsig], function_call="auto")
+    
+    push!(funchat, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))
+    push!(funchat, UniLM.Message(role=UniLM.GPTUser, content="What's the weather like in Boston?"))
 
-    conv2 = UniLM.Conversation()
-    push!(conv2, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))
-    push!(conv2, UniLM.Message(role=UniLM.GPTUser, content="What's the weather like in Boston?"))
+    (m, _) = UniLM.chat_request!(funchat)
 
-    fanswer = UniLM.chat_request(conv2, params=funchatparams)
-
-    @info "fun answer: " fanswer
-    @test UniLM.makecall(fanswer) isa Expr
-    @test isnothing(fanswer.content)
-
-    # @info UniLM.call_function(fanswer)
+    @info "fun answer: " m
+    @test UniLM.makecall(m) isa Expr
+    @test isnothing(m.content)
 
 
     

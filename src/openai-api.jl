@@ -19,8 +19,7 @@ const GPT4 = Model("gpt-4")
     content::Union{String,Nothing}=nothing
     name::Union{String,Nothing} = nothing
     function_call::Union{Nothing,Dict{String,Any}} = nothing
-    function Message(role, content, name, function_call)
-        @info "Called inner constructor"
+    function Message(role, content, name, function_call)        
         isnothing(content) && isnothing(function_call) && throw(ArgumentError("content and function_call cannot both be nothing"))
         role == GPTFunction && isnothing(name) && throw(ArgumentError("name cannot be empty when role is GPTFunction"))
         return new(role, content, name, function_call)
@@ -40,11 +39,12 @@ end
 StructTypes.StructType(::Type{GPTFunctionSignature}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{GPTFunctionSignature}) = (:description, :parameters)
 
-@kwdef struct ChatParams
-    model::String = "gpt-3.5-turbo"
+@kwdef struct Chat
+    model::String = "gpt-3.5-turbo" 
     messages::Vector{Message} = Message[]
+    history::Bool = true
     functions::Union{Vector{GPTFunctionSignature},Nothing} = nothing
-    function_call::Union{String,Pair{String,String},Nothing} = nothing # "auto" | "none" | Dict("name" => "my_function")
+    function_call::Union{String,Pair{String,String},Nothing} = nothing # "auto" | "none" | Dict("name" => "my_function")    
     temperature::Union{Float64,Nothing} = 1.0 # 0.0 - 2.0 - mutual exclusive with top_p
     top_p::Union{Float64,Nothing} = nothing # 1 - 100 - mutual exclusive with temperature
     n::Union{Int64,Nothing} = nothing # 1 - 10
@@ -55,9 +55,10 @@ StructTypes.omitempties(::Type{GPTFunctionSignature}) = (:description, :paramete
     frequency_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
     logit_bias::Union{Dict{String,Float64},Nothing} = nothing
     user::Union{String,Nothing} = nothing
-    function ChatParams(
+    function Chat(
         model,
         messages,
+        history,
         functions,
         function_call,
         temperature,
@@ -76,6 +77,7 @@ StructTypes.omitempties(::Type{GPTFunctionSignature}) = (:description, :paramete
         return new(
             model,
             messages,
+            history,
             functions,
             function_call,
             temperature,
@@ -92,30 +94,23 @@ StructTypes.omitempties(::Type{GPTFunctionSignature}) = (:description, :paramete
     end
 end
 
-StructTypes.StructType(::Type{ChatParams}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{ChatParams}) = fieldnames(ChatParams)
+StructTypes.StructType(::Type{Chat}) = StructTypes.Struct()
+StructTypes.omitempties(::Type{Chat}) = fieldnames(Chat)
+StructTypes.excludes(::Type{Chat}) = (:history,)
 
-
-
-
-@kwdef struct Conversation
-    history::Bool = false
-    messages::Vector{Message} = Message[]
-end
-
-Base.length(conv::Conversation) = length(conv.messages)
-Base.isempty(conv::Conversation) = isempty(conv.messages)
+Base.length(chat::Chat) = length(chat.messages)
+Base.isempty(chat::Chat) = isempty(chat.messages)
 
 """
     is_send_valid(conv::Conversation)::Bool
 
     Check if the conversation is valid for sending to the API.
 """
-function is_send_valid(conv::Conversation)::Bool
-    length(conv) > 1 &&
-        conv.messages[begin].role == GPTSystem &&
-        conv.messages[end].role == GPTUser &&
-        all([v.role != conv.messages[i+1].role for (i, v) in collect(enumerate(conv.messages))[1:end-1]])
+function is_send_valid(chat::Chat)::Bool
+    length(chat) > 1 &&
+        chat.messages[begin].role == GPTSystem &&
+        chat.messages[end].role == GPTUser &&
+        all([v.role != chat.messages[i+1].role for (i, v) in collect(enumerate(chat.messages))[1:end-1]])
 end
 
 """
@@ -123,15 +118,15 @@ end
 
     Add a message to the conversation. The goal here is to make invalid conversations unrepresentable.
 """
-function Base.push!(conv::Conversation, msg::Message)
-    msg.role == GPTSystem && isempty(conv) && return push!(conv.messages, msg)
-    msg.role != GPTSystem && conv.messages[end].role != msg.role && return push!(conv.messages, msg)
-    InvalidConversationError("Cannot add message $msg to conversation: $conv")
+function Base.push!(chat::Chat, msg::Message)
+    msg.role == GPTSystem && isempty(chat) && return push!(chat.messages, msg)
+    msg.role != GPTSystem && chat.messages[end].role != msg.role && return push!(chat.messages, msg)
+    InvalidConversationError("Cannot add message $msg to conversation: $chat")
 end
 
-function update!(conv::Conversation, msg::Message)
-    conv.history && push!(conv, msg)
-    conv
+function update!(chat::Chat, msg::Message)
+    chat.history && push!(chat, msg)
+    chat
 end
 
 

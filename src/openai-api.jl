@@ -14,6 +14,7 @@ Base.parse(::Type{Model}, s::String) = Model(s)
 const GPT35Turbo = Model("gpt-3.5-turbo")
 const GPT4 = Model("gpt-4")
 
+
 @kwdef struct Message
     role::String
     content::Union{String,Nothing}=nothing
@@ -25,6 +26,8 @@ const GPT4 = Model("gpt-4")
         return new(role, content, name, function_call)
     end
 end
+
+const Conversation = Vector{Message}
 
 StructTypes.StructType(::Type{Message}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{Message}) = (:name, :function_call) # content cannot be nothing when user generated
@@ -39,13 +42,21 @@ end
 StructTypes.StructType(::Type{GPTFunctionSignature}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{GPTFunctionSignature}) = (:description, :parameters)
 
+"""
+    chat = Chat()
+
+Creates a new `Chat` object with default settings:
+- `model` is set to `gpt-3.5-turbo`
+- `messages` is set to an empty `Vector{Message}`
+- `history` is set to `true`
+"""
 @kwdef struct Chat
     model::String = "gpt-3.5-turbo" 
-    messages::Vector{Message} = Message[]
+    messages::Conversation = Message[]
     history::Bool = true
     functions::Union{Vector{GPTFunctionSignature},Nothing} = nothing
     function_call::Union{String,Pair{String,String},Nothing} = nothing # "auto" | "none" | Dict("name" => "my_function")    
-    temperature::Union{Float64,Nothing} = 1.0 # 0.0 - 2.0 - mutual exclusive with top_p
+    temperature::Union{Float64,Nothing} = nothing # 0.0 - 2.0 - mutual exclusive with top_p
     top_p::Union{Float64,Nothing} = nothing # 1 - 100 - mutual exclusive with temperature
     n::Union{Int64,Nothing} = nothing # 1 - 10
     stream::Union{Bool,Nothing} = nothing
@@ -72,7 +83,6 @@ StructTypes.omitempties(::Type{GPTFunctionSignature}) = (:description, :paramete
         logit_bias,
         user
     )
-        @info "Called inner constructor"
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
         return new(
             model,
@@ -102,7 +112,7 @@ Base.length(chat::Chat) = length(chat.messages)
 Base.isempty(chat::Chat) = isempty(chat.messages)
 
 """
-    is_send_valid(conv::Conversation)::Bool
+    is_send_valid(chat::Chat)::Bool
 
     Check if the conversation is valid for sending to the API.
 """
@@ -114,7 +124,7 @@ function is_send_valid(chat::Chat)::Bool
 end
 
 """
-    push!(conv::Conversation, msg::Message)
+    push!(chat::Chat, msg::Message)
 
     Add a message to the conversation. The goal here is to make invalid conversations unrepresentable.
 """
@@ -124,6 +134,11 @@ function Base.push!(chat::Chat, msg::Message)
     InvalidConversationError("Cannot add message $msg to conversation: $chat")
 end
 
+"""
+    update!(chat::Chat, msg::Message)
+
+    Update the chat with a new message.
+"""
 function update!(chat::Chat, msg::Message)
     chat.history && push!(chat, msg)
     chat

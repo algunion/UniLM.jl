@@ -11,4 +11,16 @@ include("openai-api.jl")
 include("metaprog.jl")
 include("requests.jl")
 
+export 
+    Chat, 
+    Message, 
+    GPTSystem, 
+    GPTUser, 
+    GPTAssistant, 
+    GPTFunction,
+    InvalidConversationError, 
+    is_send_valid, 
+    chat_request!,
+    update!
+
 end

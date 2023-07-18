@@ -47,8 +47,7 @@
     m, _ = t.result
     @info m
     @test m isa UniLM.Message
-    @test m.role == UniLM.GPTAssistant
-    
+    @test m.role == UniLM.GPTAssistant   
     
 
     function get_current_weather(;location, unit="fahrenheit")

@@ -84,7 +84,7 @@
     funchat = UniLM.Chat(functions=[gptfsig], function_call="auto")
     
     push!(funchat, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))
-    push!(funchat, UniLM.Message(role=UniLM.GPTUser, content="What's the weather like in Boston?"))
+    push!(funchat, UniLM.Message(role=UniLM.GPTUser, content="What's the weather like in Boston? Give answer in celsius"))
 
     (m, _) = UniLM.chat_request!(funchat)
 
@@ -97,6 +97,12 @@
     @info "calling f: " get_current_weather(location="Boston")
     r = UniLM.evalcall(m)
     @info "result: " r
+    fname = m.function_call["name"]
+    funmsg = Message(role=GPTFunction,name=fname, content=r)
+    update!(funchat, funmsg)
+    funchat.messages[3].function_call["arguments"] = funchat.messages[3].function_call["arguments"] |> JSON3.write
+    (m2, _) = UniLM.chat_request!(funchat)  
+    @info "answer: " m2
 
 
     

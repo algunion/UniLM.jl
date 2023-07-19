@@ -84,7 +84,7 @@ end
 
 
 """
-    chat_request(conv::Conversation; callback=nothing, params::ChatParams=ChatParams())
+    chat_request(chat::Chat; callback=nothing)
 
 Send a request to the OpenAI API to generate a response to the messages in `conv`.
 

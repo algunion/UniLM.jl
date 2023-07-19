@@ -92,6 +92,12 @@
     @test UniLM.makecall(m) isa Expr
     @test isnothing(m.content)
 
+    callexpr = UniLM.makecall(m)
+    @info "call expr: " callexpr
+    @info "calling f: " get_current_weather(location="Boston")
+    r = UniLM.evalcall(m)
+    @info "result: " r
+
 
     
 

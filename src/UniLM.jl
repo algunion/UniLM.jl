@@ -10,6 +10,7 @@ include("helpers.jl")
 include("openai-api.jl")
 include("metaprog.jl")
 include("requests.jl")
+include("testutils.jl")
 
 export 
     Chat, 

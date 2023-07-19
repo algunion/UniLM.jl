@@ -10,3 +10,5 @@ end
 Generates an `Expr` from a `Message` containing a `function_call`.
 """
 makecall(m::Message) = makecall(m.function_call)
+
+evalcall(m::Message) = eval(makecall(m))

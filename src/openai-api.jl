@@ -17,10 +17,10 @@ const GPT4 = Model("gpt-4")
 
 @kwdef struct Message
     role::String
-    content::Union{String,Nothing}=nothing
+    content::Union{String,Nothing} = nothing
     name::Union{String,Nothing} = nothing
     function_call::Union{Nothing,Dict{String,Any}} = nothing
-    function Message(role, content, name, function_call)        
+    function Message(role, content, name, function_call)
         isnothing(content) && isnothing(function_call) && throw(ArgumentError("content and function_call cannot both be nothing"))
         role == GPTFunction && isnothing(name) && throw(ArgumentError("name cannot be empty when role is GPTFunction"))
         return new(role, content, name, function_call)
@@ -45,7 +45,7 @@ Creates a new `Chat` object with default settings:
 - `history` is set to `true`
 """
 @kwdef struct Chat
-    model::String = "gpt-3.5-turbo" 
+    model::String = "gpt-3.5-turbo"
     messages::Conversation = Message[]
     history::Bool = true
     functions::Union{Vector{GPTFunctionSignature},Nothing} = nothing
@@ -144,7 +144,4 @@ function update!(chat::Chat, msg::Message)
     chat.history && push!(chat, msg)
     chat
 end
-
-
-
 

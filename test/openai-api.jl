@@ -95,6 +95,7 @@
     
     r = UniLM.evalcall!(funchat)
     @info "result: " r    
+
     funchat.messages[3].function_call["arguments"] = funchat.messages[3].function_call["arguments"]
     (m2, _) = UniLM.chat_request!(funchat)  
     @info "answer: " m2

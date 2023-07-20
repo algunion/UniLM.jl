@@ -90,17 +90,12 @@
 
     @info "fun answer: " m
     @test UniLM.makecall(m) isa Expr
-    @test isnothing(m.content)
-
-    callexpr = UniLM.makecall(m)
-    @info "call expr: " callexpr
-    @info "calling f: " get_current_weather(location="Boston")
-    r = UniLM.evalcall(m)
-    @info "result: " r
-    fname = m.function_call["name"]
-    funmsg = Message(role=GPTFunction,name=fname, content=r)
-    update!(funchat, funmsg)
-    funchat.messages[3].function_call["arguments"] = funchat.messages[3].function_call["arguments"] |> JSON3.write
+    @test isnothing(m.content)    
+    
+    
+    r = UniLM.evalcall!(funchat)
+    @info "result: " r    
+    funchat.messages[3].function_call["arguments"] = funchat.messages[3].function_call["arguments"]
     (m2, _) = UniLM.chat_request!(funchat)  
     @info "answer: " m2
 

@@ -32,15 +32,9 @@ const Conversation = Vector{Message}
 StructTypes.StructType(::Type{Message}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{Message}) = (:name, :function_call) # content cannot be nothing when user generated
 
+message(m::Message) = m.content
+content(m::Message) = m.content
 
-@kwdef struct GPTFunctionSignature
-    name::String
-    description::Union{String,Nothing} = nothing
-    parameters::Union{Dict{String,Any},Nothing} = nothing
-end
-
-StructTypes.StructType(::Type{GPTFunctionSignature}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{GPTFunctionSignature}) = (:description, :parameters)
 
 """
     chat = Chat()
@@ -133,6 +127,13 @@ function Base.push!(chat::Chat, msg::Message)
     msg.role != GPTSystem && chat.messages[end].role != msg.role && return push!(chat.messages, msg)
     InvalidConversationError("Cannot add message $msg to conversation: $chat")
 end
+
+"""
+    last(chat::Chat)
+
+    Get the last message in the conversation.
+"""
+Base.last(chat::Chat) = last(chat.messages)
 
 """
     update!(chat::Chat, msg::Message)

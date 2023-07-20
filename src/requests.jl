@@ -13,9 +13,9 @@ function extract_message(resp::HTTP.Response)
     message = received_message["choices"][1]["message"]   
     if haskey(message, "function_call")                
         fcall = message["function_call"]
-        if fcall["arguments"] isa String
-            fcall["arguments"] = JSON3.read(fcall["arguments"], Dict)
-        end
+        # if fcall["arguments"] isa String
+        #     fcall["arguments"] = JSON3.read(fcall["arguments"], Dict)
+        # end
         Message(role=GPTAssistant, function_call=fcall)
     else        
         Message(role=GPTAssistant, content=message["content"])

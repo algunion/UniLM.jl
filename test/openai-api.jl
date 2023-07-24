@@ -22,7 +22,7 @@
     end
 
     m, _ = UniLM.chatrequest!(chat)
-    @info m
+    #@info m
     @test m isa UniLM.Message
     @test m.role == UniLM.GPTAssistant
 
@@ -30,7 +30,7 @@
 
     # test streaming
     callback = (msg, close) -> begin
-        @info "from callback - echo: $msg"
+        "from callback - echo: $msg"
     end
 
     chat_with_stream = UniLM.Chat(stream=true, temperature=0.2)
@@ -40,12 +40,12 @@
     push!(chat_with_stream, UniLM.Message(role=UniLM.GPTUser, content="Please tell me a one-liner joke."))
     @test length(chat_with_stream) == 2
 
-    @info "Starting chat with stream"
+    #@info "Starting chat with stream"
     t = UniLM.chatrequest!(chat_with_stream, callback=callback)
     wait(t)
     @test t.state == :done
     m, _ = t.result
-    @info m
+    #@info m
     @test m isa UniLM.Message
     @test m.role == UniLM.GPTAssistant
 
@@ -88,22 +88,22 @@
 
     (m, _) = UniLM.chatrequest!(funchat)
 
-    @info "fun answer: " m
+    #@info "fun answer: " m
     @test UniLM.makecall(m) isa Expr
     @test isnothing(m.content)
 
 
     r = UniLM.evalcall!(funchat)
-    @info "result: " r
+    #@info "result evalcall!: " r
 
-    funchat.messages[3].function_call["arguments"] = funchat.messages[3].function_call["arguments"]
+    #funchat.messages[3].function_call["arguments"] = funchat.messages[3].function_call["arguments"]
     (m2, _) = UniLM.chatrequest!(funchat)
-    @info "answer: " m2
+    #@info "answer: " m2
 
     emb = UniLM.Embedding(input="Embed this!")
 
     result = embeddingrequest!(emb)
-    @info "result: " result
+    #@info "result: " result
     #@test result isa Vector
 
 

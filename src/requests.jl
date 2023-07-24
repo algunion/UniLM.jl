@@ -62,7 +62,6 @@ function _chatrequeststream(chat, body, callback=nothing)
             HTTP.startread(io)
             while !eof(io) && !close[] && !done[]
                 chunk = join((String(take!(fail_buffer)), String(readavailable(io)))) # JET doesn't like * operator 
-                @info "chunk: $chunk"
                 streamstatus = _parse_chunk(chunk, chunk_buffer, fail_buffer)
                 parsed = String(take!(chunk_buffer))
                 if streamstatus.eos
@@ -75,10 +74,10 @@ function _chatrequeststream(chat, body, callback=nothing)
                 end
             end
             close[] && @info "stream closed by user"
-            @info "Stream closing and returning"
+            #@info "Stream closing and returning"
             HTTP.closeread(io)
         end
-        @info "Finishing streaming with stutus: $(resp.status)"
+        #@info "Finishing streaming with stutus: $(resp.status)"
         resp.status == 200 ? (m[], chat) : nothing
     end
 end

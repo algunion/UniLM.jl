@@ -85,7 +85,7 @@ end
 
 
 """
-    chat_request(chat::Chat; callback=nothing)
+    chatrequest!(chat::Chat; callback=nothing)
 
 Send a request to the OpenAI API to generate a response to the messages in `conv`.
 
@@ -97,27 +97,38 @@ The `callback` function is called for each chunk of the response. The `close` Re
 function chatrequest!(chat::Chat; callback=nothing)::Union{Task,Tuple{Union{Message,Nothing},Chat}}
     body = JSON3.write(chat)
     if isnothing(chat.stream) || !something(chat.stream)
-        @info "chat_request: request/no-stream"
         resp = HTTP.post(get_url(chat), body=body, headers=auth_header())
         m = resp.status == 200 ? extract_message(resp) : @error "Request staus: " resp.status
         nothing
         m !== nothing && update!(chat, m)
-        @info "chat_request: $m"
+
         return (m, chat)
     else
-        @info "chat_request: stream"
         task = _chatrequeststream(chat, body, callback)
-        @info "chat_request: stream task launched"
         return task
     end
 end
 
-function embeddingrequest(emb::Embedding)
+"""
+    embeddingrequest!(emb::Embedding)
+
+    Send a request to the OpenAI API to generate an embedding for the `input` in `emb`.
+    
+    Resulting embedding is stored in the preallocated `embedding` field.  
+
+    @kwdef struct Embedding
+        model::String = "text-embedding-ada-002"
+        input::Union{String,Vector{String}}
+        embedding::Vector{Float64} = zeros(Float64, 1536)
+        user::Union{String,Nothing} = nothing
+    end
+
+"""
+function embeddingrequest!(emb::Embedding)
     body = JSON3.write(emb)
     try
         resp = HTTP.post(get_url(emb), body=body, headers=auth_header())
         embedding = resp.status == 200 ? JSON3.read(resp.body, Dict) : @error "Request staus: " resp.status
-        #@show embedding
         embedding !== nothing && update!(emb, embedding["data"][1]["embedding"])
         return (embedding, emb)
     catch e

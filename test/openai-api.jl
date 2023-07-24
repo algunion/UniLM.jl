@@ -102,7 +102,7 @@
 
     emb = UniLM.Embedding(input="Embed this!")
 
-    result = embeddingrequest(emb)
+    result = embeddingrequest!(emb)
     @info "result: " result
     #@test result isa Vector
 

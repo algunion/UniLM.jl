@@ -26,6 +26,6 @@ export
     issendvalid,
     chatrequest!,
     Embedding,
-    embeddingrequest,
+    embeddingrequest!,
     update!
 end

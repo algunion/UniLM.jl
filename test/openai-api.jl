@@ -12,25 +12,25 @@
         @test e isa UniLM.InvalidConversationError
     end
 
-    @test UniLM.is_send_valid(chat) == true
+    @test UniLM.issendvalid(chat) == true
 
-    try 
+    try
         UniLM.Chat(temperature=0.2, top_p=0.5)
     catch e
         @error e
         @test e isa ArgumentError
     end
-    
-    m, _ = UniLM.chat_request!(chat)
+
+    m, _ = UniLM.chatrequest!(chat)
     @info m
     @test m isa UniLM.Message
     @test m.role == UniLM.GPTAssistant
-    
-    
-    
+
+
+
     # test streaming
-    callback = (msg, close) -> begin         
-        @info "from callback - echo: $msg"         
+    callback = (msg, close) -> begin
+        @info "from callback - echo: $msg"
     end
 
     chat_with_stream = UniLM.Chat(stream=true, temperature=0.2)
@@ -41,16 +41,16 @@
     @test length(chat_with_stream) == 2
 
     @info "Starting chat with stream"
-    t = UniLM.chat_request!(chat_with_stream, callback=callback)
+    t = UniLM.chatrequest!(chat_with_stream, callback=callback)
     wait(t)
-    @test t.state == :done    
+    @test t.state == :done
     m, _ = t.result
     @info m
     @test m isa UniLM.Message
-    @test m.role == UniLM.GPTAssistant   
-    
+    @test m.role == UniLM.GPTAssistant
 
-    function get_current_weather(;location, unit="fahrenheit")
+
+    function get_current_weather(; location, unit="fahrenheit")
         weather_info = Dict(
             "location" => location,
             "temperature" => "72",
@@ -82,26 +82,30 @@
     gptfsig = UniLM.GPTFunctionSignature(name=get_current_weather_schema["name"], description=get_current_weather_schema["description"], parameters=get_current_weather_schema["parameters"])
 
     funchat = UniLM.Chat(functions=[gptfsig], function_call="auto")
-    
+
     push!(funchat, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))
     push!(funchat, UniLM.Message(role=UniLM.GPTUser, content="What's the weather like in Boston? Give answer in celsius"))
 
-    (m, _) = UniLM.chat_request!(funchat)
+    (m, _) = UniLM.chatrequest!(funchat)
 
     @info "fun answer: " m
     @test UniLM.makecall(m) isa Expr
-    @test isnothing(m.content)    
-    
-    
+    @test isnothing(m.content)
+
+
     r = UniLM.evalcall!(funchat)
-    @info "result: " r    
+    @info "result: " r
 
     funchat.messages[3].function_call["arguments"] = funchat.messages[3].function_call["arguments"]
-    (m2, _) = UniLM.chat_request!(funchat)  
+    (m2, _) = UniLM.chatrequest!(funchat)
     @info "answer: " m2
 
+    emb = UniLM.Embedding(input="Embed this!")
 
-    
+    result = embeddingrequest(emb)
+    @info "result: " result
+    #@test result isa Vector
+
 
 
 end

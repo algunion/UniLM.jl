@@ -1,5 +1,6 @@
 get_url(model::String) = OPENAI_BASE_URL * _MODEL_ENDPOINTS[model]
 get_url(params::Chat) = get_url(params.model)
+get_url(emb::Embedding) = get_url(emb.model)
 
 function auth_header(api_key::String=OPENAI_API_KEY)
     [
@@ -47,7 +48,7 @@ function _parse_chunk(chunk::String, iobuff, failbuff)
     (; eos=eos)
 end
 
-function _chat_request_stream(chat, body, callback=nothing)
+function _chatrequeststream(chat, body, callback=nothing)
     Threads.@spawn begin
         m = Ref{Union{Message,Nothing}}(nothing)
         resp = HTTP.open("POST", get_url(chat), auth_header()) do io
@@ -93,7 +94,7 @@ The `callback` function is called for each chunk of the response. The `close` Re
     The signature of the callback function is:
         `callback(chunk::Union{String, Message}, close::Ref{Bool})`
 """
-function chat_request!(chat::Chat; callback=nothing)::Union{Task,Tuple{Union{Message,Nothing},Chat}}
+function chatrequest!(chat::Chat; callback=nothing)::Union{Task,Tuple{Union{Message,Nothing},Chat}}
     body = JSON3.write(chat)
     if isnothing(chat.stream) || !something(chat.stream)
         @info "chat_request: request/no-stream"
@@ -105,8 +106,22 @@ function chat_request!(chat::Chat; callback=nothing)::Union{Task,Tuple{Union{Mes
         return (m, chat)
     else
         @info "chat_request: stream"
-        task = _chat_request_stream(chat, body, callback)
+        task = _chatrequeststream(chat, body, callback)
         @info "chat_request: stream task launched"
-        task
+        return task
+    end
+end
+
+function embeddingrequest(emb::Embedding)
+    body = JSON3.write(emb)
+    try
+        resp = HTTP.post(get_url(emb), body=body, headers=auth_header())
+        embedding = resp.status == 200 ? JSON3.read(resp.body, Dict) : @error "Request staus: " resp.status
+        #@show embedding
+        embedding !== nothing && update!(emb, embedding["data"][1]["embedding"])
+        return (embedding, emb)
+    catch e
+        @error e
+        return nothing
     end
 end

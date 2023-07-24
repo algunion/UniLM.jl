@@ -110,7 +110,7 @@ Base.isempty(chat::Chat) = isempty(chat.messages)
 
     Check if the conversation is valid for sending to the API.
 """
-function is_send_valid(chat::Chat)::Bool
+function issendvalid(chat::Chat)::Bool
     length(chat) > 1 &&
         chat.messages[begin].role == GPTSystem &&
         chat.messages[end].role == GPTUser &&
@@ -144,4 +144,23 @@ function update!(chat::Chat, msg::Message)
     chat.history && push!(chat, msg)
     chat
 end
+
+# _EMBEDDINGS_
+
+const GPTTextEmbeddingAda002 = Model("text-embedding-ada-002")
+
+# defaulting to text-embedding-ada-002 for now
+# be aware of embedding size if changing model
+@kwdef struct Embedding
+    model::String = "text-embedding-ada-002"
+    input::Union{String,Vector{String}}
+    embedding::Vector{Float64} = zeros(Float64, 1536)
+    user::Union{String,Nothing} = nothing
+end
+
+StructTypes.StructType(::Type{Embedding}) = StructTypes.Struct()
+StructTypes.omitempties(::Type{Embedding}) = (:user,)
+StructTypes.excludes(::Type{Embedding}) = (:embedding,)
+
+update!(emb::Embedding, embedding) = copy!(emb.embedding, embedding)
 

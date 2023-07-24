@@ -13,16 +13,19 @@ include("metaprog.jl")
 include("requests.jl")
 include("testutils.jl")
 
-export 
-    Chat, 
-    Message, 
-    GPTSystem, 
-    GPTUser, 
-    GPTAssistant, 
+export
+    Chat,
+    Message,
+    GPTSystem,
+    GPTUser,
+    GPTAssistant,
     GPTFunction,
-    InvalidConversationError, 
-    is_send_valid, 
-    chat_request!,
+    GPTFunctionSignature,
+    GPTFunctionCallResult,
+    InvalidConversationError,
+    issendvalid,
+    chatrequest!,
+    Embedding,
+    embeddingrequest,
     update!
-
 end

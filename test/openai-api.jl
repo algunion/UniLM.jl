@@ -79,12 +79,35 @@
         )
     )
 
-    gptfsig = UniLM.GPTFunctionSignature(name=get_current_weather_schema["name"], description=get_current_weather_schema["description"], parameters=get_current_weather_schema["parameters"])
+    rootvarslist::Vector{String} = [
+        "--primary-color",
+        "--secondary-color",
+        "--accent-color",
+        "--background-color",
+        "--background-color-light",
+        "--background-color-dark",
+        "--text-color",
+        "--text-color-light",
+        "--text-color-dark",
+    ]
 
-    funchat = UniLM.Chat(functions=[gptfsig], function_call="auto")
+    get_root_variables = Dict("name" => "set_css_root_variables",
+        "description" => "Set the global CSS variables for the root element as hex color values",
+        "parameters" => Dict("type" => "object",
+            "properties" => Dict("variables" => Dict("type" => "object",
+                "properties" => Dict(k => Dict("type" => "string")
+                                     for k in rootvarslist))),
+            "required" => [
+                "variables"]))
+
+
+
+    gptfsig = UniLM.GPTFunctionSignature(name=get_current_weather_schema["name"], description=get_current_weather_schema["description"], parameters=get_current_weather_schema["parameters"])
+    gptfsig2 = UniLM.GPTFunctionSignature(name=get_root_variables["name"], description=get_root_variables["description"], parameters=get_root_variables["parameters"])
+    funchat = UniLM.Chat(functions=[gptfsig, gptfsig2], function_call="auto")
 
     push!(funchat, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))
-    push!(funchat, UniLM.Message(role=UniLM.GPTUser, content="What's the weather like in Boston? Give answer in celsius"))
+    push!(funchat, UniLM.Message(role=UniLM.GPTUser, content="Surprise my in a pleasant way by setting my css root variables to something that looks like summer."))
 
     (m, _) = UniLM.chatrequest!(funchat)
 
@@ -92,17 +115,20 @@
     @test UniLM.makecall(m) isa Expr
     @test isnothing(m.content)
 
+    @show funchat
+    @show m
 
-    r = UniLM.evalcall!(funchat)
-    #@info "result evalcall!: " r
 
-    #funchat.messages[3].function_call["arguments"] = funchat.messages[3].function_call["arguments"]
-    (m2, _) = UniLM.chatrequest!(funchat)
-    #@info "answer: " m2
+    # r = UniLM.evalcall!(funchat)
+    # #@info "result evalcall!: " r
 
-    emb = UniLM.Embedding(input="Embed this!")
+    # #funchat.messages[3].function_call["arguments"] = funchat.messages[3].function_call["arguments"]
+    # (m2, _) = UniLM.chatrequest!(funchat)
+    # #@info "answer: " m2
 
-    result = embeddingrequest!(emb)
+    # emb = UniLM.Embedding(input="Embed this!")
+
+    # result = embeddingrequest!(emb)
     #@info "result: " result
     #@test result isa Vector
 

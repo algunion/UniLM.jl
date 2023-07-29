@@ -1,126 +1,119 @@
 @testset "openai-api.jl" begin
-    chat = UniLM.Chat()
-    push!(chat, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))
-    @test length(chat) == 1
 
-    push!(chat, UniLM.Message(role=UniLM.GPTUser, content="Please tell me a one-liner joke."))
-    @test length(chat) == 2
 
-    try
+    @testset "chat/conversation operation/manipulation" begin
+        chat = UniLM.Chat()
+        push!(chat, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))
         push!(chat, UniLM.Message(role=UniLM.GPTUser, content="Please tell me a one-liner joke."))
-    catch e
-        @test e isa UniLM.InvalidConversationError
+
+        @test UniLM.issendvalid(chat) == true
+
+        try
+            push!(chat, UniLM.Message(role=UniLM.GPTUser, content="Please tell me a one-liner joke."))
+        catch e
+            @error "test expected error:" e
+            @test e isa UniLM.InvalidConversationError
+        end
+
+        try
+            UniLM.Chat(temperature=0.2, top_p=0.5)
+        catch e
+            @error "test expected error:" e
+            @test e isa ArgumentError
+        end
+
     end
 
-    @test UniLM.issendvalid(chat) == true
+    @testset "regular conversation" begin
+        chat = UniLM.Chat()
+        push!(chat, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))
+        push!(chat, UniLM.Message(role=UniLM.GPTUser, content="Please tell me a one-liner joke."))
 
-    try
-        UniLM.Chat(temperature=0.2, top_p=0.5)
-    catch e
-        @error e
-        @test e isa ArgumentError
+        m, _ = UniLM.chatrequest!(chat)
+
+        @test m isa UniLM.Message
+        @test m.role == UniLM.GPTAssistant
     end
 
-    m, _ = UniLM.chatrequest!(chat)
-    #@info m
-    @test m isa UniLM.Message
-    @test m.role == UniLM.GPTAssistant
 
+    @testset "streaming" begin
+        callback = (msg, close) -> begin
+            "from callback - echo: $msg"
+        end
 
+        chat_with_stream = UniLM.Chat(stream=true, temperature=0.2)
+        push!(chat_with_stream, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))
+        push!(chat_with_stream, UniLM.Message(role=UniLM.GPTUser, content="Please tell me a one-liner joke."))
+        t = UniLM.chatrequest!(chat_with_stream, callback=callback)
+        wait(t)
+        @test t.state == :done
+        m, _ = t.result
 
-    # test streaming
-    callback = (msg, close) -> begin
-        "from callback - echo: $msg"
+        @test m isa UniLM.Message
+        @test m.role == UniLM.GPTAssistant
     end
 
-    chat_with_stream = UniLM.Chat(stream=true, temperature=0.2)
-    push!(chat_with_stream, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))
-    @test length(chat_with_stream) == 1
+    @testset "function call" begin
+        function get_current_weather(; location, unit="fahrenheit")
+            weather_info = Dict(
+                "location" => location,
+                "temperature" => "72",
+                "unit" => unit,
+                "forecast" => ["sunny", "windy"]
+            )
+            return JSON3.write(weather_info)
+        end
 
-    push!(chat_with_stream, UniLM.Message(role=UniLM.GPTUser, content="Please tell me a one-liner joke."))
-    @test length(chat_with_stream) == 2
-
-    #@info "Starting chat with stream"
-    t = UniLM.chatrequest!(chat_with_stream, callback=callback)
-    wait(t)
-    @test t.state == :done
-    m, _ = t.result
-    #@info m
-    @test m isa UniLM.Message
-    @test m.role == UniLM.GPTAssistant
-
-
-    function get_current_weather(; location, unit="fahrenheit")
-        weather_info = Dict(
-            "location" => location,
-            "temperature" => "72",
-            "unit" => unit,
-            "forecast" => ["sunny", "windy"]
-        )
-        return JSON3.write(weather_info)
-    end
-
-    get_current_weather_schema = Dict(
-        "name" => "get_current_weather",
-        "description" => "Get the current weather in a given location",
-        "parameters" => Dict(
-            "type" => "object",
-            "properties" => Dict(
-                "location" => Dict(
-                    "type" => "string",
-                    "description" => "The city and state, e.g. San Francisco, CA"
+        get_current_weather_schema = Dict(
+            "name" => "get_current_weather",
+            "description" => "Get the current weather in a given location",
+            "parameters" => Dict(
+                "type" => "object",
+                "properties" => Dict(
+                    "location" => Dict(
+                        "type" => "string",
+                        "description" => "The city and state, e.g. San Francisco, CA"
+                    ),
+                    "unit" => Dict(
+                        "type" => "string",
+                        "enum" => ["celsius", "fahrenheit"]
+                    )
                 ),
-                "unit" => Dict(
-                    "type" => "string",
-                    "enum" => ["celsius", "fahrenheit"]
-                )
-            ),
-            "required" => ["location"]
+                "required" => ["location"]
+            )
         )
-    )
 
-    rootvarslist::Vector{String} = [
-        "--primary-color",
-        "--secondary-color",
-        "--accent-color",
-        "--background-color",
-        "--background-color-light",
-        "--background-color-dark",
-        "--text-color",
-        "--text-color-light",
-        "--text-color-dark",
-    ]
+        gptfsig = UniLM.GPTFunctionSignature(
+            name=get_current_weather_schema["name"],
+            description=get_current_weather_schema["description"],
+            parameters=get_current_weather_schema["parameters"])
 
-    get_root_variables = Dict("name" => "set_css_root_variables",
-        "description" => "Set the global CSS variables for the root element as hex color values",
-        "parameters" => Dict("type" => "object",
-            "properties" => Dict("variables" => Dict("type" => "object",
-                "properties" => Dict(k => Dict("type" => "string")
-                                     for k in rootvarslist))),
-            "required" => [
-                "variables"]))
+        funchat = UniLM.Chat(functions=[gptfsig], function_call=("name" => "get_current_weather"))
+        push!(funchat, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))
+        push!(funchat, UniLM.Message(role=UniLM.GPTUser, content="What is the weather in boston?."))
 
+        (m, _) = UniLM.chatrequest!(funchat)
 
+        @test UniLM.makecall(m) isa Expr
+        @test isnothing(m.content)
 
-    gptfsig = UniLM.GPTFunctionSignature(name=get_current_weather_schema["name"], description=get_current_weather_schema["description"], parameters=get_current_weather_schema["parameters"])
-    gptfsig2 = UniLM.GPTFunctionSignature(name=get_root_variables["name"], description=get_root_variables["description"], parameters=get_root_variables["parameters"])
-    funchat = UniLM.Chat(functions=[gptfsig, gptfsig2], function_call="auto")
+        @show m
 
-    push!(funchat, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))
-    push!(funchat, UniLM.Message(role=UniLM.GPTUser, content="Surprise my in a pleasant way by setting my css root variables to something that looks like summer."))
+    end
 
-    (m, _) = UniLM.chatrequest!(funchat)
+    @testset "embedding" begin
+        emb = UniLM.Embedding(input="Embed this!")
 
-    #@info "fun answer: " m
-    @test UniLM.makecall(m) isa Expr
-    @test isnothing(m.content)
+        (result, emb) = UniLM.embeddingrequest!(emb)
 
-    @show funchat
-    @show m
+        @show typeof(result)
 
 
-    # r = UniLM.evalcall!(funchat)
-    # #@info "result evalcall!: " r
+        @show keys(result)
+    end
+
+
+
 
     # #funchat.messages[3].function_call["arguments"] = funchat.messages[3].function_call["arguments"]
     # (m2, _) = UniLM.chatrequest!(funchat)

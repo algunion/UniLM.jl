@@ -7,6 +7,7 @@ using Accessors
 include("constants.jl")
 include("exceptions.jl")
 include("helpers.jl")
+include("jsonschema.jl")
 include("functioncall.jl")
 include("openai-api.jl")
 include("metaprog.jl")

@@ -64,29 +64,17 @@
             return JSON3.write(weather_info)
         end
 
-        get_current_weather_schema = Dict(
-            "name" => "get_current_weather",
-            "description" => "Get the current weather in a given location",
-            "parameters" => Dict(
-                "type" => "object",
-                "properties" => Dict(
-                    "location" => Dict(
-                        "type" => "string",
-                        "description" => "The city and state, e.g. San Francisco, CA"
-                    ),
-                    "unit" => Dict(
-                        "type" => "string",
-                        "enum" => ["celsius", "fahrenheit"]
-                    )
+        gptfsig = UniLM.GPTFunctionSignature(
+            name="get_current_weather",
+            description="",
+            parameters=UniLM.JsonObject(
+                properties=Dict(
+                    "location" => UniLM.JsonString(description="The city and state, e.g. San Francisco, CA"),
+                    "unit" => UniLM.JsonString(enum=["celsius", "fahrenheit"])
                 ),
-                "required" => ["location"]
+                required=["location"]
             )
         )
-
-        gptfsig = UniLM.GPTFunctionSignature(
-            name=get_current_weather_schema["name"],
-            description=get_current_weather_schema["description"],
-            parameters=get_current_weather_schema["parameters"])
 
         funchat = UniLM.Chat(functions=[gptfsig], function_call=("name" => "get_current_weather"))
         push!(funchat, UniLM.Message(role=UniLM.GPTSystem, content="Act as a helpful AI agent."))

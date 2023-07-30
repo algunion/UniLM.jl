@@ -78,7 +78,7 @@ StructTypes.omitempties(::Type{JsonArray}) = (:description, :items, :maxItems, :
 end
 
 StructTypes.StructType(::Type{JsonObject}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{JsonObject}) = (:properties, :required)
+StructTypes.omitempties(::Type{JsonObject}) = (:description, :properties, :required)
 
 function withdescription(schema::JsonSchema, description::String)::JsonSchema
     @set schema.description = description

@@ -66,7 +66,7 @@
 
         gptfsig = UniLM.GPTFunctionSignature(
             name="get_current_weather",
-            description="",
+            description="Getting the current weather",
             parameters=UniLM.JsonObject(
                 properties=Dict(
                     "location" => UniLM.JsonString(description="The city and state, e.g. San Francisco, CA"),

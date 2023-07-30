@@ -1,4 +1,4 @@
-if isdefined(@__MODULE__,:LanguageServer)
+if isdefined(@__MODULE__, :LanguageServer)
     include("../src/UniLM.jl")
 end
 
@@ -31,6 +31,7 @@ end
 end
 
 include("helpers.jl")
+include("jsonschema.jl")
 include("openai-api.jl")
 
 

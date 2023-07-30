@@ -72,9 +72,14 @@ StructTypes.omitempties(::Type{JsonArray}) = (:description, :items, :maxItems, :
 
 @kwdef struct JsonObject <: JsonSchema
     type::String = "object"
+    description::Union{String,Nothing} = nothing
     properties::Dict{String,JsonSchema} = Dict()
     required::Vector{String} = String[]
 end
 
 StructTypes.StructType(::Type{JsonObject}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{JsonObject}) = (:properties, :required)
+
+function withdescription(schema::JsonSchema, description::String)::JsonSchema
+    @set schema.description = description
+end

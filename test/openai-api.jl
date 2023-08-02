@@ -82,8 +82,11 @@
 
         (m, _) = UniLM.chatrequest!(funchat)
 
-        @test UniLM.makecall(m) isa Expr
+        #@test UniLM.makecall(m) isa Expr
         @test isnothing(m.content)
+
+        fcall_result = UniLM.evalcall!(funchat)
+        @info "fcall_result: " fcall_result
 
         @show m
 

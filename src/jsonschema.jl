@@ -70,6 +70,12 @@ end
 StructTypes.StructType(::Type{JsonArray}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{JsonArray}) = (:description, :items, :maxItems, :minItems, :uniqueItems, :prefixItems, :additionalItems)
 
+struct JsonAny <: JsonSchema
+
+end
+
+StructTypes.StructType(::Type{JsonAny}) = StructTypes.Struct()
+
 @kwdef struct JsonObject <: JsonSchema
     type::String = "object"
     description::Union{String,Nothing} = nothing

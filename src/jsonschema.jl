@@ -71,7 +71,7 @@ StructTypes.StructType(::Type{JsonArray}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{JsonArray}) = (:description, :items, :maxItems, :minItems, :uniqueItems, :prefixItems, :additionalItems)
 
 struct JsonAny <: JsonSchema
-
+    description::Union{String,Nothing} = nothing
 end
 
 StructTypes.StructType(::Type{JsonAny}) = StructTypes.Struct()

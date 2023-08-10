@@ -28,6 +28,7 @@ export
     JsonNumber,
     JsonString,
     JsonInteger,
+    JsonAny,
     GPTFunctionSignature,
     withdescription,
     GPTFunctionCallResult,

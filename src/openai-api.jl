@@ -143,7 +143,7 @@ end
 function Base.push!(chat::Chat, msg::Message)
     msg.role == GPTSystem && isempty(chat) && return push!(chat.messages, msg)
     msg.role != GPTSystem && chat.messages[end].role != msg.role && return push!(chat.messages, msg)
-    InvalidConversationError("Cannot add message $msg to conversation: $chat")
+    throw(InvalidConversationError("Cannot add message $msg to conversation: $chat"))
 end
 
 """

@@ -22,7 +22,7 @@ end
 @testset "Type Stability (JET.jl)" begin
     if VERSION >= v"1.9"
         @assert get_pkg_version("JET") >= v"0.8.4"
-        #JET.test_package(UniLM; target_defined_modules=true, ignore_missing_comparison=true)
+        JET.test_package(UniLM; target_defined_modules=true, ignore_missing_comparison=true)
     end
 end
 

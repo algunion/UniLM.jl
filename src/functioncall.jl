@@ -1,10 +1,10 @@
 makecall(::Nothing) = nothing
 
-function makecall(m::Union{Dict,String})
+function makecall(m::Dict)
     # temporary JSON3.read workaround - might not be an issue since only one makecall is issued per message   
     # this is cause by the way OpenAI API returns the function_call 
     try
-        args = m["arguments"] isa String ? JSON3.read(m["arguments"], Dict) : m["arguments"]
+        args = JSON3.read(m["arguments"], Dict) # m["arguments"] isa String ? JSON3.read(m["arguments"], Dict) : m["arguments"]
         #Expr(:call, Symbol(m["name"]), (Expr(:kw, Symbol(k), v) for (k, v) in args)...)
         f = eval(Symbol(m["name"]))
         ans = f(; ((Symbol(k), v) for (k, v) in args)...)

@@ -93,18 +93,23 @@ The `callback` function is called for each chunk of the response. The `close` Re
     The signature of the callback function is:
         `callback(chunk::Union{String, Message}, close::Ref{Bool})`
 """
-function chatrequest!(chat::Chat; callback=nothing)::Union{Task,Tuple{Union{Message,Nothing},Chat}}
-    body = JSON3.write(chat)
-    if isnothing(chat.stream) || !something(chat.stream)
-        resp = HTTP.post(get_url(chat), body=body, headers=auth_header())
-        m = resp.status == 200 ? extract_message(resp) : @error "Request staus: " resp.status
-        nothing
-        m !== nothing && update!(chat, m)
+function chatrequest!(chat::Chat; callback=nothing)::Union{Task,Tuple{Union{Message,Nothing},Chat}, Nothing}
+    try
+        body = JSON3.write(chat)
+        if isnothing(chat.stream) || !something(chat.stream)
+            resp = HTTP.post(get_url(chat), body=body, headers=auth_header())
+            m = resp.status == 200 ? extract_message(resp) : @error "Request staus: " resp.status
+            nothing
+            m !== nothing && update!(chat, m)
 
-        return (m, chat)
-    else
-        task = _chatrequeststream(chat, body, callback)
-        return task
+            return (m, chat)
+        else
+            task = _chatrequeststream(chat, body, callback)
+            return task
+        end
+    catch e
+        @error e
+        return nothing
     end
 end
 

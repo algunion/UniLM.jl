@@ -98,11 +98,18 @@ function chatrequest!(chat::Chat; callback=nothing)::Union{Task,Tuple{Union{Mess
         body = JSON3.write(chat)
         if isnothing(chat.stream) || !something(chat.stream)
             resp = HTTP.post(get_url(chat), body=body, headers=auth_header())
-            m = resp.status == 200 ? extract_message(resp) : @error "Request staus: " resp.status
-            nothing
-            m !== nothing && update!(chat, m)
-
-            return (m, chat)
+            if resp.status == 200
+                m = extract_message(resp)
+                update!(chat, m)
+                return (m, chat)
+            elseif resp.status == 500 || resp.status == 503
+                @warn "Request status: $(resp.status). Retrying... in 1s"
+                sleep(1)
+                return chatrequest!(chat; callback=callback)
+            else
+                @error "Request status: $(resp.status)"
+                return nothing
+            end            
         else
             task = _chatrequeststream(chat, body, callback)
             return task
@@ -132,9 +139,18 @@ function embeddingrequest!(emb::Embedding)
     body = JSON3.write(emb)
     try
         resp = HTTP.post(get_url(emb), body=body, headers=auth_header())
-        embedding = resp.status == 200 ? JSON3.read(resp.body, Dict) : @error "Request staus: " resp.status
-        embedding !== nothing && update!(emb, embedding["data"][1]["embedding"])
-        return (embedding, emb)
+        if resp.status == 200
+            embedding = JSON3.read(resp.body, Dict)
+            update!(emb, embedding["data"][1]["embedding"])
+            return (embedding, emb)
+        elseif resp.status == 500 || resp.status == 503
+            @warn "Request status: $(resp.status). Retrying... in 1s"
+            sleep(1)
+            return embeddingrequest!(emb)
+        else
+            @error "Request status: $(resp.status)"
+            return nothing
+        end        
     catch e
         @error e
         return nothing

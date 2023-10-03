@@ -140,6 +140,8 @@ function embeddingrequest!(emb::Embedding)
     try
         resp = HTTP.post(get_url(emb), body=body, headers=auth_header())
         if resp.status == 200
+            # headers info
+            # @info "Request headers: $(resp.headers)"
             embedding = JSON3.read(resp.body, Dict)
             update!(emb, embedding["data"][1]["embedding"])
             return (embedding, emb)

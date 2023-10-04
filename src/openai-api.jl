@@ -147,6 +147,16 @@ function Base.push!(chat::Chat, msg::Message)
 end
 
 """
+    pop!(chat::Chat)
+
+    Remove the last message from the conversation.
+"""
+function Base.pop!(chat::Chat)    
+    !isempty(chat) && return pop!(chat.messages)
+    throw(InvalidConversationError("Cannot remove message from an empty conversation."))
+end
+
+"""
     last(chat::Chat)
 
     Get the last message in the conversation.
@@ -159,7 +169,8 @@ Base.last(chat::Chat) = last(chat.messages)
     Update the chat with a new message.
 """
 function update!(chat::Chat, msg::Message)
-    chat.history && push!(chat, msg)
+    (chat.history || isempty(chat)) && push!(chat, msg)
+    !chat.history && !isempty(chat) && (chat.messages[end] = msg)
     chat
 end
 

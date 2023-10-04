@@ -166,11 +166,10 @@ Base.last(chat::Chat) = last(chat.messages)
 """
     update!(chat::Chat, msg::Message)
 
-    Update the chat with a new message.
+    Update the chat with a new message. 
 """
 function update!(chat::Chat, msg::Message)
-    (chat.history || isempty(chat)) && push!(chat, msg)
-    !chat.history && !isempty(chat) && (chat.messages[end] = msg)
+    chat.history && push!(chat, msg)    
     chat
 end
 

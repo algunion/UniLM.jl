@@ -8,7 +8,12 @@
 # /v1/embeddings	text-embedding-ada-002, text-search-ada-doc-001
 # /v1/moderations	text-moderation-stable, text-moderation-latest
 
-const OPENAI_API_KEY = get(ENV, "OPENAI_API_KEY", nothing)
+const OPENAI_API_KEY =
+    let
+        @info "Loading OpenAI API key from environment variable OPENAI_API_KEY"
+        get(ENV, "OPENAI_API_KEY", nothing)
+    end
+
 const OPENAI_BASE_URL = "https://api.openai.com"
 
 const _CHAT_COMPLETIONS_MODELS = [

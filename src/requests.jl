@@ -93,7 +93,7 @@ The `callback` function is called for each chunk of the response. The `close` Re
     The signature of the callback function is:
         `callback(chunk::Union{String, Message}, close::Ref{Bool})`
 """
-function chatrequest!(chat::Chat; callback=nothing)::Union{Task,Tuple{Union{Message,Nothing},Chat}, Nothing}
+function chatrequest!(chat::Chat; callback=nothing)::Union{Task,Tuple{Union{Message,Nothing},Chat},Nothing}
     try
         body = JSON3.write(chat)
         if isnothing(chat.stream) || !something(chat.stream)
@@ -109,7 +109,7 @@ function chatrequest!(chat::Chat; callback=nothing)::Union{Task,Tuple{Union{Mess
             else
                 @error "Request status: $(resp.status)"
                 return nothing
-            end            
+            end
         else
             task = _chatrequeststream(chat, body, callback)
             return task
@@ -152,7 +152,7 @@ function embeddingrequest!(emb::Embedding)
         else
             @error "Request status: $(resp.status)"
             return nothing
-        end        
+        end
     catch e
         @error e
         return nothing

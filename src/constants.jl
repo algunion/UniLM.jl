@@ -16,11 +16,16 @@ const OPENAI_API_KEY =
 
 const OPENAI_BASE_URL = "https://api.openai.com"
 
+
+
 const _CHAT_COMPLETIONS_MODELS = [
     "gpt-4",
+    "gpt-4-1106-preview",
+    "gpt-4-vision-preview",
     "gpt-4-0613",
     "gpt-4-32k",
     "gpt-4-32k-0613",
+    "gpt-3.5-turbo-1106",
     "gpt-3.5-turbo",
     "gpt-3.5-turbo-0613",
     "gpt-3.5-turbo-16k",
@@ -38,6 +43,11 @@ const _COMPLETIONS_MODELS = [
 const _EDITS_MODELS = [
     "text-davinci-edit-001",
     "code-davinci-edit-001"
+]
+
+const _AUDIO_TTS_MODELS = [
+    "tts-1",
+    "tts-1-hd"
 ]
 
 const _AUDIO_TRANSCRIPTIONS_MODELS = [
@@ -69,6 +79,7 @@ const _ENDPOINTS = [
     "/v1/chat/completions",
     "/v1/completions",
     "/v1/edits",
+    "/v1/audio/speech",
     "/v1/audio/transcriptions",
     "/v1/audio/translations",
     "/v1/fine-tunes",
@@ -78,6 +89,8 @@ const _ENDPOINTS = [
 
 # dict of model names to endpoint names
 const _MODEL_ENDPOINTS = Dict(
+    "gpt-4-1106-preview" => "/v1/chat/completions",
+    "gpt-4-vision-preview" => "/v1/chat/completions",
     "gpt-4" => "/v1/chat/completions",
     "gpt-4-0613" => "/v1/chat/completions",
     "gpt-4-32k" => "/v1/chat/completions",

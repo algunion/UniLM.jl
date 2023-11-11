@@ -7,6 +7,14 @@ end
 StructTypes.StructType(::Type{GPTFunctionSignature}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{GPTFunctionSignature}) = (:description, :parameters)
 
+@kwdef mutable struct GPTTool
+    type::String = "function"
+    func::GPTFunctionSignature
+end
+
+StructTypes.StructType(::Type{GPTTool}) = StructTypes.Struct()
+StructTypes.names(::Type{GPTTool}) = ((:func, :function))
+
 struct GPTFunctionCallResult{T}
     name::Union{String,Symbol}
     origincall::Dict{String,Any}
@@ -20,6 +28,7 @@ const GPTSystem = "system"
 const GPTUser = "user"
 const GPTAssistant = "assistant"
 const GPTFunction = "function"
+#const GPTTool = "tool"
 
 # to do: extend to all models/endpoints
 struct Model
@@ -31,13 +40,16 @@ Base.parse(::Type{Model}, s::String) = Model(s)
 
 const GPT35Turbo = Model("gpt-3.5-turbo")
 const GPT4 = Model("gpt-4")
+const GPT4Turbo = Model("gpt-4-1106-preview")
+const GPT4TurboVision = Model("gpt-4-vision-preview")
 
 
 @kwdef struct Message
     role::String
     content::Union{String,Nothing} = nothing
     name::Union{String,Nothing} = nothing
-    function_call::Union{Nothing,Dict{String,Any}} = nothing
+    function_call::Union{Nothing,Dict{String,Any}} = nothing # deprecated
+    tool_call_id::Union{String,Nothing} = nothing
     function Message(role, content, name, function_call)
         isnothing(content) && isnothing(function_call) && throw(ArgumentError("content and function_call cannot both be nothing"))
         role == GPTFunction && isnothing(name) && throw(ArgumentError("name cannot be empty when role is GPTFunction"))
@@ -66,6 +78,7 @@ Creates a new `Chat` object with default settings:
     model::String = "gpt-3.5-turbo"
     messages::Conversation = Message[]
     history::Bool = true
+    tools::Union{Vector{String},Nothing} = nothing
     functions::Union{Vector{GPTFunctionSignature},Nothing} = nothing
     function_call::Union{String,Pair{String,String},Nothing} = nothing # "auto" | "none" | Dict("name" => "my_function")    
     temperature::Union{Float64,Nothing} = nothing # 0.0 - 2.0 - mutual exclusive with top_p
@@ -151,7 +164,7 @@ end
 
     Remove the last message from the conversation.
 """
-function Base.pop!(chat::Chat)    
+function Base.pop!(chat::Chat)
     !isempty(chat) && return pop!(chat.messages)
     throw(InvalidConversationError("Cannot remove message from an empty conversation and return it."))
 end
@@ -169,7 +182,7 @@ Base.last(chat::Chat) = last(chat.messages)
     Update the chat with a new message. 
 """
 function update!(chat::Chat, msg::Message)
-    chat.history && push!(chat, msg)    
+    chat.history && push!(chat, msg)
     chat
 end
 
@@ -183,7 +196,7 @@ function replacelast!(chat::Chat, msg::Message)
     if !isempty(chat)
         chat.messages[end] = msg
         return chat
-    end    
+    end
 end
 # _EMBEDDINGS_
 

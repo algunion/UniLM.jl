@@ -7,13 +7,33 @@ end
 StructTypes.StructType(::Type{GPTFunctionSignature}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{GPTFunctionSignature}) = (:description, :parameters)
 
-@kwdef mutable struct GPTTool
+@kwdef mutable struct GPTToolCall
+    id::String
     type::String = "function"
-    func::GPTFunctionSignature
+    func::Dict{String,String}
+end
+
+StructTypes.StructType(::Type{GPTToolCall}) = StructTypes.Struct()
+StructTypes.names(::Type{GPTToolCall}) = ((:func, :function))
+
+@kwdef struct GPTTool
+    type::String = "function"
+    func::GTPFunctionSignature
 end
 
 StructTypes.StructType(::Type{GPTTool}) = StructTypes.Struct()
 StructTypes.names(::Type{GPTTool}) = ((:func, :function))
+
+
+# we only care about serialization here (syntactic sugar)
+@kwdef struct GPTToolChoice
+    type::String = "function"
+    func::String
+end
+
+StructTypes.StructType(::Type{GPTToolChoice}) = StructTypes.CustomStruct()
+StructTypes.lower(x::GPTToolChoice) = Dict(:type => x.type, :function => Dict(:name => x.func))
+
 
 struct GPTFunctionCallResult{T}
     name::Union{String,Symbol}
@@ -41,17 +61,19 @@ const GPT35Turbo = Model("gpt-3.5-turbo")
 const GPT4 = Model("gpt-4")
 const GPT4Turbo = Model("gpt-4-1106-preview")
 const GPT4TurboVision = Model("gpt-4-vision-preview")
+const GPT35Latest = ""
+const GPT4Latest = ""
 
 
 @kwdef struct Message
     role::String
     content::Union{String,Nothing} = nothing
     name::Union{String,Nothing} = nothing
-    function_call::Union{Nothing,Dict{String,Any}} = nothing # deprecated
+    tool_calls::Union{Nothing,Vector{GPTToolCall}} = nothing
     tool_call_id::Union{String,Nothing} = nothing
-    function Message(role, content, name, function_call, tool_call_id)
-        isnothing(content) && isnothing(function_call) && throw(ArgumentError("content and function_call cannot both be nothing"))
-        role == RoleTool && isnothing(name) && throw(ArgumentError("name cannot be empty when role is GPTFunction"))
+    function Message(role, content, name, tool_calls, tool_call_id)
+        isnothing(content) && isnothing(tool_calls) && throw(ArgumentError("`content` and `tool_calls` cannot both be nothing"))
+        role == RoleTool && isnothing(tool_call_id) && throw(ArgumentError("`tool_call_id` cannot be empty when role is `tool`"))
         return new(role, content, name, function_call)
     end
 end
@@ -59,7 +81,7 @@ end
 const Conversation = Vector{Message}
 
 StructTypes.StructType(::Type{Message}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{Message}) = (:name, :function_call) # content cannot be nothing when user generated
+StructTypes.omitempties(::Type{Message}) = (:name, :tool_calls, :tool_call_id) # content cannot be nothing when user generated
 
 message(m::Message) = m.content
 content(m::Message) = m.content
@@ -77,9 +99,8 @@ Creates a new `Chat` object with default settings:
     model::String = "gpt-3.5-turbo"
     messages::Conversation = Message[]
     history::Bool = true
-    tools::Union{Vector{String},Nothing} = nothing
-    functions::Union{Vector{GPTFunctionSignature},Nothing} = nothing
-    function_call::Union{String,Pair{String,String},Nothing} = nothing # "auto" | "none" | Dict("name" => "my_function")    
+    tools::Union{Vector{GPTTool},Nothing} = nothing
+    tool_choice::Union{String,Pair{String,String},Nothing} = nothing # "auto" | "none" | Dict("name" => "my_function")    
     temperature::Union{Float64,Nothing} = nothing # 0.0 - 2.0 - mutual exclusive with top_p
     top_p::Union{Float64,Nothing} = nothing # 1 - 100 - mutual exclusive with temperature
     n::Union{Int64,Nothing} = nothing # 1 - 10
@@ -90,6 +111,8 @@ Creates a new `Chat` object with default settings:
     frequency_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
     logit_bias::Union{Dict{String,Float64},Nothing} = nothing
     user::Union{String,Nothing} = nothing
+    response_format::Union{Dict{String, String}, Nothing} = nothing
+    seed::Union{Int64,Nothing} = nothing
     function Chat(
         model,
         messages,

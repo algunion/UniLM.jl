@@ -24,11 +24,10 @@ end
 StructTypes.StructType(::Type{GPTFunctionCallResult}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{GPTFunctionCallResult}) = (:name,)
 
-const GPTSystem = "system"
-const GPTUser = "user"
-const GPTAssistant = "assistant"
-const GPTFunction = "function"
-#const GPTTool = "tool"
+const RoleSystem = "system"
+const RoleUser = "user"
+const RoleAssistant = "assistant"
+const RoleTool = "tool"
 
 # to do: extend to all models/endpoints
 struct Model
@@ -50,9 +49,9 @@ const GPT4TurboVision = Model("gpt-4-vision-preview")
     name::Union{String,Nothing} = nothing
     function_call::Union{Nothing,Dict{String,Any}} = nothing # deprecated
     tool_call_id::Union{String,Nothing} = nothing
-    function Message(role, content, name, function_call)
+    function Message(role, content, name, function_call, tool_call_id)
         isnothing(content) && isnothing(function_call) && throw(ArgumentError("content and function_call cannot both be nothing"))
-        role == GPTFunction && isnothing(name) && throw(ArgumentError("name cannot be empty when role is GPTFunction"))
+        role == RoleTool && isnothing(name) && throw(ArgumentError("name cannot be empty when role is GPTFunction"))
         return new(role, content, name, function_call)
     end
 end

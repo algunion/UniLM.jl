@@ -7,6 +7,20 @@ end
 StructTypes.StructType(::Type{GPTFunctionSignature}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{GPTFunctionSignature}) = (:description, :parameters)
 
+struct GPTImageContent
+    text::String
+    images::Vector{String}
+end
+
+StructTypes.StructType(::Type{GPTImageContent}) = StructTypes.CustomStruct()
+function StructTypes.lower(x::GPTImageContent)
+    d = [Dict(:type => "text", :text => x.text) ]
+    for i in x.images
+        push!(d, Dict(:type => "image_url", :image_url => Dict(:url =>  i, :detail => "auto")))
+    end
+    return d
+end
+
 @kwdef mutable struct GPTToolCall
     id::String
     type::String = "function"
@@ -64,10 +78,11 @@ const GPT4TurboVision = Model("gpt-4-vision-preview")
 const GPT35Latest = ""
 const GPT4Latest = ""
 
-
+"Message"
 @kwdef struct Message
+    "role: system | user | assistant | tool"
     role::String
-    content::Union{String,Nothing} = nothing
+    content::Union{String, GPTImageContent, Nothing} = nothing
     name::Union{String,Nothing} = nothing
     tool_calls::Union{Nothing,Vector{GPTToolCall}} = nothing
     tool_call_id::Union{String,Nothing} = nothing
@@ -100,7 +115,7 @@ Creates a new `Chat` object with default settings:
     messages::Conversation = Message[]
     history::Bool = true
     tools::Union{Vector{GPTTool},Nothing} = nothing
-    tool_choice::Union{String,Pair{String,String},Nothing} = nothing # "auto" | "none" | Dict("name" => "my_function")    
+    tool_choice::Union{String,GPTToolChoice,Nothing} = nothing # "auto" | "none" | Dict("name" => "my_function")    
     temperature::Union{Float64,Nothing} = nothing # 0.0 - 2.0 - mutual exclusive with top_p
     top_p::Union{Float64,Nothing} = nothing # 1 - 100 - mutual exclusive with temperature
     n::Union{Int64,Nothing} = nothing # 1 - 10
@@ -117,8 +132,8 @@ Creates a new `Chat` object with default settings:
         model,
         messages,
         history,
-        functions,
-        function_call,
+        tools,
+        tool_choice,
         temperature,
         top_p,
         n,
@@ -127,16 +142,18 @@ Creates a new `Chat` object with default settings:
         max_tokens,
         presence_penalty,
         frequency_penalty,
-        logit_bias,
-        user
+        logit_bias,        
+        user,
+        response_format,
+        seed
     )
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
         return new(
             model,
             messages,
             history,
-            functions,
-            function_call,
+            tools,
+            tool_choice,
             temperature,
             top_p,
             n,
@@ -146,13 +163,15 @@ Creates a new `Chat` object with default settings:
             presence_penalty,
             frequency_penalty,
             logit_bias,
-            user
+            user,
+            response_format,
+            seed
         )
     end
 end
 
 StructTypes.StructType(::Type{Chat}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{Chat}) = fieldnames(Chat)
+StructTypes.omitempties(::Type{Chat}) = true
 StructTypes.excludes(::Type{Chat}) = (:history,)
 
 Base.length(chat::Chat) = length(chat.messages)

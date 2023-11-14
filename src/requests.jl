@@ -1,6 +1,6 @@
 get_url(model::String) = OPENAI_BASE_URL * _MODEL_ENDPOINTS[model]
 get_url(params::Chat) = get_url(params.model)
-get_url(emb::Embedding) = get_url(emb.model)
+get_url(emb::Embeddings) = get_url(emb.model)
 
 function auth_header(api_key::String=OPENAI_API_KEY)
     [
@@ -12,14 +12,11 @@ end
 function extract_message(resp::HTTP.Response)
     received_message = JSON3.read(resp.body, Dict)
     message = received_message["choices"][1]["message"]
-    if haskey(message, "function_call")
-        fcall = message["function_call"]
-        # if fcall["arguments"] isa String
-        #     fcall["arguments"] = JSON3.read(fcall["arguments"], Dict)
-        # end
-        Message(role=GPTAssistant, function_call=fcall)
+    if haskey(message, "tool_calls")
+        tcalls = JSON3.read(message["tool_calls"], Vector{GPTToolCall})
+        return Message(role=RoleAssistant, tool_calls=tcalls)
     else
-        Message(role=GPTAssistant, content=message["content"])
+        return Message(role=RoleAssistant, content=message["content"])
     end
 end
 
@@ -66,7 +63,7 @@ function _chatrequeststream(chat, body, callback=nothing)
                 parsed = String(take!(chunk_buffer))
                 if streamstatus.eos
                     done[] = true
-                    m[] = Message(role=GPTAssistant, content=String(take!(tmp)))
+                    m[] = Message(role=RoleAssistant, content=String(take!(tmp)))
                     !isnothing(callback) && callback(m[], close)
                 else
                     !isnothing(callback) && callback(parsed, close)
@@ -135,7 +132,7 @@ end
     end
 
 """
-function embeddingrequest!(emb::Embedding)
+function embeddingrequest!(emb::Embeddings)
     body = JSON3.write(emb)
     try
         resp = HTTP.post(get_url(emb), body=body, headers=auth_header())

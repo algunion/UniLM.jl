@@ -20,7 +20,7 @@ end
 
 Generates an `Expr` from a `Message` containing a `function_call`. 
 """
-makecall(m::Message) = makecall(m.function_call)
+makecall(m::Message) = makecall(something(m.tool_calls)[1].func)
 
 """
     evalcall!(chat::Chat)::GPTFunctionCallResult
@@ -32,8 +32,8 @@ function evalcall!(chat::Chat)::GPTFunctionCallResult
     result = makecall(m)
     #result = evalcall!(e)
     @info "result: " result
-    update!(chat, Message(role=GPTFunction, name=something(m.function_call)["name"], content=JSON3.write(result)))
+    update!(chat, Message(role=RoleTool, name=something(m.function_call)["name"], content=JSON3.write(result)))
     #@info length(chat)
 
-    GPTFunctionCallResult(Symbol(something(m.function_call)["name"]), something(m.function_call), result)
+    GPTFunctionCallResult(Symbol(something(m.tool_calls[1].id)), something(m.tool_calls[1].func), result)
 end

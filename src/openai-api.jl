@@ -7,6 +7,11 @@ end
 StructTypes.StructType(::Type{GPTFunctionSignature}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{GPTFunctionSignature}) = (:description, :parameters)
 
+
+"""
+`text` is the prompt.\n
+`images` is a vector of image urls (or base64 encoded images).
+"""
 struct GPTImageContent
     text::String
     images::Vector{String}
@@ -21,28 +26,28 @@ function StructTypes.lower(x::GPTImageContent)
     return d
 end
 
+
 @kwdef mutable struct GPTToolCall
     id::String
     type::String = "function"
-    func::Dict{String,String}
+    func::Dict{String, String}
 end
 
 StructTypes.StructType(::Type{GPTToolCall}) = StructTypes.Struct()
-StructTypes.names(::Type{GPTToolCall}) = ((:func, :function))
+StructTypes.names(::Type{GPTToolCall}) = ((:func, :function), )
 
 @kwdef struct GPTTool
     type::String = "function"
-    func::GTPFunctionSignature
+    func::GPTFunctionSignature
 end
 
 StructTypes.StructType(::Type{GPTTool}) = StructTypes.Struct()
-StructTypes.names(::Type{GPTTool}) = ((:func, :function))
+StructTypes.names(::Type{GPTTool}) = ((:func, :function), )
 
 
-# we only care about serialization here (syntactic sugar)
 @kwdef struct GPTToolChoice
     type::String = "function"
-    func::String
+    func::Union{String, Symbol}
 end
 
 StructTypes.StructType(::Type{GPTToolChoice}) = StructTypes.CustomStruct()
@@ -79,8 +84,7 @@ const GPT35Latest = ""
 const GPT4Latest = ""
 
 "Message"
-@kwdef struct Message
-    "role: system | user | assistant | tool"
+@kwdef struct Message    
     role::String
     content::Union{String, GPTImageContent, Nothing} = nothing
     name::Union{String,Nothing} = nothing
@@ -89,7 +93,7 @@ const GPT4Latest = ""
     function Message(role, content, name, tool_calls, tool_call_id)
         isnothing(content) && isnothing(tool_calls) && throw(ArgumentError("`content` and `tool_calls` cannot both be nothing"))
         role == RoleTool && isnothing(tool_call_id) && throw(ArgumentError("`tool_call_id` cannot be empty when role is `tool`"))
-        return new(role, content, name, function_call)
+        return new(role, content, name, tool_calls, tool_call_id)
     end
 end
 
@@ -115,7 +119,7 @@ Creates a new `Chat` object with default settings:
     messages::Conversation = Message[]
     history::Bool = true
     tools::Union{Vector{GPTTool},Nothing} = nothing
-    tool_choice::Union{String,GPTToolChoice,Nothing} = nothing # "auto" | "none" | Dict("name" => "my_function")    
+    tool_choice::Union{String,GPTToolChoice,Nothing} = nothing # "auto" | "none" |    
     temperature::Union{Float64,Nothing} = nothing # 0.0 - 2.0 - mutual exclusive with top_p
     top_p::Union{Float64,Nothing} = nothing # 1 - 100 - mutual exclusive with temperature
     n::Union{Int64,Nothing} = nothing # 1 - 10
@@ -184,8 +188,8 @@ Base.isempty(chat::Chat) = isempty(chat.messages)
 """
 function issendvalid(chat::Chat)::Bool
     length(chat) > 1 &&
-        chat.messages[begin].role == GPTSystem &&
-        chat.messages[end].role == GPTUser &&
+        chat.messages[begin].role == RoleSystem &&
+        chat.messages[end].role == RoleUser &&
         all([v.role != chat.messages[i+1].role for (i, v) in collect(enumerate(chat.messages))[1:end-1]])
 end
 
@@ -195,8 +199,8 @@ end
     Add a message to the conversation. The goal here is to make invalid conversations unrepresentable.
 """
 function Base.push!(chat::Chat, msg::Message)
-    msg.role == GPTSystem && isempty(chat) && return push!(chat.messages, msg)
-    msg.role != GPTSystem && chat.messages[end].role != msg.role && return push!(chat.messages, msg)
+    msg.role == RoleSystem && isempty(chat) && return push!(chat.messages, msg)
+    msg.role != RoleSystem && chat.messages[end].role != msg.role && return push!(chat.messages, msg)
     throw(InvalidConversationError("Cannot add message $msg to conversation: $chat"))
 end
 
@@ -238,6 +242,7 @@ function replacelast!(chat::Chat, msg::Message)
         chat.messages[end] = msg
         return chat
     end
+    throw(InvalidConversationError("Cannot replace last message in an empty conversation."))
 end
 # _EMBEDDINGS_
 
@@ -245,16 +250,23 @@ const GPTTextEmbeddingAda002 = Model("text-embedding-ada-002")
 
 # defaulting to text-embedding-ada-002 for now
 # be aware of embedding size if changing model
-@kwdef struct Embedding
-    model::String = "text-embedding-ada-002"
+struct Embeddings
+    model::String 
     input::Union{String,Vector{String}}
-    embedding::Vector{Float64} = zeros(Float64, 1536)
-    user::Union{String,Nothing} = nothing
+    embeddings::Union{Vector{Float64}, Vector{Vector{Float64}}}
+    user::Union{String,Nothing}
+    function Embeddings(input)
+        if isa(input, String)
+            return new(GPTTextEmbeddingAda002 |> string, input, zeros(Float64, 1536), nothing)
+        elseif isa(input, Vector{String})
+            return new(GPTTextEmbeddingAda002 |> string, input, zeros(Float64, 1536, length(input)), nothing)
+        end
+    end
 end
 
-StructTypes.StructType(::Type{Embedding}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{Embedding}) = (:user,)
-StructTypes.excludes(::Type{Embedding}) = (:embedding,)
+StructTypes.StructType(::Type{Embeddings}) = StructTypes.Struct()
+StructTypes.omitempties(::Type{Embeddings}) = (:user,)
+StructTypes.excludes(::Type{Embeddings}) = (:embeddings,)
 
-update!(emb::Embedding, embedding) = copy!(emb.embedding, embedding)
+update!(emb::Embeddings, embeddings) = copy!(emb.embeddings, embeddings)
 

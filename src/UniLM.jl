@@ -16,10 +16,12 @@ include("testutils.jl")
 export
     Chat,
     Message,
-    GPTSystem,
-    GPTUser,
-    GPTAssistant,
-    GPTFunction,
+    RoleSystem,
+    RoleUser,
+    RoleAssistant,
+    RoleFunction,
+    GPTTool,
+    GPTToolCall,
     JsonSchema,
     JsonArray,
     JsonObject,
@@ -35,7 +37,7 @@ export
     InvalidConversationError,
     issendvalid,
     chatrequest!,
-    Embedding,
+    Embeddings,
     embeddingrequest!,
     update!
 end

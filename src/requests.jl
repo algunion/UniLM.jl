@@ -13,7 +13,14 @@ function extract_message(resp::HTTP.Response)
     received_message = JSON3.read(resp.body, Dict)
     message = received_message["choices"][1]["message"]
     if haskey(message, "tool_calls")
-        tcalls = JSON3.read(message["tool_calls"], Vector{GPTToolCall})
+        tcalls = Vector{GPTToolCall}[]
+        @info "attempt> $(message["tool_calls"])"
+        for x in message["tool_calls"]
+            fdict = x["function"]
+            tc = GPTToolCall(id = x["id"], func = fdict)
+            push!(tcalls, tc)
+        end
+        
         return Message(role=RoleAssistant, tool_calls=tcalls)
     else
         return Message(role=RoleAssistant, content=message["content"])

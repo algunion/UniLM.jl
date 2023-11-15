@@ -60,10 +60,22 @@
 
         (m, _) = UniLM.chatrequest!(funchat)
 
-        #@test UniLM.makecall(m) isa Expr
-        #@test isnothing(m.content)
+        @test UniLM.makecall(m) isa Dict
+        @test isnothing(m.content)
 
-        #fcall_result = UniLM.evalcall!(funchat)
+        fcall_result = UniLM.evalcall!(funchat)
+
+
+
+
+        fchat2 = UniLM.Chat()
+        for m in funchat.messages
+            @show "message is: $m"
+            push!(fchat2, m)
+        end
+        (m, _) = UniLM.chatrequest!(fchat2)
+
+        @show m
 
         #@show m
 

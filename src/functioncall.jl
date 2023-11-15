@@ -1,5 +1,3 @@
-makecall(::Nothing) = nothing
-
 function makecall(m::Dict)
     # temporary JSON3.read workaround - might not be an issue since only one makecall is issued per message   
     # this is cause by the way OpenAI API returns the function_call 
@@ -11,14 +9,14 @@ function makecall(m::Dict)
         return ans
     catch e
         @error "makecall failed with error: $e"
-        return nothing
+        throw(e)
     end
 end
 
 """
     makecall(m::Message)
 
-Generates an `Expr` from a `Message` containing a `function_call`. 
+Generates an `result`` from a `Message` containing a `tool_call`. 
 """
 makecall(m::Message) = makecall(something(m.tool_calls)[1].func)
 
@@ -27,13 +25,16 @@ makecall(m::Message) = makecall(something(m.tool_calls)[1].func)
 
     Evaluates the `function_call` of the last `Message` in `chat` and updates the `chat` with the result.
 """
-function evalcall!(chat::Chat)::GPTFunctionCallResult
+function evalcall!(chat::Chat)::Union{GPTFunctionCallResult,Nothing}
     m = last(chat)
-    result = makecall(m)
-    #result = evalcall!(e)
-    @info "result: " result
-    update!(chat, Message(role=RoleTool, name=something(m.function_call)["name"], content=JSON3.write(result)))
-    #@info length(chat)
+    if !isnothing(m.tool_calls)
+        result = makecall(m)
+        #result = evalcall!(e)
+        @info "result: " result
 
-    GPTFunctionCallResult(Symbol(something(m.tool_calls[1].id)), something(m.tool_calls[1].func), result)
+        update!(chat, Message(role=RoleTool, tool_call_id=something(m.tool_calls)[1].id, content=JSON3.write(result)))
+        #@info length(chat)
+
+        return GPTFunctionCallResult(Symbol(something(m.tool_calls)[1].id), something(m.tool_calls)[1].func, result)
+    end
 end

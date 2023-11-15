@@ -19,9 +19,9 @@ end
 
 StructTypes.StructType(::Type{GPTImageContent}) = StructTypes.CustomStruct()
 function StructTypes.lower(x::GPTImageContent)
-    d = [Dict(:type => "text", :text => x.text) ]
+    d = [Dict(:type => "text", :text => x.text)]
     for i in x.images
-        push!(d, Dict(:type => "image_url", :image_url => Dict(:url =>  i, :detail => "auto")))
+        push!(d, Dict(:type => "image_url", :image_url => Dict(:url => i, :detail => "auto")))
     end
     return d
 end
@@ -30,11 +30,11 @@ end
 @kwdef mutable struct GPTToolCall
     id::String
     type::String = "function"
-    func::Dict{String, String}
+    func::Dict{String,String}
 end
 
 StructTypes.StructType(::Type{GPTToolCall}) = StructTypes.Struct()
-StructTypes.names(::Type{GPTToolCall}) = ((:func, :function), )
+StructTypes.names(::Type{GPTToolCall}) = ((:func, :function),)
 
 @kwdef struct GPTTool
     type::String = "function"
@@ -42,12 +42,12 @@ StructTypes.names(::Type{GPTToolCall}) = ((:func, :function), )
 end
 
 StructTypes.StructType(::Type{GPTTool}) = StructTypes.Struct()
-StructTypes.names(::Type{GPTTool}) = ((:func, :function), )
+StructTypes.names(::Type{GPTTool}) = ((:func, :function),)
 
 
 @kwdef struct GPTToolChoice
     type::String = "function"
-    func::Union{String, Symbol}
+    func::Union{String,Symbol}
 end
 
 StructTypes.StructType(::Type{GPTToolChoice}) = StructTypes.CustomStruct()
@@ -56,7 +56,7 @@ StructTypes.lower(x::GPTToolChoice) = Dict(:type => x.type, :function => Dict(:n
 
 struct GPTFunctionCallResult{T}
     name::Union{String,Symbol}
-    origincall::Dict{String,Any}
+    origincall::Dict{String,<:Any}
     result::T
 end
 
@@ -84,9 +84,9 @@ const GPT35Latest = ""
 const GPT4Latest = ""
 
 "Message"
-@kwdef struct Message    
+@kwdef struct Message
     role::String
-    content::Union{String, GPTImageContent, Nothing} = nothing
+    content::Union{String,GPTImageContent,Nothing} = nothing
     name::Union{String,Nothing} = nothing
     tool_calls::Union{Nothing,Vector{GPTToolCall}} = nothing
     tool_call_id::Union{String,Nothing} = nothing
@@ -130,7 +130,7 @@ Creates a new `Chat` object with default settings:
     frequency_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
     logit_bias::Union{Dict{String,Float64},Nothing} = nothing
     user::Union{String,Nothing} = nothing
-    response_format::Union{Dict{String, String}, Nothing} = nothing
+    response_format::Union{Dict{String,String},Nothing} = nothing
     seed::Union{Int64,Nothing} = nothing
     function Chat(
         model,
@@ -146,7 +146,7 @@ Creates a new `Chat` object with default settings:
         max_tokens,
         presence_penalty,
         frequency_penalty,
-        logit_bias,        
+        logit_bias,
         user,
         response_format,
         seed
@@ -251,9 +251,9 @@ const GPTTextEmbeddingAda002 = Model("text-embedding-ada-002")
 # defaulting to text-embedding-ada-002 for now
 # be aware of embedding size if changing model
 struct Embeddings
-    model::String 
+    model::String
     input::Union{String,Vector{String}}
-    embeddings::Union{Vector{Float64}, Vector{Vector{Float64}}}
+    embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}
     user::Union{String,Nothing}
     function Embeddings(input)
         if isa(input, String)

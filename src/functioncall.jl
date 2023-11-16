@@ -1,10 +1,9 @@
-function makecall(m::Dict)
+function makecall(func::GPTFunction)
     # temporary JSON3.read workaround - might not be an issue since only one makecall is issued per message   
     # this is cause by the way OpenAI API returns the function_call 
     try
-        args = JSON3.read(m["arguments"], Dict) # m["arguments"] isa String ? JSON3.read(m["arguments"], Dict) : m["arguments"]
-        #Expr(:call, Symbol(m["name"]), (Expr(:kw, Symbol(k), v) for (k, v) in args)...)
-        f = eval(Symbol(m["name"]))
+        f = eval(Symbol(getfield(func, :name)))
+        args = getfield(func, :arguments)
         ans = f(; ((Symbol(k), v) for (k, v) in args)...)
         return ans
     catch e

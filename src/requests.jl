@@ -14,12 +14,11 @@ function extract_message(resp::HTTP.Response)
     message = received_message["choices"][1]["message"]
     if haskey(message, "tool_calls")
         tcalls = GPTToolCall[]
-        @info "attempt> $(message["tool_calls"])"
         for x in message["tool_calls"]
             fdict = x["function"]
-            @info "attempt dtype> $(fdict |> typeof)"
-            tc = GPTToolCall(id=x["id"], func=fdict)
-            @info "attempt tc > $(tc)"
+            args = JSON3.read(fdict["arguments"], Dict)
+            gptfunc = GPTFunction(fdict["name"], args)
+            tc = GPTToolCall(id=x["id"], func=gptfunc)
             push!(tcalls, tc)
         end
 

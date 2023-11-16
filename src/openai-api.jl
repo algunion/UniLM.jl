@@ -26,11 +26,20 @@ function StructTypes.lower(x::GPTImageContent)
     return d
 end
 
+struct GPTFunction
+    name::String
+    arguments::Dict{String,String}
+end
 
-@kwdef mutable struct GPTToolCall
+StructTypes.StructType(::Type{GPTFunction}) = StructTypes.CustomStruct()
+function StructTypes.lower(x::GPTFunction)
+    Dict(:name => x.name, :arguments => JSON3.write(x.arguments))
+end
+
+@kwdef struct GPTToolCall
     id::String
     type::String = "function"
-    func::Dict{String,String}
+    func::GPTFunction
 end
 
 StructTypes.StructType(::Type{GPTToolCall}) = StructTypes.Struct()
@@ -56,7 +65,7 @@ StructTypes.lower(x::GPTToolChoice) = Dict(:type => x.type, :function => Dict(:n
 
 struct GPTFunctionCallResult{T}
     name::Union{String,Symbol}
-    origincall::Dict{String,<:Any}
+    origincall::GPTFunction
     result::T
 end
 
@@ -104,6 +113,9 @@ StructTypes.omitempties(::Type{Message}) = (:name, :tool_calls, :tool_call_id) #
 
 message(m::Message) = m.content
 content(m::Message) = m.content
+
+getrole(m::Message) = m.role
+iscall(m::Message) = m.role == RoleTool
 
 
 """

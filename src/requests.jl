@@ -32,6 +32,11 @@ end
 # There are also multiple complaints about this on the OpenAI API forum. 
 # I'll attempt a robust parsind approach here that can handle the variable chunk format.
 function _parse_chunk(chunk::String, iobuff, failbuff)
+    # check if chunk contains new line
+    if occursin("\n", chunk)
+        @info "Newline in chunk $chunk"
+    end
+
     lines = strip.(split(chunk, "\n"))
     lines = filter(!isempty, lines)
     eos = lines[end] == "data: [DONE]"

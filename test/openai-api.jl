@@ -29,7 +29,7 @@
             "from callback - echo: $msg"
         end
 
-        chat_with_stream = UniLM.Chat(stream=true, temperature=0.2)
+        chat_with_stream = UniLM.Chat(stream=true)
         push!(chat_with_stream, UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent."))
         push!(chat_with_stream, UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke."))
         t = UniLM.chatrequest!(chat_with_stream, callback=callback)

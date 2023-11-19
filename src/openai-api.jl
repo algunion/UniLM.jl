@@ -211,9 +211,11 @@ end
     Add a message to the conversation. The goal here is to make invalid conversations unrepresentable.
 """
 function Base.push!(chat::Chat, msg::Message)
-    msg.role == RoleSystem && isempty(chat) && return push!(chat.messages, msg)
-    msg.role != RoleSystem && chat.messages[end].role != msg.role && return push!(chat.messages, msg)
-    throw(InvalidConversationError("Cannot add message $msg to conversation: $chat"))
+    inilen = length(chat)
+    msg.role == RoleSystem && isempty(chat) && push!(chat.messages, msg)
+    msg.role != RoleSystem && chat.messages[end].role != msg.role && push!(chat.messages, msg)
+    length(chat) == inilen && @warn "Cannot add message $msg to conversation: $chat"
+    return chat
 end
 
 """
@@ -222,8 +224,10 @@ end
     Remove the last message from the conversation.
 """
 function Base.pop!(chat::Chat)
-    !isempty(chat) && return pop!(chat.messages)
-    throw(InvalidConversationError("Cannot remove message from an empty conversation and return it."))
+    inilength = length(chat)
+    !isempty(chat) && pop!(chat.messages)
+    length(chat) == inilength && @warn "Cannot remove last message from an empty conversation: $chat"
+    return chat
 end
 
 """
@@ -240,9 +244,9 @@ Base.last(chat::Chat) = last(chat.messages)
 """
 function update!(chat::Chat, msg::Message)
     chat.history && push!(chat, msg)
-    chat
+    !chat.history && @warn "Cannot update chat with your message: chat history is disabled."
+    return chat
 end
-
 
 """
     replacelast!(chat::Chat, msg::Message)

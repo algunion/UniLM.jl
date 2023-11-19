@@ -8,7 +8,10 @@
 
         @test UniLM.issendvalid(chat) == true
 
-        @test_throws UniLM.InvalidConversationError push!(chat, UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke."))
+        inilength = length(chat)
+        push!(chat, UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke.")) # duplicate user message (avoided)
+
+        @test length(chat) == inilength
         @test_throws ArgumentError UniLM.Chat(temperature=0.2, top_p=0.5)
     end
 

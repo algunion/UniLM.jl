@@ -33,9 +33,9 @@ end
 # I'll attempt a robust parsind approach here that can handle the variable chunk format.
 function _parse_chunk(chunk::String, iobuff, failbuff)
     # check if chunk contains new line
-    if occursin("\n", chunk)
-        @info "Newline in chunk $chunk"
-    end
+    # if occursin("\n", chunk)
+    #     @info "Newline in chunk $chunk"
+    # end
 
     lines = strip.(split(chunk, "\n"))
     lines = filter(!isempty, lines)
@@ -50,7 +50,8 @@ function _parse_chunk(chunk::String, iobuff, failbuff)
                 print(iobuff, parsed["delta"]["content"])
             end
         catch e
-            @warn "JSON parsing failed for line: $line"
+            #@warn "JSON parsing failed for line: $line"
+            #@info "Chunk was: $chunk"
             print(failbuff, line)
             continue
         end

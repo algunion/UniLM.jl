@@ -10,7 +10,7 @@
 
 const OPENAI_API_KEY =
     let
-        @info "Loading OpenAI API key from environment variable OPENAI_API_KEY"
+        #@info "Loading OpenAI API key from environment variable OPENAI_API_KEY"
         get(ENV, "OPENAI_API_KEY", nothing)
     end
 

@@ -7,6 +7,7 @@ version = "1.9.4-DEV"
 Accessors = "7d9f7c33-5ae7-4f3b-8dc6-eff91059b697"
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
 JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+MethodSchemas = "2f9ac701-0d3a-4d08-89d5-1210f8a5edb2"
 StructTypes = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
 
 [compat]

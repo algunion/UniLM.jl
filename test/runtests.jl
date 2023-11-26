@@ -31,7 +31,6 @@ end
 end
 
 include("helpers.jl")
-include("jsonschema.jl")
 include("openai-api.jl")
 
 

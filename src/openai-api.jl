@@ -1,7 +1,7 @@
 @kwdef mutable struct GPTFunctionSignature
     name::String
     description::Union{String,Nothing} = nothing
-    parameters::Union{JsonObject,Nothing} = nothing
+    parameters::Union{MethodSchemas.JsonObject,Nothing} = nothing
 end
 
 StructTypes.StructType(::Type{GPTFunctionSignature}) = StructTypes.Struct()

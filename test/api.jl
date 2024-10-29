@@ -1,5 +1,65 @@
 @testset "api.jl" begin
+    @testset "Chat utility functions" begin
+        @testset "Chat creation" begin
+            chat = Chat()
+            @test chat.model == "gpt-4o"
+            @test isempty(chat.messages)
+            @test chat.history == true
+        end
 
+        @testset "Chat message operations" begin
+            chat = Chat()
+            system_msg = UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent.")
+            user_msg = UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke.")
+
+            # Test push! function
+            push!(chat, system_msg)
+            @test length(chat) == 1
+            @test chat.messages[1] == system_msg
+
+            push!(chat, user_msg)
+            @test length(chat) == 2
+            @test chat.messages[2] == user_msg
+
+            # Test invalid push! (consecutive user messages)
+            push!(chat, user_msg)
+            @test length(chat) == 2
+
+            # Test pop! function
+            pop!(chat)
+            @test length(chat) == 1
+            @test chat.messages[1] == system_msg
+
+            # Test last function
+            @test last(chat) == system_msg
+
+            push!(chat, user_msg)
+
+            # Test update! function
+            assist_msg = UniLM.Message(role=UniLM.RoleAssistant, content="This should be funny.")
+            update!(chat, assist_msg)
+            @test length(chat) == 3
+            @test last(chat) == assist_msg
+
+            @test chat[1] == chat.messages[1]
+            @test chat[2] == chat.messages[2]
+        end
+
+        @testset "Chat validation" begin
+            chat = Chat()
+            system_msg = UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent.")
+            user_msg = UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke.")
+
+            push!(chat, system_msg)
+            push!(chat, user_msg)
+
+            @test UniLM.issendvalid(chat) == true
+
+            # Test invalid chat (a system message at the end)
+            chat[end] = system_msg
+            @test UniLM.issendvalid(chat) == false
+        end
+    end
 
     @testset "chat/conversation operation/manipulation" begin
         chat = UniLM.Chat()

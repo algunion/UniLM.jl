@@ -1,4 +1,4 @@
-get_url(model::String) = OPENAI_BASE_URL * _MODEL_ENDPOINTS[model]
+get_url(model::String) = OPENAI_BASE_URL * _MODEL_ENDPOINTS_OPENAI[model]
 get_url(params::Chat) = params.service == OPENAIServiceEndpoint ? get_url(params.model) : get_url(AZUREServiceEndpoint, params)
 get_url(emb::Embeddings) = get_url(emb.model)
 get_url(::Type{OPENAIServiceEndpoint}, params::Chat) = get_url(params)

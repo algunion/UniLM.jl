@@ -315,17 +315,34 @@ function update!(chat::Chat, msg::Message)
 end
 
 """
-    replacelast!(chat::Chat, msg::Message)
+    Base.getindex(chat::Chat, i::Int)
 
-    Replace the last message in the conversation with a new message.
+    Get the message at index `i` in the conversation.
 """
-function replacelast!(chat::Chat, msg::Message)
-    if !isempty(chat)
-        chat.messages[end] = msg
-        return chat
-    end
-    throw(InvalidConversationError("Cannot replace last message in an empty conversation."))
-end
+Base.getindex(chat::Chat, i::Int) = chat.messages[i]
+
+"""
+    Base.setindex!(chat::Chat, msg::Message, i::Int)
+
+    Set the message at index `i` in the conversation.
+"""
+Base.setindex!(chat::Chat, msg::Message, i::Int) = (chat.messages[i] = msg)
+
+"""
+    Base.lastindex(chat::Chat)
+
+    Get the last index in the conversation.
+"""
+Base.lastindex(chat::Chat) = lastindex(chat.messages)
+
+"""
+    Base.firstindex(chat::Chat)
+
+    Get the first index in the conversation.
+"""
+Base.firstindex(chat::Chat) = firstindex(chat.messages)
+
+
 # _EMBEDDINGS_
 
 const GPTTextEmbeddingAda002 = Model("text-embedding-ada-002")

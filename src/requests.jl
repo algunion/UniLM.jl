@@ -159,8 +159,7 @@ function chatrequest!(chat::Chat; retries=0, callback=nothing)::Union{Task,LLMCa
         end
     catch e
         @info "Error: $e"
-        statuserror = e isa HTTP.Exception ? e.status : nothing
-        @info "HTTP status error: $statuserror"
+        statuserror = hasfield(typeof(e), :status) ? getfield(e, :status) : nothing
         res = LLMCallError(error=e |> string, self=chat, status=statuserror)
     end
     @info "Returning from chatrequest!"

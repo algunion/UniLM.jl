@@ -27,5 +27,10 @@ export
     chatrequest!,
     Embeddings,
     embeddingrequest!,
-    update!
+    update!,
+    ResponseFormat,
+    LLMRequestResponse,
+    LLMSuccess,
+    LLMFailure,
+    LLMCallError
 end

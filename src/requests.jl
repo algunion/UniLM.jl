@@ -193,7 +193,7 @@ function embeddingrequest!(emb::Embeddings)
             return (embedding, emb)
         elseif resp.status == 500 || resp.status == 503
             @warn "Request status: $(resp.status). Retrying... in 1s"
-            sleep(1)
+            sleep(1) # not the best way to handle this, but it's a start
             return embeddingrequest!(emb)
         else
             @error "Request status: $(resp.status)"

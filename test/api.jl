@@ -111,19 +111,23 @@
 
         cr = UniLM.chatrequest!(funchat)
 
+        m = getfield(cr, :message)
 
+        @test m isa UniLM.Message
+
+        @info "Function Call Result: $(m)"
 
     end
 
     @testset "embedding" begin
         emb = UniLM.Embeddings("Embed this!")
 
-        (result, emb) = UniLM.embeddingrequest!(emb)
+        result = UniLM.embeddingrequest!(emb)
 
         @show typeof(result)
-
-
         @show keys(result)
+
+        @test result isa Tuple
 
     end
 

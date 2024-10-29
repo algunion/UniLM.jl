@@ -43,3 +43,4 @@ jobs:
         continue-on-error: true
         with:
           path-to-lcov: lcov.info
+          repo_token: 'pSFvlwoBvwTbuCVAXn0u0n3uwi2BjcXFs'

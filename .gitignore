@@ -1,6 +1,7 @@
-/Manifest.toml
+Manifest.toml
+test/Manifest.toml
 
-# no workflows for now
-/workflows
+
 /.vscode
 .env
+

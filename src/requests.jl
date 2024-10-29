@@ -1,5 +1,5 @@
 get_url(model::String) = OPENAI_BASE_URL * _MODEL_ENDPOINTS[model]
-get_url(params::Chat) = params.service == OPENAIServiceEndpoint ? get_url(params.model) : get_url(AZUREServiceEndpoint)
+get_url(params::Chat) = params.service == OPENAIServiceEndpoint ? get_url(params.model) : get_url(AZUREServiceEndpoint, params)
 get_url(emb::Embeddings) = get_url(emb.model)
 get_url(::Type{OPENAIServiceEndpoint}, params::Chat) = get_url(params)
 get_url(::Type{OPENAIServiceEndpoint}, emb::Embeddings) = get_url(emb)
@@ -23,7 +23,6 @@ function auth_header(::Type{OPENAIServiceEndpoint})
 end
 
 function auth_header(::Type{AZUREServiceEndpoint})
-    @info "Using Azure OpenAI API with key: $AZURE_OPENAI_API_KEY"
     [
         "api-key" => "$AZURE_OPENAI_API_KEY",
         "Content-Type" => "application/json"
@@ -133,7 +132,6 @@ The `callback` function is called for each chunk of the response. The `close` Re
 """
 function chatrequest!(chat::Chat; retries=0, callback=nothing)::Union{Task,LLMCallError,LLMFailure,LLMSuccess}
     res = LLMCallError(error="uninitialized", status=0, self=chat)
-    @info "Sending chat request to $(chat.service)..."
     try
         body = JSON3.write(chat)
         if isnothing(chat.stream) || !something(chat.stream)

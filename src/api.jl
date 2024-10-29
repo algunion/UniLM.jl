@@ -101,10 +101,10 @@ const TOOL_CALLS = "tool_calls"
     refusal_message::Union{String,Nothing} = nothing
     tool_calls::Union{Nothing,Vector{GPTToolCall}} = nothing
     tool_call_id::Union{String,Nothing} = nothing
-    function Message(role, content, name, tool_calls, tool_call_id)
+    function Message(role, content, name, finish_reason, refusal_message, tool_calls, tool_call_id)
         isnothing(content) && isnothing(tool_calls) && throw(ArgumentError("`content` and `tool_calls` cannot both be nothing"))
         role == RoleTool && isnothing(tool_call_id) && throw(ArgumentError("`tool_call_id` cannot be empty when role is `tool`"))
-        return new(role, content, name, tool_calls, tool_call_id)
+        return new(role, content, name, finish_reason, refusal_message, tool_calls, tool_call_id)
     end
 end
 
@@ -156,11 +156,11 @@ Creates a new `Chat` object with default settings:
 - `history` is set to `true`
 """
 @kwdef struct Chat
-    service::Type{<:ServiceEndpoint} = AZUREServiceEndpoint #AZUREServiceEndpoint #OPENAIServiceEndpoint
-    model::String = "gpt-4o-2024-08-06"
-    api_version::String = "2024-08-01-preview"
+    service::Type{<:ServiceEndpoint} = OPENAIServiceEndpoint #AZUREServiceEndpoint #OPENAIServiceEndpoint
+    model::String = "gpt-4o"
+    api_version::String = "2024-08-01-preview" # for Azure only
     messages::Conversation = Message[]
-    history::Bool = false
+    history::Bool = true
     tools::Union{Vector{GPTTool},Nothing} = nothing
     tool_choice::Union{String,GPTToolChoice,Nothing} = nothing # "auto" | "none" |
     parallel_tool_calls::Union{Bool,Nothing} = false
@@ -179,6 +179,7 @@ Creates a new `Chat` object with default settings:
     function Chat(
         service,
         model,
+        api_version,
         messages,
         history,
         tools,
@@ -201,6 +202,7 @@ Creates a new `Chat` object with default settings:
         return new(
             service,
             model,
+            api_version,
             messages,
             history,
             tools,
@@ -224,7 +226,7 @@ end
 
 StructTypes.StructType(::Type{Chat}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{Chat}) = true
-StructTypes.excludes(::Type{Chat}) = (:history, :service)
+StructTypes.excludes(::Type{Chat}) = (:history, :service, :api_version)
 
 Base.length(chat::Chat) = length(chat.messages)
 Base.isempty(chat::Chat) = isempty(chat.messages)
@@ -257,6 +259,10 @@ StructTypes.StructType(::Type{LLMCallError}) = StructTypes.Struct()
     is_send_valid(chat::Chat)::Bool
 
     Check if the conversation is valid for sending to the API.
+
+    This check employs a rough heuristic that works for practical purposes. 
+            
+    It checks if the conversation has at least two messages, the first message is from the system, the last message is from the user, and there are no consecutive messages from the same role. However, this is not a foolproof check and may not work in all cases (e.g. imagine that you passed another system message in the middle of the conversation).
 """
 function issendvalid(chat::Chat)::Bool
     length(chat) > 1 &&

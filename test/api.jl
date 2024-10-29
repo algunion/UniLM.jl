@@ -6,7 +6,7 @@
         push!(chat, UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent."))
         push!(chat, UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke."))
 
-        @test UniLM.issendvalid(chat) == true
+        @test UniLM.issendvalid(chat)
 
         inilength = length(chat)
         push!(chat, UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke.")) # duplicate user message (avoided)

@@ -4,16 +4,10 @@ using JSON3
 using StructTypes
 using Accessors
 
-import MethodSchemas
-
 include("constants.jl")
 include("exceptions.jl")
-include("helpers.jl")
-include("openai-api.jl")
-include("convertors.jl")
-include("functioncall.jl")
+include("api.jl")
 include("requests.jl")
-include("testutils.jl")
 
 export
     Chat,
@@ -30,6 +24,5 @@ export
     chatrequest!,
     Embeddings,
     embeddingrequest!,
-    update!,
-    MethodSchemas
+    update!
 end

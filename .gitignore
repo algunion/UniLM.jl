@@ -3,3 +3,4 @@
 # no workflows for now
 /workflows
 /.vscode
+.env

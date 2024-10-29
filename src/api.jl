@@ -1,12 +1,11 @@
 @kwdef mutable struct GPTFunctionSignature
     name::String
     description::Union{String,Nothing} = nothing
-    parameters::Union{MethodSchemas.JsonObject,Nothing} = nothing
+    parameters::Union{Dict,Nothing} = nothing
 end
 
 StructTypes.StructType(::Type{GPTFunctionSignature}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{GPTFunctionSignature}) = (:description, :parameters)
-
 
 """
 `text` is the prompt.\n
@@ -85,18 +84,21 @@ end
 Base.show(io::IO, x::Model) = print(io, x.name)
 Base.parse(::Type{Model}, s::String) = Model(s)
 
-const GPT35Turbo = Model("gpt-3.5-turbo")
-const GPT4 = Model("gpt-4")
+const GPT4o = Model("gpt-4o")
 const GPT4Turbo = Model("gpt-4-1106-preview")
 const GPT4TurboVision = Model("gpt-4-vision-preview")
-const GPT35Latest = ""
-const GPT4Latest = ""
 
-"Message"
+const STOP = "stop"
+const CONTENT_FILTER = "content_filter"
+const TOOL_CALLS = "tool_calls"
+
+
 @kwdef struct Message
     role::String
     content::Union{String,GPTImageContent,Nothing} = nothing
     name::Union{String,Nothing} = nothing
+    finish_reason::Union{String,Nothing} = nothing
+    refusal_message::Union{String,Nothing} = nothing
     tool_calls::Union{Nothing,Vector{GPTToolCall}} = nothing
     tool_call_id::Union{String,Nothing} = nothing
     function Message(role, content, name, tool_calls, tool_call_id)
@@ -117,21 +119,51 @@ content(m::Message) = m.content
 getrole(m::Message) = m.role
 iscall(m::Message) = m.role == RoleTool
 
+#string(m::Message) = getfield(m, :content) |> string
+
+struct JsonSchemaAPI
+    name::String
+    description::String
+    schema::Dict
+end
+
+StructTypes.StructType(::Type{JsonSchemaAPI}) = StructTypes.Struct()
+
+struct ResponseFormat
+    type::String
+    json_schema::Union{JsonSchemaAPI,Dict,Nothing}
+    ResponseFormat() = new("json_object", nothing)
+    ResponseFormat(json_schema) = new("json_schema", json_schema)
+end
+
+StructTypes.StructType(::Type{ResponseFormat}) = StructTypes.Struct()
+StructTypes.omitempties(::Type{ResponseFormat}) = (:json_schema,)
+
+json_object() = ResponseFormat()
+json_schema(schema) = ResponseFormat(schema)
+
+abstract type ServiceEndpoint end
+struct OPENAIServiceEndpoint <: ServiceEndpoint end
+struct AZUREServiceEndpoint <: ServiceEndpoint end
+
 
 """
     chat = Chat()
 
 Creates a new `Chat` object with default settings:
-- `model` is set to `gpt-3.5-turbo`
+- `model` is set to `gpt-4o-2024-08-06`
 - `messages` is set to an empty `Vector{Message}`
 - `history` is set to `true`
 """
 @kwdef struct Chat
-    model::String = "gpt-3.5-turbo"
+    service::Type{<:ServiceEndpoint} = AZUREServiceEndpoint #AZUREServiceEndpoint #OPENAIServiceEndpoint
+    model::String = "gpt-4o-2024-08-06"
+    api_version::String = "2024-08-01-preview"
     messages::Conversation = Message[]
-    history::Bool = true
+    history::Bool = false
     tools::Union{Vector{GPTTool},Nothing} = nothing
-    tool_choice::Union{String,GPTToolChoice,Nothing} = nothing # "auto" | "none" |    
+    tool_choice::Union{String,GPTToolChoice,Nothing} = nothing # "auto" | "none" |
+    parallel_tool_calls::Union{Bool,Nothing} = false
     temperature::Union{Float64,Nothing} = nothing # 0.0 - 2.0 - mutual exclusive with top_p
     top_p::Union{Float64,Nothing} = nothing # 1 - 100 - mutual exclusive with temperature
     n::Union{Int64,Nothing} = nothing # 1 - 10
@@ -139,17 +171,19 @@ Creates a new `Chat` object with default settings:
     stop::Union{Vector{String},String,Nothing} = nothing # max 4 sequences
     max_tokens::Union{Int64,Nothing} = nothing
     presence_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
+    response_format::Union{ResponseFormat,Nothing} = nothing
     frequency_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
     logit_bias::Union{Dict{String,Float64},Nothing} = nothing
     user::Union{String,Nothing} = nothing
-    response_format::Union{Dict{String,String},Nothing} = nothing
     seed::Union{Int64,Nothing} = nothing
     function Chat(
+        service,
         model,
         messages,
         history,
         tools,
         tool_choice,
+        parallel_tool_calls,
         temperature,
         top_p,
         n,
@@ -157,19 +191,21 @@ Creates a new `Chat` object with default settings:
         stop,
         max_tokens,
         presence_penalty,
+        response_format,
         frequency_penalty,
         logit_bias,
         user,
-        response_format,
         seed
     )
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
         return new(
+            service,
             model,
             messages,
             history,
             tools,
             tool_choice,
+            !isnothing(tools) ? parallel_tool_calls : nothing,
             temperature,
             top_p,
             n,
@@ -177,10 +213,10 @@ Creates a new `Chat` object with default settings:
             stop,
             max_tokens,
             presence_penalty,
+            response_format,
             frequency_penalty,
             logit_bias,
             user,
-            response_format,
             seed
         )
     end
@@ -188,10 +224,34 @@ end
 
 StructTypes.StructType(::Type{Chat}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{Chat}) = true
-StructTypes.excludes(::Type{Chat}) = (:history,)
+StructTypes.excludes(::Type{Chat}) = (:history, :service)
 
 Base.length(chat::Chat) = length(chat.messages)
 Base.isempty(chat::Chat) = isempty(chat.messages)
+
+abstract type LLMRequestResponse end
+@kwdef struct LLMSuccess <: LLMRequestResponse
+    message::Message
+    self::Chat
+end
+
+StructTypes.StructType(::Type{LLMSuccess}) = StructTypes.Struct()
+
+@kwdef struct LLMFailure <: LLMRequestResponse
+    response::String
+    status::Int
+    self::Chat
+end
+
+StructTypes.StructType(::Type{LLMFailure}) = StructTypes.Struct()
+
+@kwdef struct LLMCallError <: LLMRequestResponse
+    error::String
+    status::Union{Int,Nothing} = nothing
+    self::Chat
+end
+
+StructTypes.StructType(::Type{LLMCallError}) = StructTypes.Struct()
 
 """
     is_send_valid(chat::Chat)::Bool
@@ -285,4 +345,3 @@ StructTypes.omitempties(::Type{Embeddings}) = (:user,)
 StructTypes.excludes(::Type{Embeddings}) = (:embeddings,)
 
 update!(emb::Embeddings, embeddings) = copy!(emb.embeddings, embeddings)
-

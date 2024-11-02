@@ -3,9 +3,6 @@ using HTTP
 using JSON3
 using StructTypes
 using Accessors
-using DotEnv
-
-DotEnv.load!()
 
 include("constants.jl")
 include("exceptions.jl")

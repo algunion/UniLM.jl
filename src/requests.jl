@@ -29,7 +29,7 @@ function auth_header(::Type{AZUREServiceEndpoint})
     ]
 end
 
-function extract_message(resp::HTTP.Response)::Message
+function extract_message(resp::HTTP.Response)
     received_message = JSON3.read(resp.body, Dict)
     finish_reason = received_message["choices"][1]["finish_reason"]
     message = received_message["choices"][1]["message"]
@@ -130,7 +130,7 @@ The `callback` function is called for each chunk of the response. The `close` Re
     The signature of the callback function is:
         `callback(chunk::Union{String, Message}, close::Ref{Bool})`
 """
-function chatrequest!(chat::Chat; retries=0, callback=nothing)::Union{Task,LLMCallError,LLMFailure,LLMSuccess}
+function chatrequest!(chat::Chat; retries=0, callback=nothing)
     res = LLMCallError(error="uninitialized", status=0, self=chat)
     try
         body = JSON3.write(chat)

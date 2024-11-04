@@ -45,11 +45,11 @@ function extract_message(resp::HTTP.Response)
 
         return Message(role=RoleAssistant, tool_calls=tcalls, finish_reason=TOOL_CALLS)
     elseif finish_reason == STOP && haskey(message, "content") && !isnothing(message["content"])
-        return Message(role=RoleAssistant, content=message["content"])
+        return Message(role=RoleAssistant, content=message["content"], finish_reason=STOP)
     elseif finish_reason == CONTENT_FILTER && haskey(message, "refusal") && !isnothing(message["refusal"])
-        return Message(role=RoleAssistant, refusal_message=message["refusal"])
+        return Message(role=RoleAssistant, refusal_message=message["refusal"], finish_reason=CONTENT_FILTER)
     else
-        return Message(role=RoleAssistant, content="No response from the model.")
+        return Message(role=RoleAssistant, content="No response from the model.", finish_reason=finish_reason)
     end
 end
 

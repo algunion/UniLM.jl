@@ -5,26 +5,19 @@ get_url(::Type{OPENAIServiceEndpoint}, params::Chat) = get_url(params)
 get_url(::Type{OPENAIServiceEndpoint}, emb::Embeddings) = get_url(emb)
 get_url(::Type{OPENAIServiceEndpoint}, model::String) = get_url(model)
 function get_url(::Type{AZUREServiceEndpoint}, params::Chat)
-    AZURE_OPENAI_BASE_URL * "/openai/deployments/" * AZURE_OPENAI_DEPLOY_NAME * "/chat/completions?api-version=$(getfield(params, :api_version))"
-end
-
-function auth_header(api_key::String=OPENAI_API_KEY)
-    [
-        "Authorization" => "Bearer $api_key",
-        "Content-Type" => "application/json"
-    ]
+    ENV[AZURE_OPENAI_BASE_URL] * "/openai/deployments/" * ENV[AZURE_OPENAI_DEPLOY_NAME] * "/chat/completions?api-version=$(getfield(params, :api_version))"
 end
 
 function auth_header(::Type{OPENAIServiceEndpoint})
     [
-        "Authorization" => "Bearer $OPENAI_API_KEY",
+        "Authorization" => "Bearer $(ENV["OPENAI_API_KEY"])",
         "Content-Type" => "application/json"
     ]
 end
 
 function auth_header(::Type{AZUREServiceEndpoint})
     [
-        "api-key" => "$AZURE_OPENAI_API_KEY",
+        "api-key" => "$(ENV[AZURE_OPENAI_API_KEY])",
         "Content-Type" => "application/json"
     ]
 end
@@ -184,7 +177,7 @@ end
 function embeddingrequest!(emb::Embeddings)
     body = JSON3.write(emb)
     try
-        resp = HTTP.post(get_url(emb), body=body, headers=auth_header())
+        resp = HTTP.post(get_url(emb), body=body, headers=auth_header(OPENAIServiceEndpoint)) # default to OpenAI service for now
         if resp.status == 200
             # headers info
             # @info "Request headers: $(resp.headers)"

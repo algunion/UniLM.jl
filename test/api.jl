@@ -86,7 +86,7 @@
             m = getfield(cr, :message)
             @test m.role == UniLM.RoleAssistant
         else
-            @test cr <: UniLMRequestResponse
+            @test cr <: UniLM.LLMRequestResponse
         end
 
     end

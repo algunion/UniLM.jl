@@ -1,26 +1,8 @@
-
-
-const OPENAI_API_KEY::String =
-    let
-        get(ENV, "OPENAI_API_KEY", "")
-    end
-
-const AZURE_OPENAI_API_KEY::String =
-    let
-        get(ENV, "AZURE_OPENAI_API_KEY", "")
-    end
-
 const OPENAI_BASE_URL::String = "https://api.openai.com"
-
-const AZURE_OPENAI_BASE_URL::String =
-    let
-        get(ENV, "AZURE_OPENAI_BASE_URL", "")
-    end
-
-const AZURE_OPENAI_DEPLOY_NAME::String =
-    let
-        get(ENV, "AZURE_OPENAI_DEPLOY_NAME", "")
-    end
+const OPENAI_API_KEY::String = "OPENAI_API_KEY"
+const AZURE_OPENAI_BASE_URL::String = "AZURE_OPENAI_BASE_URL"
+const AZURE_OPENAI_DEPLOY_NAME::String = "AZURE_OPENAI_DEPLOY_NAME"
+const AZURE_OPENAI_API_KEY::String = "AZURE_OPENAI_API_KEY"
 
 """
     Convenience mapping of model names to their respective endpoints.

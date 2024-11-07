@@ -1,8 +1,8 @@
 get_url(params::Chat) = get_url(params.service, params.model)
-get_url(emb::Embeddings) = get_url(emb.model)
+get_url(emb::Embeddings) = get_url(OPENAIServiceEndpoint, emb.model)
 get_url(::Type{OPENAIServiceEndpoint}, model::String) = OPENAI_BASE_URL * _MODEL_ENDPOINTS_OPENAI[model]
 get_url(::Type{OPENAIServiceEndpoint}, emb::Embeddings) = get_url(emb)
-get_url(::Type{AZUREServiceEndpoint}, model::String) = ENV[AZURE_OPENAI_BASE_URL] * "/openai/deployments/" * _MODEL_ENDPOINTS_AZURE_OPENAI[model] * "/chat/completions?api-version=$(ENV[AZURE_OPENAI_API_VERSION])"
+get_url(::Type{AZUREServiceEndpoint}, model::String) = ENV[AZURE_OPENAI_BASE_URL] * _MODEL_ENDPOINTS_AZURE_OPENAI[model] * "/chat/completions?api-version=$(ENV[AZURE_OPENAI_API_VERSION])"
 
 
 function auth_header(::Type{OPENAIServiceEndpoint})

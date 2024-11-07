@@ -156,7 +156,7 @@ Creates a new `Chat` object with default settings:
 - `history` is set to `true`
 """
 @kwdef struct Chat
-    service::Type{<:ServiceEndpoint} = OPENAIServiceEndpoint #AZUREServiceEndpoint #OPENAIServiceEndpoint
+    service::Type{<:ServiceEndpoint} = AZUREServiceEndpoint #AZUREServiceEndpoint #OPENAIServiceEndpoint
     model::String = "gpt-4o"
     messages::Conversation = Message[]
     history::Bool = true

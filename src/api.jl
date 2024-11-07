@@ -151,14 +151,13 @@ struct AZUREServiceEndpoint <: ServiceEndpoint end
     chat = Chat()
 
 Creates a new `Chat` object with default settings:
-- `model` is set to `gpt-4o-2024-08-06`
+- `model` is set to `gpt-4o`
 - `messages` is set to an empty `Vector{Message}`
 - `history` is set to `true`
 """
 @kwdef struct Chat
     service::Type{<:ServiceEndpoint} = OPENAIServiceEndpoint #AZUREServiceEndpoint #OPENAIServiceEndpoint
     model::String = "gpt-4o"
-    api_version::String = "2024-08-01-preview" # for Azure only
     messages::Conversation = Message[]
     history::Bool = true
     tools::Union{Vector{GPTTool},Nothing} = nothing
@@ -179,7 +178,6 @@ Creates a new `Chat` object with default settings:
     function Chat(
         service,
         model,
-        api_version,
         messages,
         history,
         tools,
@@ -202,7 +200,6 @@ Creates a new `Chat` object with default settings:
         return new(
             service,
             model,
-            api_version,
             messages,
             history,
             tools,
@@ -226,7 +223,7 @@ end
 
 StructTypes.StructType(::Type{Chat}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{Chat}) = true
-StructTypes.excludes(::Type{Chat}) = (:history, :service, :api_version)
+StructTypes.excludes(::Type{Chat}) = (:history, :service)
 
 Base.length(chat::Chat) = length(chat.messages)
 Base.isempty(chat::Chat) = isempty(chat.messages)

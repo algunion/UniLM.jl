@@ -1,11 +1,11 @@
 const OPENAI_BASE_URL::String = "https://api.openai.com"
 const OPENAI_API_KEY::String = "OPENAI_API_KEY"
 const AZURE_OPENAI_BASE_URL::String = "AZURE_OPENAI_BASE_URL"
-const AZURE_OPENAI_DEPLOY_NAME::String = "AZURE_OPENAI_DEPLOY_NAME"
 const AZURE_OPENAI_API_KEY::String = "AZURE_OPENAI_API_KEY"
+const AZURE_OPENAI_API_VERSION::String = "AZURE_OPENAI_API_VERSION"
 
 """
-    Convenience mapping of model names to their respective endpoints.
+    Convenience mapping of OpenAI model names to their respective endpoints.
     
 """
 const _MODEL_ENDPOINTS_OPENAI::Dict{String,String} = Dict(
@@ -39,4 +39,13 @@ const _MODEL_ENDPOINTS_OPENAI::Dict{String,String} = Dict(
     "text-search-ada-doc-001" => "/v1/embeddings",
     "text-moderation-stable" => "/v1/moderations",
     "text-moderation-latest" => "/v1/moderations"
+)
+
+"""
+    Convenience mapping of OpenAI model names to their respective endpoints.
+    
+"""
+const _MODEL_ENDPOINTS_AZURE_OPENAI::Dict{String,String} = Dict(
+    "gpt-4o" => "/openai/deployments/" * ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_4O"],
+    "gpt-4o-mini" => "/openai/deployments/" * ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_4O_MINI"]
 )

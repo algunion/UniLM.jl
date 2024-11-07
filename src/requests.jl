@@ -1,16 +1,13 @@
-get_url(model::String) = OPENAI_BASE_URL * _MODEL_ENDPOINTS_OPENAI[model]
-get_url(params::Chat) = params.service == OPENAIServiceEndpoint ? get_url(params.model) : get_url(AZUREServiceEndpoint, params)
+get_url(params::Chat) = get_url(params.service, params.model)
 get_url(emb::Embeddings) = get_url(emb.model)
-get_url(::Type{OPENAIServiceEndpoint}, params::Chat) = get_url(params)
+get_url(::Type{OPENAIServiceEndpoint}, model::String) = OPENAI_BASE_URL * _MODEL_ENDPOINTS_OPENAI[model]
 get_url(::Type{OPENAIServiceEndpoint}, emb::Embeddings) = get_url(emb)
-get_url(::Type{OPENAIServiceEndpoint}, model::String) = get_url(model)
-function get_url(::Type{AZUREServiceEndpoint}, params::Chat)
-    ENV[AZURE_OPENAI_BASE_URL] * "/openai/deployments/" * ENV[AZURE_OPENAI_DEPLOY_NAME] * "/chat/completions?api-version=$(getfield(params, :api_version))"
-end
+get_url(::Type{AZUREServiceEndpoint}, model::String) = ENV[AZURE_OPENAI_BASE_URL] * "/openai/deployments/" * _MODEL_ENDPOINTS_AZURE_OPENAI[model] * "/chat/completions?api-version=$(ENV[AZURE_OPENAI_API_VERSION])"
+
 
 function auth_header(::Type{OPENAIServiceEndpoint})
     [
-        "Authorization" => "Bearer $(ENV["OPENAI_API_KEY"])",
+        "Authorization" => "Bearer $(ENV[OPENAI_API_KEY])",
         "Content-Type" => "application/json"
     ]
 end

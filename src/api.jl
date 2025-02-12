@@ -1,7 +1,7 @@
 @kwdef mutable struct GPTFunctionSignature
     name::String
     description::Union{String,Nothing} = nothing
-    parameters::Union{Dict,Nothing} = nothing
+    parameters::Union{AbstractDict,Nothing} = nothing
 end
 
 StructTypes.StructType(::Type{GPTFunctionSignature}) = StructTypes.Struct()
@@ -27,7 +27,7 @@ end
 
 struct GPTFunction
     name::String
-    arguments::Dict{String,String}
+    arguments::AbstractDict{String,String}
 end
 
 StructTypes.StructType(::Type{GPTFunction}) = StructTypes.CustomStruct()
@@ -124,14 +124,14 @@ iscall(m::Message) = m.role == RoleTool
 struct JsonSchemaAPI
     name::String
     description::String
-    schema::Dict
+    schema::AbstractDict
 end
 
 StructTypes.StructType(::Type{JsonSchemaAPI}) = StructTypes.Struct()
 
 struct ResponseFormat
     type::String
-    json_schema::Union{JsonSchemaAPI,Dict,Nothing}
+    json_schema::Union{JsonSchemaAPI,AbstractDict,Nothing}
     ResponseFormat() = new("json_object", nothing)
     ResponseFormat(json_schema) = new("json_schema", json_schema)
 end
@@ -172,7 +172,7 @@ Creates a new `Chat` object with default settings:
     presence_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
     response_format::Union{ResponseFormat,Nothing} = nothing
     frequency_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
-    logit_bias::Union{Dict{String,Float64},Nothing} = nothing
+    logit_bias::Union{AbstractDict{String,Float64},Nothing} = nothing
     user::Union{String,Nothing} = nothing
     seed::Union{Int64,Nothing} = nothing
     function Chat(

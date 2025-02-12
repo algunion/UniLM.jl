@@ -1,5 +1,5 @@
 Manifest.toml
-test/Manifest.toml
+/test/Manifest.toml
 
 
 /.vscode

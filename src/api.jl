@@ -95,7 +95,7 @@ const TOOL_CALLS = "tool_calls"
 
 @kwdef struct Message
     role::String
-    content::Union{String,GPTImageContent,Nothing} = nothing
+    content::Union{String,Nothing} = nothing
     name::Union{String,Nothing} = nothing
     finish_reason::Union{String,Nothing} = nothing
     refusal_message::Union{String,Nothing} = nothing

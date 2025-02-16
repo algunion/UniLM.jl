@@ -93,8 +93,8 @@
 
     @testset "JSON_OBJECT" begin
         chat = UniLM.Chat(response_format=UniLM.json_object())
-        push!(chat, UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent answering only in JSON."))
-        push!(chat, UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke."))
+        push!(chat, UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent."))
+        push!(chat, UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke (return JSON format)."))
 
         cr = UniLM.chatrequest!(chat)
 

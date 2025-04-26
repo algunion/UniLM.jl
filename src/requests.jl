@@ -111,7 +111,7 @@ end
 
 
 """
-    chatrequest!(chat::Chat; callback=nothing)
+    chatrequest!(chat::Chat, retries=0, callback=nothing)
 
 Send a request to the OpenAI API to generate a response to the messages in `conv`.
 
@@ -120,7 +120,7 @@ The `callback` function is called for each chunk of the response. The `close` Re
     The signature of the callback function is:
         `callback(chunk::Union{String, Message}, close::Ref{Bool})`
 """
-function chatrequest!(chat::Chat; retries=0, callback=nothing)
+function chatrequest!(chat::Chat, retries=0, callback=nothing)
     res = LLMCallError(error="uninitialized", status=0, self=chat)
     try
         body = JSON3.write(chat)
@@ -135,7 +135,7 @@ function chatrequest!(chat::Chat; retries=0, callback=nothing)
                 @info "Retrying... in 1s"
                 sleep(1)
                 if retries < 30
-                    return chatrequest!(chat; retries=retries + 1, callback=callback)
+                    return chatrequest!(chat, retries + 1, callback)
                 else
                     return LLMFailure(status=resp.status, response=String(resp.body), self=chat)
                 end
@@ -154,6 +154,15 @@ function chatrequest!(chat::Chat; retries=0, callback=nothing)
     end
     @info "Returning from chatrequest!"
     return res
+end
+
+"""
+    chatrequest!(; kwargs...)
+    Send a request to the OpenAI API to generate a response to the messages in `conv`.
+"""
+function chatrequest!(; kwargs...)
+    chat = Chat(; kwargs...)
+    return chatrequest!(chat)
 end
 
 """

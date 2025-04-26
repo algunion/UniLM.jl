@@ -91,6 +91,22 @@
 
     end
 
+    @testset "regular conversation / kwargs" begin
+        messages = []
+        push!(messages, UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent."))
+        push!(messages, UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke."))
+
+        cr = UniLM.chatrequest!(messages=messages)
+
+        if cr isa UniLM.LLMSuccess
+            m = getfield(cr, :message)
+            @test m.role == UniLM.RoleAssistant
+        else
+            @test cr <: UniLM.LLMRequestResponse
+        end
+
+    end
+
     @testset "JSON_OBJECT" begin
         chat = UniLM.Chat(response_format=UniLM.json_object())
         push!(chat, UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent."))
@@ -140,7 +156,7 @@
         chat_with_stream = UniLM.Chat(stream=true)
         push!(chat_with_stream, UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent."))
         push!(chat_with_stream, UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke."))
-        t = UniLM.chatrequest!(chat_with_stream, callback=callback)
+        t = UniLM.chatrequest!(chat_with_stream, callback)
         wait(t)
         @test t.state == :done
         m, _ = t.result

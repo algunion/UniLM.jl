@@ -157,13 +157,53 @@ function chatrequest!(chat::Chat, retries=0, callback=nothing)
 end
 
 """
-    chatrequest!(; kwargs...)
-    Send a request to the OpenAI API to generate a response to the messages in `conv`.
+# Flexible keyword arguments usage
+chatrequest!(; kwargs...)
+Send a request to the OpenAI API to generate a response to the messages in `conv`.
+
+# Keyword Arguments
+- `service::Type{<:ServiceEndpoint} = AZUREServiceEndpoint`: The service endpoint to use (e.g., `AZUREServiceEndpoint`, `OPENAIServiceEndpoint`).
+- `model::String = "gpt-4o"`: The model to use for the chat completion.
+- `systemprompt::Union{Message,String}`: The system prompt message.
+- `userprompt::Union{Message,String}`: The user prompt message.
+- `messages::Conversation = Message[]`: The conversation history or the system/prompt messages.
+- `history::Bool = true`: Whether to include the conversation history in the request.
+- `tools::Union{Vector{GPTTool},Nothing} = nothing`: A list of tools the model may call.
+- `tool_choice::Union{String,GPTToolChoice,Nothing} = nothing`: Controls which (if any) function is called by the model. e.g. "auto", "none", `GPTToolChoice`.
+- `parallel_tool_calls::Union{Bool,Nothing} = false`: Whether to enable parallel function calling.
+- `temperature::Union{Float64,Nothing} = nothing`: Sampling temperature (0.0-2.0). Higher values make output more random. Mutually exclusive with `top_p`.
+- `top_p::Union{Float64,Nothing} = nothing`: Nucleus sampling parameter (0.0-1.0). Mutually exclusive with `temperature`.
+- `n::Union{Int64,Nothing} = nothing`: How many chat completion choices to generate for each input message (1-10).
+- `stream::Union{Bool,Nothing} = nothing`: If set, partial message deltas will be sent, like in ChatGPT.
+- `stop::Union{Vector{String},String,Nothing} = nothing`: Up to 4 sequences where the API will stop generating further tokens.
+- `max_tokens::Union{Int64,Nothing} = nothing`: The maximum number of tokens to generate in the chat completion.
+- `presence_penalty::Union{Float64,Nothing} = nothing`: Number between -2.0 and 2.0. Positive values penalize new tokens based on whether they appear in the text so far.
+- `response_format::Union{ResponseFormat,Nothing} = nothing`: An object specifying the format that the model must output. e.g., `ResponseFormat(type="json_object")`.
+- `frequency_penalty::Union{Float64,Nothing} = nothing`: Number between -2.0 and 2.0. Positive values penalize new tokens based on their existing frequency in the text so far.
+- `logit_bias::Union{AbstractDict{String,Float64},Nothing} = nothing`: Modify the likelihood of specified tokens appearing in the completion.
+- `user::Union{String,Nothing} = nothing`: A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse.
+- `seed::Union{Int64,Nothing} = nothing`: This feature is in Beta. If specified, the system will make a best effort to sample deterministically.
 """
-function chatrequest!(; kwargs...)
-    chat = Chat(; kwargs...)
-    return chatrequest!(chat)
+function chatrequest!(; kws...)
+    !haskey(kws, :messages) && (!haskey(kws, :userprompt) || !haskey(kws, :systemprompt)) && return LLMFailure(response="No messages and/or systemprompt/userprompt provided.", status=499, self=Chat(; kws...))
+    messages = get(kws, :messages, Message[])
+    if haskey(kws, :userprompt) && haskey(kws, :systemprompt)
+        empty!(messages)
+        if kws[:systemprompt] isa AbstractString
+            push!(messages, Message(role=RoleSystem, content=kws[:systemprompt]))
+        else
+            push!(messages, kws[:systemprompt])
+        end
+        if kws[:userprompt] isa AbstractString
+            push!(messages, Message(role=RoleUser, content=kws[:userprompt]))
+        else
+            push!(messages, kws[:userprompt])
+        end
+    end
+    nkws = filter(x -> x[1] != :messages && x[1] != :userprompt && x[1] != :systemprompt, kws)
+    chatrequest!(Chat(; messages=messages, nkws...))
 end
+
 
 """
     embeddingrequest!(emb::Embedding)

@@ -109,15 +109,31 @@ const TOOL_CALLS = "tool_calls"
     end
 end
 
+Message(::Val{:system}, content) = Message(role=RoleSystem, content=content)
+Message(::Val{:user}, content) = Message(role=RoleUser, content=content)
+
 const Conversation = Vector{Message}
 
 StructTypes.StructType(::Type{Message}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{Message}) = (:name, :tool_calls, :tool_call_id) # content cannot be nothing when user generated
 
-message(m::Message) = m.content
-content(m::Message) = m.content
+"""
+getcontent(m::Message)::Union{String,Nothing}
 
+Get the content of the message.
+"""
+getcontent(m::Message) = m.content
+
+"""
+getrole(m::Message)::String
+Get the role of the message.
+"""
 getrole(m::Message) = m.role
+
+"""
+iscall(m::Message)::Bool
+Check if the message is a tool call.
+"""
 iscall(m::Message) = m.role == RoleTool
 
 #string(m::Message) = getfield(m, :content) |> string

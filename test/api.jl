@@ -98,6 +98,23 @@
 
         cr = UniLM.chatrequest!(messages=messages)
 
+        @info "ChatRequest: $(cr)"
+
+        if cr isa UniLM.LLMSuccess
+            m = getfield(cr, :message)
+            @test m.role == UniLM.RoleAssistant
+        else
+            @test cr <: UniLM.LLMRequestResponse
+        end
+
+    end
+
+    @testset "regular conversation / kwargs / individual prompts" begin
+
+        cr = UniLM.chatrequest!(systemprompt="Act as a helpful AI agent.", userprompt="Please tell me a one-liner joke.")
+
+        @info "ChatRequest: $(cr)"
+
         if cr isa UniLM.LLMSuccess
             m = getfield(cr, :message)
             @test m.role == UniLM.RoleAssistant

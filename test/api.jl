@@ -150,7 +150,7 @@
             "required" => ["location", "unit"]
         )
 
-        chat = UniLM.Chat(response_format=UniLM.json_schema(UniLM.JsonSchemaAPI("get_current_weather", "Getting the current weather", schema)))
+        chat = UniLM.Chat(response_format=UniLM.json_schema("get_current_weather", "Getting the current weather", schema))
         push!(chat, UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent - only answering in JSON."))
         push!(chat, UniLM.Message(role=UniLM.RoleUser, content="What is the weather in New York?."))
 

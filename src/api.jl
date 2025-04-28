@@ -158,6 +158,7 @@ StructTypes.omitempties(::Type{ResponseFormat}) = (:json_schema,)
 
 json_object() = ResponseFormat()
 json_schema(schema) = ResponseFormat(schema)
+json_schema(name::String, description::String, schema::AbstractDict) = ResponseFormat(JsonSchemaAPI(name, description, schema))
 
 abstract type ServiceEndpoint end
 struct OPENAIServiceEndpoint <: ServiceEndpoint end

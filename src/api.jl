@@ -138,7 +138,7 @@ iscall(m::Message) = m.role == RoleTool
 
 #string(m::Message) = getfield(m, :content) |> string
 
-struct JsonSchemaAPI
+@kwdef struct JsonSchemaAPI
     name::String
     description::String
     schema::AbstractDict
@@ -146,12 +146,12 @@ end
 
 StructTypes.StructType(::Type{JsonSchemaAPI}) = StructTypes.Struct()
 
-struct ResponseFormat
-    type::String
-    json_schema::Union{JsonSchemaAPI,AbstractDict,Nothing}
-    ResponseFormat() = new("json_object", nothing)
-    ResponseFormat(json_schema) = new("json_schema", json_schema)
+@kwdef struct ResponseFormat
+    type::String = "json_object"
+    json_schema::Union{JsonSchemaAPI,AbstractDict,Nothing} = nothing
 end
+
+ResponseFormat(json_schema) = ResponseFormat("json_schema", json_schema)
 
 StructTypes.StructType(::Type{ResponseFormat}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{ResponseFormat}) = (:json_schema,)

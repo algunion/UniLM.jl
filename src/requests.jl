@@ -19,6 +19,15 @@ function auth_header(::Type{AZUREServiceEndpoint})
     ]
 end
 
+function auth_header(service::GEMINIServiceEndpoint)
+    [
+        "Authorization" => "Bearer $(ENV[GEMINI_API_KEY])",
+        "Content-Type" => "application/json"
+    ]
+end
+
+
+
 function extract_message(resp::HTTP.Response)
     received_message = JSON3.read(resp.body, Dict)
     finish_reason = received_message["choices"][1]["finish_reason"]

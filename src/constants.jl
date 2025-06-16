@@ -3,6 +3,7 @@ const OPENAI_API_KEY::String = "OPENAI_API_KEY"
 const AZURE_OPENAI_BASE_URL::String = "AZURE_OPENAI_BASE_URL"
 const AZURE_OPENAI_API_KEY::String = "AZURE_OPENAI_API_KEY"
 const AZURE_OPENAI_API_VERSION::String = "AZURE_OPENAI_API_VERSION"
+const GEMINI_API_KEY::String = "GEMINI_API_KEY"
 
 """
     Convenience mapping of OpenAI model names to their respective endpoints.
@@ -45,8 +46,8 @@ const _MODEL_ENDPOINTS_OPENAI::Dict{String,String} = Dict(
     Convenience mapping of OpenAI model names to their respective endpoints.
     
 """
-const _MODEL_ENDPOINTS_AZURE_OPENAI::Dict{String,String} = begin
-    d = Dict()
+const _MODEL_ENDPOINTS_AZURE_OPENAI::Dict{String,String} = let
+    local d = Dict()
 
     if haskey(ENV, "AZURE_OPENAI_DEPLOY_NAME_GPT_4O")
         d["gpt-4o"] = "/openai/deployments/" * ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_4O"]
@@ -62,3 +63,9 @@ end
 function add_azure_deploy_name!(model::String, deploy_name::String)
     _MODEL_ENDPOINTS_AZURE_OPENAI[model] = "/openai/deployments/" * deploy_name
 end
+
+const _MODEL_ENDPOINTS_AZURE_GEMINI::Dict{String,String} = Dict(
+    "gemini-2.0-flash" => "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    "gemini-2.5-flash-preview-05-20" => "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    "gemini-1.5-ultra" => "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+)

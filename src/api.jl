@@ -163,6 +163,7 @@ json_schema(name::String, description::String, schema::AbstractDict) = ResponseF
 abstract type ServiceEndpoint end
 struct OPENAIServiceEndpoint <: ServiceEndpoint end
 struct AZUREServiceEndpoint <: ServiceEndpoint end
+struct GEMINIServiceEndpoint <: ServiceEndpoint end
 
 
 """

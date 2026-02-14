@@ -19,23 +19,23 @@ println(JSON.json(r))</code></pre><pre class="documenter-example-output"><code c
 ig = ImageGeneration(prompt=&quot;A watercolor Julia logo&quot;, quality=&quot;high&quot;)
 println(&quot;Image model: &quot;, ig.model)
 println(JSON.json(ig))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Image model: gpt-image-1.5
-{&quot;quality&quot;:&quot;high&quot;,&quot;prompt&quot;:&quot;A watercolor Julia logo&quot;,&quot;model&quot;:&quot;gpt-image-1.5&quot;}</code></pre><p>With a valid API key, actual API calls return structured results:</p><pre><code class="language-julia hljs"># --- Responses API (recommended for new code) ---
-result = respond(&quot;What makes Julia special?&quot;)
-println(output_text(result))
-# =&gt; &quot;Julia is special for its combination of high performance
-#     (approaching C speed), dynamic typing, multiple dispatch...&quot;
+{&quot;quality&quot;:&quot;high&quot;,&quot;prompt&quot;:&quot;A watercolor Julia logo&quot;,&quot;model&quot;:&quot;gpt-image-1.5&quot;}</code></pre><p>With a valid API key, actual API calls return structured results:</p><p><strong>Responses API</strong> (recommended for new code):</p><pre><code class="language-julia hljs">julia&gt; result = respond(&quot;Explain Julia&#39;s multiple dispatch in 2-3 sentences.&quot;)
 
-# --- Chat Completions ---
-result = chatrequest!(chat)
-if result isa LLMSuccess
-    println(result.message.content)
-    # =&gt; &quot;Multiple dispatch selects the method implementation based
-    #     on the types of all arguments, enabling extensible code.&quot;
-end
+julia&gt; output_text(result)
+&quot;Julia&#39;s multiple dispatch means a function can have many method definitions, and Julia chooses which one to run based on the types of *all* arguments in a call (not just the first). This makes it easy to write generic code while still getting specialized, high-performance behavior for specific type combinations.&quot;</code></pre><p><strong>Chat Completions:</strong></p><pre><code class="language-julia hljs">julia&gt; chat = Chat(model=&quot;gpt-4o-mini&quot;)
+julia&gt; push!(chat, Message(Val(:system), &quot;You are a concise Julia programming tutor.&quot;))
+julia&gt; push!(chat, Message(Val(:user), &quot;What is multiple dispatch? Answer in 2-3 sentences.&quot;))
 
-# --- Image Generation ---
-result = generate_image(&quot;A watercolor painting of the Julia logo&quot;)
-if result isa ImageSuccess
-    save_image(image_data(result)[1], &quot;julia_logo.png&quot;)
-    println(&quot;Image saved! ($(length(image_data(result)[1])) bytes base64)&quot;)
-end</code></pre><h2 id="Next-Steps"><a class="docs-heading-anchor" href="#Next-Steps">Next Steps</a><a id="Next-Steps-1"></a><a class="docs-heading-anchor-permalink" href="#Next-Steps" title="Permalink"></a></h2><ul><li><a href="getting_started/#Getting-Started">Getting Started</a> — setup and first requests</li><li><a href="guide/chat_completions/#chat_guide">Chat Completions Guide</a> — deep dive into <code>Chat</code> and <code>chatrequest!</code></li><li><a href="guide/responses_api/#responses_guide">Responses API Guide</a> — the newer Responses API</li><li><a href="guide/image_generation/#images_guide">Image Generation Guide</a> — create images from text prompts</li><li><a href="@ref chat_api">API Reference</a> — full type and function reference</li></ul></article><nav class="docs-footer"><a class="docs-footer-nextpage" href="getting_started/">Getting Started »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Saturday 14 February 2026 18:41">Saturday 14 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+julia&gt; result = chatrequest!(chat)
+
+julia&gt; result.message.content
+&quot;Multiple dispatch is a feature in programming languages, including Julia, that allows the selection of a method to execute based on the types of all its arguments, rather than just the first one. This enables more flexible and expressive code, as it can define different behaviors for a function depending on the combination of argument types. It supports polymorphism, making it easier to write generic code that works with multiple types.&quot;</code></pre><p><strong>Image Generation:</strong></p><pre><code class="language-julia hljs">julia&gt; result = generate_image(
+           &quot;A watercolor painting of a friendly robot reading a Julia programming book&quot;,
+           size=&quot;1024x1024&quot;, quality=&quot;medium&quot;
+       )
+
+julia&gt; result isa ImageSuccess
+true
+
+julia&gt; save_image(image_data(result)[1], &quot;robot_julia.png&quot;)
+&quot;robot_julia.png&quot;</code></pre><p><img src="assets/generated_robot.png" alt="Generated robot reading Julia"/></p><h2 id="Next-Steps"><a class="docs-heading-anchor" href="#Next-Steps">Next Steps</a><a id="Next-Steps-1"></a><a class="docs-heading-anchor-permalink" href="#Next-Steps" title="Permalink"></a></h2><ul><li><a href="getting_started/#Getting-Started">Getting Started</a> — setup and first requests</li><li><a href="guide/chat_completions/#chat_guide">Chat Completions Guide</a> — deep dive into <code>Chat</code> and <code>chatrequest!</code></li><li><a href="guide/responses_api/#responses_guide">Responses API Guide</a> — the newer Responses API</li><li><a href="guide/image_generation/#images_guide">Image Generation Guide</a> — create images from text prompts</li><li><a href="api/chat/#chat_api">API Reference</a> — full type and function reference</li></ul></article><nav class="docs-footer"><a class="docs-footer-nextpage" href="getting_started/">Getting Started »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Saturday 14 February 2026 19:28">Saturday 14 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

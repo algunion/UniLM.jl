@@ -535,7 +535,7 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
     Threads.@spawn begin
         try
             result = Ref{Union{ResponseObject,Nothing}}(nothing)
-            url = OPENAI_BASE_URL * RESPONSES_PATH
+            url = _api_base_url(r.service) * RESPONSES_PATH
             resp = HTTP.open("POST", url, auth_header(r.service)) do io
                 text_buffer = IOBuffer()
                 fail_buffer = IOBuffer()
@@ -617,8 +617,8 @@ function respond(r::Respond; retries::Int=0, callback=nothing)
             return _respond_stream(r, body, callback)
         end
 
-        url = OPENAI_BASE_URL * RESPONSES_PATH
-        resp = HTTP.post(url, body=body, headers=auth_header(r.service))
+        url = _api_base_url(r.service) * RESPONSES_PATH
+        resp = HTTP.post(url, body=body, headers=auth_header(r.service); status_exception=false)
 
         if resp.status == 200
             return ResponseSuccess(response=parse_response(resp))
@@ -711,8 +711,8 @@ end
 """
 function get_response(response_id::String; service::Type{<:ServiceEndpoint}=OPENAIServiceEndpoint)
     try
-        url = OPENAI_BASE_URL * RESPONSES_PATH * "/" * response_id
-        resp = HTTP.get(url, headers=auth_header(service))
+        url = _api_base_url(service) * RESPONSES_PATH * "/" * response_id
+        resp = HTTP.get(url, headers=auth_header(service); status_exception=false)
         if resp.status == 200
             return ResponseSuccess(response=parse_response(resp))
         else
@@ -737,8 +737,8 @@ result["deleted"]  # => true
 """
 function delete_response(response_id::String; service::Type{<:ServiceEndpoint}=OPENAIServiceEndpoint)
     try
-        url = OPENAI_BASE_URL * RESPONSES_PATH * "/" * response_id
-        resp = HTTP.request("DELETE", url, headers=auth_header(service))
+        url = _api_base_url(service) * RESPONSES_PATH * "/" * response_id
+        resp = HTTP.request("DELETE", url, headers=auth_header(service); status_exception=false)
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else
@@ -770,12 +770,12 @@ function list_input_items(response_id::String;
     service::Type{<:ServiceEndpoint}=OPENAIServiceEndpoint)
 
     try
-        url = OPENAI_BASE_URL * RESPONSES_PATH * "/" * response_id * "/input_items"
+        url = _api_base_url(service) * RESPONSES_PATH * "/" * response_id * "/input_items"
         params = ["limit=$limit", "order=$order"]
         !isnothing(after) && push!(params, "after=$after")
         url *= "?" * join(params, "&")
 
-        resp = HTTP.get(url, headers=auth_header(service))
+        resp = HTTP.get(url, headers=auth_header(service); status_exception=false)
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else

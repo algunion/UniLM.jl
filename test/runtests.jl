@@ -50,6 +50,10 @@ end
         include("images.jl")
     end
 
+    @testset "mock server" begin
+        include("mock_server.jl")
+    end
+
     @testset "integration" begin
         include("integration.jl")
     end

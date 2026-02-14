@@ -234,8 +234,8 @@ function generate_image(ig::ImageGeneration; retries::Int=0)
     res = ImageCallError(error="uninitialized", status=0)
     try
         body = JSON.json(ig)
-        url = OPENAI_BASE_URL * IMAGES_GENERATIONS_PATH
-        resp = HTTP.post(url, body=body, headers=auth_header(ig.service))
+        url = _api_base_url(ig.service) * IMAGES_GENERATIONS_PATH
+        resp = HTTP.post(url, body=body, headers=auth_header(ig.service); status_exception=false)
 
         if resp.status == 200
             return ImageSuccess(response=parse_image_response(resp))

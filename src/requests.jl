@@ -8,6 +8,8 @@ get_url(::Type{OPENAIServiceEndpoint}, ::Chat) = OPENAI_BASE_URL * CHAT_COMPLETI
 get_url(::Type{AZUREServiceEndpoint}, chat::Chat) = ENV[AZURE_OPENAI_BASE_URL] * _MODEL_ENDPOINTS_AZURE_OPENAI[chat.model] * "/chat/completions?api-version=$(ENV[AZURE_OPENAI_API_VERSION])"
 get_url(::Type{GEMINIServiceEndpoint}, ::Chat) = GEMINI_CHAT_URL
 
+_api_base_url(::Type{OPENAIServiceEndpoint}) = OPENAI_BASE_URL
+
 
 function auth_header(::Type{OPENAIServiceEndpoint})
     [
@@ -141,7 +143,7 @@ function chatrequest!(chat::Chat; retries::Int=0, callback=nothing)
     try
         body = JSON.json(chat)
         if chat.stream !== true
-            resp = HTTP.post(get_url(chat), body=body, headers=auth_header(chat.service))
+            resp = HTTP.post(get_url(chat), body=body, headers=auth_header(chat.service); status_exception=false)
             if resp.status == 200
                 m = extract_message(resp)
                 update!(chat, m)
@@ -239,7 +241,7 @@ end
 function embeddingrequest!(emb::Embeddings; retries::Int=0)
     body = JSON.json(emb)
     try
-        resp = HTTP.post(get_url(emb), body=body, headers=auth_header(OPENAIServiceEndpoint))
+        resp = HTTP.post(get_url(emb), body=body, headers=auth_header(OPENAIServiceEndpoint); status_exception=false)
         if resp.status == 200
             embedding = JSON.parse(resp.body; dicttype=Dict{String,Any})
             update!(emb, embedding["data"][1]["embedding"])

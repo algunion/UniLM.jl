@@ -25,7 +25,11 @@ println(JSON.json(chat))
 
 ```@example structured
 result = chatrequest!(chat)
-println(JSON.json(JSON.parse(result.message.content), 2))
+if result isa LLMSuccess
+    println(JSON.json(JSON.parse(result.message.content), 2))
+else
+    println("Request failed — see result for details")
+end
 ```
 
 ### JSON Schema (Strict)
@@ -62,7 +66,11 @@ println("Response format type: ", schema.type)
 
 ```@example structured
 result = chatrequest!(chat)
-println(JSON.json(JSON.parse(result.message.content), 2))
+if result isa LLMSuccess
+    println(JSON.json(JSON.parse(result.message.content), 2))
+else
+    println("Request failed — see result for details")
+end
 ```
 
 ## Responses API
@@ -73,7 +81,11 @@ The Responses API uses [`TextConfig`](@ref) with convenience constructors:
 
 ```@example structured
 result = respond("List 3 colors as a JSON object", text=json_object_format())
-println(output_text(result))
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println("Request failed — ", output_text(result))
+end
 ```
 
 ### JSON Schema
@@ -109,7 +121,11 @@ println("Schema strict: ", fmt.format.strict)
 
 ```@example structured
 result = respond("List red, green, and blue with their hex codes", text=fmt)
-println(JSON.json(JSON.parse(output_text(result)), 2))
+if result isa ResponseSuccess
+    println(JSON.json(JSON.parse(output_text(result)), 2))
+else
+    println("Request failed — ", output_text(result))
+end
 ```
 
 ### Plain Text Format

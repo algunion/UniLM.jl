@@ -55,7 +55,11 @@ task = respond("Write a haiku about Julia programming.") do chunk, close
     end
 end
 result = fetch(task)
-println(output_text(result))
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println("Request failed — ", output_text(result))
+end
 ```
 
 The `do`-block form automatically sets `stream=true`.

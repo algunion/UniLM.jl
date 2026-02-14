@@ -83,7 +83,11 @@ With a valid API key, actual API calls return structured results:
 **Responses API** (recommended for new code):
 ```@example quickstart
 result = respond("Explain Julia's multiple dispatch in 2-3 sentences.")
-println(output_text(result))
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println("Request failed — ", output_text(result))
+end
 ```
 
 **Chat Completions:**
@@ -92,7 +96,11 @@ chat = Chat(model="gpt-4o-mini")
 push!(chat, Message(Val(:system), "You are a concise Julia programming tutor."))
 push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
 result = chatrequest!(chat)
-println(result.message.content)
+if result isa LLMSuccess
+    println(result.message.content)
+else
+    println("Request failed — see result for details")
+end
 ```
 
 **Image Generation:**
@@ -102,8 +110,12 @@ result = generate_image(
     size="1024x1024", quality="medium"
 )
 println("Success: ", result isa ImageSuccess)
-save_image(image_data(result)[1], joinpath(@__DIR__, "assets", "generated_robot.png"))
-println("Saved to assets/generated_robot.png")
+if result isa ImageSuccess
+    save_image(image_data(result)[1], joinpath(@__DIR__, "assets", "generated_robot.png"))
+    println("Saved to assets/generated_robot.png")
+else
+    println("Image generation failed — see result for details")
+end
 ```
 
 ![Generated robot reading Julia](assets/generated_robot.png)

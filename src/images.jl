@@ -167,6 +167,8 @@ function image_data(r::ImageResponse)::Vector{String}
 end
 
 image_data(r::ImageSuccess) = image_data(r.response)
+image_data(::ImageFailure) = String[]
+image_data(::ImageCallError) = String[]
 
 """
     save_image(img_b64::String, filepath::String)

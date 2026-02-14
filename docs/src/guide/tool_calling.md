@@ -57,10 +57,14 @@ chat = Chat(
 push!(chat, Message(Val(:system), "Use the provided tools to answer."))
 push!(chat, Message(Val(:user), "What's the weather in Paris?"))
 result = chatrequest!(chat)
-println("Finish reason: ", result.message.finish_reason)
-tc = result.message.tool_calls[1]
-println("Function: ", tc.func.name)
-println("Arguments: ", JSON.json(tc.func.arguments, 2))
+if result isa LLMSuccess
+    println("Finish reason: ", result.message.finish_reason)
+    tc = result.message.tool_calls[1]
+    println("Function: ", tc.func.name)
+    println("Arguments: ", JSON.json(tc.func.arguments, 2))
+else
+    println("Request failed — see result for details")
+end
 ```
 
 ### Controlling Tool Choice
@@ -114,8 +118,12 @@ weather_fn = function_tool(
 )
 result = respond("What's the weather in Tokyo? Use celsius.", tools=[weather_fn])
 calls = function_calls(result)
-println("Function: ", calls[1]["name"])
-println("Arguments: ", JSON.json(JSON.parse(calls[1]["arguments"]), 2))
+if !isempty(calls)
+    println("Function: ", calls[1]["name"])
+    println("Arguments: ", JSON.json(JSON.parse(calls[1]["arguments"]), 2))
+else
+    println("No function calls — ", output_text(result))
+end
 ```
 
 ### Web Search
@@ -133,7 +141,11 @@ result = respond(
     "What is the latest stable release of the Julia programming language?",
     tools=[web_search()]
 )
-println(output_text(result))
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println("Request failed — ", output_text(result))
+end
 ```
 
 ### File Search

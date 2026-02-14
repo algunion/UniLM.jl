@@ -15,13 +15,21 @@ The simplest call — just a string:
 
 ```@example responses
 result = respond("Explain Julia's multiple dispatch in 2-3 sentences.")
-println(output_text(result))
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println("Request failed — ", output_text(result))
+end
 ```
 
 ```@example responses
-println("ID:     ", result.response.id)
-println("Status: ", result.response.status)
-println("Model:  ", result.response.model)
+if result isa ResponseSuccess
+    println("ID:     ", result.response.id)
+    println("Status: ", result.response.status)
+    println("Model:  ", result.response.model)
+else
+    println("No response metadata available")
+end
 ```
 
 ## The `Respond` Type
@@ -51,7 +59,11 @@ result = respond(
     "Translate to French: The quick brown fox jumps over the lazy dog.",
     instructions="You are a professional translator. Respond only with the translation."
 )
-println(output_text(result))
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println("Request failed — ", output_text(result))
+end
 ```
 
 ## Structured Input
@@ -86,12 +98,24 @@ Chain requests using `previous_response_id` — no need to re-send the full hist
 
 ```@example responses
 r1 = respond("Tell me a one-liner programming joke.", instructions="Be concise.")
-println(output_text(r1))
+if r1 isa ResponseSuccess
+    println(output_text(r1))
+else
+    println("Request failed — ", output_text(r1))
+end
 ```
 
 ```@example responses
-r2 = respond("Explain why that's funny, in one sentence.", previous_response_id=r1.response.id)
-println(output_text(r2))
+if r1 isa ResponseSuccess
+    r2 = respond("Explain why that's funny, in one sentence.", previous_response_id=r1.response.id)
+    if r2 isa ResponseSuccess
+        println(output_text(r2))
+    else
+        println("Request failed — ", output_text(r2))
+    end
+else
+    println("Skipped — first request failed")
+end
 ```
 
 ## Built-in Tools
@@ -103,7 +127,11 @@ result = respond(
     "What is the latest stable release of the Julia programming language?",
     tools=[web_search()]
 )
-println(output_text(result))
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println("Request failed — ", output_text(result))
+end
 ```
 
 ### File Search
@@ -136,8 +164,12 @@ println("Tool JSON: ", JSON.json(JSON.lower(weather_tool)))
 ```@example responses
 result = respond("What's the weather in Tokyo? Use celsius.", tools=[weather_tool])
 calls = function_calls(result)
-println("Function: ", calls[1]["name"])
-println("Arguments: ", JSON.json(JSON.parse(calls[1]["arguments"]), 2))
+if !isempty(calls)
+    println("Function: ", calls[1]["name"])
+    println("Arguments: ", JSON.json(JSON.parse(calls[1]["arguments"]), 2))
+else
+    println("No function calls — ", output_text(result))
+end
 ```
 
 ## Reasoning (O-Series Models)
@@ -183,7 +215,11 @@ println("Schema name: ", fmt.format.name)
 
 ```@example responses
 result = respond("List 5 popular colors", text=fmt)
-println(JSON.json(JSON.parse(output_text(result)), 2))
+if result isa ResponseSuccess
+    println(JSON.json(JSON.parse(output_text(result)), 2))
+else
+    println("Request failed — ", output_text(result))
+end
 ```
 
 ## Response Accessors

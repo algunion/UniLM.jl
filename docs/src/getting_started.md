@@ -57,7 +57,11 @@ The simplest way to get started — one function call:
 
 ```@example gs
 result = respond("Explain Julia's type system in 3 bullet points")
-println(output_text(result))
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println("Request failed — ", output_text(result))
+end
 ```
 
 ### Using Chat Completions
@@ -69,9 +73,13 @@ chat = Chat(model="gpt-4o-mini")
 push!(chat, Message(Val(:system), "You are a concise Julia programming tutor."))
 push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
 result = chatrequest!(chat)
-println(result.message.content)
-println("\nFinish reason: ", result.message.finish_reason)
-println("Conversation length: ", length(chat))
+if result isa LLMSuccess
+    println(result.message.content)
+    println("\nFinish reason: ", result.message.finish_reason)
+    println("Conversation length: ", length(chat))
+else
+    println("Request failed — see result for details")
+end
 ```
 
 ### Generating Images
@@ -81,8 +89,13 @@ result = generate_image(
     "A watercolor painting of a friendly robot reading a Julia programming book",
     size="1024x1024", quality="medium"
 )
-println("Success: ", result isa ImageSuccess)
-println("Images: ", length(image_data(result)))
+if result isa ImageSuccess
+    println("Success: true")
+    println("Images: ", length(image_data(result)))
+else
+    println("Success: false")
+    println("Images: 0")
+end
 ```
 
 ### Using Keyword Arguments
@@ -96,7 +109,11 @@ result = chatrequest!(
     model="gpt-4o-mini",
     temperature=0.0
 )
-println(result.message.content)
+if result isa LLMSuccess
+    println(result.message.content)
+else
+    println("Request failed — see result for details")
+end
 ```
 
 ## Handling Results

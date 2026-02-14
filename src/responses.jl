@@ -449,6 +449,8 @@ function output_text(r::ResponseObject)::String
 end
 
 output_text(r::ResponseSuccess) = output_text(r.response)
+output_text(r::ResponseFailure) = "Error (HTTP $(r.status)): $(r.response)"
+output_text(r::ResponseCallError) = "Error: $(r.error)"
 
 """
     function_calls(r::ResponseObject)::Vector{Dict{String,Any}}
@@ -479,6 +481,8 @@ function function_calls(r::ResponseObject)
 end
 
 function_calls(r::ResponseSuccess) = function_calls(r.response)
+function_calls(::ResponseFailure) = Dict{String,Any}[]
+function_calls(::ResponseCallError) = Dict{String,Any}[]
 
 
 # ─── Parsing ─────────────────────────────────────────────────────────────────

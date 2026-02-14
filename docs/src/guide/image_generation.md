@@ -17,10 +17,16 @@ result = generate_image(
     quality="medium"
 )
 println("Success: ", result isa ImageSuccess)
-println("Images: ", length(image_data(result)))
-println("Base64 length: ", length(image_data(result)[1]))
-save_image(image_data(result)[1], joinpath(@__DIR__, "..", "assets", "generated_robot.png"))
-println("Image saved to assets/generated_robot.png")
+if result isa ImageSuccess
+    imgs = image_data(result)
+    println("Images: ", length(imgs))
+    println("Base64 length: ", length(imgs[1]))
+    save_image(imgs[1], joinpath(@__DIR__, "..", "assets", "generated_robot.png"))
+    println("Image saved to assets/generated_robot.png")
+else
+    println("Images: 0")
+    println("Image generation failed — see result for details")
+end
 ```
 
 ![Generated image: A watercolor painting of a friendly robot reading a Julia programming book](../assets/generated_robot.png)

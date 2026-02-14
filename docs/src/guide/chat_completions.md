@@ -74,9 +74,13 @@ The `!` suffix is a Julia convention — `chatrequest!` mutates `chat` by append
 
 ```@example chat
 result = chatrequest!(chat)
-println(result.message.content)
-println("\nFinish reason: ", result.message.finish_reason)
-println("Conversation length: ", length(chat))
+if result isa LLMSuccess
+    println(result.message.content)
+    println("\nFinish reason: ", result.message.finish_reason)
+    println("Conversation length: ", length(chat))
+else
+    println("Request failed — see result for details")
+end
 ```
 
 ### One-Shot Requests via Keywords
@@ -90,7 +94,11 @@ result = chatrequest!(
     model="gpt-4o-mini",
     temperature=0.0
 )
-println(result.message.content)
+if result isa LLMSuccess
+    println(result.message.content)
+else
+    println("Request failed — see result for details")
+end
 ```
 
 ## Multi-Turn Conversations
@@ -102,14 +110,22 @@ chat = Chat(model="gpt-4o-mini")
 push!(chat, Message(Val(:system), "You are a concise Julia programming tutor."))
 push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
 result = chatrequest!(chat)
-println(result.message.content)
+if result isa LLMSuccess
+    println(result.message.content)
+else
+    println("Request failed — see result for details")
+end
 ```
 
 ```@example chat
 push!(chat, Message(Val(:user), "Give a short Julia code example of it."))
 result = chatrequest!(chat)
-println(result.message.content)
-println("\nConversation length: ", length(chat))
+if result isa LLMSuccess
+    println(result.message.content)
+    println("\nConversation length: ", length(chat))
+else
+    println("Request failed — see result for details")
+end
 ```
 
 ## Checking Conversation Validity

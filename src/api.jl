@@ -4,8 +4,7 @@
     parameters::Union{AbstractDict,Nothing} = nothing
 end
 
-StructTypes.StructType(::Type{GPTFunctionSignature}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{GPTFunctionSignature}) = (:description, :parameters)
+JSON.omit_null(::Type{GPTFunctionSignature}) = true
 
 """
 `text` is the prompt.\n
@@ -16,23 +15,21 @@ struct GPTImageContent
     images::Vector{String}
 end
 
-StructTypes.StructType(::Type{GPTImageContent}) = StructTypes.CustomStruct()
-function StructTypes.lower(x::GPTImageContent)
-    d = [Dict(:type => "text", :text => x.text)]
+function JSON.lower(x::GPTImageContent)
+    d = Dict{Symbol,Any}[Dict{Symbol,Any}(:type => "text", :text => x.text)]
     for i in x.images
-        push!(d, Dict(:type => "image_url", :image_url => Dict(:url => i, :detail => "auto")))
+        push!(d, Dict{Symbol,Any}(:type => "image_url", :image_url => Dict(:url => i, :detail => "auto")))
     end
     return d
 end
 
 struct GPTFunction
     name::String
-    arguments::AbstractDict{String,String}
+    arguments::AbstractDict
 end
 
-StructTypes.StructType(::Type{GPTFunction}) = StructTypes.CustomStruct()
-function StructTypes.lower(x::GPTFunction)
-    Dict(:name => x.name, :arguments => JSON3.write(x.arguments))
+function JSON.lower(x::GPTFunction)
+    Dict(:name => x.name, :arguments => JSON.json(x.arguments))
 end
 
 @kwdef struct GPTToolCall
@@ -41,16 +38,14 @@ end
     func::GPTFunction
 end
 
-StructTypes.StructType(::Type{GPTToolCall}) = StructTypes.Struct()
-StructTypes.names(::Type{GPTToolCall}) = ((:func, :function),)
+JSON.lower(x::GPTToolCall) = Dict(:id => x.id, :type => x.type, :function => x.func)
 
 @kwdef struct GPTTool
     type::String = "function"
     func::GPTFunctionSignature
 end
 
-StructTypes.StructType(::Type{GPTTool}) = StructTypes.Struct()
-StructTypes.names(::Type{GPTTool}) = ((:func, :function),)
+JSON.lower(x::GPTTool) = Dict(:type => x.type, :function => x.func)
 
 
 @kwdef struct GPTToolChoice
@@ -58,8 +53,7 @@ StructTypes.names(::Type{GPTTool}) = ((:func, :function),)
     func::Union{String,Symbol}
 end
 
-StructTypes.StructType(::Type{GPTToolChoice}) = StructTypes.CustomStruct()
-StructTypes.lower(x::GPTToolChoice) = Dict(:type => x.type, :function => Dict(:name => x.func))
+JSON.lower(x::GPTToolChoice) = Dict(:type => x.type, :function => Dict(:name => x.func))
 
 
 struct GPTFunctionCallResult{T}
@@ -68,8 +62,8 @@ struct GPTFunctionCallResult{T}
     result::T
 end
 
-StructTypes.StructType(::Type{GPTFunctionCallResult}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{GPTFunctionCallResult}) = (:name,)
+JSON.omit_null(::Type{<:GPTFunctionCallResult}) = true
+JSON.omit_empty(::Type{<:GPTFunctionCallResult}) = true
 
 const RoleSystem = "system"
 const RoleUser = "user"
@@ -103,7 +97,7 @@ const TOOL_CALLS = "tool_calls"
     tool_calls::Union{Nothing,Vector{GPTToolCall}} = nothing
     tool_call_id::Union{String,Nothing} = nothing
     function Message(role, content, name, finish_reason, refusal_message, tool_calls, tool_call_id)
-        isnothing(content) && isnothing(tool_calls) && throw(ArgumentError("`content` and `tool_calls` cannot both be nothing"))
+        isnothing(content) && isnothing(tool_calls) && isnothing(refusal_message) && throw(ArgumentError("`content`, `tool_calls`, and `refusal_message` cannot all be nothing"))
         role == RoleTool && isnothing(tool_call_id) && throw(ArgumentError("`tool_call_id` cannot be empty when role is `tool`"))
         return new(role, content, name, finish_reason, refusal_message, tool_calls, tool_call_id)
     end
@@ -114,8 +108,7 @@ Message(::Val{:user}, content) = Message(role=RoleUser, content=content)
 
 const Conversation = Vector{Message}
 
-StructTypes.StructType(::Type{Message}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{Message}) = (:name, :tool_calls, :tool_call_id) # content cannot be nothing when user generated
+JSON.omit_null(::Type{Message}) = true
 
 """
 getcontent(m::Message)::Union{String,Nothing}
@@ -144,7 +137,7 @@ iscall(m::Message) = m.role == RoleTool
     schema::AbstractDict
 end
 
-StructTypes.StructType(::Type{JsonSchemaAPI}) = StructTypes.Struct()
+# JsonSchemaAPI serializes as a regular struct (JSON.jl handles this automatically)
 
 @kwdef struct ResponseFormat
     type::String = "json_object"
@@ -153,8 +146,7 @@ end
 
 ResponseFormat(json_schema) = ResponseFormat("json_schema", json_schema)
 
-StructTypes.StructType(::Type{ResponseFormat}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{ResponseFormat}) = (:json_schema,)
+JSON.omit_null(::Type{ResponseFormat}) = true
 
 json_object() = ResponseFormat()
 json_schema(schema) = ResponseFormat(schema)
@@ -175,7 +167,7 @@ Creates a new `Chat` object with default settings:
 - `history` is set to `true`
 """
 @kwdef struct Chat
-    service::Type{<:ServiceEndpoint} = AZUREServiceEndpoint #AZUREServiceEndpoint #OPENAIServiceEndpoint
+    service::Type{<:ServiceEndpoint} = OPENAIServiceEndpoint #AZUREServiceEndpoint #OPENAIServiceEndpoint
     model::String = "gpt-4o"
     messages::Conversation = Message[]
     history::Bool = true
@@ -240,9 +232,16 @@ Creates a new `Chat` object with default settings:
     end
 end
 
-StructTypes.StructType(::Type{Chat}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{Chat}) = true
-StructTypes.excludes(::Type{Chat}) = (:history, :service)
+function JSON.lower(chat::Chat)
+    d = Dict{Symbol,Any}(:model => chat.model, :messages => chat.messages)
+    for f in (:tools, :tool_choice, :parallel_tool_calls, :temperature, :top_p,
+        :n, :stream, :stop, :max_tokens, :presence_penalty, :response_format,
+        :frequency_penalty, :logit_bias, :user, :seed)
+        v = getfield(chat, f)
+        !isnothing(v) && (d[f] = v)
+    end
+    return d
+end
 
 Base.length(chat::Chat) = length(chat.messages)
 Base.isempty(chat::Chat) = isempty(chat.messages)
@@ -253,7 +252,7 @@ abstract type LLMRequestResponse end
     self::Chat
 end
 
-StructTypes.StructType(::Type{LLMSuccess}) = StructTypes.Struct()
+
 
 @kwdef struct LLMFailure <: LLMRequestResponse
     response::String
@@ -261,7 +260,7 @@ StructTypes.StructType(::Type{LLMSuccess}) = StructTypes.Struct()
     self::Chat
 end
 
-StructTypes.StructType(::Type{LLMFailure}) = StructTypes.Struct()
+
 
 @kwdef struct LLMCallError <: LLMRequestResponse
     error::String
@@ -269,7 +268,7 @@ StructTypes.StructType(::Type{LLMFailure}) = StructTypes.Struct()
     self::Chat
 end
 
-StructTypes.StructType(::Type{LLMCallError}) = StructTypes.Struct()
+
 
 """
     is_send_valid(chat::Chat)::Bool
@@ -284,7 +283,7 @@ function issendvalid(chat::Chat)::Bool
     length(chat) > 1 &&
         chat.messages[begin].role == RoleSystem &&
         chat.messages[end].role == RoleUser &&
-        all([v.role != chat.messages[i+1].role for (i, v) in collect(enumerate(chat.messages))[1:end-1]])
+        all(chat.messages[i].role != chat.messages[i+1].role for i in 1:length(chat)-1)
 end
 
 """
@@ -370,17 +369,19 @@ struct Embeddings
     input::Union{String,Vector{String}}
     embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}
     user::Union{String,Nothing}
-    function Embeddings(input)
-        if isa(input, String)
-            return new(GPTTextEmbeddingAda002 |> string, input, zeros(Float64, 1536), nothing)
-        elseif isa(input, Vector{String})
-            return new(GPTTextEmbeddingAda002 |> string, input, zeros(Float64, 1536, length(input)), nothing)
-        end
+    function Embeddings(input::String)
+        return new(string(GPTTextEmbeddingAda002), input, zeros(Float64, 1536), nothing)
+    end
+    function Embeddings(input::Vector{String})
+        isempty(input) && throw(ArgumentError("input must not be empty"))
+        return new(string(GPTTextEmbeddingAda002), input, [zeros(Float64, 1536) for _ in 1:length(input)], nothing)
     end
 end
 
-StructTypes.StructType(::Type{Embeddings}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{Embeddings}) = (:user,)
-StructTypes.excludes(::Type{Embeddings}) = (:embeddings,)
+function JSON.lower(emb::Embeddings)
+    d = Dict{Symbol,Any}(:model => emb.model, :input => emb.input)
+    !isnothing(emb.user) && (d[:user] = emb.user)
+    return d
+end
 
 update!(emb::Embeddings, embeddings) = copy!(emb.embeddings, embeddings)

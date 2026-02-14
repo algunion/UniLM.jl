@@ -1,227 +1,558 @@
-@testset "api.jl" begin
-    @testset "Chat utility functions" begin
-        @testset "Chat creation" begin
-            chat = Chat()
-            @test chat.model == "gpt-4o"
-            @test isempty(chat.messages)
-            @test chat.history == true
-        end
+@testset "Constants" begin
+    @test UniLM.RoleSystem == "system"
+    @test UniLM.RoleUser == "user"
+    @test UniLM.RoleAssistant == "assistant"
+    @test UniLM.RoleTool == "tool"
+    @test UniLM.STOP == "stop"
+    @test UniLM.CONTENT_FILTER == "content_filter"
+    @test UniLM.TOOL_CALLS == "tool_calls"
+    @test UniLM.OPENAI_BASE_URL == "https://api.openai.com"
 
-        @testset "Chat message operations" begin
-            chat = Chat()
-            system_msg = UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent.")
-            user_msg = UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke.")
+    @testset "Model endpoint dictionaries" begin
+        @test haskey(UniLM._MODEL_ENDPOINTS_OPENAI, "gpt-4o")
+        @test UniLM._MODEL_ENDPOINTS_OPENAI["gpt-4o"] == "/v1/chat/completions"
+        @test haskey(UniLM._MODEL_ENDPOINTS_OPENAI, "text-embedding-ada-002")
+        @test UniLM._MODEL_ENDPOINTS_OPENAI["text-embedding-ada-002"] == "/v1/embeddings"
+        # Verify duplicate key fix
+        @test haskey(UniLM._MODEL_ENDPOINTS_OPENAI, "whisper-1")
+        @test haskey(UniLM._MODEL_ENDPOINTS_OPENAI, "whisper-1-translate")
+        @test UniLM._MODEL_ENDPOINTS_OPENAI["whisper-1"] == "/v1/audio/transcriptions"
+        @test UniLM._MODEL_ENDPOINTS_OPENAI["whisper-1-translate"] == "/v1/audio/translations"
+    end
+end
 
-            # Test push! function
-            push!(chat, system_msg)
-            @test length(chat) == 1
-            @test chat.messages[1] == system_msg
+@testset "Model type" begin
+    m = UniLM.Model("gpt-4o")
+    @test string(m) == "gpt-4o"
+    @test Base.parse(UniLM.Model, "gpt-4o") == UniLM.Model("gpt-4o")
 
-            push!(chat, user_msg)
-            @test length(chat) == 2
-            @test chat.messages[2] == user_msg
+    @test UniLM.GPT4o == UniLM.Model("gpt-4o")
+    @test UniLM.GPT4oMini == UniLM.Model("gpt-4o-mini")
+    @test UniLM.GPT4Turbo == UniLM.Model("gpt-4-1106-preview")
+    @test UniLM.GPT4TurboVision == UniLM.Model("gpt-4-vision-preview")
+    @test UniLM.GPTTextEmbeddingAda002 == UniLM.Model("text-embedding-ada-002")
+end
 
-            # Test invalid push! (consecutive user messages)
-            push!(chat, user_msg)
-            @test length(chat) == 2
+@testset "InvalidConversationError" begin
+    e = InvalidConversationError("test reason")
+    @test e isa Exception
+    @test e.reason == "test reason"
+end
 
-            # Test pop! function
-            pop!(chat)
-            @test length(chat) == 1
-            @test chat.messages[1] == system_msg
-
-            # Test last function
-            @test last(chat) == system_msg
-
-            push!(chat, user_msg)
-
-            # Test update! function
-            assist_msg = UniLM.Message(role=UniLM.RoleAssistant, content="This should be funny.")
-            update!(chat, assist_msg)
-            @test length(chat) == 3
-            @test last(chat) == assist_msg
-
-            @test chat[1] == chat.messages[1]
-            @test chat[2] == chat.messages[2]
-        end
-
-        @testset "Chat validation" begin
-            chat = Chat()
-            system_msg = UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent.")
-            user_msg = UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke.")
-
-            push!(chat, system_msg)
-            push!(chat, user_msg)
-
-            @test UniLM.issendvalid(chat) == true
-
-            # Test invalid chat (a system message at the end)
-            chat[end] = system_msg
-            @test UniLM.issendvalid(chat) == false
-        end
+@testset "GPTFunctionSignature" begin
+    @testset "minimal creation" begin
+        sig = GPTFunctionSignature(name="test_fn")
+        @test sig.name == "test_fn"
+        @test isnothing(sig.description)
+        @test isnothing(sig.parameters)
     end
 
-    @testset "chat/conversation operation/manipulation" begin
-        chat = UniLM.Chat()
-        push!(chat, UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent."))
-        push!(chat, UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke."))
-
-        @test UniLM.issendvalid(chat)
-
-        inilength = length(chat)
-        push!(chat, UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke.")) # duplicate user message (avoided)
-
-        @test length(chat) == inilength
-        @test_throws ArgumentError UniLM.Chat(temperature=0.2, top_p=0.5)
+    @testset "full creation" begin
+        params = Dict("type" => "object", "properties" => Dict("x" => Dict("type" => "string")))
+        sig = GPTFunctionSignature(name="test_fn", description="A test", parameters=params)
+        @test sig.name == "test_fn"
+        @test sig.description == "A test"
+        @test sig.parameters == params
     end
 
-    @testset "regular conversation" begin
-        chat = UniLM.Chat()
-        push!(chat, UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent."))
-        push!(chat, UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke."))
-
-        cr = UniLM.chatrequest!(chat)
-
-        if cr isa UniLM.LLMSuccess
-            m = getfield(cr, :message)
-            @test m.role == UniLM.RoleAssistant
-        else
-            @test cr <: UniLM.LLMRequestResponse
-        end
-
+    @testset "JSON.jl config" begin
+        @test JSON.omit_null(GPTFunctionSignature) == true
     end
 
-    @testset "regular conversation / kwargs" begin
-        messages = []
-        push!(messages, UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent."))
-        push!(messages, UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke."))
+    @testset "serialization omit_null" begin
+        sig = GPTFunctionSignature(name="fn")
+        json = JSON.json(sig)
+        parsed = JSON.parse(json)
+        @test parsed["name"] == "fn"
+        @test !haskey(parsed, "description")
+        @test !haskey(parsed, "parameters")
+    end
+end
 
-        cr = UniLM.chatrequest!(messages=messages)
+@testset "GPTImageContent" begin
+    ic = UniLM.GPTImageContent("hello", ["http://img1.png", "http://img2.png"])
+    @test ic.text == "hello"
+    @test length(ic.images) == 2
 
-        @info "ChatRequest: $(cr)"
+    lowered = JSON.lower(ic)
+    @test length(lowered) == 3
+    @test lowered[1][:type] == "text"
+    @test lowered[1][:text] == "hello"
+    @test lowered[2][:type] == "image_url"
+    @test lowered[2][:image_url][:url] == "http://img1.png"
+    @test lowered[2][:image_url][:detail] == "auto"
+    @test lowered[3][:image_url][:url] == "http://img2.png"
+end
 
-        if cr isa UniLM.LLMSuccess
-            m = getfield(cr, :message)
-            @test m.role == UniLM.RoleAssistant
-        else
-            @test cr <: UniLM.LLMRequestResponse
-        end
+@testset "GPTFunction" begin
+    args = Dict("location" => "NYC", "count" => 3)
+    f = UniLM.GPTFunction("get_weather", args)
+    @test f.name == "get_weather"
+    @test f.arguments["location"] == "NYC"
+    @test f.arguments["count"] == 3  # non-string values allowed
 
+    lowered = JSON.lower(f)
+    @test lowered[:name] == "get_weather"
+    @test lowered[:arguments] isa String  # arguments serialized to JSON string
+    parsed_args = JSON.parse(lowered[:arguments])
+    @test parsed_args["location"] == "NYC"
+end
+
+@testset "GPTToolCall" begin
+    func = UniLM.GPTFunction("test_fn", Dict("a" => "b"))
+    tc = GPTToolCall(id="call_123", func=func)
+    @test tc.id == "call_123"
+    @test tc.type == "function"
+    @test tc.func.name == "test_fn"
+
+    lowered = JSON.lower(tc)
+    @test haskey(lowered, :function)
+    @test !haskey(lowered, :func)
+    @test lowered[:id] == "call_123"
+    @test lowered[:type] == "function"
+end
+
+@testset "GPTTool" begin
+    sig = GPTFunctionSignature(name="my_tool")
+    tool = GPTTool(func=sig)
+    @test tool.type == "function"
+    @test tool.func.name == "my_tool"
+
+    lowered = JSON.lower(tool)
+    @test haskey(lowered, :function)
+    @test !haskey(lowered, :func)
+    @test lowered[:type] == "function"
+end
+
+@testset "GPTToolChoice" begin
+    tc = UniLM.GPTToolChoice(func=:my_function)
+    @test tc.type == "function"
+    @test tc.func == :my_function
+
+    lowered = JSON.lower(tc)
+    @test lowered[:type] == "function"
+    @test lowered[:function][:name] == :my_function
+end
+
+@testset "GPTFunctionCallResult" begin
+    func = UniLM.GPTFunction("test_fn", Dict("x" => "1"))
+    fcr = GPTFunctionCallResult("test_fn", func, "result_value")
+    @test fcr.name == "test_fn"
+    @test fcr.origincall === func
+    @test fcr.result == "result_value"
+
+    @test JSON.omit_null(GPTFunctionCallResult{String}) == true
+    @test JSON.omit_empty(GPTFunctionCallResult{String}) == true
+end
+
+@testset "Message" begin
+    @testset "basic creation" begin
+        m = Message(role=UniLM.RoleUser, content="Hello")
+        @test m.role == "user"
+        @test m.content == "Hello"
+        @test isnothing(m.name)
+        @test isnothing(m.finish_reason)
+        @test isnothing(m.refusal_message)
+        @test isnothing(m.tool_calls)
+        @test isnothing(m.tool_call_id)
     end
 
-    @testset "regular conversation / kwargs / individual prompts" begin
+    @testset "Val constructors" begin
+        sys = Message(Val(:system), "You are helpful.")
+        @test sys.role == UniLM.RoleSystem
+        @test sys.content == "You are helpful."
 
-        cr = UniLM.chatrequest!(systemprompt="Act as a helpful AI agent.", userprompt="Please tell me a one-liner joke.")
-
-        @info "ChatRequest: $(cr)"
-
-        if cr isa UniLM.LLMSuccess
-            m = getfield(cr, :message)
-            @test m.role == UniLM.RoleAssistant
-        else
-            @test cr <: UniLM.LLMRequestResponse
-        end
-
+        usr = Message(Val(:user), "Hi")
+        @test usr.role == UniLM.RoleUser
+        @test usr.content == "Hi"
     end
 
-    @testset "JSON_OBJECT" begin
-        chat = UniLM.Chat(response_format=UniLM.json_object())
-        push!(chat, UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent."))
-        push!(chat, UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke (return JSON format)."))
-
-        cr = UniLM.chatrequest!(chat)
-
-        m = getfield(cr, :message)
-
-        @test m isa UniLM.Message
-        @test m.role == UniLM.RoleAssistant
-
-        @info "JSON OBJECT result: $(m.content)"
+    @testset "validation: content and tool_calls and refusal_message all nothing" begin
+        @test_throws ArgumentError Message(role=UniLM.RoleUser)
     end
 
-    @testset "JSON SCHEMA" begin
-        schema = Dict(
-            "type" => "object",
-            "properties" => Dict(
-                "location" => Dict("description" => "The city and state, e.g. San Francisco, CA"),
-                "unit" => Dict("enum" => ["celsius", "fahrenheit"])
-            ),
-            "additionalProperties" => false,
-            "required" => ["location", "unit"]
-        )
-
-        chat = UniLM.Chat(response_format=UniLM.json_schema("get_current_weather", "Getting the current weather", schema))
-        push!(chat, UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent - only answering in JSON."))
-        push!(chat, UniLM.Message(role=UniLM.RoleUser, content="What is the weather in New York?."))
-
-        cr = UniLM.chatrequest!(chat)
-
-        m = getfield(cr, :message)
-
-        @test m isa UniLM.Message
-        @test m.role == UniLM.RoleAssistant
-
-        @info "JSON SCHEMA Result: $(m.content)"
-
+    @testset "validation: tool role requires tool_call_id" begin
+        @test_throws ArgumentError Message(role=UniLM.RoleTool, content="result")
     end
 
-    @testset "streaming" begin
-        callback = (msg, close) -> begin
-            "from callback - echo: $msg"
-        end
-
-        chat_with_stream = UniLM.Chat(stream=true)
-        push!(chat_with_stream, UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent."))
-        push!(chat_with_stream, UniLM.Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke."))
-        t = UniLM.chatrequest!(chat_with_stream, callback)
-        wait(t)
-        @test t.state == :done
-        m, _ = t.result
-
-        #@test m isa UniLM.Message
-        #@test m.role == UniLM.RoleAssistant
-
-        @test true
+    @testset "tool message with tool_call_id" begin
+        m = Message(role=UniLM.RoleTool, content="result", tool_call_id="call_abc")
+        @test m.role == UniLM.RoleTool
+        @test m.content == "result"
+        @test m.tool_call_id == "call_abc"
     end
 
-    @testset "function call" begin
-        gptfsig = UniLM.GPTFunctionSignature(
-            name="get_current_weather",
-            description="Getting the current weather",
-            parameters=Dict(
-                "type" => "object",
-                "properties" => Dict(
-                    "location" => Dict("description" => "The city and state, e.g. San Francisco, CA"),
-                    "unit" => Dict("enum" => ["celsius", "fahrenheit"])
-                ),
-                "required" => ["location"]
-            )
-        )
-
-        funchat = UniLM.Chat(tools=[UniLM.GPTTool(func=gptfsig)], tool_choice=UniLM.GPTToolChoice(func=:get_current_weather))
-        push!(funchat, UniLM.Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent."))
-        push!(funchat, UniLM.Message(role=UniLM.RoleUser, content="What is the weather in New York?."))
-
-        cr = UniLM.chatrequest!(funchat)
-
-        m = getfield(cr, :message)
-
-        @test m isa UniLM.Message
-
-        @info "Function Call Result: $(m)"
-
+    @testset "message with tool_calls" begin
+        func = UniLM.GPTFunction("fn", Dict("a" => "b"))
+        tc = GPTToolCall(id="call_1", func=func)
+        m = Message(role=UniLM.RoleAssistant, tool_calls=[tc], finish_reason=UniLM.TOOL_CALLS)
+        @test length(m.tool_calls) == 1
+        @test isnothing(m.content)
     end
 
-    @testset "embedding" begin
-        emb = UniLM.Embeddings("Embed this!")
-
-        result = UniLM.embeddingrequest!(emb)
-
-        @show typeof(result)
-        @show keys(result)
-
-        @test result isa Tuple
-
+    @testset "message with refusal_message (content_filter)" begin
+        m = Message(role=UniLM.RoleAssistant, refusal_message="Content filtered", finish_reason=UniLM.CONTENT_FILTER)
+        @test m.refusal_message == "Content filtered"
+        @test isnothing(m.content)
+        @test isnothing(m.tool_calls)
     end
 
+    @testset "helpers" begin
+        m = Message(role=UniLM.RoleUser, content="test")
+        @test UniLM.getcontent(m) == "test"
+        @test UniLM.getrole(m) == "user"
+        @test UniLM.iscall(m) == false
+
+        tool_m = Message(role=UniLM.RoleTool, content="result", tool_call_id="call_x")
+        @test UniLM.iscall(tool_m) == true
+    end
+
+    @testset "JSON serialization" begin
+        @test JSON.omit_null(Message) == true
+
+        m = Message(role=UniLM.RoleUser, content="hi")
+        json = JSON.json(m)
+        parsed = JSON.parse(json)
+        @test parsed["role"] == "user"
+        @test parsed["content"] == "hi"
+        @test !haskey(parsed, "name")
+        @test !haskey(parsed, "tool_calls")
+    end
+end
+
+@testset "ResponseFormat" begin
+    @testset "json_object default" begin
+        rf = ResponseFormat()
+        @test rf.type == "json_object"
+        @test isnothing(rf.json_schema)
+    end
+
+    @testset "json_object via helper" begin
+        rf = UniLM.json_object()
+        @test rf.type == "json_object"
+    end
+
+    @testset "json_schema via helper" begin
+        schema = Dict("type" => "object", "properties" => Dict("x" => Dict("type" => "string")))
+        rf = UniLM.json_schema("test", "desc", schema)
+        @test rf.type == "json_schema"
+        @test rf.json_schema isa UniLM.JsonSchemaAPI
+        @test rf.json_schema.name == "test"
+        @test rf.json_schema.description == "desc"
+        @test rf.json_schema.schema == schema
+    end
+
+    @testset "json_schema with dict" begin
+        d = Dict("name" => "test", "schema" => Dict())
+        rf = UniLM.json_schema(d)
+        @test rf.type == "json_schema"
+        @test rf.json_schema == d
+    end
+
+    @testset "ResponseFormat constructor with positional" begin
+        jsa = UniLM.JsonSchemaAPI(name="n", description="d", schema=Dict("type" => "object"))
+        rf = ResponseFormat(jsa)
+        @test rf.type == "json_schema"
+    end
+
+    @testset "serialization omit_null" begin
+        rf = UniLM.json_object()
+        json = JSON.json(rf)
+        parsed = JSON.parse(json)
+        @test parsed["type"] == "json_object"
+        @test !haskey(parsed, "json_schema")
+    end
+end
+
+@testset "JsonSchemaAPI" begin
+    schema = Dict("type" => "object")
+    jsa = UniLM.JsonSchemaAPI(name="weather", description="Get weather", schema=schema)
+    @test jsa.name == "weather"
+    @test jsa.description == "Get weather"
+    json = JSON.json(jsa)
+    parsed = JSON.parse(json)
+    @test parsed["name"] == "weather"
+    @test parsed["description"] == "Get weather"
+end
+
+@testset "ServiceEndpoint types" begin
+    @test UniLM.OPENAIServiceEndpoint <: UniLM.ServiceEndpoint
+    @test UniLM.AZUREServiceEndpoint <: UniLM.ServiceEndpoint
+    @test UniLM.GEMINIServiceEndpoint <: UniLM.ServiceEndpoint
+end
+
+@testset "Chat" begin
+    @testset "default creation" begin
+        chat = Chat()
+        @test chat.model == "gpt-4o"
+        @test isempty(chat.messages)
+        @test chat.history == true
+        @test isnothing(chat.tools)
+        @test isnothing(chat.tool_choice)
+        @test isnothing(chat.parallel_tool_calls)  # nil because tools is nothing
+        @test isnothing(chat.temperature)
+        @test isnothing(chat.top_p)
+        @test isnothing(chat.n)
+        @test isnothing(chat.stream)
+        @test isnothing(chat.stop)
+        @test isnothing(chat.max_tokens)
+        @test isnothing(chat.presence_penalty)
+        @test isnothing(chat.response_format)
+        @test isnothing(chat.frequency_penalty)
+        @test isnothing(chat.logit_bias)
+        @test isnothing(chat.user)
+        @test isnothing(chat.seed)
+        @test chat.service == UniLM.OPENAIServiceEndpoint
+    end
+
+    @testset "custom creation" begin
+        chat = Chat(model="gpt-4o-mini", temperature=0.5, max_tokens=100, seed=42)
+        @test chat.model == "gpt-4o-mini"
+        @test chat.temperature == 0.5
+        @test chat.max_tokens == 100
+        @test chat.seed == 42
+    end
+
+    @testset "temperature and top_p mutual exclusion" begin
+        @test_throws ArgumentError Chat(temperature=0.2, top_p=0.5)
+    end
+
+    @testset "parallel_tool_calls nil when no tools" begin
+        chat = Chat(parallel_tool_calls=true)
+        @test isnothing(chat.parallel_tool_calls)  # reset to nothing since tools is nothing
+    end
+
+    @testset "parallel_tool_calls preserved with tools" begin
+        sig = GPTFunctionSignature(name="fn")
+        chat = Chat(tools=[GPTTool(func=sig)], parallel_tool_calls=true)
+        @test chat.parallel_tool_calls == true
+    end
+
+    @testset "length and isempty" begin
+        chat = Chat()
+        @test length(chat) == 0
+        @test isempty(chat)
+
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        @test length(chat) == 1
+        @test !isempty(chat)
+    end
+
+    @testset "push! operations" begin
+        chat = Chat()
+        sys = Message(role=UniLM.RoleSystem, content="system prompt")
+        usr = Message(role=UniLM.RoleUser, content="hello")
+
+        # System as first message
+        push!(chat, sys)
+        @test length(chat) == 1
+        @test chat.messages[1] == sys
+
+        # User after system
+        push!(chat, usr)
+        @test length(chat) == 2
+
+        # Consecutive same-role rejected
+        push!(chat, usr)
+        @test length(chat) == 2  # unchanged
+
+        # System not allowed after conversation started
+        push!(chat, sys)
+        @test length(chat) == 2  # unchanged
+
+        # Assistant after user
+        asst = Message(role=UniLM.RoleAssistant, content="response")
+        push!(chat, asst)
+        @test length(chat) == 3
+    end
+
+    @testset "pop!" begin
+        chat = Chat()
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="q"))
+        @test length(chat) == 2
+
+        pop!(chat)
+        @test length(chat) == 1
+
+        pop!(chat)
+        @test length(chat) == 0
+
+        # Pop from empty - should warn but not error
+        pop!(chat)
+        @test length(chat) == 0
+    end
+
+    @testset "last" begin
+        chat = Chat()
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="q"))
+        @test last(chat).content == "q"
+    end
+
+    @testset "getindex / setindex! / firstindex / lastindex" begin
+        chat = Chat()
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="q"))
+
+        @test chat[1].role == UniLM.RoleSystem
+        @test chat[2].role == UniLM.RoleUser
+        @test firstindex(chat) == 1
+        @test lastindex(chat) == 2
+
+        new_msg = Message(role=UniLM.RoleUser, content="new_q")
+        chat[2] = new_msg
+        @test chat[2].content == "new_q"
+    end
+
+    @testset "update! with history" begin
+        chat = Chat(history=true)
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="q"))
+        asst = Message(role=UniLM.RoleAssistant, content="a")
+        update!(chat, asst)
+        @test length(chat) == 3
+        @test last(chat) == asst
+    end
+
+    @testset "update! without history" begin
+        chat = Chat(history=false)
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="q"))
+        asst = Message(role=UniLM.RoleAssistant, content="a")
+        update!(chat, asst)
+        @test length(chat) == 2  # unchanged because history=false
+    end
+
+    @testset "issendvalid" begin
+        # Valid: system + user
+        chat = Chat()
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="q"))
+        @test issendvalid(chat) == true
+
+        # Invalid: only system
+        chat2 = Chat()
+        push!(chat2, Message(role=UniLM.RoleSystem, content="sys"))
+        @test issendvalid(chat2) == false
+
+        # Invalid: empty
+        @test issendvalid(Chat()) == false
+
+        # Invalid: ends with system
+        chat3 = Chat()
+        push!(chat3, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat3, Message(role=UniLM.RoleUser, content="q"))
+        chat3[end] = Message(role=UniLM.RoleSystem, content="sys2")
+        @test issendvalid(chat3) == false
+
+        # Valid: system + user + assistant + user
+        chat4 = Chat()
+        push!(chat4, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat4, Message(role=UniLM.RoleUser, content="q1"))
+        push!(chat4, Message(role=UniLM.RoleAssistant, content="a1"))
+        push!(chat4, Message(role=UniLM.RoleUser, content="q2"))
+        @test issendvalid(chat4) == true
+
+        # Invalid: starts with user
+        chat5 = Chat()
+        push!(chat5.messages, Message(role=UniLM.RoleUser, content="q"))
+        push!(chat5.messages, Message(role=UniLM.RoleAssistant, content="a"))
+        @test issendvalid(chat5) == false
+    end
+
+    @testset "JSON serialization" begin
+        chat = Chat(temperature=0.7)
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        lowered = JSON.lower(chat)
+        @test !haskey(lowered, :history)
+        @test !haskey(lowered, :service)
+        @test lowered[:temperature] == 0.7
+        @test !haskey(lowered, :top_p)  # nothing fields omitted
+
+        json = JSON.json(chat)
+        parsed = JSON.parse(json)
+        @test parsed["model"] == "gpt-4o"
+        @test parsed["temperature"] == 0.7
+        @test !haskey(parsed, "history")
+        @test !haskey(parsed, "service")
+        @test !haskey(parsed, "top_p")
+    end
+end
+
+@testset "LLMRequestResponse types" begin
+    chat = Chat()
+
+    @testset "LLMSuccess" begin
+        m = Message(role=UniLM.RoleAssistant, content="hello")
+        s = LLMSuccess(message=m, self=chat)
+        @test s isa UniLM.LLMRequestResponse
+        @test s.message == m
+        @test s.self === chat
+    end
+
+    @testset "LLMFailure" begin
+        f = LLMFailure(response="error", status=500, self=chat)
+        @test f isa UniLM.LLMRequestResponse
+        @test f.response == "error"
+        @test f.status == 500
+    end
+
+    @testset "LLMCallError" begin
+        e = LLMCallError(error="timeout", self=chat)
+        @test e isa UniLM.LLMRequestResponse
+        @test e.error == "timeout"
+        @test isnothing(e.status)
+
+        e2 = LLMCallError(error="err", status=503, self=chat)
+        @test e2.status == 503
+        @test e2.error == "err"
+    end
+end
+
+@testset "Embeddings" begin
+    @testset "String input" begin
+        emb = UniLM.Embeddings("hello world")
+        @test emb.model == "text-embedding-ada-002"
+        @test emb.input == "hello world"
+        @test emb.embeddings isa Vector{Float64}
+        @test length(emb.embeddings) == 1536
+        @test all(x -> x == 0.0, emb.embeddings)
+        @test isnothing(emb.user)
+    end
+
+    @testset "Vector{String} input" begin
+        emb = UniLM.Embeddings(["hello", "world"])
+        @test emb.input == ["hello", "world"]
+        @test emb.embeddings isa Vector{Vector{Float64}}
+        @test length(emb.embeddings) == 2
+        @test length(emb.embeddings[1]) == 1536
+    end
+
+    @testset "empty Vector{String} error" begin
+        @test_throws ArgumentError UniLM.Embeddings(String[])
+    end
+
+    @testset "JSON serialization" begin
+        emb = UniLM.Embeddings("test")
+        lowered = JSON.lower(emb)
+        @test !haskey(lowered, :embeddings)
+        @test !haskey(lowered, :user)
+        @test lowered[:model] == "text-embedding-ada-002"
+        @test lowered[:input] == "test"
+
+        json = JSON.json(emb)
+        parsed = JSON.parse(json)
+        @test parsed["model"] == "text-embedding-ada-002"
+        @test parsed["input"] == "test"
+        @test !haskey(parsed, "embeddings")
+        @test !haskey(parsed, "user")
+    end
+
+    @testset "update!" begin
+        emb = UniLM.Embeddings("test")
+        new_vals = rand(1536)
+        update!(emb, new_vals)
+        @test emb.embeddings ≈ new_vals
+    end
 end

@@ -3,6 +3,7 @@ get_url(emb::Embeddings) = get_url(OPENAIServiceEndpoint, emb.model)
 get_url(::Type{OPENAIServiceEndpoint}, model::String) = OPENAI_BASE_URL * _MODEL_ENDPOINTS_OPENAI[model]
 get_url(::Type{OPENAIServiceEndpoint}, emb::Embeddings) = get_url(emb)
 get_url(::Type{AZUREServiceEndpoint}, model::String) = ENV[AZURE_OPENAI_BASE_URL] * _MODEL_ENDPOINTS_AZURE_OPENAI[model] * "/chat/completions?api-version=$(ENV[AZURE_OPENAI_API_VERSION])"
+get_url(::Type{GEMINIServiceEndpoint}, model::String) = _MODEL_ENDPOINTS_AZURE_GEMINI[model]
 
 
 function auth_header(::Type{OPENAIServiceEndpoint})
@@ -19,7 +20,7 @@ function auth_header(::Type{AZUREServiceEndpoint})
     ]
 end
 
-function auth_header(service::GEMINIServiceEndpoint)
+function auth_header(::Type{GEMINIServiceEndpoint})
     [
         "Authorization" => "Bearer $(ENV[GEMINI_API_KEY])",
         "Content-Type" => "application/json"
@@ -29,14 +30,14 @@ end
 
 
 function extract_message(resp::HTTP.Response)
-    received_message = JSON3.read(resp.body, Dict)
+    received_message = JSON.parse(resp.body; dicttype=Dict{String,Any})
     finish_reason = received_message["choices"][1]["finish_reason"]
     message = received_message["choices"][1]["message"]
     if finish_reason == TOOL_CALLS && haskey(message, "tool_calls")
         tcalls = GPTToolCall[]
         for x in message["tool_calls"]
             fdict = x["function"]
-            args = JSON3.read(fdict["arguments"], Dict)
+            args = JSON.parse(fdict["arguments"]; dicttype=Dict{String,Any})
             gptfunc = GPTFunction(fdict["name"], args)
             tc = GPTToolCall(id=x["id"], func=gptfunc)
             push!(tcalls, tc)
@@ -56,18 +57,14 @@ end
 # There are also multiple complaints about this on the OpenAI API forum. 
 # I'll attempt a robust parsind approach here that can handle the variable chunk format.
 function _parse_chunk(chunk::String, iobuff, failbuff)
-    # check if chunk contains new line
-    # if occursin("\n", chunk)
-    #     @info "Newline in chunk $chunk"
-    # end
-
     lines = strip.(split(chunk, "\n"))
     lines = filter(!isempty, lines)
+    isempty(lines) && return (; eos=false)
     eos = lines[end] == "data: [DONE]"
     eos && length(lines) == 1 && return (; eos=true)
     for line in lines[1:end-(eos ? 1 : 0)]
         try
-            parsed = JSON3.read(line[6:end], Vector)
+            parsed = JSON.parse(line[6:end]; dicttype=Dict{String,Any})
             cho = parsed["choices"][1]
             if cho["finish_reason"] == "stop"
                 eos = true
@@ -75,8 +72,6 @@ function _parse_chunk(chunk::String, iobuff, failbuff)
                 print(iobuff, cho["delta"]["content"])
             end
         catch e
-            #@warn "JSON parsing failed for line: $line"
-            #@info "Chunk was: $chunk"
             print(failbuff, line)
             continue
         end
@@ -97,12 +92,12 @@ function _chatrequeststream(chat, body, callback=nothing)
             HTTP.closewrite(io)
             HTTP.startread(io)
             while !eof(io) && !close[] && !done[]
-                chunk::String = join((String(take!(fail_buffer)), String(readavailable(io)))) # JET doesn't like * operator 
+                chunk::String = join((String(take!(fail_buffer)), String(readavailable(io))))
                 streamstatus = _parse_chunk(chunk, chunk_buffer, fail_buffer)
                 parsed = String(take!(chunk_buffer))
                 if streamstatus.eos
                     done[] = true
-                    m[] = Message(role=RoleAssistant, content=String(take!(tmp)))
+                    m[] = Message(role=RoleAssistant, content=String(take!(tmp)), finish_reason=STOP)
                     !isnothing(callback) && callback(m[], close)
                 else
                     !isnothing(callback) && callback(parsed, close)
@@ -110,11 +105,15 @@ function _chatrequeststream(chat, body, callback=nothing)
                 end
             end
             close[] && @info "stream closed by user"
-            #@info "Stream closing and returning"
             HTTP.closeread(io)
         end
-        #@info "Finishing streaming with stutus: $(resp.status)"
-        resp.status == 200 ? (m[], chat) : nothing
+        if resp.status == 200 && !isnothing(m[])
+            msg = m[]::Message
+            update!(chat, msg)
+            (msg, chat)
+        else
+            nothing
+        end
     end
 end
 
@@ -129,10 +128,10 @@ The `callback` function is called for each chunk of the response. The `close` Re
     The signature of the callback function is:
         `callback(chunk::Union{String, Message}, close::Ref{Bool})`
 """
-function chatrequest!(chat::Chat, retries=0, callback=nothing)
+function chatrequest!(chat::Chat; retries::Int=0, callback=nothing)
     res = LLMCallError(error="uninitialized", status=0, self=chat)
     try
-        body = JSON3.write(chat)
+        body = JSON.json(chat)
         if isnothing(chat.stream) || !something(chat.stream)
             resp = HTTP.post(get_url(chat), body=body, headers=auth_header(chat.service))
             if resp.status == 200
@@ -144,7 +143,7 @@ function chatrequest!(chat::Chat, retries=0, callback=nothing)
                 @info "Retrying... in 1s"
                 sleep(1)
                 if retries < 30
-                    return chatrequest!(chat, retries + 1, callback)
+                    return chatrequest!(chat; retries=retries + 1, callback=callback)
                 else
                     return LLMFailure(status=resp.status, response=String(resp.body), self=chat)
                 end
@@ -194,7 +193,8 @@ Send a request to the OpenAI API to generate a response to the messages in `conv
 - `seed::Union{Int64,Nothing} = nothing`: This feature is in Beta. If specified, the system will make a best effort to sample deterministically.
 """
 function chatrequest!(; kws...)
-    !haskey(kws, :messages) && (!haskey(kws, :userprompt) || !haskey(kws, :systemprompt)) && return LLMFailure(response="No messages and/or systemprompt/userprompt provided.", status=499, self=Chat(; kws...))
+    filteredkws = filter(x -> x[1] != :messages && x[1] != :userprompt && x[1] != :systemprompt, kws)
+    !haskey(kws, :messages) && (!haskey(kws, :userprompt) || !haskey(kws, :systemprompt)) && return LLMFailure(response="No messages and/or systemprompt/userprompt provided.", status=499, self=Chat(; filteredkws...))
     messages = get(kws, :messages, Message[])
     if haskey(kws, :userprompt) && haskey(kws, :systemprompt)
         empty!(messages)
@@ -209,8 +209,7 @@ function chatrequest!(; kws...)
             push!(messages, kws[:userprompt])
         end
     end
-    nkws = filter(x -> x[1] != :messages && x[1] != :userprompt && x[1] != :systemprompt, kws)
-    chatrequest!(Chat(; messages=messages, nkws...))
+    chatrequest!(Chat(; messages=messages, filteredkws...))
 end
 
 
@@ -229,20 +228,23 @@ end
     end
 
 """
-function embeddingrequest!(emb::Embeddings)
-    body = JSON3.write(emb)
+function embeddingrequest!(emb::Embeddings; retries::Int=0)
+    body = JSON.json(emb)
     try
-        resp = HTTP.post(get_url(emb), body=body, headers=auth_header(OPENAIServiceEndpoint)) # default to OpenAI service for now
+        resp = HTTP.post(get_url(emb), body=body, headers=auth_header(OPENAIServiceEndpoint))
         if resp.status == 200
-            # headers info
-            # @info "Request headers: $(resp.headers)"
-            embedding = JSON3.read(resp.body, Dict)
+            embedding = JSON.parse(resp.body; dicttype=Dict{String,Any})
             update!(emb, embedding["data"][1]["embedding"])
             return (embedding, emb)
         elseif resp.status == 500 || resp.status == 503
             @warn "Request status: $(resp.status). Retrying... in 1s"
-            sleep(1) # not the best way to handle this, but it's a start
-            return embeddingrequest!(emb)
+            sleep(1)
+            if retries < 30
+                return embeddingrequest!(emb; retries=retries + 1)
+            else
+                @error "Max retries (30) exceeded for embedding request."
+                return nothing
+            end
         else
             @error "Request status: $(resp.status)"
             return nothing

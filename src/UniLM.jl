@@ -1,8 +1,6 @@
 module UniLM
 using HTTP
-using JSON3
-using StructTypes
-using Accessors
+using JSON
 
 include("constants.jl")
 include("exceptions.jl")

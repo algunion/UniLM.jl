@@ -108,8 +108,8 @@ end
     t = chatrequest!(chat_with_stream; callback=callback)
     result = fetch(t)
 
-    @test !isnothing(result)
-    m, _ = result
+    @test result isa LLMSuccess
+    m = result.message
     @test m isa Message
     @test m.role == UniLM.RoleAssistant
     @test !isnothing(m.content)

@@ -23,7 +23,12 @@ task = chatrequest!(chat, callback=function(chunk, close)
         println("\n--- done ---")
     end
 end)
-msg, _ = fetch(task)
+result = fetch(task)
+if result isa LLMSuccess
+    println(result.message.content)
+else
+    println("Request failed — see result for details")
+end
 nothing # hide
 ```
 

@@ -84,38 +84,43 @@ end
 
 function _chatrequeststream(chat, body, callback=nothing)
     Threads.@spawn begin
-        m = Ref{Union{Message,Nothing}}(nothing)
-        resp = HTTP.open("POST", get_url(chat), auth_header(chat.service)) do io
-            tmp = IOBuffer()
-            chunk_buffer = IOBuffer()
-            fail_buffer = IOBuffer()
-            done = Ref(false)
-            close_ref = Ref(false)
-            write(io, body)
-            HTTP.closewrite(io)
-            HTTP.startread(io)
-            while !eof(io) && !close_ref[] && !done[]
-                chunk::String = join((String(take!(fail_buffer)), String(readavailable(io))))
-                streamstatus = _parse_chunk(chunk, chunk_buffer, fail_buffer)
-                parsed = String(take!(chunk_buffer))
-                if streamstatus.eos
-                    done[] = true
-                    m[] = Message(role=RoleAssistant, content=String(take!(tmp)), finish_reason=STOP)
-                    !isnothing(callback) && callback(m[], close_ref)
-                else
-                    !isnothing(callback) && callback(parsed, close_ref)
-                    print(tmp, parsed)
+        try
+            m = Ref{Union{Message,Nothing}}(nothing)
+            resp = HTTP.open("POST", get_url(chat), auth_header(chat.service)) do io
+                tmp = IOBuffer()
+                chunk_buffer = IOBuffer()
+                fail_buffer = IOBuffer()
+                done = Ref(false)
+                close_ref = Ref(false)
+                write(io, body)
+                HTTP.closewrite(io)
+                HTTP.startread(io)
+                while !eof(io) && !close_ref[] && !done[]
+                    chunk::String = join((String(take!(fail_buffer)), String(readavailable(io))))
+                    streamstatus = _parse_chunk(chunk, chunk_buffer, fail_buffer)
+                    parsed = String(take!(chunk_buffer))
+                    if streamstatus.eos
+                        done[] = true
+                        m[] = Message(role=RoleAssistant, content=String(take!(tmp)), finish_reason=STOP)
+                        !isnothing(callback) && callback(m[], close_ref)
+                    else
+                        !isnothing(callback) && callback(parsed, close_ref)
+                        print(tmp, parsed)
+                    end
                 end
+                close_ref[] && @info "stream closed by user"
+                HTTP.closeread(io)
             end
-            close_ref[] && @info "stream closed by user"
-            HTTP.closeread(io)
-        end
-        if resp.status == 200 && !isnothing(m[])
-            msg = m[]::Message
-            update!(chat, msg)
-            (msg, chat)
-        else
-            nothing
+            if resp.status == 200 && !isnothing(m[])
+                msg = m[]::Message
+                update!(chat, msg)
+                LLMSuccess(message=msg, self=chat)
+            else
+                LLMFailure(status=resp.status, response=String(resp.body), self=chat)
+            end
+        catch e
+            statuserror = hasproperty(e, :status) ? e.status : nothing
+            LLMCallError(error=string(e), self=chat, status=statuserror)
         end
     end
 end

@@ -632,9 +632,9 @@ push!(stream_chat, Message(Val(:user), "Write a very short 2-line poem about cod
 try
     task = chatrequest!(stream_chat, callback=function (chunk, close)
     end)
-    result_pair = fetch(task)
-    if !isnothing(result_pair)
-        msg, _ = result_pair
+    result = fetch(task)
+    if result isa LLMSuccess
+        msg = result.message
         write_example(
             "chat_streaming.md",
             """
@@ -655,9 +655,9 @@ julia> task = chatrequest!(chat, callback=function(chunk, close)
 $(msg.content)
 --- done ---
 
-julia> msg, _ = fetch(task)
+julia> result = fetch(task)
 
-julia> msg.content
+julia> result.message.content
 "$(escape_string(msg.content))"
 ```
 """

@@ -533,47 +533,52 @@ end
 
 function _respond_stream(r::Respond, body::String, callback=nothing)
     Threads.@spawn begin
-        result = Ref{Union{ResponseObject,Nothing}}(nothing)
-        url = OPENAI_BASE_URL * RESPONSES_PATH
-        resp = HTTP.open("POST", url, auth_header(r.service)) do io
-            text_buffer = IOBuffer()
-            fail_buffer = IOBuffer()
-            done = Ref(false)
-            close_ref = Ref(false)
-            write(io, body)
-            HTTP.closewrite(io)
-            HTTP.startread(io)
-            while !eof(io) && !close_ref[] && !done[]
-                chunk = join((String(take!(fail_buffer)), String(readavailable(io))))
-                status = _parse_response_stream_chunk(chunk, text_buffer, fail_buffer)
-                if status.done && !isnothing(status.data)
-                    rdata = status.data["response"]
-                    result[] = ResponseObject(
-                        id=rdata["id"],
-                        status=rdata["status"],
-                        model=rdata["model"],
-                        output=get(rdata, "output", Any[]),
-                        usage=get(rdata, "usage", nothing),
-                        error=get(rdata, "error", nothing),
-                        metadata=get(rdata, "metadata", nothing),
-                        raw=rdata
-                    )
-                    done[] = true
-                    !isnothing(callback) && callback(result[], close_ref)
-                else
-                    parsed_text = String(take!(text_buffer))
-                    if !isempty(parsed_text) && !isnothing(callback)
-                        callback(parsed_text, close_ref)
+        try
+            result = Ref{Union{ResponseObject,Nothing}}(nothing)
+            url = OPENAI_BASE_URL * RESPONSES_PATH
+            resp = HTTP.open("POST", url, auth_header(r.service)) do io
+                text_buffer = IOBuffer()
+                fail_buffer = IOBuffer()
+                done = Ref(false)
+                close_ref = Ref(false)
+                write(io, body)
+                HTTP.closewrite(io)
+                HTTP.startread(io)
+                while !eof(io) && !close_ref[] && !done[]
+                    chunk = join((String(take!(fail_buffer)), String(readavailable(io))))
+                    status = _parse_response_stream_chunk(chunk, text_buffer, fail_buffer)
+                    if status.done && !isnothing(status.data)
+                        rdata = status.data["response"]
+                        result[] = ResponseObject(
+                            id=rdata["id"],
+                            status=rdata["status"],
+                            model=rdata["model"],
+                            output=get(rdata, "output", Any[]),
+                            usage=get(rdata, "usage", nothing),
+                            error=get(rdata, "error", nothing),
+                            metadata=get(rdata, "metadata", nothing),
+                            raw=rdata
+                        )
+                        done[] = true
+                        !isnothing(callback) && callback(result[], close_ref)
+                    else
+                        parsed_text = String(take!(text_buffer))
+                        if !isempty(parsed_text) && !isnothing(callback)
+                            callback(parsed_text, close_ref)
+                        end
                     end
                 end
+                close_ref[] && @info "Response stream closed by user"
+                HTTP.closeread(io)
             end
-            close_ref[] && @info "Response stream closed by user"
-            HTTP.closeread(io)
-        end
-        if resp.status == 200 && !isnothing(result[])
-            ResponseSuccess(response=result[]::ResponseObject)
-        else
-            nothing
+            if resp.status == 200 && !isnothing(result[])
+                ResponseSuccess(response=result[]::ResponseObject)
+            else
+                ResponseFailure(response=String(resp.body), status=resp.status)
+            end
+        catch e
+            statuserror = hasproperty(e, :status) ? e.status : nothing
+            ResponseCallError(error=string(e), status=statuserror)
         end
     end
 end

@@ -16,8 +16,8 @@ In lines of logic, dreams arise,
 Crafting worlds behind the screen's wise guise
 --- done ---
 
-julia> msg, _ = fetch(task)
+julia> result = fetch(task)
 
-julia> msg.content
+julia> result.message.content
 "In lines of logic, dreams arise,  \nCrafting worlds behind the screen's wise guise"
 ```

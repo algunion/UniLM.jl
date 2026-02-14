@@ -129,13 +129,14 @@ All API calls return subtypes of [`LLMRequestResponse`](@ref). Use Julia's patte
 
 ```@example results
 using UniLM
+using InteractiveUtils
 
 # Construct a chat to show the result type hierarchy
 chat = Chat()
 push!(chat, Message(Val(:system), "You are helpful."))
 push!(chat, Message(Val(:user), "Hello!"))
 
-# Without a real API key, we show the type hierarchy:
+# Show the type hierarchy:
 println("LLMRequestResponse subtypes:")
 for T in subtypes(UniLM.LLMRequestResponse)
     println("  ", T)

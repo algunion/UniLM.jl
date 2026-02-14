@@ -33,11 +33,11 @@ end
 
 ## Responses API Results
 
-```@docs
-ResponseSuccess
-ResponseFailure
-ResponseCallError
-```
+See also the [Responses API reference](responses.md).
+
+- [`ResponseSuccess`](@ref)
+- [`ResponseFailure`](@ref)
+- [`ResponseCallError`](@ref)
 
 ### Pattern Matching
 
@@ -56,11 +56,11 @@ end
 
 ## Image Generation Results
 
-```@docs
-ImageSuccess
-ImageFailure
-ImageCallError
-```
+See also the [Images API reference](images.md).
+
+- [`ImageSuccess`](@ref)
+- [`ImageFailure`](@ref)
+- [`ImageCallError`](@ref)
 
 ### Pattern Matching
 

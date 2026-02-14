@@ -44,7 +44,7 @@ result = chatrequest!(chat)
 If your Azure deployment has a custom name:
 
 ```@example backends
-add_azure_deploy_name!("my-custom-model", "my-deployment-name")
+UniLM.add_azure_deploy_name!("my-custom-model", "my-deployment-name")
 println("Registered deployments: ", collect(keys(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI)))
 delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "my-custom-model")  # cleanup
 ```

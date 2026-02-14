@@ -5,15 +5,15 @@ Types for configuring **multi-backend** service endpoints.
 ## Abstract Type
 
 ```@docs
-ServiceEndpoint
+UniLM.ServiceEndpoint
 ```
 
 ## Endpoint Types
 
 ```@docs
-OPENAIServiceEndpoint
-AZUREServiceEndpoint
-GEMINIServiceEndpoint
+UniLM.OPENAIServiceEndpoint
+UniLM.AZUREServiceEndpoint
+UniLM.GEMINIServiceEndpoint
 ```
 
 ## Configuration
@@ -59,7 +59,7 @@ println("Registered deployment: ", UniLM._MODEL_ENDPOINTS_AZURE_OPENAI["gpt-5.2"
 Pass the `service` keyword to any request constructor:
 
 ```@example endpoints
-chat = Chat(service=AZUREServiceEndpoint, model="gpt-5.2")
+chat = Chat(service=UniLM.AZUREServiceEndpoint, model="gpt-5.2")
 println("Service: ", chat.service)
 println("Model: ", chat.model)
 ```

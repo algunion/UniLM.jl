@@ -1,6 +1,8 @@
 # UniLM.jl
 [![Coverage Status](https://coveralls.io/repos/github/algunion/UniLM.jl/badge.svg)](https://coveralls.io/github/algunion/UniLM.jl)
 [![](https://img.shields.io/badge/%F0%9F%9B%A9%EF%B8%8F_tested_with-JET.jl-233f9a)](https://github.com/aviatesk/JET.jl)
+[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://algunion.github.io/UniLM.jl/stable/)
+[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://algunion.github.io/UniLM.jl/dev/)
 
 **! Highly experimental / WIP**
 
@@ -8,9 +10,7 @@ UniLM.jl: Currently a Julia interface for OpenAI's language models (focus on `gp
 
 ### Usage
 
-You can play with the package using the github installation method. However, this is in a highly experimental state and I'll not publish it yet to Julia package registry.
-
-This package is not documented yet. The best (and only) way to get started is to take a look at the examples from `test` directory.
+See the [documentation](https://algunion.github.io/UniLM.jl/dev/) for guides, examples, and full API reference.
 
 Installation:
 

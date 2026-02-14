@@ -1,3 +1,28 @@
+"""
+    GPTFunctionSignature(; name, description=nothing, parameters=nothing)
+
+Describes a function that can be called by the model in the Chat Completions API.
+
+# Fields
+- `name::String`: The name of the function.
+- `description::Union{String,Nothing}`: A description of what the function does.
+- `parameters::Union{AbstractDict,Nothing}`: JSON Schema object describing the function parameters.
+
+# Example
+```julia
+sig = GPTFunctionSignature(
+    name="get_weather",
+    description="Get the current weather in a given location",
+    parameters=Dict(
+        "type" => "object",
+        "properties" => Dict(
+            "location" => Dict("type" => "string", "description" => "The city")
+        ),
+        "required" => ["location"]
+    )
+)
+```
+"""
 @kwdef mutable struct GPTFunctionSignature
     name::String
     description::Union{String,Nothing} = nothing
@@ -32,6 +57,12 @@ function JSON.lower(x::GPTFunction)
     Dict(:name => x.name, :arguments => JSON.json(x.arguments))
 end
 
+"""
+    GPTToolCall(; id, type="function", func)
+
+Represents a tool call returned by the model. Contains the call `id` (used to match
+results back), the tool `type`, and the [`GPTFunction`] with name and parsed arguments.
+"""
 @kwdef struct GPTToolCall
     id::String
     type::String = "function"
@@ -40,6 +71,21 @@ end
 
 JSON.lower(x::GPTToolCall) = Dict(:id => x.id, :type => x.type, :function => x.func)
 
+"""
+    GPTTool(; type="function", func)
+
+Wraps a [`GPTFunctionSignature`](@ref) for use in the `tools` parameter of a [`Chat`](@ref).
+
+# Example
+```julia
+tool = GPTTool(func=GPTFunctionSignature(
+    name="get_weather",
+    description="Get the current weather",
+    parameters=Dict("type" => "object", "properties" => Dict())
+))
+chat = Chat(tools=[tool])
+```
+"""
 @kwdef struct GPTTool
     type::String = "function"
     func::GPTFunctionSignature
@@ -56,6 +102,16 @@ end
 JSON.lower(x::GPTToolChoice) = Dict(:type => x.type, :function => Dict(:name => x.func))
 
 
+"""
+    GPTFunctionCallResult{T}
+
+Holds the result of executing a function that was requested by the model via a tool call.
+
+# Fields
+- `name::Union{String,Symbol}`: The function name.
+- `origincall::GPTFunction`: The original [`GPTFunction`] call from the model.
+- `result::T`: The result of executing the function.
+"""
 struct GPTFunctionCallResult{T}
     name::Union{String,Symbol}
     origincall::GPTFunction
@@ -65,9 +121,28 @@ end
 JSON.omit_null(::Type{<:GPTFunctionCallResult}) = true
 JSON.omit_empty(::Type{<:GPTFunctionCallResult}) = true
 
+"""
+    RoleSystem
+
+Role constant `"system"` — used for system-level instructions.
+"""
 const RoleSystem = "system"
+
+"""
+    RoleUser
+
+Role constant `"user"` — used for user messages.
+"""
 const RoleUser = "user"
+
+"""
+    RoleAssistant
+
+Role constant `"assistant"` — used for model-generated messages.
+"""
 const RoleAssistant = "assistant"
+
+"""Role constant `"tool"` — used for tool/function call result messages."""
 const RoleTool = "tool"
 
 # to do: extend to all models/endpoints
@@ -88,6 +163,30 @@ const CONTENT_FILTER = "content_filter"
 const TOOL_CALLS = "tool_calls"
 
 
+"""
+    Message(; role, content=nothing, name=nothing, finish_reason=nothing, refusal_message=nothing, tool_calls=nothing, tool_call_id=nothing)
+
+Represents a single message in a Chat Completions conversation.
+
+# Fields
+- `role::String`: One of [`RoleSystem`](@ref), [`RoleUser`](@ref), [`RoleAssistant`](@ref), or `RoleTool`.
+- `content::Union{String,Nothing}`: The text content of the message.
+- `name::Union{String,Nothing}`: Optional name for the participant.
+- `finish_reason::Union{String,Nothing}`: Why the model stopped generating (e.g. `"stop"`, `"tool_calls"`).
+- `refusal_message::Union{String,Nothing}`: Refusal text when content is filtered.
+- `tool_calls::Union{Nothing,Vector{GPTToolCall}}`: Tool calls requested by the assistant.
+- `tool_call_id::Union{String,Nothing}`: Required when `role` is `"tool"` — the ID of the tool call being responded to.
+
+# Validation
+- At least one of `content`, `tool_calls`, or `refusal_message` must be non-`nothing`.
+- `tool_call_id` is required when `role == "tool"`.
+
+# Convenience Constructors
+```julia
+Message(Val(:system), "You are a helpful assistant")
+Message(Val(:user), "Hello!")
+```
+"""
 @kwdef struct Message
     role::String
     content::Union{String,Nothing} = nothing
@@ -139,6 +238,32 @@ end
 
 # JsonSchemaAPI serializes as a regular struct (JSON.jl handles this automatically)
 
+"""
+    ResponseFormat(; type="json_object", json_schema=nothing)
+    ResponseFormat(json_schema)
+
+Specifies the output format for Chat Completions.
+
+# Fields
+- `type::String`: `"json_object"` or `"json_schema"`.
+- `json_schema::Union{JsonSchemaAPI,AbstractDict,Nothing}`: Schema definition when `type` is `"json_schema"`.
+
+# Examples
+```julia
+# Free-form JSON
+fmt = ResponseFormat()
+
+# Structured JSON via schema
+fmt = ResponseFormat(JsonSchemaAPI(
+    name="result",
+    description="A structured result",
+    schema=Dict("type" => "object", "properties" => Dict())
+))
+```
+
+!!! note
+    Use the convenience constructors `json_object()` and `json_schema()` for cleaner code.
+"""
 @kwdef struct ResponseFormat
     type::String = "json_object"
     json_schema::Union{JsonSchemaAPI,AbstractDict,Nothing} = nothing
@@ -152,9 +277,25 @@ json_object() = ResponseFormat()
 json_schema(schema) = ResponseFormat(schema)
 json_schema(name::String, description::String, schema::AbstractDict) = ResponseFormat(JsonSchemaAPI(name, description, schema))
 
+"""
+    ServiceEndpoint
+
+Abstract supertype for LLM service backends. Subtypes control URL routing and authentication.
+
+Subtypes:
+- `OPENAIServiceEndpoint` — OpenAI API (default)
+- `AZUREServiceEndpoint` — Azure OpenAI Service
+- `GEMINIServiceEndpoint` — Google Gemini via OpenAI-compatible endpoint
+"""
 abstract type ServiceEndpoint end
+
+"""OpenAI API service endpoint (default). Requires `OPENAI_API_KEY` env variable."""
 struct OPENAIServiceEndpoint <: ServiceEndpoint end
+
+"""Azure OpenAI Service endpoint. Requires `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_API_VERSION` env variables."""
 struct AZUREServiceEndpoint <: ServiceEndpoint end
+
+"""Google Gemini endpoint (OpenAI-compatible). Requires `GEMINI_API_KEY` env variable."""
 struct GEMINIServiceEndpoint <: ServiceEndpoint end
 
 
@@ -246,22 +387,60 @@ end
 Base.length(chat::Chat) = length(chat.messages)
 Base.isempty(chat::Chat) = isempty(chat.messages)
 
+"""
+    LLMRequestResponse
+
+Abstract supertype for all API call results. Pattern-match on subtypes to handle outcomes:
+
+- [`LLMSuccess`](@ref) — successful response
+- [`LLMFailure`](@ref) — HTTP-level failure (non-200 status)
+- [`LLMCallError`](@ref) — exception during the call (network error, etc.)
+- [`ResponseSuccess`](@ref) — successful Responses API result
+- [`ResponseFailure`](@ref) — Responses API HTTP failure
+- [`ResponseCallError`](@ref) — Responses API exception
+"""
 abstract type LLMRequestResponse end
+
+"""
+    LLMSuccess(; message, self)
+
+Successful Chat Completions API response.
+
+# Fields
+- `message::Message`: The assistant's reply message.
+- `self::Chat`: The updated [`Chat`](@ref) object (with the new message appended if `history=true`).
+"""
 @kwdef struct LLMSuccess <: LLMRequestResponse
     message::Message
     self::Chat
 end
 
+"""
+    LLMFailure(; response, status, self)
 
+HTTP-level failure from the Chat Completions API. The server returned a non-200 status.
 
+# Fields
+- `response::String`: The raw response body.
+- `status::Int`: The HTTP status code.
+- `self::Chat`: The [`Chat`](@ref) object (unchanged).
+"""
 @kwdef struct LLMFailure <: LLMRequestResponse
     response::String
     status::Int
     self::Chat
 end
 
+"""
+    LLMCallError(; error, status=nothing, self)
 
+Exception-level error during a Chat Completions API call (network failure, JSON parse error, etc.).
 
+# Fields
+- `error::String`: The stringified exception.
+- `status::Union{Int,Nothing}`: HTTP status if available.
+- `self::Chat`: The [`Chat`](@ref) object (unchanged).
+"""
 @kwdef struct LLMCallError <: LLMRequestResponse
     error::String
     status::Union{Int,Nothing} = nothing
@@ -362,8 +541,28 @@ Base.firstindex(chat::Chat) = firstindex(chat.messages)
 
 const GPTTextEmbeddingAda002 = Model("text-embedding-ada-002")
 
-# defaulting to text-embedding-ada-002 for now
-# be aware of embedding size if changing model
+"""
+    Embeddings(input::String)
+    Embeddings(input::Vector{String})
+
+Create an embedding request for one or more text inputs. Uses the `text-embedding-ada-002`
+model (1536-dimensional embeddings) by default.
+
+The `embeddings` field is **pre-allocated** and filled in-place by [`embeddingrequest!`](@ref).
+
+# Fields
+- `model::String`: The embedding model name.
+- `input::Union{String,Vector{String}}`: Text(s) to embed.
+- `embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}`: Pre-allocated embedding vector(s).
+- `user::Union{String,Nothing}`: Optional end-user identifier.
+
+# Example
+```julia
+emb = Embeddings("Julia is a great language")
+embeddingrequest!(emb)
+emb.embeddings  # => Float64[...] (1536 dims)
+```
+"""
 struct Embeddings
     model::String
     input::Union{String,Vector{String}}

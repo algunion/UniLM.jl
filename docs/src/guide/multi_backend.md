@@ -13,13 +13,14 @@ type hierarchy. Switching backends requires only changing the `service` paramete
 
 ## OpenAI (Default)
 
-```julia
-# OpenAI is the default — no need to specify service
-chat = Chat(model="gpt-4o")
-result = chatrequest!(chat)
+```@example backends
+using UniLM
+using JSON
 
-# Explicit:
-chat = Chat(service=OPENAIServiceEndpoint, model="gpt-4o")
+# OpenAI is the default — no need to specify service
+chat = Chat(model="gpt-5.2")
+println("Service: ", chat.service)
+println("Model: ", chat.model)
 ```
 
 ## Azure OpenAI
@@ -29,10 +30,10 @@ chat = Chat(service=OPENAIServiceEndpoint, model="gpt-4o")
 ENV["AZURE_OPENAI_BASE_URL"] = "https://your-resource.openai.azure.com"
 ENV["AZURE_OPENAI_API_KEY"] = "your-key"
 ENV["AZURE_OPENAI_API_VERSION"] = "2024-02-01"
-ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_4O"] = "your-gpt4o-deployment"
+ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_5_2"] = "your-gpt52-deployment"
 
 # Use Azure
-chat = Chat(service=AZUREServiceEndpoint, model="gpt-4o")
+chat = Chat(service=AZUREServiceEndpoint, model="gpt-5.2")
 push!(chat, Message(Val(:system), "Hello from Azure!"))
 push!(chat, Message(Val(:user), "Hi!"))
 result = chatrequest!(chat)
@@ -42,9 +43,10 @@ result = chatrequest!(chat)
 
 If your Azure deployment has a custom name:
 
-```julia
+```@example backends
 add_azure_deploy_name!("my-custom-model", "my-deployment-name")
-chat = Chat(service=AZUREServiceEndpoint, model="my-custom-model")
+println("Registered deployments: ", collect(keys(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI)))
+delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "my-custom-model")  # cleanup
 ```
 
 ## Google Gemini
@@ -52,28 +54,28 @@ chat = Chat(service=AZUREServiceEndpoint, model="my-custom-model")
 ```julia
 ENV["GEMINI_API_KEY"] = "your-gemini-key"
 
-chat = Chat(service=GEMINIServiceEndpoint, model="gemini-2.0-flash")
+chat = Chat(service=GEMINIServiceEndpoint, model="gemini-2.5-flash")
 push!(chat, Message(Val(:system), "You are a helpful assistant."))
 push!(chat, Message(Val(:user), "Hello!"))
 result = chatrequest!(chat)
 ```
 
 Available Gemini models:
-- `"gemini-2.0-flash"`
-- `"gemini-2.5-flash-preview-05-20"`
-- `"gemini-1.5-ultra"`
+- `"gemini-2.5-flash"`
+- `"gemini-2.5-pro"`
 
 ## Responses API Backend
 
 The Responses API also supports the `service` parameter:
 
-```julia
+```@example backends
 r = Respond(
-    service=OPENAIServiceEndpoint,  # only OpenAI for now
-    model="gpt-4.1",
+    service=UniLM.OPENAIServiceEndpoint,
+    model="gpt-5.2",
     input="Hello!",
 )
-result = respond(r)
+println("Service: ", r.service)
+println("Model: ", r.model)
 ```
 
 ## See Also

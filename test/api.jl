@@ -33,9 +33,9 @@ end
     @test string(m) == "gpt-4o"
     @test Base.parse(UniLM.Model, "gpt-4o") == UniLM.Model("gpt-4o")
 
-    @test UniLM.GPT4o == UniLM.Model("gpt-4o")
-    @test UniLM.GPT4oMini == UniLM.Model("gpt-4o-mini")
-    @test UniLM.GPTTextEmbeddingAda002 == UniLM.Model("text-embedding-ada-002")
+    @test UniLM.GPT5_2 == UniLM.Model("gpt-5.2")
+    @test UniLM.GPT5_2Mini == UniLM.Model("gpt-5.2-mini")
+    @test UniLM.GPTTextEmbedding3Small == UniLM.Model("text-embedding-3-small")
 end
 
 @testset "InvalidConversationError" begin
@@ -289,7 +289,7 @@ end
 @testset "Chat" begin
     @testset "default creation" begin
         chat = Chat()
-        @test chat.model == "gpt-4o"
+        @test chat.model == "gpt-5.2"
         @test isempty(chat.messages)
         @test chat.history == true
         @test isnothing(chat.tools)
@@ -477,7 +477,7 @@ end
 
         json = JSON.json(chat)
         parsed = JSON.parse(json)
-        @test parsed["model"] == "gpt-4o"
+        @test parsed["model"] == "gpt-5.2"
         @test parsed["temperature"] == 0.7
         @test !haskey(parsed, "history")
         @test !haskey(parsed, "service")
@@ -518,7 +518,7 @@ end
 @testset "Embeddings" begin
     @testset "String input" begin
         emb = UniLM.Embeddings("hello world")
-        @test emb.model == "text-embedding-ada-002"
+        @test emb.model == "text-embedding-3-small"
         @test emb.input == "hello world"
         @test emb.embeddings isa Vector{Float64}
         @test length(emb.embeddings) == 1536
@@ -543,12 +543,12 @@ end
         lowered = JSON.lower(emb)
         @test !haskey(lowered, :embeddings)
         @test !haskey(lowered, :user)
-        @test lowered[:model] == "text-embedding-ada-002"
+        @test lowered[:model] == "text-embedding-3-small"
         @test lowered[:input] == "test"
 
         json = JSON.json(emb)
         parsed = JSON.parse(json)
-        @test parsed["model"] == "text-embedding-ada-002"
+        @test parsed["model"] == "text-embedding-3-small"
         @test parsed["input"] == "test"
         @test !haskey(parsed, "embeddings")
         @test !haskey(parsed, "user")

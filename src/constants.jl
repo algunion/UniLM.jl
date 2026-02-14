@@ -20,6 +20,9 @@ const EMBEDDINGS_PATH::String = "/v1/embeddings"
 """OpenAI Responses API path."""
 const RESPONSES_PATH::String = "/v1/responses"
 
+"""OpenAI Image Generation API path."""
+const IMAGES_GENERATIONS_PATH::String = "/v1/images/generations"
+
 # ─── Azure OpenAI Deployment Mapping ─────────────────────────────────────────
 # Azure routes requests via deployment names, so a model→deployment mapping is required.
 
@@ -27,18 +30,18 @@ const RESPONSES_PATH::String = "/v1/responses"
     _MODEL_ENDPOINTS_AZURE_OPENAI
 
 Maps model names to Azure deployment paths. Populated from environment variables
-`AZURE_OPENAI_DEPLOY_NAME_GPT_4O` and `AZURE_OPENAI_DEPLOY_NAME_GPT_4O_MINI` at
+`AZURE_OPENAI_DEPLOY_NAME_GPT_5_2` and `AZURE_OPENAI_DEPLOY_NAME_GPT_5_2_MINI` at
 load time. Use [`add_azure_deploy_name!`](@ref) to register additional deployments.
 """
 const _MODEL_ENDPOINTS_AZURE_OPENAI::Dict{String,String} = let
     d = Dict{String,String}()
 
-    if haskey(ENV, "AZURE_OPENAI_DEPLOY_NAME_GPT_4O")
-        d["gpt-4o"] = "/openai/deployments/" * ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_4O"]
+    if haskey(ENV, "AZURE_OPENAI_DEPLOY_NAME_GPT_5_2")
+        d["gpt-5.2"] = "/openai/deployments/" * ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_5_2"]
     end
 
-    if haskey(ENV, "AZURE_OPENAI_DEPLOY_NAME_GPT_4O_MINI")
-        d["gpt-4o-mini"] = "/openai/deployments/" * ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_4O_MINI"]
+    if haskey(ENV, "AZURE_OPENAI_DEPLOY_NAME_GPT_5_2_MINI")
+        d["gpt-5.2-mini"] = "/openai/deployments/" * ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_5_2_MINI"]
     end
 
     d
@@ -51,7 +54,7 @@ Register an Azure OpenAI deployment for a given model name.
 
 # Example
 ```julia
-add_azure_deploy_name!("gpt-4.1", "my-gpt41-deployment")
+add_azure_deploy_name!("gpt-5.2", "my-gpt52-deployment")
 ```
 """
 function add_azure_deploy_name!(model::String, deploy_name::String)

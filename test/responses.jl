@@ -220,7 +220,7 @@ end
 @testset "Respond" begin
     @testset "minimal creation" begin
         r = Respond(input="Tell me a joke")
-        @test r.model == "gpt-4.1"
+        @test r.model == "gpt-5.2"
         @test r.input == "Tell me a joke"
         @test r.service == UniLM.OPENAIServiceEndpoint
         @test isnothing(r.instructions)
@@ -235,7 +235,7 @@ end
     @testset "full creation" begin
         r = Respond(
             input="Hello",
-            model="gpt-4.1-mini",
+            model="gpt-5.2-mini",
             instructions="Be helpful",
             temperature=0.5,
             max_output_tokens=100,
@@ -243,7 +243,7 @@ end
             metadata=Dict("key" => "value"),
             truncation="auto"
         )
-        @test r.model == "gpt-4.1-mini"
+        @test r.model == "gpt-5.2-mini"
         @test r.instructions == "Be helpful"
         @test r.temperature == 0.5
         @test r.max_output_tokens == 100
@@ -281,7 +281,7 @@ end
     @testset "JSON serialization" begin
         r = Respond(input="Hello", instructions="Be nice", temperature=0.7)
         lowered = JSON.lower(r)
-        @test lowered[:model] == "gpt-4.1"
+        @test lowered[:model] == "gpt-5.2"
         @test lowered[:input] == "Hello"
         @test lowered[:instructions] == "Be nice"
         @test lowered[:temperature] == 0.7
@@ -305,7 +305,7 @@ end
         json_str = JSON.json(r)
         parsed = JSON.parse(json_str)
 
-        @test parsed["model"] == "gpt-4.1"
+        @test parsed["model"] == "gpt-5.2"
         @test parsed["input"] isa Vector
         @test parsed["input"][1]["role"] == "user"
         @test parsed["tools"] isa Vector
@@ -320,7 +320,7 @@ end
     raw = Dict{String,Any}(
         "id" => "resp_123",
         "status" => "completed",
-        "model" => "gpt-4.1",
+        "model" => "gpt-5.2",
         "output" => Any[
             Dict{String,Any}(
             "type" => "message",
@@ -342,7 +342,7 @@ end
     ro = ResponseObject(
         id="resp_123",
         status="completed",
-        model="gpt-4.1",
+        model="gpt-5.2",
         output=raw["output"],
         usage=raw["usage"],
         raw=raw
@@ -350,7 +350,7 @@ end
 
     @test ro.id == "resp_123"
     @test ro.status == "completed"
-    @test ro.model == "gpt-4.1"
+    @test ro.model == "gpt-5.2"
     @test length(ro.output) == 1
 end
 
@@ -358,7 +358,7 @@ end
     ro = ResponseObject(
         id="resp_1",
         status="completed",
-        model="gpt-4.1",
+        model="gpt-5.2",
         output=Any[
             Dict{String,Any}(
             "type" => "message",
@@ -376,7 +376,7 @@ end
     ro = ResponseObject(
         id="resp_1",
         status="completed",
-        model="gpt-4.1",
+        model="gpt-5.2",
         output=Any[
             Dict{String,Any}(
                 "type" => "message",
@@ -398,7 +398,7 @@ end
 
 @testset "output_text empty output" begin
     ro = ResponseObject(
-        id="resp_1", status="completed", model="gpt-4.1",
+        id="resp_1", status="completed", model="gpt-5.2",
         output=Any[], raw=Dict{String,Any}()
     )
     @test output_text(ro) == ""
@@ -408,7 +408,7 @@ end
     ro = ResponseObject(
         id="resp_1",
         status="completed",
-        model="gpt-4.1",
+        model="gpt-5.2",
         output=Any[
             Dict{String,Any}(
                 "type" => "function_call",
@@ -436,7 +436,7 @@ end
 
 @testset "function_calls empty" begin
     ro = ResponseObject(
-        id="resp_1", status="completed", model="gpt-4.1",
+        id="resp_1", status="completed", model="gpt-5.2",
         output=Any[
             Dict{String,Any}("type" => "message", "content" => Any[])
         ],
@@ -448,7 +448,7 @@ end
 @testset "Result types" begin
     @testset "ResponseSuccess" begin
         ro = ResponseObject(
-            id="resp_1", status="completed", model="gpt-4.1",
+            id="resp_1", status="completed", model="gpt-5.2",
             output=Any[], raw=Dict{String,Any}()
         )
         s = ResponseSuccess(response=ro)
@@ -487,7 +487,7 @@ end
             "id" => "resp_test",
             "object" => "response",
             "status" => "completed",
-            "model" => "gpt-4.1",
+            "model" => "gpt-5.2",
             "output" => [Dict(
                 "type" => "message",
                 "id" => "msg_1",
@@ -511,7 +511,7 @@ end
         ro = UniLM.parse_response(resp)
         @test ro.id == "resp_test"
         @test ro.status == "completed"
-        @test ro.model == "gpt-4.1"
+        @test ro.model == "gpt-5.2"
         @test output_text(ro) == "Hello!"
         @test ro.usage["total_tokens"] == 15
     end
@@ -521,7 +521,7 @@ end
             "id" => "resp_fn",
             "object" => "response",
             "status" => "completed",
-            "model" => "gpt-4.1",
+            "model" => "gpt-5.2",
             "output" => [Dict(
                 "type" => "function_call",
                 "id" => "fc_1",
@@ -561,7 +561,7 @@ data: {"type":"response.output_text.delta","delta":"Hello"}"""
             "response" => Dict(
                 "id" => "resp_1",
                 "status" => "completed",
-                "model" => "gpt-4.1",
+                "model" => "gpt-5.2",
                 "output" => [],
                 "usage" => Dict("input_tokens" => 1, "output_tokens" => 1, "total_tokens" => 2)
             )
@@ -603,7 +603,7 @@ end
 
     @testset "respond(input; kwargs...) convenience method" begin
         withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
-            result = respond("Hello", model="gpt-4.1")
+            result = respond("Hello", model="gpt-5.2")
             @test result isa ResponseCallError || result isa ResponseFailure
         end
     end
@@ -657,7 +657,7 @@ end
 @testset "ResponseObject accessors" begin
     @testset "output_text with non-message items" begin
         ro = ResponseObject(
-            id="resp_1", status="completed", model="gpt-4.1",
+            id="resp_1", status="completed", model="gpt-5.2",
             output=Any[
                 Dict{String,Any}("type" => "function_call", "name" => "fn"),
                 Dict{String,Any}(
@@ -675,7 +675,7 @@ end
 
     @testset "function_calls on ResponseSuccess" begin
         ro = ResponseObject(
-            id="resp_1", status="completed", model="gpt-4.1",
+            id="resp_1", status="completed", model="gpt-5.2",
             output=Any[
                 Dict{String,Any}(
                 "type" => "function_call",
@@ -696,7 +696,7 @@ end
 
 @testset "ResponseObject optional fields" begin
     ro = ResponseObject(
-        id="resp_1", status="completed", model="gpt-4.1",
+        id="resp_1", status="completed", model="gpt-5.2",
         output=Any[], raw=Dict{String,Any}(),
         error=Dict{String,Any}("code" => "error"),
         metadata=Dict{String,Any}("key" => "value")

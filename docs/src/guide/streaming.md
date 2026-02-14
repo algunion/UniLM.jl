@@ -10,7 +10,7 @@ Set `stream=true` and provide a callback:
 ```julia
 using UniLM
 
-chat = Chat(model="gpt-4o", stream=true)
+chat = Chat(model="gpt-5.2", stream=true)
 push!(chat, Message(Val(:system), "You are a storyteller."))
 push!(chat, Message(Val(:user), "Tell me a short story about a robot learning Julia."))
 
@@ -24,6 +24,10 @@ end)
 
 # The task runs on a separate thread
 result = fetch(task)
+# Output (streamed token by token):
+# Once upon a time, in a server room humming with electricity,
+# there lived a small robot named JL-42...
+# --- Done! ---
 ```
 
 ### Stopping a Stream Early
@@ -57,25 +61,29 @@ task = respond("Tell me a story about a robot learning Julia") do chunk, close
 end
 
 result = fetch(task)
+# Output (streamed):
+# In the year 2026, a small autonomous robot named Dispatch
+# discovered a programming language that changed everything...
+# Done! Status: completed
 ```
 
 The `do`-block form automatically sets `stream=true`.
 
 ### With Explicit Configuration
 
-```julia
+```@example streaming
+using UniLM
+using JSON
+
 r = Respond(
     input="Explain quantum computing step by step",
-    model="gpt-4.1",
+    model="gpt-5.2",
     stream=true,
     max_output_tokens=2000,
 )
-
-task = respond(r, callback=function(chunk, close)
-    if chunk isa String
-        print(chunk)
-    end
-end)
+println("Stream enabled: ", r.stream)
+println("Request preview:")
+println(JSON.json(r))
 ```
 
 ## Notes

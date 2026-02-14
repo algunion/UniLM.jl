@@ -255,7 +255,7 @@ json_object_format() = TextConfig(format=TextFormatSpec(type="json_object"))
 """
     Reasoning(; effort=nothing, summary=nothing)
 
-Reasoning configuration for O-series models (o3-mini, o1, etc.).
+Reasoning configuration for O-series models (o3, o4-mini, etc.).
 
 - `effort`: `"low"`, `"medium"`, or `"high"`
 - `summary`: `"auto"`, `"concise"`, or `"detailed"`
@@ -276,12 +276,12 @@ end
 # ─── Main Request Type ────────────────────────────────────────────────────────
 
 """
-    Respond(; model="gpt-4.1", input, kwargs...)
+    Respond(; model="gpt-5.2", input, kwargs...)
 
 Configuration struct for an OpenAI Responses API request.
 
 # Key Fields
-- `model::String`: Model to use (default: `"gpt-4.1"`)
+- `model::String`: Model to use (default: `"gpt-5.2"`)
 - `input::Any`: A `String` or `Vector{InputMessage}` — the prompt input
 - `instructions::String`: System-level instructions
 - `tools::Vector`: Available tools (`FunctionTool`, `WebSearchTool`, `FileSearchTool`)
@@ -315,12 +315,12 @@ Respond(
 )
 
 # Reasoning (O-series models)
-Respond(input="Solve this math problem...", model="o3-mini", reasoning=Reasoning(effort="high"))
+Respond(input="Solve this math problem...", model="o3", reasoning=Reasoning(effort="high"))
 ```
 """
 @kwdef struct Respond
     service::Type{<:ServiceEndpoint} = OPENAIServiceEndpoint
-    model::String = "gpt-4.1"
+    model::String = "gpt-5.2"
     input::Any  # String or Vector{InputMessage}
     instructions::Union{String,Nothing} = nothing
     tools::Union{Vector,Nothing} = nothing
@@ -642,7 +642,7 @@ Convenience method: create a [`Respond`](@ref) from `input` + keyword arguments 
 result = respond("Tell me a joke")
 
 # With instructions and model
-result = respond("Translate: Hello", instructions="You are a translator", model="gpt-4.1")
+result = respond("Translate: Hello", instructions="You are a translator", model="gpt-5.2")
 
 # With tools
 result = respond("Search for Julia news", tools=[web_search()])

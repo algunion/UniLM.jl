@@ -46,6 +46,10 @@ end
         include("responses.jl")
     end
 
+    @testset "images.jl" begin
+        include("images.jl")
+    end
+
     @testset "integration" begin
         include("integration.jl")
     end

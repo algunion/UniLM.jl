@@ -8,26 +8,35 @@ Use [`ResponseFormat`](@ref) to control the output format:
 
 ### Free-Form JSON
 
-```julia
+```@example structured
 using UniLM
+using JSON
 
 chat = Chat(
-    model="gpt-4o",
+    model="gpt-5.2",
     response_format=ResponseFormat()  # type="json_object"
 )
 push!(chat, Message(Val(:system), "You output JSON. Always respond with valid JSON."))
 push!(chat, Message(Val(:user), "List 3 programming languages with their year of creation."))
+println("Response format type: ", chat.response_format.type)
+println("Request body:")
+println(JSON.json(chat))
+```
 
+```julia
 result = chatrequest!(chat)
 data = JSON.parse(result.message.content)
+# => Dict("languages" => [
+#      Dict("name" => "Julia", "year" => 2012),
+#      Dict("name" => "Python", "year" => 1991),
+#      Dict("name" => "Rust", "year" => 2015)
+#    ])
 ```
 
 ### JSON Schema (Strict)
 
-```julia
-using UniLM
-
-schema = ResponseFormat(JsonSchemaAPI(
+```@example structured
+schema = ResponseFormat(UniLM.JsonSchemaAPI(
     name="languages",
     description="A list of programming languages",
     schema=Dict(
@@ -49,12 +58,17 @@ schema = ResponseFormat(JsonSchemaAPI(
     )
 ))
 
-chat = Chat(model="gpt-4o", response_format=schema)
+chat = Chat(model="gpt-5.2", response_format=schema)
 push!(chat, Message(Val(:system), "Return structured data about programming languages."))
 push!(chat, Message(Val(:user), "List Julia, Python, and Rust"))
+println("Schema name: ", schema.json_schema.name)
+println("Response format type: ", schema.type)
+```
 
+```julia
 result = chatrequest!(chat)
-# result.message.content is guaranteed to match the schema
+# result.message.content is guaranteed to match the schema:
+# {"languages":[{"name":"Julia","year":2012},{"name":"Python","year":1991},{"name":"Rust","year":2015}]}
 ```
 
 ## Responses API
@@ -68,11 +82,12 @@ result = respond(
     "List 3 colors as a JSON object",
     text=json_object_format()
 )
+# output_text(result) => '{"colors":["red","green","blue"]}'
 ```
 
 ### JSON Schema
 
-```julia
+```@example structured
 fmt = json_schema_format(
     "colors",
     "A structured list of colors",
@@ -95,15 +110,25 @@ fmt = json_schema_format(
     ),
     strict=true
 )
+println("Format type: ", fmt.format.type)
+println("Schema strict: ", fmt.format.strict)
+```
 
+```julia
 result = respond("List red, green, and blue with hex codes", text=fmt)
 colors = JSON.parse(output_text(result))
+# => Dict("colors" => [
+#      Dict("name" => "red", "hex" => "#FF0000"),
+#      Dict("name" => "green", "hex" => "#00FF00"),
+#      Dict("name" => "blue", "hex" => "#0000FF")
+#    ])
 ```
 
 ### Plain Text Format
 
-```julia
-result = respond("Hello", text=text_format())  # default: plain text
+```@example structured
+tc = text_format()
+println("Default format type: ", tc.format.type)
 ```
 
 ## Convenience Constructors

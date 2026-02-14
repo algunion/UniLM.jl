@@ -15,6 +15,8 @@ result = respond("Tell me a joke about Julia programming")
 
 if result isa ResponseSuccess
     println(output_text(result))
+    # => "Why do Julia programmers never get lost? Because they always
+    #     know which method to dispatch!"
 end
 ```
 
@@ -22,16 +24,20 @@ end
 
 For full control, construct a [`Respond`](@ref) object:
 
-```julia
+```@example responses
+using UniLM
+using JSON
+
 r = Respond(
-    model="gpt-4.1",
+    model="gpt-5.2",
     input="Explain monads simply",
     instructions="You are a functional programming expert. Be concise.",
     temperature=0.5,
     max_output_tokens=500,
 )
-
-result = respond(r)
+println("Model: ", r.model)
+println("Request body:")
+println(JSON.json(r))
 ```
 
 ## Instructions (System Prompt)
@@ -44,13 +50,14 @@ result = respond(
     "Translate to French: The quick brown fox",
     instructions="You are a professional translator. Respond only with the translation.",
 )
+# output_text(result) => "Le renard brun rapide saute par-dessus le chien paresseux"
 ```
 
 ## Structured Input
 
 For multimodal inputs, use [`InputMessage`](@ref) with content helpers:
 
-```julia
+```@example responses
 # Text-only structured input
 msgs = [
     InputMessage(role="system", content="You analyze images."),
@@ -59,8 +66,9 @@ msgs = [
         input_image("https://example.com/photo.jpg"),
     ]),
 ]
-
-result = respond(Respond(input=msgs, model="gpt-4.1"))
+r = Respond(input=msgs, model="gpt-5.2")
+println("Input is structured: ", r.input isa Vector)
+println("Number of input messages: ", length(r.input))
 ```
 
 ### Input Helpers
@@ -81,6 +89,7 @@ joke_id = r1.response.id
 
 r2 = respond("Explain why that's funny", previous_response_id=joke_id)
 println(output_text(r2))
+# => "The joke plays on the double meaning of 'dispatch'..."
 ```
 
 ## Built-in Tools
@@ -92,6 +101,7 @@ result = respond(
     "What are the latest Julia language releases?",
     tools=[web_search()]
 )
+# output_text(result) => "The latest Julia release is v1.12.5, released..."
 ```
 
 ### File Search
@@ -105,7 +115,7 @@ result = respond(
 
 ### Function Tools
 
-```julia
+```@example responses
 weather_tool = function_tool(
     "get_weather",
     "Get current weather for a location",
@@ -117,36 +127,41 @@ weather_tool = function_tool(
         "required" => ["location"]
     )
 )
+println("Tool name: ", weather_tool.name)
+println("Tool JSON: ", JSON.json(JSON.lower(weather_tool)))
+```
 
+```julia
 result = respond("What's the weather in Tokyo?", tools=[weather_tool])
 
 # Extract function calls
 for call in function_calls(result)
     println("Call: ", call["name"], " with: ", call["arguments"])
+    # => Call: get_weather with: {"location":"Tokyo"}
 end
 ```
 
 ## Reasoning (O-Series Models)
 
-For models like `o3-mini` that support extended reasoning:
+For models like `o3` that support extended reasoning:
 
-```julia
-result = respond(
-    "Prove that √2 is irrational",
-    model="o3-mini",
+```@example responses
+r = Respond(
+    input="Prove that √2 is irrational",
+    model="o3",
     reasoning=Reasoning(effort="high", summary="detailed")
 )
+println("Model: ", r.model)
+println("Reasoning effort: ", r.reasoning.effort)
+println(JSON.json(r))
 ```
 
 ## Structured Output
 
 Force JSON-conformant output:
 
-```julia
-# Free-form JSON
-result = respond("List 3 colors as JSON", text=json_object_format())
-
-# JSON Schema
+```@example responses
+# JSON Schema format
 fmt = json_schema_format(
     "colors",
     "A list of colors",
@@ -162,7 +177,13 @@ fmt = json_schema_format(
     ),
     strict=true
 )
+println("Format type: ", fmt.format.type)
+println("Schema name: ", fmt.format.name)
+```
+
+```julia
 result = respond("List 3 colors", text=fmt)
+# output_text(result) => '{"colors":["red","green","blue"]}'
 ```
 
 ## Response Accessors
@@ -174,16 +195,16 @@ if result isa ResponseSuccess
     r = result.response
 
     # Convenience accessors
-    output_text(result)      # concatenated text output
-    function_calls(result)   # vector of function call dicts
+    output_text(result)      # => "Hi there! How can I help?"
+    function_calls(result)   # => Dict[] (empty if no function calls)
 
     # Raw fields
-    r.id                     # response ID
-    r.status                 # "completed", "failed", etc.
-    r.model                  # model used
-    r.output                 # full output array
-    r.usage                  # token usage dict
-    r.raw                    # complete raw JSON
+    r.id                     # => "resp_abc123def456"
+    r.status                 # => "completed"
+    r.model                  # => "gpt-5.2"
+    r.output                 # => [{...}] full output array
+    r.usage                  # => Dict("input_tokens"=>12, "output_tokens"=>8, ...)
+    r.raw                    # => Dict{String,Any}(...) complete raw JSON
 end
 ```
 

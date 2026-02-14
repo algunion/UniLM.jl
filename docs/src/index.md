@@ -7,12 +7,13 @@
 
 ## What is UniLM.jl?
 
-UniLM.jl provides a **Julian**, type-safe interface to OpenAI's language models — covering both the classic **Chat Completions API** and the newer **Responses API**. It aims to become a unified solution for accessing multiple LLM providers from Julia.
+UniLM.jl provides a **Julian**, type-safe interface to OpenAI's language models — covering both the classic **Chat Completions API**, the newer **Responses API**, and the **Image Generation API**. It aims to become a unified solution for accessing multiple LLM providers from Julia.
 
 ### Key Features
 
 - 🗣️ **Chat Completions** — stateful conversations with automatic history management
 - 🔮 **Responses API** — OpenAI's newer API with built-in tools, multi-turn chaining, and reasoning
+- 🖼️ **Image Generation** — create images from text prompts with `gpt-image-1.5`
 - 🔧 **Tool/Function Calling** — first-class support for function tools in both APIs
 - 📊 **Embeddings** — text embedding generation
 - 🌊 **Streaming** — real-time token streaming with `do`-block syntax
@@ -48,23 +49,57 @@ pkg> add https://github.com/algunion/UniLM.jl
 
 ## Quick Example
 
-```julia
+Building requests — these construct objects locally without calling the API:
+
+```@example quickstart
 using UniLM
+using JSON
 
-# Set your API key
-ENV["OPENAI_API_KEY"] = "sk-..."
+# Chat Completions request
+chat = Chat(model="gpt-5.2")
+push!(chat, Message(Val(:system), "You are a Julia expert."))
+push!(chat, Message(Val(:user), "Explain multiple dispatch in one sentence."))
+println("Chat has ", length(chat), " messages, model: ", chat.model)
+println("Request body preview:")
+println(JSON.json(chat))
+```
 
+```@example quickstart
+# Responses API request
+r = Respond(input="What makes Julia special?")
+println("Respond model: ", r.model)
+println(JSON.json(r))
+```
+
+```@example quickstart
+# Image Generation request
+ig = ImageGeneration(prompt="A watercolor Julia logo", quality="high")
+println("Image model: ", ig.model)
+println(JSON.json(ig))
+```
+
+With a valid API key, actual API calls return structured results:
+
+```julia
 # --- Responses API (recommended for new code) ---
 result = respond("What makes Julia special?")
 println(output_text(result))
+# => "Julia is special for its combination of high performance
+#     (approaching C speed), dynamic typing, multiple dispatch..."
 
 # --- Chat Completions ---
-chat = Chat(model="gpt-4o")
-push!(chat, Message(Val(:system), "You are a Julia expert."))
-push!(chat, Message(Val(:user), "Explain multiple dispatch in one sentence."))
 result = chatrequest!(chat)
 if result isa LLMSuccess
     println(result.message.content)
+    # => "Multiple dispatch selects the method implementation based
+    #     on the types of all arguments, enabling extensible code."
+end
+
+# --- Image Generation ---
+result = generate_image("A watercolor painting of the Julia logo")
+if result isa ImageSuccess
+    save_image(image_data(result)[1], "julia_logo.png")
+    println("Image saved! ($(length(image_data(result)[1])) bytes base64)")
 end
 ```
 
@@ -73,4 +108,5 @@ end
 - [Getting Started](@ref) — setup and first requests
 - [Chat Completions Guide](@ref chat_guide) — deep dive into `Chat` and `chatrequest!`
 - [Responses API Guide](@ref responses_guide) — the newer Responses API
+- [Image Generation Guide](@ref images_guide) — create images from text prompts
 - [API Reference](@ref chat_api) — full type and function reference

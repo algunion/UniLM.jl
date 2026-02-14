@@ -153,8 +153,8 @@ end
 Base.show(io::IO, x::Model) = print(io, x.name)
 Base.parse(::Type{Model}, s::String) = Model(s)
 
-const GPT4o = Model("gpt-4o")
-const GPT4oMini = Model("gpt-4o-mini")
+const GPT5_2 = Model("gpt-5.2")
+const GPT5_2Mini = Model("gpt-5.2-mini")
 
 const STOP = "stop"
 const CONTENT_FILTER = "content_filter"
@@ -301,13 +301,13 @@ struct GEMINIServiceEndpoint <: ServiceEndpoint end
     chat = Chat()
 
 Creates a new `Chat` object with default settings:
-- `model` is set to `gpt-4o`
+- `model` is set to `gpt-5.2`
 - `messages` is set to an empty `Vector{Message}`
 - `history` is set to `true`
 """
 @kwdef struct Chat
     service::Type{<:ServiceEndpoint} = OPENAIServiceEndpoint #AZUREServiceEndpoint #OPENAIServiceEndpoint
-    model::String = "gpt-4o"
+    model::String = "gpt-5.2"
     messages::Conversation = Message[]
     history::Bool = true
     tools::Union{Vector{GPTTool},Nothing} = nothing
@@ -537,13 +537,13 @@ Base.firstindex(chat::Chat) = firstindex(chat.messages)
 
 # _EMBEDDINGS_
 
-const GPTTextEmbeddingAda002 = Model("text-embedding-ada-002")
+const GPTTextEmbedding3Small = Model("text-embedding-3-small")
 
 """
     Embeddings(input::String)
     Embeddings(input::Vector{String})
 
-Create an embedding request for one or more text inputs. Uses the `text-embedding-ada-002`
+Create an embedding request for one or more text inputs. Uses the `text-embedding-3-small`
 model (1536-dimensional embeddings) by default.
 
 The `embeddings` field is **pre-allocated** and filled in-place by [`embeddingrequest!`](@ref).
@@ -567,11 +567,11 @@ struct Embeddings
     embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}
     user::Union{String,Nothing}
     function Embeddings(input::String)
-        return new(string(GPTTextEmbeddingAda002), input, zeros(Float64, 1536), nothing)
+        return new(string(GPTTextEmbedding3Small), input, zeros(Float64, 1536), nothing)
     end
     function Embeddings(input::Vector{String})
         isempty(input) && throw(ArgumentError("input must not be empty"))
-        return new(string(GPTTextEmbeddingAda002), input, [zeros(Float64, 1536) for _ in 1:length(input)], nothing)
+        return new(string(GPTTextEmbedding3Small), input, [zeros(Float64, 1536) for _ in 1:length(input)], nothing)
     end
 end
 

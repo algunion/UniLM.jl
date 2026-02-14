@@ -1,26 +1,49 @@
-# [Chat Types](@id chat_api)
+# Chat Completions API
 
-```@docs
-UniLM.UniLM
-```
+Types and functions for the **Chat Completions API**.
 
-## Core Types
+## Chat Object
 
 ```@docs
 Chat
+```
+
+## Messages
+
+```@docs
 Message
 ```
 
-## Role Constants
+### Convenience Constructors
 
-```@docs
-RoleSystem
-RoleUser
-RoleAssistant
-UniLM.RoleTool
+```@example chat_api
+using UniLM
+
+sys = Message(Val(:system), "You are a helpful assistant")
+usr = Message(Val(:user), "Hello!")
+println("System role: ", sys.role)
+println("User role: ", usr.role)
+println("User content: ", usr.content)
 ```
 
-## Tool Types
+## Conversation Management
+
+```@docs
+issendvalid
+update!
+```
+
+### Building a Conversation
+
+```@example chat_api
+chat = Chat(model="gpt-5.2")
+push!(chat, Message(Val(:system), "You are a helpful assistant"))
+push!(chat, Message(Val(:user), "What is Julia?"))
+println("Messages: ", length(chat))
+println("Valid for sending: ", issendvalid(chat))
+```
+
+## Tools
 
 ```@docs
 GPTTool
@@ -33,23 +56,34 @@ GPTFunctionCallResult
 
 ```@docs
 ResponseFormat
-UniLM.GPTImageContent
 ```
 
-## Functions
+```@example chat_api
+using JSON
+
+# JSON object format
+fmt = ResponseFormat()
+println("Type: ", fmt.type)
+println("JSON: ", JSON.json(fmt))
+```
+
+## Request Function
 
 ```@docs
 chatrequest!
-issendvalid
-UniLM.getcontent
-UniLM.getrole
-UniLM.iscall
-Base.push!(::Chat, ::Message)
-Base.pop!(::Chat)
-Base.getindex(::Chat, ::Int64)
-Base.setindex!(::Chat, ::Message, ::Int64)
-Base.last(::Chat)
-Base.firstindex(::Chat)
-Base.lastindex(::Chat)
-UniLM.update!(::Chat, ::Message)
+```
+
+## Role Constants
+
+```@docs
+RoleSystem
+RoleUser
+RoleAssistant
+```
+
+## Model Constants
+
+```@example chat_api
+println("GPT5_2: ", UniLM.GPT5_2)
+println("GPT5_2Mini: ", UniLM.GPT5_2Mini)
 ```

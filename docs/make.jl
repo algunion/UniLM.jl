@@ -20,6 +20,7 @@ makedocs(;
         "Guide" => [
             "Chat Completions" => "guide/chat_completions.md",
             "Responses API" => "guide/responses_api.md",
+            "Image Generation" => "guide/image_generation.md",
             "Embeddings" => "guide/embeddings.md",
             "Tool Calling" => "guide/tool_calling.md",
             "Streaming" => "guide/streaming.md",
@@ -29,6 +30,7 @@ makedocs(;
         "API Reference" => [
             "Chat Types" => "api/chat.md",
             "Responses Types" => "api/responses.md",
+            "Images" => "api/images.md",
             "Embeddings" => "api/embeddings.md",
             "Service Endpoints" => "api/endpoints.md",
             "Result Types" => "api/results.md",

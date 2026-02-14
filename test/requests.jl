@@ -3,8 +3,9 @@
         chat = Chat(model="gpt-4o")
         @test UniLM.get_url(chat) == "https://api.openai.com/v1/chat/completions"
 
-        chat2 = Chat(model="text-embedding-ada-002")
-        @test UniLM.get_url(chat2) == "https://api.openai.com/v1/embeddings"
+        # Any model routes to chat completions when used with Chat
+        chat2 = Chat(model="gpt-4.1-mini")
+        @test UniLM.get_url(chat2) == "https://api.openai.com/v1/chat/completions"
     end
 
     @testset "OpenAI get_url for Embeddings" begin
@@ -12,17 +13,17 @@
         @test UniLM.get_url(emb) == "https://api.openai.com/v1/embeddings"
     end
 
-    @testset "OpenAI get_url dispatches" begin
-        @test UniLM.get_url(UniLM.OPENAIServiceEndpoint, "gpt-4o") == "https://api.openai.com/v1/chat/completions"
-        @test UniLM.get_url(UniLM.OPENAIServiceEndpoint, "gpt-4o-mini") == "https://api.openai.com/v1/chat/completions"
+    @testset "OpenAI get_url dispatches on request type" begin
+        chat = Chat(model="gpt-4o")
+        @test UniLM.get_url(UniLM.OPENAIServiceEndpoint, chat) == "https://api.openai.com/v1/chat/completions"
+
+        chat2 = Chat(model="gpt-4o-mini")
+        @test UniLM.get_url(UniLM.OPENAIServiceEndpoint, chat2) == "https://api.openai.com/v1/chat/completions"
     end
 
     @testset "Gemini get_url" begin
-        @test UniLM.get_url(UniLM.GEMINIServiceEndpoint, "gemini-2.0-flash") == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-    end
-
-    @testset "Unknown model throws KeyError" begin
-        @test_throws KeyError UniLM.get_url(UniLM.OPENAIServiceEndpoint, "nonexistent-model")
+        chat = Chat(service=UniLM.GEMINIServiceEndpoint, model="gemini-2.0-flash")
+        @test UniLM.get_url(UniLM.GEMINIServiceEndpoint, chat) == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
     end
 end
 

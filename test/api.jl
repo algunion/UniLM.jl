@@ -8,16 +8,11 @@
     @test UniLM.TOOL_CALLS == "tool_calls"
     @test UniLM.OPENAI_BASE_URL == "https://api.openai.com"
 
-    @testset "Model endpoint dictionaries" begin
-        @test haskey(UniLM._MODEL_ENDPOINTS_OPENAI, "gpt-4o")
-        @test UniLM._MODEL_ENDPOINTS_OPENAI["gpt-4o"] == "/v1/chat/completions"
-        @test haskey(UniLM._MODEL_ENDPOINTS_OPENAI, "text-embedding-ada-002")
-        @test UniLM._MODEL_ENDPOINTS_OPENAI["text-embedding-ada-002"] == "/v1/embeddings"
-        # Verify duplicate key fix
-        @test haskey(UniLM._MODEL_ENDPOINTS_OPENAI, "whisper-1")
-        @test haskey(UniLM._MODEL_ENDPOINTS_OPENAI, "whisper-1-translate")
-        @test UniLM._MODEL_ENDPOINTS_OPENAI["whisper-1"] == "/v1/audio/transcriptions"
-        @test UniLM._MODEL_ENDPOINTS_OPENAI["whisper-1-translate"] == "/v1/audio/translations"
+    @testset "Endpoint path constants" begin
+        @test UniLM.CHAT_COMPLETIONS_PATH == "/v1/chat/completions"
+        @test UniLM.EMBEDDINGS_PATH == "/v1/embeddings"
+        @test UniLM.RESPONSES_PATH == "/v1/responses"
+        @test UniLM.GEMINI_CHAT_URL == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
     end
 end
 
@@ -28,8 +23,6 @@ end
 
     @test UniLM.GPT4o == UniLM.Model("gpt-4o")
     @test UniLM.GPT4oMini == UniLM.Model("gpt-4o-mini")
-    @test UniLM.GPT4Turbo == UniLM.Model("gpt-4-1106-preview")
-    @test UniLM.GPT4TurboVision == UniLM.Model("gpt-4-vision-preview")
     @test UniLM.GPTTextEmbeddingAda002 == UniLM.Model("text-embedding-ada-002")
 end
 

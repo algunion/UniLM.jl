@@ -1,9 +1,12 @@
-get_url(params::Chat) = get_url(params.service, params.model)
-get_url(emb::Embeddings) = get_url(OPENAIServiceEndpoint, emb.model)
-get_url(::Type{OPENAIServiceEndpoint}, model::String) = OPENAI_BASE_URL * _MODEL_ENDPOINTS_OPENAI[model]
-get_url(::Type{OPENAIServiceEndpoint}, emb::Embeddings) = get_url(emb)
-get_url(::Type{AZUREServiceEndpoint}, model::String) = ENV[AZURE_OPENAI_BASE_URL] * _MODEL_ENDPOINTS_AZURE_OPENAI[model] * "/chat/completions?api-version=$(ENV[AZURE_OPENAI_API_VERSION])"
-get_url(::Type{GEMINIServiceEndpoint}, model::String) = _MODEL_ENDPOINTS_AZURE_GEMINI[model]
+# ─── URL Dispatch ─────────────────────────────────────────────────────────────
+# Endpoints are determined by (ServiceEndpoint, RequestType), not model name.
+
+get_url(chat::Chat) = get_url(chat.service, chat)
+get_url(::Embeddings) = OPENAI_BASE_URL * EMBEDDINGS_PATH
+
+get_url(::Type{OPENAIServiceEndpoint}, ::Chat) = OPENAI_BASE_URL * CHAT_COMPLETIONS_PATH
+get_url(::Type{AZUREServiceEndpoint}, chat::Chat) = ENV[AZURE_OPENAI_BASE_URL] * _MODEL_ENDPOINTS_AZURE_OPENAI[chat.model] * "/chat/completions?api-version=$(ENV[AZURE_OPENAI_API_VERSION])"
+get_url(::Type{GEMINIServiceEndpoint}, ::Chat) = GEMINI_CHAT_URL
 
 
 function auth_header(::Type{OPENAIServiceEndpoint})
@@ -87,24 +90,24 @@ function _chatrequeststream(chat, body, callback=nothing)
             chunk_buffer = IOBuffer()
             fail_buffer = IOBuffer()
             done = Ref(false)
-            close = Ref(false)
+            close_ref = Ref(false)
             write(io, body)
             HTTP.closewrite(io)
             HTTP.startread(io)
-            while !eof(io) && !close[] && !done[]
+            while !eof(io) && !close_ref[] && !done[]
                 chunk::String = join((String(take!(fail_buffer)), String(readavailable(io))))
                 streamstatus = _parse_chunk(chunk, chunk_buffer, fail_buffer)
                 parsed = String(take!(chunk_buffer))
                 if streamstatus.eos
                     done[] = true
                     m[] = Message(role=RoleAssistant, content=String(take!(tmp)), finish_reason=STOP)
-                    !isnothing(callback) && callback(m[], close)
+                    !isnothing(callback) && callback(m[], close_ref)
                 else
-                    !isnothing(callback) && callback(parsed, close)
+                    !isnothing(callback) && callback(parsed, close_ref)
                     print(tmp, parsed)
                 end
             end
-            close[] && @info "stream closed by user"
+            close_ref[] && @info "stream closed by user"
             HTTP.closeread(io)
         end
         if resp.status == 200 && !isnothing(m[])
@@ -132,7 +135,7 @@ function chatrequest!(chat::Chat; retries::Int=0, callback=nothing)
     res = LLMCallError(error="uninitialized", status=0, self=chat)
     try
         body = JSON.json(chat)
-        if isnothing(chat.stream) || !something(chat.stream)
+        if chat.stream !== true
             resp = HTTP.post(get_url(chat), body=body, headers=auth_header(chat.service))
             if resp.status == 200
                 m = extract_message(resp)
@@ -157,8 +160,8 @@ function chatrequest!(chat::Chat; retries::Int=0, callback=nothing)
         end
     catch e
         @info "Error: $e"
-        statuserror = hasfield(typeof(e), :status) ? getfield(e, :status) : nothing
-        res = LLMCallError(error=e |> string, self=chat, status=statuserror)
+        statuserror = hasproperty(e, :status) ? e.status : nothing
+        res = LLMCallError(error=string(e), self=chat, status=statuserror)
     end
     @info "Returning from chatrequest!"
     return res

@@ -155,8 +155,6 @@ Base.parse(::Type{Model}, s::String) = Model(s)
 
 const GPT4o = Model("gpt-4o")
 const GPT4oMini = Model("gpt-4o-mini")
-const GPT4Turbo = Model("gpt-4-1106-preview")
-const GPT4TurboVision = Model("gpt-4-vision-preview")
 
 const STOP = "stop"
 const CONTENT_FILTER = "content_filter"

@@ -530,7 +530,7 @@ end
 function _respond_stream(r::Respond, body::String, callback=nothing)
     Threads.@spawn begin
         result = Ref{Union{ResponseObject,Nothing}}(nothing)
-        url = OPENAI_BASE_URL * "/v1/responses"
+        url = OPENAI_BASE_URL * RESPONSES_PATH
         resp = HTTP.open("POST", url, auth_header(r.service)) do io
             text_buffer = IOBuffer()
             fail_buffer = IOBuffer()
@@ -608,7 +608,7 @@ function respond(r::Respond; retries::Int=0, callback=nothing)
             return _respond_stream(r, body, callback)
         end
 
-        url = OPENAI_BASE_URL * "/v1/responses"
+        url = OPENAI_BASE_URL * RESPONSES_PATH
         resp = HTTP.post(url, body=body, headers=auth_header(r.service))
 
         if resp.status == 200
@@ -625,8 +625,7 @@ function respond(r::Respond; retries::Int=0, callback=nothing)
             return ResponseFailure(response=String(resp.body), status=resp.status)
         end
     catch e
-        @info "Error: $e"
-        statuserror = hasfield(typeof(e), :status) ? getfield(e, :status) : nothing
+        statuserror = hasproperty(e, :status) ? e.status : nothing
         res = ResponseCallError(error=string(e), status=statuserror)
     end
     return res
@@ -703,7 +702,7 @@ end
 """
 function get_response(response_id::String; service::Type{<:ServiceEndpoint}=OPENAIServiceEndpoint)
     try
-        url = OPENAI_BASE_URL * "/v1/responses/" * response_id
+        url = OPENAI_BASE_URL * RESPONSES_PATH * "/" * response_id
         resp = HTTP.get(url, headers=auth_header(service))
         if resp.status == 200
             return ResponseSuccess(response=parse_response(resp))
@@ -711,7 +710,7 @@ function get_response(response_id::String; service::Type{<:ServiceEndpoint}=OPEN
             return ResponseFailure(response=String(resp.body), status=resp.status)
         end
     catch e
-        statuserror = hasfield(typeof(e), :status) ? getfield(e, :status) : nothing
+        statuserror = hasproperty(e, :status) ? e.status : nothing
         return ResponseCallError(error=string(e), status=statuserror)
     end
 end
@@ -729,7 +728,7 @@ result["deleted"]  # => true
 """
 function delete_response(response_id::String; service::Type{<:ServiceEndpoint}=OPENAIServiceEndpoint)
     try
-        url = OPENAI_BASE_URL * "/v1/responses/" * response_id
+        url = OPENAI_BASE_URL * RESPONSES_PATH * "/" * response_id
         resp = HTTP.request("DELETE", url, headers=auth_header(service))
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
@@ -737,7 +736,7 @@ function delete_response(response_id::String; service::Type{<:ServiceEndpoint}=O
             return ResponseFailure(response=String(resp.body), status=resp.status)
         end
     catch e
-        statuserror = hasfield(typeof(e), :status) ? getfield(e, :status) : nothing
+        statuserror = hasproperty(e, :status) ? e.status : nothing
         return ResponseCallError(error=string(e), status=statuserror)
     end
 end
@@ -762,7 +761,7 @@ function list_input_items(response_id::String;
     service::Type{<:ServiceEndpoint}=OPENAIServiceEndpoint)
 
     try
-        url = OPENAI_BASE_URL * "/v1/responses/" * response_id * "/input_items"
+        url = OPENAI_BASE_URL * RESPONSES_PATH * "/" * response_id * "/input_items"
         params = ["limit=$limit", "order=$order"]
         !isnothing(after) && push!(params, "after=$after")
         url *= "?" * join(params, "&")
@@ -774,7 +773,7 @@ function list_input_items(response_id::String;
             return ResponseFailure(response=String(resp.body), status=resp.status)
         end
     catch e
-        statuserror = hasfield(typeof(e), :status) ? getfield(e, :status) : nothing
+        statuserror = hasproperty(e, :status) ? e.status : nothing
         return ResponseCallError(error=string(e), status=statuserror)
     end
 end

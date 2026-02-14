@@ -36,11 +36,8 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1
-        continue-on-error: true
-      - uses: julia-actions/julia-uploadcoveralls@v1
-        continue-on-error: true
-      - uses: coverallsapp/github-action@v2
-        continue-on-error: true
+      - uses: codecov/codecov-action@v5
         with:
-          path-to-lcov: lcov.info
-          repo_token: 'pSFvlwoBvwTbuCVAXn0u0n3uwi2BjcXFs'
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false

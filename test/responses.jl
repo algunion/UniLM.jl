@@ -591,3 +591,210 @@ data: {"type":"response.output_text.delta","delta":"Hello"}"""
         @test !isempty(take!(failbuff))
     end
 end
+
+@testset "respond() error handling" begin
+    @testset "respond(::Respond) with invalid API key" begin
+        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
+            r = Respond(input="Hello")
+            result = respond(r)
+            @test result isa ResponseCallError || result isa ResponseFailure
+        end
+    end
+
+    @testset "respond(input; kwargs...) convenience method" begin
+        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
+            result = respond("Hello", model="gpt-4.1")
+            @test result isa ResponseCallError || result isa ResponseFailure
+        end
+    end
+
+    @testset "respond(callback, input; kwargs...) do-block form" begin
+        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
+            result = respond("Hello") do chunk, close
+                # callback - won't be called because request fails
+            end
+            # With an invalid key, the streaming request will either
+            # return an error or a Task that fails
+            @test result isa ResponseCallError || result isa Task
+        end
+    end
+end
+
+@testset "get_response error handling" begin
+    @testset "with invalid API key" begin
+        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
+            result = get_response("resp_nonexistent")
+            @test result isa ResponseCallError || result isa ResponseFailure
+        end
+    end
+end
+
+@testset "delete_response error handling" begin
+    @testset "with invalid API key" begin
+        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
+            result = delete_response("resp_nonexistent")
+            @test result isa ResponseCallError || result isa ResponseFailure
+        end
+    end
+end
+
+@testset "list_input_items error handling" begin
+    @testset "with invalid API key" begin
+        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
+            result = list_input_items("resp_nonexistent")
+            @test result isa ResponseCallError || result isa ResponseFailure
+        end
+    end
+
+    @testset "with after parameter" begin
+        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
+            result = list_input_items("resp_nonexistent"; limit=10, order="asc", after="item_abc")
+            @test result isa ResponseCallError || result isa ResponseFailure
+        end
+    end
+end
+
+@testset "ResponseObject accessors" begin
+    @testset "output_text with non-message items" begin
+        ro = ResponseObject(
+            id="resp_1", status="completed", model="gpt-4.1",
+            output=Any[
+                Dict{String,Any}("type" => "function_call", "name" => "fn"),
+                Dict{String,Any}(
+                    "type" => "message",
+                    "content" => Any[
+                        Dict{String,Any}("type" => "other_type", "data" => "ignored"),
+                        Dict{String,Any}("type" => "output_text", "text" => "actual")
+                    ]
+                )
+            ],
+            raw=Dict{String,Any}()
+        )
+        @test output_text(ro) == "actual"
+    end
+
+    @testset "function_calls on ResponseSuccess" begin
+        ro = ResponseObject(
+            id="resp_1", status="completed", model="gpt-4.1",
+            output=Any[
+                Dict{String,Any}(
+                "type" => "function_call",
+                "id" => "fc_1",
+                "call_id" => "call_1",
+                "name" => "fn1",
+                "arguments" => "{}",
+                "status" => "completed"
+            )
+            ],
+            raw=Dict{String,Any}()
+        )
+        s = ResponseSuccess(response=ro)
+        @test length(function_calls(s)) == 1
+        @test function_calls(s)[1]["name"] == "fn1"
+    end
+end
+
+@testset "ResponseObject optional fields" begin
+    ro = ResponseObject(
+        id="resp_1", status="completed", model="gpt-4.1",
+        output=Any[], raw=Dict{String,Any}(),
+        error=Dict{String,Any}("code" => "error"),
+        metadata=Dict{String,Any}("key" => "value")
+    )
+    @test ro.error["code"] == "error"
+    @test ro.metadata["key"] == "value"
+end
+
+@testset "TextConfig JSON serialization" begin
+    tc = TextConfig(format=UniLM.TextFormatSpec(type="json_schema", name="test", description="d", schema=Dict("type" => "object"), strict=true))
+    lowered = JSON.lower(tc.format)
+    @test lowered[:type] == "json_schema"
+    @test lowered[:name] == "test"
+    @test lowered[:strict] == true
+end
+
+@testset "FileSearchTool with all options" begin
+    ranking = Dict("ranker" => "auto")
+    filters = Dict("type" => "eq", "key" => "author", "value" => "test")
+    t = FileSearchTool(vector_store_ids=["vs_1"], max_num_results=5, ranking_options=ranking, filters=filters)
+    lowered = JSON.lower(t)
+    @test lowered[:ranking_options] == ranking
+    @test lowered[:filters] == filters
+end
+
+@testset "WebSearchTool with location" begin
+    loc = Dict("country" => "DE", "city" => "Berlin")
+    t = WebSearchTool(user_location=loc)
+    lowered = JSON.lower(t)
+    @test lowered[:user_location] == loc
+end
+
+@testset "FunctionTool with strict and parameters" begin
+    params = Dict("type" => "object", "properties" => Dict())
+    t = FunctionTool(name="fn", parameters=params, strict=true)
+    lowered = JSON.lower(t)
+    @test lowered[:parameters] == params
+    @test lowered[:strict] == true
+end
+
+@testset "function_tool shorthand with kwargs" begin
+    params = Dict("type" => "object")
+    t = function_tool("fn", "desc"; parameters=params, strict=true)
+    @test t.parameters == params
+    @test t.strict == true
+end
+
+@testset "web_search shorthand with location" begin
+    loc = Dict("country" => "US")
+    t = web_search(context_size="high", location=loc)
+    @test t.search_context_size == "high"
+    @test t.user_location == loc
+end
+
+@testset "file_search shorthand with all options" begin
+    ranking = Dict("ranker" => "auto")
+    filters = Dict("type" => "eq")
+    t = file_search(["vs_1"]; max_results=10, ranking=ranking, filters=filters)
+    @test t.max_num_results == 10
+    @test t.ranking_options == ranking
+    @test t.filters == filters
+end
+
+@testset "input_file with both url and id" begin
+    p = input_file(url="https://example.com/f.pdf", id="file-123")
+    @test p[:file_url] == "https://example.com/f.pdf"
+    @test p[:file_id] == "file-123"
+end
+
+@testset "Respond JSON serialization with all fields" begin
+    r = Respond(
+        input="test",
+        instructions="inst",
+        tools=[function_tool("fn")],
+        tool_choice="auto",
+        parallel_tool_calls=true,
+        temperature=0.5,
+        max_output_tokens=100,
+        stream=false,
+        text=text_format(),
+        reasoning=Reasoning(effort="high"),
+        truncation="auto",
+        store=true,
+        metadata=Dict("k" => "v"),
+        previous_response_id="resp_prev",
+        user="user_123"
+    )
+    lowered = JSON.lower(r)
+    @test lowered[:instructions] == "inst"
+    @test lowered[:tool_choice] == "auto"
+    @test lowered[:parallel_tool_calls] == true
+    @test lowered[:max_output_tokens] == 100
+    @test lowered[:stream] == false
+    @test haskey(lowered, :text)
+    @test haskey(lowered, :reasoning)
+    @test lowered[:truncation] == "auto"
+    @test lowered[:store] == true
+    @test lowered[:metadata] == Dict("k" => "v")
+    @test lowered[:previous_response_id] == "resp_prev"
+    @test lowered[:user] == "user_123"
+end

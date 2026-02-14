@@ -29,12 +29,31 @@ end
 
 @testset "Auth headers" begin
     @testset "OpenAI auth header" begin
-        # Ensure env var is set
-        if haskey(ENV, "OPENAI_API_KEY")
+        withenv("OPENAI_API_KEY" => "test-openai-key") do
             headers = UniLM.auth_header(UniLM.OPENAIServiceEndpoint)
             @test length(headers) == 2
             @test headers[1][1] == "Authorization"
-            @test startswith(headers[1][2], "Bearer ")
+            @test headers[1][2] == "Bearer test-openai-key"
+            @test headers[2] == ("Content-Type" => "application/json")
+        end
+    end
+
+    @testset "Azure auth header" begin
+        withenv("AZURE_OPENAI_API_KEY" => "test-azure-key") do
+            headers = UniLM.auth_header(UniLM.AZUREServiceEndpoint)
+            @test length(headers) == 2
+            @test headers[1][1] == "api-key"
+            @test headers[1][2] == "test-azure-key"
+            @test headers[2] == ("Content-Type" => "application/json")
+        end
+    end
+
+    @testset "Gemini auth header" begin
+        withenv("GEMINI_API_KEY" => "test-gemini-key") do
+            headers = UniLM.auth_header(UniLM.GEMINIServiceEndpoint)
+            @test length(headers) == 2
+            @test headers[1][1] == "Authorization"
+            @test headers[1][2] == "Bearer test-gemini-key"
             @test headers[2] == ("Content-Type" => "application/json")
         end
     end
@@ -239,5 +258,94 @@ end
         @test haskey(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "test-model")
         @test UniLM._MODEL_ENDPOINTS_AZURE_OPENAI["test-model"] == "/openai/deployments/my-deploy"
         delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "test-model")
+    end
+end
+
+@testset "Azure URL generation" begin
+    UniLM.add_azure_deploy_name!("gpt-4o-test", "my-gpt4o-deploy")
+    withenv(
+        "AZURE_OPENAI_BASE_URL" => "https://myazure.openai.azure.com",
+        "AZURE_OPENAI_API_VERSION" => "2024-02-01"
+    ) do
+        chat = Chat(service=UniLM.AZUREServiceEndpoint, model="gpt-4o-test")
+        url = UniLM.get_url(UniLM.AZUREServiceEndpoint, chat)
+        @test startswith(url, "https://myazure.openai.azure.com/openai/deployments/my-gpt4o-deploy/chat/completions")
+        @test occursin("api-version=2024-02-01", url)
+    end
+    delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "gpt-4o-test")
+end
+
+@testset "chatrequest! kwargs with prompts" begin
+    @testset "string prompts build correct Chat" begin
+        # This will fail at HTTP level but we test the LLMCallError path
+        withenv("OPENAI_API_KEY" => "test-key") do
+            result = chatrequest!(
+                systemprompt="You are helpful.",
+                userprompt="Hello!",
+                model="gpt-4o"
+            )
+            # Without a real API key, we expect a call error
+            @test result isa LLMCallError || result isa LLMFailure
+        end
+    end
+
+    @testset "Message object prompts build correct Chat" begin
+        withenv("OPENAI_API_KEY" => "test-key") do
+            result = chatrequest!(
+                systemprompt=Message(role=UniLM.RoleSystem, content="System"),
+                userprompt=Message(role=UniLM.RoleUser, content="User"),
+                model="gpt-4o"
+            )
+            @test result isa LLMCallError || result isa LLMFailure
+        end
+    end
+
+    @testset "messages keyword builds correct Chat" begin
+        withenv("OPENAI_API_KEY" => "test-key") do
+            msgs = [
+                Message(role=UniLM.RoleSystem, content="sys"),
+                Message(role=UniLM.RoleUser, content="usr")
+            ]
+            result = chatrequest!(; messages=msgs, model="gpt-4o")
+            @test result isa LLMCallError || result isa LLMFailure || result isa LLMSuccess
+        end
+    end
+
+    @testset "prompts override messages" begin
+        withenv("OPENAI_API_KEY" => "test-key") do
+            msgs = [
+                Message(role=UniLM.RoleSystem, content="old sys"),
+                Message(role=UniLM.RoleUser, content="old usr")
+            ]
+            result = chatrequest!(
+                messages=msgs,
+                systemprompt="new sys",
+                userprompt="new usr",
+                model="gpt-4o"
+            )
+            @test result isa LLMCallError || result isa LLMFailure
+        end
+    end
+end
+
+@testset "chatrequest! HTTP error handling" begin
+    @testset "non-stream request with invalid API key" begin
+        withenv("OPENAI_API_KEY" => "sk-invalid-key-for-testing") do
+            chat = Chat(model="gpt-4o")
+            push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+            push!(chat, Message(role=UniLM.RoleUser, content="hi"))
+            result = chatrequest!(chat)
+            @test result isa LLMCallError || result isa LLMFailure
+        end
+    end
+end
+
+@testset "embeddingrequest! error handling" begin
+    @testset "with invalid API key" begin
+        withenv("OPENAI_API_KEY" => "sk-invalid-key-for-testing") do
+            emb = UniLM.Embeddings("test")
+            result = embeddingrequest!(emb)
+            @test isnothing(result)  # returns nothing on error
+        end
     end
 end

@@ -14,6 +14,18 @@
         @test UniLM.RESPONSES_PATH == "/v1/responses"
         @test UniLM.GEMINI_CHAT_URL == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
     end
+
+    @testset "API key env var name constants" begin
+        @test UniLM.OPENAI_API_KEY == "OPENAI_API_KEY"
+        @test UniLM.AZURE_OPENAI_API_KEY == "AZURE_OPENAI_API_KEY"
+        @test UniLM.AZURE_OPENAI_BASE_URL == "AZURE_OPENAI_BASE_URL"
+        @test UniLM.AZURE_OPENAI_API_VERSION == "AZURE_OPENAI_API_VERSION"
+        @test UniLM.GEMINI_API_KEY == "GEMINI_API_KEY"
+    end
+
+    @testset "Azure deployment mapping is a Dict" begin
+        @test UniLM._MODEL_ENDPOINTS_AZURE_OPENAI isa Dict{String,String}
+    end
 end
 
 @testset "Model type" begin
@@ -548,4 +560,66 @@ end
         update!(emb, new_vals)
         @test emb.embeddings ≈ new_vals
     end
+end
+
+@testset "Chat JSON serialization - all optional fields" begin
+    sig = GPTFunctionSignature(name="fn")
+    chat = Chat(
+        model="gpt-4o",
+        temperature=0.7,
+        tools=[GPTTool(func=sig)],
+        tool_choice="auto",
+        parallel_tool_calls=true,
+        n=2,
+        stream=true,
+        stop=["END"],
+        max_tokens=100,
+        presence_penalty=0.5,
+        response_format=ResponseFormat(),
+        frequency_penalty=0.3,
+        logit_bias=Dict("100" => 1.0),
+        user="user_1",
+        seed=42
+    )
+    lowered = JSON.lower(chat)
+    @test lowered[:model] == "gpt-4o"
+    @test lowered[:tools] isa Vector
+    @test lowered[:tool_choice] == "auto"
+    @test lowered[:parallel_tool_calls] == true
+    @test lowered[:n] == 2
+    @test lowered[:stream] == true
+    @test lowered[:stop] == ["END"]
+    @test lowered[:max_tokens] == 100
+    @test lowered[:presence_penalty] == 0.5
+    @test haskey(lowered, :response_format)
+    @test lowered[:frequency_penalty] == 0.3
+    @test lowered[:logit_bias] == Dict("100" => 1.0)
+    @test lowered[:user] == "user_1"
+    @test lowered[:seed] == 42
+    # service and history not serialized
+    @test !haskey(lowered, :service)
+    @test !haskey(lowered, :history)
+end
+
+@testset "Chat with different service endpoints" begin
+    @testset "Azure endpoint" begin
+        chat = Chat(service=UniLM.AZUREServiceEndpoint, model="gpt-4o")
+        @test chat.service == UniLM.AZUREServiceEndpoint
+    end
+
+    @testset "Gemini endpoint" begin
+        chat = Chat(service=UniLM.GEMINIServiceEndpoint, model="gemini-2.0-flash")
+        @test chat.service == UniLM.GEMINIServiceEndpoint
+    end
+end
+
+@testset "Chat with top_p (no temperature)" begin
+    chat = Chat(top_p=0.9)
+    @test chat.top_p == 0.9
+    @test isnothing(chat.temperature)
+end
+
+@testset "InvalidConversationError detailed" begin
+    e = InvalidConversationError("bad conversation")
+    @test sprint(showerror, e) == "InvalidConversationError(\"bad conversation\")"
 end

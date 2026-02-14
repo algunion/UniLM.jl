@@ -8,26 +8,27 @@ results as they arrive.
 Set `stream=true` and provide a callback:
 
 ```julia
-using UniLM
+julia> chat = Chat(model="gpt-4o-mini", stream=true)
 
-chat = Chat(model="gpt-5.2", stream=true)
-push!(chat, Message(Val(:system), "You are a storyteller."))
-push!(chat, Message(Val(:user), "Tell me a short story about a robot learning Julia."))
+julia> push!(chat, Message(Val(:system), "You are a poet."))
 
-task = chatrequest!(chat, callback=function(chunk, close)
-    if chunk isa String
-        print(chunk)  # partial text delta
-    elseif chunk isa Message
-        println("\n--- Done! ---")
-    end
-end)
+julia> push!(chat, Message(Val(:user), "Write a very short 2-line poem about coding."))
 
-# The task runs on a separate thread
-result = fetch(task)
-# Output (streamed token by token):
-# Once upon a time, in a server room humming with electricity,
-# there lived a small robot named JL-42...
-# --- Done! ---
+julia> task = chatrequest!(chat, callback=function(chunk, close)
+           if chunk isa String
+               print(chunk)  # tokens stream in real-time
+           elseif chunk isa Message
+               println("\n--- done ---")
+           end
+       end)
+In lines of logic, dreams arise,  
+Crafting worlds behind the screen's wise guise
+--- done ---
+
+julia> msg, _ = fetch(task)
+
+julia> msg.content
+"In lines of logic, dreams arise,  \nCrafting worlds behind the screen's wise guise"
 ```
 
 ### Stopping a Stream Early
@@ -50,21 +51,22 @@ end)
 The Responses API provides an even cleaner streaming interface using Julia's `do`-block syntax:
 
 ```julia
-using UniLM
+julia> task = respond("Write a haiku about Julia programming.") do chunk, close
+           if chunk isa String
+               print(chunk)  # tokens stream in real-time
+           elseif chunk isa ResponseObject
+               println("\nDone! Status: ", chunk.status)
+           end
+       end
+Multiple dispatch sings,  
+Types align in swift fusion—  
+Loops bloom into speed.
+Done! Status: completed
 
-task = respond("Tell me a story about a robot learning Julia") do chunk, close
-    if chunk isa String
-        print(chunk)           # partial text delta
-    elseif chunk isa ResponseObject
-        println("\nDone! Status: ", chunk.status)
-    end
-end
+julia> result = fetch(task)
 
-result = fetch(task)
-# Output (streamed):
-# In the year 2026, a small autonomous robot named Dispatch
-# discovered a programming language that changed everything...
-# Done! Status: completed
+julia> output_text(result)
+"Multiple dispatch sings,  \nTypes align in swift fusion—  \nLoops bloom into speed."
 ```
 
 The `do`-block form automatically sets `stream=true`.

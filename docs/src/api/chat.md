@@ -1,4 +1,4 @@
-# Chat Completions API
+# [Chat Completions API](@id chat_api)
 
 Types and functions for the **Chat Completions API**.
 

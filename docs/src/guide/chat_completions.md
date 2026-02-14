@@ -72,18 +72,16 @@ The `!` suffix is a Julia convention — `chatrequest!` mutates `chat` by append
 ### Result Handling
 
 ```julia
-if result isa LLMSuccess
-    println(result.message.content)
-    # => "Parametric types in Julia allow you to define types that
-    #     are parameterized by other types. For example, `Vector{Int}`..."
+julia> result = chatrequest!(chat)
 
-    # The chat now has 3 messages: system, user, assistant
-    @assert length(chat) == 3
-elseif result isa LLMFailure
-    @warn "HTTP $(result.status): $(result.response)"
-elseif result isa LLMCallError
-    @error "Exception: $(result.error)"
-end
+julia> result.message.content
+"Multiple dispatch is a feature in programming languages, including Julia, that allows the selection of a method to execute based on the types of all its arguments, rather than just the first one. This enables more flexible and expressive code, as it can define different behaviors for a function depending on the combination of argument types. It supports polymorphism, making it easier to write generic code that works with multiple types."
+
+julia> result.message.finish_reason
+"stop"
+
+julia> length(chat)  # system + user + assistant
+3
 ```
 
 ### One-Shot Requests via Keywords
@@ -91,13 +89,15 @@ end
 Skip the `Chat` object entirely for simple one-off requests:
 
 ```julia
-result = chatrequest!(
-    systemprompt="You are a translator.",
-    userprompt="Translate 'Hello world' to French.",
-    model="gpt-5.2-mini",
-    temperature=0.0
-)
-# result.message.content => "Bonjour le monde"
+julia> result = chatrequest!(
+           systemprompt="You are a calculator. Respond only with the number.",
+           userprompt="What is 42 * 17?",
+           model="gpt-4o-mini",
+           temperature=0.0
+       )
+
+julia> result.message.content
+"714"
 ```
 
 ## Multi-Turn Conversations
@@ -105,20 +105,26 @@ result = chatrequest!(
 Because `chatrequest!` appends the response, you can keep chatting:
 
 ```julia
-chat = Chat(model="gpt-5.2")
-push!(chat, Message(Val(:system), "You are a math tutor. Show your work."))
+julia> chat = Chat(model="gpt-4o-mini")
 
-# Turn 1
-push!(chat, Message(Val(:user), "What is the integral of x²?"))
-r1 = chatrequest!(chat)
-println(r1.message.content)
-# => "The integral of x² is: ∫x² dx = x³/3 + C"
+julia> push!(chat, Message(Val(:system), "You are a concise Julia programming tutor."))
 
-# Turn 2 — history is automatic
-push!(chat, Message(Val(:user), "Now compute the definite integral from 0 to 1"))
-r2 = chatrequest!(chat)
-println(r2.message.content)
-# => "∫₀¹ x² dx = [x³/3]₀¹ = 1/3 - 0 = 1/3"
+julia> push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
+
+julia> result = chatrequest!(chat)
+
+julia> result.message.content
+"Multiple dispatch is a feature in programming languages, including Julia, that allows the selection of a method to execute based on the types of all its arguments, rather than just the first one. This enables more flexible and expressive code, as it can define different behaviors for a function depending on the combination of argument types. It supports polymorphism, making it easier to write generic code that works with multiple types."
+
+julia> push!(chat, Message(Val(:user), "Give a short Julia code example of it."))
+
+julia> result = chatrequest!(chat)
+
+julia> println(result.message.content)
+# (multi-line code example output)
+
+julia> length(chat)  # system + user + assistant + user + assistant
+5
 ```
 
 ## Checking Conversation Validity
@@ -143,7 +149,8 @@ UniLM.jl works with any model name string. Common choices:
 | Model            | Usage                  |
 | :--------------- | :--------------------- |
 | `"gpt-5.2"`      | Best quality (default) |
-| `"gpt-5.2-mini"` | Fast and cheap         |
+| `"gpt-4o-mini"`  | Fast and cheap         |
+| `"gpt-4.1-mini"` | Balanced performance   |
 | `"o3"`           | Extended reasoning     |
 | `"o4-mini"`      | Fast reasoning         |
 

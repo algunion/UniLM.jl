@@ -5,9 +5,10 @@ JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+UniLM = "2a65a866-de6b-4bc8-8daf-c130204fdf93"
 
 [compat]
 Aqua = "0.8"
-JET = "0.11"
 HTTP = "1.9"
+JET = "0.11"
 JSON = "1"

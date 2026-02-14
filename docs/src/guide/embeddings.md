@@ -18,8 +18,20 @@ println("Pre-allocated (all zeros): ", all(x -> x == 0.0, emb.embeddings))
 After calling the API, the embeddings are filled in-place:
 
 ```julia
-embeddingrequest!(emb)
-emb.embeddings  # => Float64[0.0123, -0.0456, ...] (1536 dims)
+julia> emb = Embeddings("Julia is a high-performance programming language for technical computing.")
+
+julia> embeddingrequest!(emb)
+
+julia> emb.embeddings[1:5]  # first 5 dimensions
+5-element Vector{Float64}:
+  -0.039474
+  -0.009283
+  0.001706
+  -0.028087
+  0.063363
+
+julia> sqrt(sum(x^2 for x in emb.embeddings))  # L2 norm ≈ 1.0
+1.0
 ```
 
 ## Batch Embeddings
@@ -42,9 +54,9 @@ println("Embeddings per text: ", length(emb.embeddings[1]), " dimensions")
 ```julia
 embeddingrequest!(emb)
 
-# Each embedding is accessible by index
-emb.embeddings[1]  # => Float64[...] for "Julia is fast"
-emb.embeddings[2]  # => Float64[...] for "Python is popular"
+# Each embedding is a 1536-dimensional Float64 vector
+length(emb.embeddings[1])  # 1536
+length(emb.embeddings[2])  # 1536
 ```
 
 ## Computing Similarity
@@ -57,10 +69,10 @@ using LinearAlgebra
 emb = Embeddings(["Julia", "Python", "Rust", "Fortran"])
 embeddingrequest!(emb)
 
-# Cosine similarity between "Julia" and "Fortran"
+# Cosine similarity between embeddings
 sim = dot(emb.embeddings[1], emb.embeddings[4]) /
       (norm(emb.embeddings[1]) * norm(emb.embeddings[4]))
-# => 0.82 (high similarity — both scientific computing languages)
+# Similarity score between 0 and 1
 ```
 
 ## Available Models

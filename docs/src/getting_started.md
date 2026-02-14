@@ -51,16 +51,12 @@ export GEMINI_API_KEY="your-gemini-key"
 The simplest way to get started — one function call:
 
 ```julia
-using UniLM
+julia> using UniLM
 
-result = respond("Explain Julia's type system in 3 bullet points")
+julia> result = respond("Explain Julia's type system in 3 bullet points")
 
-if result isa ResponseSuccess
-    println(output_text(result))
-    # • Julia uses a dynamic type system with optional type annotations...
-    # • The type hierarchy is rooted at `Any`, with abstract types forming...
-    # • Parametric types allow generic programming, e.g., `Array{Float64,2}`...
-end
+julia> output_text(result)
+"Julia's multiple dispatch means a function can have many method definitions, and Julia chooses which one to run based on the types of *all* arguments in a call (not just the first). This makes it easy to write generic code while still getting specialized, high-performance behavior for specific type combinations."
 ```
 
 ### Using Chat Completions
@@ -68,46 +64,42 @@ end
 For stateful, multi-turn conversations:
 
 ```julia
-using UniLM
+julia> using UniLM
 
-# Create a chat session
-chat = Chat(model="gpt-5.2")
+julia> chat = Chat(model="gpt-4o-mini")
 
-# Build the conversation
-push!(chat, Message(Val(:system), "You are a concise Julia tutor."))
-push!(chat, Message(Val(:user), "What is multiple dispatch?"))
+julia> push!(chat, Message(Val(:system), "You are a concise Julia programming tutor."))
 
-# Send the request
-result = chatrequest!(chat)
+julia> push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
 
-if result isa LLMSuccess
-    println(result.message.content)
-    # => "Multiple dispatch is Julia's core paradigm where the method
-    #     called is determined by the types of *all* arguments..."
+julia> result = chatrequest!(chat)
 
-    # Continue the conversation — history is managed automatically
-    push!(chat, Message(Val(:user), "Give me a code example."))
-    result2 = chatrequest!(chat)
-    println(result2.message.content)
-    # => "```julia\nf(x::Int) = x + 1\nf(x::Float64) = x + 0.5\n..."
-end
+julia> result.message.content
+"Multiple dispatch is a feature in programming languages, including Julia, that allows the selection of a method to execute based on the types of all its arguments, rather than just the first one. This enables more flexible and expressive code, as it can define different behaviors for a function depending on the combination of argument types. It supports polymorphism, making it easier to write generic code that works with multiple types."
+
+julia> result.message.finish_reason
+"stop"
+
+julia> length(chat)  # system + user + assistant
+3
 ```
 
 ### Generating Images
 
 ```julia
-using UniLM
+julia> result = generate_image(
+           "A watercolor painting of a friendly robot reading a Julia programming book",
+           size="1024x1024", quality="medium"
+       )
 
-result = generate_image(
-    "A cute robot writing Julia code",
-    size="1024x1024",
-    quality="high"
-)
+julia> result isa ImageSuccess
+true
 
-if result isa ImageSuccess
-    save_image(image_data(result)[1], "robot_coder.png")
-    println("Image saved!")
-end
+julia> length(image_data(result))
+1
+
+julia> save_image(image_data(result)[1], "robot_julia.png")
+"robot_julia.png"
 ```
 
 ### Using Keyword Arguments
@@ -115,12 +107,15 @@ end
 For one-shot requests without managing `Chat` objects:
 
 ```julia
-result = chatrequest!(
-    systemprompt="You are a helpful assistant.",
-    userprompt="What is 2+2?",
-    model="gpt-5.2-mini",
-    temperature=0.0
-)
+julia> result = chatrequest!(
+           systemprompt="You are a calculator. Respond only with the number.",
+           userprompt="What is 42 * 17?",
+           model="gpt-4o-mini",
+           temperature=0.0
+       )
+
+julia> result.message.content
+"714"
 ```
 
 ## Handling Results
@@ -148,6 +143,7 @@ result = chatrequest!(chat)
 
 if result isa LLMSuccess
     println("Assistant: ", result.message.content)
+    println("Finish reason: ", result.message.finish_reason)
 elseif result isa LLMFailure
     @warn "API returned HTTP $(result.status): $(result.response)"
 elseif result isa LLMCallError
@@ -162,7 +158,8 @@ result = respond("Hello!")
 
 if result isa ResponseSuccess
     println(output_text(result))
-    # => "Hello! How can I help you today?"
+    println("Status: ", result.response.status)  # "completed"
+    println("Model: ", result.response.model)
 elseif result isa ResponseFailure
     @warn "HTTP $(result.status)"
 elseif result isa ResponseCallError

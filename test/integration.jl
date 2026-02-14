@@ -186,3 +186,162 @@ end
     @test cr isa LLMSuccess
     @test occursin("2", cr.message.content)
 end
+
+# ── Responses API Tests ──────────────────────────────────────────────────────
+
+@testset "Responses API — basic text" begin
+    r = respond("Say 'hello world' and nothing else.")
+    @test r isa ResponseSuccess
+    @test r.response.status == "completed"
+    @test !isempty(output_text(r))
+    @test !isnothing(r.response.id)
+    @test !isnothing(r.response.model)
+    @test !isnothing(r.response.usage)
+end
+
+@testset "Responses API — with instructions" begin
+    r = respond(
+        "Translate to French: Hello",
+        instructions="You are a translator. Respond only with the translation."
+    )
+    @test r isa ResponseSuccess
+    text = output_text(r)
+    @test !isempty(text)
+end
+
+@testset "Responses API — multi-turn" begin
+    r1 = respond("Say the number 42 and nothing else.")
+    @test r1 isa ResponseSuccess
+    @test occursin("42", output_text(r1))
+
+    r2 = respond("Now add 8 to that number and say only the result.", previous_response_id=r1.response.id)
+    @test r2 isa ResponseSuccess
+    @test occursin("50", output_text(r2))
+end
+
+@testset "Responses API — structured output (json_schema_format)" begin
+    fmt = json_schema_format(
+        "answer", "A structured answer",
+        Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "result" => Dict("type" => "integer"),
+                "explanation" => Dict("type" => "string")
+            ),
+            "required" => ["result", "explanation"],
+            "additionalProperties" => false
+        ),
+        strict=true
+    )
+    r = respond("What is 6 * 7? Give the result and a brief explanation.", text=fmt)
+    @test r isa ResponseSuccess
+
+    parsed = JSON.parse(output_text(r))
+    @test parsed isa AbstractDict
+    @test haskey(parsed, "result")
+    @test haskey(parsed, "explanation")
+    @test parsed["result"] == 42
+end
+
+@testset "Responses API — function calling" begin
+    tool = function_tool(
+        "get_temperature",
+        "Get the temperature for a city",
+        parameters=Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "city" => Dict("type" => "string", "description" => "City name"),
+                "unit" => Dict("type" => "string", "enum" => ["celsius", "fahrenheit"])
+            ),
+            "required" => ["city", "unit"],
+            "additionalProperties" => false
+        ),
+        strict=true
+    )
+    r = respond("What is the temperature in London? Use celsius.", tools=[tool])
+    @test r isa ResponseSuccess
+
+    calls = function_calls(r)
+    @test length(calls) >= 1
+    @test calls[1]["name"] == "get_temperature"
+
+    args = JSON.parse(calls[1]["arguments"])
+    @test haskey(args, "city")
+    @test args["unit"] == "celsius"
+end
+
+@testset "Responses API — web search" begin
+    r = respond(
+        "What is the latest stable release of the Julia programming language?",
+        tools=[web_search()]
+    )
+    @test r isa ResponseSuccess
+    text = output_text(r)
+    @test !isempty(text)
+    @test occursin(r"[Jj]ulia", text)
+end
+
+@testset "Responses API — streaming" begin
+    chunks = String[]
+    final_response = Ref{Any}(nothing)
+
+    task = respond("Say 'streaming works' and nothing else.") do chunk, close
+        if chunk isa String
+            push!(chunks, chunk)
+        elseif chunk isa ResponseObject
+            final_response[] = chunk
+        end
+    end
+
+    r = fetch(task)
+    @test r isa ResponseSuccess
+    @test !isempty(output_text(r))
+    @test !isempty(chunks)
+end
+
+# ── Image Generation Tests ───────────────────────────────────────────────────
+
+@testset "Image Generation — basic" begin
+    r = generate_image(
+        "A simple blue square on white background",
+        size="1024x1024",
+        quality="low"
+    )
+    @test r isa ImageSuccess
+    @test !isnothing(r.response)
+    @test length(r.response.data) >= 1
+    @test !isnothing(r.response.data[1].b64_json)
+end
+
+@testset "Image Generation — image_data accessor" begin
+    r = generate_image(
+        "A small red circle",
+        size="1024x1024",
+        quality="low"
+    )
+    @test r isa ImageSuccess
+
+    imgs = image_data(r)
+    @test imgs isa Vector{String}
+    @test length(imgs) >= 1
+    @test length(imgs[1]) > 100  # non-trivial base64 data
+end
+
+@testset "Image Generation — save_image" begin
+    r = generate_image(
+        "A green triangle",
+        size="1024x1024",
+        quality="low"
+    )
+    @test r isa ImageSuccess
+
+    tmpfile = tempname() * ".png"
+    try
+        result = save_image(image_data(r)[1], tmpfile)
+        @test result == tmpfile
+        @test isfile(tmpfile)
+        @test filesize(tmpfile) > 0
+    finally
+        isfile(tmpfile) && rm(tmpfile)
+    end
+end

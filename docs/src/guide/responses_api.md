@@ -9,15 +9,19 @@ via `previous_response_id`, and reasoning support for O-series models.
 The simplest call — just a string:
 
 ```julia
-using UniLM
+julia> result = respond("Explain Julia's multiple dispatch in 2-3 sentences.")
 
-result = respond("Tell me a joke about Julia programming")
+julia> output_text(result)
+"Julia's multiple dispatch means a function can have many method definitions, and Julia chooses which one to run based on the types of *all* arguments in a call (not just the first). This makes it easy to write generic code while still getting specialized, high-performance behavior for specific type combinations."
 
-if result isa ResponseSuccess
-    println(output_text(result))
-    # => "Why do Julia programmers never get lost? Because they always
-    #     know which method to dispatch!"
-end
+julia> result.response.id
+"resp_00e791c82448c27d006990c7a81de88194975ba388932de6b8"
+
+julia> result.response.status
+"completed"
+
+julia> result.response.model
+"gpt-5.2-2025-12-11"
 ```
 
 ## The `Respond` Type
@@ -46,11 +50,13 @@ Unlike Chat Completions where you push a system `Message`, the Responses API use
 `instructions` parameter:
 
 ```julia
-result = respond(
-    "Translate to French: The quick brown fox",
-    instructions="You are a professional translator. Respond only with the translation.",
-)
-# output_text(result) => "Le renard brun rapide saute par-dessus le chien paresseux"
+julia> result = respond(
+           "Translate to French: The quick brown fox jumps over the lazy dog.",
+           instructions="You are a professional translator. Respond only with the translation."
+       )
+
+julia> output_text(result)
+"Le rapide renard brun saute par-dessus le chien paresseux."
 ```
 
 ## Structured Input
@@ -84,12 +90,15 @@ println("Number of input messages: ", length(r.input))
 Chain requests using `previous_response_id` — no need to re-send the full history:
 
 ```julia
-r1 = respond("Tell me a joke")
-joke_id = r1.response.id
+julia> r1 = respond("Tell me a one-liner programming joke.", instructions="Be concise.")
 
-r2 = respond("Explain why that's funny", previous_response_id=joke_id)
-println(output_text(r2))
-# => "The joke plays on the double meaning of 'dispatch'..."
+julia> output_text(r1)
+"There are only 10 kinds of people in the world: those who understand binary and those who don't."
+
+julia> r2 = respond("Explain why that's funny, in one sentence.", previous_response_id=r1.response.id)
+
+julia> output_text(r2)
+"It's funny because \"10\" looks like ten in decimal but equals two in binary, so it sets up a nerdy misdirection that only people who know binary immediately get."
 ```
 
 ## Built-in Tools
@@ -97,11 +106,13 @@ println(output_text(r2))
 ### Web Search
 
 ```julia
-result = respond(
-    "What are the latest Julia language releases?",
-    tools=[web_search()]
-)
-# output_text(result) => "The latest Julia release is v1.12.5, released..."
+julia> result = respond(
+           "What is the latest stable release of the Julia programming language?",
+           tools=[web_search()]
+       )
+
+julia> output_text(result)
+"The latest **stable** release of the Julia programming language is **Julia v1.12.5**."
 ```
 
 ### File Search
@@ -132,13 +143,18 @@ println("Tool JSON: ", JSON.json(JSON.lower(weather_tool)))
 ```
 
 ```julia
-result = respond("What's the weather in Tokyo?", tools=[weather_tool])
+julia> result = respond("What's the weather in Tokyo? Use celsius.", tools=[weather_tool])
 
-# Extract function calls
-for call in function_calls(result)
-    println("Call: ", call["name"], " with: ", call["arguments"])
-    # => Call: get_weather with: {"location":"Tokyo"}
-end
+julia> calls = function_calls(result)
+
+julia> calls[1]["name"]
+"get_weather"
+
+julia> JSON.parse(calls[1]["arguments"])
+{
+  "location": "Tokyo",
+  "unit": "celsius"
+}
 ```
 
 ## Reasoning (O-Series Models)
@@ -182,8 +198,31 @@ println("Schema name: ", fmt.format.name)
 ```
 
 ```julia
-result = respond("List 3 colors", text=fmt)
-# output_text(result) => '{"colors":["red","green","blue"]}'
+julia> result = respond(
+           "List Julia, Python, and Rust with their release year and primary paradigm.",
+           text=fmt
+       )
+
+julia> JSON.parse(output_text(result))
+{
+  "languages": [
+    {
+      "name": "Julia",
+      "year": 2012,
+      "paradigm": "Multi-paradigm (scientific/numerical, functional, concurrent)"
+    },
+    {
+      "name": "Python",
+      "year": 1991,
+      "paradigm": "Multi-paradigm (object-oriented, imperative, functional)"
+    },
+    {
+      "name": "Rust",
+      "year": 2010,
+      "paradigm": "Multi-paradigm (systems programming, functional, imperative)"
+    }
+  ]
+}
 ```
 
 ## Response Accessors
@@ -194,17 +233,14 @@ result = respond("Hello!")
 if result isa ResponseSuccess
     r = result.response
 
-    # Convenience accessors
-    output_text(result)      # => "Hi there! How can I help?"
-    function_calls(result)   # => Dict[] (empty if no function calls)
+    output_text(result)      # full text output
+    function_calls(result)   # Vector of function call Dicts (empty if none)
 
-    # Raw fields
-    r.id                     # => "resp_abc123def456"
-    r.status                 # => "completed"
-    r.model                  # => "gpt-5.2"
-    r.output                 # => [{...}] full output array
-    r.usage                  # => Dict("input_tokens"=>12, "output_tokens"=>8, ...)
-    r.raw                    # => Dict{String,Any}(...) complete raw JSON
+    r.id                     # "resp_00e791c8..."
+    r.status                 # "completed"
+    r.model                  # "gpt-5.2-2025-12-11"
+    r.output                 # full output array
+    r.usage                  # Dict with token counts
 end
 ```
 
@@ -212,13 +248,13 @@ end
 
 ```julia
 # Retrieve a previously stored response
-result = get_response("resp_abc123")
+result = get_response("resp_00e791c82448c27d...")
 
 # Delete a stored response
-delete_response("resp_abc123")
+delete_response("resp_00e791c82448c27d...")
 
 # List input items for a response
-items = list_input_items("resp_abc123", limit=50)
+items = list_input_items("resp_00e791c82448c27d...", limit=50)
 ```
 
 ## See Also

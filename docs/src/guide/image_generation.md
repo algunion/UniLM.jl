@@ -6,16 +6,26 @@ UniLM.jl supports image generation via the OpenAI Images API using models like
 ## Basic Usage
 
 ```julia
-using UniLM
+julia> result = generate_image(
+           "A watercolor painting of a friendly robot reading a Julia programming book",
+           size="1024x1024",
+           quality="medium"
+       )
 
-result = generate_image("A watercolor painting of a mountain sunset")
+julia> result isa ImageSuccess
+true
 
-if result isa ImageSuccess
-    # Save the first image to disk
-    save_image(image_data(result)[1], "sunset.png")
-    println("Image saved!")
-end
+julia> length(image_data(result))
+1
+
+julia> length(image_data(result)[1])  # base64 string length
+2654660
+
+julia> save_image(image_data(result)[1], "robot_julia.png")
+"robot_julia.png"
 ```
+
+![Generated image: A watercolor painting of a friendly robot reading a Julia programming book](../assets/generated_robot.png)
 
 ## The `ImageGeneration` Type
 
@@ -57,15 +67,10 @@ println(JSON.json(ig))
 Generate multiple images in a single request:
 
 ```julia
-result = generate_image(
-    "A cute robot learning to program",
-    n=3,
-    size="1024x1024"
-)
+result = generate_image("A cute robot learning to program", n=3, size="1024x1024")
 
 if result isa ImageSuccess
     imgs = image_data(result)
-    println("Generated $(length(imgs)) images")
     for (i, img) in enumerate(imgs)
         save_image(img, "robot_$i.png")
     end
@@ -100,19 +105,20 @@ println("ImageCallError <: ", supertype(ImageCallError))
 ```
 
 ```julia
-result = generate_image("A sunset")
+result = generate_image("A sunset over mountains")
 
 if result isa ImageSuccess
     r = result.response
 
-    r.created       # => 1713833628 (Unix timestamp)
-    r.data          # => Vector{ImageObject}
-    r.data[1].b64_json        # => "iVBORw0KGgo..." (base64 image data)
-    r.data[1].revised_prompt  # => "A vibrant sunset over..." (may be nothing)
-    r.usage         # => Dict("total_tokens" => 100, ...)
+    r.created                 # Unix timestamp
+    r.data                    # Vector{ImageObject}
+    r.data[1].b64_json        # base64-encoded image data
+    r.data[1].revised_prompt  # revised prompt (may be nothing)
+    r.usage                   # token usage Dict
 
     # Convenience accessors
-    image_data(result)   # => ["iVBORw0KGgo..."] (Vector{String})
+    image_data(result)        # Vector{String} of base64 data
+    save_image(image_data(result)[1], "sunset.png")
 end
 ```
 
@@ -132,12 +138,12 @@ rm(tmpfile)
 ## Error Handling
 
 ```julia
-result = generate_image("test prompt")
+result = generate_image("A sunset over mountains")
 
 if result isa ImageSuccess
-    println("Generated $(length(result.response.data)) image(s)")
+    save_image(image_data(result)[1], "sunset.png")
 elseif result isa ImageFailure
-    @warn "HTTP $(result.status): $(result.response[1:min(200,end)])"
+    @warn "HTTP $(result.status): $(result.response)"
 elseif result isa ImageCallError
     @error "Call failed: $(result.error)"
 end

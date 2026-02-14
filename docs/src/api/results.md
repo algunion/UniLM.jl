@@ -23,11 +23,12 @@ LLMCallError
 result = chatrequest!(chat)
 
 if result isa LLMSuccess
-    println("Assistant: ", result.message.content)
+    println(result.message.content)
+    println(result.message.finish_reason)  # "stop"
 elseif result isa LLMFailure
-    println("HTTP error $(result.status): ", result.response)
+    @warn "HTTP $(result.status): $(result.response)"
 elseif result isa LLMCallError
-    println("Call error: ", result.error)
+    @error "Call error: $(result.error)"
 end
 ```
 
@@ -46,11 +47,11 @@ result = respond("Tell me a joke")
 
 if result isa ResponseSuccess
     println(output_text(result))
-    # => "Why did the Julia programmer bring a ladder?..."
+    println(result.response.status)  # "completed"
 elseif result isa ResponseFailure
-    println("HTTP error $(result.status)")
+    @warn "HTTP $(result.status)"
 elseif result isa ResponseCallError
-    println("Error: ", result.error)
+    @error result.error
 end
 ```
 
@@ -68,13 +69,11 @@ See also the [Images API reference](images.md).
 result = generate_image("A robot writing Julia code")
 
 if result isa ImageSuccess
-    imgs = image_data(result)
-    println("Generated $(length(imgs)) image(s)")
-    save_image(imgs[1], "robot.png")
+    save_image(image_data(result)[1], "robot.png")
 elseif result isa ImageFailure
-    println("HTTP error $(result.status): ", result.response)
+    @warn "HTTP $(result.status): $(result.response)"
 elseif result isa ImageCallError
-    println("Error: ", result.error)
+    @error result.error
 end
 ```
 

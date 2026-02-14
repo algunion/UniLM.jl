@@ -49,29 +49,24 @@ println(JSON.json(chat))
 When the model wants to call a function, the result message will have `finish_reason == "tool_calls"`:
 
 ```julia
-result = chatrequest!(chat)
+julia> result = chatrequest!(chat)
 
-if result isa LLMSuccess && result.message.finish_reason == "tool_calls"
-    for tc in result.message.tool_calls
-        func_name = tc.func.name       # "get_weather"
-        func_args = tc.func.arguments  # Dict("location" => "Paris")
+julia> result.message.finish_reason
+"tool_calls"
 
-        # Execute your function
-        weather_result = my_get_weather(func_args["location"])
+julia> tc = result.message.tool_calls[1]
 
-        # Send the result back
-        push!(chat.messages, Message(
-            role="tool",
-            content=string(weather_result),
-            tool_call_id=tc.id
-        ))
-    end
+julia> tc.func.name
+"get_weather"
 
-    # Get the final response
-    final = chatrequest!(chat)
-    println(final.message.content)
-    # => "The current weather in Paris is 18°C with partly cloudy skies."
-end
+julia> tc.func.arguments
+{
+  "location": "Paris"
+}
+
+# You can then execute your function and send the result back:
+# push!(chat.messages, Message(role="tool", content=my_get_weather("Paris"), tool_call_id=tc.id))
+# final = chatrequest!(chat)
 ```
 
 ### Controlling Tool Choice
@@ -111,13 +106,18 @@ println("JSON: ", JSON.json(JSON.lower(tool)))
 ```
 
 ```julia
-result = respond("What is 2^10?", tools=[tool])
+julia> result = respond("What's the weather in Tokyo? Use celsius.", tools=[weather_tool])
 
-# Extract calls
-for call in function_calls(result)
-    println(call["name"])       # "calculate"
-    println(call["arguments"])  # '{"expression":"2^10"}'
-end
+julia> calls = function_calls(result)
+
+julia> calls[1]["name"]
+"get_weather"
+
+julia> JSON.parse(calls[1]["arguments"])
+{
+  "location": "Tokyo",
+  "unit": "celsius"
+}
 ```
 
 ### Web Search
@@ -131,13 +131,13 @@ println("Context size: ", ws.search_context_size)
 ```
 
 ```julia
-result = respond(
-    "What are the latest developments in quantum computing?",
-    tools=[web_search(context_size="high")]
-)
-println(output_text(result))
-# => "Recent developments in quantum computing include Google's
-#     achievement of quantum error correction below threshold..."
+julia> result = respond(
+           "What is the latest stable release of the Julia programming language?",
+           tools=[web_search()]
+       )
+
+julia> output_text(result)
+"The latest **stable** release of the Julia programming language is **Julia v1.12.5**."
 ```
 
 ### File Search

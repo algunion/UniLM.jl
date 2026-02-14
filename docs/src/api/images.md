@@ -67,23 +67,19 @@ generate_image
 ### Usage Examples
 
 ```julia
-# Simple generation
-result = generate_image("A watercolor painting of a Julia butterfly")
+julia> result = generate_image(
+           "A watercolor painting of a friendly robot reading a Julia programming book",
+           size="1024x1024", quality="medium"
+       )
 
-# With options
-result = generate_image(
-    "A minimalist logo",
-    size="1024x1024",
-    quality="high",
-    background="transparent"
-)
+julia> result isa ImageSuccess
+true
 
-if result isa ImageSuccess
-    println("Created: ", result.response.created)
-    println("Images: ", length(result.response.data))
-    # => Created: 1713833628
-    # => Images: 1
-end
+julia> length(image_data(result))
+1
+
+julia> save_image(image_data(result)[1], "robot_julia.png")
+"robot_julia.png"
 ```
 
 ## Accessor Functions
@@ -99,12 +95,8 @@ save_image
 result = generate_image("A sunset over mountains", n=3)
 if result isa ImageSuccess
     for (i, img) in enumerate(image_data(result))
-        save_image(img, "sunset_\$i.png")
-        println("Saved sunset_\$i.png")
+        save_image(img, "sunset_$i.png")
     end
-    # => Saved sunset_1.png
-    # => Saved sunset_2.png
-    # => Saved sunset_3.png
 end
 ```
 

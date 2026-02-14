@@ -1,4 +1,4 @@
-# Embeddings API
+# [Embeddings API](@id embeddings_api)
 
 Types and functions for the **Embeddings API**.
 
@@ -39,10 +39,18 @@ println("Default embedding model: ", UniLM.GPTTextEmbedding3Small)
 ## Usage Example
 
 ```julia
-emb = Embeddings("The Julia programming language")
-embeddingrequest!(emb)
-println("First 5 dimensions: ", emb.embeddings[1:5])
-# => [0.0023, -0.0091, 0.0148, -0.0032, 0.0076]
-println("Embedding norm: ", sqrt(sum(x^2 for x in emb.embeddings)))
-# => ≈ 1.0
+julia> emb = Embeddings("Julia is a high-performance programming language for technical computing.")
+
+julia> embeddingrequest!(emb)
+
+julia> emb.embeddings[1:5]  # first 5 dimensions
+5-element Vector{Float64}:
+  -0.039474
+  -0.009283
+  0.001706
+  -0.028087
+  0.063363
+
+julia> sqrt(sum(x^2 for x in emb.embeddings))  # L2 norm ≈ 1.0
+1.0
 ```

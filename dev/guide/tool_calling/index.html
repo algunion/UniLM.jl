@@ -29,24 +29,27 @@ println(&quot;Chat has &quot;, length(chat.tools), &quot; tool(s) registered&quo
 println(&quot;Request body:&quot;)
 println(JSON.json(chat))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Chat has 1 tool(s) registered
 Request body:
-{&quot;tools&quot;:[{&quot;type&quot;:&quot;function&quot;,&quot;function&quot;:{&quot;name&quot;:&quot;get_weather&quot;,&quot;description&quot;:&quot;Get current weather for a location&quot;,&quot;parameters&quot;:{&quot;properties&quot;:{&quot;location&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;description&quot;:&quot;City name&quot;},&quot;unit&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;enum&quot;:[&quot;celsius&quot;,&quot;fahrenheit&quot;]}},&quot;required&quot;:[&quot;location&quot;],&quot;type&quot;:&quot;object&quot;}}}],&quot;messages&quot;:[{&quot;role&quot;:&quot;system&quot;,&quot;content&quot;:&quot;You are a helpful assistant with access to weather data.&quot;},{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;What&#39;s the weather in Paris?&quot;}],&quot;parallel_tool_calls&quot;:false,&quot;model&quot;:&quot;gpt-5.2&quot;}</code></pre><h3 id="Handling-Tool-Calls"><a class="docs-heading-anchor" href="#Handling-Tool-Calls">Handling Tool Calls</a><a id="Handling-Tool-Calls-1"></a><a class="docs-heading-anchor-permalink" href="#Handling-Tool-Calls" title="Permalink"></a></h3><p>When the model wants to call a function, the result message will have <code>finish_reason == &quot;tool_calls&quot;</code>:</p><pre><code class="language-julia hljs">julia&gt; result = chatrequest!(chat)
-
-julia&gt; result.message.finish_reason
-&quot;tool_calls&quot;
-
-julia&gt; tc = result.message.tool_calls[1]
-
-julia&gt; tc.func.name
-&quot;get_weather&quot;
-
-julia&gt; tc.func.arguments
-{
-  &quot;location&quot;: &quot;Paris&quot;
-}
-
-# You can then execute your function and send the result back:
-# push!(chat.messages, Message(role=&quot;tool&quot;, content=my_get_weather(&quot;Paris&quot;), tool_call_id=tc.id))
-# final = chatrequest!(chat)</code></pre><h3 id="Controlling-Tool-Choice"><a class="docs-heading-anchor" href="#Controlling-Tool-Choice">Controlling Tool Choice</a><a id="Controlling-Tool-Choice-1"></a><a class="docs-heading-anchor-permalink" href="#Controlling-Tool-Choice" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Let the model decide
+{&quot;tools&quot;:[{&quot;type&quot;:&quot;function&quot;,&quot;function&quot;:{&quot;name&quot;:&quot;get_weather&quot;,&quot;description&quot;:&quot;Get current weather for a location&quot;,&quot;parameters&quot;:{&quot;properties&quot;:{&quot;location&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;description&quot;:&quot;City name&quot;},&quot;unit&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;enum&quot;:[&quot;celsius&quot;,&quot;fahrenheit&quot;]}},&quot;required&quot;:[&quot;location&quot;],&quot;type&quot;:&quot;object&quot;}}}],&quot;messages&quot;:[{&quot;role&quot;:&quot;system&quot;,&quot;content&quot;:&quot;You are a helpful assistant with access to weather data.&quot;},{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;What&#39;s the weather in Paris?&quot;}],&quot;parallel_tool_calls&quot;:false,&quot;model&quot;:&quot;gpt-5.2&quot;}</code></pre><h3 id="Handling-Tool-Calls"><a class="docs-heading-anchor" href="#Handling-Tool-Calls">Handling Tool Calls</a><a id="Handling-Tool-Calls-1"></a><a class="docs-heading-anchor-permalink" href="#Handling-Tool-Calls" title="Permalink"></a></h3><p>When the model wants to call a function, the result message will have <code>finish_reason == &quot;tool_calls&quot;</code>:</p><pre><code class="language-julia hljs">chat = Chat(
+    model=&quot;gpt-5.2&quot;,
+    tools=[weather_tool],
+    tool_choice=UniLM.GPTToolChoice(func=:get_weather)
+)
+push!(chat, Message(Val(:system), &quot;Use the provided tools to answer.&quot;))
+push!(chat, Message(Val(:user), &quot;What&#39;s the weather in Paris?&quot;))
+result = chatrequest!(chat)
+if result isa LLMSuccess
+    println(&quot;Finish reason: &quot;, result.message.finish_reason)
+    tc = result.message.tool_calls[1]
+    println(&quot;Function: &quot;, tc.func.name)
+    println(&quot;Arguments: &quot;, JSON.json(tc.func.arguments, 2))
+else
+    println(&quot;Request failed — see result for details&quot;)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Finish reason: tool_calls
+Function: get_weather
+Arguments: {
+  &quot;location&quot;: &quot;Paris&quot;,
+  &quot;unit&quot;: &quot;celsius&quot;
+}</code></pre><h3 id="Controlling-Tool-Choice"><a class="docs-heading-anchor" href="#Controlling-Tool-Choice">Controlling Tool Choice</a><a id="Controlling-Tool-Choice-1"></a><a class="docs-heading-anchor-permalink" href="#Controlling-Tool-Choice" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Let the model decide
 chat = Chat(tools=[weather_tool], tool_choice=&quot;auto&quot;)
 
 # Force the model to use a tool
@@ -67,27 +70,41 @@ chat = Chat(tools=[weather_tool], tool_choice=&quot;none&quot;)</code></pre><h2 
 )
 println(&quot;Tool: &quot;, tool.name, &quot; (strict=&quot;, tool.strict, &quot;)&quot;)
 println(&quot;JSON: &quot;, JSON.json(JSON.lower(tool)))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Tool: calculate (strict=true)
-JSON: {&quot;strict&quot;:true,&quot;type&quot;:&quot;function&quot;,&quot;name&quot;:&quot;calculate&quot;,&quot;description&quot;:&quot;Evaluate a math expression&quot;,&quot;parameters&quot;:{&quot;properties&quot;:{&quot;expression&quot;:{&quot;type&quot;:&quot;string&quot;}},&quot;required&quot;:[&quot;expression&quot;],&quot;type&quot;:&quot;object&quot;}}</code></pre><pre><code class="language-julia hljs">julia&gt; result = respond(&quot;What&#39;s the weather in Tokyo? Use celsius.&quot;, tools=[weather_tool])
-
-julia&gt; calls = function_calls(result)
-
-julia&gt; calls[1][&quot;name&quot;]
-&quot;get_weather&quot;
-
-julia&gt; JSON.parse(calls[1][&quot;arguments&quot;])
-{
+JSON: {&quot;strict&quot;:true,&quot;type&quot;:&quot;function&quot;,&quot;name&quot;:&quot;calculate&quot;,&quot;description&quot;:&quot;Evaluate a math expression&quot;,&quot;parameters&quot;:{&quot;properties&quot;:{&quot;expression&quot;:{&quot;type&quot;:&quot;string&quot;}},&quot;required&quot;:[&quot;expression&quot;],&quot;type&quot;:&quot;object&quot;}}</code></pre><pre><code class="language-julia hljs">weather_fn = function_tool(
+    &quot;get_weather&quot;,
+    &quot;Get current weather for a location&quot;,
+    parameters=Dict(
+        &quot;type&quot; =&gt; &quot;object&quot;,
+        &quot;properties&quot; =&gt; Dict(
+            &quot;location&quot; =&gt; Dict(&quot;type&quot; =&gt; &quot;string&quot;, &quot;description&quot; =&gt; &quot;City name&quot;),
+            &quot;unit&quot; =&gt; Dict(&quot;type&quot; =&gt; &quot;string&quot;, &quot;enum&quot; =&gt; [&quot;celsius&quot;, &quot;fahrenheit&quot;])
+        ),
+        &quot;required&quot; =&gt; [&quot;location&quot;]
+    )
+)
+result = respond(&quot;What&#39;s the weather in Tokyo? Use celsius.&quot;, tools=[weather_fn])
+calls = function_calls(result)
+if !isempty(calls)
+    println(&quot;Function: &quot;, calls[1][&quot;name&quot;])
+    println(&quot;Arguments: &quot;, JSON.json(JSON.parse(calls[1][&quot;arguments&quot;]), 2))
+else
+    println(&quot;No function calls — &quot;, output_text(result))
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Function: get_weather
+Arguments: {
   &quot;location&quot;: &quot;Tokyo&quot;,
   &quot;unit&quot;: &quot;celsius&quot;
 }</code></pre><h3 id="Web-Search"><a class="docs-heading-anchor" href="#Web-Search">Web Search</a><a id="Web-Search-1"></a><a class="docs-heading-anchor-permalink" href="#Web-Search" title="Permalink"></a></h3><p>The model can search the web — no function implementation needed:</p><pre><code class="language-julia hljs">ws = web_search(context_size=&quot;high&quot;)
 println(&quot;Web search tool type: &quot;, typeof(ws))
 println(&quot;Context size: &quot;, ws.search_context_size)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Web search tool type: WebSearchTool
-Context size: high</code></pre><pre><code class="language-julia hljs">julia&gt; result = respond(
-           &quot;What is the latest stable release of the Julia programming language?&quot;,
-           tools=[web_search()]
-       )
-
-julia&gt; output_text(result)
-&quot;The latest **stable** release of the Julia programming language is **Julia v1.12.5**.&quot;</code></pre><h3 id="File-Search"><a class="docs-heading-anchor" href="#File-Search">File Search</a><a id="File-Search-1"></a><a class="docs-heading-anchor-permalink" href="#File-Search" title="Permalink"></a></h3><p>Search over your uploaded vector stores:</p><pre><code class="language-julia hljs">result = respond(
+Context size: high</code></pre><pre><code class="language-julia hljs">result = respond(
+    &quot;What is the latest stable release of the Julia programming language?&quot;,
+    tools=[web_search()]
+)
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println(&quot;Request failed — &quot;, output_text(result))
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">The latest **stable** release of the Julia programming language is **Julia v1.12.5**. ([discourse.julialang.org](https://discourse.julialang.org/c/announce/25))</code></pre><h3 id="File-Search"><a class="docs-heading-anchor" href="#File-Search">File Search</a><a id="File-Search-1"></a><a class="docs-heading-anchor-permalink" href="#File-Search" title="Permalink"></a></h3><p>Search over your uploaded vector stores:</p><pre><code class="language-julia hljs">result = respond(
     &quot;Find the error handling policy&quot;,
     tools=[file_search([&quot;vs_store_id_123&quot;], max_results=5)]
 )</code></pre><h3 id="Combining-Tools"><a class="docs-heading-anchor" href="#Combining-Tools">Combining Tools</a><a id="Combining-Tools-1"></a><a class="docs-heading-anchor-permalink" href="#Combining-Tools" title="Permalink"></a></h3><p>Mix different tool types freely:</p><pre><code class="language-julia hljs">tools = [
@@ -107,4 +124,4 @@ for t in tools
     println(&quot;  - &quot;, typeof(t))
 end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Number of tools: 2
   - WebSearchTool
-  - FunctionTool</code></pre><h2 id="See-Also"><a class="docs-heading-anchor" href="#See-Also">See Also</a><a id="See-Also-1"></a><a class="docs-heading-anchor-permalink" href="#See-Also" title="Permalink"></a></h2><ul><li><a href="../../api/chat/#UniLM.GPTTool"><code>GPTTool</code></a>, <a href="../../api/chat/#UniLM.GPTFunctionSignature"><code>GPTFunctionSignature</code></a> — Chat Completions tool types</li><li><a href="../../api/responses/#UniLM.FunctionTool"><code>FunctionTool</code></a>, <a href="../../api/responses/#UniLM.WebSearchTool"><code>WebSearchTool</code></a>, <a href="../../api/responses/#UniLM.FileSearchTool"><code>FileSearchTool</code></a> — Responses API tool types</li><li><a href="../../api/responses/#UniLM.function_tool"><code>function_tool</code></a>, <a href="../../api/responses/#UniLM.web_search"><code>web_search</code></a>, <a href="../../api/responses/#UniLM.file_search"><code>file_search</code></a> — convenience constructors</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../embeddings/">« Embeddings</a><a class="docs-footer-nextpage" href="../streaming/">Streaming »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Saturday 14 February 2026 19:28">Saturday 14 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+  - FunctionTool</code></pre><h2 id="See-Also"><a class="docs-heading-anchor" href="#See-Also">See Also</a><a id="See-Also-1"></a><a class="docs-heading-anchor-permalink" href="#See-Also" title="Permalink"></a></h2><ul><li><a href="../../api/chat/#UniLM.GPTTool"><code>GPTTool</code></a>, <a href="../../api/chat/#UniLM.GPTFunctionSignature"><code>GPTFunctionSignature</code></a> — Chat Completions tool types</li><li><a href="../../api/responses/#UniLM.FunctionTool"><code>FunctionTool</code></a>, <a href="../../api/responses/#UniLM.WebSearchTool"><code>WebSearchTool</code></a>, <a href="../../api/responses/#UniLM.FileSearchTool"><code>FileSearchTool</code></a> — Responses API tool types</li><li><a href="../../api/responses/#UniLM.function_tool"><code>function_tool</code></a>, <a href="../../api/responses/#UniLM.web_search"><code>web_search</code></a>, <a href="../../api/responses/#UniLM.file_search"><code>file_search</code></a> — convenience constructors</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../embeddings/">« Embeddings</a><a class="docs-footer-nextpage" href="../streaming/">Streaming »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Saturday 14 February 2026 20:25">Saturday 14 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

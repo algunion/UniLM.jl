@@ -12,28 +12,24 @@ println(&quot;Response format type: &quot;, chat.response_format.type)
 println(&quot;Request body:&quot;)
 println(JSON.json(chat))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Response format type: json_object
 Request body:
-{&quot;response_format&quot;:{&quot;type&quot;:&quot;json_object&quot;},&quot;messages&quot;:[{&quot;role&quot;:&quot;system&quot;,&quot;content&quot;:&quot;You output JSON. Always respond with valid JSON.&quot;},{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;List 3 programming languages with their year of creation.&quot;}],&quot;model&quot;:&quot;gpt-5.2&quot;}</code></pre><pre><code class="language-julia hljs">julia&gt; chat = Chat(model=&quot;gpt-4o-mini&quot;, response_format=ResponseFormat())
-
-julia&gt; push!(chat, Message(Val(:system), &quot;You always respond in valid JSON.&quot;))
-
-julia&gt; push!(chat, Message(Val(:user), &quot;List 3 programming languages with their year of creation.&quot;))
-
-julia&gt; result = chatrequest!(chat)
-
-julia&gt; JSON.parse(result.message.content)
-{
+{&quot;response_format&quot;:{&quot;type&quot;:&quot;json_object&quot;},&quot;messages&quot;:[{&quot;role&quot;:&quot;system&quot;,&quot;content&quot;:&quot;You output JSON. Always respond with valid JSON.&quot;},{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;List 3 programming languages with their year of creation.&quot;}],&quot;model&quot;:&quot;gpt-5.2&quot;}</code></pre><pre><code class="language-julia hljs">result = chatrequest!(chat)
+if result isa LLMSuccess
+    println(JSON.json(JSON.parse(result.message.content), 2))
+else
+    println(&quot;Request failed — see result for details&quot;)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">{
   &quot;languages&quot;: [
     {
+      &quot;name&quot;: &quot;C&quot;,
+      &quot;year_of_creation&quot;: 1972
+    },
+    {
       &quot;name&quot;: &quot;Python&quot;,
-      &quot;year&quot;: 1991
+      &quot;year_of_creation&quot;: 1991
     },
     {
       &quot;name&quot;: &quot;Java&quot;,
-      &quot;year&quot;: 1995
-    },
-    {
-      &quot;name&quot;: &quot;JavaScript&quot;,
-      &quot;year&quot;: 1995
+      &quot;year_of_creation&quot;: 1995
     }
   ]
 }</code></pre><h3 id="JSON-Schema-(Strict)"><a class="docs-heading-anchor" href="#JSON-Schema-(Strict)">JSON Schema (Strict)</a><a id="JSON-Schema-(Strict)-1"></a><a class="docs-heading-anchor-permalink" href="#JSON-Schema-(Strict)" title="Permalink"></a></h3><pre><code class="language-julia hljs">schema = ResponseFormat(UniLM.JsonSchemaAPI(
@@ -63,13 +59,32 @@ push!(chat, Message(Val(:system), &quot;Return structured data about programming
 push!(chat, Message(Val(:user), &quot;List Julia, Python, and Rust&quot;))
 println(&quot;Schema name: &quot;, schema.json_schema.name)
 println(&quot;Response format type: &quot;, schema.type)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Schema name: languages
-Response format type: json_schema</code></pre><pre><code class="language-julia hljs">julia&gt; result = chatrequest!(chat)
-
-julia&gt; data = JSON.parse(result.message.content)
-# result.message.content is guaranteed to match the schema</code></pre><h2 id="Responses-API"><a class="docs-heading-anchor" href="#Responses-API">Responses API</a><a id="Responses-API-1"></a><a class="docs-heading-anchor-permalink" href="#Responses-API" title="Permalink"></a></h2><p>The Responses API uses <a href="../../api/responses/#UniLM.TextConfig"><code>TextConfig</code></a> with convenience constructors:</p><h3 id="JSON-Object"><a class="docs-heading-anchor" href="#JSON-Object">JSON Object</a><a id="JSON-Object-1"></a><a class="docs-heading-anchor-permalink" href="#JSON-Object" title="Permalink"></a></h3><pre><code class="language-julia hljs">julia&gt; result = respond(&quot;List 3 colors as a JSON object&quot;, text=json_object_format())
-
-julia&gt; output_text(result)
-# Returns valid JSON conforming to &quot;json_object&quot; format</code></pre><h3 id="JSON-Schema"><a class="docs-heading-anchor" href="#JSON-Schema">JSON Schema</a><a id="JSON-Schema-1"></a><a class="docs-heading-anchor-permalink" href="#JSON-Schema" title="Permalink"></a></h3><pre><code class="language-julia hljs">fmt = json_schema_format(
+Response format type: json_schema</code></pre><pre><code class="language-julia hljs">result = chatrequest!(chat)
+if result isa LLMSuccess
+    println(JSON.json(JSON.parse(result.message.content), 2))
+else
+    println(&quot;Request failed — see result for details&quot;)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">{
+  &quot;languages&quot;: [
+    {
+      &quot;name&quot;: &quot;Julia&quot;,
+      &quot;year&quot;: 2012
+    },
+    {
+      &quot;name&quot;: &quot;Python&quot;,
+      &quot;year&quot;: 1991
+    },
+    {
+      &quot;name&quot;: &quot;Rust&quot;,
+      &quot;year&quot;: 2010
+    }
+  ]
+}</code></pre><h2 id="Responses-API"><a class="docs-heading-anchor" href="#Responses-API">Responses API</a><a id="Responses-API-1"></a><a class="docs-heading-anchor-permalink" href="#Responses-API" title="Permalink"></a></h2><p>The Responses API uses <a href="../../api/responses/#UniLM.TextConfig"><code>TextConfig</code></a> with convenience constructors:</p><h3 id="JSON-Object"><a class="docs-heading-anchor" href="#JSON-Object">JSON Object</a><a id="JSON-Object-1"></a><a class="docs-heading-anchor-permalink" href="#JSON-Object" title="Permalink"></a></h3><pre><code class="language-julia hljs">result = respond(&quot;List 3 colors as a JSON object&quot;, text=json_object_format())
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println(&quot;Request failed — &quot;, output_text(result))
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">{&quot;colors&quot;:[&quot;red&quot;,&quot;green&quot;,&quot;blue&quot;]}</code></pre><h3 id="JSON-Schema"><a class="docs-heading-anchor" href="#JSON-Schema">JSON Schema</a><a id="JSON-Schema-1"></a><a class="docs-heading-anchor-permalink" href="#JSON-Schema" title="Permalink"></a></h3><pre><code class="language-julia hljs">fmt = json_schema_format(
     &quot;colors&quot;,
     &quot;A structured list of colors&quot;,
     Dict(
@@ -83,18 +98,37 @@ julia&gt; output_text(result)
                         &quot;name&quot; =&gt; Dict(&quot;type&quot; =&gt; &quot;string&quot;),
                         &quot;hex&quot; =&gt; Dict(&quot;type&quot; =&gt; &quot;string&quot;)
                     ),
-                    &quot;required&quot; =&gt; [&quot;name&quot;, &quot;hex&quot;]
+                    &quot;required&quot; =&gt; [&quot;name&quot;, &quot;hex&quot;],
+                    &quot;additionalProperties&quot; =&gt; false
                 )
             )
         ),
-        &quot;required&quot; =&gt; [&quot;colors&quot;]
+        &quot;required&quot; =&gt; [&quot;colors&quot;],
+        &quot;additionalProperties&quot; =&gt; false
     ),
     strict=true
 )
 println(&quot;Format type: &quot;, fmt.format.type)
 println(&quot;Schema strict: &quot;, fmt.format.strict)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Format type: json_schema
-Schema strict: true</code></pre><pre><code class="language-julia hljs">julia&gt; result = respond(&quot;List red, green, and blue with their hex codes&quot;, text=fmt)
-
-julia&gt; JSON.parse(output_text(result))
-# Returns JSON matching the defined schema</code></pre><h3 id="Plain-Text-Format"><a class="docs-heading-anchor" href="#Plain-Text-Format">Plain Text Format</a><a id="Plain-Text-Format-1"></a><a class="docs-heading-anchor-permalink" href="#Plain-Text-Format" title="Permalink"></a></h3><pre><code class="language-julia hljs">tc = text_format()
-println(&quot;Default format type: &quot;, tc.format.type)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Default format type: text</code></pre><h2 id="Convenience-Constructors"><a class="docs-heading-anchor" href="#Convenience-Constructors">Convenience Constructors</a><a id="Convenience-Constructors-1"></a><a class="docs-heading-anchor-permalink" href="#Convenience-Constructors" title="Permalink"></a></h2><table><tr><th style="text-align: left">Constructor</th><th style="text-align: left">Format</th></tr><tr><td style="text-align: left"><code>json_object_format()</code></td><td style="text-align: left">Unstructured JSON</td></tr><tr><td style="text-align: left"><code>json_schema_format(name, desc, schema)</code></td><td style="text-align: left">Schema-constrained JSON</td></tr><tr><td style="text-align: left"><code>text_format()</code></td><td style="text-align: left">Plain text (default)</td></tr></table><h2 id="See-Also"><a class="docs-heading-anchor" href="#See-Also">See Also</a><a id="See-Also-1"></a><a class="docs-heading-anchor-permalink" href="#See-Also" title="Permalink"></a></h2><ul><li><a href="../../api/chat/#UniLM.ResponseFormat"><code>ResponseFormat</code></a> — Chat Completions format type</li><li><a href="../../api/responses/#UniLM.TextConfig"><code>TextConfig</code></a>, <a href="../../api/responses/#UniLM.TextFormatSpec"><code>TextFormatSpec</code></a> — Responses API format types</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../streaming/">« Streaming</a><a class="docs-footer-nextpage" href="../multi_backend/">Multi-Backend »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Saturday 14 February 2026 19:28">Saturday 14 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+Schema strict: true</code></pre><pre><code class="language-julia hljs">result = respond(&quot;List red, green, and blue with their hex codes&quot;, text=fmt)
+if result isa ResponseSuccess
+    println(JSON.json(JSON.parse(output_text(result)), 2))
+else
+    println(&quot;Request failed — &quot;, output_text(result))
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">{
+  &quot;colors&quot;: [
+    {
+      &quot;name&quot;: &quot;Red&quot;,
+      &quot;hex&quot;: &quot;#FF0000&quot;
+    },
+    {
+      &quot;name&quot;: &quot;Green&quot;,
+      &quot;hex&quot;: &quot;#00FF00&quot;
+    },
+    {
+      &quot;name&quot;: &quot;Blue&quot;,
+      &quot;hex&quot;: &quot;#0000FF&quot;
+    }
+  ]
+}</code></pre><h3 id="Plain-Text-Format"><a class="docs-heading-anchor" href="#Plain-Text-Format">Plain Text Format</a><a id="Plain-Text-Format-1"></a><a class="docs-heading-anchor-permalink" href="#Plain-Text-Format" title="Permalink"></a></h3><pre><code class="language-julia hljs">tc = text_format()
+println(&quot;Default format type: &quot;, tc.format.type)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Default format type: text</code></pre><h2 id="Convenience-Constructors"><a class="docs-heading-anchor" href="#Convenience-Constructors">Convenience Constructors</a><a id="Convenience-Constructors-1"></a><a class="docs-heading-anchor-permalink" href="#Convenience-Constructors" title="Permalink"></a></h2><table><tr><th style="text-align: left">Constructor</th><th style="text-align: left">Format</th></tr><tr><td style="text-align: left"><code>json_object_format()</code></td><td style="text-align: left">Unstructured JSON</td></tr><tr><td style="text-align: left"><code>json_schema_format(name, desc, schema)</code></td><td style="text-align: left">Schema-constrained JSON</td></tr><tr><td style="text-align: left"><code>text_format()</code></td><td style="text-align: left">Plain text (default)</td></tr></table><h2 id="See-Also"><a class="docs-heading-anchor" href="#See-Also">See Also</a><a id="See-Also-1"></a><a class="docs-heading-anchor-permalink" href="#See-Also" title="Permalink"></a></h2><ul><li><a href="../../api/chat/#UniLM.ResponseFormat"><code>ResponseFormat</code></a> — Chat Completions format type</li><li><a href="../../api/responses/#UniLM.TextConfig"><code>TextConfig</code></a>, <a href="../../api/responses/#UniLM.TextFormatSpec"><code>TextFormatSpec</code></a> — Responses API format types</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../streaming/">« Streaming</a><a class="docs-footer-nextpage" href="../multi_backend/">Multi-Backend »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Saturday 14 February 2026 20:25">Saturday 14 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

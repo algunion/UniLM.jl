@@ -3,49 +3,50 @@
 Pkg.add(url=&quot;https://github.com/algunion/UniLM.jl&quot;)</code></pre><h2 id="Configuration"><a class="docs-heading-anchor" href="#Configuration">Configuration</a><a id="Configuration-1"></a><a class="docs-heading-anchor-permalink" href="#Configuration" title="Permalink"></a></h2><p>UniLM.jl reads API credentials from environment variables. Set them before making any requests:</p><h3 id="OpenAI-(default)"><a class="docs-heading-anchor" href="#OpenAI-(default)">OpenAI (default)</a><a id="OpenAI-(default)-1"></a><a class="docs-heading-anchor-permalink" href="#OpenAI-(default)" title="Permalink"></a></h3><pre><code class="language-julia hljs">ENV[&quot;OPENAI_API_KEY&quot;] = &quot;sk-...&quot;</code></pre><p>Or via your shell:</p><pre><code class="language-bash hljs">export OPENAI_API_KEY=&quot;sk-...&quot;</code></pre><h3 id="Azure-OpenAI"><a class="docs-heading-anchor" href="#Azure-OpenAI">Azure OpenAI</a><a id="Azure-OpenAI-1"></a><a class="docs-heading-anchor-permalink" href="#Azure-OpenAI" title="Permalink"></a></h3><pre><code class="language-bash hljs">export AZURE_OPENAI_BASE_URL=&quot;https://your-resource.openai.azure.com&quot;
 export AZURE_OPENAI_API_KEY=&quot;your-key&quot;
 export AZURE_OPENAI_API_VERSION=&quot;2024-02-01&quot;
-export AZURE_OPENAI_DEPLOY_NAME_GPT_5_2=&quot;your-gpt52-deployment&quot;</code></pre><h3 id="Google-Gemini"><a class="docs-heading-anchor" href="#Google-Gemini">Google Gemini</a><a id="Google-Gemini-1"></a><a class="docs-heading-anchor-permalink" href="#Google-Gemini" title="Permalink"></a></h3><pre><code class="language-bash hljs">export GEMINI_API_KEY=&quot;your-gemini-key&quot;</code></pre><h2 id="Your-First-Request"><a class="docs-heading-anchor" href="#Your-First-Request">Your First Request</a><a id="Your-First-Request-1"></a><a class="docs-heading-anchor-permalink" href="#Your-First-Request" title="Permalink"></a></h2><h3 id="Using-the-Responses-API"><a class="docs-heading-anchor" href="#Using-the-Responses-API">Using the Responses API</a><a id="Using-the-Responses-API-1"></a><a class="docs-heading-anchor-permalink" href="#Using-the-Responses-API" title="Permalink"></a></h3><p>The simplest way to get started — one function call:</p><pre><code class="language-julia hljs">julia&gt; using UniLM
+export AZURE_OPENAI_DEPLOY_NAME_GPT_5_2=&quot;your-gpt52-deployment&quot;</code></pre><h3 id="Google-Gemini"><a class="docs-heading-anchor" href="#Google-Gemini">Google Gemini</a><a id="Google-Gemini-1"></a><a class="docs-heading-anchor-permalink" href="#Google-Gemini" title="Permalink"></a></h3><pre><code class="language-bash hljs">export GEMINI_API_KEY=&quot;your-gemini-key&quot;</code></pre><h2 id="Your-First-Request"><a class="docs-heading-anchor" href="#Your-First-Request">Your First Request</a><a id="Your-First-Request-1"></a><a class="docs-heading-anchor-permalink" href="#Your-First-Request" title="Permalink"></a></h2><h3 id="Using-the-Responses-API"><a class="docs-heading-anchor" href="#Using-the-Responses-API">Using the Responses API</a><a id="Using-the-Responses-API-1"></a><a class="docs-heading-anchor-permalink" href="#Using-the-Responses-API" title="Permalink"></a></h3><p>The simplest way to get started — one function call:</p><pre><code class="language-julia hljs">result = respond(&quot;Explain Julia&#39;s type system in 3 bullet points&quot;)
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println(&quot;Request failed — &quot;, output_text(result))
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">- **Dynamic, but strongly typed with multiple dispatch:** Values have concrete types at runtime, and functions choose methods based on the types of *all* arguments (multiple dispatch), enabling fast, generic code.
 
-julia&gt; result = respond(&quot;Explain Julia&#39;s type system in 3 bullet points&quot;)
+- **Parametric types + abstract type hierarchies:** Types form a lattice rooted at `Any`, with **abstract types** (e.g., `Number`) for interfaces and **concrete types** (e.g., `Int64`) for actual values; both can be **parametric** (e.g., `Array{T,N}`), letting you express “container of T” style relationships.
 
-julia&gt; output_text(result)
-&quot;Julia&#39;s multiple dispatch means a function can have many method definitions, and Julia chooses which one to run based on the types of *all* arguments in a call (not just the first). This makes it easy to write generic code while still getting specialized, high-performance behavior for specific type combinations.&quot;</code></pre><h3 id="Using-Chat-Completions"><a class="docs-heading-anchor" href="#Using-Chat-Completions">Using Chat Completions</a><a id="Using-Chat-Completions-1"></a><a class="docs-heading-anchor-permalink" href="#Using-Chat-Completions" title="Permalink"></a></h3><p>For stateful, multi-turn conversations:</p><pre><code class="language-julia hljs">julia&gt; using UniLM
+- **Performance via specialization (no automatic implicit casts):** The compiler specializes methods for the concrete argument types it sees, often achieving C-like speed; conversions are explicit (or via defined promotion rules), so type stability and concrete types matter for performance.</code></pre><h3 id="Using-Chat-Completions"><a class="docs-heading-anchor" href="#Using-Chat-Completions">Using Chat Completions</a><a id="Using-Chat-Completions-1"></a><a class="docs-heading-anchor-permalink" href="#Using-Chat-Completions" title="Permalink"></a></h3><p>For stateful, multi-turn conversations:</p><pre><code class="language-julia hljs">chat = Chat(model=&quot;gpt-4o-mini&quot;)
+push!(chat, Message(Val(:system), &quot;You are a concise Julia programming tutor.&quot;))
+push!(chat, Message(Val(:user), &quot;What is multiple dispatch? Answer in 2-3 sentences.&quot;))
+result = chatrequest!(chat)
+if result isa LLMSuccess
+    println(result.message.content)
+    println(&quot;\nFinish reason: &quot;, result.message.finish_reason)
+    println(&quot;Conversation length: &quot;, length(chat))
+else
+    println(&quot;Request failed — see result for details&quot;)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Multiple dispatch is a programming paradigm that allows a function to select which method to execute based on the runtime types of all its arguments, rather than just the first one. This enables more flexible and efficient code by allowing different behaviors for different combinations of argument types, making it a core feature of Julia&#39;s design and facilitating generic programming.
 
-julia&gt; chat = Chat(model=&quot;gpt-4o-mini&quot;)
-
-julia&gt; push!(chat, Message(Val(:system), &quot;You are a concise Julia programming tutor.&quot;))
-
-julia&gt; push!(chat, Message(Val(:user), &quot;What is multiple dispatch? Answer in 2-3 sentences.&quot;))
-
-julia&gt; result = chatrequest!(chat)
-
-julia&gt; result.message.content
-&quot;Multiple dispatch is a feature in programming languages, including Julia, that allows the selection of a method to execute based on the types of all its arguments, rather than just the first one. This enables more flexible and expressive code, as it can define different behaviors for a function depending on the combination of argument types. It supports polymorphism, making it easier to write generic code that works with multiple types.&quot;
-
-julia&gt; result.message.finish_reason
-&quot;stop&quot;
-
-julia&gt; length(chat)  # system + user + assistant
-3</code></pre><h3 id="Generating-Images"><a class="docs-heading-anchor" href="#Generating-Images">Generating Images</a><a id="Generating-Images-1"></a><a class="docs-heading-anchor-permalink" href="#Generating-Images" title="Permalink"></a></h3><pre><code class="language-julia hljs">julia&gt; result = generate_image(
-           &quot;A watercolor painting of a friendly robot reading a Julia programming book&quot;,
-           size=&quot;1024x1024&quot;, quality=&quot;medium&quot;
-       )
-
-julia&gt; result isa ImageSuccess
-true
-
-julia&gt; length(image_data(result))
-1
-
-julia&gt; save_image(image_data(result)[1], &quot;robot_julia.png&quot;)
-&quot;robot_julia.png&quot;</code></pre><h3 id="Using-Keyword-Arguments"><a class="docs-heading-anchor" href="#Using-Keyword-Arguments">Using Keyword Arguments</a><a id="Using-Keyword-Arguments-1"></a><a class="docs-heading-anchor-permalink" href="#Using-Keyword-Arguments" title="Permalink"></a></h3><p>For one-shot requests without managing <code>Chat</code> objects:</p><pre><code class="language-julia hljs">julia&gt; result = chatrequest!(
-           systemprompt=&quot;You are a calculator. Respond only with the number.&quot;,
-           userprompt=&quot;What is 42 * 17?&quot;,
-           model=&quot;gpt-4o-mini&quot;,
-           temperature=0.0
-       )
-
-julia&gt; result.message.content
-&quot;714&quot;</code></pre><h2 id="Handling-Results"><a class="docs-heading-anchor" href="#Handling-Results">Handling Results</a><a id="Handling-Results-1"></a><a class="docs-heading-anchor-permalink" href="#Handling-Results" title="Permalink"></a></h2><p>All API calls return subtypes of <a href="../api/results/#UniLM.LLMRequestResponse"><code>LLMRequestResponse</code></a>. Use Julia&#39;s pattern matching:</p><pre><code class="language-julia hljs">using UniLM
+Finish reason: stop
+Conversation length: 3</code></pre><h3 id="Generating-Images"><a class="docs-heading-anchor" href="#Generating-Images">Generating Images</a><a id="Generating-Images-1"></a><a class="docs-heading-anchor-permalink" href="#Generating-Images" title="Permalink"></a></h3><pre><code class="language-julia hljs">result = generate_image(
+    &quot;A watercolor painting of a friendly robot reading a Julia programming book&quot;,
+    size=&quot;1024x1024&quot;, quality=&quot;medium&quot;
+)
+if result isa ImageSuccess
+    println(&quot;Success: true&quot;)
+    println(&quot;Images: &quot;, length(image_data(result)))
+else
+    println(&quot;Success: false&quot;)
+    println(&quot;Images: 0&quot;)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Success: true
+Images: 1</code></pre><h3 id="Using-Keyword-Arguments"><a class="docs-heading-anchor" href="#Using-Keyword-Arguments">Using Keyword Arguments</a><a id="Using-Keyword-Arguments-1"></a><a class="docs-heading-anchor-permalink" href="#Using-Keyword-Arguments" title="Permalink"></a></h3><p>For one-shot requests without managing <code>Chat</code> objects:</p><pre><code class="language-julia hljs">result = chatrequest!(
+    systemprompt=&quot;You are a calculator. Respond only with the number.&quot;,
+    userprompt=&quot;What is 42 * 17?&quot;,
+    model=&quot;gpt-4o-mini&quot;,
+    temperature=0.0
+)
+if result isa LLMSuccess
+    println(result.message.content)
+else
+    println(&quot;Request failed — see result for details&quot;)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">714</code></pre><h2 id="Handling-Results"><a class="docs-heading-anchor" href="#Handling-Results">Handling Results</a><a id="Handling-Results-1"></a><a class="docs-heading-anchor-permalink" href="#Handling-Results" title="Permalink"></a></h2><p>All API calls return subtypes of <a href="../api/results/#UniLM.LLMRequestResponse"><code>LLMRequestResponse</code></a>. Use Julia&#39;s pattern matching:</p><pre><code class="language-julia hljs">using UniLM
 using InteractiveUtils
 
 # Construct a chat to show the result type hierarchy
@@ -75,14 +76,17 @@ elseif result isa LLMFailure
     @warn &quot;API returned HTTP $(result.status): $(result.response)&quot;
 elseif result isa LLMCallError
     @error &quot;Call failed: $(result.error)&quot;
-end</code></pre><p>For the Responses API:</p><pre><code class="language-julia hljs">result = respond(&quot;Hello!&quot;)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Assistant: Hello! How can I help you today?
+Finish reason: stop</code></pre><p>For the Responses API:</p><pre><code class="language-julia hljs">result = respond(&quot;Hello!&quot;)
 
 if result isa ResponseSuccess
     println(output_text(result))
-    println(&quot;Status: &quot;, result.response.status)  # &quot;completed&quot;
+    println(&quot;Status: &quot;, result.response.status)
     println(&quot;Model: &quot;, result.response.model)
 elseif result isa ResponseFailure
     @warn &quot;HTTP $(result.status)&quot;
 elseif result isa ResponseCallError
     @error result.error
-end</code></pre><h2 id="What&#39;s-Next?"><a class="docs-heading-anchor" href="#What&#39;s-Next?">What&#39;s Next?</a><a id="What&#39;s-Next?-1"></a><a class="docs-heading-anchor-permalink" href="#What&#39;s-Next?" title="Permalink"></a></h2><table><tr><th style="text-align: left">Want to...</th><th style="text-align: left">Read...</th></tr><tr><td style="text-align: left">Build multi-turn conversations</td><td style="text-align: left"><a href="../guide/chat_completions/#chat_guide">Chat Completions Guide</a></td></tr><tr><td style="text-align: left">Use the newer Responses API</td><td style="text-align: left"><a href="../guide/responses_api/#responses_guide">Responses API Guide</a></td></tr><tr><td style="text-align: left">Generate images from prompts</td><td style="text-align: left"><a href="../guide/image_generation/#images_guide">Image Generation Guide</a></td></tr><tr><td style="text-align: left">Call functions from the model</td><td style="text-align: left"><a href="../guide/tool_calling/#tools_guide">Tool Calling Guide</a></td></tr><tr><td style="text-align: left">Stream tokens in real-time</td><td style="text-align: left"><a href="../guide/streaming/#streaming_guide">Streaming Guide</a></td></tr><tr><td style="text-align: left">Get structured JSON output</td><td style="text-align: left"><a href="../guide/structured_output/#structured_guide">Structured Output Guide</a></td></tr><tr><td style="text-align: left">Use Azure or Gemini</td><td style="text-align: left"><a href="../guide/multi_backend/#backend_guide">Multi-Backend Guide</a></td></tr></table></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« Home</a><a class="docs-footer-nextpage" href="../guide/chat_completions/">Chat Completions »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Saturday 14 February 2026 19:28">Saturday 14 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Hello! What can I help you with today?
+Status: completed
+Model: gpt-5.2-2025-12-11</code></pre><h2 id="What&#39;s-Next?"><a class="docs-heading-anchor" href="#What&#39;s-Next?">What&#39;s Next?</a><a id="What&#39;s-Next?-1"></a><a class="docs-heading-anchor-permalink" href="#What&#39;s-Next?" title="Permalink"></a></h2><table><tr><th style="text-align: left">Want to...</th><th style="text-align: left">Read...</th></tr><tr><td style="text-align: left">Build multi-turn conversations</td><td style="text-align: left"><a href="../guide/chat_completions/#chat_guide">Chat Completions Guide</a></td></tr><tr><td style="text-align: left">Use the newer Responses API</td><td style="text-align: left"><a href="../guide/responses_api/#responses_guide">Responses API Guide</a></td></tr><tr><td style="text-align: left">Generate images from prompts</td><td style="text-align: left"><a href="../guide/image_generation/#images_guide">Image Generation Guide</a></td></tr><tr><td style="text-align: left">Call functions from the model</td><td style="text-align: left"><a href="../guide/tool_calling/#tools_guide">Tool Calling Guide</a></td></tr><tr><td style="text-align: left">Stream tokens in real-time</td><td style="text-align: left"><a href="../guide/streaming/#streaming_guide">Streaming Guide</a></td></tr><tr><td style="text-align: left">Get structured JSON output</td><td style="text-align: left"><a href="../guide/structured_output/#structured_guide">Structured Output Guide</a></td></tr><tr><td style="text-align: left">Use Azure or Gemini</td><td style="text-align: left"><a href="../guide/multi_backend/#backend_guide">Multi-Backend Guide</a></td></tr></table></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« Home</a><a class="docs-footer-nextpage" href="../guide/chat_completions/">Chat Completions »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Saturday 14 February 2026 20:25">Saturday 14 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

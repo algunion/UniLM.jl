@@ -3,16 +3,17 @@
 The Chat Completions API is the classic way to interact with OpenAI's language models.
 UniLM.jl wraps it in a type-safe, stateful `Chat` object that tracks conversation history automatically.
 
+```@setup chat
+using UniLM
+using JSON
+```
+
 ## Creating a Chat
 
 ```@example chat
-using UniLM
-using JSON
-
 chat = Chat(
     model="gpt-5.2",        # model name
     temperature=0.7,        # sampling temperature
-    max_tokens=1000,        # response length limit
 )
 println("Model: ", chat.model)
 println("Messages: ", length(chat))
@@ -71,60 +72,44 @@ The `!` suffix is a Julia convention — `chatrequest!` mutates `chat` by append
 
 ### Result Handling
 
-```julia
-julia> result = chatrequest!(chat)
-
-julia> result.message.content
-"Multiple dispatch is a feature in programming languages, including Julia, that allows the selection of a method to execute based on the types of all its arguments, rather than just the first one. This enables more flexible and expressive code, as it can define different behaviors for a function depending on the combination of argument types. It supports polymorphism, making it easier to write generic code that works with multiple types."
-
-julia> result.message.finish_reason
-"stop"
-
-julia> length(chat)  # system + user + assistant
-3
+```@example chat
+result = chatrequest!(chat)
+println(result.message.content)
+println("\nFinish reason: ", result.message.finish_reason)
+println("Conversation length: ", length(chat))
 ```
 
 ### One-Shot Requests via Keywords
 
 Skip the `Chat` object entirely for simple one-off requests:
 
-```julia
-julia> result = chatrequest!(
-           systemprompt="You are a calculator. Respond only with the number.",
-           userprompt="What is 42 * 17?",
-           model="gpt-4o-mini",
-           temperature=0.0
-       )
-
-julia> result.message.content
-"714"
+```@example chat
+result = chatrequest!(
+    systemprompt="You are a calculator. Respond only with the number.",
+    userprompt="What is 42 * 17?",
+    model="gpt-4o-mini",
+    temperature=0.0
+)
+println(result.message.content)
 ```
 
 ## Multi-Turn Conversations
 
 Because `chatrequest!` appends the response, you can keep chatting:
 
-```julia
-julia> chat = Chat(model="gpt-4o-mini")
+```@example chat
+chat = Chat(model="gpt-4o-mini")
+push!(chat, Message(Val(:system), "You are a concise Julia programming tutor."))
+push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
+result = chatrequest!(chat)
+println(result.message.content)
+```
 
-julia> push!(chat, Message(Val(:system), "You are a concise Julia programming tutor."))
-
-julia> push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
-
-julia> result = chatrequest!(chat)
-
-julia> result.message.content
-"Multiple dispatch is a feature in programming languages, including Julia, that allows the selection of a method to execute based on the types of all its arguments, rather than just the first one. This enables more flexible and expressive code, as it can define different behaviors for a function depending on the combination of argument types. It supports polymorphism, making it easier to write generic code that works with multiple types."
-
-julia> push!(chat, Message(Val(:user), "Give a short Julia code example of it."))
-
-julia> result = chatrequest!(chat)
-
-julia> println(result.message.content)
-# (multi-line code example output)
-
-julia> length(chat)  # system + user + assistant + user + assistant
-5
+```@example chat
+push!(chat, Message(Val(:user), "Give a short Julia code example of it."))
+result = chatrequest!(chat)
+println(result.message.content)
+println("\nConversation length: ", length(chat))
 ```
 
 ## Checking Conversation Validity

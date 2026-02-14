@@ -44,78 +44,59 @@ export AZURE_OPENAI_DEPLOY_NAME_GPT_5_2="your-gpt52-deployment"
 export GEMINI_API_KEY="your-gemini-key"
 ```
 
+```@setup gs
+using UniLM
+using JSON
+```
+
 ## Your First Request
 
 ### Using the Responses API
 
 The simplest way to get started — one function call:
 
-```julia
-julia> using UniLM
-
-julia> result = respond("Explain Julia's type system in 3 bullet points")
-
-julia> output_text(result)
-"Julia's multiple dispatch means a function can have many method definitions, and Julia chooses which one to run based on the types of *all* arguments in a call (not just the first). This makes it easy to write generic code while still getting specialized, high-performance behavior for specific type combinations."
+```@example gs
+result = respond("Explain Julia's type system in 3 bullet points")
+println(output_text(result))
 ```
 
 ### Using Chat Completions
 
 For stateful, multi-turn conversations:
 
-```julia
-julia> using UniLM
-
-julia> chat = Chat(model="gpt-4o-mini")
-
-julia> push!(chat, Message(Val(:system), "You are a concise Julia programming tutor."))
-
-julia> push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
-
-julia> result = chatrequest!(chat)
-
-julia> result.message.content
-"Multiple dispatch is a feature in programming languages, including Julia, that allows the selection of a method to execute based on the types of all its arguments, rather than just the first one. This enables more flexible and expressive code, as it can define different behaviors for a function depending on the combination of argument types. It supports polymorphism, making it easier to write generic code that works with multiple types."
-
-julia> result.message.finish_reason
-"stop"
-
-julia> length(chat)  # system + user + assistant
-3
+```@example gs
+chat = Chat(model="gpt-4o-mini")
+push!(chat, Message(Val(:system), "You are a concise Julia programming tutor."))
+push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
+result = chatrequest!(chat)
+println(result.message.content)
+println("\nFinish reason: ", result.message.finish_reason)
+println("Conversation length: ", length(chat))
 ```
 
 ### Generating Images
 
-```julia
-julia> result = generate_image(
-           "A watercolor painting of a friendly robot reading a Julia programming book",
-           size="1024x1024", quality="medium"
-       )
-
-julia> result isa ImageSuccess
-true
-
-julia> length(image_data(result))
-1
-
-julia> save_image(image_data(result)[1], "robot_julia.png")
-"robot_julia.png"
+```@example gs
+result = generate_image(
+    "A watercolor painting of a friendly robot reading a Julia programming book",
+    size="1024x1024", quality="medium"
+)
+println("Success: ", result isa ImageSuccess)
+println("Images: ", length(image_data(result)))
 ```
 
 ### Using Keyword Arguments
 
 For one-shot requests without managing `Chat` objects:
 
-```julia
-julia> result = chatrequest!(
-           systemprompt="You are a calculator. Respond only with the number.",
-           userprompt="What is 42 * 17?",
-           model="gpt-4o-mini",
-           temperature=0.0
-       )
-
-julia> result.message.content
-"714"
+```@example gs
+result = chatrequest!(
+    systemprompt="You are a calculator. Respond only with the number.",
+    userprompt="What is 42 * 17?",
+    model="gpt-4o-mini",
+    temperature=0.0
+)
+println(result.message.content)
 ```
 
 ## Handling Results
@@ -138,7 +119,7 @@ for T in subtypes(UniLM.LLMRequestResponse)
 end
 ```
 
-```julia
+```@example results
 result = chatrequest!(chat)
 
 if result isa LLMSuccess
@@ -153,12 +134,12 @@ end
 
 For the Responses API:
 
-```julia
+```@example results
 result = respond("Hello!")
 
 if result isa ResponseSuccess
     println(output_text(result))
-    println("Status: ", result.response.status)  # "completed"
+    println("Status: ", result.response.status)
     println("Model: ", result.response.model)
 elseif result isa ResponseFailure
     @warn "HTTP $(result.status)"

@@ -23,32 +23,9 @@ println("Request body:")
 println(JSON.json(chat))
 ```
 
-```julia
-julia> chat = Chat(model="gpt-4o-mini", response_format=ResponseFormat())
-
-julia> push!(chat, Message(Val(:system), "You always respond in valid JSON."))
-
-julia> push!(chat, Message(Val(:user), "List 3 programming languages with their year of creation."))
-
-julia> result = chatrequest!(chat)
-
-julia> JSON.parse(result.message.content)
-{
-  "languages": [
-    {
-      "name": "Python",
-      "year": 1991
-    },
-    {
-      "name": "Java",
-      "year": 1995
-    },
-    {
-      "name": "JavaScript",
-      "year": 1995
-    }
-  ]
-}
+```@example structured
+result = chatrequest!(chat)
+println(JSON.json(JSON.parse(result.message.content), 2))
 ```
 
 ### JSON Schema (Strict)
@@ -83,11 +60,9 @@ println("Schema name: ", schema.json_schema.name)
 println("Response format type: ", schema.type)
 ```
 
-```julia
-julia> result = chatrequest!(chat)
-
-julia> data = JSON.parse(result.message.content)
-# result.message.content is guaranteed to match the schema
+```@example structured
+result = chatrequest!(chat)
+println(JSON.json(JSON.parse(result.message.content), 2))
 ```
 
 ## Responses API
@@ -96,11 +71,9 @@ The Responses API uses [`TextConfig`](@ref) with convenience constructors:
 
 ### JSON Object
 
-```julia
-julia> result = respond("List 3 colors as a JSON object", text=json_object_format())
-
-julia> output_text(result)
-# Returns valid JSON conforming to "json_object" format
+```@example structured
+result = respond("List 3 colors as a JSON object", text=json_object_format())
+println(output_text(result))
 ```
 
 ### JSON Schema
@@ -120,11 +93,13 @@ fmt = json_schema_format(
                         "name" => Dict("type" => "string"),
                         "hex" => Dict("type" => "string")
                     ),
-                    "required" => ["name", "hex"]
+                    "required" => ["name", "hex"],
+                    "additionalProperties" => false
                 )
             )
         ),
-        "required" => ["colors"]
+        "required" => ["colors"],
+        "additionalProperties" => false
     ),
     strict=true
 )
@@ -132,11 +107,9 @@ println("Format type: ", fmt.format.type)
 println("Schema strict: ", fmt.format.strict)
 ```
 
-```julia
-julia> result = respond("List red, green, and blue with their hex codes", text=fmt)
-
-julia> JSON.parse(output_text(result))
-# Returns JSON matching the defined schema
+```@example structured
+result = respond("List red, green, and blue with their hex codes", text=fmt)
+println(JSON.json(JSON.parse(output_text(result)), 2))
 ```
 
 ### Plain Text Format

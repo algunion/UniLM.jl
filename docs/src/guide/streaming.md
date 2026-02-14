@@ -3,32 +3,28 @@
 Both APIs support **real-time streaming** of generated tokens, so you can display partial
 results as they arrive.
 
+```@setup streaming
+using UniLM
+using JSON
+```
+
 ## Chat Completions Streaming
 
 Set `stream=true` and provide a callback:
 
-```julia
-julia> chat = Chat(model="gpt-4o-mini", stream=true)
-
-julia> push!(chat, Message(Val(:system), "You are a poet."))
-
-julia> push!(chat, Message(Val(:user), "Write a very short 2-line poem about coding."))
-
-julia> task = chatrequest!(chat, callback=function(chunk, close)
-           if chunk isa String
-               print(chunk)  # tokens stream in real-time
-           elseif chunk isa Message
-               println("\n--- done ---")
-           end
-       end)
-In lines of logic, dreams arise,  
-Crafting worlds behind the screen's wise guise
---- done ---
-
-julia> msg, _ = fetch(task)
-
-julia> msg.content
-"In lines of logic, dreams arise,  \nCrafting worlds behind the screen's wise guise"
+```@example streaming
+chat = Chat(model="gpt-4o-mini", stream=true)
+push!(chat, Message(Val(:system), "You are a poet."))
+push!(chat, Message(Val(:user), "Write a very short 2-line poem about coding."))
+task = chatrequest!(chat, callback=function(chunk, close)
+    if chunk isa String
+        print(chunk)
+    elseif chunk isa Message
+        println("\n--- done ---")
+    end
+end)
+msg, _ = fetch(task)
+nothing # hide
 ```
 
 ### Stopping a Stream Early
@@ -50,23 +46,16 @@ end)
 
 The Responses API provides an even cleaner streaming interface using Julia's `do`-block syntax:
 
-```julia
-julia> task = respond("Write a haiku about Julia programming.") do chunk, close
-           if chunk isa String
-               print(chunk)  # tokens stream in real-time
-           elseif chunk isa ResponseObject
-               println("\nDone! Status: ", chunk.status)
-           end
-       end
-Multiple dispatch sings,  
-Types align in swift fusion—  
-Loops bloom into speed.
-Done! Status: completed
-
-julia> result = fetch(task)
-
-julia> output_text(result)
-"Multiple dispatch sings,  \nTypes align in swift fusion—  \nLoops bloom into speed."
+```@example streaming
+task = respond("Write a haiku about Julia programming.") do chunk, close
+    if chunk isa String
+        print(chunk)
+    elseif chunk isa UniLM.ResponseObject
+        println("\nDone! Status: ", chunk.status)
+    end
+end
+result = fetch(task)
+println(output_text(result))
 ```
 
 The `do`-block form automatically sets `stream=true`.
@@ -74,9 +63,6 @@ The `do`-block form automatically sets `stream=true`.
 ### With Explicit Configuration
 
 ```@example streaming
-using UniLM
-using JSON
-
 r = Respond(
     input="Explain quantum computing step by step",
     model="gpt-5.2",

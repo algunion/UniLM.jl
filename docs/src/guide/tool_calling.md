@@ -48,25 +48,19 @@ println(JSON.json(chat))
 
 When the model wants to call a function, the result message will have `finish_reason == "tool_calls"`:
 
-```julia
-julia> result = chatrequest!(chat)
-
-julia> result.message.finish_reason
-"tool_calls"
-
-julia> tc = result.message.tool_calls[1]
-
-julia> tc.func.name
-"get_weather"
-
-julia> tc.func.arguments
-{
-  "location": "Paris"
-}
-
-# You can then execute your function and send the result back:
-# push!(chat.messages, Message(role="tool", content=my_get_weather("Paris"), tool_call_id=tc.id))
-# final = chatrequest!(chat)
+```@example tools
+chat = Chat(
+    model="gpt-5.2",
+    tools=[weather_tool],
+    tool_choice=UniLM.GPTToolChoice(func=:get_weather)
+)
+push!(chat, Message(Val(:system), "Use the provided tools to answer."))
+push!(chat, Message(Val(:user), "What's the weather in Paris?"))
+result = chatrequest!(chat)
+println("Finish reason: ", result.message.finish_reason)
+tc = result.message.tool_calls[1]
+println("Function: ", tc.func.name)
+println("Arguments: ", JSON.json(tc.func.arguments, 2))
 ```
 
 ### Controlling Tool Choice
@@ -105,19 +99,23 @@ println("Tool: ", tool.name, " (strict=", tool.strict, ")")
 println("JSON: ", JSON.json(JSON.lower(tool)))
 ```
 
-```julia
-julia> result = respond("What's the weather in Tokyo? Use celsius.", tools=[weather_tool])
-
-julia> calls = function_calls(result)
-
-julia> calls[1]["name"]
-"get_weather"
-
-julia> JSON.parse(calls[1]["arguments"])
-{
-  "location": "Tokyo",
-  "unit": "celsius"
-}
+```@example tools
+weather_fn = function_tool(
+    "get_weather",
+    "Get current weather for a location",
+    parameters=Dict(
+        "type" => "object",
+        "properties" => Dict(
+            "location" => Dict("type" => "string", "description" => "City name"),
+            "unit" => Dict("type" => "string", "enum" => ["celsius", "fahrenheit"])
+        ),
+        "required" => ["location"]
+    )
+)
+result = respond("What's the weather in Tokyo? Use celsius.", tools=[weather_fn])
+calls = function_calls(result)
+println("Function: ", calls[1]["name"])
+println("Arguments: ", JSON.json(JSON.parse(calls[1]["arguments"]), 2))
 ```
 
 ### Web Search
@@ -130,14 +128,12 @@ println("Web search tool type: ", typeof(ws))
 println("Context size: ", ws.search_context_size)
 ```
 
-```julia
-julia> result = respond(
-           "What is the latest stable release of the Julia programming language?",
-           tools=[web_search()]
-       )
-
-julia> output_text(result)
-"The latest **stable** release of the Julia programming language is **Julia v1.12.5**."
+```@example tools
+result = respond(
+    "What is the latest stable release of the Julia programming language?",
+    tools=[web_search()]
+)
+println(output_text(result))
 ```
 
 ### File Search

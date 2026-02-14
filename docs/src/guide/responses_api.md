@@ -4,24 +4,24 @@ The Responses API is OpenAI's newer, more flexible alternative to Chat Completio
 Key advantages include built-in tools (web search, file search), stateless multi-turn
 via `previous_response_id`, and reasoning support for O-series models.
 
+```@setup responses
+using UniLM
+using JSON
+```
+
 ## Basic Usage
 
 The simplest call — just a string:
 
-```julia
-julia> result = respond("Explain Julia's multiple dispatch in 2-3 sentences.")
+```@example responses
+result = respond("Explain Julia's multiple dispatch in 2-3 sentences.")
+println(output_text(result))
+```
 
-julia> output_text(result)
-"Julia's multiple dispatch means a function can have many method definitions, and Julia chooses which one to run based on the types of *all* arguments in a call (not just the first). This makes it easy to write generic code while still getting specialized, high-performance behavior for specific type combinations."
-
-julia> result.response.id
-"resp_00e791c82448c27d006990c7a81de88194975ba388932de6b8"
-
-julia> result.response.status
-"completed"
-
-julia> result.response.model
-"gpt-5.2-2025-12-11"
+```@example responses
+println("ID:     ", result.response.id)
+println("Status: ", result.response.status)
+println("Model:  ", result.response.model)
 ```
 
 ## The `Respond` Type
@@ -29,9 +29,6 @@ julia> result.response.model
 For full control, construct a [`Respond`](@ref) object:
 
 ```@example responses
-using UniLM
-using JSON
-
 r = Respond(
     model="gpt-5.2",
     input="Explain monads simply",
@@ -49,14 +46,12 @@ println(JSON.json(r))
 Unlike Chat Completions where you push a system `Message`, the Responses API uses the
 `instructions` parameter:
 
-```julia
-julia> result = respond(
-           "Translate to French: The quick brown fox jumps over the lazy dog.",
-           instructions="You are a professional translator. Respond only with the translation."
-       )
-
-julia> output_text(result)
-"Le rapide renard brun saute par-dessus le chien paresseux."
+```@example responses
+result = respond(
+    "Translate to French: The quick brown fox jumps over the lazy dog.",
+    instructions="You are a professional translator. Respond only with the translation."
+)
+println(output_text(result))
 ```
 
 ## Structured Input
@@ -89,30 +84,26 @@ println("Number of input messages: ", length(r.input))
 
 Chain requests using `previous_response_id` — no need to re-send the full history:
 
-```julia
-julia> r1 = respond("Tell me a one-liner programming joke.", instructions="Be concise.")
+```@example responses
+r1 = respond("Tell me a one-liner programming joke.", instructions="Be concise.")
+println(output_text(r1))
+```
 
-julia> output_text(r1)
-"There are only 10 kinds of people in the world: those who understand binary and those who don't."
-
-julia> r2 = respond("Explain why that's funny, in one sentence.", previous_response_id=r1.response.id)
-
-julia> output_text(r2)
-"It's funny because \"10\" looks like ten in decimal but equals two in binary, so it sets up a nerdy misdirection that only people who know binary immediately get."
+```@example responses
+r2 = respond("Explain why that's funny, in one sentence.", previous_response_id=r1.response.id)
+println(output_text(r2))
 ```
 
 ## Built-in Tools
 
 ### Web Search
 
-```julia
-julia> result = respond(
-           "What is the latest stable release of the Julia programming language?",
-           tools=[web_search()]
-       )
-
-julia> output_text(result)
-"The latest **stable** release of the Julia programming language is **Julia v1.12.5**."
+```@example responses
+result = respond(
+    "What is the latest stable release of the Julia programming language?",
+    tools=[web_search()]
+)
+println(output_text(result))
 ```
 
 ### File Search
@@ -142,19 +133,11 @@ println("Tool name: ", weather_tool.name)
 println("Tool JSON: ", JSON.json(JSON.lower(weather_tool)))
 ```
 
-```julia
-julia> result = respond("What's the weather in Tokyo? Use celsius.", tools=[weather_tool])
-
-julia> calls = function_calls(result)
-
-julia> calls[1]["name"]
-"get_weather"
-
-julia> JSON.parse(calls[1]["arguments"])
-{
-  "location": "Tokyo",
-  "unit": "celsius"
-}
+```@example responses
+result = respond("What's the weather in Tokyo? Use celsius.", tools=[weather_tool])
+calls = function_calls(result)
+println("Function: ", calls[1]["name"])
+println("Arguments: ", JSON.json(JSON.parse(calls[1]["arguments"]), 2))
 ```
 
 ## Reasoning (O-Series Models)
@@ -189,7 +172,8 @@ fmt = json_schema_format(
                 "items" => Dict("type" => "string")
             )
         ),
-        "required" => ["colors"]
+        "required" => ["colors"],
+        "additionalProperties" => false
     ),
     strict=true
 )
@@ -197,32 +181,9 @@ println("Format type: ", fmt.format.type)
 println("Schema name: ", fmt.format.name)
 ```
 
-```julia
-julia> result = respond(
-           "List Julia, Python, and Rust with their release year and primary paradigm.",
-           text=fmt
-       )
-
-julia> JSON.parse(output_text(result))
-{
-  "languages": [
-    {
-      "name": "Julia",
-      "year": 2012,
-      "paradigm": "Multi-paradigm (scientific/numerical, functional, concurrent)"
-    },
-    {
-      "name": "Python",
-      "year": 1991,
-      "paradigm": "Multi-paradigm (object-oriented, imperative, functional)"
-    },
-    {
-      "name": "Rust",
-      "year": 2010,
-      "paradigm": "Multi-paradigm (systems programming, functional, imperative)"
-    }
-  ]
-}
+```@example responses
+result = respond("List 5 popular colors", text=fmt)
+println(JSON.json(JSON.parse(output_text(result)), 2))
 ```
 
 ## Response Accessors

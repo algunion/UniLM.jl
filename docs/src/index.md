@@ -81,37 +81,29 @@ println(JSON.json(ig))
 With a valid API key, actual API calls return structured results:
 
 **Responses API** (recommended for new code):
-```julia
-julia> result = respond("Explain Julia's multiple dispatch in 2-3 sentences.")
-
-julia> output_text(result)
-"Julia's multiple dispatch means a function can have many method definitions, and Julia chooses which one to run based on the types of *all* arguments in a call (not just the first). This makes it easy to write generic code while still getting specialized, high-performance behavior for specific type combinations."
+```@example quickstart
+result = respond("Explain Julia's multiple dispatch in 2-3 sentences.")
+println(output_text(result))
 ```
 
 **Chat Completions:**
-```julia
-julia> chat = Chat(model="gpt-4o-mini")
-julia> push!(chat, Message(Val(:system), "You are a concise Julia programming tutor."))
-julia> push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
-
-julia> result = chatrequest!(chat)
-
-julia> result.message.content
-"Multiple dispatch is a feature in programming languages, including Julia, that allows the selection of a method to execute based on the types of all its arguments, rather than just the first one. This enables more flexible and expressive code, as it can define different behaviors for a function depending on the combination of argument types. It supports polymorphism, making it easier to write generic code that works with multiple types."
+```@example quickstart
+chat = Chat(model="gpt-4o-mini")
+push!(chat, Message(Val(:system), "You are a concise Julia programming tutor."))
+push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
+result = chatrequest!(chat)
+println(result.message.content)
 ```
 
 **Image Generation:**
-```julia
-julia> result = generate_image(
-           "A watercolor painting of a friendly robot reading a Julia programming book",
-           size="1024x1024", quality="medium"
-       )
-
-julia> result isa ImageSuccess
-true
-
-julia> save_image(image_data(result)[1], "robot_julia.png")
-"robot_julia.png"
+```@example quickstart
+result = generate_image(
+    "A watercolor painting of a friendly robot reading a Julia programming book",
+    size="1024x1024", quality="medium"
+)
+println("Success: ", result isa ImageSuccess)
+save_image(image_data(result)[1], joinpath(@__DIR__, "assets", "generated_robot.png"))
+println("Saved to assets/generated_robot.png")
 ```
 
 ![Generated robot reading Julia](assets/generated_robot.png)

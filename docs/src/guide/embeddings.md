@@ -17,21 +17,14 @@ println("Pre-allocated (all zeros): ", all(x -> x == 0.0, emb.embeddings))
 
 After calling the API, the embeddings are filled in-place:
 
-```julia
-julia> emb = Embeddings("Julia is a high-performance programming language for technical computing.")
-
-julia> embeddingrequest!(emb)
-
-julia> emb.embeddings[1:5]  # first 5 dimensions
-5-element Vector{Float64}:
-  -0.039474
-  -0.009283
-  0.001706
-  -0.028087
-  0.063363
-
-julia> sqrt(sum(x^2 for x in emb.embeddings))  # L2 norm ≈ 1.0
-1.0
+```@example emb
+emb = Embeddings("Julia is a high-performance programming language for technical computing.")
+embeddingrequest!(emb)
+println("First 5 dimensions:")
+for v in emb.embeddings[1:5]
+    println("  ", round(v, digits=6))
+end
+println("L2 norm: ", round(sqrt(sum(x^2 for x in emb.embeddings)), digits=4))
 ```
 
 ## Batch Embeddings
@@ -51,28 +44,24 @@ println("Number of texts: ", length(emb.input))
 println("Embeddings per text: ", length(emb.embeddings[1]), " dimensions")
 ```
 
-```julia
+```@example emb
 embeddingrequest!(emb)
-
-# Each embedding is a 1536-dimensional Float64 vector
-length(emb.embeddings[1])  # 1536
-length(emb.embeddings[2])  # 1536
+println("Embedding dimensions per text: ", length(emb.embeddings[1]))
 ```
 
 ## Computing Similarity
 
 A common use case is computing cosine similarity between embeddings:
 
-```julia
+```@example emb
 using LinearAlgebra
 
 emb = Embeddings(["Julia", "Python", "Rust", "Fortran"])
 embeddingrequest!(emb)
 
-# Cosine similarity between embeddings
 sim = dot(emb.embeddings[1], emb.embeddings[4]) /
       (norm(emb.embeddings[1]) * norm(emb.embeddings[4]))
-# Similarity score between 0 and 1
+println("Cosine similarity (Julia vs Fortran): ", round(sim, digits=4))
 ```
 
 ## Available Models

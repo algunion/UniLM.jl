@@ -3,26 +3,24 @@
 UniLM.jl supports image generation via the OpenAI Images API using models like
 `gpt-image-1.5`.
 
+```@setup images
+using UniLM
+using JSON
+```
+
 ## Basic Usage
 
-```julia
-julia> result = generate_image(
-           "A watercolor painting of a friendly robot reading a Julia programming book",
-           size="1024x1024",
-           quality="medium"
-       )
-
-julia> result isa ImageSuccess
-true
-
-julia> length(image_data(result))
-1
-
-julia> length(image_data(result)[1])  # base64 string length
-2654660
-
-julia> save_image(image_data(result)[1], "robot_julia.png")
-"robot_julia.png"
+```@example images
+result = generate_image(
+    "A watercolor painting of a friendly robot reading a Julia programming book",
+    size="1024x1024",
+    quality="medium"
+)
+println("Success: ", result isa ImageSuccess)
+println("Images: ", length(image_data(result)))
+println("Base64 length: ", length(image_data(result)[1]))
+save_image(image_data(result)[1], joinpath(@__DIR__, "..", "assets", "generated_robot.png"))
+println("Image saved to assets/generated_robot.png")
 ```
 
 ![Generated image: A watercolor painting of a friendly robot reading a Julia programming book](../assets/generated_robot.png)
@@ -32,9 +30,6 @@ julia> save_image(image_data(result)[1], "robot_julia.png")
 For full control, construct an [`ImageGeneration`](@ref) object:
 
 ```@example images
-using UniLM
-using JSON
-
 ig = ImageGeneration(
     prompt="A minimalist logo for a Julia programming package",
     model="gpt-image-1.5",

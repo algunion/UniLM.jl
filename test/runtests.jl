@@ -42,6 +42,10 @@ end
         include("requests.jl")
     end
 
+    @testset "responses.jl" begin
+        include("responses.jl")
+    end
+
     @testset "integration" begin
         include("integration.jl")
     end

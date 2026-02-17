@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Structured Output · UniLM.jl</title><meta name="title" content="Structured Output · UniLM.jl"/><meta property="og:title" content="Structured Output · UniLM.jl"/><meta property="twitter:title" content="Structured Output · UniLM.jl"/><meta name="description" content="Documentation for UniLM.jl."/><meta property="og:description" content="Documentation for UniLM.jl."/><meta property="twitter:description" content="Documentation for UniLM.jl."/><meta property="og:url" content="https://algunion.github.io/UniLM.jl/guide/structured_output/"/><meta property="twitter:url" content="https://algunion.github.io/UniLM.jl/guide/structured_output/"/><link rel="canonical" href="https://algunion.github.io/UniLM.jl/guide/structured_output/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">UniLM.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><a class="tocitem" href="../../getting_started/">Getting Started</a></li><li><span class="tocitem">Guide</span><ul><li><a class="tocitem" href="../chat_completions/">Chat Completions</a></li><li><a class="tocitem" href="../responses_api/">Responses API</a></li><li><a class="tocitem" href="../image_generation/">Image Generation</a></li><li><a class="tocitem" href="../embeddings/">Embeddings</a></li><li><a class="tocitem" href="../tool_calling/">Tool Calling</a></li><li><a class="tocitem" href="../streaming/">Streaming</a></li><li class="is-active"><a class="tocitem" href>Structured Output</a><ul class="internal"><li><a class="tocitem" href="#Chat-Completions"><span>Chat Completions</span></a></li><li><a class="tocitem" href="#Responses-API"><span>Responses API</span></a></li><li><a class="tocitem" href="#Convenience-Constructors"><span>Convenience Constructors</span></a></li><li><a class="tocitem" href="#See-Also"><span>See Also</span></a></li></ul></li><li><a class="tocitem" href="../multi_backend/">Multi-Backend</a></li></ul></li><li><span class="tocitem">API Reference</span><ul><li><a class="tocitem" href="../../api/chat/">Chat Types</a></li><li><a class="tocitem" href="../../api/responses/">Responses Types</a></li><li><a class="tocitem" href="../../api/images/">Images</a></li><li><a class="tocitem" href="../../api/embeddings/">Embeddings</a></li><li><a class="tocitem" href="../../api/endpoints/">Service Endpoints</a></li><li><a class="tocitem" href="../../api/results/">Result Types</a></li></ul></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Guide</a></li><li class="is-active"><a href>Structured Output</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Structured Output</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/algunion/UniLM.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/algunion/UniLM.jl/blob/main/docs/src/guide/structured_output.md#" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="structured_guide"><a class="docs-heading-anchor" href="#structured_guide">Structured Output</a><a id="structured_guide-1"></a><a class="docs-heading-anchor-permalink" href="#structured_guide" title="Permalink"></a></h1><p>Force the model to produce valid JSON conforming to a schema. Both APIs support this.</p><h2 id="Chat-Completions"><a class="docs-heading-anchor" href="#Chat-Completions">Chat Completions</a><a id="Chat-Completions-1"></a><a class="docs-heading-anchor-permalink" href="#Chat-Completions" title="Permalink"></a></h2><p>Use <a href="../../api/chat/#UniLM.ResponseFormat"><code>ResponseFormat</code></a> to control the output format:</p><h3 id="Free-Form-JSON"><a class="docs-heading-anchor" href="#Free-Form-JSON">Free-Form JSON</a><a id="Free-Form-JSON-1"></a><a class="docs-heading-anchor-permalink" href="#Free-Form-JSON" title="Permalink"></a></h3><pre><code class="language-julia hljs">using UniLM
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Structured Output · UniLM.jl</title><meta name="title" content="Structured Output · UniLM.jl"/><meta property="og:title" content="Structured Output · UniLM.jl"/><meta property="twitter:title" content="Structured Output · UniLM.jl"/><meta name="description" content="Documentation for UniLM.jl."/><meta property="og:description" content="Documentation for UniLM.jl."/><meta property="twitter:description" content="Documentation for UniLM.jl."/><meta property="og:url" content="https://algunion.github.io/UniLM.jl/guide/structured_output/"/><meta property="twitter:url" content="https://algunion.github.io/UniLM.jl/guide/structured_output/"/><link rel="canonical" href="https://algunion.github.io/UniLM.jl/guide/structured_output/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">UniLM.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><a class="tocitem" href="../../getting_started/">Getting Started</a></li><li><span class="tocitem">Guide</span><ul><li><a class="tocitem" href="../chat_completions/">Chat Completions</a></li><li><a class="tocitem" href="../responses_api/">Responses API</a></li><li><a class="tocitem" href="../image_generation/">Image Generation</a></li><li><a class="tocitem" href="../embeddings/">Embeddings</a></li><li><a class="tocitem" href="../tool_calling/">Tool Calling</a></li><li><a class="tocitem" href="../streaming/">Streaming</a></li><li class="is-active"><a class="tocitem" href>Structured Output</a><ul class="internal"><li><a class="tocitem" href="#Chat-Completions"><span>Chat Completions</span></a></li><li><a class="tocitem" href="#Responses-API"><span>Responses API</span></a></li><li><a class="tocitem" href="#Convenience-Constructors"><span>Convenience Constructors</span></a></li><li><a class="tocitem" href="#Using-DescribedTypes.jl"><span>Using DescribedTypes.jl</span></a></li><li><a class="tocitem" href="#See-Also"><span>See Also</span></a></li></ul></li><li><a class="tocitem" href="../multi_backend/">Multi-Backend</a></li></ul></li><li><span class="tocitem">API Reference</span><ul><li><a class="tocitem" href="../../api/chat/">Chat Types</a></li><li><a class="tocitem" href="../../api/responses/">Responses Types</a></li><li><a class="tocitem" href="../../api/images/">Images</a></li><li><a class="tocitem" href="../../api/embeddings/">Embeddings</a></li><li><a class="tocitem" href="../../api/endpoints/">Service Endpoints</a></li><li><a class="tocitem" href="../../api/results/">Result Types</a></li></ul></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Guide</a></li><li class="is-active"><a href>Structured Output</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Structured Output</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/algunion/UniLM.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/algunion/UniLM.jl/blob/main/docs/src/guide/structured_output.md#" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="structured_guide"><a class="docs-heading-anchor" href="#structured_guide">Structured Output</a><a id="structured_guide-1"></a><a class="docs-heading-anchor-permalink" href="#structured_guide" title="Permalink"></a></h1><p>Force the model to produce valid JSON conforming to a schema. Both APIs support this.</p><h2 id="Chat-Completions"><a class="docs-heading-anchor" href="#Chat-Completions">Chat Completions</a><a id="Chat-Completions-1"></a><a class="docs-heading-anchor-permalink" href="#Chat-Completions" title="Permalink"></a></h2><p>Use <a href="../../api/chat/#UniLM.ResponseFormat"><code>ResponseFormat</code></a> to control the output format:</p><h3 id="Free-Form-JSON"><a class="docs-heading-anchor" href="#Free-Form-JSON">Free-Form JSON</a><a id="Free-Form-JSON-1"></a><a class="docs-heading-anchor-permalink" href="#Free-Form-JSON" title="Permalink"></a></h3><pre><code class="language-julia hljs">using UniLM
 using JSON
 
 chat = Chat(
@@ -21,15 +21,15 @@ end</code></pre><pre class="documenter-example-output"><code class="nohighlight 
   &quot;languages&quot;: [
     {
       &quot;name&quot;: &quot;C&quot;,
-      &quot;year_created&quot;: 1972
+      &quot;year_of_creation&quot;: 1972
     },
     {
       &quot;name&quot;: &quot;Python&quot;,
-      &quot;year_created&quot;: 1991
+      &quot;year_of_creation&quot;: 1991
     },
     {
       &quot;name&quot;: &quot;Java&quot;,
-      &quot;year_created&quot;: 1995
+      &quot;year_of_creation&quot;: 1995
     }
   ]
 }</code></pre><h3 id="JSON-Schema-(Strict)"><a class="docs-heading-anchor" href="#JSON-Schema-(Strict)">JSON Schema (Strict)</a><a id="JSON-Schema-(Strict)-1"></a><a class="docs-heading-anchor-permalink" href="#JSON-Schema-(Strict)" title="Permalink"></a></h3><pre><code class="language-julia hljs">schema = ResponseFormat(UniLM.JsonSchemaAPI(
@@ -131,4 +131,184 @@ end</code></pre><pre class="documenter-example-output"><code class="nohighlight 
     }
   ]
 }</code></pre><h3 id="Plain-Text-Format"><a class="docs-heading-anchor" href="#Plain-Text-Format">Plain Text Format</a><a id="Plain-Text-Format-1"></a><a class="docs-heading-anchor-permalink" href="#Plain-Text-Format" title="Permalink"></a></h3><pre><code class="language-julia hljs">tc = text_format()
-println(&quot;Default format type: &quot;, tc.format.type)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Default format type: text</code></pre><h2 id="Convenience-Constructors"><a class="docs-heading-anchor" href="#Convenience-Constructors">Convenience Constructors</a><a id="Convenience-Constructors-1"></a><a class="docs-heading-anchor-permalink" href="#Convenience-Constructors" title="Permalink"></a></h2><table><tr><th style="text-align: left">Constructor</th><th style="text-align: left">Format</th></tr><tr><td style="text-align: left"><code>json_object_format()</code></td><td style="text-align: left">Unstructured JSON</td></tr><tr><td style="text-align: left"><code>json_schema_format(name, desc, schema)</code></td><td style="text-align: left">Schema-constrained JSON</td></tr><tr><td style="text-align: left"><code>text_format()</code></td><td style="text-align: left">Plain text (default)</td></tr></table><h2 id="See-Also"><a class="docs-heading-anchor" href="#See-Also">See Also</a><a id="See-Also-1"></a><a class="docs-heading-anchor-permalink" href="#See-Also" title="Permalink"></a></h2><ul><li><a href="../../api/chat/#UniLM.ResponseFormat"><code>ResponseFormat</code></a> — Chat Completions format type</li><li><a href="../../api/responses/#UniLM.TextConfig"><code>TextConfig</code></a>, <a href="../../api/responses/#UniLM.TextFormatSpec"><code>TextFormatSpec</code></a> — Responses API format types</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../streaming/">« Streaming</a><a class="docs-footer-nextpage" href="../multi_backend/">Multi-Backend »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Tuesday 17 February 2026 18:02">Tuesday 17 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+println(&quot;Default format type: &quot;, tc.format.type)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Default format type: text</code></pre><h2 id="Convenience-Constructors"><a class="docs-heading-anchor" href="#Convenience-Constructors">Convenience Constructors</a><a id="Convenience-Constructors-1"></a><a class="docs-heading-anchor-permalink" href="#Convenience-Constructors" title="Permalink"></a></h2><table><tr><th style="text-align: left">Constructor</th><th style="text-align: left">Format</th></tr><tr><td style="text-align: left"><code>json_object_format()</code></td><td style="text-align: left">Unstructured JSON</td></tr><tr><td style="text-align: left"><code>json_schema_format(name, desc, schema)</code></td><td style="text-align: left">Schema-constrained JSON</td></tr><tr><td style="text-align: left"><code>text_format()</code></td><td style="text-align: left">Plain text (default)</td></tr></table><h2 id="Using-DescribedTypes.jl"><a class="docs-heading-anchor" href="#Using-DescribedTypes.jl">Using DescribedTypes.jl</a><a id="Using-DescribedTypes.jl-1"></a><a class="docs-heading-anchor-permalink" href="#Using-DescribedTypes.jl" title="Permalink"></a></h2><p><a href="https://github.com/algunion/DescribedTypes.jl">DescribedTypes.jl</a> lets you derive JSON Schemas directly from Julia structs instead of hand-writing <code>Dict</code> literals. Define your types, annotate them, and let the library produce the exact format OpenAI expects.</p><p><strong>Why use DescribedTypes.jl?</strong></p><ul><li><strong>Annotate types you don&#39;t own.</strong> The <code>annotate</code> method can be defined for <em>any</em> type — including those from third-party packages or Base. This means you can attach rich schema metadata (names, descriptions, enum constraints) to existing structs without modifying their source code.</li><li><strong>Higher-quality structured output.</strong> Bare JSON Schemas carry only type information. DescribedTypes adds field-level descriptions and constrained enum values that guide the model, producing more accurate and consistent responses compared to raw schemas.</li><li><strong>Single source of truth.</strong> The Julia struct <em>is</em> the schema. Changes to your types automatically propagate to the generated schema — no more keeping <code>Dict</code> literals in sync by hand.</li></ul><div class="admonition is-info" id="Note-3fa2a558d729367f"><header class="admonition-header">Note<a class="admonition-anchor" href="#Note-3fa2a558d729367f" title="Permalink"></a></header><div class="admonition-body"><p>Install the package first: <code>Pkg.add(url=&quot;https://github.com/algunion/DescribedTypes.jl&quot;)</code>.</p></div></div><h3 id="Defining-Annotated-Types"><a class="docs-heading-anchor" href="#Defining-Annotated-Types">Defining Annotated Types</a><a id="Defining-Annotated-Types-1"></a><a class="docs-heading-anchor-permalink" href="#Defining-Annotated-Types" title="Permalink"></a></h3><pre><code class="language-julia hljs">using UniLM, DescribedTypes, JSON
+
+struct Language
+    name::String
+    year::Int
+    paradigm::String
+end
+
+struct LanguageList
+    languages::Vector{Language}
+end
+
+DescribedTypes.annotate(::Type{Language}) = Annotation(
+    name=&quot;Language&quot;,
+    description=&quot;A programming language.&quot;,
+    parameters=Dict(
+        :name     =&gt; Annotation(name=&quot;name&quot;, description=&quot;Name of the language&quot;),
+        :year     =&gt; Annotation(name=&quot;year&quot;, description=&quot;Year of first release&quot;),
+        :paradigm =&gt; Annotation(name=&quot;paradigm&quot;, description=&quot;Primary paradigm&quot;,
+                                enum=[&quot;functional&quot;, &quot;imperative&quot;, &quot;object-oriented&quot;, &quot;multi-paradigm&quot;]),
+    ),
+)
+
+DescribedTypes.annotate(::Type{LanguageList}) = Annotation(
+    name=&quot;language_list&quot;,
+    description=&quot;A list of programming languages with metadata.&quot;,
+    parameters=Dict(
+        :languages =&gt; Annotation(name=&quot;languages&quot;, description=&quot;The language entries&quot;),
+    ),
+)</code></pre><h3 id="Chat-Completions-with-DescribedTypes"><a class="docs-heading-anchor" href="#Chat-Completions-with-DescribedTypes">Chat Completions with DescribedTypes</a><a id="Chat-Completions-with-DescribedTypes-1"></a><a class="docs-heading-anchor-permalink" href="#Chat-Completions-with-DescribedTypes" title="Permalink"></a></h3><p>Use the <code>OPENAI</code> adapter to generate a schema ready for <a href="../../api/chat/#UniLM.ResponseFormat"><code>ResponseFormat</code></a>:</p><pre><code class="language-julia hljs">s = schema(LanguageList, llm_adapter=OPENAI)
+println(JSON.json(s, 2))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">{
+  &quot;name&quot;: &quot;language_list&quot;,
+  &quot;description&quot;: &quot;A list of programming languages with metadata.&quot;,
+  &quot;strict&quot;: true,
+  &quot;schema&quot;: {
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;properties&quot;: {
+      &quot;languages&quot;: {
+        &quot;type&quot;: &quot;array&quot;,
+        &quot;items&quot;: {
+          &quot;type&quot;: &quot;object&quot;,
+          &quot;properties&quot;: {
+            &quot;name&quot;: {
+              &quot;type&quot;: &quot;string&quot;,
+              &quot;description&quot;: &quot;Name of the language&quot;
+            },
+            &quot;year&quot;: {
+              &quot;type&quot;: &quot;integer&quot;,
+              &quot;description&quot;: &quot;Year of first release&quot;
+            },
+            &quot;paradigm&quot;: {
+              &quot;type&quot;: &quot;string&quot;,
+              &quot;description&quot;: &quot;Primary paradigm&quot;,
+              &quot;enum&quot;: [
+                &quot;functional&quot;,
+                &quot;imperative&quot;,
+                &quot;object-oriented&quot;,
+                &quot;multi-paradigm&quot;
+              ]
+            }
+          },
+          &quot;required&quot;: [
+            &quot;name&quot;,
+            &quot;year&quot;,
+            &quot;paradigm&quot;
+          ],
+          &quot;additionalProperties&quot;: false,
+          &quot;description&quot;: &quot;A programming language.&quot;
+        },
+        &quot;description&quot;: &quot;The language entries&quot;
+      }
+    },
+    &quot;required&quot;: [
+      &quot;languages&quot;
+    ],
+    &quot;additionalProperties&quot;: false
+  }
+}</code></pre><p>Plug the generated schema straight into a <code>Chat</code>:</p><pre><code class="language-julia hljs">fmt = ResponseFormat(UniLM.JsonSchemaAPI(s[&quot;name&quot;], s[&quot;description&quot;], s[&quot;schema&quot;]))
+chat = Chat(model=&quot;gpt-5.2&quot;, response_format=fmt)
+push!(chat, Message(Val(:system), &quot;Return structured data about programming languages.&quot;))
+push!(chat, Message(Val(:user), &quot;List Julia, Python, and Rust&quot;))
+println(&quot;Response format type: &quot;, fmt.type)
+println(&quot;Request body:&quot;)
+println(JSON.json(chat))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Response format type: json_schema
+Request body:
+{&quot;response_format&quot;:{&quot;type&quot;:&quot;json_schema&quot;,&quot;json_schema&quot;:{&quot;name&quot;:&quot;language_list&quot;,&quot;description&quot;:&quot;A list of programming languages with metadata.&quot;,&quot;schema&quot;:{&quot;type&quot;:&quot;object&quot;,&quot;properties&quot;:{&quot;languages&quot;:{&quot;type&quot;:&quot;array&quot;,&quot;items&quot;:{&quot;type&quot;:&quot;object&quot;,&quot;properties&quot;:{&quot;name&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;description&quot;:&quot;Name of the language&quot;},&quot;year&quot;:{&quot;type&quot;:&quot;integer&quot;,&quot;description&quot;:&quot;Year of first release&quot;},&quot;paradigm&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;description&quot;:&quot;Primary paradigm&quot;,&quot;enum&quot;:[&quot;functional&quot;,&quot;imperative&quot;,&quot;object-oriented&quot;,&quot;multi-paradigm&quot;]}},&quot;required&quot;:[&quot;name&quot;,&quot;year&quot;,&quot;paradigm&quot;],&quot;additionalProperties&quot;:false,&quot;description&quot;:&quot;A programming language.&quot;},&quot;description&quot;:&quot;The language entries&quot;}},&quot;required&quot;:[&quot;languages&quot;],&quot;additionalProperties&quot;:false}}},&quot;messages&quot;:[{&quot;role&quot;:&quot;system&quot;,&quot;content&quot;:&quot;Return structured data about programming languages.&quot;},{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;List Julia, Python, and Rust&quot;}],&quot;model&quot;:&quot;gpt-5.2&quot;}</code></pre><pre><code class="language-julia hljs">result = chatrequest!(chat)
+if result isa LLMSuccess
+    println(JSON.json(JSON.parse(result.message.content), 2))
+else
+    println(&quot;Request failed — see result for details&quot;)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">{
+  &quot;languages&quot;: [
+    {
+      &quot;name&quot;: &quot;Julia&quot;,
+      &quot;year&quot;: 2012,
+      &quot;paradigm&quot;: &quot;multi-paradigm&quot;
+    },
+    {
+      &quot;name&quot;: &quot;Python&quot;,
+      &quot;year&quot;: 1991,
+      &quot;paradigm&quot;: &quot;multi-paradigm&quot;
+    },
+    {
+      &quot;name&quot;: &quot;Rust&quot;,
+      &quot;year&quot;: 2010,
+      &quot;paradigm&quot;: &quot;multi-paradigm&quot;
+    }
+  ]
+}</code></pre><h3 id="Responses-API-with-DescribedTypes"><a class="docs-heading-anchor" href="#Responses-API-with-DescribedTypes">Responses API with DescribedTypes</a><a id="Responses-API-with-DescribedTypes-1"></a><a class="docs-heading-anchor-permalink" href="#Responses-API-with-DescribedTypes" title="Permalink"></a></h3><p>The same schema works with <code>json_schema_format</code>:</p><pre><code class="language-julia hljs">fmt2 = json_schema_format(s[&quot;name&quot;], s[&quot;description&quot;], s[&quot;schema&quot;], strict=s[&quot;strict&quot;])
+println(&quot;Format type: &quot;, fmt2.format.type)
+println(&quot;Schema strict: &quot;, fmt2.format.strict)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Format type: json_schema
+Schema strict: true</code></pre><pre><code class="language-julia hljs">result = respond(&quot;List Julia, Python, and Rust with their year and paradigm&quot;, text=fmt2)
+if result isa ResponseSuccess
+    println(JSON.json(JSON.parse(output_text(result)), 2))
+else
+    println(&quot;Request failed — &quot;, output_text(result))
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">{
+  &quot;languages&quot;: [
+    {
+      &quot;name&quot;: &quot;Julia&quot;,
+      &quot;year&quot;: 2012,
+      &quot;paradigm&quot;: &quot;multi-paradigm&quot;
+    },
+    {
+      &quot;name&quot;: &quot;Python&quot;,
+      &quot;year&quot;: 1991,
+      &quot;paradigm&quot;: &quot;multi-paradigm&quot;
+    },
+    {
+      &quot;name&quot;: &quot;Rust&quot;,
+      &quot;year&quot;: 2010,
+      &quot;paradigm&quot;: &quot;multi-paradigm&quot;
+    }
+  ]
+}</code></pre><h3 id="Optional-Fields"><a class="docs-heading-anchor" href="#Optional-Fields">Optional Fields</a><a id="Optional-Fields-1"></a><a class="docs-heading-anchor-permalink" href="#Optional-Fields" title="Permalink"></a></h3><p>Mark a field as <code>Union{Nothing, T}</code> and DescribedTypes will handle it correctly — the field stays required in the schema but its type becomes a union with <code>null</code>:</p><pre><code class="language-julia hljs">struct MovieReview
+    title::String
+    rating::Int
+    comment::Union{Nothing, String}
+end
+
+DescribedTypes.annotate(::Type{MovieReview}) = Annotation(
+    name=&quot;movie_review&quot;,
+    description=&quot;A movie review with optional comment.&quot;,
+    parameters=Dict(
+        :title   =&gt; Annotation(name=&quot;title&quot;,   description=&quot;Movie title&quot;),
+        :rating  =&gt; Annotation(name=&quot;rating&quot;,  description=&quot;Rating from 1 to 10&quot;),
+        :comment =&gt; Annotation(name=&quot;comment&quot;,  description=&quot;Optional review text&quot;),
+    ),
+)
+
+println(JSON.json(schema(MovieReview, llm_adapter=OPENAI), 2))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">{
+  &quot;name&quot;: &quot;movie_review&quot;,
+  &quot;description&quot;: &quot;A movie review with optional comment.&quot;,
+  &quot;strict&quot;: true,
+  &quot;schema&quot;: {
+    &quot;type&quot;: &quot;object&quot;,
+    &quot;properties&quot;: {
+      &quot;title&quot;: {
+        &quot;type&quot;: &quot;string&quot;,
+        &quot;description&quot;: &quot;Movie title&quot;
+      },
+      &quot;rating&quot;: {
+        &quot;type&quot;: &quot;integer&quot;,
+        &quot;description&quot;: &quot;Rating from 1 to 10&quot;
+      },
+      &quot;comment&quot;: {
+        &quot;type&quot;: [
+          &quot;string&quot;,
+          &quot;null&quot;
+        ],
+        &quot;description&quot;: &quot;Optional review text&quot;
+      }
+    },
+    &quot;required&quot;: [
+      &quot;title&quot;,
+      &quot;rating&quot;,
+      &quot;comment&quot;
+    ],
+    &quot;additionalProperties&quot;: false
+  }
+}</code></pre><h3 id="Type-Mapping-Reference"><a class="docs-heading-anchor" href="#Type-Mapping-Reference">Type Mapping Reference</a><a id="Type-Mapping-Reference-1"></a><a class="docs-heading-anchor-permalink" href="#Type-Mapping-Reference" title="Permalink"></a></h3><table><tr><th style="text-align: left">Julia type</th><th style="text-align: left">JSON Schema type</th></tr><tr><td style="text-align: left"><code>String</code> / <code>AbstractString</code></td><td style="text-align: left"><code>string</code></td></tr><tr><td style="text-align: left"><code>Bool</code></td><td style="text-align: left"><code>boolean</code></td></tr><tr><td style="text-align: left"><code>&lt;:Integer</code></td><td style="text-align: left"><code>integer</code></td></tr><tr><td style="text-align: left"><code>&lt;:Real</code></td><td style="text-align: left"><code>number</code></td></tr><tr><td style="text-align: left"><code>Nothing</code> / <code>Missing</code></td><td style="text-align: left"><code>null</code></td></tr><tr><td style="text-align: left"><code>&lt;:AbstractArray</code></td><td style="text-align: left"><code>array</code></td></tr><tr><td style="text-align: left"><code>&lt;:Enum</code></td><td style="text-align: left"><code>string</code> + <code>enum</code></td></tr><tr><td style="text-align: left">Any other <code>struct</code></td><td style="text-align: left"><code>object</code></td></tr></table><h2 id="See-Also"><a class="docs-heading-anchor" href="#See-Also">See Also</a><a id="See-Also-1"></a><a class="docs-heading-anchor-permalink" href="#See-Also" title="Permalink"></a></h2><ul><li><a href="../../api/chat/#UniLM.ResponseFormat"><code>ResponseFormat</code></a> — Chat Completions format type</li><li><a href="../../api/responses/#UniLM.TextConfig"><code>TextConfig</code></a>, <a href="../../api/responses/#UniLM.TextFormatSpec"><code>TextFormatSpec</code></a> — Responses API format types</li><li><a href="https://github.com/algunion/DescribedTypes.jl">DescribedTypes.jl</a> — Schema generation from Julia types</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../streaming/">« Streaming</a><a class="docs-footer-nextpage" href="../multi_backend/">Multi-Backend »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Tuesday 17 February 2026 19:29">Tuesday 17 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

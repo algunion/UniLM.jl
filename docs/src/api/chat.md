@@ -85,5 +85,4 @@ RoleAssistant
 
 ```@example chat_api
 println("GPT5_2: ", UniLM.GPT5_2)
-println("GPT5_2Mini: ", UniLM.GPT5_2Mini)
 ```

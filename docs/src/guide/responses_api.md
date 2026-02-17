@@ -243,16 +243,172 @@ end
 
 ## Managing Stored Responses
 
-```julia
-# Retrieve a previously stored response
-result = get_response("resp_00e791c82448c27d...")
+When you pass `store=true`, the response is saved on OpeAnI's servers and can be
+retrieved, inspected, or deleted later:
 
-# Delete a stored response
-delete_response("resp_00e791c82448c27d...")
+```@example responses
+r = respond("Say 'stored response test' and nothing else.", store=true)
+if r isa ResponseSuccess
+    rid = r.response.id
+    println("Stored response ID: ", rid)
 
-# List input items for a response
-items = list_input_items("resp_00e791c82448c27d...", limit=50)
+    # Retrieve
+    retrieved = get_response(rid)
+    if retrieved isa ResponseSuccess
+        println("Retrieved text: ", output_text(retrieved))
+    end
+
+    # List input items
+    items = list_input_items(rid)
+    if items isa Dict
+        println("Input items: ", length(items["data"]))
+    end
+
+    # Delete
+    del = delete_response(rid)
+    if del isa Dict
+        println("Deleted: ", del["deleted"])
+    end
+else
+    println("Request failed — ", output_text(r))
+end
 ```
+
+## Metadata
+
+Attach arbitrary key-value metadata to any request for tracking, filtering, or debugging:
+
+```@example responses
+result = respond(
+    "Say 'metadata test' and nothing else.",
+    metadata=Dict("env" => "docs", "request_id" => "demo_123")
+)
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println("Request failed — ", output_text(result))
+end
+```
+
+## Service Tier
+
+Control the processing tier for your request (`"auto"`, `"default"`, `"flex"`, `"priority"`):
+
+```@example responses
+result = respond("Say 'tier test' and nothing else.", service_tier="auto")
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println("Request failed — ", output_text(result))
+end
+```
+
+## Counting Input Tokens
+
+Estimate token usage **before** making a full request — useful for cost estimation or
+verifying that input fits within the context window:
+
+```@example responses
+result = count_input_tokens(input="Tell me a joke about programming")
+if result isa Dict
+    println("Input tokens: ", result["input_tokens"])
+else
+    println("Request failed — see result for details")
+end
+```
+
+With tools and instructions:
+
+```@example responses
+tool = function_tool("search", "Search for information",
+    parameters=Dict("type" => "object", "properties" => Dict(
+        "query" => Dict("type" => "string")
+    ), "required" => ["query"], "additionalProperties" => false),
+    strict=true
+)
+result = count_input_tokens(
+    input="Search for Julia language news",
+    instructions="You are a helpful assistant.",
+    tools=[tool]
+)
+if result isa Dict
+    println("Tokens with tools: ", result["input_tokens"])
+else
+    println("Request failed — see result for details")
+end
+```
+
+## Compacting Conversations
+
+For long conversations, [`compact_response`](@ref) compresses the history into opaque,
+encrypted items that reduce token usage while preserving context:
+
+```@example responses
+items = [
+    Dict("role" => "user", "content" => "Hello, I want to learn about Julia."),
+    Dict("type" => "message", "role" => "assistant", "status" => "completed",
+         "content" => [Dict("type" => "output_text",
+            "text" => "Julia is a high-performance programming language for technical computing.")])
+]
+result = compact_response(input=items)
+if result isa Dict
+    println("Compact succeeded")
+    println("Output items: ", length(result["output"]))
+    println("Usage: ", result["usage"])
+else
+    println("Request failed — see result for details")
+end
+```
+
+## Cancelling Responses
+
+Cancel an in-progress (background) response:
+
+```julia
+# Start a background response
+result = respond("Write a very long essay about Julia", background=true)
+
+# Cancel it
+if result isa ResponseSuccess
+    cancel_result = cancel_response(result.response.id)
+    if cancel_result isa ResponseSuccess
+        println("Cancelled: ", cancel_result.response.status)
+    end
+end
+```
+
+## Parameters Reference
+
+| Parameter                | Type           | Default      | Description                                               |
+| :----------------------- | :------------- | :----------- | :-------------------------------------------------------- |
+| `model`                  | String         | `"gpt-5.2"`  | Model to use                                              |
+| `input`                  | Any            | *(required)* | String or `Vector{InputMessage}`                          |
+| `instructions`           | String         | —            | System-level instructions                                 |
+| `tools`                  | Vector         | —            | Available tools (function, web search, file search)       |
+| `tool_choice`            | String         | —            | `"auto"`, `"none"`, `"required"`                          |
+| `parallel_tool_calls`    | Bool           | —            | Allow parallel tool calls                                 |
+| `temperature`            | Float64        | —            | 0.0–2.0 (mutually exclusive with `top_p`)                 |
+| `top_p`                  | Float64        | —            | 0.0–1.0 (mutually exclusive with `temperature`)           |
+| `max_output_tokens`      | Int64          | —            | Maximum tokens in the response                            |
+| `stream`                 | Bool           | —            | Enable streaming                                          |
+| `text`                   | TextConfig     | —            | Output format (text, json_object, json_schema)            |
+| `reasoning`              | Reasoning      | —            | Reasoning config for O-series models                      |
+| `truncation`             | String         | —            | `"auto"` or `"disabled"`                                  |
+| `store`                  | Bool           | —            | Store response for later retrieval                        |
+| `metadata`               | Dict           | —            | Arbitrary key-value metadata                              |
+| `previous_response_id`   | String         | —            | Chain to a previous response for multi-turn               |
+| `user`                   | String         | —            | End-user identifier                                       |
+| `background`             | Bool           | —            | Run in background (cancellable)                           |
+| `include`                | Vector{String} | —            | Extra data to include (e.g. `"file_search_call.results"`) |
+| `max_tool_calls`         | Int64          | —            | Max number of tool calls per turn                         |
+| `service_tier`           | String         | —            | `"auto"`, `"default"`, `"flex"`, `"priority"`             |
+| `top_logprobs`           | Int64          | —            | 0–20, top log probabilities                               |
+| `prompt`                 | Dict           | —            | Prompt template reference                                 |
+| `prompt_cache_key`       | String         | —            | Cache key for prompt caching                              |
+| `prompt_cache_retention` | String         | —            | `"in-memory"` or `"24h"`                                  |
+| `conversation`           | Any            | —            | Conversation context (String or Dict)                     |
+| `context_management`     | Vector         | —            | Context management strategies                             |
+| `stream_options`         | Dict           | —            | Streaming options (e.g. `include_usage`)                  |
 
 ## See Also
 

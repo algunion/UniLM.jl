@@ -40,9 +40,7 @@ const _MODEL_ENDPOINTS_AZURE_OPENAI::Dict{String,String} = let
         d["gpt-5.2"] = "/openai/deployments/" * ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_5_2"]
     end
 
-    if haskey(ENV, "AZURE_OPENAI_DEPLOY_NAME_GPT_5_2_MINI")
-        d["gpt-5.2-mini"] = "/openai/deployments/" * ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_5_2_MINI"]
-    end
+
 
     d
 end

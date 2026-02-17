@@ -299,49 +299,143 @@ end
     @test !isempty(chunks)
 end
 
-# ── Image Generation Tests ───────────────────────────────────────────────────
+# ── Responses API: get_response / delete_response / list_input_items ─────────
 
-@testset "Image Generation — basic" begin
-    r = generate_image(
-        "A simple blue square on white background",
-        size="1024x1024",
-        quality="low"
-    )
-    @test r isa ImageSuccess
-    @test !isnothing(r.response)
-    @test length(r.response.data) >= 1
-    @test !isnothing(r.response.data[1].b64_json)
+@testset "Responses API — get_response" begin
+    # Create a response first, then retrieve it
+    r = respond("Say 'stored' and nothing else.", store=true)
+    @test r isa ResponseSuccess
+    rid = r.response.id
+
+    retrieved = get_response(rid)
+    @test retrieved isa ResponseSuccess
+    @test retrieved.response.id == rid
+    @test retrieved.response.status == "completed"
+    @test !isempty(output_text(retrieved))
 end
 
-@testset "Image Generation — image_data accessor" begin
-    r = generate_image(
-        "A small red circle",
-        size="1024x1024",
-        quality="low"
-    )
-    @test r isa ImageSuccess
+@testset "Responses API — list_input_items" begin
+    r = respond("Say 'items test' and nothing else.", store=true)
+    @test r isa ResponseSuccess
 
-    imgs = image_data(r)
-    @test imgs isa Vector{String}
-    @test length(imgs) >= 1
-    @test length(imgs[1]) > 100  # non-trivial base64 data
+    items = list_input_items(r.response.id)
+    @test items isa Dict
+    @test haskey(items, "data")
+    @test length(items["data"]) >= 1
 end
 
-@testset "Image Generation — save_image" begin
-    r = generate_image(
-        "A green triangle",
-        size="1024x1024",
-        quality="low"
-    )
-    @test r isa ImageSuccess
+@testset "Responses API — delete_response" begin
+    r = respond("Say 'delete me' and nothing else.", store=true)
+    @test r isa ResponseSuccess
+    rid = r.response.id
 
-    tmpfile = tempname() * ".png"
-    try
-        result = save_image(image_data(r)[1], tmpfile)
-        @test result == tmpfile
-        @test isfile(tmpfile)
-        @test filesize(tmpfile) > 0
-    finally
-        isfile(tmpfile) && rm(tmpfile)
-    end
+    result = delete_response(rid)
+    @test result isa Dict
+    @test result["deleted"] == true
+    @test result["id"] == rid
+end
+
+# ── Responses API: count_input_tokens ─────────────────────────────────────────
+
+@testset "Responses API — count_input_tokens" begin
+    result = count_input_tokens(input="Tell me a joke about programming")
+    @test result isa Dict
+    @test haskey(result, "input_tokens")
+    @test result["input_tokens"] > 0
+end
+
+@testset "Responses API — count_input_tokens with instructions and tools" begin
+    tool = function_tool(
+        "lookup",
+        "Look something up",
+        parameters=Dict(
+            "type" => "object",
+            "properties" => Dict("query" => Dict("type" => "string")),
+            "required" => ["query"],
+            "additionalProperties" => false
+        ),
+        strict=true
+    )
+    result = count_input_tokens(
+        input="Search for Julia programming language",
+        instructions="You are helpful.",
+        tools=[tool]
+    )
+    @test result isa Dict
+    @test result["input_tokens"] > 0
+end
+
+# ── Responses API: compact_response ──────────────────────────────────────────
+
+@testset "Responses API — compact_response" begin
+    input_items = [
+        Dict("role" => "user", "content" => "Hello, I'm starting a long conversation."),
+        Dict("type" => "message", "role" => "assistant", "status" => "completed",
+            "content" => [Dict("type" => "output_text",
+                "text" => "Hello! I'm here to help. What would you like to discuss?")])
+    ]
+    result = compact_response(input=input_items)
+    @test result isa Dict
+    @test haskey(result, "output")
+    @test haskey(result, "usage")
+end
+
+# ── Responses API: new fields ────────────────────────────────────────────────
+
+@testset "Responses API — with service_tier" begin
+    r = respond("Say 'tier test' and nothing else.", service_tier="auto")
+    @test r isa ResponseSuccess
+    @test !isempty(output_text(r))
+end
+
+@testset "Responses API — with structured input messages" begin
+    r = respond([
+        InputMessage(role="developer", content="You are helpful."),
+        InputMessage(role="user", content="Say 'structured' and nothing else.")
+    ])
+    @test r isa ResponseSuccess
+    @test occursin("structured", lowercase(output_text(r)))
+end
+
+@testset "Responses API — with multimodal input" begin
+    r = respond([InputMessage(
+        role="user",
+        content=[input_text("What does 2+2 equal? Reply with just the number.")]
+    )])
+    @test r isa ResponseSuccess
+    @test occursin("4", output_text(r))
+end
+
+@testset "Responses API — with reasoning (o-series)" begin
+    r = respond(
+        "What is 15 * 23? Reply with just the number.",
+        model="o4-mini",
+        reasoning=Reasoning(effort="low")
+    )
+    @test r isa ResponseSuccess
+    @test occursin("345", output_text(r))
+end
+
+@testset "Responses API — with max_output_tokens" begin
+    r = respond("Say 'token limit' and nothing else.", max_output_tokens=Int64(100))
+    @test r isa ResponseSuccess
+    @test !isempty(output_text(r))
+end
+
+@testset "Responses API — with temperature" begin
+    r = respond("Say 'temp test' and nothing else.", temperature=0.0)
+    @test r isa ResponseSuccess
+    @test !isempty(output_text(r))
+end
+
+@testset "Responses API — with store=false" begin
+    r = respond("Say 'no store' and nothing else.", store=false)
+    @test r isa ResponseSuccess
+    @test !isempty(output_text(r))
+end
+
+@testset "Responses API — with metadata" begin
+    r = respond("Say 'meta' and nothing else.", metadata=Dict("test_id" => "integration_123"))
+    @test r isa ResponseSuccess
+    @test !isempty(output_text(r))
 end

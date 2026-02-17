@@ -21,19 +21,6 @@ function get_pkg_version(name::AbstractString)
 end
 
 @testset "UniLM.jl" begin
-    @testset "Aqua.jl quality checks" begin
-        Aqua.test_all(UniLM; ambiguities=false)
-    end
-
-    @testset "Type Stability (JET.jl)" begin
-        if VERSION >= v"1.12"
-            @assert get_pkg_version("JET") >= v"0.11"
-            JET.test_package(UniLM;
-                target_modules=(UniLM,),
-                ignore_missing_comparison=true)
-        end
-    end
-
     @testset "api.jl" begin
         include("api.jl")
     end
@@ -56,5 +43,24 @@ end
 
     @testset "integration" begin
         include("integration.jl")
+    end
+
+    # ── Slow tests run last ──────────────────────────────────────────────
+
+    @testset "Aqua.jl quality checks" begin
+        Aqua.test_all(UniLM; ambiguities=false)
+    end
+
+    @testset "Type Stability (JET.jl)" begin
+        if VERSION >= v"1.12"
+            @assert get_pkg_version("JET") >= v"0.11"
+            JET.test_package(UniLM;
+                target_modules=(UniLM,),
+                ignore_missing_comparison=true)
+        end
+    end
+
+    @testset "integration — image generation" begin
+        include("integration_images.jl")
     end
 end

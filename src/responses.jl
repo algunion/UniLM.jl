@@ -257,17 +257,20 @@ json_object_format() = TextConfig(format=TextFormatSpec(type="json_object"))
 
 Reasoning configuration for O-series models (o3, o4-mini, etc.).
 
-- `effort`: `"low"`, `"medium"`, or `"high"`
-- `summary`: `"auto"`, `"concise"`, or `"detailed"`
+- `effort`: `"none"`, `"low"`, `"medium"`, or `"high"`
+- `generate_summary`: `"auto"`, `"concise"`, or `"detailed"` — configures summary generation
+- `summary`: `"auto"`, `"concise"`, or `"detailed"` (deprecated alias for `generate_summary`)
 """
 @kwdef struct Reasoning
     effort::Union{String,Nothing} = nothing
+    generate_summary::Union{String,Nothing} = nothing
     summary::Union{String,Nothing} = nothing
 end
 
 function JSON.lower(r::Reasoning)
     d = Dict{Symbol,Any}()
     !isnothing(r.effort) && (d[:effort] = r.effort)
+    !isnothing(r.generate_summary) && (d[:generate_summary] = r.generate_summary)
     !isnothing(r.summary) && (d[:summary] = r.summary)
     return d
 end
@@ -337,15 +340,33 @@ Respond(input="Solve this math problem...", model="o3", reasoning=Reasoning(effo
     metadata::Union{AbstractDict,Nothing} = nothing
     previous_response_id::Union{String,Nothing} = nothing
     user::Union{String,Nothing} = nothing
+    background::Union{Bool,Nothing} = nothing
+    include::Union{Vector{String},Nothing} = nothing
+    max_tool_calls::Union{Int64,Nothing} = nothing
+    service_tier::Union{String,Nothing} = nothing      # "auto", "default", "flex", "priority"
+    top_logprobs::Union{Int64,Nothing} = nothing       # 0-20
+    prompt::Union{AbstractDict,Nothing} = nothing
+    prompt_cache_key::Union{String,Nothing} = nothing
+    prompt_cache_retention::Union{String,Nothing} = nothing  # "in-memory", "24h"
+    safety_identifier::Union{String,Nothing} = nothing
+    conversation::Union{Any,Nothing} = nothing         # String or Dict
+    context_management::Union{Vector,Nothing} = nothing
+    stream_options::Union{AbstractDict,Nothing} = nothing
     function Respond(service, model, input, instructions, tools, tool_choice,
         parallel_tool_calls, temperature, top_p, max_output_tokens,
         stream, text, reasoning, truncation, store, metadata,
-        previous_response_id, user)
+        previous_response_id, user, background, include, max_tool_calls,
+        service_tier, top_logprobs, prompt, prompt_cache_key,
+        prompt_cache_retention, safety_identifier, conversation,
+        context_management, stream_options)
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
         new(service, model, input, instructions, tools, tool_choice,
             parallel_tool_calls, temperature, top_p, max_output_tokens,
             stream, text, reasoning, truncation, store, metadata,
-            previous_response_id, user)
+            previous_response_id, user, background, include, max_tool_calls,
+            service_tier, top_logprobs, prompt, prompt_cache_key,
+            prompt_cache_retention, safety_identifier, conversation,
+            context_management, stream_options)
     end
 end
 
@@ -353,7 +374,10 @@ function JSON.lower(r::Respond)
     d = Dict{Symbol,Any}(:model => r.model, :input => r.input)
     for f in (:instructions, :tools, :tool_choice, :parallel_tool_calls,
         :temperature, :top_p, :max_output_tokens, :stream, :text,
-        :reasoning, :truncation, :store, :metadata, :previous_response_id, :user)
+        :reasoning, :truncation, :store, :metadata, :previous_response_id,
+        :user, :background, :include, :max_tool_calls, :service_tier,
+        :top_logprobs, :prompt, :prompt_cache_key, :prompt_cache_retention,
+        :safety_identifier, :conversation, :context_management, :stream_options)
         v = getfield(r, f)
         !isnothing(v) && (d[f] = v)
     end
@@ -776,6 +800,118 @@ function list_input_items(response_id::String;
         url *= "?" * join(params, "&")
 
         resp = HTTP.get(url, headers=auth_header(service); status_exception=false)
+        if resp.status == 200
+            return JSON.parse(resp.body; dicttype=Dict{String,Any})
+        else
+            return ResponseFailure(response=String(resp.body), status=resp.status)
+        end
+    catch e
+        statuserror = hasproperty(e, :status) ? e.status : nothing
+        return ResponseCallError(error=string(e), status=statuserror)
+    end
+end
+
+
+"""
+    cancel_response(response_id::String; service=OPENAIServiceEndpoint)
+
+Cancel an in-progress response by its ID. Returns `ResponseSuccess` on success.
+
+# Examples
+```julia
+# Start a background response, then cancel it
+result = respond("Write a very long essay", background=true)
+cancel_result = cancel_response(result.response.id)
+if cancel_result isa ResponseSuccess
+    println("Cancelled: ", cancel_result.response.status)
+end
+```
+"""
+function cancel_response(response_id::String; service::Type{<:ServiceEndpoint}=OPENAIServiceEndpoint)
+    try
+        url = _api_base_url(service) * RESPONSES_PATH * "/" * response_id * "/cancel"
+        resp = HTTP.post(url, headers=auth_header(service); status_exception=false)
+        if resp.status == 200
+            return ResponseSuccess(response=parse_response(resp))
+        else
+            return ResponseFailure(response=String(resp.body), status=resp.status)
+        end
+    catch e
+        statuserror = hasproperty(e, :status) ? e.status : nothing
+        return ResponseCallError(error=string(e), status=statuserror)
+    end
+end
+
+
+"""
+    compact_response(; model, input, kwargs...)
+
+Compact a conversation by running a compaction pass. Returns opaque, encrypted items
+that can be passed as input to subsequent requests, reducing token usage in long conversations.
+
+# Fields
+- `model::String`: Model to use for compaction
+- `input::Any`: The conversation items to compact (typically the full conversation history)
+
+Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys.
+
+# Examples
+```julia
+compacted = compact_response(model="gpt-5.2", input=[
+    InputMessage(role="user", content="Hello"),
+    Dict("type" => "message", "role" => "assistant", "status" => "completed",
+         "content" => [Dict("type" => "output_text", "text" => "Hi there!")])
+])
+# Use compacted["output"] as input to the next request
+```
+"""
+function compact_response(; model::String="gpt-5.2",
+    input::Any,
+    service::Type{<:ServiceEndpoint}=OPENAIServiceEndpoint)
+
+    try
+        url = _api_base_url(service) * RESPONSES_PATH * "/compact"
+        body = JSON.json(Dict{Symbol,Any}(:model => model, :input => input))
+        resp = HTTP.post(url, body=body, headers=auth_header(service); status_exception=false)
+        if resp.status == 200
+            return JSON.parse(resp.body; dicttype=Dict{String,Any})
+        else
+            return ResponseFailure(response=String(resp.body), status=resp.status)
+        end
+    catch e
+        statuserror = hasproperty(e, :status) ? e.status : nothing
+        return ResponseCallError(error=string(e), status=statuserror)
+    end
+end
+
+
+"""
+    count_input_tokens(; model, input, kwargs...)
+
+Count the number of input tokens a request would use without actually generating a response.
+Useful for estimating costs or checking whether input fits within the context window.
+
+Returns a Dict with `"object"` (`"response.input_tokens"`) and `"input_tokens"` keys.
+
+# Examples
+```julia
+result = count_input_tokens(model="gpt-5.2", input="Tell me a joke")
+println("Input tokens: ", result["input_tokens"])
+```
+"""
+function count_input_tokens(; model::String="gpt-5.2",
+    input::Any,
+    instructions::Union{String,Nothing}=nothing,
+    tools::Union{Vector,Nothing}=nothing,
+    service::Type{<:ServiceEndpoint}=OPENAIServiceEndpoint)
+
+    try
+        url = _api_base_url(service) * RESPONSES_PATH * "/input_tokens"
+        d = Dict{Symbol,Any}(:model => model, :input => input)
+        !isnothing(instructions) && (d[:instructions] = instructions)
+        !isnothing(tools) && (d[:tools] = tools)
+        body = JSON.json(d)
+        resp = HTTP.post(url, body=body, headers=auth_header(service); status_exception=false)
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else

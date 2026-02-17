@@ -58,6 +58,9 @@ respond
 get_response
 delete_response
 list_input_items
+cancel_response
+compact_response
+count_input_tokens
 ```
 
 ## Input Helpers

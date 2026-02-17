@@ -34,7 +34,6 @@ end
     @test Base.parse(UniLM.Model, "gpt-4o") == UniLM.Model("gpt-4o")
 
     @test UniLM.GPT5_2 == UniLM.Model("gpt-5.2")
-    @test UniLM.GPT5_2Mini == UniLM.Model("gpt-5.2-mini")
     @test UniLM.GPTTextEmbedding3Small == UniLM.Model("text-embedding-3-small")
 end
 

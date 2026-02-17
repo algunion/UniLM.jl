@@ -154,7 +154,6 @@ Base.show(io::IO, x::Model) = print(io, x.name)
 Base.parse(::Type{Model}, s::String) = Model(s)
 
 const GPT5_2 = Model("gpt-5.2")
-const GPT5_2Mini = Model("gpt-5.2-mini")
 
 const STOP = "stop"
 const CONTENT_FILTER = "content_filter"

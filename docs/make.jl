@@ -16,6 +16,7 @@ makedocs(;
     ),
     pages=[
         "Home" => "index.md",
+        "LLM Reference" => "llm.md",
         "Getting Started" => "getting_started.md",
         "Guide" => [
             "Chat Completions" => "guide/chat_completions.md",

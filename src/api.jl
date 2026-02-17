@@ -91,6 +91,22 @@ chat = Chat(tools=[tool])
     func::GPTFunctionSignature
 end
 
+"""
+    GPTTool(d::AbstractDict)
+
+Construct a [`GPTTool`](@ref) from a dict (e.g. the output of
+`DescribedTypes.schema(T, llm_adapter=OPENAI_TOOLS)`).
+Expects keys `"name"`, `"description"`, and `"parameters"`.
+"""
+GPTTool(d::AbstractDict) = GPTTool(
+    type=get(d, "type", "function"),
+    func=GPTFunctionSignature(
+        name=d["name"],
+        description=get(d, "description", nothing),
+        parameters=get(d, "parameters", nothing)
+    )
+)
+
 JSON.lower(x::GPTTool) = Dict(:type => x.type, :function => x.func)
 
 

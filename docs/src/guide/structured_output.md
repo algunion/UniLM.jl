@@ -194,21 +194,17 @@ nothing  # hide
 
 ### Chat Completions with DescribedTypes
 
-Use the `OPENAI` adapter to generate a schema ready for [`ResponseFormat`](@ref):
+Use the `OPENAI` adapter to generate a schema and pass it directly to `ResponseFormat` — multiple dispatch takes care of the rest:
 
 ```@example described_structured
 s = schema(LanguageList, llm_adapter=OPENAI)
 println(JSON.json(s, 2))
 ```
 
-Plug the generated schema straight into a `Chat`:
-
 ```@example described_structured
-fmt = ResponseFormat(UniLM.JsonSchemaAPI(s["name"], s["description"], s["schema"]))
-chat = Chat(model="gpt-5.2", response_format=fmt)
+chat = Chat(model="gpt-5.2", response_format=ResponseFormat(s))
 push!(chat, Message(Val(:system), "Return structured data about programming languages."))
 push!(chat, Message(Val(:user), "List Julia, Python, and Rust"))
-println("Response format type: ", fmt.type)
 println("Request body:")
 println(JSON.json(chat))
 ```
@@ -224,16 +220,16 @@ end
 
 ### Responses API with DescribedTypes
 
-The same schema works with `json_schema_format`:
+The same schema dict dispatches to `json_schema_format` just as cleanly:
 
 ```@example described_structured
-fmt2 = json_schema_format(s["name"], s["description"], s["schema"], strict=s["strict"])
-println("Format type: ", fmt2.format.type)
-println("Schema strict: ", fmt2.format.strict)
+fmt = json_schema_format(s)
+println("Format type: ", fmt.format.type)
+println("Schema strict: ", fmt.format.strict)
 ```
 
 ```@example described_structured
-result = respond("List Julia, Python, and Rust with their year and paradigm", text=fmt2)
+result = respond("List Julia, Python, and Rust with their year and paradigm", text=json_schema_format(s))
 if result isa ResponseSuccess
     println(JSON.json(JSON.parse(output_text(result)), 2))
 else

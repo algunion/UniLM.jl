@@ -221,21 +221,15 @@ println(JSON.json(s, 2))
 
 ### Chat Completions with DescribedTypes
 
-Build a [`GPTTool`](@ref) from the generated schema:
+Pass the schema dict directly to `GPTTool` — multiple dispatch handles the unpacking:
 
 ```@example described_tools
-tool = GPTTool(
-    func=GPTFunctionSignature(
-        name=s["name"],
-        description=s["description"],
-        parameters=s["parameters"]
-    )
-)
+tool = GPTTool(s)
 println(JSON.json(JSON.lower(tool), 2))
 ```
 
 ```@example described_tools
-chat = Chat(model="gpt-5.2", tools=[tool])
+chat = Chat(model="gpt-5.2", tools=[GPTTool(s)])
 push!(chat, Message(Val(:system), "Use the provided tools to answer."))
 push!(chat, Message(Val(:user), "What's the weather in Paris?"))
 result = chatrequest!(chat)
@@ -250,16 +244,15 @@ end
 
 ### Responses API with DescribedTypes
 
-Use the same schema with [`function_tool`](@ref):
+Same dict, different dispatch — `function_tool` does the same:
 
 ```@example described_tools
-ftool = function_tool(s["name"], s["description"],
-                      parameters=s["parameters"], strict=s["strict"])
+ftool = function_tool(s)
 println(JSON.json(JSON.lower(ftool), 2))
 ```
 
 ```@example described_tools
-result = respond("What's the weather in Tokyo? Use celsius.", tools=[ftool])
+result = respond("What's the weather in Tokyo? Use celsius.", tools=[function_tool(s)])
 calls = function_calls(result)
 if !isempty(calls)
     println("Function: ", calls[1]["name"])
@@ -288,15 +281,10 @@ DescribedTypes.annotate(::Type{SearchDatabase}) = Annotation(
     ),
 )
 
-s_search = schema(SearchDatabase, llm_adapter=OPENAI_TOOLS)
-s_weather = schema(GetWeather, llm_adapter=OPENAI_TOOLS)
-
-tools = [
-    function_tool(s_weather["name"], s_weather["description"],
-                  parameters=s_weather["parameters"], strict=s_weather["strict"]),
-    function_tool(s_search["name"], s_search["description"],
-                  parameters=s_search["parameters"], strict=s_search["strict"]),
-]
+tools = function_tool.([  # broadcast over a vector of schema dicts
+    schema(GetWeather, llm_adapter=OPENAI_TOOLS),
+    schema(SearchDatabase, llm_adapter=OPENAI_TOOLS),
+])
 for t in tools
     println("  - ", t.name, " (strict=", t.strict, ")")
 end

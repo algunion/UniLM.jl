@@ -1,6 +1,6 @@
 name = "UniLM"
 uuid = "2a65a866-de6b-4bc8-8daf-c130204fdf93"
-version = "0.6.2"
+version = "0.6.3"
 authors = ["Marius Fersigan <marius.fersigan@gmail.com> and contributors"]
 
 [deps]

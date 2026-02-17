@@ -169,6 +169,20 @@ function_tool(name::String, description::Union{String,Nothing}=nothing;
     FunctionTool(name=name, description=description, parameters=parameters, strict=strict)
 
 """
+    function_tool(d::AbstractDict)
+
+Construct a [`FunctionTool`](@ref) from a dict (e.g. the output of
+`DescribedTypes.schema(T, llm_adapter=OPENAI_TOOLS)`).
+Expects keys `"name"`, `"description"`, and `"parameters"`.
+"""
+function_tool(d::AbstractDict) = FunctionTool(
+    name=d["name"],
+    description=get(d, "description", nothing),
+    parameters=get(d, "parameters", nothing),
+    strict=get(d, "strict", nothing)
+)
+
+"""
     web_search(; context_size="medium", location=nothing)
 
 Shorthand constructor for [`WebSearchTool`](@ref).
@@ -243,6 +257,23 @@ Create a JSON Schema output format for structured output.
 json_schema_format(name::String, description::String, schema::AbstractDict;
     strict::Union{Bool,Nothing}=nothing) =
     TextConfig(format=TextFormatSpec(type="json_schema", name=name, description=description, schema=schema, strict=strict))
+
+"""
+    json_schema_format(d::AbstractDict)
+
+Construct a JSON Schema [`TextConfig`](@ref) from a dict (e.g. the output of
+`DescribedTypes.schema(T, llm_adapter=OPENAI)`).
+Expects keys `"name"`, `"description"`, and `"schema"`.
+"""
+json_schema_format(d::AbstractDict) = TextConfig(
+    format=TextFormatSpec(
+        type="json_schema",
+        name=d["name"],
+        description=get(d, "description", nothing),
+        schema=d["schema"],
+        strict=get(d, "strict", nothing)
+    )
+)
 
 """
     json_object_format()

@@ -143,7 +143,143 @@ println("Default format type: ", tc.format.type)
 | `json_schema_format(name, desc, schema)` | Schema-constrained JSON |
 | `text_format()`                          | Plain text (default)    |
 
+## Using DescribedTypes.jl
+
+[DescribedTypes.jl](https://github.com/algunion/DescribedTypes.jl) lets you derive JSON Schemas directly from Julia structs instead of hand-writing `Dict` literals. Define your types, annotate them, and let the library produce the exact format OpenAI expects.
+
+**Why use DescribedTypes.jl?**
+
+- **Annotate types you don't own.** The `annotate` method can be defined for _any_ type — including those from third-party packages or Base. This means you can attach rich schema metadata (names, descriptions, enum constraints) to existing structs without modifying their source code.
+- **Higher-quality structured output.** Bare JSON Schemas carry only type information. DescribedTypes adds field-level descriptions and constrained enum values that guide the model, producing more accurate and consistent responses compared to raw schemas.
+- **Single source of truth.** The Julia struct _is_ the schema. Changes to your types automatically propagate to the generated schema — no more keeping `Dict` literals in sync by hand.
+
+!!! note
+    Install the package first: `Pkg.add(url="https://github.com/algunion/DescribedTypes.jl")`.
+
+### Defining Annotated Types
+
+```@example described_structured
+using UniLM, DescribedTypes, JSON
+
+struct Language
+    name::String
+    year::Int
+    paradigm::String
+end
+
+struct LanguageList
+    languages::Vector{Language}
+end
+
+DescribedTypes.annotate(::Type{Language}) = Annotation(
+    name="Language",
+    description="A programming language.",
+    parameters=Dict(
+        :name     => Annotation(name="name", description="Name of the language"),
+        :year     => Annotation(name="year", description="Year of first release"),
+        :paradigm => Annotation(name="paradigm", description="Primary paradigm",
+                                enum=["functional", "imperative", "object-oriented", "multi-paradigm"]),
+    ),
+)
+
+DescribedTypes.annotate(::Type{LanguageList}) = Annotation(
+    name="language_list",
+    description="A list of programming languages with metadata.",
+    parameters=Dict(
+        :languages => Annotation(name="languages", description="The language entries"),
+    ),
+)
+nothing  # hide
+```
+
+### Chat Completions with DescribedTypes
+
+Use the `OPENAI` adapter to generate a schema ready for [`ResponseFormat`](@ref):
+
+```@example described_structured
+s = schema(LanguageList, llm_adapter=OPENAI)
+println(JSON.json(s, 2))
+```
+
+Plug the generated schema straight into a `Chat`:
+
+```@example described_structured
+fmt = ResponseFormat(UniLM.JsonSchemaAPI(s["name"], s["description"], s["schema"]))
+chat = Chat(model="gpt-5.2", response_format=fmt)
+push!(chat, Message(Val(:system), "Return structured data about programming languages."))
+push!(chat, Message(Val(:user), "List Julia, Python, and Rust"))
+println("Response format type: ", fmt.type)
+println("Request body:")
+println(JSON.json(chat))
+```
+
+```@example described_structured
+result = chatrequest!(chat)
+if result isa LLMSuccess
+    println(JSON.json(JSON.parse(result.message.content), 2))
+else
+    println("Request failed — see result for details")
+end
+```
+
+### Responses API with DescribedTypes
+
+The same schema works with `json_schema_format`:
+
+```@example described_structured
+fmt2 = json_schema_format(s["name"], s["description"], s["schema"], strict=s["strict"])
+println("Format type: ", fmt2.format.type)
+println("Schema strict: ", fmt2.format.strict)
+```
+
+```@example described_structured
+result = respond("List Julia, Python, and Rust with their year and paradigm", text=fmt2)
+if result isa ResponseSuccess
+    println(JSON.json(JSON.parse(output_text(result)), 2))
+else
+    println("Request failed — ", output_text(result))
+end
+```
+
+### Optional Fields
+
+Mark a field as `Union{Nothing, T}` and DescribedTypes will handle it correctly — the field stays required in the schema but its type becomes a union with `null`:
+
+```@example described_structured
+struct MovieReview
+    title::String
+    rating::Int
+    comment::Union{Nothing, String}
+end
+
+DescribedTypes.annotate(::Type{MovieReview}) = Annotation(
+    name="movie_review",
+    description="A movie review with optional comment.",
+    parameters=Dict(
+        :title   => Annotation(name="title",   description="Movie title"),
+        :rating  => Annotation(name="rating",  description="Rating from 1 to 10"),
+        :comment => Annotation(name="comment",  description="Optional review text"),
+    ),
+)
+
+println(JSON.json(schema(MovieReview, llm_adapter=OPENAI), 2))
+```
+
+### Type Mapping Reference
+
+| Julia type                  | JSON Schema type  |
+| :-------------------------- | :---------------- |
+| `String` / `AbstractString` | `string`          |
+| `Bool`                      | `boolean`         |
+| `<:Integer`                 | `integer`         |
+| `<:Real`                    | `number`          |
+| `Nothing` / `Missing`       | `null`            |
+| `<:AbstractArray`           | `array`           |
+| `<:Enum`                    | `string` + `enum` |
+| Any other `struct`          | `object`          |
+
 ## See Also
 
 - [`ResponseFormat`](@ref) — Chat Completions format type
 - [`TextConfig`](@ref), [`TextFormatSpec`](@ref) — Responses API format types
+- [DescribedTypes.jl](https://github.com/algunion/DescribedTypes.jl) — Schema generation from Julia types

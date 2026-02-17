@@ -182,8 +182,129 @@ for t in tools
 end
 ```
 
+## Using DescribedTypes.jl for Tool Definitions
+
+[DescribedTypes.jl](https://github.com/algunion/DescribedTypes.jl) can generate tool/function schemas directly from Julia structs, replacing hand-written `Dict` parameter schemas. Use the `OPENAI_TOOLS` adapter to get the exact format expected by both ChatCompletions and Responses API tools.
+
+**Why use DescribedTypes.jl for tools?**
+
+- **Annotate types you don't own.** The `annotate` method can be defined for _any_ type — including those from third-party packages or Base. You can expose existing structs as tool parameters without modifying their source code.
+- **Higher-quality tool calls.** Bare parameter schemas carry only type information. DescribedTypes adds field-level descriptions and constrained enum values that guide the model, producing more accurate argument values compared to raw schemas.
+- **Single source of truth.** The Julia struct _is_ the parameter schema. Changes to your types automatically propagate — no more keeping `Dict` literals in sync by hand.
+
+!!! note
+    Install the package first: `Pkg.add(url="https://github.com/algunion/DescribedTypes.jl")`.
+
+### Defining Tool Parameters as Structs
+
+```@example described_tools
+using UniLM, DescribedTypes, JSON
+
+struct GetWeather
+    location::String
+    unit::String
+end
+
+DescribedTypes.annotate(::Type{GetWeather}) = Annotation(
+    name="get_weather",
+    description="Get current weather for a location.",
+    parameters=Dict(
+        :location => Annotation(name="location", description="City name"),
+        :unit     => Annotation(name="unit", description="Unit of measurement",
+                                enum=["celsius", "fahrenheit"]),
+    ),
+)
+
+s = schema(GetWeather, llm_adapter=OPENAI_TOOLS)
+println(JSON.json(s, 2))
+```
+
+### Chat Completions with DescribedTypes
+
+Build a [`GPTTool`](@ref) from the generated schema:
+
+```@example described_tools
+tool = GPTTool(
+    func=GPTFunctionSignature(
+        name=s["name"],
+        description=s["description"],
+        parameters=s["parameters"]
+    )
+)
+println(JSON.json(JSON.lower(tool), 2))
+```
+
+```@example described_tools
+chat = Chat(model="gpt-5.2", tools=[tool])
+push!(chat, Message(Val(:system), "Use the provided tools to answer."))
+push!(chat, Message(Val(:user), "What's the weather in Paris?"))
+result = chatrequest!(chat)
+if result isa LLMSuccess && result.message.finish_reason == "tool_calls"
+    tc = result.message.tool_calls[1]
+    println("Function: ", tc.func.name)
+    println("Arguments: ", JSON.json(tc.func.arguments, 2))
+else
+    println("Result: ", output_text(result))
+end
+```
+
+### Responses API with DescribedTypes
+
+Use the same schema with [`function_tool`](@ref):
+
+```@example described_tools
+ftool = function_tool(s["name"], s["description"],
+                      parameters=s["parameters"], strict=s["strict"])
+println(JSON.json(JSON.lower(ftool), 2))
+```
+
+```@example described_tools
+result = respond("What's the weather in Tokyo? Use celsius.", tools=[ftool])
+calls = function_calls(result)
+if !isempty(calls)
+    println("Function: ", calls[1]["name"])
+    println("Arguments: ", JSON.json(JSON.parse(calls[1]["arguments"]), 2))
+else
+    println("No function calls — ", output_text(result))
+end
+```
+
+### Multiple Tools from Structs
+
+Define several tool parameter structs and combine them:
+
+```@example described_tools
+struct SearchDatabase
+    query::String
+    max_results::Union{Nothing, Int}
+end
+
+DescribedTypes.annotate(::Type{SearchDatabase}) = Annotation(
+    name="search_database",
+    description="Search the internal database.",
+    parameters=Dict(
+        :query       => Annotation(name="query", description="Search query text"),
+        :max_results => Annotation(name="max_results", description="Maximum results to return"),
+    ),
+)
+
+s_search = schema(SearchDatabase, llm_adapter=OPENAI_TOOLS)
+s_weather = schema(GetWeather, llm_adapter=OPENAI_TOOLS)
+
+tools = [
+    function_tool(s_weather["name"], s_weather["description"],
+                  parameters=s_weather["parameters"], strict=s_weather["strict"]),
+    function_tool(s_search["name"], s_search["description"],
+                  parameters=s_search["parameters"], strict=s_search["strict"]),
+]
+for t in tools
+    println("  - ", t.name, " (strict=", t.strict, ")")
+end
+```
+
 ## See Also
 
 - [`GPTTool`](@ref), [`GPTFunctionSignature`](@ref) — Chat Completions tool types
 - [`FunctionTool`](@ref), [`WebSearchTool`](@ref), [`FileSearchTool`](@ref) — Responses API tool types
 - [`function_tool`](@ref), [`web_search`](@ref), [`file_search`](@ref) — convenience constructors
+- [DescribedTypes.jl](https://github.com/algunion/DescribedTypes.jl) — Schema generation from Julia types

@@ -596,4 +596,13 @@ function JSON.lower(emb::Embeddings)
     return d
 end
 
-update!(emb::Embeddings, embeddings) = copy!(emb.embeddings, embeddings)
+function update!(emb::Embeddings, data::AbstractVector)
+    if emb.input isa String
+        copy!(emb.embeddings, data[1]["embedding"])
+    else
+        for item in data
+            idx = item["index"] + 1  # API uses 0-based indexing
+            copy!(emb.embeddings[idx], item["embedding"])
+        end
+    end
+end

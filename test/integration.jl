@@ -167,6 +167,24 @@ end
     @test length(emb.embeddings) == 1536
 end
 
+@testset "batch embedding" begin
+    inputs = ["Julia is fast", "Python is popular", "Rust is safe"]
+    emb = UniLM.Embeddings(inputs)
+
+    @test emb.embeddings isa Vector{Vector{Float64}}
+    @test length(emb.embeddings) == 3
+    @test all(v -> all(x -> x == 0.0, v), emb.embeddings)
+
+    result = embeddingrequest!(emb)
+
+    @test result isa Tuple
+    @test length(emb.embeddings) == 3
+    for i in 1:3
+        @test !all(x -> x == 0.0, emb.embeddings[i])  # each embedding updated
+        @test length(emb.embeddings[i]) == 1536
+    end
+end
+
 @testset "conversation with temperature" begin
     chat = Chat(temperature=0.0)
     push!(chat, Message(role=UniLM.RoleSystem, content="You are a calculator."))

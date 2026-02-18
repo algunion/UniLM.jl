@@ -244,7 +244,7 @@ function embeddingrequest!(emb::Embeddings; retries::Int=0)
         resp = HTTP.post(get_url(emb), body=body, headers=auth_header(OPENAIServiceEndpoint); status_exception=false)
         if resp.status == 200
             embedding = JSON.parse(resp.body; dicttype=Dict{String,Any})
-            update!(emb, embedding["data"][1]["embedding"])
+            update!(emb, embedding["data"])
             return (embedding, emb)
         elseif resp.status == 500 || resp.status == 503
             @warn "Request status: $(resp.status). Retrying... in 1s"

@@ -553,11 +553,27 @@ end
         @test !haskey(parsed, "user")
     end
 
-    @testset "update!" begin
+    @testset "update! single input" begin
         emb = UniLM.Embeddings("test")
         new_vals = rand(1536)
-        update!(emb, new_vals)
+        data = [Dict{String,Any}("index" => 0, "embedding" => new_vals)]
+        update!(emb, data)
         @test emb.embeddings ≈ new_vals
+    end
+
+    @testset "update! batch input" begin
+        emb = UniLM.Embeddings(["hello", "world", "foo"])
+        vecs = [rand(1536) for _ in 1:3]
+        # Simulate API response with potentially out-of-order indices
+        data = [
+            Dict{String,Any}("index" => 2, "embedding" => vecs[3]),
+            Dict{String,Any}("index" => 0, "embedding" => vecs[1]),
+            Dict{String,Any}("index" => 1, "embedding" => vecs[2]),
+        ]
+        update!(emb, data)
+        @test emb.embeddings[1] ≈ vecs[1]
+        @test emb.embeddings[2] ≈ vecs[2]
+        @test emb.embeddings[3] ≈ vecs[3]
     end
 end
 

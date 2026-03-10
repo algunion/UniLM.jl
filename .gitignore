@@ -4,4 +4,7 @@ Manifest.toml
 
 /.vscode
 .env
+AGENTS.md
+CLAUDE.md
+grounding/
 

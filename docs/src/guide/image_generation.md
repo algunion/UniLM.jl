@@ -150,6 +150,10 @@ elseif result isa ImageCallError
 end
 ```
 
+## Retry Behaviour
+
+`generate_image` automatically retries on HTTP 429, 500, and 503 errors with exponential backoff and jitter (up to 30 attempts, max 60s delay). On 429 responses, the `Retry-After` header is respected.
+
 ## See Also
 
 - [`ImageGeneration`](@ref) — request configuration type

@@ -6,13 +6,15 @@ using Sockets
 
 response_status = Ref{Int}(200)
 response_body = Ref{String}("{}")
+response_headers = Ref{Vector{Pair{String,String}}}(Pair{String,String}[])
 
 tcp_server = Sockets.listen(Sockets.localhost, 0)
 mock_port = Int(Sockets.getsockname(tcp_server)[2])
 close(tcp_server)
 
 mock_server = HTTP.serve!("127.0.0.1", mock_port; verbose=false) do req
-    return HTTP.Response(response_status[], ["Content-Type" => "application/json"], Vector{UInt8}(response_body[]))
+    headers = vcat(["Content-Type" => "application/json"], response_headers[])
+    return HTTP.Response(response_status[], headers, Vector{UInt8}(response_body[]))
 end
 
 mock_base_url = "http://127.0.0.1:$mock_port"
@@ -25,9 +27,10 @@ UniLM.get_url(::Type{MockServiceEndpoint}, ::Chat) = mock_base_url * UniLM.CHAT_
 UniLM.auth_header(::Type{MockServiceEndpoint}) = ["Content-Type" => "application/json"]
 
 # Helper: set error response
-function set_error!(status, msg="error")
+function set_error!(status, msg="error"; headers::Vector{Pair{String,String}}=Pair{String,String}[])
     response_status[] = status
     response_body[] = JSON.json(Dict("error" => Dict("message" => msg, "type" => "server_error")))
+    response_headers[] = headers
 end
 
 try
@@ -48,14 +51,14 @@ try
         @test result.status == 500
     end
 
-    @testset "chatrequest! with 503 (retry once then exhaust)" begin
+    @testset "chatrequest! with 503 (retry exhausted)" begin
         set_error!(503, "Service Unavailable")
 
         chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
-        result = chatrequest!(chat; retries=29)
+        result = chatrequest!(chat; retries=30)
         @test result isa LLMFailure
         @test result.status == 503
     end
@@ -107,11 +110,11 @@ try
         @test result.status == 500
     end
 
-    @testset "respond with 503 (retry once then exhaust)" begin
+    @testset "respond with 503 (retry exhausted)" begin
         set_error!(503, "Service Unavailable")
 
         r = Respond(input="test", service=MockServiceEndpoint)
-        result = respond(r; retries=29)
+        result = respond(r; retries=30)
 
         @test result isa ResponseFailure
         @test result.status == 503
@@ -195,11 +198,11 @@ try
         @test result.status == 500
     end
 
-    @testset "generate_image with 503 (retry once then exhaust)" begin
+    @testset "generate_image with 503 (retry exhausted)" begin
         set_error!(503, "Service Unavailable")
 
         ig = ImageGeneration(prompt="test", service=MockServiceEndpoint)
-        result = generate_image(ig; retries=29)
+        result = generate_image(ig; retries=30)
 
         @test result isa ImageFailure
         @test result.status == 503
@@ -213,6 +216,58 @@ try
 
         @test result isa ImageFailure
         @test result.status == 400
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # 429 Rate Limit handling
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "chatrequest! with 429 (retry exhausted)" begin
+        set_error!(429, "Rate limited"; headers=["Retry-After" => "2"])
+
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="usr"))
+
+        result = chatrequest!(chat; retries=30)
+        @test result isa LLMFailure
+        @test result.status == 429
+    end
+
+    @testset "respond with 429 (retry exhausted)" begin
+        set_error!(429, "Rate limited"; headers=["Retry-After" => "2"])
+
+        r = Respond(input="test", service=MockServiceEndpoint)
+        result = respond(r; retries=30)
+
+        @test result isa ResponseFailure
+        @test result.status == 429
+    end
+
+    @testset "generate_image with 429 (retry exhausted)" begin
+        set_error!(429, "Rate limited"; headers=["Retry-After" => "2"])
+
+        ig = ImageGeneration(prompt="test", service=MockServiceEndpoint)
+        result = generate_image(ig; retries=30)
+
+        @test result isa ImageFailure
+        @test result.status == 429
+    end
+
+    @testset "embeddingrequest! with 429 (retry exhausted)" begin
+        UniLM.get_url(::UniLM.Embeddings) = mock_base_url * UniLM.EMBEDDINGS_PATH
+
+        set_error!(429, "Rate limited"; headers=["Retry-After" => "2"])
+
+        withenv("OPENAI_API_KEY" => "test-key") do
+            emb = UniLM.Embeddings("test")
+            result = embeddingrequest!(emb; retries=30)
+            @test isnothing(result)
+        end
+
+        # Reset mock state so subsequent tests don't inherit 429 + Retry-After
+        UniLM.get_url(::UniLM.Embeddings) = UniLM.OPENAI_BASE_URL * UniLM.EMBEDDINGS_PATH
+        set_error!(200, "")
     end
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -239,12 +294,12 @@ try
         end
     end
 
-    @testset "embeddingrequest! with 503 (retry once then exhaust)" begin
+    @testset "embeddingrequest! with 503 (retry exhausted)" begin
         set_error!(503, "Service Unavailable")
 
         withenv("OPENAI_API_KEY" => "test-key") do
             emb = UniLM.Embeddings("test")
-            result = embeddingrequest!(emb; retries=29)
+            result = embeddingrequest!(emb; retries=30)
             @test isnothing(result)
         end
     end

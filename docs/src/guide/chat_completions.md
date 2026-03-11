@@ -165,7 +165,21 @@ println(JSON.json(chat))
 
 ## Retry Behaviour
 
-`chatrequest!` automatically retries on HTTP 500/503 errors with a 1-second delay, up to 30 retries. This is transparent and requires no configuration.
+`chatrequest!` automatically retries on HTTP 429, 500, and 503 errors with exponential backoff and jitter (up to 30 attempts, max 60s delay). On 429 responses, the `Retry-After` header is respected. This is transparent and requires no configuration.
+
+## Parameter Validation
+
+The `Chat` constructor validates parameter ranges at construction time:
+
+| Parameter           | Valid Range      |
+| :------------------ | :--------------- |
+| `temperature`       | 0.0–2.0          |
+| `top_p`             | 0.0–1.0          |
+| `n`                 | 1–10             |
+| `presence_penalty`  | -2.0–2.0         |
+| `frequency_penalty` | -2.0–2.0         |
+
+Out-of-range values throw `ArgumentError`. Additionally, `temperature` and `top_p` are mutually exclusive.
 
 ## See Also
 

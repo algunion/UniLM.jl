@@ -307,6 +307,7 @@ end
         @test isnothing(chat.user)
         @test isnothing(chat.seed)
         @test chat.service == UniLM.OPENAIServiceEndpoint
+        @test chat._cumulative_cost[] == 0.0
     end
 
     @testset "custom creation" begin
@@ -481,6 +482,7 @@ end
         @test !haskey(parsed, "history")
         @test !haskey(parsed, "service")
         @test !haskey(parsed, "top_p")
+        @test !haskey(parsed, "_cumulative_cost")
     end
 end
 
@@ -493,6 +495,15 @@ end
         @test s isa UniLM.LLMRequestResponse
         @test s.message == m
         @test s.self === chat
+        @test isnothing(s.usage)
+    end
+
+    @testset "LLMSuccess with usage" begin
+        m = Message(role=UniLM.RoleAssistant, content="hello")
+        u = TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+        s = LLMSuccess(message=m, self=chat, usage=u)
+        @test s.usage === u
+        @test s.usage.prompt_tokens == 10
     end
 
     @testset "LLMFailure" begin
@@ -637,4 +648,73 @@ end
 @testset "InvalidConversationError detailed" begin
     e = InvalidConversationError("bad conversation")
     @test sprint(showerror, e) == "InvalidConversationError(\"bad conversation\")"
+end
+
+@testset "Chat parameter validation" begin
+    @testset "temperature out of range" begin
+        @test_throws ArgumentError Chat(temperature=-0.1)
+        @test_throws ArgumentError Chat(temperature=2.1)
+        @test_throws ArgumentError Chat(temperature=3.0)
+    end
+
+    @testset "temperature boundary values accepted" begin
+        @test Chat(temperature=0.0).temperature == 0.0
+        @test Chat(temperature=2.0).temperature == 2.0
+        @test Chat(temperature=1.0).temperature == 1.0
+    end
+
+    @testset "top_p out of range" begin
+        @test_throws ArgumentError Chat(top_p=-0.1)
+        @test_throws ArgumentError Chat(top_p=1.1)
+        @test_throws ArgumentError Chat(top_p=2.0)
+    end
+
+    @testset "top_p boundary values accepted" begin
+        @test Chat(top_p=0.0).top_p == 0.0
+        @test Chat(top_p=1.0).top_p == 1.0
+        @test Chat(top_p=0.5).top_p == 0.5
+    end
+
+    @testset "n out of range" begin
+        @test_throws ArgumentError Chat(n=0)
+        @test_throws ArgumentError Chat(n=-1)
+        @test_throws ArgumentError Chat(n=11)
+    end
+
+    @testset "n boundary values accepted" begin
+        @test Chat(n=1).n == 1
+        @test Chat(n=10).n == 10
+        @test Chat(n=5).n == 5
+    end
+
+    @testset "presence_penalty out of range" begin
+        @test_throws ArgumentError Chat(presence_penalty=-2.1)
+        @test_throws ArgumentError Chat(presence_penalty=2.1)
+    end
+
+    @testset "presence_penalty boundary values accepted" begin
+        @test Chat(presence_penalty=-2.0).presence_penalty == -2.0
+        @test Chat(presence_penalty=2.0).presence_penalty == 2.0
+        @test Chat(presence_penalty=0.0).presence_penalty == 0.0
+    end
+
+    @testset "frequency_penalty out of range" begin
+        @test_throws ArgumentError Chat(frequency_penalty=-2.1)
+        @test_throws ArgumentError Chat(frequency_penalty=2.1)
+    end
+
+    @testset "frequency_penalty boundary values accepted" begin
+        @test Chat(frequency_penalty=-2.0).frequency_penalty == -2.0
+        @test Chat(frequency_penalty=2.0).frequency_penalty == 2.0
+        @test Chat(frequency_penalty=0.0).frequency_penalty == 0.0
+    end
+
+    @testset "nothing values still accepted" begin
+        chat = Chat()
+        @test isnothing(chat.temperature)
+        @test isnothing(chat.top_p)
+        @test isnothing(chat.n)
+        @test isnothing(chat.presence_penalty)
+        @test isnothing(chat.frequency_penalty)
+    end
 end

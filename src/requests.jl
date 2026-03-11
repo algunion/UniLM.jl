@@ -1,3 +1,23 @@
+# ─── Retry Infrastructure ────────────────────────────────────────────────────
+
+const _RETRY_BASE = 1.0
+const _RETRY_FACTOR = 2.0
+const _RETRY_MAX_DELAY = 60.0
+const _RETRY_MAX_ATTEMPTS = 30
+
+_is_retryable(status::Integer)::Bool = status in (429, 500, 503)
+
+function _retry_delay(retry::Integer, resp::HTTP.Response)::Float64
+    computed = min(_RETRY_BASE * _RETRY_FACTOR^retry, _RETRY_MAX_DELAY)
+    delay = rand() * computed  # full jitter
+    ra = HTTP.header(resp, "Retry-After", "")
+    if !isempty(ra)
+        parsed = tryparse(Int, ra)
+        !isnothing(parsed) && parsed > 0 && (delay = max(Float64(parsed), delay))
+    end
+    delay
+end
+
 # ─── URL Dispatch ─────────────────────────────────────────────────────────────
 # Endpoints are determined by (ServiceEndpoint, RequestType), not model name.
 
@@ -34,11 +54,26 @@ end
 
 
 
+# Stub: overridden by accounting.jl after include
+_accumulate_cost!(::Chat, ::LLMRequestResponse) = nothing
+
+function _parse_usage(data::Dict{String,Any})::Union{TokenUsage, Nothing}
+    haskey(data, "usage") || return nothing
+    u = data["usage"]
+    u isa Dict || return nothing
+    TokenUsage(
+        prompt_tokens=get(u, "prompt_tokens", 0),
+        completion_tokens=get(u, "completion_tokens", 0),
+        total_tokens=get(u, "total_tokens", 0)
+    )
+end
+
 function extract_message(resp::HTTP.Response)
     received_message = JSON.parse(resp.body; dicttype=Dict{String,Any})
     finish_reason = received_message["choices"][1]["finish_reason"]
     message = received_message["choices"][1]["message"]
-    if finish_reason == TOOL_CALLS && haskey(message, "tool_calls")
+    usage = _parse_usage(received_message)
+    msg = if finish_reason == TOOL_CALLS && haskey(message, "tool_calls")
         tcalls = GPTToolCall[]
         for x in message["tool_calls"]
             fdict = x["function"]
@@ -47,21 +82,29 @@ function extract_message(resp::HTTP.Response)
             tc = GPTToolCall(id=x["id"], func=gptfunc)
             push!(tcalls, tc)
         end
-
-        return Message(role=RoleAssistant, tool_calls=tcalls, finish_reason=TOOL_CALLS)
+        Message(role=RoleAssistant, tool_calls=tcalls, finish_reason=TOOL_CALLS)
     elseif finish_reason == STOP && haskey(message, "content") && !isnothing(message["content"])
-        return Message(role=RoleAssistant, content=message["content"], finish_reason=STOP)
+        Message(role=RoleAssistant, content=message["content"], finish_reason=STOP)
     elseif finish_reason == CONTENT_FILTER && haskey(message, "refusal") && !isnothing(message["refusal"])
-        return Message(role=RoleAssistant, refusal_message=message["refusal"], finish_reason=CONTENT_FILTER)
+        Message(role=RoleAssistant, refusal_message=message["refusal"], finish_reason=CONTENT_FILTER)
     else
-        return Message(role=RoleAssistant, content="No response from the model.", finish_reason=finish_reason)
+        Message(role=RoleAssistant, content="No response from the model.", finish_reason=finish_reason)
     end
+    (; message=msg, usage)
 end
 
-# There is a variable chunk format (which is also incomplete from time to time) that can be received from the stream. 
-# There are also multiple complaints about this on the OpenAI API forum. 
-# I'll attempt a robust parsind approach here that can handle the variable chunk format.
-function _parse_chunk(chunk::String, iobuff, failbuff)
+"""Mutable accumulator for streaming Chat Completions chunks."""
+@kwdef mutable struct StreamState
+    content::IOBuffer = IOBuffer()
+    tool_calls::Dict{Int, Dict{String,Any}} = Dict{Int, Dict{String,Any}}()
+    finish_reason::Union{String, Nothing} = nothing
+    usage::Union{TokenUsage, Nothing} = nothing
+end
+
+# There is a variable chunk format (which is also incomplete from time to time) that can be received from the stream.
+# There are also multiple complaints about this on the OpenAI API forum.
+# I'll attempt a robust parsing approach here that can handle the variable chunk format.
+function _parse_chunk(chunk::String, state::StreamState, failbuff)
     lines = strip.(split(chunk, "\n"))
     lines = filter(!isempty, lines)
     isempty(lines) && return (; eos=false)
@@ -70,44 +113,122 @@ function _parse_chunk(chunk::String, iobuff, failbuff)
     for line in lines[1:end-(eos ? 1 : 0)]
         try
             parsed = JSON.parse(line[6:end]; dicttype=Dict{String,Any})
+            # Capture usage if present (e.g. stream_options.include_usage)
+            if haskey(parsed, "usage") && parsed["usage"] isa Dict
+                u = parsed["usage"]
+                state.usage = TokenUsage(
+                    prompt_tokens=get(u, "prompt_tokens", 0),
+                    completion_tokens=get(u, "completion_tokens", 0),
+                    total_tokens=get(u, "total_tokens", 0)
+                )
+            end
             cho = parsed["choices"][1]
-            if cho["finish_reason"] == "stop"
-                eos = true
-            else
-                print(iobuff, cho["delta"]["content"])
+            fr = cho["finish_reason"]
+            if !isnothing(fr)
+                state.finish_reason = fr
+                fr == "stop" && (eos = true)
+            end
+            delta = get(cho, "delta", Dict{String,Any}())
+            # Text content delta
+            if haskey(delta, "content") && !isnothing(delta["content"])
+                print(state.content, delta["content"])
+            end
+            # Tool call deltas — accumulate by index
+            if haskey(delta, "tool_calls")
+                for tc_delta in delta["tool_calls"]
+                    idx = tc_delta["index"]
+                    if !haskey(state.tool_calls, idx)
+                        state.tool_calls[idx] = Dict{String,Any}(
+                            "id" => get(tc_delta, "id", ""),
+                            "type" => get(tc_delta, "type", "function"),
+                            "function" => Dict{String,Any}("name" => "", "arguments" => "")
+                        )
+                    end
+                    entry = state.tool_calls[idx]
+                    haskey(tc_delta, "id") && !isempty(tc_delta["id"]) && (entry["id"] = tc_delta["id"])
+                    if haskey(tc_delta, "function")
+                        fd = tc_delta["function"]
+                        haskey(fd, "name") && !isnothing(fd["name"]) && (entry["function"]["name"] *= fd["name"])
+                        haskey(fd, "arguments") && !isnothing(fd["arguments"]) && (entry["function"]["arguments"] *= fd["arguments"])
+                    end
+                end
             end
         catch e
             print(failbuff, line)
             continue
         end
     end
-    (; eos=eos)
+    (; eos)
 end
 
-function _chatrequeststream(chat, body, callback=nothing)
+function _build_stream_message(state::StreamState)::Message
+    if state.finish_reason == TOOL_CALLS && !isempty(state.tool_calls)
+        tcalls = GPTToolCall[]
+        for idx in sort(collect(keys(state.tool_calls)))
+            tc_data = state.tool_calls[idx]
+            fdict = tc_data["function"]
+            args = JSON.parse(fdict["arguments"]; dicttype=Dict{String,Any})
+            gptfunc = GPTFunction(fdict["name"], args)
+            push!(tcalls, GPTToolCall(id=tc_data["id"], func=gptfunc))
+        end
+        Message(role=RoleAssistant, tool_calls=tcalls, finish_reason=TOOL_CALLS)
+    else
+        content = String(take!(state.content))
+        Message(role=RoleAssistant, content=content, finish_reason=something(state.finish_reason, STOP))
+    end
+end
+
+function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
     Threads.@spawn begin
         try
             m = Ref{Union{Message,Nothing}}(nothing)
+            stream_usage = Ref{Union{TokenUsage,Nothing}}(nothing)
             resp = HTTP.open("POST", get_url(chat), auth_header(chat.service)) do io
-                tmp = IOBuffer()
-                chunk_buffer = IOBuffer()
+                state = StreamState()
+                callback_buf = IOBuffer()  # tracks already-emitted text
                 fail_buffer = IOBuffer()
                 done = Ref(false)
                 close_ref = Ref(false)
+                prev_tc_count = 0
                 write(io, body)
                 HTTP.closewrite(io)
                 HTTP.startread(io)
                 while !eof(io) && !close_ref[] && !done[]
                     chunk::String = join((String(take!(fail_buffer)), String(readavailable(io))))
-                    streamstatus = _parse_chunk(chunk, chunk_buffer, fail_buffer)
-                    parsed = String(take!(chunk_buffer))
+                    streamstatus = _parse_chunk(chunk, state, fail_buffer)
+                    # Fire on_tool_call for newly completed tool calls
+                    if !isnothing(on_tool_call) && length(state.tool_calls) > prev_tc_count
+                        for idx in sort(collect(keys(state.tool_calls)))
+                            idx < prev_tc_count && continue
+                            tc_data = state.tool_calls[idx]
+                            fdict = tc_data["function"]
+                            # A tool call is "complete" when we have a non-empty name and parseable arguments
+                            if !isempty(fdict["name"]) && !isempty(fdict["arguments"])
+                                try
+                                    args = JSON.parse(fdict["arguments"]; dicttype=Dict{String,Any})
+                                    gptfunc = GPTFunction(fdict["name"], args)
+                                    tc = GPTToolCall(id=tc_data["id"], func=gptfunc)
+                                    on_tool_call(tc)
+                                catch; end
+                            end
+                        end
+                        prev_tc_count = length(state.tool_calls)
+                    end
                     if streamstatus.eos
                         done[] = true
-                        m[] = Message(role=RoleAssistant, content=String(take!(tmp)), finish_reason=STOP)
+                        m[] = _build_stream_message(state)
+                        stream_usage[] = state.usage
                         !isnothing(callback) && callback(m[], close_ref)
-                    else
-                        !isnothing(callback) && callback(parsed, close_ref)
-                        print(tmp, parsed)
+                    elseif !isnothing(callback)
+                        # Emit only newly-arrived text
+                        full = String(take!(state.content))
+                        emitted = String(take!(callback_buf))
+                        if sizeof(full) > sizeof(emitted)
+                            delta_text = full[nextind(full, sizeof(emitted)):end]
+                            callback(delta_text, close_ref)
+                        end
+                        print(state.content, full)
+                        print(callback_buf, full)
                     end
                 end
                 close_ref[] && @info "stream closed by user"
@@ -116,7 +237,9 @@ function _chatrequeststream(chat, body, callback=nothing)
             if resp.status == 200 && !isnothing(m[])
                 msg = m[]::Message
                 update!(chat, msg)
-                LLMSuccess(message=msg, self=chat)
+                result = LLMSuccess(message=msg, self=chat, usage=stream_usage[])
+                _accumulate_cost!(chat, result)
+                result
             else
                 LLMFailure(status=resp.status, response=String(resp.body), self=chat)
             end
@@ -138,22 +261,24 @@ The `callback` function is called for each chunk of the response. The `close` Re
     The signature of the callback function is:
         `callback(chunk::Union{String, Message}, close::Ref{Bool})`
 """
-function chatrequest!(chat::Chat; retries::Int=0, callback=nothing)
+function chatrequest!(chat::Chat; retries::Int=0, callback=nothing, on_tool_call=nothing)
     res = LLMCallError(error="uninitialized", status=0, self=chat)
     try
         body = JSON.json(chat)
         if chat.stream !== true
             resp = HTTP.post(get_url(chat), body=body, headers=auth_header(chat.service); status_exception=false)
             if resp.status == 200
-                m = extract_message(resp)
-                update!(chat, m)
-                return LLMSuccess(message=m, self=chat)
-            elseif resp.status == 500 || resp.status == 503
-                @warn "Request status: $(resp.status)."
-                @info "Retrying... in 1s"
-                sleep(1)
-                if retries < 30
-                    return chatrequest!(chat; retries=retries + 1, callback=callback)
+                extracted = extract_message(resp)
+                update!(chat, extracted.message)
+                result = LLMSuccess(message=extracted.message, self=chat, usage=extracted.usage)
+                _accumulate_cost!(chat, result)
+                return result
+            elseif _is_retryable(resp.status)
+                if retries < _RETRY_MAX_ATTEMPTS
+                    delay = _retry_delay(retries, resp)
+                    @warn "Request status: $(resp.status). Retrying in $(round(delay; digits=2))s..."
+                    sleep(delay)
+                    return chatrequest!(chat; retries=retries + 1, callback, on_tool_call)
                 else
                     return LLMFailure(status=resp.status, response=String(resp.body), self=chat)
                 end
@@ -162,7 +287,7 @@ function chatrequest!(chat::Chat; retries::Int=0, callback=nothing)
                 return LLMFailure(status=resp.status, response=String(resp.body), self=chat)
             end
         else
-            task = _chatrequeststream(chat, body, callback)
+            task = _chatrequeststream(chat, body, callback; on_tool_call)
             return task
         end
     catch e
@@ -246,13 +371,14 @@ function embeddingrequest!(emb::Embeddings; retries::Int=0)
             embedding = JSON.parse(resp.body; dicttype=Dict{String,Any})
             update!(emb, embedding["data"])
             return (embedding, emb)
-        elseif resp.status == 500 || resp.status == 503
-            @warn "Request status: $(resp.status). Retrying... in 1s"
-            sleep(1)
-            if retries < 30
+        elseif _is_retryable(resp.status)
+            if retries < _RETRY_MAX_ATTEMPTS
+                delay = _retry_delay(retries, resp)
+                @warn "Request status: $(resp.status). Retrying in $(round(delay; digits=2))s..."
+                sleep(delay)
                 return embeddingrequest!(emb; retries=retries + 1)
             else
-                @error "Max retries (30) exceeded for embedding request."
+                @error "Max retries ($(_RETRY_MAX_ATTEMPTS)) exceeded for embedding request."
                 return nothing
             end
         else

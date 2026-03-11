@@ -239,10 +239,11 @@ function generate_image(ig::ImageGeneration; retries::Int=0)
 
         if resp.status == 200
             return ImageSuccess(response=parse_image_response(resp))
-        elseif resp.status in (500, 503)
-            @warn "Request status: $(resp.status). Retrying in 1s..."
-            sleep(1)
-            if retries < 30
+        elseif _is_retryable(resp.status)
+            if retries < _RETRY_MAX_ATTEMPTS
+                delay = _retry_delay(retries, resp)
+                @warn "Request status: $(resp.status). Retrying in $(round(delay; digits=2))s..."
+                sleep(delay)
                 return generate_image(ig; retries=retries + 1)
             else
                 return ImageFailure(response=String(resp.body), status=resp.status)

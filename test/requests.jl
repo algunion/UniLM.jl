@@ -73,10 +73,30 @@ end
             )]
         )
         resp = make_response(body)
-        m = UniLM.extract_message(resp)
+        extracted = UniLM.extract_message(resp)
+        m = extracted.message
         @test m.role == UniLM.RoleAssistant
         @test m.content == "Hello there!"
         @test m.finish_reason == UniLM.STOP
+        @test isnothing(extracted.usage)  # no usage in body
+    end
+
+    @testset "stop with usage field" begin
+        body = Dict(
+            "choices" => [Dict(
+                "finish_reason" => "stop",
+                "message" => Dict("role" => "assistant", "content" => "Hi!")
+            )],
+            "usage" => Dict("prompt_tokens" => 10, "completion_tokens" => 5, "total_tokens" => 15)
+        )
+        resp = make_response(body)
+        extracted = UniLM.extract_message(resp)
+        @test extracted.message.content == "Hi!"
+        u = extracted.usage
+        @test !isnothing(u)
+        @test u.prompt_tokens == 10
+        @test u.completion_tokens == 5
+        @test u.total_tokens == 15
     end
 
     @testset "tool_calls finish_reason" begin
@@ -98,7 +118,7 @@ end
             )]
         )
         resp = make_response(body)
-        m = UniLM.extract_message(resp)
+        m = UniLM.extract_message(resp).message
         @test m.role == UniLM.RoleAssistant
         @test m.finish_reason == UniLM.TOOL_CALLS
         @test length(m.tool_calls) == 1
@@ -118,7 +138,7 @@ end
             )]
         )
         resp = make_response(body)
-        m = UniLM.extract_message(resp)
+        m = UniLM.extract_message(resp).message
         @test m.role == UniLM.RoleAssistant
         @test m.finish_reason == UniLM.CONTENT_FILTER
         @test m.refusal_message == "This content was filtered."
@@ -132,7 +152,7 @@ end
             )]
         )
         resp = make_response(body)
-        m = UniLM.extract_message(resp)
+        m = UniLM.extract_message(resp).message
         @test m.role == UniLM.RoleAssistant
         @test m.content == "No response from the model."
         @test m.finish_reason == "length"
@@ -161,7 +181,7 @@ end
             )]
         )
         resp = make_response(body)
-        m = UniLM.extract_message(resp)
+        m = UniLM.extract_message(resp).message
         @test length(m.tool_calls) == 2
         @test m.tool_calls[1].func.name == "fn1"
         @test m.tool_calls[2].func.name == "fn2"
@@ -171,42 +191,43 @@ end
 @testset "_parse_chunk" begin
     @testset "normal content chunk" begin
         chunk = """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}"""
-        iobuff = IOBuffer()
+        state = UniLM.StreamState()
         failbuff = IOBuffer()
-        result = UniLM._parse_chunk(chunk, iobuff, failbuff)
+        result = UniLM._parse_chunk(chunk, state, failbuff)
         @test result.eos == false
-        @test String(take!(iobuff)) == "Hello"
+        @test String(take!(state.content)) == "Hello"
         @test isempty(take!(failbuff))
     end
 
     @testset "done chunk" begin
         chunk = "data: [DONE]"
-        iobuff = IOBuffer()
+        state = UniLM.StreamState()
         failbuff = IOBuffer()
-        result = UniLM._parse_chunk(chunk, iobuff, failbuff)
+        result = UniLM._parse_chunk(chunk, state, failbuff)
         @test result.eos == true
     end
 
     @testset "stop finish_reason" begin
         chunk = """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"""
-        iobuff = IOBuffer()
+        state = UniLM.StreamState()
         failbuff = IOBuffer()
-        result = UniLM._parse_chunk(chunk, iobuff, failbuff)
+        result = UniLM._parse_chunk(chunk, state, failbuff)
         @test result.eos == true
-        @test isempty(take!(iobuff))  # no content from stop signal
+        @test isempty(take!(state.content))
+        @test state.finish_reason == "stop"
     end
 
     @testset "empty chunk" begin
-        iobuff = IOBuffer()
+        state = UniLM.StreamState()
         failbuff = IOBuffer()
-        result = UniLM._parse_chunk("", iobuff, failbuff)
+        result = UniLM._parse_chunk("", state, failbuff)
         @test result.eos == false
     end
 
     @testset "whitespace-only chunk" begin
-        iobuff = IOBuffer()
+        state = UniLM.StreamState()
         failbuff = IOBuffer()
-        result = UniLM._parse_chunk("   \n  \n  ", iobuff, failbuff)
+        result = UniLM._parse_chunk("   \n  \n  ", state, failbuff)
         @test result.eos == false
     end
 
@@ -214,20 +235,86 @@ end
         chunk = """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":null}]}
 
 data: [DONE]"""
-        iobuff = IOBuffer()
+        state = UniLM.StreamState()
         failbuff = IOBuffer()
-        result = UniLM._parse_chunk(chunk, iobuff, failbuff)
+        result = UniLM._parse_chunk(chunk, state, failbuff)
         @test result.eos == true
-        @test String(take!(iobuff)) == " world"
+        @test String(take!(state.content)) == " world"
     end
 
     @testset "malformed JSON goes to failbuff" begin
         chunk = "data: {invalid json"
-        iobuff = IOBuffer()
+        state = UniLM.StreamState()
         failbuff = IOBuffer()
-        result = UniLM._parse_chunk(chunk, iobuff, failbuff)
+        result = UniLM._parse_chunk(chunk, state, failbuff)
         @test result.eos == false
         @test !isempty(take!(failbuff))
+    end
+
+    @testset "tool call deltas accumulated by index" begin
+        # First chunk: tool call start
+        chunk1 = """data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}"""
+        state = UniLM.StreamState()
+        failbuff = IOBuffer()
+        UniLM._parse_chunk(chunk1, state, failbuff)
+        @test haskey(state.tool_calls, 0)
+        @test state.tool_calls[0]["id"] == "call_abc"
+        @test state.tool_calls[0]["function"]["name"] == "get_weather"
+
+        # Second chunk: arguments fragment
+        chunk2 = """data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\\"location\\\":"}}]},"finish_reason":null}]}"""
+        UniLM._parse_chunk(chunk2, state, failbuff)
+
+        chunk3 = """data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\\"NYC\\\"}"}}]},"finish_reason":null}]}"""
+        UniLM._parse_chunk(chunk3, state, failbuff)
+
+        @test state.tool_calls[0]["function"]["arguments"] == "{\"location\":\"NYC\"}"
+
+        # Finish
+        chunk4 = """data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"""
+        result = UniLM._parse_chunk(chunk4, state, failbuff)
+        @test state.finish_reason == "tool_calls"
+    end
+
+    @testset "usage captured from stream chunk" begin
+        chunk = """data: {"id":"chatcmpl-1","choices":[],"usage":{"prompt_tokens":25,"completion_tokens":10,"total_tokens":35}}"""
+        state = UniLM.StreamState()
+        failbuff = IOBuffer()
+        UniLM._parse_chunk(chunk, state, failbuff)
+        @test !isnothing(state.usage)
+        @test state.usage.prompt_tokens == 25
+        @test state.usage.completion_tokens == 10
+        @test state.usage.total_tokens == 35
+    end
+end
+
+@testset "_build_stream_message" begin
+    @testset "text content message" begin
+        state = UniLM.StreamState()
+        print(state.content, "Hello world")
+        state.finish_reason = "stop"
+        msg = UniLM._build_stream_message(state)
+        @test msg.role == UniLM.RoleAssistant
+        @test msg.content == "Hello world"
+        @test msg.finish_reason == "stop"
+        @test isnothing(msg.tool_calls)
+    end
+
+    @testset "tool calls message" begin
+        state = UniLM.StreamState()
+        state.finish_reason = "tool_calls"
+        state.tool_calls[0] = Dict{String,Any}(
+            "id" => "call_1",
+            "type" => "function",
+            "function" => Dict{String,Any}("name" => "get_weather", "arguments" => "{\"location\":\"NYC\"}")
+        )
+        msg = UniLM._build_stream_message(state)
+        @test msg.role == UniLM.RoleAssistant
+        @test msg.finish_reason == UniLM.TOOL_CALLS
+        @test length(msg.tool_calls) == 1
+        @test msg.tool_calls[1].id == "call_1"
+        @test msg.tool_calls[1].func.name == "get_weather"
+        @test msg.tool_calls[1].func.arguments["location"] == "NYC"
     end
 end
 
@@ -348,4 +435,91 @@ end
             @test isnothing(result)  # returns nothing on error
         end
     end
+end
+
+@testset "_is_retryable" begin
+    @test UniLM._is_retryable(429) == true
+    @test UniLM._is_retryable(500) == true
+    @test UniLM._is_retryable(503) == true
+    @test UniLM._is_retryable(400) == false
+    @test UniLM._is_retryable(401) == false
+    @test UniLM._is_retryable(200) == false
+    @test UniLM._is_retryable(404) == false
+    # HTTP.Response.status is Int16
+    @test UniLM._is_retryable(Int16(429)) == true
+    @test UniLM._is_retryable(Int16(500)) == true
+    @test UniLM._is_retryable(Int16(200)) == false
+end
+
+@testset "_retry_delay" begin
+    @testset "delay within expected range" begin
+        # At retry 0: computed = min(1.0 * 2.0^0, 60.0) = 1.0, delay ∈ [0, 1.0]
+        resp = HTTP.Response(500)
+        for _ in 1:20
+            d = UniLM._retry_delay(0, resp)
+            @test 0.0 <= d <= 1.0
+        end
+    end
+
+    @testset "delay grows with retries" begin
+        resp = HTTP.Response(500)
+        # At retry 5: computed = min(1.0 * 2.0^5, 60.0) = 32.0, delay ∈ [0, 32.0]
+        for _ in 1:20
+            d = UniLM._retry_delay(5, resp)
+            @test 0.0 <= d <= 32.0
+        end
+    end
+
+    @testset "delay capped at max" begin
+        resp = HTTP.Response(500)
+        # At retry 10: computed = min(1.0 * 2.0^10, 60.0) = 60.0, delay ∈ [0, 60.0]
+        for _ in 1:20
+            d = UniLM._retry_delay(10, resp)
+            @test 0.0 <= d <= 60.0
+        end
+        # At retry 20: still capped at 60.0
+        for _ in 1:20
+            d = UniLM._retry_delay(20, resp)
+            @test 0.0 <= d <= 60.0
+        end
+    end
+
+    @testset "Retry-After header respected" begin
+        resp = HTTP.Response(429, ["Retry-After" => "5"])
+        for _ in 1:20
+            d = UniLM._retry_delay(0, resp)
+            # computed at retry 0 = 1.0, so jitter ∈ [0, 1.0]
+            # Retry-After=5, so delay = max(5.0, jitter) = 5.0
+            @test d >= 5.0
+        end
+    end
+
+    @testset "Retry-After header with large retry" begin
+        resp = HTTP.Response(429, ["Retry-After" => "2"])
+        for _ in 1:20
+            d = UniLM._retry_delay(5, resp)
+            # computed = 32.0, jitter ∈ [0, 32.0]
+            # Retry-After=2, so delay = max(2.0, jitter) — may be >= 2.0
+            @test d >= 2.0
+        end
+    end
+
+    @testset "invalid Retry-After ignored" begin
+        resp = HTTP.Response(500, ["Retry-After" => "not-a-number"])
+        d = UniLM._retry_delay(0, resp)
+        @test 0.0 <= d <= 1.0
+    end
+
+    @testset "negative Retry-After ignored" begin
+        resp = HTTP.Response(500, ["Retry-After" => "-1"])
+        d = UniLM._retry_delay(0, resp)
+        @test 0.0 <= d <= 1.0
+    end
+end
+
+@testset "Retry constants" begin
+    @test UniLM._RETRY_BASE == 1.0
+    @test UniLM._RETRY_FACTOR == 2.0
+    @test UniLM._RETRY_MAX_DELAY == 60.0
+    @test UniLM._RETRY_MAX_ATTEMPTS == 30
 end

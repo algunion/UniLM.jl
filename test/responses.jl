@@ -62,6 +62,152 @@ end
     @test FunctionTool <: UniLM.ResponseTool
     @test WebSearchTool <: UniLM.ResponseTool
     @test FileSearchTool <: UniLM.ResponseTool
+    @test MCPTool <: UniLM.ResponseTool
+    @test ComputerUseTool <: UniLM.ResponseTool
+    @test ImageGenerationTool <: UniLM.ResponseTool
+    @test CodeInterpreterTool <: UniLM.ResponseTool
+end
+
+@testset "MCPTool" begin
+    @testset "minimal creation" begin
+        t = MCPTool(server_label="my-server", server_url="https://mcp.example.com/sse")
+        @test t.server_label == "my-server"
+        @test t.server_url == "https://mcp.example.com/sse"
+        @test t.require_approval == "never"
+        @test isnothing(t.allowed_tools)
+        @test isnothing(t.headers)
+    end
+
+    @testset "full creation" begin
+        t = MCPTool(
+            server_label="tools",
+            server_url="https://mcp.example.com/sse",
+            require_approval="always",
+            allowed_tools=["search", "read"],
+            headers=Dict("Authorization" => "Bearer token")
+        )
+        @test t.require_approval == "always"
+        @test t.allowed_tools == ["search", "read"]
+        @test t.headers["Authorization"] == "Bearer token"
+    end
+
+    @testset "JSON serialization" begin
+        t = MCPTool(server_label="srv", server_url="https://example.com")
+        lowered = JSON.lower(t)
+        @test lowered[:type] == "mcp"
+        @test lowered[:server_label] == "srv"
+        @test lowered[:server_url] == "https://example.com"
+        @test lowered[:require_approval] == "never"
+        @test !haskey(lowered, :allowed_tools)
+        @test !haskey(lowered, :headers)
+    end
+
+    @testset "mcp_tool convenience" begin
+        t = mcp_tool("my-server", "https://example.com"; allowed_tools=["fn1"])
+        @test t isa MCPTool
+        @test t.server_label == "my-server"
+        @test t.allowed_tools == ["fn1"]
+    end
+end
+
+@testset "ComputerUseTool" begin
+    @testset "defaults" begin
+        t = ComputerUseTool()
+        @test t.display_width == 1024
+        @test t.display_height == 768
+        @test isnothing(t.environment)
+    end
+
+    @testset "custom" begin
+        t = ComputerUseTool(display_width=1920, display_height=1080, environment="browser")
+        @test t.display_width == 1920
+        @test t.environment == "browser"
+    end
+
+    @testset "JSON serialization" begin
+        t = ComputerUseTool()
+        lowered = JSON.lower(t)
+        @test lowered[:type] == "computer_use_preview"
+        @test lowered[:display_width] == 1024
+        @test lowered[:display_height] == 768
+        @test !haskey(lowered, :environment)
+    end
+
+    @testset "computer_use convenience" begin
+        t = computer_use(display_width=800, display_height=600)
+        @test t isa ComputerUseTool
+        @test t.display_width == 800
+    end
+end
+
+@testset "ImageGenerationTool" begin
+    @testset "defaults" begin
+        t = ImageGenerationTool()
+        @test isnothing(t.background)
+        @test isnothing(t.output_format)
+        @test isnothing(t.output_compression)
+        @test isnothing(t.quality)
+        @test isnothing(t.size)
+    end
+
+    @testset "full creation" begin
+        t = ImageGenerationTool(
+            background="transparent",
+            output_format="png",
+            output_compression=80,
+            quality="high",
+            size="1024x1024"
+        )
+        @test t.background == "transparent"
+        @test t.output_compression == 80
+    end
+
+    @testset "JSON serialization" begin
+        t = ImageGenerationTool(quality="high", size="1024x1024")
+        lowered = JSON.lower(t)
+        @test lowered[:type] == "image_generation"
+        @test lowered[:quality] == "high"
+        @test lowered[:size] == "1024x1024"
+        @test !haskey(lowered, :background)
+        @test !haskey(lowered, :output_format)
+    end
+
+    @testset "image_generation_tool convenience" begin
+        t = image_generation_tool(quality="medium")
+        @test t isa ImageGenerationTool
+        @test t.quality == "medium"
+    end
+end
+
+@testset "CodeInterpreterTool" begin
+    @testset "defaults" begin
+        t = CodeInterpreterTool()
+        @test isnothing(t.container)
+        @test isnothing(t.file_ids)
+    end
+
+    @testset "with options" begin
+        t = CodeInterpreterTool(
+            container=Dict("type" => "auto"),
+            file_ids=["file-1", "file-2"]
+        )
+        @test t.container["type"] == "auto"
+        @test length(t.file_ids) == 2
+    end
+
+    @testset "JSON serialization" begin
+        t = CodeInterpreterTool(file_ids=["file-1"])
+        lowered = JSON.lower(t)
+        @test lowered[:type] == "code_interpreter"
+        @test lowered[:file_ids] == ["file-1"]
+        @test !haskey(lowered, :container)
+    end
+
+    @testset "code_interpreter convenience" begin
+        t = code_interpreter(file_ids=["f1"])
+        @test t isa CodeInterpreterTool
+        @test t.file_ids == ["f1"]
+    end
 end
 
 @testset "FunctionTool" begin
@@ -1511,5 +1657,97 @@ data: {"type":"response.created","response":{"id":"resp_1"}}"""
         failbuff = IOBuffer()
         result = UniLM._parse_response_stream_chunk("  \n  \n  ", textbuff, failbuff)
         @test result.done == false
+    end
+end
+
+# ─── Phase 3B: Respond parameter validation ──────────────────────────────────
+
+@testset "Respond parameter validation" begin
+    @testset "temperature out of range" begin
+        @test_throws ArgumentError Respond(input="test", temperature=-0.1)
+        @test_throws ArgumentError Respond(input="test", temperature=2.1)
+        @test_throws ArgumentError Respond(input="test", temperature=3.0)
+    end
+
+    @testset "temperature boundary values accepted" begin
+        @test Respond(input="test", temperature=0.0).temperature == 0.0
+        @test Respond(input="test", temperature=2.0).temperature == 2.0
+        @test Respond(input="test", temperature=1.0).temperature == 1.0
+    end
+
+    @testset "top_p out of range" begin
+        @test_throws ArgumentError Respond(input="test", top_p=-0.1)
+        @test_throws ArgumentError Respond(input="test", top_p=1.1)
+        @test_throws ArgumentError Respond(input="test", top_p=2.0)
+    end
+
+    @testset "top_p boundary values accepted" begin
+        @test Respond(input="test", top_p=0.0).top_p == 0.0
+        @test Respond(input="test", top_p=1.0).top_p == 1.0
+        @test Respond(input="test", top_p=0.5).top_p == 0.5
+    end
+
+    @testset "max_output_tokens out of range" begin
+        @test_throws ArgumentError Respond(input="test", max_output_tokens=Int64(0))
+        @test_throws ArgumentError Respond(input="test", max_output_tokens=Int64(-1))
+        @test_throws ArgumentError Respond(input="test", max_output_tokens=Int64(-100))
+    end
+
+    @testset "max_output_tokens boundary values accepted" begin
+        @test Respond(input="test", max_output_tokens=Int64(1)).max_output_tokens == 1
+        @test Respond(input="test", max_output_tokens=Int64(100)).max_output_tokens == 100
+    end
+
+    @testset "top_logprobs out of range" begin
+        @test_throws ArgumentError Respond(input="test", top_logprobs=Int64(-1))
+        @test_throws ArgumentError Respond(input="test", top_logprobs=Int64(21))
+        @test_throws ArgumentError Respond(input="test", top_logprobs=Int64(100))
+    end
+
+    @testset "top_logprobs boundary values accepted" begin
+        @test Respond(input="test", top_logprobs=Int64(0)).top_logprobs == 0
+        @test Respond(input="test", top_logprobs=Int64(20)).top_logprobs == 20
+        @test Respond(input="test", top_logprobs=Int64(10)).top_logprobs == 10
+    end
+
+    @testset "nothing values still accepted" begin
+        r = Respond(input="test")
+        @test isnothing(r.temperature)
+        @test isnothing(r.top_p)
+        @test isnothing(r.max_output_tokens)
+        @test isnothing(r.top_logprobs)
+    end
+end
+
+# ─── Phase 3A: Respond.input type tightening ─────────────────────────────────
+
+@testset "Respond.input type" begin
+    @testset "String input accepted" begin
+        r = Respond(input="Hello")
+        @test r.input == "Hello"
+    end
+
+    @testset "Vector{InputMessage} accepted" begin
+        msgs = [InputMessage(role="user", content="Hello")]
+        r = Respond(input=msgs)
+        @test r.input == msgs
+    end
+
+    @testset "Vector{Dict} accepted" begin
+        dicts = [Dict("role" => "user", "content" => "Hello")]
+        r = Respond(input=dicts)
+        @test r.input == dicts
+    end
+
+    @testset "Mixed Vector{Any} accepted" begin
+        mixed = Any[InputMessage(role="user", content="Hi"), Dict("role" => "assistant", "content" => "Hey")]
+        r = Respond(input=mixed)
+        @test r.input == mixed
+    end
+
+    @testset "non-String non-Vector rejected" begin
+        @test_throws MethodError Respond(input=42)
+        @test_throws MethodError Respond(input=nothing)
+        @test_throws MethodError Respond(input=3.14)
     end
 end

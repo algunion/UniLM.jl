@@ -46,8 +46,10 @@ include("constants.jl")
 include("exceptions.jl")
 include("api.jl")
 include("requests.jl")
+include("fork.jl")
 include("responses.jl")
 include("images.jl")
+include("accounting.jl")
 
 # ─── Chat Completions API ─────────────────────────────────────────────────────
 export
@@ -70,7 +72,15 @@ export
     LLMRequestResponse,
     LLMSuccess,
     LLMFailure,
-    LLMCallError
+    LLMCallError,
+    # Token usage and accounting
+    TokenUsage,
+    token_usage,
+    estimated_cost,
+    cumulative_cost,
+    DEFAULT_PRICING,
+    # Fork
+    fork
 
 # ─── Responses API ────────────────────────────────────────────────────────────
 export
@@ -108,6 +118,15 @@ export
     function_tool,
     web_search,
     file_search,
+    mcp_tool,
+    computer_use,
+    image_generation_tool,
+    code_interpreter,
+    # Tool types
+    MCPTool,
+    ComputerUseTool,
+    ImageGenerationTool,
+    CodeInterpreterTool,
     # Format constructors
     text_format,
     json_schema_format,

@@ -1,7 +1,7 @@
 # UniLM.jl — LLM Reference
 
 > **Single-file reference for LLM code-generation systems.**
-> UniLM.jl v0.6.4 · Julia ≥ 1.12 · Deps: `HTTP.jl`, `JSON.jl`, `Base64`
+> UniLM.jl v0.6.5 · Julia ≥ 1.12 · Deps: `HTTP.jl`, `JSON.jl`, `Base64`
 > Repo: <https://github.com/algunion/UniLM.jl>
 
 ## Installation
@@ -90,6 +90,7 @@ end
 - `history=true`: responses are automatically appended to `messages`.
 - `temperature` and `top_p` are mutually exclusive (constructor throws `ArgumentError`).
 - `parallel_tool_calls` is auto-set to `nothing` when `tools` is `nothing`.
+- **Parameter validation**: the constructor validates ranges at construction time — `temperature` ∈ [0.0, 2.0], `top_p` ∈ [0.0, 1.0], `n` ∈ [1, 10], `presence_penalty` ∈ [-2.0, 2.0], `frequency_penalty` ∈ [-2.0, 2.0]. Out-of-range values throw `ArgumentError`.
 
 ### Message
 
@@ -130,7 +131,7 @@ chatrequest!(; service=OPENAIServiceEndpoint, model="gpt-5.2",
 
 - Non-streaming: returns `LLMSuccess`, `LLMFailure`, or `LLMCallError`.
 - Streaming (`stream=true`): returns a `Task`. Pass a `callback(chunk::Union{String,Message}, close::Ref{Bool})`.
-- Auto-retries on HTTP 500/503, up to 30 times with 1s sleep.
+- Auto-retries on HTTP 429/500/503 with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers on 429 responses.
 
 ### Conversation Management
 
@@ -268,7 +269,7 @@ result = fetch(task)  # LLMSuccess when complete
 @kwdef struct Respond
     service::Type{<:ServiceEndpoint} = OPENAIServiceEndpoint
     model::String = "gpt-5.2"
-    input::Any                                              # String or Vector{InputMessage}
+    input::Union{String, Vector}                             # String or Vector{InputMessage}
     instructions::Union{String,Nothing} = nothing
     tools::Union{Vector,Nothing} = nothing                  # Vector of ResponseTool subtypes
     tool_choice::Union{String,Nothing} = nothing            # "auto", "none", "required"
@@ -399,7 +400,8 @@ respond(callback::Function, input; kwargs...) -> Task
 ```
 
 - Streaming callback signature: `callback(chunk::Union{String, ResponseObject}, close::Ref{Bool})`
-- Auto-retries on HTTP 500/503, up to 30 times.
+- Auto-retries on HTTP 429/500/503 with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers.
+- **Parameter validation**: `temperature` ∈ [0.0, 2.0], `top_p` ∈ [0.0, 1.0], `max_output_tokens` ≥ 1, `top_logprobs` ∈ [0, 20]. Out-of-range values throw `ArgumentError`.
 
 ### Response Accessors
 
@@ -539,7 +541,7 @@ generate_image(ig::ImageGeneration; retries=0) -> ImageSuccess | ImageFailure | 
 generate_image(prompt::String; kwargs...)       -> same   # convenience
 ```
 
-Auto-retries on 500/503, up to 30 times.
+Auto-retries on 429/500/503 with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers.
 
 ### Response Types
 
@@ -609,7 +611,7 @@ Embeddings(input::Vector{String})   # batch input, pre-allocates one vector per 
 embeddingrequest!(emb::Embeddings; retries=0) -> (response_dict, emb) | nothing
 ```
 
-Fills `emb.embeddings` in-place. Auto-retries on 500/503.
+Fills `emb.embeddings` in-place. Auto-retries on 429/500/503 with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers.
 
 ### Embeddings Example
 

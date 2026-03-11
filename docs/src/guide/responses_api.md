@@ -382,7 +382,7 @@ end
 | Parameter                | Type           | Default      | Description                                               |
 | :----------------------- | :------------- | :----------- | :-------------------------------------------------------- |
 | `model`                  | String         | `"gpt-5.2"`  | Model to use                                              |
-| `input`                  | Any            | *(required)* | String or `Vector{InputMessage}`                          |
+| `input`                  | `Union{String, Vector}` | *(required)* | String or `Vector{InputMessage}`                   |
 | `instructions`           | String         | —            | System-level instructions                                 |
 | `tools`                  | Vector         | —            | Available tools (function, web search, file search)       |
 | `tool_choice`            | String         | —            | `"auto"`, `"none"`, `"required"`                          |
@@ -409,6 +409,23 @@ end
 | `conversation`           | Any            | —            | Conversation context (String or Dict)                     |
 | `context_management`     | Vector         | —            | Context management strategies                             |
 | `stream_options`         | Dict           | —            | Streaming options (e.g. `include_usage`)                  |
+
+## Retry Behaviour
+
+`respond` automatically retries on HTTP 429, 500, and 503 errors with exponential backoff and jitter (up to 30 attempts, max 60s delay). On 429 responses, the `Retry-After` header is respected. This applies to all Responses API functions (`respond`, `get_response`, `delete_response`, etc.).
+
+## Parameter Validation
+
+The `Respond` constructor validates parameter ranges at construction time:
+
+| Parameter          | Valid Range |
+| :----------------- | :---------- |
+| `temperature`      | 0.0–2.0     |
+| `top_p`            | 0.0–1.0     |
+| `max_output_tokens`| ≥ 1         |
+| `top_logprobs`     | 0–20        |
+
+Out-of-range values throw `ArgumentError`. Additionally, `temperature` and `top_p` are mutually exclusive.
 
 ## See Also
 

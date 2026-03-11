@@ -37,6 +37,14 @@ end
         include("images.jl")
     end
 
+    @testset "fork.jl" begin
+        include("fork.jl")
+    end
+
+    @testset "accounting.jl" begin
+        include("accounting.jl")
+    end
+
     @testset "mock server" begin
         include("mock_server.jl")
     end

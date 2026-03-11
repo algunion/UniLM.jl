@@ -156,7 +156,128 @@ function JSON.lower(t::FileSearchTool)
     return d
 end
 
+"""
+    MCPTool(; server_label, server_url, require_approval="never", allowed_tools=nothing, headers=nothing)
+
+A Model Context Protocol (MCP) tool for the Responses API. Connects the model
+to an external MCP server for tool execution.
+"""
+@kwdef struct MCPTool <: ResponseTool
+    server_label::String
+    server_url::String
+    require_approval::Union{String, AbstractDict, Nothing} = "never"
+    allowed_tools::Union{Vector{String}, Nothing} = nothing
+    headers::Union{AbstractDict, Nothing} = nothing
+end
+
+function JSON.lower(t::MCPTool)
+    d = Dict{Symbol,Any}(:type => "mcp", :server_label => t.server_label, :server_url => t.server_url)
+    !isnothing(t.require_approval) && (d[:require_approval] = t.require_approval)
+    !isnothing(t.allowed_tools) && (d[:allowed_tools] = t.allowed_tools)
+    !isnothing(t.headers) && (d[:headers] = t.headers)
+    return d
+end
+
+"""
+    ComputerUseTool(; display_width=1024, display_height=768, environment=nothing)
+
+A computer use tool for the Responses API. Allows the model to interact with a
+virtual display via screenshots, mouse, and keyboard.
+"""
+@kwdef struct ComputerUseTool <: ResponseTool
+    display_width::Int = 1024
+    display_height::Int = 768
+    environment::Union{String, Nothing} = nothing
+end
+
+function JSON.lower(t::ComputerUseTool)
+    d = Dict{Symbol,Any}(:type => "computer_use_preview", :display_width => t.display_width, :display_height => t.display_height)
+    !isnothing(t.environment) && (d[:environment] = t.environment)
+    return d
+end
+
+"""
+    ImageGenerationTool(; background=nothing, output_format=nothing, output_compression=nothing, quality=nothing, size=nothing)
+
+An image generation tool for the Responses API. Allows the model to generate
+images inline during a response.
+"""
+@kwdef struct ImageGenerationTool <: ResponseTool
+    background::Union{String, Nothing} = nothing
+    output_format::Union{String, Nothing} = nothing
+    output_compression::Union{Int, Nothing} = nothing
+    quality::Union{String, Nothing} = nothing
+    size::Union{String, Nothing} = nothing
+end
+
+function JSON.lower(t::ImageGenerationTool)
+    d = Dict{Symbol,Any}(:type => "image_generation")
+    !isnothing(t.background) && (d[:background] = t.background)
+    !isnothing(t.output_format) && (d[:output_format] = t.output_format)
+    !isnothing(t.output_compression) && (d[:output_compression] = t.output_compression)
+    !isnothing(t.quality) && (d[:quality] = t.quality)
+    !isnothing(t.size) && (d[:size] = t.size)
+    return d
+end
+
+"""
+    CodeInterpreterTool(; container=nothing, file_ids=nothing)
+
+A code interpreter tool for the Responses API. Allows the model to execute
+code in a sandboxed environment.
+"""
+@kwdef struct CodeInterpreterTool <: ResponseTool
+    container::Union{AbstractDict, Nothing} = nothing
+    file_ids::Union{Vector{String}, Nothing} = nothing
+end
+
+function JSON.lower(t::CodeInterpreterTool)
+    d = Dict{Symbol,Any}(:type => "code_interpreter")
+    !isnothing(t.container) && (d[:container] = t.container)
+    !isnothing(t.file_ids) && (d[:file_ids] = t.file_ids)
+    return d
+end
+
 # Convenience constructors
+
+"""
+    mcp_tool(label, url; require_approval="never", allowed_tools=nothing, headers=nothing)
+
+Shorthand constructor for [`MCPTool`](@ref).
+"""
+mcp_tool(label::String, url::String;
+    require_approval::Union{String, AbstractDict, Nothing}="never",
+    allowed_tools::Union{Vector{String}, Nothing}=nothing,
+    headers::Union{AbstractDict, Nothing}=nothing) =
+    MCPTool(server_label=label, server_url=url, require_approval=require_approval,
+        allowed_tools=allowed_tools, headers=headers)
+
+"""
+    computer_use(; display_width=1024, display_height=768, environment=nothing)
+
+Shorthand constructor for [`ComputerUseTool`](@ref).
+"""
+computer_use(; display_width::Int=1024, display_height::Int=768,
+    environment::Union{String, Nothing}=nothing) =
+    ComputerUseTool(display_width=display_width, display_height=display_height, environment=environment)
+
+"""
+    image_generation_tool(; kwargs...)
+
+Shorthand constructor for [`ImageGenerationTool`](@ref).
+"""
+image_generation_tool(; kwargs...) = ImageGenerationTool(; kwargs...)
+
+"""
+    code_interpreter(; container=nothing, file_ids=nothing)
+
+Shorthand constructor for [`CodeInterpreterTool`](@ref).
+"""
+code_interpreter(; container::Union{AbstractDict, Nothing}=nothing,
+    file_ids::Union{Vector{String}, Nothing}=nothing) =
+    CodeInterpreterTool(container=container, file_ids=file_ids)
+
+# Convenience constructors (existing)
 
 """
     function_tool(name, description=nothing; parameters=nothing, strict=nothing)
@@ -355,7 +476,7 @@ Respond(input="Solve this math problem...", model="o3", reasoning=Reasoning(effo
 @kwdef struct Respond
     service::Type{<:ServiceEndpoint} = OPENAIServiceEndpoint
     model::String = "gpt-5.2"
-    input::Any  # String or Vector{InputMessage}
+    input::Union{String, Vector}  # String, Vector{InputMessage}, or Vector{Dict}
     instructions::Union{String,Nothing} = nothing
     tools::Union{Vector,Nothing} = nothing
     tool_choice::Union{String,Nothing} = nothing      # "auto", "none", "required"
@@ -391,6 +512,10 @@ Respond(input="Solve this math problem...", model="o3", reasoning=Reasoning(effo
         prompt_cache_retention, safety_identifier, conversation,
         context_management, stream_options)
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
+        !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
+        !isnothing(top_p) && !(0.0 <= top_p <= 1.0) && throw(ArgumentError("top_p must be in [0.0, 1.0]"))
+        !isnothing(max_output_tokens) && max_output_tokens < 1 && throw(ArgumentError("max_output_tokens must be >= 1"))
+        !isnothing(top_logprobs) && !(0 <= top_logprobs <= 20) && throw(ArgumentError("top_logprobs must be in [0, 20]"))
         new(service, model, input, instructions, tools, tool_choice,
             parallel_tool_calls, temperature, top_p, max_output_tokens,
             stream, text, reasoning, truncation, store, metadata,
@@ -677,10 +802,11 @@ function respond(r::Respond; retries::Int=0, callback=nothing)
 
         if resp.status == 200
             return ResponseSuccess(response=parse_response(resp))
-        elseif resp.status in (500, 503)
-            @warn "Request status: $(resp.status). Retrying in 1s..."
-            sleep(1)
-            if retries < 30
+        elseif _is_retryable(resp.status)
+            if retries < _RETRY_MAX_ATTEMPTS
+                delay = _retry_delay(retries, resp)
+                @warn "Request status: $(resp.status). Retrying in $(round(delay; digits=2))s..."
+                sleep(delay)
                 return respond(r; retries=retries + 1, callback=callback)
             else
                 return ResponseFailure(response=String(resp.body), status=resp.status)

@@ -321,7 +321,7 @@ Creates a new `Chat` object with default settings:
 - `history` is set to `true`
 """
 @kwdef struct Chat
-    service::Type{<:ServiceEndpoint} = OPENAIServiceEndpoint #AZUREServiceEndpoint #OPENAIServiceEndpoint
+    service::Type{<:ServiceEndpoint} = OPENAIServiceEndpoint
     model::String = "gpt-5.2"
     messages::Conversation = Message[]
     history::Bool = true
@@ -329,7 +329,7 @@ Creates a new `Chat` object with default settings:
     tool_choice::Union{String,GPTToolChoice,Nothing} = nothing # "auto" | "none" |
     parallel_tool_calls::Union{Bool,Nothing} = false
     temperature::Union{Float64,Nothing} = nothing # 0.0 - 2.0 - mutual exclusive with top_p
-    top_p::Union{Float64,Nothing} = nothing # 1 - 100 - mutual exclusive with temperature
+    top_p::Union{Float64,Nothing} = nothing # 0.0 - 1.0 - mutual exclusive with temperature
     n::Union{Int64,Nothing} = nothing # 1 - 10
     stream::Union{Bool,Nothing} = nothing
     stop::Union{Vector{String},String,Nothing} = nothing # max 4 sequences
@@ -340,6 +340,7 @@ Creates a new `Chat` object with default settings:
     logit_bias::Union{AbstractDict{String,Float64},Nothing} = nothing
     user::Union{String,Nothing} = nothing
     seed::Union{Int64,Nothing} = nothing
+    _cumulative_cost::Ref{Float64} = Ref(0.0)
     function Chat(
         service,
         model,
@@ -359,9 +360,15 @@ Creates a new `Chat` object with default settings:
         frequency_penalty,
         logit_bias,
         user,
-        seed
+        seed,
+        _cumulative_cost
     )
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
+        !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
+        !isnothing(top_p) && !(0.0 <= top_p <= 1.0) && throw(ArgumentError("top_p must be in [0.0, 1.0]"))
+        !isnothing(n) && !(1 <= n <= 10) && throw(ArgumentError("n must be in [1, 10]"))
+        !isnothing(presence_penalty) && !(-2.0 <= presence_penalty <= 2.0) && throw(ArgumentError("presence_penalty must be in [-2.0, 2.0]"))
+        !isnothing(frequency_penalty) && !(-2.0 <= frequency_penalty <= 2.0) && throw(ArgumentError("frequency_penalty must be in [-2.0, 2.0]"))
         return new(
             service,
             model,
@@ -381,7 +388,8 @@ Creates a new `Chat` object with default settings:
             frequency_penalty,
             logit_bias,
             user,
-            seed
+            seed,
+            _cumulative_cost
         )
     end
 end
@@ -415,17 +423,30 @@ Abstract supertype for all API call results. Pattern-match on subtypes to handle
 abstract type LLMRequestResponse end
 
 """
-    LLMSuccess(; message, self)
+    TokenUsage(; prompt_tokens=0, completion_tokens=0, total_tokens=0)
+
+Token usage statistics returned by the API.
+"""
+@kwdef struct TokenUsage
+    prompt_tokens::Int = 0
+    completion_tokens::Int = 0
+    total_tokens::Int = 0
+end
+
+"""
+    LLMSuccess(; message, self, usage=nothing)
 
 Successful Chat Completions API response.
 
 # Fields
 - `message::Message`: The assistant's reply message.
 - `self::Chat`: The updated [`Chat`](@ref) object (with the new message appended if `history=true`).
+- `usage::Union{TokenUsage, Nothing}`: Token usage statistics from the API.
 """
 @kwdef struct LLMSuccess <: LLMRequestResponse
     message::Message
     self::Chat
+    usage::Union{TokenUsage, Nothing} = nothing
 end
 
 """

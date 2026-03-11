@@ -88,6 +88,10 @@ println("Pre-allocated length: ", length(emb.embeddings))
 println("All zeros before API call: ", all(x -> x == 0.0, emb.embeddings))
 ```
 
+## Retry Behaviour
+
+`embeddingrequest!` automatically retries on HTTP 429, 500, and 503 errors with exponential backoff and jitter (up to 30 attempts, max 60s delay). On 429 responses, the `Retry-After` header is respected.
+
 ## API Reference
 
 See the [Embeddings API](@ref embeddings_api) page for full type documentation.

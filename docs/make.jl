@@ -44,4 +44,5 @@ deploydocs(;
     repo="github.com/algunion/UniLM.jl",
     devbranch="main",
     push_preview=true,
+    versions=["stable" => "v^", "v#.#.#", "dev" => "dev"],
 )

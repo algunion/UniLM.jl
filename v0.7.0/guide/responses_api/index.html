@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Responses API · UniLM.jl</title><meta name="title" content="Responses API · UniLM.jl"/><meta property="og:title" content="Responses API · UniLM.jl"/><meta property="twitter:title" content="Responses API · UniLM.jl"/><meta name="description" content="Documentation for UniLM.jl."/><meta property="og:description" content="Documentation for UniLM.jl."/><meta property="twitter:description" content="Documentation for UniLM.jl."/><meta property="og:url" content="https://algunion.github.io/UniLM.jl/guide/responses_api/"/><meta property="twitter:url" content="https://algunion.github.io/UniLM.jl/guide/responses_api/"/><link rel="canonical" href="https://algunion.github.io/UniLM.jl/guide/responses_api/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">UniLM.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><a class="tocitem" href="../../llm/">LLM Reference</a></li><li><a class="tocitem" href="../../getting_started/">Getting Started</a></li><li><span class="tocitem">Guide</span><ul><li><a class="tocitem" href="../chat_completions/">Chat Completions</a></li><li class="is-active"><a class="tocitem" href>Responses API</a><ul class="internal"><li><a class="tocitem" href="#Basic-Usage"><span>Basic Usage</span></a></li><li><a class="tocitem" href="#The-Respond-Type"><span>The <code>Respond</code> Type</span></a></li><li><a class="tocitem" href="#Instructions-(System-Prompt)"><span>Instructions (System Prompt)</span></a></li><li><a class="tocitem" href="#Structured-Input"><span>Structured Input</span></a></li><li><a class="tocitem" href="#Multi-Turn-Conversations"><span>Multi-Turn Conversations</span></a></li><li><a class="tocitem" href="#Built-in-Tools"><span>Built-in Tools</span></a></li><li><a class="tocitem" href="#Reasoning-(O-Series-Models)"><span>Reasoning (O-Series Models)</span></a></li><li><a class="tocitem" href="#Structured-Output"><span>Structured Output</span></a></li><li><a class="tocitem" href="#Response-Accessors"><span>Response Accessors</span></a></li><li><a class="tocitem" href="#Managing-Stored-Responses"><span>Managing Stored Responses</span></a></li><li><a class="tocitem" href="#Metadata"><span>Metadata</span></a></li><li><a class="tocitem" href="#Service-Tier"><span>Service Tier</span></a></li><li><a class="tocitem" href="#Counting-Input-Tokens"><span>Counting Input Tokens</span></a></li><li><a class="tocitem" href="#Compacting-Conversations"><span>Compacting Conversations</span></a></li><li><a class="tocitem" href="#Cancelling-Responses"><span>Cancelling Responses</span></a></li><li><a class="tocitem" href="#Parameters-Reference"><span>Parameters Reference</span></a></li><li><a class="tocitem" href="#Retry-Behaviour"><span>Retry Behaviour</span></a></li><li><a class="tocitem" href="#Parameter-Validation"><span>Parameter Validation</span></a></li><li><a class="tocitem" href="#See-Also"><span>See Also</span></a></li></ul></li><li><a class="tocitem" href="../image_generation/">Image Generation</a></li><li><a class="tocitem" href="../embeddings/">Embeddings</a></li><li><a class="tocitem" href="../tool_calling/">Tool Calling</a></li><li><a class="tocitem" href="../streaming/">Streaming</a></li><li><a class="tocitem" href="../structured_output/">Structured Output</a></li><li><a class="tocitem" href="../multi_backend/">Multi-Backend</a></li></ul></li><li><span class="tocitem">API Reference</span><ul><li><a class="tocitem" href="../../api/chat/">Chat Types</a></li><li><a class="tocitem" href="../../api/responses/">Responses Types</a></li><li><a class="tocitem" href="../../api/images/">Images</a></li><li><a class="tocitem" href="../../api/embeddings/">Embeddings</a></li><li><a class="tocitem" href="../../api/endpoints/">Service Endpoints</a></li><li><a class="tocitem" href="../../api/results/">Result Types</a></li></ul></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Guide</a></li><li class="is-active"><a href>Responses API</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Responses API</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/algunion/UniLM.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/algunion/UniLM.jl/blob/main/docs/src/guide/responses_api.md#" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="responses_guide"><a class="docs-heading-anchor" href="#responses_guide">Responses API</a><a id="responses_guide-1"></a><a class="docs-heading-anchor-permalink" href="#responses_guide" title="Permalink"></a></h1><p>The Responses API is OpenAI&#39;s newer, more flexible alternative to Chat Completions. Key advantages include built-in tools (web search, file search), stateless multi-turn via <code>previous_response_id</code>, and reasoning support for O-series models.</p><h2 id="Basic-Usage"><a class="docs-heading-anchor" href="#Basic-Usage">Basic Usage</a><a id="Basic-Usage-1"></a><a class="docs-heading-anchor-permalink" href="#Basic-Usage" title="Permalink"></a></h2><p>The simplest call — just a string:</p><pre><code class="language-julia hljs">result = respond(&quot;Explain Julia&#39;s multiple dispatch in 2-3 sentences.&quot;)
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println(&quot;Request failed — &quot;, output_text(result))
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Julia uses multiple dispatch to choose which method to run based on the types of *all* a function’s arguments, not just the first one. You can define many methods under the same function name for different combinations of argument types, and Julia selects the most specific match at runtime. This makes it natural to write generic code while still getting fast, specialized implementations for particular types.</code></pre><pre><code class="language-julia hljs">if result isa ResponseSuccess
+    println(&quot;ID:     &quot;, result.response.id)
+    println(&quot;Status: &quot;, result.response.status)
+    println(&quot;Model:  &quot;, result.response.model)
+else
+    println(&quot;No response metadata available&quot;)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">ID:     resp_0e5866cded49c7c00069b2b9a380a0819ea17518b48adf5c86
+Status: completed
+Model:  gpt-5.2-2025-12-11</code></pre><h2 id="The-Respond-Type"><a class="docs-heading-anchor" href="#The-Respond-Type">The <code>Respond</code> Type</a><a id="The-Respond-Type-1"></a><a class="docs-heading-anchor-permalink" href="#The-Respond-Type" title="Permalink"></a></h2><p>For full control, construct a <a href="../../llm/#Respond"><code>Respond</code></a> object:</p><pre><code class="language-julia hljs">r = Respond(
+    model=&quot;gpt-5.2&quot;,
+    input=&quot;Explain monads simply&quot;,
+    instructions=&quot;You are a functional programming expert. Be concise.&quot;,
+    temperature=0.5,
+    max_output_tokens=500,
+)
+println(&quot;Model: &quot;, r.model)
+println(&quot;Request body:&quot;)
+println(JSON.json(r))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Model: gpt-5.2
+Request body:
+{&quot;temperature&quot;:0.5,&quot;max_output_tokens&quot;:500,&quot;model&quot;:&quot;gpt-5.2&quot;,&quot;input&quot;:&quot;Explain monads simply&quot;,&quot;instructions&quot;:&quot;You are a functional programming expert. Be concise.&quot;}</code></pre><h2 id="Instructions-(System-Prompt)"><a class="docs-heading-anchor" href="#Instructions-(System-Prompt)">Instructions (System Prompt)</a><a id="Instructions-(System-Prompt)-1"></a><a class="docs-heading-anchor-permalink" href="#Instructions-(System-Prompt)" title="Permalink"></a></h2><p>Unlike Chat Completions where you push a system <code>Message</code>, the Responses API uses the <code>instructions</code> parameter:</p><pre><code class="language-julia hljs">result = respond(
+    &quot;Translate to French: The quick brown fox jumps over the lazy dog.&quot;,
+    instructions=&quot;You are a professional translator. Respond only with the translation.&quot;
+)
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println(&quot;Request failed — &quot;, output_text(result))
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Le rapide renard brun saute par-dessus le chien paresseux.</code></pre><h2 id="Structured-Input"><a class="docs-heading-anchor" href="#Structured-Input">Structured Input</a><a id="Structured-Input-1"></a><a class="docs-heading-anchor-permalink" href="#Structured-Input" title="Permalink"></a></h2><p>For multimodal inputs, use <a href="../../api/responses/#UniLM.InputMessage"><code>InputMessage</code></a> with content helpers:</p><pre><code class="language-julia hljs"># Text-only structured input
+msgs = [
+    InputMessage(role=&quot;system&quot;, content=&quot;You analyze images.&quot;),
+    InputMessage(role=&quot;user&quot;, content=[
+        input_text(&quot;What do you see in this image?&quot;),
+        input_image(&quot;https://example.com/photo.jpg&quot;),
+    ]),
+]
+r = Respond(input=msgs, model=&quot;gpt-5.2&quot;)
+println(&quot;Input is structured: &quot;, r.input isa Vector)
+println(&quot;Number of input messages: &quot;, length(r.input))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Input is structured: true
+Number of input messages: 2</code></pre><h3 id="Input-Helpers"><a class="docs-heading-anchor" href="#Input-Helpers">Input Helpers</a><a id="Input-Helpers-1"></a><a class="docs-heading-anchor-permalink" href="#Input-Helpers" title="Permalink"></a></h3><table><tr><th style="text-align: left">Function</th><th style="text-align: left">Purpose</th></tr><tr><td style="text-align: left"><a href="../../api/responses/#UniLM.input_text"><code>input_text</code></a></td><td style="text-align: left">Text content part</td></tr><tr><td style="text-align: left"><a href="../../api/responses/#UniLM.input_image"><code>input_image</code></a></td><td style="text-align: left">Image URL content part</td></tr><tr><td style="text-align: left"><a href="../../api/responses/#UniLM.input_file"><code>input_file</code></a></td><td style="text-align: left">File (URL or ID) content part</td></tr></table><h2 id="Multi-Turn-Conversations"><a class="docs-heading-anchor" href="#Multi-Turn-Conversations">Multi-Turn Conversations</a><a id="Multi-Turn-Conversations-1"></a><a class="docs-heading-anchor-permalink" href="#Multi-Turn-Conversations" title="Permalink"></a></h2><p>Chain requests using <code>previous_response_id</code> — no need to re-send the full history:</p><pre><code class="language-julia hljs">r1 = respond(&quot;Tell me a one-liner programming joke.&quot;, instructions=&quot;Be concise.&quot;)
+if r1 isa ResponseSuccess
+    println(output_text(r1))
+else
+    println(&quot;Request failed — &quot;, output_text(r1))
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">There are only 10 kinds of people in the world: those who understand binary and those who don’t.</code></pre><pre><code class="language-julia hljs">if r1 isa ResponseSuccess
+    r2 = respond(&quot;Explain why that&#39;s funny, in one sentence.&quot;, previous_response_id=r1.response.id)
+    if r2 isa ResponseSuccess
+        println(output_text(r2))
+    else
+        println(&quot;Request failed — &quot;, output_text(r2))
+    end
+else
+    println(&quot;Skipped — first request failed&quot;)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">It’s funny because “10” is binary for 2, so it’s a nerdy twist that splits people into those who get binary and those who don’t.</code></pre><h2 id="Built-in-Tools"><a class="docs-heading-anchor" href="#Built-in-Tools">Built-in Tools</a><a id="Built-in-Tools-1"></a><a class="docs-heading-anchor-permalink" href="#Built-in-Tools" title="Permalink"></a></h2><h3 id="Web-Search"><a class="docs-heading-anchor" href="#Web-Search">Web Search</a><a id="Web-Search-1"></a><a class="docs-heading-anchor-permalink" href="#Web-Search" title="Permalink"></a></h3><pre><code class="language-julia hljs">result = respond(
+    &quot;What is the latest stable release of the Julia programming language?&quot;,
+    tools=[web_search()]
+)
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println(&quot;Request failed — &quot;, output_text(result))
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">The latest **stable** release of the Julia programming language is **Julia 1.12.4**. ([julialang.org](https://julialang.org/blog/2026/01/this-month-in-julia-world/?utm_source=openai))</code></pre><h3 id="File-Search"><a class="docs-heading-anchor" href="#File-Search">File Search</a><a id="File-Search-1"></a><a class="docs-heading-anchor-permalink" href="#File-Search" title="Permalink"></a></h3><pre><code class="language-julia hljs">result = respond(
+    &quot;Find information about error handling&quot;,
+    tools=[file_search([&quot;vs_abc123&quot;])]
+)</code></pre><h3 id="Function-Tools"><a class="docs-heading-anchor" href="#Function-Tools">Function Tools</a><a id="Function-Tools-1"></a><a class="docs-heading-anchor-permalink" href="#Function-Tools" title="Permalink"></a></h3><pre><code class="language-julia hljs">weather_tool = function_tool(
+    &quot;get_weather&quot;,
+    &quot;Get current weather for a location&quot;,
+    parameters=Dict(
+        &quot;type&quot; =&gt; &quot;object&quot;,
+        &quot;properties&quot; =&gt; Dict(
+            &quot;location&quot; =&gt; Dict(&quot;type&quot; =&gt; &quot;string&quot;, &quot;description&quot; =&gt; &quot;City name&quot;)
+        ),
+        &quot;required&quot; =&gt; [&quot;location&quot;]
+    )
+)
+println(&quot;Tool name: &quot;, weather_tool.name)
+println(&quot;Tool JSON: &quot;, JSON.json(JSON.lower(weather_tool)))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Tool name: get_weather
+Tool JSON: {&quot;type&quot;:&quot;function&quot;,&quot;name&quot;:&quot;get_weather&quot;,&quot;description&quot;:&quot;Get current weather for a location&quot;,&quot;parameters&quot;:{&quot;properties&quot;:{&quot;location&quot;:{&quot;type&quot;:&quot;string&quot;,&quot;description&quot;:&quot;City name&quot;}},&quot;required&quot;:[&quot;location&quot;],&quot;type&quot;:&quot;object&quot;}}</code></pre><pre><code class="language-julia hljs">result = respond(&quot;What&#39;s the weather in Tokyo? Use celsius.&quot;, tools=[weather_tool])
+calls = function_calls(result)
+if !isempty(calls)
+    println(&quot;Function: &quot;, calls[1][&quot;name&quot;])
+    println(&quot;Arguments: &quot;, JSON.json(JSON.parse(calls[1][&quot;arguments&quot;]), 2))
+else
+    println(&quot;No function calls — &quot;, output_text(result))
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Function: get_weather
+Arguments: {
+  &quot;location&quot;: &quot;Tokyo&quot;
+}</code></pre><h2 id="Reasoning-(O-Series-Models)"><a class="docs-heading-anchor" href="#Reasoning-(O-Series-Models)">Reasoning (O-Series Models)</a><a id="Reasoning-(O-Series-Models)-1"></a><a class="docs-heading-anchor-permalink" href="#Reasoning-(O-Series-Models)" title="Permalink"></a></h2><p>For models like <code>o3</code> that support extended reasoning:</p><pre><code class="language-julia hljs">r = Respond(
+    input=&quot;Prove that √2 is irrational&quot;,
+    model=&quot;o3&quot;,
+    reasoning=Reasoning(effort=&quot;high&quot;, summary=&quot;detailed&quot;)
+)
+println(&quot;Model: &quot;, r.model)
+println(&quot;Reasoning effort: &quot;, r.reasoning.effort)
+println(JSON.json(r))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Model: o3
+Reasoning effort: high
+{&quot;reasoning&quot;:{&quot;effort&quot;:&quot;high&quot;,&quot;summary&quot;:&quot;detailed&quot;},&quot;model&quot;:&quot;o3&quot;,&quot;input&quot;:&quot;Prove that √2 is irrational&quot;}</code></pre><h2 id="Structured-Output"><a class="docs-heading-anchor" href="#Structured-Output">Structured Output</a><a id="Structured-Output-1"></a><a class="docs-heading-anchor-permalink" href="#Structured-Output" title="Permalink"></a></h2><p>Force JSON-conformant output:</p><pre><code class="language-julia hljs"># JSON Schema format
+fmt = json_schema_format(
+    &quot;colors&quot;,
+    &quot;A list of colors&quot;,
+    Dict(
+        &quot;type&quot; =&gt; &quot;object&quot;,
+        &quot;properties&quot; =&gt; Dict(
+            &quot;colors&quot; =&gt; Dict(
+                &quot;type&quot; =&gt; &quot;array&quot;,
+                &quot;items&quot; =&gt; Dict(&quot;type&quot; =&gt; &quot;string&quot;)
+            )
+        ),
+        &quot;required&quot; =&gt; [&quot;colors&quot;],
+        &quot;additionalProperties&quot; =&gt; false
+    ),
+    strict=true
+)
+println(&quot;Format type: &quot;, fmt.format.type)
+println(&quot;Schema name: &quot;, fmt.format.name)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Format type: json_schema
+Schema name: colors</code></pre><pre><code class="language-julia hljs">result = respond(&quot;List 5 popular colors&quot;, text=fmt)
+if result isa ResponseSuccess
+    println(JSON.json(JSON.parse(output_text(result)), 2))
+else
+    println(&quot;Request failed — &quot;, output_text(result))
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">{
+  &quot;colors&quot;: [
+    &quot;Red&quot;,
+    &quot;Blue&quot;,
+    &quot;Green&quot;,
+    &quot;Black&quot;,
+    &quot;White&quot;
+  ]
+}</code></pre><h2 id="Response-Accessors"><a class="docs-heading-anchor" href="#Response-Accessors">Response Accessors</a><a id="Response-Accessors-1"></a><a class="docs-heading-anchor-permalink" href="#Response-Accessors" title="Permalink"></a></h2><pre><code class="language-julia hljs">result = respond(&quot;Hello!&quot;)
+
+if result isa ResponseSuccess
+    r = result.response
+
+    output_text(result)      # full text output
+    function_calls(result)   # Vector of function call Dicts (empty if none)
+
+    r.id                     # &quot;resp_00e791c8...&quot;
+    r.status                 # &quot;completed&quot;
+    r.model                  # &quot;gpt-5.2-2025-12-11&quot;
+    r.output                 # full output array
+    r.usage                  # Dict with token counts
+end</code></pre><h2 id="Managing-Stored-Responses"><a class="docs-heading-anchor" href="#Managing-Stored-Responses">Managing Stored Responses</a><a id="Managing-Stored-Responses-1"></a><a class="docs-heading-anchor-permalink" href="#Managing-Stored-Responses" title="Permalink"></a></h2><p>When you pass <code>store=true</code>, the response is saved on OpeAnI&#39;s servers and can be retrieved, inspected, or deleted later:</p><pre><code class="language-julia hljs">r = respond(&quot;Say &#39;stored response test&#39; and nothing else.&quot;, store=true)
+if r isa ResponseSuccess
+    rid = r.response.id
+    println(&quot;Stored response ID: &quot;, rid)
+
+    # Retrieve
+    retrieved = get_response(rid)
+    if retrieved isa ResponseSuccess
+        println(&quot;Retrieved text: &quot;, output_text(retrieved))
+    end
+
+    # List input items
+    items = list_input_items(rid)
+    if items isa Dict
+        println(&quot;Input items: &quot;, length(items[&quot;data&quot;]))
+    end
+
+    # Delete
+    del = delete_response(rid)
+    if del isa Dict
+        println(&quot;Deleted: &quot;, del[&quot;deleted&quot;])
+    end
+else
+    println(&quot;Request failed — &quot;, output_text(r))
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Stored response ID: resp_0ee4522f6e8d99680069b2b9b258e0819cb274f492705b36d4
+Retrieved text: stored response test
+Input items: 1
+Deleted: true</code></pre><h2 id="Metadata"><a class="docs-heading-anchor" href="#Metadata">Metadata</a><a id="Metadata-1"></a><a class="docs-heading-anchor-permalink" href="#Metadata" title="Permalink"></a></h2><p>Attach arbitrary key-value metadata to any request for tracking, filtering, or debugging:</p><pre><code class="language-julia hljs">result = respond(
+    &quot;Say &#39;metadata test&#39; and nothing else.&quot;,
+    metadata=Dict(&quot;env&quot; =&gt; &quot;docs&quot;, &quot;request_id&quot; =&gt; &quot;demo_123&quot;)
+)
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println(&quot;Request failed — &quot;, output_text(result))
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">metadata test</code></pre><h2 id="Service-Tier"><a class="docs-heading-anchor" href="#Service-Tier">Service Tier</a><a id="Service-Tier-1"></a><a class="docs-heading-anchor-permalink" href="#Service-Tier" title="Permalink"></a></h2><p>Control the processing tier for your request (<code>&quot;auto&quot;</code>, <code>&quot;default&quot;</code>, <code>&quot;flex&quot;</code>, <code>&quot;priority&quot;</code>):</p><pre><code class="language-julia hljs">result = respond(&quot;Say &#39;tier test&#39; and nothing else.&quot;, service_tier=&quot;auto&quot;)
+if result isa ResponseSuccess
+    println(output_text(result))
+else
+    println(&quot;Request failed — &quot;, output_text(result))
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">tier test</code></pre><h2 id="Counting-Input-Tokens"><a class="docs-heading-anchor" href="#Counting-Input-Tokens">Counting Input Tokens</a><a id="Counting-Input-Tokens-1"></a><a class="docs-heading-anchor-permalink" href="#Counting-Input-Tokens" title="Permalink"></a></h2><p>Estimate token usage <strong>before</strong> making a full request — useful for cost estimation or verifying that input fits within the context window:</p><pre><code class="language-julia hljs">result = count_input_tokens(input=&quot;Tell me a joke about programming&quot;)
+if result isa Dict
+    println(&quot;Input tokens: &quot;, result[&quot;input_tokens&quot;])
+else
+    println(&quot;Request failed — see result for details&quot;)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Input tokens: 12</code></pre><p>With tools and instructions:</p><pre><code class="language-julia hljs">tool = function_tool(&quot;search&quot;, &quot;Search for information&quot;,
+    parameters=Dict(&quot;type&quot; =&gt; &quot;object&quot;, &quot;properties&quot; =&gt; Dict(
+        &quot;query&quot; =&gt; Dict(&quot;type&quot; =&gt; &quot;string&quot;)
+    ), &quot;required&quot; =&gt; [&quot;query&quot;], &quot;additionalProperties&quot; =&gt; false),
+    strict=true
+)
+result = count_input_tokens(
+    input=&quot;Search for Julia language news&quot;,
+    instructions=&quot;You are a helpful assistant.&quot;,
+    tools=[tool]
+)
+if result isa Dict
+    println(&quot;Tokens with tools: &quot;, result[&quot;input_tokens&quot;])
+else
+    println(&quot;Request failed — see result for details&quot;)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Tokens with tools: 54</code></pre><h2 id="Compacting-Conversations"><a class="docs-heading-anchor" href="#Compacting-Conversations">Compacting Conversations</a><a id="Compacting-Conversations-1"></a><a class="docs-heading-anchor-permalink" href="#Compacting-Conversations" title="Permalink"></a></h2><p>For long conversations, <a href="../../api/responses/#UniLM.compact_response"><code>compact_response</code></a> compresses the history into opaque, encrypted items that reduce token usage while preserving context:</p><pre><code class="language-julia hljs">items = [
+    Dict(&quot;role&quot; =&gt; &quot;user&quot;, &quot;content&quot; =&gt; &quot;Hello, I want to learn about Julia.&quot;),
+    Dict(&quot;type&quot; =&gt; &quot;message&quot;, &quot;role&quot; =&gt; &quot;assistant&quot;, &quot;status&quot; =&gt; &quot;completed&quot;,
+         &quot;content&quot; =&gt; [Dict(&quot;type&quot; =&gt; &quot;output_text&quot;,
+            &quot;text&quot; =&gt; &quot;Julia is a high-performance programming language for technical computing.&quot;)])
+]
+result = compact_response(input=items)
+if result isa Dict
+    println(&quot;Compact succeeded&quot;)
+    println(&quot;Output items: &quot;, length(result[&quot;output&quot;]))
+    println(&quot;Usage: &quot;, result[&quot;usage&quot;])
+else
+    println(&quot;Request failed — see result for details&quot;)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Compact succeeded
+Output items: 2
+Usage: Dict{String, Any}(&quot;input_tokens&quot; =&gt; 125, &quot;input_tokens_details&quot; =&gt; Dict{String, Any}(&quot;cached_tokens&quot; =&gt; 0), &quot;output_tokens_details&quot; =&gt; Dict{String, Any}(&quot;reasoning_tokens&quot; =&gt; 0), &quot;total_tokens&quot; =&gt; 522, &quot;output_tokens&quot; =&gt; 397)</code></pre><h2 id="Cancelling-Responses"><a class="docs-heading-anchor" href="#Cancelling-Responses">Cancelling Responses</a><a id="Cancelling-Responses-1"></a><a class="docs-heading-anchor-permalink" href="#Cancelling-Responses" title="Permalink"></a></h2><p>Cancel an in-progress (background) response:</p><pre><code class="language-julia hljs"># Start a background response
+result = respond(&quot;Write a very long essay about Julia&quot;, background=true)
+
+# Cancel it
+if result isa ResponseSuccess
+    cancel_result = cancel_response(result.response.id)
+    if cancel_result isa ResponseSuccess
+        println(&quot;Cancelled: &quot;, cancel_result.response.status)
+    end
+end</code></pre><h2 id="Parameters-Reference"><a class="docs-heading-anchor" href="#Parameters-Reference">Parameters Reference</a><a id="Parameters-Reference-1"></a><a class="docs-heading-anchor-permalink" href="#Parameters-Reference" title="Permalink"></a></h2><table><tr><th style="text-align: left">Parameter</th><th style="text-align: left">Type</th><th style="text-align: left">Default</th><th style="text-align: left">Description</th></tr><tr><td style="text-align: left"><code>model</code></td><td style="text-align: left">String</td><td style="text-align: left"><code>&quot;gpt-5.2&quot;</code></td><td style="text-align: left">Model to use</td></tr><tr><td style="text-align: left"><code>input</code></td><td style="text-align: left"><code>Union{String, Vector}</code></td><td style="text-align: left"><em>(required)</em></td><td style="text-align: left">String or <code>Vector{InputMessage}</code></td></tr><tr><td style="text-align: left"><code>instructions</code></td><td style="text-align: left">String</td><td style="text-align: left">—</td><td style="text-align: left">System-level instructions</td></tr><tr><td style="text-align: left"><code>tools</code></td><td style="text-align: left">Vector</td><td style="text-align: left">—</td><td style="text-align: left">Available tools (function, web search, file search)</td></tr><tr><td style="text-align: left"><code>tool_choice</code></td><td style="text-align: left">String</td><td style="text-align: left">—</td><td style="text-align: left"><code>&quot;auto&quot;</code>, <code>&quot;none&quot;</code>, <code>&quot;required&quot;</code></td></tr><tr><td style="text-align: left"><code>parallel_tool_calls</code></td><td style="text-align: left">Bool</td><td style="text-align: left">—</td><td style="text-align: left">Allow parallel tool calls</td></tr><tr><td style="text-align: left"><code>temperature</code></td><td style="text-align: left">Float64</td><td style="text-align: left">—</td><td style="text-align: left">0.0–2.0 (mutually exclusive with <code>top_p</code>)</td></tr><tr><td style="text-align: left"><code>top_p</code></td><td style="text-align: left">Float64</td><td style="text-align: left">—</td><td style="text-align: left">0.0–1.0 (mutually exclusive with <code>temperature</code>)</td></tr><tr><td style="text-align: left"><code>max_output_tokens</code></td><td style="text-align: left">Int64</td><td style="text-align: left">—</td><td style="text-align: left">Maximum tokens in the response</td></tr><tr><td style="text-align: left"><code>stream</code></td><td style="text-align: left">Bool</td><td style="text-align: left">—</td><td style="text-align: left">Enable streaming</td></tr><tr><td style="text-align: left"><code>text</code></td><td style="text-align: left">TextConfig</td><td style="text-align: left">—</td><td style="text-align: left">Output format (text, json<em>object, json</em>schema)</td></tr><tr><td style="text-align: left"><code>reasoning</code></td><td style="text-align: left">Reasoning</td><td style="text-align: left">—</td><td style="text-align: left">Reasoning config for O-series models</td></tr><tr><td style="text-align: left"><code>truncation</code></td><td style="text-align: left">String</td><td style="text-align: left">—</td><td style="text-align: left"><code>&quot;auto&quot;</code> or <code>&quot;disabled&quot;</code></td></tr><tr><td style="text-align: left"><code>store</code></td><td style="text-align: left">Bool</td><td style="text-align: left">—</td><td style="text-align: left">Store response for later retrieval</td></tr><tr><td style="text-align: left"><code>metadata</code></td><td style="text-align: left">Dict</td><td style="text-align: left">—</td><td style="text-align: left">Arbitrary key-value metadata</td></tr><tr><td style="text-align: left"><code>previous_response_id</code></td><td style="text-align: left">String</td><td style="text-align: left">—</td><td style="text-align: left">Chain to a previous response for multi-turn</td></tr><tr><td style="text-align: left"><code>user</code></td><td style="text-align: left">String</td><td style="text-align: left">—</td><td style="text-align: left">End-user identifier</td></tr><tr><td style="text-align: left"><code>background</code></td><td style="text-align: left">Bool</td><td style="text-align: left">—</td><td style="text-align: left">Run in background (cancellable)</td></tr><tr><td style="text-align: left"><code>include</code></td><td style="text-align: left">Vector{String}</td><td style="text-align: left">—</td><td style="text-align: left">Extra data to include (e.g. <code>&quot;file_search_call.results&quot;</code>)</td></tr><tr><td style="text-align: left"><code>max_tool_calls</code></td><td style="text-align: left">Int64</td><td style="text-align: left">—</td><td style="text-align: left">Max number of tool calls per turn</td></tr><tr><td style="text-align: left"><code>service_tier</code></td><td style="text-align: left">String</td><td style="text-align: left">—</td><td style="text-align: left"><code>&quot;auto&quot;</code>, <code>&quot;default&quot;</code>, <code>&quot;flex&quot;</code>, <code>&quot;priority&quot;</code></td></tr><tr><td style="text-align: left"><code>top_logprobs</code></td><td style="text-align: left">Int64</td><td style="text-align: left">—</td><td style="text-align: left">0–20, top log probabilities</td></tr><tr><td style="text-align: left"><code>prompt</code></td><td style="text-align: left">Dict</td><td style="text-align: left">—</td><td style="text-align: left">Prompt template reference</td></tr><tr><td style="text-align: left"><code>prompt_cache_key</code></td><td style="text-align: left">String</td><td style="text-align: left">—</td><td style="text-align: left">Cache key for prompt caching</td></tr><tr><td style="text-align: left"><code>prompt_cache_retention</code></td><td style="text-align: left">String</td><td style="text-align: left">—</td><td style="text-align: left"><code>&quot;in-memory&quot;</code> or <code>&quot;24h&quot;</code></td></tr><tr><td style="text-align: left"><code>conversation</code></td><td style="text-align: left">Any</td><td style="text-align: left">—</td><td style="text-align: left">Conversation context (String or Dict)</td></tr><tr><td style="text-align: left"><code>context_management</code></td><td style="text-align: left">Vector</td><td style="text-align: left">—</td><td style="text-align: left">Context management strategies</td></tr><tr><td style="text-align: left"><code>stream_options</code></td><td style="text-align: left">Dict</td><td style="text-align: left">—</td><td style="text-align: left">Streaming options (e.g. <code>include_usage</code>)</td></tr></table><h2 id="Retry-Behaviour"><a class="docs-heading-anchor" href="#Retry-Behaviour">Retry Behaviour</a><a id="Retry-Behaviour-1"></a><a class="docs-heading-anchor-permalink" href="#Retry-Behaviour" title="Permalink"></a></h2><p><code>respond</code> automatically retries on HTTP 429, 500, and 503 errors with exponential backoff and jitter (up to 30 attempts, max 60s delay). On 429 responses, the <code>Retry-After</code> header is respected. This applies to all Responses API functions (<code>respond</code>, <code>get_response</code>, <code>delete_response</code>, etc.).</p><h2 id="Parameter-Validation"><a class="docs-heading-anchor" href="#Parameter-Validation">Parameter Validation</a><a id="Parameter-Validation-1"></a><a class="docs-heading-anchor-permalink" href="#Parameter-Validation" title="Permalink"></a></h2><p>The <code>Respond</code> constructor validates parameter ranges at construction time:</p><table><tr><th style="text-align: left">Parameter</th><th style="text-align: left">Valid Range</th></tr><tr><td style="text-align: left"><code>temperature</code></td><td style="text-align: left">0.0–2.0</td></tr><tr><td style="text-align: left"><code>top_p</code></td><td style="text-align: left">0.0–1.0</td></tr><tr><td style="text-align: left"><code>max_output_tokens</code></td><td style="text-align: left">≥ 1</td></tr><tr><td style="text-align: left"><code>top_logprobs</code></td><td style="text-align: left">0–20</td></tr></table><p>Out-of-range values throw <code>ArgumentError</code>. Additionally, <code>temperature</code> and <code>top_p</code> are mutually exclusive.</p><h2 id="See-Also"><a class="docs-heading-anchor" href="#See-Also">See Also</a><a id="See-Also-1"></a><a class="docs-heading-anchor-permalink" href="#See-Also" title="Permalink"></a></h2><ul><li><a href="../../llm/#Respond"><code>Respond</code></a> — full type reference</li><li><a href="../../llm/#ResponseObject"><code>ResponseObject</code></a> — response structure</li><li><a href="../tool_calling/#tools_guide">Tool Calling</a> — detailed tool calling guide</li><li><a href="../streaming/#streaming_guide">Streaming</a> — streaming with <code>do</code>-blocks</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../chat_completions/">« Chat Completions</a><a class="docs-footer-nextpage" href="../image_generation/">Image Generation »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Thursday 12 March 2026 13:04">Thursday 12 March 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

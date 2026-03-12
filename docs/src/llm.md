@@ -1,7 +1,7 @@
 # UniLM.jl — LLM Reference
 
 > **Single-file reference for LLM code-generation systems.**
-> UniLM.jl v0.6.5 · Julia ≥ 1.12 · Deps: `HTTP.jl`, `JSON.jl`, `Base64`
+> UniLM.jl v0.7.0 · Julia ≥ 1.12 · Deps: `HTTP.jl`, `JSON.jl`, `Base64`
 > Repo: <https://github.com/algunion/UniLM.jl>
 
 ## Installation
@@ -23,9 +23,9 @@ using UniLM
 | `AZURE_OPENAI_DEPLOY_NAME_GPT_5_2` | `AZUREServiceEndpoint`            | Auto-registers Azure deployment for `"gpt-5.2"` |
 | `GEMINI_API_KEY`                   | `GEMINIServiceEndpoint`           | Google Gemini API key                           |
 
-## Three APIs
+## Four APIs
 
-UniLM.jl wraps three OpenAI API surfaces:
+UniLM.jl wraps four OpenAI API surfaces:
 
 1. **Chat Completions** (`Chat` + `chatrequest!`) — stateful, message-based conversations with tool calling, streaming, structured output. Supports OpenAI, Azure, and Gemini backends.
 2. **Responses API** (`Respond` + `respond`) — newer, more flexible API with built-in tools (web search, file search), multi-turn chaining via `previous_response_id`, reasoning support for O-series models, structured output. OpenAI only.
@@ -160,7 +160,7 @@ end
     type::String = "function"
     func::GPTFunctionSignature
 end
-GPTTool(d::AbstractDict)   # construct from dict (e.g. DescribedTypes.schema output)
+GPTTool(d::AbstractDict)   # construct from dict with keys "name", "description", "parameters"
 
 # Returned by model when it wants to call a function
 @kwdef struct GPTToolCall
@@ -338,13 +338,46 @@ end
 end
 ```
 
+```julia
+@kwdef struct MCPTool <: ResponseTool
+    server_label::String
+    server_url::String
+    require_approval::Union{String, AbstractDict, Nothing} = "never"
+    allowed_tools::Union{Vector{String}, Nothing} = nothing
+    headers::Union{AbstractDict, Nothing} = nothing
+end
+
+@kwdef struct ComputerUseTool <: ResponseTool
+    display_width::Int = 1024
+    display_height::Int = 768
+    environment::Union{String, Nothing} = nothing
+end
+
+@kwdef struct ImageGenerationTool <: ResponseTool
+    background::Union{String, Nothing} = nothing
+    output_format::Union{String, Nothing} = nothing
+    output_compression::Union{Int, Nothing} = nothing
+    quality::Union{String, Nothing} = nothing
+    size::Union{String, Nothing} = nothing
+end
+
+@kwdef struct CodeInterpreterTool <: ResponseTool
+    container::Union{AbstractDict, Nothing} = nothing
+    file_ids::Union{Vector{String}, Nothing} = nothing
+end
+```
+
 **Convenience constructors**:
 
 ```julia
 function_tool(name, description=nothing; parameters=nothing, strict=nothing)
-function_tool(d::AbstractDict)           # from DescribedTypes.schema output
+function_tool(d::AbstractDict)           # from dict with keys "name", "description", "parameters"
 web_search(; context_size="medium", location=nothing)
 file_search(store_ids; max_results=nothing, ranking=nothing, filters=nothing)
+mcp_tool(label, url; require_approval="never", allowed_tools=nothing, headers=nothing)
+computer_use(; display_width=1024, display_height=768, environment=nothing)
+image_generation_tool(; kwargs...)
+code_interpreter(; container=nothing, file_ids=nothing)
 ```
 
 ### Text Format / Structured Output
@@ -368,7 +401,7 @@ end
 ```julia
 text_format(; kwargs...)                                     # generic TextConfig
 json_schema_format(name, description, schema; strict=nothing) # JSON Schema output
-json_schema_format(d::AbstractDict)                          # from DescribedTypes output
+json_schema_format(d::AbstractDict)                          # from dict with keys "name", "description", "schema"
 json_object_format()                                         # unstructured JSON
 ```
 
@@ -631,6 +664,73 @@ similarity = dot(emb.embeddings[1], emb.embeddings[2]) /
 
 ---
 
+## Cost Tracking
+
+### TokenUsage
+
+```julia
+@kwdef struct TokenUsage
+    prompt_tokens::Int = 0
+    completion_tokens::Int = 0
+    total_tokens::Int = 0
+end
+```
+
+### Functions
+
+```julia
+token_usage(result::LLMSuccess)::Union{TokenUsage, Nothing}      # extract TokenUsage from a Chat result
+token_usage(result::ResponseSuccess)::Union{TokenUsage, Nothing}  # extract from Responses API result
+
+estimated_cost(result; model=nothing, pricing=DEFAULT_PRICING)     # per-call cost estimate (Float64)
+cumulative_cost(chat::Chat)::Float64                               # running total for a Chat instance
+
+DEFAULT_PRICING   # Dict{String, Tuple{Float64, Float64}} — model → (input_price, output_price) per token
+```
+
+### Cost Tracking Example
+
+```julia
+chat = Chat(model="gpt-5.2")
+push!(chat, Message(Val(:system), "You are helpful."))
+push!(chat, Message(Val(:user), "Hello!"))
+
+result = chatrequest!(chat)
+if result isa LLMSuccess
+    usage = token_usage(result)
+    cost = estimated_cost(result)
+    println("Tokens: $(usage.total_tokens), Cost: \$$(round(cost; digits=6))")
+    println("Cumulative: \$$(round(cumulative_cost(chat); digits=6))")
+end
+```
+
+---
+
+## Conversation Forking
+
+```julia
+fork(chat::Chat)::Chat          # deep-copy a Chat, resetting cumulative cost
+fork(chat::Chat, n::Int)::Vector{Chat}  # create n independent forks
+```
+
+### Fork Example
+
+```julia
+chat = Chat(model="gpt-5.2")
+push!(chat, Message(Val(:system), "You are a creative writer."))
+push!(chat, Message(Val(:user), "Start a story about a robot."))
+chatrequest!(chat)
+
+# Fork into 3 independent continuations
+forks = fork(chat, 3)
+for (i, f) in enumerate(forks)
+    push!(f, Message(Val(:user), "Continue the story with ending $i."))
+    chatrequest!(f)
+end
+```
+
+---
+
 ## Result Type Hierarchy
 
 All API call results inherit from `LLMRequestResponse`:
@@ -708,10 +808,14 @@ Thrown by `issendvalid` / internal validation when conversation structure is inv
 
 **Chat Completions**: `Chat`, `Message`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `GPTTool`, `GPTToolCall`, `GPTFunctionSignature`, `GPTFunctionCallResult`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `ResponseFormat`
 
-**Responses API**: `Respond`, `InputMessage`, `ResponseTool`, `FunctionTool`, `WebSearchTool`, `FileSearchTool`, `TextConfig`, `TextFormatSpec`, `Reasoning`, `ResponseObject`, `ResponseSuccess`, `ResponseFailure`, `ResponseCallError`, `respond`, `get_response`, `delete_response`, `list_input_items`, `cancel_response`, `compact_response`, `count_input_tokens`, `output_text`, `function_calls`, `input_text`, `input_image`, `input_file`, `function_tool`, `web_search`, `file_search`, `text_format`, `json_schema_format`, `json_object_format`
+**Responses API**: `Respond`, `InputMessage`, `ResponseTool`, `FunctionTool`, `WebSearchTool`, `FileSearchTool`, `MCPTool`, `ComputerUseTool`, `ImageGenerationTool`, `CodeInterpreterTool`, `TextConfig`, `TextFormatSpec`, `Reasoning`, `ResponseObject`, `ResponseSuccess`, `ResponseFailure`, `ResponseCallError`, `respond`, `get_response`, `delete_response`, `list_input_items`, `cancel_response`, `compact_response`, `count_input_tokens`, `output_text`, `function_calls`, `input_text`, `input_image`, `input_file`, `function_tool`, `web_search`, `file_search`, `mcp_tool`, `computer_use`, `image_generation_tool`, `code_interpreter`, `text_format`, `json_schema_format`, `json_object_format`
 
 **Image Generation**: `ImageGeneration`, `ImageObject`, `ImageResponse`, `ImageSuccess`, `ImageFailure`, `ImageCallError`, `generate_image`, `image_data`, `save_image`
 
 **Embeddings**: `Embeddings`, `embeddingrequest!`
+
+**Cost Tracking**: `TokenUsage`, `token_usage`, `estimated_cost`, `cumulative_cost`, `DEFAULT_PRICING`
+
+**Forking**: `fork`
 
 **Result Types**: `LLMRequestResponse`, `LLMSuccess`, `LLMFailure`, `LLMCallError`

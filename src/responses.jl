@@ -292,9 +292,7 @@ function_tool(name::String, description::Union{String,Nothing}=nothing;
 """
     function_tool(d::AbstractDict)
 
-Construct a [`FunctionTool`](@ref) from a dict (e.g. the output of
-`DescribedTypes.schema(T, llm_adapter=OPENAI_TOOLS)`).
-Expects keys `"name"`, `"description"`, and `"parameters"`.
+Construct a [`FunctionTool`](@ref) from a dict with keys `"name"`, `"description"`, and `"parameters"`.
 """
 function_tool(d::AbstractDict) = FunctionTool(
     name=d["name"],
@@ -382,9 +380,7 @@ json_schema_format(name::String, description::String, schema::AbstractDict;
 """
     json_schema_format(d::AbstractDict)
 
-Construct a JSON Schema [`TextConfig`](@ref) from a dict (e.g. the output of
-`DescribedTypes.schema(T, llm_adapter=OPENAI)`).
-Expects keys `"name"`, `"description"`, and `"schema"`.
+Construct a JSON Schema [`TextConfig`](@ref) from a dict with keys `"name"`, `"description"`, and `"schema"`.
 """
 json_schema_format(d::AbstractDict) = TextConfig(
     format=TextFormatSpec(
@@ -562,7 +558,7 @@ Parsed response from the Responses API.
     model::String
     output::Vector{Any}
     usage::Union{Dict{String,Any},Nothing} = nothing
-    error::Union{Any,Nothing} = nothing
+    error::Union{Dict{String,Any}, String, Nothing} = nothing
     metadata::Union{Dict{String,Any},Nothing} = nothing
     raw::Dict{String,Any}
 end

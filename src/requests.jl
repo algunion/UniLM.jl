@@ -29,6 +29,8 @@ get_url(::Type{AZUREServiceEndpoint}, chat::Chat) = ENV[AZURE_OPENAI_BASE_URL] *
 get_url(::Type{GEMINIServiceEndpoint}, ::Chat) = GEMINI_CHAT_URL
 
 _api_base_url(::Type{OPENAIServiceEndpoint}) = OPENAI_BASE_URL
+_api_base_url(::Type{AZUREServiceEndpoint}) = throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))
+_api_base_url(::Type{GEMINIServiceEndpoint}) = throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))
 
 
 function auth_header(::Type{OPENAIServiceEndpoint})
@@ -295,7 +297,6 @@ function chatrequest!(chat::Chat; retries::Int=0, callback=nothing, on_tool_call
         statuserror = hasproperty(e, :status) ? e.status : nothing
         res = LLMCallError(error=string(e), self=chat, status=statuserror)
     end
-    @info "Returning from chatrequest!"
     return res
 end
 

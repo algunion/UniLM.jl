@@ -94,9 +94,7 @@ end
 """
     GPTTool(d::AbstractDict)
 
-Construct a [`GPTTool`](@ref) from a dict (e.g. the output of
-`DescribedTypes.schema(T, llm_adapter=OPENAI_TOOLS)`).
-Expects keys `"name"`, `"description"`, and `"parameters"`.
+Construct a [`GPTTool`](@ref) from a dict with keys `"name"`, `"description"`, and `"parameters"`.
 """
 GPTTool(d::AbstractDict) = GPTTool(
     type=get(d, "type", "function"),
@@ -240,8 +238,6 @@ iscall(m::Message)::Bool
 Check if the message is a tool call.
 """
 iscall(m::Message) = m.role == RoleTool
-
-#string(m::Message) = getfield(m, :content) |> string
 
 @kwdef struct JsonSchemaAPI
     name::String

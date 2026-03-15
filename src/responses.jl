@@ -292,14 +292,18 @@ function_tool(name::String, description::Union{String,Nothing}=nothing;
 """
     function_tool(d::AbstractDict)
 
-Construct a [`FunctionTool`](@ref) from a dict with keys `"name"`, `"description"`, and `"parameters"`.
+Construct a [`FunctionTool`](@ref) from a dict. Accepts both the bare format
+`{"name": ...}` and the wrapped format `{"type": "function", "function": {"name": ...}}`.
 """
-function_tool(d::AbstractDict) = FunctionTool(
-    name=d["name"],
-    description=get(d, "description", nothing),
-    parameters=get(d, "parameters", nothing),
-    strict=get(d, "strict", nothing)
-)
+function function_tool(d::AbstractDict)
+    inner = haskey(d, "function") && d["function"] isa AbstractDict ? d["function"] : d
+    FunctionTool(
+        name=inner["name"],
+        description=get(inner, "description", nothing),
+        parameters=get(inner, "parameters", nothing),
+        strict=get(inner, "strict", nothing)
+    )
+end
 
 """
     web_search(; context_size="medium", location=nothing)

@@ -50,6 +50,7 @@ include("fork.jl")
 include("responses.jl")
 include("images.jl")
 include("accounting.jl")
+include("tool_loop.jl")
 
 # ─── Chat Completions API ─────────────────────────────────────────────────────
 export
@@ -80,7 +81,14 @@ export
     cumulative_cost,
     DEFAULT_PRICING,
     # Fork
-    fork
+    fork,
+    # Tool loop
+    CallableTool,
+    ToolCallOutcome,
+    ToolLoopResult,
+    tool_loop!,
+    tool_loop,
+    to_tool
 
 # ─── Responses API ────────────────────────────────────────────────────────────
 export

@@ -45,6 +45,10 @@ end
         include("accounting.jl")
     end
 
+    @testset "tool_loop" begin
+        include("tool_loop.jl")
+    end
+
     @testset "mock server" begin
         include("mock_server.jl")
     end

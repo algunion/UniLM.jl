@@ -423,6 +423,232 @@ try
         @test !isempty(inner.error)
     end
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # Tool Loop: Chat Completions
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "tool_loop! two-turn cycle (Chat)" begin
+        response_status[] = 200
+
+        # First response: tool call
+        response_body[] = JSON.json(Dict(
+            "choices" => [Dict(
+                "finish_reason" => "tool_calls",
+                "message" => Dict(
+                    "role" => "assistant",
+                    "tool_calls" => [Dict(
+                        "id" => "call_123",
+                        "type" => "function",
+                        "function" => Dict(
+                            "name" => "add",
+                            "arguments" => """{"a": 3, "b": 5}"""
+                        )
+                    )]
+                )
+            )],
+            "usage" => Dict("prompt_tokens" => 10, "completion_tokens" => 5, "total_tokens" => 15)
+        ))
+
+        tool = GPTTool(func=GPTFunctionSignature(
+            name="add", description="Add two numbers",
+            parameters=Dict("type"=>"object",
+                "properties"=>Dict("a"=>Dict("type"=>"number"),"b"=>Dict("type"=>"number")),
+                "required"=>["a","b"])))
+
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", tools=[tool])
+        push!(chat, Message(role=UniLM.RoleSystem, content="You are a calculator"))
+        push!(chat, Message(role=UniLM.RoleUser, content="What is 3+5?"))
+
+        dispatcher = (name, args) -> begin
+            # Swap to text response for next API call
+            response_body[] = JSON.json(Dict(
+                "choices" => [Dict(
+                    "finish_reason" => "stop",
+                    "message" => Dict(
+                        "role" => "assistant",
+                        "content" => "The result is 8."
+                    )
+                )],
+                "usage" => Dict("prompt_tokens" => 20, "completion_tokens" => 10, "total_tokens" => 30)
+            ))
+            name == "add" ? string(args["a"] + args["b"]) : error("Unknown: $name")
+        end
+
+        result = tool_loop!(chat, dispatcher; max_turns=5)
+
+        @test result.completed
+        @test result.turns_used == 2
+        @test length(result.tool_calls) == 1
+        @test result.tool_calls[1].tool_name == "add"
+        @test result.tool_calls[1].success
+        @test result.tool_calls[1].result.result == "8"
+        @test result.response isa LLMSuccess
+        @test result.response.message.content == "The result is 8."
+    end
+
+    @testset "tool_loop! max turns exhausted (Chat)" begin
+        response_status[] = 200
+
+        # Always return tool calls
+        response_body[] = JSON.json(Dict(
+            "choices" => [Dict(
+                "finish_reason" => "tool_calls",
+                "message" => Dict(
+                    "role" => "assistant",
+                    "tool_calls" => [Dict(
+                        "id" => "call_loop",
+                        "type" => "function",
+                        "function" => Dict(
+                            "name" => "noop",
+                            "arguments" => "{}"
+                        )
+                    )]
+                )
+            )],
+            "usage" => Dict("prompt_tokens" => 5, "completion_tokens" => 3, "total_tokens" => 8)
+        ))
+
+        tool = GPTTool(func=GPTFunctionSignature(name="noop"))
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", tools=[tool])
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="go"))
+
+        result = tool_loop!(chat, (name, args) -> "ok"; max_turns=3)
+
+        @test !result.completed
+        @test result.turns_used == 3
+        @test length(result.tool_calls) == 3
+        @test contains(result.llm_error, "max turns")
+    end
+
+    @testset "tool_loop! with parallel tool calls (Chat)" begin
+        response_status[] = 200
+
+        # Response with two parallel tool calls
+        response_body[] = JSON.json(Dict(
+            "choices" => [Dict(
+                "finish_reason" => "tool_calls",
+                "message" => Dict(
+                    "role" => "assistant",
+                    "tool_calls" => [
+                        Dict("id" => "call_a", "type" => "function",
+                            "function" => Dict("name" => "add", "arguments" => """{"a":1,"b":2}""")),
+                        Dict("id" => "call_b", "type" => "function",
+                            "function" => Dict("name" => "add", "arguments" => """{"a":3,"b":4}"""))
+                    ]
+                )
+            )],
+            "usage" => Dict("prompt_tokens" => 10, "completion_tokens" => 5, "total_tokens" => 15)
+        ))
+
+        tool = GPTTool(func=GPTFunctionSignature(name="add"))
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", tools=[tool])
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="calc"))
+
+        dispatcher = (name, args) -> begin
+            response_body[] = JSON.json(Dict(
+                "choices" => [Dict(
+                    "finish_reason" => "stop",
+                    "message" => Dict("role" => "assistant", "content" => "Done."))],
+                "usage" => Dict("prompt_tokens" => 15, "completion_tokens" => 5, "total_tokens" => 20)
+            ))
+            string(args["a"] + args["b"])
+        end
+
+        result = tool_loop!(chat, dispatcher; max_turns=5)
+
+        @test result.completed
+        @test result.turns_used == 2
+        @test length(result.tool_calls) == 2
+        @test result.tool_calls[1].result.result == "3"
+        @test result.tool_calls[2].result.result == "7"
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Tool Loop: Responses API
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "tool_loop two-turn cycle (Respond)" begin
+        response_status[] = 200
+
+        # First response: function call
+        response_body[] = JSON.json(Dict(
+            "id" => "resp_001",
+            "status" => "completed",
+            "model" => "gpt-4o",
+            "output" => [Dict(
+                "type" => "function_call",
+                "id" => "fc_001",
+                "call_id" => "call_abc",
+                "name" => "add",
+                "arguments" => """{"a": 3, "b": 5}""",
+                "status" => "completed"
+            )]
+        ))
+
+        ft = FunctionTool(name="add", description="Add two numbers",
+            parameters=Dict("type"=>"object",
+                "properties"=>Dict("a"=>Dict("type"=>"number"),"b"=>Dict("type"=>"number"))))
+
+        r = Respond(input="What is 3+5?", tools=[ft], service=MockServiceEndpoint)
+
+        dispatcher = (name, args) -> begin
+            # Swap to text response for next call
+            response_body[] = JSON.json(Dict(
+                "id" => "resp_002",
+                "status" => "completed",
+                "model" => "gpt-4o",
+                "output" => [Dict(
+                    "type" => "message",
+                    "role" => "assistant",
+                    "status" => "completed",
+                    "content" => [Dict("type" => "output_text", "text" => "The result is 8.")]
+                )]
+            ))
+            name == "add" ? string(args["a"] + args["b"]) : error("Unknown: $name")
+        end
+
+        result = tool_loop(r, dispatcher; max_turns=5)
+
+        @test result.completed
+        @test result.turns_used == 2
+        @test length(result.tool_calls) == 1
+        @test result.tool_calls[1].tool_name == "add"
+        @test result.tool_calls[1].success
+        @test result.response isa ResponseSuccess
+        @test output_text(result.response) == "The result is 8."
+    end
+
+    @testset "tool_loop max turns exhausted (Respond)" begin
+        response_status[] = 200
+
+        # Always return function call
+        response_body[] = JSON.json(Dict(
+            "id" => "resp_loop",
+            "status" => "completed",
+            "model" => "gpt-4o",
+            "output" => [Dict(
+                "type" => "function_call",
+                "id" => "fc_loop",
+                "call_id" => "call_loop",
+                "name" => "noop",
+                "arguments" => "{}",
+                "status" => "completed"
+            )]
+        ))
+
+        ft = FunctionTool(name="noop")
+        r = Respond(input="go", tools=[ft], service=MockServiceEndpoint)
+
+        result = tool_loop(r, (name, args) -> "ok"; max_turns=3)
+
+        @test !result.completed
+        @test result.turns_used == 3
+        @test length(result.tool_calls) == 3
+        @test contains(result.llm_error, "max turns")
+    end
+
 finally
     close(mock_server)
 end

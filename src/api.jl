@@ -94,16 +94,20 @@ end
 """
     GPTTool(d::AbstractDict)
 
-Construct a [`GPTTool`](@ref) from a dict with keys `"name"`, `"description"`, and `"parameters"`.
+Construct a [`GPTTool`](@ref) from a dict. Accepts both the bare format
+`{"name": ...}` and the wrapped OpenAI format `{"type": "function", "function": {"name": ...}}`.
 """
-GPTTool(d::AbstractDict) = GPTTool(
-    type=get(d, "type", "function"),
-    func=GPTFunctionSignature(
-        name=d["name"],
-        description=get(d, "description", nothing),
-        parameters=get(d, "parameters", nothing)
+function GPTTool(d::AbstractDict)
+    inner = haskey(d, "function") && d["function"] isa AbstractDict ? d["function"] : d
+    GPTTool(
+        type=get(d, "type", "function"),
+        func=GPTFunctionSignature(
+            name=inner["name"],
+            description=get(inner, "description", nothing),
+            parameters=get(inner, "parameters", nothing)
+        )
     )
-)
+end
 
 JSON.lower(x::GPTTool) = Dict(:type => x.type, :function => x.func)
 
@@ -503,7 +507,9 @@ end
 function Base.push!(chat::Chat, msg::Message)
     inilen = length(chat)
     msg.role == RoleSystem && isempty(chat) && push!(chat.messages, msg)
-    msg.role != RoleSystem && chat.messages[end].role != msg.role && push!(chat.messages, msg)
+    msg.role != RoleSystem && !isempty(chat) &&
+        (chat.messages[end].role != msg.role || msg.role == RoleTool) &&
+        push!(chat.messages, msg)
     length(chat) == inilen && @warn "Cannot add message $msg to conversation: $chat"
     return chat
 end

@@ -243,6 +243,26 @@ end
         @test t.name == "get_weather"
         @test t.description == "Get weather"
     end
+
+    @testset "function_tool from bare dict" begin
+        d = Dict("name" => "bare_fn", "description" => "bare", "strict" => true)
+        t = function_tool(d)
+        @test t isa FunctionTool
+        @test t.name == "bare_fn"
+        @test t.description == "bare"
+        @test t.strict == true
+    end
+
+    @testset "function_tool from wrapped dict" begin
+        d = Dict("type" => "function", "function" => Dict(
+            "name" => "wrapped_fn", "description" => "wrapped",
+            "parameters" => Dict("type" => "object")))
+        t = function_tool(d)
+        @test t isa FunctionTool
+        @test t.name == "wrapped_fn"
+        @test t.description == "wrapped"
+        @test t.parameters == Dict("type" => "object")
+    end
 end
 
 @testset "WebSearchTool" begin

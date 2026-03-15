@@ -126,6 +126,26 @@ end
     @test haskey(lowered, :function)
     @test !haskey(lowered, :func)
     @test lowered[:type] == "function"
+
+    @testset "from bare dict" begin
+        d = Dict("name" => "bare_fn", "description" => "A bare function",
+            "parameters" => Dict("type" => "object"))
+        t = GPTTool(d)
+        @test t.type == "function"
+        @test t.func.name == "bare_fn"
+        @test t.func.description == "A bare function"
+        @test t.func.parameters == Dict("type" => "object")
+    end
+
+    @testset "from wrapped dict" begin
+        d = Dict("type" => "function", "function" => Dict(
+            "name" => "wrapped_fn", "description" => "Wrapped",
+            "parameters" => Dict("type" => "object", "properties" => Dict())))
+        t = GPTTool(d)
+        @test t.type == "function"
+        @test t.func.name == "wrapped_fn"
+        @test t.func.description == "Wrapped"
+    end
 end
 
 @testset "GPTToolChoice" begin
@@ -369,6 +389,26 @@ end
         asst = Message(role=UniLM.RoleAssistant, content="response")
         push!(chat, asst)
         @test length(chat) == 3
+    end
+
+    @testset "push! allows consecutive tool messages" begin
+        chat = Chat()
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="q"))
+
+        func = UniLM.GPTFunction("fn", Dict("a" => "b"))
+        tc1 = GPTToolCall(id="call_1", func=func)
+        tc2 = GPTToolCall(id="call_2", func=func)
+        asst = Message(role=UniLM.RoleAssistant, tool_calls=[tc1, tc2], finish_reason=UniLM.TOOL_CALLS)
+        push!(chat, asst)
+        @test length(chat) == 3
+
+        tool1 = Message(role=UniLM.RoleTool, content="result1", tool_call_id="call_1")
+        tool2 = Message(role=UniLM.RoleTool, content="result2", tool_call_id="call_2")
+        push!(chat, tool1)
+        @test length(chat) == 4
+        push!(chat, tool2)
+        @test length(chat) == 5  # consecutive tool messages allowed
     end
 
     @testset "pop!" begin

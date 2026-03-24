@@ -143,7 +143,7 @@ println("Has auth: ", any(p -> p.first == "Authorization", UniLM.auth_header(ep)
 Embeddings also support the `service` parameter:
 
 ```@example backends
-emb = Embeddings("test"; service=OllamaEndpoint())
+emb = Embeddings("test"; service=OllamaEndpoint(), model="nomic-embed-text")
 println("URL: ", UniLM.get_url(emb))
 ```
 

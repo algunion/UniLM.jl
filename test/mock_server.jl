@@ -261,8 +261,7 @@ try
 
         withenv("OPENAI_API_KEY" => "test-key") do
             emb = UniLM.Embeddings("test")
-            result = embeddingrequest!(emb; retries=30)
-            @test isnothing(result)
+            @test_throws ErrorException embeddingrequest!(emb; retries=30)
         end
 
         # Reset mock state so subsequent tests don't inherit 429 + Retry-After
@@ -277,8 +276,7 @@ try
     @testset "embeddingrequest! with non-200 error status" begin
         withenv("OPENAI_API_KEY" => "sk-invalid-test-key-mock") do
             emb = UniLM.Embeddings("test embedding")
-            result = embeddingrequest!(emb)
-            @test isnothing(result)
+            @test_throws ErrorException embeddingrequest!(emb)
         end
     end
 
@@ -289,8 +287,7 @@ try
 
         withenv("OPENAI_API_KEY" => "test-key") do
             emb = UniLM.Embeddings("test")
-            result = embeddingrequest!(emb; retries=30)
-            @test isnothing(result)
+            @test_throws ErrorException embeddingrequest!(emb; retries=30)
         end
     end
 
@@ -299,8 +296,7 @@ try
 
         withenv("OPENAI_API_KEY" => "test-key") do
             emb = UniLM.Embeddings("test")
-            result = embeddingrequest!(emb; retries=30)
-            @test isnothing(result)
+            @test_throws ErrorException embeddingrequest!(emb; retries=30)
         end
     end
 
@@ -309,8 +305,7 @@ try
 
         withenv("OPENAI_API_KEY" => "test-key") do
             emb = UniLM.Embeddings("test")
-            result = embeddingrequest!(emb)
-            @test isnothing(result)
+            @test_throws ErrorException embeddingrequest!(emb)
         end
 
         UniLM.get_url(::UniLM.Embeddings) = UniLM.OPENAI_BASE_URL * UniLM.EMBEDDINGS_PATH

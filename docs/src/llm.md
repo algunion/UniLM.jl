@@ -1,7 +1,7 @@
 # UniLM.jl — LLM Reference
 
 > **Single-file reference for LLM code-generation systems.**
-> UniLM.jl v0.7.0 · Julia ≥ 1.12 · Deps: `HTTP.jl`, `JSON.jl`, `Base64`
+> UniLM.jl v0.8.0 · Julia ≥ 1.12 · Deps: `HTTP.jl`, `JSON.jl`, `Base64`
 > Repo: <https://github.com/algunion/UniLM.jl>
 
 ## Installation
@@ -731,6 +731,176 @@ end
 
 ---
 
+## Tool Loop
+
+Automated tool dispatch for both APIs. Wraps a tool schema with a callable function.
+
+### CallableTool
+
+```julia
+struct CallableTool{T}
+    tool::T              # GPTTool or FunctionTool
+    callable::Function   # (name::String, args::Dict{String,Any}) -> String
+end
+```
+
+### to_tool
+
+```julia
+to_tool(x)  # identity for GPTTool, FunctionTool, CallableTool; converts AbstractDict to GPTTool
+```
+
+### ToolCallOutcome / ToolLoopResult
+
+```julia
+# Per-call record
+struct ToolCallOutcome
+    tool_name::String
+    arguments::Dict{String,Any}
+    result::Union{GPTFunctionCallResult,Nothing}
+    success::Bool
+    error::Union{String,Nothing}
+end
+
+# Loop result
+struct ToolLoopResult
+    response::LLMRequestResponse
+    tool_calls::Vector{ToolCallOutcome}
+    turns_used::Int
+    completed::Bool
+    llm_error::Union{String,Nothing}
+end
+```
+
+### tool_loop! (Chat Completions)
+
+```julia
+tool_loop!(chat, dispatcher; max_turns=10, retries=0) -> ToolLoopResult
+tool_loop!(chat; tools::Vector{<:CallableTool}, kwargs...) -> ToolLoopResult
+```
+
+### tool_loop (Responses API)
+
+```julia
+tool_loop(r::Respond, dispatcher; max_turns=10, retries=0) -> ToolLoopResult
+tool_loop(r::Respond; max_turns=10, retries=0) -> ToolLoopResult   # extracts callables from r.tools
+tool_loop(input, dispatcher; tools, kwargs...) -> ToolLoopResult    # convenience form
+```
+
+---
+
+## MCP Client
+
+Native MCP client (JSON-RPC 2.0 over stdio or HTTP, spec 2025-11-25).
+
+### Types
+
+```julia
+MCPSession            # live connection — manages transport + cached tools/resources/prompts
+MCPToolInfo           # tool definition from tools/list
+MCPResourceInfo       # resource definition from resources/list
+MCPPromptInfo         # prompt definition from prompts/list
+MCPServerCapabilities # capabilities from initialize
+MCPTransport          # abstract (subtypes: StdioTransport, HTTPTransport)
+MCPError <: Exception # JSON-RPC error (code, message, data)
+```
+
+### Lifecycle
+
+```julia
+mcp_connect(command::Cmd; ...) -> MCPSession     # stdio subprocess
+mcp_connect(url::String; headers=[], ...) -> MCPSession  # HTTP
+mcp_connect(f::Function, args...; ...)            # do-block, auto-disconnect
+mcp_disconnect!(session)
+```
+
+### Discovery
+
+```julia
+list_tools!(session) -> Vector{MCPToolInfo}
+list_resources!(session) -> Vector{MCPResourceInfo}
+list_prompts!(session) -> Vector{MCPPromptInfo}
+```
+
+### Operations
+
+```julia
+call_tool(session, name, arguments) -> String
+read_resource(session, uri) -> String
+get_prompt(session, name, arguments) -> Vector{Dict}
+ping(session)
+```
+
+### Tool Bridge
+
+```julia
+mcp_tools(session) -> Vector{CallableTool{GPTTool}}         # for tool_loop!
+mcp_tools_respond(session) -> Vector{CallableTool{FunctionTool}}  # for tool_loop
+```
+
+### Client Example
+
+```julia
+session = mcp_connect(`npx -y @modelcontextprotocol/server-filesystem /tmp`)
+tools = mcp_tools(session)
+chat = Chat(model="gpt-5.2", tools=map(t -> t.tool, tools))
+push!(chat, Message(Val(:user), "List files"))
+result = tool_loop!(chat; tools)
+mcp_disconnect!(session)
+```
+
+---
+
+## MCP Server
+
+Build MCP servers that expose tools, resources, and prompts.
+
+### Types
+
+```julia
+MCPServer(name, version; description=nothing)
+MCPServerPrimitive    # abstract (MCPServerTool, MCPServerResource, MCPServerResourceTemplate, MCPServerPrompt)
+```
+
+### Registration
+
+```julia
+register_tool!(server, name, description, schema, handler)
+register_tool!(server, name, description, handler)           # auto-schema from signature
+register_tool!(server, ct::CallableTool{GPTTool})            # bridge from Chat API
+register_tool!(server, ct::CallableTool{FunctionTool})       # bridge from Responses API
+register_resource!(server, uri, name, handler; mime_type="text/plain", description=nothing)
+register_resource_template!(server, uri_template, name, handler; ...)
+register_prompt!(server, name, handler; description=nothing, arguments=[])
+```
+
+### Macros
+
+```julia
+@mcp_tool server function name(args...) body end
+@mcp_resource server uri function(args...) body end
+@mcp_prompt server name function(args...) body end
+```
+
+### Serving
+
+```julia
+serve(server; transport=:stdio)                         # default — stdio
+serve(server; transport=:http, host="127.0.0.1", port=8080)  # HTTP
+```
+
+### Server Example
+
+```julia
+server = MCPServer("calc", "1.0.0")
+@mcp_tool server function add(a::Float64, b::Float64)::String
+    string(a + b)
+end
+serve(server)
+```
+
+---
+
 ## Result Type Hierarchy
 
 All API call results inherit from `LLMRequestResponse`:
@@ -817,5 +987,11 @@ Thrown by `issendvalid` / internal validation when conversation structure is inv
 **Cost Tracking**: `TokenUsage`, `token_usage`, `estimated_cost`, `cumulative_cost`, `DEFAULT_PRICING`
 
 **Forking**: `fork`
+
+**Tool Loop**: `CallableTool`, `ToolCallOutcome`, `ToolLoopResult`, `tool_loop!`, `tool_loop`, `to_tool`
+
+**MCP Client**: `MCPSession`, `MCPToolInfo`, `MCPResourceInfo`, `MCPPromptInfo`, `MCPServerCapabilities`, `MCPTransport`, `StdioTransport`, `HTTPTransport`, `MCPError`, `mcp_connect`, `mcp_disconnect!`, `mcp_tools`, `mcp_tools_respond`, `list_tools!`, `list_resources!`, `list_prompts!`, `call_tool`, `read_resource`, `get_prompt`, `ping`
+
+**MCP Server**: `MCPServer`, `MCPServerTool`, `MCPServerResource`, `MCPServerResourceTemplate`, `MCPServerPrompt`, `MCPServerPrimitive`, `register_tool!`, `register_resource!`, `register_resource_template!`, `register_prompt!`, `serve`, `@mcp_tool`, `@mcp_resource`, `@mcp_prompt`
 
 **Result Types**: `LLMRequestResponse`, `LLMSuccess`, `LLMFailure`, `LLMCallError`

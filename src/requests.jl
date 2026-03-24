@@ -72,8 +72,10 @@ end
 
 function extract_message(resp::HTTP.Response)
     received_message = JSON.parse(resp.body; dicttype=Dict{String,Any})
-    finish_reason = received_message["choices"][1]["finish_reason"]
-    message = received_message["choices"][1]["message"]
+    choices = get(received_message, "choices", [])
+    isempty(choices) && error("API returned empty choices array")
+    finish_reason = choices[1]["finish_reason"]
+    message = choices[1]["message"]
     usage = _parse_usage(received_message)
     msg = if finish_reason == TOOL_CALLS && haskey(message, "tool_calls")
         tcalls = GPTToolCall[]
@@ -211,7 +213,9 @@ function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
                                     gptfunc = GPTFunction(fdict["name"], args)
                                     tc = GPTToolCall(id=tc_data["id"], func=gptfunc)
                                     on_tool_call(tc)
-                                catch; end
+                                catch e
+                                    @warn "on_tool_call callback error" exception=e
+                                end
                             end
                         end
                         prev_tc_count = length(state.tool_calls)
@@ -379,15 +383,13 @@ function embeddingrequest!(emb::Embeddings; retries::Int=0)
                 sleep(delay)
                 return embeddingrequest!(emb; retries=retries + 1)
             else
-                @error "Max retries ($(_RETRY_MAX_ATTEMPTS)) exceeded for embedding request."
-                return nothing
+                error("Max retries ($(_RETRY_MAX_ATTEMPTS)) exceeded for embedding request (status $(resp.status))")
             end
         else
-            @error "Request status: $(resp.status)"
-            return nothing
+            error("Embedding request failed with status $(resp.status): $(String(resp.body))")
         end
     catch e
-        @error e
-        return nothing
+        e isa ErrorException && rethrow()  # re-throw our own errors
+        error("Embedding request error: $e")
     end
 end

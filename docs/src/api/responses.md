@@ -95,6 +95,10 @@ ResponseTool
 FunctionTool
 WebSearchTool
 FileSearchTool
+MCPTool
+ComputerUseTool
+ImageGenerationTool
+CodeInterpreterTool
 ```
 
 ### Tool Constructors
@@ -103,6 +107,10 @@ FileSearchTool
 function_tool
 web_search
 file_search
+mcp_tool
+computer_use
+image_generation_tool
+code_interpreter
 ```
 
 ```@example responses_api

@@ -14,7 +14,8 @@ A **Julian**, type-safe interface to OpenAI's language models — covering both 
 - **Chat Completions** — stateful conversations with automatic history management
 - **Responses API** — OpenAI's newer API with built-in tools, multi-turn chaining, and reasoning
 - **Image Generation** — create images from text prompts with `gpt-image-1.5`
-- **Tool/Function Calling** — first-class support for function tools in both APIs
+- **Tool/Function Calling** — first-class support for function tools in both APIs, with automated `tool_loop`
+- **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool loop integration
 - **Embeddings** — text embedding generation with `text-embedding-3-small`
 - **Streaming** — real-time token streaming with `do`-block syntax
 - **Structured Output** — JSON Schema–constrained generation
@@ -263,6 +264,8 @@ chat = Chat(service=GEMINIServiceEndpoint, model="gemini-2.5-flash")
 | Streaming              |   `stream=true` + callback   |          `do`-block syntax          |
 | Structured output      |       `ResponseFormat`       | `TextConfig` / `json_schema_format` |
 | Reasoning (O-series)   |              —               |             `Reasoning`             |
+| Automated tool loop    |       `tool_loop!`           |          `tool_loop`                |
+| MCP integration        |    `mcp_tools` bridge        |   `MCPTool` / `mcp_tool`            |
 
 ## Documentation
 
@@ -276,3 +279,4 @@ Full documentation with guides and API reference: **[https://algunion.github.io/
 - [Streaming Guide](https://algunion.github.io/UniLM.jl/dev/guide/streaming/) — real-time streaming
 - [Structured Output Guide](https://algunion.github.io/UniLM.jl/dev/guide/structured_output/) — JSON Schema output
 - [Multi-Backend Guide](https://algunion.github.io/UniLM.jl/dev/guide/multi_backend/) — Azure, Gemini
+- [MCP Guide](https://algunion.github.io/UniLM.jl/dev/guide/mcp/) — MCP client/server

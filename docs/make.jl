@@ -27,6 +27,7 @@ makedocs(;
             "Streaming" => "guide/streaming.md",
             "Structured Output" => "guide/structured_output.md",
             "Multi-Backend" => "guide/multi_backend.md",
+            "MCP (Model Context Protocol)" => "guide/mcp.md",
         ],
         "API Reference" => [
             "Chat Types" => "api/chat.md",
@@ -35,6 +36,7 @@ makedocs(;
             "Embeddings" => "api/embeddings.md",
             "Service Endpoints" => "api/endpoints.md",
             "Result Types" => "api/results.md",
+            "MCP Client & Server" => "api/mcp.md",
         ],
     ],
     warnonly=[:missing_docs, :cross_references],

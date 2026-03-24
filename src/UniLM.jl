@@ -41,6 +41,7 @@ See the [documentation](https://algunion.github.io/UniLM.jl/) for full details.
 module UniLM
 using HTTP
 using JSON
+using Base64
 
 include("constants.jl")
 include("exceptions.jl")
@@ -51,6 +52,9 @@ include("responses.jl")
 include("images.jl")
 include("accounting.jl")
 include("tool_loop.jl")
+include("mcp_schema.jl")
+include("mcp_client.jl")
+include("mcp_server.jl")
 
 # ─── Chat Completions API ─────────────────────────────────────────────────────
 export
@@ -154,5 +158,45 @@ export
     generate_image,
     image_data,
     save_image
+
+# ─── MCP Client ──────────────────────────────────────────────────────────────
+export
+    MCPSession,
+    MCPToolInfo,
+    MCPResourceInfo,
+    MCPPromptInfo,
+    MCPServerCapabilities,
+    MCPTransport,
+    StdioTransport,
+    HTTPTransport,
+    MCPError,
+    mcp_connect,
+    mcp_disconnect!,
+    mcp_tools,
+    mcp_tools_respond,
+    list_tools!,
+    list_resources!,
+    list_prompts!,
+    call_tool,
+    read_resource,
+    get_prompt,
+    ping
+
+# ─── MCP Server ──────────────────────────────────────────────────────────────
+export
+    MCPServer,
+    MCPServerTool,
+    MCPServerResource,
+    MCPServerResourceTemplate,
+    MCPServerPrompt,
+    MCPServerPrimitive,
+    register_tool!,
+    register_resource!,
+    register_resource_template!,
+    register_prompt!,
+    serve,
+    @mcp_tool,
+    @mcp_resource,
+    @mcp_prompt
 
 end

@@ -11,14 +11,15 @@
 
 ## What is UniLM.jl?
 
-UniLM.jl provides a **Julian**, type-safe interface to OpenAI's language models — covering both the classic **Chat Completions API**, the newer **Responses API**, and the **Image Generation API**. It aims to become a unified solution for accessing multiple LLM providers from Julia.
+UniLM.jl provides a **Julian**, type-safe interface to OpenAI's language models — covering the classic **Chat Completions API**, the newer **Responses API**, the **Image Generation API**, and the **Model Context Protocol (MCP)**. It aims to become a unified solution for accessing multiple LLM providers from Julia.
 
 ### Key Features
 
 - 🗣️ **Chat Completions** — stateful conversations with automatic history management
 - 🔮 **Responses API** — OpenAI's newer API with built-in tools, multi-turn chaining, and reasoning
 - 🖼️ **Image Generation** — create images from text prompts with `gpt-image-1.5`
-- 🔧 **Tool/Function Calling** — first-class support for function tools in both APIs
+- 🔧 **Tool/Function Calling** — first-class support for function tools in both APIs, with automated `tool_loop`
+- 🔌 **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool loop integration
 - 📊 **Embeddings** — text embedding generation
 - 🌊 **Streaming** — real-time token streaming with `do`-block syntax
 - 📐 **Structured Output** — JSON Schema–constrained generation
@@ -37,6 +38,8 @@ UniLM.jl provides a **Julian**, type-safe interface to OpenAI's language models 
 | Streaming              |   `stream=true` + callback   |          `do`-block syntax          |
 | Structured output      |       `ResponseFormat`       | `TextConfig` / `json_schema_format` |
 | Reasoning (O-series)   |              ✗               |             `Reasoning`             |
+| Automated tool loop    |       `tool_loop!`           |          `tool_loop`                |
+| MCP integration        |    `mcp_tools` bridge        |   `MCPTool` / `mcp_tool`            |
 
 ## Installation
 
@@ -130,4 +133,5 @@ end
 - [Chat Completions Guide](@ref chat_guide) — deep dive into `Chat` and `chatrequest!`
 - [Responses API Guide](@ref responses_guide) — the newer Responses API
 - [Image Generation Guide](@ref images_guide) — create images from text prompts
+- [MCP Guide](@ref mcp_guide) — connect to MCP servers or build your own
 - [API Reference](@ref chat_api) — full type and function reference

@@ -478,7 +478,7 @@ Respond(input="Solve this math problem...", model="o3", reasoning=Reasoning(effo
     model::String = "gpt-5.2"
     input::Union{String, Vector}  # String, Vector{InputMessage}, or Vector{Dict}
     instructions::Union{String,Nothing} = nothing
-    tools::Union{Vector,Nothing} = nothing
+    tools::Union{Vector,Nothing} = nothing  # Untyped Vector: accepts ResponseTool, CallableTool, and Dict
     tool_choice::Union{String,Nothing} = nothing      # "auto", "none", "required"
     parallel_tool_calls::Union{Bool,Nothing} = nothing
     temperature::Union{Float64,Nothing} = nothing

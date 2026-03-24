@@ -182,8 +182,58 @@ for t in tools
 end
 ```
 
+## Automated Tool Loop
+
+Instead of manually handling tool calls, use [`tool_loop!`](@ref) (Chat Completions) or
+[`tool_loop`](@ref) (Responses API) for automatic dispatch:
+
+### Chat Completions
+
+```@example tools
+ct = CallableTool(weather_tool, (name, args) -> "22C, sunny in $(args["location"])")
+println("Callable tool wrapping: ", ct.tool.func.name)
+```
+
+```julia
+chat = Chat(model="gpt-5.2", tools=[ct.tool])
+push!(chat, Message(Val(:user), "What's the weather in Paris?"))
+result = tool_loop!(chat; tools=[ct])
+# result.completed == true when the model gives a text response
+```
+
+### Responses API
+
+```julia
+ct = CallableTool(
+    function_tool("get_weather", "Get weather", parameters=Dict(...)),
+    (name, args) -> "22C, sunny")
+result = tool_loop("What's the weather?"; tools=[ct])
+```
+
+## MCP Tool Integration
+
+MCP servers expose tools that integrate directly with the tool loop via
+[`mcp_tools`](@ref) and [`mcp_tools_respond`](@ref).
+See the [MCP Guide](@ref mcp_guide) for full details.
+
+```julia
+# Chat Completions + MCP
+session = mcp_connect(`npx server`)
+tools = mcp_tools(session)
+chat = Chat(model="gpt-5.2", tools=map(t -> t.tool, tools))
+push!(chat, Message(Val(:user), "Do something"))
+result = tool_loop!(chat; tools)
+
+# Responses API + MCP
+tools = mcp_tools_respond(session)
+result = tool_loop("Do something"; tools=tools)
+```
+
 ## See Also
 
 - [`GPTTool`](@ref), [`GPTFunctionSignature`](@ref) — Chat Completions tool types
 - [`FunctionTool`](@ref), [`WebSearchTool`](@ref), [`FileSearchTool`](@ref) — Responses API tool types
 - [`function_tool`](@ref), [`web_search`](@ref), [`file_search`](@ref) — convenience constructors
+- [`CallableTool`](@ref), [`ToolCallOutcome`](@ref), [`ToolLoopResult`](@ref) — tool loop types
+- [`tool_loop!`](@ref), [`tool_loop`](@ref) — automated tool dispatch
+- [MCP Guide](@ref mcp_guide) — MCP server integration

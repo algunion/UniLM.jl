@@ -81,6 +81,17 @@ RoleUser
 RoleAssistant
 ```
 
+## Tool Loop
+
+```@docs
+CallableTool
+ToolCallOutcome
+ToolLoopResult
+tool_loop!
+tool_loop
+to_tool
+```
+
 ## Model Constants
 
 ```@example chat_api

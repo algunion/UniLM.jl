@@ -49,6 +49,18 @@ end
         include("tool_loop.jl")
     end
 
+    @testset "mcp_schema" begin
+        include("mcp_schema.jl")
+    end
+
+    @testset "mcp_client" begin
+        include("mcp_client.jl")
+    end
+
+    @testset "mcp_server" begin
+        include("mcp_server.jl")
+    end
+
     @testset "mock server" begin
         include("mock_server.jl")
     end

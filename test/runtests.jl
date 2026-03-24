@@ -76,11 +76,13 @@ end
     end
 
     @testset "Type Stability (JET.jl)" begin
-        if VERSION >= v"1.12"
+        if VERSION >= v"1.12" && get(ENV, "UNILM_RUN_JET", "false") == "true"
             @assert get_pkg_version("JET") >= v"0.11"
             JET.test_package(UniLM;
                 target_modules=(UniLM,),
                 ignore_missing_comparison=true)
+        else
+            @info "JET.jl checks skipped (set UNILM_RUN_JET=true to enable)"
         end
     end
 

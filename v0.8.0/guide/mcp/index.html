@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>MCP (Model Context Protocol) · UniLM.jl</title><meta name="title" content="MCP (Model Context Protocol) · UniLM.jl"/><meta property="og:title" content="MCP (Model Context Protocol) · UniLM.jl"/><meta property="twitter:title" content="MCP (Model Context Protocol) · UniLM.jl"/><meta name="description" content="Documentation for UniLM.jl."/><meta property="og:description" content="Documentation for UniLM.jl."/><meta property="twitter:description" content="Documentation for UniLM.jl."/><meta property="og:url" content="https://algunion.github.io/UniLM.jl/guide/mcp/"/><meta property="twitter:url" content="https://algunion.github.io/UniLM.jl/guide/mcp/"/><link rel="canonical" href="https://algunion.github.io/UniLM.jl/guide/mcp/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">UniLM.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><a class="tocitem" href="../../llm/">LLM Reference</a></li><li><a class="tocitem" href="../../getting_started/">Getting Started</a></li><li><span class="tocitem">Guide</span><ul><li><a class="tocitem" href="../chat_completions/">Chat Completions</a></li><li><a class="tocitem" href="../responses_api/">Responses API</a></li><li><a class="tocitem" href="../image_generation/">Image Generation</a></li><li><a class="tocitem" href="../embeddings/">Embeddings</a></li><li><a class="tocitem" href="../tool_calling/">Tool Calling</a></li><li><a class="tocitem" href="../streaming/">Streaming</a></li><li><a class="tocitem" href="../structured_output/">Structured Output</a></li><li><a class="tocitem" href="../multi_backend/">Multi-Backend</a></li><li class="is-active"><a class="tocitem" href>MCP (Model Context Protocol)</a><ul class="internal"><li><a class="tocitem" href="#MCP-Client"><span>MCP Client</span></a></li><li><a class="tocitem" href="#MCP-Server"><span>MCP Server</span></a></li><li><a class="tocitem" href="#MCP-Tool-in-Responses-API"><span>MCP Tool in Responses API</span></a></li><li><a class="tocitem" href="#See-Also"><span>See Also</span></a></li></ul></li></ul></li><li><span class="tocitem">API Reference</span><ul><li><a class="tocitem" href="../../api/chat/">Chat Types</a></li><li><a class="tocitem" href="../../api/responses/">Responses Types</a></li><li><a class="tocitem" href="../../api/images/">Images</a></li><li><a class="tocitem" href="../../api/embeddings/">Embeddings</a></li><li><a class="tocitem" href="../../api/endpoints/">Service Endpoints</a></li><li><a class="tocitem" href="../../api/results/">Result Types</a></li><li><a class="tocitem" href="../../api/mcp/">MCP Client &amp; Server</a></li></ul></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Guide</a></li><li class="is-active"><a href>MCP (Model Context Protocol)</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>MCP (Model Context Protocol)</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/algunion/UniLM.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/algunion/UniLM.jl/blob/main/docs/src/guide/mcp.md#" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="mcp_guide"><a class="docs-heading-anchor" href="#mcp_guide">Model Context Protocol (MCP)</a><a id="mcp_guide-1"></a><a class="docs-heading-anchor-permalink" href="#mcp_guide" title="Permalink"></a></h1><p>UniLM.jl provides native MCP support — both as a <strong>client</strong> (connect to MCP servers) and a <strong>server</strong> (build your own). MCP tools integrate seamlessly with <a href="../../api/chat/#UniLM.tool_loop!"><code>tool_loop!</code></a> and <a href="../../api/chat/#UniLM.tool_loop"><code>tool_loop</code></a> via the <a href="../../llm/#CallableTool"><code>CallableTool</code></a> bridge.</p><p>Protocol: JSON-RPC 2.0 over stdio or Streamable HTTP (MCP spec 2025-11-25). Zero external dependencies.</p><hr/><h2 id="MCP-Client"><a class="docs-heading-anchor" href="#MCP-Client">MCP Client</a><a id="MCP-Client-1"></a><a class="docs-heading-anchor-permalink" href="#MCP-Client" title="Permalink"></a></h2><h3 id="Transports"><a class="docs-heading-anchor" href="#Transports">Transports</a><a id="Transports-1"></a><a class="docs-heading-anchor-permalink" href="#Transports" title="Permalink"></a></h3><p>Two transport types are available:</p><ul><li><strong><a href="../../api/mcp/#UniLM.StdioTransport"><code>StdioTransport</code></a></strong> — launches a subprocess, communicates via stdin/stdout (newline-delimited JSON-RPC)</li><li><strong><a href="../../api/mcp/#UniLM.HTTPTransport"><code>HTTPTransport</code></a></strong> — communicates via POST requests with <code>Mcp-Session-Id</code> session management</li></ul><pre><code class="language-julia hljs"># Transport types are constructed but not connected until mcp_connect
+t1 = StdioTransport(`echo hello`)
+println(&quot;Stdio transport for: &quot;, t1.command)
+
+t2 = HTTPTransport(&quot;https://mcp.example.com/mcp&quot;;
+    headers=[&quot;Authorization&quot; =&gt; &quot;Bearer token&quot;])
+println(&quot;HTTP transport for: &quot;, t2.url)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Stdio transport for: `echo hello`
+HTTP transport for: https://mcp.example.com/mcp</code></pre><h3 id="Connecting-to-an-MCP-Server"><a class="docs-heading-anchor" href="#Connecting-to-an-MCP-Server">Connecting to an MCP Server</a><a id="Connecting-to-an-MCP-Server-1"></a><a class="docs-heading-anchor-permalink" href="#Connecting-to-an-MCP-Server" title="Permalink"></a></h3><p>Use <a href="../../api/mcp/#UniLM.mcp_connect"><code>mcp_connect</code></a> with a <code>Cmd</code> (stdio), URL string (HTTP), or transport object:</p><pre><code class="language-julia hljs"># Stdio — launches subprocess
+session = mcp_connect(`npx -y @modelcontextprotocol/server-filesystem /tmp`)
+
+# HTTP
+session = mcp_connect(&quot;https://mcp.example.com/mcp&quot;;
+    headers=[&quot;Authorization&quot; =&gt; &quot;Bearer token&quot;])
+
+# Custom transport
+session = mcp_connect(StdioTransport(`my-server`))</code></pre><p>The do-block form automatically disconnects when done:</p><pre><code class="language-julia hljs">mcp_connect(`npx server`) do session
+    tools = mcp_tools(session)
+    # ... use tools ...
+end  # session is disconnected here</code></pre><h3 id="Discovering-Tools,-Resources,-and-Prompts"><a class="docs-heading-anchor" href="#Discovering-Tools,-Resources,-and-Prompts">Discovering Tools, Resources, and Prompts</a><a id="Discovering-Tools,-Resources,-and-Prompts-1"></a><a class="docs-heading-anchor-permalink" href="#Discovering-Tools,-Resources,-and-Prompts" title="Permalink"></a></h3><p>After connecting, the session auto-populates tool/resource/prompt caches. You can also refresh them manually:</p><pre><code class="language-julia hljs">tools    = list_tools!(session)     # -&gt; Vector{MCPToolInfo}
+resources = list_resources!(session) # -&gt; Vector{MCPResourceInfo}
+prompts  = list_prompts!(session)   # -&gt; Vector{MCPPromptInfo}</code></pre><pre><code class="language-julia hljs"># MCPToolInfo fields
+info = MCPToolInfo(Dict{String,Any}(
+    &quot;name&quot; =&gt; &quot;read_file&quot;,
+    &quot;description&quot; =&gt; &quot;Read a file from disk&quot;,
+    &quot;inputSchema&quot; =&gt; Dict{String,Any}(
+        &quot;type&quot; =&gt; &quot;object&quot;,
+        &quot;properties&quot; =&gt; Dict{String,Any}(
+            &quot;path&quot; =&gt; Dict{String,Any}(&quot;type&quot; =&gt; &quot;string&quot;, &quot;description&quot; =&gt; &quot;File path&quot;)
+        ),
+        &quot;required&quot; =&gt; [&quot;path&quot;]
+    )
+))
+println(&quot;Tool: &quot;, info.name)
+println(&quot;Description: &quot;, info.description)
+println(&quot;Schema: &quot;, JSON.json(info.input_schema, 2))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Tool: read_file
+Description: Read a file from disk
+Schema: {
+  &quot;properties&quot;: {
+    &quot;path&quot;: {
+      &quot;type&quot;: &quot;string&quot;,
+      &quot;description&quot;: &quot;File path&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;path&quot;
+  ],
+  &quot;type&quot;: &quot;object&quot;
+}</code></pre><h3 id="Calling-Tools-Directly"><a class="docs-heading-anchor" href="#Calling-Tools-Directly">Calling Tools Directly</a><a id="Calling-Tools-Directly-1"></a><a class="docs-heading-anchor-permalink" href="#Calling-Tools-Directly" title="Permalink"></a></h3><pre><code class="language-julia hljs">result = call_tool(session, &quot;read_file&quot;, Dict{String,Any}(&quot;path&quot; =&gt; &quot;/tmp/data.txt&quot;))
+content = read_resource(session, &quot;config://app&quot;)
+messages = get_prompt(session, &quot;review&quot;, Dict{String,Any}(&quot;code&quot; =&gt; &quot;x + 1&quot;))
+ping(session)</code></pre><h3 id="Bridging-to-tool_loop!-(Chat-Completions)"><a class="docs-heading-anchor" href="#Bridging-to-tool_loop!-(Chat-Completions)">Bridging to tool_loop! (Chat Completions)</a><a id="Bridging-to-tool_loop!-(Chat-Completions)-1"></a><a class="docs-heading-anchor-permalink" href="#Bridging-to-tool_loop!-(Chat-Completions)" title="Permalink"></a></h3><p><a href="../../api/mcp/#UniLM.mcp_tools"><code>mcp_tools</code></a> converts MCP tools into <code>Vector{CallableTool{GPTTool}}</code> for use with <a href="../../api/chat/#UniLM.tool_loop!"><code>tool_loop!</code></a>:</p><pre><code class="language-julia hljs">session = mcp_connect(`npx server`)
+tools = mcp_tools(session)
+
+chat = Chat(model=&quot;gpt-5.2&quot;, tools=map(t -&gt; t.tool, tools))
+push!(chat, Message(Val(:user), &quot;List files in /tmp&quot;))
+result = tool_loop!(chat; tools)
+
+mcp_disconnect!(session)</code></pre><h3 id="Bridging-to-tool_loop-(Responses-API)"><a class="docs-heading-anchor" href="#Bridging-to-tool_loop-(Responses-API)">Bridging to tool_loop (Responses API)</a><a id="Bridging-to-tool_loop-(Responses-API)-1"></a><a class="docs-heading-anchor-permalink" href="#Bridging-to-tool_loop-(Responses-API)" title="Permalink"></a></h3><p><a href="../../api/mcp/#UniLM.mcp_tools_respond"><code>mcp_tools_respond</code></a> converts MCP tools into <code>Vector{CallableTool{FunctionTool}}</code> for use with <a href="../../api/chat/#UniLM.tool_loop"><code>tool_loop</code></a>:</p><pre><code class="language-julia hljs">session = mcp_connect(&quot;https://mcp.example.com/mcp&quot;)
+tools = mcp_tools_respond(session)
+result = tool_loop(&quot;List files in /tmp&quot;; tools=tools)
+mcp_disconnect!(session)</code></pre><hr/><h2 id="MCP-Server"><a class="docs-heading-anchor" href="#MCP-Server">MCP Server</a><a id="MCP-Server-1"></a><a class="docs-heading-anchor-permalink" href="#MCP-Server" title="Permalink"></a></h2><h3 id="Creating-a-Server"><a class="docs-heading-anchor" href="#Creating-a-Server">Creating a Server</a><a id="Creating-a-Server-1"></a><a class="docs-heading-anchor-permalink" href="#Creating-a-Server" title="Permalink"></a></h3><pre><code class="language-julia hljs">server = MCPServer(&quot;calc&quot;, &quot;1.0.0&quot;; description=&quot;A calculator server&quot;)
+println(&quot;Server: &quot;, server.name, &quot; v&quot;, server.version)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Server: calc v1.0.0</code></pre><h3 id="Registering-Tools"><a class="docs-heading-anchor" href="#Registering-Tools">Registering Tools</a><a id="Registering-Tools-1"></a><a class="docs-heading-anchor-permalink" href="#Registering-Tools" title="Permalink"></a></h3><p>Register tools with explicit JSON Schema or auto-inferred schema:</p><pre><code class="language-julia hljs"># Explicit schema
+register_tool!(server, &quot;add&quot;, &quot;Add two numbers&quot;,
+    Dict{String,Any}(
+        &quot;type&quot; =&gt; &quot;object&quot;,
+        &quot;properties&quot; =&gt; Dict{String,Any}(
+            &quot;a&quot; =&gt; Dict{String,Any}(&quot;type&quot; =&gt; &quot;number&quot;),
+            &quot;b&quot; =&gt; Dict{String,Any}(&quot;type&quot; =&gt; &quot;number&quot;)
+        ),
+        &quot;required&quot; =&gt; [&quot;a&quot;, &quot;b&quot;]
+    ),
+    args -&gt; string(args[&quot;a&quot;] + args[&quot;b&quot;]))
+
+println(&quot;Registered tools: &quot;, collect(keys(server.tools)))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Registered tools: [&quot;add&quot;]</code></pre><pre><code class="language-julia hljs"># Auto-inferred schema from function signature
+register_tool!(server, &quot;greet&quot;, &quot;Greet someone&quot;,
+    (args::Dict{String,Any}) -&gt; &quot;Hello, $(args[&quot;name&quot;])!&quot;)
+
+println(&quot;Tools now: &quot;, collect(keys(server.tools)))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Tools now: [&quot;add&quot;, &quot;greet&quot;]</code></pre><p>You can also register existing <a href="../../llm/#CallableTool"><code>CallableTool</code></a> instances:</p><pre><code class="language-julia hljs"># From Chat Completions tool
+register_tool!(server, my_callable_gpt_tool)
+
+# From Responses API tool
+register_tool!(server, my_callable_function_tool)</code></pre><h3 id="Registering-Resources"><a class="docs-heading-anchor" href="#Registering-Resources">Registering Resources</a><a id="Registering-Resources-1"></a><a class="docs-heading-anchor-permalink" href="#Registering-Resources" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Static resource
+register_resource!(server, &quot;config://app&quot;, &quot;App Config&quot;,
+    () -&gt; &quot;{\&quot;debug\&quot;: true}&quot;;
+    mime_type=&quot;application/json&quot;,
+    description=&quot;Application configuration&quot;)
+
+println(&quot;Resources: &quot;, collect(keys(server.resources)))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Resources: [&quot;config://app&quot;]</code></pre><pre><code class="language-julia hljs"># URI-templated resource
+register_resource_template!(server, &quot;file://{path}&quot;, &quot;File Reader&quot;,
+    (params::Dict{String,String}) -&gt; &quot;Contents of $(params[&quot;path&quot;])&quot;;
+    description=&quot;Read files by path&quot;)
+
+println(&quot;Templates: &quot;, length(server.resource_templates))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Templates: 1</code></pre><h3 id="Registering-Prompts"><a class="docs-heading-anchor" href="#Registering-Prompts">Registering Prompts</a><a id="Registering-Prompts-1"></a><a class="docs-heading-anchor-permalink" href="#Registering-Prompts" title="Permalink"></a></h3><pre><code class="language-julia hljs">register_prompt!(server, &quot;review&quot;, (args::Dict{String,Any}) -&gt;
+    [Dict{String,Any}(&quot;role&quot; =&gt; &quot;user&quot;,
+        &quot;content&quot; =&gt; Dict{String,Any}(&quot;type&quot; =&gt; &quot;text&quot;,
+            &quot;text&quot; =&gt; &quot;Review this code:\n$(args[&quot;code&quot;])&quot;))];
+    description=&quot;Code review prompt&quot;,
+    arguments=[Dict{String,Any}(&quot;name&quot; =&gt; &quot;code&quot;, &quot;required&quot; =&gt; true)])
+
+println(&quot;Prompts: &quot;, collect(keys(server.prompts)))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Prompts: [&quot;review&quot;]</code></pre><h3 id="Macros"><a class="docs-heading-anchor" href="#Macros">Macros</a><a id="Macros-1"></a><a class="docs-heading-anchor-permalink" href="#Macros" title="Permalink"></a></h3><p>The <code>@mcp_tool</code>, <code>@mcp_resource</code>, and <code>@mcp_prompt</code> macros provide a more ergonomic registration API with automatic JSON Schema generation from Julia type annotations:</p><pre><code class="language-julia hljs">server = MCPServer(&quot;calc&quot;, &quot;1.0.0&quot;)
+
+@mcp_tool server function add(a::Float64, b::Float64)::String
+    string(a + b)
+end
+
+@mcp_resource server &quot;config://app&quot; function()
+    read(&quot;config.toml&quot;, String)
+end
+
+@mcp_resource server &quot;file://{path}&quot; function(path::String)
+    read(path, String)
+end
+
+@mcp_prompt server &quot;review&quot; function(code::String)
+    [Dict(&quot;role&quot; =&gt; &quot;user&quot;,
+        &quot;content&quot; =&gt; Dict(&quot;type&quot; =&gt; &quot;text&quot;, &quot;text&quot; =&gt; &quot;Review: $code&quot;))]
+end</code></pre><h3 id="Serving"><a class="docs-heading-anchor" href="#Serving">Serving</a><a id="Serving-1"></a><a class="docs-heading-anchor-permalink" href="#Serving" title="Permalink"></a></h3><p>Start the server with <a href="../../api/mcp/#UniLM.serve"><code>serve</code></a>:</p><pre><code class="language-julia hljs">serve(server)                             # stdio (default) — for Claude Desktop/CLI
+serve(server; transport=:http, port=3000)  # HTTP on port 3000</code></pre><hr/><h2 id="MCP-Tool-in-Responses-API"><a class="docs-heading-anchor" href="#MCP-Tool-in-Responses-API">MCP Tool in Responses API</a><a id="MCP-Tool-in-Responses-API-1"></a><a class="docs-heading-anchor-permalink" href="#MCP-Tool-in-Responses-API" title="Permalink"></a></h2><p>Separately from the client/server above, OpenAI&#39;s Responses API has a built-in <a href="../../api/responses/#UniLM.MCPTool"><code>MCPTool</code></a> type for server-side MCP integration. This tells the model to connect to an external MCP server during response generation:</p><pre><code class="language-julia hljs">tool = mcp_tool(&quot;my-server&quot;, &quot;https://mcp.example.com/sse&quot;;
+    require_approval=&quot;never&quot;,
+    allowed_tools=[&quot;read_file&quot;, &quot;list_dir&quot;])
+println(&quot;Type: &quot;, typeof(tool))
+println(&quot;Label: &quot;, tool.server_label)
+println(&quot;URL: &quot;, tool.server_url)
+println(&quot;JSON: &quot;, JSON.json(JSON.lower(tool)))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Type: MCPTool
+Label: my-server
+URL: https://mcp.example.com/sse
+JSON: {&quot;allowed_tools&quot;:[&quot;read_file&quot;,&quot;list_dir&quot;],&quot;type&quot;:&quot;mcp&quot;,&quot;require_approval&quot;:&quot;never&quot;,&quot;server_url&quot;:&quot;https://mcp.example.com/sse&quot;,&quot;server_label&quot;:&quot;my-server&quot;}</code></pre><p>This is distinct from the UniLM.jl MCP client — <code>MCPTool</code> delegates tool execution to OpenAI&#39;s servers, while <code>mcp_connect</code> runs tools locally.</p><hr/><h2 id="See-Also"><a class="docs-heading-anchor" href="#See-Also">See Also</a><a id="See-Also-1"></a><a class="docs-heading-anchor-permalink" href="#See-Also" title="Permalink"></a></h2><ul><li><a href="../tool_calling/#tools_guide">Tool Calling Guide</a> — function tools and automated tool loop</li><li><a href="../../api/mcp/#mcp_api">MCP API Reference</a> — full type and function reference</li><li><a href="../../llm/#CallableTool"><code>CallableTool</code></a>, <a href="../../api/chat/#UniLM.tool_loop!"><code>tool_loop!</code></a>, <a href="../../api/chat/#UniLM.tool_loop"><code>tool_loop</code></a> — tool loop integration</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../multi_backend/">« Multi-Backend</a><a class="docs-footer-nextpage" href="../../api/chat/">Chat Types »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Tuesday 24 March 2026 16:14">Tuesday 24 March 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

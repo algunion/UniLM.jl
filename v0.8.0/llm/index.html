@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>LLM Reference · UniLM.jl</title><meta name="title" content="LLM Reference · UniLM.jl"/><meta property="og:title" content="LLM Reference · UniLM.jl"/><meta property="twitter:title" content="LLM Reference · UniLM.jl"/><meta name="description" content="Documentation for UniLM.jl."/><meta property="og:description" content="Documentation for UniLM.jl."/><meta property="twitter:description" content="Documentation for UniLM.jl."/><meta property="og:url" content="https://algunion.github.io/UniLM.jl/llm/"/><meta property="twitter:url" content="https://algunion.github.io/UniLM.jl/llm/"/><link rel="canonical" href="https://algunion.github.io/UniLM.jl/llm/"/><script data-outdated-warner src="../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../assets/documenter.js"></script><script src="../search_index.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../">UniLM.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../">Home</a></li><li class="is-active"><a class="tocitem" href>LLM Reference</a><ul class="internal"><li><a class="tocitem" href="#Installation"><span>Installation</span></a></li><li><a class="tocitem" href="#Environment-Variables"><span>Environment Variables</span></a></li><li><a class="tocitem" href="#Four-APIs"><span>Four APIs</span></a></li><li><a class="tocitem" href="#Service-Endpoints"><span>Service Endpoints</span></a></li><li><a class="tocitem" href="#Chat-Completions-API"><span>Chat Completions API</span></a></li><li><a class="tocitem" href="#Responses-API"><span>Responses API</span></a></li><li><a class="tocitem" href="#Image-Generation-API"><span>Image Generation API</span></a></li><li><a class="tocitem" href="#Embeddings-API"><span>Embeddings API</span></a></li><li><a class="tocitem" href="#Cost-Tracking"><span>Cost Tracking</span></a></li><li><a class="tocitem" href="#Conversation-Forking"><span>Conversation Forking</span></a></li><li><a class="tocitem" href="#Tool-Loop"><span>Tool Loop</span></a></li><li><a class="tocitem" href="#MCP-Client"><span>MCP Client</span></a></li><li><a class="tocitem" href="#MCP-Server"><span>MCP Server</span></a></li><li><a class="tocitem" href="#Result-Type-Hierarchy"><span>Result Type Hierarchy</span></a></li><li><a class="tocitem" href="#API-Constants"><span>API Constants</span></a></li><li><a class="tocitem" href="#Exceptions"><span>Exceptions</span></a></li><li><a class="tocitem" href="#Complete-Exports-List"><span>Complete Exports List</span></a></li></ul></li><li><a class="tocitem" href="../getting_started/">Getting Started</a></li><li><span class="tocitem">Guide</span><ul><li><a class="tocitem" href="../guide/chat_completions/">Chat Completions</a></li><li><a class="tocitem" href="../guide/responses_api/">Responses API</a></li><li><a class="tocitem" href="../guide/image_generation/">Image Generation</a></li><li><a class="tocitem" href="../guide/embeddings/">Embeddings</a></li><li><a class="tocitem" href="../guide/tool_calling/">Tool Calling</a></li><li><a class="tocitem" href="../guide/streaming/">Streaming</a></li><li><a class="tocitem" href="../guide/structured_output/">Structured Output</a></li><li><a class="tocitem" href="../guide/multi_backend/">Multi-Backend</a></li><li><a class="tocitem" href="../guide/mcp/">MCP (Model Context Protocol)</a></li></ul></li><li><span class="tocitem">API Reference</span><ul><li><a class="tocitem" href="../api/chat/">Chat Types</a></li><li><a class="tocitem" href="../api/responses/">Responses Types</a></li><li><a class="tocitem" href="../api/images/">Images</a></li><li><a class="tocitem" href="../api/embeddings/">Embeddings</a></li><li><a class="tocitem" href="../api/endpoints/">Service Endpoints</a></li><li><a class="tocitem" href="../api/results/">Result Types</a></li><li><a class="tocitem" href="../api/mcp/">MCP Client &amp; Server</a></li></ul></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li class="is-active"><a href>LLM Reference</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>LLM Reference</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/algunion/UniLM.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/algunion/UniLM.jl/blob/main/docs/src/llm.md#" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="UniLM.jl-—-LLM-Reference"><a class="docs-heading-anchor" href="#UniLM.jl-—-LLM-Reference">UniLM.jl — LLM Reference</a><a id="UniLM.jl-—-LLM-Reference-1"></a><a class="docs-heading-anchor-permalink" href="#UniLM.jl-—-LLM-Reference" title="Permalink"></a></h1><blockquote><p><strong>Single-file reference for LLM code-generation systems.</strong> UniLM.jl v0.8.0 · Julia ≥ 1.12 · Deps: <code>HTTP.jl</code>, <code>JSON.jl</code>, <code>Base64</code> Repo: <a href="https://github.com/algunion/UniLM.jl">https://github.com/algunion/UniLM.jl</a></p></blockquote><h2 id="Installation"><a class="docs-heading-anchor" href="#Installation">Installation</a><a id="Installation-1"></a><a class="docs-heading-anchor-permalink" href="#Installation" title="Permalink"></a></h2><pre><code class="language-julia hljs">using Pkg
+Pkg.add(&quot;UniLM&quot;)
+using UniLM</code></pre><h2 id="Environment-Variables"><a class="docs-heading-anchor" href="#Environment-Variables">Environment Variables</a><a id="Environment-Variables-1"></a><a class="docs-heading-anchor-permalink" href="#Environment-Variables" title="Permalink"></a></h2><table><tr><th style="text-align: right">Variable</th><th style="text-align: right">Required by</th><th style="text-align: right">Description</th></tr><tr><td style="text-align: right"><code>OPENAI_API_KEY</code></td><td style="text-align: right"><code>OPENAIServiceEndpoint</code> (default)</td><td style="text-align: right">OpenAI API key</td></tr><tr><td style="text-align: right"><code>AZURE_OPENAI_BASE_URL</code></td><td style="text-align: right"><code>AZUREServiceEndpoint</code></td><td style="text-align: right">Azure deployment base URL</td></tr><tr><td style="text-align: right"><code>AZURE_OPENAI_API_KEY</code></td><td style="text-align: right"><code>AZUREServiceEndpoint</code></td><td style="text-align: right">Azure API key</td></tr><tr><td style="text-align: right"><code>AZURE_OPENAI_API_VERSION</code></td><td style="text-align: right"><code>AZUREServiceEndpoint</code></td><td style="text-align: right">Azure API version string</td></tr><tr><td style="text-align: right"><code>AZURE_OPENAI_DEPLOY_NAME_GPT_5_2</code></td><td style="text-align: right"><code>AZUREServiceEndpoint</code></td><td style="text-align: right">Auto-registers Azure deployment for <code>&quot;gpt-5.2&quot;</code></td></tr><tr><td style="text-align: right"><code>GEMINI_API_KEY</code></td><td style="text-align: right"><code>GEMINIServiceEndpoint</code></td><td style="text-align: right">Google Gemini API key</td></tr></table><h2 id="Four-APIs"><a class="docs-heading-anchor" href="#Four-APIs">Four APIs</a><a id="Four-APIs-1"></a><a class="docs-heading-anchor-permalink" href="#Four-APIs" title="Permalink"></a></h2><p>UniLM.jl wraps four OpenAI API surfaces:</p><ol><li><strong>Chat Completions</strong> (<code>Chat</code> + <code>chatrequest!</code>) — stateful, message-based conversations with tool calling, streaming, structured output. Supports OpenAI, Azure, and Gemini backends.</li><li><strong>Responses API</strong> (<code>Respond</code> + <code>respond</code>) — newer, more flexible API with built-in tools (web search, file search), multi-turn chaining via <code>previous_response_id</code>, reasoning support for O-series models, structured output. OpenAI only.</li><li><strong>Image Generation</strong> (<code>ImageGeneration</code> + <code>generate_image</code>) — text-to-image with <code>gpt-image-1.5</code>. OpenAI only.</li><li><strong>Embeddings</strong> (<code>Embeddings</code> + <code>embeddingrequest!</code>) — vector embeddings with <code>text-embedding-3-small</code>.</li></ol><hr/><h2 id="Service-Endpoints"><a class="docs-heading-anchor" href="#Service-Endpoints">Service Endpoints</a><a id="Service-Endpoints-1"></a><a class="docs-heading-anchor-permalink" href="#Service-Endpoints" title="Permalink"></a></h2><pre><code class="language-julia hljs">abstract type ServiceEndpoint end
+struct OPENAIServiceEndpoint &lt;: ServiceEndpoint end   # default — uses OPENAI_API_KEY
+struct AZUREServiceEndpoint  &lt;: ServiceEndpoint end   # uses AZURE_OPENAI_* env vars
+struct GEMINIServiceEndpoint &lt;: ServiceEndpoint end   # uses GEMINI_API_KEY
+struct GenericOpenAIEndpoint &lt;: ServiceEndpoint       # any OpenAI-compatible provider
+    base_url::String
+    api_key::String
+end
+
+# Convenience constructors
+OllamaEndpoint(; base_url=&quot;http://localhost:11434&quot;)   # Ollama local
+MistralEndpoint(; api_key=ENV[&quot;MISTRAL_API_KEY&quot;])     # Mistral AI</code></pre><h3 id="Provider-Compatibility"><a class="docs-heading-anchor" href="#Provider-Compatibility">Provider Compatibility</a><a id="Provider-Compatibility-1"></a><a class="docs-heading-anchor-permalink" href="#Provider-Compatibility" title="Permalink"></a></h3><table><tr><th style="text-align: right">API Surface</th><th style="text-align: right">Status</th><th style="text-align: right">Providers</th></tr><tr><td style="text-align: right">Chat Completions</td><td style="text-align: right">De facto standard</td><td style="text-align: right">OpenAI, Azure, Gemini, Mistral, Ollama, vLLM, LM Studio, Anthropic*</td></tr><tr><td style="text-align: right">Embeddings</td><td style="text-align: right">Widely adopted</td><td style="text-align: right">OpenAI, Gemini, Mistral, Ollama, vLLM</td></tr><tr><td style="text-align: right">Responses API</td><td style="text-align: right">Emerging (Open Responses)</td><td style="text-align: right">OpenAI, Ollama, vLLM, Amazon Bedrock</td></tr><tr><td style="text-align: right">Image Generation</td><td style="text-align: right">Limited</td><td style="text-align: right">OpenAI, Gemini, Ollama</td></tr></table><p>*Anthropic compat layer not production-recommended by Anthropic.</p><p>Register additional Azure deployments at runtime:</p><pre><code class="language-julia hljs">add_azure_deploy_name!(model::String, deploy_name::String)
+# e.g. add_azure_deploy_name!(&quot;gpt-5.2&quot;, &quot;my-deployment&quot;)</code></pre><p>Pass the backend via the <code>service</code> keyword on <code>Chat</code>, <code>Respond</code>, or <code>ImageGeneration</code>:</p><pre><code class="language-julia hljs">Chat(service=AZUREServiceEndpoint, model=&quot;gpt-5.2&quot;)
+Respond(service=OPENAIServiceEndpoint, input=&quot;Hello&quot;)</code></pre><hr/><h2 id="Chat-Completions-API"><a class="docs-heading-anchor" href="#Chat-Completions-API">Chat Completions API</a><a id="Chat-Completions-API-1"></a><a class="docs-heading-anchor-permalink" href="#Chat-Completions-API" title="Permalink"></a></h2><h3 id="Chat"><a class="docs-heading-anchor" href="#Chat">Chat</a><a id="Chat-1"></a><a class="docs-heading-anchor-permalink" href="#Chat" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct Chat
+    service::Type{&lt;:ServiceEndpoint} = OPENAIServiceEndpoint
+    model::String = &quot;gpt-5.2&quot;
+    messages::Vector{Message} = Message[]
+    history::Bool = true
+    tools::Union{Vector{GPTTool},Nothing} = nothing
+    tool_choice::Union{String,GPTToolChoice,Nothing} = nothing
+    parallel_tool_calls::Union{Bool,Nothing} = false
+    temperature::Union{Float64,Nothing} = nothing       # 0.0–2.0, mutually exclusive with top_p
+    top_p::Union{Float64,Nothing} = nothing              # 0.0–1.0, mutually exclusive with temperature
+    n::Union{Int64,Nothing} = nothing
+    stream::Union{Bool,Nothing} = nothing
+    stop::Union{Vector{String},String,Nothing} = nothing # max 4 sequences
+    max_tokens::Union{Int64,Nothing} = nothing
+    presence_penalty::Union{Float64,Nothing} = nothing   # -2.0 to 2.0
+    response_format::Union{ResponseFormat,Nothing} = nothing
+    frequency_penalty::Union{Float64,Nothing} = nothing  # -2.0 to 2.0
+    logit_bias::Union{AbstractDict{String,Float64},Nothing} = nothing
+    user::Union{String,Nothing} = nothing
+    seed::Union{Int64,Nothing} = nothing
+end</code></pre><ul><li><code>history=true</code>: responses are automatically appended to <code>messages</code>.</li><li><code>temperature</code> and <code>top_p</code> are mutually exclusive (constructor throws <code>ArgumentError</code>).</li><li><code>parallel_tool_calls</code> is auto-set to <code>nothing</code> when <code>tools</code> is <code>nothing</code>.</li><li><strong>Parameter validation</strong>: the constructor validates ranges at construction time — <code>temperature</code> ∈ [0.0, 2.0], <code>top_p</code> ∈ [0.0, 1.0], <code>n</code> ∈ [1, 10], <code>presence_penalty</code> ∈ [-2.0, 2.0], <code>frequency_penalty</code> ∈ [-2.0, 2.0]. Out-of-range values throw <code>ArgumentError</code>.</li></ul><h3 id="Message"><a class="docs-heading-anchor" href="#Message">Message</a><a id="Message-1"></a><a class="docs-heading-anchor-permalink" href="#Message" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct Message
+    role::String                                          # RoleSystem, RoleUser, RoleAssistant, or &quot;tool&quot;
+    content::Union{String,Nothing} = nothing
+    name::Union{String,Nothing} = nothing
+    finish_reason::Union{String,Nothing} = nothing        # &quot;stop&quot;, &quot;tool_calls&quot;, &quot;content_filter&quot;
+    refusal_message::Union{String,Nothing} = nothing
+    tool_calls::Union{Nothing,Vector{GPTToolCall}} = nothing
+    tool_call_id::Union{String,Nothing} = nothing         # required when role == &quot;tool&quot;
+end</code></pre><p><strong>Validation</strong>: at least one of <code>content</code>, <code>tool_calls</code>, or <code>refusal_message</code> must be non-<code>nothing</code>. <code>tool_call_id</code> is required when <code>role == &quot;tool&quot;</code>.</p><p><strong>Convenience constructors</strong>:</p><pre><code class="language-julia hljs">Message(Val(:system), &quot;You are a helpful assistant&quot;)
+Message(Val(:user), &quot;Hello!&quot;)</code></pre><p><strong>Role constants</strong>: <code>RoleSystem = &quot;system&quot;</code>, <code>RoleUser = &quot;user&quot;</code>, <code>RoleAssistant = &quot;assistant&quot;</code>.</p><h3 id="chatrequest!"><a class="docs-heading-anchor" href="#chatrequest!">chatrequest!</a><a id="chatrequest!-1"></a><a class="docs-heading-anchor-permalink" href="#chatrequest!" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Mutating form — sends chat.messages, appends response when history=true
+chatrequest!(chat::Chat; retries::Int=0, callback=nothing) -&gt; LLMSuccess | LLMFailure | LLMCallError | Task
+
+# Keyword-argument convenience form — builds a Chat internally
+chatrequest!(; service=OPENAIServiceEndpoint, model=&quot;gpt-5.2&quot;,
+    systemprompt, userprompt, messages=Message[], history=true,
+    tools=nothing, tool_choice=nothing, temperature=nothing, ...) -&gt; same</code></pre><ul><li>Non-streaming: returns <code>LLMSuccess</code>, <code>LLMFailure</code>, or <code>LLMCallError</code>.</li><li>Streaming (<code>stream=true</code>): returns a <code>Task</code>. Pass a <code>callback(chunk::Union{String,Message}, close::Ref{Bool})</code>.</li><li>Auto-retries on HTTP 429/500/503 with exponential backoff and jitter (up to 30 attempts). Respects <code>Retry-After</code> headers on 429 responses.</li></ul><h3 id="Conversation-Management"><a class="docs-heading-anchor" href="#Conversation-Management">Conversation Management</a><a id="Conversation-Management-1"></a><a class="docs-heading-anchor-permalink" href="#Conversation-Management" title="Permalink"></a></h3><pre><code class="language-julia hljs">push!(chat, message)       # append a Message
+pop!(chat)                 # remove last message
+update!(chat, message)     # append if history=true
+issendvalid(chat) -&gt; Bool  # check conversation rules (≥1 message, system first if present, etc.)
+length(chat)               # number of messages
+isempty(chat)              # true if no messages
+chat[i]                    # index into messages</code></pre><h3 id="Tool-Calling-Types"><a class="docs-heading-anchor" href="#Tool-Calling-Types">Tool Calling Types</a><a id="Tool-Calling-Types-1"></a><a class="docs-heading-anchor-permalink" href="#Tool-Calling-Types" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Define a function the model can call
+@kwdef struct GPTFunctionSignature
+    name::String
+    description::Union{String,Nothing} = nothing
+    parameters::Union{AbstractDict,Nothing} = nothing   # JSON Schema dict
+end
+
+# Wrap it for the tools parameter
+@kwdef struct GPTTool
+    type::String = &quot;function&quot;
+    func::GPTFunctionSignature
+end
+GPTTool(d::AbstractDict)   # construct from dict with keys &quot;name&quot;, &quot;description&quot;, &quot;parameters&quot;
+
+# Returned by model when it wants to call a function
+@kwdef struct GPTToolCall
+    id::String
+    type::String = &quot;function&quot;
+    func::GPTFunction       # has .name::String and .arguments::AbstractDict
+end
+
+# Your result after executing the function
+struct GPTFunctionCallResult{T}
+    name::Union{String,Symbol}
+    origincall::GPTFunction
+    result::T
+end</code></pre><h3 id="ResponseFormat-(Structured-Output)"><a class="docs-heading-anchor" href="#ResponseFormat-(Structured-Output)">ResponseFormat (Structured Output)</a><a id="ResponseFormat-(Structured-Output)-1"></a><a class="docs-heading-anchor-permalink" href="#ResponseFormat-(Structured-Output)" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct ResponseFormat
+    type::String = &quot;json_object&quot;                               # &quot;json_object&quot; or &quot;json_schema&quot;
+    json_schema::Union{JsonSchemaAPI,AbstractDict,Nothing} = nothing
+end
+ResponseFormat(json_schema)  # shorthand, sets type=&quot;json_schema&quot;</code></pre><h3 id="Chat-Completions-Example"><a class="docs-heading-anchor" href="#Chat-Completions-Example">Chat Completions Example</a><a id="Chat-Completions-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Chat-Completions-Example" title="Permalink"></a></h3><pre><code class="language-julia hljs">using UniLM
+
+# Build conversation
+chat = Chat(model=&quot;gpt-5.2&quot;)
+push!(chat, Message(Val(:system), &quot;You are a helpful assistant.&quot;))
+push!(chat, Message(Val(:user), &quot;What is the capital of France?&quot;))
+
+result = chatrequest!(chat)
+if result isa LLMSuccess
+    println(result.message.content)     # &quot;Paris...&quot;
+    # chat.messages already has the response appended (history=true)
+end
+
+# One-shot via keywords
+result = chatrequest!(
+    systemprompt=&quot;You are a translator.&quot;,
+    userprompt=&quot;Translate &#39;hello&#39; to French.&quot;,
+    model=&quot;gpt-5.2&quot;
+)</code></pre><h3 id="Tool-Calling-Example-(Chat)"><a class="docs-heading-anchor" href="#Tool-Calling-Example-(Chat)">Tool Calling Example (Chat)</a><a id="Tool-Calling-Example-(Chat)-1"></a><a class="docs-heading-anchor-permalink" href="#Tool-Calling-Example-(Chat)" title="Permalink"></a></h3><pre><code class="language-julia hljs">weather_tool = GPTTool(func=GPTFunctionSignature(
+    name=&quot;get_weather&quot;,
+    description=&quot;Get current weather&quot;,
+    parameters=Dict(
+        &quot;type&quot; =&gt; &quot;object&quot;,
+        &quot;properties&quot; =&gt; Dict(&quot;location&quot; =&gt; Dict(&quot;type&quot; =&gt; &quot;string&quot;)),
+        &quot;required&quot; =&gt; [&quot;location&quot;]
+    )
+))
+
+chat = Chat(model=&quot;gpt-5.2&quot;, tools=[weather_tool])
+push!(chat, Message(Val(:system), &quot;You help with weather.&quot;))
+push!(chat, Message(Val(:user), &quot;Weather in Paris?&quot;))
+
+result = chatrequest!(chat)
+if result isa LLMSuccess &amp;&amp; result.message.finish_reason == &quot;tool_calls&quot;
+    for tc in result.message.tool_calls
+        # tc.func.name == &quot;get_weather&quot;, tc.func.arguments == Dict(&quot;location&quot; =&gt; &quot;Paris&quot;)
+        answer = &quot;22°C, sunny&quot;  # your function result
+        push!(chat, Message(role=&quot;tool&quot;, content=answer, tool_call_id=tc.id))
+    end
+    result2 = chatrequest!(chat)
+    println(result2.message.content)
+end</code></pre><h3 id="Streaming-Example-(Chat)"><a class="docs-heading-anchor" href="#Streaming-Example-(Chat)">Streaming Example (Chat)</a><a id="Streaming-Example-(Chat)-1"></a><a class="docs-heading-anchor-permalink" href="#Streaming-Example-(Chat)" title="Permalink"></a></h3><pre><code class="language-julia hljs">chat = Chat(model=&quot;gpt-5.2&quot;, stream=true)
+push!(chat, Message(Val(:system), &quot;You are helpful.&quot;))
+push!(chat, Message(Val(:user), &quot;Tell me a story.&quot;))
+
+task = chatrequest!(chat) do chunk, close_ref
+    if chunk isa String
+        print(chunk)            # partial text delta
+    elseif chunk isa Message
+        println(&quot;\n[Done]&quot;)     # final assembled message
+        # close_ref[] = true    # to stop early
+    end
+end
+
+result = fetch(task)  # LLMSuccess when complete</code></pre><hr/><h2 id="Responses-API"><a class="docs-heading-anchor" href="#Responses-API">Responses API</a><a id="Responses-API-1"></a><a class="docs-heading-anchor-permalink" href="#Responses-API" title="Permalink"></a></h2><h3 id="Respond"><a class="docs-heading-anchor" href="#Respond">Respond</a><a id="Respond-1"></a><a class="docs-heading-anchor-permalink" href="#Respond" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct Respond
+    service::Type{&lt;:ServiceEndpoint} = OPENAIServiceEndpoint
+    model::String = &quot;gpt-5.2&quot;
+    input::Union{String, Vector}                             # String or Vector{InputMessage}
+    instructions::Union{String,Nothing} = nothing
+    tools::Union{Vector,Nothing} = nothing                  # Vector of ResponseTool subtypes
+    tool_choice::Union{String,Nothing} = nothing            # &quot;auto&quot;, &quot;none&quot;, &quot;required&quot;
+    parallel_tool_calls::Union{Bool,Nothing} = nothing
+    temperature::Union{Float64,Nothing} = nothing           # 0.0–2.0, mutually exclusive with top_p
+    top_p::Union{Float64,Nothing} = nothing                 # 0.0–1.0
+    max_output_tokens::Union{Int64,Nothing} = nothing
+    stream::Union{Bool,Nothing} = nothing
+    text::Union{TextConfig,Nothing} = nothing               # output format
+    reasoning::Union{Reasoning,Nothing} = nothing           # O-series models
+    truncation::Union{String,Nothing} = nothing             # &quot;auto&quot; or &quot;disabled&quot;
+    store::Union{Bool,Nothing} = nothing                    # store for later retrieval
+    metadata::Union{AbstractDict,Nothing} = nothing
+    previous_response_id::Union{String,Nothing} = nothing   # multi-turn chaining
+    user::Union{String,Nothing} = nothing
+    background::Union{Bool,Nothing} = nothing
+    include::Union{Vector{String},Nothing} = nothing
+    max_tool_calls::Union{Int64,Nothing} = nothing
+    service_tier::Union{String,Nothing} = nothing           # &quot;auto&quot;,&quot;default&quot;,&quot;flex&quot;,&quot;priority&quot;
+    top_logprobs::Union{Int64,Nothing} = nothing            # 0–20
+    prompt::Union{AbstractDict,Nothing} = nothing
+    prompt_cache_key::Union{String,Nothing} = nothing
+    prompt_cache_retention::Union{String,Nothing} = nothing  # &quot;in-memory&quot;,&quot;24h&quot;
+    safety_identifier::Union{String,Nothing} = nothing
+    conversation::Union{Any,Nothing} = nothing
+    context_management::Union{Vector,Nothing} = nothing
+    stream_options::Union{AbstractDict,Nothing} = nothing
+end</code></pre><h3 id="Input-Helpers"><a class="docs-heading-anchor" href="#Input-Helpers">Input Helpers</a><a id="Input-Helpers-1"></a><a class="docs-heading-anchor-permalink" href="#Input-Helpers" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Structured input messages
+InputMessage(role=&quot;user&quot;, content=&quot;Hello&quot;)
+InputMessage(role=&quot;user&quot;, content=[input_text(&quot;Describe:&quot;), input_image(&quot;https://...&quot;)])
+
+# Content part constructors
+input_text(text::String)                                    # → Dict(:type=&gt;&quot;input_text&quot;, :text=&gt;...)
+input_image(url::String; detail=nothing)                    # → Dict(:type=&gt;&quot;input_image&quot;, ...) detail: &quot;auto&quot;,&quot;low&quot;,&quot;high&quot;
+input_file(; url=nothing, id=nothing)                       # → Dict(:type=&gt;&quot;input_file&quot;, ...) provide url or file id</code></pre><h3 id="Tool-Types"><a class="docs-heading-anchor" href="#Tool-Types">Tool Types</a><a id="Tool-Types-1"></a><a class="docs-heading-anchor-permalink" href="#Tool-Types" title="Permalink"></a></h3><pre><code class="language-julia hljs">abstract type ResponseTool end
+
+@kwdef struct FunctionTool &lt;: ResponseTool
+    name::String
+    description::Union{String,Nothing} = nothing
+    parameters::Union{AbstractDict,Nothing} = nothing
+    strict::Union{Bool,Nothing} = nothing
+end
+
+@kwdef struct WebSearchTool &lt;: ResponseTool
+    search_context_size::String = &quot;medium&quot;                  # &quot;low&quot;,&quot;medium&quot;,&quot;high&quot;
+    user_location::Union{AbstractDict,Nothing} = nothing
+end
+
+@kwdef struct FileSearchTool &lt;: ResponseTool
+    vector_store_ids::Vector{String}
+    max_num_results::Union{Int,Nothing} = nothing
+    ranking_options::Union{AbstractDict,Nothing} = nothing
+    filters::Union{AbstractDict,Nothing} = nothing
+end</code></pre><pre><code class="language-julia hljs">@kwdef struct MCPTool &lt;: ResponseTool
+    server_label::String
+    server_url::String
+    require_approval::Union{String, AbstractDict, Nothing} = &quot;never&quot;
+    allowed_tools::Union{Vector{String}, Nothing} = nothing
+    headers::Union{AbstractDict, Nothing} = nothing
+end
+
+@kwdef struct ComputerUseTool &lt;: ResponseTool
+    display_width::Int = 1024
+    display_height::Int = 768
+    environment::Union{String, Nothing} = nothing
+end
+
+@kwdef struct ImageGenerationTool &lt;: ResponseTool
+    background::Union{String, Nothing} = nothing
+    output_format::Union{String, Nothing} = nothing
+    output_compression::Union{Int, Nothing} = nothing
+    quality::Union{String, Nothing} = nothing
+    size::Union{String, Nothing} = nothing
+end
+
+@kwdef struct CodeInterpreterTool &lt;: ResponseTool
+    container::Union{AbstractDict, Nothing} = nothing
+    file_ids::Union{Vector{String}, Nothing} = nothing
+end</code></pre><p><strong>Convenience constructors</strong>:</p><pre><code class="language-julia hljs">function_tool(name, description=nothing; parameters=nothing, strict=nothing)
+function_tool(d::AbstractDict)           # from dict with keys &quot;name&quot;, &quot;description&quot;, &quot;parameters&quot;
+web_search(; context_size=&quot;medium&quot;, location=nothing)
+file_search(store_ids; max_results=nothing, ranking=nothing, filters=nothing)
+mcp_tool(label, url; require_approval=&quot;never&quot;, allowed_tools=nothing, headers=nothing)
+computer_use(; display_width=1024, display_height=768, environment=nothing)
+image_generation_tool(; kwargs...)
+code_interpreter(; container=nothing, file_ids=nothing)</code></pre><h3 id="Text-Format-/-Structured-Output"><a class="docs-heading-anchor" href="#Text-Format-/-Structured-Output">Text Format / Structured Output</a><a id="Text-Format-/-Structured-Output-1"></a><a class="docs-heading-anchor-permalink" href="#Text-Format-/-Structured-Output" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct TextFormatSpec
+    type::String = &quot;text&quot;                                   # &quot;text&quot;,&quot;json_object&quot;,&quot;json_schema&quot;
+    name::Union{String,Nothing} = nothing
+    description::Union{String,Nothing} = nothing
+    schema::Union{AbstractDict,Nothing} = nothing
+    strict::Union{Bool,Nothing} = nothing
+end
+
+@kwdef struct TextConfig
+    format::TextFormatSpec = TextFormatSpec()
+end</code></pre><p><strong>Convenience constructors</strong>:</p><pre><code class="language-julia hljs">text_format(; kwargs...)                                     # generic TextConfig
+json_schema_format(name, description, schema; strict=nothing) # JSON Schema output
+json_schema_format(d::AbstractDict)                          # from dict with keys &quot;name&quot;, &quot;description&quot;, &quot;schema&quot;
+json_object_format()                                         # unstructured JSON</code></pre><h3 id="Reasoning-(O-series-models)"><a class="docs-heading-anchor" href="#Reasoning-(O-series-models)">Reasoning (O-series models)</a><a id="Reasoning-(O-series-models)-1"></a><a class="docs-heading-anchor-permalink" href="#Reasoning-(O-series-models)" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct Reasoning
+    effort::Union{String,Nothing} = nothing                 # &quot;none&quot;,&quot;low&quot;,&quot;medium&quot;,&quot;high&quot;
+    generate_summary::Union{String,Nothing} = nothing       # &quot;auto&quot;,&quot;concise&quot;,&quot;detailed&quot;
+    summary::Union{String,Nothing} = nothing                # deprecated alias
+end</code></pre><pre><code class="language-julia hljs">Respond(input=&quot;Hard math problem&quot;, model=&quot;o3&quot;, reasoning=Reasoning(effort=&quot;high&quot;))</code></pre><h3 id="respond"><a class="docs-heading-anchor" href="#respond">respond</a><a id="respond-1"></a><a class="docs-heading-anchor-permalink" href="#respond" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Struct form
+respond(r::Respond; retries=0, callback=nothing) -&gt; ResponseSuccess | ResponseFailure | ResponseCallError | Task
+
+# Convenience — builds Respond internally
+respond(input; kwargs...) -&gt; same
+
+# do-block streaming — auto-sets stream=true
+respond(callback::Function, input; kwargs...) -&gt; Task</code></pre><ul><li>Streaming callback signature: <code>callback(chunk::Union{String, ResponseObject}, close::Ref{Bool})</code></li><li>Auto-retries on HTTP 429/500/503 with exponential backoff and jitter (up to 30 attempts). Respects <code>Retry-After</code> headers.</li><li><strong>Parameter validation</strong>: <code>temperature</code> ∈ [0.0, 2.0], <code>top_p</code> ∈ [0.0, 1.0], <code>max_output_tokens</code> ≥ 1, <code>top_logprobs</code> ∈ [0, 20]. Out-of-range values throw <code>ArgumentError</code>.</li></ul><h3 id="Response-Accessors"><a class="docs-heading-anchor" href="#Response-Accessors">Response Accessors</a><a id="Response-Accessors-1"></a><a class="docs-heading-anchor-permalink" href="#Response-Accessors" title="Permalink"></a></h3><pre><code class="language-julia hljs">output_text(result::ResponseSuccess)::String                # concatenated text output
+output_text(result::ResponseFailure)::String                # error message
+output_text(result::ResponseCallError)::String              # error message
+
+function_calls(result::ResponseSuccess)::Vector{Dict{String,Any}}
+# Each dict has: &quot;id&quot;, &quot;call_id&quot;, &quot;name&quot;, &quot;arguments&quot; (JSON string), &quot;status&quot;</code></pre><h3 id="Response-Management-Functions"><a class="docs-heading-anchor" href="#Response-Management-Functions">Response Management Functions</a><a id="Response-Management-Functions-1"></a><a class="docs-heading-anchor-permalink" href="#Response-Management-Functions" title="Permalink"></a></h3><pre><code class="language-julia hljs">get_response(id::String; service=OPENAIServiceEndpoint)           -&gt; ResponseSuccess | ResponseFailure | ResponseCallError
+delete_response(id::String; service=OPENAIServiceEndpoint)        -&gt; Dict | ResponseFailure | ResponseCallError
+list_input_items(id::String; limit=20, order=&quot;desc&quot;, after=nothing, service=OPENAIServiceEndpoint) -&gt; Dict | ...
+cancel_response(id::String; service=OPENAIServiceEndpoint)        -&gt; ResponseSuccess | ...
+compact_response(; model=&quot;gpt-5.2&quot;, input, service=OPENAIServiceEndpoint) -&gt; Dict | ...
+count_input_tokens(; model=&quot;gpt-5.2&quot;, input, instructions=nothing, tools=nothing, service=OPENAIServiceEndpoint) -&gt; Dict | ...</code></pre><h3 id="ResponseObject"><a class="docs-heading-anchor" href="#ResponseObject">ResponseObject</a><a id="ResponseObject-1"></a><a class="docs-heading-anchor-permalink" href="#ResponseObject" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct ResponseObject
+    id::String
+    status::String
+    model::String
+    output::Vector{Any}
+    usage::Union{Dict{String,Any},Nothing} = nothing
+    error::Union{Any,Nothing} = nothing
+    metadata::Union{Dict{String,Any},Nothing} = nothing
+    raw::Dict{String,Any}
+end</code></pre><h3 id="Responses-API-Examples"><a class="docs-heading-anchor" href="#Responses-API-Examples">Responses API Examples</a><a id="Responses-API-Examples-1"></a><a class="docs-heading-anchor-permalink" href="#Responses-API-Examples" title="Permalink"></a></h3><pre><code class="language-julia hljs">using UniLM
+
+# Basic
+result = respond(&quot;Tell me a joke&quot;)
+if result isa ResponseSuccess
+    println(output_text(result))
+end
+
+# With instructions
+result = respond(&quot;Hello&quot;, instructions=&quot;You are a pirate. Respond in pirate speak.&quot;)
+
+# Multi-turn via chaining
+r1 = respond(&quot;Tell me a joke&quot;)
+r2 = respond(&quot;Tell me another&quot;, previous_response_id=r1.response.id)
+
+# Structured output
+schema = Dict(
+    &quot;type&quot; =&gt; &quot;object&quot;,
+    &quot;properties&quot; =&gt; Dict(
+        &quot;name&quot; =&gt; Dict(&quot;type&quot; =&gt; &quot;string&quot;),
+        &quot;age&quot; =&gt; Dict(&quot;type&quot; =&gt; &quot;integer&quot;)
+    ),
+    &quot;required&quot; =&gt; [&quot;name&quot;, &quot;age&quot;],
+    &quot;additionalProperties&quot; =&gt; false
+)
+result = respond(&quot;Extract: John is 30 years old&quot;,
+    text=json_schema_format(&quot;person&quot;, &quot;A person&quot;, schema, strict=true))
+parsed = JSON.parse(output_text(result))
+
+# Web search
+result = respond(&quot;Latest Julia language news&quot;, tools=[web_search()])
+
+# Function calling
+tool = function_tool(&quot;get_weather&quot;, &quot;Get weather&quot;,
+    parameters=Dict(
+        &quot;type&quot; =&gt; &quot;object&quot;,
+        &quot;properties&quot; =&gt; Dict(&quot;location&quot; =&gt; Dict(&quot;type&quot; =&gt; &quot;string&quot;)),
+        &quot;required&quot; =&gt; [&quot;location&quot;]
+    ))
+result = respond(&quot;Weather in NYC?&quot;, tools=ResponseTool[tool])
+for call in function_calls(result)
+    println(call[&quot;name&quot;], &quot;: &quot;, call[&quot;arguments&quot;])
+end
+
+# Streaming (do-block)
+respond(&quot;Tell me a story&quot;) do chunk, close_ref
+    if chunk isa String
+        print(chunk)
+    elseif chunk isa ResponseObject
+        println(&quot;\nDone: &quot;, chunk.status)
+    end
+end
+
+# Reasoning (O-series)
+result = respond(&quot;Prove that √2 is irrational&quot;, model=&quot;o3&quot;,
+    reasoning=Reasoning(effort=&quot;high&quot;, generate_summary=&quot;concise&quot;))
+
+# Multimodal input
+result = respond([
+    InputMessage(role=&quot;user&quot;, content=[
+        input_text(&quot;What&#39;s in this image?&quot;),
+        input_image(&quot;https://example.com/photo.jpg&quot;)
+    ])
+])
+
+# Count tokens without generating
+tokens = count_input_tokens(model=&quot;gpt-5.2&quot;, input=&quot;Hello world&quot;)
+println(tokens[&quot;input_tokens&quot;])</code></pre><hr/><h2 id="Image-Generation-API"><a class="docs-heading-anchor" href="#Image-Generation-API">Image Generation API</a><a id="Image-Generation-API-1"></a><a class="docs-heading-anchor-permalink" href="#Image-Generation-API" title="Permalink"></a></h2><h3 id="ImageGeneration"><a class="docs-heading-anchor" href="#ImageGeneration">ImageGeneration</a><a id="ImageGeneration-1"></a><a class="docs-heading-anchor-permalink" href="#ImageGeneration" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct ImageGeneration
+    service::Type{&lt;:ServiceEndpoint} = OPENAIServiceEndpoint
+    model::String = &quot;gpt-image-1.5&quot;
+    prompt::String
+    n::Union{Int,Nothing} = nothing                         # 1–10
+    size::Union{String,Nothing} = nothing                   # &quot;1024x1024&quot;,&quot;1536x1024&quot;,&quot;1024x1536&quot;,&quot;auto&quot;
+    quality::Union{String,Nothing} = nothing                # &quot;low&quot;,&quot;medium&quot;,&quot;high&quot;,&quot;auto&quot;
+    background::Union{String,Nothing} = nothing             # &quot;transparent&quot;,&quot;opaque&quot;,&quot;auto&quot;
+    output_format::Union{String,Nothing} = nothing          # &quot;png&quot;,&quot;webp&quot;,&quot;jpeg&quot;
+    output_compression::Union{Int,Nothing} = nothing        # 0–100 (webp/jpeg only)
+    user::Union{String,Nothing} = nothing
+end</code></pre><h3 id="generate_image"><a class="docs-heading-anchor" href="#generate_image">generate_image</a><a id="generate_image-1"></a><a class="docs-heading-anchor-permalink" href="#generate_image" title="Permalink"></a></h3><pre><code class="language-julia hljs">generate_image(ig::ImageGeneration; retries=0) -&gt; ImageSuccess | ImageFailure | ImageCallError
+generate_image(prompt::String; kwargs...)       -&gt; same   # convenience</code></pre><p>Auto-retries on 429/500/503 with exponential backoff and jitter (up to 30 attempts). Respects <code>Retry-After</code> headers.</p><h3 id="Response-Types"><a class="docs-heading-anchor" href="#Response-Types">Response Types</a><a id="Response-Types-1"></a><a class="docs-heading-anchor-permalink" href="#Response-Types" title="Permalink"></a></h3><pre><code class="language-julia hljs">struct ImageObject
+    b64_json::Union{String,Nothing}
+    revised_prompt::Union{String,Nothing}
+end
+
+struct ImageResponse
+    created::Int64
+    data::Vector{ImageObject}
+    usage::Union{Dict{String,Any},Nothing}
+    raw::Dict{String,Any}
+end</code></pre><h3 id="Accessors"><a class="docs-heading-anchor" href="#Accessors">Accessors</a><a id="Accessors-1"></a><a class="docs-heading-anchor-permalink" href="#Accessors" title="Permalink"></a></h3><pre><code class="language-julia hljs">image_data(result::ImageSuccess)::Vector{String}       # base64-encoded image strings
+image_data(result::ImageFailure)::String[]              # empty
+image_data(result::ImageCallError)::String[]            # empty
+save_image(img_b64::String, filepath::String)           # decode + write to disk, returns filepath</code></pre><h3 id="Image-Generation-Example"><a class="docs-heading-anchor" href="#Image-Generation-Example">Image Generation Example</a><a id="Image-Generation-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Image-Generation-Example" title="Permalink"></a></h3><pre><code class="language-julia hljs">using UniLM
+
+result = generate_image(&quot;A watercolor painting of a Julia butterfly&quot;,
+    size=&quot;1024x1024&quot;, quality=&quot;high&quot;)
+
+if result isa ImageSuccess
+    imgs = image_data(result)
+    save_image(imgs[1], &quot;butterfly.png&quot;)
+    println(&quot;Saved! Revised prompt: &quot;, result.response.data[1].revised_prompt)
+end
+
+# Multiple images with transparent background
+result = generate_image(&quot;Minimalist logo&quot;,
+    n=3, background=&quot;transparent&quot;, output_format=&quot;png&quot;)</code></pre><hr/><h2 id="Embeddings-API"><a class="docs-heading-anchor" href="#Embeddings-API">Embeddings API</a><a id="Embeddings-API-1"></a><a class="docs-heading-anchor-permalink" href="#Embeddings-API" title="Permalink"></a></h2><h3 id="Embeddings"><a class="docs-heading-anchor" href="#Embeddings">Embeddings</a><a id="Embeddings-1"></a><a class="docs-heading-anchor-permalink" href="#Embeddings" title="Permalink"></a></h3><pre><code class="language-julia hljs">struct Embeddings
+    model::String             # &quot;text-embedding-3-small&quot; (1536 dims)
+    input::Union{String,Vector{String}}
+    embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}
+    user::Union{String,Nothing}
+end
+
+Embeddings(input::String)           # single input, pre-allocates 1536-dim vector
+Embeddings(input::Vector{String})   # batch input, pre-allocates one vector per input</code></pre><h3 id="embeddingrequest!"><a class="docs-heading-anchor" href="#embeddingrequest!">embeddingrequest!</a><a id="embeddingrequest!-1"></a><a class="docs-heading-anchor-permalink" href="#embeddingrequest!" title="Permalink"></a></h3><pre><code class="language-julia hljs">embeddingrequest!(emb::Embeddings; retries=0) -&gt; (response_dict, emb) | nothing</code></pre><p>Fills <code>emb.embeddings</code> in-place. Auto-retries on 429/500/503 with exponential backoff and jitter (up to 30 attempts). Respects <code>Retry-After</code> headers.</p><h3 id="Embeddings-Example"><a class="docs-heading-anchor" href="#Embeddings-Example">Embeddings Example</a><a id="Embeddings-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Embeddings-Example" title="Permalink"></a></h3><pre><code class="language-julia hljs">using UniLM, LinearAlgebra
+
+emb = Embeddings(&quot;What is Julia?&quot;)
+embeddingrequest!(emb)
+println(emb.embeddings[1:5])  # first 5 dimensions
+
+# Batch + cosine similarity
+emb = Embeddings([&quot;cat&quot;, &quot;dog&quot;, &quot;airplane&quot;])
+embeddingrequest!(emb)
+similarity = dot(emb.embeddings[1], emb.embeddings[2]) /
+    (norm(emb.embeddings[1]) * norm(emb.embeddings[2]))</code></pre><hr/><h2 id="Cost-Tracking"><a class="docs-heading-anchor" href="#Cost-Tracking">Cost Tracking</a><a id="Cost-Tracking-1"></a><a class="docs-heading-anchor-permalink" href="#Cost-Tracking" title="Permalink"></a></h2><h3 id="TokenUsage"><a class="docs-heading-anchor" href="#TokenUsage">TokenUsage</a><a id="TokenUsage-1"></a><a class="docs-heading-anchor-permalink" href="#TokenUsage" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct TokenUsage
+    prompt_tokens::Int = 0
+    completion_tokens::Int = 0
+    total_tokens::Int = 0
+end</code></pre><h3 id="Functions"><a class="docs-heading-anchor" href="#Functions">Functions</a><a id="Functions-1"></a><a class="docs-heading-anchor-permalink" href="#Functions" title="Permalink"></a></h3><pre><code class="language-julia hljs">token_usage(result::LLMSuccess)::Union{TokenUsage, Nothing}      # extract TokenUsage from a Chat result
+token_usage(result::ResponseSuccess)::Union{TokenUsage, Nothing}  # extract from Responses API result
+
+estimated_cost(result; model=nothing, pricing=DEFAULT_PRICING)     # per-call cost estimate (Float64)
+cumulative_cost(chat::Chat)::Float64                               # running total for a Chat instance
+
+DEFAULT_PRICING   # Dict{String, Tuple{Float64, Float64}} — model → (input_price, output_price) per token</code></pre><h3 id="Cost-Tracking-Example"><a class="docs-heading-anchor" href="#Cost-Tracking-Example">Cost Tracking Example</a><a id="Cost-Tracking-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Cost-Tracking-Example" title="Permalink"></a></h3><pre><code class="language-julia hljs">chat = Chat(model=&quot;gpt-5.2&quot;)
+push!(chat, Message(Val(:system), &quot;You are helpful.&quot;))
+push!(chat, Message(Val(:user), &quot;Hello!&quot;))
+
+result = chatrequest!(chat)
+if result isa LLMSuccess
+    usage = token_usage(result)
+    cost = estimated_cost(result)
+    println(&quot;Tokens: $(usage.total_tokens), Cost: \$$(round(cost; digits=6))&quot;)
+    println(&quot;Cumulative: \$$(round(cumulative_cost(chat); digits=6))&quot;)
+end</code></pre><hr/><h2 id="Conversation-Forking"><a class="docs-heading-anchor" href="#Conversation-Forking">Conversation Forking</a><a id="Conversation-Forking-1"></a><a class="docs-heading-anchor-permalink" href="#Conversation-Forking" title="Permalink"></a></h2><pre><code class="language-julia hljs">fork(chat::Chat)::Chat          # deep-copy a Chat, resetting cumulative cost
+fork(chat::Chat, n::Int)::Vector{Chat}  # create n independent forks</code></pre><h3 id="Fork-Example"><a class="docs-heading-anchor" href="#Fork-Example">Fork Example</a><a id="Fork-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Fork-Example" title="Permalink"></a></h3><pre><code class="language-julia hljs">chat = Chat(model=&quot;gpt-5.2&quot;)
+push!(chat, Message(Val(:system), &quot;You are a creative writer.&quot;))
+push!(chat, Message(Val(:user), &quot;Start a story about a robot.&quot;))
+chatrequest!(chat)
+
+# Fork into 3 independent continuations
+forks = fork(chat, 3)
+for (i, f) in enumerate(forks)
+    push!(f, Message(Val(:user), &quot;Continue the story with ending $i.&quot;))
+    chatrequest!(f)
+end</code></pre><hr/><h2 id="Tool-Loop"><a class="docs-heading-anchor" href="#Tool-Loop">Tool Loop</a><a id="Tool-Loop-1"></a><a class="docs-heading-anchor-permalink" href="#Tool-Loop" title="Permalink"></a></h2><p>Automated tool dispatch for both APIs. Wraps a tool schema with a callable function.</p><h3 id="CallableTool"><a class="docs-heading-anchor" href="#CallableTool">CallableTool</a><a id="CallableTool-1"></a><a class="docs-heading-anchor-permalink" href="#CallableTool" title="Permalink"></a></h3><pre><code class="language-julia hljs">struct CallableTool{T}
+    tool::T              # GPTTool or FunctionTool
+    callable::Function   # (name::String, args::Dict{String,Any}) -&gt; String
+end</code></pre><h3 id="to_tool"><a class="docs-heading-anchor" href="#to_tool">to_tool</a><a id="to_tool-1"></a><a class="docs-heading-anchor-permalink" href="#to_tool" title="Permalink"></a></h3><pre><code class="language-julia hljs">to_tool(x)  # identity for GPTTool, FunctionTool, CallableTool; converts AbstractDict to GPTTool</code></pre><h3 id="ToolCallOutcome-/-ToolLoopResult"><a class="docs-heading-anchor" href="#ToolCallOutcome-/-ToolLoopResult">ToolCallOutcome / ToolLoopResult</a><a id="ToolCallOutcome-/-ToolLoopResult-1"></a><a class="docs-heading-anchor-permalink" href="#ToolCallOutcome-/-ToolLoopResult" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Per-call record
+struct ToolCallOutcome
+    tool_name::String
+    arguments::Dict{String,Any}
+    result::Union{GPTFunctionCallResult,Nothing}
+    success::Bool
+    error::Union{String,Nothing}
+end
+
+# Loop result
+struct ToolLoopResult
+    response::LLMRequestResponse
+    tool_calls::Vector{ToolCallOutcome}
+    turns_used::Int
+    completed::Bool
+    llm_error::Union{String,Nothing}
+end</code></pre><h3 id="tool_loop!-(Chat-Completions)"><a class="docs-heading-anchor" href="#tool_loop!-(Chat-Completions)">tool_loop! (Chat Completions)</a><a id="tool_loop!-(Chat-Completions)-1"></a><a class="docs-heading-anchor-permalink" href="#tool_loop!-(Chat-Completions)" title="Permalink"></a></h3><pre><code class="language-julia hljs">tool_loop!(chat, dispatcher; max_turns=10, retries=0) -&gt; ToolLoopResult
+tool_loop!(chat; tools::Vector{&lt;:CallableTool}, kwargs...) -&gt; ToolLoopResult</code></pre><h3 id="tool_loop-(Responses-API)"><a class="docs-heading-anchor" href="#tool_loop-(Responses-API)">tool_loop (Responses API)</a><a id="tool_loop-(Responses-API)-1"></a><a class="docs-heading-anchor-permalink" href="#tool_loop-(Responses-API)" title="Permalink"></a></h3><pre><code class="language-julia hljs">tool_loop(r::Respond, dispatcher; max_turns=10, retries=0) -&gt; ToolLoopResult
+tool_loop(r::Respond; max_turns=10, retries=0) -&gt; ToolLoopResult   # extracts callables from r.tools
+tool_loop(input, dispatcher; tools, kwargs...) -&gt; ToolLoopResult    # convenience form</code></pre><hr/><h2 id="MCP-Client"><a class="docs-heading-anchor" href="#MCP-Client">MCP Client</a><a id="MCP-Client-1"></a><a class="docs-heading-anchor-permalink" href="#MCP-Client" title="Permalink"></a></h2><p>Native MCP client (JSON-RPC 2.0 over stdio or HTTP, spec 2025-11-25).</p><h3 id="Types"><a class="docs-heading-anchor" href="#Types">Types</a><a id="Types-1"></a><a class="docs-heading-anchor-permalink" href="#Types" title="Permalink"></a></h3><pre><code class="language-julia hljs">MCPSession            # live connection — manages transport + cached tools/resources/prompts
+MCPToolInfo           # tool definition from tools/list
+MCPResourceInfo       # resource definition from resources/list
+MCPPromptInfo         # prompt definition from prompts/list
+MCPServerCapabilities # capabilities from initialize
+MCPTransport          # abstract (subtypes: StdioTransport, HTTPTransport)
+MCPError &lt;: Exception # JSON-RPC error (code, message, data)</code></pre><h3 id="Lifecycle"><a class="docs-heading-anchor" href="#Lifecycle">Lifecycle</a><a id="Lifecycle-1"></a><a class="docs-heading-anchor-permalink" href="#Lifecycle" title="Permalink"></a></h3><pre><code class="language-julia hljs">mcp_connect(command::Cmd; ...) -&gt; MCPSession     # stdio subprocess
+mcp_connect(url::String; headers=[], ...) -&gt; MCPSession  # HTTP
+mcp_connect(f::Function, args...; ...)            # do-block, auto-disconnect
+mcp_disconnect!(session)</code></pre><h3 id="Discovery"><a class="docs-heading-anchor" href="#Discovery">Discovery</a><a id="Discovery-1"></a><a class="docs-heading-anchor-permalink" href="#Discovery" title="Permalink"></a></h3><pre><code class="language-julia hljs">list_tools!(session) -&gt; Vector{MCPToolInfo}
+list_resources!(session) -&gt; Vector{MCPResourceInfo}
+list_prompts!(session) -&gt; Vector{MCPPromptInfo}</code></pre><h3 id="Operations"><a class="docs-heading-anchor" href="#Operations">Operations</a><a id="Operations-1"></a><a class="docs-heading-anchor-permalink" href="#Operations" title="Permalink"></a></h3><pre><code class="language-julia hljs">call_tool(session, name, arguments) -&gt; String
+read_resource(session, uri) -&gt; String
+get_prompt(session, name, arguments) -&gt; Vector{Dict}
+ping(session)</code></pre><h3 id="Tool-Bridge"><a class="docs-heading-anchor" href="#Tool-Bridge">Tool Bridge</a><a id="Tool-Bridge-1"></a><a class="docs-heading-anchor-permalink" href="#Tool-Bridge" title="Permalink"></a></h3><pre><code class="language-julia hljs">mcp_tools(session) -&gt; Vector{CallableTool{GPTTool}}         # for tool_loop!
+mcp_tools_respond(session) -&gt; Vector{CallableTool{FunctionTool}}  # for tool_loop</code></pre><h3 id="Client-Example"><a class="docs-heading-anchor" href="#Client-Example">Client Example</a><a id="Client-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Client-Example" title="Permalink"></a></h3><pre><code class="language-julia hljs">session = mcp_connect(`npx -y @modelcontextprotocol/server-filesystem /tmp`)
+tools = mcp_tools(session)
+chat = Chat(model=&quot;gpt-5.2&quot;, tools=map(t -&gt; t.tool, tools))
+push!(chat, Message(Val(:user), &quot;List files&quot;))
+result = tool_loop!(chat; tools)
+mcp_disconnect!(session)</code></pre><hr/><h2 id="MCP-Server"><a class="docs-heading-anchor" href="#MCP-Server">MCP Server</a><a id="MCP-Server-1"></a><a class="docs-heading-anchor-permalink" href="#MCP-Server" title="Permalink"></a></h2><p>Build MCP servers that expose tools, resources, and prompts.</p><h3 id="Types-2"><a class="docs-heading-anchor" href="#Types-2">Types</a><a class="docs-heading-anchor-permalink" href="#Types-2" title="Permalink"></a></h3><pre><code class="language-julia hljs">MCPServer(name, version; description=nothing)
+MCPServerPrimitive    # abstract (MCPServerTool, MCPServerResource, MCPServerResourceTemplate, MCPServerPrompt)</code></pre><h3 id="Registration"><a class="docs-heading-anchor" href="#Registration">Registration</a><a id="Registration-1"></a><a class="docs-heading-anchor-permalink" href="#Registration" title="Permalink"></a></h3><pre><code class="language-julia hljs">register_tool!(server, name, description, schema, handler)
+register_tool!(server, name, description, handler)           # auto-schema from signature
+register_tool!(server, ct::CallableTool{GPTTool})            # bridge from Chat API
+register_tool!(server, ct::CallableTool{FunctionTool})       # bridge from Responses API
+register_resource!(server, uri, name, handler; mime_type=&quot;text/plain&quot;, description=nothing)
+register_resource_template!(server, uri_template, name, handler; ...)
+register_prompt!(server, name, handler; description=nothing, arguments=[])</code></pre><h3 id="Macros"><a class="docs-heading-anchor" href="#Macros">Macros</a><a id="Macros-1"></a><a class="docs-heading-anchor-permalink" href="#Macros" title="Permalink"></a></h3><pre><code class="language-julia hljs">@mcp_tool server function name(args...) body end
+@mcp_resource server uri function(args...) body end
+@mcp_prompt server name function(args...) body end</code></pre><h3 id="Serving"><a class="docs-heading-anchor" href="#Serving">Serving</a><a id="Serving-1"></a><a class="docs-heading-anchor-permalink" href="#Serving" title="Permalink"></a></h3><pre><code class="language-julia hljs">serve(server; transport=:stdio)                         # default — stdio
+serve(server; transport=:http, host=&quot;127.0.0.1&quot;, port=8080)  # HTTP</code></pre><h3 id="Server-Example"><a class="docs-heading-anchor" href="#Server-Example">Server Example</a><a id="Server-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Server-Example" title="Permalink"></a></h3><pre><code class="language-julia hljs">server = MCPServer(&quot;calc&quot;, &quot;1.0.0&quot;)
+@mcp_tool server function add(a::Float64, b::Float64)::String
+    string(a + b)
+end
+serve(server)</code></pre><hr/><h2 id="Result-Type-Hierarchy"><a class="docs-heading-anchor" href="#Result-Type-Hierarchy">Result Type Hierarchy</a><a id="Result-Type-Hierarchy-1"></a><a class="docs-heading-anchor-permalink" href="#Result-Type-Hierarchy" title="Permalink"></a></h2><p>All API call results inherit from <code>LLMRequestResponse</code>:</p><pre><code class="nohighlight hljs">LLMRequestResponse (abstract)
+├── LLMSuccess          — Chat Completions success (.message::Message, .self::Chat)
+├── LLMFailure          — Chat Completions HTTP error (.response::String, .status::Int, .self::Chat)
+├── LLMCallError        — Chat Completions exception (.error::String, .status, .self::Chat)
+├── ResponseSuccess     — Responses API success (.response::ResponseObject)
+├── ResponseFailure     — Responses API HTTP error (.response::String, .status::Int)
+├── ResponseCallError   — Responses API exception (.error::String, .status)
+├── ImageSuccess        — Image Gen success (.response::ImageResponse)
+├── ImageFailure        — Image Gen HTTP error (.response::String, .status::Int)
+└── ImageCallError      — Image Gen exception (.error::String, .status)</code></pre><p><strong>Standard pattern-matching idiom</strong>:</p><pre><code class="language-julia hljs">result = chatrequest!(chat)
+if result isa LLMSuccess
+    println(result.message.content)
+elseif result isa LLMFailure
+    @error &quot;HTTP $(result.status): $(result.response)&quot;
+elseif result isa LLMCallError
+    @error &quot;Exception: $(result.error)&quot;
+end
+
+result = respond(&quot;Hello&quot;)
+if result isa ResponseSuccess
+    println(output_text(result))
+elseif result isa ResponseFailure
+    @error &quot;HTTP $(result.status)&quot;
+elseif result isa ResponseCallError
+    @error result.error
+end
+
+result = generate_image(&quot;A cat&quot;)
+if result isa ImageSuccess
+    save_image(image_data(result)[1], &quot;cat.png&quot;)
+elseif result isa ImageFailure
+    @error &quot;HTTP $(result.status)&quot;
+elseif result isa ImageCallError
+    @error result.error
+end</code></pre><hr/><h2 id="API-Constants"><a class="docs-heading-anchor" href="#API-Constants">API Constants</a><a id="API-Constants-1"></a><a class="docs-heading-anchor-permalink" href="#API-Constants" title="Permalink"></a></h2><pre><code class="language-julia hljs">const OPENAI_BASE_URL = &quot;https://api.openai.com&quot;
+const CHAT_COMPLETIONS_PATH = &quot;/v1/chat/completions&quot;
+const EMBEDDINGS_PATH = &quot;/v1/embeddings&quot;
+const RESPONSES_PATH = &quot;/v1/responses&quot;
+const IMAGES_GENERATIONS_PATH = &quot;/v1/images/generations&quot;
+const GEMINI_CHAT_URL = &quot;https://generativelanguage.googleapis.com/v1beta/openai/chat/completions&quot;</code></pre><h2 id="Exceptions"><a class="docs-heading-anchor" href="#Exceptions">Exceptions</a><a id="Exceptions-1"></a><a class="docs-heading-anchor-permalink" href="#Exceptions" title="Permalink"></a></h2><pre><code class="language-julia hljs">struct InvalidConversationError &lt;: Exception
+    reason::String
+end</code></pre><p>Thrown by <code>issendvalid</code> / internal validation when conversation structure is invalid (e.g., missing system message position, consecutive same-role messages).</p><hr/><h2 id="Complete-Exports-List"><a class="docs-heading-anchor" href="#Complete-Exports-List">Complete Exports List</a><a id="Complete-Exports-List-1"></a><a class="docs-heading-anchor-permalink" href="#Complete-Exports-List" title="Permalink"></a></h2><p><strong>Chat Completions</strong>: <code>Chat</code>, <code>Message</code>, <code>RoleSystem</code>, <code>RoleUser</code>, <code>RoleAssistant</code>, <code>GPTTool</code>, <code>GPTToolCall</code>, <code>GPTFunctionSignature</code>, <code>GPTFunctionCallResult</code>, <code>InvalidConversationError</code>, <code>issendvalid</code>, <code>chatrequest!</code>, <code>update!</code>, <code>ResponseFormat</code></p><p><strong>Responses API</strong>: <code>Respond</code>, <code>InputMessage</code>, <code>ResponseTool</code>, <code>FunctionTool</code>, <code>WebSearchTool</code>, <code>FileSearchTool</code>, <code>MCPTool</code>, <code>ComputerUseTool</code>, <code>ImageGenerationTool</code>, <code>CodeInterpreterTool</code>, <code>TextConfig</code>, <code>TextFormatSpec</code>, <code>Reasoning</code>, <code>ResponseObject</code>, <code>ResponseSuccess</code>, <code>ResponseFailure</code>, <code>ResponseCallError</code>, <code>respond</code>, <code>get_response</code>, <code>delete_response</code>, <code>list_input_items</code>, <code>cancel_response</code>, <code>compact_response</code>, <code>count_input_tokens</code>, <code>output_text</code>, <code>function_calls</code>, <code>input_text</code>, <code>input_image</code>, <code>input_file</code>, <code>function_tool</code>, <code>web_search</code>, <code>file_search</code>, <code>mcp_tool</code>, <code>computer_use</code>, <code>image_generation_tool</code>, <code>code_interpreter</code>, <code>text_format</code>, <code>json_schema_format</code>, <code>json_object_format</code></p><p><strong>Image Generation</strong>: <code>ImageGeneration</code>, <code>ImageObject</code>, <code>ImageResponse</code>, <code>ImageSuccess</code>, <code>ImageFailure</code>, <code>ImageCallError</code>, <code>generate_image</code>, <code>image_data</code>, <code>save_image</code></p><p><strong>Embeddings</strong>: <code>Embeddings</code>, <code>embeddingrequest!</code></p><p><strong>Cost Tracking</strong>: <code>TokenUsage</code>, <code>token_usage</code>, <code>estimated_cost</code>, <code>cumulative_cost</code>, <code>DEFAULT_PRICING</code></p><p><strong>Service Endpoints</strong>: <code>ServiceEndpoint</code>, <code>ServiceEndpointSpec</code>, <code>OPENAIServiceEndpoint</code>, <code>AZUREServiceEndpoint</code>, <code>GEMINIServiceEndpoint</code>, <code>GenericOpenAIEndpoint</code>, <code>OllamaEndpoint</code>, <code>MistralEndpoint</code>, <code>add_azure_deploy_name!</code></p><p><strong>Forking</strong>: <code>fork</code></p><p><strong>Tool Loop</strong>: <code>CallableTool</code>, <code>ToolCallOutcome</code>, <code>ToolLoopResult</code>, <code>tool_loop!</code>, <code>tool_loop</code>, <code>to_tool</code></p><p><strong>MCP Client</strong>: <code>MCPSession</code>, <code>MCPToolInfo</code>, <code>MCPResourceInfo</code>, <code>MCPPromptInfo</code>, <code>MCPServerCapabilities</code>, <code>MCPTransport</code>, <code>StdioTransport</code>, <code>HTTPTransport</code>, <code>MCPError</code>, <code>mcp_connect</code>, <code>mcp_disconnect!</code>, <code>mcp_tools</code>, <code>mcp_tools_respond</code>, <code>list_tools!</code>, <code>list_resources!</code>, <code>list_prompts!</code>, <code>call_tool</code>, <code>read_resource</code>, <code>get_prompt</code>, <code>ping</code></p><p><strong>MCP Server</strong>: <code>MCPServer</code>, <code>MCPServerTool</code>, <code>MCPServerResource</code>, <code>MCPServerResourceTemplate</code>, <code>MCPServerPrompt</code>, <code>MCPServerPrimitive</code>, <code>register_tool!</code>, <code>register_resource!</code>, <code>register_resource_template!</code>, <code>register_prompt!</code>, <code>serve</code>, <code>@mcp_tool</code>, <code>@mcp_resource</code>, <code>@mcp_prompt</code></p><p><strong>Result Types</strong>: <code>LLMRequestResponse</code>, <code>LLMSuccess</code>, <code>LLMFailure</code>, <code>LLMCallError</code></p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« Home</a><a class="docs-footer-nextpage" href="../getting_started/">Getting Started »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Tuesday 24 March 2026 16:14">Tuesday 24 March 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

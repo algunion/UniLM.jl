@@ -360,11 +360,17 @@ Pre-configured endpoint for [Mistral AI](https://mistral.ai) API.
 MistralEndpoint(; api_key::String=ENV["MISTRAL_API_KEY"]) = GenericOpenAIEndpoint("https://api.mistral.ai", api_key)
 
 """
-    DeepSeekEndpoint(; api_key=ENV["DEEPSEEK_API_KEY"]) -> GenericOpenAIEndpoint
+    DeepSeekEndpoint <: ServiceEndpoint
 
-Pre-configured endpoint for [DeepSeek](https://deepseek.com) API.
+Pre-configured endpoint for [DeepSeek](https://deepseek.com) API. Supports chat completions,
+tool calling, FIM completion, and prefix completion.
+
+FIM and prefix completion use the beta base URL (`https://api.deepseek.com/beta`).
 """
-DeepSeekEndpoint(; api_key::String=ENV["DEEPSEEK_API_KEY"]) = GenericOpenAIEndpoint("https://api.deepseek.com", api_key)
+struct DeepSeekEndpoint <: ServiceEndpoint
+    api_key::String
+end
+DeepSeekEndpoint(; api_key::String=ENV["DEEPSEEK_API_KEY"]) = DeepSeekEndpoint(api_key)
 
 
 """

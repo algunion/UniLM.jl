@@ -91,5 +91,8 @@ LLMRequestResponse
 ├── ResponseCallError   (Responses API)
 ├── ImageSuccess        (Image Generation)
 ├── ImageFailure        (Image Generation)
-└── ImageCallError      (Image Generation)
+├── ImageCallError      (Image Generation)
+├── FIMSuccess          (FIM Completion)
+├── FIMFailure          (FIM Completion)
+└── FIMCallError        (FIM Completion)
 ```

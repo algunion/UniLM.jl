@@ -50,6 +50,8 @@ include("requests.jl")
 include("fork.jl")
 include("responses.jl")
 include("images.jl")
+include("capabilities.jl")
+include("completions.jl")
 include("accounting.jl")
 include("tool_loop.jl")
 include("mcp_schema.jl")
@@ -171,6 +173,23 @@ export
     generate_image,
     image_data,
     save_image
+
+# ─── FIM / Completions API ──────────────────────────────────────────────────
+export
+    FIMCompletion,
+    FIMChoice,
+    FIMResponse,
+    FIMSuccess,
+    FIMFailure,
+    FIMCallError,
+    fim_complete,
+    fim_text,
+    prefix_complete
+
+# ─── Provider Capabilities ──────────────────────────────────────────────────
+export
+    has_capability,
+    provider_capabilities
 
 # ─── MCP Client ──────────────────────────────────────────────────────────────
 export

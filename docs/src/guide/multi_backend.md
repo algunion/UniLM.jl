@@ -151,12 +151,34 @@ println("URL: ", UniLM.get_url(emb))
 
 | API Surface | Standard Status | Supported Providers |
 |---|---|---|
-| Chat Completions | De facto standard | OpenAI, Azure, Gemini, Mistral, Ollama, vLLM, LM Studio, Anthropic* |
+| Chat Completions | De facto standard | OpenAI, Azure, Gemini, Mistral, DeepSeek, Ollama, vLLM, LM Studio, Anthropic* |
 | Embeddings | Widely adopted | OpenAI, Gemini, Mistral, Ollama, vLLM |
 | Responses API | Emerging (Open Responses) | OpenAI, Ollama, vLLM, Amazon Bedrock |
+| FIM Completion | Provider-specific | DeepSeek (beta), Ollama, vLLM |
 | Image Generation | Limited | OpenAI, Gemini, Ollama |
 
 *Anthropic compat layer is not production-recommended by Anthropic.
+
+## Querying Provider Capabilities
+
+Use [`has_capability`](@ref) to check what a provider supports before making requests:
+
+```@example backends
+for (name, svc) in [
+    ("OpenAI", OPENAIServiceEndpoint),
+    ("DeepSeek", DeepSeekEndpoint("k")),
+    ("Ollama", OllamaEndpoint())
+]
+    caps = join(sort(collect(provider_capabilities(svc))), ", ")
+    println("$name: $caps")
+end
+```
+
+```@example backends
+# Check specific capabilities
+println("DeepSeek FIM: ", has_capability(DeepSeekEndpoint("k"), :fim))
+println("OpenAI FIM: ", has_capability(OPENAIServiceEndpoint, :fim))
+```
 
 ## See Also
 

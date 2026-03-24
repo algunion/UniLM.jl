@@ -47,6 +47,16 @@ function auth_header(s::GenericOpenAIEndpoint)
     hdrs
 end
 
+# ─── DeepSeekEndpoint dispatch ───────────────────────────────────────────────
+
+get_url(s::DeepSeekEndpoint, ::Chat) = DEEPSEEK_BASE_URL * CHAT_COMPLETIONS_PATH
+get_url(s::DeepSeekEndpoint, ::Embeddings) = DEEPSEEK_BASE_URL * EMBEDDINGS_PATH
+_api_base_url(s::DeepSeekEndpoint) = DEEPSEEK_BASE_URL
+
+function auth_header(s::DeepSeekEndpoint)
+    ["Authorization" => "Bearer $(s.api_key)", "Content-Type" => "application/json"]
+end
+
 # ─── Built-in endpoint auth ─────────────────────────────────────────────────
 
 function auth_header(::Type{OPENAIServiceEndpoint})

@@ -61,12 +61,24 @@ end
         include("mcp_server.jl")
     end
 
+    @testset "completions" begin
+        include("completions.jl")
+    end
+
+    @testset "capabilities" begin
+        include("capabilities.jl")
+    end
+
     @testset "mock server" begin
         include("mock_server.jl")
     end
 
     @testset "integration" begin
         include("integration.jl")
+    end
+
+    @testset "integration — deepseek" begin
+        include("integration_deepseek.jl")
     end
 
     # ── Slow tests run last ──────────────────────────────────────────────

@@ -921,6 +921,86 @@ serve(server)
 
 ---
 
+## FIM Completion
+
+Fill-in-the-Middle: generate text between a `prompt` (prefix) and `suffix`.
+Supported by DeepSeek (beta), Ollama, vLLM.
+
+```julia
+@kwdef struct FIMCompletion
+    service::ServiceEndpointSpec
+    model::String = "deepseek-chat"
+    prompt::String
+    suffix::Union{String,Nothing} = nothing
+    max_tokens::Union{Int,Nothing} = 128
+    # temperature, top_p, stream, stop, echo, logprobs, frequency_penalty, presence_penalty
+end
+
+struct FIMChoice; text, index, finish_reason; end
+struct FIMResponse; choices, usage, model, raw; end
+struct FIMSuccess <: LLMRequestResponse; response::FIMResponse; end
+struct FIMFailure <: LLMRequestResponse; response, status; end
+struct FIMCallError <: LLMRequestResponse; error, status; end
+
+fim_complete(fim::FIMCompletion; retries=0) -> LLMRequestResponse
+fim_complete(prompt; suffix=nothing, kwargs...) -> LLMRequestResponse  # convenience
+fim_text(result) -> String  # extract generated text
+```
+
+### FIM Example
+
+```julia
+result = fim_complete("def fib(a):",
+    service=DeepSeekEndpoint(), suffix="    return fib(a-1) + fib(a-2)",
+    max_tokens=128, stop=["\n\n"])
+println(fim_text(result))
+```
+
+---
+
+## Chat Prefix Completion
+
+Continue from a partial assistant message. The model generates text continuing
+from the assistant's prefix. DeepSeek beta feature.
+
+```julia
+prefix_complete(chat::Chat; retries=0) -> LLMRequestResponse
+# Last message must be role=assistant with the prefix text
+```
+
+### Prefix Example
+
+```julia
+chat = Chat(service=DeepSeekEndpoint(), model="deepseek-chat")
+push!(chat, Message(Val(:system), "You are a coding assistant."))
+push!(chat, Message(Val(:user), "Write quicksort in Python"))
+push!(chat, Message(role=RoleAssistant, content="```python\n"))
+result = prefix_complete(chat)
+```
+
+---
+
+## Provider Capabilities
+
+Each endpoint declares supported features. Request functions validate before dispatch.
+
+```julia
+provider_capabilities(service) -> Set{Symbol}
+has_capability(service, cap::Symbol) -> Bool
+```
+
+### Capabilities by Provider
+
+| Provider | Capabilities |
+|---|---|
+| OpenAI | `:chat`, `:responses`, `:embeddings`, `:images`, `:tools`, `:json_output` |
+| Azure | `:chat`, `:tools` |
+| Gemini | `:chat`, `:embeddings`, `:tools`, `:json_output` |
+| DeepSeek | `:chat`, `:tools`, `:fim`, `:prefix_completion`, `:json_output` |
+| Generic | `:chat`, `:embeddings`, `:fim`, `:tools`, `:responses` |
+
+---
+
 ## Result Type Hierarchy
 
 All API call results inherit from `LLMRequestResponse`:
@@ -935,7 +1015,10 @@ LLMRequestResponse (abstract)
 ├── ResponseCallError   — Responses API exception (.error::String, .status)
 ├── ImageSuccess        — Image Gen success (.response::ImageResponse)
 ├── ImageFailure        — Image Gen HTTP error (.response::String, .status::Int)
-└── ImageCallError      — Image Gen exception (.error::String, .status)
+├── ImageCallError      — Image Gen exception (.error::String, .status)
+├── FIMSuccess          — FIM success (.response::FIMResponse)
+├── FIMFailure          — FIM HTTP error (.response::String, .status::Int)
+└── FIMCallError        — FIM exception (.error::String, .status)
 ```
 
 **Standard pattern-matching idiom**:
@@ -1015,5 +1098,9 @@ Thrown by `issendvalid` / internal validation when conversation structure is inv
 **MCP Client**: `MCPSession`, `MCPToolInfo`, `MCPResourceInfo`, `MCPPromptInfo`, `MCPServerCapabilities`, `MCPTransport`, `StdioTransport`, `HTTPTransport`, `MCPError`, `mcp_connect`, `mcp_disconnect!`, `mcp_tools`, `mcp_tools_respond`, `list_tools!`, `list_resources!`, `list_prompts!`, `call_tool`, `read_resource`, `get_prompt`, `ping`
 
 **MCP Server**: `MCPServer`, `MCPServerTool`, `MCPServerResource`, `MCPServerResourceTemplate`, `MCPServerPrompt`, `MCPServerPrimitive`, `register_tool!`, `register_resource!`, `register_resource_template!`, `register_prompt!`, `serve`, `@mcp_tool`, `@mcp_resource`, `@mcp_prompt`
+
+**FIM / Completions**: `FIMCompletion`, `FIMChoice`, `FIMResponse`, `FIMSuccess`, `FIMFailure`, `FIMCallError`, `fim_complete`, `fim_text`, `prefix_complete`
+
+**Provider Capabilities**: `has_capability`, `provider_capabilities`
 
 **Result Types**: `LLMRequestResponse`, `LLMSuccess`, `LLMFailure`, `LLMCallError`

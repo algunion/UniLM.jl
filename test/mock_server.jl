@@ -25,7 +25,9 @@ struct MockServiceEndpoint <: UniLM.ServiceEndpoint end
 UniLM._api_base_url(::Type{MockServiceEndpoint}) = mock_base_url
 UniLM.get_url(::Type{MockServiceEndpoint}, ::Chat) = mock_base_url * UniLM.CHAT_COMPLETIONS_PATH
 UniLM.get_url(::Type{MockServiceEndpoint}, ::Embeddings) = mock_base_url * UniLM.EMBEDDINGS_PATH
+UniLM.get_url(::Type{MockServiceEndpoint}, ::FIMCompletion) = mock_base_url * UniLM.COMPLETIONS_PATH
 UniLM.auth_header(::Type{MockServiceEndpoint}) = ["Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{MockServiceEndpoint}) = Set([:chat, :responses, :embeddings, :images, :tools, :fim, :prefix_completion])
 
 # Helper: set error response
 function set_error!(status, msg="error"; headers::Vector{Pair{String,String}}=Pair{String,String}[])

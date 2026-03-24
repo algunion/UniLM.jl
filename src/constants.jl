@@ -23,6 +23,9 @@ const RESPONSES_PATH::String = "/v1/responses"
 """OpenAI Image Generation API path."""
 const IMAGES_GENERATIONS_PATH::String = "/v1/images/generations"
 
+"""Legacy Completions API path (used for FIM by DeepSeek, Ollama, vLLM)."""
+const COMPLETIONS_PATH::String = "/v1/completions"
+
 # ─── Azure OpenAI Deployment Mapping ─────────────────────────────────────────
 # Azure routes requests via deployment names, so a model→deployment mapping is required.
 
@@ -60,6 +63,12 @@ function add_azure_deploy_name!(model::String, deploy_name::String)
 end
 
 # ─── Gemini (OpenAI-compatible) ───────────────────────────────────────────────
+
+"""DeepSeek API base URL."""
+const DEEPSEEK_BASE_URL::String = "https://api.deepseek.com"
+
+"""DeepSeek beta API base URL (required for FIM and prefix completion)."""
+const DEEPSEEK_BETA_BASE_URL::String = "https://api.deepseek.com/beta"
 
 """Google Gemini OpenAI-compatible base URL (replaces `https://api.openai.com` in paths)."""
 const GEMINI_OPENAI_BASE::String = "https://generativelanguage.googleapis.com/v1beta/openai"

@@ -359,6 +359,13 @@ Pre-configured endpoint for [Mistral AI](https://mistral.ai) API.
 """
 MistralEndpoint(; api_key::String=ENV["MISTRAL_API_KEY"]) = GenericOpenAIEndpoint("https://api.mistral.ai", api_key)
 
+"""
+    DeepSeekEndpoint(; api_key=ENV["DEEPSEEK_API_KEY"]) -> GenericOpenAIEndpoint
+
+Pre-configured endpoint for [DeepSeek](https://deepseek.com) API.
+"""
+DeepSeekEndpoint(; api_key::String=ENV["DEEPSEEK_API_KEY"]) = GenericOpenAIEndpoint("https://api.deepseek.com", api_key)
+
 
 """
     chat = Chat()

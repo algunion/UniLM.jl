@@ -99,6 +99,13 @@ chat = Chat(service=MistralEndpoint(), model="mistral-large-latest")
 result = chatrequest!(chat)
 ```
 
+### DeepSeek
+
+```julia
+chat = Chat(service=DeepSeekEndpoint(), model="deepseek-chat")       # V3.2
+chat = Chat(service=DeepSeekEndpoint(), model="deepseek-reasoner")   # V3.2 thinking mode
+```
+
 ### vLLM / LM Studio
 
 ```julia

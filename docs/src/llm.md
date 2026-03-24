@@ -49,6 +49,7 @@ end
 # Convenience constructors
 OllamaEndpoint(; base_url="http://localhost:11434")   # Ollama local
 MistralEndpoint(; api_key=ENV["MISTRAL_API_KEY"])     # Mistral AI
+DeepSeekEndpoint(; api_key=ENV["DEEPSEEK_API_KEY"])   # DeepSeek
 ```
 
 ### Provider Compatibility
@@ -1005,7 +1006,7 @@ Thrown by `issendvalid` / internal validation when conversation structure is inv
 
 **Cost Tracking**: `TokenUsage`, `token_usage`, `estimated_cost`, `cumulative_cost`, `DEFAULT_PRICING`
 
-**Service Endpoints**: `ServiceEndpoint`, `ServiceEndpointSpec`, `OPENAIServiceEndpoint`, `AZUREServiceEndpoint`, `GEMINIServiceEndpoint`, `GenericOpenAIEndpoint`, `OllamaEndpoint`, `MistralEndpoint`, `add_azure_deploy_name!`
+**Service Endpoints**: `ServiceEndpoint`, `ServiceEndpointSpec`, `OPENAIServiceEndpoint`, `AZUREServiceEndpoint`, `GEMINIServiceEndpoint`, `GenericOpenAIEndpoint`, `OllamaEndpoint`, `MistralEndpoint`, `DeepSeekEndpoint`, `add_azure_deploy_name!`
 
 **Forking**: `fork`
 

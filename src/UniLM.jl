@@ -66,6 +66,7 @@ export
     GenericOpenAIEndpoint,
     OllamaEndpoint,
     MistralEndpoint,
+    DeepSeekEndpoint,
     add_azure_deploy_name!
 
 # ─── Chat Completions API ─────────────────────────────────────────────────────

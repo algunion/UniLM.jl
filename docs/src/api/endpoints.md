@@ -23,6 +23,7 @@ GenericOpenAIEndpoint
 ServiceEndpointSpec
 OllamaEndpoint
 MistralEndpoint
+DeepSeekEndpoint
 ```
 
 ## Configuration

@@ -1,8 +1,7 @@
 """
     UniLM
 
-A Julia interface for OpenAI's language models, supporting both the **Chat Completions API**
-and the newer **Responses API**.
+A Julia interface for **LLM providers** via the OpenAI-compatible API standard.
 
 UniLM.jl provides:
 - **Chat Completions** via [`Chat`](@ref) and [`chatrequest!`](@ref) — stateful conversations
@@ -13,7 +12,8 @@ UniLM.jl provides:
 - **Image Generation** via [`ImageGeneration`](@ref) and [`generate_image`](@ref) — create
   images from text prompts using `gpt-image-1.5`.
 - **Embeddings** via [`Embeddings`](@ref) and [`embeddingrequest!`](@ref).
-- **Multi-backend support**: OpenAI, Azure OpenAI, and Google Gemini.
+- **MCP** via [`MCPSession`](@ref) and [`MCPServer`](@ref) — Model Context Protocol client and server.
+- **Multi-provider support**: OpenAI, Azure, Gemini, Mistral, Ollama, vLLM, and any OpenAI-compatible provider via [`GenericOpenAIEndpoint`](@ref).
 
 # Quick Start
 ```julia
@@ -55,6 +55,18 @@ include("tool_loop.jl")
 include("mcp_schema.jl")
 include("mcp_client.jl")
 include("mcp_server.jl")
+
+# ─── Service Endpoints ────────────────────────────────────────────────────────
+export
+    ServiceEndpoint,
+    ServiceEndpointSpec,
+    OPENAIServiceEndpoint,
+    AZUREServiceEndpoint,
+    GEMINIServiceEndpoint,
+    GenericOpenAIEndpoint,
+    OllamaEndpoint,
+    MistralEndpoint,
+    add_azure_deploy_name!
 
 # ─── Chat Completions API ─────────────────────────────────────────────────────
 export

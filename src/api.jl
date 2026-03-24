@@ -295,10 +295,11 @@ json_schema(name::String, description::String, schema::AbstractDict) = ResponseF
 
 Abstract supertype for LLM service backends. Subtypes control URL routing and authentication.
 
-Subtypes:
+Built-in subtypes:
 - `OPENAIServiceEndpoint` — OpenAI API (default)
 - `AZUREServiceEndpoint` — Azure OpenAI Service
 - `GEMINIServiceEndpoint` — Google Gemini via OpenAI-compatible endpoint
+- `GenericOpenAIEndpoint` — any OpenAI-compatible provider (Ollama, Mistral, vLLM, etc.)
 """
 abstract type ServiceEndpoint end
 
@@ -311,6 +312,53 @@ struct AZUREServiceEndpoint <: ServiceEndpoint end
 """Google Gemini endpoint (OpenAI-compatible). Requires `GEMINI_API_KEY` env variable."""
 struct GEMINIServiceEndpoint <: ServiceEndpoint end
 
+"""
+    GenericOpenAIEndpoint <: ServiceEndpoint
+
+Configurable endpoint for any OpenAI-compatible API provider. Supports Chat Completions,
+Embeddings, and (where the provider implements it) the Responses API.
+
+# Fields
+- `base_url::String`: Base URL without trailing slash (e.g., `"http://localhost:11434"`)
+- `api_key::String`: API key for Bearer auth. Use `""` for local servers with no auth.
+
+# Example
+```julia
+# Ollama (local)
+chat = Chat(service=GenericOpenAIEndpoint("http://localhost:11434", ""), model="llama3.1")
+
+# Mistral
+chat = Chat(service=GenericOpenAIEndpoint("https://api.mistral.ai", ENV["MISTRAL_API_KEY"]),
+            model="mistral-large-latest")
+```
+"""
+struct GenericOpenAIEndpoint <: ServiceEndpoint
+    base_url::String
+    api_key::String
+end
+
+"""
+    ServiceEndpointSpec
+
+Type alias accepting both marker types (`OPENAIServiceEndpoint`) and instances
+(`GenericOpenAIEndpoint(...)`). Used as the type of `service` fields.
+"""
+const ServiceEndpointSpec = Union{Type{<:ServiceEndpoint}, ServiceEndpoint}
+
+"""
+    OllamaEndpoint(; base_url="http://localhost:11434") -> GenericOpenAIEndpoint
+
+Pre-configured endpoint for [Ollama](https://ollama.com) local server.
+"""
+OllamaEndpoint(; base_url::String="http://localhost:11434") = GenericOpenAIEndpoint(base_url, "")
+
+"""
+    MistralEndpoint(; api_key=ENV["MISTRAL_API_KEY"]) -> GenericOpenAIEndpoint
+
+Pre-configured endpoint for [Mistral AI](https://mistral.ai) API.
+"""
+MistralEndpoint(; api_key::String=ENV["MISTRAL_API_KEY"]) = GenericOpenAIEndpoint("https://api.mistral.ai", api_key)
+
 
 """
     chat = Chat()
@@ -321,7 +369,7 @@ Creates a new `Chat` object with default settings:
 - `history` is set to `true`
 """
 @kwdef struct Chat
-    service::Type{<:ServiceEndpoint} = OPENAIServiceEndpoint
+    service::ServiceEndpointSpec = OPENAIServiceEndpoint
     model::String = "gpt-5.2"
     messages::Conversation = Message[]
     history::Bool = true
@@ -600,16 +648,17 @@ emb.embeddings  # => Float64[...] (1536 dims)
 ```
 """
 struct Embeddings
+    service::ServiceEndpointSpec
     model::String
     input::Union{String,Vector{String}}
     embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}
     user::Union{String,Nothing}
-    function Embeddings(input::String)
-        return new(string(GPTTextEmbedding3Small), input, zeros(Float64, 1536), nothing)
+    function Embeddings(input::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+        return new(service, string(GPTTextEmbedding3Small), input, zeros(Float64, 1536), nothing)
     end
-    function Embeddings(input::Vector{String})
+    function Embeddings(input::Vector{String}; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
         isempty(input) && throw(ArgumentError("input must not be empty"))
-        return new(string(GPTTextEmbedding3Small), input, [zeros(Float64, 1536) for _ in 1:length(input)], nothing)
+        return new(service, string(GPTTextEmbedding3Small), input, [zeros(Float64, 1536) for _ in 1:length(input)], nothing)
     end
 end
 

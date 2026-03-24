@@ -24,6 +24,7 @@ mock_base_url = "http://127.0.0.1:$mock_port"
 struct MockServiceEndpoint <: UniLM.ServiceEndpoint end
 UniLM._api_base_url(::Type{MockServiceEndpoint}) = mock_base_url
 UniLM.get_url(::Type{MockServiceEndpoint}, ::Chat) = mock_base_url * UniLM.CHAT_COMPLETIONS_PATH
+UniLM.get_url(::Type{MockServiceEndpoint}, ::Embeddings) = mock_base_url * UniLM.EMBEDDINGS_PATH
 UniLM.auth_header(::Type{MockServiceEndpoint}) = ["Content-Type" => "application/json"]
 
 # Helper: set error response
@@ -255,17 +256,12 @@ try
     end
 
     @testset "embeddingrequest! with 429 (retry exhausted)" begin
-        UniLM.get_url(::UniLM.Embeddings) = mock_base_url * UniLM.EMBEDDINGS_PATH
-
         set_error!(429, "Rate limited"; headers=["Retry-After" => "2"])
 
-        withenv("OPENAI_API_KEY" => "test-key") do
-            emb = UniLM.Embeddings("test")
-            @test_throws ErrorException embeddingrequest!(emb; retries=30)
-        end
+        emb = UniLM.Embeddings("test"; service=MockServiceEndpoint)
+        @test_throws ErrorException embeddingrequest!(emb; retries=30)
 
         # Reset mock state so subsequent tests don't inherit 429 + Retry-After
-        UniLM.get_url(::UniLM.Embeddings) = UniLM.OPENAI_BASE_URL * UniLM.EMBEDDINGS_PATH
         set_error!(200, "")
     end
 
@@ -274,41 +270,27 @@ try
     # ═══════════════════════════════════════════════════════════════════════
 
     @testset "embeddingrequest! with non-200 error status" begin
-        withenv("OPENAI_API_KEY" => "sk-invalid-test-key-mock") do
-            emb = UniLM.Embeddings("test embedding")
-            @test_throws ErrorException embeddingrequest!(emb)
-        end
+        set_error!(401, "Unauthorized")
+        emb = UniLM.Embeddings("test embedding"; service=MockServiceEndpoint)
+        @test_throws ErrorException embeddingrequest!(emb)
     end
 
     @testset "embeddingrequest! with 500 (retry exhausted)" begin
-        UniLM.get_url(::UniLM.Embeddings) = mock_base_url * UniLM.EMBEDDINGS_PATH
-
         set_error!(500, "Internal Server Error")
-
-        withenv("OPENAI_API_KEY" => "test-key") do
-            emb = UniLM.Embeddings("test")
-            @test_throws ErrorException embeddingrequest!(emb; retries=30)
-        end
+        emb = UniLM.Embeddings("test"; service=MockServiceEndpoint)
+        @test_throws ErrorException embeddingrequest!(emb; retries=30)
     end
 
     @testset "embeddingrequest! with 503 (retry exhausted)" begin
         set_error!(503, "Service Unavailable")
-
-        withenv("OPENAI_API_KEY" => "test-key") do
-            emb = UniLM.Embeddings("test")
-            @test_throws ErrorException embeddingrequest!(emb; retries=30)
-        end
+        emb = UniLM.Embeddings("test"; service=MockServiceEndpoint)
+        @test_throws ErrorException embeddingrequest!(emb; retries=30)
     end
 
     @testset "embeddingrequest! catch block (connection error)" begin
-        UniLM.get_url(::UniLM.Embeddings) = "http://127.0.0.1:1" * UniLM.EMBEDDINGS_PATH
-
-        withenv("OPENAI_API_KEY" => "test-key") do
-            emb = UniLM.Embeddings("test")
-            @test_throws ErrorException embeddingrequest!(emb)
-        end
-
-        UniLM.get_url(::UniLM.Embeddings) = UniLM.OPENAI_BASE_URL * UniLM.EMBEDDINGS_PATH
+        dead = UniLM.GenericOpenAIEndpoint("http://127.0.0.1:1", "")
+        emb = UniLM.Embeddings("test"; service=dead)
+        @test_throws ErrorException embeddingrequest!(emb)
     end
 
     # ═══════════════════════════════════════════════════════════════════════

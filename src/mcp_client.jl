@@ -275,7 +275,11 @@ function _transport_disconnect!(t::HTTPTransport)
     if t.connected && !isnothing(t.session_id)
         hdrs = copy(t.headers)
         push!(hdrs, "Mcp-Session-Id" => t.session_id)
-        try HTTP.request("DELETE", t.url; headers=hdrs, status_exception=false) catch end
+        try
+            HTTP.request("DELETE", t.url; headers=hdrs, status_exception=false)
+        catch e
+            @debug "MCP HTTP disconnect failed" exception=e
+        end
     end
     t.connected = false
     t.session_id = nothing
@@ -456,7 +460,9 @@ Stores result in `session.tools`.
 function list_tools!(session::MCPSession)::Vector{MCPToolInfo}
     all_tools = MCPToolInfo[]
     cursor = nothing
+    pages = 0
     while true
+        (pages += 1) > 1000 && error("MCP pagination exceeded 1000 pages")
         params = isnothing(cursor) ? Dict{String,Any}() : Dict{String,Any}("cursor" => cursor)
         result = _mcp_request!(session, "tools/list", params)
         for t in get(result, "tools", [])
@@ -477,7 +483,9 @@ Fetch the resource list from the MCP server. Handles pagination.
 function list_resources!(session::MCPSession)::Vector{MCPResourceInfo}
     all_resources = MCPResourceInfo[]
     cursor = nothing
+    pages = 0
     while true
+        (pages += 1) > 1000 && error("MCP pagination exceeded 1000 pages")
         params = isnothing(cursor) ? Dict{String,Any}() : Dict{String,Any}("cursor" => cursor)
         result = _mcp_request!(session, "resources/list", params)
         for r in get(result, "resources", [])
@@ -498,7 +506,9 @@ Fetch the prompt list from the MCP server. Handles pagination.
 function list_prompts!(session::MCPSession)::Vector{MCPPromptInfo}
     all_prompts = MCPPromptInfo[]
     cursor = nothing
+    pages = 0
     while true
+        (pages += 1) > 1000 && error("MCP pagination exceeded 1000 pages")
         params = isnothing(cursor) ? Dict{String,Any}() : Dict{String,Any}("cursor" => cursor)
         result = _mcp_request!(session, "prompts/list", params)
         for p in get(result, "prompts", [])

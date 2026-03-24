@@ -11,7 +11,7 @@
 
 ## What is UniLM.jl?
 
-UniLM.jl provides a **Julian**, type-safe interface to OpenAI's language models — covering the classic **Chat Completions API**, the newer **Responses API**, the **Image Generation API**, and the **Model Context Protocol (MCP)**. It aims to become a unified solution for accessing multiple LLM providers from Julia.
+UniLM.jl provides a **Julian**, type-safe interface to **LLM providers** via the OpenAI-compatible API standard — covering the **Chat Completions API**, the **Responses API**, **Image Generation**, **Embeddings**, and **MCP**. Works with OpenAI, Azure, Gemini, Mistral, Ollama, vLLM, LM Studio, and any OpenAI-compatible provider.
 
 ### Key Features
 

@@ -316,3 +316,13 @@ end
     @test server.tools["add"].input_schema["properties"]["a"] == Dict{String,Any}("type" => "number")
     @test server.tools["add"].input_schema["properties"]["b"] == Dict{String,Any}("type" => "number")
 end
+
+@testset "@mcp_tool macro — zero arguments" begin
+    server = MCPServer("zero-arg", "1.0.0")
+    @mcp_tool server function hello()::String
+        "world"
+    end
+    @test haskey(server.tools, "hello")
+    @test server.tools["hello"].handler(Dict{String,Any}()) == "world"
+    @test isempty(server.tools["hello"].input_schema["properties"])
+end

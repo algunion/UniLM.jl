@@ -474,7 +474,7 @@ Respond(input="Solve this math problem...", model="o3", reasoning=Reasoning(effo
 ```
 """
 @kwdef struct Respond
-    service::Type{<:ServiceEndpoint} = OPENAIServiceEndpoint
+    service::ServiceEndpointSpec = OPENAIServiceEndpoint
     model::String = "gpt-5.2"
     input::Union{String, Vector}  # String, Vector{InputMessage}, or Vector{Dict}
     instructions::Union{String,Nothing} = nothing
@@ -890,7 +890,7 @@ if result isa ResponseSuccess
 end
 ```
 """
-function get_response(response_id::String; service::Type{<:ServiceEndpoint}=OPENAIServiceEndpoint)
+function get_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
     try
         url = _api_base_url(service) * RESPONSES_PATH * "/" * response_id
         resp = HTTP.get(url, headers=auth_header(service); status_exception=false)
@@ -916,7 +916,7 @@ result = delete_response("resp_abc123")
 result["deleted"]  # => true
 ```
 """
-function delete_response(response_id::String; service::Type{<:ServiceEndpoint}=OPENAIServiceEndpoint)
+function delete_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
     try
         url = _api_base_url(service) * RESPONSES_PATH * "/" * response_id
         resp = HTTP.request("DELETE", url, headers=auth_header(service); status_exception=false)
@@ -948,7 +948,7 @@ function list_input_items(response_id::String;
     limit::Int=20,
     order::String="desc",
     after::Union{String,Nothing}=nothing,
-    service::Type{<:ServiceEndpoint}=OPENAIServiceEndpoint)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint)
 
     try
         url = _api_base_url(service) * RESPONSES_PATH * "/" * response_id * "/input_items"
@@ -984,7 +984,7 @@ if cancel_result isa ResponseSuccess
 end
 ```
 """
-function cancel_response(response_id::String; service::Type{<:ServiceEndpoint}=OPENAIServiceEndpoint)
+function cancel_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
     try
         url = _api_base_url(service) * RESPONSES_PATH * "/" * response_id * "/cancel"
         resp = HTTP.post(url, headers=auth_header(service); status_exception=false)
@@ -1024,7 +1024,7 @@ compacted = compact_response(model="gpt-5.2", input=[
 """
 function compact_response(; model::String="gpt-5.2",
     input::Any,
-    service::Type{<:ServiceEndpoint}=OPENAIServiceEndpoint)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint)
 
     try
         url = _api_base_url(service) * RESPONSES_PATH * "/compact"
@@ -1060,7 +1060,7 @@ function count_input_tokens(; model::String="gpt-5.2",
     input::Any,
     instructions::Union{String,Nothing}=nothing,
     tools::Union{Vector,Nothing}=nothing,
-    service::Type{<:ServiceEndpoint}=OPENAIServiceEndpoint)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint)
 
     try
         url = _api_base_url(service) * RESPONSES_PATH * "/input_tokens"

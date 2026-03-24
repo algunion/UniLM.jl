@@ -20,7 +20,7 @@ function get_pkg_version(name::AbstractString)
     return error("Dependency not available")
 end
 
-@testset "UniLM.jl" begin
+@testset failfast=true "UniLM.jl" begin
     @testset "api.jl" begin
         include("api.jl")
     end

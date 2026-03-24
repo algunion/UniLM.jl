@@ -61,5 +61,9 @@ end
 
 # ─── Gemini (OpenAI-compatible) ───────────────────────────────────────────────
 
-"""Google Gemini chat completions URL (OpenAI-compatible endpoint)."""
+"""Google Gemini OpenAI-compatible base URL (replaces `https://api.openai.com` in paths)."""
+const GEMINI_OPENAI_BASE::String = "https://generativelanguage.googleapis.com/v1beta/openai"
+
+"""Google Gemini chat completions URL (OpenAI-compatible endpoint).
+Note: Gemini uses `/chat/completions` without the `/v1` prefix."""
 const GEMINI_CHAT_URL::String = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"

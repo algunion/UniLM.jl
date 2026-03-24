@@ -78,7 +78,81 @@ println("Service: ", r.service)
 println("Model: ", r.model)
 ```
 
+## OpenAI-Compatible Providers (Generic Endpoint)
+
+Any provider that implements the OpenAI-compatible `/v1/chat/completions` endpoint can be
+used with [`GenericOpenAIEndpoint`](@ref). This includes Ollama, vLLM, LM Studio, Mistral,
+and many others.
+
+### Ollama (local)
+
+```@example backends
+ep = OllamaEndpoint()  # defaults to http://localhost:11434
+chat = Chat(service=ep, model="llama3.1")
+println("URL: ", UniLM.get_url(chat))
+```
+
+### Mistral
+
+```julia
+chat = Chat(service=MistralEndpoint(), model="mistral-large-latest")
+result = chatrequest!(chat)
+```
+
+### vLLM / LM Studio
+
+```julia
+# vLLM
+chat = Chat(service=GenericOpenAIEndpoint("http://localhost:8000", ""), model="meta-llama/Llama-3.1-8B")
+
+# LM Studio
+chat = Chat(service=GenericOpenAIEndpoint("http://localhost:1234", ""), model="loaded-model")
+```
+
+### Anthropic (compatibility layer)
+
+Anthropic provides an OpenAI-compatible endpoint for evaluation purposes.
+Note: Anthropic considers this "not a long-term or production-ready solution" —
+features like `response_format` and `strict` are ignored.
+
+```julia
+chat = Chat(
+    service=GenericOpenAIEndpoint("https://api.anthropic.com/v1", ENV["ANTHROPIC_API_KEY"]),
+    model="claude-sonnet-4-6"
+)
+```
+
+### Custom Provider
+
+```@example backends
+ep = GenericOpenAIEndpoint("https://my-llm-server.example.com", "sk-my-key")
+chat = Chat(service=ep, model="my-model")
+println("URL: ", UniLM.get_url(chat))
+println("Has auth: ", any(p -> p.first == "Authorization", UniLM.auth_header(ep)))
+```
+
+### Embeddings with Generic Endpoint
+
+Embeddings also support the `service` parameter:
+
+```@example backends
+emb = Embeddings("test"; service=OllamaEndpoint())
+println("URL: ", UniLM.get_url(emb))
+```
+
+## API Compatibility Tiers
+
+| API Surface | Standard Status | Supported Providers |
+|---|---|---|
+| Chat Completions | De facto standard | OpenAI, Azure, Gemini, Mistral, Ollama, vLLM, LM Studio, Anthropic* |
+| Embeddings | Widely adopted | OpenAI, Gemini, Mistral, Ollama, vLLM |
+| Responses API | Emerging (Open Responses) | OpenAI, Ollama, vLLM, Amazon Bedrock |
+| Image Generation | Limited | OpenAI, Gemini, Ollama |
+
+*Anthropic compat layer is not production-recommended by Anthropic.
+
 ## See Also
 
-- `ServiceEndpoint` — backend type hierarchy
-- `OPENAIServiceEndpoint`, `AZUREServiceEndpoint`, `GEMINIServiceEndpoint` — specific backends
+- [`ServiceEndpoint`](@ref), [`GenericOpenAIEndpoint`](@ref) — endpoint types
+- [`OllamaEndpoint`](@ref), [`MistralEndpoint`](@ref) — convenience constructors
+- [`OPENAIServiceEndpoint`](@ref), [`AZUREServiceEndpoint`](@ref), [`GEMINIServiceEndpoint`](@ref) — built-in backends

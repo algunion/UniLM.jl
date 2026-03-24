@@ -41,7 +41,26 @@ abstract type ServiceEndpoint end
 struct OPENAIServiceEndpoint <: ServiceEndpoint end   # default — uses OPENAI_API_KEY
 struct AZUREServiceEndpoint  <: ServiceEndpoint end   # uses AZURE_OPENAI_* env vars
 struct GEMINIServiceEndpoint <: ServiceEndpoint end   # uses GEMINI_API_KEY
+struct GenericOpenAIEndpoint <: ServiceEndpoint       # any OpenAI-compatible provider
+    base_url::String
+    api_key::String
+end
+
+# Convenience constructors
+OllamaEndpoint(; base_url="http://localhost:11434")   # Ollama local
+MistralEndpoint(; api_key=ENV["MISTRAL_API_KEY"])     # Mistral AI
 ```
+
+### Provider Compatibility
+
+| API Surface | Status | Providers |
+|---|---|---|
+| Chat Completions | De facto standard | OpenAI, Azure, Gemini, Mistral, Ollama, vLLM, LM Studio, Anthropic* |
+| Embeddings | Widely adopted | OpenAI, Gemini, Mistral, Ollama, vLLM |
+| Responses API | Emerging (Open Responses) | OpenAI, Ollama, vLLM, Amazon Bedrock |
+| Image Generation | Limited | OpenAI, Gemini, Ollama |
+
+*Anthropic compat layer not production-recommended by Anthropic.
 
 Register additional Azure deployments at runtime:
 
@@ -985,6 +1004,8 @@ Thrown by `issendvalid` / internal validation when conversation structure is inv
 **Embeddings**: `Embeddings`, `embeddingrequest!`
 
 **Cost Tracking**: `TokenUsage`, `token_usage`, `estimated_cost`, `cumulative_cost`, `DEFAULT_PRICING`
+
+**Service Endpoints**: `ServiceEndpoint`, `ServiceEndpointSpec`, `OPENAIServiceEndpoint`, `AZUREServiceEndpoint`, `GEMINIServiceEndpoint`, `GenericOpenAIEndpoint`, `OllamaEndpoint`, `MistralEndpoint`, `add_azure_deploy_name!`
 
 **Forking**: `fork`
 

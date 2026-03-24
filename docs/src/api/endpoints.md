@@ -8,12 +8,21 @@ Types for configuring **multi-backend** service endpoints.
 UniLM.ServiceEndpoint
 ```
 
-## Endpoint Types
+## Built-in Endpoints
 
 ```@docs
 UniLM.OPENAIServiceEndpoint
 UniLM.AZUREServiceEndpoint
 UniLM.GEMINIServiceEndpoint
+```
+
+## Generic Endpoint
+
+```@docs
+GenericOpenAIEndpoint
+ServiceEndpointSpec
+OllamaEndpoint
+MistralEndpoint
 ```
 
 ## Configuration

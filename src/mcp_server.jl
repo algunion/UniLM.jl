@@ -101,12 +101,19 @@ end
 """Compile a URI template like `"file://{path}"` into a regex and param name list."""
 function _compile_uri_template(template::String)
     param_names = String[]
-    pattern = replace(template, r"\{(\w+)\}" => s -> begin
-        name = s[2:end-1]
-        push!(param_names, name)
-        "(?P<$name>[^/]+)"
-    end)
-    (Regex("^" * pattern * "\$"), param_names)
+    # Split on {param} placeholders, escape literal parts for regex safety
+    parts = split(template, r"\{\w+\}"; keepempty=true)
+    params = [m.match for m in eachmatch(r"\{(\w+)\}", template)]
+    buf = IOBuffer()
+    for (i, part) in enumerate(parts)
+        write(buf, replace(part, r"([.+*?^\$|\\()\[\]{}])" => s"\\\1"))
+        if i <= length(params)
+            name = params[i][2:end-1]
+            push!(param_names, name)
+            write(buf, "(?P<$name>[^/]+)")
+        end
+    end
+    (Regex("^" * String(take!(buf)) * "\$"), param_names)
 end
 
 # ─── MCPServer ───────────────────────────────────────────────────────────────
@@ -307,7 +314,8 @@ function _handle_tools_list(server::MCPServer, id, params::Dict{String,Any})
 end
 
 function _handle_tools_call(server::MCPServer, id, params::Dict{String,Any})
-    name = params["name"]
+    name = get(params, "name", nothing)
+    isnothing(name) && return _jsonrpc_error(id, -32602, "Missing required parameter: name")
     args = get(params, "arguments", Dict{String,Any}())
     tool = get(server.tools, name, nothing)
     isnothing(tool) && return _jsonrpc_error(id, -32602, "Unknown tool: $name")
@@ -341,7 +349,8 @@ function _handle_resources_templates_list(server::MCPServer, id, params::Dict{St
 end
 
 function _handle_resources_read(server::MCPServer, id, params::Dict{String,Any})
-    uri = params["uri"]
+    uri = get(params, "uri", nothing)
+    isnothing(uri) && return _jsonrpc_error(id, -32602, "Missing required parameter: uri")
     # Check static resources first
     if haskey(server.resources, uri)
         r = server.resources[uri]
@@ -381,7 +390,8 @@ function _handle_prompts_list(server::MCPServer, id, params::Dict{String,Any})
 end
 
 function _handle_prompts_get(server::MCPServer, id, params::Dict{String,Any})
-    name = params["name"]
+    name = get(params, "name", nothing)
+    isnothing(name) && return _jsonrpc_error(id, -32602, "Missing required parameter: name")
     args = get(params, "arguments", Dict{String,Any}())
     prompt = get(server.prompts, name, nothing)
     isnothing(prompt) && return _jsonrpc_error(id, -32602, "Unknown prompt: $name")
@@ -400,20 +410,27 @@ function _dispatch_mcp(server::MCPServer, parsed::Dict{String,Any})
     params = get(parsed, "params", Dict{String,Any}())
     # Notifications (no id) — handle silently
     isnothing(id) && return nothing
-    handlers = Dict{String,Function}(
-        "initialize" => (id, p) -> _handle_initialize(server, id, p),
-        "tools/list" => (id, p) -> _handle_tools_list(server, id, p),
-        "tools/call" => (id, p) -> _handle_tools_call(server, id, p),
-        "resources/list" => (id, p) -> _handle_resources_list(server, id, p),
-        "resources/templates/list" => (id, p) -> _handle_resources_templates_list(server, id, p),
-        "resources/read" => (id, p) -> _handle_resources_read(server, id, p),
-        "prompts/list" => (id, p) -> _handle_prompts_list(server, id, p),
-        "prompts/get" => (id, p) -> _handle_prompts_get(server, id, p),
-        "ping" => (id, _) -> _jsonrpc_result(id, Dict{String,Any}()),
-    )
-    handler = get(handlers, method, nothing)
-    isnothing(handler) && return _jsonrpc_error(id, -32601, "Method not found: $method")
-    handler(id, params)
+    if method == "initialize"
+        _handle_initialize(server, id, params)
+    elseif method == "tools/list"
+        _handle_tools_list(server, id, params)
+    elseif method == "tools/call"
+        _handle_tools_call(server, id, params)
+    elseif method == "resources/list"
+        _handle_resources_list(server, id, params)
+    elseif method == "resources/templates/list"
+        _handle_resources_templates_list(server, id, params)
+    elseif method == "resources/read"
+        _handle_resources_read(server, id, params)
+    elseif method == "prompts/list"
+        _handle_prompts_list(server, id, params)
+    elseif method == "prompts/get"
+        _handle_prompts_get(server, id, params)
+    elseif method == "ping"
+        _jsonrpc_result(id, Dict{String,Any}())
+    else
+        _jsonrpc_error(id, -32601, "Method not found: $method")
+    end
 end
 
 # ─── Transports ──────────────────────────────────────────────────────────────

@@ -22,16 +22,32 @@ end
 # Endpoints are determined by (ServiceEndpoint, RequestType), not model name.
 
 get_url(chat::Chat) = get_url(chat.service, chat)
-get_url(::Embeddings) = OPENAI_BASE_URL * EMBEDDINGS_PATH
+get_url(emb::Embeddings) = get_url(emb.service, emb)
 
 get_url(::Type{OPENAIServiceEndpoint}, ::Chat) = OPENAI_BASE_URL * CHAT_COMPLETIONS_PATH
 get_url(::Type{AZUREServiceEndpoint}, chat::Chat) = ENV[AZURE_OPENAI_BASE_URL] * _MODEL_ENDPOINTS_AZURE_OPENAI[chat.model] * "/chat/completions?api-version=$(ENV[AZURE_OPENAI_API_VERSION])"
 get_url(::Type{GEMINIServiceEndpoint}, ::Chat) = GEMINI_CHAT_URL
 
+get_url(::Type{OPENAIServiceEndpoint}, ::Embeddings) = OPENAI_BASE_URL * EMBEDDINGS_PATH
+get_url(::Type{GEMINIServiceEndpoint}, ::Embeddings) = GEMINI_OPENAI_BASE * "/embeddings"
+
 _api_base_url(::Type{OPENAIServiceEndpoint}) = OPENAI_BASE_URL
 _api_base_url(::Type{AZUREServiceEndpoint}) = throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))
 _api_base_url(::Type{GEMINIServiceEndpoint}) = throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))
 
+# ─── GenericOpenAIEndpoint dispatch ──────────────────────────────────────────
+
+get_url(s::GenericOpenAIEndpoint, ::Chat) = rstrip(s.base_url, '/') * CHAT_COMPLETIONS_PATH
+get_url(s::GenericOpenAIEndpoint, ::Embeddings) = rstrip(s.base_url, '/') * EMBEDDINGS_PATH
+_api_base_url(s::GenericOpenAIEndpoint) = rstrip(s.base_url, '/')
+
+function auth_header(s::GenericOpenAIEndpoint)
+    hdrs = ["Content-Type" => "application/json"]
+    !isempty(s.api_key) && pushfirst!(hdrs, "Authorization" => "Bearer $(s.api_key)")
+    hdrs
+end
+
+# ─── Built-in endpoint auth ─────────────────────────────────────────────────
 
 function auth_header(::Type{OPENAIServiceEndpoint})
     [
@@ -371,7 +387,7 @@ end
 function embeddingrequest!(emb::Embeddings; retries::Int=0)
     body = JSON.json(emb)
     try
-        resp = HTTP.post(get_url(emb), body=body, headers=auth_header(OPENAIServiceEndpoint); status_exception=false)
+        resp = HTTP.post(get_url(emb), body=body, headers=auth_header(emb.service); status_exception=false)
         if resp.status == 200
             embedding = JSON.parse(resp.body; dicttype=Dict{String,Any})
             update!(emb, embedding["data"])

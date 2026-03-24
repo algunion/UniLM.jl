@@ -43,7 +43,7 @@ ImageGeneration(
 ```
 """
 @kwdef struct ImageGeneration
-    service::Type{<:ServiceEndpoint} = OPENAIServiceEndpoint
+    service::ServiceEndpointSpec = OPENAIServiceEndpoint
     model::String = "gpt-image-1.5"
     prompt::String
     n::Union{Int,Nothing} = nothing

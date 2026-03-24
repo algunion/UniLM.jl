@@ -28,6 +28,10 @@ UniLM.get_url(::Type{MockServiceEndpoint}, ::Embeddings) = mock_base_url * UniLM
 UniLM.get_url(::Type{MockServiceEndpoint}, ::FIMCompletion) = mock_base_url * UniLM.COMPLETIONS_PATH
 UniLM.auth_header(::Type{MockServiceEndpoint}) = ["Content-Type" => "application/json"]
 UniLM.provider_capabilities(::Type{MockServiceEndpoint}) = Set([:chat, :responses, :embeddings, :images, :tools, :fim, :prefix_completion])
+UniLM.default_model(::Type{MockServiceEndpoint}) = "mock-model"
+UniLM.default_embedding_model(::Type{MockServiceEndpoint}) = "mock-embedding"
+UniLM.default_image_model(::Type{MockServiceEndpoint}) = "mock-image"
+UniLM.default_fim_model(::Type{MockServiceEndpoint}) = "mock-fim"
 
 # Helper: set error response
 function set_error!(status, msg="error"; headers::Vector{Pair{String,String}}=Pair{String,String}[])
@@ -291,7 +295,7 @@ try
 
     @testset "embeddingrequest! catch block (connection error)" begin
         dead = UniLM.GenericOpenAIEndpoint("http://127.0.0.1:1", "")
-        emb = UniLM.Embeddings("test"; service=dead)
+        emb = UniLM.Embeddings("test"; service=dead, model="test-embed")
         @test_throws ErrorException embeddingrequest!(emb)
     end
 
@@ -337,6 +341,7 @@ try
         struct RespondDeadEndpoint <: UniLM.ServiceEndpoint end
         UniLM._api_base_url(::Type{RespondDeadEndpoint}) = "http://127.0.0.1:1"
         UniLM.auth_header(::Type{RespondDeadEndpoint}) = ["Content-Type" => "application/json"]
+        UniLM.default_model(::Type{RespondDeadEndpoint}) = "dead-model"
 
         r = Respond(input="test", service=RespondDeadEndpoint)
         result = respond(r)
@@ -385,6 +390,7 @@ try
         struct ImageDeadEndpoint <: UniLM.ServiceEndpoint end
         UniLM._api_base_url(::Type{ImageDeadEndpoint}) = "http://127.0.0.1:1"
         UniLM.auth_header(::Type{ImageDeadEndpoint}) = ["Content-Type" => "application/json"]
+        UniLM.default_image_model(::Type{ImageDeadEndpoint}) = "dead-image"
 
         ig = ImageGeneration(prompt="test", service=ImageDeadEndpoint)
         result = generate_image(ig)

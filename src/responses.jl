@@ -475,7 +475,7 @@ Respond(input="Solve this math problem...", model="o3", reasoning=Reasoning(effo
 """
 @kwdef struct Respond
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
-    model::String = "gpt-5.2"
+    model::String = ""
     input::Union{String, Vector}  # String, Vector{InputMessage}, or Vector{Dict}
     instructions::Union{String,Nothing} = nothing
     tools::Union{Vector,Nothing} = nothing  # Untyped Vector: accepts ResponseTool, CallableTool, and Dict
@@ -511,6 +511,7 @@ Respond(input="Solve this math problem...", model="o3", reasoning=Reasoning(effo
         service_tier, top_logprobs, prompt, prompt_cache_key,
         prompt_cache_retention, safety_identifier, conversation,
         context_management, stream_options)
+        model = _resolve_model(service, model)
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
         !isnothing(top_p) && !(0.0 <= top_p <= 1.0) && throw(ArgumentError("top_p must be in [0.0, 1.0]"))

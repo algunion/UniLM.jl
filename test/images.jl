@@ -1,7 +1,8 @@
 @testset "ImageGeneration" begin
     @testset "minimal creation" begin
         ig = ImageGeneration(prompt="A cute robot")
-        @test ig.model == "gpt-image-1.5"
+        @test ig.model == ""  # resolved to "gpt-image-1.5" during serialization
+        @test JSON.parse(JSON.json(ig))["model"] == "gpt-image-1.5"
         @test ig.prompt == "A cute robot"
         @test ig.service == UniLM.OPENAIServiceEndpoint
         @test isnothing(ig.n)

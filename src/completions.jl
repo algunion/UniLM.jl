@@ -25,7 +25,7 @@ println(fim_text(result))
 """
 @kwdef struct FIMCompletion
     service::ServiceEndpointSpec
-    model::String = "deepseek-chat"
+    model::String = ""
     prompt::String
     suffix::Union{String,Nothing} = nothing
     max_tokens::Union{Int,Nothing} = 128
@@ -40,7 +40,13 @@ println(fim_text(result))
 end
 
 function JSON.lower(fim::FIMCompletion)
-    d = Dict{Symbol,Any}(:model => fim.model, :prompt => fim.prompt)
+    model = fim.model
+    if isempty(model)
+        dm = default_fim_model(fim.service)
+        isnothing(dm) && throw(ArgumentError("model must be specified for FIM with $(typeof(fim.service))"))
+        model = dm
+    end
+    d = Dict{Symbol,Any}(:model => model, :prompt => fim.prompt)
     for f in (:suffix, :max_tokens, :temperature, :top_p, :stream, :stop,
               :echo, :logprobs, :frequency_penalty, :presence_penalty)
         v = getfield(fim, f)

@@ -1,6 +1,6 @@
 @testset "FIMCompletion construction" begin
     fim = FIMCompletion(service=DeepSeekEndpoint("key"), prompt="def fib(a):")
-    @test fim.model == "deepseek-chat"
+    @test fim.model == ""  # resolved to "deepseek-chat" during serialization
     @test fim.prompt == "def fib(a):"
     @test isnothing(fim.suffix)
     @test fim.max_tokens == 128
@@ -77,6 +77,7 @@ end
 
     # Last message not assistant
     chat2 = Chat(service=DeepSeekEndpoint("k"))
+    push!(chat2, Message(Val(:system), "sys"))
     push!(chat2, Message(Val(:user), "hello"))
     @test_throws ArgumentError prefix_complete(chat2)
 end

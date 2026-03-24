@@ -43,3 +43,41 @@ function validate_capability(service, cap::Symbol, feature_name::String)
     caps = join(sort(collect(provider_capabilities(service))), ", ")
     throw(ArgumentError("$feature_name is not supported by $(typeof(service)). Supported: $caps"))
 end
+
+# ─── Default Model Resolution ──────────────────────────────────────────────
+
+"""
+    default_model(service) -> Union{String, Nothing}
+
+Return the default chat/completions model for the given service endpoint.
+Returns `nothing` for generic endpoints (model must be specified explicitly).
+"""
+default_model(::Type{OPENAIServiceEndpoint})  = "gpt-5.2"
+default_model(::Type{AZUREServiceEndpoint})   = "gpt-5.2"
+default_model(::Type{GEMINIServiceEndpoint})  = "gemini-2.5-flash"
+default_model(::DeepSeekEndpoint)              = "deepseek-chat"
+default_model(::GenericOpenAIEndpoint)          = nothing
+
+"""Default embedding model per provider."""
+default_embedding_model(::Type{OPENAIServiceEndpoint})  = "text-embedding-3-small"
+default_embedding_model(::Type{GEMINIServiceEndpoint})  = "gemini-embedding-001"
+default_embedding_model(::DeepSeekEndpoint)              = nothing
+default_embedding_model(::GenericOpenAIEndpoint)          = nothing
+default_embedding_model(_) = nothing
+
+"""Default image generation model per provider."""
+default_image_model(::Type{OPENAIServiceEndpoint}) = "gpt-image-1.5"
+default_image_model(_) = nothing
+
+"""Default FIM model per provider."""
+default_fim_model(::DeepSeekEndpoint)      = "deepseek-chat"
+default_fim_model(::GenericOpenAIEndpoint)  = nothing
+default_fim_model(_) = nothing
+
+"""Resolve model from sentinel (empty string) to service default, or throw if no default."""
+function _resolve_model(service, model::String)
+    !isempty(model) && return model
+    dm = default_model(service)
+    isnothing(dm) && throw(ArgumentError("model must be specified when using $(typeof(service))"))
+    dm
+end

@@ -44,7 +44,7 @@ ImageGeneration(
 """
 @kwdef struct ImageGeneration
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
-    model::String = "gpt-image-1.5"
+    model::String = ""
     prompt::String
     n::Union{Int,Nothing} = nothing
     size::Union{String,Nothing} = nothing
@@ -56,7 +56,13 @@ ImageGeneration(
 end
 
 function JSON.lower(ig::ImageGeneration)
-    d = Dict{Symbol,Any}(:model => ig.model, :prompt => ig.prompt)
+    model = ig.model
+    if isempty(model)
+        dm = default_image_model(ig.service)
+        isnothing(dm) && throw(ArgumentError("model must be specified for image generation with $(typeof(ig.service))"))
+        model = dm
+    end
+    d = Dict{Symbol,Any}(:model => model, :prompt => ig.prompt)
     for f in (:n, :size, :quality, :background, :output_format, :output_compression, :user)
         v = getfield(ig, f)
         !isnothing(v) && (d[f] = v)

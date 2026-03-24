@@ -383,7 +383,7 @@ Creates a new `Chat` object with default settings:
 """
 @kwdef struct Chat
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
-    model::String = "gpt-5.2"
+    model::String = ""
     messages::Conversation = Message[]
     history::Bool = true
     tools::Union{Vector{GPTTool},Nothing} = nothing
@@ -424,6 +424,7 @@ Creates a new `Chat` object with default settings:
         seed,
         _cumulative_cost
     )
+        model = _resolve_model(service, model)
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
         !isnothing(top_p) && !(0.0 <= top_p <= 1.0) && throw(ArgumentError("top_p must be in [0.0, 1.0]"))
@@ -666,12 +667,22 @@ struct Embeddings
     input::Union{String,Vector{String}}
     embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}
     user::Union{String,Nothing}
-    function Embeddings(input::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
-        return new(service, string(GPTTextEmbedding3Small), input, zeros(Float64, 1536), nothing)
+    function Embeddings(input::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, model::String="")
+        if isempty(model)
+            dm = default_embedding_model(service)
+            isnothing(dm) && throw(ArgumentError("model must be specified for embeddings with $(typeof(service))"))
+            model = dm
+        end
+        return new(service, model, input, zeros(Float64, 1536), nothing)
     end
-    function Embeddings(input::Vector{String}; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    function Embeddings(input::Vector{String}; service::ServiceEndpointSpec=OPENAIServiceEndpoint, model::String="")
         isempty(input) && throw(ArgumentError("input must not be empty"))
-        return new(service, string(GPTTextEmbedding3Small), input, [zeros(Float64, 1536) for _ in 1:length(input)], nothing)
+        if isempty(model)
+            dm = default_embedding_model(service)
+            isnothing(dm) && throw(ArgumentError("model must be specified for embeddings with $(typeof(service))"))
+            model = dm
+        end
+        return new(service, model, input, [zeros(Float64, 1536) for _ in 1:length(input)], nothing)
     end
 end
 

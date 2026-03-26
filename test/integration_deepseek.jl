@@ -44,9 +44,14 @@ end
     push!(chat, Message(Val(:system), "You are a helpful coding assistant."))
     push!(chat, Message(Val(:user), "Write a Python hello world"))
     push!(chat, Message(role=RoleAssistant, content="```python\n"))
+    @test length(chat) == 3
     result = prefix_complete(chat)
     @test result isa LLMSuccess
     @test !isempty(result.message.content)
+    # Verify chat history: prefix replaced with completed response, not rejected
+    @test length(chat) == 3
+    @test last(chat).role == UniLM.RoleAssistant
+    @test last(chat).content == result.message.content
     @info "Prefix result: $(result.message.content)"
 end
 

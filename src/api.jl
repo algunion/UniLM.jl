@@ -32,8 +32,10 @@ end
 JSON.omit_null(::Type{GPTFunctionSignature}) = true
 
 """
-`text` is the prompt.\n
-`images` is a vector of image urls (or base64 encoded images).
+    GPTImageContent(text, images)
+
+Message content combining text with images. `text` is the prompt and `images`
+is a vector of image URLs or base64-encoded image data.
 """
 struct GPTImageContent
     text::String
@@ -163,7 +165,11 @@ const RoleAssistant = "assistant"
 """Role constant `"tool"` — used for tool/function call result messages."""
 const RoleTool = "tool"
 
-# to do: extend to all models/endpoints
+"""
+    Model(name::String)
+
+Named model identifier used internally for known model constants (e.g. `GPT5_2`).
+"""
 struct Model
     name::String
 end
@@ -640,15 +646,17 @@ Base.firstindex(chat::Chat) = firstindex(chat.messages)
 const GPTTextEmbedding3Small = Model("text-embedding-3-small")
 
 """
-    Embeddings(input::String)
-    Embeddings(input::Vector{String})
+    Embeddings(input::String; service=OPENAIServiceEndpoint, model="text-embedding-3-small")
+    Embeddings(input::Vector{String}; service=OPENAIServiceEndpoint, model="text-embedding-3-small")
 
-Create an embedding request for one or more text inputs. Uses the `text-embedding-3-small`
-model (1536-dimensional embeddings) by default.
+Create an embedding request for one or more texts. Defaults to OpenAI's
+`text-embedding-3-small` (1536 dimensions), but works with any provider via
+the `service` parameter — Ollama, Gemini, Mistral, or any OpenAI-compatible server.
 
 The `embeddings` field is **pre-allocated** and filled in-place by [`embeddingrequest!`](@ref).
 
 # Fields
+- `service::ServiceEndpointSpec`: LLM provider (default: `OPENAIServiceEndpoint`).
 - `model::String`: The embedding model name.
 - `input::Union{String,Vector{String}}`: Text(s) to embed.
 - `embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}`: Pre-allocated embedding vector(s).
@@ -659,6 +667,9 @@ The `embeddings` field is **pre-allocated** and filled in-place by [`embeddingre
 emb = Embeddings("Julia is a great language")
 embeddingrequest!(emb)
 emb.embeddings  # => Float64[...] (1536 dims)
+
+# With Ollama
+emb = Embeddings("test"; service=OllamaEndpoint(), model="nomic-embed-text")
 ```
 """
 struct Embeddings

@@ -1,7 +1,9 @@
 # [Chat Completions](@id chat_guide)
 
-The Chat Completions API is the classic way to interact with OpenAI's language models.
-UniLM.jl wraps it in a type-safe, stateful `Chat` object that tracks conversation history automatically.
+The Chat Completions API is the standard way to talk to LLM providers.
+UniLM.jl wraps it in a type-safe, stateful `Chat` object that tracks conversation history
+automatically — and works with every supported backend (OpenAI, DeepSeek, Ollama, Gemini,
+Mistral, and more).
 
 ```@setup chat
 using UniLM
@@ -154,6 +156,23 @@ UniLM.jl works with any model name string. Common choices:
 | `"gpt-4.1-mini"` | Balanced performance   |
 | `"o3"`           | Extended reasoning     |
 | `"o4-mini"`      | Fast reasoning         |
+
+## Using Other Providers
+
+Pass a `service` to target any supported backend:
+
+```julia
+# DeepSeek
+chat = Chat(service=DeepSeekEndpoint(), model="deepseek-chat")
+
+# Ollama (local)
+chat = Chat(service=OllamaEndpoint(), model="llama3.1")
+
+# Mistral
+chat = Chat(service=MistralEndpoint(), model="mistral-large-latest")
+```
+
+See the [Multi-Backend Guide](@ref backend_guide) for the full list of providers and configuration.
 
 ## JSON Serialization
 

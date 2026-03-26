@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - **Julia 1.12+** (as specified in `Project.toml`)
-- An **OpenAI API key** (or Azure/Gemini credentials for those backends)
+- An **API key** for your chosen provider (OpenAI, DeepSeek, Gemini, Mistral, etc.) — or none at all for local providers like Ollama
 
 ## Installation
 
@@ -43,6 +43,16 @@ export AZURE_OPENAI_DEPLOY_NAME_GPT_5_2="your-gpt52-deployment"
 ```bash
 export GEMINI_API_KEY="your-gemini-key"
 ```
+
+### DeepSeek
+
+```bash
+export DEEPSEEK_API_KEY="sk-..."
+```
+
+### Ollama (local — no key needed)
+
+Just have the Ollama server running on `localhost:11434`. No API key required.
 
 ```@setup gs
 using UniLM
@@ -175,4 +185,4 @@ end
 | Call functions from the model  | [Tool Calling Guide](@ref tools_guide)           |
 | Stream tokens in real-time     | [Streaming Guide](@ref streaming_guide)          |
 | Get structured JSON output     | [Structured Output Guide](@ref structured_guide) |
-| Use Azure or Gemini            | [Multi-Backend Guide](@ref backend_guide)        |
+| Use any provider               | [Multi-Backend Guide](@ref backend_guide)        |

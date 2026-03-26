@@ -19,7 +19,7 @@ A **Julian**, type-safe interface to **LLM providers** via the OpenAI-compatible
 - **Embeddings** — text embedding generation with `text-embedding-3-small`
 - **Streaming** — real-time token streaming with `do`-block syntax
 - **Structured Output** — JSON Schema–constrained generation
-- **Multi-Backend** — OpenAI, Azure OpenAI, and Google Gemini
+- **Multi-Backend** — OpenAI, Azure, Gemini, DeepSeek, Ollama, Mistral, vLLM, LM Studio, and any OpenAI-compatible provider
 - **Type Safety** — invalid states are unrepresentable; tested with [JET.jl](https://github.com/aviatesk/JET.jl) and [Aqua.jl](https://github.com/JuliaTesting/Aqua.jl)
 
 ## Installation
@@ -238,11 +238,15 @@ julia> output_text(r2)
 
 UniLM.jl supports multiple backends. Switch via the `service` parameter:
 
-| Backend       | Type                    | Env Variables                                                               |
-| :------------ | :---------------------- | :-------------------------------------------------------------------------- |
-| OpenAI        | `OPENAIServiceEndpoint` | `OPENAI_API_KEY`                                                            |
-| Azure OpenAI  | `AZUREServiceEndpoint`  | `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION` |
-| Google Gemini | `GEMINIServiceEndpoint` | `GEMINI_API_KEY`                                                            |
+| Backend          | Type                             | Env Variables                                                               |
+| :--------------- | :------------------------------- | :-------------------------------------------------------------------------- |
+| OpenAI (default) | `OPENAIServiceEndpoint`          | `OPENAI_API_KEY`                                                            |
+| Azure OpenAI     | `AZUREServiceEndpoint`           | `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION` |
+| Google Gemini    | `GEMINIServiceEndpoint`          | `GEMINI_API_KEY`                                                            |
+| DeepSeek         | `DeepSeekEndpoint()`             | `DEEPSEEK_API_KEY`                                                          |
+| Ollama (local)   | `OllamaEndpoint()`               | none                                                                        |
+| Mistral          | `MistralEndpoint()`              | `MISTRAL_API_KEY`                                                           |
+| Any OpenAI-compat | `GenericOpenAIEndpoint(url, key)` | custom                                                                      |
 
 ```julia
 # Azure
@@ -250,6 +254,12 @@ chat = Chat(service=AZUREServiceEndpoint, model="gpt-5.2")
 
 # Gemini
 chat = Chat(service=GEMINIServiceEndpoint, model="gemini-2.5-flash")
+
+# DeepSeek
+chat = Chat(service=DeepSeekEndpoint(), model="deepseek-chat")
+
+# Ollama (local)
+chat = Chat(service=OllamaEndpoint(), model="llama3.1")
 ```
 
 ## Two APIs, One Package
@@ -278,5 +288,5 @@ Full documentation with guides and API reference: **[https://algunion.github.io/
 - [Tool Calling Guide](https://algunion.github.io/UniLM.jl/dev/guide/tool_calling/) — function calling
 - [Streaming Guide](https://algunion.github.io/UniLM.jl/dev/guide/streaming/) — real-time streaming
 - [Structured Output Guide](https://algunion.github.io/UniLM.jl/dev/guide/structured_output/) — JSON Schema output
-- [Multi-Backend Guide](https://algunion.github.io/UniLM.jl/dev/guide/multi_backend/) — Azure, Gemini
+- [Multi-Backend Guide](https://algunion.github.io/UniLM.jl/dev/guide/multi_backend/) — Azure, Gemini, DeepSeek, Ollama, and more
 - [MCP Guide](https://algunion.github.io/UniLM.jl/dev/guide/mcp/) — MCP client/server

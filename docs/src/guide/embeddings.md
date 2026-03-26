@@ -1,7 +1,8 @@
 # Embeddings
 
-UniLM.jl supports text embeddings via the OpenAI Embeddings API using the
-`text-embedding-3-small` model (1536 dimensions) by default.
+UniLM.jl supports text embeddings across multiple providers. The default is
+OpenAI's `text-embedding-3-small` (1536 dimensions), but you can target Ollama,
+Gemini, Mistral, or any OpenAI-compatible server via the `service` parameter.
 
 ## Basic Usage
 
@@ -75,6 +76,24 @@ println("Cosine similarity (Julia vs Fortran): ", round(sim, digits=4))
     The default `Embeddings` constructor pre-allocates for 1536 dimensions
     (`text-embedding-3-small`). To use `text-embedding-3-large`, you would need
     to adjust the embedding vector size accordingly.
+
+## Using Other Providers
+
+Pass `service` and `model` to embed with a different backend:
+
+```julia
+# Ollama (local)
+emb = Embeddings("test"; service=OllamaEndpoint(), model="nomic-embed-text")
+embeddingrequest!(emb)
+
+# Gemini
+emb = Embeddings("test"; service=GEMINIServiceEndpoint, model="gemini-embedding-001")
+embeddingrequest!(emb)
+```
+
+!!! note
+    Different providers return different embedding dimensions. The default pre-allocation
+    assumes 1536 dimensions (OpenAI's `text-embedding-3-small`).
 
 ## In-Place Design
 

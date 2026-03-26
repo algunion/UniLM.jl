@@ -23,7 +23,7 @@ UniLM.jl provides a **Julian**, type-safe interface to **LLM providers** via the
 - 📊 **Embeddings** — text embedding generation
 - 🌊 **Streaming** — real-time token streaming with `do`-block syntax
 - 📐 **Structured Output** — JSON Schema–constrained generation
-- ☁️ **Multi-Backend** — OpenAI, Azure OpenAI, and Google Gemini
+- ☁️ **Multi-Backend** — OpenAI, Azure, Gemini, DeepSeek, Ollama, Mistral, vLLM, LM Studio
 - ✅ **Type Safety** — invalid states are unrepresentable; tested with [JET.jl](https://github.com/aviatesk/JET.jl) and [Aqua.jl](https://github.com/JuliaTesting/Aqua.jl)
 
 ### Two APIs, One Package
@@ -33,11 +33,11 @@ UniLM.jl provides a **Julian**, type-safe interface to **LLM providers** via the
 | Stateful conversations |       `Chat` + `push!`       |       `previous_response_id`        |
 | System prompt          | `Message(Val(:system), ...)` |        `instructions` kwarg         |
 | Tool calling           |  `GPTTool` / `GPTToolCall`   |  `FunctionTool` / `function_tool`   |
-| Web search             |              ✗               |           `WebSearchTool`           |
-| File search            |              ✗               |          `FileSearchTool`           |
+| Web search             |              —               |           `WebSearchTool`           |
+| File search            |              —               |          `FileSearchTool`           |
 | Streaming              |   `stream=true` + callback   |          `do`-block syntax          |
 | Structured output      |       `ResponseFormat`       | `TextConfig` / `json_schema_format` |
-| Reasoning (O-series)   |              ✗               |             `Reasoning`             |
+| Reasoning (O-series)   |              —               |             `Reasoning`             |
 | Automated tool loop    |       `tool_loop!`           |          `tool_loop`                |
 | MCP integration        |    `mcp_tools` bridge        |   `MCPTool` / `mcp_tool`            |
 

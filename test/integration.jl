@@ -1,5 +1,9 @@
+if !haskey(ENV, "OPENAI_API_KEY")
+    @info "Skipping OpenAI integration tests (OPENAI_API_KEY not set)"
+else
+
 @testset "regular conversation" begin
-    chat = Chat(model="gpt-4.1-mini")
+    chat = Chat(model="gpt-5.4-nano")
     push!(chat, Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent."))
     push!(chat, Message(role=UniLM.RoleUser, content="Please tell me a one-liner joke."))
 
@@ -20,7 +24,7 @@ end
     push!(messages, Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent."))
     push!(messages, Message(role=UniLM.RoleUser, content="Say 'hello' and nothing else."))
 
-    cr = chatrequest!(; messages=messages, model="gpt-4.1-mini")
+    cr = chatrequest!(; messages=messages, model="gpt-5.4-nano")
 
     @test cr isa LLMSuccess
     m = cr.message
@@ -32,7 +36,7 @@ end
     cr = chatrequest!(
         systemprompt="Act as a helpful AI agent.",
         userprompt="Say 'hello' and nothing else.",
-        model="gpt-4.1-mini"
+        model="gpt-5.4-nano"
     )
 
     @test cr isa LLMSuccess
@@ -44,14 +48,14 @@ end
     cr = chatrequest!(
         systemprompt=Message(role=UniLM.RoleSystem, content="You are helpful."),
         userprompt=Message(role=UniLM.RoleUser, content="Say 'yes'."),
-        model="gpt-4.1-mini"
+        model="gpt-5.4-nano"
     )
 
     @test cr isa LLMSuccess
 end
 
 @testset "JSON_OBJECT" begin
-    chat = Chat(model="gpt-4.1-mini", response_format=UniLM.json_object())
+    chat = Chat(model="gpt-5.4-nano", response_format=UniLM.json_object())
     push!(chat, Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent. Always respond in JSON."))
     push!(chat, Message(role=UniLM.RoleUser, content="Tell me a joke in JSON format with keys 'setup' and 'punchline'."))
 
@@ -77,7 +81,7 @@ end
         "required" => ["location", "unit"]
     )
 
-    chat = Chat(model="gpt-4.1-mini", response_format=UniLM.json_schema("get_current_weather", "Getting the current weather", schema))
+    chat = Chat(model="gpt-5.4-nano", response_format=UniLM.json_schema("get_current_weather", "Getting the current weather", schema))
     push!(chat, Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent. Only answer in JSON."))
     push!(chat, Message(role=UniLM.RoleUser, content="What is the weather in New York?"))
 
@@ -104,7 +108,7 @@ end
         end
     end
 
-    chat_with_stream = Chat(model="gpt-4.1-mini", stream=true)
+    chat_with_stream = Chat(model="gpt-5.4-nano", stream=true)
     push!(chat_with_stream, Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent."))
     push!(chat_with_stream, Message(role=UniLM.RoleUser, content="Say 'hello world' and nothing else."))
     t = chatrequest!(chat_with_stream; callback=callback)
@@ -135,7 +139,7 @@ end
     )
 
     funchat = Chat(
-        model="gpt-4.1-mini",
+        model="gpt-5.4-nano",
         tools=[GPTTool(func=gptfsig)],
         tool_choice=UniLM.GPTToolChoice(func=:get_current_weather)
     )
@@ -189,7 +193,7 @@ end
 end
 
 @testset "conversation with temperature" begin
-    chat = Chat(model="gpt-4.1-mini", temperature=0.0)
+    chat = Chat(model="gpt-5.4-nano", temperature=0.0)
     push!(chat, Message(role=UniLM.RoleSystem, content="You are a calculator."))
     push!(chat, Message(role=UniLM.RoleUser, content="What is 2+2? Answer with just the number."))
 
@@ -199,7 +203,7 @@ end
 end
 
 @testset "chat with seed for reproducibility" begin
-    chat = Chat(model="gpt-4.1-mini", temperature=0.0, seed=42)
+    chat = Chat(model="gpt-5.4-nano", temperature=0.0, seed=42)
     push!(chat, Message(role=UniLM.RoleSystem, content="You are a calculator."))
     push!(chat, Message(role=UniLM.RoleUser, content="What is 1+1? Answer with just the number."))
 
@@ -211,7 +215,7 @@ end
 # ── Responses API Tests ──────────────────────────────────────────────────────
 
 @testset "Responses API — basic text" begin
-    r = respond("Say 'hello world' and nothing else.", model="gpt-4.1-mini")
+    r = respond("Say 'hello world' and nothing else.", model="gpt-5.4-nano")
     @test r isa ResponseSuccess
     @test r.response.status == "completed"
     @test !isempty(output_text(r))
@@ -223,7 +227,7 @@ end
 @testset "Responses API — with instructions" begin
     r = respond(
         "Translate to French: Hello",
-        model="gpt-4.1-mini",
+        model="gpt-5.4-nano",
         instructions="You are a translator. Respond only with the translation."
     )
     @test r isa ResponseSuccess
@@ -232,11 +236,11 @@ end
 end
 
 @testset "Responses API — multi-turn" begin
-    r1 = respond("Say the number 42 and nothing else.", model="gpt-4.1-mini")
+    r1 = respond("Say the number 42 and nothing else.", model="gpt-5.4-nano")
     @test r1 isa ResponseSuccess
     @test occursin("42", output_text(r1))
 
-    r2 = respond("Now add 8 to that number and say only the result.", model="gpt-4.1-mini", previous_response_id=r1.response.id)
+    r2 = respond("Now add 8 to that number and say only the result.", model="gpt-5.4-nano", previous_response_id=r1.response.id)
     @test r2 isa ResponseSuccess
     @test occursin("50", output_text(r2))
 end
@@ -255,7 +259,7 @@ end
         ),
         strict=true
     )
-    r = respond("What is 6 * 7? Give the result and a brief explanation.", model="gpt-4.1-mini", text=fmt)
+    r = respond("What is 6 * 7? Give the result and a brief explanation.", model="gpt-5.4-nano", text=fmt)
     @test r isa ResponseSuccess
 
     parsed = JSON.parse(output_text(r))
@@ -280,7 +284,7 @@ end
         ),
         strict=true
     )
-    r = respond("What is the temperature in London? Use celsius.", model="gpt-4.1-mini", tools=[tool])
+    r = respond("What is the temperature in London? Use celsius.", model="gpt-5.4-nano", tools=[tool])
     @test r isa ResponseSuccess
 
     calls = function_calls(r)
@@ -295,7 +299,7 @@ end
 @testset "Responses API — web search" begin
     r = respond(
         "What is the latest stable release of the Julia programming language?",
-        model="gpt-4.1-mini",
+        model="gpt-5.4-nano",
         tools=[web_search()]
     )
     @test r isa ResponseSuccess
@@ -308,7 +312,7 @@ end
     chunks = String[]
     final_response = Ref{Any}(nothing)
 
-    task = respond("Say 'streaming works' and nothing else.", model="gpt-4.1-mini") do chunk, close
+    task = respond("Say 'streaming works' and nothing else.", model="gpt-5.4-nano") do chunk, close
         if chunk isa String
             push!(chunks, chunk)
         elseif chunk isa ResponseObject
@@ -326,7 +330,7 @@ end
 
 @testset "Responses API — get_response" begin
     # Create a response first, then retrieve it
-    r = respond("Say 'stored' and nothing else.", model="gpt-4.1-mini", store=true)
+    r = respond("Say 'stored' and nothing else.", model="gpt-5.4-nano", store=true)
     @test r isa ResponseSuccess
     rid = r.response.id
 
@@ -338,7 +342,7 @@ end
 end
 
 @testset "Responses API — list_input_items" begin
-    r = respond("Say 'items test' and nothing else.", model="gpt-4.1-mini", store=true)
+    r = respond("Say 'items test' and nothing else.", model="gpt-5.4-nano", store=true)
     @test r isa ResponseSuccess
 
     items = list_input_items(r.response.id)
@@ -348,7 +352,7 @@ end
 end
 
 @testset "Responses API — delete_response" begin
-    r = respond("Say 'delete me' and nothing else.", model="gpt-4.1-mini", store=true)
+    r = respond("Say 'delete me' and nothing else.", model="gpt-5.4-nano", store=true)
     @test r isa ResponseSuccess
     rid = r.response.id
 
@@ -361,7 +365,7 @@ end
 # ── Responses API: count_input_tokens ─────────────────────────────────────────
 
 @testset "Responses API — count_input_tokens" begin
-    result = count_input_tokens(model="gpt-4.1-mini", input="Tell me a joke about programming")
+    result = count_input_tokens(model="gpt-5.4-nano", input="Tell me a joke about programming")
     @test result isa Dict
     @test haskey(result, "input_tokens")
     @test result["input_tokens"] > 0
@@ -380,7 +384,7 @@ end
         strict=true
     )
     result = count_input_tokens(
-        model="gpt-4.1-mini",
+        model="gpt-5.4-nano",
         input="Search for Julia programming language",
         instructions="You are helpful.",
         tools=[tool]
@@ -398,7 +402,7 @@ end
             "content" => [Dict("type" => "output_text",
                 "text" => "Hello! I'm here to help. What would you like to discuss?")])
     ]
-    result = compact_response(model="gpt-4.1-mini", input=input_items)
+    result = compact_response(model="gpt-5.4-nano", input=input_items)
     @test result isa Dict
     @test haskey(result, "output")
     @test haskey(result, "usage")
@@ -407,7 +411,7 @@ end
 # ── Responses API: new fields ────────────────────────────────────────────────
 
 @testset "Responses API — with service_tier" begin
-    r = respond("Say 'tier test' and nothing else.", model="gpt-4.1-mini", service_tier="auto")
+    r = respond("Say 'tier test' and nothing else.", model="gpt-5.4-nano", service_tier="auto")
     @test r isa ResponseSuccess
     @test !isempty(output_text(r))
 end
@@ -416,7 +420,7 @@ end
     r = respond([
         InputMessage(role="developer", content="You are helpful."),
         InputMessage(role="user", content="Say 'structured' and nothing else.")
-    ], model="gpt-4.1-mini")
+    ], model="gpt-5.4-nano")
     @test r isa ResponseSuccess
     @test occursin("structured", lowercase(output_text(r)))
 end
@@ -425,7 +429,7 @@ end
     r = respond([InputMessage(
         role="user",
         content=[input_text("What does 2+2 equal? Reply with just the number.")]
-    )], model="gpt-4.1-mini")
+    )], model="gpt-5.4-nano")
     @test r isa ResponseSuccess
     @test occursin("4", output_text(r))
 end
@@ -441,25 +445,27 @@ end
 end
 
 @testset "Responses API — with max_output_tokens" begin
-    r = respond("Say 'token limit' and nothing else.", model="gpt-4.1-mini", max_output_tokens=Int64(100))
+    r = respond("Say 'token limit' and nothing else.", model="gpt-5.4-nano", max_output_tokens=Int64(100))
     @test r isa ResponseSuccess
     @test !isempty(output_text(r))
 end
 
 @testset "Responses API — with temperature" begin
-    r = respond("Say 'temp test' and nothing else.", model="gpt-4.1-mini", temperature=0.0)
+    r = respond("Say 'temp test' and nothing else.", model="gpt-5.4-nano", temperature=0.0)
     @test r isa ResponseSuccess
     @test !isempty(output_text(r))
 end
 
 @testset "Responses API — with store=false" begin
-    r = respond("Say 'no store' and nothing else.", model="gpt-4.1-mini", store=false)
+    r = respond("Say 'no store' and nothing else.", model="gpt-5.4-nano", store=false)
     @test r isa ResponseSuccess
     @test !isempty(output_text(r))
 end
 
 @testset "Responses API — with metadata" begin
-    r = respond("Say 'meta' and nothing else.", model="gpt-4.1-mini", metadata=Dict("test_id" => "integration_123"))
+    r = respond("Say 'meta' and nothing else.", model="gpt-5.4-nano", metadata=Dict("test_id" => "integration_123"))
     @test r isa ResponseSuccess
     @test !isempty(output_text(r))
 end
+
+end  # if OPENAI_API_KEY

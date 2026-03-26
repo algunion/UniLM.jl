@@ -237,7 +237,10 @@ function prefix_complete(chat::Chat; retries::Int=0)::LLMRequestResponse
 
         if resp.status == 200
             extracted = extract_message(resp)
-            update!(chat, extracted.message)
+            # Replace the partial assistant prefix with the completed response
+            if chat.history && !isempty(chat)
+                chat.messages[end] = extracted.message
+            end
             return LLMSuccess(message=extracted.message, self=chat, usage=extracted.usage)
         elseif _is_retryable(resp.status)
             if retries < _RETRY_MAX_ATTEMPTS

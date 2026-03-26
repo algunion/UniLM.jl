@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Chat Completions · UniLM.jl</title><meta name="title" content="Chat Completions · UniLM.jl"/><meta property="og:title" content="Chat Completions · UniLM.jl"/><meta property="twitter:title" content="Chat Completions · UniLM.jl"/><meta name="description" content="Documentation for UniLM.jl."/><meta property="og:description" content="Documentation for UniLM.jl."/><meta property="twitter:description" content="Documentation for UniLM.jl."/><meta property="og:url" content="https://algunion.github.io/UniLM.jl/guide/chat_completions/"/><meta property="twitter:url" content="https://algunion.github.io/UniLM.jl/guide/chat_completions/"/><link rel="canonical" href="https://algunion.github.io/UniLM.jl/guide/chat_completions/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">UniLM.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><a class="tocitem" href="../../llm/">LLM Reference</a></li><li><a class="tocitem" href="../../getting_started/">Getting Started</a></li><li><span class="tocitem">Guide</span><ul><li class="is-active"><a class="tocitem" href>Chat Completions</a><ul class="internal"><li><a class="tocitem" href="#Creating-a-Chat"><span>Creating a Chat</span></a></li><li><a class="tocitem" href="#Building-Conversations"><span>Building Conversations</span></a></li><li><a class="tocitem" href="#Sending-Requests"><span>Sending Requests</span></a></li><li><a class="tocitem" href="#Multi-Turn-Conversations"><span>Multi-Turn Conversations</span></a></li><li><a class="tocitem" href="#Checking-Conversation-Validity"><span>Checking Conversation Validity</span></a></li><li><a class="tocitem" href="#Models"><span>Models</span></a></li><li><a class="tocitem" href="#JSON-Serialization"><span>JSON Serialization</span></a></li><li><a class="tocitem" href="#Retry-Behaviour"><span>Retry Behaviour</span></a></li><li><a class="tocitem" href="#Parameter-Validation"><span>Parameter Validation</span></a></li><li><a class="tocitem" href="#See-Also"><span>See Also</span></a></li></ul></li><li><a class="tocitem" href="../responses_api/">Responses API</a></li><li><a class="tocitem" href="../image_generation/">Image Generation</a></li><li><a class="tocitem" href="../embeddings/">Embeddings</a></li><li><a class="tocitem" href="../tool_calling/">Tool Calling</a></li><li><a class="tocitem" href="../streaming/">Streaming</a></li><li><a class="tocitem" href="../structured_output/">Structured Output</a></li><li><a class="tocitem" href="../multi_backend/">Multi-Backend</a></li><li><a class="tocitem" href="../mcp/">MCP (Model Context Protocol)</a></li><li><a class="tocitem" href="../completions/">FIM &amp; Prefix Completion</a></li></ul></li><li><span class="tocitem">API Reference</span><ul><li><a class="tocitem" href="../../api/chat/">Chat Types</a></li><li><a class="tocitem" href="../../api/responses/">Responses Types</a></li><li><a class="tocitem" href="../../api/images/">Images</a></li><li><a class="tocitem" href="../../api/embeddings/">Embeddings</a></li><li><a class="tocitem" href="../../api/endpoints/">Service Endpoints</a></li><li><a class="tocitem" href="../../api/results/">Result Types</a></li><li><a class="tocitem" href="../../api/mcp/">MCP Client &amp; Server</a></li><li><a class="tocitem" href="../../api/completions/">FIM Types</a></li><li><a class="tocitem" href="../../api/capabilities/">Provider Capabilities</a></li></ul></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Guide</a></li><li class="is-active"><a href>Chat Completions</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Chat Completions</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/algunion/UniLM.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/algunion/UniLM.jl/blob/main/docs/src/guide/chat_completions.md#" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="chat_guide"><a class="docs-heading-anchor" href="#chat_guide">Chat Completions</a><a id="chat_guide-1"></a><a class="docs-heading-anchor-permalink" href="#chat_guide" title="Permalink"></a></h1><p>The Chat Completions API is the classic way to interact with OpenAI&#39;s language models. UniLM.jl wraps it in a type-safe, stateful <code>Chat</code> object that tracks conversation history automatically.</p><h2 id="Creating-a-Chat"><a class="docs-heading-anchor" href="#Creating-a-Chat">Creating a Chat</a><a id="Creating-a-Chat-1"></a><a class="docs-heading-anchor-permalink" href="#Creating-a-Chat" title="Permalink"></a></h2><pre><code class="language-julia hljs">chat = Chat(
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Chat Completions · UniLM.jl</title><meta name="title" content="Chat Completions · UniLM.jl"/><meta property="og:title" content="Chat Completions · UniLM.jl"/><meta property="twitter:title" content="Chat Completions · UniLM.jl"/><meta name="description" content="Documentation for UniLM.jl."/><meta property="og:description" content="Documentation for UniLM.jl."/><meta property="twitter:description" content="Documentation for UniLM.jl."/><meta property="og:url" content="https://algunion.github.io/UniLM.jl/guide/chat_completions/"/><meta property="twitter:url" content="https://algunion.github.io/UniLM.jl/guide/chat_completions/"/><link rel="canonical" href="https://algunion.github.io/UniLM.jl/guide/chat_completions/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">UniLM.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><a class="tocitem" href="../../llm/">LLM Reference</a></li><li><a class="tocitem" href="../../getting_started/">Getting Started</a></li><li><span class="tocitem">Guide</span><ul><li class="is-active"><a class="tocitem" href>Chat Completions</a><ul class="internal"><li><a class="tocitem" href="#Creating-a-Chat"><span>Creating a Chat</span></a></li><li><a class="tocitem" href="#Building-Conversations"><span>Building Conversations</span></a></li><li><a class="tocitem" href="#Sending-Requests"><span>Sending Requests</span></a></li><li><a class="tocitem" href="#Multi-Turn-Conversations"><span>Multi-Turn Conversations</span></a></li><li><a class="tocitem" href="#Checking-Conversation-Validity"><span>Checking Conversation Validity</span></a></li><li><a class="tocitem" href="#Models"><span>Models</span></a></li><li><a class="tocitem" href="#Using-Other-Providers"><span>Using Other Providers</span></a></li><li><a class="tocitem" href="#JSON-Serialization"><span>JSON Serialization</span></a></li><li><a class="tocitem" href="#Retry-Behaviour"><span>Retry Behaviour</span></a></li><li><a class="tocitem" href="#Parameter-Validation"><span>Parameter Validation</span></a></li><li><a class="tocitem" href="#See-Also"><span>See Also</span></a></li></ul></li><li><a class="tocitem" href="../responses_api/">Responses API</a></li><li><a class="tocitem" href="../image_generation/">Image Generation</a></li><li><a class="tocitem" href="../embeddings/">Embeddings</a></li><li><a class="tocitem" href="../tool_calling/">Tool Calling</a></li><li><a class="tocitem" href="../streaming/">Streaming</a></li><li><a class="tocitem" href="../structured_output/">Structured Output</a></li><li><a class="tocitem" href="../multi_backend/">Multi-Backend</a></li><li><a class="tocitem" href="../mcp/">MCP (Model Context Protocol)</a></li><li><a class="tocitem" href="../completions/">FIM &amp; Prefix Completion</a></li></ul></li><li><span class="tocitem">API Reference</span><ul><li><a class="tocitem" href="../../api/chat/">Chat Types</a></li><li><a class="tocitem" href="../../api/responses/">Responses Types</a></li><li><a class="tocitem" href="../../api/images/">Images</a></li><li><a class="tocitem" href="../../api/embeddings/">Embeddings</a></li><li><a class="tocitem" href="../../api/endpoints/">Service Endpoints</a></li><li><a class="tocitem" href="../../api/results/">Result Types</a></li><li><a class="tocitem" href="../../api/mcp/">MCP Client &amp; Server</a></li><li><a class="tocitem" href="../../api/completions/">FIM Types</a></li><li><a class="tocitem" href="../../api/capabilities/">Provider Capabilities</a></li></ul></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Guide</a></li><li class="is-active"><a href>Chat Completions</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Chat Completions</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/algunion/UniLM.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/algunion/UniLM.jl/blob/main/docs/src/guide/chat_completions.md#" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="chat_guide"><a class="docs-heading-anchor" href="#chat_guide">Chat Completions</a><a id="chat_guide-1"></a><a class="docs-heading-anchor-permalink" href="#chat_guide" title="Permalink"></a></h1><p>The Chat Completions API is the standard way to talk to LLM providers. UniLM.jl wraps it in a type-safe, stateful <code>Chat</code> object that tracks conversation history automatically — and works with every supported backend (OpenAI, DeepSeek, Ollama, Gemini, Mistral, and more).</p><h2 id="Creating-a-Chat"><a class="docs-heading-anchor" href="#Creating-a-Chat">Creating a Chat</a><a id="Creating-a-Chat-1"></a><a class="docs-heading-anchor-permalink" href="#Creating-a-Chat" title="Permalink"></a></h2><pre><code class="language-julia hljs">chat = Chat(
     model=&quot;gpt-5.2&quot;,        # model name
     temperature=0.7,        # sampling temperature
 )
@@ -24,7 +24,7 @@ push!(chat3, Message(Val(:system), &quot;sys&quot;))
 push!(chat3, Message(Val(:user), &quot;hello&quot;))
 push!(chat3, Message(Val(:user), &quot;hello again&quot;))  # rejected — same role
 println(&quot;Length after duplicate push: &quot;, length(chat3), &quot; (second user msg rejected)&quot;)</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">┌ Warning: Cannot add message Message(&quot;user&quot;, &quot;hello again&quot;, nothing, nothing, nothing, nothing, nothing) to conversation: Chat(OPENAIServiceEndpoint, &quot;gpt-5.2&quot;, Message[Message(&quot;system&quot;, &quot;sys&quot;, nothing, nothing, nothing, nothing, nothing), Message(&quot;user&quot;, &quot;hello&quot;, nothing, nothing, nothing, nothing, nothing)], true, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, nothing, Base.RefValue{Float64}(0.0))
-└ @ UniLM ~/work/UniLM.jl/UniLM.jl/src/api.jl:575
+└ @ UniLM ~/work/UniLM.jl/UniLM.jl/src/api.jl:581
 Length after duplicate push: 2 (second user msg rejected)</code></pre><h2 id="Sending-Requests"><a class="docs-heading-anchor" href="#Sending-Requests">Sending Requests</a><a id="Sending-Requests-1"></a><a class="docs-heading-anchor-permalink" href="#Sending-Requests" title="Permalink"></a></h2><pre><code class="language-julia hljs">result = chatrequest!(chat)</code></pre><p>The <code>!</code> suffix is a Julia convention — <code>chatrequest!</code> mutates <code>chat</code> by appending the assistant&#39;s response to the message history (when <code>history=true</code>).</p><h3 id="Result-Handling"><a class="docs-heading-anchor" href="#Result-Handling">Result Handling</a><a id="Result-Handling-1"></a><a class="docs-heading-anchor-permalink" href="#Result-Handling" title="Permalink"></a></h3><pre><code class="language-julia hljs">result = chatrequest!(chat)
 if result isa LLMSuccess
     println(result.message.content)
@@ -32,10 +32,14 @@ if result isa LLMSuccess
     println(&quot;Conversation length: &quot;, length(chat))
 else
     println(&quot;Request failed — see result for details&quot;)
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">In Julia, **parametric types** are types that are **parameterized by one or more values (usually other types)**. They let you write generic, reusable code while still keeping Julia’s strong type information for performance.
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">In Julia, **parametric types** are types that are *parameterized by other types or values*, letting you write one generic definition that produces many concrete, specialized types.
 
-### 1) Parametric composite types (structs)
-You can define a type with a parameter `T`:
+### Why they matter
+They let you express and enforce structure like “a vector of `Int`s” vs “a vector of `Float64`s”, and they enable Julia to generate efficient, specialized code for each case.
+
+---
+
+## 1) Parametric composite types (your own structs)
 
 ```julia
 struct Box{T}
@@ -43,38 +47,18 @@ struct Box{T}
 end
 ```
 
-- `Box{T}` is a *family* of types.
-- `Box{Int}` and `Box{String}` are different concrete types.
+- `Box{T}` is a *parametric type*.
+- `T` is a *type parameter*.
 
-Example:
-
-```julia
-b1 = Box(1)          # Box{Int64}
-b2 = Box(&quot;hello&quot;)    # Box{String}
-```
-
-### 2) Parametric abstract types
-Abstract types can also have parameters:
+Examples:
 
 ```julia
-abstract type MyAbstract{T} end
+Box(1)        # Box{Int64}(1)
+Box(1.0)      # Box{Float64}(1.0)
 ```
 
-This is often used to express “things parameterized by element type”, like `AbstractArray{T}` in Base.
+`Box{Int64}` and `Box{Float64}` are different **concrete types**.
 
-### 3) Parametric primitive types (less common)
-Even primitive types can be parametric (rare in everyday code).
-
-### 4) Why they matter
-**Performance + generic code**: If you write
-
-```julia
-f(b::Box{T}) where {T} = b.value
-```
-
-Julia specializes `f` for each `T` it sees, often giving performance similar to hand-written type-specific code.
-
-### 5) Constraints on parameters
 You can restrict parameters:
 
 ```julia
@@ -83,26 +67,53 @@ struct NumBox{T&lt;:Number}
 end
 ```
 
-So `NumBox(&quot;x&quot;)` would error, but `NumBox(3.14)` works.
+---
 
-### 6) Invariance (important detail)
-Julia’s parametric types are **invariant**, meaning:
-
-```julia
-Box{Int} &lt;: Box{Number}  # false
-```
-
-Even though `Int &lt;: Number`, the `Box{...}` types don’t have the same subtype relationship.
-
-If you want to accept any `Box` whose parameter is a subtype of `Number`, you write:
+## 2) Parametric abstract types
 
 ```julia
-g(b::Box{&lt;:Number}) = b.value
-# or
-g(b::Box{T}) where {T&lt;:Number} = b.value
+abstract type MyAbstract{T} end
 ```
 
-That’s the core idea: parametric types let you encode “this container holds Ts” (or similar relationships) directly in the type system.
+These are useful for organizing type hierarchies where subtypes carry a parameter.
+
+---
+
+## 3) Built-in parametric types you use all the time
+
+- `Array{T,N}`: element type `T`, dimension `N`
+  - `Vector{T}` is `Array{T,1}`
+  - `Matrix{T}` is `Array{T,2}`
+
+Examples:
+
+```julia
+Vector{Int}           # 1D array of Int
+Array{Float64,2}      # 2D array of Float64
+```
+
+---
+
+## 4) Parametric methods (generic functions)
+
+You can write methods that work for any `T`:
+
+```julia
+f(x::Box{T}) where {T} = x.value
+```
+
+Or constrain `T`:
+
+```julia
+g(x::Box{T}) where {T&lt;:Real} = x.value + 1
+```
+
+---
+
+## Key idea
+A parametric type is like a “type template”: `Box{T}` describes a family of types, and choosing a specific `T` (like `Int`) gives you a concrete, usable type (`Box{Int}`).
+
+If you want, I can explain the difference between `Box{T}` vs `Box` in dispatch, or show how value parameters (like `Val{N}`) work.
 
 Finish reason: stop
 Conversation length: 3</code></pre><h3 id="One-Shot-Requests-via-Keywords"><a class="docs-heading-anchor" href="#One-Shot-Requests-via-Keywords">One-Shot Requests via Keywords</a><a id="One-Shot-Requests-via-Keywords-1"></a><a class="docs-heading-anchor-permalink" href="#One-Shot-Requests-via-Keywords" title="Permalink"></a></h3><p>Skip the <code>Chat</code> object entirely for simple one-off requests:</p><pre><code class="language-julia hljs">result = chatrequest!(
@@ -123,7 +134,7 @@ if result isa LLMSuccess
     println(result.message.content)
 else
     println(&quot;Request failed — see result for details&quot;)
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Multiple dispatch is a programming paradigm where the method to be executed is determined based on the types of multiple arguments at runtime, rather than just the first argument. This allows for more flexible and dynamic function definitions, enabling developers to define specialized behavior for different combinations of argument types. In languages like Julia, multiple dispatch is a fundamental feature, allowing for concise and efficient code that can handle various data types seamlessly.</code></pre><pre><code class="language-julia hljs">push!(chat, Message(Val(:user), &quot;Give a short Julia code example of it.&quot;))
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Multiple dispatch is a feature of some programming languages, including Julia, that allows the selection of a method to execute based on the runtime types of multiple arguments, rather than just one. This capability enables more flexible and reusable code by allowing different implementations of functions to be defined for different combinations of argument types. It facilitates polymorphism and can improve performance by optimizing the method selection process.</code></pre><pre><code class="language-julia hljs">push!(chat, Message(Val(:user), &quot;Give a short Julia code example of it.&quot;))
 result = chatrequest!(chat)
 if result isa LLMSuccess
     println(result.message.content)
@@ -133,35 +144,38 @@ else
 end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Here’s a simple example of multiple dispatch in Julia:
 
 ```julia
-function area(shape::Circle)
-    return π * shape.radius^2
+# Define a function for adding two numbers
+function add(x::Int, y::Int)
+    return x + y
 end
 
-function area(shape::Rectangle)
-    return shape.width * shape.height
+# Define a function for adding two floating-point numbers
+function add(x::Float64, y::Float64)
+    return x + y
 end
 
-struct Circle
-    radius::Float64
+# Define a function for adding a number and a string
+function add(x::String, y::String)
+    return x * y  # String concatenation
 end
 
-struct Rectangle
-    width::Float64
-    height::Float64
-end
-
-# Example usage
-circle = Circle(5)
-rectangle = Rectangle(4, 6)
-
-println(&quot;Area of circle: &quot;, area(circle))       # Outputs: Area of circle: 78.53981633974483
-println(&quot;Area of rectangle: &quot;, area(rectangle)) # Outputs: Area of rectangle: 24.0
+# Calling the functions with different types
+println(add(2, 3))               # Calls add(x::Int, y::Int)
+println(add(2.5, 3.5))           # Calls add(x::Float64, y::Float64)
+println(add(&quot;Hello, &quot;, &quot;World!&quot;)) # Calls add(x::String, y::String)
 ```
 
-In this example, the `area` function is defined for two different types: `Circle` and `Rectangle`. Depending on the type of the argument passed, the appropriate method is executed.
+In this example, the `add` function behaves differently depending on the types of its arguments, demonstrating multiple dispatch.
 
 Conversation length: 5</code></pre><h2 id="Checking-Conversation-Validity"><a class="docs-heading-anchor" href="#Checking-Conversation-Validity">Checking Conversation Validity</a><a id="Checking-Conversation-Validity-1"></a><a class="docs-heading-anchor-permalink" href="#Checking-Conversation-Validity" title="Permalink"></a></h2><pre><code class="language-julia hljs">println(&quot;Is chat valid? &quot;, issendvalid(chat))  # true — system + user
 
 empty_chat = Chat()
 println(&quot;Is empty chat valid? &quot;, issendvalid(empty_chat))  # false</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Is chat valid? false
-Is empty chat valid? false</code></pre><p>This checks:</p><ul><li>At least 2 messages</li><li>First message is <code>system</code></li><li>Last message is <code>user</code></li><li>No consecutive same-role messages</li></ul><h2 id="Models"><a class="docs-heading-anchor" href="#Models">Models</a><a id="Models-1"></a><a class="docs-heading-anchor-permalink" href="#Models" title="Permalink"></a></h2><p>UniLM.jl works with any model name string. Common choices:</p><table><tr><th style="text-align: left">Model</th><th style="text-align: left">Usage</th></tr><tr><td style="text-align: left"><code>&quot;gpt-5.2&quot;</code></td><td style="text-align: left">Best quality (default)</td></tr><tr><td style="text-align: left"><code>&quot;gpt-4o-mini&quot;</code></td><td style="text-align: left">Fast and cheap</td></tr><tr><td style="text-align: left"><code>&quot;gpt-4.1-mini&quot;</code></td><td style="text-align: left">Balanced performance</td></tr><tr><td style="text-align: left"><code>&quot;o3&quot;</code></td><td style="text-align: left">Extended reasoning</td></tr><tr><td style="text-align: left"><code>&quot;o4-mini&quot;</code></td><td style="text-align: left">Fast reasoning</td></tr></table><h2 id="JSON-Serialization"><a class="docs-heading-anchor" href="#JSON-Serialization">JSON Serialization</a><a id="JSON-Serialization-1"></a><a class="docs-heading-anchor-permalink" href="#JSON-Serialization" title="Permalink"></a></h2><p>The <code>Chat</code> object serializes cleanly to JSON for the API:</p><pre><code class="language-julia hljs">println(JSON.json(chat))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">{&quot;messages&quot;:[{&quot;role&quot;:&quot;system&quot;,&quot;content&quot;:&quot;You are a concise Julia programming tutor.&quot;},{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;What is multiple dispatch? Answer in 2-3 sentences.&quot;},{&quot;role&quot;:&quot;assistant&quot;,&quot;content&quot;:&quot;Multiple dispatch is a programming paradigm where the method to be executed is determined based on the types of multiple arguments at runtime, rather than just the first argument. This allows for more flexible and dynamic function definitions, enabling developers to define specialized behavior for different combinations of argument types. In languages like Julia, multiple dispatch is a fundamental feature, allowing for concise and efficient code that can handle various data types seamlessly.&quot;,&quot;finish_reason&quot;:&quot;stop&quot;},{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;Give a short Julia code example of it.&quot;},{&quot;role&quot;:&quot;assistant&quot;,&quot;content&quot;:&quot;Here’s a simple example of multiple dispatch in Julia:\n\n```julia\nfunction area(shape::Circle)\n    return π * shape.radius^2\nend\n\nfunction area(shape::Rectangle)\n    return shape.width * shape.height\nend\n\nstruct Circle\n    radius::Float64\nend\n\nstruct Rectangle\n    width::Float64\n    height::Float64\nend\n\n# Example usage\ncircle = Circle(5)\nrectangle = Rectangle(4, 6)\n\nprintln(\&quot;Area of circle: \&quot;, area(circle))       # Outputs: Area of circle: 78.53981633974483\nprintln(\&quot;Area of rectangle: \&quot;, area(rectangle)) # Outputs: Area of rectangle: 24.0\n```\n\nIn this example, the `area` function is defined for two different types: `Circle` and `Rectangle`. Depending on the type of the argument passed, the appropriate method is executed.&quot;,&quot;finish_reason&quot;:&quot;stop&quot;}],&quot;model&quot;:&quot;gpt-4o-mini&quot;}</code></pre><h2 id="Retry-Behaviour"><a class="docs-heading-anchor" href="#Retry-Behaviour">Retry Behaviour</a><a id="Retry-Behaviour-1"></a><a class="docs-heading-anchor-permalink" href="#Retry-Behaviour" title="Permalink"></a></h2><p><code>chatrequest!</code> automatically retries on HTTP 429, 500, and 503 errors with exponential backoff and jitter (up to 30 attempts, max 60s delay). On 429 responses, the <code>Retry-After</code> header is respected. This is transparent and requires no configuration.</p><h2 id="Parameter-Validation"><a class="docs-heading-anchor" href="#Parameter-Validation">Parameter Validation</a><a id="Parameter-Validation-1"></a><a class="docs-heading-anchor-permalink" href="#Parameter-Validation" title="Permalink"></a></h2><p>The <code>Chat</code> constructor validates parameter ranges at construction time:</p><table><tr><th style="text-align: left">Parameter</th><th style="text-align: left">Valid Range</th></tr><tr><td style="text-align: left"><code>temperature</code></td><td style="text-align: left">0.0–2.0</td></tr><tr><td style="text-align: left"><code>top_p</code></td><td style="text-align: left">0.0–1.0</td></tr><tr><td style="text-align: left"><code>n</code></td><td style="text-align: left">1–10</td></tr><tr><td style="text-align: left"><code>presence_penalty</code></td><td style="text-align: left">-2.0–2.0</td></tr><tr><td style="text-align: left"><code>frequency_penalty</code></td><td style="text-align: left">-2.0–2.0</td></tr></table><p>Out-of-range values throw <code>ArgumentError</code>. Additionally, <code>temperature</code> and <code>top_p</code> are mutually exclusive.</p><h2 id="See-Also"><a class="docs-heading-anchor" href="#See-Also">See Also</a><a id="See-Also-1"></a><a class="docs-heading-anchor-permalink" href="#See-Also" title="Permalink"></a></h2><ul><li><a href="../../llm/#Chat"><code>Chat</code></a> — full type reference</li><li><a href="../../llm/#Message"><code>Message</code></a> — message type reference</li><li><a href="../tool_calling/#tools_guide">Tool Calling</a> — function calling with Chat Completions</li><li><a href="../streaming/#streaming_guide">Streaming</a> — real-time streaming</li><li><a href="../structured_output/#structured_guide">Structured Output</a> — JSON-constrained generation</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../../getting_started/">« Getting Started</a><a class="docs-footer-nextpage" href="../responses_api/">Responses API »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Tuesday 24 March 2026 21:09">Tuesday 24 March 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+Is empty chat valid? false</code></pre><p>This checks:</p><ul><li>At least 2 messages</li><li>First message is <code>system</code></li><li>Last message is <code>user</code></li><li>No consecutive same-role messages</li></ul><h2 id="Models"><a class="docs-heading-anchor" href="#Models">Models</a><a id="Models-1"></a><a class="docs-heading-anchor-permalink" href="#Models" title="Permalink"></a></h2><p>UniLM.jl works with any model name string. Common choices:</p><table><tr><th style="text-align: left">Model</th><th style="text-align: left">Usage</th></tr><tr><td style="text-align: left"><code>&quot;gpt-5.2&quot;</code></td><td style="text-align: left">Best quality (default)</td></tr><tr><td style="text-align: left"><code>&quot;gpt-4o-mini&quot;</code></td><td style="text-align: left">Fast and cheap</td></tr><tr><td style="text-align: left"><code>&quot;gpt-4.1-mini&quot;</code></td><td style="text-align: left">Balanced performance</td></tr><tr><td style="text-align: left"><code>&quot;o3&quot;</code></td><td style="text-align: left">Extended reasoning</td></tr><tr><td style="text-align: left"><code>&quot;o4-mini&quot;</code></td><td style="text-align: left">Fast reasoning</td></tr></table><h2 id="Using-Other-Providers"><a class="docs-heading-anchor" href="#Using-Other-Providers">Using Other Providers</a><a id="Using-Other-Providers-1"></a><a class="docs-heading-anchor-permalink" href="#Using-Other-Providers" title="Permalink"></a></h2><p>Pass a <code>service</code> to target any supported backend:</p><pre><code class="language-julia hljs"># DeepSeek
+chat = Chat(service=DeepSeekEndpoint(), model=&quot;deepseek-chat&quot;)
+
+# Ollama (local)
+chat = Chat(service=OllamaEndpoint(), model=&quot;llama3.1&quot;)
+
+# Mistral
+chat = Chat(service=MistralEndpoint(), model=&quot;mistral-large-latest&quot;)</code></pre><p>See the <a href="../multi_backend/#backend_guide">Multi-Backend Guide</a> for the full list of providers and configuration.</p><h2 id="JSON-Serialization"><a class="docs-heading-anchor" href="#JSON-Serialization">JSON Serialization</a><a id="JSON-Serialization-1"></a><a class="docs-heading-anchor-permalink" href="#JSON-Serialization" title="Permalink"></a></h2><p>The <code>Chat</code> object serializes cleanly to JSON for the API:</p><pre><code class="language-julia hljs">println(JSON.json(chat))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">{&quot;messages&quot;:[{&quot;role&quot;:&quot;system&quot;,&quot;content&quot;:&quot;You are a concise Julia programming tutor.&quot;},{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;What is multiple dispatch? Answer in 2-3 sentences.&quot;},{&quot;role&quot;:&quot;assistant&quot;,&quot;content&quot;:&quot;Multiple dispatch is a feature of some programming languages, including Julia, that allows the selection of a method to execute based on the runtime types of multiple arguments, rather than just one. This capability enables more flexible and reusable code by allowing different implementations of functions to be defined for different combinations of argument types. It facilitates polymorphism and can improve performance by optimizing the method selection process.&quot;,&quot;finish_reason&quot;:&quot;stop&quot;},{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;Give a short Julia code example of it.&quot;},{&quot;role&quot;:&quot;assistant&quot;,&quot;content&quot;:&quot;Here’s a simple example of multiple dispatch in Julia:\n\n```julia\n# Define a function for adding two numbers\nfunction add(x::Int, y::Int)\n    return x + y\nend\n\n# Define a function for adding two floating-point numbers\nfunction add(x::Float64, y::Float64)\n    return x + y\nend\n\n# Define a function for adding a number and a string\nfunction add(x::String, y::String)\n    return x * y  # String concatenation\nend\n\n# Calling the functions with different types\nprintln(add(2, 3))               # Calls add(x::Int, y::Int)\nprintln(add(2.5, 3.5))           # Calls add(x::Float64, y::Float64)\nprintln(add(\&quot;Hello, \&quot;, \&quot;World!\&quot;)) # Calls add(x::String, y::String)\n```\n\nIn this example, the `add` function behaves differently depending on the types of its arguments, demonstrating multiple dispatch.&quot;,&quot;finish_reason&quot;:&quot;stop&quot;}],&quot;model&quot;:&quot;gpt-4o-mini&quot;}</code></pre><h2 id="Retry-Behaviour"><a class="docs-heading-anchor" href="#Retry-Behaviour">Retry Behaviour</a><a id="Retry-Behaviour-1"></a><a class="docs-heading-anchor-permalink" href="#Retry-Behaviour" title="Permalink"></a></h2><p><code>chatrequest!</code> automatically retries on HTTP 429, 500, and 503 errors with exponential backoff and jitter (up to 30 attempts, max 60s delay). On 429 responses, the <code>Retry-After</code> header is respected. This is transparent and requires no configuration.</p><h2 id="Parameter-Validation"><a class="docs-heading-anchor" href="#Parameter-Validation">Parameter Validation</a><a id="Parameter-Validation-1"></a><a class="docs-heading-anchor-permalink" href="#Parameter-Validation" title="Permalink"></a></h2><p>The <code>Chat</code> constructor validates parameter ranges at construction time:</p><table><tr><th style="text-align: left">Parameter</th><th style="text-align: left">Valid Range</th></tr><tr><td style="text-align: left"><code>temperature</code></td><td style="text-align: left">0.0–2.0</td></tr><tr><td style="text-align: left"><code>top_p</code></td><td style="text-align: left">0.0–1.0</td></tr><tr><td style="text-align: left"><code>n</code></td><td style="text-align: left">1–10</td></tr><tr><td style="text-align: left"><code>presence_penalty</code></td><td style="text-align: left">-2.0–2.0</td></tr><tr><td style="text-align: left"><code>frequency_penalty</code></td><td style="text-align: left">-2.0–2.0</td></tr></table><p>Out-of-range values throw <code>ArgumentError</code>. Additionally, <code>temperature</code> and <code>top_p</code> are mutually exclusive.</p><h2 id="See-Also"><a class="docs-heading-anchor" href="#See-Also">See Also</a><a id="See-Also-1"></a><a class="docs-heading-anchor-permalink" href="#See-Also" title="Permalink"></a></h2><ul><li><a href="../../llm/#Chat"><code>Chat</code></a> — full type reference</li><li><a href="../../llm/#Message"><code>Message</code></a> — message type reference</li><li><a href="../tool_calling/#tools_guide">Tool Calling</a> — function calling with Chat Completions</li><li><a href="../streaming/#streaming_guide">Streaming</a> — real-time streaming</li><li><a href="../structured_output/#structured_guide">Structured Output</a> — JSON-constrained generation</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../../getting_started/">« Getting Started</a><a class="docs-footer-nextpage" href="../responses_api/">Responses API »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Thursday 26 March 2026 14:44">Thursday 26 March 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

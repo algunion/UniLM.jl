@@ -111,6 +111,48 @@ end
     end
 end
 
+@testset "_accumulate_cost! across requests" begin
+    chat = Chat(model="gpt-4.1-nano")
+    m = Message(role=UniLM.RoleAssistant, content="hi")
+
+    u1 = TokenUsage(prompt_tokens=1_000_000, completion_tokens=500_000, total_tokens=1_500_000)
+    r1 = LLMSuccess(message=m, self=chat, usage=u1)
+    UniLM._accumulate_cost!(chat, r1)
+    cost1 = estimated_cost(r1)
+    @test cost1 > 0.0
+    @test cumulative_cost(chat) ≈ cost1
+
+    u2 = TokenUsage(prompt_tokens=2_000_000, completion_tokens=1_000_000, total_tokens=3_000_000)
+    r2 = LLMSuccess(message=m, self=chat, usage=u2)
+    UniLM._accumulate_cost!(chat, r2)
+    cost2 = estimated_cost(r2)
+    @test cumulative_cost(chat) ≈ cost1 + cost2
+end
+
+@testset "fork cost independence" begin
+    chat = Chat(model="gpt-4.1-nano")
+    chat._cumulative_cost[] = 1.5
+    forked = fork(chat)
+    @test cumulative_cost(forked) ≈ 1.5
+
+    forked._cumulative_cost[] += 0.5
+    @test cumulative_cost(forked) ≈ 2.0
+    @test cumulative_cost(chat) ≈ 1.5  # original unchanged
+end
+
+@testset "estimated_cost — ResponseSuccess" begin
+    ro = UniLM.ResponseObject(
+        id="resp_1", status="completed", model="gpt-4.1-nano",
+        output=Any[],
+        usage=Dict{String,Any}("input_tokens" => 1_000_000, "output_tokens" => 1_000_000, "total_tokens" => 2_000_000),
+        raw=Dict{String,Any}()
+    )
+    rs = UniLM.ResponseSuccess(response=ro)
+    cost = estimated_cost(rs)
+    # gpt-4.1-nano: input=0.1/1M, output=0.4/1M => 0.1 + 0.4 = 0.5
+    @test cost ≈ 0.5
+end
+
 @testset "DEFAULT_PRICING" begin
     @test haskey(DEFAULT_PRICING, "gpt-5.2")
     @test haskey(DEFAULT_PRICING, "gpt-4.1")

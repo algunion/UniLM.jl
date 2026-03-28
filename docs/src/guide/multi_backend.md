@@ -5,11 +5,15 @@ type hierarchy. Switching backends requires only changing the `service` paramete
 
 ## Available Backends
 
-| Backend          | Type                    | Env Variables                                                               |
-| :--------------- | :---------------------- | :-------------------------------------------------------------------------- |
-| OpenAI (default) | `OPENAIServiceEndpoint` | `OPENAI_API_KEY`                                                            |
-| Azure OpenAI     | `AZUREServiceEndpoint`  | `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION` |
-| Google Gemini    | `GEMINIServiceEndpoint` | `GEMINI_API_KEY`                                                            |
+| Backend          | Type                      | Env Variables                                                               |
+| :--------------- | :------------------------ | :-------------------------------------------------------------------------- |
+| OpenAI (default) | `OPENAIServiceEndpoint`   | `OPENAI_API_KEY`                                                            |
+| Azure OpenAI     | `AZUREServiceEndpoint`    | `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION` |
+| Google Gemini    | `GEMINIServiceEndpoint`   | `GEMINI_API_KEY`                                                            |
+| DeepSeek         | `DeepSeekEndpoint`        | `DEEPSEEK_API_KEY`                                                          |
+| Mistral          | `MistralEndpoint`         | `MISTRAL_API_KEY`                                                           |
+| Ollama (local)   | `OllamaEndpoint`          | (none)                                                                      |
+| Generic          | `GenericOpenAIEndpoint`   | (passed to constructor)                                                     |
 
 ## OpenAI (Default)
 

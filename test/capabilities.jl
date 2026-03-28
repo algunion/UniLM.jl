@@ -43,3 +43,30 @@ end
     UniLM.validate_capability(OPENAIServiceEndpoint, :chat, "Chat")
     UniLM.validate_capability(GenericOpenAIEndpoint("http://x", ""), :fim, "FIM")
 end
+
+@testset "OllamaEndpoint" begin
+    ollama = OllamaEndpoint()
+    @test ollama isa GenericOpenAIEndpoint
+    @test ollama.base_url == "http://localhost:11434"
+    @test ollama.api_key == ""
+    caps = provider_capabilities(ollama)
+    @test :chat in caps
+    @test :embeddings in caps
+    @test :fim in caps
+    @test :tools in caps
+    @test :responses in caps
+    @test UniLM.default_model(ollama) === nothing
+end
+
+@testset "MistralEndpoint" begin
+    mistral = MistralEndpoint(api_key="test-key")
+    @test mistral isa GenericOpenAIEndpoint
+    @test mistral.base_url == "https://api.mistral.ai"
+    @test mistral.api_key == "test-key"
+    caps = provider_capabilities(mistral)
+    @test :chat in caps
+    @test :embeddings in caps
+    @test :fim in caps
+    @test :tools in caps
+    @test UniLM.default_model(mistral) === nothing
+end

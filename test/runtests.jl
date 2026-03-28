@@ -81,6 +81,10 @@ end
         include("integration_deepseek.jl")
     end
 
+    @testset "integration — tool loop" begin
+        include("integration_tool_loop.jl")
+    end
+
     # ── Slow tests run last ──────────────────────────────────────────────
 
     @testset "Aqua.jl quality checks" begin

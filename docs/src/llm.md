@@ -1,7 +1,7 @@
 # UniLM.jl — LLM Reference
 
-> **Single-file reference for LLM code-generation systems.**
-> UniLM.jl v0.8.0 · Julia ≥ 1.12 · Deps: `HTTP.jl`, `JSON.jl`, `Base64`
+> **Single-file reference for LLM code-generation systems.** This is a **Julia** package.
+> UniLM.jl v0.9.1 · Julia ≥ 1.12 · Deps: `HTTP.jl`, `JSON.jl`, `Base64`
 > Repo: <https://github.com/algunion/UniLM.jl>
 
 ## Installation
@@ -22,15 +22,23 @@ using UniLM
 | `AZURE_OPENAI_API_VERSION`         | `AZUREServiceEndpoint`            | Azure API version string                        |
 | `AZURE_OPENAI_DEPLOY_NAME_GPT_5_2` | `AZUREServiceEndpoint`            | Auto-registers Azure deployment for `"gpt-5.2"` |
 | `GEMINI_API_KEY`                   | `GEMINIServiceEndpoint`           | Google Gemini API key                           |
+| `DEEPSEEK_API_KEY`                 | `DeepSeekEndpoint`                | DeepSeek API key                                |
+| `MISTRAL_API_KEY`                  | `MistralEndpoint`                 | Mistral AI API key                              |
 
 ## Four APIs
 
-UniLM.jl wraps four OpenAI API surfaces:
+UniLM.jl wraps four OpenAI API surfaces plus FIM completion:
 
-1. **Chat Completions** (`Chat` + `chatrequest!`) — stateful, message-based conversations with tool calling, streaming, structured output. Supports OpenAI, Azure, and Gemini backends.
-2. **Responses API** (`Respond` + `respond`) — newer, more flexible API with built-in tools (web search, file search), multi-turn chaining via `previous_response_id`, reasoning support for O-series models, structured output. OpenAI only.
+1. **Chat Completions** (`Chat` + `chatrequest!`) — stateful, message-based conversations with tool calling, streaming, structured output. Supports OpenAI, Azure, Gemini, DeepSeek, Ollama, Mistral, and any OpenAI-compatible provider.
+2. **Responses API** (`Respond` + `respond`) — newer, more flexible API with built-in tools (web search, file search), multi-turn chaining via `previous_response_id`, reasoning support for O-series models, structured output. OpenAI only for full feature set.
 3. **Image Generation** (`ImageGeneration` + `generate_image`) — text-to-image with `gpt-image-1.5`. OpenAI only.
-4. **Embeddings** (`Embeddings` + `embeddingrequest!`) — vector embeddings with `text-embedding-3-small`.
+4. **Embeddings** (`Embeddings` + `embeddingrequest!`) — vector embeddings. Multi-provider via `service` parameter.
+5. **FIM Completion** (`FIMCompletion` + `fim_complete`) — code infilling. DeepSeek, Ollama, vLLM.
+
+**Which API to use:**
+- **Chat Completions** — best for multi-turn conversations; broadest provider support. Use for chat, tool calling, or streaming across any supported backend.
+- **Responses API** — simpler for single-shot or chained requests; built-in web search, file search, MCP, computer use tools. Currently OpenAI-only for full feature set.
+- **FIM Completion** — code infilling between prefix and suffix. DeepSeek, Ollama, vLLM only.
 
 ---
 
@@ -50,6 +58,11 @@ end
 OllamaEndpoint(; base_url="http://localhost:11434")   # Ollama local
 MistralEndpoint(; api_key=ENV["MISTRAL_API_KEY"])     # Mistral AI
 DeepSeekEndpoint(; api_key=ENV["DEEPSEEK_API_KEY"])   # DeepSeek
+
+# Type alias for service fields — accepts both marker types and instances:
+const ServiceEndpointSpec = Union{Type{<:ServiceEndpoint}, ServiceEndpoint}
+# Built-in types: Chat(service=OPENAIServiceEndpoint)      — passed as the type
+# Instance types: Chat(service=DeepSeekEndpoint())          — passed as a constructed value
 ```
 
 ### Provider Compatibility
@@ -85,7 +98,7 @@ Respond(service=OPENAIServiceEndpoint, input="Hello")
 
 ```julia
 @kwdef struct Chat
-    service::Type{<:ServiceEndpoint} = OPENAIServiceEndpoint
+    service::ServiceEndpointSpec = OPENAIServiceEndpoint
     model::String = "gpt-5.2"
     messages::Vector{Message} = Message[]
     history::Bool = true
@@ -107,6 +120,7 @@ Respond(service=OPENAIServiceEndpoint, input="Hello")
 end
 ```
 
+- **Model defaults**: `"gpt-5.2"` for OpenAI, `"gemini-2.5-flash"` for Gemini, `"deepseek-chat"` for DeepSeek. For `GenericOpenAIEndpoint` / `OllamaEndpoint`, model must be specified explicitly.
 - `history=true`: responses are automatically appended to `messages`.
 - `temperature` and `top_p` are mutually exclusive (constructor throws `ArgumentError`).
 - `parallel_tool_calls` is auto-set to `nothing` when `tools` is `nothing`.
@@ -287,7 +301,7 @@ result = fetch(task)  # LLMSuccess when complete
 
 ```julia
 @kwdef struct Respond
-    service::Type{<:ServiceEndpoint} = OPENAIServiceEndpoint
+    service::ServiceEndpointSpec = OPENAIServiceEndpoint
     model::String = "gpt-5.2"
     input::Union{String, Vector}                             # String or Vector{InputMessage}
     instructions::Union{String,Nothing} = nothing
@@ -574,7 +588,7 @@ println(tokens["input_tokens"])
 
 ```julia
 @kwdef struct ImageGeneration
-    service::Type{<:ServiceEndpoint} = OPENAIServiceEndpoint
+    service::ServiceEndpointSpec = OPENAIServiceEndpoint
     model::String = "gpt-image-1.5"
     prompt::String
     n::Union{Int,Nothing} = nothing                         # 1–10
@@ -648,15 +662,18 @@ result = generate_image("Minimalist logo",
 
 ```julia
 struct Embeddings
-    model::String             # "text-embedding-3-small" (1536 dims)
+    service::ServiceEndpointSpec     # default: OPENAIServiceEndpoint
+    model::String                    # default resolved per provider
     input::Union{String,Vector{String}}
     embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}
     user::Union{String,Nothing}
 end
 
-Embeddings(input::String)           # single input, pre-allocates 1536-dim vector
-Embeddings(input::Vector{String})   # batch input, pre-allocates one vector per input
+Embeddings(input::String; service=OPENAIServiceEndpoint, model="text-embedding-3-small")
+Embeddings(input::Vector{String}; service=OPENAIServiceEndpoint, model="text-embedding-3-small")
 ```
+
+Model defaults: `"text-embedding-3-small"` for OpenAI, `"gemini-embedding-001"` for Gemini. For generic/DeepSeek endpoints, model must be specified explicitly.
 
 ### embeddingrequest!
 
@@ -999,6 +1016,8 @@ has_capability(service, cap::Symbol) -> Bool
 | DeepSeek | `:chat`, `:tools`, `:fim`, `:prefix_completion`, `:json_output` |
 | Generic | `:chat`, `:embeddings`, `:fim`, `:tools`, `:responses` |
 
+Request functions call `validate_capability` internally and throw `ArgumentError` if the provider does not support the requested feature. You do not need to check capabilities manually before making requests.
+
 ---
 
 ## Result Type Hierarchy
@@ -1062,6 +1081,9 @@ const CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
 const EMBEDDINGS_PATH = "/v1/embeddings"
 const RESPONSES_PATH = "/v1/responses"
 const IMAGES_GENERATIONS_PATH = "/v1/images/generations"
+const COMPLETIONS_PATH = "/v1/completions"                     # FIM endpoint
+const DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+const DEEPSEEK_BETA_BASE_URL = "https://api.deepseek.com/beta"
 const GEMINI_CHAT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 ```
 

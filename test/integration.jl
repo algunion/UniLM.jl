@@ -468,4 +468,102 @@ end
     @test !isempty(output_text(r))
 end
 
+# ── Cost Tracking ────────────────────────────────────────────────────────────
+
+@testset "cost tracking — token_usage from real API call" begin
+    chat = Chat(model="gpt-4.1-nano", temperature=0.0)
+    push!(chat, Message(Val(:system), "You are a calculator."))
+    push!(chat, Message(Val(:user), "What is 1+1? Answer with just the number."))
+
+    result = chatrequest!(chat)
+    @test result isa LLMSuccess
+
+    u = token_usage(result)
+    @test u.prompt_tokens > 0
+    @test u.completion_tokens > 0
+    @test u.total_tokens == u.prompt_tokens + u.completion_tokens
+end
+
+@testset "cost tracking — estimated_cost with real usage" begin
+    chat = Chat(model="gpt-4.1-nano", temperature=0.0)
+    push!(chat, Message(Val(:system), "You are helpful."))
+    push!(chat, Message(Val(:user), "Say 'hi'."))
+
+    result = chatrequest!(chat)
+    @test result isa LLMSuccess
+
+    cost = estimated_cost(result)
+    @test cost > 0.0
+end
+
+@testset "cost tracking — cumulative_cost accumulates" begin
+    chat = Chat(model="gpt-4.1-nano", temperature=0.0)
+    push!(chat, Message(Val(:system), "You are a calculator."))
+    push!(chat, Message(Val(:user), "What is 1+1? Answer with just the number."))
+
+    r1 = chatrequest!(chat)
+    @test r1 isa LLMSuccess
+    cost_after_1 = cumulative_cost(chat)
+    @test cost_after_1 > 0.0
+
+    push!(chat, Message(Val(:user), "What is 2+2? Answer with just the number."))
+    r2 = chatrequest!(chat)
+    @test r2 isa LLMSuccess
+    @test cumulative_cost(chat) > cost_after_1
+end
+
+# ── Fork Integration ─────────────────────────────────────────────────────────
+
+@testset "fork — continue conversation from fork" begin
+    chat = Chat(model="gpt-5.4-nano", temperature=0.0)
+    push!(chat, Message(Val(:system), "You are a calculator. Answer with just the number."))
+    push!(chat, Message(Val(:user), "What is 42?"))
+
+    r1 = chatrequest!(chat)
+    @test r1 isa LLMSuccess
+    @test occursin("42", r1.message.content)
+    @test length(chat) == 3
+
+    forked = fork(chat)
+    push!(forked, Message(Val(:user), "Add 8 to that. Answer with just the number."))
+    r2 = chatrequest!(forked)
+    @test r2 isa LLMSuccess
+    @test occursin("50", r2.message.content)
+
+    @test length(forked) == 5  # system + user1 + assistant1 + user2 + assistant2
+    @test length(chat) == 3    # original unchanged
+end
+
+# ── Multi-turn Chat Completions ──────────────────────────────────────────────
+
+@testset "multi-turn Chat Completions" begin
+    chat = Chat(model="gpt-5.4-nano", temperature=0.0)
+    push!(chat, Message(Val(:system), "You are a calculator. Answer with just the number."))
+
+    push!(chat, Message(Val(:user), "What is 2+2?"))
+    r1 = chatrequest!(chat)
+    @test r1 isa LLMSuccess
+    @test occursin("4", r1.message.content)
+
+    push!(chat, Message(Val(:user), "Multiply that by 3."))
+    r2 = chatrequest!(chat)
+    @test r2 isa LLMSuccess
+    @test occursin("12", r2.message.content)
+
+    @test length(chat) == 5  # system + 2 user + 2 assistant
+end
+
+# ── GenericOpenAIEndpoint ────────────────────────────────────────────────────
+
+@testset "GenericOpenAIEndpoint — against OpenAI" begin
+    endpoint = GenericOpenAIEndpoint("https://api.openai.com", ENV["OPENAI_API_KEY"])
+    chat = Chat(service=endpoint, model="gpt-5.4-nano")
+    push!(chat, Message(Val(:system), "You are helpful."))
+    push!(chat, Message(Val(:user), "Say 'hello' and nothing else."))
+
+    result = chatrequest!(chat)
+    @test result isa LLMSuccess
+    @test !isempty(result.message.content)
+end
+
 end  # if OPENAI_API_KEY

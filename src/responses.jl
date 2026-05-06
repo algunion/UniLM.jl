@@ -685,23 +685,39 @@ end
 
 # ─── Streaming ───────────────────────────────────────────────────────────────
 
-function _parse_response_stream_chunk(chunk::String, textbuff::IOBuffer, failbuff::IOBuffer)
+function _parse_response_stream_chunk(chunk::String, textbuff::IOBuffer, failbuff::IOBuffer,
+                                      last_event::Ref{String}=Ref(""))
+    # Reassemble: prepend any partial line stashed from a previous call.
+    # Without this carry-over, a `readavailable(io)` boundary that lands
+    # mid-line would orphan the next data: payload (last_event reset, or
+    # partial-prefix corrupting last_event before the matching data: line
+    # arrives in the next chunk).
+    chunk = String(take!(failbuff)) * chunk
+    last_nl = findlast('\n', chunk)
+    if isnothing(last_nl)
+        print(failbuff, chunk)
+        return (; done=false, event=last_event[], data=nothing)
+    end
+    if last_nl < lastindex(chunk)
+        print(failbuff, chunk[nextind(chunk, last_nl):end])
+        chunk = chunk[1:last_nl]
+    end
+
     lines = strip.(split(chunk, "\n"))
     lines = filter(!isempty, lines)
-    isempty(lines) && return (; done=false, event="", data=nothing)
+    isempty(lines) && return (; done=false, event=last_event[], data=nothing)
 
-    last_event = ""
     for line in lines
         if startswith(line, "event: ")
-            last_event = strip(line[8:end])
+            last_event[] = strip(line[8:end])
         elseif startswith(line, "data: ")
             try
                 payload = JSON.parse(line[7:end]; dicttype=Dict{String,Any})
-                if last_event == "response.output_text.delta"
+                if last_event[] == "response.output_text.delta"
                     delta = get(payload, "delta", "")
                     print(textbuff, delta)
-                elseif last_event == "response.completed"
-                    return (; done=true, event=last_event, data=payload)
+                elseif last_event[] == "response.completed"
+                    return (; done=true, event=last_event[], data=payload)
                 end
             catch e
                 print(failbuff, line)
@@ -709,7 +725,7 @@ function _parse_response_stream_chunk(chunk::String, textbuff::IOBuffer, failbuf
             end
         end
     end
-    return (; done=false, event=last_event, data=nothing)
+    return (; done=false, event=last_event[], data=nothing)
 end
 
 function _respond_stream(r::Respond, body::String, callback=nothing)
@@ -720,14 +736,15 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
             resp = HTTP.open("POST", url, auth_header(r.service)) do io
                 text_buffer = IOBuffer()
                 fail_buffer = IOBuffer()
+                last_event = Ref("")
                 done = Ref(false)
                 close_ref = Ref(false)
                 write(io, body)
                 HTTP.closewrite(io)
                 HTTP.startread(io)
                 while !eof(io) && !close_ref[] && !done[]
-                    chunk = join((String(take!(fail_buffer)), String(readavailable(io))))
-                    status = _parse_response_stream_chunk(chunk, text_buffer, fail_buffer)
+                    chunk = String(readavailable(io))
+                    status = _parse_response_stream_chunk(chunk, text_buffer, fail_buffer, last_event)
                     if status.done && !isnothing(status.data)
                         rdata = status.data["response"]
                         result[] = ResponseObject(

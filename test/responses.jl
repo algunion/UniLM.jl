@@ -713,8 +713,7 @@ end
 
 @testset "_parse_response_stream_chunk" begin
     @testset "text delta" begin
-        chunk = """event: response.output_text.delta
-data: {"type":"response.output_text.delta","delta":"Hello"}"""
+        chunk = "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n"
         textbuff = IOBuffer()
         failbuff = IOBuffer()
         result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
@@ -732,7 +731,7 @@ data: {"type":"response.output_text.delta","delta":"Hello"}"""
                 "usage" => Dict("input_tokens" => 1, "output_tokens" => 1, "total_tokens" => 2)
             )
         )
-        chunk = "event: response.completed\ndata: $(JSON.json(resp_data))"
+        chunk = "event: response.completed\ndata: $(JSON.json(resp_data))\n\n"
         textbuff = IOBuffer()
         failbuff = IOBuffer()
         result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
@@ -1651,10 +1650,8 @@ end
 
 @testset "_parse_response_stream_chunk edge cases" begin
     @testset "multiple deltas in one chunk" begin
-        chunk = """event: response.output_text.delta
-data: {"type":"response.output_text.delta","delta":"Hello"}
-event: response.output_text.delta
-data: {"type":"response.output_text.delta","delta":" World"}"""
+        chunk = "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n" *
+                "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\" World\"}\n\n"
         textbuff = IOBuffer()
         failbuff = IOBuffer()
         result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
@@ -1663,8 +1660,7 @@ data: {"type":"response.output_text.delta","delta":" World"}"""
     end
 
     @testset "non-text event type (ignored)" begin
-        chunk = """event: response.created
-data: {"type":"response.created","response":{"id":"resp_1"}}"""
+        chunk = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n"
         textbuff = IOBuffer()
         failbuff = IOBuffer()
         result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
@@ -1677,6 +1673,44 @@ data: {"type":"response.created","response":{"id":"resp_1"}}"""
         failbuff = IOBuffer()
         result = UniLM._parse_response_stream_chunk("  \n  \n  ", textbuff, failbuff)
         @test result.done == false
+    end
+end
+
+@testset "_parse_response_stream_chunk chunk-boundary persistence" begin
+    @testset "boundary mid-data preserves delta across calls" begin
+        text_buffer = IOBuffer()
+        fail_buffer = IOBuffer()
+        last_event = Ref("")
+
+        UniLM._parse_response_stream_chunk(
+            "event: response.output_text.delta\ndata: {\"delta\":\"Hello\"}\n\n" *
+            "event: response.output_text.delta\ndata: {\"delta\":\" Wo",
+            text_buffer, fail_buffer, last_event)
+        UniLM._parse_response_stream_chunk(
+            "rld\"}\n\nevent: response.output_text.delta\ndata: {\"delta\":\"!\"}\n\n",
+            text_buffer, fail_buffer, last_event)
+
+        @test String(take!(text_buffer)) == "Hello World!"
+    end
+
+    @testset "every byte-split position roundtrips" begin
+        sse = "event: response.output_text.delta\ndata: {\"delta\":\"Saint-Exup\"}\n\n" *
+              "event: response.output_text.delta\ndata: {\"delta\":\"éry, \"}\n\n" *
+              "event: response.output_text.delta\ndata: {\"delta\":\"Adults (19–70)\"}\n\n"
+        expected = "Saint-Exupéry, Adults (19–70)"
+        bytes = Vector{UInt8}(sse)
+
+        for k in 1:length(bytes)-1
+            text_buffer = IOBuffer()
+            fail_buffer = IOBuffer()
+            last_event = Ref("")
+            UniLM._parse_response_stream_chunk(String(bytes[1:k]),
+                                               text_buffer, fail_buffer, last_event)
+            UniLM._parse_response_stream_chunk(String(bytes[k+1:end]),
+                                               text_buffer, fail_buffer, last_event)
+            got = String(take!(text_buffer))
+            @test got == expected
+        end
     end
 end
 

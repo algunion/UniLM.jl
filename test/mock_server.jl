@@ -104,6 +104,44 @@ try
     end
 
     # ═══════════════════════════════════════════════════════════════════════
+    # Streaming error STATUS (regression): a non-200 on the streamed path must
+    # surface as LLMFailure/ResponseFailure with the real status + error body.
+    # Under HTTP 2.x the pull-model leaves resp.body empty, so the body must be
+    # captured in-block — this guards against silently degrading to *CallError.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "_chatrequeststream non-200 → LLMFailure with status + body" begin
+        set_error!(400, "Bad Request")
+
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true)
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="usr"))
+
+        body = JSON.json(chat)
+        task = UniLM._chatrequeststream(chat, body, nothing)
+        result = fetch(task)
+
+        @test result isa LLMFailure
+        @test result.status == 400
+        @test !isempty(result.response)
+        @test occursin("Bad Request", result.response)
+    end
+
+    @testset "_respond_stream non-200 → ResponseFailure with status + body" begin
+        set_error!(400, "Bad Request")
+
+        r = Respond(input="test", service=MockServiceEndpoint, stream=true)
+        result = respond(r)
+        @test result isa Task
+        inner = fetch(result)
+
+        @test inner isa ResponseFailure
+        @test inner.status == 400
+        @test !isempty(inner.response)
+        @test occursin("Bad Request", inner.response)
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
     # Responses API: error / retry paths
     # ═══════════════════════════════════════════════════════════════════════
 

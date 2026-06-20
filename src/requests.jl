@@ -213,7 +213,8 @@ function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
         try
             m = Ref{Union{Message,Nothing}}(nothing)
             stream_usage = Ref{Union{TokenUsage,Nothing}}(nothing)
-            resp = HTTP.open("POST", get_url(chat), auth_header(chat.service)) do io
+            raw_buffer = IOBuffer()  # wire bytes for non-200 reporting (streamed resp.body is empty under HTTP 2.x)
+            resp = HTTP.open("POST", get_url(chat), auth_header(chat.service); status_exception=false) do io
                 state = StreamState()
                 callback_buf = IOBuffer()  # tracks already-emitted text
                 fail_buffer = IOBuffer()
@@ -224,7 +225,9 @@ function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
                 HTTP.closewrite(io)
                 HTTP.startread(io)
                 while !eof(io) && !close_ref[] && !done[]
-                    chunk::String = join((String(take!(fail_buffer)), String(readavailable(io))))
+                    raw = String(readavailable(io))
+                    write(raw_buffer, raw)
+                    chunk::String = join((String(take!(fail_buffer)), raw))
                     streamstatus = _parse_chunk(chunk, state, fail_buffer)
                     # Fire on_tool_call for newly completed tool calls
                     if !isnothing(on_tool_call) && length(state.tool_calls) > prev_tc_count
@@ -273,7 +276,7 @@ function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
                 _accumulate_cost!(chat, result)
                 result
             else
-                LLMFailure(status=resp.status, response=String(resp.body), self=chat)
+                LLMFailure(status=resp.status, response=String(take!(raw_buffer)), self=chat)
             end
         catch e
             statuserror = hasproperty(e, :status) ? e.status : nothing

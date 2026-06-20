@@ -732,8 +732,9 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
     Threads.@spawn begin
         try
             result = Ref{Union{ResponseObject,Nothing}}(nothing)
+            raw_buffer = IOBuffer()  # wire bytes for non-200 reporting (streamed resp.body is empty under HTTP 2.x)
             url = _api_base_url(r.service) * RESPONSES_PATH
-            resp = HTTP.open("POST", url, auth_header(r.service)) do io
+            resp = HTTP.open("POST", url, auth_header(r.service); status_exception=false) do io
                 text_buffer = IOBuffer()
                 fail_buffer = IOBuffer()
                 last_event = Ref("")
@@ -744,6 +745,7 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
                 HTTP.startread(io)
                 while !eof(io) && !close_ref[] && !done[]
                     chunk = String(readavailable(io))
+                    write(raw_buffer, chunk)
                     status = _parse_response_stream_chunk(chunk, text_buffer, fail_buffer, last_event)
                     if status.done && !isnothing(status.data)
                         rdata = status.data["response"]
@@ -772,7 +774,7 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
             if resp.status == 200 && !isnothing(result[])
                 ResponseSuccess(response=result[]::ResponseObject)
             else
-                ResponseFailure(response=String(resp.body), status=resp.status)
+                ResponseFailure(response=String(take!(raw_buffer)), status=resp.status)
             end
         catch e
             statuserror = hasproperty(e, :status) ? e.status : nothing

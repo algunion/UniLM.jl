@@ -16,6 +16,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      UNILM_RUN_IMAGE_TESTS: 'false'  # image generation is billed per image; opt-in only
     strategy:
       fail-fast: false
       matrix:

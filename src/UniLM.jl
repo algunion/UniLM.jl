@@ -56,6 +56,9 @@ include("accounting.jl")
 include("files.jl")
 include("vector_stores.jl")
 include("conversations.jl")
+include("moderations.jl")
+include("audio.jl")
+include("batch.jl")
 include("tool_loop.jl")
 include("mcp_schema.jl")
 include("mcp_client.jl")
@@ -209,7 +212,9 @@ export
     # Functions
     generate_image,
     image_data,
-    save_image
+    save_image,
+    ImageEdit,
+    edit_image
 
 # ─── FIM / Completions API ──────────────────────────────────────────────────
 export
@@ -283,6 +288,44 @@ export
     add_conversation_items,
     list_conversation_items,
     delete_conversation_item
+
+# ─── Moderations API ──────────────────────────────────────────────────────────
+export
+    ModerationResult,
+    ModerationResponse,
+    ModerationSuccess,
+    ModerationFailure,
+    ModerationCallError,
+    moderate,
+    is_flagged
+
+# ─── Audio API ────────────────────────────────────────────────────────────────
+export
+    SpeechRequest,
+    SpeechSuccess,
+    TranscriptionRequest,
+    TranscriptionSuccess,
+    AudioFailure,
+    AudioCallError,
+    speak,
+    save_audio,
+    transcribe,
+    translate,
+    transcript_text
+
+# ─── Batch API ────────────────────────────────────────────────────────────────
+export
+    BatchObject,
+    BatchList,
+    BatchSuccess,
+    BatchListSuccess,
+    BatchFailure,
+    BatchCallError,
+    create_batch,
+    retrieve_batch,
+    cancel_batch,
+    list_batches,
+    poll_batch
 
 # ─── Provider Capabilities ──────────────────────────────────────────────────
 export

@@ -53,6 +53,8 @@ ImageGeneration(
     output_format::Union{String,Nothing} = nothing
     output_compression::Union{Int,Nothing} = nothing
     user::Union{String,Nothing} = nothing
+    input_fidelity::Union{String,Nothing} = nothing
+    moderation::Union{String,Nothing} = nothing
 end
 
 function JSON.lower(ig::ImageGeneration)
@@ -63,7 +65,7 @@ function JSON.lower(ig::ImageGeneration)
         model = dm
     end
     d = Dict{Symbol,Any}(:model => model, :prompt => ig.prompt)
-    for f in (:n, :size, :quality, :background, :output_format, :output_compression, :user)
+    for f in (:n, :size, :quality, :background, :output_format, :output_compression, :user, :input_fidelity, :moderation)
         v = getfield(ig, f)
         !isnothing(v) && (d[f] = v)
     end
@@ -292,3 +294,72 @@ end
 function generate_image(prompt::String; kwargs...)
     generate_image(ImageGeneration(; prompt=prompt, kwargs...))
 end
+
+
+# ─── Image Edits (multipart) ──────────────────────────────────────────────────
+
+"""
+    ImageEdit(; image, prompt, mask=nothing, model="", n=nothing, size=nothing,
+              quality=nothing, input_fidelity=nothing, background=nothing, output_format=nothing)
+
+An image-edit request. `image` is a path (or vector of paths); `mask` is an optional path.
+Sent as multipart/form-data to `/v1/images/edits`.
+"""
+@kwdef struct ImageEdit
+    service::ServiceEndpointSpec = OPENAIServiceEndpoint
+    image::Union{String,Vector{String}}
+    prompt::String
+    mask::Union{String,Nothing} = nothing
+    model::String = ""
+    n::Union{Int,Nothing} = nothing
+    size::Union{String,Nothing} = nothing
+    quality::Union{String,Nothing} = nothing
+    input_fidelity::Union{String,Nothing} = nothing
+    background::Union{String,Nothing} = nothing
+    output_format::Union{String,Nothing} = nothing
+end
+
+"""
+    edit_image(e::ImageEdit; retries=0) -> LLMRequestResponse
+    edit_image(image, prompt; mask=nothing, service=OPENAIServiceEndpoint, kwargs...)
+
+Edit/extend image(s) under a text prompt. Returns the same `ImageSuccess`/`ImageFailure`/
+`ImageCallError` shapes as [`generate_image`](@ref).
+"""
+function edit_image(e::ImageEdit; retries::Int=0)
+    validate_capability(e.service, :image_edits, "Image Edits API")
+    try
+        model = isempty(e.model) ? something(default_image_model(e.service), "") : e.model
+        isempty(model) && throw(ArgumentError("model must be specified for image edits with $(typeof(e.service))"))
+        parts = Pair{String,Any}["prompt" => e.prompt, "model" => model]
+        images = e.image isa String ? [e.image] : e.image
+        for img in images
+            isfile(img) || throw(ArgumentError("image not found: $img"))
+            push!(parts, "image[]" => HTTP.Multipart(basename(img), IOBuffer(read(img)), _mime_for(img)))
+        end
+        if !isnothing(e.mask)
+            isfile(e.mask) || throw(ArgumentError("mask not found: $(e.mask)"))
+            push!(parts, "mask" => HTTP.Multipart(basename(e.mask), IOBuffer(read(e.mask)), _mime_for(e.mask)))
+        end
+        for (k, f) in (("n", :n), ("size", :size), ("quality", :quality),
+            ("input_fidelity", :input_fidelity), ("background", :background), ("output_format", :output_format))
+            v = getfield(e, f)
+            !isnothing(v) && push!(parts, k => string(v))
+        end
+        url = _api_base_url(e.service) * IMAGES_EDITS_PATH
+        resp = HTTP.post(url, auth_header_multipart(e.service), HTTP.Form(parts); status_exception=false)
+        if resp.status == 200
+            return ImageSuccess(response=parse_image_response(resp))
+        elseif _is_retryable(resp.status) && retries < _RETRY_MAX_ATTEMPTS
+            sleep(_retry_delay(retries, resp))
+            return edit_image(e; retries=retries + 1)
+        else
+            return ImageFailure(response=String(resp.body), status=resp.status)
+        end
+    catch err
+        return ImageCallError(error=string(err), status=(hasproperty(err, :status) ? err.status : nothing))
+    end
+end
+edit_image(image, prompt::String; mask::Union{String,Nothing}=nothing,
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, kwargs...) =
+    edit_image(ImageEdit(; service=service, image=image, prompt=prompt, mask=mask, kwargs...))

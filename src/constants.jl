@@ -35,6 +35,20 @@ const VECTOR_STORES_PATH::String = "/v1/vector_stores"
 """OpenAI Conversations API path."""
 const CONVERSATIONS_PATH::String = "/v1/conversations"
 
+"""OpenAI Moderations API path."""
+const MODERATIONS_PATH::String = "/v1/moderations"
+
+"""OpenAI Audio API paths."""
+const AUDIO_SPEECH_PATH::String = "/v1/audio/speech"
+const AUDIO_TRANSCRIPTIONS_PATH::String = "/v1/audio/transcriptions"
+const AUDIO_TRANSLATIONS_PATH::String = "/v1/audio/translations"
+
+"""OpenAI Batch API path."""
+const BATCHES_PATH::String = "/v1/batches"
+
+"""OpenAI Image Edits API path."""
+const IMAGES_EDITS_PATH::String = "/v1/images/edits"
+
 # ─── Azure OpenAI Deployment Mapping ─────────────────────────────────────────
 # Azure routes requests via deployment names, so a model→deployment mapping is required.
 

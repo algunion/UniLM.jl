@@ -1,0 +1,121 @@
+# ============================================================================
+# OpenAI Batch API — async, ~50%-cheaper bulk processing. The input is a JSONL
+# file uploaded via the Files API (purpose="batch"); output is fetched with
+# `file_content(batch.output_file_id)`.
+# ============================================================================
+
+@kwdef struct BatchObject
+    id::String
+    status::Union{String,Nothing} = nothing
+    endpoint::Union{String,Nothing} = nothing
+    input_file_id::Union{String,Nothing} = nothing
+    output_file_id::Union{String,Nothing} = nothing
+    error_file_id::Union{String,Nothing} = nothing
+    request_counts::Dict{String,Any} = Dict{String,Any}()
+    raw::Dict{String,Any} = Dict{String,Any}()
+end
+
+@kwdef struct BatchList
+    data::Vector{BatchObject}
+    has_more::Bool = false
+    raw::Dict{String,Any} = Dict{String,Any}()
+end
+
+@kwdef struct BatchSuccess <: LLMRequestResponse; response::BatchObject; end
+@kwdef struct BatchListSuccess <: LLMRequestResponse; response::BatchList; end
+@kwdef struct BatchFailure <: LLMRequestResponse; response::String; status::Int; end
+@kwdef struct BatchCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
+
+_parse_batch(d::AbstractDict) = BatchObject(id=d["id"], status=get(d, "status", nothing),
+    endpoint=get(d, "endpoint", nothing), input_file_id=get(d, "input_file_id", nothing),
+    output_file_id=get(d, "output_file_id", nothing), error_file_id=get(d, "error_file_id", nothing),
+    request_counts=Dict{String,Any}(get(d, "request_counts", Dict{String,Any}())), raw=Dict{String,Any}(d))
+
+_batch_err(e) = BatchCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+
+"""
+    create_batch(input_file_id, endpoint; completion_window="24h", metadata=nothing, service=OPENAIServiceEndpoint)
+
+Create a batch job. `endpoint` is e.g. `"/v1/chat/completions"`, `"/v1/responses"`, or
+`"/v1/embeddings"`. `input_file_id` comes from `upload_file(path, "batch")`.
+"""
+function create_batch(input_file_id::String, endpoint::String; completion_window::String="24h",
+    metadata::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    validate_capability(service, :batch, "Batch API")
+    try
+        d = Dict{Symbol,Any}(:input_file_id => input_file_id, :endpoint => endpoint, :completion_window => completion_window)
+        !isnothing(metadata) && (d[:metadata] = metadata)
+        resp = HTTP.post(_api_base_url(service) * BATCHES_PATH, body=JSON.json(d), headers=auth_header(service); status_exception=false)
+        resp.status == 200 ? BatchSuccess(response=_parse_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
+            BatchFailure(response=String(resp.body), status=resp.status)
+    catch e
+        _batch_err(e)
+    end
+end
+
+"""
+    retrieve_batch(id; service=OPENAIServiceEndpoint)
+"""
+function retrieve_batch(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    validate_capability(service, :batch, "Batch API")
+    try
+        resp = HTTP.get(_api_base_url(service) * BATCHES_PATH * "/" * id, headers=auth_header(service); status_exception=false)
+        resp.status == 200 ? BatchSuccess(response=_parse_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
+            BatchFailure(response=String(resp.body), status=resp.status)
+    catch e
+        _batch_err(e)
+    end
+end
+
+"""
+    cancel_batch(id; service=OPENAIServiceEndpoint)
+"""
+function cancel_batch(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    validate_capability(service, :batch, "Batch API")
+    try
+        resp = HTTP.post(_api_base_url(service) * BATCHES_PATH * "/" * id * "/cancel", headers=auth_header(service); status_exception=false)
+        resp.status == 200 ? BatchSuccess(response=_parse_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
+            BatchFailure(response=String(resp.body), status=resp.status)
+    catch e
+        _batch_err(e)
+    end
+end
+
+"""
+    list_batches(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
+"""
+function list_batches(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    validate_capability(service, :batch, "Batch API")
+    try
+        url = _api_base_url(service) * BATCHES_PATH
+        params = String[]
+        !isnothing(limit) && push!(params, "limit=$limit")
+        !isnothing(after) && push!(params, "after=$after")
+        !isempty(params) && (url *= "?" * join(params, "&"))
+        resp = HTTP.get(url, headers=auth_header(service); status_exception=false)
+        if resp.status == 200
+            data = JSON.parse(resp.body; dicttype=Dict{String,Any})
+            BatchListSuccess(response=BatchList(data=BatchObject[_parse_batch(b) for b in get(data, "data", [])], has_more=get(data, "has_more", false), raw=data))
+        else
+            BatchFailure(response=String(resp.body), status=resp.status)
+        end
+    catch e
+        _batch_err(e)
+    end
+end
+
+"""
+    poll_batch(id; interval=10.0, timeout=86400.0, service=OPENAIServiceEndpoint)
+
+Poll a batch until terminal (`completed`/`failed`/`cancelled`/`expired`) or timeout.
+"""
+function poll_batch(id::String; interval::Real=10.0, timeout::Real=86400.0, service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    max_iters = max(1, ceil(Int, timeout / interval))
+    for _ in 1:max_iters
+        r = retrieve_batch(id; service=service)
+        r isa BatchSuccess || return r
+        r.response.status in ("completed", "failed", "cancelled", "expired") && return r
+        sleep(interval)
+    end
+    BatchCallError(error="poll_batch timed out after $(timeout)s", status=nothing)
+end

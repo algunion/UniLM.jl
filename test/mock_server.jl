@@ -29,7 +29,7 @@ UniLM.get_url(::Type{MockServiceEndpoint}, ::Chat) = mock_base_url * UniLM.CHAT_
 UniLM.get_url(::Type{MockServiceEndpoint}, ::Embeddings) = mock_base_url * UniLM.EMBEDDINGS_PATH
 UniLM.get_url(::Type{MockServiceEndpoint}, ::FIMCompletion) = mock_base_url * UniLM.COMPLETIONS_PATH
 UniLM.auth_header(::Type{MockServiceEndpoint}) = ["Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{MockServiceEndpoint}) = Set([:chat, :responses, :embeddings, :images, :tools, :fim, :prefix_completion, :files, :vector_stores, :conversations])
+UniLM.provider_capabilities(::Type{MockServiceEndpoint}) = Set([:chat, :responses, :embeddings, :images, :tools, :fim, :prefix_completion, :files, :vector_stores, :conversations, :moderation, :audio, :batch, :image_edits])
 UniLM.default_model(::Type{MockServiceEndpoint}) = "mock-model"
 UniLM.default_embedding_model(::Type{MockServiceEndpoint}) = "mock-embedding"
 UniLM.default_image_model(::Type{MockServiceEndpoint}) = "mock-image"
@@ -451,6 +451,84 @@ try
 
         set_error!(404, "nope")
         @test retrieve_conversation("conv-x"; service=MockServiceEndpoint) isa ConversationFailure
+        set_error!(200, "")
+    end
+
+    @testset "Moderations API (mock)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict("model" => "omni-moderation-latest", "results" => [
+            Dict("flagged" => true, "categories" => Dict("violence" => true),
+                 "category_scores" => Dict("violence" => 0.9))]))
+        r = moderate("something"; service=MockServiceEndpoint)
+        @test r isa ModerationSuccess
+        @test is_flagged(r)
+        @test r.response.results[1].category_scores["violence"] == 0.9
+        set_error!(400, "bad")
+        @test moderate("x"; service=MockServiceEndpoint) isa ModerationFailure
+        set_error!(200, "")
+    end
+
+    @testset "Audio API (mock)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = "AUDIOBYTES"
+        r = speak("hello"; service=MockServiceEndpoint)
+        @test r isa SpeechSuccess
+        p = tempname() * ".mp3"
+        save_audio(r, p)                          # save BEFORE String(): String(::Vector{UInt8}) empties the buffer
+        @test read(p, String) == "AUDIOBYTES"
+        @test String(copy(r.audio)) == "AUDIOBYTES"
+        rm(p)
+
+        response_body[] = JSON.json(Dict("text" => "hello world"))
+        af = tempname() * ".wav"
+        write(af, "fakeaudio")
+        rt = transcribe(af; service=MockServiceEndpoint)
+        @test rt isa TranscriptionSuccess
+        @test transcript_text(rt) == "hello world"
+        rm(af)
+
+        set_error!(401, "no")
+        @test speak("x"; service=MockServiceEndpoint) isa AudioFailure
+        set_error!(200, "")
+    end
+
+    @testset "Batch API (mock)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict("id" => "batch-1", "status" => "completed",
+            "endpoint" => "/v1/chat/completions", "output_file_id" => "file-out",
+            "request_counts" => Dict("completed" => 2, "total" => 2)))
+        r = create_batch("file-in", "/v1/chat/completions"; service=MockServiceEndpoint)
+        @test r isa BatchSuccess
+        @test r.response.output_file_id == "file-out"
+        rp = poll_batch("batch-1"; interval=0.01, timeout=1.0, service=MockServiceEndpoint)
+        @test rp isa BatchSuccess && rp.response.status == "completed"
+        response_body[] = JSON.json(Dict("data" => [Dict("id" => "batch-1", "status" => "completed")], "has_more" => false))
+        @test list_batches(service=MockServiceEndpoint) isa BatchListSuccess
+        set_error!(404, "no")
+        @test retrieve_batch("batch-x"; service=MockServiceEndpoint) isa BatchFailure
+        set_error!(200, "")
+    end
+
+    @testset "Image edits (mock)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict("created" => 1, "data" => [Dict("b64_json" => "EDITED")]))
+        img = tempname() * ".png"
+        write(img, "fakepng")
+        r = edit_image(img, "make it blue"; service=MockServiceEndpoint)
+        @test r isa ImageSuccess
+        @test image_data(r) == ["EDITED"]
+        rm(img)
+        # missing file is caught inside the request → ImageCallError
+        @test edit_image("/no/such.png", "x"; service=MockServiceEndpoint) isa ImageCallError
+        set_error!(400, "bad")
+        img2 = tempname() * ".png"
+        write(img2, "fakepng")
+        @test edit_image(img2, "x"; service=MockServiceEndpoint) isa ImageFailure
+        rm(img2)
         set_error!(200, "")
     end
 

@@ -29,7 +29,7 @@ UniLM.get_url(::Type{MockServiceEndpoint}, ::Chat) = mock_base_url * UniLM.CHAT_
 UniLM.get_url(::Type{MockServiceEndpoint}, ::Embeddings) = mock_base_url * UniLM.EMBEDDINGS_PATH
 UniLM.get_url(::Type{MockServiceEndpoint}, ::FIMCompletion) = mock_base_url * UniLM.COMPLETIONS_PATH
 UniLM.auth_header(::Type{MockServiceEndpoint}) = ["Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{MockServiceEndpoint}) = Set([:chat, :responses, :embeddings, :images, :tools, :fim, :prefix_completion])
+UniLM.provider_capabilities(::Type{MockServiceEndpoint}) = Set([:chat, :responses, :embeddings, :images, :tools, :fim, :prefix_completion, :files])
 UniLM.default_model(::Type{MockServiceEndpoint}) = "mock-model"
 UniLM.default_embedding_model(::Type{MockServiceEndpoint}) = "mock-embedding"
 UniLM.default_image_model(::Type{MockServiceEndpoint}) = "mock-image"
@@ -361,6 +361,41 @@ try
         emb = UniLM.Embeddings("test"; service=dead, model="test-embed")
         result = embeddingrequest!(emb)
         @test result isa EmbeddingCallError
+    end
+
+    @testset "Files API (mock)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict("id" => "file-1", "bytes" => 5, "created_at" => 1,
+            "filename" => "a.txt", "purpose" => "user_data", "status" => "processed"))
+        path = tempname() * ".txt"
+        write(path, "hello")
+        r = upload_file(path, "user_data"; service=MockServiceEndpoint)
+        @test r isa FileSuccess
+        @test r.response.id == "file-1"
+        @test r.response.filename == "a.txt"
+        rm(path)
+
+        response_body[] = JSON.json(Dict("data" => [Dict("id" => "file-1", "bytes" => 5,
+            "created_at" => 1, "filename" => "a.txt", "purpose" => "user_data")], "has_more" => false))
+        rl = list_files(service=MockServiceEndpoint)
+        @test rl isa FileListSuccess
+        @test length(rl.response.data) == 1
+        @test rl.response.data[1].id == "file-1"
+
+        response_body[] = JSON.json(Dict("id" => "file-1", "object" => "file", "deleted" => true))
+        rd = delete_file("file-1"; service=MockServiceEndpoint)
+        @test rd isa FileDeleteSuccess
+        @test rd.deleted
+
+        response_body[] = "rawbytes"
+        rc = file_content("file-1"; service=MockServiceEndpoint)
+        @test rc isa FileContentSuccess
+        @test String(rc.content) == "rawbytes"
+
+        set_error!(404, "not found")
+        @test retrieve_file("file-x"; service=MockServiceEndpoint) isa FileFailure
+        set_error!(200, "")
     end
 
     # ═══════════════════════════════════════════════════════════════════════

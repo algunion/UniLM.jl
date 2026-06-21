@@ -26,6 +26,15 @@ const IMAGES_GENERATIONS_PATH::String = "/v1/images/generations"
 """Legacy Completions API path (used for FIM by DeepSeek, Ollama, vLLM)."""
 const COMPLETIONS_PATH::String = "/v1/completions"
 
+"""OpenAI Files API path."""
+const FILES_PATH::String = "/v1/files"
+
+"""OpenAI Vector Stores API path."""
+const VECTOR_STORES_PATH::String = "/v1/vector_stores"
+
+"""OpenAI Conversations API path."""
+const CONVERSATIONS_PATH::String = "/v1/conversations"
+
 # ─── Azure OpenAI Deployment Mapping ─────────────────────────────────────────
 # Azure routes requests via deployment names, so a model→deployment mapping is required.
 

@@ -53,6 +53,7 @@ include("images.jl")
 include("capabilities.jl")
 include("completions.jl")
 include("accounting.jl")
+include("files.jl")
 include("tool_loop.jl")
 include("mcp_schema.jl")
 include("mcp_client.jl")
@@ -219,6 +220,24 @@ export
     fim_complete,
     fim_text,
     prefix_complete
+
+# ─── Files API ───────────────────────────────────────────────────────────────
+export
+    FileUpload,
+    FileObject,
+    FileList,
+    FileSuccess,
+    FileListSuccess,
+    FileContentSuccess,
+    FileDeleteSuccess,
+    FileFailure,
+    FileCallError,
+    upload_file,
+    list_files,
+    retrieve_file,
+    delete_file,
+    file_content,
+    save_file_content
 
 # ─── Provider Capabilities ──────────────────────────────────────────────────
 export

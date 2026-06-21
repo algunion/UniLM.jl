@@ -383,7 +383,7 @@ DeepSeekEndpoint(; api_key::String=ENV["DEEPSEEK_API_KEY"]) = DeepSeekEndpoint(a
     chat = Chat()
 
 Creates a new `Chat` object with default settings:
-- `model` is set to `gpt-5.2`
+- `model` is set to `gpt-5.5`
 - `messages` is set to an empty `Vector{Message}`
 - `history` is set to `true`
 """
@@ -401,12 +401,27 @@ Creates a new `Chat` object with default settings:
     stream::Union{Bool,Nothing} = nothing
     stop::Union{Vector{String},String,Nothing} = nothing # max 4 sequences
     max_tokens::Union{Int64,Nothing} = nothing
+    max_completion_tokens::Union{Int64,Nothing} = nothing # preferred over max_tokens; reasoning models reject max_tokens
     presence_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
     response_format::Union{ResponseFormat,Nothing} = nothing
     frequency_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
     logit_bias::Union{AbstractDict{String,Float64},Nothing} = nothing
     user::Union{String,Nothing} = nothing
     seed::Union{Int64,Nothing} = nothing
+    reasoning_effort::Union{String,Nothing} = nothing      # none|minimal|low|medium|high|xhigh
+    stream_options::Union{AbstractDict,Nothing} = nothing  # e.g. {"include_usage": true}
+    verbosity::Union{String,Nothing} = nothing             # low|medium|high
+    store::Union{Bool,Nothing} = nothing
+    metadata::Union{AbstractDict,Nothing} = nothing
+    service_tier::Union{String,Nothing} = nothing          # auto|default|flex|scale|priority
+    logprobs::Union{Bool,Nothing} = nothing
+    top_logprobs::Union{Int64,Nothing} = nothing
+    prediction::Union{AbstractDict,Nothing} = nothing
+    modalities::Union{Vector{String},Nothing} = nothing
+    audio::Union{AbstractDict,Nothing} = nothing
+    web_search_options::Union{AbstractDict,Nothing} = nothing
+    prompt_cache_key::Union{String,Nothing} = nothing
+    safety_identifier::Union{String,Nothing} = nothing     # replaces deprecated `user`
     _cumulative_cost::Ref{Float64} = Ref(0.0)
     function Chat(
         service,
@@ -422,12 +437,27 @@ Creates a new `Chat` object with default settings:
         stream,
         stop,
         max_tokens,
+        max_completion_tokens,
         presence_penalty,
         response_format,
         frequency_penalty,
         logit_bias,
         user,
         seed,
+        reasoning_effort,
+        stream_options,
+        verbosity,
+        store,
+        metadata,
+        service_tier,
+        logprobs,
+        top_logprobs,
+        prediction,
+        modalities,
+        audio,
+        web_search_options,
+        prompt_cache_key,
+        safety_identifier,
         _cumulative_cost
     )
         model = _resolve_model(service, model)
@@ -451,12 +481,27 @@ Creates a new `Chat` object with default settings:
             stream,
             stop,
             max_tokens,
+            max_completion_tokens,
             presence_penalty,
             response_format,
             frequency_penalty,
             logit_bias,
             user,
             seed,
+            reasoning_effort,
+            stream_options,
+            verbosity,
+            store,
+            metadata,
+            service_tier,
+            logprobs,
+            top_logprobs,
+            prediction,
+            modalities,
+            audio,
+            web_search_options,
+            prompt_cache_key,
+            safety_identifier,
             _cumulative_cost
         )
     end
@@ -465,8 +510,11 @@ end
 function JSON.lower(chat::Chat)
     d = Dict{Symbol,Any}(:model => chat.model, :messages => chat.messages)
     for f in (:tools, :tool_choice, :parallel_tool_calls, :temperature, :top_p,
-        :n, :stream, :stop, :max_tokens, :presence_penalty, :response_format,
-        :frequency_penalty, :logit_bias, :user, :seed)
+        :n, :stream, :stop, :max_tokens, :max_completion_tokens, :presence_penalty, :response_format,
+        :frequency_penalty, :logit_bias, :user, :seed,
+        :reasoning_effort, :stream_options, :verbosity, :store, :metadata, :service_tier,
+        :logprobs, :top_logprobs, :prediction, :modalities, :audio, :web_search_options,
+        :prompt_cache_key, :safety_identifier)
         v = getfield(chat, f)
         !isnothing(v) && (d[f] = v)
     end
@@ -491,14 +539,22 @@ Abstract supertype for all API call results. Pattern-match on subtypes to handle
 abstract type LLMRequestResponse end
 
 """
-    TokenUsage(; prompt_tokens=0, completion_tokens=0, total_tokens=0)
+    TokenUsage(; prompt_tokens=0, completion_tokens=0, total_tokens=0, cached_tokens=0, reasoning_tokens=0)
 
 Token usage statistics returned by the API.
+
+`cached_tokens` (a subset of `prompt_tokens` served from the prompt cache) and
+`reasoning_tokens` (a subset of `completion_tokens` spent on hidden reasoning) are
+reported by newer models via the `*_tokens_details` objects; they default to 0 when
+the provider omits those details. `estimated_cost` bills `cached_tokens` at the
+discounted cached-input rate.
 """
 @kwdef struct TokenUsage
     prompt_tokens::Int = 0
     completion_tokens::Int = 0
     total_tokens::Int = 0
+    cached_tokens::Int = 0
+    reasoning_tokens::Int = 0
 end
 
 """
@@ -678,38 +734,95 @@ struct Embeddings
     input::Union{String,Vector{String}}
     embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}
     user::Union{String,Nothing}
-    function Embeddings(input::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, model::String="")
+    dimensions::Union{Int,Nothing}
+    encoding_format::Union{String,Nothing}
+    function Embeddings(input::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, model::String="",
+        dimensions::Union{Int,Nothing}=nothing, encoding_format::Union{String,Nothing}=nothing,
+        user::Union{String,Nothing}=nothing)
         if isempty(model)
             dm = default_embedding_model(service)
             isnothing(dm) && throw(ArgumentError("model must be specified for embeddings with $(typeof(service))"))
             model = dm
         end
-        return new(service, model, input, zeros(Float64, 1536), nothing)
+        return new(service, model, input, zeros(Float64, something(dimensions, 1536)), user, dimensions, encoding_format)
     end
-    function Embeddings(input::Vector{String}; service::ServiceEndpointSpec=OPENAIServiceEndpoint, model::String="")
+    function Embeddings(input::Vector{String}; service::ServiceEndpointSpec=OPENAIServiceEndpoint, model::String="",
+        dimensions::Union{Int,Nothing}=nothing, encoding_format::Union{String,Nothing}=nothing,
+        user::Union{String,Nothing}=nothing)
         isempty(input) && throw(ArgumentError("input must not be empty"))
         if isempty(model)
             dm = default_embedding_model(service)
             isnothing(dm) && throw(ArgumentError("model must be specified for embeddings with $(typeof(service))"))
             model = dm
         end
-        return new(service, model, input, [zeros(Float64, 1536) for _ in 1:length(input)], nothing)
+        return new(service, model, input, [zeros(Float64, something(dimensions, 1536)) for _ in 1:length(input)], user, dimensions, encoding_format)
     end
 end
 
 function JSON.lower(emb::Embeddings)
     d = Dict{Symbol,Any}(:model => emb.model, :input => emb.input)
     !isnothing(emb.user) && (d[:user] = emb.user)
+    !isnothing(emb.dimensions) && (d[:dimensions] = emb.dimensions)
+    !isnothing(emb.encoding_format) && (d[:encoding_format] = emb.encoding_format)
     return d
 end
 
 function update!(emb::Embeddings, data::AbstractVector)
     if emb.input isa String
-        copy!(emb.embeddings, data[1]["embedding"])
+        _store_embedding!(emb.embeddings, data[1]["embedding"])
     else
         for item in data
             idx = item["index"] + 1  # API uses 0-based indexing
-            copy!(emb.embeddings[idx], item["embedding"])
+            _store_embedding!(emb.embeddings[idx], item["embedding"])
         end
     end
 end
+
+# Copy an API-returned embedding into the preallocated buffer, resizing when the model's
+# actual dimension differs from the 1536 default (e.g. text-embedding-3-large = 3072).
+function _store_embedding!(dst::Vector{Float64}, src::AbstractVector)
+    length(dst) == length(src) || resize!(dst, length(src))
+    @inbounds for i in eachindex(src)
+        dst[i] = src[i]
+    end
+    return dst
+end
+
+"""
+    EmbeddingSuccess(; embeddings, usage=nothing, raw)
+
+Successful Embeddings API response. Vectors are in `embeddings.embeddings` (also filled
+in place on the request struct); `embedding_vectors(r)` returns them.
+"""
+@kwdef struct EmbeddingSuccess <: LLMRequestResponse
+    embeddings::Embeddings
+    usage::Union{TokenUsage,Nothing} = nothing
+    raw::Dict{String,Any}
+end
+
+"""
+    EmbeddingFailure(; response, status)
+
+HTTP-level failure from the Embeddings API (non-2xx).
+"""
+@kwdef struct EmbeddingFailure <: LLMRequestResponse
+    response::String
+    status::Int
+end
+
+"""
+    EmbeddingCallError(; error, status=nothing)
+
+Exception-level error during an Embeddings API call (network, parse, etc.).
+"""
+@kwdef struct EmbeddingCallError <: LLMRequestResponse
+    error::String
+    status::Union{Int,Nothing} = nothing
+end
+
+"""
+    embedding_vectors(r::EmbeddingSuccess)
+
+Return the embedding vector(s): `Vector{Float64}` (single input) or `Vector{Vector{Float64}}` (batch).
+"""
+embedding_vectors(r::EmbeddingSuccess) = r.embeddings.embeddings

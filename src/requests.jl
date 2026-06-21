@@ -5,7 +5,7 @@ const _RETRY_FACTOR = 2.0
 const _RETRY_MAX_DELAY = 60.0
 const _RETRY_MAX_ATTEMPTS = 30
 
-_is_retryable(status::Integer)::Bool = status in (429, 500, 503)
+_is_retryable(status::Integer)::Bool = status in (408, 429, 500, 502, 503, 504, 529)
 
 function _retry_delay(retry::Integer, resp::HTTP.Response)::Float64
     computed = min(_RETRY_BASE * _RETRY_FACTOR^retry, _RETRY_MAX_DELAY)
@@ -82,18 +82,41 @@ end
 
 
 
+# Multipart auth: strip the JSON Content-Type so HTTP.Form can set its own
+# multipart/form-data boundary header (a stray application/json corrupts the upload).
+auth_header_multipart(s) = filter(p -> lowercase(String(first(p))) != "content-type", auth_header(s))
+
 # Stub: overridden by accounting.jl after include
 _accumulate_cost!(::Chat, ::LLMRequestResponse) = nothing
+
+"""
+    _token_usage_from(u::AbstractDict; prompt_key, completion_key, prompt_details, completion_details)
+
+Build a [`TokenUsage`](@ref) from a raw `usage` dict, pulling the cached/reasoning
+subtotals from the detail objects when present. Chat Completions and the Responses API
+name these differently (`prompt_tokens`/`input_tokens`, `prompt_tokens_details`/
+`input_tokens_details`, …), so the keys are parameterized.
+"""
+function _token_usage_from(u::AbstractDict;
+    prompt_key::String="prompt_tokens", completion_key::String="completion_tokens",
+    prompt_details::String="prompt_tokens_details", completion_details::String="completion_tokens_details")
+    pd = get(u, prompt_details, nothing)
+    cd = get(u, completion_details, nothing)
+    _i(x) = x isa Integer ? Int(x) : 0   # tolerate JSON null / missing / non-int → 0
+    TokenUsage(
+        prompt_tokens=_i(get(u, prompt_key, 0)),
+        completion_tokens=_i(get(u, completion_key, 0)),
+        total_tokens=_i(get(u, "total_tokens", 0)),
+        cached_tokens=(pd isa AbstractDict ? _i(get(pd, "cached_tokens", 0)) : 0),
+        reasoning_tokens=(cd isa AbstractDict ? _i(get(cd, "reasoning_tokens", 0)) : 0),
+    )
+end
 
 function _parse_usage(data::Dict{String,Any})::Union{TokenUsage, Nothing}
     haskey(data, "usage") || return nothing
     u = data["usage"]
-    u isa Dict || return nothing
-    TokenUsage(
-        prompt_tokens=get(u, "prompt_tokens", 0),
-        completion_tokens=get(u, "completion_tokens", 0),
-        total_tokens=get(u, "total_tokens", 0)
-    )
+    u isa AbstractDict || return nothing
+    _token_usage_from(u)
 end
 
 function extract_message(resp::HTTP.Response)
@@ -113,10 +136,12 @@ function extract_message(resp::HTTP.Response)
             push!(tcalls, tc)
         end
         Message(role=RoleAssistant, tool_calls=tcalls, finish_reason=TOOL_CALLS)
-    elseif finish_reason == STOP && haskey(message, "content") && !isnothing(message["content"])
-        Message(role=RoleAssistant, content=message["content"], finish_reason=STOP)
-    elseif finish_reason == CONTENT_FILTER && haskey(message, "refusal") && !isnothing(message["refusal"])
-        Message(role=RoleAssistant, refusal_message=message["refusal"], finish_reason=CONTENT_FILTER)
+    elseif haskey(message, "content") && !isnothing(message["content"])
+        # Preserve content for ANY finish_reason (incl. "length"/truncated) — never discard partial output.
+        Message(role=RoleAssistant, content=message["content"], finish_reason=finish_reason)
+    elseif haskey(message, "refusal") && !isnothing(message["refusal"])
+        # A refusal may arrive with finish_reason "content_filter" OR "stop" — capture it regardless.
+        Message(role=RoleAssistant, refusal_message=message["refusal"], finish_reason=finish_reason)
     else
         Message(role=RoleAssistant, content="No response from the model.", finish_reason=finish_reason)
     end
@@ -126,6 +151,7 @@ end
 """Mutable accumulator for streaming Chat Completions chunks."""
 @kwdef mutable struct StreamState
     content::IOBuffer = IOBuffer()
+    refusal::IOBuffer = IOBuffer()
     tool_calls::Dict{Int, Dict{String,Any}} = Dict{Int, Dict{String,Any}}()
     finish_reason::Union{String, Nothing} = nothing
     usage::Union{TokenUsage, Nothing} = nothing
@@ -144,13 +170,8 @@ function _parse_chunk(chunk::String, state::StreamState, failbuff)
         try
             parsed = JSON.parse(line[6:end]; dicttype=Dict{String,Any})
             # Capture usage if present (e.g. stream_options.include_usage)
-            if haskey(parsed, "usage") && parsed["usage"] isa Dict
-                u = parsed["usage"]
-                state.usage = TokenUsage(
-                    prompt_tokens=get(u, "prompt_tokens", 0),
-                    completion_tokens=get(u, "completion_tokens", 0),
-                    total_tokens=get(u, "total_tokens", 0)
-                )
+            if haskey(parsed, "usage") && parsed["usage"] isa AbstractDict
+                state.usage = _token_usage_from(parsed["usage"])
             end
             cho = parsed["choices"][1]
             fr = cho["finish_reason"]
@@ -162,6 +183,10 @@ function _parse_chunk(chunk::String, state::StreamState, failbuff)
             # Text content delta
             if haskey(delta, "content") && !isnothing(delta["content"])
                 print(state.content, delta["content"])
+            end
+            # Refusal delta (streamed safety refusal)
+            if haskey(delta, "refusal") && !isnothing(delta["refusal"])
+                print(state.refusal, delta["refusal"])
             end
             # Tool call deltas — accumulate by index
             if haskey(delta, "tool_calls")
@@ -204,7 +229,12 @@ function _build_stream_message(state::StreamState)::Message
         Message(role=RoleAssistant, tool_calls=tcalls, finish_reason=TOOL_CALLS)
     else
         content = String(take!(state.content))
-        Message(role=RoleAssistant, content=content, finish_reason=something(state.finish_reason, STOP))
+        refusal = String(take!(state.refusal))
+        if isempty(content) && !isempty(refusal)
+            Message(role=RoleAssistant, refusal_message=refusal, finish_reason=something(state.finish_reason, STOP))
+        else
+            Message(role=RoleAssistant, content=content, finish_reason=something(state.finish_reason, STOP))
+        end
     end
 end
 
@@ -340,7 +370,7 @@ Send a request to the OpenAI API to generate a response to the messages in `conv
 
 # Keyword Arguments
 - `service::Type{<:ServiceEndpoint} = AZUREServiceEndpoint`: The service endpoint to use (e.g., `AZUREServiceEndpoint`, `OPENAIServiceEndpoint`).
-- `model::String = "gpt-5.2"`: The model to use for the chat completion.
+- `model::String = "gpt-5.5"`: The model to use for the chat completion.
 - `systemprompt::Union{Message,String}`: The system prompt message.
 - `userprompt::Union{Message,String}`: The user prompt message.
 - `messages::Conversation = Message[]`: The conversation history or the system/prompt messages.
@@ -383,28 +413,21 @@ end
 
 
 """
-    embeddingrequest!(emb::Embedding)
+    embeddingrequest!(emb::Embeddings; retries=0) -> LLMRequestResponse
 
-    Send a request to the OpenAI API to generate an embedding for the `input` in `emb`.
-    
-    Resulting embedding is stored in the preallocated `embedding` field.  
-
-    @kwdef struct Embedding
-        model::String = "text-embedding-3-small"
-        input::Union{String,Vector{String}}
-        embedding::Vector{Float64} = zeros(Float64, 1536)
-        user::Union{String,Nothing} = nothing
-    end
-
+Send an Embeddings API request for the `input` in `emb`. Returns `EmbeddingSuccess`,
+`EmbeddingFailure` (non-2xx), or `EmbeddingCallError` (network/parse). The resulting
+vectors are filled into `emb.embeddings` in place and are also reachable via
+`embedding_vectors(result)`.
 """
 function embeddingrequest!(emb::Embeddings; retries::Int=0)
-    body = JSON.json(emb)
     try
+        body = JSON.json(emb)
         resp = HTTP.post(get_url(emb), body=body, headers=auth_header(emb.service); status_exception=false)
         if resp.status == 200
-            embedding = JSON.parse(resp.body; dicttype=Dict{String,Any})
-            update!(emb, embedding["data"])
-            return (embedding, emb)
+            data = JSON.parse(resp.body; dicttype=Dict{String,Any})
+            update!(emb, data["data"])
+            return EmbeddingSuccess(embeddings=emb, usage=_parse_usage(data), raw=data)
         elseif _is_retryable(resp.status)
             if retries < _RETRY_MAX_ATTEMPTS
                 delay = _retry_delay(retries, resp)
@@ -412,13 +435,13 @@ function embeddingrequest!(emb::Embeddings; retries::Int=0)
                 sleep(delay)
                 return embeddingrequest!(emb; retries=retries + 1)
             else
-                error("Max retries ($(_RETRY_MAX_ATTEMPTS)) exceeded for embedding request (status $(resp.status))")
+                return EmbeddingFailure(response=String(resp.body), status=resp.status)
             end
         else
-            error("Embedding request failed with status $(resp.status): $(String(resp.body))")
+            return EmbeddingFailure(response=String(resp.body), status=resp.status)
         end
     catch e
-        e isa ErrorException && rethrow()  # re-throw our own errors
-        error("Embedding request error: $e")
+        statuserror = hasproperty(e, :status) ? e.status : nothing
+        return EmbeddingCallError(error=string(e), status=statuserror)
     end
 end

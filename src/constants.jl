@@ -26,6 +26,46 @@ const IMAGES_GENERATIONS_PATH::String = "/v1/images/generations"
 """Legacy Completions API path (used for FIM by DeepSeek, Ollama, vLLM)."""
 const COMPLETIONS_PATH::String = "/v1/completions"
 
+"""OpenAI Files API path."""
+const FILES_PATH::String = "/v1/files"
+
+"""OpenAI Vector Stores API path."""
+const VECTOR_STORES_PATH::String = "/v1/vector_stores"
+
+"""OpenAI Conversations API path."""
+const CONVERSATIONS_PATH::String = "/v1/conversations"
+
+"""OpenAI Moderations API path."""
+const MODERATIONS_PATH::String = "/v1/moderations"
+
+"""OpenAI Audio API paths."""
+const AUDIO_SPEECH_PATH::String = "/v1/audio/speech"
+const AUDIO_TRANSCRIPTIONS_PATH::String = "/v1/audio/transcriptions"
+const AUDIO_TRANSLATIONS_PATH::String = "/v1/audio/translations"
+
+"""OpenAI Batch API path."""
+const BATCHES_PATH::String = "/v1/batches"
+
+"""OpenAI Image Edits API path."""
+const IMAGES_EDITS_PATH::String = "/v1/images/edits"
+
+"""OpenAI Fine-tuning API path."""
+const FINE_TUNING_PATH::String = "/v1/fine_tuning/jobs"
+
+"""OpenAI Containers API path."""
+const CONTAINERS_PATH::String = "/v1/containers"
+
+"""OpenAI Uploads API path (resumable large-file uploads)."""
+const UPLOADS_PATH::String = "/v1/uploads"
+
+"""OpenAI Videos API path (Sora)."""
+const VIDEOS_PATH::String = "/v1/videos"
+
+"""OpenAI Realtime API paths."""
+const REALTIME_CLIENT_SECRETS_PATH::String = "/v1/realtime/client_secrets"
+const REALTIME_CALLS_PATH::String = "/v1/realtime/calls"
+const REALTIME_WS_URL::String = "wss://api.openai.com/v1/realtime"
+
 # ─── Azure OpenAI Deployment Mapping ─────────────────────────────────────────
 # Azure routes requests via deployment names, so a model→deployment mapping is required.
 

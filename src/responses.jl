@@ -46,26 +46,36 @@ Create an `input_text` content part for multimodal input messages.
 input_text(text::String) = Dict{Symbol,Any}(:type => "input_text", :text => text)
 
 """
-    input_image(url::String; detail=nothing)
+    input_image(url=nothing; detail=nothing, file_id=nothing)
 
-Create an `input_image` content part. `detail` can be `"auto"`, `"low"`, or `"high"`.
+Create an `input_image` content part. Provide either an image `url` or a `file_id`.
+`detail` can be `"auto"`, `"low"`, or `"high"`.
 """
-function input_image(url::String; detail::Union{String,Nothing}=nothing)
-    d = Dict{Symbol,Any}(:type => "input_image", :image_url => url)
+function input_image(url::Union{String,Nothing}=nothing; detail::Union{String,Nothing}=nothing,
+        file_id::Union{String,Nothing}=nothing)
+    isnothing(url) && isnothing(file_id) && throw(ArgumentError("Either `url` or `file_id` must be provided"))
+    d = Dict{Symbol,Any}(:type => "input_image")
+    !isnothing(url) && (d[:image_url] = url)
+    !isnothing(file_id) && (d[:file_id] = file_id)
     !isnothing(detail) && (d[:detail] = detail)
     return d
 end
 
 """
-    input_file(; url=nothing, id=nothing)
+    input_file(; url=nothing, id=nothing, file_data=nothing, filename=nothing)
 
-Create an `input_file` content part. Provide either a `url` or a `file_id`.
+Create an `input_file` content part. Provide a `url`, a file `id`, or inline `file_data`
+(base64). `filename` is recommended when passing `file_data`.
 """
-function input_file(; url::Union{String,Nothing}=nothing, id::Union{String,Nothing}=nothing)
-    isnothing(url) && isnothing(id) && throw(ArgumentError("Either `url` or `id` must be provided"))
+function input_file(; url::Union{String,Nothing}=nothing, id::Union{String,Nothing}=nothing,
+        file_data::Union{String,Nothing}=nothing, filename::Union{String,Nothing}=nothing)
+    isnothing(url) && isnothing(id) && isnothing(file_data) &&
+        throw(ArgumentError("One of `url`, `id`, or `file_data` must be provided"))
     d = Dict{Symbol,Any}(:type => "input_file")
     !isnothing(url) && (d[:file_url] = url)
     !isnothing(id) && (d[:file_id] = id)
+    !isnothing(file_data) && (d[:file_data] = file_data)
+    !isnothing(filename) && (d[:filename] = filename)
     return d
 end
 
@@ -118,21 +128,28 @@ function JSON.lower(t::FunctionTool)
 end
 
 """
-    WebSearchTool(; search_context_size="medium", user_location=nothing)
+    WebSearchTool(; type="web_search", search_context_size="medium", user_location=nothing, filters=nothing)
 
 A web search tool for the Responses API. Allows the model to search the web.
 
+- `type`: `"web_search"` (GA, default) or the legacy `"web_search_preview"`
 - `search_context_size`: `"low"`, `"medium"`, or `"high"`
 - `user_location`: Dict with keys like `"country"`, `"city"`, `"region"`, `"timezone"`
+- `filters`: Dict with `"allowed_domains"` / `"blocked_domains"` (GA only)
+
+Fetch sources/results back via `include=["web_search_call.results", "web_search_call.action.sources"]`.
 """
 @kwdef struct WebSearchTool <: ResponseTool
+    type::String = "web_search"
     search_context_size::String = "medium"
     user_location::Union{AbstractDict,Nothing} = nothing
+    filters::Union{AbstractDict,Nothing} = nothing
 end
 
 function JSON.lower(t::WebSearchTool)
-    d = Dict{Symbol,Any}(:type => "web_search_preview", :search_context_size => t.search_context_size)
+    d = Dict{Symbol,Any}(:type => t.type, :search_context_size => t.search_context_size)
     !isnothing(t.user_location) && (d[:user_location] = t.user_location)
+    !isnothing(t.filters) && (d[:filters] = t.filters)
     return d
 end
 
@@ -157,24 +174,38 @@ function JSON.lower(t::FileSearchTool)
 end
 
 """
-    MCPTool(; server_label, server_url, require_approval="never", allowed_tools=nothing, headers=nothing)
+    MCPTool(; server_label, server_url=nothing, connector_id=nothing, authorization=nothing,
+            server_description=nothing, require_approval="never", allowed_tools=nothing,
+            headers=nothing, tunnel_id=nothing)
 
-A Model Context Protocol (MCP) tool for the Responses API. Connects the model
-to an external MCP server for tool execution.
+A Model Context Protocol (MCP) tool for the Responses API. Connect the model to a remote
+MCP server (`server_url`), an OpenAI connector (`connector_id`, e.g. `"connector_googledrive"`,
+`"connector_gmail"`, `"connector_dropbox"`), or a Secure MCP Tunnel (`tunnel_id`). Use
+`authorization` for an OAuth access token. `require_approval`/`allowed_tools` accept the
+string or object forms.
 """
 @kwdef struct MCPTool <: ResponseTool
     server_label::String
-    server_url::String
+    server_url::Union{String, Nothing} = nothing
+    connector_id::Union{String, Nothing} = nothing
+    authorization::Union{String, Nothing} = nothing
+    server_description::Union{String, Nothing} = nothing
     require_approval::Union{String, AbstractDict, Nothing} = "never"
-    allowed_tools::Union{Vector{String}, Nothing} = nothing
+    allowed_tools::Union{Vector{String}, AbstractDict, Nothing} = nothing
     headers::Union{AbstractDict, Nothing} = nothing
+    tunnel_id::Union{String, Nothing} = nothing
 end
 
 function JSON.lower(t::MCPTool)
-    d = Dict{Symbol,Any}(:type => "mcp", :server_label => t.server_label, :server_url => t.server_url)
+    d = Dict{Symbol,Any}(:type => "mcp", :server_label => t.server_label)
+    !isnothing(t.server_url) && (d[:server_url] = t.server_url)
+    !isnothing(t.connector_id) && (d[:connector_id] = t.connector_id)
+    !isnothing(t.authorization) && (d[:authorization] = t.authorization)
+    !isnothing(t.server_description) && (d[:server_description] = t.server_description)
     !isnothing(t.require_approval) && (d[:require_approval] = t.require_approval)
     !isnothing(t.allowed_tools) && (d[:allowed_tools] = t.allowed_tools)
     !isnothing(t.headers) && (d[:headers] = t.headers)
+    !isnothing(t.tunnel_id) && (d[:tunnel_id] = t.tunnel_id)
     return d
 end
 
@@ -238,6 +269,80 @@ function JSON.lower(t::CodeInterpreterTool)
     return d
 end
 
+# ─── Newer hosted tools (GA computer, shell, local_shell, apply_patch, custom) ──
+
+"""
+    ComputerTool(; environment=nothing)
+
+GA computer-use tool (`type:"computer"`) for newer models. Unlike [`ComputerUseTool`](@ref)
+(`computer_use_preview`) it carries no `display_width`/`display_height`.
+"""
+@kwdef struct ComputerTool <: ResponseTool
+    environment::Union{String, Nothing} = nothing
+end
+function JSON.lower(t::ComputerTool)
+    d = Dict{Symbol,Any}(:type => "computer")
+    !isnothing(t.environment) && (d[:environment] = t.environment)
+    return d
+end
+
+"""
+    LocalShellTool()
+
+Local shell tool (`type:"local_shell"`): the model emits shell commands you run on your
+own runtime (codex-style models).
+"""
+struct LocalShellTool <: ResponseTool end
+JSON.lower(::LocalShellTool) = Dict{Symbol,Any}(:type => "local_shell")
+
+"""
+    ShellTool(; environment=nothing)
+
+Hosted shell tool (`type:"shell"`).
+"""
+@kwdef struct ShellTool <: ResponseTool
+    environment::Union{AbstractDict, Nothing} = nothing
+end
+function JSON.lower(t::ShellTool)
+    d = Dict{Symbol,Any}(:type => "shell")
+    !isnothing(t.environment) && (d[:environment] = t.environment)
+    return d
+end
+
+"""
+    ApplyPatchTool()
+
+Structured file-edit tool (`type:"apply_patch"`).
+"""
+struct ApplyPatchTool <: ResponseTool end
+JSON.lower(::ApplyPatchTool) = Dict{Symbol,Any}(:type => "apply_patch")
+
+"""
+    CustomTool(; name, description=nothing, format=nothing)
+
+Custom tool (`type:"custom"`) with free-form text input, or a grammar-constrained input via
+`format = Dict("type"=>"grammar", "syntax"=>"lark"|"regex", "definition"=>...)`.
+"""
+@kwdef struct CustomTool <: ResponseTool
+    name::String
+    description::Union{String, Nothing} = nothing
+    format::Union{String, AbstractDict, Nothing} = nothing
+end
+function JSON.lower(t::CustomTool)
+    d = Dict{Symbol,Any}(:type => "custom", :name => t.name)
+    !isnothing(t.description) && (d[:description] = t.description)
+    !isnothing(t.format) && (d[:format] = t.format)
+    return d
+end
+
+computer_tool(; environment::Union{String,Nothing}=nothing) = ComputerTool(environment=environment)
+local_shell() = LocalShellTool()
+shell(; environment::Union{AbstractDict,Nothing}=nothing) = ShellTool(environment=environment)
+apply_patch_tool() = ApplyPatchTool()
+custom_tool(name::String; description::Union{String,Nothing}=nothing,
+    format::Union{String,AbstractDict,Nothing}=nothing) =
+    CustomTool(name=name, description=description, format=format)
+
 # Convenience constructors
 
 """
@@ -245,12 +350,29 @@ end
 
 Shorthand constructor for [`MCPTool`](@ref).
 """
-mcp_tool(label::String, url::String;
+mcp_tool(label::String, url::Union{String,Nothing}=nothing;
     require_approval::Union{String, AbstractDict, Nothing}="never",
-    allowed_tools::Union{Vector{String}, Nothing}=nothing,
-    headers::Union{AbstractDict, Nothing}=nothing) =
+    allowed_tools::Union{Vector{String}, AbstractDict, Nothing}=nothing,
+    headers::Union{AbstractDict, Nothing}=nothing,
+    connector_id::Union{String, Nothing}=nothing,
+    authorization::Union{String, Nothing}=nothing,
+    server_description::Union{String, Nothing}=nothing,
+    tunnel_id::Union{String, Nothing}=nothing) =
     MCPTool(server_label=label, server_url=url, require_approval=require_approval,
-        allowed_tools=allowed_tools, headers=headers)
+        allowed_tools=allowed_tools, headers=headers, connector_id=connector_id,
+        authorization=authorization, server_description=server_description, tunnel_id=tunnel_id)
+
+"""
+    mcp_approval_response(approval_request_id, approve; reason=nothing)
+
+Build an `mcp_approval_response` input item to approve/deny a pending MCP tool call.
+Pass it back as an element of the next request's `input`.
+"""
+function mcp_approval_response(approval_request_id::String, approve::Bool; reason::Union{String,Nothing}=nothing)
+    d = Dict{Symbol,Any}(:type => "mcp_approval_response", :approval_request_id => approval_request_id, :approve => approve)
+    !isnothing(reason) && (d[:reason] = reason)
+    return d
+end
 
 """
     computer_use(; display_width=1024, display_height=768, environment=nothing)
@@ -311,8 +433,10 @@ end
 Shorthand constructor for [`WebSearchTool`](@ref).
 """
 web_search(; context_size::String="medium",
-    location::Union{AbstractDict,Nothing}=nothing) =
-    WebSearchTool(search_context_size=context_size, user_location=location)
+    location::Union{AbstractDict,Nothing}=nothing,
+    type::String="web_search",
+    filters::Union{AbstractDict,Nothing}=nothing) =
+    WebSearchTool(type=type, search_context_size=context_size, user_location=location, filters=filters)
 
 """
     file_search(store_ids::Vector{String}; max_results=nothing, ranking=nothing, filters=nothing)
@@ -325,6 +449,53 @@ file_search(store_ids::Vector{String};
     filters::Union{AbstractDict,Nothing}=nothing) =
     FileSearchTool(vector_store_ids=store_ids, max_num_results=max_results,
         ranking_options=ranking, filters=filters)
+
+
+# ─── tool_choice helpers ──────────────────────────────────────────────────────
+# Beyond the string forms ("auto"/"none"/"required"), `Respond.tool_choice` accepts a
+# Dict to force a specific tool. These builders produce those Dicts.
+
+"""
+    tool_choice_function(name)
+
+Force the model to call a specific function tool: `{type:"function", name}`.
+"""
+tool_choice_function(name::String) = Dict{Symbol,Any}(:type => "function", :name => name)
+
+"""
+    tool_choice_hosted(type)
+
+Force a specific hosted tool, e.g. `tool_choice_hosted("file_search")`, `"image_generation"`,
+`"code_interpreter"`. Note: the hosted web-search selector is `"web_search_preview"` (not `"web_search"`).
+"""
+tool_choice_hosted(type::String) = Dict{Symbol,Any}(:type => type)
+
+"""
+    tool_choice_mcp(server_label; name=nothing)
+
+Force a specific MCP server (optionally a specific tool): `{type:"mcp", server_label, name?}`.
+"""
+function tool_choice_mcp(server_label::String; name::Union{String,Nothing}=nothing)
+    d = Dict{Symbol,Any}(:type => "mcp", :server_label => server_label)
+    !isnothing(name) && (d[:name] = name)
+    return d
+end
+
+"""
+    tool_choice_custom(name)
+
+Force a specific custom tool: `{type:"custom", name}`.
+"""
+tool_choice_custom(name::String) = Dict{Symbol,Any}(:type => "custom", :name => name)
+
+"""
+    tool_choice_allowed(mode, tools)
+
+Constrain the model to a subset of tools: `{type:"allowed_tools", mode, tools}`.
+`mode` is `"auto"` or `"required"`; `tools` is a vector of tool-reference dicts.
+"""
+tool_choice_allowed(mode::String, tools::Vector) =
+    Dict{Symbol,Any}(:type => "allowed_tools", :mode => mode, :tools => tools)
 
 
 # ─── Configuration Types ─────────────────────────────────────────────────────
@@ -361,6 +532,13 @@ Wrapper for the `text` field in the Responses API request body.
 """
 @kwdef struct TextConfig
     format::TextFormatSpec = TextFormatSpec()
+    verbosity::Union{String,Nothing} = nothing   # "low" | "medium" | "high" (gpt-5.x)
+end
+
+function JSON.lower(t::TextConfig)
+    d = Dict{Symbol,Any}(:format => t.format)
+    !isnothing(t.verbosity) && (d[:verbosity] = t.verbosity)
+    return d
 end
 
 # Convenience constructors
@@ -370,7 +548,8 @@ end
 
 Create a [`TextConfig`](@ref) with the given format options.
 """
-text_format(; kwargs...) = TextConfig(format=TextFormatSpec(; kwargs...))
+text_format(; verbosity::Union{String,Nothing}=nothing, kwargs...) =
+    TextConfig(format=TextFormatSpec(; kwargs...), verbosity=verbosity)
 
 """
     json_schema_format(name, description, schema; strict=nothing)
@@ -405,13 +584,14 @@ json_object_format() = TextConfig(format=TextFormatSpec(type="json_object"))
 
 
 """
-    Reasoning(; effort=nothing, summary=nothing)
+    Reasoning(; effort=nothing, summary=nothing, generate_summary=nothing)
 
-Reasoning configuration for O-series models (o3, o4-mini, etc.).
+Reasoning configuration for reasoning models (gpt-5.x, o-series).
 
-- `effort`: `"none"`, `"low"`, `"medium"`, or `"high"`
-- `generate_summary`: `"auto"`, `"concise"`, or `"detailed"` — configures summary generation
-- `summary`: `"auto"`, `"concise"`, or `"detailed"` (deprecated alias for `generate_summary`)
+- `effort`: `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, or `"xhigh"` (supported values are
+  model-dependent; passed through verbatim).
+- `summary`: `"auto"`, `"concise"`, or `"detailed"` — request a reasoning summary in the output.
+- `generate_summary`: deprecated alias of `summary`; prefer `summary`.
 """
 @kwdef struct Reasoning
     effort::Union{String,Nothing} = nothing
@@ -431,12 +611,12 @@ end
 # ─── Main Request Type ────────────────────────────────────────────────────────
 
 """
-    Respond(; model="gpt-5.2", input, kwargs...)
+    Respond(; model="gpt-5.5", input, kwargs...)
 
 Configuration struct for an OpenAI Responses API request.
 
 # Key Fields
-- `model::String`: Model to use (default: `"gpt-5.2"`)
+- `model::String`: Model to use (default: `"gpt-5.5"`)
 - `input::Any`: A `String` or `Vector{InputMessage}` — the prompt input
 - `instructions::String`: System-level instructions
 - `tools::Vector`: Available tools (`FunctionTool`, `WebSearchTool`, `FileSearchTool`)
@@ -479,7 +659,7 @@ Respond(input="Solve this math problem...", model="o3", reasoning=Reasoning(effo
     input::Union{String, Vector}  # String, Vector{InputMessage}, or Vector{Dict}
     instructions::Union{String,Nothing} = nothing
     tools::Union{Vector,Nothing} = nothing  # Untyped Vector: accepts ResponseTool, CallableTool, and Dict
-    tool_choice::Union{String,Nothing} = nothing      # "auto", "none", "required"
+    tool_choice::Union{String,AbstractDict,Nothing} = nothing  # "auto"/"none"/"required" or a {type:...} object
     parallel_tool_calls::Union{Bool,Nothing} = nothing
     temperature::Union{Float64,Nothing} = nothing
     top_p::Union{Float64,Nothing} = nothing
@@ -619,7 +799,7 @@ function output_text(r::ResponseObject)::String
     texts = String[]
     for item in r.output
         if item isa Dict && get(item, "type", "") == "message"
-            for content in get(item, "content", [])
+            for content in _as_iter(get(item, "content", ()))
                 if content isa Dict && get(content, "type", "") == "output_text"
                     push!(texts, get(content, "text", ""))
                 end
@@ -666,6 +846,115 @@ function_calls(::ResponseFailure) = Dict{String,Any}[]
 function_calls(::ResponseCallError) = Dict{String,Any}[]
 
 
+# ─── Additional typed accessors over the output array ─────────────────────────
+
+# Tolerate JSON null / missing / non-array where the API may return an array (e.g. content: null).
+_as_iter(x) = x isa AbstractVector ? x : ()
+
+# Collect output items of a given "type".
+_output_items(r::ResponseObject, typ::String) =
+    Dict{String,Any}[item for item in r.output if item isa Dict && get(item, "type", "") == typ]
+
+"""
+    reasoning_summaries(r) -> Vector{String}
+
+Reasoning-summary text from each `reasoning` output item.
+"""
+function reasoning_summaries(r::ResponseObject)
+    out = String[]
+    for item in _output_items(r, "reasoning"), s in _as_iter(get(item, "summary", ()))
+        s isa Dict && haskey(s, "text") && push!(out, s["text"])
+    end
+    return out
+end
+
+"""
+    refusals(r) -> Vector{String}
+
+Refusal messages from any `refusal` content part of the output messages.
+"""
+function refusals(r::ResponseObject)
+    out = String[]
+    for item in r.output
+        item isa Dict && get(item, "type", "") == "message" || continue
+        for c in _as_iter(get(item, "content", ()))
+            c isa Dict && get(c, "type", "") == "refusal" && haskey(c, "refusal") && push!(out, c["refusal"])
+        end
+    end
+    return out
+end
+
+"""
+    url_citations(r) -> Vector{Dict{String,Any}}
+
+URL-citation annotations on output_text parts (from web_search).
+"""
+function url_citations(r::ResponseObject)
+    out = Dict{String,Any}[]
+    for item in r.output
+        item isa Dict && get(item, "type", "") == "message" || continue
+        for c in _as_iter(get(item, "content", ())), a in _as_iter(c isa Dict ? get(c, "annotations", ()) : ())
+            a isa Dict && get(a, "type", "") == "url_citation" && push!(out, a)
+        end
+    end
+    return out
+end
+
+"""
+    image_generation_results(r) -> Vector{String}
+
+Base64 image results from `image_generation_call` output items.
+"""
+function image_generation_results(r::ResponseObject)
+    out = String[]
+    for item in _output_items(r, "image_generation_call")
+        v = get(item, "result", nothing)
+        v isa String && push!(out, v)
+    end
+    return out
+end
+
+"Raw `web_search_call` output items (request results via `include`)."
+web_search_results(r::ResponseObject)       = _output_items(r, "web_search_call")
+"Raw `file_search_call` output items."
+file_search_results(r::ResponseObject)      = _output_items(r, "file_search_call")
+"Raw `code_interpreter_call` output items."
+code_interpreter_outputs(r::ResponseObject) = _output_items(r, "code_interpreter_call")
+"Raw `mcp_call` output items."
+mcp_call_outputs(r::ResponseObject)         = _output_items(r, "mcp_call")
+"Raw `mcp_approval_request` output items (feed back via [`mcp_approval_response`](@ref))."
+mcp_approval_requests(r::ResponseObject)    = _output_items(r, "mcp_approval_request")
+"Raw `reasoning` output items."
+reasoning_items(r::ResponseObject)          = _output_items(r, "reasoning")
+
+response_status(r::ResponseObject)    = r.status
+incomplete_details(r::ResponseObject) = get(r.raw, "incomplete_details", nothing)
+usage_details(r::ResponseObject)      = r.usage
+
+# ResponseSuccess forwarders + empty/typed defaults for the non-success results.
+# String-returning vs Dict-returning accessors get correctly-typed empty defaults (not Vector{Any}).
+for f in (:reasoning_summaries, :refusals, :image_generation_results)
+    @eval $f(r::ResponseSuccess) = $f(r.response)
+    @eval $f(::ResponseFailure) = String[]
+    @eval $f(::ResponseCallError) = String[]
+end
+for f in (:url_citations, :web_search_results, :file_search_results, :code_interpreter_outputs,
+          :mcp_call_outputs, :mcp_approval_requests, :reasoning_items)
+    @eval $f(r::ResponseSuccess) = $f(r.response)
+    @eval $f(::ResponseFailure) = Dict{String,Any}[]
+    @eval $f(::ResponseCallError) = Dict{String,Any}[]
+end
+response_status(r::ResponseSuccess) = response_status(r.response)
+response_status(::ResponseFailure) = "failed"
+response_status(::ResponseCallError) = "error"
+incomplete_details(r::ResponseSuccess) = incomplete_details(r.response)
+incomplete_details(::ResponseFailure) = nothing
+incomplete_details(::ResponseCallError) = nothing
+usage_details(r::ResponseSuccess) = usage_details(r.response)
+usage_details(::ResponseFailure) = nothing
+usage_details(::ResponseCallError) = nothing
+
+
 # ─── Parsing ─────────────────────────────────────────────────────────────────
 
 function parse_response(resp::HTTP.Response)::ResponseObject
@@ -696,7 +985,7 @@ function _parse_response_stream_chunk(chunk::String, textbuff::IOBuffer, failbuf
     last_nl = findlast('\n', chunk)
     if isnothing(last_nl)
         print(failbuff, chunk)
-        return (; done=false, event=last_event[], data=nothing)
+        return (; done=false, event=last_event[], data=nothing, terminal=:none)
     end
     if last_nl < lastindex(chunk)
         print(failbuff, chunk[nextind(chunk, last_nl):end])
@@ -705,7 +994,7 @@ function _parse_response_stream_chunk(chunk::String, textbuff::IOBuffer, failbuf
 
     lines = strip.(split(chunk, "\n"))
     lines = filter(!isempty, lines)
-    isempty(lines) && return (; done=false, event=last_event[], data=nothing)
+    isempty(lines) && return (; done=false, event=last_event[], data=nothing, terminal=:none)
 
     for line in lines
         if startswith(line, "event: ")
@@ -713,25 +1002,35 @@ function _parse_response_stream_chunk(chunk::String, textbuff::IOBuffer, failbuf
         elseif startswith(line, "data: ")
             try
                 payload = JSON.parse(line[7:end]; dicttype=Dict{String,Any})
-                if last_event[] == "response.output_text.delta"
-                    delta = get(payload, "delta", "")
-                    print(textbuff, delta)
-                elseif last_event[] == "response.completed"
-                    return (; done=true, event=last_event[], data=payload)
+                ev = last_event[]
+                if ev == "response.output_text.delta"
+                    print(textbuff, get(payload, "delta", ""))
+                elseif ev == "response.completed"
+                    return (; done=true, event=ev, data=payload, terminal=:completed)
+                elseif ev == "response.failed"
+                    return (; done=true, event=ev, data=payload, terminal=:failed)
+                elseif ev == "response.incomplete"
+                    return (; done=true, event=ev, data=payload, terminal=:incomplete)
+                elseif ev == "error"
+                    return (; done=true, event=ev, data=payload, terminal=:error)
                 end
+                # Every other event (created/in_progress/queued, output_item.*, content_part.*,
+                # refusal.*, function_call_arguments.*, reasoning*, and the hosted-tool progress
+                # events) is ignored here and degrades gracefully — as do unknown/future types.
             catch e
                 print(failbuff, line)
                 continue
             end
         end
     end
-    return (; done=false, event=last_event[], data=nothing)
+    return (; done=false, event=last_event[], data=nothing, terminal=:none)
 end
 
 function _respond_stream(r::Respond, body::String, callback=nothing)
     Threads.@spawn begin
         try
             result = Ref{Union{ResponseObject,Nothing}}(nothing)
+            terminal_error = Ref{Union{Dict{String,Any},Nothing}}(nothing)  # structured failed/incomplete/error payload
             raw_buffer = IOBuffer()  # wire bytes for non-200 reporting (streamed resp.body is empty under HTTP 2.x)
             url = _api_base_url(r.service) * RESPONSES_PATH
             resp = HTTP.open("POST", url, auth_header(r.service); status_exception=false) do io
@@ -747,7 +1046,7 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
                     chunk = String(readavailable(io))
                     write(raw_buffer, chunk)
                     status = _parse_response_stream_chunk(chunk, text_buffer, fail_buffer, last_event)
-                    if status.done && !isnothing(status.data)
+                    if status.terminal == :completed && status.data isa AbstractDict && haskey(status.data, "response")
                         rdata = status.data["response"]
                         result[] = ResponseObject(
                             id=rdata["id"],
@@ -761,6 +1060,11 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
                         )
                         done[] = true
                         !isnothing(callback) && callback(result[], close_ref)
+                    elseif status.terminal in (:failed, :incomplete, :error) && !isnothing(status.data)
+                        # Structured terminal failure mid-stream (HTTP itself may be 200): keep the
+                        # response's own error/incomplete details instead of dropping them.
+                        terminal_error[] = status.data
+                        done[] = true
                     else
                         parsed_text = String(take!(text_buffer))
                         if !isempty(parsed_text) && !isnothing(callback)
@@ -773,6 +1077,14 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
             end
             if resp.status == 200 && !isnothing(result[])
                 ResponseSuccess(response=result[]::ResponseObject)
+            elseif !isnothing(terminal_error[])
+                te = terminal_error[]
+                if haskey(te, "response")            # response.failed / response.incomplete
+                    ResponseFailure(response=JSON.json(te["response"]), status=resp.status)
+                else                                  # bare `error` event
+                    ResponseCallError(error=get(te, "message", JSON.json(te)),
+                        status=(resp.status == 200 ? nothing : resp.status))
+                end
             else
                 ResponseFailure(response=String(take!(raw_buffer)), status=resp.status)
             end
@@ -852,7 +1164,7 @@ Convenience method: create a [`Respond`](@ref) from `input` + keyword arguments 
 result = respond("Tell me a joke")
 
 # With instructions and model
-result = respond("Translate: Hello", instructions="You are a translator", model="gpt-5.2")
+result = respond("Translate: Hello", instructions="You are a translator", model="gpt-5.5")
 
 # With tools
 result = respond("Search for Julia news", tools=[web_search()])
@@ -1034,7 +1346,7 @@ Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys.
 
 # Examples
 ```julia
-compacted = compact_response(model="gpt-5.2", input=[
+compacted = compact_response(model="gpt-5.5", input=[
     InputMessage(role="user", content="Hello"),
     Dict("type" => "message", "role" => "assistant", "status" => "completed",
          "content" => [Dict("type" => "output_text", "text" => "Hi there!")])
@@ -1042,7 +1354,7 @@ compacted = compact_response(model="gpt-5.2", input=[
 # Use compacted["output"] as input to the next request
 ```
 """
-function compact_response(; model::String="gpt-5.2",
+function compact_response(; model::String="gpt-5.5",
     input::Any,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint)
 
@@ -1072,11 +1384,11 @@ Returns a Dict with `"object"` (`"response.input_tokens"`) and `"input_tokens"` 
 
 # Examples
 ```julia
-result = count_input_tokens(model="gpt-5.2", input="Tell me a joke")
+result = count_input_tokens(model="gpt-5.5", input="Tell me a joke")
 println("Input tokens: ", result["input_tokens"])
 ```
 """
-function count_input_tokens(; model::String="gpt-5.2",
+function count_input_tokens(; model::String="gpt-5.5",
     input::Any,
     instructions::Union{String,Nothing}=nothing,
     tools::Union{Vector,Nothing}=nothing,

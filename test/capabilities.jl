@@ -70,3 +70,29 @@ end
     @test :tools in caps
     @test UniLM.default_model(mistral) === nothing
 end
+
+@testset "0.10 endpoint capabilities (consolidation)" begin
+    new_caps = (:files, :vector_stores, :conversations, :moderation, :audio, :batch,
+        :image_edits, :fine_tuning, :containers, :uploads, :video, :realtime)
+    # OpenAI has them all
+    for c in new_caps
+        @test has_capability(OPENAIServiceEndpoint, c)
+    end
+    # Every non-OpenAI provider rejects them (has_capability false + validate throws)
+    for svc in (GEMINIServiceEndpoint, AZUREServiceEndpoint, DeepSeekEndpoint("k"), GenericOpenAIEndpoint("http://x", ""))
+        for c in new_caps
+            @test !has_capability(svc, c)
+            @test_throws ArgumentError UniLM.validate_capability(svc, c, "X")
+        end
+    end
+    # Representative request fns reject a non-OpenAI provider BEFORE any network call
+    @test_throws ArgumentError list_files(service=GEMINIServiceEndpoint)
+    @test_throws ArgumentError create_vector_store(service=DeepSeekEndpoint("k"))
+    @test_throws ArgumentError create_conversation(service=AZUREServiceEndpoint)
+    @test_throws ArgumentError moderate("x"; service=AZUREServiceEndpoint)
+    @test_throws ArgumentError create_batch("f", "/v1/responses"; service=GEMINIServiceEndpoint)
+    @test_throws ArgumentError create_fine_tuning_job(model="m", training_file="f", service=GEMINIServiceEndpoint)
+    @test_throws ArgumentError create_container(name="c", service=DeepSeekEndpoint("k"))
+    @test_throws ArgumentError create_video(prompt="p", service=AZUREServiceEndpoint)
+    @test_throws ArgumentError mint_realtime_secret(service=GenericOpenAIEndpoint("http://x", ""))
+end

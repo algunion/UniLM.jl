@@ -308,7 +308,7 @@ end
 @testset "Chat" begin
     @testset "default creation" begin
         chat = Chat()
-        @test chat.model == "gpt-5.2"
+        @test chat.model == "gpt-5.5"
         @test isempty(chat.messages)
         @test chat.history == true
         @test isnothing(chat.tools)
@@ -517,7 +517,7 @@ end
 
         json = JSON.json(chat)
         parsed = JSON.parse(json)
-        @test parsed["model"] == "gpt-5.2"
+        @test parsed["model"] == "gpt-5.5"
         @test parsed["temperature"] == 0.7
         @test !haskey(parsed, "history")
         @test !haskey(parsed, "service")
@@ -604,6 +604,25 @@ end
         @test !haskey(parsed, "user")
     end
 
+    @testset "dimensions / encoding_format / resize" begin
+        emb = UniLM.Embeddings("x"; model="text-embedding-3-large", dimensions=256, encoding_format="float", user="u1")
+        lowered = JSON.lower(emb)
+        @test lowered[:dimensions] == 256
+        @test lowered[:encoding_format] == "float"
+        @test lowered[:user] == "u1"
+        @test length(emb.embeddings) == 256          # buffer pre-sized to the requested dimension
+        # defaults omit both; buffer falls back to 1536
+        e2 = UniLM.Embeddings("x"; model="text-embedding-3-small")
+        @test !haskey(JSON.lower(e2), :dimensions)
+        @test !haskey(JSON.lower(e2), :encoding_format)
+        @test length(e2.embeddings) == 1536
+        # update! tolerates a 3072-dim response even when the buffer started at 1536
+        e3 = UniLM.Embeddings("x"; model="text-embedding-3-large")
+        update!(e3, [Dict{String,Any}("index" => 0, "embedding" => collect(1.0:3072.0))])
+        @test length(e3.embeddings) == 3072
+        @test e3.embeddings[3072] == 3072.0
+    end
+
     @testset "update! single input" begin
         emb = UniLM.Embeddings("test")
         new_vals = rand(1536)
@@ -665,6 +684,43 @@ end
     # service and history not serialized
     @test !haskey(lowered, :service)
     @test !haskey(lowered, :history)
+end
+
+@testset "Chat max_completion_tokens" begin
+    c = Chat(model="gpt-5.5", max_completion_tokens=64)
+    l = JSON.lower(c)
+    @test l[:max_completion_tokens] == 64
+    @test !haskey(l, :max_tokens)
+    # legacy max_tokens still serializes independently
+    @test JSON.lower(Chat(model="gpt-5.5", max_tokens=64))[:max_tokens] == 64
+end
+
+@testset "Chat parity params (Phase C)" begin
+    c = Chat(model="gpt-5.5",
+        reasoning_effort="high", stream_options=Dict("include_usage" => true), verbosity="low",
+        store=true, metadata=Dict("k" => "v"), service_tier="flex", logprobs=true, top_logprobs=3,
+        prediction=Dict("type" => "content", "content" => "x"), modalities=["text"],
+        audio=Dict("voice" => "alloy", "format" => "mp3"),
+        web_search_options=Dict("search_context_size" => "low"),
+        prompt_cache_key="ck", safety_identifier="sid")
+    l = JSON.lower(c)
+    @test l[:reasoning_effort] == "high"
+    @test l[:stream_options]["include_usage"] == true
+    @test l[:verbosity] == "low"
+    @test l[:store] == true
+    @test l[:metadata]["k"] == "v"
+    @test l[:service_tier] == "flex"
+    @test l[:logprobs] == true
+    @test l[:top_logprobs] == 3
+    @test l[:modalities] == ["text"]
+    @test l[:audio]["voice"] == "alloy"
+    @test l[:web_search_options]["search_context_size"] == "low"
+    @test l[:prompt_cache_key] == "ck"
+    @test l[:safety_identifier] == "sid"
+    @test haskey(l, :prediction)
+    # all omitted when unset
+    l2 = JSON.lower(Chat(model="gpt-5.5"))
+    @test !haskey(l2, :reasoning_effort) && !haskey(l2, :store) && !haskey(l2, :audio)
 end
 
 @testset "Chat with different service endpoints" begin

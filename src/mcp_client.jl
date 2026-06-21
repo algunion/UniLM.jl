@@ -608,7 +608,7 @@ Each tool's callable invokes `call_tool(session, name, args)` under the hood.
 ```julia
 session = mcp_connect(`npx server`)
 tools = mcp_tools(session)
-chat = Chat(model="gpt-5.2", tools=map(t -> t.tool, tools))
+chat = Chat(model="gpt-5.5", tools=map(t -> t.tool, tools))
 push!(chat, Message(Val(:user), "Do something"))
 result = tool_loop!(chat; tools)
 ```

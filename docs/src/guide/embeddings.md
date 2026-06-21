@@ -109,7 +109,7 @@ println("All zeros before API call: ", all(x -> x == 0.0, emb.embeddings))
 
 ## Retry Behaviour
 
-`embeddingrequest!` automatically retries on HTTP 429, 500, and 503 errors with exponential backoff and jitter (up to 30 attempts, max 60s delay). On 429 responses, the `Retry-After` header is respected.
+`embeddingrequest!` returns an `EmbeddingSuccess`/`EmbeddingFailure`/`EmbeddingCallError` and fills `emb.embeddings` in place (use `embedding_vectors(result)` for the vectors). It automatically retries on transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) with exponential backoff and jitter (up to 30 attempts, max 60s delay). On 429 responses, the `Retry-After` header is respected.
 
 ## API Reference
 

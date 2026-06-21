@@ -282,7 +282,7 @@ end
     @testset "JSON serialization" begin
         t = WebSearchTool()
         lowered = JSON.lower(t)
-        @test lowered[:type] == "web_search_preview"
+        @test lowered[:type] == "web_search"   # GA default (was web_search_preview)
         @test lowered[:search_context_size] == "medium"
         @test !haskey(lowered, :user_location)
     end
@@ -386,7 +386,7 @@ end
 @testset "Respond" begin
     @testset "minimal creation" begin
         r = Respond(input="Tell me a joke")
-        @test r.model == "gpt-5.2"
+        @test r.model == "gpt-5.5"
         @test r.input == "Tell me a joke"
         @test r.service == UniLM.OPENAIServiceEndpoint
         @test isnothing(r.instructions)
@@ -447,7 +447,7 @@ end
     @testset "JSON serialization" begin
         r = Respond(input="Hello", instructions="Be nice", temperature=0.7)
         lowered = JSON.lower(r)
-        @test lowered[:model] == "gpt-5.2"
+        @test lowered[:model] == "gpt-5.5"
         @test lowered[:input] == "Hello"
         @test lowered[:instructions] == "Be nice"
         @test lowered[:temperature] == 0.7
@@ -471,7 +471,7 @@ end
         json_str = JSON.json(r)
         parsed = JSON.parse(json_str)
 
-        @test parsed["model"] == "gpt-5.2"
+        @test parsed["model"] == "gpt-5.5"
         @test parsed["input"] isa Vector
         @test parsed["input"][1]["role"] == "user"
         @test parsed["tools"] isa Vector
@@ -754,6 +754,33 @@ end
         result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
         @test result.done == false
         @test !isempty(take!(failbuff))
+    end
+
+    @testset "response.failed → terminal :failed with structured error" begin
+        chunk = "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"r\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"boom\"}}}\n\n"
+        textbuff = IOBuffer(); failbuff = IOBuffer()
+        result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
+        @test result.done == true
+        @test result.terminal == :failed
+        @test result.data["response"]["error"]["code"] == "server_error"
+    end
+
+    @testset "bare error event → terminal :error" begin
+        chunk = "event: error\ndata: {\"type\":\"error\",\"code\":\"rate_limit\",\"message\":\"slow down\"}\n\n"
+        textbuff = IOBuffer(); failbuff = IOBuffer()
+        result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
+        @test result.done == true
+        @test result.terminal == :error
+        @test result.data["message"] == "slow down"
+    end
+
+    @testset "unknown event degrades to :none without throwing" begin
+        chunk = "event: response.reasoning_text.delta\ndata: {\"type\":\"response.reasoning_text.delta\",\"delta\":\"thinking\"}\n\n"
+        textbuff = IOBuffer(); failbuff = IOBuffer()
+        result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
+        @test result.done == false
+        @test result.terminal == :none
+        @test isempty(take!(textbuff))   # reasoning deltas are not emitted as output text
     end
 end
 
@@ -1589,7 +1616,7 @@ end
     t = WebSearchTool(search_context_size="high", user_location=loc)
     json_str = JSON.json(t)
     parsed = JSON.parse(json_str)
-    @test parsed["type"] == "web_search_preview"
+    @test parsed["type"] == "web_search"   # GA default (was web_search_preview)
     @test parsed["search_context_size"] == "high"
     @test parsed["user_location"]["city"] == "San Francisco"
 end
@@ -1803,5 +1830,129 @@ end
         @test_throws MethodError Respond(input=42)
         @test_throws MethodError Respond(input=nothing)
         @test_throws MethodError Respond(input=3.14)
+    end
+end
+
+@testset "Phase B: tool_choice / verbosity / web_search GA / input parts" begin
+    @testset "tool_choice accepts a Dict and lowers through" begin
+        r = Respond(input="x", tool_choice=tool_choice_function("get_weather"))
+        l = JSON.lower(r)
+        @test l[:tool_choice][:type] == "function"
+        @test l[:tool_choice][:name] == "get_weather"
+        @test JSON.lower(Respond(input="x", tool_choice="required"))[:tool_choice] == "required"
+    end
+
+    @testset "tool_choice builders" begin
+        @test tool_choice_hosted("file_search")[:type] == "file_search"
+        m = tool_choice_mcp("dw"; name="search")
+        @test m[:server_label] == "dw" && m[:name] == "search"
+        @test tool_choice_custom("grammar")[:type] == "custom"
+        ta = tool_choice_allowed("auto", [Dict(:type => "function", :name => "f")])
+        @test ta[:type] == "allowed_tools" && ta[:mode] == "auto" && length(ta[:tools]) == 1
+    end
+
+    @testset "text.verbosity" begin
+        l = JSON.lower(text_format(verbosity="low"))
+        @test l[:verbosity] == "low"
+        @test haskey(l, :format)
+        @test !haskey(JSON.lower(json_object_format()), :verbosity)
+    end
+
+    @testset "WebSearchTool GA type + filters" begin
+        @test JSON.lower(WebSearchTool())[:type] == "web_search"
+        @test JSON.lower(web_search())[:type] == "web_search"
+        @test JSON.lower(WebSearchTool(type="web_search_preview"))[:type] == "web_search_preview"
+        wt = web_search(filters=Dict("allowed_domains" => ["a.com"]))
+        @test JSON.lower(wt)[:filters]["allowed_domains"] == ["a.com"]
+    end
+
+    @testset "input_image file_id / input_file file_data" begin
+        @test input_image(file_id="file-1")[:file_id] == "file-1"
+        @test !haskey(input_image(file_id="file-1"), :image_url)
+        @test input_image("http://x/y.png")[:image_url] == "http://x/y.png"
+        @test_throws ArgumentError input_image()
+        f = input_file(file_data="<b64>", filename="a.pdf")
+        @test f[:file_data] == "<b64>" && f[:filename] == "a.pdf"
+    end
+
+    @testset "Reasoning effort passthrough (xhigh)" begin
+        @test JSON.lower(Reasoning(effort="xhigh"))[:effort] == "xhigh"
+        @test JSON.lower(Reasoning(summary="detailed"))[:summary] == "detailed"
+    end
+end
+
+@testset "Phase B: MCP connectors, new tools, accessors" begin
+    @testset "MCPTool connectors / authorization / tunnel" begin
+        t = MCPTool(server_label="gd", connector_id="connector_googledrive", authorization="tok",
+                    server_description="Drive", tunnel_id="tun_1")
+        l = JSON.lower(t)
+        @test l[:connector_id] == "connector_googledrive"
+        @test l[:authorization] == "tok"
+        @test l[:server_description] == "Drive"
+        @test l[:tunnel_id] == "tun_1"
+        @test !haskey(l, :server_url)
+        @test JSON.lower(mcp_tool("s", "https://mcp.example.com"))[:server_url] == "https://mcp.example.com"
+    end
+
+    @testset "mcp_approval_response input item" begin
+        a = mcp_approval_response("req_1", true; reason="ok")
+        @test a[:type] == "mcp_approval_response"
+        @test a[:approval_request_id] == "req_1"
+        @test a[:approve] == true
+        @test a[:reason] == "ok"
+    end
+
+    @testset "new tool types lower to correct type strings" begin
+        @test JSON.lower(local_shell())[:type] == "local_shell"
+        @test JSON.lower(shell())[:type] == "shell"
+        @test JSON.lower(apply_patch_tool())[:type] == "apply_patch"
+        @test JSON.lower(computer_tool())[:type] == "computer"
+        ct = custom_tool("grammar_tool"; format=Dict("type" => "grammar", "syntax" => "lark", "definition" => "start: x"))
+        cl = JSON.lower(ct)
+        @test cl[:type] == "custom" && cl[:name] == "grammar_tool" && cl[:format]["syntax"] == "lark"
+        @test all(T -> T <: UniLM.ResponseTool, (LocalShellTool, ShellTool, ApplyPatchTool, ComputerTool, CustomTool))
+    end
+
+    @testset "typed output accessors" begin
+        ro = UniLM.ResponseObject(
+            id="r", status="incomplete", model="gpt-5.5",
+            output=Any[
+                Dict("type" => "reasoning", "summary" => [Dict("type" => "summary_text", "text" => "thought")]),
+                Dict("type" => "message", "content" => [
+                    Dict("type" => "output_text", "text" => "hi",
+                         "annotations" => [Dict("type" => "url_citation", "url" => "http://x", "title" => "X")]),
+                    Dict("type" => "refusal", "refusal" => "no")]),
+                Dict("type" => "image_generation_call", "result" => "BASE64"),
+                Dict("type" => "web_search_call", "status" => "completed"),
+                Dict("type" => "mcp_approval_request", "id" => "req_9", "name" => "do_it"),
+            ],
+            usage=Dict{String,Any}("input_tokens" => 1, "output_tokens" => 2, "total_tokens" => 3),
+            raw=Dict{String,Any}("incomplete_details" => Dict("reason" => "max_output_tokens")))
+        rs = ResponseSuccess(response=ro)
+        @test reasoning_summaries(rs) == ["thought"]
+        @test refusals(rs) == ["no"]
+        @test length(url_citations(rs)) == 1 && url_citations(rs)[1]["url"] == "http://x"
+        @test image_generation_results(rs) == ["BASE64"]
+        @test length(web_search_results(rs)) == 1
+        @test length(mcp_approval_requests(rs)) == 1
+        @test response_status(rs) == "incomplete"
+        @test incomplete_details(rs)["reason"] == "max_output_tokens"
+        @test usage_details(rs)["input_tokens"] == 1
+        @test isempty(refusals(ResponseFailure(response="e", status=500)))
+        @test response_status(ResponseCallError(error="x")) == "error"
+
+        # null arrays (content/summary/annotations) must return empty, not crash (regression)
+        ro2 = UniLM.ResponseObject(id="r2", status="completed", model="m", output=Any[
+                Dict("type" => "reasoning", "summary" => nothing),
+                Dict("type" => "message", "content" => nothing),
+                Dict("type" => "message", "content" => [Dict("type" => "output_text", "text" => "hi", "annotations" => nothing)]),
+            ], raw=Dict{String,Any}())
+        @test reasoning_summaries(ro2) == String[]
+        @test refusals(ro2) == String[]
+        @test url_citations(ro2) == Dict{String,Any}[]
+        @test output_text(ro2) == "hi"
+        # failure-result empties are correctly typed (not Vector{Any})
+        @test reasoning_summaries(ResponseFailure(response="e", status=500)) isa Vector{String}
+        @test url_citations(ResponseCallError(error="x")) isa Vector{Dict{String,Any}}
     end
 end

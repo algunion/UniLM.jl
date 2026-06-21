@@ -158,6 +158,30 @@ end
         @test m.finish_reason == "length"
     end
 
+    @testset "length finish_reason preserves partial content" begin
+        body = Dict(
+            "choices" => [Dict(
+                "finish_reason" => "length",
+                "message" => Dict("role" => "assistant", "content" => "partial answer")
+            )]
+        )
+        m = UniLM.extract_message(make_response(body)).message
+        @test m.content == "partial answer"
+        @test m.finish_reason == "length"
+    end
+
+    @testset "refusal with stop finish_reason is captured" begin
+        body = Dict(
+            "choices" => [Dict(
+                "finish_reason" => "stop",
+                "message" => Dict("role" => "assistant", "content" => nothing, "refusal" => "I can't help with that.")
+            )]
+        )
+        m = UniLM.extract_message(make_response(body)).message
+        @test m.refusal_message == "I can't help with that."
+        @test m.finish_reason == "stop"
+    end
+
     @testset "multiple tool_calls" begin
         body = Dict(
             "choices" => [Dict(
@@ -215,6 +239,16 @@ end
         @test result.eos == true
         @test isempty(take!(state.content))
         @test state.finish_reason == "stop"
+    end
+
+    @testset "refusal delta builds a refusal message" begin
+        chunk = """data: {"choices":[{"index":0,"delta":{"refusal":"I can't help"},"finish_reason":"stop"}]}"""
+        state = UniLM.StreamState()
+        failbuff = IOBuffer()
+        UniLM._parse_chunk(chunk, state, failbuff)
+        msg = UniLM._build_stream_message(state)
+        @test msg.refusal_message == "I can't help"
+        @test isnothing(msg.content)
     end
 
     @testset "empty chunk" begin
@@ -431,7 +465,9 @@ end
     @testset "with invalid API key" begin
         withenv("OPENAI_API_KEY" => "sk-invalid-key-for-testing") do
             emb = UniLM.Embeddings("test")
-            @test_throws ErrorException embeddingrequest!(emb)
+            result = embeddingrequest!(emb)
+            @test result isa EmbeddingFailure
+            @test result.status == 401
         end
     end
 end
@@ -440,6 +476,10 @@ end
     @test UniLM._is_retryable(429) == true
     @test UniLM._is_retryable(500) == true
     @test UniLM._is_retryable(503) == true
+    @test UniLM._is_retryable(502) == true
+    @test UniLM._is_retryable(504) == true
+    @test UniLM._is_retryable(408) == true
+    @test UniLM._is_retryable(529) == true
     @test UniLM._is_retryable(400) == false
     @test UniLM._is_retryable(401) == false
     @test UniLM._is_retryable(200) == false

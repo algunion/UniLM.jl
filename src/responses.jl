@@ -174,24 +174,38 @@ function JSON.lower(t::FileSearchTool)
 end
 
 """
-    MCPTool(; server_label, server_url, require_approval="never", allowed_tools=nothing, headers=nothing)
+    MCPTool(; server_label, server_url=nothing, connector_id=nothing, authorization=nothing,
+            server_description=nothing, require_approval="never", allowed_tools=nothing,
+            headers=nothing, tunnel_id=nothing)
 
-A Model Context Protocol (MCP) tool for the Responses API. Connects the model
-to an external MCP server for tool execution.
+A Model Context Protocol (MCP) tool for the Responses API. Connect the model to a remote
+MCP server (`server_url`), an OpenAI connector (`connector_id`, e.g. `"connector_googledrive"`,
+`"connector_gmail"`, `"connector_dropbox"`), or a Secure MCP Tunnel (`tunnel_id`). Use
+`authorization` for an OAuth access token. `require_approval`/`allowed_tools` accept the
+string or object forms.
 """
 @kwdef struct MCPTool <: ResponseTool
     server_label::String
-    server_url::String
+    server_url::Union{String, Nothing} = nothing
+    connector_id::Union{String, Nothing} = nothing
+    authorization::Union{String, Nothing} = nothing
+    server_description::Union{String, Nothing} = nothing
     require_approval::Union{String, AbstractDict, Nothing} = "never"
-    allowed_tools::Union{Vector{String}, Nothing} = nothing
+    allowed_tools::Union{Vector{String}, AbstractDict, Nothing} = nothing
     headers::Union{AbstractDict, Nothing} = nothing
+    tunnel_id::Union{String, Nothing} = nothing
 end
 
 function JSON.lower(t::MCPTool)
-    d = Dict{Symbol,Any}(:type => "mcp", :server_label => t.server_label, :server_url => t.server_url)
+    d = Dict{Symbol,Any}(:type => "mcp", :server_label => t.server_label)
+    !isnothing(t.server_url) && (d[:server_url] = t.server_url)
+    !isnothing(t.connector_id) && (d[:connector_id] = t.connector_id)
+    !isnothing(t.authorization) && (d[:authorization] = t.authorization)
+    !isnothing(t.server_description) && (d[:server_description] = t.server_description)
     !isnothing(t.require_approval) && (d[:require_approval] = t.require_approval)
     !isnothing(t.allowed_tools) && (d[:allowed_tools] = t.allowed_tools)
     !isnothing(t.headers) && (d[:headers] = t.headers)
+    !isnothing(t.tunnel_id) && (d[:tunnel_id] = t.tunnel_id)
     return d
 end
 
@@ -255,6 +269,80 @@ function JSON.lower(t::CodeInterpreterTool)
     return d
 end
 
+# ─── Newer hosted tools (GA computer, shell, local_shell, apply_patch, custom) ──
+
+"""
+    ComputerTool(; environment=nothing)
+
+GA computer-use tool (`type:"computer"`) for newer models. Unlike [`ComputerUseTool`](@ref)
+(`computer_use_preview`) it carries no `display_width`/`display_height`.
+"""
+@kwdef struct ComputerTool <: ResponseTool
+    environment::Union{String, Nothing} = nothing
+end
+function JSON.lower(t::ComputerTool)
+    d = Dict{Symbol,Any}(:type => "computer")
+    !isnothing(t.environment) && (d[:environment] = t.environment)
+    return d
+end
+
+"""
+    LocalShellTool()
+
+Local shell tool (`type:"local_shell"`): the model emits shell commands you run on your
+own runtime (codex-style models).
+"""
+struct LocalShellTool <: ResponseTool end
+JSON.lower(::LocalShellTool) = Dict{Symbol,Any}(:type => "local_shell")
+
+"""
+    ShellTool(; environment=nothing)
+
+Hosted shell tool (`type:"shell"`).
+"""
+@kwdef struct ShellTool <: ResponseTool
+    environment::Union{AbstractDict, Nothing} = nothing
+end
+function JSON.lower(t::ShellTool)
+    d = Dict{Symbol,Any}(:type => "shell")
+    !isnothing(t.environment) && (d[:environment] = t.environment)
+    return d
+end
+
+"""
+    ApplyPatchTool()
+
+Structured file-edit tool (`type:"apply_patch"`).
+"""
+struct ApplyPatchTool <: ResponseTool end
+JSON.lower(::ApplyPatchTool) = Dict{Symbol,Any}(:type => "apply_patch")
+
+"""
+    CustomTool(; name, description=nothing, format=nothing)
+
+Custom tool (`type:"custom"`) with free-form text input, or a grammar-constrained input via
+`format = Dict("type"=>"grammar", "syntax"=>"lark"|"regex", "definition"=>...)`.
+"""
+@kwdef struct CustomTool <: ResponseTool
+    name::String
+    description::Union{String, Nothing} = nothing
+    format::Union{String, AbstractDict, Nothing} = nothing
+end
+function JSON.lower(t::CustomTool)
+    d = Dict{Symbol,Any}(:type => "custom", :name => t.name)
+    !isnothing(t.description) && (d[:description] = t.description)
+    !isnothing(t.format) && (d[:format] = t.format)
+    return d
+end
+
+computer_tool(; environment::Union{String,Nothing}=nothing) = ComputerTool(environment=environment)
+local_shell() = LocalShellTool()
+shell(; environment::Union{AbstractDict,Nothing}=nothing) = ShellTool(environment=environment)
+apply_patch_tool() = ApplyPatchTool()
+custom_tool(name::String; description::Union{String,Nothing}=nothing,
+    format::Union{String,AbstractDict,Nothing}=nothing) =
+    CustomTool(name=name, description=description, format=format)
+
 # Convenience constructors
 
 """
@@ -262,12 +350,29 @@ end
 
 Shorthand constructor for [`MCPTool`](@ref).
 """
-mcp_tool(label::String, url::String;
+mcp_tool(label::String, url::Union{String,Nothing}=nothing;
     require_approval::Union{String, AbstractDict, Nothing}="never",
-    allowed_tools::Union{Vector{String}, Nothing}=nothing,
-    headers::Union{AbstractDict, Nothing}=nothing) =
+    allowed_tools::Union{Vector{String}, AbstractDict, Nothing}=nothing,
+    headers::Union{AbstractDict, Nothing}=nothing,
+    connector_id::Union{String, Nothing}=nothing,
+    authorization::Union{String, Nothing}=nothing,
+    server_description::Union{String, Nothing}=nothing,
+    tunnel_id::Union{String, Nothing}=nothing) =
     MCPTool(server_label=label, server_url=url, require_approval=require_approval,
-        allowed_tools=allowed_tools, headers=headers)
+        allowed_tools=allowed_tools, headers=headers, connector_id=connector_id,
+        authorization=authorization, server_description=server_description, tunnel_id=tunnel_id)
+
+"""
+    mcp_approval_response(approval_request_id, approve; reason=nothing)
+
+Build an `mcp_approval_response` input item to approve/deny a pending MCP tool call.
+Pass it back as an element of the next request's `input`.
+"""
+function mcp_approval_response(approval_request_id::String, approve::Bool; reason::Union{String,Nothing}=nothing)
+    d = Dict{Symbol,Any}(:type => "mcp_approval_response", :approval_request_id => approval_request_id, :approve => approve)
+    !isnothing(reason) && (d[:reason] = reason)
+    return d
+end
 
 """
     computer_use(; display_width=1024, display_height=768, environment=nothing)
@@ -739,6 +844,107 @@ end
 function_calls(r::ResponseSuccess) = function_calls(r.response)
 function_calls(::ResponseFailure) = Dict{String,Any}[]
 function_calls(::ResponseCallError) = Dict{String,Any}[]
+
+
+# ─── Additional typed accessors over the output array ─────────────────────────
+
+# Collect output items of a given "type".
+_output_items(r::ResponseObject, typ::String) =
+    Dict{String,Any}[item for item in r.output if item isa Dict && get(item, "type", "") == typ]
+
+"""
+    reasoning_summaries(r) -> Vector{String}
+
+Reasoning-summary text from each `reasoning` output item.
+"""
+function reasoning_summaries(r::ResponseObject)
+    out = String[]
+    for item in _output_items(r, "reasoning"), s in get(item, "summary", [])
+        s isa Dict && haskey(s, "text") && push!(out, s["text"])
+    end
+    return out
+end
+
+"""
+    refusals(r) -> Vector{String}
+
+Refusal messages from any `refusal` content part of the output messages.
+"""
+function refusals(r::ResponseObject)
+    out = String[]
+    for item in r.output
+        item isa Dict && get(item, "type", "") == "message" || continue
+        for c in get(item, "content", [])
+            c isa Dict && get(c, "type", "") == "refusal" && haskey(c, "refusal") && push!(out, c["refusal"])
+        end
+    end
+    return out
+end
+
+"""
+    url_citations(r) -> Vector{Dict{String,Any}}
+
+URL-citation annotations on output_text parts (from web_search).
+"""
+function url_citations(r::ResponseObject)
+    out = Dict{String,Any}[]
+    for item in r.output
+        item isa Dict && get(item, "type", "") == "message" || continue
+        for c in get(item, "content", []), a in (c isa Dict ? get(c, "annotations", []) : [])
+            a isa Dict && get(a, "type", "") == "url_citation" && push!(out, a)
+        end
+    end
+    return out
+end
+
+"""
+    image_generation_results(r) -> Vector{String}
+
+Base64 image results from `image_generation_call` output items.
+"""
+function image_generation_results(r::ResponseObject)
+    out = String[]
+    for item in _output_items(r, "image_generation_call")
+        v = get(item, "result", nothing)
+        v isa String && push!(out, v)
+    end
+    return out
+end
+
+"Raw `web_search_call` output items (request results via `include`)."
+web_search_results(r::ResponseObject)       = _output_items(r, "web_search_call")
+"Raw `file_search_call` output items."
+file_search_results(r::ResponseObject)      = _output_items(r, "file_search_call")
+"Raw `code_interpreter_call` output items."
+code_interpreter_outputs(r::ResponseObject) = _output_items(r, "code_interpreter_call")
+"Raw `mcp_call` output items."
+mcp_call_outputs(r::ResponseObject)         = _output_items(r, "mcp_call")
+"Raw `mcp_approval_request` output items (feed back via [`mcp_approval_response`](@ref))."
+mcp_approval_requests(r::ResponseObject)    = _output_items(r, "mcp_approval_request")
+"Raw `reasoning` output items."
+reasoning_items(r::ResponseObject)          = _output_items(r, "reasoning")
+
+response_status(r::ResponseObject)    = r.status
+incomplete_details(r::ResponseObject) = get(r.raw, "incomplete_details", nothing)
+usage_details(r::ResponseObject)      = r.usage
+
+# ResponseSuccess forwarders + empty/typed defaults for the non-success results.
+for f in (:reasoning_summaries, :refusals, :url_citations, :image_generation_results,
+          :web_search_results, :file_search_results, :code_interpreter_outputs,
+          :mcp_call_outputs, :mcp_approval_requests, :reasoning_items)
+    @eval $f(r::ResponseSuccess) = $f(r.response)
+    @eval $f(::ResponseFailure) = []
+    @eval $f(::ResponseCallError) = []
+end
+response_status(r::ResponseSuccess) = response_status(r.response)
+response_status(::ResponseFailure) = "failed"
+response_status(::ResponseCallError) = "error"
+incomplete_details(r::ResponseSuccess) = incomplete_details(r.response)
+incomplete_details(::ResponseFailure) = nothing
+incomplete_details(::ResponseCallError) = nothing
+usage_details(r::ResponseSuccess) = usage_details(r.response)
+usage_details(::ResponseFailure) = nothing
+usage_details(::ResponseCallError) = nothing
 
 
 # ─── Parsing ─────────────────────────────────────────────────────────────────

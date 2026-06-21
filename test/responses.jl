@@ -1880,3 +1880,65 @@ end
         @test JSON.lower(Reasoning(summary="detailed"))[:summary] == "detailed"
     end
 end
+
+@testset "Phase B: MCP connectors, new tools, accessors" begin
+    @testset "MCPTool connectors / authorization / tunnel" begin
+        t = MCPTool(server_label="gd", connector_id="connector_googledrive", authorization="tok",
+                    server_description="Drive", tunnel_id="tun_1")
+        l = JSON.lower(t)
+        @test l[:connector_id] == "connector_googledrive"
+        @test l[:authorization] == "tok"
+        @test l[:server_description] == "Drive"
+        @test l[:tunnel_id] == "tun_1"
+        @test !haskey(l, :server_url)
+        @test JSON.lower(mcp_tool("s", "https://mcp.example.com"))[:server_url] == "https://mcp.example.com"
+    end
+
+    @testset "mcp_approval_response input item" begin
+        a = mcp_approval_response("req_1", true; reason="ok")
+        @test a[:type] == "mcp_approval_response"
+        @test a[:approval_request_id] == "req_1"
+        @test a[:approve] == true
+        @test a[:reason] == "ok"
+    end
+
+    @testset "new tool types lower to correct type strings" begin
+        @test JSON.lower(local_shell())[:type] == "local_shell"
+        @test JSON.lower(shell())[:type] == "shell"
+        @test JSON.lower(apply_patch_tool())[:type] == "apply_patch"
+        @test JSON.lower(computer_tool())[:type] == "computer"
+        ct = custom_tool("grammar_tool"; format=Dict("type" => "grammar", "syntax" => "lark", "definition" => "start: x"))
+        cl = JSON.lower(ct)
+        @test cl[:type] == "custom" && cl[:name] == "grammar_tool" && cl[:format]["syntax"] == "lark"
+        @test all(T -> T <: UniLM.ResponseTool, (LocalShellTool, ShellTool, ApplyPatchTool, ComputerTool, CustomTool))
+    end
+
+    @testset "typed output accessors" begin
+        ro = UniLM.ResponseObject(
+            id="r", status="incomplete", model="gpt-5.5",
+            output=Any[
+                Dict("type" => "reasoning", "summary" => [Dict("type" => "summary_text", "text" => "thought")]),
+                Dict("type" => "message", "content" => [
+                    Dict("type" => "output_text", "text" => "hi",
+                         "annotations" => [Dict("type" => "url_citation", "url" => "http://x", "title" => "X")]),
+                    Dict("type" => "refusal", "refusal" => "no")]),
+                Dict("type" => "image_generation_call", "result" => "BASE64"),
+                Dict("type" => "web_search_call", "status" => "completed"),
+                Dict("type" => "mcp_approval_request", "id" => "req_9", "name" => "do_it"),
+            ],
+            usage=Dict{String,Any}("input_tokens" => 1, "output_tokens" => 2, "total_tokens" => 3),
+            raw=Dict{String,Any}("incomplete_details" => Dict("reason" => "max_output_tokens")))
+        rs = ResponseSuccess(response=ro)
+        @test reasoning_summaries(rs) == ["thought"]
+        @test refusals(rs) == ["no"]
+        @test length(url_citations(rs)) == 1 && url_citations(rs)[1]["url"] == "http://x"
+        @test image_generation_results(rs) == ["BASE64"]
+        @test length(web_search_results(rs)) == 1
+        @test length(mcp_approval_requests(rs)) == 1
+        @test response_status(rs) == "incomplete"
+        @test incomplete_details(rs)["reason"] == "max_output_tokens"
+        @test usage_details(rs)["input_tokens"] == 1
+        @test isempty(refusals(ResponseFailure(response="e", status=500)))
+        @test response_status(ResponseCallError(error="x")) == "error"
+    end
+end

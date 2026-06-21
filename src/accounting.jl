@@ -4,15 +4,15 @@ const PriceRow = @NamedTuple{input::Float64, cached_input::Float64, output::Floa
 """Build a [`PriceRow`](@ref) from per-1M-token USD figures (input, cached-input, output)."""
 _price(i, c, o) = (input = i / 1_000_000, cached_input = c / 1_000_000, output = o / 1_000_000)
 
-"""Default per-token pricing. ⚠️ Figures are research-sourced — verify against the live
-OpenAI pricing page before relying on them. Cached input is billed at the discounted
+"""Default per-token pricing, verified against the live OpenAI pricing page on 2026-06-21
+(prices drift — re-verify before relying on them). Cached input is billed at the discounted
 `cached_input` rate; reasoning tokens are already counted within output tokens."""
 const DEFAULT_PRICING = Dict{String, PriceRow}(
-    # GPT-5.x  (⚠️ verify)
+    # GPT-5.x  (live-verified 2026-06-21)
     "gpt-5.5"       => _price(5.0,  0.50,  30.0),
     "gpt-5.4"       => _price(2.5,  0.25,  15.0),
     "gpt-5.4-mini"  => _price(0.75, 0.075, 4.5),
-    "gpt-5.2"       => _price(2.0,  0.20,  8.0),
+    "gpt-5.2"       => _price(1.75, 0.175, 14.0),
     # GPT-4.1 family
     "gpt-4.1"       => _price(2.0,  0.50,  8.0),
     "gpt-4.1-mini"  => _price(0.4,  0.10,  1.6),

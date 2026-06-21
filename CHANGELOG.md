@@ -5,8 +5,9 @@
 "OpenAI first-class" release: correctness fixes, a fully-modeled Responses API, cache-aware
 cost accounting, and broad new endpoint coverage.
 
-> ⚠️ The model ids and `DEFAULT_PRICING` figures introduced here are research-sourced and
-> should be verified against the live OpenAI `/v1/models` and pricing pages before relying on them.
+> Model ids and `DEFAULT_PRICING` figures were verified against the live OpenAI `/v1/models` and
+> official model pricing pages on 2026-06-21 (18/18 model ids present; the `gpt-5.2` rate was
+> corrected to 1.75/0.175/14.0 per 1M tokens in that pass). Prices drift — re-verify over time.
 
 ### Breaking changes
 - **`embeddingrequest!`** now returns `EmbeddingSuccess` / `EmbeddingFailure` / `EmbeddingCallError`

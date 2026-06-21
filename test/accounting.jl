@@ -109,8 +109,8 @@ end
     s = LLMSuccess(message=m, self=chat, usage=u)
 
     cost = estimated_cost(s)
-    # gpt-5.2: input=2.0/1M, output=8.0/1M => 1M*2/1M + 1M*8/1M = 2 + 8 = 10.0
-    @test cost ≈ 10.0
+    # gpt-5.2 (live-verified 2026-06-21): input=1.75/1M, output=14.0/1M => 1.75 + 14.0 = 15.75
+    @test cost ≈ 15.75
 
     @testset "explicit model override" begin
         cost2 = estimated_cost(s; model="gpt-4.1-mini")
@@ -192,10 +192,11 @@ end
     @test haskey(DEFAULT_PRICING, "o3")
     @test haskey(DEFAULT_PRICING, "o4-mini")
 
-    # Verify structure
+    # Verify structure + pin the live-verified gpt-5.2 rates (2026-06-21) so a revert is caught
     p = DEFAULT_PRICING["gpt-5.2"]
-    @test p.input > 0
-    @test p.output > 0
+    @test p.input ≈ 1.75 / 1_000_000
+    @test p.cached_input ≈ 0.175 / 1_000_000
+    @test p.output ≈ 14.0 / 1_000_000
 end
 
 @testset "estimated_cost — cached input + new rows" begin

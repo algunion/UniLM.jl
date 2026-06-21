@@ -13,6 +13,9 @@ function _mime_for(path::AbstractString)
         ".txt" => "text/plain", ".md" => "text/markdown", ".csv" => "text/csv",
         ".pdf" => "application/pdf", ".png" => "image/png", ".jpg" => "image/jpeg",
         ".jpeg" => "image/jpeg", ".webp" => "image/webp", ".gif" => "image/gif",
+        ".wav" => "audio/wav", ".mp3" => "audio/mpeg", ".mpeg" => "audio/mpeg",
+        ".mpga" => "audio/mpeg", ".m4a" => "audio/mp4", ".mp4" => "audio/mp4",
+        ".oga" => "audio/ogg", ".ogg" => "audio/ogg", ".flac" => "audio/flac", ".webm" => "audio/webm",
     ), ext, "application/octet-stream")
 end
 

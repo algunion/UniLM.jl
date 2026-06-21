@@ -1940,5 +1940,19 @@ end
         @test usage_details(rs)["input_tokens"] == 1
         @test isempty(refusals(ResponseFailure(response="e", status=500)))
         @test response_status(ResponseCallError(error="x")) == "error"
+
+        # null arrays (content/summary/annotations) must return empty, not crash (regression)
+        ro2 = UniLM.ResponseObject(id="r2", status="completed", model="m", output=Any[
+                Dict("type" => "reasoning", "summary" => nothing),
+                Dict("type" => "message", "content" => nothing),
+                Dict("type" => "message", "content" => [Dict("type" => "output_text", "text" => "hi", "annotations" => nothing)]),
+            ], raw=Dict{String,Any}())
+        @test reasoning_summaries(ro2) == String[]
+        @test refusals(ro2) == String[]
+        @test url_citations(ro2) == Dict{String,Any}[]
+        @test output_text(ro2) == "hi"
+        # failure-result empties are correctly typed (not Vector{Any})
+        @test reasoning_summaries(ResponseFailure(response="e", status=500)) isa Vector{String}
+        @test url_citations(ResponseCallError(error="x")) isa Vector{Dict{String,Any}}
     end
 end

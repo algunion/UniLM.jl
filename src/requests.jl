@@ -102,12 +102,13 @@ function _token_usage_from(u::AbstractDict;
     prompt_details::String="prompt_tokens_details", completion_details::String="completion_tokens_details")
     pd = get(u, prompt_details, nothing)
     cd = get(u, completion_details, nothing)
+    _i(x) = x isa Integer ? Int(x) : 0   # tolerate JSON null / missing / non-int → 0
     TokenUsage(
-        prompt_tokens=get(u, prompt_key, 0),
-        completion_tokens=get(u, completion_key, 0),
-        total_tokens=get(u, "total_tokens", 0),
-        cached_tokens=(pd isa AbstractDict ? get(pd, "cached_tokens", 0) : 0),
-        reasoning_tokens=(cd isa AbstractDict ? get(cd, "reasoning_tokens", 0) : 0),
+        prompt_tokens=_i(get(u, prompt_key, 0)),
+        completion_tokens=_i(get(u, completion_key, 0)),
+        total_tokens=_i(get(u, "total_tokens", 0)),
+        cached_tokens=(pd isa AbstractDict ? _i(get(pd, "cached_tokens", 0)) : 0),
+        reasoning_tokens=(cd isa AbstractDict ? _i(get(cd, "reasoning_tokens", 0)) : 0),
     )
 end
 

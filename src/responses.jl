@@ -799,7 +799,7 @@ function output_text(r::ResponseObject)::String
     texts = String[]
     for item in r.output
         if item isa Dict && get(item, "type", "") == "message"
-            for content in get(item, "content", [])
+            for content in _as_iter(get(item, "content", ()))
                 if content isa Dict && get(content, "type", "") == "output_text"
                     push!(texts, get(content, "text", ""))
                 end
@@ -848,6 +848,9 @@ function_calls(::ResponseCallError) = Dict{String,Any}[]
 
 # ─── Additional typed accessors over the output array ─────────────────────────
 
+# Tolerate JSON null / missing / non-array where the API may return an array (e.g. content: null).
+_as_iter(x) = x isa AbstractVector ? x : ()
+
 # Collect output items of a given "type".
 _output_items(r::ResponseObject, typ::String) =
     Dict{String,Any}[item for item in r.output if item isa Dict && get(item, "type", "") == typ]
@@ -859,7 +862,7 @@ Reasoning-summary text from each `reasoning` output item.
 """
 function reasoning_summaries(r::ResponseObject)
     out = String[]
-    for item in _output_items(r, "reasoning"), s in get(item, "summary", [])
+    for item in _output_items(r, "reasoning"), s in _as_iter(get(item, "summary", ()))
         s isa Dict && haskey(s, "text") && push!(out, s["text"])
     end
     return out
@@ -874,7 +877,7 @@ function refusals(r::ResponseObject)
     out = String[]
     for item in r.output
         item isa Dict && get(item, "type", "") == "message" || continue
-        for c in get(item, "content", [])
+        for c in _as_iter(get(item, "content", ()))
             c isa Dict && get(c, "type", "") == "refusal" && haskey(c, "refusal") && push!(out, c["refusal"])
         end
     end
@@ -890,7 +893,7 @@ function url_citations(r::ResponseObject)
     out = Dict{String,Any}[]
     for item in r.output
         item isa Dict && get(item, "type", "") == "message" || continue
-        for c in get(item, "content", []), a in (c isa Dict ? get(c, "annotations", []) : [])
+        for c in _as_iter(get(item, "content", ())), a in _as_iter(c isa Dict ? get(c, "annotations", ()) : ())
             a isa Dict && get(a, "type", "") == "url_citation" && push!(out, a)
         end
     end
@@ -929,12 +932,17 @@ incomplete_details(r::ResponseObject) = get(r.raw, "incomplete_details", nothing
 usage_details(r::ResponseObject)      = r.usage
 
 # ResponseSuccess forwarders + empty/typed defaults for the non-success results.
-for f in (:reasoning_summaries, :refusals, :url_citations, :image_generation_results,
-          :web_search_results, :file_search_results, :code_interpreter_outputs,
+# String-returning vs Dict-returning accessors get correctly-typed empty defaults (not Vector{Any}).
+for f in (:reasoning_summaries, :refusals, :image_generation_results)
+    @eval $f(r::ResponseSuccess) = $f(r.response)
+    @eval $f(::ResponseFailure) = String[]
+    @eval $f(::ResponseCallError) = String[]
+end
+for f in (:url_citations, :web_search_results, :file_search_results, :code_interpreter_outputs,
           :mcp_call_outputs, :mcp_approval_requests, :reasoning_items)
     @eval $f(r::ResponseSuccess) = $f(r.response)
-    @eval $f(::ResponseFailure) = []
-    @eval $f(::ResponseCallError) = []
+    @eval $f(::ResponseFailure) = Dict{String,Any}[]
+    @eval $f(::ResponseCallError) = Dict{String,Any}[]
 end
 response_status(r::ResponseSuccess) = response_status(r.response)
 response_status(::ResponseFailure) = "failed"
@@ -1038,7 +1046,7 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
                     chunk = String(readavailable(io))
                     write(raw_buffer, chunk)
                     status = _parse_response_stream_chunk(chunk, text_buffer, fail_buffer, last_event)
-                    if status.terminal == :completed && !isnothing(status.data)
+                    if status.terminal == :completed && status.data isa AbstractDict && haskey(status.data, "response")
                         rdata = status.data["response"]
                         result[] = ResponseObject(
                             id=rdata["id"],

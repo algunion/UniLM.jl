@@ -35,6 +35,13 @@
         @test ru.cached_tokens == 2
         @test ru.reasoning_tokens == 4
         @test ru.prompt_tokens == 3
+        # JSON null subtotals must coalesce to 0, not crash (regression)
+        nulled = Dict{String,Any}("usage" => Dict{String,Any}("prompt_tokens" => nothing,
+            "completion_tokens" => 5, "total_tokens" => nothing,
+            "prompt_tokens_details" => Dict{String,Any}("cached_tokens" => nothing)))
+        nu = UniLM._parse_usage(nulled)
+        @test nu.prompt_tokens == 0 && nu.total_tokens == 0 && nu.cached_tokens == 0
+        @test nu.completion_tokens == 5
     end
 end
 

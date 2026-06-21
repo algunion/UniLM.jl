@@ -30,23 +30,31 @@ function _consteq(a::AbstractString, b::AbstractString)
     r == 0
 end
 
-_header_dict(headers::AbstractDict) = Dict(lowercase(String(k)) => String(v) for (k, v) in headers)
-_header_dict(headers) = Dict(lowercase(String(first(p))) => String(last(p)) for p in headers)
+_header_dict(headers::AbstractDict) = Dict(lowercase(string(k)) => string(v) for (k, v) in headers)
+_header_dict(headers) = Dict(lowercase(string(first(p))) => string(last(p)) for p in headers)
 
 """
-    verify_webhook(payload::AbstractString, headers, secret::AbstractString) -> Bool
+    verify_webhook(payload::AbstractString, headers, secret::AbstractString; tolerance_seconds=300) -> Bool
 
 Verify an OpenAI webhook signature (Standard Webhooks). `payload` is the raw request body;
 `headers` is a Dict or iterable of pairs containing `webhook-id`, `webhook-timestamp`, and
 `webhook-signature`; `secret` is the endpoint signing secret (with or without the `whsec_`
-prefix). Returns `true` iff a valid `v1` signature is present. Uses a constant-time compare.
+prefix). Returns `true` iff a fresh, validly-signed `v1` signature is present.
+
+Replay protection: timestamps outside `±tolerance_seconds` of now are rejected — pass
+`tolerance_seconds=Inf` to skip the time check (e.g. when replaying a stored fixture). Uses
+a constant-time digest compare.
 """
-function verify_webhook(payload::AbstractString, headers, secret::AbstractString)
+function verify_webhook(payload::AbstractString, headers, secret::AbstractString; tolerance_seconds::Real=300)
     h = _header_dict(headers)
     wid = get(h, "webhook-id", "")
     wts = get(h, "webhook-timestamp", "")
     wsig = get(h, "webhook-signature", "")
     (isempty(wid) || isempty(wts) || isempty(wsig)) && return false
+    if isfinite(tolerance_seconds)
+        ts = tryparse(Float64, wts)
+        (isnothing(ts) || abs(time() - ts) > tolerance_seconds) && return false
+    end
     sec = startswith(secret, "whsec_") ? secret[7:end] : secret
     key = try
         base64decode(sec)
@@ -57,7 +65,7 @@ function verify_webhook(payload::AbstractString, headers, secret::AbstractString
     expected = base64encode(_hmac_sha256(key, Vector{UInt8}(signed)))
     for part in split(wsig, ' ')
         seg = split(part, ',')
-        length(seg) == 2 && _consteq(String(seg[2]), expected) && return true
+        length(seg) == 2 && seg[1] == "v1" && _consteq(String(seg[2]), expected) && return true
     end
     return false
 end

@@ -27,6 +27,8 @@ True if any moderation result is flagged. Works on `ModerationResult`/`Moderatio
 is_flagged(m::ModerationResult) = m.flagged
 is_flagged(r::ModerationResponse) = any(is_flagged, r.results)
 is_flagged(r::ModerationSuccess) = is_flagged(r.response)
+is_flagged(::ModerationFailure) = false
+is_flagged(::ModerationCallError) = false
 
 """
     moderate(input; model="omni-moderation-latest", service=OPENAIServiceEndpoint)

@@ -165,7 +165,7 @@ chatrequest!(; service=OPENAIServiceEndpoint, model="gpt-5.2",
 
 - Non-streaming: returns `LLMSuccess`, `LLMFailure`, or `LLMCallError`.
 - Streaming (`stream=true`): returns a `Task`. Pass a `callback(chunk::Union{String,Message}, close::Ref{Bool})`.
-- Auto-retries on HTTP 429/500/503 with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers on 429 responses.
+- Auto-retries on HTTP 408/429/500/502/503/504/529 with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers on 429 responses.
 
 ### Conversation Management
 
@@ -467,7 +467,7 @@ respond(callback::Function, input; kwargs...) -> Task
 ```
 
 - Streaming callback signature: `callback(chunk::Union{String, ResponseObject}, close::Ref{Bool})`
-- Auto-retries on HTTP 429/500/503 with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers.
+- Auto-retries on HTTP 408/429/500/502/503/504/529 with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers.
 - **Parameter validation**: `temperature` ∈ [0.0, 2.0], `top_p` ∈ [0.0, 1.0], `max_output_tokens` ≥ 1, `top_logprobs` ∈ [0, 20]. Out-of-range values throw `ArgumentError`.
 
 ### Response Accessors
@@ -608,7 +608,7 @@ generate_image(ig::ImageGeneration; retries=0) -> ImageSuccess | ImageFailure | 
 generate_image(prompt::String; kwargs...)       -> same   # convenience
 ```
 
-Auto-retries on 429/500/503 with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers.
+Auto-retries on 408/429/500/502/503/504/529 with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers.
 
 ### Response Types
 
@@ -678,10 +678,10 @@ Model defaults: `"text-embedding-3-small"` for OpenAI, `"gemini-embedding-001"` 
 ### embeddingrequest!
 
 ```julia
-embeddingrequest!(emb::Embeddings; retries=0) -> (response_dict, emb) | nothing
+embeddingrequest!(emb::Embeddings; retries=0) -> EmbeddingSuccess | EmbeddingFailure | EmbeddingCallError
 ```
 
-Fills `emb.embeddings` in-place. Auto-retries on 429/500/503 with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers.
+Returns an `EmbeddingSuccess`/`EmbeddingFailure`/`EmbeddingCallError` (a `<: LLMRequestResponse`). Fills `emb.embeddings` in-place; `embedding_vectors(result)` returns the vectors. Auto-retries on transient statuses (408/429/500/502/503/504/529) with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers.
 
 ### Embeddings Example
 

@@ -20,6 +20,15 @@
         @test f.status == "processed"
     end
 
+    @testset "mime types (incl. audio)" begin
+        @test UniLM._mime_for("a.wav") == "audio/wav"
+        @test UniLM._mime_for("a.mp3") == "audio/mpeg"
+        @test UniLM._mime_for("a.flac") == "audio/flac"
+        @test UniLM._mime_for("a.m4a") == "audio/mp4"
+        @test UniLM._mime_for("a.json") == "application/json"
+        @test UniLM._mime_for("a.unknown") == "application/octet-stream"
+    end
+
     @testset "auth_header_multipart strips content-type" begin
         g = UniLM.GenericOpenAIEndpoint("http://x", "k")
         h = UniLM.auth_header_multipart(g)

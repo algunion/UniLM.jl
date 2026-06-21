@@ -68,10 +68,14 @@ Open a Realtime WebSocket and run `handler(session::RealtimeSession)`. Inside th
 [`realtime_send`](@ref) to send event dicts and [`realtime_receive`](@ref) to read server
 events. The socket closes when `handler` returns.
 """
+# WS base URL is a function so tests can point realtime_connect at a local echo server.
+_realtime_ws_url(service) = REALTIME_WS_URL
+
 function realtime_connect(handler; model::String="gpt-realtime-2", service::ServiceEndpointSpec=OPENAIServiceEndpoint)
     validate_capability(service, :realtime, "Realtime API")
-    url = REALTIME_WS_URL * "?model=" * model
-    HTTP.WebSockets.open(url; headers=auth_header(service)) do ws
+    url = _realtime_ws_url(service) * "?model=" * model
+    # auth_header_multipart drops the JSON Content-Type, which is meaningless on a WS upgrade.
+    HTTP.WebSockets.open(url; headers=auth_header_multipart(service)) do ws
         handler(RealtimeSession(ws, model))
     end
 end

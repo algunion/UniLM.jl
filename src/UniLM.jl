@@ -54,6 +54,8 @@ include("capabilities.jl")
 include("completions.jl")
 include("accounting.jl")
 include("files.jl")
+include("vector_stores.jl")
+include("conversations.jl")
 include("tool_loop.jl")
 include("mcp_schema.jl")
 include("mcp_client.jl")
@@ -238,6 +240,49 @@ export
     delete_file,
     file_content,
     save_file_content
+
+# ─── Vector Stores API ────────────────────────────────────────────────────────
+export
+    VectorStoreObject,
+    VectorStoreFileObject,
+    VectorStoreFileBatch,
+    VectorStoreList,
+    VectorStoreSuccess,
+    VectorStoreListSuccess,
+    VectorStoreFileSuccess,
+    VectorStoreBatchSuccess,
+    VectorStoreDeleteSuccess,
+    VectorStoreFailure,
+    VectorStoreCallError,
+    vector_store_id,
+    create_vector_store,
+    retrieve_vector_store,
+    list_vector_stores,
+    delete_vector_store,
+    add_vector_store_file,
+    create_file_batch,
+    retrieve_file_batch,
+    poll_file_batch
+
+# ─── Conversations API ────────────────────────────────────────────────────────
+export
+    ConversationObject,
+    ConversationItem,
+    ConversationItemList,
+    ConversationSuccess,
+    ConversationItemListSuccess,
+    ConversationItemSuccess,
+    ConversationDeleteSuccess,
+    ConversationFailure,
+    ConversationCallError,
+    conversation_id,
+    create_conversation,
+    retrieve_conversation,
+    update_conversation,
+    delete_conversation,
+    add_conversation_items,
+    list_conversation_items,
+    delete_conversation_item
 
 # ─── Provider Capabilities ──────────────────────────────────────────────────
 export

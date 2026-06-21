@@ -29,7 +29,7 @@ UniLM.get_url(::Type{MockServiceEndpoint}, ::Chat) = mock_base_url * UniLM.CHAT_
 UniLM.get_url(::Type{MockServiceEndpoint}, ::Embeddings) = mock_base_url * UniLM.EMBEDDINGS_PATH
 UniLM.get_url(::Type{MockServiceEndpoint}, ::FIMCompletion) = mock_base_url * UniLM.COMPLETIONS_PATH
 UniLM.auth_header(::Type{MockServiceEndpoint}) = ["Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{MockServiceEndpoint}) = Set([:chat, :responses, :embeddings, :images, :tools, :fim, :prefix_completion, :files])
+UniLM.provider_capabilities(::Type{MockServiceEndpoint}) = Set([:chat, :responses, :embeddings, :images, :tools, :fim, :prefix_completion, :files, :vector_stores, :conversations])
 UniLM.default_model(::Type{MockServiceEndpoint}) = "mock-model"
 UniLM.default_embedding_model(::Type{MockServiceEndpoint}) = "mock-embedding"
 UniLM.default_image_model(::Type{MockServiceEndpoint}) = "mock-image"
@@ -395,6 +395,62 @@ try
 
         set_error!(404, "not found")
         @test retrieve_file("file-x"; service=MockServiceEndpoint) isa FileFailure
+        set_error!(200, "")
+    end
+
+    @testset "Vector Stores API (mock)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict("id" => "vs-1", "name" => "docs", "status" => "completed",
+            "file_counts" => Dict("total" => 0)))
+        r = create_vector_store(name="docs", service=MockServiceEndpoint)
+        @test r isa VectorStoreSuccess
+        @test vector_store_id(r.response) == "vs-1"
+
+        response_body[] = JSON.json(Dict("data" => [Dict("id" => "vs-1", "name" => "docs")], "has_more" => false))
+        rl = list_vector_stores(service=MockServiceEndpoint)
+        @test rl isa VectorStoreListSuccess && length(rl.response.data) == 1
+
+        response_body[] = JSON.json(Dict("id" => "vsf-1", "status" => "completed"))
+        rf = add_vector_store_file("vs-1", "file-1"; service=MockServiceEndpoint)
+        @test rf isa VectorStoreFileSuccess && rf.response.id == "vsf-1"
+
+        response_body[] = JSON.json(Dict("id" => "batch-1", "status" => "completed", "file_counts" => Dict("completed" => 1)))
+        @test create_file_batch("vs-1", ["file-1"]; service=MockServiceEndpoint) isa VectorStoreBatchSuccess
+        rp = poll_file_batch("vs-1", "batch-1"; interval=0.01, timeout=1.0, service=MockServiceEndpoint)
+        @test rp isa VectorStoreBatchSuccess && rp.response.status == "completed"
+
+        response_body[] = JSON.json(Dict("id" => "vs-1", "deleted" => true))
+        rd = delete_vector_store("vs-1"; service=MockServiceEndpoint)
+        @test rd isa VectorStoreDeleteSuccess && rd.deleted
+
+        @test_throws ArgumentError create_vector_store(service=UniLM.GEMINIServiceEndpoint)
+
+        set_error!(404, "nope")
+        @test retrieve_vector_store("vs-x"; service=MockServiceEndpoint) isa VectorStoreFailure
+        set_error!(200, "")
+    end
+
+    @testset "Conversations API (mock)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict("id" => "conv-1", "created_at" => 1, "metadata" => Dict("k" => "v")))
+        r = create_conversation(metadata=Dict("k" => "v"), service=MockServiceEndpoint)
+        @test r isa ConversationSuccess
+        @test conversation_id(r.response) == "conv-1"
+
+        response_body[] = JSON.json(Dict("data" => [Dict("id" => "item-1", "type" => "message")],
+            "has_more" => false, "first_id" => "item-1", "last_id" => "item-1"))
+        ra = add_conversation_items("conv-1", [Dict("type" => "message", "role" => "user", "content" => "hi")]; service=MockServiceEndpoint)
+        @test ra isa ConversationItemListSuccess && length(ra.response.data) == 1
+        @test list_conversation_items("conv-1"; service=MockServiceEndpoint) isa ConversationItemListSuccess
+
+        response_body[] = JSON.json(Dict("id" => "conv-1", "deleted" => true))
+        rd = delete_conversation("conv-1"; service=MockServiceEndpoint)
+        @test rd isa ConversationDeleteSuccess && rd.deleted
+
+        set_error!(404, "nope")
+        @test retrieve_conversation("conv-x"; service=MockServiceEndpoint) isa ConversationFailure
         set_error!(200, "")
     end
 

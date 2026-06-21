@@ -19,7 +19,7 @@ Standard capability symbols:
 - `:prefix_completion` — Chat prefix completion (continue from partial assistant message)
 - `:json_output` — JSON output mode (`response_format`)
 """
-provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :embeddings, :images, :tools, :json_output, :files])
+provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :embeddings, :images, :tools, :json_output, :files, :vector_stores, :conversations])
 provider_capabilities(::Type{AZUREServiceEndpoint})   = Set([:chat, :tools])
 provider_capabilities(::Type{GEMINIServiceEndpoint})  = Set([:chat, :embeddings, :tools, :json_output])
 provider_capabilities(::DeepSeekEndpoint)              = Set([:chat, :tools, :fim, :prefix_completion, :json_output])

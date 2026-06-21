@@ -42,6 +42,7 @@ module UniLM
 using HTTP
 using JSON
 using Base64
+using SHA
 
 include("constants.jl")
 include("exceptions.jl")
@@ -59,6 +60,12 @@ include("conversations.jl")
 include("moderations.jl")
 include("audio.jl")
 include("batch.jl")
+include("fine_tuning.jl")
+include("webhooks.jl")
+include("containers.jl")
+include("uploads.jl")
+include("videos.jl")
+include("realtime.jl")
 include("tool_loop.jl")
 include("mcp_schema.jl")
 include("mcp_client.jl")
@@ -326,6 +333,85 @@ export
     cancel_batch,
     list_batches,
     poll_batch
+
+# ─── Fine-tuning API ──────────────────────────────────────────────────────────
+export
+    FineTuningJob,
+    FineTuningList,
+    FineTuningSuccess,
+    FineTuningListSuccess,
+    FineTuningFailure,
+    FineTuningCallError,
+    create_fine_tuning_job,
+    retrieve_fine_tuning_job,
+    cancel_fine_tuning_job,
+    list_fine_tuning_jobs,
+    list_fine_tuning_events,
+    list_fine_tuning_checkpoints
+
+# ─── Webhooks ─────────────────────────────────────────────────────────────────
+export
+    WebhookEvent,
+    WEBHOOK_EVENTS,
+    verify_webhook,
+    parse_webhook
+
+# ─── Containers API ───────────────────────────────────────────────────────────
+export
+    ContainerObject,
+    ContainerList,
+    ContainerSuccess,
+    ContainerListSuccess,
+    ContainerDeleteSuccess,
+    ContainerFailure,
+    ContainerCallError,
+    create_container,
+    retrieve_container,
+    list_containers,
+    delete_container,
+    add_container_file
+
+# ─── Uploads API ──────────────────────────────────────────────────────────────
+export
+    UploadObject,
+    UploadPartObject,
+    UploadSuccess,
+    UploadPartSuccess,
+    UploadFailure,
+    UploadCallError,
+    create_upload,
+    add_upload_part,
+    complete_upload,
+    cancel_upload
+
+# ─── Videos API ───────────────────────────────────────────────────────────────
+export
+    VideoObject,
+    VideoList,
+    VideoSuccess,
+    VideoListSuccess,
+    VideoContentSuccess,
+    VideoFailure,
+    VideoCallError,
+    create_video,
+    retrieve_video,
+    list_videos,
+    video_content
+
+# ─── Realtime API ─────────────────────────────────────────────────────────────
+export
+    RealtimeSession,
+    RealtimeSecretSuccess,
+    RealtimeFailure,
+    RealtimeCallError,
+    mint_realtime_secret,
+    realtime_connect,
+    realtime_send,
+    realtime_receive,
+    realtime_event,
+    session_update,
+    input_audio_append,
+    response_create
 
 # ─── Provider Capabilities ──────────────────────────────────────────────────
 export

@@ -73,6 +73,10 @@ end
         include("files.jl")
     end
 
+    @testset "webhooks" begin
+        include("webhooks.jl")
+    end
+
     @testset "mock server" begin
         include("mock_server.jl")
     end

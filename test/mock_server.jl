@@ -29,7 +29,7 @@ UniLM.get_url(::Type{MockServiceEndpoint}, ::Chat) = mock_base_url * UniLM.CHAT_
 UniLM.get_url(::Type{MockServiceEndpoint}, ::Embeddings) = mock_base_url * UniLM.EMBEDDINGS_PATH
 UniLM.get_url(::Type{MockServiceEndpoint}, ::FIMCompletion) = mock_base_url * UniLM.COMPLETIONS_PATH
 UniLM.auth_header(::Type{MockServiceEndpoint}) = ["Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{MockServiceEndpoint}) = Set([:chat, :responses, :embeddings, :images, :tools, :fim, :prefix_completion, :files, :vector_stores, :conversations, :moderation, :audio, :batch, :image_edits])
+UniLM.provider_capabilities(::Type{MockServiceEndpoint}) = Set([:chat, :responses, :embeddings, :images, :tools, :fim, :prefix_completion, :files, :vector_stores, :conversations, :moderation, :audio, :batch, :image_edits, :fine_tuning, :containers, :uploads, :video, :realtime])
 UniLM.default_model(::Type{MockServiceEndpoint}) = "mock-model"
 UniLM.default_embedding_model(::Type{MockServiceEndpoint}) = "mock-embedding"
 UniLM.default_image_model(::Type{MockServiceEndpoint}) = "mock-image"
@@ -529,6 +529,77 @@ try
         write(img2, "fakepng")
         @test edit_image(img2, "x"; service=MockServiceEndpoint) isa ImageFailure
         rm(img2)
+        set_error!(200, "")
+    end
+
+    @testset "Fine-tuning API (mock)" begin
+        response_status[] = 200; response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict("id" => "ftjob-1", "status" => "running", "model" => "gpt-4.1-mini"))
+        r = create_fine_tuning_job(model="gpt-4.1-mini", training_file="file-1", service=MockServiceEndpoint)
+        @test r isa FineTuningSuccess && r.response.id == "ftjob-1"
+        @test retrieve_fine_tuning_job("ftjob-1"; service=MockServiceEndpoint) isa FineTuningSuccess
+        response_body[] = JSON.json(Dict("data" => [Dict("id" => "evt-1")], "has_more" => false))
+        @test list_fine_tuning_events("ftjob-1"; service=MockServiceEndpoint) isa FineTuningListSuccess
+        set_error!(404, "no")
+        @test retrieve_fine_tuning_job("x"; service=MockServiceEndpoint) isa FineTuningFailure
+        set_error!(200, "")
+    end
+
+    @testset "Containers API (mock)" begin
+        response_status[] = 200; response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict("id" => "cntr-1", "status" => "running", "name" => "box"))
+        @test create_container(name="box", service=MockServiceEndpoint) isa ContainerSuccess
+        response_body[] = JSON.json(Dict("id" => "cfile-1", "status" => "ok"))
+        p = tempname() * ".txt"; write(p, "x")
+        @test add_container_file("cntr-1", p; service=MockServiceEndpoint) isa ContainerSuccess
+        rm(p)
+        response_body[] = JSON.json(Dict("id" => "cntr-1", "deleted" => true))
+        @test delete_container("cntr-1"; service=MockServiceEndpoint) isa ContainerDeleteSuccess
+        set_error!(404, "no")
+        @test retrieve_container("x"; service=MockServiceEndpoint) isa ContainerFailure
+        set_error!(200, "")
+    end
+
+    @testset "Uploads API (mock)" begin
+        response_status[] = 200; response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict("id" => "upload-1", "status" => "pending", "filename" => "big.bin", "bytes" => 10))
+        @test create_upload(filename="big.bin", purpose="batch", bytes=10, mime_type="application/octet-stream", service=MockServiceEndpoint) isa UploadSuccess
+        response_body[] = JSON.json(Dict("id" => "part-1"))
+        @test add_upload_part("upload-1", Vector{UInt8}("chunk"); service=MockServiceEndpoint) isa UploadPartSuccess
+        response_body[] = JSON.json(Dict("id" => "upload-1", "status" => "completed",
+            "file" => Dict("id" => "file-9", "bytes" => 10, "created_at" => 1, "filename" => "big.bin", "purpose" => "batch")))
+        rc = complete_upload("upload-1", ["part-1"]; service=MockServiceEndpoint)
+        @test rc isa UploadSuccess && !isnothing(rc.response.file) && rc.response.file.id == "file-9"
+        set_error!(400, "no")
+        @test cancel_upload("upload-1"; service=MockServiceEndpoint) isa UploadFailure
+        set_error!(200, "")
+    end
+
+    @testset "Videos API (mock)" begin
+        response_status[] = 200; response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict("id" => "video-1", "status" => "queued", "model" => "sora-2"))
+        @test create_video(prompt="a cat", service=MockServiceEndpoint) isa VideoSuccess
+        response_body[] = "VIDEOBYTES"
+        rc = video_content("video-1"; service=MockServiceEndpoint)
+        @test rc isa VideoContentSuccess && String(copy(rc.content)) == "VIDEOBYTES"
+        set_error!(404, "no")
+        @test retrieve_video("x"; service=MockServiceEndpoint) isa VideoFailure
+        set_error!(200, "")
+    end
+
+    @testset "Realtime API (mock secret + event builders)" begin
+        response_status[] = 200; response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict("value" => "ek_123", "expires_at" => 1))
+        r = mint_realtime_secret(service=MockServiceEndpoint)
+        @test r isa RealtimeSecretSuccess && r.value == "ek_123"
+        response_body[] = JSON.json(Dict("client_secret" => Dict("value" => "ek_456")))
+        @test mint_realtime_secret(service=MockServiceEndpoint).value == "ek_456"
+        @test session_update(Dict("voice" => "alloy"))[:type] == "session.update"
+        @test input_audio_append("BASE64")[:audio] == "BASE64"
+        @test response_create()[:type] == "response.create"
+        @test realtime_event("custom"; foo="bar")[:foo] == "bar"
+        set_error!(401, "no")
+        @test mint_realtime_secret(service=MockServiceEndpoint) isa RealtimeFailure
         set_error!(200, "")
     end
 

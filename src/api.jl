@@ -408,6 +408,20 @@ Creates a new `Chat` object with default settings:
     logit_bias::Union{AbstractDict{String,Float64},Nothing} = nothing
     user::Union{String,Nothing} = nothing
     seed::Union{Int64,Nothing} = nothing
+    reasoning_effort::Union{String,Nothing} = nothing      # none|minimal|low|medium|high|xhigh
+    stream_options::Union{AbstractDict,Nothing} = nothing  # e.g. {"include_usage": true}
+    verbosity::Union{String,Nothing} = nothing             # low|medium|high
+    store::Union{Bool,Nothing} = nothing
+    metadata::Union{AbstractDict,Nothing} = nothing
+    service_tier::Union{String,Nothing} = nothing          # auto|default|flex|scale|priority
+    logprobs::Union{Bool,Nothing} = nothing
+    top_logprobs::Union{Int64,Nothing} = nothing
+    prediction::Union{AbstractDict,Nothing} = nothing
+    modalities::Union{Vector{String},Nothing} = nothing
+    audio::Union{AbstractDict,Nothing} = nothing
+    web_search_options::Union{AbstractDict,Nothing} = nothing
+    prompt_cache_key::Union{String,Nothing} = nothing
+    safety_identifier::Union{String,Nothing} = nothing     # replaces deprecated `user`
     _cumulative_cost::Ref{Float64} = Ref(0.0)
     function Chat(
         service,
@@ -430,6 +444,20 @@ Creates a new `Chat` object with default settings:
         logit_bias,
         user,
         seed,
+        reasoning_effort,
+        stream_options,
+        verbosity,
+        store,
+        metadata,
+        service_tier,
+        logprobs,
+        top_logprobs,
+        prediction,
+        modalities,
+        audio,
+        web_search_options,
+        prompt_cache_key,
+        safety_identifier,
         _cumulative_cost
     )
         model = _resolve_model(service, model)
@@ -460,6 +488,20 @@ Creates a new `Chat` object with default settings:
             logit_bias,
             user,
             seed,
+            reasoning_effort,
+            stream_options,
+            verbosity,
+            store,
+            metadata,
+            service_tier,
+            logprobs,
+            top_logprobs,
+            prediction,
+            modalities,
+            audio,
+            web_search_options,
+            prompt_cache_key,
+            safety_identifier,
             _cumulative_cost
         )
     end
@@ -469,7 +511,10 @@ function JSON.lower(chat::Chat)
     d = Dict{Symbol,Any}(:model => chat.model, :messages => chat.messages)
     for f in (:tools, :tool_choice, :parallel_tool_calls, :temperature, :top_p,
         :n, :stream, :stop, :max_tokens, :max_completion_tokens, :presence_penalty, :response_format,
-        :frequency_penalty, :logit_bias, :user, :seed)
+        :frequency_penalty, :logit_bias, :user, :seed,
+        :reasoning_effort, :stream_options, :verbosity, :store, :metadata, :service_tier,
+        :logprobs, :top_logprobs, :prediction, :modalities, :audio, :web_search_options,
+        :prompt_cache_key, :safety_identifier)
         v = getfield(chat, f)
         !isnothing(v) && (d[f] = v)
     end

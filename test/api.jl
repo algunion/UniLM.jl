@@ -695,6 +695,34 @@ end
     @test JSON.lower(Chat(model="gpt-5.5", max_tokens=64))[:max_tokens] == 64
 end
 
+@testset "Chat parity params (Phase C)" begin
+    c = Chat(model="gpt-5.5",
+        reasoning_effort="high", stream_options=Dict("include_usage" => true), verbosity="low",
+        store=true, metadata=Dict("k" => "v"), service_tier="flex", logprobs=true, top_logprobs=3,
+        prediction=Dict("type" => "content", "content" => "x"), modalities=["text"],
+        audio=Dict("voice" => "alloy", "format" => "mp3"),
+        web_search_options=Dict("search_context_size" => "low"),
+        prompt_cache_key="ck", safety_identifier="sid")
+    l = JSON.lower(c)
+    @test l[:reasoning_effort] == "high"
+    @test l[:stream_options]["include_usage"] == true
+    @test l[:verbosity] == "low"
+    @test l[:store] == true
+    @test l[:metadata]["k"] == "v"
+    @test l[:service_tier] == "flex"
+    @test l[:logprobs] == true
+    @test l[:top_logprobs] == 3
+    @test l[:modalities] == ["text"]
+    @test l[:audio]["voice"] == "alloy"
+    @test l[:web_search_options]["search_context_size"] == "low"
+    @test l[:prompt_cache_key] == "ck"
+    @test l[:safety_identifier] == "sid"
+    @test haskey(l, :prediction)
+    # all omitted when unset
+    l2 = JSON.lower(Chat(model="gpt-5.5"))
+    @test !haskey(l2, :reasoning_effort) && !haskey(l2, :store) && !haskey(l2, :audio)
+end
+
 @testset "Chat with different service endpoints" begin
     @testset "Azure endpoint" begin
         chat = Chat(service=UniLM.AZUREServiceEndpoint, model="gpt-4o")

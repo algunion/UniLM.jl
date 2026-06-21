@@ -3,7 +3,7 @@
 # https://platform.openai.com/docs/api-reference/images
 #
 # The Images API generates images from text prompts using models like
-# gpt-image-1.5. Supports configurable size, quality, background
+# gpt-image-2. Supports configurable size, quality, background
 # transparency, and output format.
 # ============================================================================
 
@@ -12,12 +12,12 @@ using Base64
 # ─── Request Type ─────────────────────────────────────────────────────────────
 
 """
-    ImageGeneration(; prompt, model="gpt-image-1.5", kwargs...)
+    ImageGeneration(; prompt, model="gpt-image-2", kwargs...)
 
 Configuration struct for an OpenAI Image Generation API request.
 
 # Key Fields
-- `model::String`: Model to use (default: `"gpt-image-1.5"`)
+- `model::String`: Model to use (default: `"gpt-image-2"`)
 - `prompt::String`: A text description of the desired image
 - `n::Union{Int,Nothing}`: Number of images to generate (1–10)
 - `size::Union{String,Nothing}`: Size (`"1024x1024"`, `"1536x1024"`, `"1024x1536"`, `"auto"`)

@@ -1,15 +1,28 @@
-"""Per-token pricing: `Dict{String, @NamedTuple{input::Float64, output::Float64}}`.
-Values are cost per token (i.e. per-million / 1_000_000)."""
-const DEFAULT_PRICING = Dict{String, @NamedTuple{input::Float64, output::Float64}}(
-    # GPT-5.2
-    "gpt-5.2"       => (input=2.0/1_000_000,  output=8.0/1_000_000),
+"""A per-token pricing row: `input` / `cached_input` / `output` USD per token."""
+const PriceRow = @NamedTuple{input::Float64, cached_input::Float64, output::Float64}
+
+"""Build a [`PriceRow`](@ref) from per-1M-token USD figures (input, cached-input, output)."""
+_price(i, c, o) = (input = i / 1_000_000, cached_input = c / 1_000_000, output = o / 1_000_000)
+
+"""Default per-token pricing. ⚠️ Figures are research-sourced — verify against the live
+OpenAI pricing page before relying on them. Cached input is billed at the discounted
+`cached_input` rate; reasoning tokens are already counted within output tokens."""
+const DEFAULT_PRICING = Dict{String, PriceRow}(
+    # GPT-5.x  (⚠️ verify)
+    "gpt-5.5"       => _price(5.0,  0.50,  30.0),
+    "gpt-5.4"       => _price(2.5,  0.25,  15.0),
+    "gpt-5.4-mini"  => _price(0.75, 0.075, 4.5),
+    "gpt-5.2"       => _price(2.0,  0.20,  8.0),
     # GPT-4.1 family
-    "gpt-4.1"       => (input=2.0/1_000_000,  output=8.0/1_000_000),
-    "gpt-4.1-mini"  => (input=0.4/1_000_000,  output=1.6/1_000_000),
-    "gpt-4.1-nano"  => (input=0.1/1_000_000,  output=0.4/1_000_000),
+    "gpt-4.1"       => _price(2.0,  0.50,  8.0),
+    "gpt-4.1-mini"  => _price(0.4,  0.10,  1.6),
+    "gpt-4.1-nano"  => _price(0.1,  0.025, 0.4),
     # O-series
-    "o3"            => (input=2.0/1_000_000,  output=8.0/1_000_000),
-    "o4-mini"       => (input=1.1/1_000_000,  output=4.4/1_000_000),
+    "o3"            => _price(2.0,  0.50,  8.0),
+    "o4-mini"       => _price(1.1,  0.275, 4.4),
+    # Embeddings (billed on input tokens only)
+    "text-embedding-3-small" => _price(0.02, 0.02, 0.0),
+    "text-embedding-3-large" => _price(0.13, 0.13, 0.0),
 )
 
 """
@@ -43,7 +56,7 @@ If `model` is not provided, it is inferred from the result when possible.
 """
 function estimated_cost(result::LLMRequestResponse;
     model::Union{String,Nothing}=nothing,
-    pricing::Dict{String, @NamedTuple{input::Float64, output::Float64}}=DEFAULT_PRICING)::Float64
+    pricing::Dict{String, PriceRow}=DEFAULT_PRICING)::Float64
 
     u = token_usage(result)
     mdl = if !isnothing(model)
@@ -52,12 +65,16 @@ function estimated_cost(result::LLMRequestResponse;
         result.self.model
     elseif result isa ResponseSuccess
         result.response.model
+    elseif result isa EmbeddingSuccess
+        result.embeddings.model
     else
         return 0.0
     end
     rates = get(pricing, mdl, nothing)
     isnothing(rates) && return 0.0
-    u.prompt_tokens * rates.input + u.completion_tokens * rates.output
+    cached = min(u.cached_tokens, u.prompt_tokens)        # cached input billed at the discounted rate
+    fresh = u.prompt_tokens - cached
+    fresh * rates.input + cached * rates.cached_input + u.completion_tokens * rates.output
 end
 
 # Override the stub from requests.jl to accumulate cost automatically

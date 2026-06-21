@@ -386,7 +386,7 @@ end
 @testset "Respond" begin
     @testset "minimal creation" begin
         r = Respond(input="Tell me a joke")
-        @test r.model == "gpt-5.2"
+        @test r.model == "gpt-5.5"
         @test r.input == "Tell me a joke"
         @test r.service == UniLM.OPENAIServiceEndpoint
         @test isnothing(r.instructions)
@@ -447,7 +447,7 @@ end
     @testset "JSON serialization" begin
         r = Respond(input="Hello", instructions="Be nice", temperature=0.7)
         lowered = JSON.lower(r)
-        @test lowered[:model] == "gpt-5.2"
+        @test lowered[:model] == "gpt-5.5"
         @test lowered[:input] == "Hello"
         @test lowered[:instructions] == "Be nice"
         @test lowered[:temperature] == 0.7
@@ -471,7 +471,7 @@ end
         json_str = JSON.json(r)
         parsed = JSON.parse(json_str)
 
-        @test parsed["model"] == "gpt-5.2"
+        @test parsed["model"] == "gpt-5.5"
         @test parsed["input"] isa Vector
         @test parsed["input"][1]["role"] == "user"
         @test parsed["tools"] isa Vector

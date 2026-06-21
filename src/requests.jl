@@ -369,7 +369,7 @@ Send a request to the OpenAI API to generate a response to the messages in `conv
 
 # Keyword Arguments
 - `service::Type{<:ServiceEndpoint} = AZUREServiceEndpoint`: The service endpoint to use (e.g., `AZUREServiceEndpoint`, `OPENAIServiceEndpoint`).
-- `model::String = "gpt-5.2"`: The model to use for the chat completion.
+- `model::String = "gpt-5.5"`: The model to use for the chat completion.
 - `systemprompt::Union{Message,String}`: The system prompt message.
 - `userprompt::Union{Message,String}`: The user prompt message.
 - `messages::Conversation = Message[]`: The conversation history or the system/prompt messages.

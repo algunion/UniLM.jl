@@ -611,12 +611,12 @@ end
 # ─── Main Request Type ────────────────────────────────────────────────────────
 
 """
-    Respond(; model="gpt-5.2", input, kwargs...)
+    Respond(; model="gpt-5.5", input, kwargs...)
 
 Configuration struct for an OpenAI Responses API request.
 
 # Key Fields
-- `model::String`: Model to use (default: `"gpt-5.2"`)
+- `model::String`: Model to use (default: `"gpt-5.5"`)
 - `input::Any`: A `String` or `Vector{InputMessage}` — the prompt input
 - `instructions::String`: System-level instructions
 - `tools::Vector`: Available tools (`FunctionTool`, `WebSearchTool`, `FileSearchTool`)
@@ -1346,7 +1346,7 @@ compacted = compact_response(model="gpt-5.2", input=[
 # Use compacted["output"] as input to the next request
 ```
 """
-function compact_response(; model::String="gpt-5.2",
+function compact_response(; model::String="gpt-5.5",
     input::Any,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint)
 
@@ -1380,7 +1380,7 @@ result = count_input_tokens(model="gpt-5.2", input="Tell me a joke")
 println("Input tokens: ", result["input_tokens"])
 ```
 """
-function count_input_tokens(; model::String="gpt-5.2",
+function count_input_tokens(; model::String="gpt-5.5",
     input::Any,
     instructions::Union{String,Nothing}=nothing,
     tools::Union{Vector,Nothing}=nothing,

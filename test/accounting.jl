@@ -190,3 +190,21 @@ end
     @test p.input > 0
     @test p.output > 0
 end
+
+@testset "estimated_cost — cached input + new rows" begin
+    chat = Chat(model="gpt-5.4")
+    m = Message(role=UniLM.RoleAssistant, content="hi")
+    rates = DEFAULT_PRICING["gpt-5.4"]
+    # cache-heavy: 900k of 1M input cached → billed at the cheaper cached rate
+    u = TokenUsage(prompt_tokens=1_000_000, cached_tokens=900_000, completion_tokens=0)
+    cost = estimated_cost(LLMSuccess(message=m, self=chat, usage=u))
+    @test cost ≈ 100_000 * rates.input + 900_000 * rates.cached_input
+    @test cost < 1_000_000 * rates.input          # strictly cheaper than full-rate (the regression this fixes)
+    # cached_tokens clamped to prompt_tokens
+    u2 = TokenUsage(prompt_tokens=10, cached_tokens=999, completion_tokens=0)
+    @test estimated_cost(LLMSuccess(message=m, self=chat, usage=u2)) ≈ 10 * rates.cached_input
+    # new rows exist with a discounted cached rate
+    @test haskey(DEFAULT_PRICING, "gpt-5.5")
+    @test haskey(DEFAULT_PRICING, "text-embedding-3-small")
+    @test DEFAULT_PRICING["gpt-5.5"].cached_input < DEFAULT_PRICING["gpt-5.5"].input
+end

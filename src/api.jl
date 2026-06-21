@@ -383,7 +383,7 @@ DeepSeekEndpoint(; api_key::String=ENV["DEEPSEEK_API_KEY"]) = DeepSeekEndpoint(a
     chat = Chat()
 
 Creates a new `Chat` object with default settings:
-- `model` is set to `gpt-5.2`
+- `model` is set to `gpt-5.5`
 - `messages` is set to an empty `Vector{Message}`
 - `history` is set to `true`
 """

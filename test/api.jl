@@ -308,7 +308,7 @@ end
 @testset "Chat" begin
     @testset "default creation" begin
         chat = Chat()
-        @test chat.model == "gpt-5.2"
+        @test chat.model == "gpt-5.5"
         @test isempty(chat.messages)
         @test chat.history == true
         @test isnothing(chat.tools)
@@ -517,7 +517,7 @@ end
 
         json = JSON.json(chat)
         parsed = JSON.parse(json)
-        @test parsed["model"] == "gpt-5.2"
+        @test parsed["model"] == "gpt-5.5"
         @test parsed["temperature"] == 0.7
         @test !haskey(parsed, "history")
         @test !haskey(parsed, "service")

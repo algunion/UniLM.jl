@@ -440,6 +440,10 @@ end
     @test UniLM._is_retryable(429) == true
     @test UniLM._is_retryable(500) == true
     @test UniLM._is_retryable(503) == true
+    @test UniLM._is_retryable(502) == true
+    @test UniLM._is_retryable(504) == true
+    @test UniLM._is_retryable(408) == true
+    @test UniLM._is_retryable(529) == true
     @test UniLM._is_retryable(400) == false
     @test UniLM._is_retryable(401) == false
     @test UniLM._is_retryable(200) == false

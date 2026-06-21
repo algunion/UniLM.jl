@@ -5,7 +5,7 @@ const _RETRY_FACTOR = 2.0
 const _RETRY_MAX_DELAY = 60.0
 const _RETRY_MAX_ATTEMPTS = 30
 
-_is_retryable(status::Integer)::Bool = status in (429, 500, 503)
+_is_retryable(status::Integer)::Bool = status in (408, 429, 500, 502, 503, 504, 529)
 
 function _retry_delay(retry::Integer, resp::HTTP.Response)::Float64
     computed = min(_RETRY_BASE * _RETRY_FACTOR^retry, _RETRY_MAX_DELAY)
@@ -82,18 +82,40 @@ end
 
 
 
+# Multipart auth: strip the JSON Content-Type so HTTP.Form can set its own
+# multipart/form-data boundary header (a stray application/json corrupts the upload).
+auth_header_multipart(s) = filter(p -> lowercase(String(first(p))) != "content-type", auth_header(s))
+
 # Stub: overridden by accounting.jl after include
 _accumulate_cost!(::Chat, ::LLMRequestResponse) = nothing
+
+"""
+    _token_usage_from(u::AbstractDict; prompt_key, completion_key, prompt_details, completion_details)
+
+Build a [`TokenUsage`](@ref) from a raw `usage` dict, pulling the cached/reasoning
+subtotals from the detail objects when present. Chat Completions and the Responses API
+name these differently (`prompt_tokens`/`input_tokens`, `prompt_tokens_details`/
+`input_tokens_details`, …), so the keys are parameterized.
+"""
+function _token_usage_from(u::AbstractDict;
+    prompt_key::String="prompt_tokens", completion_key::String="completion_tokens",
+    prompt_details::String="prompt_tokens_details", completion_details::String="completion_tokens_details")
+    pd = get(u, prompt_details, nothing)
+    cd = get(u, completion_details, nothing)
+    TokenUsage(
+        prompt_tokens=get(u, prompt_key, 0),
+        completion_tokens=get(u, completion_key, 0),
+        total_tokens=get(u, "total_tokens", 0),
+        cached_tokens=(pd isa AbstractDict ? get(pd, "cached_tokens", 0) : 0),
+        reasoning_tokens=(cd isa AbstractDict ? get(cd, "reasoning_tokens", 0) : 0),
+    )
+end
 
 function _parse_usage(data::Dict{String,Any})::Union{TokenUsage, Nothing}
     haskey(data, "usage") || return nothing
     u = data["usage"]
-    u isa Dict || return nothing
-    TokenUsage(
-        prompt_tokens=get(u, "prompt_tokens", 0),
-        completion_tokens=get(u, "completion_tokens", 0),
-        total_tokens=get(u, "total_tokens", 0)
-    )
+    u isa AbstractDict || return nothing
+    _token_usage_from(u)
 end
 
 function extract_message(resp::HTTP.Response)
@@ -144,13 +166,8 @@ function _parse_chunk(chunk::String, state::StreamState, failbuff)
         try
             parsed = JSON.parse(line[6:end]; dicttype=Dict{String,Any})
             # Capture usage if present (e.g. stream_options.include_usage)
-            if haskey(parsed, "usage") && parsed["usage"] isa Dict
-                u = parsed["usage"]
-                state.usage = TokenUsage(
-                    prompt_tokens=get(u, "prompt_tokens", 0),
-                    completion_tokens=get(u, "completion_tokens", 0),
-                    total_tokens=get(u, "total_tokens", 0)
-                )
+            if haskey(parsed, "usage") && parsed["usage"] isa AbstractDict
+                state.usage = _token_usage_from(parsed["usage"])
             end
             cho = parsed["choices"][1]
             fr = cho["finish_reason"]

@@ -21,11 +21,8 @@ token_usage(r::LLMSuccess)::TokenUsage = something(r.usage, TokenUsage())
 token_usage(r::ResponseSuccess)::TokenUsage = begin
     u = r.response.usage
     isnothing(u) && return TokenUsage()
-    TokenUsage(
-        prompt_tokens=get(u, "input_tokens", get(u, "prompt_tokens", 0)),
-        completion_tokens=get(u, "output_tokens", get(u, "completion_tokens", 0)),
-        total_tokens=get(u, "total_tokens", 0)
-    )
+    _token_usage_from(u; prompt_key="input_tokens", completion_key="output_tokens",
+        prompt_details="input_tokens_details", completion_details="output_tokens_details")
 end
 token_usage(::LLMFailure)::TokenUsage = TokenUsage()
 token_usage(::LLMCallError)::TokenUsage = TokenUsage()

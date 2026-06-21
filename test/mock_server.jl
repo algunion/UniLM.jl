@@ -7,12 +7,14 @@ using Sockets
 response_status = Ref{Int}(200)
 response_body = Ref{String}("{}")
 response_headers = Ref{Vector{Pair{String,String}}}(Pair{String,String}[])
+request_body = Ref{String}("")   # captures the last request body for wire-level assertions
 
 tcp_server = Sockets.listen(Sockets.localhost, 0)
 mock_port = Int(Sockets.getsockname(tcp_server)[2])
 close(tcp_server)
 
 mock_server = HTTP.serve!("127.0.0.1", mock_port; verbose=false) do req
+    request_body[] = String(req.body)
     headers = vcat(["Content-Type" => "application/json"], response_headers[])
     return HTTP.Response(response_status[], headers, Vector{UInt8}(response_body[]))
 end

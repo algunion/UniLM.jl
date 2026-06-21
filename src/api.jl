@@ -491,14 +491,22 @@ Abstract supertype for all API call results. Pattern-match on subtypes to handle
 abstract type LLMRequestResponse end
 
 """
-    TokenUsage(; prompt_tokens=0, completion_tokens=0, total_tokens=0)
+    TokenUsage(; prompt_tokens=0, completion_tokens=0, total_tokens=0, cached_tokens=0, reasoning_tokens=0)
 
 Token usage statistics returned by the API.
+
+`cached_tokens` (a subset of `prompt_tokens` served from the prompt cache) and
+`reasoning_tokens` (a subset of `completion_tokens` spent on hidden reasoning) are
+reported by newer models via the `*_tokens_details` objects; they default to 0 when
+the provider omits those details. `estimated_cost` bills `cached_tokens` at the
+discounted cached-input rate.
 """
 @kwdef struct TokenUsage
     prompt_tokens::Int = 0
     completion_tokens::Int = 0
     total_tokens::Int = 0
+    cached_tokens::Int = 0
+    reasoning_tokens::Int = 0
 end
 
 """

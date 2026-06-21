@@ -12,6 +12,30 @@
         @test u.completion_tokens == 50
         @test u.total_tokens == 150
     end
+
+    @testset "detail fields (cached/reasoning)" begin
+        u = TokenUsage()
+        @test u.cached_tokens == 0
+        @test u.reasoning_tokens == 0
+        # Chat-style usage dict → _parse_usage pulls *_tokens_details subtotals
+        chat_data = Dict{String,Any}("usage" => Dict{String,Any}(
+            "prompt_tokens" => 10, "completion_tokens" => 5, "total_tokens" => 15,
+            "prompt_tokens_details" => Dict{String,Any}("cached_tokens" => 7),
+            "completion_tokens_details" => Dict{String,Any}("reasoning_tokens" => 42)))
+        cu = UniLM._parse_usage(chat_data)
+        @test cu.cached_tokens == 7
+        @test cu.reasoning_tokens == 42
+        # Responses-style usage dict → token_usage(::ResponseSuccess) reads input/output details
+        ro = UniLM.ResponseObject(id="r", status="completed", model="gpt-5.5", output=Any[],
+            usage=Dict{String,Any}("input_tokens" => 3, "output_tokens" => 9, "total_tokens" => 12,
+                "input_tokens_details" => Dict{String,Any}("cached_tokens" => 2),
+                "output_tokens_details" => Dict{String,Any}("reasoning_tokens" => 4)),
+            raw=Dict{String,Any}())
+        ru = token_usage(ResponseSuccess(response=ro))
+        @test ru.cached_tokens == 2
+        @test ru.reasoning_tokens == 4
+        @test ru.prompt_tokens == 3
+    end
 end
 
 @testset "token_usage" begin

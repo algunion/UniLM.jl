@@ -696,7 +696,7 @@ function _parse_response_stream_chunk(chunk::String, textbuff::IOBuffer, failbuf
     last_nl = findlast('\n', chunk)
     if isnothing(last_nl)
         print(failbuff, chunk)
-        return (; done=false, event=last_event[], data=nothing)
+        return (; done=false, event=last_event[], data=nothing, terminal=:none)
     end
     if last_nl < lastindex(chunk)
         print(failbuff, chunk[nextind(chunk, last_nl):end])
@@ -705,7 +705,7 @@ function _parse_response_stream_chunk(chunk::String, textbuff::IOBuffer, failbuf
 
     lines = strip.(split(chunk, "\n"))
     lines = filter(!isempty, lines)
-    isempty(lines) && return (; done=false, event=last_event[], data=nothing)
+    isempty(lines) && return (; done=false, event=last_event[], data=nothing, terminal=:none)
 
     for line in lines
         if startswith(line, "event: ")
@@ -713,25 +713,35 @@ function _parse_response_stream_chunk(chunk::String, textbuff::IOBuffer, failbuf
         elseif startswith(line, "data: ")
             try
                 payload = JSON.parse(line[7:end]; dicttype=Dict{String,Any})
-                if last_event[] == "response.output_text.delta"
-                    delta = get(payload, "delta", "")
-                    print(textbuff, delta)
-                elseif last_event[] == "response.completed"
-                    return (; done=true, event=last_event[], data=payload)
+                ev = last_event[]
+                if ev == "response.output_text.delta"
+                    print(textbuff, get(payload, "delta", ""))
+                elseif ev == "response.completed"
+                    return (; done=true, event=ev, data=payload, terminal=:completed)
+                elseif ev == "response.failed"
+                    return (; done=true, event=ev, data=payload, terminal=:failed)
+                elseif ev == "response.incomplete"
+                    return (; done=true, event=ev, data=payload, terminal=:incomplete)
+                elseif ev == "error"
+                    return (; done=true, event=ev, data=payload, terminal=:error)
                 end
+                # Every other event (created/in_progress/queued, output_item.*, content_part.*,
+                # refusal.*, function_call_arguments.*, reasoning*, and the hosted-tool progress
+                # events) is ignored here and degrades gracefully — as do unknown/future types.
             catch e
                 print(failbuff, line)
                 continue
             end
         end
     end
-    return (; done=false, event=last_event[], data=nothing)
+    return (; done=false, event=last_event[], data=nothing, terminal=:none)
 end
 
 function _respond_stream(r::Respond, body::String, callback=nothing)
     Threads.@spawn begin
         try
             result = Ref{Union{ResponseObject,Nothing}}(nothing)
+            terminal_error = Ref{Union{Dict{String,Any},Nothing}}(nothing)  # structured failed/incomplete/error payload
             raw_buffer = IOBuffer()  # wire bytes for non-200 reporting (streamed resp.body is empty under HTTP 2.x)
             url = _api_base_url(r.service) * RESPONSES_PATH
             resp = HTTP.open("POST", url, auth_header(r.service); status_exception=false) do io
@@ -747,7 +757,7 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
                     chunk = String(readavailable(io))
                     write(raw_buffer, chunk)
                     status = _parse_response_stream_chunk(chunk, text_buffer, fail_buffer, last_event)
-                    if status.done && !isnothing(status.data)
+                    if status.terminal == :completed && !isnothing(status.data)
                         rdata = status.data["response"]
                         result[] = ResponseObject(
                             id=rdata["id"],
@@ -761,6 +771,11 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
                         )
                         done[] = true
                         !isnothing(callback) && callback(result[], close_ref)
+                    elseif status.terminal in (:failed, :incomplete, :error) && !isnothing(status.data)
+                        # Structured terminal failure mid-stream (HTTP itself may be 200): keep the
+                        # response's own error/incomplete details instead of dropping them.
+                        terminal_error[] = status.data
+                        done[] = true
                     else
                         parsed_text = String(take!(text_buffer))
                         if !isempty(parsed_text) && !isnothing(callback)
@@ -773,6 +788,14 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
             end
             if resp.status == 200 && !isnothing(result[])
                 ResponseSuccess(response=result[]::ResponseObject)
+            elseif !isnothing(terminal_error[])
+                te = terminal_error[]
+                if haskey(te, "response")            # response.failed / response.incomplete
+                    ResponseFailure(response=JSON.json(te["response"]), status=resp.status)
+                else                                  # bare `error` event
+                    ResponseCallError(error=get(te, "message", JSON.json(te)),
+                        status=(resp.status == 200 ? nothing : resp.status))
+                end
             else
                 ResponseFailure(response=String(take!(raw_buffer)), status=resp.status)
             end

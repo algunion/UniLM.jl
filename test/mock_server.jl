@@ -143,6 +143,21 @@ try
         @test occursin("Bad Request", inner.response)
     end
 
+    @testset "_respond_stream 200 + streamed response.failed → structured ResponseFailure" begin
+        # HTTP 200, but the SSE stream ends in response.failed — the structured error must be
+        # surfaced, not silently degraded to a 200 with a raw SSE blob (the pre-fix behavior).
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = "event: response.created\ndata: {\"type\":\"response.created\"}\n\n" *
+            "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"boom\"}}}\n\n"
+
+        r = Respond(input="test", service=MockServiceEndpoint, stream=true)
+        inner = fetch(respond(r))
+        @test inner isa ResponseFailure
+        @test occursin("server_error", inner.response)
+        @test occursin("boom", inner.response)
+    end
+
     # ═══════════════════════════════════════════════════════════════════════
     # Responses API: error / retry paths
     # ═══════════════════════════════════════════════════════════════════════

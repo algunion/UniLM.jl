@@ -135,10 +135,12 @@ function extract_message(resp::HTTP.Response)
             push!(tcalls, tc)
         end
         Message(role=RoleAssistant, tool_calls=tcalls, finish_reason=TOOL_CALLS)
-    elseif finish_reason == STOP && haskey(message, "content") && !isnothing(message["content"])
-        Message(role=RoleAssistant, content=message["content"], finish_reason=STOP)
-    elseif finish_reason == CONTENT_FILTER && haskey(message, "refusal") && !isnothing(message["refusal"])
-        Message(role=RoleAssistant, refusal_message=message["refusal"], finish_reason=CONTENT_FILTER)
+    elseif haskey(message, "content") && !isnothing(message["content"])
+        # Preserve content for ANY finish_reason (incl. "length"/truncated) — never discard partial output.
+        Message(role=RoleAssistant, content=message["content"], finish_reason=finish_reason)
+    elseif haskey(message, "refusal") && !isnothing(message["refusal"])
+        # A refusal may arrive with finish_reason "content_filter" OR "stop" — capture it regardless.
+        Message(role=RoleAssistant, refusal_message=message["refusal"], finish_reason=finish_reason)
     else
         Message(role=RoleAssistant, content="No response from the model.", finish_reason=finish_reason)
     end
@@ -148,6 +150,7 @@ end
 """Mutable accumulator for streaming Chat Completions chunks."""
 @kwdef mutable struct StreamState
     content::IOBuffer = IOBuffer()
+    refusal::IOBuffer = IOBuffer()
     tool_calls::Dict{Int, Dict{String,Any}} = Dict{Int, Dict{String,Any}}()
     finish_reason::Union{String, Nothing} = nothing
     usage::Union{TokenUsage, Nothing} = nothing
@@ -179,6 +182,10 @@ function _parse_chunk(chunk::String, state::StreamState, failbuff)
             # Text content delta
             if haskey(delta, "content") && !isnothing(delta["content"])
                 print(state.content, delta["content"])
+            end
+            # Refusal delta (streamed safety refusal)
+            if haskey(delta, "refusal") && !isnothing(delta["refusal"])
+                print(state.refusal, delta["refusal"])
             end
             # Tool call deltas — accumulate by index
             if haskey(delta, "tool_calls")
@@ -221,7 +228,12 @@ function _build_stream_message(state::StreamState)::Message
         Message(role=RoleAssistant, tool_calls=tcalls, finish_reason=TOOL_CALLS)
     else
         content = String(take!(state.content))
-        Message(role=RoleAssistant, content=content, finish_reason=something(state.finish_reason, STOP))
+        refusal = String(take!(state.refusal))
+        if isempty(content) && !isempty(refusal)
+            Message(role=RoleAssistant, refusal_message=refusal, finish_reason=something(state.finish_reason, STOP))
+        else
+            Message(role=RoleAssistant, content=content, finish_reason=something(state.finish_reason, STOP))
+        end
     end
 end
 

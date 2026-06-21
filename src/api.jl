@@ -401,6 +401,7 @@ Creates a new `Chat` object with default settings:
     stream::Union{Bool,Nothing} = nothing
     stop::Union{Vector{String},String,Nothing} = nothing # max 4 sequences
     max_tokens::Union{Int64,Nothing} = nothing
+    max_completion_tokens::Union{Int64,Nothing} = nothing # preferred over max_tokens; reasoning models reject max_tokens
     presence_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
     response_format::Union{ResponseFormat,Nothing} = nothing
     frequency_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
@@ -422,6 +423,7 @@ Creates a new `Chat` object with default settings:
         stream,
         stop,
         max_tokens,
+        max_completion_tokens,
         presence_penalty,
         response_format,
         frequency_penalty,
@@ -451,6 +453,7 @@ Creates a new `Chat` object with default settings:
             stream,
             stop,
             max_tokens,
+            max_completion_tokens,
             presence_penalty,
             response_format,
             frequency_penalty,
@@ -465,7 +468,7 @@ end
 function JSON.lower(chat::Chat)
     d = Dict{Symbol,Any}(:model => chat.model, :messages => chat.messages)
     for f in (:tools, :tool_choice, :parallel_tool_calls, :temperature, :top_p,
-        :n, :stream, :stop, :max_tokens, :presence_penalty, :response_format,
+        :n, :stream, :stop, :max_tokens, :max_completion_tokens, :presence_penalty, :response_format,
         :frequency_penalty, :logit_bias, :user, :seed)
         v = getfield(chat, f)
         !isnothing(v) && (d[f] = v)
@@ -686,38 +689,56 @@ struct Embeddings
     input::Union{String,Vector{String}}
     embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}
     user::Union{String,Nothing}
-    function Embeddings(input::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, model::String="")
+    dimensions::Union{Int,Nothing}
+    encoding_format::Union{String,Nothing}
+    function Embeddings(input::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, model::String="",
+        dimensions::Union{Int,Nothing}=nothing, encoding_format::Union{String,Nothing}=nothing,
+        user::Union{String,Nothing}=nothing)
         if isempty(model)
             dm = default_embedding_model(service)
             isnothing(dm) && throw(ArgumentError("model must be specified for embeddings with $(typeof(service))"))
             model = dm
         end
-        return new(service, model, input, zeros(Float64, 1536), nothing)
+        return new(service, model, input, zeros(Float64, something(dimensions, 1536)), user, dimensions, encoding_format)
     end
-    function Embeddings(input::Vector{String}; service::ServiceEndpointSpec=OPENAIServiceEndpoint, model::String="")
+    function Embeddings(input::Vector{String}; service::ServiceEndpointSpec=OPENAIServiceEndpoint, model::String="",
+        dimensions::Union{Int,Nothing}=nothing, encoding_format::Union{String,Nothing}=nothing,
+        user::Union{String,Nothing}=nothing)
         isempty(input) && throw(ArgumentError("input must not be empty"))
         if isempty(model)
             dm = default_embedding_model(service)
             isnothing(dm) && throw(ArgumentError("model must be specified for embeddings with $(typeof(service))"))
             model = dm
         end
-        return new(service, model, input, [zeros(Float64, 1536) for _ in 1:length(input)], nothing)
+        return new(service, model, input, [zeros(Float64, something(dimensions, 1536)) for _ in 1:length(input)], user, dimensions, encoding_format)
     end
 end
 
 function JSON.lower(emb::Embeddings)
     d = Dict{Symbol,Any}(:model => emb.model, :input => emb.input)
     !isnothing(emb.user) && (d[:user] = emb.user)
+    !isnothing(emb.dimensions) && (d[:dimensions] = emb.dimensions)
+    !isnothing(emb.encoding_format) && (d[:encoding_format] = emb.encoding_format)
     return d
 end
 
 function update!(emb::Embeddings, data::AbstractVector)
     if emb.input isa String
-        copy!(emb.embeddings, data[1]["embedding"])
+        _store_embedding!(emb.embeddings, data[1]["embedding"])
     else
         for item in data
             idx = item["index"] + 1  # API uses 0-based indexing
-            copy!(emb.embeddings[idx], item["embedding"])
+            _store_embedding!(emb.embeddings[idx], item["embedding"])
         end
     end
+end
+
+# Copy an API-returned embedding into the preallocated buffer, resizing when the model's
+# actual dimension differs from the 1536 default (e.g. text-embedding-3-large = 3072).
+function _store_embedding!(dst::Vector{Float64}, src::AbstractVector)
+    length(dst) == length(src) || resize!(dst, length(src))
+    @inbounds for i in eachindex(src)
+        dst[i] = src[i]
+    end
+    return dst
 end

@@ -755,6 +755,33 @@ end
         @test result.done == false
         @test !isempty(take!(failbuff))
     end
+
+    @testset "response.failed → terminal :failed with structured error" begin
+        chunk = "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"r\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"boom\"}}}\n\n"
+        textbuff = IOBuffer(); failbuff = IOBuffer()
+        result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
+        @test result.done == true
+        @test result.terminal == :failed
+        @test result.data["response"]["error"]["code"] == "server_error"
+    end
+
+    @testset "bare error event → terminal :error" begin
+        chunk = "event: error\ndata: {\"type\":\"error\",\"code\":\"rate_limit\",\"message\":\"slow down\"}\n\n"
+        textbuff = IOBuffer(); failbuff = IOBuffer()
+        result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
+        @test result.done == true
+        @test result.terminal == :error
+        @test result.data["message"] == "slow down"
+    end
+
+    @testset "unknown event degrades to :none without throwing" begin
+        chunk = "event: response.reasoning_text.delta\ndata: {\"type\":\"response.reasoning_text.delta\",\"delta\":\"thinking\"}\n\n"
+        textbuff = IOBuffer(); failbuff = IOBuffer()
+        result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
+        @test result.done == false
+        @test result.terminal == :none
+        @test isempty(take!(textbuff))   # reasoning deltas are not emitted as output text
+    end
 end
 
 @testset "respond() error handling" begin

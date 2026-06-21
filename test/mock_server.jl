@@ -320,7 +320,9 @@ try
         set_error!(429, "Rate limited"; headers=["Retry-After" => "2"])
 
         emb = UniLM.Embeddings("test"; service=MockServiceEndpoint)
-        @test_throws ErrorException embeddingrequest!(emb; retries=30)
+        result = embeddingrequest!(emb; retries=30)
+        @test result isa EmbeddingFailure
+        @test result.status == 429
 
         # Reset mock state so subsequent tests don't inherit 429 + Retry-After
         set_error!(200, "")
@@ -333,25 +335,32 @@ try
     @testset "embeddingrequest! with non-200 error status" begin
         set_error!(401, "Unauthorized")
         emb = UniLM.Embeddings("test embedding"; service=MockServiceEndpoint)
-        @test_throws ErrorException embeddingrequest!(emb)
+        result = embeddingrequest!(emb)
+        @test result isa EmbeddingFailure
+        @test result.status == 401
     end
 
     @testset "embeddingrequest! with 500 (retry exhausted)" begin
         set_error!(500, "Internal Server Error")
         emb = UniLM.Embeddings("test"; service=MockServiceEndpoint)
-        @test_throws ErrorException embeddingrequest!(emb; retries=30)
+        result = embeddingrequest!(emb; retries=30)
+        @test result isa EmbeddingFailure
+        @test result.status == 500
     end
 
     @testset "embeddingrequest! with 503 (retry exhausted)" begin
         set_error!(503, "Service Unavailable")
         emb = UniLM.Embeddings("test"; service=MockServiceEndpoint)
-        @test_throws ErrorException embeddingrequest!(emb; retries=30)
+        result = embeddingrequest!(emb; retries=30)
+        @test result isa EmbeddingFailure
+        @test result.status == 503
     end
 
     @testset "embeddingrequest! catch block (connection error)" begin
         dead = UniLM.GenericOpenAIEndpoint("http://127.0.0.1:1", "")
         emb = UniLM.Embeddings("test"; service=dead, model="test-embed")
-        @test_throws ErrorException embeddingrequest!(emb)
+        result = embeddingrequest!(emb)
+        @test result isa EmbeddingCallError
     end
 
     # ═══════════════════════════════════════════════════════════════════════

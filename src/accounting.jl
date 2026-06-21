@@ -31,6 +31,9 @@ token_usage(::ResponseCallError)::TokenUsage = TokenUsage()
 token_usage(::ImageSuccess)::TokenUsage = TokenUsage()
 token_usage(::ImageFailure)::TokenUsage = TokenUsage()
 token_usage(::ImageCallError)::TokenUsage = TokenUsage()
+token_usage(r::EmbeddingSuccess)::TokenUsage = something(r.usage, TokenUsage())
+token_usage(::EmbeddingFailure)::TokenUsage = TokenUsage()
+token_usage(::EmbeddingCallError)::TokenUsage = TokenUsage()
 
 """
     estimated_cost(result::LLMRequestResponse; model=nothing, pricing=DEFAULT_PRICING) -> Float64

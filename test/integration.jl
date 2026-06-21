@@ -169,9 +169,10 @@ end
 
     result = embeddingrequest!(emb)
 
-    @test result isa Tuple
+    @test result isa EmbeddingSuccess
     @test !all(x -> x == 0.0, emb.embeddings)  # embeddings updated in-place
     @test length(emb.embeddings) == 1536
+    @test embedding_vectors(result) === emb.embeddings
 end
 
 @testset "batch embedding" begin
@@ -184,7 +185,7 @@ end
 
     result = embeddingrequest!(emb)
 
-    @test result isa Tuple
+    @test result isa EmbeddingSuccess
     @test length(emb.embeddings) == 3
     for i in 1:3
         @test !all(x -> x == 0.0, emb.embeddings[i])  # each embedding updated

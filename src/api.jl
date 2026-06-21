@@ -787,3 +787,42 @@ function _store_embedding!(dst::Vector{Float64}, src::AbstractVector)
     end
     return dst
 end
+
+"""
+    EmbeddingSuccess(; embeddings, usage=nothing, raw)
+
+Successful Embeddings API response. Vectors are in `embeddings.embeddings` (also filled
+in place on the request struct); `embedding_vectors(r)` returns them.
+"""
+@kwdef struct EmbeddingSuccess <: LLMRequestResponse
+    embeddings::Embeddings
+    usage::Union{TokenUsage,Nothing} = nothing
+    raw::Dict{String,Any}
+end
+
+"""
+    EmbeddingFailure(; response, status)
+
+HTTP-level failure from the Embeddings API (non-2xx).
+"""
+@kwdef struct EmbeddingFailure <: LLMRequestResponse
+    response::String
+    status::Int
+end
+
+"""
+    EmbeddingCallError(; error, status=nothing)
+
+Exception-level error during an Embeddings API call (network, parse, etc.).
+"""
+@kwdef struct EmbeddingCallError <: LLMRequestResponse
+    error::String
+    status::Union{Int,Nothing} = nothing
+end
+
+"""
+    embedding_vectors(r::EmbeddingSuccess)
+
+Return the embedding vector(s): `Vector{Float64}` (single input) or `Vector{Vector{Float64}}` (batch).
+"""
+embedding_vectors(r::EmbeddingSuccess) = r.embeddings.embeddings

@@ -412,28 +412,21 @@ end
 
 
 """
-    embeddingrequest!(emb::Embedding)
+    embeddingrequest!(emb::Embeddings; retries=0) -> LLMRequestResponse
 
-    Send a request to the OpenAI API to generate an embedding for the `input` in `emb`.
-    
-    Resulting embedding is stored in the preallocated `embedding` field.  
-
-    @kwdef struct Embedding
-        model::String = "text-embedding-3-small"
-        input::Union{String,Vector{String}}
-        embedding::Vector{Float64} = zeros(Float64, 1536)
-        user::Union{String,Nothing} = nothing
-    end
-
+Send an Embeddings API request for the `input` in `emb`. Returns `EmbeddingSuccess`,
+`EmbeddingFailure` (non-2xx), or `EmbeddingCallError` (network/parse). The resulting
+vectors are filled into `emb.embeddings` in place and are also reachable via
+`embedding_vectors(result)`.
 """
 function embeddingrequest!(emb::Embeddings; retries::Int=0)
-    body = JSON.json(emb)
     try
+        body = JSON.json(emb)
         resp = HTTP.post(get_url(emb), body=body, headers=auth_header(emb.service); status_exception=false)
         if resp.status == 200
-            embedding = JSON.parse(resp.body; dicttype=Dict{String,Any})
-            update!(emb, embedding["data"])
-            return (embedding, emb)
+            data = JSON.parse(resp.body; dicttype=Dict{String,Any})
+            update!(emb, data["data"])
+            return EmbeddingSuccess(embeddings=emb, usage=_parse_usage(data), raw=data)
         elseif _is_retryable(resp.status)
             if retries < _RETRY_MAX_ATTEMPTS
                 delay = _retry_delay(retries, resp)
@@ -441,13 +434,13 @@ function embeddingrequest!(emb::Embeddings; retries::Int=0)
                 sleep(delay)
                 return embeddingrequest!(emb; retries=retries + 1)
             else
-                error("Max retries ($(_RETRY_MAX_ATTEMPTS)) exceeded for embedding request (status $(resp.status))")
+                return EmbeddingFailure(response=String(resp.body), status=resp.status)
             end
         else
-            error("Embedding request failed with status $(resp.status): $(String(resp.body))")
+            return EmbeddingFailure(response=String(resp.body), status=resp.status)
         end
     catch e
-        e isa ErrorException && rethrow()  # re-throw our own errors
-        error("Embedding request error: $e")
+        statuserror = hasproperty(e, :status) ? e.status : nothing
+        return EmbeddingCallError(error=string(e), status=statuserror)
     end
 end

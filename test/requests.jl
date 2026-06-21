@@ -465,7 +465,9 @@ end
     @testset "with invalid API key" begin
         withenv("OPENAI_API_KEY" => "sk-invalid-key-for-testing") do
             emb = UniLM.Embeddings("test")
-            @test_throws ErrorException embeddingrequest!(emb)
+            result = embeddingrequest!(emb)
+            @test result isa EmbeddingFailure
+            @test result.status == 401
         end
     end
 end

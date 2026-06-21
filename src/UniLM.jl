@@ -157,7 +157,13 @@ export
     # Format constructors
     text_format,
     json_schema_format,
-    json_object_format
+    json_object_format,
+    # tool_choice builders
+    tool_choice_function,
+    tool_choice_hosted,
+    tool_choice_mcp,
+    tool_choice_custom,
+    tool_choice_allowed
 
 # ─── Image Generation API ─────────────────────────────────────────────────────────
 export

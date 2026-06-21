@@ -46,26 +46,36 @@ Create an `input_text` content part for multimodal input messages.
 input_text(text::String) = Dict{Symbol,Any}(:type => "input_text", :text => text)
 
 """
-    input_image(url::String; detail=nothing)
+    input_image(url=nothing; detail=nothing, file_id=nothing)
 
-Create an `input_image` content part. `detail` can be `"auto"`, `"low"`, or `"high"`.
+Create an `input_image` content part. Provide either an image `url` or a `file_id`.
+`detail` can be `"auto"`, `"low"`, or `"high"`.
 """
-function input_image(url::String; detail::Union{String,Nothing}=nothing)
-    d = Dict{Symbol,Any}(:type => "input_image", :image_url => url)
+function input_image(url::Union{String,Nothing}=nothing; detail::Union{String,Nothing}=nothing,
+        file_id::Union{String,Nothing}=nothing)
+    isnothing(url) && isnothing(file_id) && throw(ArgumentError("Either `url` or `file_id` must be provided"))
+    d = Dict{Symbol,Any}(:type => "input_image")
+    !isnothing(url) && (d[:image_url] = url)
+    !isnothing(file_id) && (d[:file_id] = file_id)
     !isnothing(detail) && (d[:detail] = detail)
     return d
 end
 
 """
-    input_file(; url=nothing, id=nothing)
+    input_file(; url=nothing, id=nothing, file_data=nothing, filename=nothing)
 
-Create an `input_file` content part. Provide either a `url` or a `file_id`.
+Create an `input_file` content part. Provide a `url`, a file `id`, or inline `file_data`
+(base64). `filename` is recommended when passing `file_data`.
 """
-function input_file(; url::Union{String,Nothing}=nothing, id::Union{String,Nothing}=nothing)
-    isnothing(url) && isnothing(id) && throw(ArgumentError("Either `url` or `id` must be provided"))
+function input_file(; url::Union{String,Nothing}=nothing, id::Union{String,Nothing}=nothing,
+        file_data::Union{String,Nothing}=nothing, filename::Union{String,Nothing}=nothing)
+    isnothing(url) && isnothing(id) && isnothing(file_data) &&
+        throw(ArgumentError("One of `url`, `id`, or `file_data` must be provided"))
     d = Dict{Symbol,Any}(:type => "input_file")
     !isnothing(url) && (d[:file_url] = url)
     !isnothing(id) && (d[:file_id] = id)
+    !isnothing(file_data) && (d[:file_data] = file_data)
+    !isnothing(filename) && (d[:filename] = filename)
     return d
 end
 
@@ -118,21 +128,28 @@ function JSON.lower(t::FunctionTool)
 end
 
 """
-    WebSearchTool(; search_context_size="medium", user_location=nothing)
+    WebSearchTool(; type="web_search", search_context_size="medium", user_location=nothing, filters=nothing)
 
 A web search tool for the Responses API. Allows the model to search the web.
 
+- `type`: `"web_search"` (GA, default) or the legacy `"web_search_preview"`
 - `search_context_size`: `"low"`, `"medium"`, or `"high"`
 - `user_location`: Dict with keys like `"country"`, `"city"`, `"region"`, `"timezone"`
+- `filters`: Dict with `"allowed_domains"` / `"blocked_domains"` (GA only)
+
+Fetch sources/results back via `include=["web_search_call.results", "web_search_call.action.sources"]`.
 """
 @kwdef struct WebSearchTool <: ResponseTool
+    type::String = "web_search"
     search_context_size::String = "medium"
     user_location::Union{AbstractDict,Nothing} = nothing
+    filters::Union{AbstractDict,Nothing} = nothing
 end
 
 function JSON.lower(t::WebSearchTool)
-    d = Dict{Symbol,Any}(:type => "web_search_preview", :search_context_size => t.search_context_size)
+    d = Dict{Symbol,Any}(:type => t.type, :search_context_size => t.search_context_size)
     !isnothing(t.user_location) && (d[:user_location] = t.user_location)
+    !isnothing(t.filters) && (d[:filters] = t.filters)
     return d
 end
 
@@ -311,8 +328,10 @@ end
 Shorthand constructor for [`WebSearchTool`](@ref).
 """
 web_search(; context_size::String="medium",
-    location::Union{AbstractDict,Nothing}=nothing) =
-    WebSearchTool(search_context_size=context_size, user_location=location)
+    location::Union{AbstractDict,Nothing}=nothing,
+    type::String="web_search",
+    filters::Union{AbstractDict,Nothing}=nothing) =
+    WebSearchTool(type=type, search_context_size=context_size, user_location=location, filters=filters)
 
 """
     file_search(store_ids::Vector{String}; max_results=nothing, ranking=nothing, filters=nothing)
@@ -325,6 +344,53 @@ file_search(store_ids::Vector{String};
     filters::Union{AbstractDict,Nothing}=nothing) =
     FileSearchTool(vector_store_ids=store_ids, max_num_results=max_results,
         ranking_options=ranking, filters=filters)
+
+
+# ─── tool_choice helpers ──────────────────────────────────────────────────────
+# Beyond the string forms ("auto"/"none"/"required"), `Respond.tool_choice` accepts a
+# Dict to force a specific tool. These builders produce those Dicts.
+
+"""
+    tool_choice_function(name)
+
+Force the model to call a specific function tool: `{type:"function", name}`.
+"""
+tool_choice_function(name::String) = Dict{Symbol,Any}(:type => "function", :name => name)
+
+"""
+    tool_choice_hosted(type)
+
+Force a specific hosted tool, e.g. `tool_choice_hosted("file_search")`, `"image_generation"`,
+`"code_interpreter"`. Note: the hosted web-search selector is `"web_search_preview"` (not `"web_search"`).
+"""
+tool_choice_hosted(type::String) = Dict{Symbol,Any}(:type => type)
+
+"""
+    tool_choice_mcp(server_label; name=nothing)
+
+Force a specific MCP server (optionally a specific tool): `{type:"mcp", server_label, name?}`.
+"""
+function tool_choice_mcp(server_label::String; name::Union{String,Nothing}=nothing)
+    d = Dict{Symbol,Any}(:type => "mcp", :server_label => server_label)
+    !isnothing(name) && (d[:name] = name)
+    return d
+end
+
+"""
+    tool_choice_custom(name)
+
+Force a specific custom tool: `{type:"custom", name}`.
+"""
+tool_choice_custom(name::String) = Dict{Symbol,Any}(:type => "custom", :name => name)
+
+"""
+    tool_choice_allowed(mode, tools)
+
+Constrain the model to a subset of tools: `{type:"allowed_tools", mode, tools}`.
+`mode` is `"auto"` or `"required"`; `tools` is a vector of tool-reference dicts.
+"""
+tool_choice_allowed(mode::String, tools::Vector) =
+    Dict{Symbol,Any}(:type => "allowed_tools", :mode => mode, :tools => tools)
 
 
 # ─── Configuration Types ─────────────────────────────────────────────────────
@@ -361,6 +427,13 @@ Wrapper for the `text` field in the Responses API request body.
 """
 @kwdef struct TextConfig
     format::TextFormatSpec = TextFormatSpec()
+    verbosity::Union{String,Nothing} = nothing   # "low" | "medium" | "high" (gpt-5.x)
+end
+
+function JSON.lower(t::TextConfig)
+    d = Dict{Symbol,Any}(:format => t.format)
+    !isnothing(t.verbosity) && (d[:verbosity] = t.verbosity)
+    return d
 end
 
 # Convenience constructors
@@ -370,7 +443,8 @@ end
 
 Create a [`TextConfig`](@ref) with the given format options.
 """
-text_format(; kwargs...) = TextConfig(format=TextFormatSpec(; kwargs...))
+text_format(; verbosity::Union{String,Nothing}=nothing, kwargs...) =
+    TextConfig(format=TextFormatSpec(; kwargs...), verbosity=verbosity)
 
 """
     json_schema_format(name, description, schema; strict=nothing)
@@ -405,13 +479,14 @@ json_object_format() = TextConfig(format=TextFormatSpec(type="json_object"))
 
 
 """
-    Reasoning(; effort=nothing, summary=nothing)
+    Reasoning(; effort=nothing, summary=nothing, generate_summary=nothing)
 
-Reasoning configuration for O-series models (o3, o4-mini, etc.).
+Reasoning configuration for reasoning models (gpt-5.x, o-series).
 
-- `effort`: `"none"`, `"low"`, `"medium"`, or `"high"`
-- `generate_summary`: `"auto"`, `"concise"`, or `"detailed"` — configures summary generation
-- `summary`: `"auto"`, `"concise"`, or `"detailed"` (deprecated alias for `generate_summary`)
+- `effort`: `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, or `"xhigh"` (supported values are
+  model-dependent; passed through verbatim).
+- `summary`: `"auto"`, `"concise"`, or `"detailed"` — request a reasoning summary in the output.
+- `generate_summary`: deprecated alias of `summary`; prefer `summary`.
 """
 @kwdef struct Reasoning
     effort::Union{String,Nothing} = nothing
@@ -479,7 +554,7 @@ Respond(input="Solve this math problem...", model="o3", reasoning=Reasoning(effo
     input::Union{String, Vector}  # String, Vector{InputMessage}, or Vector{Dict}
     instructions::Union{String,Nothing} = nothing
     tools::Union{Vector,Nothing} = nothing  # Untyped Vector: accepts ResponseTool, CallableTool, and Dict
-    tool_choice::Union{String,Nothing} = nothing      # "auto", "none", "required"
+    tool_choice::Union{String,AbstractDict,Nothing} = nothing  # "auto"/"none"/"required" or a {type:...} object
     parallel_tool_calls::Union{Bool,Nothing} = nothing
     temperature::Union{Float64,Nothing} = nothing
     top_p::Union{Float64,Nothing} = nothing

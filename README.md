@@ -7,16 +7,19 @@
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://algunion.github.io/UniLM.jl/stable/)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://algunion.github.io/UniLM.jl/dev/)
 
-A **Julian**, type-safe interface to **LLM providers** via the OpenAI-compatible API standard — covering the **Chat Completions API**, the **Responses API**, **Image Generation**, **Embeddings**, and **MCP**. Works with OpenAI, Azure, Gemini, Mistral, DeepSeek, Ollama, vLLM, LM Studio, and any OpenAI-compatible provider.
+A **Julian**, type-safe interface to **LLM providers** via the OpenAI-compatible API standard — covering the **Chat Completions** and **Responses** APIs, **Image Generation/Edits**, **Embeddings**, **Files/Vector Stores**, **Conversations**, **Audio**, **Batch**, **Moderations**, **Fine-tuning**, **Webhooks**, **Realtime**, and **MCP**. Works with OpenAI, Azure, Gemini, Mistral, DeepSeek, Ollama, vLLM, LM Studio, and any OpenAI-compatible provider.
 
 ## Features
 
 - **Chat Completions** — stateful conversations with automatic history management
 - **Responses API** — OpenAI's newer API with built-in tools, multi-turn chaining, and reasoning
-- **Image Generation** — create images from text prompts with `gpt-image-1.5`
+- **Image Generation & Edits** — create and edit images with `gpt-image-2`
 - **Tool/Function Calling** — first-class support for function tools in both APIs, with automated `tool_loop`
 - **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool loop integration
 - **Embeddings** — text embedding generation with `text-embedding-3-small`
+- **Files, Vector Stores & Conversations** — upload files, build vector stores for `file_search`, and manage server-side conversation state
+- **Audio, Batch & Moderations** — TTS/transcription, async 50%-off bulk jobs, and free safety classification
+- **Realtime, Fine-tuning, Webhooks, Containers, Uploads & Videos** — WebSocket realtime, custom models, signed-webhook verification, and more
 - **Streaming** — real-time token streaming with `do`-block syntax
 - **Structured Output** — JSON Schema–constrained generation
 - **Multi-Backend** — OpenAI, Azure, Gemini, DeepSeek, Ollama, Mistral, vLLM, LM Studio, and any OpenAI-compatible provider
@@ -54,7 +57,7 @@ julia> output_text(result)
 "Julia's multiple dispatch means a function can have many method definitions, and Julia chooses which one to run based on the types of *all* arguments in a call (not just the first). This makes it easy to write generic code while still getting specialized, high-performance behavior for specific type combinations."
 
 julia> result.response.model
-"gpt-5.2-2025-12-11"
+"gpt-5.5"
 ```
 
 ### Chat Completions

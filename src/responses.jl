@@ -1156,7 +1156,7 @@ Convenience method: create a [`Respond`](@ref) from `input` + keyword arguments 
 result = respond("Tell me a joke")
 
 # With instructions and model
-result = respond("Translate: Hello", instructions="You are a translator", model="gpt-5.2")
+result = respond("Translate: Hello", instructions="You are a translator", model="gpt-5.5")
 
 # With tools
 result = respond("Search for Julia news", tools=[web_search()])
@@ -1338,7 +1338,7 @@ Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys.
 
 # Examples
 ```julia
-compacted = compact_response(model="gpt-5.2", input=[
+compacted = compact_response(model="gpt-5.5", input=[
     InputMessage(role="user", content="Hello"),
     Dict("type" => "message", "role" => "assistant", "status" => "completed",
          "content" => [Dict("type" => "output_text", "text" => "Hi there!")])
@@ -1376,7 +1376,7 @@ Returns a Dict with `"object"` (`"response.input_tokens"`) and `"input_tokens"` 
 
 # Examples
 ```julia
-result = count_input_tokens(model="gpt-5.2", input="Tell me a joke")
+result = count_input_tokens(model="gpt-5.5", input="Tell me a joke")
 println("Input tokens: ", result["input_tokens"])
 ```
 """

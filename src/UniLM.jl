@@ -20,7 +20,7 @@ UniLM.jl provides:
 using UniLM
 
 # Chat Completions
-chat = Chat(model=\"gpt-5.2\")
+chat = Chat(model=\"gpt-5.5\")
 push!(chat, Message(Val(:system), \"You are a helpful assistant\"))
 push!(chat, Message(Val(:user), \"Hello!\"))
 result = chatrequest!(chat)

@@ -8,11 +8,11 @@ if result isa ResponseSuccess
     println(output_text(result))
 else
     println(&quot;Request failed — &quot;, output_text(result))
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">- **Multiple dispatch + parametric types:** Julia’s core abstraction is *generic functions* with methods specialized on argument types. Types can be parameterized (e.g., `Vector{Int}`, `Dict{String,Float64}`), enabling both expressive APIs and efficient specialization.
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">- **Types are dynamic but can be very specific:** Julia variables do not have fixed types, but values do. The compiler uses value types to generate efficient machine code, often comparable to statically typed languages.
 
-- **Dynamic, nominative, with a rich subtype lattice:** Values always have concrete runtime types, but variables don’t need annotations (dynamic). Types are **nominative** (a type’s identity matters, not just its structure) and form a hierarchy under `Any`, with abstract types (e.g., `Number`) and concrete leaf types (e.g., `Int64`).
+- **Multiple dispatch is central:** Functions are selected based on the types of *all* their arguments, not just the first one. This makes it easy to write generic, extensible code.
 
-- **Performance via inference and specialization, not mandatory annotations:** Julia compiles “just ahead of time” for the types it sees, using type inference to generate optimized machine code. Type annotations are mainly for dispatch/documentation; you get speed when code is type-stable and works with concrete types.</code></pre><h3 id="Using-Chat-Completions"><a class="docs-heading-anchor" href="#Using-Chat-Completions">Using Chat Completions</a><a id="Using-Chat-Completions-1"></a><a class="docs-heading-anchor-permalink" href="#Using-Chat-Completions" title="Permalink"></a></h3><p>For stateful, multi-turn conversations:</p><pre><code class="language-julia hljs">chat = Chat(model=&quot;gpt-4o-mini&quot;)
+- **Types form a hierarchy:** Julia has abstract types, concrete types, parametric types, and unions. Concrete types cannot be subtyped, but abstract types can organize behavior, e.g. `Number`, `Real`, `Integer`, `Float64`.</code></pre><h3 id="Using-Chat-Completions"><a class="docs-heading-anchor" href="#Using-Chat-Completions">Using Chat Completions</a><a id="Using-Chat-Completions-1"></a><a class="docs-heading-anchor-permalink" href="#Using-Chat-Completions" title="Permalink"></a></h3><p>For stateful, multi-turn conversations:</p><pre><code class="language-julia hljs">chat = Chat(model=&quot;gpt-4o-mini&quot;)
 push!(chat, Message(Val(:system), &quot;You are a concise Julia programming tutor.&quot;))
 push!(chat, Message(Val(:user), &quot;What is multiple dispatch? Answer in 2-3 sentences.&quot;))
 result = chatrequest!(chat)
@@ -22,7 +22,7 @@ if result isa LLMSuccess
     println(&quot;Conversation length: &quot;, length(chat))
 else
     println(&quot;Request failed — see result for details&quot;)
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Multiple dispatch is a feature in programming languages like Julia that allows a function to be selected based on the types of all its arguments, not just the first one. This enables more flexible and expressive code, as it allows for defining specialized behaviors for different combinations of argument types, promoting code reuse and clarity.
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Multiple dispatch is a programming paradigm where the method to be executed is determined by the runtime types of more than one argument. In Julia, this allows for highly flexible and efficient code, as different implementations of a function can be defined based on the specific types of all its parameters. This contrasts with single dispatch, which resolves methods based only on the type of the first argument (usually the object invoking the method).
 
 Finish reason: stop
 Conversation length: 3</code></pre><h3 id="Generating-Images"><a class="docs-heading-anchor" href="#Generating-Images">Generating Images</a><a id="Generating-Images-1"></a><a class="docs-heading-anchor-permalink" href="#Generating-Images" title="Permalink"></a></h3><pre><code class="language-julia hljs">result = generate_image(
@@ -59,18 +59,72 @@ println(&quot;LLMRequestResponse subtypes:&quot;)
 for T in subtypes(UniLM.LLMRequestResponse)
     println(&quot;  &quot;, T)
 end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">LLMRequestResponse subtypes:
+  AudioCallError
+  AudioFailure
+  BatchCallError
+  BatchFailure
+  BatchListSuccess
+  BatchSuccess
+  ContainerCallError
+  ContainerDeleteSuccess
+  ContainerFailure
+  ContainerListSuccess
+  ContainerSuccess
+  ConversationCallError
+  ConversationDeleteSuccess
+  ConversationFailure
+  ConversationItemListSuccess
+  ConversationItemSuccess
+  ConversationSuccess
+  EmbeddingCallError
+  EmbeddingFailure
+  EmbeddingSuccess
   FIMCallError
   FIMFailure
   FIMSuccess
+  FileCallError
+  FileContentSuccess
+  FileDeleteSuccess
+  FileFailure
+  FileListSuccess
+  FileSuccess
+  FineTuningCallError
+  FineTuningFailure
+  FineTuningListSuccess
+  FineTuningSuccess
   ImageCallError
   ImageFailure
   ImageSuccess
   LLMCallError
   LLMFailure
   LLMSuccess
+  ModerationCallError
+  ModerationFailure
+  ModerationSuccess
+  RealtimeCallError
+  RealtimeFailure
+  RealtimeSecretSuccess
   ResponseCallError
   ResponseFailure
-  ResponseSuccess</code></pre><pre><code class="language-julia hljs">result = chatrequest!(chat)
+  ResponseSuccess
+  SpeechSuccess
+  TranscriptionSuccess
+  UploadCallError
+  UploadFailure
+  UploadPartSuccess
+  UploadSuccess
+  VectorStoreBatchSuccess
+  VectorStoreCallError
+  VectorStoreDeleteSuccess
+  VectorStoreFailure
+  VectorStoreFileSuccess
+  VectorStoreListSuccess
+  VectorStoreSuccess
+  VideoCallError
+  VideoContentSuccess
+  VideoFailure
+  VideoListSuccess
+  VideoSuccess</code></pre><pre><code class="language-julia hljs">result = chatrequest!(chat)
 
 if result isa LLMSuccess
     println(&quot;Assistant: &quot;, result.message.content)
@@ -79,7 +133,7 @@ elseif result isa LLMFailure
     @warn &quot;API returned HTTP $(result.status): $(result.response)&quot;
 elseif result isa LLMCallError
     @error &quot;Call failed: $(result.error)&quot;
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Assistant: Hello! How can I help today?
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Assistant: Hello! How can I help you today?
 Finish reason: stop</code></pre><p>For the Responses API:</p><pre><code class="language-julia hljs">result = respond(&quot;Hello!&quot;)
 
 if result isa ResponseSuccess
@@ -92,4 +146,4 @@ elseif result isa ResponseCallError
     @error result.error
 end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Hello! How can I help you today?
 Status: completed
-Model: gpt-5.2-2025-12-11</code></pre><h2 id="What&#39;s-Next?"><a class="docs-heading-anchor" href="#What&#39;s-Next?">What&#39;s Next?</a><a id="What&#39;s-Next?-1"></a><a class="docs-heading-anchor-permalink" href="#What&#39;s-Next?" title="Permalink"></a></h2><table><tr><th style="text-align: left">Want to...</th><th style="text-align: left">Read...</th></tr><tr><td style="text-align: left">Build multi-turn conversations</td><td style="text-align: left"><a href="../guide/chat_completions/#chat_guide">Chat Completions Guide</a></td></tr><tr><td style="text-align: left">Use the newer Responses API</td><td style="text-align: left"><a href="../guide/responses_api/#responses_guide">Responses API Guide</a></td></tr><tr><td style="text-align: left">Generate images from prompts</td><td style="text-align: left"><a href="../guide/image_generation/#images_guide">Image Generation Guide</a></td></tr><tr><td style="text-align: left">Call functions from the model</td><td style="text-align: left"><a href="../guide/tool_calling/#tools_guide">Tool Calling Guide</a></td></tr><tr><td style="text-align: left">Stream tokens in real-time</td><td style="text-align: left"><a href="../guide/streaming/#streaming_guide">Streaming Guide</a></td></tr><tr><td style="text-align: left">Get structured JSON output</td><td style="text-align: left"><a href="../guide/structured_output/#structured_guide">Structured Output Guide</a></td></tr><tr><td style="text-align: left">Use any provider</td><td style="text-align: left"><a href="../guide/multi_backend/#backend_guide">Multi-Backend Guide</a></td></tr></table></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../llm/">« LLM Reference</a><a class="docs-footer-nextpage" href="../guide/chat_completions/">Chat Completions »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Saturday 20 June 2026 22:38">Saturday 20 June 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+Model: gpt-5.5-2026-04-23</code></pre><h2 id="What&#39;s-Next?"><a class="docs-heading-anchor" href="#What&#39;s-Next?">What&#39;s Next?</a><a id="What&#39;s-Next?-1"></a><a class="docs-heading-anchor-permalink" href="#What&#39;s-Next?" title="Permalink"></a></h2><table><tr><th style="text-align: left">Want to...</th><th style="text-align: left">Read...</th></tr><tr><td style="text-align: left">Build multi-turn conversations</td><td style="text-align: left"><a href="../guide/chat_completions/#chat_guide">Chat Completions Guide</a></td></tr><tr><td style="text-align: left">Use the newer Responses API</td><td style="text-align: left"><a href="../guide/responses_api/#responses_guide">Responses API Guide</a></td></tr><tr><td style="text-align: left">Generate images from prompts</td><td style="text-align: left"><a href="../guide/image_generation/#images_guide">Image Generation Guide</a></td></tr><tr><td style="text-align: left">Call functions from the model</td><td style="text-align: left"><a href="../guide/tool_calling/#tools_guide">Tool Calling Guide</a></td></tr><tr><td style="text-align: left">Stream tokens in real-time</td><td style="text-align: left"><a href="../guide/streaming/#streaming_guide">Streaming Guide</a></td></tr><tr><td style="text-align: left">Get structured JSON output</td><td style="text-align: left"><a href="../guide/structured_output/#structured_guide">Structured Output Guide</a></td></tr><tr><td style="text-align: left">Use any provider</td><td style="text-align: left"><a href="../guide/multi_backend/#backend_guide">Multi-Backend Guide</a></td></tr></table></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../llm/">« LLM Reference</a><a class="docs-footer-nextpage" href="../guide/chat_completions/">Chat Completions »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Sunday 21 June 2026 17:59">Sunday 21 June 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

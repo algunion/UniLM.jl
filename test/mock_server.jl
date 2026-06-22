@@ -1176,6 +1176,190 @@ try
         @test contains(result.llm_error, "max turns")
     end
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # Chat Completions: SUCCESSFUL streaming + non-stream retry recursion
+    # Covers requests.jl: 264–307 (stream accumulation, callbacks, on_tool_call,
+    # eos→_build_stream_message→LLMSuccess→_accumulate_cost!), 343–346 (non-stream
+    # retry-then-recover recursion), 355–356 (chatrequest! stream dispatch).
+    # The streamed resp.body is empty under HTTP 2.x → assert on the parsed
+    # LLMSuccess message, never the raw body (mirrors the existing stream tests).
+    # SSE chunk wire-format is reused verbatim from test/requests.jl.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "chatrequest! stream=true success → LLMSuccess via dispatch (355–356, 302–307)" begin
+        # Content deltas "Hello" + " world", a usage chunk, then finish_reason stop + [DONE].
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] =
+            """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"chatcmpl-1","choices":[],"usage":{"prompt_tokens":7,"completion_tokens":2,"total_tokens":9}}\n\n""" *
+            """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n""" *
+            """data: [DONE]"""
+
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true)
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="usr"))
+
+        # Go through chatrequest! (the public dispatch) — NOT _chatrequeststream directly.
+        task = chatrequest!(chat)
+        @test task isa Task
+        result = fetch(task)
+
+        @test result isa LLMSuccess
+        @test result.message.role == UniLM.RoleAssistant
+        @test result.message.content == "Hello world"      # exact accumulated content
+        @test result.message.finish_reason == UniLM.STOP
+        @test result.usage isa UniLM.TokenUsage              # populated from the stream usage chunk
+        @test result.usage.prompt_tokens == 7
+        @test result.usage.completion_tokens == 2
+        @test result.usage.total_tokens == 9
+        # update! appended the assistant message onto the chat (history defaults true)
+        @test last(chat).content == "Hello world"
+        set_error!(200, "")
+    end
+
+    @testset "chatrequest! stream callback receives final Message on eos (286)" begin
+        # Under HTTP 2.x the mock delivers the whole SSE body in a single readavailable,
+        # so _parse_chunk reports eos on the first loop iteration: the eos branch (282–286)
+        # runs and invokes callback(m[], close_ref) with the assembled Message. The
+        # incremental text-delta branch (287–297) requires multiple network reads, which a
+        # single canned HTTP.Response cannot produce — so it is not asserted here (asserting
+        # incremental deltas against this transport would test a fiction, not the source).
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] =
+            """data: {"id":"c","choices":[{"index":0,"delta":{"content":"Ahoy"},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"c","choices":[{"index":0,"delta":{"content":" there"},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"c","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n""" *
+            """data: [DONE]"""
+
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true)
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="usr"))
+
+        received = Any[]
+        cb = (chunk, close_ref) -> push!(received, chunk)
+
+        result = fetch(chatrequest!(chat; callback=cb))
+
+        @test result isa LLMSuccess
+        @test result.message.content == "Ahoy there"
+        # The callback fired exactly once — with the final assembled Message (eos branch).
+        @test length(received) == 1
+        @test received[1] isa Message
+        @test received[1].content == "Ahoy there"
+        @test received[1].finish_reason == UniLM.STOP
+        set_error!(200, "")
+    end
+
+    @testset "chatrequest! stream on_tool_call fires with parsed GPTToolCall (263–280, 220–229)" begin
+        # A single streamed tool call: id, name, then argument fragments, finishing tool_calls.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] =
+            """data: {"id":"c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_xyz","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\\"location\\\":"}}]},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\\"NYC\\\"}"}}]},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"c","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\n""" *
+            """data: [DONE]"""
+
+        tool = GPTTool(func=GPTFunctionSignature(name="get_weather", description="Weather",
+            parameters=Dict("type"=>"object", "properties"=>Dict("location"=>Dict("type"=>"string")))))
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true, tools=[tool])
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="weather in NYC?"))
+
+        received_calls = GPTToolCall[]
+        on_tc = tc -> push!(received_calls, tc)
+
+        result = fetch(chatrequest!(chat; on_tool_call=on_tc))
+
+        @test result isa LLMSuccess
+        @test result.message.finish_reason == UniLM.TOOL_CALLS
+        # The final message carries the assembled tool call (built by _build_stream_message).
+        @test length(result.message.tool_calls) == 1
+        @test result.message.tool_calls[1].id == "call_xyz"
+        @test result.message.tool_calls[1].func.name == "get_weather"
+        @test result.message.tool_calls[1].func.arguments["location"] == "NYC"
+        # on_tool_call fired exactly once, with the fully-parsed GPTToolCall.
+        @test length(received_calls) == 1
+        @test received_calls[1].id == "call_xyz"
+        @test received_calls[1].func.name == "get_weather"
+        @test received_calls[1].func.arguments["location"] == "NYC"
+        set_error!(200, "")
+    end
+
+    @testset "chatrequest! non-stream retry-then-recover recursion (343–346)" begin
+        # First request: retryable 503 (drains queue entry 1) → recurse → 200 success (entry 2).
+        # retries defaults to 0 < _RETRY_MAX_ATTEMPTS, so 343–346 (delay/sleep/recurse) runs once.
+        success_body = JSON.json(Dict(
+            "choices" => [Dict(
+                "finish_reason" => "stop",
+                "message" => Dict("role" => "assistant", "content" => "recovered after retry"))],
+            "usage" => Dict("prompt_tokens" => 4, "completion_tokens" => 3, "total_tokens" => 7)))
+        response_queue[] = [(503, ""), (200, success_body)]
+
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="usr"))
+
+        result = chatrequest!(chat)   # default retries=0 → genuinely retries
+
+        @test result isa LLMSuccess
+        @test result.message.content == "recovered after retry"
+        @test result.usage.total_tokens == 7
+        @test isempty(response_queue[])   # both queued responses consumed → it really retried once
+        set_error!(200, "")
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Embeddings: SUCCESS + retry-then-recover recursion
+    # Covers requests.jl: 428–430 (200 → update! → EmbeddingSuccess) and
+    # 433–436 (retryable → recurse → recover). _store_embedding! resizes the
+    # preallocated buffer to the returned length, so short exact vectors are safe.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "embeddingrequest! success → EmbeddingSuccess with exact vectors + usage (428–430)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "object" => "list",
+            "model" => "mock-embedding",
+            "data" => [Dict("object" => "embedding", "index" => 0,
+                "embedding" => [0.5, -0.25, 0.125])],
+            "usage" => Dict("prompt_tokens" => 3, "total_tokens" => 3)))
+
+        emb = UniLM.Embeddings("hello"; service=MockServiceEndpoint)
+        result = embeddingrequest!(emb)
+
+        @test result isa EmbeddingSuccess
+        @test embedding_vectors(result) == [0.5, -0.25, 0.125]   # exact returned vector
+        @test emb.embeddings == [0.5, -0.25, 0.125]              # filled in place on the request
+        @test result.usage isa UniLM.TokenUsage
+        @test result.usage.prompt_tokens == 3
+        @test result.usage.total_tokens == 3
+        @test result.raw["model"] == "mock-embedding"           # raw JSON retained
+        set_error!(200, "")
+    end
+
+    @testset "embeddingrequest! retry-then-recover recursion (433–436)" begin
+        emb_body = JSON.json(Dict(
+            "object" => "list", "model" => "mock-embedding",
+            "data" => [Dict("object" => "embedding", "index" => 0, "embedding" => [1.0, 2.0])],
+            "usage" => Dict("prompt_tokens" => 2, "total_tokens" => 2)))
+        response_queue[] = [(503, ""), (200, emb_body)]
+
+        emb = UniLM.Embeddings("retry me"; service=MockServiceEndpoint)
+        result = embeddingrequest!(emb)   # default retries=0 → genuinely retries once
+
+        @test result isa EmbeddingSuccess
+        @test embedding_vectors(result) == [1.0, 2.0]
+        @test result.usage.total_tokens == 2
+        @test isempty(response_queue[])   # both queued responses consumed → it retried then recovered
+        set_error!(200, "")
+    end
+
 finally
     close(mock_server)
 end

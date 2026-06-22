@@ -516,3 +516,324 @@ end
         close(httpserver)
     end
 end
+
+# ─── StdioTransport: drive the CLIENT against a REAL subprocess MCP server ─────
+# The most common MCP deployment is a child process speaking newline-delimited
+# JSON-RPC over stdin/stdout. We spawn a Julia child that `using UniLM` and runs
+# `UniLM._serve_stdio(server)` (which FLUSHES stdout per response → the parent's
+# `readline` never deadlocks). This is the ONLY way to exercise
+# `_transport_connect!/_transport_send!/_transport_notify!/_transport_disconnect!`
+# for StdioTransport and the `mcp_connect(::Cmd)` entry point — all of which the
+# HTTP path cannot reach.
+#
+# DETERMINISM: stdio is synchronous request/response (no timing races). A watchdog
+# (`timedwait` + kill-by-unique-marker) guarantees a pathologically hung child can
+# never block the suite, and `finally` always tears the child down even on an
+# assertion failure (`failfast` semantics in CI).
+@testset "MCP client ↔ subprocess stdio server" begin
+    # Unique marker embedded in the child program so we can pkill it by name even
+    # if we never obtain its Process handle (e.g. a hung handshake).
+    marker = "UNILMSTDIOSRV" * string(rand(UInt64); base=16)
+    child_src = """
+    # $marker
+    using UniLM
+    server = UniLM.MCPServer("stdio-probe-mcp", "7.7.7"; description="stdio probe")
+    UniLM.register_tool!(server, "concat", "Concatenate a and b with a pipe",
+        Dict{String,Any}("type" => "object",
+            "properties" => Dict{String,Any}(
+                "a" => Dict{String,Any}("type" => "string"),
+                "b" => Dict{String,Any}("type" => "string")),
+            "required" => ["a", "b"]),
+        function (args::Dict{String,Any})
+            string(args["a"]) * "|" * string(args["b"])
+        end)
+    UniLM._serve_stdio(server)
+    """
+    childfile, childio = mktemp()
+    write(childio, child_src)
+    close(childio)
+    proj = dirname(dirname(pathof(UniLM)))
+    cmd = `$(Base.julia_cmd()) --startup-file=no --project=$proj $childfile`
+
+    # Connect on a worker task guarded by a watchdog so a hung child cannot hang
+    # the suite. On success the worker stores the live MCPSession.
+    box = Ref{Any}(nothing)
+    worker = @async (box[] = try mcp_connect(cmd) catch e; e end)
+    connected = timedwait(() -> istaskdone(worker), 90.0)
+    try
+        if connected !== :ok
+            # Pathological hang: kill the child by marker, fail loud, do not block.
+            try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+            @test connected === :ok  # falsifies: handshake completed within budget
+        else
+            session = box[]
+            @test session isa MCPSession           # not a thrown exception
+            if session isa MCPSession
+                try
+                    # Handshake completed over a real pipe.
+                    @test session.status == :ready
+                    @test UniLM._transport_isconnected(session.transport) == true
+                    @test session.transport isa StdioTransport
+                    # serverInfo carries the EXACT values the child registered.
+                    @test session.server_info["name"] == "stdio-probe-mcp"
+                    @test session.server_info["version"] == "7.7.7"
+                    # A real round-trip request → exact deterministic handler output.
+                    @test call_tool(session, "concat",
+                        Dict{String,Any}("a" => "foo", "b" => "bar")) == "foo|bar"
+                    # Different args → different exact result (falsifies constant-return).
+                    @test call_tool(session, "concat",
+                        Dict{String,Any}("a" => "x", "b" => "yz")) == "x|yz"
+                finally
+                    mcp_disconnect!(session)
+                end
+                # Teardown actually closed the subprocess.
+                @test session.status == :closed
+                @test UniLM._transport_isconnected(session.transport) == false
+            end
+        end
+    finally
+        # Belt-and-suspenders: ensure no child of ours survives, whatever happened.
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "MCP client HTTPTransport non-200 → error with status" begin
+    # The server returns HTTP 500 for the initialize POST. `_transport_send!`
+    # must raise (NOT silently return), and the message must name the status —
+    # this is the `resp.status == 200 || error(...)` branch (mcp_client.jl:255).
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        HTTP.Response(500, "upstream exploded")
+    end
+    url = "http://127.0.0.1:$port"
+    try
+        err = nothing
+        try
+            mcp_connect(url)  # handshake's first POST hits the 500
+        catch e
+            err = e
+        end
+        @test err isa ErrorException                    # raised, not swallowed
+        @test contains(err.msg, "MCP HTTP request failed with status 500")
+        @test contains(err.msg, "upstream exploded")    # body echoed into the error
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "MCP client list_* pagination follows nextCursor" begin
+    # A stateful handler hand-crafts JSON-RPC responses: the FIRST tools/list (and
+    # resources/list, prompts/list) returns ONE item + a `nextCursor`; the SECOND
+    # (carrying that cursor) returns the remaining item and NO cursor. Merged
+    # results containing items from BOTH pages prove the cursor loop iterated past
+    # its first `break` (mcp_client.jl:473/496/519). `initialize` advertises NO
+    # capabilities so `mcp_connect` does NOT auto-list — we drive list_*! ourselves.
+    calls = Dict{String,Int}("tools/list" => 0, "resources/list" => 0, "prompts/list" => 0)
+    seen_cursor = Dict{String,Any}("tools/list" => :none, "resources/list" => :none, "prompts/list" => :none)
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        method = get(parsed, "method", "")
+        id = get(parsed, "id", nothing)
+        isnothing(id) && return HTTP.Response(202, "")  # notification (initialized)
+        local result::Dict{String,Any}
+        if method == "initialize"
+            # No capabilities → no handshake auto-list; we call list_*! explicitly.
+            result = Dict{String,Any}(
+                "protocolVersion" => UniLM._MCP_PROTOCOL_VERSION,
+                "capabilities" => Dict{String,Any}(),
+                "serverInfo" => Dict{String,Any}("name" => "pager", "version" => "1.0"))
+        elseif method == "ping"
+            result = Dict{String,Any}()
+        elseif haskey(calls, method)
+            calls[method] += 1
+            n = calls[method]
+            params = get(parsed, "params", Dict{String,Any}())
+            seen_cursor[method] = get(params, "cursor", :none)
+            key = split(method, "/")[1]  # "tools" | "resources" | "prompts"
+            if key == "tools"
+                if n == 1
+                    result = Dict{String,Any}("tools" => [Dict{String,Any}("name" => "page1tool",
+                        "inputSchema" => Dict{String,Any}("type" => "object"))],
+                        "nextCursor" => "CUR-tools")
+                else
+                    result = Dict{String,Any}("tools" => [Dict{String,Any}("name" => "page2tool",
+                        "inputSchema" => Dict{String,Any}("type" => "object"))])
+                end
+            elseif key == "resources"
+                if n == 1
+                    result = Dict{String,Any}("resources" => [Dict{String,Any}(
+                        "uri" => "probe://p1", "name" => "page1res")], "nextCursor" => "CUR-res")
+                else
+                    result = Dict{String,Any}("resources" => [Dict{String,Any}(
+                        "uri" => "probe://p2", "name" => "page2res")])
+                end
+            else  # prompts
+                if n == 1
+                    result = Dict{String,Any}("prompts" => [Dict{String,Any}("name" => "page1prompt")],
+                        "nextCursor" => "CUR-prompts")
+                else
+                    result = Dict{String,Any}("prompts" => [Dict{String,Any}("name" => "page2prompt")])
+                end
+            end
+        else
+            return HTTP.Response(200, ["Content-Type" => "application/json"],
+                JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id,
+                    "error" => Dict{String,Any}("code" => -32601, "message" => "Method not found"))))
+        end
+        HTTP.Response(200, ["Content-Type" => "application/json"],
+            JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id, "result" => result)))
+    end
+    url = "http://127.0.0.1:$port"
+    try
+        session = mcp_connect(url)
+        try
+            @test isnothing(session.server_capabilities.tools)  # confirm: no auto-list
+
+            tools = list_tools!(session)
+            @test [t.name for t in tools] == ["page1tool", "page2tool"]  # BOTH pages merged
+            @test calls["tools/list"] == 2                # loop made a second request
+            @test seen_cursor["tools/list"] == "CUR-tools"  # 2nd request carried the cursor
+            @test session.tools == tools                  # cache stored the merge
+
+            resources = list_resources!(session)
+            @test [r.uri for r in resources] == ["probe://p1", "probe://p2"]
+            @test [r.name for r in resources] == ["page1res", "page2res"]
+            @test calls["resources/list"] == 2
+            @test seen_cursor["resources/list"] == "CUR-res"
+
+            prompts = list_prompts!(session)
+            @test [p.name for p in prompts] == ["page1prompt", "page2prompt"]
+            @test calls["prompts/list"] == 2
+            @test seen_cursor["prompts/list"] == "CUR-prompts"
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "MCP client call_tool non-text & non-dict content parts" begin
+    # `tools/call` content has THREE part shapes the client must handle distinctly:
+    #   - {"type":"text", "text":...}  → push the raw text          (covered already)
+    #   - a Dict with a non-"text" type → JSON-encode the whole part (mcp_client.jl:545)
+    #   - a non-Dict element (e.g. a bare string) → `string(part)`   (mcp_client.jl:548)
+    # The handler returns a mixed content array; call_tool must join them with "\n"
+    # in order, JSON-encoding the image part and stringifying the bare element.
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        id = get(parsed, "id", nothing)
+        method = get(parsed, "method", "")
+        isnothing(id) && return HTTP.Response(202, "")
+        result = if method == "initialize"
+            Dict{String,Any}("protocolVersion" => UniLM._MCP_PROTOCOL_VERSION,
+                "capabilities" => Dict{String,Any}(),
+                "serverInfo" => Dict{String,Any}("name" => "mixed", "version" => "1.0"))
+        elseif method == "tools/call"
+            Dict{String,Any}("content" => Any[
+                Dict{String,Any}("type" => "text", "text" => "alpha"),
+                Dict{String,Any}("type" => "image", "data" => "QUJD", "mimeType" => "image/png"),
+                "bare-string-part"])
+        else
+            Dict{String,Any}()
+        end
+        HTTP.Response(200, ["Content-Type" => "application/json"],
+            JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id, "result" => result)))
+    end
+    url = "http://127.0.0.1:$port"
+    try
+        session = mcp_connect(url)
+        try
+            out = call_tool(session, "whatever", Dict{String,Any}())
+            lines = split(out, "\n")
+            @test length(lines) == 3
+            @test lines[1] == "alpha"                                  # text branch
+            # Non-text Dict part → JSON-encoded whole part. Re-parse to assert exact
+            # fields (key order in JSON is unspecified, so compare the parsed dict).
+            img = JSON.parse(lines[2]; dicttype=Dict{String,Any})
+            @test img == Dict{String,Any}("type" => "image", "data" => "QUJD", "mimeType" => "image/png")
+            @test lines[3] == "bare-string-part"                       # non-Dict → string(part)
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "MCP client read_resource blob content branch" begin
+    # resources/read may return `blob` contents (base64) instead of `text`. The
+    # client must push the blob string (mcp_client.jl:568-569). A mixed list
+    # (text + blob) proves both branches and the "\n" join order.
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        id = get(parsed, "id", nothing)
+        method = get(parsed, "method", "")
+        isnothing(id) && return HTTP.Response(202, "")
+        result = if method == "initialize"
+            Dict{String,Any}("protocolVersion" => UniLM._MCP_PROTOCOL_VERSION,
+                "capabilities" => Dict{String,Any}(),
+                "serverInfo" => Dict{String,Any}("name" => "blobby", "version" => "1.0"))
+        elseif method == "resources/read"
+            Dict{String,Any}("contents" => Any[
+                Dict{String,Any}("uri" => "probe://x", "text" => "plain-text"),
+                Dict{String,Any}("uri" => "probe://x", "blob" => "YmluYXJ5LWJsb2I=")])
+        else
+            Dict{String,Any}()
+        end
+        HTTP.Response(200, ["Content-Type" => "application/json"],
+            JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id, "result" => result)))
+    end
+    url = "http://127.0.0.1:$port"
+    try
+        session = mcp_connect(url)
+        try
+            # text part then blob part, joined by "\n" in order.
+            @test read_resource(session, "probe://x") == "plain-text\nYmluYXJ5LWJsb2I="
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "MCP client HTTPTransport disconnect-failure is swallowed" begin
+    # If the DELETE on disconnect raises (server already gone), `_transport_disconnect!`
+    # must catch it and still mark the session closed (mcp_client.jl:280-281 @debug).
+    # We give the client a session_id (so the DELETE branch is taken), then CLOSE the
+    # server before disconnecting so the DELETE request throws a connection error.
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        id = get(parsed, "id", nothing)
+        isnothing(id) && return HTTP.Response(202, ["Mcp-Session-Id" => "sid-9"], "")
+        result = Dict{String,Any}("protocolVersion" => UniLM._MCP_PROTOCOL_VERSION,
+            "capabilities" => Dict{String,Any}(),
+            "serverInfo" => Dict{String,Any}("name" => "doomed", "version" => "1.0"))
+        HTTP.Response(200,
+            ["Content-Type" => "application/json", "Mcp-Session-Id" => "sid-9"],
+            JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id, "result" => result)))
+    end
+    url = "http://127.0.0.1:$port"
+    session = mcp_connect(url)
+    @test session.transport.session_id == "sid-9"   # DELETE branch will be taken
+    close(httpserver)                                # kill the endpoint → DELETE will throw
+    # Must NOT propagate the connection error; must still close cleanly.
+    @test mcp_disconnect!(session) === nothing
+    @test session.status == :closed
+    @test UniLM._transport_isconnected(session.transport) == false
+end

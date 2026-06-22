@@ -8,6 +8,11 @@ response_status = Ref{Int}(200)
 response_body = Ref{String}("{}")
 response_headers = Ref{Vector{Pair{String,String}}}(Pair{String,String}[])
 request_body = Ref{String}("")   # captures the last request body for wire-level assertions
+# Optional FIFO of (status, body) responses. When non-empty, the handler pops one entry
+# per request, enabling multi-request flows (e.g. retry-then-succeed) without 30 real
+# backoff sleeps. Empty by default → handler falls back to the single canned response,
+# so existing tests are unaffected.
+response_queue = Ref{Vector{Tuple{Int,String}}}(Tuple{Int,String}[])
 
 tcp_server = Sockets.listen(Sockets.localhost, 0)
 mock_port = Int(Sockets.getsockname(tcp_server)[2])
@@ -15,6 +20,11 @@ close(tcp_server)
 
 mock_server = HTTP.serve!("127.0.0.1", mock_port; verbose=false) do req
     request_body[] = String(req.body)
+    # Queued multi-response flow takes precedence (drains one entry per request).
+    if !isempty(response_queue[])
+        status, body = popfirst!(response_queue[])
+        return HTTP.Response(status, ["Content-Type" => "application/json"], Vector{UInt8}(body))
+    end
     # Default to application/json, but let a test override the response Content-Type.
     has_ct = any(p -> lowercase(p.first) == "content-type", response_headers[])
     headers = has_ct ? response_headers[] : vcat(["Content-Type" => "application/json"], response_headers[])

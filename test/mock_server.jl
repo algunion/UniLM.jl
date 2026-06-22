@@ -1360,6 +1360,207 @@ try
         set_error!(200, "")
     end
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # FIM Completion: HTTP-executing function-body paths (completions.jl 156–177)
+    # Success, retry-recursion, retry-exhausted, non-retryable, and catch→CallError.
+    # The mock declares :fim, so validate_capability passes and the HTTP call runs.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "fim_complete success → FIMSuccess with exact text/usage + serialized prompt/suffix (161)" begin
+        # 200 with a realistic FIM completion shape (per _parse_fim_response): choices[].text,
+        # usage.{prompt,completion,total}_tokens, model. Falsifies the success branch AND that
+        # the request body serialized prompt+suffix (would fail if JSON.lower(fim) regressed).
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "id" => "cmpl-1",
+            "model" => "mock-fim",
+            "choices" => [Dict(
+                "text" => "    if a <= 1:\n        return a\n",
+                "index" => 0,
+                "finish_reason" => "stop")],
+            "usage" => Dict("prompt_tokens" => 11, "completion_tokens" => 9, "total_tokens" => 20)))
+
+        fim = FIMCompletion(service=MockServiceEndpoint, model="mock-fim",
+            prompt="def fib(a):\n", suffix="    return fib(a-1) + fib(a-2)", max_tokens=64)
+        result = fim_complete(fim)
+
+        @test result isa FIMSuccess
+        @test fim_text(result) == "    if a <= 1:\n        return a\n"   # exact parsed text
+        @test result.response.choices[1].finish_reason == "stop"
+        @test result.response.usage.prompt_tokens == 11
+        @test result.response.usage.completion_tokens == 9
+        @test result.response.usage.total_tokens == 20
+        @test result.response.model == "mock-fim"
+        # Request actually serialized the FIM prompt + suffix (falsifies the wire format).
+        sent = JSON.parse(request_body[]; dicttype=Dict{String,Any})
+        @test sent["prompt"] == "def fib(a):\n"
+        @test sent["suffix"] == "    return fib(a-1) + fib(a-2)"
+        @test sent["max_tokens"] == 64
+        @test sent["model"] == "mock-fim"
+        set_error!(200, "")
+    end
+
+    @testset "fim_complete retry-then-recover recursion → FIMSuccess, queue drained (162–167)" begin
+        # First request: retryable 503 (drains entry 1) → retries=0 < _RETRY_MAX_ATTEMPTS → recurse
+        # → 200 success (entry 2). Both queued responses must be consumed (proves it really retried).
+        fim_body = JSON.json(Dict(
+            "model" => "mock-fim",
+            "choices" => [Dict("text" => "recovered", "index" => 0, "finish_reason" => "stop")],
+            "usage" => Dict("prompt_tokens" => 2, "completion_tokens" => 1, "total_tokens" => 3)))
+        response_queue[] = [(503, ""), (200, fim_body)]
+
+        fim = FIMCompletion(service=MockServiceEndpoint, model="mock-fim", prompt="x", suffix="y")
+        result = fim_complete(fim)   # default retries=0 → genuinely retries once
+
+        @test result isa FIMSuccess
+        @test fim_text(result) == "recovered"
+        @test result.response.usage.total_tokens == 3
+        @test isempty(response_queue[])   # both responses consumed → it retried then recovered
+        set_error!(200, "")
+    end
+
+    @testset "fim_complete retry exhausted → FIMFailure status 503 (169)" begin
+        set_error!(503, "Service Unavailable")
+        fim = FIMCompletion(service=MockServiceEndpoint, model="mock-fim", prompt="x")
+        result = fim_complete(fim; retries=30)   # already past _RETRY_MAX_ATTEMPTS → no recurse
+        @test result isa FIMFailure
+        @test result.status == 503
+        @test occursin("Service Unavailable", result.response)   # raw body surfaced
+        set_error!(200, "")
+    end
+
+    @testset "fim_complete non-retryable 400 → FIMFailure status 400 (171–172)" begin
+        set_error!(400, "Bad Request")
+        fim = FIMCompletion(service=MockServiceEndpoint, model="mock-fim", prompt="x")
+        result = fim_complete(fim)
+        @test result isa FIMFailure
+        @test result.status == 400
+        @test occursin("Bad Request", result.response)
+        set_error!(200, "")
+    end
+
+    @testset "fim_complete connection error → FIMCallError with non-empty error (174,176–177)" begin
+        # Capable-but-unreachable endpoint: declares :fim so validate_capability passes, then the
+        # HTTP.post to a dead port raises inside the try → caught → FIMCallError. This is the only
+        # path that reaches lines 176–177 (the catch tail).
+        struct FIMDeadEndpoint <: UniLM.ServiceEndpoint end
+        UniLM._api_base_url(::Type{FIMDeadEndpoint}) = "http://127.0.0.1:1"
+        UniLM.auth_header(::Type{FIMDeadEndpoint}) = ["Content-Type" => "application/json"]
+        UniLM.default_fim_model(::Type{FIMDeadEndpoint}) = "dead-fim"
+        UniLM.get_url(::Type{FIMDeadEndpoint}, ::FIMCompletion) = "http://127.0.0.1:1/v1/completions"
+        UniLM.provider_capabilities(::Type{FIMDeadEndpoint}) = Set([:fim, :prefix_completion])
+
+        fim = FIMCompletion(service=FIMDeadEndpoint, model="dead-fim", prompt="x")
+        result = fim_complete(fim)
+        @test result isa FIMCallError
+        @test !isempty(result.error)   # stringified connection exception captured
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Chat Prefix Completion: HTTP-executing function-body paths (completions.jl 220–259)
+    # Success + message-construction loop (prefix flag), retry-recursion, failures, catch.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "prefix_complete success → LLMSuccess, prefix replaced, request carries prefix:true (220–244)" begin
+        # Build a Chat whose LAST message is role=assistant (the prefix). Set messages= directly
+        # because push! forbids assistant-after-user-then-assistant ordering construction.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "id" => "chatcmpl-1",
+            "model" => "mock-model",
+            "choices" => [Dict(
+                "index" => 0,
+                "finish_reason" => "stop",
+                "message" => Dict("role" => "assistant", "content" => "print('hello')\n```"))],
+            "usage" => Dict("prompt_tokens" => 8, "completion_tokens" => 5, "total_tokens" => 13)))
+
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", messages=[
+            Message(role=UniLM.RoleUser, content="Write hello world in Python"),
+            Message(role=UniLM.RoleAssistant, content="```python\n")])
+        result = prefix_complete(chat)
+
+        @test result isa LLMSuccess
+        @test result.message.content == "print('hello')\n```"   # exact completed content
+        @test result.message.role == UniLM.RoleAssistant
+        @test result.usage.total_tokens == 13
+        # history=true (default): the completed assistant message REPLACED the prefix in the chat.
+        @test length(chat) == 2
+        @test chat.messages[end].content == "print('hello')\n```"
+        @test chat.messages[end] === result.message
+        # The message-construction loop must have flagged the LAST message with prefix:true.
+        sent = JSON.parse(request_body[]; dicttype=Dict{String,Any})
+        @test sent["messages"][end]["prefix"] == true
+        @test sent["messages"][end]["role"] == "assistant"
+        @test sent["messages"][end]["content"] == "```python\n"   # the prefix we sent
+        @test !haskey(sent["messages"][1], "prefix")              # only the last msg flagged
+        @test sent["messages"][1]["role"] == "user"
+        set_error!(200, "")
+    end
+
+    @testset "prefix_complete retry-then-recover recursion → LLMSuccess, queue drained (245–250)" begin
+        chat_body = JSON.json(Dict(
+            "model" => "mock-model",
+            "choices" => [Dict("index" => 0, "finish_reason" => "stop",
+                "message" => Dict("role" => "assistant", "content" => "recovered prefix"))],
+            "usage" => Dict("prompt_tokens" => 3, "completion_tokens" => 2, "total_tokens" => 5)))
+        response_queue[] = [(503, ""), (200, chat_body)]
+
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", messages=[
+            Message(role=UniLM.RoleUser, content="continue"),
+            Message(role=UniLM.RoleAssistant, content="The answer is ")])
+        result = prefix_complete(chat)   # default retries=0 → genuinely retries once
+
+        @test result isa LLMSuccess
+        @test result.message.content == "recovered prefix"
+        @test result.usage.total_tokens == 5
+        @test isempty(response_queue[])   # both responses consumed → retried then recovered
+        set_error!(200, "")
+    end
+
+    @testset "prefix_complete retry exhausted → LLMFailure status 503 (252)" begin
+        set_error!(503, "Service Unavailable")
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", messages=[
+            Message(role=UniLM.RoleUser, content="hi"),
+            Message(role=UniLM.RoleAssistant, content="partial")])
+        result = prefix_complete(chat; retries=30)
+        @test result isa LLMFailure
+        @test result.status == 503
+        @test occursin("Service Unavailable", result.response)
+        set_error!(200, "")
+    end
+
+    @testset "prefix_complete non-retryable 400 → LLMFailure status 400 (255)" begin
+        set_error!(400, "Bad Request")
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", messages=[
+            Message(role=UniLM.RoleUser, content="hi"),
+            Message(role=UniLM.RoleAssistant, content="partial")])
+        result = prefix_complete(chat)
+        @test result isa LLMFailure
+        @test result.status == 400
+        @test occursin("Bad Request", result.response)
+        set_error!(200, "")
+    end
+
+    @testset "prefix_complete connection error → LLMCallError with non-empty error (257,259)" begin
+        # Capable-but-unreachable endpoint declaring :prefix_completion so validate_capability passes;
+        # HTTP.post to a dead port raises inside the try → caught → LLMCallError. Only path to 259.
+        struct PrefixDeadEndpoint <: UniLM.ServiceEndpoint end
+        UniLM._api_base_url(::Type{PrefixDeadEndpoint}) = "http://127.0.0.1:1"
+        UniLM.auth_header(::Type{PrefixDeadEndpoint}) = ["Content-Type" => "application/json"]
+        UniLM.default_model(::Type{PrefixDeadEndpoint}) = "dead-model"
+        UniLM.get_url(::Type{PrefixDeadEndpoint}, ::Chat) = "http://127.0.0.1:1/v1/chat/completions"
+        UniLM.provider_capabilities(::Type{PrefixDeadEndpoint}) = Set([:fim, :prefix_completion])
+
+        chat = Chat(service=PrefixDeadEndpoint, model="dead-model", messages=[
+            Message(role=UniLM.RoleUser, content="hi"),
+            Message(role=UniLM.RoleAssistant, content="partial")])
+        result = prefix_complete(chat)
+        @test result isa LLMCallError
+        @test !isempty(result.error)
+    end
+
 finally
     close(mock_server)
 end

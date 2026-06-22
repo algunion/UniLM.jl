@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.10.1
+
+Patch release: correctness fixes for the MCP server macros, plus a large test-coverage
+hardening pass. No breaking changes.
+
+### Fixed
+- `@mcp_resource` template form now binds the matched path parameters into the handler's
+  declared arguments. The documented example
+  `@mcp_resource server "file://{path}" function(path::String) read(path, String) end`
+  previously raised `UndefVarError` at read time because the params were never unpacked;
+  each declared argument is now bound from the matched URI `{param}` of the same name.
+- `@mcp_prompt` now supports the documented anonymous `function(arg) … end` form. The first
+  declared argument was previously dropped (omitted from the prompt's argument schema and
+  left unbound in the handler); a shared, signature-shape-robust argument extractor now
+  handles both the named and anonymous forms.
+- `@mcp_tool` registers under the function name, so it now raises a clear error when given
+  an anonymous function instead of silently registering a tool named after the first
+  argument node. Use the documented named form `@mcp_tool server function name(args…) … end`.
+
+### Internal
+- Test suite substantially expanded — the MCP client/server operation layers, streaming,
+  retry recursion, and error paths are now exercised end-to-end via deterministic in-process
+  mocks. Project coverage ~99.6%. This work is tests-only; no behavior change.
+
 ## 0.10.0
 
 "OpenAI first-class" release: correctness fixes, a fully-modeled Responses API, cache-aware

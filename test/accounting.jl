@@ -216,3 +216,35 @@ end
     @test haskey(DEFAULT_PRICING, "text-embedding-3-small")
     @test DEFAULT_PRICING["gpt-5.5"].cached_input < DEFAULT_PRICING["gpt-5.5"].input
 end
+
+@testset "estimated_cost — EmbeddingSuccess model resolution" begin
+    # src/accounting.jl:69 — for an EmbeddingSuccess the priced model is read from
+    # result.embeddings.model. text-embedding-3-small is priced at 0.02/1M input, 0.0 output.
+    emb = Embeddings("hello")                 # defaults to text-embedding-3-small on OPENAI
+    @test emb.model == "text-embedding-3-small"
+    rates = DEFAULT_PRICING["text-embedding-3-small"]
+    @test rates.input == 0.02 / 1_000_000
+    @test rates.output == 0.0
+
+    u = TokenUsage(prompt_tokens=500_000, completion_tokens=0, total_tokens=500_000)
+    es = EmbeddingSuccess(embeddings=emb, usage=u, raw=Dict{String,Any}())
+    # Hand-computed: 500_000 * 0.02/1M = 0.01 (no cached, no output).
+    @test estimated_cost(es) ≈ 0.01
+    @test estimated_cost(es) ≈ 500_000 * rates.input
+
+    # The model genuinely comes from embeddings.model: an explicit override changes the cost,
+    # and a non-zero completion count must NOT add anything (embedding output rate is 0.0).
+    u2 = TokenUsage(prompt_tokens=500_000, completion_tokens=9_999, total_tokens=509_999)
+    es2 = EmbeddingSuccess(embeddings=emb, usage=u2, raw=Dict{String,Any}())
+    @test estimated_cost(es2) ≈ 0.01
+
+    # A different priced embedding model resolves through line 69 to a different cost.
+    emb_lg = Embeddings("hello"; model="text-embedding-3-large")
+    es_lg = EmbeddingSuccess(embeddings=emb_lg, usage=u, raw=Dict{String,Any}())
+    @test estimated_cost(es_lg) ≈ 500_000 * DEFAULT_PRICING["text-embedding-3-large"].input
+
+    # An unpriced embedding model (resolved from embeddings.model, not in DEFAULT_PRICING) → 0.
+    emb_unk = Embeddings("hello"; model="text-embedding-unknown")
+    es_unk = EmbeddingSuccess(embeddings=emb_unk, usage=u, raw=Dict{String,Any}())
+    @test estimated_cost(es_unk) == 0.0
+end

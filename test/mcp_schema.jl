@@ -50,6 +50,26 @@ end
     @test opt == true
 end
 
+@testset "_is_optional — both 2-arg Union orderings + baselines" begin
+    # Julia 1.12 normalizes 2-arg `Union{T, Nothing}` deterministically: Nothing lands in
+    # `.a`, T in `.b`, REGARDLESS of source order. Empirically (verified here):
+    #   Union{Int,Nothing}.a === Nothing  and  Union{Nothing,Int}.a === Nothing
+    # So both spellings exercise src/mcp_schema.jl:53 (`a === Nothing && return (true, b)`);
+    # the doubled values below assert the SAME (true, Int) result either way, which would
+    # break if line 53's returned element (`b`) were swapped for `a`.
+    @test UniLM._is_optional(Union{Int,Nothing}) == (true, Int)
+    @test UniLM._is_optional(Union{Nothing,Int}) == (true, Int)
+    # Pin the empirical ordering this conclusion rests on (line 54, the `b === Nothing`
+    # branch, is therefore unreachable for any 2-arg Union{T,Nothing} on this Julia).
+    @test Union{Int,Nothing}.a === Nothing
+    @test Union{Nothing,Int}.a === Nothing
+    @test Union{Int,Nothing}.b === Int
+    # Non-optional baseline: a plain concrete type is required and returned unchanged.
+    @test UniLM._is_optional(Int) == (false, Int)
+    # Bare Nothing is optional with element Nothing (the T === Nothing fast-path, line 50).
+    @test UniLM._is_optional(Nothing) == (true, Nothing)
+end
+
 @testset "_function_schema" begin
     f1(a::String, b::Int) = a * string(b)
     schema = UniLM._function_schema(f1)

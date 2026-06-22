@@ -71,6 +71,33 @@ end
     @test UniLM.default_model(mistral) === nothing
 end
 
+@testset "default-model fallbacks return nothing" begin
+    gen = GenericOpenAIEndpoint("http://x", "")
+    ds = DeepSeekEndpoint("k")
+
+    # src/capabilities.jl:65 — the GenericOpenAIEndpoint-specific embedding method (more
+    # specific than the `_` fallback) returns nothing. Asserting `=== nothing` (not just
+    # falsy) pins the exact return.
+    @test which(UniLM.default_embedding_model, (typeof(gen),)).line == 65
+    @test UniLM.default_embedding_model(gen) === nothing
+
+    # src/capabilities.jl:70 — default_image_model has only an OPENAI method (line 69) and the
+    # catch-all `_` (line 70); any instance other than the OPENAI type hits line 70 → nothing.
+    @test which(UniLM.default_image_model, (typeof(ds),)).line == 70
+    @test UniLM.default_image_model(ds) === nothing
+    @test UniLM.default_image_model(gen) === nothing
+
+    # src/capabilities.jl:74 — GenericOpenAIEndpoint-specific FIM method (more specific than
+    # both ::DeepSeekEndpoint and `_`) returns nothing.
+    @test which(UniLM.default_fim_model, (typeof(gen),)).line == 74
+    @test UniLM.default_fim_model(gen) === nothing
+
+    # src/capabilities.jl:75 — the `_` FIM fallback. OPENAIServiceEndpoint is a TYPE (not a
+    # DeepSeekEndpoint/GenericOpenAIEndpoint instance), so it lands on the catch-all → nothing.
+    @test which(UniLM.default_fim_model, (Type{OPENAIServiceEndpoint},)).line == 75
+    @test UniLM.default_fim_model(OPENAIServiceEndpoint) === nothing
+end
+
 @testset "0.10 endpoint capabilities (consolidation)" begin
     new_caps = (:files, :vector_stores, :conversations, :moderation, :audio, :batch,
         :image_edits, :fine_tuning, :containers, :uploads, :video, :realtime)

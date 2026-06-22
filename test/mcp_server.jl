@@ -326,3 +326,126 @@ end
     @test server.tools["hello"].handler(Dict{String,Any}()) == "world"
     @test isempty(server.tools["hello"].input_schema["properties"])
 end
+
+# ─── Error & edge paths for resources/prompts/stdio (coverage: src lines 272, 362, 375, 402, 422, 451–454) ───
+
+@testset "resources/read — binary blob (base64, no text key)" begin
+    # src/mcp_server.jl:272 — Vector{UInt8} handler result → base64 "blob" not "text".
+    server = MCPServer("blob-test", "1.0.0")
+    payload = UInt8[0x00, 0x01, 0xff, 0xfe, 0x42, 0x00, 0x80]  # includes non-UTF8/null bytes
+    register_resource!(server, "bytes://raw", "Raw Bytes", () -> payload;
+        mime_type="application/octet-stream")
+
+    req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 11, "method" => "resources/read",
+        "params" => Dict{String,Any}("uri" => "bytes://raw"))
+    resp = UniLM._dispatch_mcp(server, req)
+
+    @test resp["id"] == 11
+    content = resp["result"]["contents"][1]
+    @test content["uri"] == "bytes://raw"
+    @test content["mimeType"] == "application/octet-stream"
+    # The blob branch must be taken: a "blob" key present, NO "text" key.
+    @test haskey(content, "blob")
+    @test !haskey(content, "text")
+    # The base64 must decode to the EXACT original bytes.
+    @test UniLM.Base64.base64decode(content["blob"]) == payload
+end
+
+@testset "resources/read — static handler throws (-32603)" begin
+    # src/mcp_server.jl:362 — static resource handler error → JSON-RPC -32603.
+    server = MCPServer("res-err", "1.0.0")
+    register_resource!(server, "boom://static", "Boom", () -> error("static handler exploded"))
+
+    req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 12, "method" => "resources/read",
+        "params" => Dict{String,Any}("uri" => "boom://static"))
+    resp = UniLM._dispatch_mcp(server, req)
+
+    @test resp["id"] == 12
+    @test !haskey(resp, "result")
+    @test resp["error"]["code"] == -32603
+    @test contains(resp["error"]["message"], "Resource read error")
+    @test contains(resp["error"]["message"], "static handler exploded")
+end
+
+@testset "resources/read — template handler throws (-32603)" begin
+    # src/mcp_server.jl:375 — TEMPLATE branch (distinct from static 362) handler error → -32603.
+    server = MCPServer("tmpl-err", "1.0.0")
+    register_resource_template!(server, "boom://{id}", "BoomTmpl",
+        p -> error("template handler exploded for $(p["id"])"))
+
+    req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 13, "method" => "resources/read",
+        "params" => Dict{String,Any}("uri" => "boom://42"))
+    resp = UniLM._dispatch_mcp(server, req)
+
+    @test resp["id"] == 13
+    @test !haskey(resp, "result")
+    @test resp["error"]["code"] == -32603
+    @test contains(resp["error"]["message"], "Resource read error")
+    # Confirms the template branch ran (param interpolated into the thrown message).
+    @test contains(resp["error"]["message"], "template handler exploded for 42")
+end
+
+@testset "prompts/get — handler throws (-32603)" begin
+    # src/mcp_server.jl:402 — prompt handler error → JSON-RPC -32603 "Prompt error".
+    server = MCPServer("prompt-err", "1.0.0")
+    register_prompt!(server, "explode", args -> error("prompt handler exploded");
+        arguments=[Dict{String,Any}("name" => "x", "required" => false)])
+
+    req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 14, "method" => "prompts/get",
+        "params" => Dict{String,Any}("name" => "explode", "arguments" => Dict{String,Any}()))
+    resp = UniLM._dispatch_mcp(server, req)
+
+    @test resp["id"] == 14
+    @test !haskey(resp, "result")
+    @test resp["error"]["code"] == -32603
+    @test contains(resp["error"]["message"], "Prompt error")
+    @test contains(resp["error"]["message"], "prompt handler exploded")
+end
+
+@testset "resources/templates/list dispatch" begin
+    # src/mcp_server.jl:422 — method "resources/templates/list" routes to templates-list handler.
+    server = MCPServer("tmpl-list", "1.0.0")
+    register_resource_template!(server, "file://{path}", "Files",
+        p -> "content of $(p["path"])"; description="File reader")
+
+    req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 15, "method" => "resources/templates/list",
+        "params" => Dict{String,Any}())
+    resp = UniLM._dispatch_mcp(server, req)
+
+    @test resp["id"] == 15
+    @test haskey(resp["result"], "resourceTemplates")
+    templates = resp["result"]["resourceTemplates"]
+    @test length(templates) == 1
+    @test templates[1]["uriTemplate"] == "file://{path}"
+    @test templates[1]["name"] == "Files"
+    @test templates[1]["description"] == "File reader"
+end
+
+@testset "stdio transport — malformed JSON → parse error (-32700)" begin
+    # src/mcp_server.jl:451–454 — malformed line in _serve_stdio → JSON-RPC -32700 with null id.
+    server = MCPServer("stdio-parse-err", "1.0.0")
+    input = IOBuffer()
+    output = IOBuffer()
+
+    # First line is invalid JSON; second is a valid ping so we can confirm the loop continues.
+    write(input, "{ this is not valid json", "\n",
+        JSON.json(Dict("jsonrpc" => "2.0", "id" => 99, "method" => "ping", "params" => Dict())), "\n")
+    seekstart(input)
+
+    UniLM._serve_stdio(server; input, output)
+
+    seekstart(output)
+    lines = filter(!isempty, split(String(take!(output)), "\n"))
+    @test length(lines) == 2  # parse-error response + ping response
+
+    err_resp = JSON.parse(lines[1])
+    @test err_resp["jsonrpc"] == "2.0"
+    @test err_resp["id"] === nothing  # parse error responses correlate to id=null per JSON-RPC
+    @test err_resp["error"]["code"] == -32700
+    @test contains(err_resp["error"]["message"], "Parse error")
+
+    # Loop survived the bad line and serviced the next request.
+    ping_resp = JSON.parse(lines[2])
+    @test ping_resp["id"] == 99
+    @test haskey(ping_resp, "result")
+end

@@ -1983,6 +1983,60 @@ try
         @test result.llm_error == result.response.error
     end
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # Streaming edge path (SAFETY): on_tool_call callback error isolation.
+    # A user callback that THROWS must be swallowed (logged), not crash the
+    # spawned stream task — single-read, so the shared canned-response mock works.
+    #
+    # NOT covered deterministically here: the incremental text-delta branches
+    # (requests.jl:289–296, responses.jl:1071) which only fire when a content
+    # chunk arrives in a read BEFORE the terminal chunk (≥2 separate network
+    # reads). A dedicated HTTP.listen! chunked-streaming mock covered them on
+    # HTTP.jl 2.x, but FAILED on the HTTP.jl 1.x CI leg (EOFError — listen!
+    # streaming semantics differ across the compat range), so it was dropped
+    # rather than ship a leg-specific test. Those two branches ARE exercised in
+    # CI by the live integration streaming tests (real multi-chunk responses).
+    # ═══════════════════════════════════════════════════════════════════════
+
+    # ── TARGET A: on_tool_call callback that THROWS is isolated (requests.jl:276)
+    @testset "stream on_tool_call callback error is swallowed, stream still succeeds (276)" begin
+        # Same single streamed tool call as the on_tool_call success test, but the
+        # user callback raises. Line 270–277 wraps on_tool_call in try/catch; the
+        # throw must hit the catch (276, @warn) and be SWALLOWED — the spawned task
+        # must NOT error. Falsifier: remove the try/catch around on_tool_call and the
+        # task throws → result becomes LLMCallError, not LLMSuccess, and tool_calls
+        # are never assembled. We also assert the assembled tool call survives, proving
+        # _build_stream_message still ran after the callback blew up.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] =
+            """data: {"id":"c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_boom","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\\"location\\\":"}}]},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\\"NYC\\\"}"}}]},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"c","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\n""" *
+            """data: [DONE]"""
+
+        tool = GPTTool(func=GPTFunctionSignature(name="get_weather", description="Weather",
+            parameters=Dict("type"=>"object", "properties"=>Dict("location"=>Dict("type"=>"string")))))
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true, tools=[tool])
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="weather in NYC?"))
+
+        fired = Ref(0)
+        on_tc = tc -> (fired[] += 1; error("callback boom"))  # throws every time
+
+        result = fetch(chatrequest!(chat; on_tool_call=on_tc))
+
+        @test fired[] == 1                                   # the callback was actually entered (then threw)
+        @test result isa LLMSuccess                          # the throw was swallowed, NOT propagated
+        @test result.message.finish_reason == UniLM.TOOL_CALLS
+        @test length(result.message.tool_calls) == 1         # tool call still assembled post-throw
+        @test result.message.tool_calls[1].id == "call_boom"
+        @test result.message.tool_calls[1].func.name == "get_weather"
+        @test result.message.tool_calls[1].func.arguments["location"] == "NYC"
+        set_error!(200, "")
+    end
+
 finally
     close(mock_server)
 end

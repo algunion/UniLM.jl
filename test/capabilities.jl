@@ -129,3 +129,35 @@ end
     @test_throws ArgumentError create_video(prompt="p", service=AZUREServiceEndpoint)
     @test_throws ArgumentError mint_realtime_secret(service=GenericOpenAIEndpoint("http://x", ""))
 end
+
+@testset "default-model resolution returns exact provider strings" begin
+    ds = DeepSeekEndpoint("k")
+
+    # default_model — Type dispatch for OPENAI/AZURE/GEMINI (capabilities.jl 55-57),
+    # instance dispatch for DeepSeek (line 58). which().line pins the precise method;
+    # the value assertion falsifies a wrong model string.
+    @test which(UniLM.default_model, (Type{OPENAIServiceEndpoint},)).line == 55
+    @test UniLM.default_model(OPENAIServiceEndpoint) == "gpt-5.5"
+    @test which(UniLM.default_model, (Type{AZUREServiceEndpoint},)).line == 56
+    @test UniLM.default_model(AZUREServiceEndpoint) == "gpt-5.2"
+    @test which(UniLM.default_model, (Type{GEMINIServiceEndpoint},)).line == 57
+    @test UniLM.default_model(GEMINIServiceEndpoint) == "gemini-2.5-flash"
+    @test which(UniLM.default_model, (typeof(ds),)).line == 58
+    @test UniLM.default_model(ds) == "deepseek-chat"
+
+    # default_embedding_model — Type dispatch for OPENAI/GEMINI (62/63), instance for DeepSeek (64→nothing)
+    @test which(UniLM.default_embedding_model, (Type{OPENAIServiceEndpoint},)).line == 62
+    @test UniLM.default_embedding_model(OPENAIServiceEndpoint) == "text-embedding-3-small"
+    @test which(UniLM.default_embedding_model, (Type{GEMINIServiceEndpoint},)).line == 63
+    @test UniLM.default_embedding_model(GEMINIServiceEndpoint) == "gemini-embedding-001"
+    @test which(UniLM.default_embedding_model, (typeof(ds),)).line == 64
+    @test UniLM.default_embedding_model(ds) === nothing
+
+    # default_image_model — OPENAI Type method (line 69)
+    @test which(UniLM.default_image_model, (Type{OPENAIServiceEndpoint},)).line == 69
+    @test UniLM.default_image_model(OPENAIServiceEndpoint) == "gpt-image-2"
+
+    # default_fim_model — DeepSeek instance method (line 73)
+    @test which(UniLM.default_fim_model, (typeof(ds),)).line == 73
+    @test UniLM.default_fim_model(ds) == "deepseek-chat"
+end

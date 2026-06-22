@@ -1956,3 +1956,79 @@ end
         @test url_citations(ResponseCallError(error="x")) isa Vector{Dict{String,Any}}
     end
 end
+
+@testset "typed accessor item-type isolation" begin
+    # Each accessor must return EXACTLY the items whose "type" matches, and exclude others.
+    # Falsifies: a swapped/wrong "type" literal in file_search_results/code_interpreter_outputs/
+    # mcp_call_outputs/reasoning_items (responses.jl 920/922/924/928).
+    fs = Dict{String,Any}("type" => "file_search_call", "id" => "fs_1")
+    ci = Dict{String,Any}("type" => "code_interpreter_call", "id" => "ci_1")
+    mc = Dict{String,Any}("type" => "mcp_call", "id" => "mc_1")
+    rz = Dict{String,Any}("type" => "reasoning", "id" => "rz_1")
+    other = Dict{String,Any}("type" => "message", "id" => "m_1")
+    ro = UniLM.ResponseObject(id="r", status="completed", model="gpt-5.5",
+        output=Any[fs, ci, mc, rz, other], raw=Dict{String,Any}())
+
+    @test file_search_results(ro) == [fs]
+    @test code_interpreter_outputs(ro) == [ci]
+    @test mcp_call_outputs(ro) == [mc]
+    @test reasoning_items(ro) == [rz]
+    # exclusion: file_search accessor must NOT leak the code_interpreter / message items
+    @test !any(==(ci), file_search_results(ro))
+    @test !any(==(other), reasoning_items(ro))
+    # return element type is the typed Dict vector, not Vector{Any}
+    @test file_search_results(ro) isa Vector{Dict{String,Any}}
+end
+
+@testset "failure-variant accessor defaults (exact)" begin
+    rf = ResponseFailure(response="boom", status=503)
+    rce = ResponseCallError(error="net down")
+
+    # String-returning accessors → empty String[] (responses.jl 939, plus 938 already hit)
+    @test reasoning_summaries(rce) == String[]
+    @test refusals(rce) == String[]
+    @test image_generation_results(rce) == String[]
+    @test refusals(rf) == String[]                 # corroborates the ResponseFailure side
+    @test reasoning_summaries(rce) isa Vector{String}
+
+    # Dict-returning accessors → empty Dict{String,Any}[] (responses.jl 944 for Failure, 945 for CallError)
+    @test web_search_results(rf) == Dict{String,Any}[]
+    @test file_search_results(rf) == Dict{String,Any}[]
+    @test code_interpreter_outputs(rf) == Dict{String,Any}[]
+    @test mcp_call_outputs(rf) == Dict{String,Any}[]
+    @test reasoning_items(rf) == Dict{String,Any}[]
+    @test url_citations(rf) == Dict{String,Any}[]
+    @test web_search_results(rce) == Dict{String,Any}[]
+    @test web_search_results(rf) isa Vector{Dict{String,Any}}
+
+    # response_status exact strings (responses.jl 948 Failure, 949 CallError)
+    @test response_status(rf) == "failed"
+    @test response_status(rce) == "error"
+
+    # incomplete_details / usage_details → nothing (responses.jl 951/952/954/955)
+    @test incomplete_details(rf) === nothing
+    @test incomplete_details(rce) === nothing
+    @test usage_details(rf) === nothing
+    @test usage_details(rce) === nothing
+end
+
+@testset "json_schema_format(::AbstractDict)" begin
+    # responses.jl:568 — single-dict overload. Asserts each field maps to the right key,
+    # and that optional keys default to nothing when absent.
+    d = Dict("name" => "person", "description" => "a person",
+             "schema" => Dict("type" => "object"), "strict" => true)
+    tc = UniLM.json_schema_format(d)
+    @test tc isa UniLM.TextConfig
+    @test tc.format.type == "json_schema"
+    @test tc.format.name == "person"
+    @test tc.format.description == "a person"
+    @test tc.format.schema == Dict("type" => "object")
+    @test tc.format.strict === true
+
+    # absent optional keys (description, strict) → nothing
+    tc2 = UniLM.json_schema_format(Dict("name" => "n", "schema" => Dict("type" => "string")))
+    @test tc2.format.name == "n"
+    @test tc2.format.description === nothing
+    @test tc2.format.strict === nothing
+    @test tc2.format.schema == Dict("type" => "string")
+end

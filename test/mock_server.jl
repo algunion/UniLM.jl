@@ -2241,6 +2241,15 @@ try
         set_error!(200, "")
     end
 
+    @testset "realtime default WS URL (pure-unit)" begin
+        # realtime.jl:72 — the generic _realtime_ws_url(service) fallback returns REALTIME_WS_URL.
+        # WSMockEndpoint overrides it (line 65), so a non-overridden service (the OPENAI type) must
+        # hit the default. which().line pins the method; the value falsifies a wrong default URL.
+        @test which(UniLM._realtime_ws_url, (Type{OPENAIServiceEndpoint},)).line == 72
+        @test UniLM._realtime_ws_url(OPENAIServiceEndpoint) == UniLM.REALTIME_WS_URL
+        @test UniLM._realtime_ws_url(OPENAIServiceEndpoint) == "wss://api.openai.com/v1/realtime"
+    end
+
 finally
     close(mock_server)
 end

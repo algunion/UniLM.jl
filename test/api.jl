@@ -167,6 +167,18 @@ end
 
     @test JSON.omit_null(GPTFunctionCallResult{String}) == true
     @test JSON.omit_empty(GPTFunctionCallResult{String}) == true
+
+    @testset "serialization honors omit_empty" begin
+        # Observable consequence of api.jl:142 (omit_empty=true): an EMPTY result field is dropped,
+        # a populated one is kept. Falsifies a regression where omit_empty stopped applying.
+        fcr_empty = GPTFunctionCallResult("get_weather", func, String[])
+        parsed_empty = JSON.parse(JSON.json(fcr_empty))
+        @test parsed_empty["name"] == "get_weather"
+        @test !haskey(parsed_empty, "result")           # empty vector omitted
+        fcr_val = GPTFunctionCallResult("get_weather", func, "sunny")
+        parsed_val = JSON.parse(JSON.json(fcr_val))
+        @test parsed_val["result"] == "sunny"            # non-empty kept
+    end
 end
 
 @testset "Message" begin
@@ -303,6 +315,14 @@ end
     @test UniLM.OPENAIServiceEndpoint <: UniLM.ServiceEndpoint
     @test UniLM.AZUREServiceEndpoint <: UniLM.ServiceEndpoint
     @test UniLM.GEMINIServiceEndpoint <: UniLM.ServiceEndpoint
+
+    @testset "DeepSeekEndpoint keyword constructor" begin
+        # api.jl:379 — the kwarg ctor. Passing api_key explicitly means the ENV["DEEPSEEK_API_KEY"]
+        # default is never evaluated (zero-spend), and the key must round-trip into the struct.
+        ds = DeepSeekEndpoint(api_key="explicit-key")
+        @test ds isa UniLM.DeepSeekEndpoint
+        @test ds.api_key == "explicit-key"
+    end
 end
 
 @testset "Chat" begin

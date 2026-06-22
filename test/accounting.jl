@@ -248,3 +248,26 @@ end
     es_unk = EmbeddingSuccess(embeddings=emb_unk, usage=u, raw=Dict{String,Any}())
     @test estimated_cost(es_unk) == 0.0
 end
+
+@testset "_price per-token conversion" begin
+    # accounting.jl:5 — _price divides per-1M USD figures by 1_000_000. Distinct i/c/o values
+    # prove no field is swapped and the /1e6 factor is applied to each.
+    p = UniLM._price(2.0, 0.5, 8.0)
+    @test p isa UniLM.PriceRow
+    @test p.input == 2.0 / 1_000_000
+    @test p.cached_input == 0.5 / 1_000_000
+    @test p.output == 8.0 / 1_000_000
+    # exact literal values (guards against an accidental /1e3 or missing division)
+    @test p == (input = 2.0e-6, cached_input = 5.0e-7, output = 8.0e-6)
+end
+
+@testset "token_usage zero for Response/Embedding failures" begin
+    # accounting.jl 42/43 (Response*) and 48/49 (Embedding*): every failure variant → zero usage.
+    zero = TokenUsage()
+    @test token_usage(ResponseFailure(response="boom", status=500)) == zero
+    @test token_usage(ResponseCallError(error="net")) == zero
+    @test token_usage(EmbeddingFailure(response="boom", status=500)) == zero
+    @test token_usage(EmbeddingCallError(error="net")) == zero
+    # sanity: a zero TokenUsage really is all-zero (so the equality above is meaningful)
+    @test zero.prompt_tokens == 0 && zero.completion_tokens == 0 && zero.total_tokens == 0
+end

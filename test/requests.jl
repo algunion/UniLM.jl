@@ -610,3 +610,20 @@ end
     @test UniLM._RETRY_MAX_DELAY == 60.0
     @test UniLM._RETRY_MAX_ATTEMPTS == 30
 end
+
+@testset "_accumulate_cost! fallback is a no-op for non-success" begin
+    # requests.jl:90 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
+    # success types are specialized in accounting.jl, so a failure result must land here:
+    # return nothing AND leave cumulative cost untouched (falsifies accidental accumulation).
+    chat = Chat(model="gpt-4.1-nano")
+    chat._cumulative_cost[] = 0.25
+    failure = LLMFailure(response="server exploded", status=500, self=chat)
+    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 90
+    @test UniLM._accumulate_cost!(chat, failure) === nothing
+    @test cumulative_cost(chat) == 0.25       # unchanged: the fallback did not add anything
+
+    # also exercised via a call-error variant (same fallback method)
+    callerr = LLMCallError(error="network down", self=chat)
+    @test UniLM._accumulate_cost!(chat, callerr) === nothing
+    @test cumulative_cost(chat) == 0.25
+end

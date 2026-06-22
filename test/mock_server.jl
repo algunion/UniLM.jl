@@ -2037,6 +2037,210 @@ try
         set_error!(200, "")
     end
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # Tool Loop no-dispatcher variants (tool_loop.jl 172–181, 258–271) +
+    # FIM convenience method (completions.jl 186–189). Multi-turn flows use the
+    # stateful response_queue (one entry drained per request); asserting the queue
+    # is empty afterward PROVES both turns actually fired over the wire.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "tool_loop!(chat; tools=CallableTool) builds dispatcher, two-turn (tool_loop.jl 172–181)" begin
+        # Turn 1: assistant requests tool "add" with a=3,b=7. Turn 2: assistant final text.
+        # The dispatcher is built INTERNALLY from the CallableTool's own callable, so the
+        # recorded outcome must equal what *that* closure computes (3+7=10) — falsifies that
+        # tool_loop! routed the call into the CallableTool and not some other path.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        turn1 = JSON.json(Dict(
+            "choices" => [Dict(
+                "finish_reason" => "tool_calls",
+                "message" => Dict("role" => "assistant",
+                    "tool_calls" => [Dict("id" => "call_q1", "type" => "function",
+                        "function" => Dict("name" => "add", "arguments" => """{"a": 3, "b": 7}"""))]))],
+            "usage" => Dict("prompt_tokens" => 10, "completion_tokens" => 5, "total_tokens" => 15)))
+        turn2 = JSON.json(Dict(
+            "choices" => [Dict("finish_reason" => "stop",
+                "message" => Dict("role" => "assistant", "content" => "The sum is 10."))],
+            "usage" => Dict("prompt_tokens" => 20, "completion_tokens" => 4, "total_tokens" => 24)))
+        response_queue[] = [(200, turn1), (200, turn2)]
+
+        called = Ref(0)
+        add_tool = GPTTool(func=GPTFunctionSignature(name="add", description="Add two numbers",
+            parameters=Dict("type"=>"object",
+                "properties"=>Dict("a"=>Dict("type"=>"number"),"b"=>Dict("type"=>"number")),
+                "required"=>["a","b"])))
+        ct = CallableTool(add_tool,
+            (name, args) -> (called[] += 1; string(Int(args["a"]) + Int(args["b"]))))
+
+        # Chat.tools is typed Vector{GPTTool}: it carries the wire schema (inner GPTTool);
+        # the executable CallableTool is supplied via the tool_loop! `tools=` kwarg.
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", tools=[add_tool])
+        push!(chat, Message(role=UniLM.RoleSystem, content="You are a calculator"))
+        push!(chat, Message(role=UniLM.RoleUser, content="What is 3+7?"))
+
+        result = tool_loop!(chat; tools=[ct], max_turns=5)
+
+        @test result isa ToolLoopResult
+        @test result.completed
+        @test result.turns_used == 2
+        @test called[] == 1                                    # the CallableTool's own closure ran exactly once
+        @test length(result.tool_calls) == 1
+        @test result.tool_calls[1].tool_name == "add"
+        @test result.tool_calls[1].success
+        @test result.tool_calls[1].arguments == Dict{String,Any}("a"=>3, "b"=>7)
+        @test result.tool_calls[1].result.result == "10"       # EXACT value the CallableTool computed
+        @test result.response isa LLMSuccess
+        @test result.response.message.content == "The sum is 10."  # the turn-2 answer
+        @test result.response.message.finish_reason == UniLM.STOP
+        @test isempty(response_queue[])                        # both turns drained → two real round-trips
+        set_error!(200, "")
+    end
+
+    @testset "tool_loop!(chat; tools=...) unknown-tool name → error outcome (tool_loop.jl 178)" begin
+        # The model names a tool ("subtract") absent from the CallableTool set ({"add"}).
+        # The internally-built dispatcher hits `error("Unknown tool: subtract")` (line 178),
+        # which _dispatch_tool catches → a FAILED outcome whose error mentions the unknown name.
+        # The error string is then pushed back as the tool message; turn 2 returns text → completed.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        turn1 = JSON.json(Dict(
+            "choices" => [Dict(
+                "finish_reason" => "tool_calls",
+                "message" => Dict("role" => "assistant",
+                    "tool_calls" => [Dict("id" => "call_unk", "type" => "function",
+                        "function" => Dict("name" => "subtract", "arguments" => """{"a": 9, "b": 2}"""))]))],
+            "usage" => Dict("prompt_tokens" => 6, "completion_tokens" => 3, "total_tokens" => 9)))
+        turn2 = JSON.json(Dict(
+            "choices" => [Dict("finish_reason" => "stop",
+                "message" => Dict("role" => "assistant", "content" => "Sorry, I can only add."))],
+            "usage" => Dict("prompt_tokens" => 12, "completion_tokens" => 5, "total_tokens" => 17)))
+        response_queue[] = [(200, turn1), (200, turn2)]
+
+        add_called = Ref(0)
+        add_tool = GPTTool(func=GPTFunctionSignature(name="add", description="Add"))
+        ct = CallableTool(add_tool, (name, args) -> (add_called[] += 1; "should-not-run"))
+
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", tools=[add_tool])
+        push!(chat, Message(role=UniLM.RoleSystem, content="You can only add."))
+        push!(chat, Message(role=UniLM.RoleUser, content="subtract 9 - 2"))
+
+        result = tool_loop!(chat; tools=[ct], max_turns=5)
+
+        @test result isa ToolLoopResult
+        @test result.completed
+        @test result.turns_used == 2
+        @test add_called[] == 0                                # the registered "add" closure was never invoked
+        @test length(result.tool_calls) == 1
+        @test result.tool_calls[1].tool_name == "subtract"
+        @test !result.tool_calls[1].success                    # dispatch FAILED
+        @test isnothing(result.tool_calls[1].result)
+        @test occursin("Unknown tool: subtract", result.tool_calls[1].error)  # error names the unknown tool
+        # The error was relayed to the model as the tool-role message content (loop continued).
+        @test chat.messages[end-1].role == UniLM.RoleTool
+        @test occursin("Unknown tool: subtract", chat.messages[end-1].content)
+        @test isempty(response_queue[])                        # both turns drained
+        set_error!(200, "")
+    end
+
+    @testset "tool_loop(Respond) with no CallableTool throws ArgumentError (tool_loop.jl 265)" begin
+        # r.tools is nothing → callables stays empty → ArgumentError. Falsifies the guard that
+        # the no-dispatcher Responses variant refuses to run without an executable tool.
+        @test_throws ArgumentError tool_loop(Respond(input="x", service=MockServiceEndpoint))
+        # And the message names the missing requirement (not some generic error).
+        err = try
+            tool_loop(Respond(input="x", service=MockServiceEndpoint))
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("No CallableTool", err.msg)
+    end
+
+    @testset "tool_loop(Respond; tools=CallableTool) extracts callable, two-turn (tool_loop.jl 258–271)" begin
+        # Turn 1: a function_call item. Turn 2: a completed message with final text. The dispatcher
+        # is built from the CallableTool in r.tools; the recorded result must equal what THAT
+        # closure computes (3*5=15), proving the no-dispatcher Responses loop wired it through.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        turn1 = JSON.json(Dict(
+            "id" => "resp_q1", "status" => "completed", "model" => "gpt-4o",
+            "output" => [Dict("type" => "function_call", "id" => "fc_q1", "call_id" => "call_mul",
+                "name" => "mul", "arguments" => """{"a": 3, "b": 5}""", "status" => "completed")]))
+        turn2 = JSON.json(Dict(
+            "id" => "resp_q2", "status" => "completed", "model" => "gpt-4o",
+            "output" => [Dict("type" => "message", "role" => "assistant", "status" => "completed",
+                "content" => [Dict("type" => "output_text", "text" => "3 times 5 is 15.")])]))
+        response_queue[] = [(200, turn1), (200, turn2)]
+
+        mul_called = Ref(0)
+        ct = CallableTool(
+            FunctionTool(name="mul", description="Multiply two numbers",
+                parameters=Dict("type"=>"object",
+                    "properties"=>Dict("a"=>Dict("type"=>"number"),"b"=>Dict("type"=>"number")))),
+            (name, args) -> (mul_called[] += 1; string(Int(args["a"]) * Int(args["b"]))))
+
+        r = Respond(input="What is 3*5?", tools=[ct], service=MockServiceEndpoint)
+        result = tool_loop(r; max_turns=5)
+
+        @test result isa ToolLoopResult
+        @test result.completed
+        @test result.turns_used == 2
+        @test mul_called[] == 1                                # the CallableTool closure ran once
+        @test length(result.tool_calls) == 1
+        @test result.tool_calls[1].tool_name == "mul"
+        @test result.tool_calls[1].success
+        @test result.tool_calls[1].arguments == Dict{String,Any}("a"=>3, "b"=>5)
+        @test result.tool_calls[1].result.result == "15"       # EXACT computed value
+        @test result.response isa ResponseSuccess
+        @test output_text(result.response) == "3 times 5 is 15."
+        @test isempty(response_queue[])                        # both turns drained → two round-trips
+        set_error!(200, "")
+    end
+
+    @testset "fim_complete(prompt::String; suffix) convenience builds+executes FIMCompletion (completions.jl 186–189)" begin
+        # Drive the string convenience overload (NOT the FIMCompletion overload) against the mock.
+        # Asserts: the result is a FIMSuccess with the EXACT parsed text, and the wire body shows the
+        # prompt + suffix the convenience method serialized — proving it constructed the FIMCompletion
+        # from its positional/keyword args (falsifies wrong field wiring, e.g. suffix dropped).
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "id" => "cmpl-conv",
+            "model" => "mock-fim",
+            "choices" => [Dict("text" => "    return 1\n", "index" => 0, "finish_reason" => "stop")],
+            "usage" => Dict("prompt_tokens" => 7, "completion_tokens" => 3, "total_tokens" => 10)))
+
+        result = fim_complete("def one():\n";
+            suffix="\n# end", service=MockServiceEndpoint, model="mock-fim", max_tokens=32)
+
+        @test result isa FIMSuccess
+        @test fim_text(result) == "    return 1\n"             # exact parsed text
+        @test result.response.choices[1].finish_reason == "stop"
+        @test result.response.usage.total_tokens == 10
+        # The convenience method serialized the prompt + suffix it was given.
+        sent = JSON.parse(request_body[]; dicttype=Dict{String,Any})
+        @test sent["prompt"] == "def one():\n"
+        @test sent["suffix"] == "\n# end"
+        @test sent["max_tokens"] == 32
+        @test sent["model"] == "mock-fim"
+
+        # Same convenience method WITHOUT suffix → suffix must be omitted from the wire body
+        # (JSON.lower drops a nothing suffix), proving the default propagated correctly.
+        response_body[] = JSON.json(Dict(
+            "id" => "cmpl-conv2",
+            "model" => "mock-fim",
+            "choices" => [Dict("text" => "x", "index" => 0, "finish_reason" => "stop")],
+            "usage" => Dict("prompt_tokens" => 1, "completion_tokens" => 1, "total_tokens" => 2)))
+        result2 = fim_complete("only prefix"; service=MockServiceEndpoint, model="mock-fim")
+        @test result2 isa FIMSuccess
+        @test fim_text(result2) == "x"
+        sent2 = JSON.parse(request_body[]; dicttype=Dict{String,Any})
+        @test sent2["prompt"] == "only prefix"
+        @test !haskey(sent2, "suffix")                         # default suffix=nothing → not serialized
+        set_error!(200, "")
+    end
+
 finally
     close(mock_server)
 end

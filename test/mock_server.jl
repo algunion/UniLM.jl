@@ -1779,6 +1779,210 @@ try
         set_error!(200, "")
     end
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # COVERAGE PUSH: success-parse + retry-recursion + tool-loop error wiring
+    # Targets src/images.jl (249, 252–255, 341–342, 354–355), src/files.jl
+    # (97–98), src/tool_loop.jl (142, 144, 218, 220). Each retry test queues
+    # EXACTLY the request count and asserts isempty(response_queue[]) afterward
+    # to prove the recursion fired (not the retries==MAX else-branch the existing
+    # "retry exhausted" tests cover). Default retries=0 → first jittered delay is
+    # rand()*1.0 < 1s, so no 30-deep real backoff.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "generate_image 200 success → ImageSuccess parsed (images.jl 249)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "created" => 1_700_000_000,
+            "data" => [Dict("b64_json" => "QUJD", "revised_prompt" => "A red cube, rendered")],
+            "usage" => Dict("input_tokens" => 11, "output_tokens" => 22, "total_tokens" => 33)))
+
+        ig = ImageGeneration(prompt="A red cube", model="mock-img-X", size="1024x1024",
+                             service=MockServiceEndpoint)
+        result = generate_image(ig)
+
+        @test result isa ImageSuccess
+        @test result.response.created == 1_700_000_000
+        @test length(result.response.data) == 1
+        @test result.response.data[1].b64_json == "QUJD"
+        @test result.response.data[1].revised_prompt == "A red cube, rendered"
+        @test image_data(result) == ["QUJD"]
+        @test result.response.usage == Dict{String,Any}(
+            "input_tokens" => 11, "output_tokens" => 22, "total_tokens" => 33)
+        # request body serialized prompt/model/size exactly (JSON.lower of ImageGeneration)
+        sent = JSON.parse(request_body[]; dicttype=Dict{String,Any})
+        @test sent["prompt"] == "A red cube"
+        @test sent["model"] == "mock-img-X"
+        @test sent["size"] == "1024x1024"
+        set_error!(200, "")
+    end
+
+    @testset "generate_image 503→200 retry recursion → ImageSuccess (images.jl 252–255)" begin
+        # Queue exactly two responses: a retryable 503 then a parseable 200. With
+        # default retries=0 the 503 takes the _is_retryable && retries<MAX branch →
+        # recurses once. Draining the queue proves the recursion (second request) fired.
+        response_queue[] = [(503, ""),
+            (200, JSON.json(Dict("created" => 7,
+                "data" => [Dict("b64_json" => "UkVUUlk=")])))]
+
+        ig = ImageGeneration(prompt="retry me", model="mock-img-R", service=MockServiceEndpoint)
+        result = generate_image(ig)   # retries defaults to 0
+
+        @test result isa ImageSuccess
+        @test result.response.created == 7
+        @test image_data(result) == ["UkVUUlk="]
+        @test isempty(response_queue[])   # both queued responses consumed → retry recursed
+        set_error!(200, "")
+    end
+
+    @testset "edit_image with mask → multipart mask part + ImageSuccess (images.jl 341–342)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict("created" => 2,
+            "data" => [Dict("b64_json" => "TUFTS0VE")]))
+
+        img = tempname() * ".png"
+        mask = tempname() * ".png"
+        write(img, "fakepng-image-bytes")
+        write(mask, "fakepng-mask-bytes")
+        try
+            e = ImageEdit(image=img, prompt="extend it", mask=mask, model="mock-img-E",
+                          service=MockServiceEndpoint)
+            result = edit_image(e)
+
+            @test result isa ImageSuccess
+            @test image_data(result) == ["TUFTS0VE"]
+            # The mask branch (341–342) pushed a `mask` multipart part: the raw form
+            # body must name it and carry the mask filename. If that push were absent,
+            # neither token would appear → this falsifies the mask branch directly.
+            @test occursin("name=\"mask\"", request_body[])
+            @test occursin(basename(mask), request_body[])
+        finally
+            rm(img; force=true)
+            rm(mask; force=true)
+        end
+        set_error!(200, "")
+    end
+
+    @testset "edit_image 503→200 retry recursion (mask-bearing) → ImageSuccess (images.jl 354–355)" begin
+        img = tempname() * ".png"
+        mask = tempname() * ".png"
+        write(img, "fakepng-image-bytes")
+        write(mask, "fakepng-mask-bytes")
+        try
+            response_queue[] = [(503, ""),
+                (200, JSON.json(Dict("created" => 9,
+                    "data" => [Dict("b64_json" => "RURJVA==")])))]
+
+            e = ImageEdit(image=img, prompt="retry edit", mask=mask, model="mock-img-ER",
+                          service=MockServiceEndpoint)
+            result = edit_image(e)   # retries defaults to 0
+
+            @test result isa ImageSuccess
+            @test result.response.created == 9
+            @test image_data(result) == ["RURJVA=="]
+            @test isempty(response_queue[])   # retry recursion drained both responses
+        finally
+            rm(img; force=true)
+            rm(mask; force=true)
+        end
+        set_error!(200, "")
+    end
+
+    @testset "upload_file 503→200 retry recursion → FileSuccess (files.jl 97–98)" begin
+        response_queue[] = [(503, ""),
+            (200, JSON.json(Dict("id" => "file-retry", "bytes" => 5, "created_at" => 123,
+                "filename" => "r.txt", "purpose" => "user_data", "status" => "processed")))]
+
+        path = tempname() * ".txt"
+        write(path, "hello")
+        try
+            r = upload_file(path, "user_data"; service=MockServiceEndpoint)   # retries defaults to 0
+
+            @test r isa FileSuccess
+            @test r.response.id == "file-retry"
+            @test r.response.bytes == 5
+            @test r.response.created_at == 123
+            @test r.response.filename == "r.txt"
+            @test r.response.status == "processed"
+            @test isempty(response_queue[])   # both responses consumed → retry recursed
+        finally
+            rm(path; force=true)
+        end
+        set_error!(200, "")
+    end
+
+    @testset "tool_loop! Chat → LLMFailure (400) propagates as .result (tool_loop.jl 142)" begin
+        set_error!(400, "Bad Request")
+        expected_body = response_body[]   # the JSON error body chatrequest! will echo
+
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
+        push!(chat, Message(role=UniLM.RoleUser, content="hi"))
+
+        result = tool_loop!(chat, (name, args) -> "x")
+
+        @test result isa ToolLoopResult
+        @test !result.completed
+        @test result.turns_used == 1
+        @test isempty(result.tool_calls)
+        @test result.response isa LLMFailure
+        @test result.response.status == 400
+        # .llm_error is wired to LLMFailure.response (the echoed body), not e.g. status.
+        @test result.llm_error == expected_body
+        @test result.llm_error == result.response.response
+        set_error!(200, "")
+    end
+
+    @testset "tool_loop! Chat → LLMCallError (connection) propagates as .result (tool_loop.jl 144)" begin
+        # Reuse ChatDeadEndpoint (defined above): chatrequest! raises a connection
+        # error → LLMCallError. tool_loop! must surface it as .result with .llm_error
+        # wired to LLMCallError.error.
+        chat = Chat(service=ChatDeadEndpoint, model="gpt-4o")
+        push!(chat, Message(role=UniLM.RoleUser, content="hi"))
+
+        result = tool_loop!(chat, (name, args) -> "x")
+
+        @test result isa ToolLoopResult
+        @test !result.completed
+        @test result.turns_used == 1
+        @test isempty(result.tool_calls)
+        @test result.response isa LLMCallError
+        @test !isempty(result.response.error)
+        @test result.llm_error == result.response.error   # .llm_error == LLMCallError.error
+    end
+
+    @testset "tool_loop(Respond) → ResponseFailure (400) propagates as .result (tool_loop.jl 218)" begin
+        set_error!(400, "Bad Request")
+        expected_body = response_body[]
+
+        result = tool_loop(Respond(input="x", service=MockServiceEndpoint), (n, a) -> "x")
+
+        @test result isa ToolLoopResult
+        @test !result.completed
+        @test result.turns_used == 1
+        @test isempty(result.tool_calls)
+        @test result.response isa ResponseFailure
+        @test result.response.status == 400
+        @test result.llm_error == expected_body
+        @test result.llm_error == result.response.response
+        set_error!(200, "")
+    end
+
+    @testset "tool_loop(Respond) → ResponseCallError (connection) propagates as .result (tool_loop.jl 220)" begin
+        # RespondDeadEndpoint (defined above) points at 127.0.0.1:1 → respond raises →
+        # ResponseCallError. respond does NOT pre-validate capability, so the dead
+        # endpoint reaches the failing HTTP.post inside the try.
+        result = tool_loop(Respond(input="x", service=RespondDeadEndpoint), (n, a) -> "x")
+
+        @test result isa ToolLoopResult
+        @test !result.completed
+        @test result.turns_used == 1
+        @test isempty(result.tool_calls)
+        @test result.response isa ResponseCallError
+        @test !isempty(result.response.error)
+        @test result.llm_error == result.response.error
+    end
+
 finally
     close(mock_server)
 end

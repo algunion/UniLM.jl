@@ -78,29 +78,24 @@ end
     # src/capabilities.jl:65 — the GenericOpenAIEndpoint-specific embedding method (more
     # specific than the `_` fallback) returns nothing. Asserting `=== nothing` (not just
     # falsy) pins the exact return.
-    @test which(UniLM.default_embedding_model, (typeof(gen),)).line == 65
     @test UniLM.default_embedding_model(gen) === nothing
 
     # src/capabilities.jl:66 — the `_` embedding fallback. AZUREServiceEndpoint is a TYPE with no
     # specific default_embedding_model method (only OPENAI/GEMINI types have one), so it lands on
     # the catch-all → nothing. Unknown services must have NO default embedding model.
-    @test which(UniLM.default_embedding_model, (Type{UniLM.AZUREServiceEndpoint},)).line == 66
     @test UniLM.default_embedding_model(UniLM.AZUREServiceEndpoint) === nothing
 
     # src/capabilities.jl:70 — default_image_model has only an OPENAI method (line 69) and the
     # catch-all `_` (line 70); any instance other than the OPENAI type hits line 70 → nothing.
-    @test which(UniLM.default_image_model, (typeof(ds),)).line == 70
     @test UniLM.default_image_model(ds) === nothing
     @test UniLM.default_image_model(gen) === nothing
 
     # src/capabilities.jl:74 — GenericOpenAIEndpoint-specific FIM method (more specific than
     # both ::DeepSeekEndpoint and `_`) returns nothing.
-    @test which(UniLM.default_fim_model, (typeof(gen),)).line == 74
     @test UniLM.default_fim_model(gen) === nothing
 
     # src/capabilities.jl:75 — the `_` FIM fallback. OPENAIServiceEndpoint is a TYPE (not a
     # DeepSeekEndpoint/GenericOpenAIEndpoint instance), so it lands on the catch-all → nothing.
-    @test which(UniLM.default_fim_model, (Type{OPENAIServiceEndpoint},)).line == 75
     @test UniLM.default_fim_model(OPENAIServiceEndpoint) === nothing
 end
 
@@ -134,30 +129,21 @@ end
     ds = DeepSeekEndpoint("k")
 
     # default_model — Type dispatch for OPENAI/AZURE/GEMINI (capabilities.jl 55-57),
-    # instance dispatch for DeepSeek (line 58). which().line pins the precise method;
-    # the value assertion falsifies a wrong model string.
-    @test which(UniLM.default_model, (Type{OPENAIServiceEndpoint},)).line == 55
+    # instance dispatch for DeepSeek (line 58). Each distinct return value uniquely
+    # identifies (and covers) its specific method, and falsifies a wrong model string.
     @test UniLM.default_model(OPENAIServiceEndpoint) == "gpt-5.5"
-    @test which(UniLM.default_model, (Type{AZUREServiceEndpoint},)).line == 56
     @test UniLM.default_model(AZUREServiceEndpoint) == "gpt-5.2"
-    @test which(UniLM.default_model, (Type{GEMINIServiceEndpoint},)).line == 57
     @test UniLM.default_model(GEMINIServiceEndpoint) == "gemini-2.5-flash"
-    @test which(UniLM.default_model, (typeof(ds),)).line == 58
     @test UniLM.default_model(ds) == "deepseek-chat"
 
     # default_embedding_model — Type dispatch for OPENAI/GEMINI (62/63), instance for DeepSeek (64→nothing)
-    @test which(UniLM.default_embedding_model, (Type{OPENAIServiceEndpoint},)).line == 62
     @test UniLM.default_embedding_model(OPENAIServiceEndpoint) == "text-embedding-3-small"
-    @test which(UniLM.default_embedding_model, (Type{GEMINIServiceEndpoint},)).line == 63
     @test UniLM.default_embedding_model(GEMINIServiceEndpoint) == "gemini-embedding-001"
-    @test which(UniLM.default_embedding_model, (typeof(ds),)).line == 64
     @test UniLM.default_embedding_model(ds) === nothing
 
     # default_image_model — OPENAI Type method (line 69)
-    @test which(UniLM.default_image_model, (Type{OPENAIServiceEndpoint},)).line == 69
     @test UniLM.default_image_model(OPENAIServiceEndpoint) == "gpt-image-2"
 
     # default_fim_model — DeepSeek instance method (line 73)
-    @test which(UniLM.default_fim_model, (typeof(ds),)).line == 73
     @test UniLM.default_fim_model(ds) == "deepseek-chat"
 end

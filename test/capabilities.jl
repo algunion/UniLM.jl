@@ -81,6 +81,12 @@ end
     @test which(UniLM.default_embedding_model, (typeof(gen),)).line == 65
     @test UniLM.default_embedding_model(gen) === nothing
 
+    # src/capabilities.jl:66 — the `_` embedding fallback. AZUREServiceEndpoint is a TYPE with no
+    # specific default_embedding_model method (only OPENAI/GEMINI types have one), so it lands on
+    # the catch-all → nothing. Unknown services must have NO default embedding model.
+    @test which(UniLM.default_embedding_model, (Type{UniLM.AZUREServiceEndpoint},)).line == 66
+    @test UniLM.default_embedding_model(UniLM.AZUREServiceEndpoint) === nothing
+
     # src/capabilities.jl:70 — default_image_model has only an OPENAI method (line 69) and the
     # catch-all `_` (line 70); any instance other than the OPENAI type hits line 70 → nothing.
     @test which(UniLM.default_image_model, (typeof(ds),)).line == 70

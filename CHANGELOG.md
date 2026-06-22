@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.10.2
+
+Documentation and CI maintenance only — **no functional changes to the library** (`src/`
+is unchanged from 0.10.1). Released so the versioned/`stable` documentation reflects 0.10.x.
+
+### Documentation
+- MCP guide macro examples are now **executed at build time** (realistic, self-verifying),
+  which prevents silent doc rot; added usage-contract notes for `@mcp_tool`/`@mcp_resource`.
+
+### CI / tooling
+- Updated GitHub Actions to current majors (`actions/checkout` v7, `julia-actions/setup-julia`
+  v3, `julia-actions/cache` v3, `codecov/codecov-action` v7) and fixed CI-vs-Documentation drift.
+- `Documentation` workflow gains `workflow_dispatch` for manual versioned-docs rebuilds.
+- `CompatHelper` workflow now installs Julia (a `setup-julia` step was missing).
+
 ## 0.10.1
 
 Patch release: correctness fixes for the MCP server macros, plus a large test-coverage

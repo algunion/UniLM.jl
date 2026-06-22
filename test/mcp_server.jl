@@ -651,12 +651,13 @@ end
 
 # ─── @mcp_resource macro — template (src 593–594) and static (src 598–599) ────
 
-@testset "@mcp_resource — template branch registers a template (src 593–594)" begin
+@testset "@mcp_resource — template branch registers a template (param-free body)" begin
     server = MCPServer("res-macro-tmpl", "1.0.0")
-    # NOTE: the template body must NOT reference the path params — the macro CANNOT
-    # bind them into an escaped body (a known src macro defect, reported separately). A param-free body
-    # still exercises the template branch (src 593–594): registration + handler run.
-    @mcp_resource server "doc://{name}" function(_p_::Dict{String,String})
+    # Template branch with a CONSTANT (param-free) body: exercises registration +
+    # dispatch without depending on a bound param. The declared arg name matches the
+    # URI {param}; the fixed macro binds it (then the body ignores it). (Param binding
+    # itself is covered by the "@mcp_resource — template binds matched path param" sets.)
+    @mcp_resource server "doc://{name}" function(name::String)
         "doc-body-constant"
     end
     # Template branch (URI has {...}) → goes to resource_templates, NOT static resources.
@@ -688,11 +689,10 @@ end
 
 # ─── @mcp_prompt macro (src 632–638) ──────────────────────────────────────────
 
-@testset "@mcp_prompt — registers prompt, unpacks args, builds schema (src 632–638)" begin
-    # NOTE: the macro skips the FIRST element of the arg list (it assumes a NAMED
-    # `:call` head `f(args...)` and does args[2:end] to drop the fn name). With a NAMED
-    # function the first slot IS the name, so this works correctly. (The anonymous form
-    # the docstring shows is broken — a known src macro defect, reported separately.)
+@testset "@mcp_prompt — NAMED form registers prompt, unpacks args, builds schema" begin
+    # NAMED `function f(args...)` form regression guard: the shared extractor must
+    # drop the fn name and keep all declared args. (The anonymous `function(x) … end`
+    # form is covered by the "@mcp_prompt — anonymous …" regression sets above.)
     server = MCPServer("prompt-macro", "1.0.0")
     # One typed (required) arg + one untyped (optional) arg exercises arg_defs both ways.
     @mcp_prompt server "review" function _ignored(code::String, lang)
@@ -717,4 +717,139 @@ end
     resp = UniLM._dispatch_mcp(server, req)
     @test resp["result"]["messages"][1]["role"] == "user"
     @test resp["result"]["messages"][1]["content"]["text"] == "Review julia code: x=1"
+end
+
+# ─── REGRESSION: macro arg-binding bugs (fix-mcp-macro-arg-binding) ────────────
+# These lock the DOCUMENTED behavior that was broken on the pre-fix source:
+#  (1) @mcp_resource template form did not bind matched path params into the
+#      declared arg (esc'd body referenced an UNDEFINED var → -32603 UndefVarError).
+#  (2) @mcp_prompt / @mcp_tool used args[2:end] (assumes a NAMED :call signature),
+#      silently dropping the FIRST declared arg of the ANONYMOUS `function(x)…end`
+#      form → arg never in the schema and never bound in the handler.
+# Each assertion below FAILS on the unfixed source (proven: dispatch returns an
+# `error` -32603 / empty `arguments`, never the asserted `result`/text).
+
+@testset "@mcp_resource — template binds matched path param into declared arg (docstring form)" begin
+    server = MCPServer("res-tmpl-bind", "1.0.0")
+    # The docstring's own shape: a templated URI + an arg whose NAME equals the
+    # {param} name, referenced in the body. Must bind "word" from the matched URI.
+    @mcp_resource server "echo://{word}" function(word::String)
+        "got:" * word
+    end
+    @test length(server.resource_templates) == 1
+    @test server.resource_templates[1].uri_template == "echo://{word}"
+
+    req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 1, "method" => "resources/read",
+        "params" => Dict{String,Any}("uri" => "echo://hello"))
+    resp = UniLM._dispatch_mcp(server, req)
+    # On the UNFIXED source this is an `error` (-32603 UndefVarError: `word`), so
+    # demanding a `result` with the exact text is a falsifiable regression assertion.
+    @test haskey(resp, "result")
+    @test !haskey(resp, "error")
+    @test resp["result"]["contents"][1]["uri"] == "echo://hello"
+    @test resp["result"]["contents"][1]["text"] == "got:hello"
+end
+
+@testset "@mcp_resource — template binds MULTIPLE matched path params (order-independent)" begin
+    server = MCPServer("res-tmpl-multi", "1.0.0")
+    # Two params; body references BOTH and in the opposite order to the URI so the
+    # test is sensitive to per-name (not positional) binding.
+    @mcp_resource server "db://{schema}/{table}" function(schema::String, table::String)
+        table * "@" * schema
+    end
+    req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 1, "method" => "resources/read",
+        "params" => Dict{String,Any}("uri" => "db://public/users"))
+    resp = UniLM._dispatch_mcp(server, req)
+    @test haskey(resp, "result")
+    @test resp["result"]["contents"][1]["text"] == "users@public"
+end
+
+@testset "@mcp_prompt — anonymous `function(x)` registers arg AND binds it (docstring form)" begin
+    server = MCPServer("prompt-anon", "1.0.0")
+    # Exactly the docstring shape: a single typed anonymous arg.
+    @mcp_prompt server "review" function(code::String)
+        [Dict{String,Any}("role" => "user",
+            "content" => Dict{String,Any}("type" => "text", "text" => "Review: " * code))]
+    end
+    @test haskey(server.prompts, "review")
+    p = server.prompts["review"]
+    # On the unfixed source `arguments` is EMPTY (the only arg was dropped by args[2:end]).
+    @test length(p.arguments) == 1
+    @test p.arguments[1]["name"] == "code"
+    @test p.arguments[1]["required"] == true   # typed ⇒ required
+
+    req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 1, "method" => "prompts/get",
+        "params" => Dict{String,Any}("name" => "review",
+            "arguments" => Dict{String,Any}("code" => "x = 1")))
+    resp = UniLM._dispatch_mcp(server, req)
+    @test haskey(resp, "result")
+    @test !haskey(resp, "error")
+    @test resp["result"]["messages"][1]["role"] == "user"
+    @test resp["result"]["messages"][1]["content"]["text"] == "Review: x = 1"
+end
+
+@testset "@mcp_prompt — anonymous MULTI-arg (typed+untyped mix): both registered & bound" begin
+    server = MCPServer("prompt-anon-multi", "1.0.0")
+    @mcp_prompt server "diff" function(a::String, b)
+        [Dict{String,Any}("role" => "user",
+            "content" => Dict{String,Any}("type" => "text", "text" => a * "→" * string(b)))]
+    end
+    p = server.prompts["diff"]
+    @test length(p.arguments) == 2
+    a_arg = only(filter(x -> x["name"] == "a", p.arguments))
+    b_arg = only(filter(x -> x["name"] == "b", p.arguments))
+    @test a_arg["required"] == true    # typed
+    @test b_arg["required"] == false   # untyped
+
+    req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 1, "method" => "prompts/get",
+        "params" => Dict{String,Any}("name" => "diff",
+            "arguments" => Dict{String,Any}("a" => "lhs", "b" => "rhs")))
+    resp = UniLM._dispatch_mcp(server, req)
+    @test haskey(resp, "result")
+    @test resp["result"]["messages"][1]["content"]["text"] == "lhs→rhs"
+end
+
+@testset "@mcp_prompt — NAMED form still works (regression guard for the shared extractor)" begin
+    # The named `function f(args...)` form was correct before; it MUST stay correct
+    # after the extractor refactor. First arg here is the NAME, not a param.
+    server = MCPServer("prompt-named", "1.0.0")
+    @mcp_prompt server "greet" function _named(name::String)
+        [Dict{String,Any}("role" => "user",
+            "content" => Dict{String,Any}("type" => "text", "text" => "Hi " * name))]
+    end
+    p = server.prompts["greet"]
+    @test length(p.arguments) == 1
+    @test p.arguments[1]["name"] == "name"
+    @test p.arguments[1]["required"] == true
+    req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 1, "method" => "prompts/get",
+        "params" => Dict{String,Any}("name" => "greet",
+            "arguments" => Dict{String,Any}("name" => "Ada")))
+    resp = UniLM._dispatch_mcp(server, req)
+    @test resp["result"]["messages"][1]["content"]["text"] == "Hi Ada"
+end
+
+@testset "@mcp_tool — NAMED single typed arg: schema + handler (locks shared extractor)" begin
+    # @mcp_tool registers under the function NAME, so its supported form is named.
+    # A single-arg named signature is the case most likely to break under a naive
+    # extractor; lock it with exact schema + handler-result assertions.
+    server = MCPServer("tool-named-1arg", "1.0.0")
+    @mcp_tool server function square(n::Int)::String
+        string(n * n)
+    end
+    @test haskey(server.tools, "square")
+    @test server.tools["square"].input_schema["properties"]["n"] == Dict{String,Any}("type" => "integer")
+    @test server.tools["square"].input_schema["required"] == ["n"]
+    @test server.tools["square"].handler(Dict{String,Any}("n" => 6)) == "36"
+end
+
+@testset "@mcp_tool — NAMED mixed typed/untyped args: required reflects typedness" begin
+    server = MCPServer("tool-named-mix", "1.0.0")
+    @mcp_tool server function pair(a::String, b)::String
+        string(a, "/", b)
+    end
+    sch = server.tools["pair"].input_schema
+    @test Set(keys(sch["properties"])) == Set(["a", "b"])
+    # `a` typed ⇒ required; `b` untyped (:Any) ⇒ NOT required (matches pre-fix logic).
+    @test sch["required"] == ["a"]
+    @test server.tools["pair"].handler(Dict{String,Any}("a" => "x", "b" => "y")) == "x/y"
 end

@@ -8,6 +8,7 @@ response_status = Ref{Int}(200)
 response_body = Ref{String}("{}")
 response_headers = Ref{Vector{Pair{String,String}}}(Pair{String,String}[])
 request_body = Ref{String}("")   # captures the last request body for wire-level assertions
+request_target = Ref{String}("") # captures the last request-target (path + query) for URL assertions
 # Optional FIFO of (status, body) responses. When non-empty, the handler pops one entry
 # per request, enabling multi-request flows (e.g. retry-then-succeed) without 30 real
 # backoff sleeps. Empty by default → handler falls back to the single canned response,
@@ -20,6 +21,7 @@ close(tcp_server)
 
 mock_server = HTTP.serve!("127.0.0.1", mock_port; verbose=false) do req
     request_body[] = String(req.body)
+    request_target[] = req.target
     # Queued multi-response flow takes precedence (drains one entry per request).
     if !isempty(response_queue[])
         status, body = popfirst!(response_queue[])
@@ -1559,6 +1561,222 @@ try
         result = prefix_complete(chat)
         @test result isa LLMCallError
         @test !isempty(result.error)
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Responses API: streaming SUCCESS + non-failed terminals + respond() retry
+    # + CRUD 200-success paths (responses.jl). These exercise the parse/build
+    # branches that the error-only tests above never reach.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "_respond_stream 200 + response.completed → ResponseSuccess w/ parsed ResponseObject (1049-1062,1078-1079)" begin
+        # Single-read mock: the whole SSE body (incl. response.completed) arrives in one
+        # readavailable → _parse_response_stream_chunk returns terminal=:completed with the
+        # `response` key → the completed branch (1049-1061) builds the ResponseObject and
+        # 1078-1079 wraps it in ResponseSuccess.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] =
+            "event: response.created\ndata: {\"type\":\"response.created\"}\n\n" *
+            "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":" *
+            "{\"id\":\"resp_1\",\"status\":\"completed\",\"model\":\"gpt-4o\"," *
+            "\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":" *
+            "[{\"type\":\"output_text\",\"text\":\"hello stream\"}]}]," *
+            "\"usage\":{\"input_tokens\":5,\"output_tokens\":2,\"total_tokens\":7}}}\n\n"
+
+        result = fetch(respond(Respond(input="x", service=MockServiceEndpoint, stream=true)))
+        @test result isa ResponseSuccess
+        obj = result.response
+        @test obj isa ResponseObject
+        @test obj.id == "resp_1"
+        @test obj.status == "completed"
+        @test obj.model == "gpt-4o"
+        @test obj.usage["total_tokens"] == 7
+        @test output_text(obj) == "hello stream"   # parsed output[] survived intact
+        set_error!(200, "")
+    end
+
+    @testset "_respond_stream 200 + response.completed fires callback with final ResponseObject (1062)" begin
+        # The completed branch invokes callback(result[], close_ref) where result[] is the
+        # built ResponseObject — falsifies that streaming success notifies the callback.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] =
+            "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":" *
+            "{\"id\":\"resp_cb\",\"status\":\"completed\",\"model\":\"gpt-4o\",\"output\":[]," *
+            "\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"
+
+        seen = Ref{Any}(nothing)
+        cb = (chunk, close) -> (seen[] = chunk)
+        result = fetch(respond(Respond(input="x", service=MockServiceEndpoint, stream=true); callback=cb))
+        @test result isa ResponseSuccess
+        @test seen[] isa ResponseObject            # callback got the final object, not a String
+        @test seen[].id == "resp_cb"
+        @test seen[] === result.response           # same object passed to callback and wrapped
+        set_error!(200, "")
+    end
+
+    @testset "_respond_stream 200 + response.incomplete → ResponseFailure w/ incomplete details (1012-1013,1063-1067,1080-1083)" begin
+        # terminal=:incomplete with a `response` key. HTTP status is 200, but this must NOT be a
+        # silent success: terminal_error[] is set (1063-1067) and 1080-1083 surfaces the response's
+        # own details as a ResponseFailure (status carries the HTTP 200).
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] =
+            "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":" *
+            "{\"id\":\"resp_inc\",\"status\":\"incomplete\"," *
+            "\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n"
+
+        result = fetch(respond(Respond(input="x", service=MockServiceEndpoint, stream=true)))
+        @test result isa ResponseFailure
+        @test result.status == 200                 # HTTP itself was 200; structured terminal failure
+        @test occursin("resp_inc", result.response)
+        @test occursin("max_output_tokens", result.response)   # incomplete reason preserved
+        set_error!(200, "")
+    end
+
+    @testset "_respond_stream 200 + malformed data: JSON → degrades to ResponseFailure, no crash (1020-1022,1088-1089)" begin
+        # A data: line with invalid JSON makes JSON.parse throw → caught (1020), stashed to failbuff,
+        # `continue` (1022). No terminal, no result[] → resp.status==200 but result[] is nothing, so
+        # the final else (1088-1089) returns ResponseFailure(raw wire bytes). Must not throw/crash.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] =
+            "event: response.created\ndata: {not valid json}\n\n"
+
+        result = fetch(respond(Respond(input="x", service=MockServiceEndpoint, stream=true)))
+        @test result isa ResponseFailure           # degraded safely; the parse-error catch held
+        @test result.status == 200
+        set_error!(200, "")
+    end
+
+    @testset "respond() non-stream retry-then-recover recursion → ResponseSuccess (1137-1142)" begin
+        # First request: retryable 503 (queue entry 1) → retries(0) < _RETRY_MAX_ATTEMPTS → 1139-1142
+        # (delay/sleep/recurse) → 200 success (entry 2) → parse_response → ResponseSuccess.
+        success_body = JSON.json(Dict(
+            "id" => "resp_retry",
+            "status" => "completed",
+            "model" => "gpt-4o",
+            "output" => [Dict("type" => "message", "role" => "assistant",
+                "content" => [Dict("type" => "output_text", "text" => "recovered")])],
+            "usage" => Dict("input_tokens" => 3, "output_tokens" => 1, "total_tokens" => 4)))
+        response_queue[] = [(503, ""), (200, success_body)]
+
+        result = respond(Respond(input="x", service=MockServiceEndpoint))   # default retries=0
+        @test result isa ResponseSuccess
+        @test result.response.id == "resp_retry"
+        @test result.response.status == "completed"
+        @test result.response.model == "gpt-4o"
+        @test output_text(result) == "recovered"
+        @test isempty(response_queue[])            # both queued responses consumed → it really retried once
+        set_error!(200, "")
+    end
+
+    @testset "get_response 200 → ResponseSuccess w/ parsed ResponseObject (1230)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "id" => "resp_get",
+            "status" => "completed",
+            "model" => "gpt-4o",
+            "output" => [Dict("type" => "message", "role" => "assistant",
+                "content" => [Dict("type" => "output_text", "text" => "fetched")])],
+            "usage" => Dict("input_tokens" => 2, "output_tokens" => 1, "total_tokens" => 3)))
+
+        result = get_response("resp_get"; service=MockServiceEndpoint)
+        @test result isa ResponseSuccess
+        @test result.response.id == "resp_get"
+        @test result.response.status == "completed"
+        @test result.response.model == "gpt-4o"
+        @test output_text(result) == "fetched"
+        @test occursin("/responses/resp_get", request_target[])   # id is in the GET path
+        set_error!(200, "")
+    end
+
+    @testset "delete_response 200 → raw Dict with deleted==true (1255-1256)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "id" => "resp_del", "object" => "response.deleted", "deleted" => true))
+
+        result = delete_response("resp_del"; service=MockServiceEndpoint)
+        @test result isa Dict{String,Any}          # raw Dict, NOT a ResponseSuccess
+        @test result["deleted"] == true
+        @test result["id"] == "resp_del"
+        @test result["object"] == "response.deleted"
+        @test occursin("/responses/resp_del", request_target[])
+        set_error!(200, "")
+    end
+
+    @testset "list_input_items 200 → raw Dict with data/paging fields (1292-1293)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "object" => "list",
+            "data" => [Dict("id" => "msg_1", "type" => "message", "role" => "user")],
+            "first_id" => "msg_1", "last_id" => "msg_1", "has_more" => false))
+
+        result = list_input_items("resp_items"; service=MockServiceEndpoint, limit=5, order="asc")
+        @test result isa Dict{String,Any}          # raw Dict
+        @test result["has_more"] == false
+        @test result["first_id"] == "msg_1"
+        @test length(result["data"]) == 1
+        @test result["data"][1]["id"] == "msg_1"
+        # query params + id are encoded in the request target
+        @test occursin("/responses/resp_items/input_items", request_target[])
+        @test occursin("limit=5", request_target[])
+        @test occursin("order=asc", request_target[])
+        set_error!(200, "")
+    end
+
+    @testset "cancel_response 200 → ResponseSuccess w/ parsed ResponseObject (1323-1324)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "id" => "resp_cancel", "status" => "cancelled", "model" => "gpt-4o",
+            "output" => Any[],
+            "usage" => Dict("input_tokens" => 1, "output_tokens" => 0, "total_tokens" => 1)))
+
+        result = cancel_response("resp_cancel"; service=MockServiceEndpoint)
+        @test result isa ResponseSuccess
+        @test result.response.id == "resp_cancel"
+        @test result.response.status == "cancelled"
+        @test occursin("/responses/resp_cancel/cancel", request_target[])
+        set_error!(200, "")
+    end
+
+    @testset "compact_response 200 → raw Dict with output/usage (1365-1366)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "id" => "resp_compact", "object" => "response.compaction",
+            "output" => [Dict("type" => "message", "role" => "assistant", "status" => "completed")],
+            "usage" => Dict("input_tokens" => 10, "output_tokens" => 4, "total_tokens" => 14)))
+
+        result = compact_response(model="gpt-5.5", input="hist"; service=MockServiceEndpoint)
+        @test result isa Dict{String,Any}          # raw Dict, NOT ResponseSuccess
+        @test result["id"] == "resp_compact"
+        @test result["object"] == "response.compaction"
+        @test result["usage"]["total_tokens"] == 14
+        @test length(result["output"]) == 1
+        # request body carries the compaction model + input
+        sent = JSON.parse(request_body[]; dicttype=Dict{String,Any})
+        @test sent["model"] == "gpt-5.5"
+        @test sent["input"] == "hist"
+        set_error!(200, "")
+    end
+
+    @testset "count_input_tokens 200 → raw Dict with input_tokens (1404-1405)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "object" => "response.input_tokens", "input_tokens" => 42))
+
+        result = count_input_tokens(model="gpt-5.5", input="how many tokens?"; service=MockServiceEndpoint)
+        @test result isa Dict{String,Any}          # raw Dict
+        @test result["input_tokens"] == 42
+        @test result["object"] == "response.input_tokens"
+        set_error!(200, "")
     end
 
 finally

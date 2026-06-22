@@ -449,3 +449,272 @@ end
     @test ping_resp["id"] == 99
     @test haskey(ping_resp, "result")
 end
+
+# ─── HTTP transport (_serve_http, src 469–488) + serve dispatcher (506–513) ───
+# These drive the REAL `serve(...; transport=:http,...)` over the wire (raw HTTP.post
+# with status_exception=false so non-2xx is inspectable, not thrown).
+
+using Sockets
+
+"Bind→read→close an ephemeral localhost port so it is free for the server to claim."
+_mcp_free_port() = let s = Sockets.listen(Sockets.localhost, 0)
+    p = Int(Sockets.getsockname(s)[2])
+    close(s)
+    p
+end
+
+"A server with one registered tool/resource/prompt and deterministic, assertable outputs."
+function _build_http_server()
+    server = MCPServer("http-xport", "3.2.1"; description="http transport probe")
+    register_tool!(server, "shout", "Uppercase the input",
+        Dict{String,Any}("type" => "object",
+            "properties" => Dict{String,Any}("s" => Dict{String,Any}("type" => "string")),
+            "required" => ["s"]),
+        args -> uppercase(string(args["s"])))
+    register_resource!(server, "probe://greeting", "greeting", () -> "hi-from-http")
+    register_prompt!(server, "salute",
+        args -> [Dict{String,Any}("role" => "user",
+            "content" => Dict{String,Any}("type" => "text", "text" => "Hello, $(get(args, "who", "x"))!"))];
+        arguments=[Dict{String,Any}("name" => "who", "required" => true)])
+    server
+end
+
+@testset "HTTP transport — valid JSON-RPC POST → 200 + result body (src 471–478,482)" begin
+    server = _build_http_server()
+    port = _mcp_free_port()
+    httpserver = serve(server; transport=:http, host="127.0.0.1", port=port)
+    try
+        # initialize: drives _dispatch_mcp → _handle_initialize through the HTTP handler.
+        body = JSON.json(Dict("jsonrpc" => "2.0", "id" => 1, "method" => "initialize",
+            "params" => Dict("protocolVersion" => "2025-11-25",
+                "capabilities" => Dict(),
+                "clientInfo" => Dict("name" => "t", "version" => "1"))))
+        resp = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"], body;
+            status_exception=false)
+        @test resp.status == 200
+        # The handler sets a JSON content type (line 482).
+        @test any(lowercase(k) == "content-type" && occursin("application/json", lowercase(v))
+                  for (k, v) in resp.headers)
+        parsed = JSON.parse(String(resp.body))
+        @test parsed["jsonrpc"] == "2.0"
+        @test parsed["id"] == 1
+        @test parsed["result"]["protocolVersion"] == UniLM._MCP_PROTOCOL_VERSION
+        @test parsed["result"]["serverInfo"]["name"] == "http-xport"
+        @test parsed["result"]["serverInfo"]["version"] == "3.2.1"
+        # Tool+resource+prompt registered → all three capability buckets advertised.
+        @test haskey(parsed["result"]["capabilities"], "tools")
+        @test haskey(parsed["result"]["capabilities"], "resources")
+        @test haskey(parsed["result"]["capabilities"], "prompts")
+
+        # tools/call: prove the handler actually ran the tool and returned its content.
+        call_body = JSON.json(Dict("jsonrpc" => "2.0", "id" => 2, "method" => "tools/call",
+            "params" => Dict("name" => "shout", "arguments" => Dict("s" => "echo"))))
+        call_resp = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+            call_body; status_exception=false)
+        @test call_resp.status == 200
+        cparsed = JSON.parse(String(call_resp.body))
+        @test cparsed["id"] == 2
+        @test cparsed["result"]["isError"] == false
+        @test cparsed["result"]["content"][1]["text"] == "ECHO"
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "HTTP transport — malformed JSON → 400 + parse error -32700 (src 475–476)" begin
+    server = _build_http_server()
+    port = _mcp_free_port()
+    httpserver = serve(server; transport=:http, port=port)  # default host
+    try
+        resp = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+            "{ not valid json at all"; status_exception=false)
+        @test resp.status == 400
+        parsed = JSON.parse(String(resp.body))
+        @test parsed["jsonrpc"] == "2.0"
+        @test parsed["id"] === nothing       # parse-error id is null per JSON-RPC
+        @test parsed["error"]["code"] == -32700
+        @test parsed["error"]["message"] == "Parse error"
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "HTTP transport — notification (no id) → 202 empty (src 479–480)" begin
+    server = _build_http_server()
+    port = _mcp_free_port()
+    httpserver = serve(server; transport=:http, port=port)
+    try
+        # Well-formed JSON-RPC with NO "id" → _dispatch_mcp returns nothing → 202.
+        notif = JSON.json(Dict("jsonrpc" => "2.0", "method" => "notifications/initialized"))
+        resp = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+            notif; status_exception=false)
+        @test resp.status == 202
+        @test isempty(String(resp.body))
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "HTTP transport — DELETE → 200 (src 483–484); GET → 405 (src 485–486)" begin
+    server = _build_http_server()
+    port = _mcp_free_port()
+    httpserver = serve(server; transport=:http, port=port)
+    try
+        del = HTTP.request("DELETE", "http://127.0.0.1:$port"; status_exception=false)
+        @test del.status == 200
+        @test isempty(String(del.body))
+
+        # Any non-POST/non-DELETE method hits the 405 else-branch.
+        getr = HTTP.request("GET", "http://127.0.0.1:$port"; status_exception=false)
+        @test getr.status == 405
+        @test String(getr.body) == "Method Not Allowed"
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "serve dispatcher — :stdio routes to _serve_stdio (src 506–508)" begin
+    # serve(...; transport=:stdio, input=, output=) must forward kwargs to _serve_stdio
+    # and produce a real JSON-RPC response on the output buffer.
+    server = MCPServer("dispatch-stdio", "1.0.0")
+    register_tool!(server, "id", "identity",
+        Dict{String,Any}("type" => "object",
+            "properties" => Dict{String,Any}("v" => Dict{String,Any}("type" => "string"))),
+        args -> args["v"])
+    input = IOBuffer()
+    output = IOBuffer()
+    write(input, JSON.json(Dict("jsonrpc" => "2.0", "id" => 7, "method" => "tools/call",
+        "params" => Dict("name" => "id", "arguments" => Dict("v" => "ok")))), "\n")
+    seekstart(input)
+
+    serve(server; transport=:stdio, input=input, output=output)
+
+    seekstart(output)
+    lines = filter(!isempty, split(String(take!(output)), "\n"))
+    @test length(lines) == 1
+    resp = JSON.parse(lines[1])
+    @test resp["id"] == 7
+    @test resp["result"]["content"][1]["text"] == "ok"
+    @test resp["result"]["isError"] == false
+end
+
+@testset "serve dispatcher — unknown transport → ArgumentError (src 511–512)" begin
+    server = MCPServer("dispatch-bogus", "1.0.0")
+    err = try
+        serve(server; transport=:bogus)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("Unknown transport", err.msg)
+    @test occursin("bogus", err.msg)
+end
+
+# ─── @mcp_tool _mcp_convert coverage (src 564–568) ────────────────────────────
+# Each macro-unpacked arg type forces a distinct _mcp_convert method.
+
+@testset "@mcp_tool — _mcp_convert per-type dispatch (src 564–568)" begin
+    server = MCPServer("convert-test", "1.0.0")
+    # String (564), Int<:Integer (565), Float64<:AbstractFloat (566), Bool (567),
+    # Vector{Int} → fallback pass-through (568).
+    @mcp_tool server function mixt(s::String, n::Int, f::Float64, b::Bool, xs::Vector{Int})::String
+        # Assert the converted Julia types are exactly right (not just stringly-equal).
+        string(s, "|", n, "|", n isa Int, "|", f, "|", f isa Float64, "|",
+            b, "|", b isa Bool, "|", sum(xs), "|", xs isa Vector{Int})
+    end
+    @test haskey(server.tools, "mixt")
+    sch = server.tools["mixt"].input_schema
+    @test sch["properties"]["s"] == Dict{String,Any}("type" => "string")
+    @test sch["properties"]["n"] == Dict{String,Any}("type" => "integer")
+    @test sch["properties"]["f"] == Dict{String,Any}("type" => "number")
+    @test sch["properties"]["b"] == Dict{String,Any}("type" => "boolean")
+    @test sch["properties"]["xs"] == Dict{String,Any}("type" => "array", "items" => Dict{String,Any}("type" => "integer"))
+    @test Set(sch["required"]) == Set(["s", "n", "f", "b", "xs"])
+
+    # Feed values as they arrive from JSON: numbers may be Float (JSON has one number type).
+    # _mcp_convert(Int, 5.0) must round → Int(5); String conv on a number → "42"; Bool passes.
+    out = server.tools["mixt"].handler(Dict{String,Any}(
+        "s" => 42,            # _mcp_convert(String, 42) → "42"  (line 564)
+        "n" => 5.0,           # _mcp_convert(Int, 5.0)   → 5     (line 565, AbstractFloat branch)
+        "f" => 2,             # _mcp_convert(Float64, 2) → 2.0   (line 566)
+        "b" => true,          # _mcp_convert(Bool, true) → true  (line 567)
+        "xs" => [3, 4]))      # _mcp_convert(Vector{Int}, …) passthrough (line 568)
+    @test out == "42|5|true|2.0|true|true|true|7|true"
+
+    # Integer branch with an already-integer value exercises the non-float arm of line 565.
+    @mcp_tool server function inc(n::Int)::Int
+        n + 1
+    end
+    @test server.tools["inc"].handler(Dict{String,Any}("n" => 41)) == 42
+end
+
+# ─── @mcp_resource macro — template (src 593–594) and static (src 598–599) ────
+
+@testset "@mcp_resource — template branch registers a template (src 593–594)" begin
+    server = MCPServer("res-macro-tmpl", "1.0.0")
+    # NOTE: the template body must NOT reference the path params — the macro CANNOT
+    # bind them into an escaped body (a known src macro defect, reported separately). A param-free body
+    # still exercises the template branch (src 593–594): registration + handler run.
+    @mcp_resource server "doc://{name}" function(_p_::Dict{String,String})
+        "doc-body-constant"
+    end
+    # Template branch (URI has {...}) → goes to resource_templates, NOT static resources.
+    @test isempty(server.resources)
+    @test length(server.resource_templates) == 1
+    @test server.resource_templates[1].uri_template == "doc://{name}"
+    # The registered handler runs through dispatch and matches the templated URI.
+    req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 1, "method" => "resources/read",
+        "params" => Dict{String,Any}("uri" => "doc://readme"))
+    resp = UniLM._dispatch_mcp(server, req)
+    @test resp["result"]["contents"][1]["uri"] == "doc://readme"
+    @test resp["result"]["contents"][1]["text"] == "doc-body-constant"
+end
+
+@testset "@mcp_resource — static branch registers a static resource (src 598–599)" begin
+    server = MCPServer("res-macro-static", "1.0.0")
+    @mcp_resource server "config://app" function()
+        "k=v"
+    end
+    # No {...} → static branch → resources dict, NOT templates.
+    @test isempty(server.resource_templates)
+    @test haskey(server.resources, "config://app")
+    @test server.resources["config://app"].handler() == "k=v"
+    req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 1, "method" => "resources/read",
+        "params" => Dict{String,Any}("uri" => "config://app"))
+    resp = UniLM._dispatch_mcp(server, req)
+    @test resp["result"]["contents"][1]["text"] == "k=v"
+end
+
+# ─── @mcp_prompt macro (src 632–638) ──────────────────────────────────────────
+
+@testset "@mcp_prompt — registers prompt, unpacks args, builds schema (src 632–638)" begin
+    # NOTE: the macro skips the FIRST element of the arg list (it assumes a NAMED
+    # `:call` head `f(args...)` and does args[2:end] to drop the fn name). With a NAMED
+    # function the first slot IS the name, so this works correctly. (The anonymous form
+    # the docstring shows is broken — a known src macro defect, reported separately.)
+    server = MCPServer("prompt-macro", "1.0.0")
+    # One typed (required) arg + one untyped (optional) arg exercises arg_defs both ways.
+    @mcp_prompt server "review" function _ignored(code::String, lang)
+        [Dict{String,Any}("role" => "user",
+            "content" => Dict{String,Any}("type" => "text",
+                "text" => "Review $(lang) code: $(code)"))]
+    end
+    @test haskey(server.prompts, "review")
+    p = server.prompts["review"]
+    # arg_defs: code typed → required=true; lang untyped → required=false (src 622–627).
+    code_arg = only(filter(a -> a["name"] == "code", p.arguments))
+    lang_arg = only(filter(a -> a["name"] == "lang", p.arguments))
+    @test code_arg["required"] == true
+    @test lang_arg["required"] == false
+    @test length(p.arguments) == 2
+
+    # Drive through dispatch so the generated unpacking handler (src 634–636) runs and
+    # binds BOTH args from the request into the escaped body.
+    req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 1, "method" => "prompts/get",
+        "params" => Dict{String,Any}("name" => "review",
+            "arguments" => Dict{String,Any}("code" => "x=1", "lang" => "julia")))
+    resp = UniLM._dispatch_mcp(server, req)
+    @test resp["result"]["messages"][1]["role"] == "user"
+    @test resp["result"]["messages"][1]["content"]["text"] == "Review julia code: x=1"
+end

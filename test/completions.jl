@@ -37,6 +37,21 @@ end
     @test UniLM.get_url(gen, fim3) == "http://localhost:8000/v1/completions"
 end
 
+@testset "_prefix_complete_url dispatch" begin
+    # src/completions.jl:194 — DeepSeek prefix completion uses the BETA base URL (the chat
+    # path is appended to DEEPSEEK_BETA_BASE_URL, not the plain DEEPSEEK_BASE_URL). Assert the
+    # exact composed string AND the literal so a wrong base constant would be caught.
+    ds = DeepSeekEndpoint("key")
+    @test UniLM._prefix_complete_url(ds) == UniLM.DEEPSEEK_BETA_BASE_URL * UniLM.CHAT_COMPLETIONS_PATH
+    @test UniLM._prefix_complete_url(ds) == "https://api.deepseek.com/beta/v1/chat/completions"
+
+    # src/completions.jl:195 — GenericOpenAIEndpoint prefix URL is rstrip(base_url,'/') *
+    # CHAT_COMPLETIONS_PATH. A trailing-slash base_url proves the rstrip (no doubled slash).
+    gen = GenericOpenAIEndpoint("https://host.example/", "k")
+    @test UniLM._prefix_complete_url(gen) == rstrip(gen.base_url, '/') * UniLM.CHAT_COMPLETIONS_PATH
+    @test UniLM._prefix_complete_url(gen) == "https://host.example/v1/chat/completions"
+end
+
 @testset "FIM response parsing" begin
     body = Dict{String,Any}(
         "choices" => [Dict{String,Any}("text" => "  if a <= 1:\n    return a\n", "index" => 0, "finish_reason" => "stop")],

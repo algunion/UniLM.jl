@@ -216,3 +216,58 @@ end
     @test haskey(DEFAULT_PRICING, "text-embedding-3-small")
     @test DEFAULT_PRICING["gpt-5.5"].cached_input < DEFAULT_PRICING["gpt-5.5"].input
 end
+
+@testset "estimated_cost — EmbeddingSuccess model resolution" begin
+    # src/accounting.jl:69 — for an EmbeddingSuccess the priced model is read from
+    # result.embeddings.model. text-embedding-3-small is priced at 0.02/1M input, 0.0 output.
+    emb = Embeddings("hello")                 # defaults to text-embedding-3-small on OPENAI
+    @test emb.model == "text-embedding-3-small"
+    rates = DEFAULT_PRICING["text-embedding-3-small"]
+    @test rates.input == 0.02 / 1_000_000
+    @test rates.output == 0.0
+
+    u = TokenUsage(prompt_tokens=500_000, completion_tokens=0, total_tokens=500_000)
+    es = EmbeddingSuccess(embeddings=emb, usage=u, raw=Dict{String,Any}())
+    # Hand-computed: 500_000 * 0.02/1M = 0.01 (no cached, no output).
+    @test estimated_cost(es) ≈ 0.01
+    @test estimated_cost(es) ≈ 500_000 * rates.input
+
+    # The model genuinely comes from embeddings.model: an explicit override changes the cost,
+    # and a non-zero completion count must NOT add anything (embedding output rate is 0.0).
+    u2 = TokenUsage(prompt_tokens=500_000, completion_tokens=9_999, total_tokens=509_999)
+    es2 = EmbeddingSuccess(embeddings=emb, usage=u2, raw=Dict{String,Any}())
+    @test estimated_cost(es2) ≈ 0.01
+
+    # A different priced embedding model resolves through line 69 to a different cost.
+    emb_lg = Embeddings("hello"; model="text-embedding-3-large")
+    es_lg = EmbeddingSuccess(embeddings=emb_lg, usage=u, raw=Dict{String,Any}())
+    @test estimated_cost(es_lg) ≈ 500_000 * DEFAULT_PRICING["text-embedding-3-large"].input
+
+    # An unpriced embedding model (resolved from embeddings.model, not in DEFAULT_PRICING) → 0.
+    emb_unk = Embeddings("hello"; model="text-embedding-unknown")
+    es_unk = EmbeddingSuccess(embeddings=emb_unk, usage=u, raw=Dict{String,Any}())
+    @test estimated_cost(es_unk) == 0.0
+end
+
+@testset "_price per-token conversion" begin
+    # accounting.jl:5 — _price divides per-1M USD figures by 1_000_000. Distinct i/c/o values
+    # prove no field is swapped and the /1e6 factor is applied to each.
+    p = UniLM._price(2.0, 0.5, 8.0)
+    @test p isa UniLM.PriceRow
+    @test p.input == 2.0 / 1_000_000
+    @test p.cached_input == 0.5 / 1_000_000
+    @test p.output == 8.0 / 1_000_000
+    # exact literal values (guards against an accidental /1e3 or missing division)
+    @test p == (input = 2.0e-6, cached_input = 5.0e-7, output = 8.0e-6)
+end
+
+@testset "token_usage zero for Response/Embedding failures" begin
+    # accounting.jl 42/43 (Response*) and 48/49 (Embedding*): every failure variant → zero usage.
+    zero = TokenUsage()
+    @test token_usage(ResponseFailure(response="boom", status=500)) == zero
+    @test token_usage(ResponseCallError(error="net")) == zero
+    @test token_usage(EmbeddingFailure(response="boom", status=500)) == zero
+    @test token_usage(EmbeddingCallError(error="net")) == zero
+    # sanity: a zero TokenUsage really is all-zero (so the equality above is meaningful)
+    @test zero.prompt_tokens == 0 && zero.completion_tokens == 0 && zero.total_tokens == 0
+end

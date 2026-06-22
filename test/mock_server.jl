@@ -8,6 +8,12 @@ response_status = Ref{Int}(200)
 response_body = Ref{String}("{}")
 response_headers = Ref{Vector{Pair{String,String}}}(Pair{String,String}[])
 request_body = Ref{String}("")   # captures the last request body for wire-level assertions
+request_target = Ref{String}("") # captures the last request-target (path + query) for URL assertions
+# Optional FIFO of (status, body) responses. When non-empty, the handler pops one entry
+# per request, enabling multi-request flows (e.g. retry-then-succeed) without 30 real
+# backoff sleeps. Empty by default → handler falls back to the single canned response,
+# so existing tests are unaffected.
+response_queue = Ref{Vector{Tuple{Int,String}}}(Tuple{Int,String}[])
 
 tcp_server = Sockets.listen(Sockets.localhost, 0)
 mock_port = Int(Sockets.getsockname(tcp_server)[2])
@@ -15,6 +21,12 @@ close(tcp_server)
 
 mock_server = HTTP.serve!("127.0.0.1", mock_port; verbose=false) do req
     request_body[] = String(req.body)
+    request_target[] = req.target
+    # Queued multi-response flow takes precedence (drains one entry per request).
+    if !isempty(response_queue[])
+        status, body = popfirst!(response_queue[])
+        return HTTP.Response(status, ["Content-Type" => "application/json"], Vector{UInt8}(body))
+    end
     # Default to application/json, but let a test override the response Content-Type.
     has_ct = any(p -> lowercase(p.first) == "content-type", response_headers[])
     headers = has_ct ? response_headers[] : vcat(["Content-Type" => "application/json"], response_headers[])
@@ -1164,6 +1176,1078 @@ try
         @test result.turns_used == 3
         @test length(result.tool_calls) == 3
         @test contains(result.llm_error, "max turns")
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Chat Completions: SUCCESSFUL streaming + non-stream retry recursion
+    # Covers requests.jl: 264–307 (stream accumulation, callbacks, on_tool_call,
+    # eos→_build_stream_message→LLMSuccess→_accumulate_cost!), 343–346 (non-stream
+    # retry-then-recover recursion), 355–356 (chatrequest! stream dispatch).
+    # The streamed resp.body is empty under HTTP 2.x → assert on the parsed
+    # LLMSuccess message, never the raw body (mirrors the existing stream tests).
+    # SSE chunk wire-format is reused verbatim from test/requests.jl.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "chatrequest! stream=true success → LLMSuccess via dispatch (355–356, 302–307)" begin
+        # Content deltas "Hello" + " world", a usage chunk, then finish_reason stop + [DONE].
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] =
+            """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"chatcmpl-1","choices":[],"usage":{"prompt_tokens":7,"completion_tokens":2,"total_tokens":9}}\n\n""" *
+            """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n""" *
+            """data: [DONE]"""
+
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true)
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="usr"))
+
+        # Go through chatrequest! (the public dispatch) — NOT _chatrequeststream directly.
+        task = chatrequest!(chat)
+        @test task isa Task
+        result = fetch(task)
+
+        @test result isa LLMSuccess
+        @test result.message.role == UniLM.RoleAssistant
+        @test result.message.content == "Hello world"      # exact accumulated content
+        @test result.message.finish_reason == UniLM.STOP
+        @test result.usage isa UniLM.TokenUsage              # populated from the stream usage chunk
+        @test result.usage.prompt_tokens == 7
+        @test result.usage.completion_tokens == 2
+        @test result.usage.total_tokens == 9
+        # update! appended the assistant message onto the chat (history defaults true)
+        @test last(chat).content == "Hello world"
+        set_error!(200, "")
+    end
+
+    @testset "chatrequest! stream callback receives final Message on eos (286)" begin
+        # Under HTTP 2.x the mock delivers the whole SSE body in a single readavailable,
+        # so _parse_chunk reports eos on the first loop iteration: the eos branch (282–286)
+        # runs and invokes callback(m[], close_ref) with the assembled Message. The
+        # incremental text-delta branch (287–297) requires multiple network reads, which a
+        # single canned HTTP.Response cannot produce — so it is not asserted here (asserting
+        # incremental deltas against this transport would test a fiction, not the source).
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] =
+            """data: {"id":"c","choices":[{"index":0,"delta":{"content":"Ahoy"},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"c","choices":[{"index":0,"delta":{"content":" there"},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"c","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n""" *
+            """data: [DONE]"""
+
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true)
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="usr"))
+
+        received = Any[]
+        cb = (chunk, close_ref) -> push!(received, chunk)
+
+        result = fetch(chatrequest!(chat; callback=cb))
+
+        @test result isa LLMSuccess
+        @test result.message.content == "Ahoy there"
+        # The callback fired exactly once — with the final assembled Message (eos branch).
+        @test length(received) == 1
+        @test received[1] isa Message
+        @test received[1].content == "Ahoy there"
+        @test received[1].finish_reason == UniLM.STOP
+        set_error!(200, "")
+    end
+
+    @testset "chatrequest! stream on_tool_call fires with parsed GPTToolCall (263–280, 220–229)" begin
+        # A single streamed tool call: id, name, then argument fragments, finishing tool_calls.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] =
+            """data: {"id":"c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_xyz","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\\"location\\\":"}}]},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\\"NYC\\\"}"}}]},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"c","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\n""" *
+            """data: [DONE]"""
+
+        tool = GPTTool(func=GPTFunctionSignature(name="get_weather", description="Weather",
+            parameters=Dict("type"=>"object", "properties"=>Dict("location"=>Dict("type"=>"string")))))
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true, tools=[tool])
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="weather in NYC?"))
+
+        received_calls = GPTToolCall[]
+        on_tc = tc -> push!(received_calls, tc)
+
+        result = fetch(chatrequest!(chat; on_tool_call=on_tc))
+
+        @test result isa LLMSuccess
+        @test result.message.finish_reason == UniLM.TOOL_CALLS
+        # The final message carries the assembled tool call (built by _build_stream_message).
+        @test length(result.message.tool_calls) == 1
+        @test result.message.tool_calls[1].id == "call_xyz"
+        @test result.message.tool_calls[1].func.name == "get_weather"
+        @test result.message.tool_calls[1].func.arguments["location"] == "NYC"
+        # on_tool_call fired exactly once, with the fully-parsed GPTToolCall.
+        @test length(received_calls) == 1
+        @test received_calls[1].id == "call_xyz"
+        @test received_calls[1].func.name == "get_weather"
+        @test received_calls[1].func.arguments["location"] == "NYC"
+        set_error!(200, "")
+    end
+
+    @testset "chatrequest! non-stream retry-then-recover recursion (343–346)" begin
+        # First request: retryable 503 (drains queue entry 1) → recurse → 200 success (entry 2).
+        # retries defaults to 0 < _RETRY_MAX_ATTEMPTS, so 343–346 (delay/sleep/recurse) runs once.
+        success_body = JSON.json(Dict(
+            "choices" => [Dict(
+                "finish_reason" => "stop",
+                "message" => Dict("role" => "assistant", "content" => "recovered after retry"))],
+            "usage" => Dict("prompt_tokens" => 4, "completion_tokens" => 3, "total_tokens" => 7)))
+        response_queue[] = [(503, ""), (200, success_body)]
+
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="usr"))
+
+        result = chatrequest!(chat)   # default retries=0 → genuinely retries
+
+        @test result isa LLMSuccess
+        @test result.message.content == "recovered after retry"
+        @test result.usage.total_tokens == 7
+        @test isempty(response_queue[])   # both queued responses consumed → it really retried once
+        set_error!(200, "")
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Embeddings: SUCCESS + retry-then-recover recursion
+    # Covers requests.jl: 428–430 (200 → update! → EmbeddingSuccess) and
+    # 433–436 (retryable → recurse → recover). _store_embedding! resizes the
+    # preallocated buffer to the returned length, so short exact vectors are safe.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "embeddingrequest! success → EmbeddingSuccess with exact vectors + usage (428–430)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "object" => "list",
+            "model" => "mock-embedding",
+            "data" => [Dict("object" => "embedding", "index" => 0,
+                "embedding" => [0.5, -0.25, 0.125])],
+            "usage" => Dict("prompt_tokens" => 3, "total_tokens" => 3)))
+
+        emb = UniLM.Embeddings("hello"; service=MockServiceEndpoint)
+        result = embeddingrequest!(emb)
+
+        @test result isa EmbeddingSuccess
+        @test embedding_vectors(result) == [0.5, -0.25, 0.125]   # exact returned vector
+        @test emb.embeddings == [0.5, -0.25, 0.125]              # filled in place on the request
+        @test result.usage isa UniLM.TokenUsage
+        @test result.usage.prompt_tokens == 3
+        @test result.usage.total_tokens == 3
+        @test result.raw["model"] == "mock-embedding"           # raw JSON retained
+        set_error!(200, "")
+    end
+
+    @testset "embeddingrequest! retry-then-recover recursion (433–436)" begin
+        emb_body = JSON.json(Dict(
+            "object" => "list", "model" => "mock-embedding",
+            "data" => [Dict("object" => "embedding", "index" => 0, "embedding" => [1.0, 2.0])],
+            "usage" => Dict("prompt_tokens" => 2, "total_tokens" => 2)))
+        response_queue[] = [(503, ""), (200, emb_body)]
+
+        emb = UniLM.Embeddings("retry me"; service=MockServiceEndpoint)
+        result = embeddingrequest!(emb)   # default retries=0 → genuinely retries once
+
+        @test result isa EmbeddingSuccess
+        @test embedding_vectors(result) == [1.0, 2.0]
+        @test result.usage.total_tokens == 2
+        @test isempty(response_queue[])   # both queued responses consumed → it retried then recovered
+        set_error!(200, "")
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # FIM Completion: HTTP-executing function-body paths (completions.jl 156–177)
+    # Success, retry-recursion, retry-exhausted, non-retryable, and catch→CallError.
+    # The mock declares :fim, so validate_capability passes and the HTTP call runs.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "fim_complete success → FIMSuccess with exact text/usage + serialized prompt/suffix (161)" begin
+        # 200 with a realistic FIM completion shape (per _parse_fim_response): choices[].text,
+        # usage.{prompt,completion,total}_tokens, model. Falsifies the success branch AND that
+        # the request body serialized prompt+suffix (would fail if JSON.lower(fim) regressed).
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "id" => "cmpl-1",
+            "model" => "mock-fim",
+            "choices" => [Dict(
+                "text" => "    if a <= 1:\n        return a\n",
+                "index" => 0,
+                "finish_reason" => "stop")],
+            "usage" => Dict("prompt_tokens" => 11, "completion_tokens" => 9, "total_tokens" => 20)))
+
+        fim = FIMCompletion(service=MockServiceEndpoint, model="mock-fim",
+            prompt="def fib(a):\n", suffix="    return fib(a-1) + fib(a-2)", max_tokens=64)
+        result = fim_complete(fim)
+
+        @test result isa FIMSuccess
+        @test fim_text(result) == "    if a <= 1:\n        return a\n"   # exact parsed text
+        @test result.response.choices[1].finish_reason == "stop"
+        @test result.response.usage.prompt_tokens == 11
+        @test result.response.usage.completion_tokens == 9
+        @test result.response.usage.total_tokens == 20
+        @test result.response.model == "mock-fim"
+        # Request actually serialized the FIM prompt + suffix (falsifies the wire format).
+        sent = JSON.parse(request_body[]; dicttype=Dict{String,Any})
+        @test sent["prompt"] == "def fib(a):\n"
+        @test sent["suffix"] == "    return fib(a-1) + fib(a-2)"
+        @test sent["max_tokens"] == 64
+        @test sent["model"] == "mock-fim"
+        set_error!(200, "")
+    end
+
+    @testset "fim_complete retry-then-recover recursion → FIMSuccess, queue drained (162–167)" begin
+        # First request: retryable 503 (drains entry 1) → retries=0 < _RETRY_MAX_ATTEMPTS → recurse
+        # → 200 success (entry 2). Both queued responses must be consumed (proves it really retried).
+        fim_body = JSON.json(Dict(
+            "model" => "mock-fim",
+            "choices" => [Dict("text" => "recovered", "index" => 0, "finish_reason" => "stop")],
+            "usage" => Dict("prompt_tokens" => 2, "completion_tokens" => 1, "total_tokens" => 3)))
+        response_queue[] = [(503, ""), (200, fim_body)]
+
+        fim = FIMCompletion(service=MockServiceEndpoint, model="mock-fim", prompt="x", suffix="y")
+        result = fim_complete(fim)   # default retries=0 → genuinely retries once
+
+        @test result isa FIMSuccess
+        @test fim_text(result) == "recovered"
+        @test result.response.usage.total_tokens == 3
+        @test isempty(response_queue[])   # both responses consumed → it retried then recovered
+        set_error!(200, "")
+    end
+
+    @testset "fim_complete retry exhausted → FIMFailure status 503 (169)" begin
+        set_error!(503, "Service Unavailable")
+        fim = FIMCompletion(service=MockServiceEndpoint, model="mock-fim", prompt="x")
+        result = fim_complete(fim; retries=30)   # already past _RETRY_MAX_ATTEMPTS → no recurse
+        @test result isa FIMFailure
+        @test result.status == 503
+        @test occursin("Service Unavailable", result.response)   # raw body surfaced
+        set_error!(200, "")
+    end
+
+    @testset "fim_complete non-retryable 400 → FIMFailure status 400 (171–172)" begin
+        set_error!(400, "Bad Request")
+        fim = FIMCompletion(service=MockServiceEndpoint, model="mock-fim", prompt="x")
+        result = fim_complete(fim)
+        @test result isa FIMFailure
+        @test result.status == 400
+        @test occursin("Bad Request", result.response)
+        set_error!(200, "")
+    end
+
+    @testset "fim_complete connection error → FIMCallError with non-empty error (174,176–177)" begin
+        # Capable-but-unreachable endpoint: declares :fim so validate_capability passes, then the
+        # HTTP.post to a dead port raises inside the try → caught → FIMCallError. This is the only
+        # path that reaches lines 176–177 (the catch tail).
+        struct FIMDeadEndpoint <: UniLM.ServiceEndpoint end
+        UniLM._api_base_url(::Type{FIMDeadEndpoint}) = "http://127.0.0.1:1"
+        UniLM.auth_header(::Type{FIMDeadEndpoint}) = ["Content-Type" => "application/json"]
+        UniLM.default_fim_model(::Type{FIMDeadEndpoint}) = "dead-fim"
+        UniLM.get_url(::Type{FIMDeadEndpoint}, ::FIMCompletion) = "http://127.0.0.1:1/v1/completions"
+        UniLM.provider_capabilities(::Type{FIMDeadEndpoint}) = Set([:fim, :prefix_completion])
+
+        fim = FIMCompletion(service=FIMDeadEndpoint, model="dead-fim", prompt="x")
+        result = fim_complete(fim)
+        @test result isa FIMCallError
+        @test !isempty(result.error)   # stringified connection exception captured
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Chat Prefix Completion: HTTP-executing function-body paths (completions.jl 220–259)
+    # Success + message-construction loop (prefix flag), retry-recursion, failures, catch.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "prefix_complete success → LLMSuccess, prefix replaced, request carries prefix:true (220–244)" begin
+        # Build a Chat whose LAST message is role=assistant (the prefix). Set messages= directly
+        # because push! forbids assistant-after-user-then-assistant ordering construction.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "id" => "chatcmpl-1",
+            "model" => "mock-model",
+            "choices" => [Dict(
+                "index" => 0,
+                "finish_reason" => "stop",
+                "message" => Dict("role" => "assistant", "content" => "print('hello')\n```"))],
+            "usage" => Dict("prompt_tokens" => 8, "completion_tokens" => 5, "total_tokens" => 13)))
+
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", messages=[
+            Message(role=UniLM.RoleUser, content="Write hello world in Python"),
+            Message(role=UniLM.RoleAssistant, content="```python\n")])
+        result = prefix_complete(chat)
+
+        @test result isa LLMSuccess
+        @test result.message.content == "print('hello')\n```"   # exact completed content
+        @test result.message.role == UniLM.RoleAssistant
+        @test result.usage.total_tokens == 13
+        # history=true (default): the completed assistant message REPLACED the prefix in the chat.
+        @test length(chat) == 2
+        @test chat.messages[end].content == "print('hello')\n```"
+        @test chat.messages[end] === result.message
+        # The message-construction loop must have flagged the LAST message with prefix:true.
+        sent = JSON.parse(request_body[]; dicttype=Dict{String,Any})
+        @test sent["messages"][end]["prefix"] == true
+        @test sent["messages"][end]["role"] == "assistant"
+        @test sent["messages"][end]["content"] == "```python\n"   # the prefix we sent
+        @test !haskey(sent["messages"][1], "prefix")              # only the last msg flagged
+        @test sent["messages"][1]["role"] == "user"
+        set_error!(200, "")
+    end
+
+    @testset "prefix_complete retry-then-recover recursion → LLMSuccess, queue drained (245–250)" begin
+        chat_body = JSON.json(Dict(
+            "model" => "mock-model",
+            "choices" => [Dict("index" => 0, "finish_reason" => "stop",
+                "message" => Dict("role" => "assistant", "content" => "recovered prefix"))],
+            "usage" => Dict("prompt_tokens" => 3, "completion_tokens" => 2, "total_tokens" => 5)))
+        response_queue[] = [(503, ""), (200, chat_body)]
+
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", messages=[
+            Message(role=UniLM.RoleUser, content="continue"),
+            Message(role=UniLM.RoleAssistant, content="The answer is ")])
+        result = prefix_complete(chat)   # default retries=0 → genuinely retries once
+
+        @test result isa LLMSuccess
+        @test result.message.content == "recovered prefix"
+        @test result.usage.total_tokens == 5
+        @test isempty(response_queue[])   # both responses consumed → retried then recovered
+        set_error!(200, "")
+    end
+
+    @testset "prefix_complete retry exhausted → LLMFailure status 503 (252)" begin
+        set_error!(503, "Service Unavailable")
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", messages=[
+            Message(role=UniLM.RoleUser, content="hi"),
+            Message(role=UniLM.RoleAssistant, content="partial")])
+        result = prefix_complete(chat; retries=30)
+        @test result isa LLMFailure
+        @test result.status == 503
+        @test occursin("Service Unavailable", result.response)
+        set_error!(200, "")
+    end
+
+    @testset "prefix_complete non-retryable 400 → LLMFailure status 400 (255)" begin
+        set_error!(400, "Bad Request")
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", messages=[
+            Message(role=UniLM.RoleUser, content="hi"),
+            Message(role=UniLM.RoleAssistant, content="partial")])
+        result = prefix_complete(chat)
+        @test result isa LLMFailure
+        @test result.status == 400
+        @test occursin("Bad Request", result.response)
+        set_error!(200, "")
+    end
+
+    @testset "prefix_complete connection error → LLMCallError with non-empty error (257,259)" begin
+        # Capable-but-unreachable endpoint declaring :prefix_completion so validate_capability passes;
+        # HTTP.post to a dead port raises inside the try → caught → LLMCallError. Only path to 259.
+        struct PrefixDeadEndpoint <: UniLM.ServiceEndpoint end
+        UniLM._api_base_url(::Type{PrefixDeadEndpoint}) = "http://127.0.0.1:1"
+        UniLM.auth_header(::Type{PrefixDeadEndpoint}) = ["Content-Type" => "application/json"]
+        UniLM.default_model(::Type{PrefixDeadEndpoint}) = "dead-model"
+        UniLM.get_url(::Type{PrefixDeadEndpoint}, ::Chat) = "http://127.0.0.1:1/v1/chat/completions"
+        UniLM.provider_capabilities(::Type{PrefixDeadEndpoint}) = Set([:fim, :prefix_completion])
+
+        chat = Chat(service=PrefixDeadEndpoint, model="dead-model", messages=[
+            Message(role=UniLM.RoleUser, content="hi"),
+            Message(role=UniLM.RoleAssistant, content="partial")])
+        result = prefix_complete(chat)
+        @test result isa LLMCallError
+        @test !isempty(result.error)
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Responses API: streaming SUCCESS + non-failed terminals + respond() retry
+    # + CRUD 200-success paths (responses.jl). These exercise the parse/build
+    # branches that the error-only tests above never reach.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "_respond_stream 200 + response.completed → ResponseSuccess w/ parsed ResponseObject (1049-1062,1078-1079)" begin
+        # Single-read mock: the whole SSE body (incl. response.completed) arrives in one
+        # readavailable → _parse_response_stream_chunk returns terminal=:completed with the
+        # `response` key → the completed branch (1049-1061) builds the ResponseObject and
+        # 1078-1079 wraps it in ResponseSuccess.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] =
+            "event: response.created\ndata: {\"type\":\"response.created\"}\n\n" *
+            "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":" *
+            "{\"id\":\"resp_1\",\"status\":\"completed\",\"model\":\"gpt-4o\"," *
+            "\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":" *
+            "[{\"type\":\"output_text\",\"text\":\"hello stream\"}]}]," *
+            "\"usage\":{\"input_tokens\":5,\"output_tokens\":2,\"total_tokens\":7}}}\n\n"
+
+        result = fetch(respond(Respond(input="x", service=MockServiceEndpoint, stream=true)))
+        @test result isa ResponseSuccess
+        obj = result.response
+        @test obj isa ResponseObject
+        @test obj.id == "resp_1"
+        @test obj.status == "completed"
+        @test obj.model == "gpt-4o"
+        @test obj.usage["total_tokens"] == 7
+        @test output_text(obj) == "hello stream"   # parsed output[] survived intact
+        set_error!(200, "")
+    end
+
+    @testset "_respond_stream 200 + response.completed fires callback with final ResponseObject (1062)" begin
+        # The completed branch invokes callback(result[], close_ref) where result[] is the
+        # built ResponseObject — falsifies that streaming success notifies the callback.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] =
+            "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":" *
+            "{\"id\":\"resp_cb\",\"status\":\"completed\",\"model\":\"gpt-4o\",\"output\":[]," *
+            "\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"
+
+        seen = Ref{Any}(nothing)
+        cb = (chunk, close) -> (seen[] = chunk)
+        result = fetch(respond(Respond(input="x", service=MockServiceEndpoint, stream=true); callback=cb))
+        @test result isa ResponseSuccess
+        @test seen[] isa ResponseObject            # callback got the final object, not a String
+        @test seen[].id == "resp_cb"
+        @test seen[] === result.response           # same object passed to callback and wrapped
+        set_error!(200, "")
+    end
+
+    @testset "_respond_stream 200 + response.incomplete → ResponseFailure w/ incomplete details (1012-1013,1063-1067,1080-1083)" begin
+        # terminal=:incomplete with a `response` key. HTTP status is 200, but this must NOT be a
+        # silent success: terminal_error[] is set (1063-1067) and 1080-1083 surfaces the response's
+        # own details as a ResponseFailure (status carries the HTTP 200).
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] =
+            "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":" *
+            "{\"id\":\"resp_inc\",\"status\":\"incomplete\"," *
+            "\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n"
+
+        result = fetch(respond(Respond(input="x", service=MockServiceEndpoint, stream=true)))
+        @test result isa ResponseFailure
+        @test result.status == 200                 # HTTP itself was 200; structured terminal failure
+        @test occursin("resp_inc", result.response)
+        @test occursin("max_output_tokens", result.response)   # incomplete reason preserved
+        set_error!(200, "")
+    end
+
+    @testset "_respond_stream 200 + malformed data: JSON → degrades to ResponseFailure, no crash (1020-1022,1088-1089)" begin
+        # A data: line with invalid JSON makes JSON.parse throw → caught (1020), stashed to failbuff,
+        # `continue` (1022). No terminal, no result[] → resp.status==200 but result[] is nothing, so
+        # the final else (1088-1089) returns ResponseFailure(raw wire bytes). Must not throw/crash.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] =
+            "event: response.created\ndata: {not valid json}\n\n"
+
+        result = fetch(respond(Respond(input="x", service=MockServiceEndpoint, stream=true)))
+        @test result isa ResponseFailure           # degraded safely; the parse-error catch held
+        @test result.status == 200
+        set_error!(200, "")
+    end
+
+    @testset "respond() non-stream retry-then-recover recursion → ResponseSuccess (1137-1142)" begin
+        # First request: retryable 503 (queue entry 1) → retries(0) < _RETRY_MAX_ATTEMPTS → 1139-1142
+        # (delay/sleep/recurse) → 200 success (entry 2) → parse_response → ResponseSuccess.
+        success_body = JSON.json(Dict(
+            "id" => "resp_retry",
+            "status" => "completed",
+            "model" => "gpt-4o",
+            "output" => [Dict("type" => "message", "role" => "assistant",
+                "content" => [Dict("type" => "output_text", "text" => "recovered")])],
+            "usage" => Dict("input_tokens" => 3, "output_tokens" => 1, "total_tokens" => 4)))
+        response_queue[] = [(503, ""), (200, success_body)]
+
+        result = respond(Respond(input="x", service=MockServiceEndpoint))   # default retries=0
+        @test result isa ResponseSuccess
+        @test result.response.id == "resp_retry"
+        @test result.response.status == "completed"
+        @test result.response.model == "gpt-4o"
+        @test output_text(result) == "recovered"
+        @test isempty(response_queue[])            # both queued responses consumed → it really retried once
+        set_error!(200, "")
+    end
+
+    @testset "get_response 200 → ResponseSuccess w/ parsed ResponseObject (1230)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "id" => "resp_get",
+            "status" => "completed",
+            "model" => "gpt-4o",
+            "output" => [Dict("type" => "message", "role" => "assistant",
+                "content" => [Dict("type" => "output_text", "text" => "fetched")])],
+            "usage" => Dict("input_tokens" => 2, "output_tokens" => 1, "total_tokens" => 3)))
+
+        result = get_response("resp_get"; service=MockServiceEndpoint)
+        @test result isa ResponseSuccess
+        @test result.response.id == "resp_get"
+        @test result.response.status == "completed"
+        @test result.response.model == "gpt-4o"
+        @test output_text(result) == "fetched"
+        @test occursin("/responses/resp_get", request_target[])   # id is in the GET path
+        set_error!(200, "")
+    end
+
+    @testset "delete_response 200 → raw Dict with deleted==true (1255-1256)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "id" => "resp_del", "object" => "response.deleted", "deleted" => true))
+
+        result = delete_response("resp_del"; service=MockServiceEndpoint)
+        @test result isa Dict{String,Any}          # raw Dict, NOT a ResponseSuccess
+        @test result["deleted"] == true
+        @test result["id"] == "resp_del"
+        @test result["object"] == "response.deleted"
+        @test occursin("/responses/resp_del", request_target[])
+        set_error!(200, "")
+    end
+
+    @testset "list_input_items 200 → raw Dict with data/paging fields (1292-1293)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "object" => "list",
+            "data" => [Dict("id" => "msg_1", "type" => "message", "role" => "user")],
+            "first_id" => "msg_1", "last_id" => "msg_1", "has_more" => false))
+
+        result = list_input_items("resp_items"; service=MockServiceEndpoint, limit=5, order="asc")
+        @test result isa Dict{String,Any}          # raw Dict
+        @test result["has_more"] == false
+        @test result["first_id"] == "msg_1"
+        @test length(result["data"]) == 1
+        @test result["data"][1]["id"] == "msg_1"
+        # query params + id are encoded in the request target
+        @test occursin("/responses/resp_items/input_items", request_target[])
+        @test occursin("limit=5", request_target[])
+        @test occursin("order=asc", request_target[])
+        set_error!(200, "")
+    end
+
+    @testset "cancel_response 200 → ResponseSuccess w/ parsed ResponseObject (1323-1324)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "id" => "resp_cancel", "status" => "cancelled", "model" => "gpt-4o",
+            "output" => Any[],
+            "usage" => Dict("input_tokens" => 1, "output_tokens" => 0, "total_tokens" => 1)))
+
+        result = cancel_response("resp_cancel"; service=MockServiceEndpoint)
+        @test result isa ResponseSuccess
+        @test result.response.id == "resp_cancel"
+        @test result.response.status == "cancelled"
+        @test occursin("/responses/resp_cancel/cancel", request_target[])
+        set_error!(200, "")
+    end
+
+    @testset "compact_response 200 → raw Dict with output/usage (1365-1366)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "id" => "resp_compact", "object" => "response.compaction",
+            "output" => [Dict("type" => "message", "role" => "assistant", "status" => "completed")],
+            "usage" => Dict("input_tokens" => 10, "output_tokens" => 4, "total_tokens" => 14)))
+
+        result = compact_response(model="gpt-5.5", input="hist"; service=MockServiceEndpoint)
+        @test result isa Dict{String,Any}          # raw Dict, NOT ResponseSuccess
+        @test result["id"] == "resp_compact"
+        @test result["object"] == "response.compaction"
+        @test result["usage"]["total_tokens"] == 14
+        @test length(result["output"]) == 1
+        # request body carries the compaction model + input
+        sent = JSON.parse(request_body[]; dicttype=Dict{String,Any})
+        @test sent["model"] == "gpt-5.5"
+        @test sent["input"] == "hist"
+        set_error!(200, "")
+    end
+
+    @testset "count_input_tokens 200 → raw Dict with input_tokens (1404-1405)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "object" => "response.input_tokens", "input_tokens" => 42))
+
+        result = count_input_tokens(model="gpt-5.5", input="how many tokens?"; service=MockServiceEndpoint)
+        @test result isa Dict{String,Any}          # raw Dict
+        @test result["input_tokens"] == 42
+        @test result["object"] == "response.input_tokens"
+        set_error!(200, "")
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # COVERAGE PUSH: success-parse + retry-recursion + tool-loop error wiring
+    # Targets src/images.jl (249, 252–255, 341–342, 354–355), src/files.jl
+    # (97–98), src/tool_loop.jl (142, 144, 218, 220). Each retry test queues
+    # EXACTLY the request count and asserts isempty(response_queue[]) afterward
+    # to prove the recursion fired (not the retries==MAX else-branch the existing
+    # "retry exhausted" tests cover). Default retries=0 → first jittered delay is
+    # rand()*1.0 < 1s, so no 30-deep real backoff.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "generate_image 200 success → ImageSuccess parsed (images.jl 249)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "created" => 1_700_000_000,
+            "data" => [Dict("b64_json" => "QUJD", "revised_prompt" => "A red cube, rendered")],
+            "usage" => Dict("input_tokens" => 11, "output_tokens" => 22, "total_tokens" => 33)))
+
+        ig = ImageGeneration(prompt="A red cube", model="mock-img-X", size="1024x1024",
+                             service=MockServiceEndpoint)
+        result = generate_image(ig)
+
+        @test result isa ImageSuccess
+        @test result.response.created == 1_700_000_000
+        @test length(result.response.data) == 1
+        @test result.response.data[1].b64_json == "QUJD"
+        @test result.response.data[1].revised_prompt == "A red cube, rendered"
+        @test image_data(result) == ["QUJD"]
+        @test result.response.usage == Dict{String,Any}(
+            "input_tokens" => 11, "output_tokens" => 22, "total_tokens" => 33)
+        # request body serialized prompt/model/size exactly (JSON.lower of ImageGeneration)
+        sent = JSON.parse(request_body[]; dicttype=Dict{String,Any})
+        @test sent["prompt"] == "A red cube"
+        @test sent["model"] == "mock-img-X"
+        @test sent["size"] == "1024x1024"
+        set_error!(200, "")
+    end
+
+    @testset "generate_image 503→200 retry recursion → ImageSuccess (images.jl 252–255)" begin
+        # Queue exactly two responses: a retryable 503 then a parseable 200. With
+        # default retries=0 the 503 takes the _is_retryable && retries<MAX branch →
+        # recurses once. Draining the queue proves the recursion (second request) fired.
+        response_queue[] = [(503, ""),
+            (200, JSON.json(Dict("created" => 7,
+                "data" => [Dict("b64_json" => "UkVUUlk=")])))]
+
+        ig = ImageGeneration(prompt="retry me", model="mock-img-R", service=MockServiceEndpoint)
+        result = generate_image(ig)   # retries defaults to 0
+
+        @test result isa ImageSuccess
+        @test result.response.created == 7
+        @test image_data(result) == ["UkVUUlk="]
+        @test isempty(response_queue[])   # both queued responses consumed → retry recursed
+        set_error!(200, "")
+    end
+
+    @testset "edit_image with mask → multipart mask part + ImageSuccess (images.jl 341–342)" begin
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict("created" => 2,
+            "data" => [Dict("b64_json" => "TUFTS0VE")]))
+
+        img = tempname() * ".png"
+        mask = tempname() * ".png"
+        write(img, "fakepng-image-bytes")
+        write(mask, "fakepng-mask-bytes")
+        try
+            e = ImageEdit(image=img, prompt="extend it", mask=mask, model="mock-img-E",
+                          service=MockServiceEndpoint)
+            result = edit_image(e)
+
+            @test result isa ImageSuccess
+            @test image_data(result) == ["TUFTS0VE"]
+            # The mask branch (341–342) pushed a `mask` multipart part: the raw form
+            # body must name it and carry the mask filename. If that push were absent,
+            # neither token would appear → this falsifies the mask branch directly.
+            @test occursin("name=\"mask\"", request_body[])
+            @test occursin(basename(mask), request_body[])
+        finally
+            rm(img; force=true)
+            rm(mask; force=true)
+        end
+        set_error!(200, "")
+    end
+
+    @testset "edit_image 503→200 retry recursion (mask-bearing) → ImageSuccess (images.jl 354–355)" begin
+        img = tempname() * ".png"
+        mask = tempname() * ".png"
+        write(img, "fakepng-image-bytes")
+        write(mask, "fakepng-mask-bytes")
+        try
+            response_queue[] = [(503, ""),
+                (200, JSON.json(Dict("created" => 9,
+                    "data" => [Dict("b64_json" => "RURJVA==")])))]
+
+            e = ImageEdit(image=img, prompt="retry edit", mask=mask, model="mock-img-ER",
+                          service=MockServiceEndpoint)
+            result = edit_image(e)   # retries defaults to 0
+
+            @test result isa ImageSuccess
+            @test result.response.created == 9
+            @test image_data(result) == ["RURJVA=="]
+            @test isempty(response_queue[])   # retry recursion drained both responses
+        finally
+            rm(img; force=true)
+            rm(mask; force=true)
+        end
+        set_error!(200, "")
+    end
+
+    @testset "upload_file 503→200 retry recursion → FileSuccess (files.jl 97–98)" begin
+        response_queue[] = [(503, ""),
+            (200, JSON.json(Dict("id" => "file-retry", "bytes" => 5, "created_at" => 123,
+                "filename" => "r.txt", "purpose" => "user_data", "status" => "processed")))]
+
+        path = tempname() * ".txt"
+        write(path, "hello")
+        try
+            r = upload_file(path, "user_data"; service=MockServiceEndpoint)   # retries defaults to 0
+
+            @test r isa FileSuccess
+            @test r.response.id == "file-retry"
+            @test r.response.bytes == 5
+            @test r.response.created_at == 123
+            @test r.response.filename == "r.txt"
+            @test r.response.status == "processed"
+            @test isempty(response_queue[])   # both responses consumed → retry recursed
+        finally
+            rm(path; force=true)
+        end
+        set_error!(200, "")
+    end
+
+    @testset "tool_loop! Chat → LLMFailure (400) propagates as .result (tool_loop.jl 142)" begin
+        set_error!(400, "Bad Request")
+        expected_body = response_body[]   # the JSON error body chatrequest! will echo
+
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
+        push!(chat, Message(role=UniLM.RoleUser, content="hi"))
+
+        result = tool_loop!(chat, (name, args) -> "x")
+
+        @test result isa ToolLoopResult
+        @test !result.completed
+        @test result.turns_used == 1
+        @test isempty(result.tool_calls)
+        @test result.response isa LLMFailure
+        @test result.response.status == 400
+        # .llm_error is wired to LLMFailure.response (the echoed body), not e.g. status.
+        @test result.llm_error == expected_body
+        @test result.llm_error == result.response.response
+        set_error!(200, "")
+    end
+
+    @testset "tool_loop! Chat → LLMCallError (connection) propagates as .result (tool_loop.jl 144)" begin
+        # Reuse ChatDeadEndpoint (defined above): chatrequest! raises a connection
+        # error → LLMCallError. tool_loop! must surface it as .result with .llm_error
+        # wired to LLMCallError.error.
+        chat = Chat(service=ChatDeadEndpoint, model="gpt-4o")
+        push!(chat, Message(role=UniLM.RoleUser, content="hi"))
+
+        result = tool_loop!(chat, (name, args) -> "x")
+
+        @test result isa ToolLoopResult
+        @test !result.completed
+        @test result.turns_used == 1
+        @test isempty(result.tool_calls)
+        @test result.response isa LLMCallError
+        @test !isempty(result.response.error)
+        @test result.llm_error == result.response.error   # .llm_error == LLMCallError.error
+    end
+
+    @testset "tool_loop(Respond) → ResponseFailure (400) propagates as .result (tool_loop.jl 218)" begin
+        set_error!(400, "Bad Request")
+        expected_body = response_body[]
+
+        result = tool_loop(Respond(input="x", service=MockServiceEndpoint), (n, a) -> "x")
+
+        @test result isa ToolLoopResult
+        @test !result.completed
+        @test result.turns_used == 1
+        @test isempty(result.tool_calls)
+        @test result.response isa ResponseFailure
+        @test result.response.status == 400
+        @test result.llm_error == expected_body
+        @test result.llm_error == result.response.response
+        set_error!(200, "")
+    end
+
+    @testset "tool_loop(Respond) → ResponseCallError (connection) propagates as .result (tool_loop.jl 220)" begin
+        # RespondDeadEndpoint (defined above) points at 127.0.0.1:1 → respond raises →
+        # ResponseCallError. respond does NOT pre-validate capability, so the dead
+        # endpoint reaches the failing HTTP.post inside the try.
+        result = tool_loop(Respond(input="x", service=RespondDeadEndpoint), (n, a) -> "x")
+
+        @test result isa ToolLoopResult
+        @test !result.completed
+        @test result.turns_used == 1
+        @test isempty(result.tool_calls)
+        @test result.response isa ResponseCallError
+        @test !isempty(result.response.error)
+        @test result.llm_error == result.response.error
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Streaming edge path (SAFETY): on_tool_call callback error isolation.
+    # A user callback that THROWS must be swallowed (logged), not crash the
+    # spawned stream task — single-read, so the shared canned-response mock works.
+    #
+    # NOT covered deterministically here: the incremental text-delta branches
+    # (requests.jl:289–296, responses.jl:1071) which only fire when a content
+    # chunk arrives in a read BEFORE the terminal chunk (≥2 separate network
+    # reads). A dedicated HTTP.listen! chunked-streaming mock covered them on
+    # HTTP.jl 2.x, but FAILED on the HTTP.jl 1.x CI leg (EOFError — listen!
+    # streaming semantics differ across the compat range), so it was dropped
+    # rather than ship a leg-specific test. Those two branches ARE exercised in
+    # CI by the live integration streaming tests (real multi-chunk responses).
+    # ═══════════════════════════════════════════════════════════════════════
+
+    # ── TARGET A: on_tool_call callback that THROWS is isolated (requests.jl:276)
+    @testset "stream on_tool_call callback error is swallowed, stream still succeeds (276)" begin
+        # Same single streamed tool call as the on_tool_call success test, but the
+        # user callback raises. Line 270–277 wraps on_tool_call in try/catch; the
+        # throw must hit the catch (276, @warn) and be SWALLOWED — the spawned task
+        # must NOT error. Falsifier: remove the try/catch around on_tool_call and the
+        # task throws → result becomes LLMCallError, not LLMSuccess, and tool_calls
+        # are never assembled. We also assert the assembled tool call survives, proving
+        # _build_stream_message still ran after the callback blew up.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] =
+            """data: {"id":"c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_boom","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\\"location\\\":"}}]},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"c","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\\"NYC\\\"}"}}]},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"c","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\n""" *
+            """data: [DONE]"""
+
+        tool = GPTTool(func=GPTFunctionSignature(name="get_weather", description="Weather",
+            parameters=Dict("type"=>"object", "properties"=>Dict("location"=>Dict("type"=>"string")))))
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true, tools=[tool])
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="weather in NYC?"))
+
+        fired = Ref(0)
+        on_tc = tc -> (fired[] += 1; error("callback boom"))  # throws every time
+
+        result = fetch(chatrequest!(chat; on_tool_call=on_tc))
+
+        @test fired[] == 1                                   # the callback was actually entered (then threw)
+        @test result isa LLMSuccess                          # the throw was swallowed, NOT propagated
+        @test result.message.finish_reason == UniLM.TOOL_CALLS
+        @test length(result.message.tool_calls) == 1         # tool call still assembled post-throw
+        @test result.message.tool_calls[1].id == "call_boom"
+        @test result.message.tool_calls[1].func.name == "get_weather"
+        @test result.message.tool_calls[1].func.arguments["location"] == "NYC"
+        set_error!(200, "")
+    end
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Tool Loop no-dispatcher variants (tool_loop.jl 172–181, 258–271) +
+    # FIM convenience method (completions.jl 186–189). Multi-turn flows use the
+    # stateful response_queue (one entry drained per request); asserting the queue
+    # is empty afterward PROVES both turns actually fired over the wire.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @testset "tool_loop!(chat; tools=CallableTool) builds dispatcher, two-turn (tool_loop.jl 172–181)" begin
+        # Turn 1: assistant requests tool "add" with a=3,b=7. Turn 2: assistant final text.
+        # The dispatcher is built INTERNALLY from the CallableTool's own callable, so the
+        # recorded outcome must equal what *that* closure computes (3+7=10) — falsifies that
+        # tool_loop! routed the call into the CallableTool and not some other path.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        turn1 = JSON.json(Dict(
+            "choices" => [Dict(
+                "finish_reason" => "tool_calls",
+                "message" => Dict("role" => "assistant",
+                    "tool_calls" => [Dict("id" => "call_q1", "type" => "function",
+                        "function" => Dict("name" => "add", "arguments" => """{"a": 3, "b": 7}"""))]))],
+            "usage" => Dict("prompt_tokens" => 10, "completion_tokens" => 5, "total_tokens" => 15)))
+        turn2 = JSON.json(Dict(
+            "choices" => [Dict("finish_reason" => "stop",
+                "message" => Dict("role" => "assistant", "content" => "The sum is 10."))],
+            "usage" => Dict("prompt_tokens" => 20, "completion_tokens" => 4, "total_tokens" => 24)))
+        response_queue[] = [(200, turn1), (200, turn2)]
+
+        called = Ref(0)
+        add_tool = GPTTool(func=GPTFunctionSignature(name="add", description="Add two numbers",
+            parameters=Dict("type"=>"object",
+                "properties"=>Dict("a"=>Dict("type"=>"number"),"b"=>Dict("type"=>"number")),
+                "required"=>["a","b"])))
+        ct = CallableTool(add_tool,
+            (name, args) -> (called[] += 1; string(Int(args["a"]) + Int(args["b"]))))
+
+        # Chat.tools is typed Vector{GPTTool}: it carries the wire schema (inner GPTTool);
+        # the executable CallableTool is supplied via the tool_loop! `tools=` kwarg.
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", tools=[add_tool])
+        push!(chat, Message(role=UniLM.RoleSystem, content="You are a calculator"))
+        push!(chat, Message(role=UniLM.RoleUser, content="What is 3+7?"))
+
+        result = tool_loop!(chat; tools=[ct], max_turns=5)
+
+        @test result isa ToolLoopResult
+        @test result.completed
+        @test result.turns_used == 2
+        @test called[] == 1                                    # the CallableTool's own closure ran exactly once
+        @test length(result.tool_calls) == 1
+        @test result.tool_calls[1].tool_name == "add"
+        @test result.tool_calls[1].success
+        @test result.tool_calls[1].arguments == Dict{String,Any}("a"=>3, "b"=>7)
+        @test result.tool_calls[1].result.result == "10"       # EXACT value the CallableTool computed
+        @test result.response isa LLMSuccess
+        @test result.response.message.content == "The sum is 10."  # the turn-2 answer
+        @test result.response.message.finish_reason == UniLM.STOP
+        @test isempty(response_queue[])                        # both turns drained → two real round-trips
+        set_error!(200, "")
+    end
+
+    @testset "tool_loop!(chat; tools=...) unknown-tool name → error outcome (tool_loop.jl 178)" begin
+        # The model names a tool ("subtract") absent from the CallableTool set ({"add"}).
+        # The internally-built dispatcher hits `error("Unknown tool: subtract")` (line 178),
+        # which _dispatch_tool catches → a FAILED outcome whose error mentions the unknown name.
+        # The error string is then pushed back as the tool message; turn 2 returns text → completed.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        turn1 = JSON.json(Dict(
+            "choices" => [Dict(
+                "finish_reason" => "tool_calls",
+                "message" => Dict("role" => "assistant",
+                    "tool_calls" => [Dict("id" => "call_unk", "type" => "function",
+                        "function" => Dict("name" => "subtract", "arguments" => """{"a": 9, "b": 2}"""))]))],
+            "usage" => Dict("prompt_tokens" => 6, "completion_tokens" => 3, "total_tokens" => 9)))
+        turn2 = JSON.json(Dict(
+            "choices" => [Dict("finish_reason" => "stop",
+                "message" => Dict("role" => "assistant", "content" => "Sorry, I can only add."))],
+            "usage" => Dict("prompt_tokens" => 12, "completion_tokens" => 5, "total_tokens" => 17)))
+        response_queue[] = [(200, turn1), (200, turn2)]
+
+        add_called = Ref(0)
+        add_tool = GPTTool(func=GPTFunctionSignature(name="add", description="Add"))
+        ct = CallableTool(add_tool, (name, args) -> (add_called[] += 1; "should-not-run"))
+
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", tools=[add_tool])
+        push!(chat, Message(role=UniLM.RoleSystem, content="You can only add."))
+        push!(chat, Message(role=UniLM.RoleUser, content="subtract 9 - 2"))
+
+        result = tool_loop!(chat; tools=[ct], max_turns=5)
+
+        @test result isa ToolLoopResult
+        @test result.completed
+        @test result.turns_used == 2
+        @test add_called[] == 0                                # the registered "add" closure was never invoked
+        @test length(result.tool_calls) == 1
+        @test result.tool_calls[1].tool_name == "subtract"
+        @test !result.tool_calls[1].success                    # dispatch FAILED
+        @test isnothing(result.tool_calls[1].result)
+        @test occursin("Unknown tool: subtract", result.tool_calls[1].error)  # error names the unknown tool
+        # The error was relayed to the model as the tool-role message content (loop continued).
+        @test chat.messages[end-1].role == UniLM.RoleTool
+        @test occursin("Unknown tool: subtract", chat.messages[end-1].content)
+        @test isempty(response_queue[])                        # both turns drained
+        set_error!(200, "")
+    end
+
+    @testset "tool_loop(Respond) with no CallableTool throws ArgumentError (tool_loop.jl 265)" begin
+        # r.tools is nothing → callables stays empty → ArgumentError. Falsifies the guard that
+        # the no-dispatcher Responses variant refuses to run without an executable tool.
+        @test_throws ArgumentError tool_loop(Respond(input="x", service=MockServiceEndpoint))
+        # And the message names the missing requirement (not some generic error).
+        err = try
+            tool_loop(Respond(input="x", service=MockServiceEndpoint))
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("No CallableTool", err.msg)
+    end
+
+    @testset "tool_loop(Respond; tools=CallableTool) extracts callable, two-turn (tool_loop.jl 258–271)" begin
+        # Turn 1: a function_call item. Turn 2: a completed message with final text. The dispatcher
+        # is built from the CallableTool in r.tools; the recorded result must equal what THAT
+        # closure computes (3*5=15), proving the no-dispatcher Responses loop wired it through.
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        turn1 = JSON.json(Dict(
+            "id" => "resp_q1", "status" => "completed", "model" => "gpt-4o",
+            "output" => [Dict("type" => "function_call", "id" => "fc_q1", "call_id" => "call_mul",
+                "name" => "mul", "arguments" => """{"a": 3, "b": 5}""", "status" => "completed")]))
+        turn2 = JSON.json(Dict(
+            "id" => "resp_q2", "status" => "completed", "model" => "gpt-4o",
+            "output" => [Dict("type" => "message", "role" => "assistant", "status" => "completed",
+                "content" => [Dict("type" => "output_text", "text" => "3 times 5 is 15.")])]))
+        response_queue[] = [(200, turn1), (200, turn2)]
+
+        mul_called = Ref(0)
+        ct = CallableTool(
+            FunctionTool(name="mul", description="Multiply two numbers",
+                parameters=Dict("type"=>"object",
+                    "properties"=>Dict("a"=>Dict("type"=>"number"),"b"=>Dict("type"=>"number")))),
+            (name, args) -> (mul_called[] += 1; string(Int(args["a"]) * Int(args["b"]))))
+
+        r = Respond(input="What is 3*5?", tools=[ct], service=MockServiceEndpoint)
+        result = tool_loop(r; max_turns=5)
+
+        @test result isa ToolLoopResult
+        @test result.completed
+        @test result.turns_used == 2
+        @test mul_called[] == 1                                # the CallableTool closure ran once
+        @test length(result.tool_calls) == 1
+        @test result.tool_calls[1].tool_name == "mul"
+        @test result.tool_calls[1].success
+        @test result.tool_calls[1].arguments == Dict{String,Any}("a"=>3, "b"=>5)
+        @test result.tool_calls[1].result.result == "15"       # EXACT computed value
+        @test result.response isa ResponseSuccess
+        @test output_text(result.response) == "3 times 5 is 15."
+        @test isempty(response_queue[])                        # both turns drained → two round-trips
+        set_error!(200, "")
+    end
+
+    @testset "fim_complete(prompt::String; suffix) convenience builds+executes FIMCompletion (completions.jl 186–189)" begin
+        # Drive the string convenience overload (NOT the FIMCompletion overload) against the mock.
+        # Asserts: the result is a FIMSuccess with the EXACT parsed text, and the wire body shows the
+        # prompt + suffix the convenience method serialized — proving it constructed the FIMCompletion
+        # from its positional/keyword args (falsifies wrong field wiring, e.g. suffix dropped).
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] = JSON.json(Dict(
+            "id" => "cmpl-conv",
+            "model" => "mock-fim",
+            "choices" => [Dict("text" => "    return 1\n", "index" => 0, "finish_reason" => "stop")],
+            "usage" => Dict("prompt_tokens" => 7, "completion_tokens" => 3, "total_tokens" => 10)))
+
+        result = fim_complete("def one():\n";
+            suffix="\n# end", service=MockServiceEndpoint, model="mock-fim", max_tokens=32)
+
+        @test result isa FIMSuccess
+        @test fim_text(result) == "    return 1\n"             # exact parsed text
+        @test result.response.choices[1].finish_reason == "stop"
+        @test result.response.usage.total_tokens == 10
+        # The convenience method serialized the prompt + suffix it was given.
+        sent = JSON.parse(request_body[]; dicttype=Dict{String,Any})
+        @test sent["prompt"] == "def one():\n"
+        @test sent["suffix"] == "\n# end"
+        @test sent["max_tokens"] == 32
+        @test sent["model"] == "mock-fim"
+
+        # Same convenience method WITHOUT suffix → suffix must be omitted from the wire body
+        # (JSON.lower drops a nothing suffix), proving the default propagated correctly.
+        response_body[] = JSON.json(Dict(
+            "id" => "cmpl-conv2",
+            "model" => "mock-fim",
+            "choices" => [Dict("text" => "x", "index" => 0, "finish_reason" => "stop")],
+            "usage" => Dict("prompt_tokens" => 1, "completion_tokens" => 1, "total_tokens" => 2)))
+        result2 = fim_complete("only prefix"; service=MockServiceEndpoint, model="mock-fim")
+        @test result2 isa FIMSuccess
+        @test fim_text(result2) == "x"
+        sent2 = JSON.parse(request_body[]; dicttype=Dict{String,Any})
+        @test sent2["prompt"] == "only prefix"
+        @test !haskey(sent2, "suffix")                         # default suffix=nothing → not serialized
+        set_error!(200, "")
+    end
+
+    @testset "realtime default WS URL (pure-unit)" begin
+        # realtime.jl:72 — the generic _realtime_ws_url(service) fallback returns REALTIME_WS_URL.
+        # WSMockEndpoint overrides it (line 65), so a non-overridden service (the OPENAI type) must
+        # hit the default. which().line pins the method; the value falsifies a wrong default URL.
+        @test which(UniLM._realtime_ws_url, (Type{OPENAIServiceEndpoint},)).line == 72
+        @test UniLM._realtime_ws_url(OPENAIServiceEndpoint) == UniLM.REALTIME_WS_URL
+        @test UniLM._realtime_ws_url(OPENAIServiceEndpoint) == "wss://api.openai.com/v1/realtime"
     end
 
 finally

@@ -32,6 +32,20 @@
         @test verify_webhook(payload, Dict("webhook-id" => 1, "webhook-timestamp" => 2, "webhook-signature" => "v1,x"), secret; tolerance_seconds=Inf) == false
     end
 
+    @testset "malformed secret base64 → false (not thrown)" begin
+        # Reaches src/webhooks.jl:62: a FRESH timestamp passes the replay window (lines 55-57),
+        # so control flows to base64decode (line 60). The secret body is not valid base64, so
+        # base64decode THROWS and the catch returns false. If the try/catch were removed, this
+        # would propagate the DecodeError instead of returning a Bool — so a thrown error here
+        # (rather than `== false`) falsifies the guard.
+        recent = string(round(Int, time()))
+        bad_headers = merge(headers, Dict("webhook-timestamp" => recent))
+        @test verify_webhook(payload, bad_headers, "whsec_!!!not-base64!!!") == false
+        # Same malformed body without the whsec_ prefix (the secret[7:end] strip is bypassed,
+        # base64decode still throws on the raw body) — also caught → false.
+        @test verify_webhook(payload, bad_headers, "@@@not base64@@@") == false
+    end
+
     @testset "parse_webhook" begin
         ev = parse_webhook("{\"id\":\"evt_1\",\"type\":\"response.completed\",\"data\":{\"id\":\"resp_1\"}}")
         @test ev.id == "evt_1"

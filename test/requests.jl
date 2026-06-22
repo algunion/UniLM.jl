@@ -25,6 +25,54 @@
         chat = Chat(service=UniLM.GEMINIServiceEndpoint, model="gemini-2.0-flash")
         @test UniLM.get_url(UniLM.GEMINIServiceEndpoint, chat) == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
     end
+
+    @testset "Gemini get_url for Embeddings" begin
+        # src/requests.jl:32 — Gemini embeddings route to GEMINI_OPENAI_BASE * "/embeddings".
+        # Note: Gemini's OpenAI-compat base already embeds /v1beta/openai, so it does NOT use
+        # the EMBEDDINGS_PATH ("/v1/embeddings") constant — assert the exact composed string.
+        emb = UniLM.Embeddings("test"; service=UniLM.GEMINIServiceEndpoint, model="gemini-embedding-001")
+        @test UniLM.get_url(UniLM.GEMINIServiceEndpoint, emb) == UniLM.GEMINI_OPENAI_BASE * "/embeddings"
+        @test UniLM.get_url(UniLM.GEMINIServiceEndpoint, emb) == "https://generativelanguage.googleapis.com/v1beta/openai/embeddings"
+    end
+end
+
+@testset "_api_base_url dispatch (Responses base)" begin
+    # src/requests.jl:34 — OpenAI is the only built-in that yields a base URL.
+    @test UniLM._api_base_url(UniLM.OPENAIServiceEndpoint) == "https://api.openai.com"
+    @test UniLM._api_base_url(UniLM.OPENAIServiceEndpoint) == UniLM.OPENAI_BASE_URL
+
+    # src/requests.jl:35-36 — Azure and Gemini reject the Responses API with an ArgumentError
+    # whose message names OPENAIServiceEndpoint (these would throw NO error if the methods
+    # silently returned a base URL instead).
+    @test_throws ArgumentError UniLM._api_base_url(UniLM.AZUREServiceEndpoint)
+    @test_throws ArgumentError UniLM._api_base_url(UniLM.GEMINIServiceEndpoint)
+    for S in (UniLM.AZUREServiceEndpoint, UniLM.GEMINIServiceEndpoint)
+        err = try
+            UniLM._api_base_url(S)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("OPENAIServiceEndpoint", err.msg)
+    end
+
+    # src/requests.jl:42 — GenericOpenAIEndpoint base is the rstripped base_url (trailing
+    # slash removed). A base_url that ends in "/" proves the rstrip: without it, the slash
+    # would survive.
+    gen = UniLM.GenericOpenAIEndpoint("https://host.example/", "k")
+    @test UniLM._api_base_url(gen) == "https://host.example"
+    @test UniLM._api_base_url(gen) == rstrip(gen.base_url, '/')
+end
+
+@testset "GenericOpenAIEndpoint get_url trailing-slash rstrip" begin
+    # src/requests.jl:40 — Chat on a GenericOpenAIEndpoint with a TRAILING-SLASH base_url:
+    # the URL is rstrip(base_url,'/') * CHAT_COMPLETIONS_PATH. With base_url "https://host.example/"
+    # the result is exactly ".../v1/chat/completions" (single slash); were the rstrip absent it
+    # would be ".../v1/chat/completions" prefixed by a doubled slash ("https://host.example//v1...").
+    gen = UniLM.GenericOpenAIEndpoint("https://host.example/", "k")
+    @test UniLM.get_url(gen, Chat()) == "https://host.example/v1/chat/completions"
+    @test UniLM.get_url(gen, Chat()) == rstrip(gen.base_url, '/') * UniLM.CHAT_COMPLETIONS_PATH
 end
 
 @testset "Auth headers" begin
@@ -561,4 +609,21 @@ end
     @test UniLM._RETRY_FACTOR == 2.0
     @test UniLM._RETRY_MAX_DELAY == 60.0
     @test UniLM._RETRY_MAX_ATTEMPTS == 30
+end
+
+@testset "_accumulate_cost! fallback is a no-op for non-success" begin
+    # requests.jl:90 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
+    # success types are specialized in accounting.jl, so a failure result must land here:
+    # return nothing AND leave cumulative cost untouched (falsifies accidental accumulation).
+    chat = Chat(model="gpt-4.1-nano")
+    chat._cumulative_cost[] = 0.25
+    failure = LLMFailure(response="server exploded", status=500, self=chat)
+    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 90
+    @test UniLM._accumulate_cost!(chat, failure) === nothing
+    @test cumulative_cost(chat) == 0.25       # unchanged: the fallback did not add anything
+
+    # also exercised via a call-error variant (same fallback method)
+    callerr = LLMCallError(error="network down", self=chat)
+    @test UniLM._accumulate_cost!(chat, callerr) === nothing
+    @test cumulative_cost(chat) == 0.25
 end

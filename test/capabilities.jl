@@ -71,6 +71,34 @@ end
     @test UniLM.default_model(mistral) === nothing
 end
 
+@testset "default-model fallbacks return nothing" begin
+    gen = GenericOpenAIEndpoint("http://x", "")
+    ds = DeepSeekEndpoint("k")
+
+    # src/capabilities.jl:65 — the GenericOpenAIEndpoint-specific embedding method (more
+    # specific than the `_` fallback) returns nothing. Asserting `=== nothing` (not just
+    # falsy) pins the exact return.
+    @test UniLM.default_embedding_model(gen) === nothing
+
+    # src/capabilities.jl:66 — the `_` embedding fallback. AZUREServiceEndpoint is a TYPE with no
+    # specific default_embedding_model method (only OPENAI/GEMINI types have one), so it lands on
+    # the catch-all → nothing. Unknown services must have NO default embedding model.
+    @test UniLM.default_embedding_model(UniLM.AZUREServiceEndpoint) === nothing
+
+    # src/capabilities.jl:70 — default_image_model has only an OPENAI method (line 69) and the
+    # catch-all `_` (line 70); any instance other than the OPENAI type hits line 70 → nothing.
+    @test UniLM.default_image_model(ds) === nothing
+    @test UniLM.default_image_model(gen) === nothing
+
+    # src/capabilities.jl:74 — GenericOpenAIEndpoint-specific FIM method (more specific than
+    # both ::DeepSeekEndpoint and `_`) returns nothing.
+    @test UniLM.default_fim_model(gen) === nothing
+
+    # src/capabilities.jl:75 — the `_` FIM fallback. OPENAIServiceEndpoint is a TYPE (not a
+    # DeepSeekEndpoint/GenericOpenAIEndpoint instance), so it lands on the catch-all → nothing.
+    @test UniLM.default_fim_model(OPENAIServiceEndpoint) === nothing
+end
+
 @testset "0.10 endpoint capabilities (consolidation)" begin
     new_caps = (:files, :vector_stores, :conversations, :moderation, :audio, :batch,
         :image_edits, :fine_tuning, :containers, :uploads, :video, :realtime)
@@ -95,4 +123,27 @@ end
     @test_throws ArgumentError create_container(name="c", service=DeepSeekEndpoint("k"))
     @test_throws ArgumentError create_video(prompt="p", service=AZUREServiceEndpoint)
     @test_throws ArgumentError mint_realtime_secret(service=GenericOpenAIEndpoint("http://x", ""))
+end
+
+@testset "default-model resolution returns exact provider strings" begin
+    ds = DeepSeekEndpoint("k")
+
+    # default_model — Type dispatch for OPENAI/AZURE/GEMINI (capabilities.jl 55-57),
+    # instance dispatch for DeepSeek (line 58). Each distinct return value uniquely
+    # identifies (and covers) its specific method, and falsifies a wrong model string.
+    @test UniLM.default_model(OPENAIServiceEndpoint) == "gpt-5.5"
+    @test UniLM.default_model(AZUREServiceEndpoint) == "gpt-5.2"
+    @test UniLM.default_model(GEMINIServiceEndpoint) == "gemini-2.5-flash"
+    @test UniLM.default_model(ds) == "deepseek-chat"
+
+    # default_embedding_model — Type dispatch for OPENAI/GEMINI (62/63), instance for DeepSeek (64→nothing)
+    @test UniLM.default_embedding_model(OPENAIServiceEndpoint) == "text-embedding-3-small"
+    @test UniLM.default_embedding_model(GEMINIServiceEndpoint) == "gemini-embedding-001"
+    @test UniLM.default_embedding_model(ds) === nothing
+
+    # default_image_model — OPENAI Type method (line 69)
+    @test UniLM.default_image_model(OPENAIServiceEndpoint) == "gpt-image-2"
+
+    # default_fim_model — DeepSeek instance method (line 73)
+    @test UniLM.default_fim_model(ds) == "deepseek-chat"
 end

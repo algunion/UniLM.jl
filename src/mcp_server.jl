@@ -515,6 +515,62 @@ end
 
 # ─── Macros ──────────────────────────────────────────────────────────────────
 
+# Macro-expansion-time helpers (operate on `Expr`, not runtime values).
+
+"""
+    _mcp_arg_name(arg) -> Symbol
+
+Name of a declared argument node. `:a` → `:a`; `Expr(:(::), :a, T)` → `:a`.
+"""
+_mcp_arg_name(arg::Symbol) = arg
+function _mcp_arg_name(arg::Expr)
+    arg.head === :(::) || error("@mcp_* unsupported argument form: $(arg)")
+    arg.args[1]::Symbol
+end
+
+"""
+    _mcp_arg_type(arg) -> type expression
+
+Declared type of an argument node. Untyped (`:a`) → `:Any`; typed
+`Expr(:(::), :a, T)` → `T`. "required"/typedness is `type !== :Any`, matching the
+pre-existing macro logic.
+"""
+_mcp_arg_type(arg::Symbol) = :Any
+_mcp_arg_type(arg::Expr) = (arg.head === :(::) ? arg.args[2] : :Any)
+
+"""
+    _mcp_sig_args(sig) -> Vector
+
+Extract the declared-argument nodes from a function signature `Expr`
+(`func_expr.args[1]`), independent of whether the function was written in named
+or anonymous form. Handles every shape Julia produces:
+
+  - Named `f(a, b)`            → `Expr(:call, :f, args...)` ⇒ `args[2:end]` (drop name).
+  - Anonymous multi `(a, b)`   → `Expr(:tuple, args...)`    ⇒ all of `.args`.
+  - Anonymous single `(a)`     → bare `Symbol` `:a` OR typed `Expr(:(::), :a, T)`
+                                  ⇒ the whole node is the single arg (`[sig]`).
+
+A trailing return-type annotation (`… :: RetType`) is unwrapped first: it appears
+as `Expr(:(::), realsig, RetType)` whose inner `realsig` is itself a `:call`
+(named) or `:tuple` (anonymous). A top-level `Expr(:(::), :sym, T)` with a *Symbol*
+inner node is instead a typed single anonymous arg and is NOT unwrapped.
+"""
+function _mcp_sig_args(sig)
+    # Unwrap a trailing return type only when the inner node is a real signature
+    # (`:call`/`:tuple`), never when it is the typed-single-arg `a::T` case.
+    if sig isa Expr && sig.head === :(::) && sig.args[1] isa Expr &&
+       sig.args[1].head in (:call, :tuple)
+        sig = sig.args[1]
+    end
+    if sig isa Expr && sig.head === :call
+        return sig.args[2:end]            # named: drop the function name
+    elseif sig isa Expr && sig.head === :tuple
+        return collect(sig.args)          # anonymous (zero or more args)
+    else
+        return Any[sig]                   # anonymous single arg: bare Symbol or `a::T`
+    end
+end
+
 """
     @mcp_tool server function name(args...)::ReturnType body end
 
@@ -533,13 +589,16 @@ macro mcp_tool(server, func_expr)
     call_expr = func_expr.args[1]
     body = func_expr.args[2]
     actual_call = call_expr isa Expr && call_expr.head == :(::) ? call_expr.args[1] : call_expr
+    # @mcp_tool registers under (and redefines) the function NAME, so it requires a
+    # named signature `f(args...)`. Reject the anonymous form loudly instead of
+    # registering a tool named after the first argument node.
+    (actual_call isa Expr && actual_call.head === :call) ||
+        error("@mcp_tool requires a NAMED function `function name(args...) … end`")
     fname = actual_call.args[1]
-    raw_args = actual_call.args[2:end]
+    raw_args = _mcp_sig_args(call_expr)
     name_str = string(fname)
-    # Extract arg names and types
-    arg_info = [(string(a isa Expr && a.head == :(::) ? a.args[1] : a),
-                 a isa Expr && a.head == :(::) ? a.args[2] : :Any)
-                for a in raw_args]
+    # Extract arg names and types (shared, AST-shape-robust extractor).
+    arg_info = [(string(_mcp_arg_name(a)), _mcp_arg_type(a)) for a in raw_args]
     required = [n for (n, T) in arg_info if T !== :Any]
     # Build schema and handler with full esc to avoid hygiene issues
     prop_exprs = [:($(n) => UniLM._json_schema_type($(T))) for (n, T) in arg_info]
@@ -589,9 +648,18 @@ macro mcp_resource(server, uri, func_expr)
     body = func_expr.args[2]
     is_template = occursin(r"\{.*\}", string(uri))
     if is_template
+        # Bind each declared arg from the matched path params `_p_`, keyed by the
+        # arg's NAME (which must equal the URI `{param}` name, per the docstring).
+        # esc the binding LHS so it is visible to the esc'd user body. A declared
+        # name with no matching URI param raises a clear KeyError at read time.
+        raw_args = _mcp_sig_args(func_expr.args[1])
+        unpack = [:($(esc(_mcp_arg_name(a))) = _p_[$(string(_mcp_arg_name(a)))]) for a in raw_args]
         quote
             UniLM.register_resource_template!($(esc(server)), $(esc(uri)), $(esc(uri)),
-                function(_p_::Dict{String,String}); $(esc(body)); end)
+                function(_p_::Dict{String,String})
+                    $(unpack...)
+                    $(esc(body))
+                end)
         end
     else
         quote
@@ -615,19 +683,16 @@ end
 """
 macro mcp_prompt(server, name, func_expr)
     func_expr.head in (:function, :(=)) || error("@mcp_prompt expects a function definition")
-    call_expr = func_expr.args[1]
     body = func_expr.args[2]
-    actual_call = call_expr isa Expr && call_expr.head == :(::) ? call_expr.args[1] : call_expr
-    raw_args = actual_call.args[2:end]
-    arg_defs = Dict{String,Any}[]
-    for arg in raw_args
-        n = arg isa Expr && arg.head == :(::) ? string(arg.args[1]) : string(arg)
-        req = arg isa Expr && arg.head == :(::)
-        push!(arg_defs, Dict{String,Any}("name" => n, "required" => req))
-    end
-    # Build handler that unpacks dict to local vars
-    arg_names = [arg isa Expr && arg.head == :(::) ? arg.args[1] : arg for arg in raw_args]
-    name_strs = [string(a) for a in arg_names]
+    # Shared, AST-shape-robust arg extraction: works for the anonymous
+    # `function(x) … end` form (the docstring's shape) AND the named form.
+    raw_args = _mcp_sig_args(func_expr.args[1])
+    arg_names = [_mcp_arg_name(a) for a in raw_args]
+    name_strs = [string(n) for n in arg_names]
+    # required ⇔ the arg is typed (type !== :Any), matching the prior logic.
+    arg_defs = [Dict{String,Any}("name" => s, "required" => _mcp_arg_type(a) !== :Any)
+                for (a, s) in zip(raw_args, name_strs)]
+    # Build handler that unpacks the request dict into local (esc'd) vars.
     unpack = [:($(esc(a)) = get(_d_, $(n), nothing)) for (a, n) in zip(arg_names, name_strs)]
     quote
         UniLM.register_prompt!($(esc(server)), $(esc(name)),

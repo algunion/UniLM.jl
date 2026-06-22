@@ -209,27 +209,76 @@ println("Prompts: ", collect(keys(server.prompts)))
 ### Macros
 
 The `@mcp_tool`, `@mcp_resource`, and `@mcp_prompt` macros provide a more ergonomic
-registration API with automatic JSON Schema generation from Julia type annotations:
+registration API with automatic JSON Schema generation from Julia type annotations.
+The examples below are executed at doc-build time and call the registered handlers
+directly to prove the wiring works.
 
-```julia
-server = MCPServer("calc", "1.0.0")
+#### `@mcp_tool` — typed args become JSON Schema
 
-@mcp_tool server function add(a::Float64, b::Float64)::String
+A named typed function becomes a tool whose `inputSchema` is inferred from the argument
+types (typed args are `required`). The generated handler unpacks the incoming
+`Dict{String,Any}` and forwards it to your function.
+
+!!! note "Contract"
+    `@mcp_tool` requires a **named** function (`function name(args…)`). An anonymous
+    `function(x) … end` now raises a clear error instead of registering a tool named
+    after its first argument.
+
+```@example mcp
+srv = MCPServer("calc", "1.0.0")
+
+@mcp_tool srv function add(a::Float64, b::Float64)::String
     string(a + b)
 end
 
-@mcp_resource server "config://app" function()
-    read("config.toml", String)
+# Generated schema, inferred from the signature:
+println("schema: ", JSON.json(srv.tools["add"].input_schema))
+# Call the registered handler with raw JSON-shaped args:
+println("add(2, 3) = ", srv.tools["add"].handler(Dict{String,Any}("a" => 2.0, "b" => 3.0)))
+```
+
+#### `@mcp_resource` — static and URI-templated
+
+A `function()` registers a static resource; a URI with `{param}` placeholders registers
+a template whose handler arguments are bound from the matched path params.
+
+!!! note "Contract"
+    For template resources, each handler argument name must match a URI `{param}` name —
+    it is bound from the matched params (e.g. `{id}` ⇒ `function(id::String)`).
+
+```@example mcp
+@mcp_resource srv "config://app" function()
+    "{\"debug\": true}"
 end
 
-@mcp_resource server "file://{path}" function(path::String)
-    read(path, String)
+@mcp_resource srv "note://{id}" function(id::String)
+    "Note #$id"
 end
 
-@mcp_prompt server "review" function(code::String)
+# Read the templated resource via JSON-RPC; the {id} param is bound into `id`:
+req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 1, "method" => "resources/read",
+    "params" => Dict{String,Any}("uri" => "note://42"))
+resp = UniLM._dispatch_mcp(srv, req)
+println("note://42 -> ", resp["result"]["contents"][1]["text"])
+```
+
+#### `@mcp_prompt` — args bound from the request
+
+The anonymous `function(arg::String) … end` form registers a prompt; declared args are
+bound from the `prompts/get` request arguments.
+
+```@example mcp
+@mcp_prompt srv "review" function(code::String)
     [Dict("role" => "user",
         "content" => Dict("type" => "text", "text" => "Review: $code"))]
 end
+
+# Dispatch prompts/get; `code` is bound from the request arguments:
+greq = Dict{String,Any}("jsonrpc" => "2.0", "id" => 2, "method" => "prompts/get",
+    "params" => Dict{String,Any}("name" => "review",
+        "arguments" => Dict{String,Any}("code" => "x + 1")))
+gresp = UniLM._dispatch_mcp(srv, greq)
+println("review -> ", gresp["result"]["messages"][1]["content"]["text"])
 ```
 
 ### Serving

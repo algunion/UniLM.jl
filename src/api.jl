@@ -1,5 +1,5 @@
 """
-    GPTFunctionSignature(; name, description=nothing, parameters=nothing)
+    GPTFunctionSignature(; name, description=nothing, parameters=nothing, strict=nothing)
 
 Describes a function that can be called by the model in the Chat Completions API.
 
@@ -7,6 +7,11 @@ Describes a function that can be called by the model in the Chat Completions API
 - `name::String`: The name of the function.
 - `description::Union{String,Nothing}`: A description of what the function does.
 - `parameters::Union{AbstractDict,Nothing}`: JSON Schema object describing the function parameters.
+- `strict::Union{Bool,Nothing}`: Enable strict schema adherence for function arguments
+  (structured outputs). `nothing` (default) omits the field from the request — the API
+  default, non-strict. `true` requires `parameters` to be a strict-valid schema
+  (`additionalProperties: false` on every object, all properties `required`); UniLM does
+  not validate this — the API rejects strict-invalid schemas with a 400.
 
 # Example
 ```julia
@@ -18,8 +23,10 @@ sig = GPTFunctionSignature(
         "properties" => Dict(
             "location" => Dict("type" => "string", "description" => "The city")
         ),
-        "required" => ["location"]
-    )
+        "required" => ["location"],
+        "additionalProperties" => false
+    ),
+    strict=true
 )
 ```
 """
@@ -27,6 +34,7 @@ sig = GPTFunctionSignature(
     name::String
     description::Union{String,Nothing} = nothing
     parameters::Union{AbstractDict,Nothing} = nothing
+    strict::Union{Bool,Nothing} = nothing
 end
 
 JSON.omit_null(::Type{GPTFunctionSignature}) = true
@@ -106,7 +114,8 @@ function GPTTool(d::AbstractDict)
         func=GPTFunctionSignature(
             name=inner["name"],
             description=get(inner, "description", nothing),
-            parameters=get(inner, "parameters", nothing)
+            parameters=get(inner, "parameters", nothing),
+            strict=get(inner, "strict", nothing)
         )
     )
 end
@@ -253,9 +262,10 @@ iscall(m::Message) = m.role == RoleTool
     name::String
     description::String
     schema::AbstractDict
+    strict::Union{Bool,Nothing} = nothing
 end
 
-# JsonSchemaAPI serializes as a regular struct (JSON.jl handles this automatically)
+JSON.omit_null(::Type{JsonSchemaAPI}) = true
 
 """
     ResponseFormat(; type="json_object", json_schema=nothing)
@@ -294,7 +304,7 @@ JSON.omit_null(::Type{ResponseFormat}) = true
 
 json_object() = ResponseFormat()
 json_schema(schema) = ResponseFormat(schema)
-json_schema(name::String, description::String, schema::AbstractDict) = ResponseFormat(JsonSchemaAPI(name, description, schema))
+json_schema(name::String, description::String, schema::AbstractDict; strict::Union{Bool,Nothing}=nothing) = ResponseFormat(JsonSchemaAPI(name, description, schema, strict))
 
 """
     ServiceEndpoint

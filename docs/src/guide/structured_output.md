@@ -49,12 +49,15 @@ schema = ResponseFormat(UniLM.JsonSchemaAPI(
                         "name" => Dict("type" => "string"),
                         "year" => Dict("type" => "integer")
                     ),
-                    "required" => ["name", "year"]
+                    "required" => ["name", "year"],
+                    "additionalProperties" => false
                 )
             )
         ),
-        "required" => ["languages"]
-    )
+        "required" => ["languages"],
+        "additionalProperties" => false
+    ),
+    strict=true
 ))
 
 chat = Chat(model="gpt-5.2", response_format=schema)
@@ -62,6 +65,7 @@ push!(chat, Message(Val(:system), "Return structured data about programming lang
 push!(chat, Message(Val(:user), "List Julia, Python, and Rust"))
 println("Schema name: ", schema.json_schema.name)
 println("Response format type: ", schema.type)
+println("Strict: ", schema.json_schema.strict)
 ```
 
 ```@example structured

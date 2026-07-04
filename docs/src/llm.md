@@ -187,6 +187,7 @@ chat[i]                    # index into messages
     name::String
     description::Union{String,Nothing} = nothing
     parameters::Union{AbstractDict,Nothing} = nothing   # JSON Schema dict
+    strict::Union{Bool,Nothing} = nothing               # strict function calling; nothing = omit (API default)
 end
 
 # Wrap it for the tools parameter
@@ -194,7 +195,7 @@ end
     type::String = "function"
     func::GPTFunctionSignature
 end
-GPTTool(d::AbstractDict)   # construct from dict with keys "name", "description", "parameters"
+GPTTool(d::AbstractDict)   # construct from dict with keys "name", "description", "parameters", "strict"
 
 # Returned by model when it wants to call a function
 @kwdef struct GPTToolCall
@@ -219,6 +220,14 @@ end
     json_schema::Union{JsonSchemaAPI,AbstractDict,Nothing} = nothing
 end
 ResponseFormat(json_schema)  # shorthand, sets type="json_schema"
+
+@kwdef struct JsonSchemaAPI
+    name::String
+    description::String
+    schema::AbstractDict
+    strict::Union{Bool,Nothing} = nothing   # strict schema adherence; nothing = omit (API default)
+end
+json_schema(name, description, schema; strict=nothing)  # → ResponseFormat(JsonSchemaAPI(...))
 ```
 
 ### Chat Completions Example

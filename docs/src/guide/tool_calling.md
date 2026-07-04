@@ -33,6 +33,33 @@ println("Tool JSON:")
 println(JSON.json(JSON.lower(weather_tool)))
 ```
 
+### Strict Function Calling
+
+Pass `strict=true` to make the API guarantee that tool-call arguments conform to your
+schema (no extra keys, all required fields present). A strict schema must set
+`additionalProperties => false` on every object and mark every property as `required`
+— the API rejects strict-invalid schemas with a 400. Omitting `strict` (the default)
+sends no flag at all: the request body is identical to previous UniLM versions.
+
+```@example tools
+strict_tool = GPTTool(
+    func=GPTFunctionSignature(
+        name="get_weather",
+        description="Get current weather for a location",
+        parameters=Dict(
+            "type" => "object",
+            "properties" => Dict(
+                "location" => Dict("type" => "string", "description" => "City name")
+            ),
+            "required" => ["location"],
+            "additionalProperties" => false
+        ),
+        strict=true
+    )
+)
+println(JSON.json(JSON.lower(strict_tool)))
+```
+
 ### Making Tool-Enabled Requests
 
 ```@example tools

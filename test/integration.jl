@@ -192,9 +192,11 @@ end
     @test witness isa LLMFailure   # strict=true engages the strict schema validator
     if witness isa LLMFailure
         @test witness.status == 400
+        # Pin the error CODE — it discriminates schema-rejection from unrelated
+        # 400s (auth, bad model, rate limit). Deliberately no pin on err["param"]
+        # or message wording: those are OpenAI-internal formats.
         err = JSON.parse(witness.response)["error"]
         @test err["code"] == "invalid_function_parameters"
-        @test err["param"] == "tools[0].function.parameters"
     end
 end
 

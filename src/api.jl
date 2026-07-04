@@ -37,6 +37,10 @@ sig = GPTFunctionSignature(
     strict::Union{Bool,Nothing} = nothing
 end
 
+# pre-0.10.3 positional arity (@kwdef defaults apply only to the keyword constructor)
+GPTFunctionSignature(name, description, parameters) =
+    GPTFunctionSignature(name, description, parameters, nothing)
+
 JSON.omit_null(::Type{GPTFunctionSignature}) = true
 
 """
@@ -109,13 +113,16 @@ Construct a [`GPTTool`](@ref) from a dict. Accepts both the bare format
 """
 function GPTTool(d::AbstractDict)
     inner = haskey(d, "function") && d["function"] isa AbstractDict ? d["function"] : d
+    strict = get(inner, "strict", nothing)
+    strict isa Union{Bool,Nothing} ||
+        throw(ArgumentError("tool \"strict\" must be a Bool or absent/null, got $(repr(strict))"))
     GPTTool(
         type=get(d, "type", "function"),
         func=GPTFunctionSignature(
             name=inner["name"],
             description=get(inner, "description", nothing),
             parameters=get(inner, "parameters", nothing),
-            strict=get(inner, "strict", nothing)
+            strict=strict
         )
     )
 end
@@ -264,6 +271,9 @@ iscall(m::Message) = m.role == RoleTool
     schema::AbstractDict
     strict::Union{Bool,Nothing} = nothing
 end
+
+# pre-0.10.3 positional arity (@kwdef defaults apply only to the keyword constructor)
+JsonSchemaAPI(name, description, schema) = JsonSchemaAPI(name, description, schema, nothing)
 
 JSON.omit_null(::Type{JsonSchemaAPI}) = true
 

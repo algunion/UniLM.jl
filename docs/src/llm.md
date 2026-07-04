@@ -221,13 +221,13 @@ end
 end
 ResponseFormat(json_schema)  # shorthand, sets type="json_schema"
 
-@kwdef struct JsonSchemaAPI
+@kwdef struct JsonSchemaAPI   # not exported — construct as UniLM.JsonSchemaAPI(...)
     name::String
     description::String
     schema::AbstractDict
     strict::Union{Bool,Nothing} = nothing   # strict schema adherence; nothing = omit (API default)
 end
-json_schema(name, description, schema; strict=nothing)  # → ResponseFormat(JsonSchemaAPI(...))
+UniLM.json_schema(name, description, schema; strict=nothing)  # → ResponseFormat(JsonSchemaAPI(...)); not exported
 ```
 
 ### Chat Completions Example

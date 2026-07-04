@@ -18,10 +18,21 @@ which is the API default — non-strict).
   it. `JsonSchemaAPI` now declares `JSON.omit_null` (all its previous fields were
   required, so existing serialized output is unchanged).
 
+### Behavior note (deliberate bug fix)
+- Tool definitions ingested as dicts (`GPTTool(::AbstractDict)` / `to_tool(::AbstractDict)`)
+  that already carry a `"strict"` key now transmit it — previously the key was silently
+  dropped. If a stored `"strict": true` definition has a strict-invalid schema, the API
+  will now reject it with a 400; that rejection reflects what the definition always
+  declared. Non-Bool `"strict"` values raise a descriptive `ArgumentError` instead of a
+  raw `MethodError`.
+- The pre-0.10.3 3-argument positional constructors `GPTFunctionSignature(name,
+  description, parameters)` and `JsonSchemaAPI(name, description, schema)` are preserved
+  via explicit methods (`@kwdef` field defaults do not extend positional constructors).
+
 UniLM does not validate schemas against strict-mode rules (transport, not policy); the
 API rejects strict-invalid schemas with a 400. Live transmission is witnessed by a
 key-gated integration test: the same tool is accepted without `strict` and rejected
-(400 naming the strict constraint) with `strict=true` on a strict-invalid schema.
+(400, `invalid_function_parameters`) with `strict=true` on a strict-invalid schema.
 
 ## 0.10.2
 

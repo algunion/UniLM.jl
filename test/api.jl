@@ -79,6 +79,14 @@ end
         @test GPTFunctionSignature(name="fn", strict=true).strict === true
         @test GPTFunctionSignature(name="fn", strict=false).strict === false
     end
+
+    @testset "positional constructor back-compat" begin
+        # pre-0.10.3 3-arg arity must keep working (patch release, non-breaking)
+        sig = GPTFunctionSignature("fn", "desc", Dict("type" => "object"))
+        @test sig.name == "fn"
+        @test sig.description == "desc"
+        @test sig.strict === nothing
+    end
 end
 
 @testset "GPTImageContent" begin
@@ -169,8 +177,9 @@ end
         @test body["tools"][1]["function"]["strict"] === true
         @test !haskey(body["tools"][1], "strict")
 
-        # F2: default (no strict) → no strict key anywhere; the function
-        # object's key set is byte-for-byte what pre-strict UniLM produced
+        # F2: default (no strict) → no strict key anywhere; the function object's
+        # key SET matches pre-strict UniLM (structural pin — JSON dict key order
+        # is not deterministic, so a byte-level pin would be brittle)
         tool_default = GPTTool(func=GPTFunctionSignature(name="fn", description="d",
             parameters=params))
         parsed = JSON.parse(JSON.json(tool_default))
@@ -194,6 +203,11 @@ end
 
         # absent → nothing (API default, non-strict)
         @test GPTTool(Dict("name" => "fn")).func.strict === nothing
+
+        # malformed non-Bool strict fails loud with a diagnostic error
+        @test_throws ArgumentError GPTTool(Dict("name" => "fn", "strict" => "true"))
+        @test_throws ArgumentError GPTTool(Dict("type" => "function",
+            "function" => Dict("name" => "fn", "strict" => 1)))
 
         # round-trip: serialize → parse → reconstruct preserves strict
         for s in (true, false)
@@ -384,6 +398,13 @@ end
         # helper without strict stays strict-free
         rf0 = UniLM.json_schema("n", "d", schema)
         @test !haskey(JSON.parse(JSON.json(rf0))["json_schema"], "strict")
+    end
+
+    @testset "positional constructor back-compat" begin
+        # pre-0.10.3 3-arg arity must keep working (patch release, non-breaking)
+        js = UniLM.JsonSchemaAPI("n", "d", schema)
+        @test js.name == "n"
+        @test js.strict === nothing
     end
 end
 

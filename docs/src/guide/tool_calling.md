@@ -57,7 +57,7 @@ strict_tool = GPTTool(
         strict=true
     )
 )
-println(JSON.json(JSON.lower(strict_tool)))
+println(JSON.json(strict_tool))
 ```
 
 ### Making Tool-Enabled Requests

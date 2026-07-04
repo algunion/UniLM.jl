@@ -71,6 +71,22 @@ end
         @test !haskey(parsed, "description")
         @test !haskey(parsed, "parameters")
     end
+
+    @testset "strict field" begin
+        sig = GPTFunctionSignature(name="fn")
+        @test sig.strict === nothing
+
+        @test GPTFunctionSignature(name="fn", strict=true).strict === true
+        @test GPTFunctionSignature(name="fn", strict=false).strict === false
+    end
+
+    @testset "positional constructor back-compat" begin
+        # pre-0.10.3 3-arg arity must keep working (patch release, non-breaking)
+        sig = GPTFunctionSignature("fn", "desc", Dict("type" => "object"))
+        @test sig.name == "fn"
+        @test sig.description == "desc"
+        @test sig.strict === nothing
+    end
 end
 
 @testset "GPTImageContent" begin
@@ -145,6 +161,61 @@ end
         @test t.type == "function"
         @test t.func.name == "wrapped_fn"
         @test t.func.description == "Wrapped"
+    end
+
+    @testset "strict serialization (F1-F3)" begin
+        params = Dict("type" => "object",
+            "properties" => Dict("x" => Dict("type" => "string")),
+            "required" => ["x"], "additionalProperties" => false)
+
+        # F1: strict=true is transmitted INSIDE the "function" object of the
+        # actual request body (Chat Completions nesting, not Responses top-level)
+        tool = GPTTool(func=GPTFunctionSignature(name="fn", description="d",
+            parameters=params, strict=true))
+        chat = Chat(model="gpt-test", tools=[tool])
+        body = JSON.parse(JSON.json(chat))
+        @test body["tools"][1]["function"]["strict"] === true
+        @test !haskey(body["tools"][1], "strict")
+
+        # F2: default (no strict) → no strict key anywhere; the function object's
+        # key SET matches pre-strict UniLM (structural pin — JSON dict key order
+        # is not deterministic, so a byte-level pin would be brittle)
+        tool_default = GPTTool(func=GPTFunctionSignature(name="fn", description="d",
+            parameters=params))
+        parsed = JSON.parse(JSON.json(tool_default))
+        @test Set(keys(parsed["function"])) == Set(["name", "description", "parameters"])
+        @test !haskey(parsed, "strict")
+
+        # F3: strict=false is transmitted explicitly
+        tool_false = GPTTool(func=GPTFunctionSignature(name="fn", strict=false))
+        @test JSON.parse(JSON.json(tool_false))["function"]["strict"] === false
+    end
+
+    @testset "strict parse-back (F4)" begin
+        # wrapped OpenAI format: strict inside "function"
+        d = Dict("type" => "function", "function" => Dict(
+            "name" => "fn", "strict" => true,
+            "parameters" => Dict("type" => "object")))
+        @test GPTTool(d).func.strict === true
+
+        # bare format
+        @test GPTTool(Dict("name" => "fn", "strict" => false)).func.strict === false
+
+        # absent → nothing (API default, non-strict)
+        @test GPTTool(Dict("name" => "fn")).func.strict === nothing
+
+        # malformed non-Bool strict fails loud with a diagnostic error
+        @test_throws ArgumentError GPTTool(Dict("name" => "fn", "strict" => "true"))
+        @test_throws ArgumentError GPTTool(Dict("type" => "function",
+            "function" => Dict("name" => "fn", "strict" => 1)))
+
+        # round-trip: serialize → parse → reconstruct preserves strict
+        for s in (true, false)
+            t = GPTTool(func=GPTFunctionSignature(name="rt", strict=s))
+            @test GPTTool(JSON.parse(JSON.json(t))).func.strict === s
+        end
+        t = GPTTool(func=GPTFunctionSignature(name="rt"))
+        @test GPTTool(JSON.parse(JSON.json(t))).func.strict === nothing
     end
 end
 
@@ -309,6 +380,35 @@ end
     parsed = JSON.parse(json)
     @test parsed["name"] == "weather"
     @test parsed["description"] == "Get weather"
+
+    @testset "strict" begin
+        # default: nothing, omitted from the wire (existing bodies unchanged)
+        # (the omit_null line itself is a known Julia coverage quirk: bare
+        # `= true` method bodies never instrument — value asserted here)
+        @test JSON.omit_null(UniLM.JsonSchemaAPI) == true
+        @test jsa.strict === nothing
+        @test !haskey(parsed, "strict")
+
+        js = UniLM.JsonSchemaAPI(name="n", description="d", schema=schema, strict=true)
+        @test JSON.parse(JSON.json(js))["strict"] === true
+
+        # full response_format body: strict inside the "json_schema" object
+        rf = UniLM.json_schema("n", "d", schema; strict=true)
+        prf = JSON.parse(JSON.json(rf))
+        @test prf["type"] == "json_schema"
+        @test prf["json_schema"]["strict"] === true
+
+        # helper without strict stays strict-free
+        rf0 = UniLM.json_schema("n", "d", schema)
+        @test !haskey(JSON.parse(JSON.json(rf0))["json_schema"], "strict")
+    end
+
+    @testset "positional constructor back-compat" begin
+        # pre-0.10.3 3-arg arity must keep working (patch release, non-breaking)
+        js = UniLM.JsonSchemaAPI("n", "d", schema)
+        @test js.name == "n"
+        @test js.strict === nothing
+    end
 end
 
 @testset "ServiceEndpoint types" begin

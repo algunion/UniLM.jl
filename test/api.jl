@@ -383,6 +383,9 @@ end
 
     @testset "strict" begin
         # default: nothing, omitted from the wire (existing bodies unchanged)
+        # (the omit_null line itself is a known Julia coverage quirk: bare
+        # `= true` method bodies never instrument — value asserted here)
+        @test JSON.omit_null(UniLM.JsonSchemaAPI) == true
         @test jsa.strict === nothing
         @test !haskey(parsed, "strict")
 

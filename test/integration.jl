@@ -163,6 +163,41 @@ end
     end
 end
 
+@testset "strict function calling — transmission witness" begin
+    # The same strict-invalid schema (typed additionalProperties map) must be accepted
+    # non-strict and rejected 400 with strict=true. The two requests differ only in the
+    # strict flag, so the 400 is proof the flag reaches tools[].function on the wire.
+    map_params = Dict(
+        "type" => "object",
+        "properties" => Dict(
+            "kwargs" => Dict("type" => "object", "additionalProperties" => Dict("type" => "string"))
+        ),
+        "required" => ["kwargs"],
+        "additionalProperties" => false
+    )
+    mktool(strict) = GPTTool(func=GPTFunctionSignature(
+        name="apply_kwargs", description="Apply keyword arguments",
+        parameters=map_params, strict=strict))
+    function strict_call(strict)
+        chat = Chat(model="gpt-5.4-nano", tools=[mktool(strict)], max_completion_tokens=16)
+        push!(chat, Message(Val(:system), "You are terse."))
+        push!(chat, Message(Val(:user), "hi"))
+        chatrequest!(chat)
+    end
+
+    control = strict_call(nothing)
+    @test control isa LLMSuccess   # non-strict default unchanged: map schema accepted
+
+    witness = strict_call(true)
+    @test witness isa LLMFailure   # strict=true engages the strict schema validator
+    if witness isa LLMFailure
+        @test witness.status == 400
+        err = JSON.parse(witness.response)["error"]
+        @test err["code"] == "invalid_function_parameters"
+        @test err["param"] == "tools[0].function.parameters"
+    end
+end
+
 @testset "embedding" begin
     emb = UniLM.Embeddings("Embed this!")
     @test all(x -> x == 0.0, emb.embeddings)

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.10.3
+
+Chat-path `strict` structured outputs are now expressible. Additive and non-breaking:
+when `strict` is not set, request bodies are identical to 0.10.2 (the field is omitted,
+which is the API default — non-strict).
+
+### Added
+- `GPTFunctionSignature` gains `strict::Union{Bool,Nothing} = nothing` (strict function
+  calling on the Chat Completions tool path). `true`/`false` are emitted inside the
+  `"function"` object per the Chat Completions wire shape; `nothing` omits the field.
+  `GPTTool(::AbstractDict)` reads `"strict"` back symmetrically (bare and wrapped
+  formats), so dict-rendered tool definitions carrying `"strict": true` are now
+  transmitted instead of silently dropped.
+- `JsonSchemaAPI` gains the documented `strict` field for chat `response_format`
+  structured outputs, and `json_schema(name, description, schema; strict=...)` threads
+  it. `JsonSchemaAPI` now declares `JSON.omit_null` (all its previous fields were
+  required, so existing serialized output is unchanged).
+
+UniLM does not validate schemas against strict-mode rules (transport, not policy); the
+API rejects strict-invalid schemas with a 400. Live transmission is witnessed by a
+key-gated integration test: the same tool is accepted without `strict` and rejected
+(400 naming the strict constraint) with `strict=true` on a strict-invalid schema.
+
 ## 0.10.2
 
 Documentation and CI maintenance only — **no functional changes to the library** (`src/`

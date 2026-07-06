@@ -20,6 +20,10 @@ const DEFAULT_PRICING = Dict{String, PriceRow}(
     # O-series
     "o3"            => _price(2.0,  0.50,  8.0),
     "o4-mini"       => _price(1.1,  0.275, 4.4),
+    # Anthropic Claude (claude-api reference, 2026-07-06; cache-read input ≈ 0.1× input)
+    "claude-opus-4-8"  => _price(5.0, 0.50, 25.0),
+    "claude-sonnet-5"  => _price(3.0, 0.30, 15.0),
+    "claude-haiku-4-5" => _price(1.0, 0.10, 5.0),
     # Embeddings (billed on input tokens only)
     "text-embedding-3-small" => _price(0.02, 0.02, 0.0),
     "text-embedding-3-large" => _price(0.13, 0.13, 0.0),

@@ -338,6 +338,10 @@ struct AZUREServiceEndpoint <: ServiceEndpoint end
 """Google Gemini endpoint (OpenAI-compatible). Requires `GEMINI_API_KEY` env variable."""
 struct GEMINIServiceEndpoint <: ServiceEndpoint end
 
+"""Anthropic (Claude) native Messages API endpoint. Requires the `ANTHROPIC_API_KEY` env variable.
+Native wire format (content blocks, top-level `system`, `user`/`assistant` roles) — NOT OpenAI-compatible."""
+struct ANTHROPICServiceEndpoint <: ServiceEndpoint end
+
 """
     GenericOpenAIEndpoint <: ServiceEndpoint
 

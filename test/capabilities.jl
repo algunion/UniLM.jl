@@ -147,3 +147,18 @@ end
     # default_fim_model — DeepSeek instance method (line 73)
     @test UniLM.default_fim_model(ds) == "deepseek-chat"
 end
+
+@testset "Anthropic — capabilities & defaults" begin
+    @test has_capability(ANTHROPICServiceEndpoint, :chat)
+    @test has_capability(ANTHROPICServiceEndpoint, :tools)
+    @test has_capability(ANTHROPICServiceEndpoint, :streaming)
+    @test !has_capability(ANTHROPICServiceEndpoint, :embeddings)
+    @test UniLM.default_model(ANTHROPICServiceEndpoint) == "claude-opus-4-8"
+    @test UniLM.default_max_tokens(ANTHROPICServiceEndpoint, "claude-opus-4-8") == 4096
+    # A Chat with no model resolves to the Anthropic default.
+    chat = Chat(service=ANTHROPICServiceEndpoint)
+    @test chat.model == "claude-opus-4-8"
+    @test UniLM.get_url(chat) == "https://api.anthropic.com/v1/messages"
+    @test haskey(UniLM.DEFAULT_PRICING, "claude-opus-4-8")
+    @test UniLM.DEFAULT_PRICING["claude-haiku-4-5"].output ≈ 5.0 / 1_000_000
+end

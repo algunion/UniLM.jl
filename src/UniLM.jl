@@ -52,6 +52,7 @@ include("fork.jl")
 include("responses.jl")
 include("images.jl")
 include("capabilities.jl")
+include("anthropic.jl")
 include("completions.jl")
 include("accounting.jl")
 include("files.jl")
@@ -78,6 +79,7 @@ export
     OPENAIServiceEndpoint,
     AZUREServiceEndpoint,
     GEMINIServiceEndpoint,
+    ANTHROPICServiceEndpoint,
     GenericOpenAIEndpoint,
     OllamaEndpoint,
     MistralEndpoint,

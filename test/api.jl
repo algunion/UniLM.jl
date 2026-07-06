@@ -414,7 +414,7 @@ end
 @testset "ServiceEndpoint types" begin
     @test UniLM.OPENAIServiceEndpoint <: UniLM.ServiceEndpoint
     @test UniLM.AZUREServiceEndpoint <: UniLM.ServiceEndpoint
-    @test UniLM.GEMINIServiceEndpoint <: UniLM.ServiceEndpoint
+    @test UniLM.GEMINIOpenAIServiceEndpoint <: UniLM.ServiceEndpoint
 
     @testset "DeepSeekEndpoint keyword constructor" begin
         # api.jl:379 — the kwarg ctor. Passing api_key explicitly means the ENV["DEEPSEEK_API_KEY"]
@@ -850,8 +850,8 @@ end
     end
 
     @testset "Gemini endpoint" begin
-        chat = Chat(service=UniLM.GEMINIServiceEndpoint, model="gemini-2.0-flash")
-        @test chat.service == UniLM.GEMINIServiceEndpoint
+        chat = Chat(service=UniLM.GEMINIOpenAIServiceEndpoint, model="gemini-2.0-flash")
+        @test chat.service == UniLM.GEMINIOpenAIServiceEndpoint
     end
 end
 

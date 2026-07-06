@@ -26,14 +26,14 @@ get_url(emb::Embeddings) = get_url(emb.service, emb)
 
 get_url(::Type{OPENAIServiceEndpoint}, ::Chat) = OPENAI_BASE_URL * CHAT_COMPLETIONS_PATH
 get_url(::Type{AZUREServiceEndpoint}, chat::Chat) = ENV[AZURE_OPENAI_BASE_URL] * _MODEL_ENDPOINTS_AZURE_OPENAI[chat.model] * "/chat/completions?api-version=$(ENV[AZURE_OPENAI_API_VERSION])"
-get_url(::Type{GEMINIServiceEndpoint}, ::Chat) = GEMINI_CHAT_URL
+get_url(::Type{GEMINIOpenAIServiceEndpoint}, ::Chat) = GEMINI_CHAT_URL
 
 get_url(::Type{OPENAIServiceEndpoint}, ::Embeddings) = OPENAI_BASE_URL * EMBEDDINGS_PATH
-get_url(::Type{GEMINIServiceEndpoint}, ::Embeddings) = GEMINI_OPENAI_BASE * "/embeddings"
+get_url(::Type{GEMINIOpenAIServiceEndpoint}, ::Embeddings) = GEMINI_OPENAI_BASE * "/embeddings"
 
 _api_base_url(::Type{OPENAIServiceEndpoint}) = OPENAI_BASE_URL
 _api_base_url(::Type{AZUREServiceEndpoint}) = throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))
-_api_base_url(::Type{GEMINIServiceEndpoint}) = throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))
+_api_base_url(::Type{GEMINIOpenAIServiceEndpoint}) = throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))
 
 # ─── GenericOpenAIEndpoint dispatch ──────────────────────────────────────────
 
@@ -73,7 +73,7 @@ function auth_header(::Type{AZUREServiceEndpoint})
     ]
 end
 
-function auth_header(::Type{GEMINIServiceEndpoint})
+function auth_header(::Type{GEMINIOpenAIServiceEndpoint})
     [
         "Authorization" => "Bearer $(ENV[GEMINI_API_KEY])",
         "Content-Type" => "application/json"

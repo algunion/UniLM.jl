@@ -324,7 +324,7 @@ Abstract supertype for LLM service backends. Subtypes control URL routing and au
 Built-in subtypes:
 - `OPENAIServiceEndpoint` — OpenAI API (default)
 - `AZUREServiceEndpoint` — Azure OpenAI Service
-- `GEMINIServiceEndpoint` — Google Gemini via OpenAI-compatible endpoint
+- `GEMINIOpenAIServiceEndpoint` — Google Gemini via OpenAI-compatible endpoint (a native, non-OpenAI-compatible Gemini endpoint is planned separately)
 - `GenericOpenAIEndpoint` — any OpenAI-compatible provider (Ollama, Mistral, vLLM, etc.)
 """
 abstract type ServiceEndpoint end
@@ -336,7 +336,7 @@ struct OPENAIServiceEndpoint <: ServiceEndpoint end
 struct AZUREServiceEndpoint <: ServiceEndpoint end
 
 """Google Gemini endpoint (OpenAI-compatible). Requires `GEMINI_API_KEY` env variable."""
-struct GEMINIServiceEndpoint <: ServiceEndpoint end
+struct GEMINIOpenAIServiceEndpoint <: ServiceEndpoint end
 
 """Anthropic (Claude) native Messages API endpoint. Requires the `ANTHROPIC_API_KEY` env variable.
 Native wire format (content blocks, top-level `system`, `user`/`assistant` roles) — NOT OpenAI-compatible."""

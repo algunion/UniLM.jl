@@ -78,7 +78,7 @@ export
     ServiceEndpointSpec,
     OPENAIServiceEndpoint,
     AZUREServiceEndpoint,
-    GEMINIServiceEndpoint,
+    GEMINIOpenAIServiceEndpoint,
     ANTHROPICServiceEndpoint,
     GenericOpenAIEndpoint,
     OllamaEndpoint,

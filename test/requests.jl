@@ -22,17 +22,17 @@
     end
 
     @testset "Gemini get_url" begin
-        chat = Chat(service=UniLM.GEMINIServiceEndpoint, model="gemini-2.0-flash")
-        @test UniLM.get_url(UniLM.GEMINIServiceEndpoint, chat) == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        chat = Chat(service=UniLM.GEMINIOpenAIServiceEndpoint, model="gemini-2.0-flash")
+        @test UniLM.get_url(UniLM.GEMINIOpenAIServiceEndpoint, chat) == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
     end
 
     @testset "Gemini get_url for Embeddings" begin
         # src/requests.jl:32 — Gemini embeddings route to GEMINI_OPENAI_BASE * "/embeddings".
         # Note: Gemini's OpenAI-compat base already embeds /v1beta/openai, so it does NOT use
         # the EMBEDDINGS_PATH ("/v1/embeddings") constant — assert the exact composed string.
-        emb = UniLM.Embeddings("test"; service=UniLM.GEMINIServiceEndpoint, model="gemini-embedding-001")
-        @test UniLM.get_url(UniLM.GEMINIServiceEndpoint, emb) == UniLM.GEMINI_OPENAI_BASE * "/embeddings"
-        @test UniLM.get_url(UniLM.GEMINIServiceEndpoint, emb) == "https://generativelanguage.googleapis.com/v1beta/openai/embeddings"
+        emb = UniLM.Embeddings("test"; service=UniLM.GEMINIOpenAIServiceEndpoint, model="gemini-embedding-001")
+        @test UniLM.get_url(UniLM.GEMINIOpenAIServiceEndpoint, emb) == UniLM.GEMINI_OPENAI_BASE * "/embeddings"
+        @test UniLM.get_url(UniLM.GEMINIOpenAIServiceEndpoint, emb) == "https://generativelanguage.googleapis.com/v1beta/openai/embeddings"
     end
 end
 
@@ -45,8 +45,8 @@ end
     # whose message names OPENAIServiceEndpoint (these would throw NO error if the methods
     # silently returned a base URL instead).
     @test_throws ArgumentError UniLM._api_base_url(UniLM.AZUREServiceEndpoint)
-    @test_throws ArgumentError UniLM._api_base_url(UniLM.GEMINIServiceEndpoint)
-    for S in (UniLM.AZUREServiceEndpoint, UniLM.GEMINIServiceEndpoint)
+    @test_throws ArgumentError UniLM._api_base_url(UniLM.GEMINIOpenAIServiceEndpoint)
+    for S in (UniLM.AZUREServiceEndpoint, UniLM.GEMINIOpenAIServiceEndpoint)
         err = try
             UniLM._api_base_url(S)
             nothing
@@ -98,7 +98,7 @@ end
 
     @testset "Gemini auth header" begin
         withenv("GEMINI_API_KEY" => "test-gemini-key") do
-            headers = UniLM.auth_header(UniLM.GEMINIServiceEndpoint)
+            headers = UniLM.auth_header(UniLM.GEMINIOpenAIServiceEndpoint)
             @test length(headers) == 2
             @test headers[1][1] == "Authorization"
             @test headers[1][2] == "Bearer test-gemini-key"

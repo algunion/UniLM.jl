@@ -140,3 +140,66 @@ end
     @test r.usage.cached_tokens == 100
     @test r.usage.prompt_tokens == 104          # input + cache_read; estimated_cost bills fresh=input
 end
+
+@testset "stream — text deltas + usage" begin
+    lines = [
+        "event: message_start",
+        "data: " * JSON.json(Dict("type" => "message_start",
+            "message" => Dict("usage" => Dict("input_tokens" => 8, "output_tokens" => 1)))),
+        "",
+        "data: " * JSON.json(Dict("type" => "content_block_start", "index" => 0,
+            "content_block" => Dict("type" => "text", "text" => ""))),
+        "",
+        "data: " * JSON.json(Dict("type" => "content_block_delta", "index" => 0,
+            "delta" => Dict("type" => "text_delta", "text" => "Hello"))),
+        "",
+        "data: " * JSON.json(Dict("type" => "content_block_delta", "index" => 0,
+            "delta" => Dict("type" => "text_delta", "text" => " world"))),
+        "",
+        "data: " * JSON.json(Dict("type" => "message_delta",
+            "delta" => Dict("stop_reason" => "end_turn"), "usage" => Dict("output_tokens" => 5))),
+        "",
+        "data: " * JSON.json(Dict("type" => "message_stop")),
+    ]
+    state = StreamState()
+    st = decode_stream_chunk(ANTHROPICServiceEndpoint, join(lines, "\n"), state, IOBuffer())
+    @test st.eos == true
+    @test state.finish_reason == STOP
+    @test state.usage.completion_tokens == 5
+    @test state.usage.prompt_tokens == 8
+    msg = _build_stream_message(state)
+    @test msg.content == "Hello world"
+    @test msg.finish_reason == STOP
+end
+
+@testset "stream — tool_use with input_json_delta" begin
+    lines = [
+        "data: " * JSON.json(Dict("type" => "message_start",
+            "message" => Dict("usage" => Dict("input_tokens" => 12, "output_tokens" => 1)))),
+        "",
+        "data: " * JSON.json(Dict("type" => "content_block_start", "index" => 0,
+            "content_block" => Dict("type" => "tool_use", "id" => "toolu_7",
+                                     "name" => "get_weather", "input" => Dict()))),
+        "",
+        "data: " * JSON.json(Dict("type" => "content_block_delta", "index" => 0,
+            "delta" => Dict("type" => "input_json_delta", "partial_json" => "{\"loc"))),
+        "",
+        "data: " * JSON.json(Dict("type" => "content_block_delta", "index" => 0,
+            "delta" => Dict("type" => "input_json_delta", "partial_json" => "ation\":\"Paris\"}"))),
+        "",
+        "data: " * JSON.json(Dict("type" => "message_delta",
+            "delta" => Dict("stop_reason" => "tool_use"), "usage" => Dict("output_tokens" => 20))),
+        "",
+        "data: " * JSON.json(Dict("type" => "message_stop")),
+    ]
+    state = StreamState()
+    st = decode_stream_chunk(ANTHROPICServiceEndpoint, join(lines, "\n"), state, IOBuffer())
+    @test st.eos == true
+    @test state.finish_reason == TOOL_CALLS
+    msg = _build_stream_message(state)
+    @test msg.finish_reason == TOOL_CALLS
+    @test length(msg.tool_calls) == 1
+    @test msg.tool_calls[1].id == "toolu_7"
+    @test msg.tool_calls[1].func.name == "get_weather"
+    @test msg.tool_calls[1].func.arguments == Dict("location" => "Paris")
+end

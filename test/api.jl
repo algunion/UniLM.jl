@@ -934,3 +934,14 @@ end
         @test isnothing(chat.frequency_penalty)
     end
 end
+
+@testset "GPTToolCall.thought_signature (Gemini-3 opaque echo)" begin
+    tc = GPTToolCall(id="fc_1", func=UniLM.GPTFunction("f", Dict("x" => 1)))
+    @test isnothing(tc.thought_signature)                      # optional, defaults nothing
+    tc2 = GPTToolCall(id="fc_2", func=UniLM.GPTFunction("f", Dict()), thought_signature="SIG")
+    @test tc2.thought_signature == "SIG"
+    # MUST NOT leak into OpenAI wire serialization:
+    lowered = JSON.lower(tc2)
+    @test !haskey(lowered, :thoughtSignature) && !haskey(lowered, :thought_signature)
+    @test Set(keys(lowered)) == Set([:id, :type, :function])
+end

@@ -81,6 +81,11 @@ results back), the tool `type`, and the [`GPTFunction`] with name and parsed arg
     id::String
     type::String = "function"
     func::GPTFunction
+    # Gemini-3 opaque function-calling signature; MUST be echoed verbatim on the
+    # next turn or stateless multi-turn tool calls 400. Set only by the Gemini
+    # decoder; ignored (nothing) by every other provider. Deliberately absent
+    # from JSON.lower below, so OpenAI-wire serialization is byte-identical.
+    thought_signature::Union{Nothing,String} = nothing
 end
 
 JSON.lower(x::GPTToolCall) = Dict(:id => x.id, :type => x.type, :function => x.func)

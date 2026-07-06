@@ -117,3 +117,60 @@ _anthropic_tool_choice(tc::String) =
     tc == "required" ? Dict(:type => "any")  :
     Dict(:type => "auto")
 _anthropic_tool_choice(tc::GPTToolChoice) = Dict(:type => "tool", :name => string(tc.func))
+
+# ─── Response decoding (Anthropic Messages → neutral Message) ────────────────
+
+# Anthropic stop_reason → neutral finish_reason.
+function _anthropic_finish_reason(stop_reason)
+    stop_reason == "end_turn"      ? STOP :
+    stop_reason == "stop_sequence" ? STOP :
+    stop_reason == "tool_use"      ? TOOL_CALLS :
+    stop_reason == "max_tokens"    ? "length" :
+    stop_reason == "refusal"       ? CONTENT_FILTER :
+    something(stop_reason, STOP)
+end
+
+# Anthropic usage → neutral TokenUsage. NOTE: Anthropic `input_tokens` is the
+# UNCACHED remainder; `cache_read_input_tokens` is separate. The neutral model
+# treats `prompt_tokens` as TOTAL input with `cached_tokens` a subset, so add
+# them — then estimated_cost bills fresh = prompt - cached = input_tokens.
+# (cache_creation_input_tokens is billed at a write premium not modeled here.)
+function _anthropic_usage(u)::Union{TokenUsage,Nothing}
+    u isa AbstractDict || return nothing
+    _i(x) = x isa Integer ? Int(x) : 0
+    inp = _i(get(u, "input_tokens", 0))
+    out = _i(get(u, "output_tokens", 0))
+    cache_read = _i(get(u, "cache_read_input_tokens", 0))
+    TokenUsage(prompt_tokens = inp + cache_read, completion_tokens = out,
+        total_tokens = inp + cache_read + out, cached_tokens = cache_read, reasoning_tokens = 0)
+end
+
+function decode_response(::Type{ANTHROPICServiceEndpoint}, resp::HTTP.Response)
+    data = JSON.parse(resp.body; dicttype=Dict{String,Any})
+    finish = _anthropic_finish_reason(get(data, "stop_reason", nothing))
+    text = IOBuffer()
+    tool_calls = GPTToolCall[]
+    for b in get(data, "content", [])
+        bt = get(b, "type", "")
+        if bt == "text"
+            print(text, get(b, "text", ""))
+        elseif bt == "tool_use"
+            args = get(b, "input", Dict{String,Any}())
+            args isa AbstractDict || (args = Dict{String,Any}())
+            push!(tool_calls, GPTToolCall(id=b["id"], func=GPTFunction(b["name"], args)))
+        end
+        # thinking / redacted_thinking / other block types ignored (keystone)
+    end
+    usage = _anthropic_usage(get(data, "usage", nothing))
+    txt = String(take!(text))
+    msg = if !isempty(tool_calls)
+        Message(role=RoleAssistant, content=(isempty(txt) ? nothing : txt),
+                tool_calls=tool_calls, finish_reason=finish)
+    elseif finish == CONTENT_FILTER && isempty(txt)
+        Message(role=RoleAssistant, refusal_message="Model refused to respond.", finish_reason=finish)
+    else
+        Message(role=RoleAssistant, content=(isempty(txt) ? "No response from the model." : txt),
+                finish_reason=finish)
+    end
+    (; message=msg, usage)
+end

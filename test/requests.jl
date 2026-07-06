@@ -627,3 +627,15 @@ end
     @test UniLM._accumulate_cost!(chat, callerr) === nothing
     @test cumulative_cost(chat) == 0.25
 end
+
+@testset "wire seam — OpenAI defaults are byte-identical to legacy path" begin
+    sig = GPTFunctionSignature(name="f", parameters=Dict("type" => "object", "properties" => Dict()))
+    chat = Chat(model="gpt-5.5", tools=[GPTTool(func=sig)], temperature=0.7,
+                stream=true, logit_bias=Dict("50256" => -100.0), seed=7)
+    push!(chat, Message(Val(:system), "sys"))
+    push!(chat, Message(Val(:user), "hi"))
+    # The default (untyped-service) encoder IS the legacy OpenAI body.
+    @test UniLM.encode_request(chat.service, chat) == JSON.json(chat)
+    @test UniLM.encode_request(OPENAIServiceEndpoint, chat) == JSON.json(chat)
+    @test UniLM.encode_request(DeepSeekEndpoint(api_key="x"), chat) == JSON.json(chat)
+end

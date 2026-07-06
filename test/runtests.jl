@@ -73,6 +73,10 @@ end
         include("anthropic.jl")
     end
 
+    @testset "gemini" begin
+        include("gemini.jl")
+    end
+
     @testset "files" begin
         include("files.jl")
     end

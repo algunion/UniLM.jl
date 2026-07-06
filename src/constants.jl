@@ -117,6 +117,11 @@ const GEMINI_OPENAI_BASE::String = "https://generativelanguage.googleapis.com/v1
 Note: Gemini uses `/chat/completions` without the `/v1` prefix."""
 const GEMINI_CHAT_URL::String = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 
+# ─── Gemini (native generateContent) ─────────────────────────────────────────
+
+"""Google Gemini native API base (model + method appended: `/models/{model}:generateContent`)."""
+const GEMINI_NATIVE_BASE::String = "https://generativelanguage.googleapis.com/v1beta"
+
 # ─── Anthropic (Claude) native Messages API ──────────────────────────────────
 
 """Anthropic API key env var name."""

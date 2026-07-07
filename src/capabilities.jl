@@ -21,7 +21,7 @@ Standard capability symbols:
 """
 provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :embeddings, :images, :tools, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :batch, :image_edits, :fine_tuning, :containers, :uploads, :video, :realtime])
 provider_capabilities(::Type{AZUREServiceEndpoint})   = Set([:chat, :tools])
-provider_capabilities(::Type{GEMINIServiceEndpoint})  = Set([:chat, :embeddings, :tools, :json_output])
+provider_capabilities(::Type{GEMINIOpenAIServiceEndpoint})  = Set([:chat, :embeddings, :tools, :json_output])
 provider_capabilities(::DeepSeekEndpoint)              = Set([:chat, :tools, :fim, :prefix_completion, :json_output])
 provider_capabilities(::GenericOpenAIEndpoint)          = Set([:chat, :embeddings, :fim, :tools, :responses])  # permissive default
 
@@ -54,13 +54,13 @@ Returns `nothing` for generic endpoints (model must be specified explicitly).
 """
 default_model(::Type{OPENAIServiceEndpoint})  = "gpt-5.5"
 default_model(::Type{AZUREServiceEndpoint})   = "gpt-5.2"
-default_model(::Type{GEMINIServiceEndpoint})  = "gemini-2.5-flash"
+default_model(::Type{GEMINIOpenAIServiceEndpoint})  = "gemini-3.5-flash"
 default_model(::DeepSeekEndpoint)              = "deepseek-chat"
 default_model(::GenericOpenAIEndpoint)          = nothing
 
 """Default embedding model per provider."""
 default_embedding_model(::Type{OPENAIServiceEndpoint})  = "text-embedding-3-small"
-default_embedding_model(::Type{GEMINIServiceEndpoint})  = "gemini-embedding-001"
+default_embedding_model(::Type{GEMINIOpenAIServiceEndpoint})  = "gemini-embedding-001"
 default_embedding_model(::DeepSeekEndpoint)              = nothing
 default_embedding_model(::GenericOpenAIEndpoint)          = nothing
 default_embedding_model(_) = nothing

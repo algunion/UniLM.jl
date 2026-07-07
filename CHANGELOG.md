@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Breaking changes
+
+- **`GEMINIServiceEndpoint` now targets Google's native `generateContent` API** (auth header `x-goog-api-key`; model in the URL), not the OpenAI-compatibility endpoint. The OpenAI-compatible Gemini shim is renamed **`GEMINIOpenAIServiceEndpoint`**. Migrate any code that used `GEMINIServiceEndpoint` for the OpenAI-compatible path — including `Embeddings(...; service=GEMINIServiceEndpoint)`, which the native endpoint does not support — to `GEMINIOpenAIServiceEndpoint`.
+
+### Added
+
+- Native Google Gemini chat (`GEMINIServiceEndpoint`): `generateContent` messages, tools (with Gemini-3 `thoughtSignature` echo for multi-turn tool calls), SSE streaming, and usage/cost accounting. Default model `gemini-3.5-flash`.
+- Native Anthropic chat (`ANTHROPICServiceEndpoint`): Messages API messages, tools, streaming, usage/cost.
+- Optional `GPTToolCall.thought_signature` field (set by the Gemini decoder; ignored by other providers).
+
 ## 0.10.3
 
 Chat-path `strict` structured outputs are now expressible. Additive and non-breaking:

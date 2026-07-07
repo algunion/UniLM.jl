@@ -37,7 +37,7 @@
     end
 
     @testset "capability gating (non-OpenAI rejects :files)" begin
-        @test_throws ArgumentError list_files(service=UniLM.GEMINIServiceEndpoint)
+        @test_throws ArgumentError list_files(service=UniLM.GEMINIOpenAIServiceEndpoint)
         @test UniLM.has_capability(UniLM.OPENAIServiceEndpoint, :files)
     end
 end

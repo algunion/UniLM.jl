@@ -116,3 +116,28 @@ const GEMINI_OPENAI_BASE::String = "https://generativelanguage.googleapis.com/v1
 """Google Gemini chat completions URL (OpenAI-compatible endpoint).
 Note: Gemini uses `/chat/completions` without the `/v1` prefix."""
 const GEMINI_CHAT_URL::String = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+
+# ─── Gemini (native generateContent) ─────────────────────────────────────────
+
+"""Google Gemini native API base (model + method appended: `/models/{model}:generateContent`)."""
+const GEMINI_NATIVE_BASE::String = "https://generativelanguage.googleapis.com/v1beta"
+
+# ─── Anthropic (Claude) native Messages API ──────────────────────────────────
+
+"""Anthropic API key env var name."""
+const ANTHROPIC_API_KEY::String = "ANTHROPIC_API_KEY"
+
+"""Anthropic API base URL."""
+const ANTHROPIC_BASE_URL::String = "https://api.anthropic.com"
+
+"""Anthropic Messages API path."""
+const ANTHROPIC_MESSAGES_PATH::String = "/v1/messages"
+
+"""Required `anthropic-version` request header value (stable since 2024)."""
+const ANTHROPIC_VERSION::String = "2023-06-01"
+
+"""Moderate, overridable default for Anthropic's REQUIRED `max_tokens` when the
+caller leaves it unset. Not the model ceiling — a ceiling-sized cap invites
+runaway output; unused headroom is not billed. Raise `max_tokens` explicitly for
+long generations."""
+const _ANTHROPIC_DEFAULT_MAX_TOKENS::Int = 4096

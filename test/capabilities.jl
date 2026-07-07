@@ -10,8 +10,8 @@
     @test :tools in UniLM.provider_capabilities(AZUREServiceEndpoint)
     @test !(:embeddings in UniLM.provider_capabilities(AZUREServiceEndpoint))
 
-    @test :chat in UniLM.provider_capabilities(GEMINIServiceEndpoint)
-    @test :embeddings in UniLM.provider_capabilities(GEMINIServiceEndpoint)
+    @test :chat in UniLM.provider_capabilities(GEMINIOpenAIServiceEndpoint)
+    @test :embeddings in UniLM.provider_capabilities(GEMINIOpenAIServiceEndpoint)
 
     ds = DeepSeekEndpoint("k")
     @test :chat in provider_capabilities(ds)
@@ -107,19 +107,19 @@ end
         @test has_capability(OPENAIServiceEndpoint, c)
     end
     # Every non-OpenAI provider rejects them (has_capability false + validate throws)
-    for svc in (GEMINIServiceEndpoint, AZUREServiceEndpoint, DeepSeekEndpoint("k"), GenericOpenAIEndpoint("http://x", ""))
+    for svc in (GEMINIOpenAIServiceEndpoint, AZUREServiceEndpoint, DeepSeekEndpoint("k"), GenericOpenAIEndpoint("http://x", ""))
         for c in new_caps
             @test !has_capability(svc, c)
             @test_throws ArgumentError UniLM.validate_capability(svc, c, "X")
         end
     end
     # Representative request fns reject a non-OpenAI provider BEFORE any network call
-    @test_throws ArgumentError list_files(service=GEMINIServiceEndpoint)
+    @test_throws ArgumentError list_files(service=GEMINIOpenAIServiceEndpoint)
     @test_throws ArgumentError create_vector_store(service=DeepSeekEndpoint("k"))
     @test_throws ArgumentError create_conversation(service=AZUREServiceEndpoint)
     @test_throws ArgumentError moderate("x"; service=AZUREServiceEndpoint)
-    @test_throws ArgumentError create_batch("f", "/v1/responses"; service=GEMINIServiceEndpoint)
-    @test_throws ArgumentError create_fine_tuning_job(model="m", training_file="f", service=GEMINIServiceEndpoint)
+    @test_throws ArgumentError create_batch("f", "/v1/responses"; service=GEMINIOpenAIServiceEndpoint)
+    @test_throws ArgumentError create_fine_tuning_job(model="m", training_file="f", service=GEMINIOpenAIServiceEndpoint)
     @test_throws ArgumentError create_container(name="c", service=DeepSeekEndpoint("k"))
     @test_throws ArgumentError create_video(prompt="p", service=AZUREServiceEndpoint)
     @test_throws ArgumentError mint_realtime_secret(service=GenericOpenAIEndpoint("http://x", ""))
@@ -133,12 +133,12 @@ end
     # identifies (and covers) its specific method, and falsifies a wrong model string.
     @test UniLM.default_model(OPENAIServiceEndpoint) == "gpt-5.5"
     @test UniLM.default_model(AZUREServiceEndpoint) == "gpt-5.2"
-    @test UniLM.default_model(GEMINIServiceEndpoint) == "gemini-2.5-flash"
+    @test UniLM.default_model(GEMINIOpenAIServiceEndpoint) == "gemini-3.5-flash"
     @test UniLM.default_model(ds) == "deepseek-chat"
 
     # default_embedding_model — Type dispatch for OPENAI/GEMINI (62/63), instance for DeepSeek (64→nothing)
     @test UniLM.default_embedding_model(OPENAIServiceEndpoint) == "text-embedding-3-small"
-    @test UniLM.default_embedding_model(GEMINIServiceEndpoint) == "gemini-embedding-001"
+    @test UniLM.default_embedding_model(GEMINIOpenAIServiceEndpoint) == "gemini-embedding-001"
     @test UniLM.default_embedding_model(ds) === nothing
 
     # default_image_model — OPENAI Type method (line 69)
@@ -146,4 +146,19 @@ end
 
     # default_fim_model — DeepSeek instance method (line 73)
     @test UniLM.default_fim_model(ds) == "deepseek-chat"
+end
+
+@testset "Anthropic — capabilities & defaults" begin
+    @test has_capability(ANTHROPICServiceEndpoint, :chat)
+    @test has_capability(ANTHROPICServiceEndpoint, :tools)
+    @test has_capability(ANTHROPICServiceEndpoint, :streaming)
+    @test !has_capability(ANTHROPICServiceEndpoint, :embeddings)
+    @test UniLM.default_model(ANTHROPICServiceEndpoint) == "claude-opus-4-8"
+    @test UniLM.default_max_tokens(ANTHROPICServiceEndpoint, "claude-opus-4-8") == 4096
+    # A Chat with no model resolves to the Anthropic default.
+    chat = Chat(service=ANTHROPICServiceEndpoint)
+    @test chat.model == "claude-opus-4-8"
+    @test UniLM.get_url(chat) == "https://api.anthropic.com/v1/messages"
+    @test haskey(UniLM.DEFAULT_PRICING, "claude-opus-4-8")
+    @test UniLM.DEFAULT_PRICING["claude-haiku-4-5"].output ≈ 5.0 / 1_000_000
 end

@@ -462,7 +462,7 @@ try
         rd = delete_vector_store("vs-1"; service=MockServiceEndpoint)
         @test rd isa VectorStoreDeleteSuccess && rd.deleted
 
-        @test_throws ArgumentError create_vector_store(service=UniLM.GEMINIServiceEndpoint)
+        @test_throws ArgumentError create_vector_store(service=UniLM.GEMINIOpenAIServiceEndpoint)
 
         set_error!(404, "nope")
         @test retrieve_vector_store("vs-x"; service=MockServiceEndpoint) isa VectorStoreFailure

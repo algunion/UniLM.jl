@@ -26,14 +26,14 @@ get_url(emb::Embeddings) = get_url(emb.service, emb)
 
 get_url(::Type{OPENAIServiceEndpoint}, ::Chat) = OPENAI_BASE_URL * CHAT_COMPLETIONS_PATH
 get_url(::Type{AZUREServiceEndpoint}, chat::Chat) = ENV[AZURE_OPENAI_BASE_URL] * _MODEL_ENDPOINTS_AZURE_OPENAI[chat.model] * "/chat/completions?api-version=$(ENV[AZURE_OPENAI_API_VERSION])"
-get_url(::Type{GEMINIServiceEndpoint}, ::Chat) = GEMINI_CHAT_URL
+get_url(::Type{GEMINIOpenAIServiceEndpoint}, ::Chat) = GEMINI_CHAT_URL
 
 get_url(::Type{OPENAIServiceEndpoint}, ::Embeddings) = OPENAI_BASE_URL * EMBEDDINGS_PATH
-get_url(::Type{GEMINIServiceEndpoint}, ::Embeddings) = GEMINI_OPENAI_BASE * "/embeddings"
+get_url(::Type{GEMINIOpenAIServiceEndpoint}, ::Embeddings) = GEMINI_OPENAI_BASE * "/embeddings"
 
 _api_base_url(::Type{OPENAIServiceEndpoint}) = OPENAI_BASE_URL
 _api_base_url(::Type{AZUREServiceEndpoint}) = throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))
-_api_base_url(::Type{GEMINIServiceEndpoint}) = throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))
+_api_base_url(::Type{GEMINIOpenAIServiceEndpoint}) = throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))
 
 # ─── GenericOpenAIEndpoint dispatch ──────────────────────────────────────────
 
@@ -73,7 +73,7 @@ function auth_header(::Type{AZUREServiceEndpoint})
     ]
 end
 
-function auth_header(::Type{GEMINIServiceEndpoint})
+function auth_header(::Type{GEMINIOpenAIServiceEndpoint})
     [
         "Authorization" => "Bearer $(ENV[GEMINI_API_KEY])",
         "Content-Type" => "application/json"
@@ -224,7 +224,8 @@ function _build_stream_message(state::StreamState)::Message
             fdict = tc_data["function"]
             args = JSON.parse(fdict["arguments"]; dicttype=Dict{String,Any})
             gptfunc = GPTFunction(fdict["name"], args)
-            push!(tcalls, GPTToolCall(id=tc_data["id"], func=gptfunc))
+            push!(tcalls, GPTToolCall(id=tc_data["id"], func=gptfunc,
+                thought_signature=get(tc_data, "thought_signature", nothing)))
         end
         Message(role=RoleAssistant, tool_calls=tcalls, finish_reason=TOOL_CALLS)
     else
@@ -238,13 +239,52 @@ function _build_stream_message(state::StreamState)::Message
     end
 end
 
+# ─── Wire-translation seam ───────────────────────────────────────────────────
+# Three generics translate between the neutral Chat/Message IR and a provider's
+# wire format. The untyped-`service` methods below are the OpenAI-wire defaults —
+# DeepSeek, Azure, the Gemini OpenAI-compat shim, and GenericOpenAIEndpoint all
+# speak this format. Providers with a different wire format (Anthropic) override
+# the three. `chatrequest!`/`_chatrequeststream` call ONLY these generics, so the
+# retry/HTTP/cost/tool-loop/streaming orchestration stays provider-agnostic.
+# Defined here (after StreamState/_parse_chunk/extract_message) so the
+# `state::StreamState` signature annotation resolves at definition time.
+
+"""
+    encode_request(service, chat::Chat) -> String
+
+Serialize `chat` into the provider's request body. Default: OpenAI Chat Completions JSON.
+"""
+encode_request(service, chat::Chat) = JSON.json(chat)
+
+"""
+    decode_response(service, resp::HTTP.Response)
+
+Parse a provider's 200 response into `(; message::Message, usage::Union{TokenUsage,Nothing})`.
+Default: OpenAI Chat Completions (`extract_message`).
+"""
+decode_response(service, resp::HTTP.Response) = extract_message(resp)
+
+"""
+    decode_stream_chunk(service, chunk::String, state::StreamState, failbuff) -> (; eos::Bool)
+
+Accumulate a streamed chunk into `state`. Default: OpenAI SSE (`_parse_chunk`).
+"""
+decode_stream_chunk(service, chunk::String, state::StreamState, failbuff) =
+    _parse_chunk(chunk, state, failbuff)
+
 function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
     Threads.@spawn begin
         try
             m = Ref{Union{Message,Nothing}}(nothing)
             stream_usage = Ref{Union{TokenUsage,Nothing}}(nothing)
             raw_buffer = IOBuffer()  # wire bytes for non-200 reporting (streamed resp.body is empty under HTTP 2.x)
-            resp = HTTP.open("POST", get_url(chat), auth_header(chat.service); status_exception=false) do io
+            # SSE must reach the parser uncompressed. Some providers (e.g. Anthropic) gzip even
+            # streamed responses, and HTTP.jl's streaming read loop does NOT auto-decompress on the
+            # 1.x major — raw gzip bytes hit the SSE parser, every chunk fails to decode, and no
+            # message is built (→ LLMFailure). Request identity encoding + disable decompression so
+            # `data:` lines arrive verbatim on both HTTP majors.
+            stream_headers = push!(copy(auth_header(chat.service)), "Accept-Encoding" => "identity")
+            resp = HTTP.open("POST", get_url(chat), stream_headers; status_exception=false, decompress=false) do io
                 state = StreamState()
                 callback_buf = IOBuffer()  # tracks already-emitted text
                 fail_buffer = IOBuffer()
@@ -258,7 +298,7 @@ function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
                     raw = String(readavailable(io))
                     write(raw_buffer, raw)
                     chunk::String = join((String(take!(fail_buffer)), raw))
-                    streamstatus = _parse_chunk(chunk, state, fail_buffer)
+                    streamstatus = decode_stream_chunk(chat.service, chunk, state, fail_buffer)
                     # Fire on_tool_call for newly completed tool calls
                     if !isnothing(on_tool_call) && length(state.tool_calls) > prev_tc_count
                         for idx in sort(collect(keys(state.tool_calls)))
@@ -329,11 +369,11 @@ The `callback` function is called for each chunk of the response. The `close` Re
 function chatrequest!(chat::Chat; retries::Int=0, callback=nothing, on_tool_call=nothing)
     res = LLMCallError(error="uninitialized", status=0, self=chat)
     try
-        body = JSON.json(chat)
+        body = encode_request(chat.service, chat)
         if chat.stream !== true
             resp = HTTP.post(get_url(chat), body=body, headers=auth_header(chat.service); status_exception=false)
             if resp.status == 200
-                extracted = extract_message(resp)
+                extracted = decode_response(chat.service, resp)
                 update!(chat, extracted.message)
                 result = LLMSuccess(message=extracted.message, self=chat, usage=extracted.usage)
                 _accumulate_cost!(chat, result)

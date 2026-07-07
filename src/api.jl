@@ -76,11 +76,21 @@ end
 
 Represents a tool call returned by the model. Contains the call `id` (used to match
 results back), the tool `type`, and the [`GPTFunction`] with name and parsed arguments.
+
+Also carries an optional `thought_signature::Union{Nothing,String}` field holding
+Gemini-3's opaque tool-call signature, which must be echoed verbatim on the next turn;
+it is set by the Gemini decoder, ignored (`nothing`) by every other provider, and
+deliberately excluded from `JSON.lower` so OpenAI-wire serialization is unaffected.
 """
 @kwdef struct GPTToolCall
     id::String
     type::String = "function"
     func::GPTFunction
+    # Gemini-3 opaque function-calling signature; MUST be echoed verbatim on the
+    # next turn or stateless multi-turn tool calls 400. Set only by the Gemini
+    # decoder; ignored (nothing) by every other provider. Deliberately absent
+    # from JSON.lower below, so OpenAI-wire serialization is byte-identical.
+    thought_signature::Union{Nothing,String} = nothing
 end
 
 JSON.lower(x::GPTToolCall) = Dict(:id => x.id, :type => x.type, :function => x.func)
@@ -324,7 +334,8 @@ Abstract supertype for LLM service backends. Subtypes control URL routing and au
 Built-in subtypes:
 - `OPENAIServiceEndpoint` — OpenAI API (default)
 - `AZUREServiceEndpoint` — Azure OpenAI Service
-- `GEMINIServiceEndpoint` — Google Gemini via OpenAI-compatible endpoint
+- `GEMINIOpenAIServiceEndpoint` — Google Gemini via OpenAI-compatible endpoint
+- `GEMINIServiceEndpoint` — Google Gemini native generateContent API
 - `GenericOpenAIEndpoint` — any OpenAI-compatible provider (Ollama, Mistral, vLLM, etc.)
 """
 abstract type ServiceEndpoint end
@@ -336,7 +347,14 @@ struct OPENAIServiceEndpoint <: ServiceEndpoint end
 struct AZUREServiceEndpoint <: ServiceEndpoint end
 
 """Google Gemini endpoint (OpenAI-compatible). Requires `GEMINI_API_KEY` env variable."""
+struct GEMINIOpenAIServiceEndpoint <: ServiceEndpoint end
+
+"""Native Google Gemini `generateContent` API (`x-goog-api-key`; model in URL). Requires `GEMINI_API_KEY`."""
 struct GEMINIServiceEndpoint <: ServiceEndpoint end
+
+"""Anthropic (Claude) native Messages API endpoint. Requires the `ANTHROPIC_API_KEY` env variable.
+Native wire format (content blocks, top-level `system`, `user`/`assistant` roles) — NOT OpenAI-compatible."""
+struct ANTHROPICServiceEndpoint <: ServiceEndpoint end
 
 """
     GenericOpenAIEndpoint <: ServiceEndpoint

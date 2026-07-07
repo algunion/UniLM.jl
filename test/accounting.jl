@@ -271,3 +271,13 @@ end
     # sanity: a zero TokenUsage really is all-zero (so the equality above is meaningful)
     @test zero.prompt_tokens == 0 && zero.completion_tokens == 0 && zero.total_tokens == 0
 end
+
+@testset "Gemini pricing rows" begin
+    @test haskey(UniLM.DEFAULT_PRICING, "gemini-3.5-flash")
+    @test haskey(UniLM.DEFAULT_PRICING, "gemini-3.1-flash-lite")
+    # 1000 prompt + 500 output on gemini-3.1-flash-lite = 1000*0.25/1e6 + 500*1.5/1e6
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.1-flash-lite")
+    usage = UniLM.TokenUsage(prompt_tokens=1000, completion_tokens=500, total_tokens=1500)
+    result = UniLM.LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=chat, usage=usage)
+    @test UniLM.estimated_cost(result) ≈ (1000 * 0.25 + 500 * 1.5) / 1_000_000
+end

@@ -69,6 +69,14 @@ end
         include("capabilities.jl")
     end
 
+    @testset "anthropic" begin
+        include("anthropic.jl")
+    end
+
+    @testset "gemini" begin
+        include("gemini.jl")
+    end
+
     @testset "files" begin
         include("files.jl")
     end
@@ -87,6 +95,14 @@ end
 
     @testset "integration — deepseek" begin
         include("integration_deepseek.jl")
+    end
+
+    @testset "integration — anthropic" begin
+        include("integration_anthropic.jl")
+    end
+
+    @testset "integration — gemini" begin
+        include("integration_gemini.jl")
     end
 
     @testset "integration — tool loop" begin

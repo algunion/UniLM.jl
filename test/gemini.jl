@@ -43,6 +43,7 @@ end
 @testset "encode — generationConfig present only when set" begin
     chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash",
                 max_tokens=256, temperature=0.5, stop=["END"])
+    push!(chat, Message(Val(:system), "s"))
     push!(chat, Message(Val(:user), "u"))
     body = JSON.parse(encode_request(GEMINIServiceEndpoint, chat))
     @test body["generationConfig"]["maxOutputTokens"] == 256
@@ -57,6 +58,7 @@ end
                         "required" => ["location"]))
     chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash",
                 tools=[GPTTool(func=sig)], tool_choice="auto")
+    push!(chat, Message(Val(:system), "s"))
     push!(chat, Message(Val(:user), "weather?"))
     body = JSON.parse(encode_request(GEMINIServiceEndpoint, chat))
     fd = body["tools"][1]["functionDeclarations"][1]
@@ -93,4 +95,36 @@ end
             Message(role=RoleTool, tool_call_id="ghost", content="x")]
     chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash", messages=msgs)
     @test_throws ArgumentError encode_request(GEMINIServiceEndpoint, chat)
+end
+
+@testset "encode — functionResponse passes a JSON-object tool result through unwrapped" begin
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash")
+    push!(chat, Message(Val(:system), "s"))
+    push!(chat, Message(Val(:user), "weather?"))
+    tc = GPTToolCall(id="fc_1", func=GPTFunction("get_weather", Dict("location" => "Paris")))
+    push!(chat, Message(role=RoleAssistant, tool_calls=[tc], finish_reason=TOOL_CALLS))
+    push!(chat, Message(role=RoleTool, tool_call_id="fc_1", content="{\"temp_f\":72}"))
+    body = JSON.parse(encode_request(GEMINIServiceEndpoint, chat))
+    fr = body["contents"][end]["parts"][1]["functionResponse"]
+    @test fr["response"] == Dict("temp_f" => 72)   # object-valued JSON string parsed through, NOT wrapped
+end
+
+@testset "encode — consecutive tool results collapse into one user turn" begin
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash")
+    push!(chat, Message(Val(:system), "s"))
+    push!(chat, Message(Val(:user), "weather in Paris and London?"))
+    tc1 = GPTToolCall(id="fc_1", func=GPTFunction("get_weather", Dict("location" => "Paris")))
+    tc2 = GPTToolCall(id="fc_2", func=GPTFunction("get_weather", Dict("location" => "London")))
+    push!(chat, Message(role=RoleAssistant, tool_calls=[tc1, tc2], finish_reason=TOOL_CALLS))
+    push!(chat, Message(role=RoleTool, tool_call_id="fc_1", content="72F"))
+    push!(chat, Message(role=RoleTool, tool_call_id="fc_2", content="60F"))
+    body = JSON.parse(encode_request(GEMINIServiceEndpoint, chat))
+    c = body["contents"]
+    @test [x["role"] for x in c] == ["user", "model", "user"]   # two tool results → ONE user turn
+    @test length(c[2]["parts"]) == 2                            # two functionCall parts
+    resp = c[3]["parts"]
+    @test length(resp) == 2                                     # two functionResponse parts
+    @test resp[1]["functionResponse"]["id"] == "fc_1"
+    @test resp[2]["functionResponse"]["id"] == "fc_2"
+    @test resp[1]["functionResponse"]["name"] == "get_weather"
 end

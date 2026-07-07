@@ -2060,3 +2060,14 @@ end
     @test String(take!(textbuff)) == "Hello"
     @test st.terminal == :none
 end
+
+@testset "respond() consults get_url dispatch for its URL" begin
+    # Azure / native-Gemini have no Responses surface: get_url(service, ::Respond) →
+    # _api_base_url throws, which respond() catches and reports as ResponseCallError.
+    # Pins that respond() routes its URL through the get_url dispatch (not a hardcoded path).
+    for svc in (AZUREServiceEndpoint, GEMINIServiceEndpoint)
+        r = respond(Respond(service=svc, input="x"))
+        @test r isa ResponseCallError
+        @test occursin("only supported with OPENAIServiceEndpoint", r.error)
+    end
+end

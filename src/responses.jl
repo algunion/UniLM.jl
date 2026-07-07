@@ -1143,18 +1143,18 @@ end
 function respond(r::Respond; retries::Int=0, callback=nothing)
     res = ResponseCallError(error="uninitialized", status=0)
     try
-        body = JSON.json(r)
+        body = encode_agentic(r.service, r)
 
         # Streaming path
         if !isnothing(r.stream) && r.stream
             return _respond_stream(r, body, callback)
         end
 
-        url = _api_base_url(r.service) * RESPONSES_PATH
+        url = get_url(r.service, r)
         resp = HTTP.post(url, body=body, headers=auth_header(r.service); status_exception=false)
 
         if resp.status == 200
-            return ResponseSuccess(response=parse_response(resp))
+            return ResponseSuccess(response=decode_agentic(r.service, resp))
         elseif _is_retryable(resp.status)
             if retries < _RETRY_MAX_ATTEMPTS
                 delay = _retry_delay(retries, resp)

@@ -128,3 +128,85 @@ end
     @test resp[2]["functionResponse"]["id"] == "fc_2"
     @test resp[1]["functionResponse"]["name"] == "get_weather"
 end
+
+@testset "decode — plain text" begin
+    body = JSON.json(Dict("candidates" => [Dict(
+        "content" => Dict("role" => "model", "parts" => [Dict("text" => "Hello there")]),
+        "finishReason" => "STOP")],
+        "usageMetadata" => Dict("promptTokenCount" => 10, "candidatesTokenCount" => 3,
+                                "totalTokenCount" => 13)))
+    r = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(body)))
+    @test r.message.role == RoleAssistant
+    @test r.message.content == "Hello there"
+    @test r.message.finish_reason == STOP
+    @test r.usage.prompt_tokens == 10
+    @test r.usage.completion_tokens == 3
+    @test r.usage.total_tokens == 13
+end
+
+@testset "decode — text + functionCall (thoughtSignature captured; presence → TOOL_CALLS)" begin
+    body = JSON.json(Dict("candidates" => [Dict(
+        "content" => Dict("role" => "model", "parts" => [
+            Dict("text" => "Let me check."),
+            Dict("functionCall" => Dict("id" => "fc_9", "name" => "get_weather",
+                                        "args" => Dict("location" => "Paris")),
+                 "thoughtSignature" => "SIGX")]),
+        "finishReason" => "STOP")],                        # Gemini says STOP even for tool calls
+        "usageMetadata" => Dict("promptTokenCount" => 20, "candidatesTokenCount" => 15,
+                                "totalTokenCount" => 35)))
+    r = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(body)))
+    @test r.message.finish_reason == TOOL_CALLS
+    @test r.message.content == "Let me check."
+    @test r.message.tool_calls[1].id == "fc_9"
+    @test r.message.tool_calls[1].func.name == "get_weather"
+    @test r.message.tool_calls[1].func.arguments == Dict("location" => "Paris")
+    @test r.message.tool_calls[1].thought_signature == "SIGX"
+end
+
+@testset "decode — MAX_TOKENS → length" begin
+    body = JSON.json(Dict("candidates" => [Dict(
+        "content" => Dict("role" => "model", "parts" => [Dict("text" => "partial")]),
+        "finishReason" => "MAX_TOKENS")],
+        "usageMetadata" => Dict("promptTokenCount" => 5, "candidatesTokenCount" => 100,
+                                "totalTokenCount" => 105)))
+    r = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(body)))
+    @test r.message.finish_reason == "length"
+    @test r.message.content == "partial"
+end
+
+@testset "decode — SAFETY → content_filter refusal" begin
+    body = JSON.json(Dict("candidates" => [Dict(
+        "content" => Dict("role" => "model", "parts" => []),
+        "finishReason" => "SAFETY")],
+        "usageMetadata" => Dict("promptTokenCount" => 4, "candidatesTokenCount" => 0,
+                                "totalTokenCount" => 4)))
+    r = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(body)))
+    @test r.message.finish_reason == CONTENT_FILTER
+    @test !isnothing(r.message.refusal_message)
+end
+
+@testset "decode — UNKNOWN finishReason does not crash (open enum)" begin
+    body = JSON.json(Dict("candidates" => [Dict(
+        "content" => Dict("role" => "model", "parts" => [Dict("text" => "partial")]),
+        "finishReason" => "TOO_MANY_TOOL_CALLS")],       # never-seen value
+        "usageMetadata" => Dict("promptTokenCount" => 5, "candidatesTokenCount" => 2,
+                                "totalTokenCount" => 7)))
+    r = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(body)))
+    @test r.message.finish_reason == STOP                  # unknown → safe default
+    @test r.message.content == "partial"
+end
+
+@testset "decode — usage: cached is a subset of prompt; thoughts bill as output" begin
+    body = JSON.json(Dict("candidates" => [Dict(
+        "content" => Dict("role" => "model", "parts" => [Dict("text" => "hi")]),
+        "finishReason" => "STOP")],
+        "usageMetadata" => Dict("promptTokenCount" => 104, "candidatesTokenCount" => 5,
+                                "thoughtsTokenCount" => 20, "cachedContentTokenCount" => 100,
+                                "totalTokenCount" => 129)))
+    r = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(body)))
+    @test r.usage.prompt_tokens == 104                     # promptTokenCount already includes cached
+    @test r.usage.cached_tokens == 100
+    @test r.usage.completion_tokens == 25                  # candidates(5) + thoughts(20), billed as output
+    @test r.usage.reasoning_tokens == 20
+    @test r.usage.total_tokens == 129
+end

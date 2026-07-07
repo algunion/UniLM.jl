@@ -137,3 +137,67 @@ function _gemini_tool_response(content)
         Dict{String,Any}("result" => s)
     end
 end
+
+# ─── Response decoding (Gemini generateContent → neutral Message) ────────────
+
+# Gemini finishReason → neutral finish_reason. OPEN ENUM: Google adds values
+# unannounced, so unknown → STOP (never throw). Tool-call detection is by
+# functionCall presence in the decoder, NOT by this reason (Gemini says STOP).
+function _gemini_finish_reason(fr)
+    fr == "STOP"       ? STOP :
+    fr == "MAX_TOKENS" ? "length" :
+    fr in ("SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY") ? CONTENT_FILTER :
+    isnothing(fr)      ? STOP :
+    STOP
+end
+
+# Gemini usageMetadata → neutral TokenUsage. Assumptions (verify vs live docs):
+# promptTokenCount INCLUDES cachedContentTokenCount (cached is a subset), so we
+# do NOT add; candidatesTokenCount EXCLUDES thoughtsTokenCount, and thoughts bill
+# at the output rate → completion = candidates + thoughts.
+function _gemini_usage(u)::Union{TokenUsage,Nothing}
+    u isa AbstractDict || return nothing
+    _i(x) = x isa Integer ? Int(x) : 0
+    prompt   = _i(get(u, "promptTokenCount", 0))
+    cand     = _i(get(u, "candidatesTokenCount", 0))
+    thoughts = _i(get(u, "thoughtsTokenCount", 0))
+    cached   = _i(get(u, "cachedContentTokenCount", 0))
+    total    = _i(get(u, "totalTokenCount", prompt + cand + thoughts))
+    TokenUsage(prompt_tokens = prompt, completion_tokens = cand + thoughts,
+        total_tokens = total, cached_tokens = cached, reasoning_tokens = thoughts)
+end
+
+function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
+    data = JSON.parse(resp.body; dicttype=Dict{String,Any})
+    cands = get(data, "candidates", [])
+    cand = isempty(cands) ? Dict{String,Any}() : cands[1]
+    fr_raw = get(cand, "finishReason", nothing)
+    text = IOBuffer()
+    tool_calls = GPTToolCall[]
+    for p in get(get(cand, "content", Dict{String,Any}()), "parts", [])
+        if haskey(p, "text")
+            print(text, p["text"])
+        elseif haskey(p, "functionCall")
+            fc = p["functionCall"]
+            args = get(fc, "args", Dict{String,Any}())
+            args isa AbstractDict || (args = Dict{String,Any}())
+            push!(tool_calls, GPTToolCall(id=get(fc, "id", ""),
+                func=GPTFunction(get(fc, "name", ""), args),
+                thought_signature=get(p, "thoughtSignature", nothing)))
+        end
+    end
+    finish = isempty(tool_calls) ? _gemini_finish_reason(fr_raw) : TOOL_CALLS
+    usage = _gemini_usage(get(data, "usageMetadata", nothing))
+    txt = String(take!(text))
+    msg = if !isempty(tool_calls)
+        Message(role=RoleAssistant, content=(isempty(txt) ? nothing : txt),
+                tool_calls=tool_calls, finish_reason=finish)
+    elseif finish == CONTENT_FILTER && isempty(txt)
+        Message(role=RoleAssistant, refusal_message="Model response blocked by safety filter.",
+                finish_reason=finish)
+    else
+        Message(role=RoleAssistant, content=(isempty(txt) ? "No response from the model." : txt),
+                finish_reason=finish)
+    end
+    (; message=msg, usage)
+end

@@ -278,7 +278,13 @@ function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
             m = Ref{Union{Message,Nothing}}(nothing)
             stream_usage = Ref{Union{TokenUsage,Nothing}}(nothing)
             raw_buffer = IOBuffer()  # wire bytes for non-200 reporting (streamed resp.body is empty under HTTP 2.x)
-            resp = HTTP.open("POST", get_url(chat), auth_header(chat.service); status_exception=false) do io
+            # SSE must reach the parser uncompressed. Some providers (e.g. Anthropic) gzip even
+            # streamed responses, and HTTP.jl's streaming read loop does NOT auto-decompress on the
+            # 1.x major — raw gzip bytes hit the SSE parser, every chunk fails to decode, and no
+            # message is built (→ LLMFailure). Request identity encoding + disable decompression so
+            # `data:` lines arrive verbatim on both HTTP majors.
+            stream_headers = push!(copy(auth_header(chat.service)), "Accept-Encoding" => "identity")
+            resp = HTTP.open("POST", get_url(chat), stream_headers; status_exception=false, decompress=false) do io
                 state = StreamState()
                 callback_buf = IOBuffer()  # tracks already-emitted text
                 fail_buffer = IOBuffer()

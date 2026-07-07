@@ -101,6 +101,10 @@ end
         include("integration_anthropic.jl")
     end
 
+    @testset "integration — gemini" begin
+        include("integration_gemini.jl")
+    end
+
     @testset "integration — tool loop" begin
         include("integration_tool_loop.jl")
     end

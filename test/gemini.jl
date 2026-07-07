@@ -263,3 +263,30 @@ end
     @test msg.tool_calls[1].func.arguments == Dict("location" => "Paris")
     @test msg.tool_calls[1].thought_signature == "SIG7"
 end
+
+@testset "decode+encode — parallel DIFFERENT-function tool calls correlate by id, not position" begin
+    respbody = JSON.json(Dict("candidates" => [Dict(
+        "content" => Dict("role" => "model", "parts" => [
+            Dict("functionCall" => Dict("id" => "fc_a", "name" => "get_weather", "args" => Dict("location" => "Paris"))),
+            Dict("functionCall" => Dict("id" => "fc_b", "name" => "get_time",    "args" => Dict("zone" => "CET")))]),
+        "finishReason" => "STOP")],
+        "usageMetadata" => Dict("promptTokenCount" => 10, "candidatesTokenCount" => 8, "totalTokenCount" => 18)))
+    r = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(respbody)))
+    @test r.message.finish_reason == TOOL_CALLS
+    @test length(r.message.tool_calls) == 2
+    @test r.message.tool_calls[1].id == "fc_a" && r.message.tool_calls[1].func.name == "get_weather"
+    @test r.message.tool_calls[2].id == "fc_b" && r.message.tool_calls[2].func.name == "get_time"
+    # Round-trip: feed both results back in REVERSED order; correlation must be by id, not position.
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash")
+    push!(chat, Message(Val(:system), "s"))
+    push!(chat, Message(Val(:user), "weather and time?"))
+    push!(chat, r.message)
+    push!(chat, Message(role=RoleTool, tool_call_id="fc_b", content="12:00"))
+    push!(chat, Message(role=RoleTool, tool_call_id="fc_a", content="72F"))
+    body = JSON.parse(encode_request(GEMINIServiceEndpoint, chat))
+    resp = body["contents"][end]["parts"]
+    @test length(resp) == 2
+    byid = Dict(p["functionResponse"]["id"] => p["functionResponse"]["name"] for p in resp)
+    @test byid["fc_a"] == "get_weather"    # correct name despite reversed push order
+    @test byid["fc_b"] == "get_time"
+end

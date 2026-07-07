@@ -76,6 +76,11 @@ end
 
 Represents a tool call returned by the model. Contains the call `id` (used to match
 results back), the tool `type`, and the [`GPTFunction`] with name and parsed arguments.
+
+Also carries an optional `thought_signature::Union{Nothing,String}` field holding
+Gemini-3's opaque tool-call signature, which must be echoed verbatim on the next turn;
+it is set by the Gemini decoder, ignored (`nothing`) by every other provider, and
+deliberately excluded from `JSON.lower` so OpenAI-wire serialization is unaffected.
 """
 @kwdef struct GPTToolCall
     id::String
@@ -329,7 +334,8 @@ Abstract supertype for LLM service backends. Subtypes control URL routing and au
 Built-in subtypes:
 - `OPENAIServiceEndpoint` — OpenAI API (default)
 - `AZUREServiceEndpoint` — Azure OpenAI Service
-- `GEMINIOpenAIServiceEndpoint` — Google Gemini via OpenAI-compatible endpoint (a native, non-OpenAI-compatible Gemini endpoint is planned separately)
+- `GEMINIOpenAIServiceEndpoint` — Google Gemini via OpenAI-compatible endpoint
+- `GEMINIServiceEndpoint` — Google Gemini native generateContent API
 - `GenericOpenAIEndpoint` — any OpenAI-compatible provider (Ollama, Mistral, vLLM, etc.)
 """
 abstract type ServiceEndpoint end

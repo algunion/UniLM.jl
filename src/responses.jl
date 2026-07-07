@@ -1032,7 +1032,7 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
             result = Ref{Union{ResponseObject,Nothing}}(nothing)
             terminal_error = Ref{Union{Dict{String,Any},Nothing}}(nothing)  # structured failed/incomplete/error payload
             raw_buffer = IOBuffer()  # wire bytes for non-200 reporting (streamed resp.body is empty under HTTP 2.x)
-            url = _api_base_url(r.service) * RESPONSES_PATH
+            url = get_url(r.service, r)
             resp = HTTP.open("POST", url, auth_header(r.service); status_exception=false) do io
                 text_buffer = IOBuffer()
                 fail_buffer = IOBuffer()
@@ -1045,7 +1045,7 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
                 while !eof(io) && !close_ref[] && !done[]
                     chunk = String(readavailable(io))
                     write(raw_buffer, chunk)
-                    status = _parse_response_stream_chunk(chunk, text_buffer, fail_buffer, last_event)
+                    status = decode_agentic_stream(r.service, chunk, text_buffer, fail_buffer, last_event)
                     if status.terminal == :completed && status.data isa AbstractDict && haskey(status.data, "response")
                         rdata = status.data["response"]
                         result[] = ResponseObject(

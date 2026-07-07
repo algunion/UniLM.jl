@@ -2071,3 +2071,13 @@ end
         @test occursin("only supported with OPENAIServiceEndpoint", r.error)
     end
 end
+
+@testset "agentic stream default — detects response.completed terminal" begin
+    textbuff = IOBuffer(); failbuff = IOBuffer(); ev = Ref("")
+    completed = Dict("response" => Dict("id" => "resp_9", "status" => "completed",
+                                        "model" => "gpt-5.5", "output" => Any[]))
+    chunk = "event: response.completed\ndata: $(JSON.json(completed))\n\n"
+    st = UniLM.decode_agentic_stream(OPENAIServiceEndpoint, chunk, textbuff, failbuff, ev)
+    @test st.terminal == :completed
+    @test st.data isa AbstractDict && haskey(st.data, "response")
+end

@@ -1098,6 +1098,27 @@ end
 
 # ─── Request Functions ───────────────────────────────────────────────────────
 
+# ─── Agentic wire-translation seam ───────────────────────────────────────────
+# Parallel to the chat seam (src/requests.jl:252-273): three generics dispatched
+# on `service` translate between the neutral Respond/ResponseObject IR and a
+# provider's agentic wire. The untyped-`service` methods below are the OpenAI
+# Responses defaults; a provider with a different surface (Gemini Interactions,
+# Plan 2) overrides them. `respond`/`_respond_stream` call ONLY these generics,
+# so retry/HTTP/cost/streaming orchestration stays provider-agnostic.
+# NB: named `*_agentic`, NOT `decode_response` — that would collide with the chat
+# seam's `decode_response(service, ::HTTP.Response)` (identical argument types).
+
+get_url(r::Respond) = get_url(r.service, r)
+get_url(service, r::Respond) = _api_base_url(service) * RESPONSES_PATH
+
+encode_agentic(service, r::Respond)::String = JSON.json(r)
+
+decode_agentic(service, resp::HTTP.Response)::ResponseObject = parse_response(resp)
+
+decode_agentic_stream(service, chunk::String, textbuff::IOBuffer, failbuff::IOBuffer,
+                      last_event::Ref{String}) =
+    _parse_response_stream_chunk(chunk, textbuff, failbuff, last_event)
+
 """
     respond(r::Respond; retries=0, callback=nothing)
 

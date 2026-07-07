@@ -77,6 +77,10 @@ end
         include("gemini.jl")
     end
 
+    @testset "interactions" begin
+        include("interactions.jl")
+    end
+
     @testset "files" begin
         include("files.jl")
     end
@@ -103,6 +107,10 @@ end
 
     @testset "integration — gemini" begin
         include("integration_gemini.jl")
+    end
+
+    @testset "integration — interactions" begin
+        include("integration_interactions.jl")
     end
 
     @testset "integration — tool loop" begin

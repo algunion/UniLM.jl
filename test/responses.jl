@@ -2062,10 +2062,12 @@ end
 end
 
 @testset "respond() consults get_url dispatch for its URL" begin
-    # Azure / native-Gemini have no Responses surface: get_url(service, ::Respond) →
-    # _api_base_url throws, which respond() catches and reports as ResponseCallError.
+    # Azure and the Gemini OpenAI-compat shim have no agentic surface: get_url(service,
+    # ::Respond) → _api_base_url throws, which respond() catches as a ResponseCallError.
     # Pins that respond() routes its URL through the get_url dispatch (not a hardcoded path).
-    for svc in (AZUREServiceEndpoint, GEMINIServiceEndpoint)
+    # (Native GEMINIServiceEndpoint IS supported now — Interactions, Plan 2 — so it is
+    # deliberately excluded here.)
+    for svc in (AZUREServiceEndpoint, GEMINIOpenAIServiceEndpoint)
         r = respond(Respond(service=svc, input="x"))
         @test r isa ResponseCallError
         @test occursin("only supported with OPENAIServiceEndpoint", r.error)

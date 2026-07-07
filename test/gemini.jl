@@ -22,7 +22,7 @@ end
 end
 
 @testset "capabilities & default" begin
-    @test UniLM.provider_capabilities(GEMINIServiceEndpoint) == Set([:chat, :tools, :streaming])
+    @test UniLM.provider_capabilities(GEMINIServiceEndpoint) == Set([:chat, :tools, :streaming, :agentic])
     @test UniLM.default_model(GEMINIServiceEndpoint) == "gemini-3.5-flash"
     @test_throws ArgumentError UniLM._api_base_url(GEMINIServiceEndpoint)
 end

@@ -1033,12 +1033,19 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
             terminal_error = Ref{Union{Dict{String,Any},Nothing}}(nothing)  # structured failed/incomplete/error payload
             raw_buffer = IOBuffer()  # wire bytes for non-200 reporting (streamed resp.body is empty under HTTP 2.x)
             url = get_url(r.service, r)
-            resp = HTTP.open("POST", url, auth_header(r.service); status_exception=false) do io
+            # SSE must reach the parser uncompressed: some providers (Gemini Interactions)
+            # gzip even streamed responses, and HTTP.jl's 1.x streaming read does NOT
+            # auto-decompress the body — raw gzip bytes hit the SSE parser, every line fails
+            # to decode, and no text/output is built. Request identity encoding + disable
+            # decompression so `data:` lines arrive verbatim (mirrors _chatrequeststream).
+            stream_headers = push!(copy(auth_header(r.service)), "Accept-Encoding" => "identity")
+            resp = HTTP.open("POST", url, stream_headers; status_exception=false, decompress=false) do io
                 text_buffer = IOBuffer()
                 fail_buffer = IOBuffer()
                 last_event = Ref("")
                 done = Ref(false)
                 close_ref = Ref(false)
+                callback_buf = IOBuffer()  # tracks already-emitted text (emitted-length delta)
                 write(io, body)
                 HTTP.closewrite(io)
                 HTTP.startread(io)
@@ -1066,10 +1073,17 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
                         terminal_error[] = status.data
                         done[] = true
                     else
-                        parsed_text = String(take!(text_buffer))
-                        if !isempty(parsed_text) && !isnothing(callback)
-                            callback(parsed_text, close_ref)
+                        # Retain full accumulated text (emitted-length tracking, like the chat
+                        # stream) so a provider whose TERMINAL event omits the output — Gemini's
+                        # `interaction.completed` carries no steps — can rebuild it from the
+                        # deltas. OpenAI ignores this at assembly (its completed event has output).
+                        full = String(take!(text_buffer))
+                        emitted = String(take!(callback_buf))
+                        if sizeof(full) > sizeof(emitted) && !isnothing(callback)
+                            callback(full[nextind(full, sizeof(emitted)):end], close_ref)
                         end
+                        print(text_buffer, full)
+                        print(callback_buf, full)
                     end
                 end
                 close_ref[] && @info "Response stream closed by user"

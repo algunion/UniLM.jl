@@ -89,3 +89,50 @@ end
         "event: done\ndata: [DONE]\n\n", IOBuffer(), IOBuffer(), Ref(""))
     @test st2.terminal == :done
 end
+
+@testset "Interactions encode — tool passthrough, fail-loud, optional gen fields" begin
+    # Dict tool passes through _interactions_tool unchanged (pre-shaped escape hatch)
+    b = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input="x",
+                tools=[Dict("type" => "function", "name" => "raw_fn")])); dicttype=Dict{String,Any})
+    @test b["tools"][1]["name"] == "raw_fn"
+
+    # a non-FunctionTool/Dict tool fails LOUD, not silently
+    @test_throws ArgumentError UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input="x", tools=[42]))
+
+    # optional generation_config fields (top_p / max_output_tokens) + background pass through
+    b2 = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input="x",
+                top_p=0.9, max_output_tokens=128, background=true)); dicttype=Dict{String,Any})
+    @test b2["generation_config"]["top_p"] == 0.9
+    @test b2["generation_config"]["max_output_tokens"] == 128
+    @test b2["background"] == true
+end
+
+@testset "Interactions stream decode — carry-over + malformed handling" begin
+    # (a) a chunk with NO newline is buffered whole (carry-over), nothing emitted yet
+    tb = IOBuffer(); fb = IOBuffer(); ev = Ref("")
+    st = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, "event: step.delta", tb, fb, ev)
+    @test st.done == false && st.terminal == :none
+    # the buffered partial line reassembles with the next chunk
+    UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "\ndata: {\"index\":0,\"delta\":{\"text\":\"hi\",\"type\":\"text\"}}\n\n", tb, fb, ev)
+    @test String(take!(tb)) == "hi"
+
+    # (b) a trailing fragment after the last newline is stashed for the next chunk
+    tb2 = IOBuffer(); fb2 = IOBuffer(); ev2 = Ref("")
+    UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "event: step.delta\ndata: {\"index\":0,\"delta\":{\"text\":\"a\",\"type\":\"text\"}}\n\n" *
+        "event: step.delta\ndata: {\"index\":0,\"delta\":{\"text\":\"b\"", tb2, fb2, ev2)
+    @test String(take!(tb2)) == "a"                       # first delta consumed
+    UniLM.decode_agentic_stream(GEMINIServiceEndpoint, ",\"type\":\"text\"}}\n\n", tb2, fb2, ev2)
+    @test String(take!(tb2)) == "b"                       # stashed fragment completed
+
+    # (c) a malformed data line is routed to failbuff via catch — no crash
+    tb3 = IOBuffer(); fb3 = IOBuffer(); ev3 = Ref("")
+    st3 = UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "event: step.delta\ndata: {not valid json\n\n", tb3, fb3, ev3)
+    @test st3.terminal == :none
+    @test !isempty(take!(fb3))
+end

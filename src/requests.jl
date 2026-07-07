@@ -224,7 +224,8 @@ function _build_stream_message(state::StreamState)::Message
             fdict = tc_data["function"]
             args = JSON.parse(fdict["arguments"]; dicttype=Dict{String,Any})
             gptfunc = GPTFunction(fdict["name"], args)
-            push!(tcalls, GPTToolCall(id=tc_data["id"], func=gptfunc))
+            push!(tcalls, GPTToolCall(id=tc_data["id"], func=gptfunc,
+                thought_signature=get(tc_data, "thought_signature", nothing)))
         end
         Message(role=RoleAssistant, tool_calls=tcalls, finish_reason=TOOL_CALLS)
     else

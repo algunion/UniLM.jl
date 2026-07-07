@@ -210,3 +210,56 @@ end
     @test r.usage.reasoning_tokens == 20
     @test r.usage.total_tokens == 129
 end
+
+@testset "stream — text deltas + final usage/finishReason + EOS" begin
+    lines = [
+        "data: " * JSON.json(Dict("candidates" => [Dict("content" =>
+            Dict("role" => "model", "parts" => [Dict("text" => "Hello")]))],
+            "usageMetadata" => Dict("promptTokenCount" => 8))),
+        "",
+        "data: " * JSON.json(Dict("candidates" => [Dict("content" =>
+            Dict("role" => "model", "parts" => [Dict("text" => " world")]))])),
+        "",
+        "data: " * JSON.json(Dict("candidates" => [Dict(
+            "content" => Dict("role" => "model", "parts" => [Dict("text" => "")]),
+            "finishReason" => "STOP")],
+            "usageMetadata" => Dict("promptTokenCount" => 8, "candidatesTokenCount" => 5,
+                                    "totalTokenCount" => 13))),
+    ]
+    state = StreamState()
+    st = decode_stream_chunk(GEMINIServiceEndpoint, join(lines, "\n"), state, IOBuffer())
+    @test st.eos == true
+    @test state.finish_reason == STOP
+    @test state.usage.completion_tokens == 5
+    @test state.usage.prompt_tokens == 8
+    msg = _build_stream_message(state)
+    @test msg.content == "Hello world"
+    @test msg.finish_reason == STOP
+end
+
+@testset "stream — functionCall + thoughtSignature via _build_stream_message" begin
+    lines = [
+        "data: " * JSON.json(Dict("candidates" => [Dict("content" =>
+            Dict("role" => "model", "parts" => [Dict(
+                "functionCall" => Dict("id" => "fc_7", "name" => "get_weather",
+                                       "args" => Dict("location" => "Paris")),
+                "thoughtSignature" => "SIG7")]))])),
+        "",
+        "data: " * JSON.json(Dict("candidates" => [Dict(
+            "content" => Dict("role" => "model", "parts" => [Dict("text" => "")]),
+            "finishReason" => "STOP")],
+            "usageMetadata" => Dict("promptTokenCount" => 12, "candidatesTokenCount" => 20,
+                                    "totalTokenCount" => 32))),
+    ]
+    state = StreamState()
+    st = decode_stream_chunk(GEMINIServiceEndpoint, join(lines, "\n"), state, IOBuffer())
+    @test st.eos == true
+    @test state.finish_reason == TOOL_CALLS                 # functionCall present overrides STOP
+    msg = _build_stream_message(state)
+    @test msg.finish_reason == TOOL_CALLS
+    @test length(msg.tool_calls) == 1
+    @test msg.tool_calls[1].id == "fc_7"
+    @test msg.tool_calls[1].func.name == "get_weather"
+    @test msg.tool_calls[1].func.arguments == Dict("location" => "Paris")
+    @test msg.tool_calls[1].thought_signature == "SIG7"
+end

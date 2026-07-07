@@ -1032,7 +1032,7 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
             result = Ref{Union{ResponseObject,Nothing}}(nothing)
             terminal_error = Ref{Union{Dict{String,Any},Nothing}}(nothing)  # structured failed/incomplete/error payload
             raw_buffer = IOBuffer()  # wire bytes for non-200 reporting (streamed resp.body is empty under HTTP 2.x)
-            url = _api_base_url(r.service) * RESPONSES_PATH
+            url = get_url(r.service, r)
             resp = HTTP.open("POST", url, auth_header(r.service); status_exception=false) do io
                 text_buffer = IOBuffer()
                 fail_buffer = IOBuffer()
@@ -1045,7 +1045,7 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
                 while !eof(io) && !close_ref[] && !done[]
                     chunk = String(readavailable(io))
                     write(raw_buffer, chunk)
-                    status = _parse_response_stream_chunk(chunk, text_buffer, fail_buffer, last_event)
+                    status = decode_agentic_stream(r.service, chunk, text_buffer, fail_buffer, last_event)
                     if status.terminal == :completed && status.data isa AbstractDict && haskey(status.data, "response")
                         rdata = status.data["response"]
                         result[] = ResponseObject(
@@ -1098,6 +1098,27 @@ end
 
 # ─── Request Functions ───────────────────────────────────────────────────────
 
+# ─── Agentic wire-translation seam ───────────────────────────────────────────
+# Parallel to the chat seam (src/requests.jl:252-273): three generics dispatched
+# on `service` translate between the neutral Respond/ResponseObject IR and a
+# provider's agentic wire. The untyped-`service` methods below are the OpenAI
+# Responses defaults; a provider with a different surface (Gemini Interactions,
+# Plan 2) overrides them. `respond`/`_respond_stream` call ONLY these generics,
+# so retry/HTTP/cost/streaming orchestration stays provider-agnostic.
+# NB: named `*_agentic`, NOT `decode_response` — that would collide with the chat
+# seam's `decode_response(service, ::HTTP.Response)` (identical argument types).
+
+get_url(r::Respond) = get_url(r.service, r)
+get_url(service, r::Respond) = _api_base_url(service) * RESPONSES_PATH
+
+encode_agentic(service, r::Respond)::String = JSON.json(r)
+
+decode_agentic(service, resp::HTTP.Response)::ResponseObject = parse_response(resp)
+
+decode_agentic_stream(service, chunk::String, textbuff::IOBuffer, failbuff::IOBuffer,
+                      last_event::Ref{String}) =
+    _parse_response_stream_chunk(chunk, textbuff, failbuff, last_event)
+
 """
     respond(r::Respond; retries=0, callback=nothing)
 
@@ -1122,18 +1143,18 @@ end
 function respond(r::Respond; retries::Int=0, callback=nothing)
     res = ResponseCallError(error="uninitialized", status=0)
     try
-        body = JSON.json(r)
+        body = encode_agentic(r.service, r)
 
         # Streaming path
         if !isnothing(r.stream) && r.stream
             return _respond_stream(r, body, callback)
         end
 
-        url = _api_base_url(r.service) * RESPONSES_PATH
+        url = get_url(r.service, r)
         resp = HTTP.post(url, body=body, headers=auth_header(r.service); status_exception=false)
 
         if resp.status == 200
-            return ResponseSuccess(response=parse_response(resp))
+            return ResponseSuccess(response=decode_agentic(r.service, resp))
         elseif _is_retryable(resp.status)
             if retries < _RETRY_MAX_ATTEMPTS
                 delay = _retry_delay(retries, resp)

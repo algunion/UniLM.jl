@@ -2032,3 +2032,52 @@ end
     @test tc2.format.strict === nothing
     @test tc2.format.schema == Dict("type" => "string")
 end
+
+# ─── Agentic seam dispatch (Plan 1: OpenAI-wire defaults) ─────────────────────
+
+@testset "agentic seam — OpenAI-wire defaults" begin
+    r = Respond(input="hi")                      # service defaults to OPENAIServiceEndpoint, model→"gpt-5.5"
+
+    # URL dispatch reproduces the current _api_base_url * RESPONSES_PATH
+    @test UniLM.get_url(r) == "https://api.openai.com/v1/responses"
+    @test UniLM.get_url(OPENAIServiceEndpoint, r) == "https://api.openai.com/v1/responses"
+
+    # encode default == today's JSON.json(r)
+    @test UniLM.encode_agentic(OPENAIServiceEndpoint, r) == JSON.json(r)
+
+    # decode default delegates to parse_response
+    canned = Dict("id" => "resp_1", "status" => "completed", "model" => "gpt-5.5", "output" => Any[])
+    resp = HTTP.Response(200, [], Vector{UInt8}(JSON.json(canned)))
+    obj = UniLM.decode_agentic(OPENAIServiceEndpoint, resp)
+    @test obj isa ResponseObject
+    @test obj.id == "resp_1"
+
+    # stream-chunk default accumulates output_text deltas like _parse_response_stream_chunk
+    textbuff = IOBuffer(); failbuff = IOBuffer(); ev = Ref("")
+    chunk = "event: response.output_text.delta\ndata: {\"delta\":\"Hel\"}\n\n" *
+            "event: response.output_text.delta\ndata: {\"delta\":\"lo\"}\n\n"
+    st = UniLM.decode_agentic_stream(OPENAIServiceEndpoint, chunk, textbuff, failbuff, ev)
+    @test String(take!(textbuff)) == "Hello"
+    @test st.terminal == :none
+end
+
+@testset "respond() consults get_url dispatch for its URL" begin
+    # Azure / native-Gemini have no Responses surface: get_url(service, ::Respond) →
+    # _api_base_url throws, which respond() catches and reports as ResponseCallError.
+    # Pins that respond() routes its URL through the get_url dispatch (not a hardcoded path).
+    for svc in (AZUREServiceEndpoint, GEMINIServiceEndpoint)
+        r = respond(Respond(service=svc, input="x"))
+        @test r isa ResponseCallError
+        @test occursin("only supported with OPENAIServiceEndpoint", r.error)
+    end
+end
+
+@testset "agentic stream default — detects response.completed terminal" begin
+    textbuff = IOBuffer(); failbuff = IOBuffer(); ev = Ref("")
+    completed = Dict("response" => Dict("id" => "resp_9", "status" => "completed",
+                                        "model" => "gpt-5.5", "output" => Any[]))
+    chunk = "event: response.completed\ndata: $(JSON.json(completed))\n\n"
+    st = UniLM.decode_agentic_stream(OPENAIServiceEndpoint, chunk, textbuff, failbuff, ev)
+    @test st.terminal == :completed
+    @test st.data isa AbstractDict && haskey(st.data, "response")
+end

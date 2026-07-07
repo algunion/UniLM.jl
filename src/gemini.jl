@@ -26,7 +26,7 @@ auth_header(::Type{GEMINIServiceEndpoint}) = [
 
 # ─── Capabilities & defaults ─────────────────────────────────────────────────
 
-provider_capabilities(::Type{GEMINIServiceEndpoint}) = Set([:chat, :tools, :streaming])
+provider_capabilities(::Type{GEMINIServiceEndpoint}) = Set([:chat, :tools, :streaming, :agentic])
 
 default_model(::Type{GEMINIServiceEndpoint}) = "gemini-3.5-flash"
 

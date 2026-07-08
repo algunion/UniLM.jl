@@ -2083,3 +2083,11 @@ end
     @test st.terminal == :completed
     @test st.data isa AbstractDict && haskey(st.data, "response")
 end
+
+@testset "tool_result helper" begin
+    tr = tool_result("call_1", "get_weather", "sunny")
+    @test tr["type"] == "function_call_output"
+    @test tr["call_id"] == "call_1"
+    @test tr["name"] == "get_weather"
+    @test tr["output"] == "sunny"
+end

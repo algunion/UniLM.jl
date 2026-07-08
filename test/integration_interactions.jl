@@ -53,4 +53,29 @@ end
     @test !isempty(payloads)
 end
 
+@testset "Interactions — tool loop (live, neutral tool_result round-trip)" begin
+    r = Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+                input="What is the weather in Tokyo? Use the get_weather tool, then tell me.",
+                tools=[function_tool("get_weather", "Get current weather for a city",
+                    parameters=Dict("type" => "object",
+                        "properties" => Dict("city" => Dict("type" => "string")), "required" => ["city"]))])
+    # the whole point of Plan 3a: tool_loop submits the neutral tool_result item, which the
+    # Gemini encoder translates to function_result — a round-trip green mocks could not prove.
+    result = tool_loop(r, (name, args) -> "The weather in $(get(args, "city", "?")) is sunny, 22C."; max_turns=4)
+    @test result.completed
+    @test !isempty(result.tool_calls)
+    @test result.tool_calls[1].tool_name == "get_weather"
+    @test result.response isa ResponseSuccess
+    @test !isempty(output_text(result.response))
+end
+
+@testset "Interactions — tool_choice required forces a call (live)" begin
+    forced = respond(Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+        input="Just say hello, nothing else.", tool_choice="required",
+        tools=[function_tool("get_weather", "Get weather",
+            parameters=Dict("type" => "object", "properties" => Dict("city" => Dict("type" => "string"))))]))
+    @test forced isa ResponseSuccess
+    @test !isempty(function_calls(forced))
+end
+
 end  # if GEMINI_API_KEY

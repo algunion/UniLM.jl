@@ -28,9 +28,6 @@ end
     @test b["store"] == true
     @test b["stream"] == true
     @test !haskey(b, "tool_choice")
-    # tool_choice must fail LOUD (Plan 3), never silently drop the caller's intent
-    @test_throws ArgumentError UniLM.encode_agentic(GEMINIServiceEndpoint,
-        Respond(service=GEMINIServiceEndpoint, input="x", tool_choice="required"))
 end
 
 @testset "Interactions decode (steps[] → neutral output[])" begin
@@ -135,4 +132,52 @@ end
         "event: step.delta\ndata: {not valid json\n\n", tb3, fb3, ev3)
     @test st3.terminal == :none
     @test !isempty(take!(fb3))
+end
+
+@testset "Interactions encode — tool-result translation" begin
+    b = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, previous_response_id="v1_prev",
+                input=[tool_result("c1", "get_weather", "sunny")])); dicttype=Dict{String,Any})
+    @test b["previous_interaction_id"] == "v1_prev"
+    @test b["input"][1] == Dict("type" => "function_result", "call_id" => "c1",
+                                "name" => "get_weather", "result" => Dict("result" => "sunny"))
+    # JSON-object output → object result (not double-wrapped)
+    b2 = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input=[tool_result("c2", "f", "{\"temp\":\"22C\"}")])); dicttype=Dict{String,Any})
+    @test b2["input"][1]["result"] == Dict("temp" => "22C")
+    # a function_call_output missing `name` → fail loud (Gemini requires it)
+    @test_throws ArgumentError UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint,
+                input=[Dict("type" => "function_call_output", "call_id" => "c", "output" => "x")]))
+    # a non-tool-result item in a Vector passes through unchanged (not re-translated)
+    b4 = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint,
+                input=[Dict("type" => "function_result", "call_id" => "c", "name" => "f", "result" => Dict("x" => 1))])); dicttype=Dict{String,Any})
+    @test b4["input"][1]["type"] == "function_result"
+    @test b4["input"][1]["result"] == Dict("x" => 1)
+    # String input still passes through
+    b3 = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input="hi")); dicttype=Dict{String,Any})
+    @test b3["input"] == "hi"
+end
+
+@testset "Interactions encode — CallableTool tool unwraps to function shape" begin
+    ct = UniLM.CallableTool(function_tool("f", "d"), (n, a) -> "x")
+    @test UniLM._interactions_tool(ct) == Dict{Symbol,Any}(:type => "function", :name => "f", :description => "d")
+end
+
+@testset "Interactions encode — tool_choice mapping" begin
+    gc(tc) = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input="x", tool_choice=tc));
+        dicttype=Dict{String,Any})["generation_config"]["tool_choice"]["allowed_tools"]
+    @test gc("auto")["mode"] == "auto"
+    @test gc("none")["mode"] == "none"
+    @test gc("required")["mode"] == "any"
+    f = gc(UniLM.tool_choice_function("get_weather"))
+    @test f["mode"] == "any" && f["tools"] == ["get_weather"]
+    # hosted-tool selector is not applicable to Gemini function tools → fail loud
+    @test_throws ArgumentError UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input="x", tool_choice=UniLM.tool_choice_hosted("web_search")))
+    # unknown tool_choice string → fail loud
+    @test_throws ArgumentError UniLM._interactions_tool_choice("bogus")
 end

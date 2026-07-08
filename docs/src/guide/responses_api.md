@@ -4,6 +4,10 @@ The Responses API is OpenAI's newer, more flexible alternative to Chat Completio
 Key advantages include built-in tools (web search, file search), stateless multi-turn
 via `previous_response_id`, and reasoning support for O-series models.
 
+!!! tip
+    For the cross-provider view — the same `respond` verb against **Gemini
+    Interactions** — see the [Agentic Workflows guide](@ref agentic_guide).
+
 ```@setup responses
 using UniLM
 using JSON

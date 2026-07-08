@@ -27,6 +27,7 @@ makedocs(;
             "Image Generation" => "guide/image_generation.md",
             "Embeddings" => "guide/embeddings.md",
             "Tool Calling" => "guide/tool_calling.md",
+            "Agentic Workflows" => "guide/agentic.md",
             "Streaming" => "guide/streaming.md",
             "Structured Output" => "guide/structured_output.md",
             "Multi-Backend" => "guide/multi_backend.md",

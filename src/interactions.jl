@@ -1,16 +1,14 @@
 # ============================================================================
-# Google Gemini Interactions API — Layer-B agentic verb
+# Google Gemini Interactions API — native agentic surface for `respond`.
 # https://ai.google.dev/gemini-api/docs/interactions-overview
 #
-# Native, server-STATEFUL agentic surface. Rides the SAME agentic seam as OpenAI
-# Responses (src/responses.jl): overrides get_url / encode_agentic / decode_agentic
-# / decode_agentic_stream for GEMINIServiceEndpoint, dispatched by request type
-# (Respond) — exactly as OPENAIServiceEndpoint hosts both Chat and Respond. The
-# decoder normalizes Interactions `steps[]` into the OpenAI-Responses-shaped
-# `output[]`, so ResponseObject accessors (output_text/function_calls/…) are reused.
-#
-# Wire shape captured LIVE against the interactions endpoint on 2026-07-07
-# (see docs/superpowers/plans/2026-07-07-gemini-interactions-plan2.md ledger).
+# Server-stateful agentic API. Rides the same agentic seam as the OpenAI
+# Responses path (src/responses.jl): overrides get_url / encode_agentic /
+# decode_agentic / decode_agentic_stream for GEMINIServiceEndpoint, dispatched by
+# request type (Respond) — exactly as OPENAIServiceEndpoint hosts both Chat and
+# Respond. The decoder normalizes Interactions `steps[]` into the
+# OpenAI-Responses-shaped `output[]`, so ResponseObject accessors
+# (output_text / function_calls / …) are reused.
 # ============================================================================
 
 # ─── Routing (streaming is a BODY flag, so the URL is stream-independent) ─────

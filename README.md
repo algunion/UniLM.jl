@@ -12,7 +12,7 @@ A **Julian**, type-safe interface to **LLM providers** via the OpenAI-compatible
 ## Features
 
 - **Chat Completions** — stateful conversations with automatic history management
-- **Responses API** — OpenAI's newer API with built-in tools, multi-turn chaining, and reasoning
+- **Responses API & Agentic Verb** — OpenAI's Responses API with built-in tools, multi-turn chaining, and reasoning; the unified `respond` verb also drives Google's Gemini Interactions
 - **Image Generation & Edits** — create and edit images with `gpt-image-2`
 - **Tool/Function Calling** — first-class support for function tools in both APIs, with automated `tool_loop`
 - **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool loop integration
@@ -22,7 +22,7 @@ A **Julian**, type-safe interface to **LLM providers** via the OpenAI-compatible
 - **Realtime, Fine-tuning, Webhooks, Containers, Uploads & Videos** — WebSocket realtime, custom models, signed-webhook verification, and more
 - **Streaming** — real-time token streaming with `do`-block syntax
 - **Structured Output** — JSON Schema–constrained generation
-- **Multi-Backend** — OpenAI, Azure, Gemini, DeepSeek, Ollama, Mistral, vLLM, LM Studio, and any OpenAI-compatible provider
+- **Multi-Backend** — OpenAI, Azure, Gemini, Anthropic, DeepSeek, Ollama, Mistral, vLLM, LM Studio, and any OpenAI-compatible provider
 - **Type Safety** — invalid states are unrepresentable; tested with [JET.jl](https://github.com/aviatesk/JET.jl) and [Aqua.jl](https://github.com/JuliaTesting/Aqua.jl)
 
 ## Installation
@@ -246,6 +246,7 @@ UniLM.jl supports multiple backends. Switch via the `service` parameter:
 | OpenAI (default) | `OPENAIServiceEndpoint`          | `OPENAI_API_KEY`                                                            |
 | Azure OpenAI     | `AZUREServiceEndpoint`           | `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION` |
 | Google Gemini    | `GEMINIServiceEndpoint`          | `GEMINI_API_KEY`                                                            |
+| Anthropic        | `ANTHROPICServiceEndpoint`       | `ANTHROPIC_API_KEY`                                                         |
 | DeepSeek         | `DeepSeekEndpoint()`             | `DEEPSEEK_API_KEY`                                                          |
 | Ollama (local)   | `OllamaEndpoint()`               | none                                                                        |
 | Mistral          | `MistralEndpoint()`              | `MISTRAL_API_KEY`                                                           |
@@ -255,8 +256,11 @@ UniLM.jl supports multiple backends. Switch via the `service` parameter:
 # Azure
 chat = Chat(service=AZUREServiceEndpoint, model="gpt-5.2")
 
-# Gemini
-chat = Chat(service=GEMINIServiceEndpoint, model="gemini-2.5-flash")
+# Gemini (native generateContent)
+chat = Chat(service=GEMINIServiceEndpoint)          # default: gemini-3.5-flash
+
+# Anthropic (native Messages API)
+chat = Chat(service=ANTHROPICServiceEndpoint)       # default: claude-opus-4-8
 
 # DeepSeek
 chat = Chat(service=DeepSeekEndpoint(), model="deepseek-chat")
@@ -289,6 +293,7 @@ Full documentation with guides and API reference: **[https://algunion.github.io/
 - [Responses API Guide](https://algunion.github.io/UniLM.jl/dev/guide/responses_api/) — the newer Responses API
 - [Image Generation Guide](https://algunion.github.io/UniLM.jl/dev/guide/image_generation/) — create images from text
 - [Tool Calling Guide](https://algunion.github.io/UniLM.jl/dev/guide/tool_calling/) — function calling
+- [Agentic Workflows Guide](https://algunion.github.io/UniLM.jl/dev/guide/agentic/) — cross-provider `respond` (OpenAI Responses + Gemini Interactions)
 - [Streaming Guide](https://algunion.github.io/UniLM.jl/dev/guide/streaming/) — real-time streaming
 - [Structured Output Guide](https://algunion.github.io/UniLM.jl/dev/guide/structured_output/) — JSON Schema output
 - [Multi-Backend Guide](https://algunion.github.io/UniLM.jl/dev/guide/multi_backend/) — Azure, Gemini, DeepSeek, Ollama, and more

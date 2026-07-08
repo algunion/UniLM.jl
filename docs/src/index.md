@@ -11,19 +11,19 @@
 
 ## What is UniLM.jl?
 
-UniLM.jl provides a **Julian**, type-safe interface to **LLM providers** via the OpenAI-compatible API standard — covering the **Chat Completions API**, the **Responses API**, **Image Generation**, **Embeddings**, and **MCP**. Works with OpenAI, Azure, Gemini, Mistral, DeepSeek, Ollama, vLLM, LM Studio, and any OpenAI-compatible provider.
+UniLM.jl provides a **Julian**, type-safe interface to **LLM providers** via the OpenAI-compatible API standard — covering the **Chat Completions API**, the **Responses API**, **Image Generation**, **Embeddings**, and **MCP**. Works with OpenAI, Azure, Gemini, Anthropic, Mistral, DeepSeek, Ollama, vLLM, LM Studio, and any OpenAI-compatible provider.
 
 ### Key Features
 
 - 🗣️ **Chat Completions** — stateful conversations with automatic history management
 - 🔮 **Responses API** — OpenAI's newer API with built-in tools, multi-turn chaining, and reasoning
-- 🖼️ **Image Generation** — create images from text prompts with `gpt-image-1.5`
+- 🖼️ **Image Generation** — create images from text prompts with `gpt-image-2`
 - 🔧 **Tool/Function Calling** — first-class support for function tools in both APIs, with automated `tool_loop`
 - 🔌 **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool loop integration
 - 📊 **Embeddings** — text embedding generation
 - 🌊 **Streaming** — real-time token streaming with `do`-block syntax
 - 📐 **Structured Output** — JSON Schema–constrained generation
-- ☁️ **Multi-Backend** — OpenAI, Azure, Gemini, DeepSeek, Ollama, Mistral, vLLM, LM Studio
+- ☁️ **Multi-Backend** — OpenAI, Azure, Gemini, Anthropic, DeepSeek, Ollama, Mistral, vLLM, LM Studio
 - ✅ **Type Safety** — invalid states are unrepresentable; tested with [JET.jl](https://github.com/aviatesk/JET.jl) and [Aqua.jl](https://github.com/JuliaTesting/Aqua.jl)
 
 ### Two APIs, One Package

@@ -68,6 +68,7 @@ Native Gemini chat (real call, guarded so a failure never breaks the build):
 
 ```@example backends
 gemini_chat = Chat(service=GEMINIServiceEndpoint)   # default model: gemini-3.5-flash
+push!(gemini_chat, Message(Val(:system), "You are a helpful assistant."))
 push!(gemini_chat, Message(Val(:user), "Say hello in one short sentence."))
 result = chatrequest!(gemini_chat)
 if result isa LLMSuccess
@@ -91,6 +92,7 @@ chat = Chat(service=GEMINIOpenAIServiceEndpoint, model="gemini-2.5-flash")
 
 ```@example backends
 claude_chat = Chat(service=ANTHROPICServiceEndpoint)  # default: claude-opus-4-8
+push!(claude_chat, Message(Val(:system), "You are a helpful assistant."))
 push!(claude_chat, Message(Val(:user), "Say hello in one short sentence."))
 result = chatrequest!(claude_chat)
 if result isa LLMSuccess

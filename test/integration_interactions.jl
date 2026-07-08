@@ -78,4 +78,34 @@ end
     @test !isempty(function_calls(forced))
 end
 
+@testset "Interactions — estimated_cost > 0 (live usage)" begin
+    res = respond(Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+                          input="Name three primary colors."))
+    @test res isa ResponseSuccess
+    @test token_usage(res).prompt_tokens > 0
+    @test estimated_cost(res) > 0
+end
+
+@testset "Interactions — background create → poll → cancel (live)" begin
+    started = respond(Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+                              input="Write one sentence about the ocean.", background=true))
+    @test started isa ResponseSuccess
+    id = started.response.id
+    got = get_response(id; service=UniLM.GEMINIServiceEndpoint)   # bounded single poll
+    @test got isa ResponseSuccess
+    @test got.response.id == id
+    @test got.response.status in ("in_progress", "completed")
+    cancelled = cancel_response(id; service=UniLM.GEMINIServiceEndpoint)
+    @test cancelled isa ResponseSuccess || cancelled isa ResponseFailure   # 200 decode, or benign if already completed
+end
+
+@testset "Interactions — google_search grounded round-trip (live)" begin
+    res = respond(Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+                          input="Who won the 2022 FIFA World Cup? Search if needed.",
+                          tools=[gemini_google_search()]))
+    @test res isa ResponseSuccess
+    @test !isempty(output_text(res))
+    @test any(o -> get(o, "type", "") == "google_search_call", res.response.output)
+end
+
 end  # if GEMINI_API_KEY

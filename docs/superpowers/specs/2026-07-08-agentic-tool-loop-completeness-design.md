@@ -38,28 +38,26 @@ The merged agentic verb (PR #12 + #13) unifies the *request* and *response*: `re
 
 ### B. `tool_choice` for Gemini
 
-Remove the fail-loud throw in `encode_agentic(::GEMINIServiceEndpoint)`. Map the neutral `tool_choice` → the Interactions shape (**exact wire confirmed at the Phase-0 gate**; research: `tool_choice.allowed_tools.mode`, lowercase):
+Remove the fail-loud throw in `encode_agentic(::GEMINIServiceEndpoint)`. **Confirmed live 2026-07-08:** the control lives **inside `generation_config`** as `tool_choice.allowed_tools.{mode, tools}` — NOT a top-level param (`tool_choice`/`tool_config`/`allowed_tools`/`function_calling_config` at top level all 400 "Unknown parameter"). `mode` ∈ `auto`/`any`/`none`/`validated` (lowercase); `tools` is a list of function-NAME strings. So `tool_choice` folds into the `generation_config` dict the encoder already builds:
 
-| neutral (`Respond.tool_choice`) | Gemini Interactions (to confirm) |
+| neutral (`Respond.tool_choice`) | `generation_config.tool_choice` (confirmed) |
 |---|---|
-| `"auto"` | `{allowed_tools: {mode: "auto"}}` |
+| `"auto"` (or unset) | omit — `auto` is the default |
 | `"none"` | `{allowed_tools: {mode: "none"}}` |
 | `"required"` | `{allowed_tools: {mode: "any"}}` |
-| `tool_choice_function(name)` → `{type:"function", name}` | `{allowed_tools: {mode: "any", tools: [{name}]}}` |
+| `tool_choice_function(name)` → `{type:"function", name}` | `{allowed_tools: {mode: "any", tools: [name]}}` (verified: `mode:"any"` + `tools:["get_weather"]` forced a `function_call`) |
 | `tool_choice_hosted/_mcp/_custom` (OpenAI hosted-tool selectors) | **fail loud** — not applicable to Gemini function tools (hosted tools are Plan 3b) |
 
-OpenAI's `tool_choice` is unchanged (its own wire).
+OpenAI's `tool_choice` is unchanged (its own top-level wire).
 
-## Phase 0 — live-wire gates (before coding)
+## Phase 0 — live-wire gates (RAN 2026-07-08 — results folded into the design above)
 
-Falsification-first, billing-enabled `GEMINI_API_KEY` (`source ~/.zshrc`; small spend; capture once):
-
-1. **`tool_choice` wire.** `curl` an Interactions request with a `tool_choice` and confirm the exact shape/casing (`allowed_tools.mode`? enum values `auto`/`none`/`any`?). The mapping table above is provisional until this runs.
-2. **Continuation-with-tools tolerance (a real risk).** `_next_respond` (`src/tool_loop.jl:188`) copies **all** fields, so turn 2+ re-sends `tools` alongside `previous_interaction_id` — but the Plan-2 capture's continuation *omitted* tools. `curl` a continuation that includes both `tools` and `previous_interaction_id` + a `function_result`. If Gemini rejects it, the Gemini encoder must **drop `tools` (and `tool_choice`) when `previous_interaction_id` is set** (server already holds the tool declarations). Pin this before building the loop.
+1. **`tool_choice` wire — RESOLVED.** Not a top-level param; it lives at `generation_config.tool_choice.allowed_tools.{mode, tools}` (`mode` `auto`/`any`/`none`/`validated`; `tools` = function-name strings). Confirmed live: `mode:"any"` + `tools:["get_weather"]` forced a `function_call` (HTTP 200, `requires_action`). Mapping table above is now definite.
+2. **Continuation-with-tools — RESOLVED, no special-casing.** A continuation with `previous_interaction_id` + `function_result` AND re-sent `tools` returned HTTP 200 `completed`. So `_next_respond` copying `tools`/`tool_choice` is fine for Gemini; the encoder does **not** drop them.
 
 ## Phase 1 — neutral tool-result item (correctness fix)
 
-`tool_loop.jl` name-field addition · `tool_result` helper + export · `_interactions_input` translation in `interactions.jl` · (conditional on Phase-0.2) drop `tools`/`tool_choice` on Gemini continuations.
+`tool_loop.jl` name-field addition · `tool_result` helper + export · `_interactions_input` translation in `interactions.jl`. (No continuation special-casing — Phase-0.2 confirmed Gemini tolerates re-sent `tools`.)
 
 **Falsifier (RED-first):** golden test — `encode_agentic(GEMINI, Respond(previous_response_id="p", input=[tool_result("c","get_weather","sunny")]))` → body `input[1] == {type:"function_result", call_id:"c", name:"get_weather", result:{"result":"sunny"}}` and `previous_interaction_id == "p"`. Mutation: drop the `name` add in `tool_loop` → a test asserting the item carries `name` fails. OpenAI unaffected (existing `tool_loop`/responses suite green).
 
@@ -85,8 +83,8 @@ Zero-spend rule (⚠️ OpenAI+Anthropic keys LIVE in sandbox): `env -u OPENAI_A
 
 ## Assumption ledger — verify against the LIVE Interactions API
 
-- exact `tool_choice` shape + casing + enum values (`allowed_tools.mode`: `auto`/`none`/`any`? or `required`?).
-- whether a continuation may carry `tools`/`tool_choice` alongside `previous_interaction_id`, or they must be dropped.
+- ~~exact `tool_choice` shape~~ **RESOLVED**: `generation_config.tool_choice.allowed_tools.{mode, tools}`; `mode` `auto`/`any`/`none`/`validated`; `tools` = function-name strings.
+- ~~continuation carrying `tools`~~ **RESOLVED**: tolerated (HTTP 200 `completed`); no drop needed.
 - `function_result.result` must be a JSON **object** (captured: yes — `_gemini_tool_response` already wraps a bare string as `{"result": …}`).
 - whether `result` accepts arbitrary nesting or only flat objects (decoder wrap is defensive regardless).
 
@@ -94,4 +92,4 @@ Zero-spend rule (⚠️ OpenAI+Anthropic keys LIVE in sandbox): `env -u OPENAI_A
 
 - OpenAI starts rejecting the extra `name` on `function_call_output` → the `thought_signature`-style neutral item is invalid; fall back to a distinct neutral type + OpenAI-side translation. (Probe on 2026-07-08 says it's tolerated.)
 - A live `tool_loop` round-trip on Gemini cannot complete through the neutral `tool_result` item → the translation is wrong regardless of green mocks.
-- Gemini rejects a continuation that carries `tools` and the encoder's tool-drop breaks OpenAI (whose continuations *do* resend tools) → the drop must be Gemini-only (it is — the change lives in the Gemini encoder).
+- (Resolved by Phase-0.2: Gemini *accepts* continuations carrying `tools`, so no drop is needed — had it rejected, the fix would have lived Gemini-encoder-side only, never touching OpenAI.)

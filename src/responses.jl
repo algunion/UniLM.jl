@@ -428,6 +428,19 @@ function function_tool(d::AbstractDict)
 end
 
 """
+    tool_result(call_id, name, output) -> Dict
+
+Neutral multi-turn tool-result input item for the agentic verb. Feed a function's
+output back via `respond(previous_response_id=id, input=[tool_result(...)])` or through
+[`tool_loop`](@ref). Wire-neutral: OpenAI serializes it as `function_call_output`
+(ignoring `name`); the Gemini encoder translates it to `function_result` (which requires
+`name`). `output` is the function's return value as a string.
+"""
+tool_result(call_id::AbstractString, name::AbstractString, output::AbstractString) =
+    Dict{String,Any}("type" => "function_call_output", "call_id" => call_id,
+                     "name" => name, "output" => output)
+
+"""
     web_search(; context_size="medium", location=nothing)
 
 Shorthand constructor for [`WebSearchTool`](@ref).

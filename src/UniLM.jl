@@ -178,6 +178,7 @@ export
     input_file,
     # Tool constructors
     function_tool,
+    tool_result,
     web_search,
     file_search,
     mcp_tool,

@@ -1,7 +1,7 @@
 # UniLM.jl — LLM Reference
 
 > **Single-file reference for LLM code-generation systems.** This is a **Julia** package.
-> UniLM.jl v0.9.1 · Julia ≥ 1.12 · Deps: `HTTP.jl`, `JSON.jl`, `Base64`
+> Julia ≥ 1.12 · Deps: `HTTP.jl`, `JSON.jl`, `Base64`
 > Repo: <https://github.com/algunion/UniLM.jl>
 
 ## Installation
@@ -22,6 +22,7 @@ using UniLM
 | `AZURE_OPENAI_API_VERSION`         | `AZUREServiceEndpoint`            | Azure API version string                        |
 | `AZURE_OPENAI_DEPLOY_NAME_GPT_5_2` | `AZUREServiceEndpoint`            | Auto-registers Azure deployment for `"gpt-5.2"` |
 | `GEMINI_API_KEY`                   | `GEMINIServiceEndpoint`           | Google Gemini API key                           |
+| `ANTHROPIC_API_KEY`                | `ANTHROPICServiceEndpoint`        | Anthropic (Claude) API key                      |
 | `DEEPSEEK_API_KEY`                 | `DeepSeekEndpoint`                | DeepSeek API key                                |
 | `MISTRAL_API_KEY`                  | `MistralEndpoint`                 | Mistral AI API key                              |
 
@@ -29,15 +30,15 @@ using UniLM
 
 UniLM.jl wraps four OpenAI API surfaces plus FIM completion:
 
-1. **Chat Completions** (`Chat` + `chatrequest!`) — stateful, message-based conversations with tool calling, streaming, structured output. Supports OpenAI, Azure, Gemini, DeepSeek, Ollama, Mistral, and any OpenAI-compatible provider.
-2. **Responses API** (`Respond` + `respond`) — newer, more flexible API with built-in tools (web search, file search), multi-turn chaining via `previous_response_id`, reasoning support for O-series models, structured output. OpenAI only for full feature set.
-3. **Image Generation** (`ImageGeneration` + `generate_image`) — text-to-image with `gpt-image-1.5`. OpenAI only.
+1. **Chat Completions** (`Chat` + `chatrequest!`) — stateful, message-based conversations with tool calling, streaming, structured output. Supports OpenAI, Azure, Gemini (native), Anthropic (native), DeepSeek, Ollama, Mistral, and any OpenAI-compatible provider.
+2. **Responses API** (`Respond` + `respond`) — newer, more flexible API with built-in tools (web search, file search), multi-turn chaining via `previous_response_id`, reasoning support for O-series models, structured output. OpenAI Responses by default; the unified `respond` verb also targets Google's Gemini Interactions via `service=GEMINIServiceEndpoint` (see the Agentic Workflows guide).
+3. **Image Generation** (`ImageGeneration` + `generate_image`) — text-to-image with `gpt-image-2`. OpenAI only.
 4. **Embeddings** (`Embeddings` + `embeddingrequest!`) — vector embeddings. Multi-provider via `service` parameter.
 5. **FIM Completion** (`FIMCompletion` + `fim_complete`) — code infilling. DeepSeek, Ollama, vLLM.
 
 **Which API to use:**
 - **Chat Completions** — best for multi-turn conversations; broadest provider support. Use for chat, tool calling, or streaming across any supported backend.
-- **Responses API** — simpler for single-shot or chained requests; built-in web search, file search, MCP, computer use tools. Currently OpenAI-only for full feature set.
+- **Responses API** — simpler for single-shot or chained requests; built-in web search, file search, MCP, computer use tools. OpenAI Responses plus Google's Gemini Interactions via the unified `respond` verb (see the Agentic Workflows guide).
 - **FIM Completion** — code infilling between prefix and suffix. DeepSeek, Ollama, vLLM only.
 
 ---
@@ -99,7 +100,7 @@ Respond(service=OPENAIServiceEndpoint, input="Hello")
 ```julia
 @kwdef struct Chat
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
-    model::String = "gpt-5.2"
+    model::String = "gpt-5.5"
     messages::Vector{Message} = Message[]
     history::Bool = true
     tools::Union{Vector{GPTTool},Nothing} = nothing
@@ -120,7 +121,7 @@ Respond(service=OPENAIServiceEndpoint, input="Hello")
 end
 ```
 
-- **Model defaults**: `"gpt-5.2"` for OpenAI, `"gemini-2.5-flash"` for Gemini, `"deepseek-chat"` for DeepSeek. For `GenericOpenAIEndpoint` / `OllamaEndpoint`, model must be specified explicitly.
+- **Model defaults**: `"gpt-5.5"` for OpenAI, `"gemini-3.5-flash"` for native Gemini, `"claude-opus-4-8"` for native Anthropic, `"deepseek-chat"` for DeepSeek. For `GenericOpenAIEndpoint` / `OllamaEndpoint`, model must be specified explicitly.
 - `history=true`: responses are automatically appended to `messages`.
 - `temperature` and `top_p` are mutually exclusive (constructor throws `ArgumentError`).
 - `parallel_tool_calls` is auto-set to `nothing` when `tools` is `nothing`.
@@ -311,7 +312,7 @@ result = fetch(task)  # LLMSuccess when complete
 ```julia
 @kwdef struct Respond
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
-    model::String = "gpt-5.2"
+    model::String = "gpt-5.5"
     input::Union{String, Vector}                             # String or Vector{InputMessage}
     instructions::Union{String,Nothing} = nothing
     tools::Union{Vector,Nothing} = nothing                  # Vector of ResponseTool subtypes
@@ -598,7 +599,7 @@ println(tokens["input_tokens"])
 ```julia
 @kwdef struct ImageGeneration
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
-    model::String = "gpt-image-1.5"
+    model::String = "gpt-image-2"
     prompt::String
     n::Union{Int,Nothing} = nothing                         # 1–10
     size::Union{String,Nothing} = nothing                   # "1024x1024","1536x1024","1024x1536","auto"

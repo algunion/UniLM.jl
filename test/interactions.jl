@@ -149,6 +149,12 @@ end
     @test_throws ArgumentError UniLM.encode_agentic(GEMINIServiceEndpoint,
         Respond(service=GEMINIServiceEndpoint,
                 input=[Dict("type" => "function_call_output", "call_id" => "c", "output" => "x")]))
+    # a non-tool-result item in a Vector passes through unchanged (not re-translated)
+    b4 = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint,
+                input=[Dict("type" => "function_result", "call_id" => "c", "name" => "f", "result" => Dict("x" => 1))])); dicttype=Dict{String,Any})
+    @test b4["input"][1]["type"] == "function_result"
+    @test b4["input"][1]["result"] == Dict("x" => 1)
     # String input still passes through
     b3 = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
         Respond(service=GEMINIServiceEndpoint, input="hi")); dicttype=Dict{String,Any})

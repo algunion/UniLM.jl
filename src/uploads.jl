@@ -3,6 +3,13 @@
 # (beyond the single-request Files limit). create → add parts → complete (→ FileObject).
 # ============================================================================
 
+"""
+    UploadObject
+
+A resumable upload session: `id`, `status`, `filename`, and `bytes`; once the
+upload is completed, `file` holds the resulting [`FileObject`](@ref). `raw`
+holds the unparsed JSON response.
+"""
 @kwdef struct UploadObject
     id::String
     status::Union{String,Nothing} = nothing
@@ -12,14 +19,24 @@
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"""
+    UploadPartObject
+
+A single uploaded part; its `id` is passed to [`complete_upload`](@ref) to
+assemble the final file. `raw` holds the unparsed JSON response.
+"""
 @kwdef struct UploadPartObject
     id::String
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"Successful create/complete/cancel result wrapping an [`UploadObject`](@ref)."
 @kwdef struct UploadSuccess <: LLMRequestResponse; response::UploadObject; end
+"Successful [`add_upload_part`](@ref) result wrapping an [`UploadPartObject`](@ref)."
 @kwdef struct UploadPartSuccess <: LLMRequestResponse; response::UploadPartObject; end
+"Uploads API error result: HTTP `status` and the raw `response` body."
 @kwdef struct UploadFailure <: LLMRequestResponse; response::String; status::Int; end
+"Local/transport error from an Uploads API call (the request never completed)."
 @kwdef struct UploadCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
 
 function _parse_upload(d::AbstractDict)

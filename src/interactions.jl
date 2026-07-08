@@ -1,16 +1,14 @@
 # ============================================================================
-# Google Gemini Interactions API — Layer-B agentic verb
+# Google Gemini Interactions API — native agentic surface for `respond`.
 # https://ai.google.dev/gemini-api/docs/interactions-overview
 #
-# Native, server-STATEFUL agentic surface. Rides the SAME agentic seam as OpenAI
-# Responses (src/responses.jl): overrides get_url / encode_agentic / decode_agentic
-# / decode_agentic_stream for GEMINIServiceEndpoint, dispatched by request type
-# (Respond) — exactly as OPENAIServiceEndpoint hosts both Chat and Respond. The
-# decoder normalizes Interactions `steps[]` into the OpenAI-Responses-shaped
-# `output[]`, so ResponseObject accessors (output_text/function_calls/…) are reused.
-#
-# Wire shape captured LIVE against the interactions endpoint on 2026-07-07
-# (see docs/superpowers/plans/2026-07-07-gemini-interactions-plan2.md ledger).
+# Server-stateful agentic API. Rides the same agentic seam as the OpenAI
+# Responses path (src/responses.jl): overrides get_url / encode_agentic /
+# decode_agentic / decode_agentic_stream for GEMINIServiceEndpoint, dispatched by
+# request type (Respond) — exactly as OPENAIServiceEndpoint hosts both Chat and
+# Respond. The decoder normalizes Interactions `steps[]` into the
+# OpenAI-Responses-shaped `output[]`, so ResponseObject accessors
+# (output_text / function_calls / …) are reused.
 # ============================================================================
 
 # ─── Routing (streaming is a BODY flag, so the URL is stream-independent) ─────
@@ -37,7 +35,7 @@ function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
     JSON.json(body)
 end
 
-# Interactions function tools use the flat OpenAI-Responses shape (captured):
+# Interactions function tools use the flat OpenAI-Responses shape observed on the wire:
 # {type:"function", name, description?, parameters?}. No functionDeclarations wrapper.
 function _interactions_tool(t)
     if t isa FunctionTool
@@ -51,10 +49,31 @@ function _interactions_tool(t)
 end
 
 # ─── Gemini native hosted tools ──────────────────────────────────────────────
-# Flat {type:<name>} declarations (captured live). NOTE: estimated_cost is token-based
-# and does NOT model hosted-tool per-call fees (e.g. google_search per-1k-queries).
+# Flat {type:<name>} declarations. NOTE: estimated_cost is token-based and does
+# NOT model hosted-tool per-call fees (e.g. google_search per-1k-queries).
+
+"""
+    gemini_google_search() -> Dict
+
+Hosted Google Search tool for the Gemini Interactions API. Pass in
+`respond(...; tools=[gemini_google_search()], service=GEMINIServiceEndpoint)`.
+"""
 gemini_google_search()  = Dict{String,Any}("type" => "google_search")
+
+"""
+    gemini_code_execution() -> Dict
+
+Hosted code-execution tool for the Gemini Interactions API. Pass in
+`respond(...; tools=[gemini_code_execution()], service=GEMINIServiceEndpoint)`.
+"""
 gemini_code_execution() = Dict{String,Any}("type" => "code_execution")
+
+"""
+    gemini_url_context() -> Dict
+
+Hosted URL-context tool for the Gemini Interactions API. Pass in
+`respond(...; tools=[gemini_url_context()], service=GEMINIServiceEndpoint)`.
+"""
 gemini_url_context()    = Dict{String,Any}("type" => "url_context")
 
 # Neutral input items → Interactions input. A `function_call_output` tool-result item

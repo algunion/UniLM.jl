@@ -1,6 +1,9 @@
 using Documenter
 using UniLM
 
+include(joinpath(@__DIR__, "doc_coverage.jl"))
+include(joinpath(@__DIR__, "undocumented_allowlist.jl"))
+
 makedocs(;
     modules=[UniLM],
     authors="Marius Fersigan <marius.fersigan@gmail.com> and contributors",
@@ -24,6 +27,7 @@ makedocs(;
             "Image Generation" => "guide/image_generation.md",
             "Embeddings" => "guide/embeddings.md",
             "Tool Calling" => "guide/tool_calling.md",
+            "Agentic Workflows" => "guide/agentic.md",
             "Streaming" => "guide/streaming.md",
             "Structured Output" => "guide/structured_output.md",
             "Multi-Backend" => "guide/multi_backend.md",
@@ -37,13 +41,28 @@ makedocs(;
             "Embeddings" => "api/embeddings.md",
             "Service Endpoints" => "api/endpoints.md",
             "Result Types" => "api/results.md",
+            "Cost Tracking" => "api/accounting.md",
             "MCP Client & Server" => "api/mcp.md",
             "FIM Types" => "api/completions.md",
             "Provider Capabilities" => "api/capabilities.md",
+            "Files" => "api/files.md",
+            "Vector Stores" => "api/vector_stores.md",
+            "Conversations" => "api/conversations.md",
+            "Batch" => "api/batch.md",
+            "Fine-tuning" => "api/fine_tuning.md",
+            "Moderations" => "api/moderations.md",
+            "Audio" => "api/audio.md",
+            "Containers" => "api/containers.md",
+            "Uploads" => "api/uploads.md",
+            "Videos" => "api/videos.md",
+            "Webhooks" => "api/webhooks.md",
+            "Realtime" => "api/realtime.md",
         ],
     ],
     warnonly=[:missing_docs, :cross_references],
 )
+
+assert_doc_coverage(UniLM, joinpath(@__DIR__, "src"), KNOWN_UNDOCUMENTED)
 
 deploydocs(;
     repo="github.com/algunion/UniLM.jl",

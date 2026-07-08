@@ -335,10 +335,15 @@ function JSON.lower(t::CustomTool)
     return d
 end
 
+"Construct a [`ComputerTool`](@ref) (GA `computer` tool); for the preview variant with display dimensions use [`computer_use`](@ref)."
 computer_tool(; environment::Union{String,Nothing}=nothing) = ComputerTool(environment=environment)
+"Construct a [`LocalShellTool`](@ref) (`local_shell`): the model emits commands you run on your own runtime."
 local_shell() = LocalShellTool()
+"Construct a [`ShellTool`](@ref) (hosted `shell` tool)."
 shell(; environment::Union{AbstractDict,Nothing}=nothing) = ShellTool(environment=environment)
+"Construct an [`ApplyPatchTool`](@ref) (structured `apply_patch` file-edit tool)."
 apply_patch_tool() = ApplyPatchTool()
+"Construct a [`CustomTool`](@ref) (`custom` tool); `format` optionally constrains input to a grammar."
 custom_tool(name::String; description::Union{String,Nothing}=nothing,
     format::Union{String,AbstractDict,Nothing}=nothing) =
     CustomTool(name=name, description=description, format=format)
@@ -940,8 +945,11 @@ mcp_approval_requests(r::ResponseObject)    = _output_items(r, "mcp_approval_req
 "Raw `reasoning` output items."
 reasoning_items(r::ResponseObject)          = _output_items(r, "reasoning")
 
+"The response's lifecycle status string (e.g. `completed`, `requires_action`); `failed`/`error` for non-success results."
 response_status(r::ResponseObject)    = r.status
+"Why a response is `incomplete` (the API's `incomplete_details` object), or `nothing`."
 incomplete_details(r::ResponseObject) = get(r.raw, "incomplete_details", nothing)
+"The response's raw token-usage dict; see [`token_usage`](@ref) for the typed [`TokenUsage`](@ref)."
 usage_details(r::ResponseObject)      = r.usage
 
 # ResponseSuccess forwarders + empty/typed defaults for the non-success results.
@@ -1129,8 +1137,8 @@ end
 # Parallel to the chat seam (src/requests.jl:252-273): three generics dispatched
 # on `service` translate between the neutral Respond/ResponseObject IR and a
 # provider's agentic wire. The untyped-`service` methods below are the OpenAI
-# Responses defaults; a provider with a different surface (Gemini Interactions,
-# Plan 2) overrides them. `respond`/`_respond_stream` call ONLY these generics,
+# Responses defaults; a provider with a different surface (Gemini Interactions)
+# overrides them. `respond`/`_respond_stream` call ONLY these generics,
 # so retry/HTTP/cost/streaming orchestration stays provider-agnostic.
 # NB: named `*_agentic`, NOT `decode_response` — that would collide with the chat
 # seam's `decode_response(service, ::HTTP.Response)` (identical argument types).

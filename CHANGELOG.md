@@ -11,6 +11,9 @@
 - Native Google Gemini chat (`GEMINIServiceEndpoint`): `generateContent` messages, tools (with Gemini-3 `thoughtSignature` echo for multi-turn tool calls), SSE streaming, and usage/cost accounting. Default model `gemini-3.5-flash`.
 - Native Anthropic chat (`ANTHROPICServiceEndpoint`): Messages API messages, tools, streaming, usage/cost.
 - Optional `GPTToolCall.thought_signature` field (set by the Gemini decoder; ignored by other providers).
+- Unified agentic verb across providers: `respond`/`Respond` now also targets Google's **Gemini Interactions** API via `service=GEMINIServiceEndpoint` (in addition to OpenAI Responses), sharing inputs, `tool_loop`/`tool_loop!`, lifecycle (`get_response`/`cancel_response`), and usage/cost accounting.
+- Gemini hosted-tool constructors `gemini_google_search`, `gemini_code_execution`, `gemini_url_context` for use in `respond(...; tools=[...])`.
+- Cross-provider `estimated_cost`/`token_usage` for Gemini Interactions results (usage normalized to the shared shape; `gemini-3.5-flash` priced in `DEFAULT_PRICING`).
 
 ## 0.10.3
 

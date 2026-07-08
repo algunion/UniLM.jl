@@ -6,20 +6,44 @@
 
 # ─── Parsed objects ───────────────────────────────────────────────────────────
 
+"""
+    ConversationObject
+
+A durable, server-side conversation: `id`, optional `created_at` and `metadata`;
+`raw` holds the unparsed JSON response.
+"""
 @kwdef struct ConversationObject
     id::String
     created_at::Union{Int,Nothing} = nothing
     metadata::Union{Dict{String,Any},Nothing} = nothing
     raw::Dict{String,Any} = Dict{String,Any}()
 end
+
+"""
+    conversation_id(c::ConversationObject) -> String
+
+Return the `id` of a [`ConversationObject`](@ref).
+"""
 conversation_id(c::ConversationObject) = c.id
 
+"""
+    ConversationItem
+
+A single item in a conversation: `id` and optional `type`; `raw` holds the
+unparsed JSON response.
+"""
 @kwdef struct ConversationItem
     id::String
     type::Union{String,Nothing} = nothing
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"""
+    ConversationItemList
+
+A page of [`ConversationItem`](@ref)s from [`list_conversation_items`](@ref);
+`has_more` signals further pages, and `first_id`/`last_id` bound the page.
+"""
 @kwdef struct ConversationItemList
     data::Vector{ConversationItem}
     has_more::Bool = false
@@ -30,11 +54,17 @@ end
 
 # ─── Result types ─────────────────────────────────────────────────────────────
 
+"Successful create/retrieve/update result wrapping a [`ConversationObject`](@ref)."
 @kwdef struct ConversationSuccess <: LLMRequestResponse; response::ConversationObject; end
+"Successful [`list_conversation_items`](@ref) / [`add_conversation_items`](@ref) result wrapping a [`ConversationItemList`](@ref)."
 @kwdef struct ConversationItemListSuccess <: LLMRequestResponse; response::ConversationItemList; end
+"Successful result wrapping a single [`ConversationItem`](@ref)."
 @kwdef struct ConversationItemSuccess <: LLMRequestResponse; response::ConversationItem; end
+"Successful [`delete_conversation`](@ref) / [`delete_conversation_item`](@ref) result; `deleted` confirms removal of `id`."
 @kwdef struct ConversationDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
+"Conversations API error result: HTTP `status` and the raw `response` body."
 @kwdef struct ConversationFailure <: LLMRequestResponse; response::String; status::Int; end
+"Local/transport error from a Conversations API call (the request never completed)."
 @kwdef struct ConversationCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
 
 _parse_conversation(d::AbstractDict) = ConversationObject(id=d["id"], created_at=get(d, "created_at", nothing),

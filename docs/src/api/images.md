@@ -6,6 +6,7 @@ Types and functions for the **Image Generation API** (`/v1/images/generations`).
 
 ```@docs
 ImageGeneration
+ImageEdit
 ```
 
 ### Construction
@@ -62,6 +63,7 @@ ImageCallError
 
 ```@docs
 generate_image
+edit_image
 ```
 
 ### Usage Examples

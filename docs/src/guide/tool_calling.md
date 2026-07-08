@@ -209,6 +209,35 @@ for t in tools
 end
 ```
 
+### Tool Choice, Tool Results & Hosted Tools
+
+Constrain which tool the model may call with the `tool_choice=` builders
+([`tool_choice_function`](@ref), [`tool_choice_hosted`](@ref),
+[`tool_choice_allowed`](@ref), [`tool_choice_mcp`](@ref),
+[`tool_choice_custom`](@ref)):
+
+```@example tools
+r = Respond(input="What's the weather?",
+            tools=[function_tool("get_weather", "Get weather",
+                       parameters=Dict("type" => "object",
+                                       "properties" => Dict("location" => Dict("type" => "string"))))],
+            tool_choice=tool_choice_function("get_weather"))
+println(r.tool_choice)
+```
+
+Return a tool's output on the next turn with [`tool_result`](@ref):
+
+```julia
+respond(; previous_response_id=r1.response.id,
+        input=[tool_result("call_abc", "get_weather", "72F and sunny")])
+```
+
+Gemini Interactions adds server-side hosted tools — see the
+[Agentic Workflows guide](@ref agentic_guide) for [`gemini_google_search`](@ref)
+and friends. When Gemini returns tool calls, the provider's opaque reasoning
+token is preserved on [`GPTToolCall`](@ref)`.thought_signature` and echoed
+automatically on the next turn.
+
 ## Automated Tool Loop
 
 Instead of manually handling tool calls, use [`tool_loop!`](@ref) (Chat Completions) or

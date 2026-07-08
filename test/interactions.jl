@@ -1,5 +1,5 @@
-# Native Gemini Interactions (Layer-B agentic verb) — deterministic, zero-spend.
-# Golden/canned bodies from the LIVE wire capture 2026-07-07 (gemini-3.1-flash-lite).
+# Native Gemini Interactions API (agentic verb) — deterministic, zero-spend.
+# Golden/canned bodies verified against the live Gemini Interactions API on 2026-07-07 (gemini-3.1-flash-lite).
 
 @testset "Interactions routing + capability" begin
     r = Respond(service=GEMINIServiceEndpoint, model="gemini-3.1-flash-lite", input="hi")
@@ -33,7 +33,7 @@ end
 @testset "Interactions decode (steps[] → neutral output[])" begin
     make(b) = HTTP.Response(200, [], Vector{UInt8}(JSON.json(b)))
 
-    # text (captured shape): thought step + model_output content
+    # text (observed shape): thought step + model_output content
     txt = Dict("id" => "v1_t", "object" => "interaction", "model" => "gemini-3.1-flash-lite",
         "status" => "completed",
         "usage" => Dict("total_tokens" => 10, "total_input_tokens" => 8,
@@ -49,7 +49,7 @@ end
     @test ro.usage["output_tokens"] == 2       # normalized to OpenAI shape at decode
     @test ro.usage["input_tokens"] == 8
 
-    # function call (captured): arguments is an OBJECT → normalized to a JSON STRING
+    # function call (observed shape): arguments is an OBJECT → normalized to a JSON STRING
     fc = Dict("id" => "v1_f", "object" => "interaction", "model" => "gemini-3.1-flash-lite",
         "status" => "requires_action",
         "steps" => [Dict("id" => "6eG7YnHo", "type" => "function_call", "name" => "get_weather",

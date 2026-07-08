@@ -2,12 +2,21 @@
 # OpenAI Audio API — text-to-speech (binary out) + transcription / translation.
 # ============================================================================
 
+"Audio API error result: HTTP `status` and the raw `response` body."
 @kwdef struct AudioFailure <: LLMRequestResponse; response::String; status::Int; end
+"Local/transport error from an Audio API call (the request never completed)."
 @kwdef struct AudioCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
 _audio_err(e) = AudioCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
 
 # ─── Text-to-speech (JSON request, binary response) ──────────────────────────
 
+"""
+    SpeechRequest(; input, voice="alloy", model="gpt-4o-mini-tts", service=OPENAIServiceEndpoint)
+
+A text-to-speech request. `input` is the text to synthesize; `voice` selects the
+speaker; optional `response_format` (`mp3`|`opus`|`aac`|`flac`|`wav`|`pcm`),
+`speed`, and `instructions` tune the output. Pass to [`speak`](@ref).
+"""
 @kwdef struct SpeechRequest
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
     model::String = "gpt-4o-mini-tts"
@@ -25,6 +34,7 @@ function JSON.lower(s::SpeechRequest)
     return d
 end
 
+"Successful [`speak`](@ref) result; `audio` holds the raw audio bytes, `content_type` the MIME type. Save with [`save_audio`](@ref)."
 @kwdef struct SpeechSuccess <: LLMRequestResponse
     audio::Vector{UInt8}
     content_type::String = ""
@@ -63,6 +73,13 @@ end
 
 # ─── Transcription / translation (multipart upload → text or JSON) ───────────
 
+"""
+    TranscriptionRequest(; file, model="gpt-4o-transcribe", service=OPENAIServiceEndpoint)
+
+An audio transcription/translation request. `file` is a path on disk; optional
+`language`, `prompt`, `response_format`, and `temperature` refine decoding.
+Pass to [`transcribe`](@ref) or [`translate`](@ref).
+"""
 @kwdef struct TranscriptionRequest
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
     file::String
@@ -77,10 +94,17 @@ end
     end
 end
 
+"Successful [`transcribe`](@ref)/[`translate`](@ref) result; `text` holds the transcript (via [`transcript_text`](@ref)), `raw` the parsed JSON when the API returns it."
 @kwdef struct TranscriptionSuccess <: LLMRequestResponse
     text::String
     raw::Union{Dict{String,Any},Nothing} = nothing
 end
+
+"""
+    transcript_text(r::TranscriptionSuccess) -> String
+
+The transcript text from a [`transcribe`](@ref) or [`translate`](@ref) result.
+"""
 transcript_text(r::TranscriptionSuccess) = r.text
 
 function _transcribe(t::TranscriptionRequest, path::String)

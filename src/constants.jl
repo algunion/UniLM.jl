@@ -122,7 +122,7 @@ const GEMINI_CHAT_URL::String = "https://generativelanguage.googleapis.com/v1bet
 """Google Gemini native API base (model + method appended: `/models/{model}:generateContent`)."""
 const GEMINI_NATIVE_BASE::String = "https://generativelanguage.googleapis.com/v1beta"
 
-"""Google Gemini Interactions API path (Layer-B agentic verb; appended to `GEMINI_NATIVE_BASE`)."""
+"""Google Gemini Interactions API path (native agentic surface; appended to `GEMINI_NATIVE_BASE`)."""
 const INTERACTIONS_PATH::String = "/interactions"
 
 # ─── Anthropic (Claude) native Messages API ──────────────────────────────────

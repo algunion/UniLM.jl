@@ -2,6 +2,13 @@
 # OpenAI Moderations API — free policy classification of text and images.
 # ============================================================================
 
+"""
+    ModerationResult
+
+One classification result: `flagged` (any policy violation), `categories`
+(per-category booleans), and `category_scores` (per-category confidence);
+`raw` holds the unparsed JSON result.
+"""
 @kwdef struct ModerationResult
     flagged::Bool
     categories::Dict{String,Any} = Dict{String,Any}()
@@ -9,14 +16,23 @@
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"""
+    ModerationResponse
+
+A moderation response: `results`, one [`ModerationResult`](@ref) per input, and
+the `model` used; `raw` holds the unparsed JSON response.
+"""
 @kwdef struct ModerationResponse
     results::Vector{ModerationResult}
     model::String = ""
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"Successful [`moderate`](@ref) result wrapping a [`ModerationResponse`](@ref)."
 @kwdef struct ModerationSuccess <: LLMRequestResponse; response::ModerationResponse; end
+"Moderations API error result: HTTP `status` and the raw `response` body."
 @kwdef struct ModerationFailure <: LLMRequestResponse; response::String; status::Int; end
+"Local/transport error from a Moderations API call (the request never completed)."
 @kwdef struct ModerationCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
 
 """

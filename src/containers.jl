@@ -3,6 +3,12 @@
 # Interpreter tool; expires after idle. Files added via multipart.
 # ============================================================================
 
+"""
+    ContainerObject
+
+A code-interpreter container: `id`, `status`, and `name`; `raw` holds the
+unparsed JSON response.
+"""
 @kwdef struct ContainerObject
     id::String
     status::Union{String,Nothing} = nothing
@@ -10,16 +16,27 @@
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"""
+    ContainerList
+
+A page of container records (raw JSON dicts) from [`list_containers`](@ref);
+`has_more` signals that further pages are available.
+"""
 @kwdef struct ContainerList
     data::Vector{Dict{String,Any}}
     has_more::Bool = false
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"Successful create/retrieve/add-file result wrapping a [`ContainerObject`](@ref)."
 @kwdef struct ContainerSuccess <: LLMRequestResponse; response::ContainerObject; end
+"Successful [`list_containers`](@ref) result wrapping a [`ContainerList`](@ref)."
 @kwdef struct ContainerListSuccess <: LLMRequestResponse; response::ContainerList; end
+"Successful [`delete_container`](@ref) result; `deleted` confirms removal of `id`."
 @kwdef struct ContainerDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
+"Containers API error result: HTTP `status` and the raw `response` body."
 @kwdef struct ContainerFailure <: LLMRequestResponse; response::String; status::Int; end
+"Local/transport error from a Containers API call (the request never completed)."
 @kwdef struct ContainerCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
 
 _parse_container(d::AbstractDict) = ContainerObject(id=d["id"], status=get(d, "status", nothing), name=get(d, "name", nothing), raw=Dict{String,Any}(d))

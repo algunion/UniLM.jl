@@ -49,6 +49,19 @@ ResponseCallError
 ```@docs
 output_text
 function_calls
+url_citations
+web_search_results
+file_search_results
+image_generation_results
+code_interpreter_outputs
+mcp_call_outputs
+mcp_approval_requests
+reasoning_summaries
+reasoning_items
+refusals
+response_status
+incomplete_details
+usage_details
 ```
 
 ## Request Functions
@@ -99,6 +112,11 @@ MCPTool
 ComputerUseTool
 ImageGenerationTool
 CodeInterpreterTool
+ComputerTool
+CustomTool
+LocalShellTool
+ShellTool
+ApplyPatchTool
 ```
 
 ### Tool Constructors
@@ -111,6 +129,12 @@ mcp_tool
 computer_use
 image_generation_tool
 code_interpreter
+computer_tool
+custom_tool
+local_shell
+shell
+apply_patch_tool
+mcp_approval_response
 ```
 
 ```@example responses_api
@@ -125,6 +149,25 @@ println("Function tool: ", ft.name)
 # Web search
 ws = web_search(context_size="high")
 println("Web search context: ", ws.search_context_size)
+```
+
+### Tool Choice
+
+```@docs
+tool_choice_function
+tool_choice_hosted
+tool_choice_allowed
+tool_choice_mcp
+tool_choice_custom
+```
+
+### Tool Results & Hosted (Gemini) Tools
+
+```@docs
+tool_result
+gemini_google_search
+gemini_code_execution
+gemini_url_context
 ```
 
 ## Text Format

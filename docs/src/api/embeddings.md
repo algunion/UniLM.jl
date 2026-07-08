@@ -30,6 +30,15 @@ println("Each embedding dims: ", length(batch.embeddings[1]))
 embeddingrequest!
 ```
 
+## Result Types
+
+```@docs
+EmbeddingSuccess
+EmbeddingFailure
+EmbeddingCallError
+embedding_vectors
+```
+
 ## Model Constants
 
 ```@example embeddings_api

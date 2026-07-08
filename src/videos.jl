@@ -3,6 +3,12 @@
 # the request/response shapes against the live API before relying on this.
 # ============================================================================
 
+"""
+    VideoObject
+
+A video-generation job from the Videos API: `id`, plus optional `status` and
+`model`; `raw` holds the unparsed JSON response.
+"""
 @kwdef struct VideoObject
     id::String
     status::Union{String,Nothing} = nothing
@@ -10,16 +16,27 @@
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"""
+    VideoList
+
+A page of video jobs (raw JSON dicts) from [`list_videos`](@ref); `has_more`
+signals that further pages are available.
+"""
 @kwdef struct VideoList
     data::Vector{Dict{String,Any}}
     has_more::Bool = false
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"Successful create/retrieve result wrapping a [`VideoObject`](@ref)."
 @kwdef struct VideoSuccess <: LLMRequestResponse; response::VideoObject; end
+"Successful [`list_videos`](@ref) result wrapping a [`VideoList`](@ref)."
 @kwdef struct VideoListSuccess <: LLMRequestResponse; response::VideoList; end
+"Successful [`video_content`](@ref) result; `content` holds the raw video bytes."
 @kwdef struct VideoContentSuccess <: LLMRequestResponse; content::Vector{UInt8}; end
+"Videos API error result: HTTP `status` and the raw `response` body."
 @kwdef struct VideoFailure <: LLMRequestResponse; response::String; status::Int; end
+"Local/transport error from a Videos API call (the request never completed)."
 @kwdef struct VideoCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
 
 _parse_video(d::AbstractDict) = VideoObject(id=d["id"], status=get(d, "status", nothing), model=get(d, "model", nothing), raw=Dict{String,Any}(d))

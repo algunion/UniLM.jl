@@ -2033,7 +2033,7 @@ end
     @test tc2.format.schema == Dict("type" => "string")
 end
 
-# ─── Agentic seam dispatch (Plan 1: OpenAI-wire defaults) ─────────────────────
+# ─── Agentic seam dispatch (OpenAI-wire defaults) ────────────────────────────
 
 @testset "agentic seam — OpenAI-wire defaults" begin
     r = Respond(input="hi")                      # service defaults to OPENAIServiceEndpoint, model→"gpt-5.5"
@@ -2065,7 +2065,7 @@ end
     # Azure and the Gemini OpenAI-compat shim have no agentic surface: get_url(service,
     # ::Respond) → _api_base_url throws, which respond() catches as a ResponseCallError.
     # Pins that respond() routes its URL through the get_url dispatch (not a hardcoded path).
-    # (Native GEMINIServiceEndpoint IS supported now — Interactions, Plan 2 — so it is
+    # (Native GEMINIServiceEndpoint IS supported now — Interactions — so it is
     # deliberately excluded here.)
     for svc in (AZUREServiceEndpoint, GEMINIOpenAIServiceEndpoint)
         r = respond(Respond(service=svc, input="x"))

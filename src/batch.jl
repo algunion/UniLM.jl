@@ -4,6 +4,13 @@
 # `file_content(batch.output_file_id)`.
 # ============================================================================
 
+"""
+    BatchObject
+
+A batch job from the Batch API: `id`, `status`, `endpoint`, `input_file_id`,
+`output_file_id`, `error_file_id`, and `request_counts`; `raw` holds the unparsed
+JSON response.
+"""
 @kwdef struct BatchObject
     id::String
     status::Union{String,Nothing} = nothing
@@ -15,15 +22,25 @@
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"""
+    BatchList
+
+A page of [`BatchObject`](@ref)s from [`list_batches`](@ref); `has_more` signals
+that further pages are available.
+"""
 @kwdef struct BatchList
     data::Vector{BatchObject}
     has_more::Bool = false
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"Successful create/retrieve/cancel result wrapping a [`BatchObject`](@ref)."
 @kwdef struct BatchSuccess <: LLMRequestResponse; response::BatchObject; end
+"Successful [`list_batches`](@ref) result wrapping a [`BatchList`](@ref)."
 @kwdef struct BatchListSuccess <: LLMRequestResponse; response::BatchList; end
+"Batch API error result: HTTP `status` and the raw `response` body."
 @kwdef struct BatchFailure <: LLMRequestResponse; response::String; status::Int; end
+"Local/transport error from a Batch API call (the request never completed)."
 @kwdef struct BatchCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
 
 _parse_batch(d::AbstractDict) = BatchObject(id=d["id"], status=get(d, "status", nothing),

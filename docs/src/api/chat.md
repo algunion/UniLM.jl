@@ -31,6 +31,8 @@ println("User content: ", usr.content)
 ```@docs
 issendvalid
 update!
+fork
+InvalidConversationError
 ```
 
 ### Building a Conversation

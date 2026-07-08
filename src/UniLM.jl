@@ -191,6 +191,10 @@ export
     shell,
     apply_patch_tool,
     custom_tool,
+    # Gemini native hosted tools
+    gemini_google_search,
+    gemini_code_execution,
+    gemini_url_context,
     # Tool types
     MCPTool,
     ComputerUseTool,

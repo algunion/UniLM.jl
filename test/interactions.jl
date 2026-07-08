@@ -46,7 +46,8 @@ end
     @test ro.id == "v1_t"
     @test ro.status == "completed"
     @test output_text(ro) == "Hello."
-    @test ro.usage["total_output_tokens"] == 2
+    @test ro.usage["output_tokens"] == 2       # normalized to OpenAI shape at decode
+    @test ro.usage["input_tokens"] == 8
 
     # function call (captured): arguments is an OBJECT → normalized to a JSON STRING
     fc = Dict("id" => "v1_f", "object" => "interaction", "model" => "gemini-3.1-flash-lite",
@@ -180,4 +181,59 @@ end
         Respond(service=GEMINIServiceEndpoint, input="x", tool_choice=UniLM.tool_choice_hosted("web_search")))
     # unknown tool_choice string → fail loud
     @test_throws ArgumentError UniLM._interactions_tool_choice("bogus")
+end
+
+@testset "Interactions decode — usage normalized for cost accounting" begin
+    raw = Dict("total_input_tokens" => 12, "total_output_tokens" => 69, "total_thought_tokens" => 5,
+               "total_tool_use_tokens" => 3, "total_cached_tokens" => 4, "total_tokens" => 93)
+    u = UniLM._interaction_usage(raw)
+    @test u["input_tokens"] == 12
+    @test u["output_tokens"] == 77                              # 69 + 5 thought + 3 tool_use (billable output)
+    @test u["input_tokens_details"]["cached_tokens"] == 4
+    @test u["output_tokens_details"]["reasoning_tokens"] == 5
+    @test isnothing(UniLM._interaction_usage(nothing))
+    # end-to-end: a decoded interaction yields correct token_usage + non-zero cost (cached=0 → clean rate identity)
+    raw0 = Dict("total_input_tokens" => 12, "total_output_tokens" => 69, "total_thought_tokens" => 5,
+                "total_tool_use_tokens" => 3, "total_cached_tokens" => 0, "total_tokens" => 89)
+    ro = UniLM._interaction_response_object(Dict("id" => "v1_u", "status" => "completed",
+        "model" => "gemini-3.1-flash-lite",
+        "steps" => [Dict("type" => "model_output", "content" => [Dict("type" => "text", "text" => "hi")])],
+        "usage" => raw0))
+    res = ResponseSuccess(response=ro)
+    @test token_usage(res).prompt_tokens == 12
+    @test token_usage(res).completion_tokens == 77
+    @test token_usage(res).reasoning_tokens == 5
+    @test estimated_cost(res) ≈ 12 * 0.25/1_000_000 + 77 * 1.5/1_000_000   # gemini-3.1-flash-lite rates
+    @test estimated_cost(res) > 0
+end
+
+@testset "Agentic lifecycle URL is service-dispatched (_agentic_url)" begin
+    @test UniLM._agentic_url(GEMINIServiceEndpoint) == "https://generativelanguage.googleapis.com/v1beta/interactions"
+    @test UniLM._agentic_url(OPENAIServiceEndpoint) == UniLM._api_base_url(OPENAIServiceEndpoint) * UniLM.RESPONSES_PATH
+    # the create URL still resolves through the same source of truth (no divergence)
+    r = Respond(service=GEMINIServiceEndpoint, input="x")
+    @test UniLM.get_url(GEMINIServiceEndpoint, r) == UniLM._agentic_url(GEMINIServiceEndpoint)
+end
+
+@testset "Gemini hosted-tool constructors + encode passthrough" begin
+    @test gemini_google_search()  == Dict("type" => "google_search")
+    @test gemini_code_execution() == Dict("type" => "code_execution")
+    @test gemini_url_context()    == Dict("type" => "url_context")
+    b = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input="x", tools=[gemini_google_search()])); dicttype=Dict{String,Any})
+    @test b["tools"][1] == Dict("type" => "google_search")
+end
+
+@testset "Interactions decode — hosted-tool steps surfaced, not dropped" begin
+    data = Dict("id" => "v1_h", "status" => "completed", "model" => "gemini-3.1-flash-lite", "steps" => [
+        Dict("type" => "google_search_call", "id" => "s1", "arguments" => Dict("queries" => ["x"])),
+        Dict("type" => "google_search_result", "id" => "s1"),
+        Dict("type" => "model_output", "content" => [Dict("type" => "text", "text" => "Answer.")])])
+    ro = UniLM._interaction_response_object(data)
+    types = [get(o, "type", "") for o in ro.output]
+    @test "google_search_call" in types                 # surfaced
+    @test "google_search_result" in types
+    res = ResponseSuccess(response=ro)
+    @test output_text(res) == "Answer."                 # message still decoded
+    @test isempty(function_calls(res))                  # hosted step ≠ function call
 end

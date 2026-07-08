@@ -157,3 +157,8 @@ end
         Respond(service=GEMINIServiceEndpoint, input="hi")); dicttype=Dict{String,Any})
     @test b3["input"] == "hi"
 end
+
+@testset "Interactions encode — CallableTool tool unwraps to function shape" begin
+    ct = UniLM.CallableTool(function_tool("f", "d"), (n, a) -> "x")
+    @test UniLM._interactions_tool(ct) == Dict{Symbol,Any}(:type => "function", :name => "f", :description => "d")
+end

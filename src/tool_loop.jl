@@ -29,6 +29,11 @@ end
 
 JSON.lower(ct::CallableTool) = JSON.lower(ct.tool)
 
+# CallableTool unwraps to its inner tool for the Gemini Interactions encoder (mirrors the
+# JSON.lower unwrap the OpenAI wire uses). Defined here — _interactions_tool lives in
+# interactions.jl (loaded before tool_loop.jl), CallableTool is defined just above.
+_interactions_tool(ct::CallableTool) = _interactions_tool(ct.tool)
+
 _tool_name(t::GPTTool) = t.func.name
 _tool_name(t::FunctionTool) = t.name
 _tool_name(ct::CallableTool) = _tool_name(ct.tool)
@@ -236,6 +241,7 @@ function tool_loop(r::Respond, dispatcher::Function;
             push!(output_items, Dict{String,Any}(
                 "type" => "function_call_output",
                 "call_id" => call["call_id"],
+                "name" => name,
                 "output" => content
             ))
         end

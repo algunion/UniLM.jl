@@ -1147,6 +1147,8 @@ try
         @test result.tool_calls[1].success
         @test result.response isa ResponseSuccess
         @test output_text(result.response) == "The result is 8."
+        # the turn-2 request (captured last) carries the neutral tool-result item WITH name
+        @test get(JSON.parse(request_body[]; dicttype=Dict{String,Any})["input"][1], "name", nothing) == "add"
     end
 
     @testset "tool_loop max turns exhausted (Respond)" begin

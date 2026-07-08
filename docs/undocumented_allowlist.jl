@@ -3,7 +3,6 @@
 # neither in an @docs block nor listed here. Entries may only be REMOVED (by
 # documenting the symbol) — never silently added. Seeded 2026-07-08.
 const KNOWN_UNDOCUMENTED = Set([
-    "ANTHROPICServiceEndpoint",
     "ApplyPatchTool",
     "AudioCallError",
     "AudioFailure",

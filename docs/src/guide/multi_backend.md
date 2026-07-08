@@ -10,6 +10,7 @@ type hierarchy. Switching backends requires only changing the `service` paramete
 | OpenAI (default) | `OPENAIServiceEndpoint`   | `OPENAI_API_KEY`                                                            |
 | Azure OpenAI     | `AZUREServiceEndpoint`    | `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION` |
 | Google Gemini    | `GEMINIServiceEndpoint`   | `GEMINI_API_KEY`                                                            |
+| Anthropic        | `ANTHROPICServiceEndpoint`| `ANTHROPIC_API_KEY`                                                         |
 | DeepSeek         | `DeepSeekEndpoint`        | `DEEPSEEK_API_KEY`                                                          |
 | Mistral          | `MistralEndpoint`         | `MISTRAL_API_KEY`                                                           |
 | Ollama (local)   | `OllamaEndpoint`          | (none)                                                                      |
@@ -82,6 +83,23 @@ To keep using the OpenAI-compatible endpoint, switch the service type:
 chat = Chat(service=GEMINIOpenAIServiceEndpoint, model="gemini-2.5-flash")
 ```
 
+## Anthropic (native Messages API)
+
+`ANTHROPICServiceEndpoint` calls Anthropic's native `/v1/messages` API
+(`x-api-key` + `anthropic-version` headers). Default model `claude-opus-4-8`;
+`max_tokens` is required on the wire and defaults to 4096 when you omit it.
+
+```@example backends
+claude_chat = Chat(service=ANTHROPICServiceEndpoint)  # default: claude-opus-4-8
+push!(claude_chat, Message(Val(:user), "Say hello in one short sentence."))
+result = chatrequest!(claude_chat)
+if result isa LLMSuccess
+    println(result.message.content)
+else
+    println("Request failed — see result for details")
+end
+```
+
 ## Responses API Backend
 
 The Responses API also supports the `service` parameter:
@@ -134,11 +152,13 @@ chat = Chat(service=GenericOpenAIEndpoint("http://localhost:8000", ""), model="m
 chat = Chat(service=GenericOpenAIEndpoint("http://localhost:1234", ""), model="loaded-model")
 ```
 
-### Anthropic (compatibility layer)
+### Anthropic (OpenAI-compatible shim)
 
-Anthropic provides an OpenAI-compatible endpoint for evaluation purposes.
-Note: Anthropic considers this "not a long-term or production-ready solution" —
-features like `response_format` and `strict` are ignored.
+Prefer the native `ANTHROPICServiceEndpoint` (the **Anthropic (native Messages
+API)** section above). For evaluation only, Anthropic also exposes an
+OpenAI-compatible endpoint — which Anthropic itself calls "not a long-term or
+production-ready solution" (features like `response_format` and `strict` are
+ignored):
 
 ```julia
 chat = Chat(

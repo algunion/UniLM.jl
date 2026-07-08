@@ -15,6 +15,7 @@ UniLM.OPENAIServiceEndpoint
 UniLM.AZUREServiceEndpoint
 UniLM.GEMINIServiceEndpoint
 UniLM.GEMINIOpenAIServiceEndpoint
+UniLM.ANTHROPICServiceEndpoint
 ```
 
 ## Generic Endpoint

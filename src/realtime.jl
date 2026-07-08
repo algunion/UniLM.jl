@@ -5,11 +5,14 @@
 # Julia lacks); audio is exchanged as base64 PCM inside events.
 # ============================================================================
 
+"Successful [`mint_realtime_secret`](@ref) result; `value` is the ephemeral client secret and `raw` the unparsed JSON response."
 @kwdef struct RealtimeSecretSuccess <: LLMRequestResponse
     value::String
     raw::Dict{String,Any} = Dict{String,Any}()
 end
+"Realtime API error result: HTTP `status` and the raw `response` body."
 @kwdef struct RealtimeFailure <: LLMRequestResponse; response::String; status::Int; end
+"Local/transport error from a Realtime API call (the request never completed)."
 @kwdef struct RealtimeCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
 
 """
@@ -61,6 +64,9 @@ mutable struct RealtimeSession
     model::String
 end
 
+# WS base URL is a function so tests can point realtime_connect at a local echo server.
+_realtime_ws_url(service) = REALTIME_WS_URL
+
 """
     realtime_connect(handler; model="gpt-realtime-2", service=OPENAIServiceEndpoint)
 
@@ -68,9 +74,6 @@ Open a Realtime WebSocket and run `handler(session::RealtimeSession)`. Inside th
 [`realtime_send`](@ref) to send event dicts and [`realtime_receive`](@ref) to read server
 events. The socket closes when `handler` returns.
 """
-# WS base URL is a function so tests can point realtime_connect at a local echo server.
-_realtime_ws_url(service) = REALTIME_WS_URL
-
 function realtime_connect(handler; model::String="gpt-realtime-2", service::ServiceEndpointSpec=OPENAIServiceEndpoint)
     validate_capability(service, :realtime, "Realtime API")
     url = _realtime_ws_url(service) * "?model=" * model

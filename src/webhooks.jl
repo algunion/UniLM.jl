@@ -70,6 +70,12 @@ function verify_webhook(payload::AbstractString, headers, secret::AbstractString
     return false
 end
 
+"""
+    WebhookEvent
+
+A parsed webhook event from [`parse_webhook`](@ref): `id`, `type`, and
+`created_at`; `data` holds the event payload and `raw` the unparsed JSON response.
+"""
 @kwdef struct WebhookEvent
     id::String
     type::String

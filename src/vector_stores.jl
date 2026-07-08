@@ -6,6 +6,12 @@
 
 # ─── Parsed objects ───────────────────────────────────────────────────────────
 
+"""
+    VectorStoreObject
+
+A vector store from the Vector Stores API: `id`, `name`, `status`, and
+`file_counts`; `raw` holds the unparsed JSON response.
+"""
 @kwdef struct VectorStoreObject
     id::String
     name::Union{String,Nothing} = nothing
@@ -13,14 +19,32 @@
     file_counts::Dict{String,Any} = Dict{String,Any}()
     raw::Dict{String,Any} = Dict{String,Any}()
 end
+
+"""
+    vector_store_id(v::VectorStoreObject) -> String
+
+Return the `id` of a [`VectorStoreObject`](@ref), for use in file and batch calls.
+"""
 vector_store_id(v::VectorStoreObject) = v.id
 
+"""
+    VectorStoreFileObject
+
+A file attached to a vector store: `id` and `status`; `raw` holds the
+unparsed JSON response.
+"""
 @kwdef struct VectorStoreFileObject
     id::String
     status::Union{String,Nothing} = nothing
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"""
+    VectorStoreFileBatch
+
+A batch of files added to a vector store: `id`, `status`, and `file_counts`;
+`raw` holds the unparsed JSON response.
+"""
 @kwdef struct VectorStoreFileBatch
     id::String
     status::Union{String,Nothing} = nothing
@@ -28,6 +52,12 @@ end
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"""
+    VectorStoreList
+
+A page of [`VectorStoreObject`](@ref)s from [`list_vector_stores`](@ref);
+`has_more` signals that further pages are available.
+"""
 @kwdef struct VectorStoreList
     data::Vector{VectorStoreObject}
     has_more::Bool = false
@@ -36,12 +66,19 @@ end
 
 # ─── Result types ─────────────────────────────────────────────────────────────
 
+"Successful create/retrieve result wrapping a [`VectorStoreObject`](@ref)."
 @kwdef struct VectorStoreSuccess <: LLMRequestResponse; response::VectorStoreObject; end
+"Successful [`list_vector_stores`](@ref) result wrapping a [`VectorStoreList`](@ref)."
 @kwdef struct VectorStoreListSuccess <: LLMRequestResponse; response::VectorStoreList; end
+"Successful [`add_vector_store_file`](@ref) result wrapping a [`VectorStoreFileObject`](@ref)."
 @kwdef struct VectorStoreFileSuccess <: LLMRequestResponse; response::VectorStoreFileObject; end
+"Successful file-batch result wrapping a [`VectorStoreFileBatch`](@ref)."
 @kwdef struct VectorStoreBatchSuccess <: LLMRequestResponse; response::VectorStoreFileBatch; end
+"Successful [`delete_vector_store`](@ref) result; `deleted` confirms removal of `id`."
 @kwdef struct VectorStoreDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
+"Vector Stores API error result: HTTP `status` and the raw `response` body."
 @kwdef struct VectorStoreFailure <: LLMRequestResponse; response::String; status::Int; end
+"Local/transport error from a Vector Stores API call (the request never completed)."
 @kwdef struct VectorStoreCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
 
 _parse_vector_store(d::AbstractDict) = VectorStoreObject(id=d["id"], name=get(d, "name", nothing),

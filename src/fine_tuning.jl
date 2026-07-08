@@ -4,6 +4,12 @@
 # dpo / reinforcement with hyperparameters.
 # ============================================================================
 
+"""
+    FineTuningJob
+
+A fine-tuning job: `id`, `status`, `model`, and `fine_tuned_model` (the resulting
+model name once training completes); `raw` holds the unparsed JSON response.
+"""
 @kwdef struct FineTuningJob
     id::String
     status::Union{String,Nothing} = nothing
@@ -12,15 +18,26 @@
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"""
+    FineTuningList
+
+A page of records from [`list_fine_tuning_jobs`](@ref), [`list_fine_tuning_events`](@ref),
+or [`list_fine_tuning_checkpoints`](@ref); `data` holds the raw JSON entries and
+`has_more` signals that further pages are available.
+"""
 @kwdef struct FineTuningList
     data::Vector{Dict{String,Any}}
     has_more::Bool = false
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"Successful create/retrieve/cancel result wrapping a [`FineTuningJob`](@ref)."
 @kwdef struct FineTuningSuccess <: LLMRequestResponse; response::FineTuningJob; end
+"Successful list result wrapping a [`FineTuningList`](@ref)."
 @kwdef struct FineTuningListSuccess <: LLMRequestResponse; response::FineTuningList; end
+"Fine-tuning API error result: HTTP `status` and the raw `response` body."
 @kwdef struct FineTuningFailure <: LLMRequestResponse; response::String; status::Int; end
+"Local/transport error from a Fine-tuning API call (the request never completed)."
 @kwdef struct FineTuningCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
 
 _parse_ft_job(d::AbstractDict) = FineTuningJob(id=d["id"], status=get(d, "status", nothing),

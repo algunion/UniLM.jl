@@ -1129,8 +1129,8 @@ end
 # Parallel to the chat seam (src/requests.jl:252-273): three generics dispatched
 # on `service` translate between the neutral Respond/ResponseObject IR and a
 # provider's agentic wire. The untyped-`service` methods below are the OpenAI
-# Responses defaults; a provider with a different surface (Gemini Interactions,
-# Plan 2) overrides them. `respond`/`_respond_stream` call ONLY these generics,
+# Responses defaults; a provider with a different surface (Gemini Interactions)
+# overrides them. `respond`/`_respond_stream` call ONLY these generics,
 # so retry/HTTP/cost/streaming orchestration stays provider-agnostic.
 # NB: named `*_agentic`, NOT `decode_response` — that would collide with the chat
 # seam's `decode_response(service, ::HTTP.Response)` (identical argument types).

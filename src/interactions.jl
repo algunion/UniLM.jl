@@ -35,7 +35,7 @@ function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
     JSON.json(body)
 end
 
-# Interactions function tools use the flat OpenAI-Responses shape (captured):
+# Interactions function tools use the flat OpenAI-Responses shape observed on the wire:
 # {type:"function", name, description?, parameters?}. No functionDeclarations wrapper.
 function _interactions_tool(t)
     if t isa FunctionTool

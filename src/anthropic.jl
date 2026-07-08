@@ -2,7 +2,7 @@
 # Anthropic (Claude) native Messages API
 # Plugs into the wire-translation seam (encode_request / decode_response /
 # decode_stream_chunk from requests.jl) so all chat orchestration is shared.
-# Wire shape verified against the claude-api reference on 2026-07-06.
+# Wire shape verified against the Anthropic Messages API docs on 2026-07-06.
 # ============================================================================
 
 # ─── Routing & auth ──────────────────────────────────────────────────────────

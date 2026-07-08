@@ -29,7 +29,7 @@ end
     @test !isempty(calls)
     @test calls[1]["name"] == "get_weather"
     @test result.response.status == "requires_action"
-    # continue: submit the tool result via previous_interaction_id (captured shape:
+    # continue: submit the tool result via previous_interaction_id (observed shape:
     # function_result requires call_id + name + result)
     call = calls[1]
     r2 = Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
@@ -59,7 +59,7 @@ end
                 tools=[function_tool("get_weather", "Get current weather for a city",
                     parameters=Dict("type" => "object",
                         "properties" => Dict("city" => Dict("type" => "string")), "required" => ["city"]))])
-    # the whole point of Plan 3a: tool_loop submits the neutral tool_result item, which the
+    # the whole point here: tool_loop submits the neutral tool_result item, which the
     # Gemini encoder translates to function_result — a round-trip green mocks could not prove.
     result = tool_loop(r, (name, args) -> "The weather in $(get(args, "city", "?")) is sunny, 22C."; max_turns=4)
     @test result.completed

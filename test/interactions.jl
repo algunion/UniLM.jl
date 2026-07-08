@@ -28,9 +28,6 @@ end
     @test b["store"] == true
     @test b["stream"] == true
     @test !haskey(b, "tool_choice")
-    # tool_choice must fail LOUD (Plan 3), never silently drop the caller's intent
-    @test_throws ArgumentError UniLM.encode_agentic(GEMINIServiceEndpoint,
-        Respond(service=GEMINIServiceEndpoint, input="x", tool_choice="required"))
 end
 
 @testset "Interactions decode (steps[] → neutral output[])" begin
@@ -161,4 +158,20 @@ end
 @testset "Interactions encode — CallableTool tool unwraps to function shape" begin
     ct = UniLM.CallableTool(function_tool("f", "d"), (n, a) -> "x")
     @test UniLM._interactions_tool(ct) == Dict{Symbol,Any}(:type => "function", :name => "f", :description => "d")
+end
+
+@testset "Interactions encode — tool_choice mapping" begin
+    gc(tc) = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input="x", tool_choice=tc));
+        dicttype=Dict{String,Any})["generation_config"]["tool_choice"]["allowed_tools"]
+    @test gc("auto")["mode"] == "auto"
+    @test gc("none")["mode"] == "none"
+    @test gc("required")["mode"] == "any"
+    f = gc(UniLM.tool_choice_function("get_weather"))
+    @test f["mode"] == "any" && f["tools"] == ["get_weather"]
+    # hosted-tool selector is not applicable to Gemini function tools → fail loud
+    @test_throws ArgumentError UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input="x", tool_choice=UniLM.tool_choice_hosted("web_search")))
+    # unknown tool_choice string → fail loud
+    @test_throws ArgumentError UniLM._interactions_tool_choice("bogus")
 end

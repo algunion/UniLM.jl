@@ -40,6 +40,12 @@ end
 
 # ─── Parsed objects ───────────────────────────────────────────────────────────
 
+"""
+    FileObject
+
+A file stored by the Files API: `id`, `bytes`, `created_at`, `filename`,
+`purpose`, and `status`; `raw` holds the unparsed JSON response.
+"""
 @kwdef struct FileObject
     id::String
     bytes::Int
@@ -50,6 +56,12 @@ end
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
+"""
+    FileList
+
+A page of [`FileObject`](@ref)s from [`list_files`](@ref); `has_more` signals
+that further pages are available.
+"""
 @kwdef struct FileList
     data::Vector{FileObject}
     has_more::Bool = false
@@ -65,11 +77,17 @@ end
 
 # ─── Result types ─────────────────────────────────────────────────────────────
 
+"Successful upload/retrieve result wrapping a [`FileObject`](@ref)."
 @kwdef struct FileSuccess <: LLMRequestResponse; response::FileObject; end
+"Successful [`list_files`](@ref) result wrapping a [`FileList`](@ref)."
 @kwdef struct FileListSuccess <: LLMRequestResponse; response::FileList; end
+"Successful [`file_content`](@ref) result; `content` holds the raw file bytes."
 @kwdef struct FileContentSuccess <: LLMRequestResponse; content::Vector{UInt8}; end
+"Successful [`delete_file`](@ref) result; `deleted` confirms removal of `id`."
 @kwdef struct FileDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
+"Files API error result: HTTP `status` and the raw `response` body."
 @kwdef struct FileFailure <: LLMRequestResponse; response::String; status::Int; end
+"Local/transport error from a Files API call (the request never completed)."
 @kwdef struct FileCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
 
 _callerr(::Type{FileCallError}, e) = FileCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))

@@ -45,6 +45,7 @@ makedocs(;
             "MCP Client & Server" => "api/mcp.md",
             "FIM Types" => "api/completions.md",
             "Provider Capabilities" => "api/capabilities.md",
+            "Files" => "api/files.md",
         ],
     ],
     warnonly=[:missing_docs, :cross_references],

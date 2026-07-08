@@ -1,6 +1,9 @@
 using Documenter
 using UniLM
 
+include(joinpath(@__DIR__, "doc_coverage.jl"))
+include(joinpath(@__DIR__, "undocumented_allowlist.jl"))
+
 makedocs(;
     modules=[UniLM],
     authors="Marius Fersigan <marius.fersigan@gmail.com> and contributors",
@@ -44,6 +47,8 @@ makedocs(;
     ],
     warnonly=[:missing_docs, :cross_references],
 )
+
+assert_doc_coverage(UniLM, joinpath(@__DIR__, "src"), KNOWN_UNDOCUMENTED)
 
 deploydocs(;
     repo="github.com/algunion/UniLM.jl",

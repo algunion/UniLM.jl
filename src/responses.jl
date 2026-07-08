@@ -1136,7 +1136,8 @@ end
 # seam's `decode_response(service, ::HTTP.Response)` (identical argument types).
 
 get_url(r::Respond) = get_url(r.service, r)
-get_url(service, r::Respond) = _api_base_url(service) * RESPONSES_PATH
+_agentic_url(service) = _api_base_url(service) * RESPONSES_PATH
+get_url(service, r::Respond) = _agentic_url(service)
 
 encode_agentic(service, r::Respond)::String = JSON.json(r)
 
@@ -1272,10 +1273,10 @@ end
 """
 function get_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
     try
-        url = _api_base_url(service) * RESPONSES_PATH * "/" * response_id
+        url = _agentic_url(service) * "/" * response_id
         resp = HTTP.get(url, headers=auth_header(service); status_exception=false)
         if resp.status == 200
-            return ResponseSuccess(response=parse_response(resp))
+            return ResponseSuccess(response=decode_agentic(service, resp))
         else
             return ResponseFailure(response=String(resp.body), status=resp.status)
         end
@@ -1298,7 +1299,7 @@ result["deleted"]  # => true
 """
 function delete_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
     try
-        url = _api_base_url(service) * RESPONSES_PATH * "/" * response_id
+        url = _agentic_url(service) * "/" * response_id
         resp = HTTP.request("DELETE", url, headers=auth_header(service); status_exception=false)
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
@@ -1331,7 +1332,7 @@ function list_input_items(response_id::String;
     service::ServiceEndpointSpec=OPENAIServiceEndpoint)
 
     try
-        url = _api_base_url(service) * RESPONSES_PATH * "/" * response_id * "/input_items"
+        url = _agentic_url(service) * "/" * response_id * "/input_items"
         params = ["limit=$limit", "order=$order"]
         !isnothing(after) && push!(params, "after=$after")
         url *= "?" * join(params, "&")
@@ -1366,10 +1367,10 @@ end
 """
 function cancel_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
     try
-        url = _api_base_url(service) * RESPONSES_PATH * "/" * response_id * "/cancel"
+        url = _agentic_url(service) * "/" * response_id * "/cancel"
         resp = HTTP.post(url, headers=auth_header(service); status_exception=false)
         if resp.status == 200
-            return ResponseSuccess(response=parse_response(resp))
+            return ResponseSuccess(response=decode_agentic(service, resp))
         else
             return ResponseFailure(response=String(resp.body), status=resp.status)
         end

@@ -206,3 +206,11 @@ end
     @test estimated_cost(res) ≈ 12 * 0.25/1_000_000 + 77 * 1.5/1_000_000   # gemini-3.1-flash-lite rates
     @test estimated_cost(res) > 0
 end
+
+@testset "Agentic lifecycle URL is service-dispatched (_agentic_url)" begin
+    @test UniLM._agentic_url(GEMINIServiceEndpoint) == "https://generativelanguage.googleapis.com/v1beta/interactions"
+    @test UniLM._agentic_url(OPENAIServiceEndpoint) == UniLM._api_base_url(OPENAIServiceEndpoint) * UniLM.RESPONSES_PATH
+    # the create URL still resolves through the same source of truth (no divergence)
+    r = Respond(service=GEMINIServiceEndpoint, input="x")
+    @test UniLM.get_url(GEMINIServiceEndpoint, r) == UniLM._agentic_url(GEMINIServiceEndpoint)
+end

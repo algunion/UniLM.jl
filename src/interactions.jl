@@ -119,13 +119,28 @@ end
 _text_message(txt::AbstractString) = Dict{String,Any}("type" => "message", "role" => "assistant",
     "content" => Any[Dict{String,Any}("type" => "output_text", "text" => txt)])
 
+# Gemini Interactions usage → OpenAI-Responses-shaped usage so token_usage/estimated_cost
+# work unchanged. Gemini bills thought + tool-use at the output rate, so they fold into
+# billable output_tokens; reasoning_tokens breaks out the thought subset (OpenAI semantics).
+# The raw usage is preserved on ResponseObject.raw. Per-call hosted-tool fees are NOT modeled.
+_interaction_usage(::Nothing) = nothing
+function _interaction_usage(u::AbstractDict)
+    _n(k) = (v = get(u, k, 0); v isa Integer ? Int(v) : 0)
+    Dict{String,Any}(
+        "input_tokens"  => _n("total_input_tokens"),
+        "output_tokens" => _n("total_output_tokens") + _n("total_thought_tokens") + _n("total_tool_use_tokens"),
+        "total_tokens"  => _n("total_tokens"),
+        "input_tokens_details"  => Dict{String,Any}("cached_tokens" => _n("total_cached_tokens")),
+        "output_tokens_details" => Dict{String,Any}("reasoning_tokens" => _n("total_thought_tokens")))
+end
+
 # OpenAI-Responses-shaped dict (used by non-stream decode + streaming assembly).
 _interaction_response_dict(data::AbstractDict) = Dict{String,Any}(
     "id" => get(data, "id", ""),
     "status" => get(data, "status", ""),
     "model" => get(data, "model", ""),
     "output" => _interaction_output(get(data, "steps", Any[])),
-    "usage" => get(data, "usage", nothing))
+    "usage" => _interaction_usage(get(data, "usage", nothing)))
 
 function _interaction_response_object(data::AbstractDict)::ResponseObject
     ResponseObject(
@@ -133,7 +148,7 @@ function _interaction_response_object(data::AbstractDict)::ResponseObject
         status = get(data, "status", ""),
         model = get(data, "model", ""),
         output = _interaction_output(get(data, "steps", Any[])),
-        usage = get(data, "usage", nothing),
+        usage = _interaction_usage(get(data, "usage", nothing)),
         error = get(data, "error", nothing),
         metadata = get(data, "metadata", nothing),
         raw = Dict{String,Any}(data))

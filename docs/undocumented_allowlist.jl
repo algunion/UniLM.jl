@@ -1,21 +1,8 @@
-# Known-undocumented EXPORTED symbols — the explicit, falsifiable debt ledger.
-# The doc-coverage gate (docs/doc_coverage.jl) fails when an exported symbol is
-# neither in an @docs block nor listed here. Entries may only be REMOVED (by
-# documenting the symbol) — never silently added. Seeded 2026-07-08.
-const KNOWN_UNDOCUMENTED = Set([
-    "ApplyPatchTool",
-    "ComputerTool",
-    "CustomTool",
-    "InvalidConversationError",
-    "LocalShellTool",
-    "ShellTool",
-    "apply_patch_tool",
-    "computer_tool",
-    "custom_tool",
-    "incomplete_details",
-    "local_shell",
-    "mcp_approval_response",
-    "response_status",
-    "shell",
-    "usage_details",
+# Doc-coverage ledger for the gate in docs/doc_coverage.jl.
+#
+# CURRENTLY EMPTY: every exported symbol is documented in an `@docs` block, so the
+# gate now enforces FULL coverage — adding a new export without an `@docs` block
+# fails the docs build. Only add a name here as a deliberate, temporary exception
+# (with a reason in a comment), and remove it once the symbol is documented.
+const KNOWN_UNDOCUMENTED = Set{String}([
 ])

@@ -59,6 +59,9 @@ mcp_approval_requests
 reasoning_summaries
 reasoning_items
 refusals
+response_status
+incomplete_details
+usage_details
 ```
 
 ## Request Functions
@@ -109,6 +112,11 @@ MCPTool
 ComputerUseTool
 ImageGenerationTool
 CodeInterpreterTool
+ComputerTool
+CustomTool
+LocalShellTool
+ShellTool
+ApplyPatchTool
 ```
 
 ### Tool Constructors
@@ -121,6 +129,12 @@ mcp_tool
 computer_use
 image_generation_tool
 code_interpreter
+computer_tool
+custom_tool
+local_shell
+shell
+apply_patch_tool
+mcp_approval_response
 ```
 
 ```@example responses_api

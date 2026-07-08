@@ -32,6 +32,7 @@ println("User content: ", usr.content)
 issendvalid
 update!
 fork
+InvalidConversationError
 ```
 
 ### Building a Conversation

@@ -49,6 +49,16 @@ ResponseCallError
 ```@docs
 output_text
 function_calls
+url_citations
+web_search_results
+file_search_results
+image_generation_results
+code_interpreter_outputs
+mcp_call_outputs
+mcp_approval_requests
+reasoning_summaries
+reasoning_items
+refusals
 ```
 
 ## Request Functions

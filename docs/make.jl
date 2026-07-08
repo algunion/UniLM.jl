@@ -41,6 +41,7 @@ makedocs(;
             "Embeddings" => "api/embeddings.md",
             "Service Endpoints" => "api/endpoints.md",
             "Result Types" => "api/results.md",
+            "Cost Tracking" => "api/accounting.md",
             "MCP Client & Server" => "api/mcp.md",
             "FIM Types" => "api/completions.md",
             "Provider Capabilities" => "api/capabilities.md",

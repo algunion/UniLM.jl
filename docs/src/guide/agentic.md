@@ -98,11 +98,10 @@ cancel_response("<interaction_id>"; service=GEMINIServiceEndpoint)
 
 ## Usage & cost (cross-provider)
 
-`token_usage` and `estimated_cost` work for Gemini too — the Interactions
-decoder normalizes usage into the shared shape and `DEFAULT_PRICING` includes
-`gemini-3.5-flash` (hosted-tool per-call fees are not modeled). (These accessors
-are shown in plain code font, not `@ref`: their API-reference `@docs` blocks are
-deferred to a later cost-tracking pass.)
+[`token_usage`](@ref) and [`estimated_cost`](@ref) work for Gemini too — the
+Interactions decoder normalizes usage into the shared shape and
+[`DEFAULT_PRICING`](@ref) includes `gemini-3.5-flash` (hosted-tool per-call fees
+are not modeled).
 
 ```@example agentic
 r = respond("What is 2+2?"; service=GEMINIServiceEndpoint)

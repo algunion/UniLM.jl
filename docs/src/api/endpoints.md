@@ -58,6 +58,10 @@ Each endpoint reads its configuration from environment variables:
 Azure requires model-to-deployment name mappings. Use `add_azure_deploy_name!` to register
 custom mappings:
 
+```@docs
+add_azure_deploy_name!
+```
+
 ```@example endpoints
 using UniLM
 

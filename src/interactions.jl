@@ -50,6 +50,13 @@ function _interactions_tool(t)
     throw(ArgumentError("Gemini Interactions supports only FunctionTool/Dict tools (got $(typeof(t)))"))
 end
 
+# ─── Gemini native hosted tools ──────────────────────────────────────────────
+# Flat {type:<name>} declarations (captured live). NOTE: estimated_cost is token-based
+# and does NOT model hosted-tool per-call fees (e.g. google_search per-1k-queries).
+gemini_google_search()  = Dict{String,Any}("type" => "google_search")
+gemini_code_execution() = Dict{String,Any}("type" => "code_execution")
+gemini_url_context()    = Dict{String,Any}("type" => "url_context")
+
 # Neutral input items → Interactions input. A `function_call_output` tool-result item
 # (OpenAI-shaped neutral, from tool_result/tool_loop) → Gemini `function_result{call_id,
 # name, result}`; a String input and any other item pass through unchanged.
@@ -109,8 +116,12 @@ function _interaction_output(steps)::Vector{Any}
                 "arguments" => (args isa AbstractString ? args : JSON.json(args))))
         elseif t == "thought"
             push!(out, Dict{String,Any}("type" => "reasoning", "summary" => Any[]))
+        elseif !isempty(t)
+            # hosted-tool + other steps (google_search_call/_result, code_execution_*, url_context_*,
+            # …): surface them (native type + fields preserved) rather than dropping. output_text still
+            # comes from model_output; function_calls() ignores them (no "function_call" type).
+            push!(out, Dict{String,Any}(s))
         end
-        # hosted-tool steps (google_search_call/…) are passed over in Plan 2.
     end
     out
 end

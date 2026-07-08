@@ -214,3 +214,26 @@ end
     r = Respond(service=GEMINIServiceEndpoint, input="x")
     @test UniLM.get_url(GEMINIServiceEndpoint, r) == UniLM._agentic_url(GEMINIServiceEndpoint)
 end
+
+@testset "Gemini hosted-tool constructors + encode passthrough" begin
+    @test gemini_google_search()  == Dict("type" => "google_search")
+    @test gemini_code_execution() == Dict("type" => "code_execution")
+    @test gemini_url_context()    == Dict("type" => "url_context")
+    b = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input="x", tools=[gemini_google_search()])); dicttype=Dict{String,Any})
+    @test b["tools"][1] == Dict("type" => "google_search")
+end
+
+@testset "Interactions decode — hosted-tool steps surfaced, not dropped" begin
+    data = Dict("id" => "v1_h", "status" => "completed", "model" => "gemini-3.1-flash-lite", "steps" => [
+        Dict("type" => "google_search_call", "id" => "s1", "arguments" => Dict("queries" => ["x"])),
+        Dict("type" => "google_search_result", "id" => "s1"),
+        Dict("type" => "model_output", "content" => [Dict("type" => "text", "text" => "Answer.")])])
+    ro = UniLM._interaction_response_object(data)
+    types = [get(o, "type", "") for o in ro.output]
+    @test "google_search_call" in types                 # surfaced
+    @test "google_search_result" in types
+    res = ResponseSuccess(response=ro)
+    @test output_text(res) == "Answer."                 # message still decoded
+    @test isempty(function_calls(res))                  # hosted step ≠ function call
+end

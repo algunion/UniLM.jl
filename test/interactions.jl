@@ -136,3 +136,24 @@ end
     @test st3.terminal == :none
     @test !isempty(take!(fb3))
 end
+
+@testset "Interactions encode — tool-result translation" begin
+    b = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, previous_response_id="v1_prev",
+                input=[tool_result("c1", "get_weather", "sunny")])); dicttype=Dict{String,Any})
+    @test b["previous_interaction_id"] == "v1_prev"
+    @test b["input"][1] == Dict("type" => "function_result", "call_id" => "c1",
+                                "name" => "get_weather", "result" => Dict("result" => "sunny"))
+    # JSON-object output → object result (not double-wrapped)
+    b2 = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input=[tool_result("c2", "f", "{\"temp\":\"22C\"}")])); dicttype=Dict{String,Any})
+    @test b2["input"][1]["result"] == Dict("temp" => "22C")
+    # a function_call_output missing `name` → fail loud (Gemini requires it)
+    @test_throws ArgumentError UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint,
+                input=[Dict("type" => "function_call_output", "call_id" => "c", "output" => "x")]))
+    # String input still passes through
+    b3 = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input="hi")); dicttype=Dict{String,Any})
+    @test b3["input"] == "hi"
+end

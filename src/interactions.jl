@@ -49,10 +49,31 @@ function _interactions_tool(t)
 end
 
 # ─── Gemini native hosted tools ──────────────────────────────────────────────
-# Flat {type:<name>} declarations (captured live). NOTE: estimated_cost is token-based
-# and does NOT model hosted-tool per-call fees (e.g. google_search per-1k-queries).
+# Flat {type:<name>} declarations. NOTE: estimated_cost is token-based and does
+# NOT model hosted-tool per-call fees (e.g. google_search per-1k-queries).
+
+"""
+    gemini_google_search() -> Dict
+
+Hosted Google Search tool for the Gemini Interactions API. Pass in
+`respond(...; tools=[gemini_google_search()], service=GEMINIServiceEndpoint)`.
+"""
 gemini_google_search()  = Dict{String,Any}("type" => "google_search")
+
+"""
+    gemini_code_execution() -> Dict
+
+Hosted code-execution tool for the Gemini Interactions API. Pass in
+`respond(...; tools=[gemini_code_execution()], service=GEMINIServiceEndpoint)`.
+"""
 gemini_code_execution() = Dict{String,Any}("type" => "code_execution")
+
+"""
+    gemini_url_context() -> Dict
+
+Hosted URL-context tool for the Gemini Interactions API. Pass in
+`respond(...; tools=[gemini_url_context()], service=GEMINIServiceEndpoint)`.
+"""
 gemini_url_context()    = Dict{String,Any}("type" => "url_context")
 
 # Neutral input items → Interactions input. A `function_call_output` tool-result item

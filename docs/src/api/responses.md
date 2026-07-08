@@ -127,6 +127,25 @@ ws = web_search(context_size="high")
 println("Web search context: ", ws.search_context_size)
 ```
 
+### Tool Choice
+
+```@docs
+tool_choice_function
+tool_choice_hosted
+tool_choice_allowed
+tool_choice_mcp
+tool_choice_custom
+```
+
+### Tool Results & Hosted (Gemini) Tools
+
+```@docs
+tool_result
+gemini_google_search
+gemini_code_execution
+gemini_url_context
+```
+
 ## Text Format
 
 ```@docs

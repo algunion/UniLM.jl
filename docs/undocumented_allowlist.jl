@@ -50,7 +50,6 @@ const KNOWN_UNDOCUMENTED = Set([
     "FineTuningList",
     "FineTuningListSuccess",
     "FineTuningSuccess",
-    "GEMINIOpenAIServiceEndpoint",
     "ImageEdit",
     "InvalidConversationError",
     "LocalShellTool",

@@ -55,18 +55,32 @@ delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "my-custom-model")  # cleanup
 
 ## Google Gemini
 
-```julia
-ENV["GEMINI_API_KEY"] = "your-gemini-key"
+!!! warning "Breaking change since v0.10.3"
+    `GEMINIServiceEndpoint` now targets Google's **native `generateContent` API**
+    (auth header `x-goog-api-key`, model in the URL, default model
+    `gemini-3.5-flash`). The old **OpenAI-compatible** Gemini path is renamed
+    [`GEMINIOpenAIServiceEndpoint`](@ref). Migrate code that relied on the
+    OpenAI-compatible behavior — including `Embeddings(...; service=GEMINIServiceEndpoint)`,
+    which the native endpoint does not support — to `GEMINIOpenAIServiceEndpoint`.
 
-chat = Chat(service=GEMINIServiceEndpoint, model="gemini-2.5-flash")
-push!(chat, Message(Val(:system), "You are a helpful assistant."))
-push!(chat, Message(Val(:user), "Hello!"))
-result = chatrequest!(chat)
+Native Gemini chat (real call, guarded so a failure never breaks the build):
+
+```@example backends
+gemini_chat = Chat(service=GEMINIServiceEndpoint)   # default model: gemini-3.5-flash
+push!(gemini_chat, Message(Val(:user), "Say hello in one short sentence."))
+result = chatrequest!(gemini_chat)
+if result isa LLMSuccess
+    println(result.message.content)
+else
+    println("Request failed — see result for details")
+end
 ```
 
-Available Gemini models:
-- `"gemini-2.5-flash"`
-- `"gemini-2.5-pro"`
+To keep using the OpenAI-compatible endpoint, switch the service type:
+
+```julia
+chat = Chat(service=GEMINIOpenAIServiceEndpoint, model="gemini-2.5-flash")
+```
 
 ## Responses API Backend
 

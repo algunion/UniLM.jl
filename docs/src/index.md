@@ -27,7 +27,9 @@ UniLM.jl provides a **Julian**, type-safe interface to **LLM providers** with **
 - ☁️ **Multi-Backend** — native OpenAI/Anthropic/Gemini plus Azure, DeepSeek, Ollama, Mistral, vLLM, LM Studio, and any OpenAI-compatible provider
 - ✅ **Type Safety & Capability Introspection** — invalid states are unrepresentable and unsupported requests fail fast via `provider_capabilities`; tested with [JET.jl](https://github.com/aviatesk/JET.jl) and [Aqua.jl](https://github.com/JuliaTesting/Aqua.jl)
 
-### Two APIs, One Package
+### Chat Completions vs Responses (OpenAI)
+
+For **OpenAI**, use either conversational API — **Chat Completions** (`Chat`; also the path for the native Anthropic/Gemini and OpenAI-compatible backends) or the newer **Responses** (`respond`; basis for the cross-provider agentic verb):
 
 | Feature                |       Chat Completions       |            Responses API            |
 | :--------------------- | :--------------------------: | :---------------------------------: |

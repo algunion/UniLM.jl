@@ -279,7 +279,9 @@ chat = Chat(service=DeepSeekEndpoint(), model="deepseek-chat")
 chat = Chat(service=OllamaEndpoint(), model="llama3.1")
 ```
 
-## Two APIs, One Package
+## Chat Completions vs Responses (OpenAI)
+
+UniLM speaks each provider's own API (see [Multi-Backend Support](#multi-backend-support)). For **OpenAI**, you can use either of two conversational APIs. **Chat Completions** (`Chat` + `chatrequest!`) is the portable path — it's also how the native Anthropic and Gemini backends and every OpenAI-compatible provider work. **Responses** (`respond`) is OpenAI's newer API, and the basis for the cross-provider agentic verb (which also targets Gemini Interactions). They map like this:
 
 | Feature                |       Chat Completions       |            Responses API            |
 | :--------------------- | :--------------------------: | :---------------------------------: |

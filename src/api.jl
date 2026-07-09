@@ -616,6 +616,8 @@ _get_request_id(::Nothing) = nothing
 function _get_request_id(e::Any)
     if hasproperty(e, :response) && e.response isa HTTP.Response
         return _get_request_id(e.response)
+    elseif hasproperty(e, :message) && e.message isa HTTP.Response
+        return _get_request_id(e.message)
     end
     return nothing
 end

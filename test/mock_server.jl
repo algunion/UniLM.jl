@@ -2325,7 +2325,11 @@ try
 
         # 7. Test _get_request_id directly on HTTP.StatusError
         status_resp = HTTP.Response(403, ["x-request-id" => "status-error-req-id"], "Forbidden")
-        status_err = HTTP.StatusError(403, status_resp)
+        status_err = try
+            HTTP.StatusError(403, status_resp)
+        catch
+            HTTP.StatusError(403, "GET", "/", status_resp)
+        end
         @test UniLM._get_request_id(status_err) == "status-error-req-id"
 
         set_error!(200, "")

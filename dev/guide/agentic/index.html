@@ -4,43 +4,46 @@ if result isa ResponseSuccess
     println(output_text(result))
 else
     println(&quot;Request failed — &quot;, output_text(result))
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Multiple dispatch is a programming mechanism where the function or method implementation to run is chosen based on the runtime types of multiple arguments, not just the receiver object.</code></pre><p>Swap the provider with a single keyword:</p><pre><code class="language-julia hljs">result = respond(&quot;Explain multiple dispatch in one sentence.&quot;; service=GEMINIServiceEndpoint)
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Multiple dispatch is a programming feature where the function or method implementation chosen at runtime depends on the types of multiple arguments, not just the receiver or first argument.</code></pre><p>Swap the provider with a single keyword:</p><pre><code class="language-julia hljs">result = respond(&quot;Explain multiple dispatch in one sentence.&quot;; service=GEMINIServiceEndpoint)
 if result isa ResponseSuccess
     println(output_text(result))
 else
     println(&quot;Request failed — &quot;, output_text(result))
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">**Multiple dispatch** is a programming language feature where the specific implementation of a function is selected at runtime based on the combined types of all its arguments, rather than just the first one.</code></pre><h2 id="Hosted-tools-(Gemini)"><a class="docs-heading-anchor" href="#Hosted-tools-(Gemini)">Hosted tools (Gemini)</a><a id="Hosted-tools-(Gemini)-1"></a><a class="docs-heading-anchor-permalink" href="#Hosted-tools-(Gemini)" title="Permalink"></a></h2><p>Gemini Interactions exposes server-side hosted tools via <a href="../../api/responses/#UniLM.gemini_google_search"><code>gemini_google_search</code></a>, <a href="../../api/responses/#UniLM.gemini_code_execution"><code>gemini_code_execution</code></a>, and <a href="../../api/responses/#UniLM.gemini_url_context"><code>gemini_url_context</code></a> — pass them in <code>tools=</code>:</p><pre><code class="language-julia hljs">result = respond(&quot;What are the latest stable Julia releases?&quot;;
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">**Multiple dispatch** is a programming language feature where the specific implementation of a function to execute is determined at runtime based on the combined types of all its arguments, rather than just the first one.</code></pre><h2 id="Hosted-tools-(Gemini)"><a class="docs-heading-anchor" href="#Hosted-tools-(Gemini)">Hosted tools (Gemini)</a><a id="Hosted-tools-(Gemini)-1"></a><a class="docs-heading-anchor-permalink" href="#Hosted-tools-(Gemini)" title="Permalink"></a></h2><p>Gemini Interactions exposes server-side hosted tools via <a href="../../api/responses/#UniLM.gemini_google_search"><code>gemini_google_search</code></a>, <a href="../../api/responses/#UniLM.gemini_code_execution"><code>gemini_code_execution</code></a>, and <a href="../../api/responses/#UniLM.gemini_url_context"><code>gemini_url_context</code></a> — pass them in <code>tools=</code>:</p><pre><code class="language-julia hljs">result = respond(&quot;What are the latest stable Julia releases?&quot;;
                  service=GEMINIServiceEndpoint, tools=[gemini_google_search()])
 if result isa ResponseSuccess
     println(output_text(result))
 else
     println(&quot;Request failed — &quot;, output_text(result))
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">As of mid-2026, the latest stable and supported versions of the Julia programming language are:
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">The latest stable and official releases of the Julia programming language are classified into three main channels:
 
-### 1. Latest Stable Release: **v1.12.6**
-* **Release Date:** April 9, 2026
-* **Details:** This is the current stable minor release of Julia and is highly recommended for most developers, users, and general production environments. It includes the latest language optimizations, features, and performance enhancements.
+### 1. Current Stable Release: **v1.12.6**
+* **Release Date:** April 10, 2026
+* **Details:** This is the latest minor release of Julia. It includes new features, runtime performance improvements, and bug fixes. Great care is taken to ensure complete backward compatibility with older Julia 1.x versions, meaning older code will run seamlessly on v1.12.6.
+* **Who it&#39;s for:** Almost all general users, researchers, and developers should use the current stable release to take advantage of the latest language optimizations.
 
 ### 2. Long-Term Support (LTS) Release: **v1.10.11**
-* **Release Date:** March 9, 2026
-* **Details:** The **v1.10** series is the designated active Long-Term Support (LTS) version. It is primarily recommended for organizations or projects where upgrading minor versions is prohibitively expensive or requires complex recertification, and who prioritize absolute stability over the newest language features.
-
-### 3. Upcoming Release (Pre-release): **v1.13.0-rc1**
-* **Release Date:** April 30, 2026
-* **Details:** This is the first release candidate (RC) for the upcoming **v1.13.0** minor release. It is intended for testing, trying out new features, and helping package developers prepare their codebases for compatibility before the general stable release of v1.13.
+* **Release Date:** March 10, 2026
+* **Details:** The `v1.10` series serves as Julia&#39;s official Long-Term Support branch. LTS releases only receive critical bug fixes and security updates. They do not introduce new features or change behaviors.
+* **Who it&#39;s for:** Enterprise users, system administrators, and those in highly restricted IT environments where verifying and certifying software upgrades is prohibitively expensive.
 
 ---
 
-### How to Install/Upgrade
-The Julia team strongly recommends using **`juliaup`**, the official cross-platform command-line installer and version multiplexer. It automatically keeps your local installation up to date with the latest stable release.
+### Upcoming Pre-Releases (Beta/Release Candidates)
+If you want to test new features ahead of their official stable release, you can also access the upcoming version:
+* **v1.13.0-rc1** (Release Candidate 1): Released on April 30, 2026. This is the first release candidate for the next major minor version, **v1.13.0**. It is primarily intended for package maintainers and developers to test their ecosystems.
 
-* **On macOS/Linux:**
+### How to Install and Manage Versions
+The Julia team strongly recommends using **`juliaup`**, the official cross-platform Julia version manager. Installing Julia via `juliaup` automatically configures the latest stable version and makes it easy to switch between Stable, LTS, and Beta channels:
+
+* **To install `juliaup` on macOS/Linux:**
   ```bash
   curl -fsSL https://install.julialang.org | sh
   ```
-* **On Windows:**
-  ```powershell
-  winget install julia -s msstore
+* **To install on Windows:**
+  You can download it directly from the Windows Store or via `winget`:
+  ```cmd
+  winget install Julia.Juliaup
   ```</code></pre><h2 id="Constraining-tool-choice"><a class="docs-heading-anchor" href="#Constraining-tool-choice">Constraining tool choice</a><a id="Constraining-tool-choice-1"></a><a class="docs-heading-anchor-permalink" href="#Constraining-tool-choice" title="Permalink"></a></h2><p>Force a specific function with <a href="../../api/responses/#UniLM.tool_choice_function"><code>tool_choice_function</code></a> (works on both providers). The other builders — <a href="../../api/responses/#UniLM.tool_choice_hosted"><code>tool_choice_hosted</code></a>, <a href="../../api/responses/#UniLM.tool_choice_mcp"><code>tool_choice_mcp</code></a>, <a href="../../api/responses/#UniLM.tool_choice_custom"><code>tool_choice_custom</code></a>, <a href="../../api/responses/#UniLM.tool_choice_allowed"><code>tool_choice_allowed</code></a> — are OpenAI-Responses selectors and raise an error on Gemini.</p><pre><code class="language-julia hljs">respond(&quot;What&#39;s the weather in Paris?&quot;;
         tools=[my_function_tool],
         tool_choice=tool_choice_function(&quot;get_weather&quot;))</code></pre><h2 id="Automated-tool-loop"><a class="docs-heading-anchor" href="#Automated-tool-loop">Automated tool loop</a><a id="Automated-tool-loop-1"></a><a class="docs-heading-anchor-permalink" href="#Automated-tool-loop" title="Permalink"></a></h2><p>The <a href="../../api/chat/#UniLM.tool_loop"><code>tool_loop</code></a> driver (see the <a href="../tool_calling/#tools_guide">Tool Calling guide</a>) runs the call/execute/respond cycle automatically, and works across providers — add <code>service=</code> to target Gemini:</p><pre><code class="language-julia hljs">ct = CallableTool(function_tool(&quot;get_weather&quot;, &quot;Get weather&quot;,
@@ -57,5 +60,5 @@ if r isa ResponseSuccess
     println(&quot;est. cost: \$&quot;, round(estimated_cost(r); digits=6))
 else
     println(&quot;Request failed — &quot;, output_text(r))
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">usage: TokenUsage(8, 101, 109, 0, 93)
-est. cost: $0.000921</code></pre><h2 id="See-Also"><a class="docs-heading-anchor" href="#See-Also">See Also</a><a id="See-Also-1"></a><a class="docs-heading-anchor-permalink" href="#See-Also" title="Permalink"></a></h2><ul><li><a href="../responses_api/#responses_guide">Responses API</a> — OpenAI-specific <code>respond</code>/<code>Respond</code> details</li><li><a href="../tool_calling/#tools_guide">Tool Calling</a> — defining tools and the tool loop</li><li><a href="../multi_backend/#backend_guide">Multi-Backend</a> — provider setup and capabilities</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../retrieval/">« Retrieval &amp; File Search</a><a class="docs-footer-nextpage" href="../streaming/">Streaming »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Thursday 9 July 2026 12:04">Thursday 9 July 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">usage: TokenUsage(8, 81, 89, 0, 73)
+est. cost: $0.000741</code></pre><h2 id="See-Also"><a class="docs-heading-anchor" href="#See-Also">See Also</a><a id="See-Also-1"></a><a class="docs-heading-anchor-permalink" href="#See-Also" title="Permalink"></a></h2><ul><li><a href="../responses_api/#responses_guide">Responses API</a> — OpenAI-specific <code>respond</code>/<code>Respond</code> details</li><li><a href="../tool_calling/#tools_guide">Tool Calling</a> — defining tools and the tool loop</li><li><a href="../multi_backend/#backend_guide">Multi-Backend</a> — provider setup and capabilities</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../retrieval/">« Retrieval &amp; File Search</a><a class="docs-footer-nextpage" href="../streaming/">Streaming »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Thursday 9 July 2026 17:21">Thursday 9 July 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

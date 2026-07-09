@@ -287,6 +287,28 @@ tools = mcp_tools_respond(session)
 result = tool_loop("Do something"; tools=tools)
 ```
 
+## Inspecting the Result
+
+`tool_loop` / `tool_loop!` return a [`ToolLoopResult`](@ref): the final `response`, the list
+of `tool_calls` that ran (each a [`ToolCallOutcome`](@ref)), `turns_used`, whether it
+`completed`, and any `llm_error`.
+
+```julia
+result = tool_loop("What's the weather in Paris and Tokyo?"; tools=[ct])
+
+if result.completed
+    println(output_text(result.response))
+else
+    # completed=false means it hit max_turns or an llm_error before a final text answer
+    println("Stopped after $(result.turns_used) turns: ", result.llm_error)
+end
+
+for oc in result.tool_calls          # one ToolCallOutcome per executed tool call
+    status = oc.success ? "ok" : "error: $(oc.error)"
+    println(oc.tool_name, oc.arguments, " -> ", status)
+end
+```
+
 ## See Also
 
 - [`GPTTool`](@ref), [`GPTFunctionSignature`](@ref) — Chat Completions tool types

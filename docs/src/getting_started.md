@@ -83,6 +83,11 @@ using UniLM
 using JSON
 ```
 
+!!! tip "Try it free, locally"
+    Hosted API calls cost money and need a funded key. To experiment with **zero cost and no
+    signup**, run a local model with [Ollama](https://ollama.com) — set
+    `service=OllamaEndpoint()` (no key required), as configured above.
+
 ## Your First Request
 
 ### Using the Responses API
@@ -210,3 +215,5 @@ end
 | Stream tokens in real-time     | [Streaming Guide](@ref streaming_guide)          |
 | Get structured JSON output     | [Structured Output Guide](@ref structured_guide) |
 | Use any provider               | [Multi-Backend Guide](@ref backend_guide)        |
+| Track token usage & cost       | [Cost Tracking Guide](@ref cost_guide)           |
+| Ground answers in your files   | [Retrieval & File Search](@ref retrieval_guide)  |

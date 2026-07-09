@@ -150,6 +150,27 @@ elseif result isa ImageCallError
 end
 ```
 
+## Editing Images
+
+[`edit_image`](@ref) edits an existing image from a text prompt, optionally masked to an
+inpainting region. The convenience form takes the source image (a file path, or a vector of
+paths) and the prompt; an optional `mask` path restricts edits to the mask's transparent area:
+
+```julia
+# Inpaint: change only the masked region, described by the prompt
+result = edit_image("room.png", "Add a large window with a sea view"; mask="room_mask.png")
+
+if result isa ImageSuccess
+    save_image(image_data(result)[1], "room_edited.png")
+else
+    println("Edit failed — see result for details")
+end
+```
+
+For full control, build an [`ImageEdit`](@ref) and call `edit_image(e)`. The model defaults to
+`gpt-image-2`; image editing needs the `:image_edits` capability (OpenAI), and other providers
+reject it at request time.
+
 ## Retry Behaviour
 
 `generate_image` automatically retries on transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) with exponential backoff and jitter (up to 30 attempts, max 60s delay). On 429 responses, the `Retry-After` header is respected.

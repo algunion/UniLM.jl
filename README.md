@@ -7,7 +7,7 @@
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://algunion.github.io/UniLM.jl/stable/)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://algunion.github.io/UniLM.jl/dev/)
 
-A **Julian**, type-safe interface to **LLM providers** via the OpenAI-compatible API standard — covering the **Chat Completions** and **Responses** APIs, **Image Generation/Edits**, **Embeddings**, **Files/Vector Stores**, **Conversations**, **Audio**, **Batch**, **Moderations**, **Fine-tuning**, **Webhooks**, **Realtime**, and **MCP**. Works with OpenAI, Azure, Gemini, Anthropic, Mistral, DeepSeek, Ollama, vLLM, LM Studio, and any OpenAI-compatible provider.
+A **Julian**, type-safe interface to **LLM providers** with **first-class native backends** — OpenAI (Chat Completions + Responses), Anthropic (Messages), and Google Gemini (generateContent + agentic Interactions) — plus any **OpenAI-compatible** provider (Azure, DeepSeek, Mistral, Ollama, vLLM, LM Studio). Covers the **Chat Completions** & **Responses** APIs, a cross-provider agentic **`respond`** verb, **Image Generation/Edits**, **Embeddings**, **Files/Vector Stores**, **Conversations**, **Audio**, **Batch**, **Moderations**, **Fine-tuning**, **Webhooks**, **Realtime**, and **MCP** (client & server) — with built-in token/cost accounting and illegal states made unrepresentable.
 
 ## Features
 
@@ -47,6 +47,8 @@ Pkg.add(url="https://github.com/algunion/UniLM.jl")
 ```
 
 ## Quick Start
+
+> 💡 **Costs & free local option:** hosted API calls bill your provider key. To try UniLM for free with no key, use a local model via Ollama (`service=OllamaEndpoint()`) — see [Multi-Backend Support](#multi-backend-support).
 
 Set your API key:
 

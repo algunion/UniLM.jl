@@ -83,6 +83,31 @@ println("Request preview:")
 println(JSON.json(r))
 ```
 
+## Streaming Across Providers
+
+Streaming is not OpenAI-only. The **native Anthropic** (`ANTHROPICServiceEndpoint`) and
+**native Gemini** (`GEMINIServiceEndpoint`) backends stream with the *same* callback /
+`do`-block API shown above — only the `service` (and model) change:
+
+```julia
+# Native Anthropic streaming (Chat Completions)
+chat = Chat(service=ANTHROPICServiceEndpoint, stream=true)
+push!(chat, Message(Val(:system), "You are a poet."))
+push!(chat, Message(Val(:user), "Two lines about the sea."))
+task = chatrequest!(chat, callback=(chunk, close) -> chunk isa String && print(chunk))
+fetch(task)
+
+# Native Gemini streaming (Chat Completions)
+chat = Chat(service=GEMINIServiceEndpoint, stream=true)
+push!(chat, Message(Val(:system), "You are a poet."))
+push!(chat, Message(Val(:user), "Two lines about the mountains."))
+task = chatrequest!(chat, callback=(chunk, close) -> chunk isa String && print(chunk))
+fetch(task)
+```
+
+Providers on the OpenAI-compatible Chat Completions standard (DeepSeek, Ollama, vLLM, LM
+Studio, …) stream through the same `stream=true` + callback path.
+
 ## Notes
 
 - Streaming runs on a **separate Julia thread** via `Threads.@spawn`. Make sure Julia is started with multiple threads (`julia -t auto`).

@@ -49,7 +49,9 @@ UniLM.jl wraps four OpenAI API surfaces plus FIM completion:
 abstract type ServiceEndpoint end
 struct OPENAIServiceEndpoint <: ServiceEndpoint end   # default — uses OPENAI_API_KEY
 struct AZUREServiceEndpoint  <: ServiceEndpoint end   # uses AZURE_OPENAI_* env vars
-struct GEMINIServiceEndpoint <: ServiceEndpoint end   # uses GEMINI_API_KEY
+struct GEMINIServiceEndpoint <: ServiceEndpoint end       # native generateContent — GEMINI_API_KEY
+struct GEMINIOpenAIServiceEndpoint <: ServiceEndpoint end # Gemini via OpenAI-compat shim — GEMINI_API_KEY
+struct ANTHROPICServiceEndpoint <: ServiceEndpoint end    # native Messages API — ANTHROPIC_API_KEY
 struct GenericOpenAIEndpoint <: ServiceEndpoint       # any OpenAI-compatible provider
     base_url::String
     api_key::String
@@ -68,14 +70,17 @@ const ServiceEndpointSpec = Union{Type{<:ServiceEndpoint}, ServiceEndpoint}
 
 ### Provider Compatibility
 
-| API Surface | Status | Providers |
-|---|---|---|
-| Chat Completions | De facto standard | OpenAI, Azure, Gemini, Mistral, Ollama, vLLM, LM Studio, Anthropic* |
-| Embeddings | Widely adopted | OpenAI, Gemini, Mistral, Ollama, vLLM |
-| Responses API | Emerging (Open Responses) | OpenAI, Ollama, vLLM, Amazon Bedrock |
-| Image Generation | Limited | OpenAI, Gemini, Ollama |
+UniLM talks to **native** provider APIs where it implements them, and rides the **OpenAI-compatible** standard elsewhere:
 
-*Anthropic compat layer not production-recommended by Anthropic.
+| Access path | Providers |
+|---|---|
+| **Native backends** (own wire format) | OpenAI (Chat + Responses), Anthropic (Messages), Gemini (generateContent + agentic Interactions) |
+| Chat Completions (OpenAI-compat) | OpenAI, Azure, DeepSeek, Mistral, Ollama, vLLM, LM Studio, Gemini (compat shim) |
+| Embeddings (OpenAI-compat) | OpenAI, Gemini (compat shim), Mistral, Ollama, vLLM |
+| Responses API | OpenAI, Ollama, vLLM, Amazon Bedrock (emerging Open Responses) |
+| Image Generation | OpenAI, Gemini, Ollama |
+
+Anthropic and native Gemini use their **own** APIs here (`ANTHROPICServiceEndpoint` / `GEMINIServiceEndpoint`) — not an OpenAI-compat shim — and that is the recommended path. The OpenAI-compat Gemini shim (`GEMINIOpenAIServiceEndpoint`) exists for embeddings and drop-in compatibility.
 
 Register additional Azure deployments at runtime:
 
@@ -322,7 +327,7 @@ result = fetch(task)  # LLMSuccess when complete
     input::Union{String, Vector}                             # String or Vector{InputMessage}
     instructions::Union{String,Nothing} = nothing
     tools::Union{Vector,Nothing} = nothing                  # Vector of ResponseTool subtypes
-    tool_choice::Union{String,Nothing} = nothing            # "auto", "none", "required"
+    tool_choice::Union{String,AbstractDict,Nothing} = nothing  # "auto"/"none"/"required", or a tool_choice_* Dict (see below)
     parallel_tool_calls::Union{Bool,Nothing} = nothing
     temperature::Union{Float64,Nothing} = nothing           # 0.0–2.0, mutually exclusive with top_p
     top_p::Union{Float64,Nothing} = nothing                 # 0.0–1.0
@@ -738,7 +743,8 @@ token_usage(result::ResponseSuccess)::Union{TokenUsage, Nothing}  # extract from
 estimated_cost(result; model=nothing, pricing=DEFAULT_PRICING)     # per-call cost estimate (Float64)
 cumulative_cost(chat::Chat)::Float64                               # running total for a Chat instance
 
-DEFAULT_PRICING   # Dict{String, Tuple{Float64, Float64}} — model → (input_price, output_price) per token
+DEFAULT_PRICING   # Dict{String, PriceRow} where PriceRow = @NamedTuple{input, cached_input, output} (USD per 1M tokens)
+# NOTE: estimated_cost returns 0.0 for any model NOT in this dict — pass pricing= to price custom models
 ```
 
 ### Cost Tracking Example
@@ -762,7 +768,7 @@ end
 ## Conversation Forking
 
 ```julia
-fork(chat::Chat)::Chat          # deep-copy a Chat, resetting cumulative cost
+fork(chat::Chat)::Chat          # deep-copy a Chat; cumulative cost is copied by value (independent Ref)
 fork(chat::Chat, n::Int)::Vector{Chat}  # create n independent forks
 ```
 
@@ -1119,21 +1125,31 @@ Thrown by `issendvalid` / internal validation when conversation structure is inv
 
 ## Complete Exports List
 
-**Chat Completions**: `Chat`, `Message`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `GPTTool`, `GPTToolCall`, `GPTFunctionSignature`, `GPTFunctionCallResult`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `ResponseFormat`
+Every exported symbol (`names(UniLM)`), grouped by area:
 
-**Responses API**: `Respond`, `InputMessage`, `ResponseTool`, `FunctionTool`, `WebSearchTool`, `FileSearchTool`, `MCPTool`, `ComputerUseTool`, `ImageGenerationTool`, `CodeInterpreterTool`, `TextConfig`, `TextFormatSpec`, `Reasoning`, `ResponseObject`, `ResponseSuccess`, `ResponseFailure`, `ResponseCallError`, `respond`, `get_response`, `delete_response`, `list_input_items`, `cancel_response`, `compact_response`, `count_input_tokens`, `output_text`, `function_calls`, `input_text`, `input_image`, `input_file`, `function_tool`, `web_search`, `file_search`, `mcp_tool`, `computer_use`, `image_generation_tool`, `code_interpreter`, `text_format`, `json_schema_format`, `json_object_format`
+**Chat Completions**: `Chat`, `Message`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `GPTTool`, `GPTToolCall`, `GPTFunctionSignature`, `GPTFunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
 
-**Image Generation**: `ImageGeneration`, `ImageObject`, `ImageResponse`, `ImageSuccess`, `ImageFailure`, `ImageCallError`, `generate_image`, `image_data`, `save_image`
+**Responses API & Agentic**: `Respond`, `InputMessage`, `ResponseObject`, `ResponseSuccess`, `ResponseFailure`, `ResponseCallError`, `Reasoning`, `TextConfig`, `TextFormatSpec`, `respond`, `get_response`, `delete_response`, `cancel_response`, `list_input_items`, `compact_response`, `count_input_tokens`, `text_format`, `json_schema_format`, `json_object_format`
+- *Input builders*: `input_text`, `input_image`, `input_file`
+- *Tool types*: `ResponseTool`, `FunctionTool`, `WebSearchTool`, `FileSearchTool`, `MCPTool`, `ComputerUseTool`, `ComputerTool`, `ImageGenerationTool`, `CodeInterpreterTool`, `LocalShellTool`, `ShellTool`, `ApplyPatchTool`, `CustomTool`
+- *Tool constructors*: `function_tool`, `web_search`, `file_search`, `mcp_tool`, `computer_use`, `computer_tool`, `image_generation_tool`, `code_interpreter`, `local_shell`, `shell`, `apply_patch_tool`, `custom_tool`, `tool_result`, `mcp_approval_response`
+- *Hosted Gemini tools*: `gemini_google_search`, `gemini_code_execution`, `gemini_url_context`
+- *tool_choice builders*: `tool_choice_function`, `tool_choice_hosted`, `tool_choice_mcp`, `tool_choice_custom`, `tool_choice_allowed`
+- *Result accessors*: `output_text`, `function_calls`, `refusals`, `reasoning_summaries`, `reasoning_items`, `url_citations`, `web_search_results`, `file_search_results`, `image_generation_results`, `code_interpreter_outputs`, `mcp_call_outputs`, `mcp_approval_requests`, `response_status`, `incomplete_details`, `usage_details`
 
-**Embeddings**: `Embeddings`, `embeddingrequest!`
+**Image Generation & Edits**: `ImageGeneration`, `ImageEdit`, `ImageObject`, `ImageResponse`, `ImageSuccess`, `ImageFailure`, `ImageCallError`, `generate_image`, `edit_image`, `image_data`, `save_image`
+
+**Embeddings**: `Embeddings`, `embeddingrequest!`, `embedding_vectors`, `EmbeddingSuccess`, `EmbeddingFailure`, `EmbeddingCallError`
 
 **Cost Tracking**: `TokenUsage`, `token_usage`, `estimated_cost`, `cumulative_cost`, `DEFAULT_PRICING`
 
-**Service Endpoints**: `ServiceEndpoint`, `ServiceEndpointSpec`, `OPENAIServiceEndpoint`, `AZUREServiceEndpoint`, `GEMINIServiceEndpoint`, `GenericOpenAIEndpoint`, `OllamaEndpoint`, `MistralEndpoint`, `DeepSeekEndpoint`, `add_azure_deploy_name!`
+**Service Endpoints**: `ServiceEndpoint`, `ServiceEndpointSpec`, `OPENAIServiceEndpoint`, `AZUREServiceEndpoint`, `GEMINIServiceEndpoint`, `GEMINIOpenAIServiceEndpoint`, `ANTHROPICServiceEndpoint`, `GenericOpenAIEndpoint`, `OllamaEndpoint`, `MistralEndpoint`, `DeepSeekEndpoint`, `add_azure_deploy_name!`
 
-**Forking**: `fork`
+**Provider Capabilities**: `provider_capabilities`, `has_capability`
 
 **Tool Loop**: `CallableTool`, `ToolCallOutcome`, `ToolLoopResult`, `tool_loop!`, `tool_loop`, `to_tool`
+
+**Forking**: `fork`
 
 **MCP Client**: `MCPSession`, `MCPToolInfo`, `MCPResourceInfo`, `MCPPromptInfo`, `MCPServerCapabilities`, `MCPTransport`, `StdioTransport`, `HTTPTransport`, `MCPError`, `mcp_connect`, `mcp_disconnect!`, `mcp_tools`, `mcp_tools_respond`, `list_tools!`, `list_resources!`, `list_prompts!`, `call_tool`, `read_resource`, `get_prompt`, `ping`
 
@@ -1141,6 +1157,28 @@ Thrown by `issendvalid` / internal validation when conversation structure is inv
 
 **FIM / Completions**: `FIMCompletion`, `FIMChoice`, `FIMResponse`, `FIMSuccess`, `FIMFailure`, `FIMCallError`, `fim_complete`, `fim_text`, `prefix_complete`
 
-**Provider Capabilities**: `has_capability`, `provider_capabilities`
+**Files**: `FileUpload`, `FileObject`, `FileList`, `FileSuccess`, `FileListSuccess`, `FileContentSuccess`, `FileDeleteSuccess`, `FileFailure`, `FileCallError`, `upload_file`, `list_files`, `retrieve_file`, `delete_file`, `file_content`, `save_file_content`
 
-**Result Types**: `LLMRequestResponse`, `LLMSuccess`, `LLMFailure`, `LLMCallError`
+**Vector Stores**: `VectorStoreObject`, `VectorStoreFileObject`, `VectorStoreFileBatch`, `VectorStoreList`, `VectorStoreSuccess`, `VectorStoreListSuccess`, `VectorStoreFileSuccess`, `VectorStoreBatchSuccess`, `VectorStoreDeleteSuccess`, `VectorStoreFailure`, `VectorStoreCallError`, `create_vector_store`, `retrieve_vector_store`, `list_vector_stores`, `delete_vector_store`, `add_vector_store_file`, `create_file_batch`, `retrieve_file_batch`, `poll_file_batch`
+
+**Conversations**: `ConversationObject`, `ConversationItem`, `ConversationItemList`, `ConversationSuccess`, `ConversationItemSuccess`, `ConversationItemListSuccess`, `ConversationDeleteSuccess`, `ConversationFailure`, `ConversationCallError`, `create_conversation`, `retrieve_conversation`, `update_conversation`, `delete_conversation`, `add_conversation_items`, `list_conversation_items`, `delete_conversation_item`, `conversation_id`
+
+**Moderations**: `ModerationResponse`, `ModerationResult`, `ModerationSuccess`, `ModerationFailure`, `ModerationCallError`, `moderate`, `is_flagged`
+
+**Audio**: `SpeechRequest`, `TranscriptionRequest`, `SpeechSuccess`, `TranscriptionSuccess`, `AudioFailure`, `AudioCallError`, `speak`, `save_audio`, `transcribe`, `translate`, `transcript_text`
+
+**Batch**: `BatchObject`, `BatchList`, `BatchSuccess`, `BatchListSuccess`, `BatchFailure`, `BatchCallError`, `create_batch`, `retrieve_batch`, `cancel_batch`, `list_batches`, `poll_batch`
+
+**Fine-tuning**: `FineTuningJob`, `FineTuningList`, `FineTuningSuccess`, `FineTuningListSuccess`, `FineTuningFailure`, `FineTuningCallError`, `create_fine_tuning_job`, `retrieve_fine_tuning_job`, `cancel_fine_tuning_job`, `list_fine_tuning_jobs`, `list_fine_tuning_events`, `list_fine_tuning_checkpoints`
+
+**Containers**: `ContainerObject`, `ContainerList`, `ContainerSuccess`, `ContainerListSuccess`, `ContainerDeleteSuccess`, `ContainerFailure`, `ContainerCallError`, `create_container`, `retrieve_container`, `list_containers`, `delete_container`, `add_container_file`
+
+**Uploads**: `UploadObject`, `UploadPartObject`, `UploadSuccess`, `UploadPartSuccess`, `UploadFailure`, `UploadCallError`, `create_upload`, `add_upload_part`, `complete_upload`, `cancel_upload`
+
+**Videos**: `VideoObject`, `VideoList`, `VideoSuccess`, `VideoListSuccess`, `VideoContentSuccess`, `VideoFailure`, `VideoCallError`, `create_video`, `retrieve_video`, `list_videos`, `video_content`
+
+**Webhooks**: `WebhookEvent`, `WEBHOOK_EVENTS`, `verify_webhook`, `parse_webhook`
+
+**Realtime**: `RealtimeSession`, `RealtimeSecretSuccess`, `RealtimeFailure`, `RealtimeCallError`, `mint_realtime_secret`, `realtime_connect`, `realtime_send`, `realtime_receive`, `realtime_event`, `session_update`, `input_audio_append`, `response_create`
+
+**Result Types (base)**: `LLMRequestResponse`, `LLMSuccess`, `LLMFailure`, `LLMCallError`

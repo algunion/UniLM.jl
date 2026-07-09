@@ -247,7 +247,7 @@ end
 
 ## Managing Stored Responses
 
-When you pass `store=true`, the response is saved on OpeAnI's servers and can be
+When you pass `store=true`, the response is saved on OpenAI's servers and can be
 retrieved, inspected, or deleted later:
 
 ```@example responses

@@ -82,17 +82,26 @@ end
 All result types share the abstract parent [`LLMRequestResponse`](@ref):
 
 ```
-LLMRequestResponse
-├── LLMSuccess          (Chat Completions)
-├── LLMFailure          (Chat Completions)
-├── LLMCallError        (Chat Completions)
-├── ResponseSuccess     (Responses API)
-├── ResponseFailure     (Responses API)
-├── ResponseCallError   (Responses API)
-├── ImageSuccess        (Image Generation)
-├── ImageFailure        (Image Generation)
-├── ImageCallError      (Image Generation)
-├── FIMSuccess          (FIM Completion)
-├── FIMFailure          (FIM Completion)
-└── FIMCallError        (FIM Completion)
+LLMRequestResponse   (abstract parent of every result type below)
+│
+├─ Chat Completions   LLMSuccess · LLMFailure · LLMCallError
+├─ Responses API      ResponseSuccess · ResponseFailure · ResponseCallError
+├─ Embeddings         EmbeddingSuccess · EmbeddingFailure · EmbeddingCallError
+├─ Image Generation   ImageSuccess · ImageFailure · ImageCallError
+├─ FIM Completion     FIMSuccess · FIMFailure · FIMCallError
+├─ Files              FileSuccess · FileListSuccess · FileContentSuccess · FileDeleteSuccess · FileFailure · FileCallError
+├─ Vector Stores      VectorStoreSuccess · VectorStoreListSuccess · VectorStoreFileSuccess · VectorStoreBatchSuccess · VectorStoreDeleteSuccess · VectorStoreFailure · VectorStoreCallError
+├─ Conversations      ConversationSuccess · ConversationItemSuccess · ConversationItemListSuccess · ConversationDeleteSuccess · ConversationFailure · ConversationCallError
+├─ Moderations        ModerationSuccess · ModerationFailure · ModerationCallError
+├─ Audio              SpeechSuccess · TranscriptionSuccess · AudioFailure · AudioCallError
+├─ Batch              BatchSuccess · BatchListSuccess · BatchFailure · BatchCallError
+├─ Fine-tuning        FineTuningSuccess · FineTuningListSuccess · FineTuningFailure · FineTuningCallError
+├─ Containers         ContainerSuccess · ContainerListSuccess · ContainerDeleteSuccess · ContainerFailure · ContainerCallError
+├─ Uploads            UploadSuccess · UploadPartSuccess · UploadFailure · UploadCallError
+├─ Videos             VideoSuccess · VideoListSuccess · VideoContentSuccess · VideoFailure · VideoCallError
+└─ Realtime           RealtimeSecretSuccess · RealtimeFailure · RealtimeCallError
 ```
+
+Every `*Success` wraps a parsed response object; every `*Failure` carries the HTTP status and
+body; every `*CallError` wraps a transport/exception. Pattern-match on the family you called
+(see each API-reference page for the concrete fields).

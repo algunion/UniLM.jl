@@ -11,20 +11,21 @@
 
 ## What is UniLM.jl?
 
-UniLM.jl provides a **Julian**, type-safe interface to **LLM providers** via the OpenAI-compatible API standard — covering the **Chat Completions API**, the **Responses API**, **Image Generation**, **Embeddings**, and **MCP**. Works with OpenAI, Azure, Gemini, Anthropic, Mistral, DeepSeek, Ollama, vLLM, LM Studio, and any OpenAI-compatible provider.
+UniLM.jl provides a **Julian**, type-safe interface to **LLM providers** with **first-class native backends** — OpenAI (Chat Completions + Responses), Anthropic (Messages), and Google Gemini (generateContent + agentic Interactions) — plus any **OpenAI-compatible** provider (Azure, DeepSeek, Mistral, Ollama, vLLM, LM Studio). It covers Chat Completions & Responses, a cross-provider agentic `respond` verb, Image Generation/Edits, Embeddings, Files/Vector Stores, Conversations, Audio, Batch, Moderations, Fine-tuning, Webhooks, Realtime, and MCP (client & server) — with built-in token/cost accounting.
 
 ### Key Features
 
 - 🗣️ **Chat Completions** — stateful conversations with automatic history management
-- 🔮 **Responses API** — OpenAI's newer API with built-in tools, multi-turn chaining, and reasoning
-- 🖼️ **Image Generation** — create images from text prompts with `gpt-image-2`
-- 🔧 **Tool/Function Calling** — first-class support for function tools in both APIs, with automated `tool_loop`
-- 🔌 **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool loop integration
+- 🔮 **Responses API & Agentic Verb** — OpenAI's Responses API plus a cross-provider `respond` verb that also drives Google's Gemini Interactions
+- 🖼️ **Image Generation & Edits** — create and edit images with `gpt-image-2`
+- 🔧 **Tool/Function Calling** — first-class function tools in both APIs, with an automated `tool_loop`
+- 🔌 **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool-loop integration
 - 📊 **Embeddings** — text embedding generation
+- 💰 **Cost & Token Accounting** — per-call `estimated_cost`, per-`Chat` `cumulative_cost`, and a built-in multi-provider pricing table
 - 🌊 **Streaming** — real-time token streaming with `do`-block syntax
 - 📐 **Structured Output** — JSON Schema–constrained generation
-- ☁️ **Multi-Backend** — OpenAI, Azure, Gemini, Anthropic, DeepSeek, Ollama, Mistral, vLLM, LM Studio
-- ✅ **Type Safety** — invalid states are unrepresentable; tested with [JET.jl](https://github.com/aviatesk/JET.jl) and [Aqua.jl](https://github.com/JuliaTesting/Aqua.jl)
+- ☁️ **Multi-Backend** — native OpenAI/Anthropic/Gemini plus Azure, DeepSeek, Ollama, Mistral, vLLM, LM Studio, and any OpenAI-compatible provider
+- ✅ **Type Safety & Capability Introspection** — invalid states are unrepresentable and unsupported requests fail fast via `provider_capabilities`; tested with [JET.jl](https://github.com/aviatesk/JET.jl) and [Aqua.jl](https://github.com/JuliaTesting/Aqua.jl)
 
 ### Two APIs, One Package
 
@@ -143,3 +144,12 @@ end
 - [Image Generation Guide](@ref images_guide) — create images from text prompts
 - [MCP Guide](@ref mcp_guide) — connect to MCP servers or build your own
 - [API Reference](@ref chat_api) — full type and function reference
+
+### Platform APIs
+
+Beyond chat and generation, UniLM wraps the full OpenAI platform surface (OpenAI-only) — each has an API-reference page:
+
+- **Storage & retrieval** — [Files](api/files.md), [Vector Stores](api/vector_stores.md), [Conversations](api/conversations.md), [Uploads](api/uploads.md), [Containers](api/containers.md)
+- **Generation & media** — [Audio](api/audio.md), [Videos](api/videos.md), [Images](api/images.md)
+- **Jobs & ops** — [Batch](api/batch.md), [Fine-tuning](api/fine_tuning.md), [Moderations](api/moderations.md), [Webhooks](api/webhooks.md), [Realtime](api/realtime.md)
+- **Cross-cutting** — [Cost Tracking](@ref cost_guide), [Provider Capabilities](api/capabilities.md), [Retrieval & File Search](@ref retrieval_guide)

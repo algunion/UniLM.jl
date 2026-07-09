@@ -53,6 +53,15 @@ Each endpoint reads its configuration from environment variables:
 | :--------------- | :------------------ |
 | `GEMINI_API_KEY` | Your Gemini API key |
 
+Both `GEMINIServiceEndpoint` (native `generateContent`) and `GEMINIOpenAIServiceEndpoint`
+(the OpenAI-compat shim) read `GEMINI_API_KEY`.
+
+### Anthropic (Claude)
+
+| Variable            | Description            |
+| :------------------ | :--------------------- |
+| `ANTHROPIC_API_KEY` | Your Anthropic API key |
+
 ## Azure Deployment Mapping
 
 Azure requires model-to-deployment name mappings. Use `add_azure_deploy_name!` to register

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.2
+
+### Added
+- Exposed `x-request-id` header on all non-success/failure result structs (`LLMFailure`, `LLMCallError`, `FIMFailure`, `FIMCallError`, `ResponseFailure`, `ResponseCallError`).
+- Implemented streaming residual flushing in the `:completed` terminal branch of `_respond_stream` to ensure text deltas received in the final stream chunk are not dropped.
+
 ## 0.11.1
 
 Documentation-only release: an exhaustive review pass over the docs. No API or behavior changes.

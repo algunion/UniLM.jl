@@ -611,8 +611,17 @@ Successful Chat Completions API response.
     usage::Union{TokenUsage, Nothing} = nothing
 end
 
+_get_request_id(resp::HTTP.Response) = (val = HTTP.header(resp, "x-request-id", ""); isempty(val) ? nothing : val)
+_get_request_id(::Nothing) = nothing
+function _get_request_id(e::Any)
+    if hasproperty(e, :response) && e.response isa HTTP.Response
+        return _get_request_id(e.response)
+    end
+    return nothing
+end
+
 """
-    LLMFailure(; response, status, self)
+    LLMFailure(; response, status, self, request_id=nothing)
 
 HTTP-level failure from the Chat Completions API. The server returned a non-200 status.
 
@@ -620,15 +629,17 @@ HTTP-level failure from the Chat Completions API. The server returned a non-200 
 - `response::String`: The raw response body.
 - `status::Int`: The HTTP status code.
 - `self::Chat`: The [`Chat`](@ref) object (unchanged).
+- `request_id::Union{String, Nothing}`: The HTTP request ID from headers, if available.
 """
 @kwdef struct LLMFailure <: LLMRequestResponse
     response::String
     status::Int
     self::Chat
+    request_id::Union{String, Nothing} = nothing
 end
 
 """
-    LLMCallError(; error, status=nothing, self)
+    LLMCallError(; error, status=nothing, self, request_id=nothing)
 
 Exception-level error during a Chat Completions API call (network failure, JSON parse error, etc.).
 
@@ -636,11 +647,13 @@ Exception-level error during a Chat Completions API call (network failure, JSON 
 - `error::String`: The stringified exception.
 - `status::Union{Int,Nothing}`: HTTP status if available.
 - `self::Chat`: The [`Chat`](@ref) object (unchanged).
+- `request_id::Union{String, Nothing}`: The HTTP request ID from headers, if available.
 """
 @kwdef struct LLMCallError <: LLMRequestResponse
     error::String
     status::Union{Int,Nothing} = nothing
     self::Chat
+    request_id::Union{String, Nothing} = nothing
 end
 
 

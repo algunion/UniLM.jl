@@ -100,12 +100,14 @@ end
 @kwdef struct FIMFailure <: LLMRequestResponse
     response::String
     status::Int
+    request_id::Union{String, Nothing} = nothing
 end
 
 """Exception-level error during FIM completion."""
 @kwdef struct FIMCallError <: LLMRequestResponse
     error::String
     status::Union{Int,Nothing} = nothing
+    request_id::Union{String, Nothing} = nothing
 end
 
 # ─── FIM Accessors ─────────────────────────────────────────────────────────
@@ -153,6 +155,7 @@ Execute a FIM (Fill-in-the-Middle) completion request. Returns [`FIMSuccess`](@r
 """
 function fim_complete(fim::FIMCompletion; retries::Int=0)::LLMRequestResponse
     validate_capability(fim.service, :fim, "FIM Completion")
+    local resp
     try
         body = JSON.json(fim)
         url = get_url(fim.service, fim)
@@ -166,15 +169,16 @@ function fim_complete(fim::FIMCompletion; retries::Int=0)::LLMRequestResponse
                 sleep(delay)
                 return fim_complete(fim; retries=retries + 1)
             else
-                return FIMFailure(response=String(resp.body), status=resp.status)
+                return FIMFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
             end
         else
-            return FIMFailure(response=String(resp.body), status=resp.status)
+            return FIMFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
         e isa ArgumentError && rethrow()  # re-throw validation errors
         statuserror = hasproperty(e, :status) ? e.status : nothing
-        return FIMCallError(error=string(e), status=statuserror)
+        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
+        return FIMCallError(error=string(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -217,6 +221,7 @@ function prefix_complete(chat::Chat; retries::Int=0)::LLMRequestResponse
     isempty(chat) && throw(ArgumentError("Chat must not be empty for prefix completion"))
     last(chat).role != RoleAssistant && throw(ArgumentError("Last message must be role=assistant for prefix completion"))
 
+    local resp
     try
         body_dict = JSON.lower(chat)
         # Convert messages to mutable dicts so we can inject the prefix flag
@@ -249,13 +254,14 @@ function prefix_complete(chat::Chat; retries::Int=0)::LLMRequestResponse
                 sleep(delay)
                 return prefix_complete(chat; retries=retries + 1)
             else
-                return LLMFailure(status=resp.status, response=String(resp.body), self=chat)
+                return LLMFailure(status=resp.status, response=String(resp.body), self=chat, request_id=_get_request_id(resp))
             end
         else
-            return LLMFailure(status=resp.status, response=String(resp.body), self=chat)
+            return LLMFailure(status=resp.status, response=String(resp.body), self=chat, request_id=_get_request_id(resp))
         end
     catch e
         e isa ArgumentError && rethrow()
-        return LLMCallError(error=string(e), self=chat)
+        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
+        return LLMCallError(error=string(e), self=chat, request_id=req_id)
     end
 end

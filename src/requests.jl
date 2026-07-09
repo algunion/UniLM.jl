@@ -274,6 +274,7 @@ decode_stream_chunk(service, chunk::String, state::StreamState, failbuff) =
 
 function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
     Threads.@spawn begin
+        io_ref = Ref{Union{HTTP.Stream,Nothing}}(nothing)
         try
             m = Ref{Union{Message,Nothing}}(nothing)
             stream_usage = Ref{Union{TokenUsage,Nothing}}(nothing)
@@ -285,6 +286,7 @@ function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
             # `data:` lines arrive verbatim on both HTTP majors.
             stream_headers = push!(copy(auth_header(chat.service)), "Accept-Encoding" => "identity")
             resp = HTTP.open("POST", get_url(chat), stream_headers; status_exception=false, decompress=false) do io
+                io_ref[] = io
                 state = StreamState()
                 callback_buf = IOBuffer()  # tracks already-emitted text
                 fail_buffer = IOBuffer()
@@ -346,11 +348,12 @@ function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
                 _accumulate_cost!(chat, result)
                 result
             else
-                LLMFailure(status=resp.status, response=String(take!(raw_buffer)), self=chat)
+                LLMFailure(status=resp.status, response=String(take!(raw_buffer)), self=chat, request_id=_get_request_id(resp))
             end
         catch e
             statuserror = hasproperty(e, :status) ? e.status : nothing
-            LLMCallError(error=string(e), self=chat, status=statuserror)
+            req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : _get_request_id(e)
+            LLMCallError(error=string(e), self=chat, status=statuserror, request_id=req_id)
         end
     end
 end
@@ -368,6 +371,7 @@ The `callback` function is called for each chunk of the response. The `close` Re
 """
 function chatrequest!(chat::Chat; retries::Int=0, callback=nothing, on_tool_call=nothing)
     res = LLMCallError(error="uninitialized", status=0, self=chat)
+    local resp
     try
         body = encode_request(chat.service, chat)
         if chat.stream !== true
@@ -385,11 +389,11 @@ function chatrequest!(chat::Chat; retries::Int=0, callback=nothing, on_tool_call
                     sleep(delay)
                     return chatrequest!(chat; retries=retries + 1, callback, on_tool_call)
                 else
-                    return LLMFailure(status=resp.status, response=String(resp.body), self=chat)
+                    return LLMFailure(status=resp.status, response=String(resp.body), self=chat, request_id=_get_request_id(resp))
                 end
             else
                 @error "Request status: $(resp.status)"
-                return LLMFailure(status=resp.status, response=String(resp.body), self=chat)
+                return LLMFailure(status=resp.status, response=String(resp.body), self=chat, request_id=_get_request_id(resp))
             end
         else
             task = _chatrequeststream(chat, body, callback; on_tool_call)
@@ -398,7 +402,8 @@ function chatrequest!(chat::Chat; retries::Int=0, callback=nothing, on_tool_call
     catch e
         @info "Error: $e"
         statuserror = hasproperty(e, :status) ? e.status : nothing
-        res = LLMCallError(error=string(e), self=chat, status=statuserror)
+        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
+        res = LLMCallError(error=string(e), self=chat, status=statuserror, request_id=req_id)
     end
     return res
 end

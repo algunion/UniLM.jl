@@ -781,11 +781,12 @@ end
 """
     ResponseFailure <: LLMRequestResponse
 
-HTTP-level failure from the Responses API. Contains the response body and status code.
+HTTP-level failure from the Responses API. Contains the response body, status code, and optional request ID.
 """
 @kwdef struct ResponseFailure <: LLMRequestResponse
     response::String
     status::Int
+    request_id::Union{String, Nothing} = nothing
 end
 
 """
@@ -796,6 +797,7 @@ Exception-level error during a Responses API call (network, parsing, etc.).
 @kwdef struct ResponseCallError <: LLMRequestResponse
     error::String
     status::Union{Int,Nothing} = nothing
+    request_id::Union{String, Nothing} = nothing
 end
 
 
@@ -1049,6 +1051,7 @@ end
 
 function _respond_stream(r::Respond, body::String, callback=nothing)
     Threads.@spawn begin
+        io_ref = Ref{Union{HTTP.Stream,Nothing}}(nothing)
         try
             result = Ref{Union{ResponseObject,Nothing}}(nothing)
             terminal_error = Ref{Union{Dict{String,Any},Nothing}}(nothing)  # structured failed/incomplete/error payload
@@ -1061,6 +1064,7 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
             # decompression so `data:` lines arrive verbatim (mirrors _chatrequeststream).
             stream_headers = push!(copy(auth_header(r.service)), "Accept-Encoding" => "identity")
             resp = HTTP.open("POST", url, stream_headers; status_exception=false, decompress=false) do io
+                io_ref[] = io
                 text_buffer = IOBuffer()
                 fail_buffer = IOBuffer()
                 last_event = Ref("")
@@ -1075,6 +1079,15 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
                     write(raw_buffer, chunk)
                     status = decode_agentic_stream(r.service, chunk, text_buffer, fail_buffer, last_event)
                     if status.terminal == :completed && status.data isa AbstractDict && haskey(status.data, "response")
+                        # Flush residual text buffer to callback before building the ResponseObject
+                        full = String(take!(text_buffer))
+                        emitted = String(take!(callback_buf))
+                        if sizeof(full) > sizeof(emitted) && !isnothing(callback)
+                            callback(full[nextind(full, sizeof(emitted)):end], close_ref)
+                        end
+                        print(text_buffer, full)
+                        print(callback_buf, full)
+
                         rdata = status.data["response"]
                         result[] = ResponseObject(
                             id=rdata["id"],
@@ -1114,18 +1127,20 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
                 ResponseSuccess(response=result[]::ResponseObject)
             elseif !isnothing(terminal_error[])
                 te = terminal_error[]
+                req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : nothing
                 if haskey(te, "response")            # response.failed / response.incomplete
-                    ResponseFailure(response=JSON.json(te["response"]), status=resp.status)
+                    ResponseFailure(response=JSON.json(te["response"]), status=resp.status, request_id=req_id)
                 else                                  # bare `error` event
                     ResponseCallError(error=get(te, "message", JSON.json(te)),
-                        status=(resp.status == 200 ? nothing : resp.status))
+                        status=(resp.status == 200 ? nothing : resp.status), request_id=req_id)
                 end
             else
-                ResponseFailure(response=String(take!(raw_buffer)), status=resp.status)
+                ResponseFailure(response=String(take!(raw_buffer)), status=resp.status, request_id=_get_request_id(resp))
             end
         catch e
             statuserror = hasproperty(e, :status) ? e.status : nothing
-            ResponseCallError(error=string(e), status=statuserror)
+            req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : _get_request_id(e)
+            ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
         end
     end
 end
@@ -1178,6 +1193,7 @@ end
 """
 function respond(r::Respond; retries::Int=0, callback=nothing)
     res = ResponseCallError(error="uninitialized", status=0)
+    local resp
     try
         body = encode_agentic(r.service, r)
 
@@ -1198,14 +1214,15 @@ function respond(r::Respond; retries::Int=0, callback=nothing)
                 sleep(delay)
                 return respond(r; retries=retries + 1, callback=callback)
             else
-                return ResponseFailure(response=String(resp.body), status=resp.status)
+                return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
             end
         else
-            return ResponseFailure(response=String(resp.body), status=resp.status)
+            return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
         statuserror = hasproperty(e, :status) ? e.status : nothing
-        res = ResponseCallError(error=string(e), status=statuserror)
+        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
+        res = ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
     end
     return res
 end
@@ -1280,17 +1297,19 @@ end
 ```
 """
 function get_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    local resp
     try
         url = _agentic_url(service) * "/" * response_id
         resp = HTTP.get(url, headers=auth_header(service); status_exception=false)
         if resp.status == 200
             return ResponseSuccess(response=decode_agentic(service, resp))
         else
-            return ResponseFailure(response=String(resp.body), status=resp.status)
+            return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
         statuserror = hasproperty(e, :status) ? e.status : nothing
-        return ResponseCallError(error=string(e), status=statuserror)
+        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
+        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -1306,17 +1325,19 @@ result["deleted"]  # => true
 ```
 """
 function delete_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    local resp
     try
         url = _agentic_url(service) * "/" * response_id
         resp = HTTP.request("DELETE", url, headers=auth_header(service); status_exception=false)
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else
-            return ResponseFailure(response=String(resp.body), status=resp.status)
+            return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
         statuserror = hasproperty(e, :status) ? e.status : nothing
-        return ResponseCallError(error=string(e), status=statuserror)
+        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
+        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -1339,6 +1360,7 @@ function list_input_items(response_id::String;
     after::Union{String,Nothing}=nothing,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint)
 
+    local resp
     try
         url = _agentic_url(service) * "/" * response_id * "/input_items"
         params = ["limit=$limit", "order=$order"]
@@ -1349,11 +1371,12 @@ function list_input_items(response_id::String;
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else
-            return ResponseFailure(response=String(resp.body), status=resp.status)
+            return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
         statuserror = hasproperty(e, :status) ? e.status : nothing
-        return ResponseCallError(error=string(e), status=statuserror)
+        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
+        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -1374,17 +1397,19 @@ end
 ```
 """
 function cancel_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    local resp
     try
         url = _agentic_url(service) * "/" * response_id * "/cancel"
         resp = HTTP.post(url, headers=auth_header(service); status_exception=false)
         if resp.status == 200
             return ResponseSuccess(response=decode_agentic(service, resp))
         else
-            return ResponseFailure(response=String(resp.body), status=resp.status)
+            return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
         statuserror = hasproperty(e, :status) ? e.status : nothing
-        return ResponseCallError(error=string(e), status=statuserror)
+        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
+        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -1415,6 +1440,7 @@ function compact_response(; model::String="gpt-5.5",
     input::Any,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint)
 
+    local resp
     try
         url = _api_base_url(service) * RESPONSES_PATH * "/compact"
         body = JSON.json(Dict{Symbol,Any}(:model => model, :input => input))
@@ -1422,11 +1448,12 @@ function compact_response(; model::String="gpt-5.5",
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else
-            return ResponseFailure(response=String(resp.body), status=resp.status)
+            return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
         statuserror = hasproperty(e, :status) ? e.status : nothing
-        return ResponseCallError(error=string(e), status=statuserror)
+        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
+        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -1451,6 +1478,7 @@ function count_input_tokens(; model::String="gpt-5.5",
     tools::Union{Vector,Nothing}=nothing,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint)
 
+    local resp
     try
         url = _api_base_url(service) * RESPONSES_PATH * "/input_tokens"
         d = Dict{Symbol,Any}(:model => model, :input => input)
@@ -1461,10 +1489,11 @@ function count_input_tokens(; model::String="gpt-5.5",
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else
-            return ResponseFailure(response=String(resp.body), status=resp.status)
+            return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
         statuserror = hasproperty(e, :status) ? e.status : nothing
-        return ResponseCallError(error=string(e), status=statuserror)
+        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
+        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
     end
 end

@@ -2252,6 +2252,85 @@ try
         @test UniLM._realtime_ws_url(OPENAIServiceEndpoint) == "wss://api.openai.com/v1/realtime"
     end
 
+    @testset "Residual stream flushing & request_id propagation" begin
+        # 1. Test streaming residual flushing on :completed event
+        response_status[] = 200
+        response_headers[] = Pair{String,String}[]
+        response_body[] =
+            "event: response.output_text.delta\ndata: {\"delta\":\"final text\"}\n\n" *
+            "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":" *
+            "{\"id\":\"resp_final\",\"status\":\"completed\",\"model\":\"gpt-4o\",\"output\":[]}}\n\n"
+
+        seen_deltas = String[]
+        cb = (chunk, close) -> begin
+            if chunk isa String
+                push!(seen_deltas, chunk)
+            end
+        end
+        result = fetch(respond(Respond(input="x", service=MockServiceEndpoint, stream=true); callback=cb))
+        @test result isa ResponseSuccess
+        @test "final text" in seen_deltas
+
+        # 2. Test ResponseFailure request_id propagation (non-streaming)
+        response_status[] = 400
+        response_headers[] = ["x-request-id" => "mock-resp-fail-id-123"]
+        response_body[] = "bad request payload"
+        res_fail = respond(Respond(input="x", service=MockServiceEndpoint))
+        @test res_fail isa ResponseFailure
+        @test res_fail.status == 400
+        @test res_fail.request_id == "mock-resp-fail-id-123"
+
+        # 3. Test ResponseFailure request_id propagation (streaming)
+        response_status[] = 200
+        response_headers[] = ["x-request-id" => "mock-resp-fail-stream-id-123"]
+        response_body[] =
+            "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":" *
+            "{\"id\":\"resp_inc\",\"status\":\"incomplete\"," *
+            "\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n"
+        res_fail_stream = fetch(respond(Respond(input="x", service=MockServiceEndpoint, stream=true)))
+        @test res_fail_stream isa ResponseFailure
+        @test res_fail_stream.status == 200
+        @test res_fail_stream.request_id == "mock-resp-fail-stream-id-123"
+
+        # 4. Test LLMFailure request_id propagation (non-streaming)
+        response_status[] = 401
+        response_headers[] = ["x-request-id" => "mock-llm-fail-id-123"]
+        response_body[] = "Unauthorized"
+        chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
+        push!(chat, Message(Val(:user), "hi"))
+        res_llm_fail = chatrequest!(chat)
+        @test res_llm_fail isa LLMFailure
+        @test res_llm_fail.status == 401
+        @test res_llm_fail.request_id == "mock-llm-fail-id-123"
+
+        # 5. Test LLMFailure request_id propagation (streaming)
+        response_status[] = 401
+        response_headers[] = ["x-request-id" => "mock-llm-fail-stream-id-123"]
+        response_body[] = "Unauthorized stream"
+        chat_stream = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true)
+        push!(chat_stream, Message(Val(:user), "hi"))
+        res_llm_fail_stream = fetch(chatrequest!(chat_stream))
+        @test res_llm_fail_stream isa LLMFailure
+        @test res_llm_fail_stream.status == 401
+        @test res_llm_fail_stream.request_id == "mock-llm-fail-stream-id-123"
+
+        # 6. Test FIMFailure request_id propagation
+        response_status[] = 500
+        response_headers[] = ["x-request-id" => "mock-fim-fail-id-123"]
+        response_body[] = "Internal Server Error"
+        res_fim_fail = fim_complete(FIMCompletion(prompt="a", suffix="b", service=MockServiceEndpoint))
+        @test res_fim_fail isa FIMFailure
+        @test res_fim_fail.status == 500
+        @test res_fim_fail.request_id == "mock-fim-fail-id-123"
+
+        # 7. Test _get_request_id directly on HTTP.StatusError
+        status_resp = HTTP.Response(403, ["x-request-id" => "status-error-req-id"], "Forbidden")
+        status_err = HTTP.StatusError(403, status_resp)
+        @test UniLM._get_request_id(status_err) == "status-error-req-id"
+
+        set_error!(200, "")
+    end
+
 finally
     close(mock_server)
 end

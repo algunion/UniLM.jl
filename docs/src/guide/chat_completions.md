@@ -151,7 +151,7 @@ UniLM.jl works with any model name string. Common choices:
 
 | Model            | Usage                  |
 | :--------------- | :--------------------- |
-| `"gpt-5.2"`      | Best quality (default) |
+| `"gpt-5.5"`      | Best quality (default) |
 | `"gpt-4o-mini"`  | Fast and cheap         |
 | `"gpt-4.1-mini"` | Balanced performance   |
 | `"o3"`           | Extended reasoning     |
@@ -184,7 +184,7 @@ println(JSON.json(chat))
 
 ## Retry Behaviour
 
-`chatrequest!` automatically retries on HTTP 429, 500, and 503 errors with exponential backoff and jitter (up to 30 attempts, max 60s delay). On 429 responses, the `Retry-After` header is respected. This is transparent and requires no configuration.
+`chatrequest!` automatically retries on transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) with exponential backoff and jitter (up to 30 attempts, max 60s delay). On 429 responses, the `Retry-After` header is respected. This is transparent and requires no configuration.
 
 ## Parameter Validation
 

@@ -86,8 +86,8 @@ Pass `service` and `model` to embed with a different backend:
 emb = Embeddings("test"; service=OllamaEndpoint(), model="nomic-embed-text")
 embeddingrequest!(emb)
 
-# Gemini
-emb = Embeddings("test"; service=GEMINIServiceEndpoint, model="gemini-embedding-001")
+# Gemini (OpenAI-compatible endpoint; the native generateContent API has no embeddings)
+emb = Embeddings("test"; service=GEMINIOpenAIServiceEndpoint, model="gemini-embedding-001")
 embeddingrequest!(emb)
 ```
 

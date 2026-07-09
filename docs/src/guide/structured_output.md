@@ -2,6 +2,11 @@
 
 Force the model to produce valid JSON conforming to a schema. Both APIs support this.
 
+!!! note "Provider support varies"
+    Schema-constrained output is fully supported on **OpenAI and OpenAI-compatible** providers.
+    Support differs on the native backends — see the provider notes in the
+    [Multi-Backend guide](@ref backend_guide) before relying on strict schemas elsewhere.
+
 ## Chat Completions
 
 Use [`ResponseFormat`](@ref) to control the output format:

@@ -1,19 +1,20 @@
 """
     UniLM
 
-A Julia interface for **LLM providers** via the OpenAI-compatible API standard.
+A Julia interface for **LLM providers** with first-class native backends (OpenAI, Anthropic, Gemini) plus any OpenAI-compatible provider.
 
 UniLM.jl provides:
 - **Chat Completions** via [`Chat`](@ref) and [`chatrequest!`](@ref) — stateful conversations
   with tool calling, streaming, and structured output.
-- **Responses API** via [`Respond`](@ref) and [`respond`](@ref) — the newer, more flexible
-  API with built-in tools (web search, file search), multi-turn chaining via `previous_response_id`,
-  and reasoning support for O-series models.
+- **Responses API & agentic verb** via [`Respond`](@ref) and [`respond`](@ref) — built-in tools
+  (web search, file search), multi-turn chaining via `previous_response_id`, reasoning support,
+  and a cross-provider `respond` that also drives Google's Gemini Interactions.
 - **Image Generation** via [`ImageGeneration`](@ref) and [`generate_image`](@ref) — create
-  images from text prompts using `gpt-image-1.5`.
+  images from text prompts using `gpt-image-2`.
 - **Embeddings** via [`Embeddings`](@ref) and [`embeddingrequest!`](@ref).
 - **MCP** via [`MCPSession`](@ref) and [`MCPServer`](@ref) — Model Context Protocol client and server.
-- **Multi-provider support**: OpenAI, Azure, Gemini, Mistral, Ollama, vLLM, and any OpenAI-compatible provider via [`GenericOpenAIEndpoint`](@ref).
+- **Cost accounting** via [`estimated_cost`](@ref) and [`cumulative_cost`](@ref) — token-usage and USD cost estimation.
+- **Multi-provider support**: native OpenAI, Anthropic, and Gemini backends, plus Azure, DeepSeek, Mistral, Ollama, vLLM, and any OpenAI-compatible provider via [`GenericOpenAIEndpoint`](@ref).
 
 # Quick Start
 ```julia

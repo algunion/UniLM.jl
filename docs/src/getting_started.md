@@ -7,8 +7,22 @@
 
 ## Installation
 
+UniLM is registered in Julia's General registry:
+
 ```julia
 using Pkg
+Pkg.add("UniLM")
+```
+
+Or from the Pkg REPL:
+
+```
+pkg> add UniLM
+```
+
+To track the latest unreleased changes, install from GitHub instead:
+
+```julia
 Pkg.add(url="https://github.com/algunion/UniLM.jl")
 ```
 
@@ -68,6 +82,11 @@ Just have the Ollama server running on `localhost:11434`. No API key required.
 using UniLM
 using JSON
 ```
+
+!!! tip "Try it free, locally"
+    Hosted API calls cost money and need a funded key. To experiment with **zero cost and no
+    signup**, run a local model with [Ollama](https://ollama.com) — set
+    `service=OllamaEndpoint()` (no key required), as configured above.
 
 ## Your First Request
 
@@ -196,3 +215,5 @@ end
 | Stream tokens in real-time     | [Streaming Guide](@ref streaming_guide)          |
 | Get structured JSON output     | [Structured Output Guide](@ref structured_guide) |
 | Use any provider               | [Multi-Backend Guide](@ref backend_guide)        |
+| Track token usage & cost       | [Cost Tracking Guide](@ref cost_guide)           |
+| Ground answers in your files   | [Retrieval & File Search](@ref retrieval_guide)  |

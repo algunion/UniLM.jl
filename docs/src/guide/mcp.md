@@ -105,6 +105,7 @@ session = mcp_connect(`npx server`)
 tools = mcp_tools(session)
 
 chat = Chat(model="gpt-5.2", tools=map(t -> t.tool, tools))
+push!(chat, Message(Val(:system), "You are a helpful assistant."))
 push!(chat, Message(Val(:user), "List files in /tmp"))
 result = tool_loop!(chat; tools)
 

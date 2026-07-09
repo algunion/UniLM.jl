@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.11.1
+
+Documentation-only release: an exhaustive review pass over the docs. No API or behavior changes.
+
+### Changed
+- Onboarding: the registered install (`Pkg.add("UniLM")`) now leads the README, docs home, and Getting Started (the GitHub-URL install is kept for tracking unreleased changes); the Julia 1.12+ prerequisite is stated up front.
+- Positioning: reframed around first-class **native** backends (OpenAI, Anthropic, Gemini) plus the OpenAI-compatible tier, rather than "via the OpenAI-compatible API standard"; the Chat-Completions-vs-Responses comparison is now scoped to OpenAI.
+- LLM reference (`llm.md`): the Complete Exports List is regenerated from `names(UniLM)` (previously missing ~40 symbols and the platform-API families); provider-compatibility table, capability sets, `tool_choice`/`DEFAULT_PRICING` types, and documented default models corrected.
+- New guides: **Cost Tracking** (incl. the silent-`$0` behavior for unpriced models) and **Retrieval & File Search** (end-to-end Files → Vector Store → `file_search`).
+
+### Fixed
+- Corrected stale documentation: image default `gpt-image-2`, chat default `gpt-5.5`, the Gemini embeddings example (`GEMINIOpenAIServiceEndpoint`), retry-status lists, and the module / `provider_capabilities` docstrings. Added a root `llms.txt` for LLM/agent consumers.
+
 ## 0.11.0
 
 ### Breaking changes

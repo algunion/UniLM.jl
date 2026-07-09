@@ -1,0 +1,38 @@
+# UniLM.jl
+
+> A Julian, type-safe interface to LLM providers with first-class native backends — OpenAI (Chat + Responses), Anthropic (Messages), and Google Gemini (generateContent + agentic Interactions) — plus any OpenAI-compatible provider (Azure, DeepSeek, Mistral, Ollama, vLLM, LM Studio). One cross-provider agentic `respond` verb, an MCP client and server, and built-in token/cost accounting.
+
+Install: `using Pkg; Pkg.add("UniLM")` (registered in Julia's General registry; requires Julia 1.12+). Source: https://github.com/algunion/UniLM.jl
+
+## Start here (for LLMs / coding agents)
+
+- [Single-file LLM reference](https://algunion.github.io/UniLM.jl/dev/llm/): the whole API — types, signatures, defaults, and the complete exports list — on one page. Read this first.
+
+## Guides
+
+- [Getting Started](https://algunion.github.io/UniLM.jl/dev/getting_started/): install, API keys, first request
+- [Chat Completions](https://algunion.github.io/UniLM.jl/dev/guide/chat_completions/): stateful `Chat` + `chatrequest!`
+- [Responses API](https://algunion.github.io/UniLM.jl/dev/guide/responses_api/): the newer `respond` API
+- [Agentic Workflows](https://algunion.github.io/UniLM.jl/dev/guide/agentic/): cross-provider `respond` (OpenAI Responses + Gemini Interactions)
+- [Tool Calling](https://algunion.github.io/UniLM.jl/dev/guide/tool_calling/): function tools + automated `tool_loop`
+- [Retrieval & File Search](https://algunion.github.io/UniLM.jl/dev/guide/retrieval/): end-to-end RAG (files → vector store → `file_search`)
+- [Streaming](https://algunion.github.io/UniLM.jl/dev/guide/streaming/): callback / `do`-block, across providers
+- [Structured Output](https://algunion.github.io/UniLM.jl/dev/guide/structured_output/): JSON-schema-constrained generation
+- [Multi-Backend](https://algunion.github.io/UniLM.jl/dev/guide/multi_backend/): native + OpenAI-compatible providers
+- [MCP](https://algunion.github.io/UniLM.jl/dev/guide/mcp/): Model Context Protocol client & server
+- [Cost Tracking](https://algunion.github.io/UniLM.jl/dev/guide/cost_tracking/): token usage + USD estimation
+- [Embeddings](https://algunion.github.io/UniLM.jl/dev/guide/embeddings/)
+- [Image Generation](https://algunion.github.io/UniLM.jl/dev/guide/image_generation/): create + edit
+- [FIM & Prefix Completion](https://algunion.github.io/UniLM.jl/dev/guide/completions/)
+
+## Gotchas for code generation
+
+- A `Chat` must start with a **system** message; `push!` silently drops a non-system message pushed onto an empty `Chat`. Use `respond(input=...)` for a single turn without a system prompt.
+- Real defaults: OpenAI `gpt-5.5`; native Gemini `gemini-3.5-flash`; native Anthropic `claude-opus-4-8` (auto `max_tokens` 4096); image `gpt-image-2`; embeddings `text-embedding-3-small`.
+- Prefer the Responses API / `respond` for new code. Native Anthropic = `ANTHROPICServiceEndpoint`; native Gemini = `GEMINIServiceEndpoint`; the OpenAI-compat Gemini shim (needed for embeddings) = `GEMINIOpenAIServiceEndpoint`.
+- Requests validate provider capabilities at call time and return typed results (`*Success` / `*Failure` / `*CallError`) instead of throwing. `estimated_cost` returns `0.0` for any model not in `DEFAULT_PRICING` (pass `pricing=` for custom models).
+
+## Reference
+
+- [API reference (start)](https://algunion.github.io/UniLM.jl/dev/api/chat/)
+- [Repository](https://github.com/algunion/UniLM.jl)

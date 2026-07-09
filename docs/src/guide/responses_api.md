@@ -247,7 +247,7 @@ end
 
 ## Managing Stored Responses
 
-When you pass `store=true`, the response is saved on OpeAnI's servers and can be
+When you pass `store=true`, the response is saved on OpenAI's servers and can be
 retrieved, inspected, or deleted later:
 
 ```@example responses
@@ -385,7 +385,7 @@ end
 
 | Parameter                | Type           | Default      | Description                                               |
 | :----------------------- | :------------- | :----------- | :-------------------------------------------------------- |
-| `model`                  | String         | `"gpt-5.2"`  | Model to use                                              |
+| `model`                  | String         | `"gpt-5.5"`  | Model to use                                              |
 | `input`                  | `Union{String, Vector}` | *(required)* | String or `Vector{InputMessage}`                   |
 | `instructions`           | String         | —            | System-level instructions                                 |
 | `tools`                  | Vector         | —            | Available tools (function, web search, file search)       |
@@ -416,7 +416,7 @@ end
 
 ## Retry Behaviour
 
-`respond` automatically retries on HTTP 429, 500, and 503 errors with exponential backoff and jitter (up to 30 attempts, max 60s delay). On 429 responses, the `Retry-After` header is respected. This applies to all Responses API functions (`respond`, `get_response`, `delete_response`, etc.).
+`respond` automatically retries on transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) with exponential backoff and jitter (up to 30 attempts, max 60s delay). On 429 responses, the `Retry-After` header is respected. This applies to all Responses API functions (`respond`, `get_response`, `delete_response`, etc.).
 
 ## Parameter Validation
 

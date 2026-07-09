@@ -7,7 +7,7 @@
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://algunion.github.io/UniLM.jl/stable/)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://algunion.github.io/UniLM.jl/dev/)
 
-A **Julian**, type-safe interface to **LLM providers** via the OpenAI-compatible API standard — covering the **Chat Completions** and **Responses** APIs, **Image Generation/Edits**, **Embeddings**, **Files/Vector Stores**, **Conversations**, **Audio**, **Batch**, **Moderations**, **Fine-tuning**, **Webhooks**, **Realtime**, and **MCP**. Works with OpenAI, Azure, Gemini, Mistral, DeepSeek, Ollama, vLLM, LM Studio, and any OpenAI-compatible provider.
+A **Julian**, type-safe interface to **LLM providers** with **first-class native backends** — OpenAI (Chat Completions + Responses), Anthropic (Messages), and Google Gemini (generateContent + agentic Interactions) — plus any **OpenAI-compatible** provider (Azure, DeepSeek, Mistral, Ollama, vLLM, LM Studio). Covers the **Chat Completions** & **Responses** APIs, a cross-provider agentic **`respond`** verb, **Image Generation/Edits**, **Embeddings**, **Files/Vector Stores**, **Conversations**, **Audio**, **Batch**, **Moderations**, **Fine-tuning**, **Webhooks**, **Realtime**, and **MCP** (client & server) — with built-in token/cost accounting and illegal states made unrepresentable.
 
 ## Features
 
@@ -27,18 +27,28 @@ A **Julian**, type-safe interface to **LLM providers** via the OpenAI-compatible
 
 ## Installation
 
+UniLM requires **Julia 1.12+** and is registered in Julia's General registry:
+
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/algunion/UniLM.jl")
+Pkg.add("UniLM")
 ```
 
 Or in the Pkg REPL:
 
 ```
-pkg> add https://github.com/algunion/UniLM.jl
+pkg> add UniLM
+```
+
+For the latest unreleased changes, install directly from GitHub:
+
+```julia
+Pkg.add(url="https://github.com/algunion/UniLM.jl")
 ```
 
 ## Quick Start
+
+> 💡 **Costs & free local option:** hosted API calls bill your provider key. To try UniLM for free with no key, use a local model via Ollama (`service=OllamaEndpoint()`) — see [Multi-Backend Support](#multi-backend-support).
 
 Set your API key:
 
@@ -49,7 +59,7 @@ export OPENAI_API_KEY="sk-..."
 ### Responses API (recommended for new code)
 
 ```julia
-julia> using UniLM
+julia> using UniLM, JSON
 
 julia> result = respond("Explain Julia's multiple dispatch in 2-3 sentences.")
 
@@ -239,7 +249,7 @@ julia> output_text(r2)
 
 ## Multi-Backend Support
 
-UniLM.jl supports multiple backends. Switch via the `service` parameter:
+UniLM.jl is built around **neutral verbs**: the same `Chat` + `chatrequest!` (tools, streaming, and cost accounting included) run unchanged across OpenAI, Anthropic, Gemini, DeepSeek, and any OpenAI-compatible provider — you only change `service`. The agentic `respond` verb is neutral the same way across OpenAI (Responses) and Gemini (Interactions). Native OpenAI/Anthropic/Gemini are first-class backends with their own wire formats (each exercised by live integration tests), not OpenAI-compatible shims. Switch via the `service` parameter:
 
 | Backend          | Type                             | Env Variables                                                               |
 | :--------------- | :------------------------------- | :-------------------------------------------------------------------------- |
@@ -269,7 +279,9 @@ chat = Chat(service=DeepSeekEndpoint(), model="deepseek-chat")
 chat = Chat(service=OllamaEndpoint(), model="llama3.1")
 ```
 
-## Two APIs, One Package
+## Chat Completions vs Responses (OpenAI)
+
+UniLM speaks each provider's own API (see [Multi-Backend Support](#multi-backend-support)). For **OpenAI**, you can use either of two conversational APIs. **Chat Completions** (`Chat` + `chatrequest!`) is the portable path — it's also how the native Anthropic and Gemini backends and every OpenAI-compatible provider work. **Responses** (`respond`) is OpenAI's newer API, and the basis for the cross-provider agentic verb (which also targets Gemini Interactions). They map like this:
 
 | Feature                |       Chat Completions       |            Responses API            |
 | :--------------------- | :--------------------------: | :---------------------------------: |

@@ -249,7 +249,7 @@ julia> output_text(r2)
 
 ## Multi-Backend Support
 
-UniLM.jl supports multiple backends. Switch via the `service` parameter:
+UniLM.jl is built around **neutral verbs**: the same `Chat` + `chatrequest!` (tools, streaming, and cost accounting included) run unchanged across OpenAI, Anthropic, Gemini, DeepSeek, and any OpenAI-compatible provider — you only change `service`. The agentic `respond` verb is neutral the same way across OpenAI (Responses) and Gemini (Interactions). Native OpenAI/Anthropic/Gemini are first-class backends with their own wire formats (each exercised by live integration tests), not OpenAI-compatible shims. Switch via the `service` parameter:
 
 | Backend          | Type                             | Env Variables                                                               |
 | :--------------- | :------------------------------- | :-------------------------------------------------------------------------- |

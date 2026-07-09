@@ -1,7 +1,13 @@
 # [Multi-Backend Support](@id backend_guide)
 
-UniLM.jl supports multiple LLM service backends through the `ServiceEndpoint`
-type hierarchy. Switching backends requires only changing the `service` parameter.
+UniLM.jl is built around **neutral verbs**: the same `Chat` + [`chatrequest!`](@ref) — with
+tools, streaming, and [cost accounting](@ref cost_guide) — run unchanged across every backend;
+you only change the `service`. The agentic [`respond`](@ref) verb is neutral the same way
+across OpenAI (Responses) and Gemini (Interactions); see [Agentic Workflows](@ref agentic_guide).
+Native OpenAI, Anthropic, and Gemini are first-class backends with their own wire formats (each
+exercised by live integration tests), not OpenAI-compatible shims.
+
+Switching backends requires only changing the `service` parameter.
 
 ## Available Backends
 

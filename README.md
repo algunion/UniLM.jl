@@ -7,7 +7,7 @@
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://algunion.github.io/UniLM.jl/stable/)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://algunion.github.io/UniLM.jl/dev/)
 
-A **Julian**, type-safe interface to **LLM providers** via the OpenAI-compatible API standard — covering the **Chat Completions** and **Responses** APIs, **Image Generation/Edits**, **Embeddings**, **Files/Vector Stores**, **Conversations**, **Audio**, **Batch**, **Moderations**, **Fine-tuning**, **Webhooks**, **Realtime**, and **MCP**. Works with OpenAI, Azure, Gemini, Mistral, DeepSeek, Ollama, vLLM, LM Studio, and any OpenAI-compatible provider.
+A **Julian**, type-safe interface to **LLM providers** via the OpenAI-compatible API standard — covering the **Chat Completions** and **Responses** APIs, **Image Generation/Edits**, **Embeddings**, **Files/Vector Stores**, **Conversations**, **Audio**, **Batch**, **Moderations**, **Fine-tuning**, **Webhooks**, **Realtime**, and **MCP**. Works with OpenAI, Azure, Gemini, Anthropic, Mistral, DeepSeek, Ollama, vLLM, LM Studio, and any OpenAI-compatible provider.
 
 ## Features
 
@@ -27,15 +27,23 @@ A **Julian**, type-safe interface to **LLM providers** via the OpenAI-compatible
 
 ## Installation
 
+UniLM requires **Julia 1.12+** and is registered in Julia's General registry:
+
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/algunion/UniLM.jl")
+Pkg.add("UniLM")
 ```
 
 Or in the Pkg REPL:
 
 ```
-pkg> add https://github.com/algunion/UniLM.jl
+pkg> add UniLM
+```
+
+For the latest unreleased changes, install directly from GitHub:
+
+```julia
+Pkg.add(url="https://github.com/algunion/UniLM.jl")
 ```
 
 ## Quick Start
@@ -49,7 +57,7 @@ export OPENAI_API_KEY="sk-..."
 ### Responses API (recommended for new code)
 
 ```julia
-julia> using UniLM
+julia> using UniLM, JSON
 
 julia> result = respond("Explain Julia's multiple dispatch in 2-3 sentences.")
 

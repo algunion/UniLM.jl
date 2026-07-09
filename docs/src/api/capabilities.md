@@ -16,14 +16,28 @@ has_capability
 
 | Symbol | Description |
 |---|---|
-| `:chat` | Chat Completions API (`/v1/chat/completions`) |
-| `:embeddings` | Embeddings API (`/v1/embeddings`) |
-| `:responses` | Responses API (`/v1/responses`) |
-| `:images` | Image Generation API (`/v1/images/generations`) |
-| `:tools` | Tool/function calling in chat |
-| `:fim` | FIM Completion (`/v1/completions` with `suffix`) |
-| `:prefix_completion` | Chat prefix completion |
-| `:json_output` | JSON output mode (`response_format`) |
+| `:chat` | Chat Completions API |
+| `:responses` | Responses API |
+| `:agentic` | Agentic `respond` verb (OpenAI Responses / Gemini Interactions) |
+| `:tools` | Tool / function calling |
+| `:streaming` | Server-sent-event token streaming (native providers) |
+| `:json_output` | JSON / structured output mode |
+| `:embeddings` | Embeddings API |
+| `:images` | Image generation |
+| `:image_edits` | Image editing |
+| `:fim` | FIM (fill-in-the-middle) completion |
+| `:prefix_completion` | Prefix completion (continue a partial assistant message) |
+| `:files` | Files API |
+| `:vector_stores` | Vector Stores API |
+| `:conversations` | Conversations API |
+| `:moderation` | Moderations API |
+| `:audio` | Audio (TTS / transcription / translation) |
+| `:batch` | Batch API |
+| `:fine_tuning` | Fine-tuning API |
+| `:containers` | Containers API |
+| `:uploads` | Resumable Uploads API |
+| `:video` | Video generation (Sora) |
+| `:realtime` | Realtime API |
 
 ## Capabilities by Provider
 
@@ -31,11 +45,13 @@ has_capability
 using UniLM
 
 for (name, svc) in [
-    ("OpenAI",  OPENAIServiceEndpoint),
-    ("Azure",   AZUREServiceEndpoint),
-    ("Gemini",  GEMINIServiceEndpoint),
-    ("DeepSeek", DeepSeekEndpoint("k")),
-    ("Generic", GenericOpenAIEndpoint("http://x", ""))
+    ("OpenAI",                 OPENAIServiceEndpoint),
+    ("Azure",                  AZUREServiceEndpoint),
+    ("Gemini (native)",        GEMINIServiceEndpoint),
+    ("Gemini (OpenAI-compat)", GEMINIOpenAIServiceEndpoint),
+    ("Anthropic",              ANTHROPICServiceEndpoint),
+    ("DeepSeek",               DeepSeekEndpoint("k")),
+    ("Generic",                GenericOpenAIEndpoint("http://x", ""))
 ]
     caps = join(sort(collect(provider_capabilities(svc))), ", ")
     println("$name: $caps")

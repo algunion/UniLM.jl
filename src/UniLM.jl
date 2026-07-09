@@ -10,7 +10,7 @@ UniLM.jl provides:
   API with built-in tools (web search, file search), multi-turn chaining via `previous_response_id`,
   and reasoning support for O-series models.
 - **Image Generation** via [`ImageGeneration`](@ref) and [`generate_image`](@ref) — create
-  images from text prompts using `gpt-image-1.5`.
+  images from text prompts using `gpt-image-2`.
 - **Embeddings** via [`Embeddings`](@ref) and [`embeddingrequest!`](@ref).
 - **MCP** via [`MCPSession`](@ref) and [`MCPServer`](@ref) — Model Context Protocol client and server.
 - **Multi-provider support**: OpenAI, Azure, Gemini, Mistral, Ollama, vLLM, and any OpenAI-compatible provider via [`GenericOpenAIEndpoint`](@ref).

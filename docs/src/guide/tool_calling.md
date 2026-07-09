@@ -252,6 +252,7 @@ println("Callable tool wrapping: ", ct.tool.func.name)
 
 ```julia
 chat = Chat(model="gpt-5.2", tools=[ct.tool])
+push!(chat, Message(Val(:system), "You are a helpful assistant."))
 push!(chat, Message(Val(:user), "What's the weather in Paris?"))
 result = tool_loop!(chat; tools=[ct])
 # result.completed == true when the model gives a text response
@@ -277,6 +278,7 @@ See the [MCP Guide](@ref mcp_guide) for full details.
 session = mcp_connect(`npx server`)
 tools = mcp_tools(session)
 chat = Chat(model="gpt-5.2", tools=map(t -> t.tool, tools))
+push!(chat, Message(Val(:system), "You are a helpful assistant."))
 push!(chat, Message(Val(:user), "Do something"))
 result = tool_loop!(chat; tools)
 

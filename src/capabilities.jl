@@ -9,15 +9,12 @@
 
 Return the set of capabilities supported by the given service endpoint.
 
-Standard capability symbols:
-- `:chat` — Chat Completions API (`/v1/chat/completions`)
-- `:embeddings` — Embeddings API (`/v1/embeddings`)
-- `:responses` — Responses API (`/v1/responses`)
-- `:images` — Image Generation API (`/v1/images/generations`)
-- `:tools` — Tool/function calling in chat
-- `:fim` — FIM Completion (`/v1/completions` with `suffix`)
-- `:prefix_completion` — Chat prefix completion (continue from partial assistant message)
-- `:json_output` — JSON output mode (`response_format`)
+Standard capability symbols include:
+- Core: `:chat`, `:responses`, `:agentic`, `:tools`, `:streaming`, `:json_output`
+- Embeddings & images: `:embeddings`, `:images`, `:image_edits`
+- Completions: `:fim`, `:prefix_completion`
+- Platform APIs: `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`,
+  `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:video`, `:realtime`
 """
 provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :batch, :image_edits, :fine_tuning, :containers, :uploads, :video, :realtime])
 provider_capabilities(::Type{AZUREServiceEndpoint})   = Set([:chat, :tools])

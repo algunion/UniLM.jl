@@ -159,7 +159,7 @@ Message(Val(:user), "Hello!")
 chatrequest!(chat::Chat; retries::Int=0, callback=nothing) -> LLMSuccess | LLMFailure | LLMCallError | Task
 
 # Keyword-argument convenience form — builds a Chat internally
-chatrequest!(; service=OPENAIServiceEndpoint, model="gpt-5.2",
+chatrequest!(; service=OPENAIServiceEndpoint, model="gpt-5.5",
     systemprompt, userprompt, messages=Message[], history=true,
     tools=nothing, tool_choice=nothing, temperature=nothing, ...) -> same
 ```
@@ -171,14 +171,20 @@ chatrequest!(; service=OPENAIServiceEndpoint, model="gpt-5.2",
 ### Conversation Management
 
 ```julia
-push!(chat, message)       # append a Message
+push!(chat, message)       # append a Message (the FIRST message must be a system Message)
 pop!(chat)                 # remove last message
 update!(chat, message)     # append if history=true
-issendvalid(chat) -> Bool  # check conversation rules (≥1 message, system first if present, etc.)
+issendvalid(chat) -> Bool  # check conversation rules (≥2 messages, first is system, no consecutive same-role except tool)
 length(chat)               # number of messages
 isempty(chat)              # true if no messages
 chat[i]                    # index into messages
 ```
+
+**Important:** A `Chat` must begin with a system message. `push!` silently refuses a
+non-system message pushed onto an empty `Chat` (and refuses consecutive same-role
+messages, except `tool`), so `chat = Chat(); push!(chat, Message(Val(:user), "…"))`
+leaves the chat empty and the next request fails. Use `respond(input=…)` for a single
+turn without a system prompt.
 
 ### Tool Calling Types
 
@@ -498,8 +504,8 @@ get_response(id::String; service=OPENAIServiceEndpoint)           -> ResponseSuc
 delete_response(id::String; service=OPENAIServiceEndpoint)        -> Dict | ResponseFailure | ResponseCallError
 list_input_items(id::String; limit=20, order="desc", after=nothing, service=OPENAIServiceEndpoint) -> Dict | ...
 cancel_response(id::String; service=OPENAIServiceEndpoint)        -> ResponseSuccess | ...
-compact_response(; model="gpt-5.2", input, service=OPENAIServiceEndpoint) -> Dict | ...
-count_input_tokens(; model="gpt-5.2", input, instructions=nothing, tools=nothing, service=OPENAIServiceEndpoint) -> Dict | ...
+compact_response(; model="gpt-5.5", input, service=OPENAIServiceEndpoint) -> Dict | ...
+count_input_tokens(; model="gpt-5.5", input, instructions=nothing, tools=nothing, service=OPENAIServiceEndpoint) -> Dict | ...
 ```
 
 ### ResponseObject
@@ -1020,9 +1026,11 @@ has_capability(service, cap::Symbol) -> Bool
 
 | Provider | Capabilities |
 |---|---|
-| OpenAI | `:chat`, `:responses`, `:embeddings`, `:images`, `:tools`, `:json_output` |
+| OpenAI | `:chat`, `:responses`, `:agentic`, `:embeddings`, `:images`, `:image_edits`, `:tools`, `:json_output`, `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`, `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:video`, `:realtime` |
 | Azure | `:chat`, `:tools` |
-| Gemini | `:chat`, `:embeddings`, `:tools`, `:json_output` |
+| Gemini (native) | `:chat`, `:tools`, `:streaming`, `:agentic` |
+| Gemini (OpenAI-compat) | `:chat`, `:embeddings`, `:tools`, `:json_output` |
+| Anthropic (native) | `:chat`, `:tools`, `:json_output`, `:streaming` |
 | DeepSeek | `:chat`, `:tools`, `:fim`, `:prefix_completion`, `:json_output` |
 | Generic | `:chat`, `:embeddings`, `:fim`, `:tools`, `:responses` |
 

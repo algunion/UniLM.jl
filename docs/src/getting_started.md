@@ -7,8 +7,22 @@
 
 ## Installation
 
+UniLM is registered in Julia's General registry:
+
 ```julia
 using Pkg
+Pkg.add("UniLM")
+```
+
+Or from the Pkg REPL:
+
+```
+pkg> add UniLM
+```
+
+To track the latest unreleased changes, install from GitHub instead:
+
+```julia
 Pkg.add(url="https://github.com/algunion/UniLM.jl")
 ```
 

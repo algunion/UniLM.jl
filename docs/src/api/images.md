@@ -106,7 +106,7 @@ end
 
 | Parameter            | Type   | Default           | Description                        |
 | :------------------- | :----- | :---------------- | :--------------------------------- |
-| `model`              | String | `"gpt-image-1.5"` | Image generation model             |
+| `model`              | String | `"gpt-image-2"` | Image generation model             |
 | `prompt`             | String | *(required)*      | Text description of the image      |
 | `n`                  | Int    | `1`               | Number of images (1–10)            |
 | `size`               | String | `"auto"`          | `"1024x1024"`, `"1536x1024"`, etc. |

@@ -43,15 +43,23 @@ UniLM.jl provides a **Julian**, type-safe interface to **LLM providers** via the
 
 ## Installation
 
+UniLM requires **Julia 1.12+** and is registered in Julia's General registry:
+
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/algunion/UniLM.jl")
+Pkg.add("UniLM")
 ```
 
 Or in the Pkg REPL:
 
 ```
-pkg> add https://github.com/algunion/UniLM.jl
+pkg> add UniLM
+```
+
+For the latest unreleased changes, install from GitHub instead:
+
+```julia
+Pkg.add(url="https://github.com/algunion/UniLM.jl")
 ```
 
 ## Quick Example

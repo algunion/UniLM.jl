@@ -141,8 +141,8 @@ end
                                            "arguments" => "{\"city\":\"Oslo\"}"))
         state.finish_reason = UniLM.TOOL_CALLS
         msg = UniLM._build_stream_message(state)
-        @test_broken msg.content == "Let me check the weather." &&
-                     !isnothing(msg.tool_calls) && length(msg.tool_calls) == 1
+        @test msg.content == "Let me check the weather." &&
+              !isnothing(msg.tool_calls) && length(msg.tool_calls) == 1
 
         # (b) A zero-argument tool call streams arguments as "" (Anthropic
         # input_json_delta may never arrive for `{}` input). JSON.parse("")
@@ -152,7 +152,10 @@ end
             "id" => "call_2", "type" => "function",
             "function" => Dict{String,Any}("name" => "ping", "arguments" => ""))
         state2.finish_reason = UniLM.TOOL_CALLS
-        @test_broken (UniLM._build_stream_message(state2); true)
+        msg2 = UniLM._build_stream_message(state2)
+        @test !isnothing(msg2.tool_calls) && length(msg2.tool_calls) == 1 &&
+              msg2.tool_calls[1].func.name == "ping" &&
+              msg2.tool_calls[1].func.arguments == Dict{String,Any}()
     end
 
     @testset "P0-3 Anthropic thinking block round-trip" begin

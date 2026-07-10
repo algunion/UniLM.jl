@@ -71,3 +71,17 @@ end
         @test ok
     end
 end
+
+@testset "_parse_tool_arguments — zero-arg contract (P0-15b mechanism)" begin
+    @test UniLM._parse_tool_arguments("") == Dict{String,Any}()
+    @test UniLM._parse_tool_arguments("  ") == Dict{String,Any}()
+    @test UniLM._parse_tool_arguments("{\"city\":\"Oslo\"}") == Dict{String,Any}("city" => "Oslo")
+    @test_throws ArgumentError UniLM._parse_tool_arguments("[1,2]")   # non-object: loud, not silent
+end
+
+@testset "StreamState — WS1 additions" begin
+    st = StreamState()
+    @test st.error === nothing
+    @test st.fired_tool_calls == Set{Int}()
+    @test st.pending_delta isa IOBuffer
+end

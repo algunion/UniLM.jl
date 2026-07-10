@@ -121,3 +121,21 @@ function _sse_dispatch!(service, carry::IOBuffer, current_event::Ref{String},
     end
     :continue
 end
+
+"""
+    _parse_tool_arguments(args::AbstractString) -> Dict{String,Any}
+
+Parse a streamed tool call's accumulated `arguments` JSON string. A zero-arg
+tool call may stream `arguments` as `""` (Anthropic sends no
+`input_json_delta` for `{}` input) — that parses as an empty object instead
+of destroying the turn (P0-15b). Anything else must be a JSON object; a
+non-object payload throws a loud `ArgumentError`. Shared by
+`_build_stream_message` and the driver's `on_tool_call` firing.
+"""
+function _parse_tool_arguments(args::AbstractString)::Dict{String,Any}
+    isempty(strip(args)) && return Dict{String,Any}()
+    parsed = JSON.parse(String(args); dicttype=Dict{String,Any})
+    parsed isa Dict{String,Any} || throw(ArgumentError(
+        "streamed tool-call arguments must be a JSON object, got $(typeof(parsed))"))
+    parsed
+end

@@ -155,6 +155,15 @@ end
     tool_calls::Dict{Int, Dict{String,Any}} = Dict{Int, Dict{String,Any}}()
     finish_reason::Union{String, Nothing} = nothing
     usage::Union{TokenUsage, Nothing} = nothing
+    # ── WS1 (Decision 1) additions ──
+    # Text deltas collected by handlers, not yet forwarded to the callback;
+    # the driver take!s and forwards verbatim (kills the take!/re-print churn).
+    pending_delta::IOBuffer = IOBuffer()
+    # In-band terminal stream error (e.g. Anthropic `error` event on HTTP 200);
+    # non-nothing → the driver returns LLMFailure/LLMCallError, never LLMSuccess.
+    error::Union{Nothing, Dict{String,Any}} = nothing
+    # on_tool_call fire-once-per-index guard (final sweep at stream end).
+    fired_tool_calls::Set{Int} = Set{Int}()
 end
 
 # There is a variable chunk format (which is also incomplete from time to time) that can be received from the stream.
@@ -217,25 +226,25 @@ function _parse_chunk(chunk::String, state::StreamState, failbuff)
 end
 
 function _build_stream_message(state::StreamState)::Message
-    if state.finish_reason == TOOL_CALLS && !isempty(state.tool_calls)
+    content = String(take!(state.content))
+    refusal = String(take!(state.refusal))
+    if !isempty(state.tool_calls)
         tcalls = GPTToolCall[]
-        for idx in sort(collect(keys(state.tool_calls)))
+        for idx in sort!(collect(keys(state.tool_calls)))
             tc_data = state.tool_calls[idx]
             fdict = tc_data["function"]
-            args = JSON.parse(fdict["arguments"]; dicttype=Dict{String,Any})
-            gptfunc = GPTFunction(fdict["name"], args)
-            push!(tcalls, GPTToolCall(id=tc_data["id"], func=gptfunc,
+            args = _parse_tool_arguments(fdict["arguments"])   # "" → Dict{String,Any}() (P0-15b)
+            push!(tcalls, GPTToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
                 thought_signature=get(tc_data, "thought_signature", nothing)))
         end
-        Message(role=RoleAssistant, tool_calls=tcalls, finish_reason=TOOL_CALLS)
+        # Keep accumulated text ALONGSIDE the tool calls (P0-15a): providers emit
+        # both in one turn and the non-streaming decoders already preserve both.
+        Message(role=RoleAssistant, content=(isempty(content) ? nothing : content),
+                tool_calls=tcalls, finish_reason=TOOL_CALLS)
+    elseif isempty(content) && !isempty(refusal)
+        Message(role=RoleAssistant, refusal_message=refusal, finish_reason=something(state.finish_reason, STOP))
     else
-        content = String(take!(state.content))
-        refusal = String(take!(state.refusal))
-        if isempty(content) && !isempty(refusal)
-            Message(role=RoleAssistant, refusal_message=refusal, finish_reason=something(state.finish_reason, STOP))
-        else
-            Message(role=RoleAssistant, content=content, finish_reason=something(state.finish_reason, STOP))
-        end
+        Message(role=RoleAssistant, content=content, finish_reason=something(state.finish_reason, STOP))
     end
 end
 

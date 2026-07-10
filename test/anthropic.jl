@@ -1,6 +1,6 @@
 # Native Anthropic translation — deterministic, zero-spend unit tests.
 using UniLM
-using UniLM: encode_request, decode_response, decode_stream_chunk, StreamState,
+using UniLM: encode_request, decode_response, StreamState,
              _build_stream_message, ANTHROPICServiceEndpoint, GPTFunction,
              RoleSystem, RoleUser, RoleAssistant, RoleTool, TOOL_CALLS, STOP, CONTENT_FILTER
 using Test, HTTP, JSON
@@ -162,11 +162,12 @@ end
         "data: " * JSON.json(Dict("type" => "message_stop")),
     ]
     state = StreamState()
-    st = decode_stream_chunk(ANTHROPICServiceEndpoint, join(lines, "\n"), state, IOBuffer())
-    @test st.eos == true
+    st = UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), join(lines, "\n") * "\n", state)
+    @test st === :done
     @test state.finish_reason == STOP
     @test state.usage.completion_tokens == 5
     @test state.usage.prompt_tokens == 8
+    @test String(take!(state.pending_delta)) == "Hello world"
     msg = _build_stream_message(state)
     @test msg.content == "Hello world"
     @test msg.finish_reason == STOP
@@ -193,8 +194,8 @@ end
         "data: " * JSON.json(Dict("type" => "message_stop")),
     ]
     state = StreamState()
-    st = decode_stream_chunk(ANTHROPICServiceEndpoint, join(lines, "\n"), state, IOBuffer())
-    @test st.eos == true
+    st = UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), join(lines, "\n") * "\n", state)
+    @test st === :done
     @test state.finish_reason == TOOL_CALLS
     msg = _build_stream_message(state)
     @test msg.finish_reason == TOOL_CALLS

@@ -170,3 +170,39 @@ end
         @test ok
     end
 end
+
+@testset "handle_sse_event! (Anthropic) — message_stop EOS + error capture + block-stop flag" begin
+    A = ANTHROPICServiceEndpoint
+
+    @testset "message_stop → :done" begin
+        st = StreamState()
+        @test UniLM.handle_sse_event!(A, "message_stop", "{\"type\":\"message_stop\"}", st) === :done
+    end
+
+    @testset "error event → :error with payload stored (P0-4 mechanism)" begin
+        st = StreamState()
+        r = UniLM.handle_sse_event!(A, "error",
+            "{\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}", st)
+        @test r === :error
+        @test st.error isa Dict{String,Any}
+        @test st.error["error"]["type"] == "overloaded_error"
+    end
+
+    @testset "content_block_stop marks a streamed tool call complete" begin
+        st = StreamState()
+        UniLM.handle_sse_event!(A, "content_block_start",
+            "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"ping\"}}", st)
+        @test get(st.tool_calls[0], "complete", false) == false
+        UniLM.handle_sse_event!(A, "content_block_stop",
+            "{\"type\":\"content_block_stop\",\"index\":0}", st)
+        @test st.tool_calls[0]["complete"] === true
+    end
+
+    @testset "text deltas land in content AND pending_delta" begin
+        st = StreamState()
+        UniLM.handle_sse_event!(A, "content_block_delta",
+            "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hey\"}}", st)
+        @test String(take!(st.pending_delta)) == "hey"
+        @test String(take!(st.content)) == "hey"
+    end
+end

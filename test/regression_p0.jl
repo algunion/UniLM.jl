@@ -185,4 +185,21 @@ end
         # the documented 529-equivalent on an HTTP-200 stream).
         @test_broken hasproperty(state, :error) && getproperty(state, :error) !== nothing
     end
+
+    @testset "P0-5 Interactions streaming surfaces function calls" begin
+        tb = IOBuffer(); fb = IOBuffer(); le = Ref("")
+        seq = "event: step.start\ndata: {\"step\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"name\":\"get_weather\",\"arguments\":{\"city\":\"Oslo\"}}}\n\n" *
+              "event: interaction.requires_action\ndata: {\"interaction\":{\"id\":\"i_1\",\"status\":\"requires_action\",\"model\":\"gemini-3.5-flash\"}}\n\n" *
+              "data: [DONE]\n\n"
+        r = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, seq, tb, fb, le)
+        # FIXED contract: the terminal result carries a response dict whose
+        # output contains the function_call (today only step.delta text and
+        # interaction.completed are handled — interactions.jl:219-228 — so a
+        # tools+streaming interaction ends as :done with data=nothing and
+        # _respond_stream manufactures a ResponseFailure from a 200 stream).
+        out = r.data isa AbstractDict ? get(get(r.data, "response", Dict{String,Any}()), "output", Any[]) : Any[]
+        @test_broken r.done == true && r.data !== nothing &&
+                     any(item -> item isa AbstractDict && get(item, "type", "") == "function_call" &&
+                                 get(item, "name", "") == "get_weather", out)
+    end
 end

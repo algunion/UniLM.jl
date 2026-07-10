@@ -61,4 +61,25 @@ end
         @test_broken all(name -> isequal(getfield(forked, name), getfield(chat, name)),
                          setdiff(fieldnames(Chat), skip))
     end
+
+    @testset "P0-2 chat SSE unit contracts" begin
+        # (a) finish_reason=="stop" must NOT end the stream — only `data: [DONE]`
+        # may. Ending early skips the trailing usage-only chunk (requests.jl:180).
+        state = UniLM.StreamState()
+        fb = IOBuffer()
+        finish_chunk = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\n"
+        r = UniLM._parse_chunk(finish_chunk, state, fb)
+        @test_broken r.eos == false
+
+        # (b) the stream_options.include_usage final chunk has `"choices": []`
+        # (documented). It must yield usage AND leave the carry buffer empty —
+        # today choices[1] throws and the whole line is stashed in failbuff
+        # (requests.jl:176,212), which later glues onto `data: [DONE]` with no
+        # newline and corrupts the stream.
+        state2 = UniLM.StreamState()
+        fb2 = IOBuffer()
+        usage_chunk = "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}\n\n"
+        UniLM._parse_chunk(usage_chunk, state2, fb2)
+        @test_broken state2.usage !== nothing && isempty(String(take!(fb2)))
+    end
 end

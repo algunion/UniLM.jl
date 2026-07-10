@@ -9,10 +9,12 @@
 using Sockets
 
 # Streaming SSE mock: writes each element of `chunks` as its own flush with a
-# 0.2s gap, so the client's readavailable() sees them as separate reads.
-# (TCP may still coalesce under load — the affected tests note the flake
-# direction: coalescing can only turn Broken into an unexpected pass, never
-# into a spurious CI failure.)
+# 0.4s gap, so the client's readavailable() sees them as separate reads.
+# (TCP may still coalesce under load. Coalescing can make the driver-level
+# assertions unexpectedly pass, which Test records as an Error — a CI failure
+# under failfast=true (test/runtests.jl). Before treating any unexpected pass
+# in a driver testset as a refutation, re-run with a larger inter-chunk gap;
+# only a pass that survives fragmentation is a refutation.)
 # Portability across the declared HTTP compat range ("1.9, 2"): `listen!`
 # handlers receive an HTTP.Stream on both majors, so no `stream=true` kwarg
 # (the 2.x major rejects it); the request body is drained with `read`
@@ -30,7 +32,7 @@ function sse_mock_server(chunks::Vector{String})
         for c in chunks
             write(http, c)
             flush(http)
-            sleep(0.2)
+            sleep(0.4)
         end
     end
     server, "http://127.0.0.1:$port"
@@ -107,6 +109,8 @@ end
             fired = Ref(0)
             task = chatrequest!(chat; on_tool_call = tc -> (fired[] += 1))
             res = fetch(task)
+            # NOTE: an unexpected pass here may be TCP coalescing of chunks 5+6,
+            # not a fix/refutation — re-run with a larger gap (see helper header).
             # P0-1: the callback must fire exactly once for the completed call.
             # (Gate at requests.jl:305 only re-checks when a NEW index appears.)
             @test_broken fired[] == 1
@@ -122,6 +126,9 @@ end
     end
 
     @testset "P0-15 _build_stream_message contracts" begin
+        # (Finding #15 is filed under P1 in grounding/quality-review-2026-07-10.md,
+        # folded into wave 1 because WS1 fixes it — flagged so a future coverage
+        # audit doesn't miscount P0s.)
         # (a) Providers emit assistant text AND tool calls in one turn (Gemini-3
         # routinely, Anthropic text-before-tool_use). The builder must keep both;
         # today the text branch is skipped whenever tool_calls exist

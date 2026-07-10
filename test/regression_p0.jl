@@ -13,14 +13,17 @@ using Sockets
 # (TCP may still coalesce under load — the affected tests note the flake
 # direction: coalescing can only turn Broken into an unexpected pass, never
 # into a spurious CI failure.)
+# Portability across the declared HTTP compat range ("1.9, 2"): `listen!`
+# handlers receive an HTTP.Stream on both majors, so no `stream=true` kwarg
+# (the 2.x major rejects it); the request body is drained with `read`
+# (readavailable is undefined for server-side streams on 2.x, and a throwing
+# handler turns every response into a 500).
 function sse_mock_server(chunks::Vector{String})
     tcp = Sockets.listen(Sockets.localhost, 0)
     port = Int(Sockets.getsockname(tcp)[2])
     close(tcp)
-    server = HTTP.listen!("127.0.0.1", port; stream=true, verbose=false) do http::HTTP.Stream
-        while !eof(http)
-            readavailable(http)              # drain the request body
-        end
+    server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
+        read(http)                           # drain the request body
         HTTP.setstatus(http, 200)
         HTTP.setheader(http, "Content-Type" => "text/event-stream")
         HTTP.startwrite(http)

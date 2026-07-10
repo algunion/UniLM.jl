@@ -127,12 +127,15 @@ end
     UniLM.decode_agentic_stream(GEMINIServiceEndpoint, ",\"type\":\"text\"}}\n\n", tb2, fb2, ev2)
     @test String(take!(tb2)) == "b"                       # stashed fragment completed
 
-    # (c) a malformed data line is routed to failbuff via catch — no crash
+    # (c) a malformed COMPLETE data line is dropped + counted (never re-queued
+    # into the carry) — the WS1 machine's contract; no crash, stream continues.
+    before = UniLM._SSE_DROPPED_LINES[]
     tb3 = IOBuffer(); fb3 = IOBuffer(); ev3 = Ref("")
     st3 = UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
         "event: step.delta\ndata: {not valid json\n\n", tb3, fb3, ev3)
     @test st3.terminal == :none
-    @test !isempty(take!(fb3))
+    @test isempty(take!(fb3))
+    @test UniLM._SSE_DROPPED_LINES[] == before + 1
 end
 
 @testset "Interactions encode — tool-result translation" begin

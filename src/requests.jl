@@ -281,13 +281,88 @@ Accumulate a streamed chunk into `state`. Default: OpenAI SSE (`_parse_chunk`).
 decode_stream_chunk(service, chunk::String, state::StreamState, failbuff) =
     _parse_chunk(chunk, state, failbuff)
 
+# ─── Streaming driver helpers (Decision 1) ───────────────────────────────────
+
+"""
+    _flush_delta!(callback, state::StreamState, close_ref) -> Nothing
+
+Forward collected-but-unsent text deltas to the streaming callback verbatim.
+Handlers collect deltas on `state.pending_delta`; the driver forwards them
+directly — no `take!`/re-print churn, no byte-offset diffing (which broke on
+multibyte boundaries and was O(n²)).
+"""
+function _flush_delta!(callback, state::StreamState, close_ref)::Nothing
+    delta = String(take!(state.pending_delta))
+    isnothing(callback) || isempty(delta) || callback(delta, close_ref)
+    nothing
+end
+
+"""
+    _fire_tool_calls!(on_tool_call, state::StreamState, stream_done::Bool) -> Nothing
+
+Provider-agnostic `on_tool_call` completion detection (Decision 1, P0-1). A
+tool call at index `i` is complete when (a) `i` is no longer the max index (a
+later call started), OR (b) its entry carries `"complete" => true` (Anthropic
+`content_block_stop` / Gemini whole-part functionCall), OR (c) the stream is
+done (`stream_done` — the final sweep). Fires at most once per index
+(`state.fired_tool_calls`). Empty accumulated arguments parse as
+`Dict{String,Any}()` via `_parse_tool_arguments` (P0-15b).
+"""
+function _fire_tool_calls!(on_tool_call, state::StreamState, stream_done::Bool)::Nothing
+    (isnothing(on_tool_call) || isempty(state.tool_calls)) && return nothing
+    maxidx = maximum(keys(state.tool_calls))
+    for idx in sort!(collect(keys(state.tool_calls)))
+        idx in state.fired_tool_calls && continue
+        tc_data = state.tool_calls[idx]
+        stream_done || idx < maxidx || get(tc_data, "complete", false) === true || continue
+        fdict = tc_data["function"]
+        args = try
+            _parse_tool_arguments(fdict["arguments"])
+        catch e
+            # A COMPLETE call's arguments cannot improve later: warn once, never retry.
+            push!(state.fired_tool_calls, idx)
+            @warn "on_tool_call: undecodable tool-call arguments; not firing" index = idx exception = e
+            continue
+        end
+        push!(state.fired_tool_calls, idx)   # before the user callback: a throwing callback must not re-fire
+        try
+            on_tool_call(GPTToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
+                thought_signature=get(tc_data, "thought_signature", nothing)))
+        catch e
+            @warn "on_tool_call callback error" exception = e
+        end
+    end
+    nothing
+end
+
+"""
+    _stream_error_result(chat, err::Dict{String,Any}, request_id)
+
+Map an in-band SSE `error` payload (`state.error`) to a typed non-success
+result (Decision 1 / P0-4): `overloaded_error` is the documented
+529-equivalent → `LLMFailure(status=529)` (status-keyed policies see it);
+any other in-band error type → `LLMCallError` (no fabricated HTTP status).
+NOTE (spec ambiguity resolved 2026-07-10): Decision 1's text places this
+mapping in WS1 although the workstream table lists "P0-4(result mapping)"
+under WS2 — WS1 ships capture + mapping; WS2 re-verifies under Decision-2
+streaming assembly and adds its own result-mapping red test.
+"""
+function _stream_error_result(chat::Chat, err::Dict{String,Any}, request_id)
+    inner = get(err, "error", nothing)
+    etype = inner isa AbstractDict ? get(inner, "type", "") : ""
+    etype == "overloaded_error" ?
+        LLMFailure(status=529, response=JSON.json(err), self=chat, request_id=request_id) :
+        LLMCallError(error=JSON.json(err), self=chat, status=nothing, request_id=request_id)
+end
+
 function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
     Threads.@spawn begin
         io_ref = Ref{Union{HTTP.Stream,Nothing}}(nothing)
         try
             m = Ref{Union{Message,Nothing}}(nothing)
             stream_usage = Ref{Union{TokenUsage,Nothing}}(nothing)
-            raw_buffer = IOBuffer()  # wire bytes for non-200 reporting (streamed resp.body is empty under HTTP 2.x)
+            stream_error = Ref{Union{Dict{String,Any},Nothing}}(nothing)
+            raw_buffer = IOBuffer()  # wire bytes for non-200/truncation reporting (streamed resp.body is empty under HTTP 2.x)
             # SSE must reach the parser uncompressed. Some providers (e.g. Anthropic) gzip even
             # streamed responses, and HTTP.jl's streaming read loop does NOT auto-decompress on the
             # 1.x major — raw gzip bytes hit the SSE parser, every chunk fails to decode, and no
@@ -297,60 +372,52 @@ function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
             resp = HTTP.open("POST", get_url(chat), stream_headers; status_exception=false, decompress=false) do io
                 io_ref[] = io
                 state = StreamState()
-                callback_buf = IOBuffer()  # tracks already-emitted text
-                fail_buffer = IOBuffer()
-                done = Ref(false)
+                carry = IOBuffer()                 # layer-1 partial-line carry
+                current_event = Ref("")            # layer-2 sticky event name
                 close_ref = Ref(false)
-                prev_tc_count = 0
+                status = :continue
                 write(io, body)
                 HTTP.closewrite(io)
                 HTTP.startread(io)
-                while !eof(io) && !close_ref[] && !done[]
+                while !eof(io) && !close_ref[] && status === :continue
                     raw = String(readavailable(io))
                     write(raw_buffer, raw)
-                    chunk::String = join((String(take!(fail_buffer)), raw))
-                    streamstatus = decode_stream_chunk(chat.service, chunk, state, fail_buffer)
-                    # Fire on_tool_call for newly completed tool calls
-                    if !isnothing(on_tool_call) && length(state.tool_calls) > prev_tc_count
-                        for idx in sort(collect(keys(state.tool_calls)))
-                            idx < prev_tc_count && continue
-                            tc_data = state.tool_calls[idx]
-                            fdict = tc_data["function"]
-                            # A tool call is "complete" when we have a non-empty name and parseable arguments
-                            if !isempty(fdict["name"]) && !isempty(fdict["arguments"])
-                                try
-                                    args = JSON.parse(fdict["arguments"]; dicttype=Dict{String,Any})
-                                    gptfunc = GPTFunction(fdict["name"], args)
-                                    tc = GPTToolCall(id=tc_data["id"], func=gptfunc)
-                                    on_tool_call(tc)
-                                catch e
-                                    @warn "on_tool_call callback error" exception=e
-                                end
-                            end
-                        end
-                        prev_tc_count = length(state.tool_calls)
+                    status = _sse_dispatch!(chat.service, carry, current_event, raw, state)
+                    _fire_tool_calls!(on_tool_call, state, false)
+                    _flush_delta!(callback, state, close_ref)
+                end
+                if status === :continue && !close_ref[]
+                    # EOF flush: a final line the server never '\n'-terminated
+                    # (e.g. `data: [DONE]` as the very last bytes) is still one
+                    # complete line — dispatch it before finalizing.
+                    tail = String(take!(carry))
+                    if !isempty(tail)
+                        status = _sse_dispatch!(chat.service, carry, current_event, tail * "\n", state)
+                        _fire_tool_calls!(on_tool_call, state, false)
+                        _flush_delta!(callback, state, close_ref)
                     end
-                    if streamstatus.eos
-                        done[] = true
-                        m[] = _build_stream_message(state)
-                        stream_usage[] = state.usage
-                        !isnothing(callback) && callback(m[], close_ref)
-                    elseif !isnothing(callback)
-                        # Emit only newly-arrived text
-                        full = String(take!(state.content))
-                        emitted = String(take!(callback_buf))
-                        if sizeof(full) > sizeof(emitted)
-                            delta_text = full[nextind(full, sizeof(emitted)):end]
-                            callback(delta_text, close_ref)
-                        end
-                        print(state.content, full)
-                        print(callback_buf, full)
-                    end
+                end
+                stream_error[] = state.error
+                # Terminal contract (Decision 1): `:done` is the sentinel EOS
+                # ([DONE] / message_stop). Gemini has NO sentinel — its handler
+                # never returns :done; its stream ends at EOF with finishReason
+                # recorded. EOF with NEITHER signal = truncated/garbage stream
+                # (or a non-200 error body) → no message → LLMFailure below.
+                finished = status === :done ||
+                           (status === :continue && !isnothing(state.finish_reason))
+                if isnothing(state.error) && !close_ref[] && finished
+                    _fire_tool_calls!(on_tool_call, state, true)   # final sweep BEFORE the terminal callback (P0-1)
+                    m[] = _build_stream_message(state)
+                    stream_usage[] = state.usage
+                    !isnothing(callback) && callback(m[], close_ref)
                 end
                 close_ref[] && @info "stream closed by user"
                 HTTP.closeread(io)
             end
-            if resp.status == 200 && !isnothing(m[])
+            if !isnothing(stream_error[])
+                # In-band `error` event on an HTTP-200 stream (P0-4): never LLMSuccess.
+                _stream_error_result(chat, stream_error[], _get_request_id(resp))
+            elseif resp.status == 200 && !isnothing(m[])
                 msg = m[]::Message
                 update!(chat, msg)
                 result = LLMSuccess(message=msg, self=chat, usage=stream_usage[])

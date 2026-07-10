@@ -107,17 +107,14 @@ end
             fired = Ref(0)
             task = chatrequest!(chat; on_tool_call = tc -> (fired[] += 1))
             res = fetch(task)
-            # NOTE: an unexpected pass here may be TCP coalescing of chunks 5+6,
-            # not a fix/refutation — re-run with a larger gap (see helper header).
-            # P0-1: the callback must fire exactly once for the completed call.
-            # (Gate at requests.jl:305 only re-checks when a NEW index appears.)
-            @test_broken fired[] == 1
-            # P0-2c: the fragmented usage chunk must not turn success into failure
-            # (failbuff glue at requests.jl:302 destroys the [DONE] line today).
-            @test_broken res isa LLMSuccess
+            # P0-1: the callback fires exactly once for the completed call
+            # (driver-owned completion detection + fired_tool_calls guard).
+            @test fired[] == 1
+            # P0-2c: the fragmented usage chunk must not turn success into failure.
+            @test res isa LLMSuccess
             # Usage from the final chunk must be captured.
-            @test_broken res isa LLMSuccess && res.usage !== nothing &&
-                         res.usage.total_tokens == 16
+            @test res isa LLMSuccess && res.usage !== nothing &&
+                  res.usage.total_tokens == 16
         finally
             close(server)
         end

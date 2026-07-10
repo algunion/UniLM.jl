@@ -35,4 +35,30 @@ end
 
 @testset "P0 regression suite (review 2026-07-10)" begin
 
+    @testset "P0-7 fork(chat) preserves every Chat field" begin
+        kwargs = Dict{Symbol,Any}(
+            :model => "gpt-5.5", :history => false,
+            :tools => [GPTTool(func=GPTFunctionSignature(name="f"))],
+            :tool_choice => "auto", :parallel_tool_calls => true,
+            :temperature => 0.5, :n => 2, :stream => false, :stop => ["x"],
+            :max_tokens => 10, :max_completion_tokens => 20,
+            :presence_penalty => 0.1, :response_format => ResponseFormat(),
+            :frequency_penalty => 0.2, :logit_bias => Dict("50256" => -100.0),
+            :user => "u", :seed => 7, :reasoning_effort => "high",
+            :stream_options => Dict("include_usage" => true), :verbosity => "low",
+            :store => true, :metadata => Dict("k" => "v"), :service_tier => "auto",
+            :logprobs => true, :top_logprobs => 3,
+            :prediction => Dict("type" => "content"), :modalities => ["text"],
+            :audio => Dict("voice" => "alloy"),
+            :web_search_options => Dict("search_context_size" => "low"),
+            :prompt_cache_key => "pck", :safety_identifier => "sid",
+        )
+        chat = Chat(; kwargs...)
+        forked = fork(chat)
+        # messages is deepcopied (identity differs by design); the cost Ref is fresh.
+        skip = (:messages, :_cumulative_cost)
+        # FIXED contract: every remaining field survives a fork. Today 15 are dropped.
+        @test_broken all(name -> isequal(getfield(forked, name), getfield(chat, name)),
+                         setdiff(fieldnames(Chat), skip))
+    end
 end

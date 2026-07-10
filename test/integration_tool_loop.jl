@@ -24,7 +24,7 @@ const _ADD_DISPATCHER = (name::String, args::Dict{String,Any}) -> string(args["a
     add_tool = GPTTool(func=GPTFunctionSignature(
         name="add", description="Add two numbers", parameters=_ADD_TOOL_SCHEMA))
 
-    chat = Chat(model="gpt-5.4-nano", temperature=0.0, tools=[add_tool])
+    chat = Chat(model="gpt-5.4-mini", temperature=0.0, tools=[add_tool])
     push!(chat, Message(Val(:system), "You are a calculator. Always use the add tool. Give only the number in your final answer."))
     push!(chat, Message(Val(:user), "What is 3 + 5?"))
 
@@ -43,7 +43,7 @@ end
         name="add", description="Add two numbers", parameters=_ADD_TOOL_SCHEMA))
     ct = CallableTool(add_gpt, _ADD_DISPATCHER)
 
-    chat = Chat(model="gpt-5.4-nano", temperature=0.0, tools=[add_gpt])
+    chat = Chat(model="gpt-5.4-mini", temperature=0.0, tools=[add_gpt])
     push!(chat, Message(Val(:system), "You are a calculator. Always use the add tool. Give only the number in your final answer."))
     push!(chat, Message(Val(:user), "What is 3 + 5?"))
 
@@ -61,7 +61,7 @@ end
         parameters=_ADD_TOOL_SCHEMA, strict=true)
 
     r = Respond(
-        model="gpt-5.4-nano",
+        model="gpt-5.4-mini",
         input="What is 3 + 5? Use the add tool. Give only the number in your final answer.",
         tools=[ft],
         temperature=0.0
@@ -82,7 +82,7 @@ end
     ct = CallableTool(ft, _ADD_DISPATCHER)
 
     r = Respond(
-        model="gpt-5.4-nano",
+        model="gpt-5.4-mini",
         input="What is 3 + 5? Use the add tool. Give only the number in your final answer.",
         tools=[ct],
         temperature=0.0
@@ -102,7 +102,7 @@ end
     result = tool_loop(
         "What is 3 + 5? Use the add tool. Give only the number in your final answer.",
         _ADD_DISPATCHER;
-        model="gpt-5.4-nano", tools=[ft], temperature=0.0, max_turns=5
+        model="gpt-5.4-mini", tools=[ft], temperature=0.0, max_turns=5
     )
     @test result isa ToolLoopResult
     @test result.completed
@@ -117,7 +117,7 @@ end
 
     failing_dispatcher = (name::String, args::Dict{String,Any}) -> error("tool crashed")
 
-    chat = Chat(model="gpt-5.4-nano", temperature=0.0, tools=[add_tool])
+    chat = Chat(model="gpt-5.4-mini", temperature=0.0, tools=[add_tool])
     push!(chat, Message(Val(:system), "You are a calculator. Always use the add tool."))
     push!(chat, Message(Val(:user), "What is 3 + 5?"))
 

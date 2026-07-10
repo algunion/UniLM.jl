@@ -166,65 +166,6 @@ end
     fired_tool_calls::Set{Int} = Set{Int}()
 end
 
-# There is a variable chunk format (which is also incomplete from time to time) that can be received from the stream.
-# There are also multiple complaints about this on the OpenAI API forum.
-# I'll attempt a robust parsing approach here that can handle the variable chunk format.
-function _parse_chunk(chunk::String, state::StreamState, failbuff)
-    lines = strip.(split(chunk, "\n"))
-    lines = filter(!isempty, lines)
-    isempty(lines) && return (; eos=false)
-    eos = lines[end] == "data: [DONE]"
-    eos && length(lines) == 1 && return (; eos=true)
-    for line in lines[1:end-(eos ? 1 : 0)]
-        try
-            parsed = JSON.parse(line[6:end]; dicttype=Dict{String,Any})
-            # Capture usage if present (e.g. stream_options.include_usage)
-            if haskey(parsed, "usage") && parsed["usage"] isa AbstractDict
-                state.usage = _token_usage_from(parsed["usage"])
-            end
-            cho = parsed["choices"][1]
-            fr = cho["finish_reason"]
-            if !isnothing(fr)
-                state.finish_reason = fr
-                fr == "stop" && (eos = true)
-            end
-            delta = get(cho, "delta", Dict{String,Any}())
-            # Text content delta
-            if haskey(delta, "content") && !isnothing(delta["content"])
-                print(state.content, delta["content"])
-            end
-            # Refusal delta (streamed safety refusal)
-            if haskey(delta, "refusal") && !isnothing(delta["refusal"])
-                print(state.refusal, delta["refusal"])
-            end
-            # Tool call deltas — accumulate by index
-            if haskey(delta, "tool_calls")
-                for tc_delta in delta["tool_calls"]
-                    idx = tc_delta["index"]
-                    if !haskey(state.tool_calls, idx)
-                        state.tool_calls[idx] = Dict{String,Any}(
-                            "id" => get(tc_delta, "id", ""),
-                            "type" => get(tc_delta, "type", "function"),
-                            "function" => Dict{String,Any}("name" => "", "arguments" => "")
-                        )
-                    end
-                    entry = state.tool_calls[idx]
-                    haskey(tc_delta, "id") && !isempty(tc_delta["id"]) && (entry["id"] = tc_delta["id"])
-                    if haskey(tc_delta, "function")
-                        fd = tc_delta["function"]
-                        haskey(fd, "name") && !isnothing(fd["name"]) && (entry["function"]["name"] *= fd["name"])
-                        haskey(fd, "arguments") && !isnothing(fd["arguments"]) && (entry["function"]["arguments"] *= fd["arguments"])
-                    end
-                end
-            end
-        catch e
-            print(failbuff, line)
-            continue
-        end
-    end
-    (; eos)
-end
-
 function _build_stream_message(state::StreamState)::Message
     content = String(take!(state.content))
     refusal = String(take!(state.refusal))
@@ -249,14 +190,13 @@ function _build_stream_message(state::StreamState)::Message
 end
 
 # ─── Wire-translation seam ───────────────────────────────────────────────────
-# Three generics translate between the neutral Chat/Message IR and a provider's
-# wire format. The untyped-`service` methods below are the OpenAI-wire defaults —
-# DeepSeek, Azure, the Gemini OpenAI-compat shim, and GenericOpenAIEndpoint all
-# speak this format. Providers with a different wire format (Anthropic) override
-# the three. `chatrequest!`/`_chatrequeststream` call ONLY these generics, so the
-# retry/HTTP/cost/tool-loop/streaming orchestration stays provider-agnostic.
-# Defined here (after StreamState/_parse_chunk/extract_message) so the
-# `state::StreamState` signature annotation resolves at definition time.
+# Generics translate between the neutral Chat/Message IR and a provider's wire
+# format. The untyped-`service` methods are the OpenAI-wire defaults — DeepSeek,
+# Azure, the Gemini OpenAI-compat shim, and GenericOpenAIEndpoint all speak this
+# format. Providers with a different wire (Anthropic, native Gemini) override
+# them. `chatrequest!`/`_chatrequeststream` call ONLY these generics plus the
+# streaming seam `handle_sse_event!` (src/sse.jl), so the retry/HTTP/cost/
+# tool-loop/streaming orchestration stays provider-agnostic.
 
 """
     encode_request(service, chat::Chat) -> String
@@ -272,14 +212,6 @@ Parse a provider's 200 response into `(; message::Message, usage::Union{TokenUsa
 Default: OpenAI Chat Completions (`extract_message`).
 """
 decode_response(service, resp::HTTP.Response) = extract_message(resp)
-
-"""
-    decode_stream_chunk(service, chunk::String, state::StreamState, failbuff) -> (; eos::Bool)
-
-Accumulate a streamed chunk into `state`. Default: OpenAI SSE (`_parse_chunk`).
-"""
-decode_stream_chunk(service, chunk::String, state::StreamState, failbuff) =
-    _parse_chunk(chunk, state, failbuff)
 
 # ─── Streaming driver helpers (Decision 1) ───────────────────────────────────
 

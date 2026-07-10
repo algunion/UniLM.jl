@@ -1,7 +1,7 @@
 # ============================================================================
 # Google Gemini native generateContent API
 # Plugs into the wire-translation seam (encode_request / decode_response /
-# decode_stream_chunk from requests.jl) so all chat orchestration is shared.
+# handle_sse_event! from sse.jl) so all chat orchestration is shared.
 # Wire shape verified against ai.google.dev live docs on 2026-07-07.
 # ============================================================================
 
@@ -200,52 +200,6 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
                 finish_reason=finish)
     end
     (; message=msg, usage)
-end
-
-# ─── Streaming decode (Gemini SSE → StreamState) ─────────────────────────────
-# Each `data:` line is a full PARTIAL GenerateContentResponse. Accumulate text and
-# functionCall parts into the SAME StreamState the OpenAI path uses (tool args stored
-# as a JSON string so the shared _build_stream_message JSON.parses them). No `[DONE]`
-# sentinel — EOS is signalled by finishReason on the final chunk.
-
-function decode_stream_chunk(::Type{GEMINIServiceEndpoint}, chunk::String, state::StreamState, failbuff)
-    eos = false
-    for line in filter(!isempty, strip.(split(chunk, "\n")))
-        startswith(line, "data:") || continue
-        payload = strip(line[6:end])
-        isempty(payload) && continue
-        try
-            ev = JSON.parse(payload; dicttype=Dict{String,Any})
-            cands = get(ev, "candidates", [])
-            if !isempty(cands)
-                cand = cands[1]
-                for p in get(get(cand, "content", Dict{String,Any}()), "parts", [])
-                    if haskey(p, "text")
-                        print(state.content, p["text"])
-                    elseif haskey(p, "functionCall")
-                        fc = p["functionCall"]
-                        idx = length(state.tool_calls)
-                        state.tool_calls[idx] = Dict{String,Any}(
-                            "id" => get(fc, "id", ""), "type" => "function",
-                            "function" => Dict{String,Any}(
-                                "name" => get(fc, "name", ""),
-                                "arguments" => JSON.json(get(fc, "args", Dict{String,Any}()))),
-                            "thought_signature" => get(p, "thoughtSignature", nothing))
-                    end
-                end
-                fr = get(cand, "finishReason", nothing)
-                if !isnothing(fr)
-                    state.finish_reason = isempty(state.tool_calls) ? _gemini_finish_reason(fr) : TOOL_CALLS
-                    eos = true
-                end
-            end
-            u = get(ev, "usageMetadata", nothing)
-            u isa AbstractDict && (state.usage = _gemini_usage(u))
-        catch
-            print(failbuff, line)
-        end
-    end
-    (; eos)
 end
 
 # ─── Layer-3 handler (Decision 1) — replaces decode_stream_chunk (removed 0.11.3)

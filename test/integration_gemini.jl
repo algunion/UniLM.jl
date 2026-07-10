@@ -52,7 +52,7 @@ end
     task = chatrequest!(chat; callback=(c, _) -> push!(payloads, c))
     result = fetch(task)
     @test result isa LLMSuccess
-    @test !isempty(result.message.content)   # decode_stream_chunk accumulated real SSE
+    @test !isempty(result.message.content)   # handle_sse_event! accumulated real SSE
     @test !isempty(payloads)                 # callback fired (deltas and/or final message)
 end
 

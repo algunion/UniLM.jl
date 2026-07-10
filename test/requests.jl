@@ -260,40 +260,36 @@ end
     end
 end
 
-@testset "_parse_chunk" begin
+@testset "chat SSE machine (ported from _parse_chunk; seam removed in 0.11.3)" begin
+    S = UniLM.OPENAIServiceEndpoint
+    dispatch(chunk, state; carry=IOBuffer()) =
+        (UniLM._sse_dispatch!(S, carry, Ref(""), chunk, state), carry)
+
     @testset "normal content chunk" begin
-        chunk = """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}"""
         state = UniLM.StreamState()
-        failbuff = IOBuffer()
-        result = UniLM._parse_chunk(chunk, state, failbuff)
-        @test result.eos == false
+        st, carry = dispatch("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n", state)
+        @test st === :continue
         @test String(take!(state.content)) == "Hello"
-        @test isempty(take!(failbuff))
+        @test isempty(take!(carry))
     end
 
     @testset "done chunk" begin
-        chunk = "data: [DONE]"
         state = UniLM.StreamState()
-        failbuff = IOBuffer()
-        result = UniLM._parse_chunk(chunk, state, failbuff)
-        @test result.eos == true
+        st, _ = dispatch("data: [DONE]\n", state)
+        @test st === :done
     end
 
-    @testset "stop finish_reason" begin
-        chunk = """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"""
+    @testset "stop finish_reason is recorded, NOT terminal (fixed contract, Decision 1)" begin
         state = UniLM.StreamState()
-        failbuff = IOBuffer()
-        result = UniLM._parse_chunk(chunk, state, failbuff)
-        @test result.eos == true
+        st, _ = dispatch("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n", state)
+        @test st === :continue
         @test isempty(take!(state.content))
         @test state.finish_reason == "stop"
     end
 
     @testset "refusal delta builds a refusal message" begin
-        chunk = """data: {"choices":[{"index":0,"delta":{"refusal":"I can't help"},"finish_reason":"stop"}]}"""
         state = UniLM.StreamState()
-        failbuff = IOBuffer()
-        UniLM._parse_chunk(chunk, state, failbuff)
+        dispatch("data: {\"choices\":[{\"index\":0,\"delta\":{\"refusal\":\"I can't help\"},\"finish_reason\":\"stop\"}]}\n", state)
         msg = UniLM._build_stream_message(state)
         @test msg.refusal_message == "I can't help"
         @test isnothing(msg.content)
@@ -301,68 +297,56 @@ end
 
     @testset "empty chunk" begin
         state = UniLM.StreamState()
-        failbuff = IOBuffer()
-        result = UniLM._parse_chunk("", state, failbuff)
-        @test result.eos == false
+        st, _ = dispatch("", state)
+        @test st === :continue
     end
 
     @testset "whitespace-only chunk" begin
         state = UniLM.StreamState()
-        failbuff = IOBuffer()
-        result = UniLM._parse_chunk("   \n  \n  ", state, failbuff)
-        @test result.eos == false
+        st, _ = dispatch("   \n  \n  ", state)
+        @test st === :continue
     end
 
     @testset "multi-line chunk with content then DONE" begin
-        chunk = """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":null}]}
-
-data: [DONE]"""
         state = UniLM.StreamState()
-        failbuff = IOBuffer()
-        result = UniLM._parse_chunk(chunk, state, failbuff)
-        @test result.eos == true
+        st, _ = dispatch("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\ndata: [DONE]\n", state)
+        @test st === :done
         @test String(take!(state.content)) == " world"
     end
 
-    @testset "malformed JSON goes to failbuff" begin
-        chunk = "data: {invalid json"
+    @testset "unterminated line stays in the carry (not yet parsed)" begin
         state = UniLM.StreamState()
-        failbuff = IOBuffer()
-        result = UniLM._parse_chunk(chunk, state, failbuff)
-        @test result.eos == false
-        @test !isempty(take!(failbuff))
+        st, carry = dispatch("data: {invalid json", state)
+        @test st === :continue
+        @test !isempty(take!(carry))
+    end
+
+    @testset "malformed COMPLETE line is dropped + counted, never re-queued" begin
+        before = UniLM._SSE_DROPPED_LINES[]
+        state = UniLM.StreamState()
+        st, carry = dispatch("data: {invalid json\n", state)
+        @test st === :continue
+        @test isempty(take!(carry))
+        @test UniLM._SSE_DROPPED_LINES[] == before + 1
     end
 
     @testset "tool call deltas accumulated by index" begin
-        # First chunk: tool call start
-        chunk1 = """data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}"""
         state = UniLM.StreamState()
-        failbuff = IOBuffer()
-        UniLM._parse_chunk(chunk1, state, failbuff)
+        carry = IOBuffer()
+        dispatch("data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_abc\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"\"}}]},\"finish_reason\":null}]}\n", state; carry)
         @test haskey(state.tool_calls, 0)
         @test state.tool_calls[0]["id"] == "call_abc"
         @test state.tool_calls[0]["function"]["name"] == "get_weather"
-
-        # Second chunk: arguments fragment
-        chunk2 = """data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\\"location\\\":"}}]},"finish_reason":null}]}"""
-        UniLM._parse_chunk(chunk2, state, failbuff)
-
-        chunk3 = """data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\\"NYC\\\"}"}}]},"finish_reason":null}]}"""
-        UniLM._parse_chunk(chunk3, state, failbuff)
-
+        dispatch("data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"location\\\":\"}}]},\"finish_reason\":null}]}\n", state; carry)
+        dispatch("data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"NYC\\\"}\"}}]},\"finish_reason\":null}]}\n", state; carry)
         @test state.tool_calls[0]["function"]["arguments"] == "{\"location\":\"NYC\"}"
-
-        # Finish
-        chunk4 = """data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"""
-        result = UniLM._parse_chunk(chunk4, state, failbuff)
+        dispatch("data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n", state; carry)
         @test state.finish_reason == "tool_calls"
     end
 
     @testset "usage captured from stream chunk" begin
-        chunk = """data: {"id":"chatcmpl-1","choices":[],"usage":{"prompt_tokens":25,"completion_tokens":10,"total_tokens":35}}"""
         state = UniLM.StreamState()
-        failbuff = IOBuffer()
-        UniLM._parse_chunk(chunk, state, failbuff)
+        dispatch("data: {\"id\":\"chatcmpl-1\",\"choices\":[],\"usage\":{\"prompt_tokens\":25,\"completion_tokens\":10,\"total_tokens\":35}}\n", state)
         @test !isnothing(state.usage)
         @test state.usage.prompt_tokens == 25
         @test state.usage.completion_tokens == 10

@@ -85,4 +85,39 @@ end
         UniLM._parse_chunk(usage_chunk, state2, fb2)
         @test_broken state2.usage !== nothing && isempty(String(take!(fb2)))
     end
+
+    @testset "P0-1/P0-2c streamed tool call end-to-end (fragmented)" begin
+        # One tool call whose arguments complete only in later reads, then a
+        # usage-only chunk, then [DONE] — each in its own TCP write.
+        chunks = [
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"\"}}]},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"city\\\":\"}}]},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"Oslo\\\"}\"}}]},\"finish_reason\":null}]}\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":9,\"total_tokens\":16}}\n\n",
+            "data: [DONE]\n\n",
+        ]
+        server, base = sse_mock_server(chunks)
+        try
+            chat = Chat(service=GenericOpenAIEndpoint(base, ""), model="mock",
+                        stream=true,
+                        tools=[GPTTool(func=GPTFunctionSignature(name="get_weather"))])
+            push!(chat, Message(Val(:system), "s"))
+            push!(chat, Message(Val(:user), "u"))
+            fired = Ref(0)
+            task = chatrequest!(chat; on_tool_call = tc -> (fired[] += 1))
+            res = fetch(task)
+            # P0-1: the callback must fire exactly once for the completed call.
+            # (Gate at requests.jl:305 only re-checks when a NEW index appears.)
+            @test_broken fired[] == 1
+            # P0-2c: the fragmented usage chunk must not turn success into failure
+            # (failbuff glue at requests.jl:302 destroys the [DONE] line today).
+            @test_broken res isa LLMSuccess
+            # Usage from the final chunk must be captured.
+            @test_broken res isa LLMSuccess && res.usage !== nothing &&
+                         res.usage.total_tokens == 16
+        finally
+            close(server)
+        end
+    end
 end

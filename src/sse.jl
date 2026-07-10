@@ -1,6 +1,5 @@
 # ============================================================================
-# Shared SSE machine — Decision 1 of the wave-1 architecture spec
-# (docs/superpowers/specs/2026-07-10-wave1-p0-architecture.md). Three layers:
+# Shared SSE machine. Three layers:
 #   1. _sse_complete_lines!  — line assembly across arbitrary read boundaries
 #   2. _sse_events!          — SSE field framing → (event, data-payload) pairs
 #   3. handle_sse_event!     — per-provider event handlers (the seam), driven
@@ -128,7 +127,7 @@ end
 Parse a streamed tool call's accumulated `arguments` JSON string. A zero-arg
 tool call may stream `arguments` as `""` (Anthropic sends no
 `input_json_delta` for `{}` input) — that parses as an empty object instead
-of destroying the turn (P0-15b). Anything else must be a JSON object; a
+of destroying the turn. Anything else must be a JSON object; a
 non-object payload throws a loud `ArgumentError`. Shared by
 `_build_stream_message` and the driver's `on_tool_call` firing.
 """
@@ -142,7 +141,7 @@ end
 
 # ─── OpenAI-wire default handler (Chat Completions SSE) ─────────────────────
 # The untyped-`service` method: DeepSeek, Azure, the Gemini OpenAI-compat shim,
-# and GenericOpenAIEndpoint all speak this wire. Contract (Decision 1):
+# and GenericOpenAIEndpoint all speak this wire. Contract:
 # `[DONE]` is the ONLY end-of-stream — `finish_reason` is recorded but never
 # terminal (the stream_options.include_usage chunk trails it); `choices` may
 # be empty (usage-only chunks, Azure prompt-filter preambles) — iterate, never

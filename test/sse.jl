@@ -1,6 +1,5 @@
 # ============================================================================
-# Shared SSE machine (src/sse.jl) — unit + driver tests. Decision 1 of
-# docs/superpowers/specs/2026-07-10-wave1-p0-architecture.md.
+# Shared SSE machine (src/sse.jl) — unit + driver tests.
 # Fully offline (zero-spend). Self-contained: own imports + own mock server.
 # ============================================================================
 using UniLM
@@ -9,7 +8,7 @@ using Test, HTTP, JSON, Sockets
 
 # Fragmenting SSE mock (portable across HTTP 1.9/2.x — same intersection APIs
 # as test/regression_p0.jl's: no listen!(stream=true), drain with read()).
-function ws1_stream_server(chunks::Vector{String}; gap::Float64=0.4)
+function fragmented_sse_server(chunks::Vector{String}; gap::Float64=0.4)
     tcp = Sockets.listen(Sockets.localhost, 0)
     port = Int(Sockets.getsockname(tcp)[2])
     close(tcp)
@@ -29,9 +28,10 @@ end
 
 # Test seam: an endpoint that speaks OpenAI-wire ROUTING to the local mock but
 # parses SSE with the ANTHROPIC handler — the sanctioned way to drive Anthropic
-# wire through the provider-agnostic driver without base-URL injection (a
-# wave-2 item per the spec). Also witnesses that handle_sse_event! is an
-# overridable seam, as decode_stream_chunk was.
+# wire through the provider-agnostic driver without base-URL injection (the
+# Anthropic endpoint type does not currently support overriding its base URL).
+# Also witnesses that handle_sse_event! is an overridable seam, as
+# decode_stream_chunk was.
 struct AnthropicWireEndpoint <: UniLM.ServiceEndpoint
     base_url::String
 end
@@ -106,21 +106,21 @@ end
     end
 end
 
-@testset "_parse_tool_arguments — zero-arg contract (P0-15b mechanism)" begin
+@testset "_parse_tool_arguments — zero-arg contract" begin
     @test UniLM._parse_tool_arguments("") == Dict{String,Any}()
     @test UniLM._parse_tool_arguments("  ") == Dict{String,Any}()
     @test UniLM._parse_tool_arguments("{\"city\":\"Oslo\"}") == Dict{String,Any}("city" => "Oslo")
     @test_throws ArgumentError UniLM._parse_tool_arguments("[1,2]")   # non-object: loud, not silent
 end
 
-@testset "StreamState — WS1 additions" begin
+@testset "StreamState — streaming-machine additions" begin
     st = StreamState()
     @test st.error === nothing
     @test st.fired_tool_calls == Set{Int}()
     @test st.pending_delta isa IOBuffer
 end
 
-@testset "handle_sse_event! (OpenAI-wire default) — Decision 1 contracts" begin
+@testset "handle_sse_event! (OpenAI-wire default) — wire contracts" begin
     S = OPENAIServiceEndpoint
 
     @testset "[DONE] is the ONLY EOS; finish_reason only records" begin
@@ -213,7 +213,7 @@ end
         @test UniLM.handle_sse_event!(A, "message_stop", "{\"type\":\"message_stop\"}", st) === :done
     end
 
-    @testset "error event → :error with payload stored (P0-4 mechanism)" begin
+    @testset "error event → :error with payload stored" begin
         st = StreamState()
         r = UniLM.handle_sse_event!(A, "error",
             "{\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}", st)
@@ -278,7 +278,7 @@ end
             "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"lo\"},\"finish_reason\":null}]}\n\n",
             "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
         ]
-        server, base = ws1_stream_server(chunks)
+        server, base = fragmented_sse_server(chunks)
         try
             chat = Chat(service=GenericOpenAIEndpoint(base, ""), model="mock", stream=true)
             push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
@@ -301,7 +301,7 @@ end
             "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null}]}\n\n",
             "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
         ]
-        server, base = ws1_stream_server(chunks)
+        server, base = fragmented_sse_server(chunks)
         try
             chat = Chat(service=GenericOpenAIEndpoint(base, ""), model="mock", stream=true)
             push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
@@ -314,7 +314,7 @@ end
 
     @testset "EOF with NO terminal signal (truncated stream) → LLMFailure" begin
         chunks = ["data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null}]}\n\n"]
-        server, base = ws1_stream_server(chunks)
+        server, base = fragmented_sse_server(chunks)
         try
             chat = Chat(service=GenericOpenAIEndpoint(base, ""), model="mock", stream=true)
             push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
@@ -326,12 +326,12 @@ end
         end
     end
 
-    @testset "in-band overloaded error → LLMFailure(529), never LLMSuccess (P0-4 mapping)" begin
+    @testset "in-band overloaded error → LLMFailure(529), never LLMSuccess" begin
         chunks = [
             "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"par\"}}\n\n",
             "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n",
         ]
-        server, base = ws1_stream_server(chunks)
+        server, base = fragmented_sse_server(chunks)
         try
             chat = Chat(service=AnthropicWireEndpoint(base), model="claude-mock", stream=true)
             push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
@@ -346,7 +346,7 @@ end
 
     @testset "in-band non-overloaded error → LLMCallError" begin
         chunks = ["event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"bad\"}}\n\n"]
-        server, base = ws1_stream_server(chunks)
+        server, base = fragmented_sse_server(chunks)
         try
             chat = Chat(service=AnthropicWireEndpoint(base), model="claude-mock", stream=true)
             push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
@@ -364,7 +364,7 @@ end
             "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\n" *
             "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
         ]
-        server, base = ws1_stream_server(chunks)
+        server, base = fragmented_sse_server(chunks)
         try
             chat = Chat(service=AnthropicWireEndpoint(base), model="claude-mock", stream=true)
             push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
@@ -381,7 +381,7 @@ end
             "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_2\",\"type\":\"function\",\"function\":{\"name\":\"f2\",\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\n",
             "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
         ]
-        server, base = ws1_stream_server(chunks)
+        server, base = fragmented_sse_server(chunks)
         try
             chat = Chat(service=GenericOpenAIEndpoint(base, ""), model="mock", stream=true,
                         tools=[GPTTool(func=GPTFunctionSignature(name="f1"))])
@@ -402,12 +402,12 @@ end
             "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"b\"},\"finish_reason\":null}]}\n\n",
             "data: [DONE]\n\n",
         ]
-        server, base = ws1_stream_server(chunks)
+        server, base = fragmented_sse_server(chunks)
         try
             chat = Chat(service=GenericOpenAIEndpoint(base, ""), model="mock", stream=true)
             push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
             res = fetch(chatrequest!(chat; callback=(c, close_ref) -> (close_ref[] = true)))
-            @test res isa LLMFailure                          # pre-WS1 user-close contract, unchanged
+            @test res isa LLMFailure                          # user-close contract, unchanged
         finally
             close(server)
         end

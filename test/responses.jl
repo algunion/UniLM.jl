@@ -1741,7 +1741,7 @@ end
     end
 end
 
-@testset "_parse_response_stream_chunk — shared-machine framing (WS1)" begin
+@testset "_parse_response_stream_chunk — shared-machine framing" begin
     @testset "data:-without-space accepted (old parser required the space)" begin
         textbuff = IOBuffer(); failbuff = IOBuffer()
         r = UniLM._parse_response_stream_chunk(

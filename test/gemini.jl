@@ -228,7 +228,7 @@ end
     ]
     state = StreamState()
     st = UniLM._sse_dispatch!(GEMINIServiceEndpoint, IOBuffer(), Ref(""), join(lines, "\n") * "\n", state)
-    # Decision 1: Gemini has no sentinel — the handler NEVER returns :done; the
+    # Gemini has no sentinel — the handler NEVER returns :done; the
     # driver reads to EOF and finalizes on the recorded finishReason.
     @test st === :continue
     @test state.finish_reason == STOP

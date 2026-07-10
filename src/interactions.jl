@@ -194,7 +194,7 @@ decode_agentic(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)::ResponseObje
 # so _respond_stream assembles unchanged. On interaction.completed, hand back
 # {"response": <OpenAI-shaped dict>}; since the completed event omits steps, the
 # message output is rebuilt from the deltas accumulated in `textbuff`.
-# WS1: line assembly + framing now come from the shared machine (src/sse.jl).
+# Line assembly + framing now come from the shared machine (src/sse.jl).
 function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String, textbuff::IOBuffer,
                                failbuff::IOBuffer, last_event::Ref{String})
     for (ev, payload) in _sse_events!(failbuff, last_event, chunk)

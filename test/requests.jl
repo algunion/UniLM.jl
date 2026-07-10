@@ -279,7 +279,7 @@ end
         @test st === :done
     end
 
-    @testset "stop finish_reason is recorded, NOT terminal (fixed contract, Decision 1)" begin
+    @testset "stop finish_reason is recorded, NOT terminal (fixed contract)" begin
         state = UniLM.StreamState()
         st, _ = dispatch("data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n", state)
         @test st === :continue

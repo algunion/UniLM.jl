@@ -202,7 +202,8 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
     (; message=msg, usage)
 end
 
-# ─── Layer-3 handler (Decision 1) — replaces decode_stream_chunk (removed 0.11.3)
+# ─── Streaming event handler for the shared SSE machine (src/sse.jl) —
+# replaces decode_stream_chunk (removed in 0.11.3).
 # Gemini streaming has NO sentinel EOS: this handler NEVER returns :done — the
 # driver reads to EOF, so trailing usageMetadata-only chunks are consumed.
 # finishReason only records state.finish_reason (EOS-on-finishReason was the

@@ -1228,7 +1228,7 @@ try
         # then the assembled final Message. The canned single-write transport may still
         # deliver everything in one read, so assert transport-agnostically: all leading
         # callback payloads are Strings that concatenate to the full text; the last is
-        # the Message. (Pre-WS1 this transport could only ever observe the final Message.)
+        # the Message. (Before delta-forwarding, this transport could only ever observe the final Message.)
         response_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] =
@@ -2001,7 +2001,7 @@ try
     # ═══════════════════════════════════════════════════════════════════════
 
     # ── TARGET A: on_tool_call callback that THROWS is isolated (requests.jl:276)
-    @testset "stream on_tool_call callback error is swallowed, stream still succeeds (276)" begin
+    @testset "stream on_tool_call callback error is swallowed, stream still succeeds" begin
         # Same single streamed tool call as the on_tool_call success test, but the
         # user callback raises. Line 270–277 wraps on_tool_call in try/catch; the
         # throw must hit the catch (276, @warn) and be SWALLOWED — the spawned task

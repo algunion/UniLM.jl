@@ -175,7 +175,8 @@ function decode_response(::Type{ANTHROPICServiceEndpoint}, resp::HTTP.Response)
     (; message=msg, usage)
 end
 
-# ─── Layer-3 handler (Decision 1) — replaces decode_stream_chunk (removed 0.11.3)
+# ─── Streaming event handler for the shared SSE machine (src/sse.jl) —
+# replaces decode_stream_chunk (removed in 0.11.3).
 # Populates the SAME StreamState fields the OpenAI path uses so the shared
 # _build_stream_message rebuilds the neutral Message unchanged. EOS on
 # `message_stop`; an in-band `error` event stores its payload in state.error

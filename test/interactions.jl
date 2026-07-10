@@ -128,7 +128,7 @@ end
     @test String(take!(tb2)) == "b"                       # stashed fragment completed
 
     # (c) a malformed COMPLETE data line is dropped + counted (never re-queued
-    # into the carry) — the WS1 machine's contract; no crash, stream continues.
+    # into the carry) — the shared machine's contract; no crash, stream continues.
     before = UniLM._SSE_DROPPED_LINES[]
     tb3 = IOBuffer(); fb3 = IOBuffer(); ev3 = Ref("")
     st3 = UniLM.decode_agentic_stream(GEMINIServiceEndpoint,

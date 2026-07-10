@@ -155,7 +155,7 @@ end
     tool_calls::Dict{Int, Dict{String,Any}} = Dict{Int, Dict{String,Any}}()
     finish_reason::Union{String, Nothing} = nothing
     usage::Union{TokenUsage, Nothing} = nothing
-    # ── WS1 (Decision 1) additions ──
+    # ── streaming-machine additions (0.11.3) ──
     # Text deltas collected by handlers, not yet forwarded to the callback;
     # the driver take!s and forwards verbatim (kills the take!/re-print churn).
     pending_delta::IOBuffer = IOBuffer()
@@ -174,11 +174,11 @@ function _build_stream_message(state::StreamState)::Message
         for idx in sort!(collect(keys(state.tool_calls)))
             tc_data = state.tool_calls[idx]
             fdict = tc_data["function"]
-            args = _parse_tool_arguments(fdict["arguments"])   # "" → Dict{String,Any}() (P0-15b)
+            args = _parse_tool_arguments(fdict["arguments"])   # "" → Dict{String,Any}() (zero-arg tool call)
             push!(tcalls, GPTToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
                 thought_signature=get(tc_data, "thought_signature", nothing)))
         end
-        # Keep accumulated text ALONGSIDE the tool calls (P0-15a): providers emit
+        # Keep accumulated text ALONGSIDE the tool calls: providers emit
         # both in one turn and the non-streaming decoders already preserve both.
         Message(role=RoleAssistant, content=(isempty(content) ? nothing : content),
                 tool_calls=tcalls, finish_reason=TOOL_CALLS)
@@ -213,7 +213,7 @@ Default: OpenAI Chat Completions (`extract_message`).
 """
 decode_response(service, resp::HTTP.Response) = extract_message(resp)
 
-# ─── Streaming driver helpers (Decision 1) ───────────────────────────────────
+# ─── Streaming driver helpers ────────────────────────────────────────────────
 
 """
     _flush_delta!(callback, state::StreamState, close_ref) -> Nothing
@@ -232,13 +232,13 @@ end
 """
     _fire_tool_calls!(on_tool_call, state::StreamState, stream_done::Bool) -> Nothing
 
-Provider-agnostic `on_tool_call` completion detection (Decision 1, P0-1). A
+Provider-agnostic `on_tool_call` completion detection. A
 tool call at index `i` is complete when (a) `i` is no longer the max index (a
 later call started), OR (b) its entry carries `"complete" => true` (Anthropic
 `content_block_stop` / Gemini whole-part functionCall), OR (c) the stream is
 done (`stream_done` — the final sweep). Fires at most once per index
 (`state.fired_tool_calls`). Empty accumulated arguments parse as
-`Dict{String,Any}()` via `_parse_tool_arguments` (P0-15b).
+`Dict{String,Any}()` via `_parse_tool_arguments`.
 """
 function _fire_tool_calls!(on_tool_call, state::StreamState, stream_done::Bool)::Nothing
     (isnothing(on_tool_call) || isempty(state.tool_calls)) && return nothing
@@ -271,13 +271,9 @@ end
     _stream_error_result(chat, err::Dict{String,Any}, request_id)
 
 Map an in-band SSE `error` payload (`state.error`) to a typed non-success
-result (Decision 1 / P0-4): `overloaded_error` is the documented
+result: `overloaded_error` is the documented
 529-equivalent → `LLMFailure(status=529)` (status-keyed policies see it);
 any other in-band error type → `LLMCallError` (no fabricated HTTP status).
-NOTE (spec ambiguity resolved 2026-07-10): Decision 1's text places this
-mapping in WS1 although the workstream table lists "P0-4(result mapping)"
-under WS2 — WS1 ships capture + mapping; WS2 re-verifies under Decision-2
-streaming assembly and adds its own result-mapping red test.
 """
 function _stream_error_result(chat::Chat, err::Dict{String,Any}, request_id)
     inner = get(err, "error", nothing)
@@ -330,7 +326,7 @@ function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
                     end
                 end
                 stream_error[] = state.error
-                # Terminal contract (Decision 1): `:done` is the sentinel EOS
+                # Terminal contract: `:done` is the sentinel EOS
                 # ([DONE] / message_stop). Gemini has NO sentinel — its handler
                 # never returns :done; its stream ends at EOF with finishReason
                 # recorded. EOF with NEITHER signal = truncated/garbage stream
@@ -338,7 +334,7 @@ function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
                 finished = status === :done ||
                            (status === :continue && !isnothing(state.finish_reason))
                 if isnothing(state.error) && !close_ref[] && finished
-                    _fire_tool_calls!(on_tool_call, state, true)   # final sweep BEFORE the terminal callback (P0-1)
+                    _fire_tool_calls!(on_tool_call, state, true)   # final sweep BEFORE the terminal callback
                     m[] = _build_stream_message(state)
                     stream_usage[] = state.usage
                     !isnothing(callback) && callback(m[], close_ref)
@@ -347,7 +343,7 @@ function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
                 HTTP.closeread(io)
             end
             if !isnothing(stream_error[])
-                # In-band `error` event on an HTTP-200 stream (P0-4): never LLMSuccess.
+                # In-band `error` event on an HTTP-200 stream: never LLMSuccess.
                 _stream_error_result(chat, stream_error[], _get_request_id(resp))
             elseif resp.status == 200 && !isnothing(m[])
                 msg = m[]::Message

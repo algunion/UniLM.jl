@@ -1,9 +1,8 @@
 # ============================================================================
-# P0 regression suite — falsification harness for the 2026-07-10 review
-# (grounding/quality-review-2026-07-10.md). Every test states the FIXED
-# contract wrapped in @test_broken. Fix PRs flip @test_broken → @test.
-# An "Error (unexpected pass)" means the finding is refuted: delete the test
-# and downgrade the finding. Fully offline (zero-spend).
+# Known-defect regression suite: every `@test_broken` pins a confirmed,
+# reproduced bug until its fix lands. An unexpected pass errors CI, so a fix
+# must flip the test (@test_broken → @test) in the same commit. Ids (P0-n)
+# are stable tracking keys for the staged fixes. Fully offline (zero-spend).
 # ============================================================================
 
 using Sockets
@@ -121,9 +120,6 @@ end
     end
 
     @testset "P0-15 _build_stream_message contracts" begin
-        # (Finding #15 is filed under P1 in grounding/quality-review-2026-07-10.md,
-        # folded into wave 1 because WS1 fixes it — flagged so a future coverage
-        # audit doesn't miscount P0s.)
         # (a) Providers emit assistant text AND tool calls in one turn (Gemini-3
         # routinely, Anthropic text-before-tool_use). The builder must keep both;
         # today the text branch is skipped whenever tool_calls exist
@@ -185,8 +181,7 @@ end
         # FIXED contract: the in-band error (documented 529-equivalent on an
         # HTTP-200 stream) is captured on the state and signalled terminally,
         # so the driver returns LLMFailure/LLMCallError instead of
-        # LLMSuccess-with-truncated-content. Driver mapping: Task 6 (WS1);
-        # WS2 re-verifies it under Decision-2 assembly with its own red test.
+        # LLMSuccess-with-truncated-content.
         @test st === :error
         @test state.error !== nothing
         @test state.error["error"]["type"] == "overloaded_error"

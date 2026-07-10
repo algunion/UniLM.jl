@@ -147,4 +147,29 @@ end
         state2.finish_reason = UniLM.TOOL_CALLS
         @test_broken (UniLM._build_stream_message(state2); true)
     end
+
+    @testset "P0-3 Anthropic thinking block round-trip" begin
+        resp_json = """
+        {"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-5",
+         "content":[{"type":"thinking","thinking":"user wants weather","signature":"sig=="},
+                    {"type":"tool_use","id":"toolu_1","name":"get_weather","input":{"city":"Oslo"}}],
+         "stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":5}}
+        """
+        # 3-arg ctor (cf. test/anthropic.jl): a String body becomes BytesBody in HTTP 2.x,
+        # which decode's JSON.parse can't consume; a Vector{UInt8} body works on HTTP 1.x + 2.x.
+        dec = UniLM.decode_response(ANTHROPICServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(resp_json)))
+        msgs = [Message(role=UniLM.RoleUser, content="weather in Oslo?"),
+                dec.message,
+                Message(role=UniLM.RoleTool, content="12C", tool_call_id="toolu_1")]
+        _, wire = UniLM._anthropic_messages(msgs)
+        asst = wire[2][:content]
+        # FIXED contract: the assistant turn opens with the thinking block,
+        # signature intact (echoed verbatim). Tolerate Symbol- or String-keyed
+        # blocks (verbatim echo of decoded JSON is String-keyed).
+        _get(b, k) = b isa AbstractDict ? get(b, k, get(b, String(k), nothing)) : nothing
+        @test_broken asst isa AbstractVector && length(asst) >= 2 &&
+                     _get(asst[1], :type) == "thinking" &&
+                     _get(asst[1], :signature) == "sig==" &&
+                     _get(asst[end], :type) == "tool_use"
+    end
 end

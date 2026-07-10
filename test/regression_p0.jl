@@ -202,4 +202,34 @@ end
                      any(item -> item isa AbstractDict && get(item, "type", "") == "function_call" &&
                                  get(item, "name", "") == "get_weather", out)
     end
+
+    @testset "P0-6 Gemini id-less parallel call correlation" begin
+        # FunctionCall.id is Optional in the Gemini API — two id-less parallel
+        # calls currently both key tool_names[""] (gemini.jl:67,105,184),
+        # last-wins, so every functionResponse is attributed to the last call.
+        resp_json = """
+        {"candidates":[{"content":{"role":"model","parts":[
+           {"functionCall":{"name":"get_weather","args":{"city":"Oslo"}}},
+           {"functionCall":{"name":"get_time","args":{"tz":"CET"}}}]},
+          "finishReason":"STOP"}],
+         "usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":2,"totalTokenCount":3}}
+        """
+        # 3-arg ctor (cf. test/gemini.jl): a String body becomes BytesBody in HTTP 2.x,
+        # which decode's JSON.parse can't consume; a Vector{UInt8} body works on HTTP 1.x + 2.x.
+        dec = UniLM.decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(resp_json)))
+        tcs = dec.message.tool_calls
+        ids_ok = !isnothing(tcs) && length(tcs) == 2 && allunique([tc.id for tc in tcs])
+        corr_ok = if ids_ok
+            msgs = [Message(role=UniLM.RoleUser, content="hi"),
+                    dec.message,
+                    Message(role=UniLM.RoleTool, content="12C",   tool_call_id=tcs[1].id),
+                    Message(role=UniLM.RoleTool, content="14:00", tool_call_id=tcs[2].id)]
+            _, contents = UniLM._gemini_contents(msgs)
+            frs = [p[:functionResponse] for p in contents[end][:parts]]
+            length(frs) == 2 && frs[1][:name] == "get_weather" && frs[2][:name] == "get_time"
+        else
+            false
+        end
+        @test_broken ids_ok && corr_ok
+    end
 end

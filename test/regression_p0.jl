@@ -120,4 +120,31 @@ end
             close(server)
         end
     end
+
+    @testset "P0-15 _build_stream_message contracts" begin
+        # (a) Providers emit assistant text AND tool calls in one turn (Gemini-3
+        # routinely, Anthropic text-before-tool_use). The builder must keep both;
+        # today the text branch is skipped whenever tool_calls exist
+        # (requests.jl:220-230), while the non-streaming decoders keep both.
+        state = UniLM.StreamState()
+        print(state.content, "Let me check the weather.")
+        state.tool_calls[0] = Dict{String,Any}(
+            "id" => "call_1", "type" => "function",
+            "function" => Dict{String,Any}("name" => "get_weather",
+                                           "arguments" => "{\"city\":\"Oslo\"}"))
+        state.finish_reason = UniLM.TOOL_CALLS
+        msg = UniLM._build_stream_message(state)
+        @test_broken msg.content == "Let me check the weather." &&
+                     !isnothing(msg.tool_calls) && length(msg.tool_calls) == 1
+
+        # (b) A zero-argument tool call streams arguments as "" (Anthropic
+        # input_json_delta may never arrive for `{}` input). JSON.parse("")
+        # throws today and destroys the whole turn.
+        state2 = UniLM.StreamState()
+        state2.tool_calls[0] = Dict{String,Any}(
+            "id" => "call_2", "type" => "function",
+            "function" => Dict{String,Any}("name" => "ping", "arguments" => ""))
+        state2.finish_reason = UniLM.TOOL_CALLS
+        @test_broken (UniLM._build_stream_message(state2); true)
+    end
 end

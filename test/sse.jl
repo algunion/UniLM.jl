@@ -85,3 +85,88 @@ end
     @test st.fired_tool_calls == Set{Int}()
     @test st.pending_delta isa IOBuffer
 end
+
+@testset "handle_sse_event! (OpenAI-wire default) — Decision 1 contracts" begin
+    S = OPENAIServiceEndpoint
+
+    @testset "[DONE] is the ONLY EOS; finish_reason only records" begin
+        st = StreamState()
+        @test UniLM.handle_sse_event!(S, "", "[DONE]", st) === :done
+        st2 = StreamState()
+        @test UniLM.handle_sse_event!(S, "",
+            "{\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}", st2) === :continue
+        @test st2.finish_reason == "stop"
+    end
+
+    @testset "choices:[] tolerated; usage captured from any chunk" begin
+        st = StreamState()
+        @test UniLM.handle_sse_event!(S, "",
+            "{\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}",
+            st) === :continue
+        @test st.usage !== nothing && st.usage.total_tokens == 3
+    end
+
+    @testset "content delta lands in content AND pending_delta" begin
+        st = StreamState()
+        UniLM.handle_sse_event!(S, "", "{\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}", st)
+        @test String(take!(st.pending_delta)) == "hi"
+        @test String(take!(st.content)) == "hi"
+    end
+
+    @testset "refusal delta accumulates" begin
+        st = StreamState()
+        UniLM.handle_sse_event!(S, "", "{\"choices\":[{\"index\":0,\"delta\":{\"refusal\":\"no\"}}]}", st)
+        @test String(take!(st.refusal)) == "no"
+    end
+
+    @testset "tool-call deltas accumulate by index" begin
+        st = StreamState()
+        UniLM.handle_sse_event!(S, "",
+            "{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_abc\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"\"}}]}}]}", st)
+        UniLM.handle_sse_event!(S, "",
+            "{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"location\\\":\"}}]}}]}", st)
+        UniLM.handle_sse_event!(S, "",
+            "{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"NYC\\\"}\"}}]}}]}", st)
+        @test st.tool_calls[0]["id"] == "call_abc"
+        @test st.tool_calls[0]["function"]["name"] == "get_weather"
+        @test st.tool_calls[0]["function"]["arguments"] == "{\"location\":\"NYC\"}"
+    end
+end
+
+@testset "_sse_dispatch! (OpenAI wire) — drop policy + adversarial wire" begin
+    S = OPENAIServiceEndpoint
+
+    @testset "malformed COMPLETE line: dropped + counted, carry stays EMPTY" begin
+        before = UniLM._SSE_DROPPED_LINES[]
+        st = StreamState(); carry = IOBuffer()
+        @test UniLM._sse_dispatch!(S, carry, Ref(""), "data: {invalid json\n", st) === :continue
+        @test UniLM._SSE_DROPPED_LINES[] == before + 1
+        @test isempty(take!(carry))          # never re-queued — the Azure/proxy poison fix
+    end
+
+    @testset "keep-alive comments and Azure-style empty-choices preamble are harmless" begin
+        st = StreamState(); carry = IOBuffer()
+        chunk = ": keep-alive\n\ndata: {\"choices\":[],\"prompt_filter_results\":[]}\n\n" *
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n"
+        @test UniLM._sse_dispatch!(S, carry, Ref(""), chunk, st) === :continue
+        @test String(take!(st.content)) == "ok"
+        @test isempty(take!(carry))
+    end
+
+    @testset "golden stream re-split at every byte → identical final state" begin
+        golden = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Saint-Exupéry\"},\"finish_reason\":null}]}\n\n" *
+                 "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" *
+                 "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":7,\"total_tokens\":12}}\n\n" *
+                 "data: [DONE]\n\n"
+        bytes = Vector{UInt8}(golden)
+        ok = true
+        for k in 1:length(bytes)-1
+            st = StreamState(); carry = IOBuffer(); ev = Ref("")
+            s1 = UniLM._sse_dispatch!(S, carry, ev, String(bytes[1:k]), st)
+            s2 = s1 === :continue ? UniLM._sse_dispatch!(S, carry, ev, String(bytes[k+1:end]), st) : s1
+            ok &= (s2 === :done) & (String(take!(st.content)) == "Saint-Exupéry") &
+                  (st.finish_reason == "stop") & (st.usage !== nothing && st.usage.total_tokens == 12)
+        end
+        @test ok
+    end
+end

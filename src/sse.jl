@@ -139,3 +139,55 @@ function _parse_tool_arguments(args::AbstractString)::Dict{String,Any}
         "streamed tool-call arguments must be a JSON object, got $(typeof(parsed))"))
     parsed
 end
+
+# ─── OpenAI-wire default handler (Chat Completions SSE) ─────────────────────
+# The untyped-`service` method: DeepSeek, Azure, the Gemini OpenAI-compat shim,
+# and GenericOpenAIEndpoint all speak this wire. Contract (Decision 1):
+# `[DONE]` is the ONLY end-of-stream — `finish_reason` is recorded but never
+# terminal (the stream_options.include_usage chunk trails it); `choices` may
+# be empty (usage-only chunks, Azure prompt-filter preambles) — iterate, never
+# index [1]; `usage` is captured from any chunk.
+function handle_sse_event!(service, event::AbstractString, payload::AbstractString,
+                           state::StreamState)::Symbol
+    payload == "[DONE]" && return :done
+    parsed = JSON.parse(payload; dicttype=Dict{String,Any})
+    parsed isa AbstractDict || return :continue
+    u = get(parsed, "usage", nothing)
+    u isa AbstractDict && (state.usage = _token_usage_from(u))
+    choices = get(parsed, "choices", nothing)
+    choices isa AbstractVector || return :continue
+    for cho in choices
+        cho isa AbstractDict || continue
+        fr = get(cho, "finish_reason", nothing)
+        fr isa AbstractString && (state.finish_reason = fr)
+        delta = get(cho, "delta", nothing)
+        delta isa AbstractDict || continue
+        c = get(delta, "content", nothing)
+        if c isa AbstractString
+            print(state.content, c)
+            print(state.pending_delta, c)
+        end
+        r = get(delta, "refusal", nothing)
+        r isa AbstractString && print(state.refusal, r)
+        tcs = get(delta, "tool_calls", nothing)
+        tcs isa AbstractVector || continue
+        for tc_delta in tcs
+            tc_delta isa AbstractDict || continue
+            idx = tc_delta["index"]
+            entry = get!(state.tool_calls, idx) do
+                Dict{String,Any}("id" => "", "type" => get(tc_delta, "type", "function"),
+                    "function" => Dict{String,Any}("name" => "", "arguments" => ""))
+            end
+            id = get(tc_delta, "id", nothing)
+            id isa AbstractString && !isempty(id) && (entry["id"] = id)
+            fd = get(tc_delta, "function", nothing)
+            if fd isa AbstractDict
+                n = get(fd, "name", nothing)
+                n isa AbstractString && (entry["function"]["name"] *= n)
+                a = get(fd, "arguments", nothing)
+                a isa AbstractString && (entry["function"]["arguments"] *= a)
+            end
+        end
+    end
+    :continue
+end

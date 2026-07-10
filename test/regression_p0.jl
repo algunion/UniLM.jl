@@ -67,25 +67,23 @@ end
                          setdiff(fieldnames(Chat), skip))
     end
 
-    @testset "P0-2 chat SSE unit contracts" begin
-        # (a) finish_reason=="stop" must NOT end the stream — only `data: [DONE]`
-        # may. Ending early skips the trailing usage-only chunk (requests.jl:180).
+    @testset "P0-2 chat SSE unit contracts (ported to handle_sse_event! seam)" begin
+        # (a) finish_reason=="stop" must NOT end the stream — only `data: [DONE]` may.
         state = UniLM.StreamState()
-        fb = IOBuffer()
+        carry = IOBuffer()
         finish_chunk = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\n"
-        r = UniLM._parse_chunk(finish_chunk, state, fb)
-        @test_broken r.eos == false
+        st = UniLM._sse_dispatch!(OPENAIServiceEndpoint, carry, Ref(""), finish_chunk, state)
+        @test st === :continue
+        @test state.finish_reason == "stop"        # recorded, not terminal
 
         # (b) the stream_options.include_usage final chunk has `"choices": []`
-        # (documented). It must yield usage AND leave the carry buffer empty —
-        # today choices[1] throws and the whole line is stashed in failbuff
-        # (requests.jl:176,212), which later glues onto `data: [DONE]` with no
-        # newline and corrupts the stream.
+        # (documented). It must yield usage AND leave the carry buffer empty.
         state2 = UniLM.StreamState()
-        fb2 = IOBuffer()
+        carry2 = IOBuffer()
         usage_chunk = "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}\n\n"
-        UniLM._parse_chunk(usage_chunk, state2, fb2)
-        @test_broken state2.usage !== nothing && isempty(String(take!(fb2)))
+        st2 = UniLM._sse_dispatch!(OPENAIServiceEndpoint, carry2, Ref(""), usage_chunk, state2)
+        @test st2 === :continue
+        @test state2.usage !== nothing && isempty(String(take!(carry2)))
     end
 
     @testset "P0-1/P0-2c streamed tool call end-to-end (fragmented)" begin

@@ -29,6 +29,10 @@ end
         include("requests.jl")
     end
 
+    @testset "P0 regression suite" begin
+        include("regression_p0.jl")
+    end
+
     @testset "responses.jl" begin
         include("responses.jl")
     end

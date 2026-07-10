@@ -172,4 +172,17 @@ end
                      _get(asst[1], :signature) == "sig==" &&
                      _get(asst[end], :type) == "tool_use"
     end
+
+    @testset "P0-4 Anthropic error event is not success" begin
+        state = UniLM.StreamState()
+        fb = IOBuffer()
+        err_chunk = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n"
+        UniLM.decode_stream_chunk(ANTHROPICServiceEndpoint, err_chunk, state, fb)
+        # FIXED contract: the error payload is captured distinguishably on the
+        # state so the driver can return LLMFailure/LLMCallError instead of
+        # LLMSuccess-with-truncated-content (anthropic.jl:227 currently folds
+        # `error` into plain EOS and discards the payload; the in-band error is
+        # the documented 529-equivalent on an HTTP-200 stream).
+        @test_broken hasproperty(state, :error) && getproperty(state, :error) !== nothing
+    end
 end

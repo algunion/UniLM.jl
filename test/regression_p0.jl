@@ -253,4 +253,20 @@ end
         end
         @test_broken ok
     end
+
+    @testset "P0-9 MCP client skips interleaved notifications" begin
+        # Server-initiated notifications (tools/list_changed, logging — legal at
+        # any time) currently get consumed as "the response": id mismatch is only
+        # @warn'ed and `{}` is returned as the result (mcp_client.jl:186-194,337),
+        # desyncing every subsequent call. FIXED contract: read until the
+        # matching id, return the real result.
+        t = UniLM.StdioTransport(`cat`)
+        t.input = IOBuffer()
+        t.output = IOBuffer("""{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n{"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n""")
+        session = UniLM.MCPSession(t, UniLM.MCPServerCapabilities(), Dict{String,Any}(),
+                                   UniLM.MCPToolInfo[], UniLM.MCPResourceInfo[],
+                                   UniLM.MCPPromptInfo[], "2025-11-25", 0, :ready)
+        res = UniLM._mcp_request!(session, "ping")
+        @test_broken get(res, "ok", false) == true
+    end
 end

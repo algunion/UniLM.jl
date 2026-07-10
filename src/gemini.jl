@@ -247,3 +247,49 @@ function decode_stream_chunk(::Type{GEMINIServiceEndpoint}, chunk::String, state
     end
     (; eos)
 end
+
+# ─── Layer-3 handler (Decision 1) — replaces decode_stream_chunk (removed 0.11.3)
+# Gemini streaming has NO sentinel EOS: this handler NEVER returns :done — the
+# driver reads to EOF, so trailing usageMetadata-only chunks are consumed.
+# finishReason only records state.finish_reason (EOS-on-finishReason was the
+# old, wrong behavior: it skipped trailing usage). Each functionCall part
+# arrives whole, so its entry is marked "complete" => true (immediate
+# on_tool_call firing in the driver).
+function handle_sse_event!(::Type{GEMINIServiceEndpoint}, event::AbstractString,
+                           payload::AbstractString, state::StreamState)::Symbol
+    ev = JSON.parse(payload; dicttype=Dict{String,Any})
+    ev isa AbstractDict || return :continue
+    cands = get(ev, "candidates", nothing)
+    if cands isa AbstractVector
+        for cand in cands
+            cand isa AbstractDict || continue
+            for p in get(get(cand, "content", Dict{String,Any}()), "parts", Any[])
+                p isa AbstractDict || continue
+                if haskey(p, "text")
+                    txt = p["text"]
+                    if txt isa AbstractString
+                        print(state.content, txt)
+                        print(state.pending_delta, txt)
+                    end
+                elseif haskey(p, "functionCall")
+                    fc = p["functionCall"]
+                    fc isa AbstractDict || continue
+                    idx = length(state.tool_calls)
+                    state.tool_calls[idx] = Dict{String,Any}(
+                        "id" => get(fc, "id", ""), "type" => "function",
+                        "function" => Dict{String,Any}(
+                            "name" => get(fc, "name", ""),
+                            "arguments" => JSON.json(get(fc, "args", Dict{String,Any}()))),
+                        "thought_signature" => get(p, "thoughtSignature", nothing),
+                        "complete" => true)
+                end
+            end
+            fr = get(cand, "finishReason", nothing)
+            isnothing(fr) ||
+                (state.finish_reason = isempty(state.tool_calls) ? _gemini_finish_reason(fr) : TOOL_CALLS)
+        end
+    end
+    u = get(ev, "usageMetadata", nothing)
+    u isa AbstractDict && (state.usage = _gemini_usage(u))
+    :continue
+end

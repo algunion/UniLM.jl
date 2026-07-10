@@ -206,3 +206,33 @@ end
         @test String(take!(st.content)) == "hey"
     end
 end
+
+@testset "handle_sse_event! (Gemini) — no sentinel: NEVER :done" begin
+    G = GEMINIServiceEndpoint
+
+    @testset "finishReason records but does not terminate" begin
+        st = StreamState()
+        r = UniLM.handle_sse_event!(G, "",
+            "{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hi\"}]},\"finishReason\":\"STOP\"}]}", st)
+        @test r === :continue
+        @test st.finish_reason == STOP
+        @test String(take!(st.pending_delta)) == "hi"
+    end
+
+    @testset "trailing usageMetadata-only chunk is consumed (the reason EOF-reads exist)" begin
+        st = StreamState()
+        r = UniLM.handle_sse_event!(G, "",
+            "{\"usageMetadata\":{\"promptTokenCount\":8,\"candidatesTokenCount\":5,\"totalTokenCount\":13}}", st)
+        @test r === :continue
+        @test st.usage !== nothing && st.usage.total_tokens == 13
+    end
+
+    @testset "functionCall parts arrive whole → marked complete, signature kept" begin
+        st = StreamState()
+        UniLM.handle_sse_event!(G, "",
+            "{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"functionCall\":{\"id\":\"fc_1\",\"name\":\"get_weather\",\"args\":{\"city\":\"Oslo\"}},\"thoughtSignature\":\"SIG\"}]}}]}", st)
+        @test st.tool_calls[0]["complete"] === true
+        @test st.tool_calls[0]["thought_signature"] == "SIG"
+        @test st.tool_calls[0]["function"]["arguments"] == "{\"city\":\"Oslo\"}"
+    end
+end

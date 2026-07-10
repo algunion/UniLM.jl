@@ -232,4 +232,25 @@ end
         end
         @test_broken ids_ok && corr_ok
     end
+
+    @testset "P0-8 MCP stdio server survives non-object frames" begin
+        # A JSON array (legacy batch — MUST be a single message per spec
+        # 2025-11-25) currently raises MethodError at mcp_server.jl:456
+        # (_dispatch_mcp only accepts Dict{String,Any}) and kills the serve loop
+        # before the NEXT valid request is answered. FIXED contract: -32600 for
+        # the bad frame, normal answer for the following ping.
+        input = IOBuffer("""[{"jsonrpc":"2.0","id":1,"method":"ping"}]\n{"jsonrpc":"2.0","id":2,"method":"ping"}\n""")
+        output = IOBuffer()
+        server = MCPServer("p0-test", "0.0.0")
+        ok = try
+            UniLM._serve_stdio(server; input=input, output=output)
+            lines = split(String(take!(output)), '\n'; keepempty=false)
+            length(lines) == 2 &&
+                occursin("-32600", lines[1]) &&
+                occursin("\"id\":2", lines[2]) && occursin("result", lines[2])
+        catch
+            false
+        end
+        @test_broken ok
+    end
 end

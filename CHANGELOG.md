@@ -8,7 +8,7 @@
 - Streaming callbacks now receive each text delta as parsed (verbatim forwarding replaces O(n²) buffer re-diffing that could split multibyte characters).
 
 ### Changed
-- Behavior (pre-registered): an Anthropic stream truncated after `message_delta` but before `message_stop` now completes as `LLMSuccess` (the driver's EOF + recorded-finish_reason rule) where it previously produced `LLMFailure`.
+- Behavior change: an Anthropic stream truncated after `message_delta` but before `message_stop` now completes as `LLMSuccess` (the driver's EOF + recorded-finish_reason rule) where it previously produced `LLMFailure`.
 
 ### Removed
 - Internal (unexported, documented) streaming seam `decode_stream_chunk` and `_parse_chunk`, replaced by `handle_sse_event!(service, event, payload, state) -> :continue | :done | :error` in `src/sse.jl` (no known external overriders).

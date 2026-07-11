@@ -32,11 +32,11 @@ end
 nothing # hide
 ```
 
-The Chat Completions callback fires in a fixed sequence: once per text delta with a
-`String` argument — each chunk is newly-generated text forwarded **verbatim** as it is
-parsed, so multibyte characters are never split across chunk boundaries — and then exactly
-once at end-of-stream with the fully assembled [`Message`](@ref), whose `content` is the
-concatenation of every delta.
+The Chat Completions callback fires in a fixed sequence: with a `String` argument as text
+arrives — each argument is newly-generated text forwarded **verbatim** (several wire deltas
+may be coalesced into one callback), so multibyte characters are never split across chunk
+boundaries — and then exactly once at end-of-stream with the fully assembled
+[`Message`](@ref), whose `content` equals the concatenation of every forwarded `String`.
 
 ### Stopping a Stream Early
 
@@ -74,10 +74,11 @@ task = chatrequest!(chat;
 result = fetch(task)
 ```
 
-`on_tool_call` is Chat-Completions-streaming only. It is a notification hook — the final
-assembled `Message` still carries every tool call (alongside any assistant text), so code
-that does not set `on_tool_call` loses nothing and can read `result.message.tool_calls`
-after `fetch`.
+`on_tool_call` is supported on the `chatrequest!` streaming path for every chat provider
+(OpenAI-wire, native Anthropic, native Gemini); the Responses-API `respond` path does not
+surface it. It is a notification hook — the final assembled `Message` still carries every
+tool call (alongside any assistant text), so code that does not set `on_tool_call` loses
+nothing and can read `result.message.tool_calls` after `fetch`.
 
 ## Responses API Streaming
 
@@ -146,5 +147,5 @@ Studio, …) stream through the same `stream=true` + callback path.
 - The returned `Task` can be `fetch`ed to get the final result.
 - The `close` `Ref{Bool}` can be set to `true` from the callback to terminate the stream early.
 - On completion, the Chat Completions callback receives a `Message`; the Responses API callback receives a `ResponseObject`.
-- **Streamed usage**: set `stream_options=Dict("include_usage" => true)` to capture token usage — it lands on the result's `.usage` once the stream completes. Empty-`choices` keep-alive comments and provider preambles (e.g. Azure) are tolerated rather than ending the stream.
+- **Streamed usage**: set `stream_options=Dict("include_usage" => true)` to capture token usage — it lands on the result's `.usage` once the stream completes. Empty-`choices` chunks, `:` keep-alive comment lines, and provider preambles (e.g. Azure content-filter results) are all tolerated without affecting the stream.
 - A provider error mid-stream on an otherwise-`200` response (e.g. an Anthropic `overloaded_error`) surfaces as an `LLMFailure`/`LLMCallError`, never a truncated `LLMSuccess` — the `else` branch in the examples above catches it.

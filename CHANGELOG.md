@@ -13,6 +13,9 @@
 ### Removed
 - Internal (unexported, documented) streaming seam `decode_stream_chunk` and `_parse_chunk`, replaced by `handle_sse_event!(service, event, payload, state) -> :continue | :done | :error` in `src/sse.jl` (no known external overriders).
 
+### Compatibility
+- HTTP.jl compat capped to `"1.9, 2 - 2.5.4"`: HTTP 2.5.5's connection-pool keying change (JuliaWeb/HTTP.jl#1329) can reuse a silently-dropped idle TLS connection, hanging the next request until the kernel read timeout (~15 minutes on Linux) instead of reconnecting. Observed deterministically on CI when a pooled connection idles past the network's drop window; the cap will be lifted once a fixed HTTP.jl release ships.
+
 ## 0.11.2
 
 ### Added

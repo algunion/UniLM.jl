@@ -32,6 +32,12 @@ end
 nothing # hide
 ```
 
+The Chat Completions callback fires in a fixed sequence: once per text delta with a
+`String` argument — each chunk is newly-generated text forwarded **verbatim** as it is
+parsed, so multibyte characters are never split across chunk boundaries — and then exactly
+once at end-of-stream with the fully assembled [`Message`](@ref), whose `content` is the
+concatenation of every delta.
+
 ### Stopping a Stream Early
 
 The callback receives a `Ref{Bool}` that you can set to `true` to stop streaming:
@@ -46,6 +52,32 @@ task = chatrequest!(chat, callback=function(chunk, close)
     end
 end)
 ```
+
+### Streamed Tool Calls
+
+When the model streams tool calls, pass `on_tool_call` to be notified as each call
+completes. It fires **exactly once per tool call**, in call order, receiving a fully
+assembled [`GPTToolCall`](@ref) whose arguments are already parsed (a zero-argument call
+arrives as an empty `Dict`). The text `callback` and `on_tool_call` are independent, so a
+single request can stream assistant text and surface tool calls as they finish:
+
+```julia
+# weather_tool defined as in the Tool Calling guide
+chat = Chat(model="gpt-5.2", tools=[weather_tool], stream=true)
+push!(chat, Message(Val(:system), "Use the tools you are given."))
+push!(chat, Message(Val(:user), "What's the weather in Paris and Tokyo?"))
+
+task = chatrequest!(chat;
+    callback = (chunk, close) -> chunk isa String && print(chunk),
+    on_tool_call = tc -> println("\ntool call: ", tc.func.name, " ", tc.func.arguments),
+)
+result = fetch(task)
+```
+
+`on_tool_call` is Chat-Completions-streaming only. It is a notification hook — the final
+assembled `Message` still carries every tool call (alongside any assistant text), so code
+that does not set `on_tool_call` loses nothing and can read `result.message.tool_calls`
+after `fetch`.
 
 ## Responses API Streaming
 
@@ -114,3 +146,5 @@ Studio, …) stream through the same `stream=true` + callback path.
 - The returned `Task` can be `fetch`ed to get the final result.
 - The `close` `Ref{Bool}` can be set to `true` from the callback to terminate the stream early.
 - On completion, the Chat Completions callback receives a `Message`; the Responses API callback receives a `ResponseObject`.
+- **Streamed usage**: set `stream_options=Dict("include_usage" => true)` to capture token usage — it lands on the result's `.usage` once the stream completes. Empty-`choices` keep-alive comments and provider preambles (e.g. Azure) are tolerated rather than ending the stream.
+- A provider error mid-stream on an otherwise-`200` response (e.g. an Anthropic `overloaded_error`) surfaces as an `LLMFailure`/`LLMCallError`, never a truncated `LLMSuccess` — the `else` branch in the examples above catches it.

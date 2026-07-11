@@ -1,7 +1,7 @@
 # ============================================================================
 # Anthropic (Claude) native Messages API
 # Plugs into the wire-translation seam (encode_request / decode_response /
-# decode_stream_chunk from requests.jl) so all chat orchestration is shared.
+# handle_sse_event! from sse.jl) so all chat orchestration is shared.
 # Wire shape verified against the Anthropic Messages API docs on 2026-07-06.
 # ============================================================================
 
@@ -175,61 +175,59 @@ function decode_response(::Type{ANTHROPICServiceEndpoint}, resp::HTTP.Response)
     (; message=msg, usage)
 end
 
-# ─── Streaming decode (Anthropic SSE → StreamState) ──────────────────────────
-# Populates the SAME StreamState fields the OpenAI path uses, so the shared
-# `_build_stream_message` rebuilds the neutral Message unchanged:
-#   text_delta        → state.content
-#   tool_use block    → state.tool_calls[index] = {"id","type","function"{"name","arguments"}}
-#   input_json_delta  → append partial_json to that entry's "arguments"
-#   stop_reason       → state.finish_reason (mapped)
-#   usage             → state.usage
-# EOS on `message_stop` (or an `error` event).
-
-function decode_stream_chunk(::Type{ANTHROPICServiceEndpoint}, chunk::String, state::StreamState, failbuff)
-    eos = false
-    for line in filter(!isempty, strip.(split(chunk, "\n")))
-        startswith(line, "data:") || continue          # skip `event:` lines, blanks, pings
-        payload = strip(line[6:end])
-        isempty(payload) && continue
-        try
-            ev = JSON.parse(payload; dicttype=Dict{String,Any})
-            t = get(ev, "type", "")
-            if t == "message_start"
-                u = get(get(ev, "message", Dict{String,Any}()), "usage", nothing)
-                u isa AbstractDict && (state.usage = _anthropic_usage(u))
-            elseif t == "content_block_start"
-                cb = get(ev, "content_block", Dict{String,Any}())
-                if get(cb, "type", "") == "tool_use"
-                    state.tool_calls[ev["index"]] = Dict{String,Any}(
-                        "id" => get(cb, "id", ""), "type" => "function",
-                        "function" => Dict{String,Any}("name" => get(cb, "name", ""), "arguments" => ""))
-                end
-            elseif t == "content_block_delta"
-                idx = ev["index"]
-                d = get(ev, "delta", Dict{String,Any}())
-                dt = get(d, "type", "")
-                if dt == "text_delta"
-                    print(state.content, get(d, "text", ""))
-                elseif dt == "input_json_delta" && haskey(state.tool_calls, idx)
-                    state.tool_calls[idx]["function"]["arguments"] *= get(d, "partial_json", "")
-                end
-            elseif t == "message_delta"
-                sr = get(get(ev, "delta", Dict{String,Any}()), "stop_reason", nothing)
-                isnothing(sr) || (state.finish_reason = _anthropic_finish_reason(sr))
-                u = get(ev, "usage", nothing)
-                out = u isa AbstractDict ? get(u, "output_tokens", nothing) : nothing
-                if out isa Integer && !isnothing(state.usage)
-                    prev = state.usage
-                    state.usage = TokenUsage(prompt_tokens=prev.prompt_tokens,
-                        completion_tokens=Int(out), total_tokens=prev.prompt_tokens + Int(out),
-                        cached_tokens=prev.cached_tokens, reasoning_tokens=0)
-                end
-            elseif t == "message_stop" || t == "error"
-                eos = true
-            end
-        catch
-            print(failbuff, line)                        # partial line — re-joined on next read
+# ─── Streaming event handler for the shared SSE machine (src/sse.jl) —
+# replaces decode_stream_chunk (removed in 0.11.3).
+# Populates the SAME StreamState fields the OpenAI path uses so the shared
+# _build_stream_message rebuilds the neutral Message unchanged. EOS on
+# `message_stop`; an in-band `error` event stores its payload in state.error
+# and returns :error (the documented 529-equivalent arrives on an HTTP-200
+# stream — it must never build an LLMSuccess). `content_block_stop` on a tool
+# index marks that call complete for the driver's on_tool_call detection.
+function handle_sse_event!(::Type{ANTHROPICServiceEndpoint}, event::AbstractString,
+                           payload::AbstractString, state::StreamState)::Symbol
+    ev = JSON.parse(payload; dicttype=Dict{String,Any})
+    ev isa AbstractDict || return :continue
+    t = get(ev, "type", "")
+    if event == "error" || t == "error"
+        state.error = ev
+        return :error
+    elseif t == "message_start"
+        u = get(get(ev, "message", Dict{String,Any}()), "usage", nothing)
+        u isa AbstractDict && (state.usage = _anthropic_usage(u))
+    elseif t == "content_block_start"
+        cb = get(ev, "content_block", Dict{String,Any}())
+        if get(cb, "type", "") == "tool_use"
+            state.tool_calls[ev["index"]] = Dict{String,Any}(
+                "id" => get(cb, "id", ""), "type" => "function",
+                "function" => Dict{String,Any}("name" => get(cb, "name", ""), "arguments" => ""))
         end
+    elseif t == "content_block_delta"
+        idx = ev["index"]
+        d = get(ev, "delta", Dict{String,Any}())
+        dt = get(d, "type", "")
+        if dt == "text_delta"
+            txt = get(d, "text", "")
+            print(state.content, txt)
+            print(state.pending_delta, txt)
+        elseif dt == "input_json_delta" && haskey(state.tool_calls, idx)
+            state.tool_calls[idx]["function"]["arguments"] *= get(d, "partial_json", "")
+        end
+    elseif t == "content_block_stop"
+        idx = get(ev, "index", nothing)
+        idx isa Integer && haskey(state.tool_calls, idx) && (state.tool_calls[idx]["complete"] = true)
+    elseif t == "message_delta"
+        sr = get(get(ev, "delta", Dict{String,Any}()), "stop_reason", nothing)
+        isnothing(sr) || (state.finish_reason = _anthropic_finish_reason(sr))
+        u = get(ev, "usage", nothing)
+        out = u isa AbstractDict ? get(u, "output_tokens", nothing) : nothing
+        if out isa Integer && !isnothing(state.usage)
+            prev = state.usage
+            state.usage = TokenUsage(prompt_tokens=prev.prompt_tokens,
+                completion_tokens=Int(out), total_tokens=prev.prompt_tokens + Int(out),
+                cached_tokens=prev.cached_tokens, reasoning_tokens=0)
+        end
+    elseif t == "message_stop"
+        return :done
     end
-    (; eos)
+    :continue
 end

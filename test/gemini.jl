@@ -1,6 +1,6 @@
 # Native Gemini translation — deterministic, zero-spend unit tests.
 using UniLM
-using UniLM: encode_request, decode_response, decode_stream_chunk, StreamState,
+using UniLM: encode_request, decode_response, StreamState,
              _build_stream_message, GEMINIServiceEndpoint, GPTFunction, GPTToolChoice,
              GEMINI_NATIVE_BASE, RoleSystem, RoleUser, RoleAssistant, RoleTool,
              TOOL_CALLS, STOP, CONTENT_FILTER
@@ -211,7 +211,7 @@ end
     @test r.usage.total_tokens == 129
 end
 
-@testset "stream — text deltas + final usage/finishReason + EOS" begin
+@testset "stream — text deltas + final usage/finishReason (EOF-terminated, never :done)" begin
     lines = [
         "data: " * JSON.json(Dict("candidates" => [Dict("content" =>
             Dict("role" => "model", "parts" => [Dict("text" => "Hello")]))],
@@ -227,8 +227,10 @@ end
                                     "totalTokenCount" => 13))),
     ]
     state = StreamState()
-    st = decode_stream_chunk(GEMINIServiceEndpoint, join(lines, "\n"), state, IOBuffer())
-    @test st.eos == true
+    st = UniLM._sse_dispatch!(GEMINIServiceEndpoint, IOBuffer(), Ref(""), join(lines, "\n") * "\n", state)
+    # Gemini has no sentinel — the handler NEVER returns :done; the
+    # driver reads to EOF and finalizes on the recorded finishReason.
+    @test st === :continue
     @test state.finish_reason == STOP
     @test state.usage.completion_tokens == 5
     @test state.usage.prompt_tokens == 8
@@ -252,8 +254,8 @@ end
                                     "totalTokenCount" => 32))),
     ]
     state = StreamState()
-    st = decode_stream_chunk(GEMINIServiceEndpoint, join(lines, "\n"), state, IOBuffer())
-    @test st.eos == true
+    st = UniLM._sse_dispatch!(GEMINIServiceEndpoint, IOBuffer(), Ref(""), join(lines, "\n") * "\n", state)
+    @test st === :continue
     @test state.finish_reason == TOOL_CALLS                 # functionCall present overrides STOP
     msg = _build_stream_message(state)
     @test msg.finish_reason == TOOL_CALLS

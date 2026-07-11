@@ -1741,6 +1741,28 @@ end
     end
 end
 
+@testset "_parse_response_stream_chunk — shared-machine framing" begin
+    @testset "data:-without-space accepted (old parser required the space)" begin
+        textbuff = IOBuffer(); failbuff = IOBuffer()
+        r = UniLM._parse_response_stream_chunk(
+            "event: response.output_text.delta\ndata:{\"delta\":\"X\"}\n\n", textbuff, failbuff)
+        @test r.done == false
+        @test String(take!(textbuff)) == "X"
+    end
+
+    @testset "malformed COMPLETE line dropped + counted, carry stays clean" begin
+        before = UniLM._SSE_DROPPED_LINES[]
+        textbuff = IOBuffer(); failbuff = IOBuffer()
+        r = UniLM._parse_response_stream_chunk(
+            "event: response.output_text.delta\ndata: {invalid json\n\n" *
+            "event: response.output_text.delta\ndata: {\"delta\":\"ok\"}\n\n", textbuff, failbuff)
+        @test r.done == false
+        @test String(take!(textbuff)) == "ok"          # the NEXT line was not poisoned
+        @test isempty(take!(failbuff))
+        @test UniLM._SSE_DROPPED_LINES[] == before + 1
+    end
+end
+
 # ─── Phase 3B: Respond parameter validation ──────────────────────────────────
 
 @testset "Respond parameter validation" begin

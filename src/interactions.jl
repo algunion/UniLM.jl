@@ -194,43 +194,28 @@ decode_agentic(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)::ResponseObje
 # so _respond_stream assembles unchanged. On interaction.completed, hand back
 # {"response": <OpenAI-shaped dict>}; since the completed event omits steps, the
 # message output is rebuilt from the deltas accumulated in `textbuff`.
+# Line assembly + framing now come from the shared machine (src/sse.jl).
 function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String, textbuff::IOBuffer,
                                failbuff::IOBuffer, last_event::Ref{String})
-    chunk = String(take!(failbuff)) * chunk
-    last_nl = findlast('\n', chunk)
-    if isnothing(last_nl)
-        print(failbuff, chunk)
-        return (; done=false, event=last_event[], data=nothing, terminal=:none)
-    end
-    if last_nl < lastindex(chunk)
-        print(failbuff, chunk[nextind(chunk, last_nl):end])
-        chunk = chunk[1:last_nl]
-    end
-    for line in filter(!isempty, strip.(split(chunk, "\n")))
-        if startswith(line, "event: ")
-            last_event[] = strip(line[8:end])
-        elseif startswith(line, "data: ")
-            payload_str = strip(line[7:end])
-            payload_str == "[DONE]" && return (; done=true, event=last_event[], data=nothing, terminal=:done)
-            try
-                payload = JSON.parse(payload_str; dicttype=Dict{String,Any})
-                ev = last_event[]
-                if ev == "step.delta"
-                    d = get(payload, "delta", nothing)
-                    d isa AbstractDict && print(textbuff, get(d, "text", ""))
-                elseif ev == "interaction.completed"
-                    rdict = _interaction_response_dict(get(payload, "interaction", payload))
-                    if isempty(rdict["output"])
-                        txt = String(take!(textbuff))
-                        isempty(txt) || (rdict["output"] = Any[_text_message(txt)])
-                    end
-                    return (; done=true, event=ev,
-                            data=Dict{String,Any}("response" => rdict), terminal=:completed)
+    for (ev, payload) in _sse_events!(failbuff, last_event, chunk)
+        payload == "[DONE]" && return (; done=true, event=last_event[], data=nothing, terminal=:done)
+        try
+            data = JSON.parse(payload; dicttype=Dict{String,Any})
+            if ev == "step.delta"
+                d = get(data, "delta", nothing)
+                d isa AbstractDict && print(textbuff, get(d, "text", ""))
+            elseif ev == "interaction.completed"
+                rdict = _interaction_response_dict(get(data, "interaction", data))
+                if isempty(rdict["output"])
+                    txt = String(take!(textbuff))
+                    isempty(txt) || (rdict["output"] = Any[_text_message(txt)])
                 end
-            catch
-                print(failbuff, line)
-                continue
+                return (; done=true, event=ev,
+                        data=Dict{String,Any}("response" => rdict), terminal=:completed)
             end
+        catch e
+            Threads.atomic_add!(_SSE_DROPPED_LINES, 1)
+            @debug "Interactions SSE: dropped undecodable data payload" event = ev payload = String(payload) exception = e
         end
     end
     return (; done=false, event=last_event[], data=nothing, terminal=:none)

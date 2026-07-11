@@ -1223,13 +1223,12 @@ try
         set_error!(200, "")
     end
 
-    @testset "chatrequest! stream callback receives final Message on eos (286)" begin
-        # Under HTTP 2.x the mock delivers the whole SSE body in a single readavailable,
-        # so _parse_chunk reports eos on the first loop iteration: the eos branch (282–286)
-        # runs and invokes callback(m[], close_ref) with the assembled Message. The
-        # incremental text-delta branch (287–297) requires multiple network reads, which a
-        # single canned HTTP.Response cannot produce — so it is not asserted here (asserting
-        # incremental deltas against this transport would test a fiction, not the source).
+    @testset "chatrequest! stream callback receives deltas then the final Message" begin
+        # The SSE machine forwards text deltas as they are parsed (state.pending_delta),
+        # then the assembled final Message. The canned single-write transport may still
+        # deliver everything in one read, so assert transport-agnostically: all leading
+        # callback payloads are Strings that concatenate to the full text; the last is
+        # the Message. (Before delta-forwarding, this transport could only ever observe the final Message.)
         response_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] =
@@ -1249,11 +1248,12 @@ try
 
         @test result isa LLMSuccess
         @test result.message.content == "Ahoy there"
-        # The callback fired exactly once — with the final assembled Message (eos branch).
-        @test length(received) == 1
-        @test received[1] isa Message
-        @test received[1].content == "Ahoy there"
-        @test received[1].finish_reason == UniLM.STOP
+        @test length(received) >= 2
+        @test all(x -> x isa String, received[1:end-1])
+        @test join(received[1:end-1]) == "Ahoy there"
+        @test received[end] isa Message
+        @test received[end].content == "Ahoy there"
+        @test received[end].finish_reason == UniLM.STOP
         set_error!(200, "")
     end
 
@@ -2001,7 +2001,7 @@ try
     # ═══════════════════════════════════════════════════════════════════════
 
     # ── TARGET A: on_tool_call callback that THROWS is isolated (requests.jl:276)
-    @testset "stream on_tool_call callback error is swallowed, stream still succeeds (276)" begin
+    @testset "stream on_tool_call callback error is swallowed, stream still succeeds" begin
         # Same single streamed tool call as the on_tool_call success test, but the
         # user callback raises. Line 270–277 wraps on_tool_call in try/catch; the
         # throw must hit the catch (276, @warn) and be SWALLOWED — the spawned task

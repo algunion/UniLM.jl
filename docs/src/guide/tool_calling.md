@@ -94,6 +94,11 @@ else
 end
 ```
 
+!!! tip "Streaming tool calls"
+    When streaming (`stream=true`), pass `on_tool_call` to [`chatrequest!`](@ref) to be
+    notified as each tool call completes — exactly once per call — instead of waiting for
+    the final message. See the [Streaming guide](@ref streaming_guide).
+
 ### Controlling Tool Choice
 
 ```julia

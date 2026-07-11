@@ -29,6 +29,10 @@ end
         include("requests.jl")
     end
 
+    @testset "SSE machine (sse.jl)" begin
+        include("sse.jl")
+    end
+
     @testset "P0 regression suite" begin
         include("regression_p0.jl")
     end

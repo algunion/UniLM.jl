@@ -155,99 +155,48 @@ end
     tool_calls::Dict{Int, Dict{String,Any}} = Dict{Int, Dict{String,Any}}()
     finish_reason::Union{String, Nothing} = nothing
     usage::Union{TokenUsage, Nothing} = nothing
-end
-
-# There is a variable chunk format (which is also incomplete from time to time) that can be received from the stream.
-# There are also multiple complaints about this on the OpenAI API forum.
-# I'll attempt a robust parsing approach here that can handle the variable chunk format.
-function _parse_chunk(chunk::String, state::StreamState, failbuff)
-    lines = strip.(split(chunk, "\n"))
-    lines = filter(!isempty, lines)
-    isempty(lines) && return (; eos=false)
-    eos = lines[end] == "data: [DONE]"
-    eos && length(lines) == 1 && return (; eos=true)
-    for line in lines[1:end-(eos ? 1 : 0)]
-        try
-            parsed = JSON.parse(line[6:end]; dicttype=Dict{String,Any})
-            # Capture usage if present (e.g. stream_options.include_usage)
-            if haskey(parsed, "usage") && parsed["usage"] isa AbstractDict
-                state.usage = _token_usage_from(parsed["usage"])
-            end
-            cho = parsed["choices"][1]
-            fr = cho["finish_reason"]
-            if !isnothing(fr)
-                state.finish_reason = fr
-                fr == "stop" && (eos = true)
-            end
-            delta = get(cho, "delta", Dict{String,Any}())
-            # Text content delta
-            if haskey(delta, "content") && !isnothing(delta["content"])
-                print(state.content, delta["content"])
-            end
-            # Refusal delta (streamed safety refusal)
-            if haskey(delta, "refusal") && !isnothing(delta["refusal"])
-                print(state.refusal, delta["refusal"])
-            end
-            # Tool call deltas — accumulate by index
-            if haskey(delta, "tool_calls")
-                for tc_delta in delta["tool_calls"]
-                    idx = tc_delta["index"]
-                    if !haskey(state.tool_calls, idx)
-                        state.tool_calls[idx] = Dict{String,Any}(
-                            "id" => get(tc_delta, "id", ""),
-                            "type" => get(tc_delta, "type", "function"),
-                            "function" => Dict{String,Any}("name" => "", "arguments" => "")
-                        )
-                    end
-                    entry = state.tool_calls[idx]
-                    haskey(tc_delta, "id") && !isempty(tc_delta["id"]) && (entry["id"] = tc_delta["id"])
-                    if haskey(tc_delta, "function")
-                        fd = tc_delta["function"]
-                        haskey(fd, "name") && !isnothing(fd["name"]) && (entry["function"]["name"] *= fd["name"])
-                        haskey(fd, "arguments") && !isnothing(fd["arguments"]) && (entry["function"]["arguments"] *= fd["arguments"])
-                    end
-                end
-            end
-        catch e
-            print(failbuff, line)
-            continue
-        end
-    end
-    (; eos)
+    # ── streaming-machine additions (0.11.3) ──
+    # Text deltas collected by handlers, not yet forwarded to the callback;
+    # the driver take!s and forwards verbatim (kills the take!/re-print churn).
+    pending_delta::IOBuffer = IOBuffer()
+    # In-band terminal stream error (e.g. Anthropic `error` event on HTTP 200);
+    # non-nothing → the driver returns LLMFailure/LLMCallError, never LLMSuccess.
+    error::Union{Nothing, Dict{String,Any}} = nothing
+    # on_tool_call fire-once-per-index guard (final sweep at stream end).
+    fired_tool_calls::Set{Int} = Set{Int}()
 end
 
 function _build_stream_message(state::StreamState)::Message
-    if state.finish_reason == TOOL_CALLS && !isempty(state.tool_calls)
+    content = String(take!(state.content))
+    refusal = String(take!(state.refusal))
+    if !isempty(state.tool_calls)
         tcalls = GPTToolCall[]
-        for idx in sort(collect(keys(state.tool_calls)))
+        for idx in sort!(collect(keys(state.tool_calls)))
             tc_data = state.tool_calls[idx]
             fdict = tc_data["function"]
-            args = JSON.parse(fdict["arguments"]; dicttype=Dict{String,Any})
-            gptfunc = GPTFunction(fdict["name"], args)
-            push!(tcalls, GPTToolCall(id=tc_data["id"], func=gptfunc,
+            args = _parse_tool_arguments(fdict["arguments"])   # "" → Dict{String,Any}() (zero-arg tool call)
+            push!(tcalls, GPTToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
                 thought_signature=get(tc_data, "thought_signature", nothing)))
         end
-        Message(role=RoleAssistant, tool_calls=tcalls, finish_reason=TOOL_CALLS)
+        # Keep accumulated text ALONGSIDE the tool calls: providers emit
+        # both in one turn and the non-streaming decoders already preserve both.
+        Message(role=RoleAssistant, content=(isempty(content) ? nothing : content),
+                tool_calls=tcalls, finish_reason=TOOL_CALLS)
+    elseif isempty(content) && !isempty(refusal)
+        Message(role=RoleAssistant, refusal_message=refusal, finish_reason=something(state.finish_reason, STOP))
     else
-        content = String(take!(state.content))
-        refusal = String(take!(state.refusal))
-        if isempty(content) && !isempty(refusal)
-            Message(role=RoleAssistant, refusal_message=refusal, finish_reason=something(state.finish_reason, STOP))
-        else
-            Message(role=RoleAssistant, content=content, finish_reason=something(state.finish_reason, STOP))
-        end
+        Message(role=RoleAssistant, content=content, finish_reason=something(state.finish_reason, STOP))
     end
 end
 
 # ─── Wire-translation seam ───────────────────────────────────────────────────
-# Three generics translate between the neutral Chat/Message IR and a provider's
-# wire format. The untyped-`service` methods below are the OpenAI-wire defaults —
-# DeepSeek, Azure, the Gemini OpenAI-compat shim, and GenericOpenAIEndpoint all
-# speak this format. Providers with a different wire format (Anthropic) override
-# the three. `chatrequest!`/`_chatrequeststream` call ONLY these generics, so the
-# retry/HTTP/cost/tool-loop/streaming orchestration stays provider-agnostic.
-# Defined here (after StreamState/_parse_chunk/extract_message) so the
-# `state::StreamState` signature annotation resolves at definition time.
+# Generics translate between the neutral Chat/Message IR and a provider's wire
+# format. The untyped-`service` methods are the OpenAI-wire defaults — DeepSeek,
+# Azure, the Gemini OpenAI-compat shim, and GenericOpenAIEndpoint all speak this
+# format. Providers with a different wire (Anthropic, native Gemini) override
+# them. `chatrequest!`/`_chatrequeststream` call ONLY these generics plus the
+# streaming seam `handle_sse_event!` (src/sse.jl), so the retry/HTTP/cost/
+# tool-loop/streaming orchestration stays provider-agnostic.
 
 """
     encode_request(service, chat::Chat) -> String
@@ -264,13 +213,75 @@ Default: OpenAI Chat Completions (`extract_message`).
 """
 decode_response(service, resp::HTTP.Response) = extract_message(resp)
 
-"""
-    decode_stream_chunk(service, chunk::String, state::StreamState, failbuff) -> (; eos::Bool)
+# ─── Streaming driver helpers ────────────────────────────────────────────────
 
-Accumulate a streamed chunk into `state`. Default: OpenAI SSE (`_parse_chunk`).
 """
-decode_stream_chunk(service, chunk::String, state::StreamState, failbuff) =
-    _parse_chunk(chunk, state, failbuff)
+    _flush_delta!(callback, state::StreamState, close_ref) -> Nothing
+
+Forward collected-but-unsent text deltas to the streaming callback verbatim.
+Handlers collect deltas on `state.pending_delta`; the driver forwards them
+directly — no `take!`/re-print churn, no byte-offset diffing (which broke on
+multibyte boundaries and was O(n²)).
+"""
+function _flush_delta!(callback, state::StreamState, close_ref)::Nothing
+    delta = String(take!(state.pending_delta))
+    isnothing(callback) || isempty(delta) || callback(delta, close_ref)
+    nothing
+end
+
+"""
+    _fire_tool_calls!(on_tool_call, state::StreamState, stream_done::Bool) -> Nothing
+
+Provider-agnostic `on_tool_call` completion detection. A
+tool call at index `i` is complete when (a) `i` is no longer the max index (a
+later call started), OR (b) its entry carries `"complete" => true` (Anthropic
+`content_block_stop` / Gemini whole-part functionCall), OR (c) the stream is
+done (`stream_done` — the final sweep). Fires at most once per index
+(`state.fired_tool_calls`). Empty accumulated arguments parse as
+`Dict{String,Any}()` via `_parse_tool_arguments`.
+"""
+function _fire_tool_calls!(on_tool_call, state::StreamState, stream_done::Bool)::Nothing
+    (isnothing(on_tool_call) || isempty(state.tool_calls)) && return nothing
+    maxidx = maximum(keys(state.tool_calls))
+    for idx in sort!(collect(keys(state.tool_calls)))
+        idx in state.fired_tool_calls && continue
+        tc_data = state.tool_calls[idx]
+        stream_done || idx < maxidx || get(tc_data, "complete", false) === true || continue
+        fdict = tc_data["function"]
+        args = try
+            _parse_tool_arguments(fdict["arguments"])
+        catch e
+            # A COMPLETE call's arguments cannot improve later: warn once, never retry.
+            push!(state.fired_tool_calls, idx)
+            @warn "on_tool_call: undecodable tool-call arguments; not firing" index = idx exception = e
+            continue
+        end
+        push!(state.fired_tool_calls, idx)   # before the user callback: a throwing callback must not re-fire
+        try
+            on_tool_call(GPTToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
+                thought_signature=get(tc_data, "thought_signature", nothing)))
+        catch e
+            @warn "on_tool_call callback error" exception = e
+        end
+    end
+    nothing
+end
+
+"""
+    _stream_error_result(chat, err::Dict{String,Any}, request_id)
+
+Map an in-band SSE `error` payload (`state.error`) to a typed non-success
+result: `overloaded_error` is the documented
+529-equivalent → `LLMFailure(status=529)` (status-keyed policies see it);
+any other in-band error type → `LLMCallError` (no fabricated HTTP status).
+"""
+function _stream_error_result(chat::Chat, err::Dict{String,Any}, request_id)
+    inner = get(err, "error", nothing)
+    etype = inner isa AbstractDict ? get(inner, "type", "") : ""
+    etype == "overloaded_error" ?
+        LLMFailure(status=529, response=JSON.json(err), self=chat, request_id=request_id) :
+        LLMCallError(error=JSON.json(err), self=chat, status=nothing, request_id=request_id)
+end
 
 function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
     Threads.@spawn begin
@@ -278,7 +289,8 @@ function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
         try
             m = Ref{Union{Message,Nothing}}(nothing)
             stream_usage = Ref{Union{TokenUsage,Nothing}}(nothing)
-            raw_buffer = IOBuffer()  # wire bytes for non-200 reporting (streamed resp.body is empty under HTTP 2.x)
+            stream_error = Ref{Union{Dict{String,Any},Nothing}}(nothing)
+            raw_buffer = IOBuffer()  # wire bytes for non-200/truncation reporting (streamed resp.body is empty under HTTP 2.x)
             # SSE must reach the parser uncompressed. Some providers (e.g. Anthropic) gzip even
             # streamed responses, and HTTP.jl's streaming read loop does NOT auto-decompress on the
             # 1.x major — raw gzip bytes hit the SSE parser, every chunk fails to decode, and no
@@ -288,60 +300,52 @@ function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
             resp = HTTP.open("POST", get_url(chat), stream_headers; status_exception=false, decompress=false) do io
                 io_ref[] = io
                 state = StreamState()
-                callback_buf = IOBuffer()  # tracks already-emitted text
-                fail_buffer = IOBuffer()
-                done = Ref(false)
+                carry = IOBuffer()                 # layer-1 partial-line carry
+                current_event = Ref("")            # layer-2 sticky event name
                 close_ref = Ref(false)
-                prev_tc_count = 0
+                status = :continue
                 write(io, body)
                 HTTP.closewrite(io)
                 HTTP.startread(io)
-                while !eof(io) && !close_ref[] && !done[]
+                while !eof(io) && !close_ref[] && status === :continue
                     raw = String(readavailable(io))
                     write(raw_buffer, raw)
-                    chunk::String = join((String(take!(fail_buffer)), raw))
-                    streamstatus = decode_stream_chunk(chat.service, chunk, state, fail_buffer)
-                    # Fire on_tool_call for newly completed tool calls
-                    if !isnothing(on_tool_call) && length(state.tool_calls) > prev_tc_count
-                        for idx in sort(collect(keys(state.tool_calls)))
-                            idx < prev_tc_count && continue
-                            tc_data = state.tool_calls[idx]
-                            fdict = tc_data["function"]
-                            # A tool call is "complete" when we have a non-empty name and parseable arguments
-                            if !isempty(fdict["name"]) && !isempty(fdict["arguments"])
-                                try
-                                    args = JSON.parse(fdict["arguments"]; dicttype=Dict{String,Any})
-                                    gptfunc = GPTFunction(fdict["name"], args)
-                                    tc = GPTToolCall(id=tc_data["id"], func=gptfunc)
-                                    on_tool_call(tc)
-                                catch e
-                                    @warn "on_tool_call callback error" exception=e
-                                end
-                            end
-                        end
-                        prev_tc_count = length(state.tool_calls)
+                    status = _sse_dispatch!(chat.service, carry, current_event, raw, state)
+                    _fire_tool_calls!(on_tool_call, state, false)
+                    _flush_delta!(callback, state, close_ref)
+                end
+                if status === :continue && !close_ref[]
+                    # EOF flush: a final line the server never '\n'-terminated
+                    # (e.g. `data: [DONE]` as the very last bytes) is still one
+                    # complete line — dispatch it before finalizing.
+                    tail = String(take!(carry))
+                    if !isempty(tail)
+                        status = _sse_dispatch!(chat.service, carry, current_event, tail * "\n", state)
+                        _fire_tool_calls!(on_tool_call, state, false)
+                        _flush_delta!(callback, state, close_ref)
                     end
-                    if streamstatus.eos
-                        done[] = true
-                        m[] = _build_stream_message(state)
-                        stream_usage[] = state.usage
-                        !isnothing(callback) && callback(m[], close_ref)
-                    elseif !isnothing(callback)
-                        # Emit only newly-arrived text
-                        full = String(take!(state.content))
-                        emitted = String(take!(callback_buf))
-                        if sizeof(full) > sizeof(emitted)
-                            delta_text = full[nextind(full, sizeof(emitted)):end]
-                            callback(delta_text, close_ref)
-                        end
-                        print(state.content, full)
-                        print(callback_buf, full)
-                    end
+                end
+                stream_error[] = state.error
+                # Terminal contract: `:done` is the sentinel EOS
+                # ([DONE] / message_stop). Gemini has NO sentinel — its handler
+                # never returns :done; its stream ends at EOF with finishReason
+                # recorded. EOF with NEITHER signal = truncated/garbage stream
+                # (or a non-200 error body) → no message → LLMFailure below.
+                finished = status === :done ||
+                           (status === :continue && !isnothing(state.finish_reason))
+                if isnothing(state.error) && !close_ref[] && finished
+                    _fire_tool_calls!(on_tool_call, state, true)   # final sweep BEFORE the terminal callback
+                    m[] = _build_stream_message(state)
+                    stream_usage[] = state.usage
+                    !isnothing(callback) && callback(m[], close_ref)
                 end
                 close_ref[] && @info "stream closed by user"
                 HTTP.closeread(io)
             end
-            if resp.status == 200 && !isnothing(m[])
+            if !isnothing(stream_error[])
+                # In-band `error` event on an HTTP-200 stream: never LLMSuccess.
+                _stream_error_result(chat, stream_error[], _get_request_id(resp))
+            elseif resp.status == 200 && !isnothing(m[])
                 msg = m[]::Message
                 update!(chat, msg)
                 result = LLMSuccess(message=msg, self=chat, usage=stream_usage[])

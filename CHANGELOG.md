@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Streaming (all providers, one shared SSE machine in `src/sse.jl`): `on_tool_call` now fires exactly once per completed streamed tool call (was: never); `stream_options.include_usage` no longer loses usage or turns a successful stream into `LLMFailure` (chat EOS is `data: [DONE]` only — `finish_reason` never ends the stream, and empty-`choices` chunks are tolerated, unbreaking Azure preambles and `: keep-alive` proxies); Anthropic mid-stream `error` events now produce `LLMFailure`(529 for `overloaded_error`)/`LLMCallError` instead of a truncated `LLMSuccess`; streamed messages keep assistant text alongside tool calls, and zero-argument streamed tool calls parse as `Dict{String,Any}()` instead of throwing. Failed SSE lines are logged and dropped, never re-queued; partial lines carry over verbatim (no whitespace loss at chunk boundaries).
+- Gemini chat streaming reads to EOF (no sentinel exists), so trailing `usageMetadata` chunks are consumed instead of being cut off at `finishReason`.
+- Streaming callbacks now receive each text delta as parsed (verbatim forwarding replaces O(n²) buffer re-diffing that could split multibyte characters).
+
+### Changed
+- Behavior change: an Anthropic stream truncated after `message_delta` but before `message_stop` now completes as `LLMSuccess` (the driver's EOF + recorded-finish_reason rule) where it previously produced `LLMFailure`.
+
+### Removed
+- Internal (unexported, documented) streaming seam `decode_stream_chunk` and `_parse_chunk`, replaced by `handle_sse_event!(service, event, payload, state) -> :continue | :done | :error` in `src/sse.jl` (no known external overriders).
+
 ## 0.11.2
 
 ### Added

@@ -1,9 +1,8 @@
 # ============================================================================
-# P0 regression suite — falsification harness for the 2026-07-10 review
-# (grounding/quality-review-2026-07-10.md). Every test states the FIXED
-# contract wrapped in @test_broken. Fix PRs flip @test_broken → @test.
-# An "Error (unexpected pass)" means the finding is refuted: delete the test
-# and downgrade the finding. Fully offline (zero-spend).
+# Known-defect regression suite: every `@test_broken` pins a confirmed,
+# reproduced bug until its fix lands. An unexpected pass errors CI, so a fix
+# must flip the test (@test_broken → @test) in the same commit. Ids (P0-n)
+# are stable tracking keys for the staged fixes. Fully offline (zero-spend).
 # ============================================================================
 
 using Sockets
@@ -67,25 +66,23 @@ end
                          setdiff(fieldnames(Chat), skip))
     end
 
-    @testset "P0-2 chat SSE unit contracts" begin
-        # (a) finish_reason=="stop" must NOT end the stream — only `data: [DONE]`
-        # may. Ending early skips the trailing usage-only chunk (requests.jl:180).
+    @testset "P0-2 chat SSE unit contracts (ported to handle_sse_event! seam)" begin
+        # (a) finish_reason=="stop" must NOT end the stream — only `data: [DONE]` may.
         state = UniLM.StreamState()
-        fb = IOBuffer()
+        carry = IOBuffer()
         finish_chunk = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\n"
-        r = UniLM._parse_chunk(finish_chunk, state, fb)
-        @test_broken r.eos == false
+        st = UniLM._sse_dispatch!(OPENAIServiceEndpoint, carry, Ref(""), finish_chunk, state)
+        @test st === :continue
+        @test state.finish_reason == "stop"        # recorded, not terminal
 
         # (b) the stream_options.include_usage final chunk has `"choices": []`
-        # (documented). It must yield usage AND leave the carry buffer empty —
-        # today choices[1] throws and the whole line is stashed in failbuff
-        # (requests.jl:176,212), which later glues onto `data: [DONE]` with no
-        # newline and corrupts the stream.
+        # (documented). It must yield usage AND leave the carry buffer empty.
         state2 = UniLM.StreamState()
-        fb2 = IOBuffer()
+        carry2 = IOBuffer()
         usage_chunk = "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}\n\n"
-        UniLM._parse_chunk(usage_chunk, state2, fb2)
-        @test_broken state2.usage !== nothing && isempty(String(take!(fb2)))
+        st2 = UniLM._sse_dispatch!(OPENAIServiceEndpoint, carry2, Ref(""), usage_chunk, state2)
+        @test st2 === :continue
+        @test state2.usage !== nothing && isempty(String(take!(carry2)))
     end
 
     @testset "P0-1/P0-2c streamed tool call end-to-end (fragmented)" begin
@@ -109,26 +106,20 @@ end
             fired = Ref(0)
             task = chatrequest!(chat; on_tool_call = tc -> (fired[] += 1))
             res = fetch(task)
-            # NOTE: an unexpected pass here may be TCP coalescing of chunks 5+6,
-            # not a fix/refutation — re-run with a larger gap (see helper header).
-            # P0-1: the callback must fire exactly once for the completed call.
-            # (Gate at requests.jl:305 only re-checks when a NEW index appears.)
-            @test_broken fired[] == 1
-            # P0-2c: the fragmented usage chunk must not turn success into failure
-            # (failbuff glue at requests.jl:302 destroys the [DONE] line today).
-            @test_broken res isa LLMSuccess
+            # P0-1: the callback fires exactly once for the completed call
+            # (driver-owned completion detection + fired_tool_calls guard).
+            @test fired[] == 1
+            # P0-2c: the fragmented usage chunk must not turn success into failure.
+            @test res isa LLMSuccess
             # Usage from the final chunk must be captured.
-            @test_broken res isa LLMSuccess && res.usage !== nothing &&
-                         res.usage.total_tokens == 16
+            @test res isa LLMSuccess && res.usage !== nothing &&
+                  res.usage.total_tokens == 16
         finally
             close(server)
         end
     end
 
     @testset "P0-15 _build_stream_message contracts" begin
-        # (Finding #15 is filed under P1 in grounding/quality-review-2026-07-10.md,
-        # folded into wave 1 because WS1 fixes it — flagged so a future coverage
-        # audit doesn't miscount P0s.)
         # (a) Providers emit assistant text AND tool calls in one turn (Gemini-3
         # routinely, Anthropic text-before-tool_use). The builder must keep both;
         # today the text branch is skipped whenever tool_calls exist
@@ -141,8 +132,8 @@ end
                                            "arguments" => "{\"city\":\"Oslo\"}"))
         state.finish_reason = UniLM.TOOL_CALLS
         msg = UniLM._build_stream_message(state)
-        @test_broken msg.content == "Let me check the weather." &&
-                     !isnothing(msg.tool_calls) && length(msg.tool_calls) == 1
+        @test msg.content == "Let me check the weather." &&
+              !isnothing(msg.tool_calls) && length(msg.tool_calls) == 1
 
         # (b) A zero-argument tool call streams arguments as "" (Anthropic
         # input_json_delta may never arrive for `{}` input). JSON.parse("")
@@ -152,7 +143,10 @@ end
             "id" => "call_2", "type" => "function",
             "function" => Dict{String,Any}("name" => "ping", "arguments" => ""))
         state2.finish_reason = UniLM.TOOL_CALLS
-        @test_broken (UniLM._build_stream_message(state2); true)
+        msg2 = UniLM._build_stream_message(state2)
+        @test !isnothing(msg2.tool_calls) && length(msg2.tool_calls) == 1 &&
+              msg2.tool_calls[1].func.name == "ping" &&
+              msg2.tool_calls[1].func.arguments == Dict{String,Any}()
     end
 
     @testset "P0-3 Anthropic thinking block round-trip" begin
@@ -180,17 +174,17 @@ end
                      _get(asst[end], :type) == "tool_use"
     end
 
-    @testset "P0-4 Anthropic error event is not success" begin
+    @testset "P0-4 Anthropic error event is not success (ported to handle_sse_event!)" begin
         state = UniLM.StreamState()
-        fb = IOBuffer()
         err_chunk = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n"
-        UniLM.decode_stream_chunk(ANTHROPICServiceEndpoint, err_chunk, state, fb)
-        # FIXED contract: the error payload is captured distinguishably on the
-        # state so the driver can return LLMFailure/LLMCallError instead of
-        # LLMSuccess-with-truncated-content (anthropic.jl:227 currently folds
-        # `error` into plain EOS and discards the payload; the in-band error is
-        # the documented 529-equivalent on an HTTP-200 stream).
-        @test_broken hasproperty(state, :error) && getproperty(state, :error) !== nothing
+        st = UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), err_chunk, state)
+        # FIXED contract: the in-band error (documented 529-equivalent on an
+        # HTTP-200 stream) is captured on the state and signalled terminally,
+        # so the driver returns LLMFailure/LLMCallError instead of
+        # LLMSuccess-with-truncated-content.
+        @test st === :error
+        @test state.error !== nothing
+        @test state.error["error"]["type"] == "overloaded_error"
     end
 
     @testset "P0-5 Interactions streaming surfaces function calls" begin

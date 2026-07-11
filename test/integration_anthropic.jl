@@ -43,7 +43,7 @@ end
 end
 
 @testset "Anthropic Chat — streaming" begin
-    # `decode_stream_chunk` correctness is proven by LLMSuccess + non-empty accumulated
+    # `handle_sse_event!` correctness is proven by LLMSuccess + non-empty accumulated
     # content (the stream was parsed end to end). Incremental String deltas are best-effort:
     # a short reply delivered in a single network read reaches EOS on the first chunk, so the
     # shared _chatrequeststream logic fires the final-Message callback rather than String deltas
@@ -56,7 +56,7 @@ end
     task = chatrequest!(chat; callback=(c, _) -> push!(payloads, c))
     result = fetch(task)
     @test result isa LLMSuccess
-    @test !isempty(result.message.content)   # decode_stream_chunk accumulated real SSE
+    @test !isempty(result.message.content)   # handle_sse_event! accumulated real SSE
     @test !isempty(payloads)                 # callback fired (incremental deltas and/or final message)
 end
 

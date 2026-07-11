@@ -999,51 +999,30 @@ end
 
 function _parse_response_stream_chunk(chunk::String, textbuff::IOBuffer, failbuff::IOBuffer,
                                       last_event::Ref{String}=Ref(""))
-    # Reassemble: prepend any partial line stashed from a previous call.
-    # Without this carry-over, a `readavailable(io)` boundary that lands
-    # mid-line would orphan the next data: payload (last_event reset, or
-    # partial-prefix corrupting last_event before the matching data: line
-    # arrives in the next chunk).
-    chunk = String(take!(failbuff)) * chunk
-    last_nl = findlast('\n', chunk)
-    if isnothing(last_nl)
-        print(failbuff, chunk)
-        return (; done=false, event=last_event[], data=nothing, terminal=:none)
-    end
-    if last_nl < lastindex(chunk)
-        print(failbuff, chunk[nextind(chunk, last_nl):end])
-        chunk = chunk[1:last_nl]
-    end
-
-    lines = strip.(split(chunk, "\n"))
-    lines = filter(!isempty, lines)
-    isempty(lines) && return (; done=false, event=last_event[], data=nothing, terminal=:none)
-
-    for line in lines
-        if startswith(line, "event: ")
-            last_event[] = strip(line[8:end])
-        elseif startswith(line, "data: ")
-            try
-                payload = JSON.parse(line[7:end]; dicttype=Dict{String,Any})
-                ev = last_event[]
-                if ev == "response.output_text.delta"
-                    print(textbuff, get(payload, "delta", ""))
-                elseif ev == "response.completed"
-                    return (; done=true, event=ev, data=payload, terminal=:completed)
-                elseif ev == "response.failed"
-                    return (; done=true, event=ev, data=payload, terminal=:failed)
-                elseif ev == "response.incomplete"
-                    return (; done=true, event=ev, data=payload, terminal=:incomplete)
-                elseif ev == "error"
-                    return (; done=true, event=ev, data=payload, terminal=:error)
-                end
-                # Every other event (created/in_progress/queued, output_item.*, content_part.*,
-                # refusal.*, function_call_arguments.*, reasoning*, and the hosted-tool progress
-                # events) is ignored here and degrades gracefully — as do unknown/future types.
-            catch e
-                print(failbuff, line)
-                continue
+    # Layers 1–2 of the shared SSE machine (src/sse.jl): `failbuff` is the
+    # partial-line carry (verbatim, never stripped), `last_event` the sticky
+    # event name. Event dispatch below is unchanged. A COMPLETE line whose
+    # payload fails to parse is logged + counted + dropped — never re-queued.
+    for (ev, payload) in _sse_events!(failbuff, last_event, chunk)
+        try
+            data = JSON.parse(payload; dicttype=Dict{String,Any})
+            if ev == "response.output_text.delta"
+                print(textbuff, get(data, "delta", ""))
+            elseif ev == "response.completed"
+                return (; done=true, event=ev, data, terminal=:completed)
+            elseif ev == "response.failed"
+                return (; done=true, event=ev, data, terminal=:failed)
+            elseif ev == "response.incomplete"
+                return (; done=true, event=ev, data, terminal=:incomplete)
+            elseif ev == "error"
+                return (; done=true, event=ev, data, terminal=:error)
             end
+            # Every other event (created/in_progress/queued, output_item.*,
+            # content_part.*, refusal.*, function_call_arguments.*, reasoning*,
+            # hosted-tool progress) degrades gracefully — as do unknown types.
+        catch e
+            Threads.atomic_add!(_SSE_DROPPED_LINES, 1)
+            @debug "Responses SSE: dropped undecodable data payload" event = ev payload = String(payload) exception = e
         end
     end
     return (; done=false, event=last_event[], data=nothing, terminal=:none)

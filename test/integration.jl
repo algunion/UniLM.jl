@@ -2,6 +2,18 @@ if !haskey(ENV, "OPENAI_API_KEY")
     @info "Skipping OpenAI integration tests (OPENAI_API_KEY not set)"
 else
 
+# Live tests run after many minutes of offline testsets. A connection pooled
+# during an earlier testset (the offline error-path tests do contact the real
+# API host) can be silently dropped by NATs/load balancers during that idle
+# window; reusing it stalls the first request here until the kernel read
+# timeout (~15 min on Linux). Start from fresh connections (best-effort,
+# per HTTP.jl major).
+if isdefined(HTTP, :close_idle_connections!)
+    HTTP.close_idle_connections!()
+elseif isdefined(HTTP, :Connections) && isdefined(HTTP.Connections, :closeall)
+    HTTP.Connections.closeall()
+end
+
 @testset "regular conversation" begin
     chat = Chat(model="gpt-5.4-mini")
     push!(chat, Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent."))

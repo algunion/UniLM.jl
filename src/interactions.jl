@@ -187,36 +187,96 @@ end
 decode_agentic(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)::ResponseObject =
     _interaction_response_object(JSON.parse(resp.body; dicttype=Dict{String,Any}))
 
-# ─── Streaming decode (Interactions SSE → text accumulation + final assembly) ──
-# Named events: interaction.created/status_update, step.start/delta/stop,
-# interaction.completed (final object+usage but NO steps), then event:done/[DONE].
-# Mirrors _parse_response_stream_chunk's carry-over + (; done,event,data,terminal)
-# so _respond_stream assembles unchanged. On interaction.completed, hand back
-# {"response": <OpenAI-shaped dict>}; since the completed event omits steps, the
-# message output is rebuilt from the deltas accumulated in `textbuff`.
-# Line assembly + framing now come from the shared machine (src/sse.jl).
+# ─── Streaming decode (Interactions SSE → per-step assembly + final rebuild) ──
+# Named events: interaction.created/status_update, step.start, step.delta
+# (delta.type: text | arguments_delta | thought_summary | thought_signature),
+# step.stop, interaction.completed (final object + usage but NO steps; its
+# `status` may be "completed" or "requires_action" — there is no dedicated
+# requires_action event), then event:done / [DONE]. Function-call arguments
+# arrive as partial-JSON STRING deltas that must be accumulated per index.
+# The terminal output[] is rebuilt from the assembled steps: function_call
+# steps (arguments kept as the accumulated JSON string — the reused
+# function_calls accessor JSON.parses strings), thought steps surfaced raw
+# (signature assembled from deltas), and one text message from the
+# accumulated text deltas.
 function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
                                state::AgenticStreamState)
     for (ev, payload) in _sse_events!(state.carry, state.last_event, chunk)
         payload == "[DONE]" && return (; done=true, event=state.last_event[], data=nothing, terminal=:done)
         try
             data = JSON.parse(payload; dicttype=Dict{String,Any})
-            if ev == "step.delta"
+            if ev == "step.start"
+                idx = get(data, "index", nothing)
+                step = get(data, "step", nothing)
+                if idx isa Integer && step isa Dict{String,Any}
+                    haskey(state.steps, idx) || push!(state.order, idx)
+                    state.steps[idx] = step
+                    delete!(state.args_json, idx)   # a re-sent start must not inherit stale argument bytes
+                end
+            elseif ev == "step.delta"
+                idx = get(data, "index", nothing)
                 d = get(data, "delta", nothing)
-                d isa AbstractDict && print(state.textbuff, get(d, "text", ""))
+                if idx isa Integer && d isa AbstractDict
+                    dt = get(d, "type", "")
+                    if dt == "arguments_delta"
+                        a = get(d, "arguments", "")
+                        a isa AbstractString && (state.args_json[idx] = get(state.args_json, idx, "") * a)
+                    elseif dt == "thought_signature"
+                        s = get(d, "signature", "")
+                        if s isa AbstractString && haskey(state.steps, idx)
+                            blk = state.steps[idx]
+                            blk["signature"] = get(blk, "signature", "") * s
+                        end
+                    else
+                        # Answer-text deltas carry a top-level `text` key and
+                        # accumulate for output_text. thought_summary deltas
+                        # nest their prose under `content` and are deliberately
+                        # NOT accumulated: summaries are display material, not
+                        # the answer and not replay material (the signature is).
+                        t = get(d, "text", "")
+                        t isa AbstractString && print(state.textbuff, t)
+                    end
+                end
             elseif ev == "interaction.completed"
                 rdict = _interaction_response_dict(get(data, "interaction", data))
                 if isempty(rdict["output"])
-                    txt = String(take!(state.textbuff))
-                    isempty(txt) || (rdict["output"] = Any[_text_message(txt)])
+                    rdict["output"] = _assembled_interaction_output(state)
                 end
                 return (; done=true, event=ev,
                         data=Dict{String,Any}("response" => rdict), terminal=:completed)
             end
+            # step.stop needs no handling beyond what assembly already holds:
+            # arguments are complete once their deltas stop arriving, and the
+            # terminal rebuild reads the accumulated state.
         catch e
             Threads.atomic_add!(_SSE_DROPPED_LINES, 1)
             @debug "Interactions SSE: dropped undecodable data payload" event = ev payload = String(payload) exception = e
         end
     end
     return (; done=false, event=state.last_event[], data=nothing, terminal=:none)
+end
+
+# Rebuild OpenAI-shaped output[] from the streamed step assembly (the terminal
+# interaction.completed event carries no steps). Order: first-seen step order,
+# then the accumulated text (if any) as a single assistant message.
+function _assembled_interaction_output(state::AgenticStreamState)::Vector{Any}
+    out = Any[]
+    for idx in state.order
+        step = state.steps[idx]
+        t = get(step, "type", "")
+        if t == "function_call"
+            args = get(state.args_json, idx, "")
+            isempty(args) && (a0 = get(step, "arguments", nothing); args = a0 isa AbstractString ? a0 : JSON.json(something(a0, Dict{String,Any}())))
+            push!(out, Dict{String,Any}(
+                "type" => "function_call",
+                "call_id" => get(step, "id", ""),
+                "name" => get(step, "name", ""),
+                "arguments" => args))
+        elseif !isempty(t)
+            push!(out, Dict{String,Any}(step))   # thought + hosted-tool steps: raw, signature intact
+        end
+    end
+    txt = String(take!(state.textbuff))
+    isempty(txt) || push!(out, _text_message(txt))
+    out
 end

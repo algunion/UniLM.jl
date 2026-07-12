@@ -286,9 +286,7 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
         # partial-JSON string deltas, and a step.stop; requires_action is a
         # STATUS on interaction.completed (there is no dedicated SSE event for
         # it). The decoder must assemble the call and surface it in the
-        # terminal response's output — today step.start/arguments_delta are
-        # ignored, so the terminal result carries no function_call and
-        # streamed tool use dies as a 200-status failure.
+        # terminal response's output.
         st = UniLM.AgenticStreamState()
         seq = "event: step.start\ndata: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"name\":\"get_weather\",\"arguments\":{}}}\n\n" *
               "event: step.delta\ndata: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"arguments_delta\",\"arguments\":\"{\\\"city\\\":\"}}\n\n" *
@@ -308,7 +306,7 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
              get(out[something(fc, 1)], "name", "") == "get_weather" &&
              get(out[something(fc, 1)], "call_id", "") == "fc_1" &&
              (JSON.parse(get(out[something(fc, 1)], "arguments", "{}"); dicttype=Dict{String,Any})["city"] == "Oslo")
-        @test_broken ok
+        @test ok
     end
 
     @testset "P0-6 Gemini id-less parallel call correlation" begin

@@ -248,3 +248,65 @@ end
     @test output_text(res) == "Answer."                 # message still decoded
     @test isempty(function_calls(res))                  # hosted step ≠ function call
 end
+
+@testset "Interactions stream — function-call assembly (requires_action)" begin
+    st = UniLM.AgenticStreamState()
+    UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "event: step.start\ndata: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"function_call\",\"id\":\"fc_9\",\"name\":\"lookup\",\"arguments\":{}}}\n\n", st)
+    UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "event: step.delta\ndata: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"arguments_delta\",\"arguments\":\"{\\\"q\\\":\"}}\n\n", st)
+    UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "event: step.delta\ndata: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"arguments_delta\",\"arguments\":\"\\\"julia\\\"}\"}}\n\n", st)
+    UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "event: step.stop\ndata: {\"event_type\":\"step.stop\",\"index\":0}\n\n", st)
+    r = UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "event: interaction.completed\ndata: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"i_9\",\"status\":\"requires_action\",\"model\":\"m\",\"usage\":{\"total_input_tokens\":1,\"total_output_tokens\":1,\"total_tokens\":2}}}\n\n", st)
+    @test r.done == true && r.terminal == :completed
+    rd = r.data["response"]
+    @test rd["status"] == "requires_action"
+    calls = [o for o in rd["output"] if get(o, "type", "") == "function_call"]
+    @test length(calls) == 1
+    @test calls[1]["call_id"] == "fc_9" && calls[1]["name"] == "lookup"
+    @test JSON.parse(calls[1]["arguments"]; dicttype=Dict{String,Any}) == Dict{String,Any}("q" => "julia")
+    # usage normalized to OpenAI keys as everywhere else
+    @test rd["usage"]["input_tokens"] == 1
+end
+
+@testset "Interactions stream — text + thought signature assembly" begin
+    st = UniLM.AgenticStreamState()
+    UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "event: step.start\ndata: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"thought\"}}\n\n", st)
+    UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "event: step.delta\ndata: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"thought_signature\",\"signature\":\"enc==\"}}\n\n", st)
+    UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "event: step.delta\ndata: {\"event_type\":\"step.delta\",\"index\":1,\"delta\":{\"type\":\"text\",\"text\":\"Hi \"}}\n\n", st)
+    UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "event: step.delta\ndata: {\"event_type\":\"step.delta\",\"index\":1,\"delta\":{\"type\":\"text\",\"text\":\"there\"}}\n\n", st)
+    r = UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "event: interaction.completed\ndata: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"i_t\",\"status\":\"completed\",\"model\":\"m\"}}\n\n", st)
+    rd = r.data["response"]
+    thoughts = [o for o in rd["output"] if get(o, "type", "") == "thought"]
+    @test length(thoughts) == 1 && thoughts[1]["signature"] == "enc=="
+    @test output_text(ResponseObject(id=rd["id"], status=rd["status"], model=rd["model"],
+                                     output=rd["output"], usage=rd["usage"],
+                                     error=nothing, metadata=nothing, raw=rd)) == "Hi there"
+end
+
+@testset "Interactions stream — byte re-split invariance of assembly" begin
+    golden = "event: step.start\ndata: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"function_call\",\"id\":\"fc_s\",\"name\":\"f\",\"arguments\":{}}}\n\n" *
+             "event: step.delta\ndata: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"arguments_delta\",\"arguments\":\"{\\\"a\\\":1}\"}}\n\n" *
+             "event: step.stop\ndata: {\"event_type\":\"step.stop\",\"index\":0}\n\n" *
+             "event: interaction.completed\ndata: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"i_s\",\"status\":\"requires_action\",\"model\":\"m\"}}\n\n"
+    bytes = Vector{UInt8}(golden)
+    ok = true
+    for k in 1:length(bytes)-1
+        st = UniLM.AgenticStreamState()
+        r1 = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, String(bytes[1:k]), st)
+        r = r1.done ? r1 : UniLM.decode_agentic_stream(GEMINIServiceEndpoint, String(bytes[k+1:end]), st)
+        calls = r.done && r.data isa AbstractDict ?
+            [o for o in get(r.data["response"], "output", Any[]) if get(o, "type", "") == "function_call"] : Any[]
+        ok &= length(calls) == 1 && calls[1]["call_id"] == "fc_s" &&
+              JSON.parse(calls[1]["arguments"]; dicttype=Dict{String,Any}) == Dict{String,Any}("a" => 1)
+    end
+    @test ok
+end

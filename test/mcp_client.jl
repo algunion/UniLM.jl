@@ -153,12 +153,17 @@ end
     end
 end
 
-@testset "SSE response parsing" begin
+@testset "SSE frame extraction" begin
     body = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n"
-    result = UniLM._parse_sse_response(body)
-    parsed = JSON.parse(result)
+    frames = UniLM._parse_sse_frames(body)
+    @test length(frames) == 1
+    parsed = JSON.parse(frames[1])
     @test parsed["id"] == 1
     @test haskey(parsed, "result")
+
+    # Multi-frame bodies come back complete and in arrival order.
+    multi = "data: {\"a\":1}\n\nevent: message\ndata: {\"b\":2}\n\n"
+    @test UniLM._parse_sse_frames(multi) == ["{\"a\":1}", "{\"b\":2}"]
 end
 
 @testset "Transport construction" begin
@@ -451,7 +456,7 @@ end
 
 @testset "MCP client ↔ HTTP server framed as SSE" begin
     # Same dispatch, but responses are wrapped as Server-Sent-Events so the
-    # HTTPTransport must route through `_parse_sse_response`. Single canned
+    # HTTPTransport must route through `_parse_sse_frames`. Single canned
     # frame per request (deterministic, not chunked streaming).
     captured = Ref{Any}(nothing)
     server = _build_mcp_test_server(captured)
@@ -836,4 +841,190 @@ end
     @test mcp_disconnect!(session) === nothing
     @test session.status == :closed
     @test UniLM._transport_isconnected(session.transport) == false
+end
+
+# ─── Interleaved server→client frames & the session lock ─────────────────────
+# All deterministic: in-memory IOBuffers on a StdioTransport (no subprocess,
+# no timing). `t.output` is pre-loaded with the exact frames "the server"
+# sends; `t.input` captures what the client writes back.
+
+"Fresh :ready session over IOBuffers pre-loaded with `server_frames`."
+function _iobuf_session(server_frames::String)
+    t = UniLM.StdioTransport(`cat`)   # command is never spawned
+    t.input = IOBuffer()
+    t.output = IOBuffer(server_frames)
+    session = UniLM.MCPSession(t, UniLM.MCPServerCapabilities(), Dict{String,Any}(),
+        UniLM.MCPToolInfo[], UniLM.MCPResourceInfo[], UniLM.MCPPromptInfo[],
+        UniLM._MCP_PROTOCOL_VERSION, 0, :ready)
+    session, t
+end
+
+@testset "client answers server-initiated ping inline, then reads on" begin
+    session, t = _iobuf_session(
+        """{"jsonrpc":"2.0","id":"srv-ping-1","method":"ping"}\n""" *
+        """{"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n""")
+    res = UniLM._mcp_request!(session, "tools/list")
+    @test res == Dict{String,Any}("ok" => true)
+    # The client wrote TWO frames: our request, then the ping answer.
+    written = split(String(take!(t.input)), "\n"; keepempty=false)
+    @test length(written) == 2
+    req = JSON.parse(written[1])
+    @test req["method"] == "tools/list"
+    @test req["id"] == 1
+    pong = JSON.parse(written[2])
+    @test pong["id"] == "srv-ping-1"
+    @test pong["result"] == Dict{String,Any}()
+    @test !haskey(pong, "error")
+end
+
+@testset "client rejects unknown server-initiated requests with -32601" begin
+    session, t = _iobuf_session(
+        """{"jsonrpc":"2.0","id":"srv-req-9","method":"sampling/createMessage","params":{}}\n""" *
+        """{"jsonrpc":"2.0","id":1,"result":{}}\n""")
+    res = UniLM._mcp_request!(session, "ping")
+    @test res == Dict{String,Any}()
+    written = split(String(take!(t.input)), "\n"; keepempty=false)
+    @test length(written) == 2
+    reply = JSON.parse(written[2])
+    @test reply["id"] == "srv-req-9"
+    @test reply["error"]["code"] == -32601
+end
+
+@testset "notifications/tools/list_changed marks the tool cache stale" begin
+    session, _ = _iobuf_session(
+        """{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n""" *
+        """{"jsonrpc":"2.0","id":1,"result":{}}\n""" *
+        """{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"fresh","inputSchema":{"type":"object"}}]}}\n""")
+    @test session.tools_stale == false
+    UniLM._mcp_request!(session, "ping")
+    @test session.tools_stale == true
+    # Refreshing the list stores the new tools and clears the flag.
+    tools = list_tools!(session)
+    @test [tl.name for tl in tools] == ["fresh"]
+    @test session.tools_stale == false
+end
+
+@testset "unrelated notifications are skipped without side effects" begin
+    session, _ = _iobuf_session(
+        """{"jsonrpc":"2.0","method":"notifications/resources/list_changed"}\n""" *
+        """{"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info","data":"hi"}}\n""" *
+        """{"jsonrpc":"2.0","id":1,"result":{"ok":1}}\n""")
+    res = UniLM._mcp_request!(session, "ping")
+    @test res == Dict{String,Any}("ok" => 1)
+    @test session.tools_stale == false
+end
+
+@testset "stale response frames with the wrong id are skipped" begin
+    session, _ = _iobuf_session(
+        """{"jsonrpc":"2.0","id":99,"result":{"stale":true}}\n""" *
+        """{"jsonrpc":"2.0","id":1,"result":{"fresh":true}}\n""")
+    res = @test_logs (:warn, r"unexpected id") UniLM._mcp_request!(session, "ping")
+    @test res == Dict{String,Any}("fresh" => true)
+end
+
+@testset "id-null error response aborts the exchange loudly" begin
+    session, _ = _iobuf_session(
+        """{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request"}}\n""")
+    err = try
+        UniLM._mcp_request!(session, "ping")
+        nothing
+    catch e
+        e
+    end
+    @test err isa MCPError
+    @test err.code == -32600
+end
+
+# Minimal MCPTransport implementing only what the lock probe needs.
+struct _LockProbeTransport <: UniLM.MCPTransport
+    on_send::Function
+    reply::String
+end
+UniLM._transport_send!(t::_LockProbeTransport, msg::String) = (t.on_send(msg); t.reply)
+
+@testset "whole exchange runs under the session lock" begin
+    # The probe records whether session._lock is held while the request is on
+    # the wire. Serialization of concurrent exchanges follows by construction
+    # (one lock, whole exchange inside it); the interleaving itself is a
+    # timing race and is deliberately not reproduced here.
+    session_box = Ref{Any}(nothing)
+    held_during_send = Ref(false)
+    probe = _LockProbeTransport(
+        _ -> (held_during_send[] = islocked(session_box[]._lock)),
+        """{"jsonrpc":"2.0","id":1,"result":{}}""")
+    session = UniLM.MCPSession(probe, UniLM.MCPServerCapabilities(), Dict{String,Any}(),
+        UniLM.MCPToolInfo[], UniLM.MCPResourceInfo[], UniLM.MCPPromptInfo[],
+        UniLM._MCP_PROTOCOL_VERSION, 0, :ready)
+    session_box[] = session
+    UniLM._mcp_request!(session, "ping")
+    @test held_during_send[]
+    # The id allocated under that same lock made it onto the wire.
+    @test session._id_counter == 1
+end
+
+# ─── HTTP transport: multi-frame SSE bodies ──────────────────────────────────
+
+@testset "HTTP SSE body: notification AFTER the response is not mistaken for it" begin
+    captured = Ref{Any}(nothing)
+    server = _build_mcp_test_server(captured)
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        resp = UniLM._dispatch_mcp(server, parsed)
+        isnothing(resp) && return HTTP.Response(202, "")
+        # Response frame FIRST, then a trailing notification on the same stream.
+        sse = "event: message\ndata: " * JSON.json(resp) * "\n\n" *
+              "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{}}\n\n"
+        HTTP.Response(200, ["Content-Type" => "text/event-stream"], sse)
+    end
+    url = "http://127.0.0.1:$port"
+    try
+        session = mcp_connect(url)
+        try
+            @test session.server_info["name"] == "unilm-test-mcp"
+            @test call_tool(session, "concat",
+                Dict{String,Any}("a" => "L", "b" => "R")) == "L|R"
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "HTTP SSE body: notification BEFORE the response is skipped (stale flag set)" begin
+    captured = Ref{Any}(nothing)
+    server = _build_mcp_test_server(captured)
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        resp = UniLM._dispatch_mcp(server, parsed)
+        isnothing(resp) && return HTTP.Response(202, "")
+        sse = "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n" *
+              "data: " * JSON.json(resp) * "\n\n"
+        HTTP.Response(200, ["Content-Type" => "text/event-stream"], sse)
+    end
+    url = "http://127.0.0.1:$port"
+    try
+        session = mcp_connect(url)
+        try
+            # Isolate the exchange under test: connect's own list_resources!/
+            # list_prompts! responses were also prefixed with list_changed, so
+            # reset the flag via a fresh tools listing first.
+            list_tools!(session)
+            @test session.tools_stale == false
+            @test call_tool(session, "concat",
+                Dict{String,Any}("a" => "x", "b" => "y")) == "x|y"
+            # The list_changed preceding that response marked the cache stale.
+            @test session.tools_stale == true
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        close(httpserver)
+    end
 end

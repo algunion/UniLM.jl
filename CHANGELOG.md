@@ -11,10 +11,18 @@
   conversation again. Never serialized on the OpenAI wire.
 
 ### Changed
+- **Breaking:** `serve(server; transport=:http)` now blocks until the server
+  is closed (matching stdio serving and `HTTP.serve`). Pass `block=false` for
+  the previous behavior: it returns the running server handle, which you
+  `close` yourself.
 - The agentic streaming decode seam now threads one `AgenticStreamState`
   (text buffer, line carry, sticky event name, per-step assembly registry)
   instead of three loose buffer arguments. The seam is unexported; provider
   packages overriding `decode_agentic_stream` must adopt the new signature.
+- MCP HTTP server transport now validates the `Origin` header (a Streamable
+  HTTP requirement; DNS-rebinding defense): requests without an `Origin` and
+  requests from localhost origins are accepted, anything else gets 403 unless
+  listed in the new `allowed_origins` kwarg of `serve`.
 
 ### Fixed
 - Anthropic tool calling on thinking models (e.g. `claude-sonnet-5`): assistant
@@ -41,6 +49,20 @@
   `web_search_options`, `prompt_cache_key`, `safety_identifier` — were
   silently dropped, so forked chats behaved differently). Forks no longer
   normalize `parallel_tool_calls`; the copy is verbatim.
+- MCP server: a syntactically valid JSON frame that is not a JSON object
+  (array, string, number — e.g. a legacy JSON-RPC batch) now gets a `-32600`
+  Invalid Request response; the stdio serve loop continues with the next frame
+  (previously a `MethodError` killed it) and the HTTP transport returns 400
+  instead of 500.
+- MCP client: a request now reads frames until the response with its own id
+  arrives — interleaved server notifications are skipped instead of being
+  returned as the (empty) result and desyncing every subsequent call, and
+  server-initiated `ping` requests are answered inline. After
+  `notifications/tools/list_changed` the session marks its cached tool list
+  stale (`session.tools_stale`; refresh with `list_tools!`). The whole
+  exchange, including request-id allocation, runs under a session lock
+  (previously only writes were locked and the id counter was racy). Custom
+  `MCPTransport` subtypes must now also implement `_transport_read!`.
 
 ## 0.11.3
 

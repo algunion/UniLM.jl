@@ -342,11 +342,9 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
     end
 
     @testset "P0-8 MCP stdio server survives non-object frames" begin
-        # A JSON array (legacy batch — MUST be a single message per spec
-        # 2025-11-25) currently raises MethodError at mcp_server.jl:456
-        # (_dispatch_mcp only accepts Dict{String,Any}) and kills the serve loop
-        # before the NEXT valid request is answered. FIXED contract: -32600 for
-        # the bad frame, normal answer for the following ping.
+        # A JSON array (legacy batch — a message MUST be a single JSON object
+        # per spec 2025-11-25) gets a -32600 Invalid Request response and the
+        # serve loop continues: the following valid ping is answered normally.
         input = IOBuffer("""[{"jsonrpc":"2.0","id":1,"method":"ping"}]\n{"jsonrpc":"2.0","id":2,"method":"ping"}\n""")
         output = IOBuffer()
         server = MCPServer("p0-test", "0.0.0")
@@ -359,15 +357,13 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
         catch
             false
         end
-        @test_broken ok
+        @test ok
     end
 
     @testset "P0-9 MCP client skips interleaved notifications" begin
-        # Server-initiated notifications (tools/list_changed, logging — legal at
-        # any time) currently get consumed as "the response": id mismatch is only
-        # @warn'ed and `{}` is returned as the result (mcp_client.jl:186-194,337),
-        # desyncing every subsequent call. FIXED contract: read until the
-        # matching id, return the real result.
+        # Server-initiated notifications (tools/list_changed, logging) are legal
+        # at any time and must never be consumed as "the response": the client
+        # reads until the frame with the matching id and returns that result.
         t = UniLM.StdioTransport(`cat`)
         t.input = IOBuffer()
         t.output = IOBuffer("""{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n{"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n""")
@@ -375,6 +371,6 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
                                    UniLM.MCPToolInfo[], UniLM.MCPResourceInfo[],
                                    UniLM.MCPPromptInfo[], "2025-11-25", 0, :ready)
         res = UniLM._mcp_request!(session, "ping")
-        @test_broken get(res, "ok", false) == true
+        @test get(res, "ok", false) == true
     end
 end

@@ -6,9 +6,9 @@
 - `ProviderContent` and `Message.provider_content`: provider-native assistant
   content (Anthropic thinking/redacted_thinking blocks, Gemini parts with
   text-part `thoughtSignature`s) is captured verbatim at decode time — for
-  both non-streaming and streaming responses — and echoed verbatim when the
-  same provider encodes the conversation again. Never serialized on the
-  OpenAI wire.
+  both non-streaming and streaming Anthropic responses, and non-streaming
+  Gemini responses — and echoed verbatim when the same provider encodes the
+  conversation again. Never serialized on the OpenAI wire.
 
 ### Fixed
 - Anthropic tool calling on thinking models (e.g. `claude-sonnet-5`): assistant

@@ -243,6 +243,13 @@ and friends. When Gemini returns tool calls, the provider's opaque reasoning
 token is preserved on [`GPTToolCall`](@ref)`.thought_signature` and echoed
 automatically on the next turn.
 
+!!! note "Gemini calls without wire ids"
+    The Gemini API may omit `FunctionCall.id`. UniLM assigns such calls a
+    synthetic positional id (`unilm_call_1`, `unilm_call_2`, …) so parallel
+    tool results correlate correctly; synthetic ids never appear on the wire
+    (the re-encoded request omits the id and correlates positionally, per the
+    API contract). The `unilm_call_` prefix is reserved.
+
 ## Automated Tool Loop
 
 Instead of manually handling tool calls, use [`tool_loop!`](@ref) (Chat Completions) or

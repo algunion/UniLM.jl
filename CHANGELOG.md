@@ -25,6 +25,15 @@
   `reasoning` stub (their `signature` was previously lost; `reasoning_items`
   no longer returns stub entries for them; filter `output` for type ==
   `"thought"`).
+- Gemini Interactions streaming with tools: function-call steps
+  (`step.start` + `arguments_delta` + `step.stop`) are now assembled and
+  surfaced in the terminal response's `output`, so streamed
+  `respond(...; tools=…)` returns a usable `requires_action` result instead
+  of failing on a 200 stream. Streamed thought steps keep their signature.
+- Gemini chat: parallel tool calls without wire `id`s now receive unique
+  synthetic positional ids (reserved prefix `unilm_call_`), fixing tool-result
+  correlation that previously collapsed to the last call; synthetic ids are
+  omitted on re-encode.
 
 ## 0.11.3
 

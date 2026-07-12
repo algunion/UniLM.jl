@@ -108,4 +108,26 @@ end
     @test any(o -> get(o, "type", "") == "google_search_call", res.response.output)
 end
 
+@testset "Interactions — streaming surfaces a function call (live)" begin
+    # Streamed tool use: the terminal event is interaction.completed with
+    # status requires_action and NO steps — the function call must be
+    # assembled from the incremental step events.
+    r = Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+                input="What is the weather in Oslo right now? Use the tool.",
+                stream=true, tool_choice="required",
+                tools=[function_tool("get_weather", "Get current weather for a city",
+                    parameters=Dict("type" => "object",
+                        "properties" => Dict("city" => Dict("type" => "string")),
+                        "required" => ["city"]))])
+    res = fetch(respond(r))
+    @test res isa ResponseSuccess
+    ro = res.response
+    @test ro.status == "requires_action"
+    calls = function_calls(ro)
+    @test length(calls) >= 1
+    @test calls[1]["name"] == "get_weather"
+    @test !isempty(calls[1]["call_id"])
+    @test haskey(JSON.parse(calls[1]["arguments"]; dicttype=Dict{String,Any}), "city")
+end
+
 end  # if GEMINI_API_KEY

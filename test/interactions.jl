@@ -272,6 +272,26 @@ end
     @test rd["usage"]["input_tokens"] == 1
 end
 
+@testset "Interactions stream — zero-argument function call assembles empty args" begin
+    # A no-parameter tool: step.start carries an empty `arguments` object and NO
+    # arguments_delta ever arrives. The assembled function_call must still surface
+    # with arguments == "{}" (parsing to an empty Dict) — the start snapshot's
+    # empty object is the fallback — not be dropped or throw on an absent delta.
+    st = UniLM.AgenticStreamState()
+    UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "event: step.start\ndata: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"function_call\",\"id\":\"fc_0\",\"name\":\"ping\",\"arguments\":{}}}\n\n", st)
+    UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "event: step.stop\ndata: {\"event_type\":\"step.stop\",\"index\":0}\n\n", st)
+    r = UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "event: interaction.completed\ndata: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"i_0\",\"status\":\"requires_action\",\"model\":\"m\"}}\n\n", st)
+    @test r.done == true && r.terminal == :completed
+    calls = [o for o in r.data["response"]["output"] if get(o, "type", "") == "function_call"]
+    @test length(calls) == 1
+    @test calls[1]["call_id"] == "fc_0" && calls[1]["name"] == "ping"
+    @test calls[1]["arguments"] == "{}"
+    @test JSON.parse(calls[1]["arguments"]; dicttype=Dict{String,Any}) == Dict{String,Any}()
+end
+
 @testset "Interactions stream — text + thought signature assembly" begin
     st = UniLM.AgenticStreamState()
     UniLM.decode_agentic_stream(GEMINIServiceEndpoint,

@@ -340,6 +340,29 @@ end
     @test rec isa Vector{Dict{Symbol,Any}} && rec[1] == Dict{Symbol,Any}(:text => "hi")
 end
 
+@testset "encode — empty gemini blocks reconstruct (never echo an empty parts array)" begin
+    # Symmetry with the Anthropic empty-blocks guard: a captured-but-empty
+    # ProviderContent(:gemini, Any[]) must fall through to reconstruction, not
+    # echo an empty model turn (which would drop the assistant text on the wire).
+    m = Message(role=UniLM.RoleAssistant, content="hi",
+                provider_content=ProviderContent(:gemini, Any[]))
+    rec = UniLM._gemini_model_parts(m, Dict{String,String}())
+    @test rec isa Vector{Dict{Symbol,Any}} && rec == [Dict{Symbol,Any}(:text => "hi")]
+end
+
+@testset "decode — malformed non-vector parts → no capture, no throw" begin
+    # Symmetry with the Anthropic malformed-content guard: if `content.parts` is a
+    # stray object instead of an array, decode must not throw and must not capture
+    # provider_content (echoing a non-array back would 400). The message still
+    # decodes to a well-formed assistant turn.
+    malformed = """{"candidates":[{"content":{"role":"model","parts":{"text":"x"}},
+        "finishReason":"STOP"}],
+        "usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}"""
+    dec = UniLM.decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(malformed)))
+    @test isnothing(dec.message.provider_content)
+    @test dec.message.role == UniLM.RoleAssistant
+end
+
 @testset "decode — id-less parallel calls get unique synthetic ids" begin
     body = """
     {"candidates":[{"content":{"role":"model","parts":[

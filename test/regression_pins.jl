@@ -20,18 +20,32 @@ using Sockets
 # (readavailable is undefined for server-side streams on 2.x, and a throwing
 # handler turns every response into a 500).
 function sse_mock_server(chunks::Vector{String})
-    tcp = Sockets.listen(Sockets.localhost, 0)
-    port = Int(Sockets.getsockname(tcp)[2])
-    close(tcp)
-    server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
-        read(http)                           # drain the request body
-        HTTP.setstatus(http, 200)
-        HTTP.setheader(http, "Content-Type" => "text/event-stream")
-        HTTP.startwrite(http)
-        for c in chunks
-            write(http, c)
-            flush(http)
-            sleep(0.4)
+    # Port TOCTOU: the ephemeral port is discovered by binding a probe socket
+    # that MUST be closed before HTTP.listen! can claim it — a window in which
+    # another listener can steal the port (a once-observed, otherwise-unexplained
+    # bind failure). Re-pick a fresh ephemeral port and retry a few times before
+    # giving up, so a lost race doesn't fail the run.
+    server = nothing
+    port = 0
+    for attempt in 1:3
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2])
+        close(tcp)
+        try
+            server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
+                read(http)                           # drain the request body
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "text/event-stream")
+                HTTP.startwrite(http)
+                for c in chunks
+                    write(http, c)
+                    flush(http)
+                    sleep(0.4)
+                end
+            end
+            break
+        catch
+            attempt == 3 && rethrow()
         end
     end
     server, "http://127.0.0.1:$port"
@@ -347,7 +361,7 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
         # serve loop continues: the following valid ping is answered normally.
         input = IOBuffer("""[{"jsonrpc":"2.0","id":1,"method":"ping"}]\n{"jsonrpc":"2.0","id":2,"method":"ping"}\n""")
         output = IOBuffer()
-        server = MCPServer("p0-test", "0.0.0")
+        server = MCPServer("pins-test", "0.0.0")
         ok = try
             UniLM._serve_stdio(server; input=input, output=output)
             lines = split(String(take!(output)), '\n'; keepempty=false)

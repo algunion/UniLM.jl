@@ -179,7 +179,11 @@ end
 function _build_stream_message(state::StreamState)::Message
     content = String(take!(state.content))
     refusal = String(take!(state.refusal))
-    pc = (isnothing(state.raw_provider) || isempty(state.raw_blocks)) ? nothing :
+    # Echo complete captures only: a block still pending (its stop line was
+    # dropped as malformed) means the capture is incomplete — fall back to
+    # neutral reconstruction rather than echo a partial turn.
+    pc = (isnothing(state.raw_provider) || isempty(state.raw_blocks) ||
+          !isempty(state.raw_pending)) ? nothing :
          ProviderContent(state.raw_provider, state.raw_blocks)
     if !isempty(state.tool_calls)
         tcalls = GPTToolCall[]

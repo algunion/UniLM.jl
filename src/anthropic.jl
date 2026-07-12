@@ -213,6 +213,9 @@ function handle_sse_event!(::Type{ANTHROPICServiceEndpoint}, event::AbstractStri
     elseif t == "content_block_start"
         cb = get(ev, "content_block", nothing)   # no {} default: a missing block must not fabricate a raw entry
         idx = get(ev, "index", nothing)
+        # Concrete Dict{String,Any} (raw_pending's value type): if the parse
+        # dicttype ever changes, capture disables loudly here — keep in sync
+        # with the AbstractDict tool-branch guard below.
         if idx isa Integer && cb isa Dict{String,Any}
             # Verbatim snapshot for round-trip assembly. The parsed event owns
             # this dict exclusively, so in-place delta accumulation is safe.

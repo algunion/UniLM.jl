@@ -416,6 +416,15 @@ end
     print(st4.content, "x")
     push!(st4.raw_blocks, Dict{String,Any}("type" => "text"))
     @test isnothing(UniLM._build_stream_message(st4).provider_content)
+
+    # Incomplete capture (a block never finalized) must NOT be echoed:
+    # partial provider-native content is worse than the neutral fallback.
+    st5 = UniLM.StreamState()
+    print(st5.content, "x")
+    st5.raw_provider = :anthropic
+    push!(st5.raw_blocks, Dict{String,Any}("type" => "text", "text" => "x"))
+    st5.raw_pending[1] = Dict{String,Any}("type" => "tool_use")
+    @test isnothing(UniLM._build_stream_message(st5).provider_content)
 end
 
 @testset "chatrequest! kwargs" begin

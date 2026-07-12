@@ -16,7 +16,9 @@
   requires back verbatim, so multi-turn tool use failed with HTTP 400.
 - Gemini Interactions `thought` steps are now surfaced verbatim in
   `ResponseObject.output` instead of being collapsed into an empty
-  `reasoning` stub (their `signature` was previously lost).
+  `reasoning` stub (their `signature` was previously lost; `reasoning_items`
+  no longer returns stub entries for them; filter `output` for type ==
+  `"thought"`).
 
 ## 0.11.3
 

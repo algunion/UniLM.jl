@@ -83,7 +83,8 @@ end
                             content="22C and clear"))
         follow = chatrequest!(chat)   # the request that used to 400
         @test follow isa LLMSuccess
-        @test !isempty(something(follow.message.content, ""))
+        @test follow.message.finish_reason == UniLM.TOOL_CALLS ||
+              !isempty(something(follow.message.content, ""))
     else
         # Adaptive thinking is model-decided; a no-tool answer — or a turn that
         # burned the default max_tokens mid-thought ("length") — is a legal

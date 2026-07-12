@@ -151,6 +151,7 @@ end
 Abstract type for MCP transport implementations. Subtypes must implement:
 - `_transport_connect!(t)` — establish connection
 - `_transport_send!(t, msg::String)::String` — send JSON-RPC message, return response
+- `_transport_read!(t)::String` — read the next incoming JSON-RPC frame
 - `_transport_notify!(t, msg::String)` — send notification (no response expected)
 - `_transport_disconnect!(t)` — close connection
 - `_transport_isconnected(t)::Bool` — check if connected
@@ -187,6 +188,10 @@ function _transport_send!(t::StdioTransport, msg::String)::String
         write(inp, msg, "\n")
         flush(inp)
     end
+    _transport_read!(t)
+end
+
+function _transport_read!(t::StdioTransport)::String
     out = t.output
     isnothing(out) && error("StdioTransport not connected")
     line = readline(out)
@@ -235,8 +240,9 @@ mutable struct HTTPTransport <: MCPTransport
     session_id::Union{String,Nothing}
     connected::Bool
     lock::ReentrantLock
+    pending::Vector{String}  # frames from the last response body, not yet consumed
     function HTTPTransport(url::String; headers::Vector{Pair{String,String}}=Pair{String,String}[])
-        new(url, headers, nothing, false, ReentrantLock())
+        new(url, headers, nothing, false, ReentrantLock(), String[])
     end
 end
 
@@ -254,12 +260,23 @@ function _transport_send!(t::HTTPTransport, msg::String)::String
     !isempty(sid) && (t.session_id = sid)
     resp.status == 200 || error("MCP HTTP request failed with status $(resp.status): $(String(resp.body))")
     ct = HTTP.header(resp, "Content-Type", "")
+    empty!(t.pending)  # frames left over from a previous exchange are stale
     if startswith(ct, "text/event-stream")
-        # Parse SSE: extract last data line as the response
-        _parse_sse_response(String(resp.body))
+        # An SSE body may carry several frames (notifications/requests around
+        # the response). Queue them in arrival order; hand back the first.
+        frames = _parse_sse_frames(String(resp.body))
+        isempty(frames) && error("No data found in SSE response")
+        append!(t.pending, frames[2:end])
+        frames[1]
     else
         String(resp.body)
     end
+end
+
+function _transport_read!(t::HTTPTransport)::String
+    isempty(t.pending) &&
+        error("MCP HTTP response body ended before a response to the pending request")
+    popfirst!(t.pending)
 end
 
 function _transport_notify!(t::HTTPTransport, msg::String)
@@ -288,15 +305,14 @@ end
 
 _transport_isconnected(t::HTTPTransport) = t.connected
 
-"""Parse SSE response body to extract the JSON-RPC response data."""
-function _parse_sse_response(body::String)::String
-    last_data = ""
+"""Split an SSE response body into its `data:` payloads, in arrival order."""
+function _parse_sse_frames(body::String)::Vector{String}
+    frames = String[]
     for line in split(body, "\n")
         stripped = strip(line)
-        startswith(stripped, "data: ") && (last_data = stripped[7:end])
+        startswith(stripped, "data: ") && push!(frames, stripped[7:end])
     end
-    isempty(last_data) && error("No data found in SSE response")
-    last_data
+    frames
 end
 
 # ─── MCPSession ──────────────────────────────────────────────────────────────
@@ -308,6 +324,13 @@ A live connection to an MCP server. Manages lifecycle, transport, and cached
 tool/resource/prompt lists.
 
 Create via [`mcp_connect`](@ref). Disconnect via [`mcp_disconnect!`](@ref).
+
+Requests are serialized: each request/response exchange (including its id
+allocation) runs under an internal session lock, and interleaved server →
+client frames are handled in place (notifications skipped, server `ping`
+requests answered). After the server sends
+`notifications/tools/list_changed`, `tools_stale` is `true` until the next
+[`list_tools!`](@ref).
 """
 mutable struct MCPSession
     transport::MCPTransport
@@ -319,23 +342,83 @@ mutable struct MCPSession
     protocol_version::String
     _id_counter::Int
     status::Symbol  # :disconnected, :initializing, :ready, :closed
+    _lock::ReentrantLock
+    tools_stale::Bool
 end
 
+# Sessions start with a fresh lock and a fresh (not stale) tool cache.
+function MCPSession(transport::MCPTransport, caps::MCPServerCapabilities,
+                    server_info::Dict{String,Any}, tools::Vector{MCPToolInfo},
+                    resources::Vector{MCPResourceInfo}, prompts::Vector{MCPPromptInfo},
+                    protocol_version::String, id_counter::Int, status::Symbol)
+    MCPSession(transport, caps, server_info, tools, resources, prompts,
+               protocol_version, id_counter, status, ReentrantLock(), false)
+end
+
+"""Allocate the next request id. Callers must hold `session._lock`."""
 function _next_id!(session::MCPSession)::Int
     session._id_counter += 1
     session._id_counter
 end
 
-"""Send a JSON-RPC request and return the parsed response, throwing MCPError on failure."""
+"""
+Send a JSON-RPC request and return the parsed response, throwing MCPError on failure.
+
+The whole exchange — id allocation, request write, and reading frames until
+the response with the matching id arrives — runs under `session._lock`, so
+concurrent callers are serialized and cannot interleave reads. Frames received
+before the matching response are handled in place:
+
+- Server notifications (no `id`) are skipped; `notifications/tools/list_changed`
+  additionally sets `session.tools_stale = true` (refresh via [`list_tools!`](@ref)).
+- Server-initiated requests (`id` + `method`): `ping` is answered with an empty
+  result; anything else with `-32601` (this client offers no server-callable
+  capabilities).
+- A response with a `null` id carrying an `error` aborts the exchange with
+  [`MCPError`](@ref) (the server could not attribute the request).
+- Any other non-matching response frame is skipped with a warning.
+"""
 function _mcp_request!(session::MCPSession, method::String, params::Union{Dict{String,Any},Nothing}=nothing)::Dict{String,Any}
-    id = _next_id!(session)
-    req = _JSONRPCRequest(id, method, params)
-    raw = _transport_send!(session.transport, _jsonrpc_serialize(req))
-    parsed = JSON.parse(raw; dicttype=Dict{String,Any})
-    resp = _JSONRPCResponse(parsed)
-    !isnothing(resp.error) && throw(MCPError(resp.error))
-    resp.id != id && @warn "Response ID mismatch" expected=id got=resp.id
-    something(resp.result, Dict{String,Any}())
+    lock(session._lock) do
+        id = _next_id!(session)
+        req = _JSONRPCRequest(id, method, params)
+        raw = _transport_send!(session.transport, _jsonrpc_serialize(req))
+        while true
+            parsed = JSON.parse(raw; dicttype=Dict{String,Any})
+            parsed isa Dict{String,Any} ||
+                error("MCP server sent a non-object JSON-RPC frame: $raw")
+            if haskey(parsed, "method")
+                frame_id = get(parsed, "id", nothing)
+                if isnothing(frame_id)
+                    # Server → client notification: never "the response".
+                    parsed["method"] == "notifications/tools/list_changed" &&
+                        (session.tools_stale = true)
+                elseif parsed["method"] == "ping"
+                    # Server-initiated ping: answer with an empty result.
+                    _transport_notify!(session.transport,
+                        JSON.json(_jsonrpc_result(frame_id, Dict{String,Any}())))
+                else
+                    # Server-initiated request this client cannot serve.
+                    _transport_notify!(session.transport,
+                        JSON.json(_jsonrpc_error(frame_id, -32601,
+                            "Method not found: $(parsed["method"])")))
+                end
+                raw = _transport_read!(session.transport)
+                continue
+            end
+            resp = _JSONRPCResponse(parsed)
+            if resp.id != id
+                if isnothing(resp.id) && !isnothing(resp.error)
+                    throw(MCPError(resp.error))
+                end
+                @warn "Skipping response with unexpected id" expected=id got=resp.id
+                raw = _transport_read!(session.transport)
+                continue
+            end
+            !isnothing(resp.error) && throw(MCPError(resp.error))
+            return something(resp.result, Dict{String,Any}())
+        end
+    end
 end
 
 """Send a JSON-RPC notification (no response expected)."""
@@ -472,6 +555,7 @@ function list_tools!(session::MCPSession)::Vector{MCPToolInfo}
         isnothing(cursor) && break
     end
     session.tools = all_tools
+    session.tools_stale = false
     all_tools
 end
 

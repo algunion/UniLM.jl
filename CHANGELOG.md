@@ -54,6 +54,15 @@
   Invalid Request response; the stdio serve loop continues with the next frame
   (previously a `MethodError` killed it) and the HTTP transport returns 400
   instead of 500.
+- MCP client: a request now reads frames until the response with its own id
+  arrives — interleaved server notifications are skipped instead of being
+  returned as the (empty) result and desyncing every subsequent call, and
+  server-initiated `ping` requests are answered inline. After
+  `notifications/tools/list_changed` the session marks its cached tool list
+  stale (`session.tools_stale`; refresh with `list_tools!`). The whole
+  exchange, including request-id allocation, runs under a session lock
+  (previously only writes were locked and the id counter was racy). Custom
+  `MCPTransport` subtypes must now also implement `_transport_read!`.
 
 ## 0.11.3
 

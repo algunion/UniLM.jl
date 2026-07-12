@@ -94,15 +94,24 @@ function _gemini_contents(messages)
     (sysinstr, out)
 end
 
-# Assistant turn → Gemini model parts: optional text + functionCall parts (id, args,
-# thoughtSignature echoed). Records id→name into `tool_names` for later functionResponse.
+# Assistant turn → Gemini model parts: echo captured provider-native parts
+# verbatim when this provider produced them (text-part thoughtSignatures
+# intact); otherwise rebuild optional text + functionCall parts. Either way,
+# record id→name into `tool_names` so later functionResponse parts correlate.
 function _gemini_model_parts(m::Message, tool_names)
+    if !isnothing(m.tool_calls)
+        for tc in m.tool_calls
+            tool_names[tc.id] = tc.func.name
+        end
+    end
+    pc = m.provider_content
+    pc isa ProviderContent && pc.provider === :gemini && !isempty(pc.blocks) &&
+        return pc.blocks
     parts = Vector{Dict{Symbol,Any}}()
     (isnothing(m.content) || isempty(m.content)) ||
         push!(parts, Dict{Symbol,Any}(:text => m.content))
     isnothing(m.tool_calls) && return parts
     for tc in m.tool_calls
-        tool_names[tc.id] = tc.func.name
         part = Dict{Symbol,Any}(:functionCall => Dict{Symbol,Any}(
             :id => tc.id, :name => tc.func.name, :args => tc.func.arguments))
         isnothing(tc.thought_signature) || (part[:thoughtSignature] = tc.thought_signature)
@@ -172,9 +181,15 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
     cands = get(data, "candidates", [])
     cand = isempty(cands) ? Dict{String,Any}() : cands[1]
     fr_raw = get(cand, "finishReason", nothing)
+    parts = get(get(cand, "content", Dict{String,Any}()), "parts", Any[])
+    # Verbatim capture for round-trip: Gemini-3 attaches thoughtSignature to
+    # text parts too; the neutral IR keeps it only on functionCall parts, so
+    # echoing these parts verbatim is what preserves multi-turn thinking.
+    pc = parts isa AbstractVector && !isempty(parts) ?
+         ProviderContent(:gemini, parts) : nothing
     text = IOBuffer()
     tool_calls = GPTToolCall[]
-    for p in get(get(cand, "content", Dict{String,Any}()), "parts", [])
+    for p in (parts isa AbstractVector ? parts : Any[])
         if haskey(p, "text")
             print(text, p["text"])
         elseif haskey(p, "functionCall")
@@ -191,13 +206,13 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
     txt = String(take!(text))
     msg = if !isempty(tool_calls)
         Message(role=RoleAssistant, content=(isempty(txt) ? nothing : txt),
-                tool_calls=tool_calls, finish_reason=finish)
+                tool_calls=tool_calls, finish_reason=finish, provider_content=pc)
     elseif finish == CONTENT_FILTER && isempty(txt)
         Message(role=RoleAssistant, refusal_message="Model response blocked by safety filter.",
-                finish_reason=finish)
+                finish_reason=finish, provider_content=pc)
     else
         Message(role=RoleAssistant, content=(isempty(txt) ? "No response from the model." : txt),
-                finish_reason=finish)
+                finish_reason=finish, provider_content=pc)
     end
     (; message=msg, usage)
 end

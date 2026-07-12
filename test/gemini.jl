@@ -292,3 +292,50 @@ end
     @test byid["fc_a"] == "get_weather"    # correct name despite reversed push order
     @test byid["fc_b"] == "get_time"
 end
+
+@testset "decode — provider-native parts captured (text-part thoughtSignature survives)" begin
+    body = """
+    {"candidates":[{"content":{"role":"model","parts":[
+       {"text":"Weighing options.","thoughtSignature":"tsig=="},
+       {"functionCall":{"id":"fc1","name":"get_weather","args":{"city":"Oslo"}}}]},
+      "finishReason":"STOP"}],
+     "usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":2,"totalTokenCount":3}}
+    """
+    dec = UniLM.decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(body)))
+    pc = dec.message.provider_content
+    @test pc isa ProviderContent && pc.provider === :gemini
+    @test length(pc.blocks) == 2
+    @test pc.blocks[1]["thoughtSignature"] == "tsig=="   # dropped by the neutral IR, kept here
+    @test dec.message.tool_calls[1].func.name == "get_weather"
+
+    # No parts (e.g. safety block with empty candidate content) → no capture.
+    blocked = """{"candidates":[{"finishReason":"SAFETY"}],
+        "usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":0,"totalTokenCount":1}}"""
+    dec2 = UniLM.decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(blocked)))
+    @test isnothing(dec2.message.provider_content)
+end
+
+@testset "encode — provider-native parts echoed verbatim, correlation preserved" begin
+    parts = Any[
+        Dict{String,Any}("text" => "Weighing options.", "thoughtSignature" => "tsig=="),
+        Dict{String,Any}("functionCall" => Dict{String,Any}(
+            "id" => "fc1", "name" => "get_weather", "args" => Dict{String,Any}("city" => "Oslo"))),
+    ]
+    tc = [GPTToolCall(id="fc1", func=GPTFunction("get_weather", Dict{String,Any}("city" => "Oslo")))]
+    m = Message(role=UniLM.RoleAssistant, tool_calls=tc,
+                provider_content=ProviderContent(:gemini, parts))
+    msgs = [Message(role=UniLM.RoleUser, content="w?"), m,
+            Message(role=UniLM.RoleTool, content="12C", tool_call_id="fc1")]
+    _, contents = UniLM._gemini_contents(msgs)
+    # Model turn is the captured parts array, identical object.
+    @test contents[2][:parts] === parts
+    # functionResponse correlation still resolved through the neutral tool_calls.
+    fr = contents[3][:parts][1][:functionResponse]
+    @test fr[:name] == "get_weather" && fr[:id] == "fc1"
+
+    # Cross-provider tag → reconstruction (no thoughtSignature text part).
+    m_anth = Message(role=UniLM.RoleAssistant, content="hi", tool_calls=tc,
+                     provider_content=ProviderContent(:anthropic, parts))
+    rec = UniLM._gemini_model_parts(m_anth, Dict{String,String}())
+    @test rec isa Vector{Dict{Symbol,Any}} && rec[1] == Dict{Symbol,Any}(:text => "hi")
+end

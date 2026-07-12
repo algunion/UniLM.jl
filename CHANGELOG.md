@@ -41,6 +41,11 @@
   `web_search_options`, `prompt_cache_key`, `safety_identifier` — were
   silently dropped, so forked chats behaved differently). Forks no longer
   normalize `parallel_tool_calls`; the copy is verbatim.
+- MCP server: a syntactically valid JSON frame that is not a JSON object
+  (array, string, number — e.g. a legacy JSON-RPC batch) now gets a `-32600`
+  Invalid Request response; the stdio serve loop continues with the next frame
+  (previously a `MethodError` killed it) and the HTTP transport returns 400
+  instead of 500.
 
 ## 0.11.3
 

@@ -453,6 +453,14 @@ function _serve_stdio(server::MCPServer; input::IO=stdin, output::IO=stdout)
             flush(output)
             continue
         end
+        # JSON-RPC messages are single objects (the MCP spec removed batch
+        # arrays); any other JSON value is answerable only as Invalid Request.
+        if !(parsed isa Dict{String,Any})
+            response = _jsonrpc_error(nothing, -32600, "Invalid Request: expected a single JSON-RPC object")
+            println(output, JSON.json(response))
+            flush(output)
+            continue
+        end
         response = _dispatch_mcp(server, parsed)
         # Notifications produce no response
         isnothing(response) && continue
@@ -474,6 +482,9 @@ function _serve_http(server::MCPServer; host::String="127.0.0.1", port::Int=8080
                 JSON.parse(body; dicttype=Dict{String,Any})
             catch
                 return HTTP.Response(400, JSON.json(_jsonrpc_error(nothing, -32700, "Parse error")))
+            end
+            if !(parsed isa Dict{String,Any})
+                return HTTP.Response(400, JSON.json(_jsonrpc_error(nothing, -32600, "Invalid Request: expected a single JSON-RPC object")))
             end
             response = _dispatch_mcp(server, parsed)
             if isnothing(response)

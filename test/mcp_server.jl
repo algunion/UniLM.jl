@@ -853,3 +853,63 @@ end
     @test sch["required"] == ["a"]
     @test server.tools["pair"].handler(Dict{String,Any}("a" => "x", "b" => "y")) == "x/y"
 end
+
+# ─── Non-object JSON-RPC frames (valid JSON, wrong shape) ─────────────────────
+
+@testset "stdio transport — non-object frames → -32600, loop continues" begin
+    server = MCPServer("stdio-invalid-req", "1.0.0")
+    input = IOBuffer()
+    output = IOBuffer()
+    # Three valid-JSON non-object frames (array, string, number), then a valid
+    # ping proving the loop survived all of them.
+    write(input,
+        """[{"jsonrpc":"2.0","id":1,"method":"ping"}]""", "\n",
+        "\"just a string\"", "\n",
+        "42", "\n",
+        JSON.json(Dict("jsonrpc" => "2.0", "id" => 5, "method" => "ping", "params" => Dict())), "\n")
+    seekstart(input)
+
+    UniLM._serve_stdio(server; input, output)
+
+    seekstart(output)
+    lines = filter(!isempty, split(String(take!(output)), "\n"))
+    @test length(lines) == 4  # three -32600 responses + one ping result
+
+    for i in 1:3
+        err = JSON.parse(lines[i])
+        @test err["jsonrpc"] == "2.0"
+        @test err["id"] === nothing          # unattributable frame → id null
+        @test err["error"]["code"] == -32600
+        @test contains(err["error"]["message"], "Invalid Request")
+        @test !haskey(err, "result")
+    end
+
+    ping_resp = JSON.parse(lines[4])
+    @test ping_resp["id"] == 5
+    @test haskey(ping_resp, "result")
+end
+
+@testset "HTTP transport — non-object frame → 400 + -32600 (not 500)" begin
+    server = _build_http_server()
+    port = _mcp_free_port()
+    httpserver = serve(server; transport=:http, port=port)
+    try
+        for bad in ("""[{"jsonrpc":"2.0","id":1,"method":"ping"}]""", "\"str\"", "42")
+            resp = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+                bad; status_exception=false)
+            @test resp.status == 400
+            parsed = JSON.parse(String(resp.body))
+            @test parsed["id"] === nothing
+            @test parsed["error"]["code"] == -32600
+            @test contains(parsed["error"]["message"], "Invalid Request")
+        end
+        # The server is still alive and answers a valid request afterwards.
+        ok = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+            JSON.json(Dict("jsonrpc" => "2.0", "id" => 9, "method" => "ping",
+                "params" => Dict())); status_exception=false)
+        @test ok.status == 200
+        @test JSON.parse(String(ok.body))["id"] == 9
+    finally
+        close(httpserver)
+    end
+end

@@ -94,4 +94,44 @@
         @test forked.user == "user_1"
         @test forked.seed == 42
     end
+
+    @testset "fork copies every config field (generic)" begin
+        chat = Chat(model="gpt-5.5", top_p=0.9,
+                    reasoning_effort="high", max_completion_tokens=222,
+                    stream_options=Dict("include_usage" => true), verbosity="low",
+                    store=true, metadata=Dict("k" => "v"), service_tier="auto",
+                    logprobs=true, top_logprobs=3,
+                    prediction=Dict("type" => "content"), modalities=["text"],
+                    audio=Dict("voice" => "alloy"),
+                    web_search_options=Dict("search_context_size" => "low"),
+                    prompt_cache_key="pck", safety_identifier="sid")
+        f = fork(chat)
+        for name in fieldnames(Chat)
+            name in (:messages, :_cumulative_cost) && continue
+            @test isequal(getfield(f, name), getfield(chat, name))
+        end
+        # messages independent, cost Ref fresh but equal in value
+        @test f.messages !== chat.messages
+        @test f._cumulative_cost !== chat._cumulative_cost
+        @test f._cumulative_cost[] == chat._cumulative_cost[]
+    end
+
+    @testset "fork copies parallel_tool_calls verbatim (no rewrite)" begin
+        # With tools present and parallel_tool_calls UNSET, the constructor keeps
+        # `nothing` (the provider default applies); forking must not rewrite it to
+        # an explicit `false`, which WOULD be emitted on the wire and silently
+        # turn parallel calling off for the fork.
+        chat2 = Chat(model="gpt-5.5",
+                     tools=[GPTTool(func=GPTFunctionSignature(name="t"))],
+                     parallel_tool_calls=nothing)
+        @test fork(chat2).parallel_tool_calls === nothing
+    end
+
+    @testset "fork(chat, n) forks inherit the generic copy" begin
+        chat = Chat(model="gpt-5.5", prompt_cache_key="pck2")
+        fs = fork(chat, 3)
+        @test length(fs) == 3
+        @test all(f -> f.prompt_cache_key == "pck2", fs)
+        @test allunique([objectid(f.messages) for f in fs])
+    end
 end

@@ -34,6 +34,13 @@
   synthetic positional ids (reserved prefix `unilm_call_`), fixing tool-result
   correlation that previously collapsed to the last call; synthetic ids are
   omitted on re-encode.
+- `fork(chat)` now copies every `Chat` field by construction (previously 15
+  config fields — `reasoning_effort`, `max_completion_tokens`,
+  `stream_options`, `verbosity`, `store`, `metadata`, `service_tier`,
+  `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`,
+  `web_search_options`, `prompt_cache_key`, `safety_identifier` — were
+  silently dropped, so forked chats behaved differently). Forks no longer
+  normalize `parallel_tool_calls`; the copy is verbatim.
 
 ## 0.11.3
 

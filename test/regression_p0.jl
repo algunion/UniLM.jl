@@ -54,6 +54,7 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
 
     @testset "P0-7 fork(chat) preserves every Chat field" begin
         kwargs = Dict{Symbol,Any}(
+            :service => GenericOpenAIEndpoint("http://localhost:9999", ""),
             :model => "gpt-5.5", :history => false,
             :tools => [GPTTool(func=GPTFunctionSignature(name="f"))],
             :tool_choice => "auto", :parallel_tool_calls => true,
@@ -74,9 +75,10 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
         forked = fork(chat)
         # messages is deepcopied (identity differs by design); the cost Ref is fresh.
         skip = (:messages, :_cumulative_cost)
-        # FIXED contract: every remaining field survives a fork. Today 15 are dropped.
-        @test_broken all(name -> isequal(getfield(forked, name), getfield(chat, name)),
-                         setdiff(fieldnames(Chat), skip))
+        # FIXED contract: every remaining field survives a fork verbatim.
+        # Extend this fixture with a non-default value whenever Chat gains a field — a field left at its default is invisible to this gate.
+        @test all(name -> isequal(getfield(forked, name), getfield(chat, name)),
+                  setdiff(fieldnames(Chat), skip))
     end
 
     @testset "P0-2 chat SSE unit contracts (ported to handle_sse_event! seam)" begin

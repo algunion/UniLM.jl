@@ -310,9 +310,9 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
     end
 
     @testset "P0-6 Gemini id-less parallel call correlation" begin
-        # FunctionCall.id is Optional in the Gemini API — two id-less parallel
-        # calls currently both key tool_names[""] (gemini.jl:67,105,184),
-        # last-wins, so every functionResponse is attributed to the last call.
+        # FunctionCall.id is Optional in the Gemini API. FIXED contract: id-less
+        # parallel calls receive unique synthetic positional ids, so every
+        # functionResponse carries the right name with no fabricated wire id.
         resp_json = """
         {"candidates":[{"content":{"role":"model","parts":[
            {"functionCall":{"name":"get_weather","args":{"city":"Oslo"}}},
@@ -336,7 +336,7 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
         else
             false
         end
-        @test_broken ids_ok && corr_ok
+        @test ids_ok && corr_ok
     end
 
     @testset "P0-8 MCP stdio server survives non-object frames" begin

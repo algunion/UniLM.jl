@@ -79,8 +79,9 @@ function _gemini_contents(messages)
             tcid = something(m.tool_call_id, "")
             haskey(tool_names, tcid) || throw(ArgumentError(
                 "functionResponse references unknown tool_call id $(repr(tcid)); no preceding model functionCall emitted it"))
-            push!(pending, Dict{Symbol,Any}(:functionResponse => Dict{Symbol,Any}(
-                :id => tcid, :name => tool_names[tcid], :response => _gemini_tool_response(m.content))))
+            fr = Dict{Symbol,Any}(:name => tool_names[tcid], :response => _gemini_tool_response(m.content))
+            _is_synthetic_call_id(tcid) || (fr[:id] = tcid)
+            push!(pending, Dict{Symbol,Any}(:functionResponse => fr))
         elseif m.role == RoleAssistant
             flush!()
             push!(out, Dict{Symbol,Any}(:role => "model", :parts => _gemini_model_parts(m, tool_names)))
@@ -112,8 +113,9 @@ function _gemini_model_parts(m::Message, tool_names)
         push!(parts, Dict{Symbol,Any}(:text => m.content))
     isnothing(m.tool_calls) && return parts
     for tc in m.tool_calls
-        part = Dict{Symbol,Any}(:functionCall => Dict{Symbol,Any}(
-            :id => tc.id, :name => tc.func.name, :args => tc.func.arguments))
+        fcall = Dict{Symbol,Any}(:name => tc.func.name, :args => tc.func.arguments)
+        _is_synthetic_call_id(tc.id) || (fcall[:id] = tc.id)
+        part = Dict{Symbol,Any}(:functionCall => fcall)
         isnothing(tc.thought_signature) || (part[:thoughtSignature] = tc.thought_signature)
         push!(parts, part)
     end
@@ -148,6 +150,12 @@ function _gemini_tool_response(content)
 end
 
 # ─── Response decoding (Gemini generateContent → neutral Message) ────────────
+
+# The Gemini API's FunctionCall.id is OPTIONAL. Id-less calls get a unique
+# synthetic positional id so tool results correlate within the turn; the
+# prefix is reserved and such ids are OMITTED on re-encode (Gemini correlates
+# positionally when ids are absent — echoing a fabricated id would be wrong).
+_is_synthetic_call_id(id::AbstractString) = startswith(id, "unilm_call_")
 
 # Gemini finishReason → neutral finish_reason. OPEN ENUM: Google adds values
 # unannounced, so unknown → STOP (never throw). Tool-call detection is by
@@ -196,7 +204,9 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
             fc = p["functionCall"]
             args = get(fc, "args", Dict{String,Any}())
             args isa AbstractDict || (args = Dict{String,Any}())
-            push!(tool_calls, GPTToolCall(id=get(fc, "id", ""),
+            raw_id = get(fc, "id", "")
+            id = isempty(raw_id) ? "unilm_call_$(length(tool_calls) + 1)" : raw_id
+            push!(tool_calls, GPTToolCall(id=id,
                 func=GPTFunction(get(fc, "name", ""), args),
                 thought_signature=get(p, "thoughtSignature", nothing)))
         end
@@ -245,8 +255,10 @@ function handle_sse_event!(::Type{GEMINIServiceEndpoint}, event::AbstractString,
                     fc = p["functionCall"]
                     fc isa AbstractDict || continue
                     idx = length(state.tool_calls)
+                    raw_id = get(fc, "id", "")
                     state.tool_calls[idx] = Dict{String,Any}(
-                        "id" => get(fc, "id", ""), "type" => "function",
+                        "id" => (isempty(raw_id) ? "unilm_call_$(idx + 1)" : raw_id),
+                        "type" => "function",
                         "function" => Dict{String,Any}(
                             "name" => get(fc, "name", ""),
                             "arguments" => JSON.json(get(fc, "args", Dict{String,Any}()))),

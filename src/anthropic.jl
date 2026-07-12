@@ -90,8 +90,13 @@ function _anthropic_messages(messages)
     (system, out)
 end
 
-# Assistant turn → Anthropic content: optional text block + tool_use blocks.
+# Assistant turn → Anthropic content: echo captured provider-native blocks
+# verbatim when this provider produced them (signatures intact, thinking
+# first); otherwise reconstruct optional text block + tool_use blocks.
 function _anthropic_assistant_content(m::Message)
+    pc = m.provider_content
+    pc isa ProviderContent && pc.provider === :anthropic && !isempty(pc.blocks) &&
+        return pc.blocks
     isnothing(m.tool_calls) && return something(m.content, "")
     blocks = Vector{Dict{Symbol,Any}}()
     (isnothing(m.content) || isempty(m.content)) ||
@@ -148,9 +153,15 @@ end
 function decode_response(::Type{ANTHROPICServiceEndpoint}, resp::HTTP.Response)
     data = JSON.parse(resp.body; dicttype=Dict{String,Any})
     finish = _anthropic_finish_reason(get(data, "stop_reason", nothing))
+    blocks = get(data, "content", Any[])
+    # Verbatim capture for round-trip: thinking/redacted_thinking signatures
+    # must be echoed unmodified on the next turn (thinking models reject
+    # modified blocks). Empty arrays are not captured — echoing [] back is a 400.
+    pc = blocks isa AbstractVector && !isempty(blocks) ?
+         ProviderContent(:anthropic, blocks) : nothing
     text = IOBuffer()
     tool_calls = GPTToolCall[]
-    for b in get(data, "content", [])
+    for b in (blocks isa AbstractVector ? blocks : Any[])
         bt = get(b, "type", "")
         if bt == "text"
             print(text, get(b, "text", ""))
@@ -159,18 +170,20 @@ function decode_response(::Type{ANTHROPICServiceEndpoint}, resp::HTTP.Response)
             args isa AbstractDict || (args = Dict{String,Any}())
             push!(tool_calls, GPTToolCall(id=b["id"], func=GPTFunction(b["name"], args)))
         end
-        # thinking / redacted_thinking / other block types ignored (keystone)
+        # thinking / redacted_thinking blocks are not flattened into the neutral
+        # fields; they ride along verbatim in provider_content.
     end
     usage = _anthropic_usage(get(data, "usage", nothing))
     txt = String(take!(text))
     msg = if !isempty(tool_calls)
         Message(role=RoleAssistant, content=(isempty(txt) ? nothing : txt),
-                tool_calls=tool_calls, finish_reason=finish)
+                tool_calls=tool_calls, finish_reason=finish, provider_content=pc)
     elseif finish == CONTENT_FILTER && isempty(txt)
-        Message(role=RoleAssistant, refusal_message="Model refused to respond.", finish_reason=finish)
+        Message(role=RoleAssistant, refusal_message="Model refused to respond.",
+                finish_reason=finish, provider_content=pc)
     else
         Message(role=RoleAssistant, content=(isempty(txt) ? "No response from the model." : txt),
-                finish_reason=finish)
+                finish_reason=finish, provider_content=pc)
     end
     (; message=msg, usage)
 end

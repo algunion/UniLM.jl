@@ -164,14 +164,16 @@ end
                 Message(role=UniLM.RoleTool, content="12C", tool_call_id="toolu_1")]
         _, wire = UniLM._anthropic_messages(msgs)
         asst = wire[2][:content]
-        # FIXED contract: the assistant turn opens with the thinking block,
-        # signature intact (echoed verbatim). Tolerate Symbol- or String-keyed
-        # blocks (verbatim echo of decoded JSON is String-keyed).
+        # FIXED contract: the assistant turn opens with the thinking block —
+        # text AND signature echoed verbatim — and still ends with tool_use.
+        # Tolerate Symbol- or String-keyed blocks (verbatim echo of decoded
+        # JSON is String-keyed).
         _get(b, k) = b isa AbstractDict ? get(b, k, get(b, String(k), nothing)) : nothing
-        @test_broken asst isa AbstractVector && length(asst) >= 2 &&
-                     _get(asst[1], :type) == "thinking" &&
-                     _get(asst[1], :signature) == "sig==" &&
-                     _get(asst[end], :type) == "tool_use"
+        @test asst isa AbstractVector && length(asst) >= 2 &&
+              _get(asst[1], :type) == "thinking" &&
+              _get(asst[1], :thinking) == "user wants weather" &&
+              _get(asst[1], :signature) == "sig==" &&
+              _get(asst[end], :type) == "tool_use"
     end
 
     @testset "P0-4 Anthropic error event is not success (ported to handle_sse_event!)" begin

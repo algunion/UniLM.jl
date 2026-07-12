@@ -384,6 +384,40 @@ end
     end
 end
 
+@testset "_build_stream_message attaches provider-native blocks" begin
+    # Populated raw blocks + provider tag → ProviderContent on every branch.
+    st = UniLM.StreamState()
+    print(st.content, "Checking.")
+    st.raw_provider = :anthropic
+    push!(st.raw_blocks, Dict{String,Any}("type" => "text", "text" => "Checking."))
+    m = UniLM._build_stream_message(st)
+    @test m.provider_content isa ProviderContent
+    @test m.provider_content.provider === :anthropic
+    @test m.provider_content.blocks[1]["text"] == "Checking."
+
+    # Tool-calls branch carries it too.
+    st2 = UniLM.StreamState()
+    st2.raw_provider = :anthropic
+    push!(st2.raw_blocks, Dict{String,Any}("type" => "tool_use", "id" => "t1",
+                                           "name" => "f", "input" => Dict{String,Any}()))
+    st2.tool_calls[0] = Dict{String,Any}("id" => "t1", "type" => "function",
+        "function" => Dict{String,Any}("name" => "f", "arguments" => ""))
+    st2.finish_reason = UniLM.TOOL_CALLS
+    m2 = UniLM._build_stream_message(st2)
+    @test !isnothing(m2.tool_calls) && m2.provider_content.provider === :anthropic
+
+    # No raw blocks (every non-Anthropic stream today) → nothing, exactly as before.
+    st3 = UniLM.StreamState()
+    print(st3.content, "plain")
+    @test isnothing(UniLM._build_stream_message(st3).provider_content)
+
+    # Blocks without a provider tag must NOT fabricate a ProviderContent.
+    st4 = UniLM.StreamState()
+    print(st4.content, "x")
+    push!(st4.raw_blocks, Dict{String,Any}("type" => "text"))
+    @test isnothing(UniLM._build_stream_message(st4).provider_content)
+end
+
 @testset "chatrequest! kwargs" begin
     @testset "missing messages and prompts returns LLMFailure" begin
         result = UniLM.chatrequest!(model="gpt-4o")

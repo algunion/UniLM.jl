@@ -61,6 +61,14 @@ end
     @test calls[1]["name"] == "get_weather"
     @test calls[1]["call_id"] == "6eG7YnHo"
     @test JSON.parse(calls[1]["arguments"])["city"] == "Tokyo"
+
+    # thought steps surface RAW (signature preserved for future replay) —
+    # not collapsed into an empty reasoning stub.
+    ro3 = UniLM.decode_agentic(GEMINIServiceEndpoint, make(txt))
+    thoughts = [o for o in ro3.output if o isa AbstractDict && get(o, "type", "") == "thought"]
+    @test length(thoughts) == 1 && thoughts[1]["signature"] == "sig"
+    @test !any(o -> o isa AbstractDict && get(o, "type", "") == "reasoning", ro3.output)
+    @test output_text(ro3) == "Hello."   # text extraction unaffected
 end
 
 @testset "Interactions stream decode (interaction.* SSE)" begin

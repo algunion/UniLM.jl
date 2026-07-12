@@ -141,6 +141,71 @@ end
     @test r.usage.prompt_tokens == 104          # input + cache_read; estimated_cost bills fresh=input
 end
 
+@testset "decode — provider-native content captured verbatim" begin
+    body = """
+    {"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-5",
+     "content":[{"type":"thinking","thinking":"user wants weather","signature":"sig=="},
+                {"type":"text","text":"Checking."},
+                {"type":"tool_use","id":"toolu_1","name":"get_weather","input":{"city":"Oslo"}}],
+     "stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":5}}
+    """
+    dec = UniLM.decode_response(ANTHROPICServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(body)))
+    pc = dec.message.provider_content
+    @test pc isa ProviderContent && pc.provider === :anthropic
+    @test length(pc.blocks) == 3
+    @test pc.blocks[1]["type"] == "thinking" && pc.blocks[1]["signature"] == "sig=="
+    @test pc.blocks[2]["text"] == "Checking."
+    @test pc.blocks[3]["input"] == Dict{String,Any}("city" => "Oslo")
+    # Neutral fields unchanged by the capture.
+    @test dec.message.content == "Checking."
+    @test length(dec.message.tool_calls) == 1
+
+    # Plain-text responses capture too (uniform rule: non-empty content array).
+    plain = """{"id":"m2","type":"message","role":"assistant","model":"claude-opus-4-8",
+       "content":[{"type":"text","text":"Hi."}],"stop_reason":"end_turn",
+       "usage":{"input_tokens":1,"output_tokens":1}}"""
+    dec2 = UniLM.decode_response(ANTHROPICServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(plain)))
+    @test dec2.message.provider_content isa ProviderContent
+    @test dec2.message.provider_content.blocks[1]["text"] == "Hi."
+
+    # Empty content array → NO ProviderContent (echoing [] back would 400).
+    empty_body = """{"id":"m3","type":"message","role":"assistant","model":"claude-opus-4-8",
+       "content":[],"stop_reason":"refusal","usage":{"input_tokens":1,"output_tokens":0}}"""
+    dec3 = UniLM.decode_response(ANTHROPICServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(empty_body)))
+    @test isnothing(dec3.message.provider_content)
+end
+
+@testset "encode — provider-native blocks echoed verbatim on provider match" begin
+    blocks = Any[
+        Dict{String,Any}("type" => "thinking", "thinking" => "w", "signature" => "sig=="),
+        Dict{String,Any}("type" => "tool_use", "id" => "toolu_1", "name" => "get_weather",
+                         "input" => Dict{String,Any}("city" => "Oslo")),
+    ]
+    tc = [GPTToolCall(id="toolu_1", func=GPTFunction("get_weather", Dict{String,Any}("city" => "Oslo")))]
+    m = Message(role=UniLM.RoleAssistant, tool_calls=tc,
+                provider_content=ProviderContent(:anthropic, blocks))
+    # Verbatim echo: the SAME array object, blocks unmodified, thinking first.
+    @test UniLM._anthropic_assistant_content(m) === blocks
+
+    # Through the full message pipeline (tool_result correlation intact).
+    msgs = [Message(role=UniLM.RoleUser, content="weather?"), m,
+            Message(role=UniLM.RoleTool, content="12C", tool_call_id="toolu_1")]
+    _, wire = UniLM._anthropic_messages(msgs)
+    @test wire[2][:content] === blocks
+    @test wire[3][:content][1][:tool_use_id] == "toolu_1"
+
+    # Cross-provider tag → neutral reconstruction (thinking dropped, tool_use rebuilt).
+    m_gem = Message(role=UniLM.RoleAssistant, tool_calls=tc,
+                    provider_content=ProviderContent(:gemini, blocks))
+    rec = UniLM._anthropic_assistant_content(m_gem)
+    @test rec isa Vector{Dict{Symbol,Any}} && rec[1][:type] == "tool_use"
+
+    # Empty blocks → reconstruction (never emit an empty content array).
+    m_empty = Message(role=UniLM.RoleAssistant, content="hi",
+                      provider_content=ProviderContent(:anthropic, Any[]))
+    @test UniLM._anthropic_assistant_content(m_empty) == "hi"
+end
+
 @testset "stream — text deltas + usage" begin
     lines = [
         "event: message_start",
@@ -203,4 +268,85 @@ end
     @test msg.tool_calls[1].id == "toolu_7"
     @test msg.tool_calls[1].func.name == "get_weather"
     @test msg.tool_calls[1].func.arguments == Dict("location" => "Paris")
+end
+
+@testset "stream — provider-native blocks assembled verbatim (thinking + text + tool_use)" begin
+    state = UniLM.StreamState()
+    lines = [
+        "event: message_start",
+        "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}}",
+        "event: content_block_start",
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}",
+        "event: content_block_delta",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"user wants \"}}",
+        "event: content_block_delta",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"weather\"}}",
+        "event: content_block_delta",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig==\"}}",
+        "event: content_block_stop",
+        "data: {\"type\":\"content_block_stop\",\"index\":0}",
+        "event: content_block_start",
+        "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+        "event: content_block_delta",
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"Checking.\"}}",
+        "event: content_block_stop",
+        "data: {\"type\":\"content_block_stop\",\"index\":1}",
+        "event: content_block_start",
+        "data: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"get_weather\",\"input\":{}}}",
+        "event: content_block_delta",
+        "data: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"city\\\":\"}}",
+        "event: content_block_delta",
+        "data: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"Oslo\\\"}\"}}",
+        "event: content_block_stop",
+        "data: {\"type\":\"content_block_stop\",\"index\":2}",
+        "event: message_delta",
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":25}}",
+        "event: message_stop",
+        "data: {\"type\":\"message_stop\"}",
+    ]
+    st = UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), join(lines, "\n") * "\n", state)
+    @test st === :done
+    @test state.raw_provider === :anthropic
+    @test length(state.raw_blocks) == 3
+    @test state.raw_blocks[1]["type"] == "thinking" &&
+          state.raw_blocks[1]["thinking"] == "user wants weather" &&
+          state.raw_blocks[1]["signature"] == "sig=="
+    @test state.raw_blocks[2]["type"] == "text" && state.raw_blocks[2]["text"] == "Checking."
+    @test state.raw_blocks[3]["type"] == "tool_use" &&
+          state.raw_blocks[3]["input"] == Dict{String,Any}("city" => "Oslo")
+    @test isempty(state.raw_pending) && isempty(state.raw_json)
+    # Built message carries the blocks AND the neutral fields.
+    msg = UniLM._build_stream_message(state)
+    @test msg.provider_content isa ProviderContent
+    @test msg.provider_content.blocks === state.raw_blocks
+    @test msg.content == "Checking." && length(msg.tool_calls) == 1
+    # Encoder echoes the streamed turn verbatim — the streamed round-trip.
+    @test UniLM._anthropic_assistant_content(msg) === state.raw_blocks
+end
+
+@testset "stream — redacted_thinking snapshot and zero-arg tool_use finalize" begin
+    state = UniLM.StreamState()
+    lines = [
+        "event: content_block_start",
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"redacted_thinking\",\"data\":\"opaque==\"}}",
+        "event: content_block_stop",
+        "data: {\"type\":\"content_block_stop\",\"index\":0}",
+        "event: content_block_start",
+        "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"t2\",\"name\":\"ping\",\"input\":{}}}",
+        "event: content_block_stop",
+        "data: {\"type\":\"content_block_stop\",\"index\":1}",
+        "event: message_stop",
+        "data: {\"type\":\"message_stop\"}",
+    ]
+    st = UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), join(lines, "\n") * "\n", state)
+    @test st === :done
+    @test state.raw_blocks[1] == Dict{String,Any}("type" => "redacted_thinking", "data" => "opaque==")
+    # No input_json_delta arrived: the start snapshot's empty input survives.
+    @test state.raw_blocks[2]["input"] == Dict{String,Any}()
+
+    # A block whose stop never arrives is NOT finalized (truncated stream).
+    state2 = UniLM.StreamState()
+    UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""),
+        "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n", state2)
+    @test isempty(state2.raw_blocks) && haskey(state2.raw_pending, 0)
 end

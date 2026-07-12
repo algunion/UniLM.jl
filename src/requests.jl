@@ -164,11 +164,27 @@ end
     error::Union{Nothing, Dict{String,Any}} = nothing
     # on_tool_call fire-once-per-index guard (final sweep at stream end).
     fired_tool_calls::Set{Int} = Set{Int}()
+    # Provider-native content blocks captured verbatim during streaming so the
+    # assistant turn can round-trip (e.g. Anthropic thinking blocks whose
+    # signatures must be echoed unmodified). `raw_pending` holds in-flight
+    # blocks by content-block index; `raw_json` accumulates partial tool-input
+    # JSON per index; finalized blocks land in `raw_blocks` in arrival order.
+    # `raw_provider` tags the dialect for ProviderContent construction.
+    raw_blocks::Vector{Any} = Any[]
+    raw_pending::Dict{Int,Dict{String,Any}} = Dict{Int,Dict{String,Any}}()
+    raw_json::Dict{Int,String} = Dict{Int,String}()
+    raw_provider::Union{Symbol,Nothing} = nothing
 end
 
 function _build_stream_message(state::StreamState)::Message
     content = String(take!(state.content))
     refusal = String(take!(state.refusal))
+    # Echo complete captures only: a block still pending (its stop line was
+    # dropped as malformed) means the capture is incomplete — fall back to
+    # neutral reconstruction rather than echo a partial turn.
+    pc = (isnothing(state.raw_provider) || isempty(state.raw_blocks) ||
+          !isempty(state.raw_pending)) ? nothing :
+         ProviderContent(state.raw_provider, state.raw_blocks)
     if !isempty(state.tool_calls)
         tcalls = GPTToolCall[]
         for idx in sort!(collect(keys(state.tool_calls)))
@@ -181,11 +197,13 @@ function _build_stream_message(state::StreamState)::Message
         # Keep accumulated text ALONGSIDE the tool calls: providers emit
         # both in one turn and the non-streaming decoders already preserve both.
         Message(role=RoleAssistant, content=(isempty(content) ? nothing : content),
-                tool_calls=tcalls, finish_reason=TOOL_CALLS)
+                tool_calls=tcalls, finish_reason=TOOL_CALLS, provider_content=pc)
     elseif isempty(content) && !isempty(refusal)
-        Message(role=RoleAssistant, refusal_message=refusal, finish_reason=something(state.finish_reason, STOP))
+        Message(role=RoleAssistant, refusal_message=refusal,
+                finish_reason=something(state.finish_reason, STOP), provider_content=pc)
     else
-        Message(role=RoleAssistant, content=content, finish_reason=something(state.finish_reason, STOP))
+        Message(role=RoleAssistant, content=content,
+                finish_reason=something(state.finish_reason, STOP), provider_content=pc)
     end
 end
 

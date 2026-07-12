@@ -95,6 +95,7 @@ export
 export
     Chat,
     Message,
+    ProviderContent,
     RoleSystem,
     RoleUser,
     RoleAssistant,

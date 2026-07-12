@@ -133,12 +133,12 @@ function _interaction_output(steps)::Vector{Any}
                 # Interactions returns arguments as a JSON OBJECT; the reused function_calls
                 # accessor JSON.parses a STRING → stringify here so the accessor round-trips.
                 "arguments" => (args isa AbstractString ? args : JSON.json(args))))
-        elseif t == "thought"
-            push!(out, Dict{String,Any}("type" => "reasoning", "summary" => Any[]))
         elseif !isempty(t)
-            # hosted-tool + other steps (google_search_call/_result, code_execution_*, url_context_*,
-            # …): surface them (native type + fields preserved) rather than dropping. output_text still
-            # comes from model_output; function_calls() ignores them (no "function_call" type).
+            # thought + hosted-tool + other steps (google_search_call/_result,
+            # code_execution_*, url_context_*, …): surface them verbatim (native
+            # type + fields, e.g. a thought step's signature) rather than
+            # dropping. output_text still comes from model_output;
+            # function_calls() ignores them (no "function_call" type).
             push!(out, Dict{String,Any}(s))
         end
     end

@@ -325,6 +325,54 @@ end
         @test !haskey(parsed, "name")
         @test !haskey(parsed, "tool_calls")
     end
+
+    @testset "provider-native content side-channel" begin
+        blocks = Any[Dict{String,Any}("type" => "thinking",
+                                      "thinking" => "check the weather",
+                                      "signature" => "sig==")]
+        pc = ProviderContent(:anthropic, blocks)
+        @test pc.provider === :anthropic
+        @test pc.blocks === blocks
+
+        # Default: absent.
+        m0 = Message(role=UniLM.RoleAssistant, content="hi")
+        @test isnothing(m0.provider_content)
+
+        # Wire isolation: provider_content NEVER serializes — byte-identical JSON.
+        # (GPTFunction is unexported; this file qualifies it everywhere.)
+        tc = [GPTToolCall(id="c1", func=UniLM.GPTFunction("f", Dict{String,Any}("a" => 1)))]
+        m_plain = Message(role=UniLM.RoleAssistant, content="ok", tool_calls=tc)
+        m_pc = Message(role=UniLM.RoleAssistant, content="ok", tool_calls=tc,
+                       provider_content=pc)
+        @test JSON.json(m_plain) == JSON.json(m_pc)
+        @test !occursin("provider_content", JSON.json(m_pc))
+
+        # All of today's wire fields still serialize (omit-null preserved).
+        full = Message(role=UniLM.RoleTool, content="r", name="n",
+                       finish_reason="stop", tool_call_id="c1")
+        parsed = JSON.parse(JSON.json(full))
+        @test parsed["role"] == "tool" && parsed["content"] == "r" &&
+              parsed["name"] == "n" && parsed["finish_reason"] == "stop" &&
+              parsed["tool_call_id"] == "c1"
+        @test !haskey(parsed, "tool_calls") && !haskey(parsed, "refusal_message")
+
+        # Chat-level: no leak through the full request body either.
+        chat = Chat(model="gpt-5.5")
+        push!(chat, Message(Val(:system), "s"))
+        push!(chat, Message(Val(:user), "u"))
+        push!(chat, m_pc)
+        body = JSON.parse(JSON.json(chat))
+        @test length(body["messages"]) == 3   # the assistant turn actually landed
+        @test all(msg -> !haskey(msg, "provider_content"), body["messages"])
+
+        # Positional compatibility: the 7-arg positional form still constructs
+        # (kwdef defaults do not extend positional constructors).
+        m7 = Message(UniLM.RoleAssistant, "hi", nothing, nothing, nothing, nothing, nothing)
+        @test m7.content == "hi" && isnothing(m7.provider_content)
+
+        # Validation still enforced with the new field present.
+        @test_throws ArgumentError Message(role=UniLM.RoleAssistant, provider_content=pc)
+    end
 end
 
 @testset "ResponseFormat" begin

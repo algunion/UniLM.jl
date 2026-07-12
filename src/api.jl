@@ -211,7 +211,31 @@ const TOOL_CALLS = "tool_calls"
 
 
 """
-    Message(; role, content=nothing, name=nothing, finish_reason=nothing, refusal_message=nothing, tool_calls=nothing, tool_call_id=nothing)
+    ProviderContent(provider::Symbol, blocks::Vector{Any})
+
+Provider-native assistant content captured verbatim at decode time and echoed
+verbatim at encode time when the SAME provider encodes the turn again.
+
+The neutral [`Message`](@ref) carries `content::String` + `tool_calls`, but some
+providers attach blocks that must round-trip byte-faithfully for multi-turn
+flows to work: Anthropic `thinking`/`redacted_thinking` blocks (their
+`signature` must be echoed unmodified or tool round-trips on thinking models
+are rejected with HTTP 400), and Gemini text-part `thoughtSignature`s.
+`provider` tags the wire dialect (`:anthropic` or `:gemini`); `blocks` is the
+provider's content/parts array exactly as decoded (String-keyed JSON).
+
+Encoders ignore a `ProviderContent` tagged for a different provider — a
+conversation moved across providers falls back to the neutral reconstruction
+(the standard "other models drop thinking" semantics). The field never
+serializes on the OpenAI wire (excluded from `JSON.lower(::Message)`).
+"""
+struct ProviderContent
+    provider::Symbol
+    blocks::Vector{Any}
+end
+
+"""
+    Message(; role, content=nothing, name=nothing, finish_reason=nothing, refusal_message=nothing, tool_calls=nothing, tool_call_id=nothing, provider_content=nothing)
 
 Represents a single message in a Chat Completions conversation.
 
@@ -223,6 +247,7 @@ Represents a single message in a Chat Completions conversation.
 - `refusal_message::Union{String,Nothing}`: Refusal text when content is filtered.
 - `tool_calls::Union{Nothing,Vector{GPTToolCall}}`: Tool calls requested by the assistant.
 - `tool_call_id::Union{String,Nothing}`: Required when `role` is `"tool"` — the ID of the tool call being responded to.
+- `provider_content::Union{Nothing,ProviderContent}`: Provider-native content blocks captured for verbatim round-trip (see [`ProviderContent`](@ref)); set by the Anthropic/Gemini decoders, `nothing` otherwise. Never serialized on the OpenAI wire.
 
 # Validation
 - At least one of `content`, `tool_calls`, or `refusal_message` must be non-`nothing`.
@@ -242,10 +267,13 @@ Message(Val(:user), "Hello!")
     refusal_message::Union{String,Nothing} = nothing
     tool_calls::Union{Nothing,Vector{GPTToolCall}} = nothing
     tool_call_id::Union{String,Nothing} = nothing
-    function Message(role, content, name, finish_reason, refusal_message, tool_calls, tool_call_id)
+    provider_content::Union{Nothing,ProviderContent} = nothing
+    function Message(role, content, name, finish_reason, refusal_message, tool_calls,
+                     tool_call_id, provider_content=nothing)
         isnothing(content) && isnothing(tool_calls) && isnothing(refusal_message) && throw(ArgumentError("`content`, `tool_calls`, and `refusal_message` cannot all be nothing"))
         role == RoleTool && isnothing(tool_call_id) && throw(ArgumentError("`tool_call_id` cannot be empty when role is `tool`"))
-        return new(role, content, name, finish_reason, refusal_message, tool_calls, tool_call_id)
+        return new(role, content, name, finish_reason, refusal_message, tool_calls,
+                   tool_call_id, provider_content)
     end
 end
 
@@ -255,6 +283,20 @@ Message(::Val{:user}, content) = Message(role=RoleUser, content=content)
 const Conversation = Vector{Message}
 
 JSON.omit_null(::Type{Message}) = true
+
+# provider_content is a decode-side round-trip cache for provider-native
+# blocks, not a wire field: exclude it from serialization (same precedent as
+# GPTToolCall.thought_signature). Conditional insertion mirrors omit-null.
+function JSON.lower(m::Message)
+    d = Dict{Symbol,Any}(:role => m.role)
+    isnothing(m.content)         || (d[:content] = m.content)
+    isnothing(m.name)            || (d[:name] = m.name)
+    isnothing(m.finish_reason)   || (d[:finish_reason] = m.finish_reason)
+    isnothing(m.refusal_message) || (d[:refusal_message] = m.refusal_message)
+    isnothing(m.tool_calls)      || (d[:tool_calls] = m.tool_calls)
+    isnothing(m.tool_call_id)    || (d[:tool_call_id] = m.tool_call_id)
+    d
+end
 
 """
 getcontent(m::Message)::Union{String,Nothing}

@@ -37,6 +37,19 @@ function sse_mock_server(chunks::Vector{String})
     server, "http://127.0.0.1:$port"
 end
 
+# Test-only endpoint: routes chat streaming to a local mock server while
+# delegating SSE semantics to the real Anthropic handler. This is the URL seam
+# the production endpoint lacks (its base URL is a constant), so driver-level
+# stream behavior gets exercised end to end through _chatrequeststream.
+struct AnthropicWireMock <: UniLM.ServiceEndpoint   # Chat.service requires ServiceEndpointSpec
+    base_url::String
+end
+UniLM.get_url(s::AnthropicWireMock, ::Chat) = s.base_url
+UniLM.auth_header(::AnthropicWireMock) = ["Content-Type" => "application/json"]
+UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::AbstractString,
+                        state::UniLM.StreamState) =
+    UniLM.handle_sse_event!(ANTHROPICServiceEndpoint, event, payload, state)
+
 @testset "P0 regression suite (review 2026-07-10)" begin
 
     @testset "P0-7 fork(chat) preserves every Chat field" begin
@@ -164,14 +177,68 @@ end
                 Message(role=UniLM.RoleTool, content="12C", tool_call_id="toolu_1")]
         _, wire = UniLM._anthropic_messages(msgs)
         asst = wire[2][:content]
-        # FIXED contract: the assistant turn opens with the thinking block,
-        # signature intact (echoed verbatim). Tolerate Symbol- or String-keyed
-        # blocks (verbatim echo of decoded JSON is String-keyed).
+        # FIXED contract: the assistant turn opens with the thinking block —
+        # text AND signature echoed verbatim — and still ends with tool_use.
+        # Tolerate Symbol- or String-keyed blocks (verbatim echo of decoded
+        # JSON is String-keyed).
         _get(b, k) = b isa AbstractDict ? get(b, k, get(b, String(k), nothing)) : nothing
-        @test_broken asst isa AbstractVector && length(asst) >= 2 &&
-                     _get(asst[1], :type) == "thinking" &&
-                     _get(asst[1], :signature) == "sig==" &&
-                     _get(asst[end], :type) == "tool_use"
+        @test asst isa AbstractVector && length(asst) >= 2 &&
+              _get(asst[1], :type) == "thinking" &&
+              _get(asst[1], :thinking) == "user wants weather" &&
+              _get(asst[1], :signature) == "sig==" &&
+              _get(asst[end], :type) == "tool_use"
+    end
+
+    @testset "P0-3 streamed thinking turn round-trips (driver-level)" begin
+        # Chunk boundaries group whole events (fragmentation is covered by the
+        # unit contracts; this witnesses the DRIVER: assembly → Message →
+        # provider_content → verbatim re-encode).
+        chunks = [
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}}\n\n" *
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}\n\n" *
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"user wants weather\"}}\n\n" *
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig==\"}}\n\n" *
+            "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" *
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"Checking.\"}}\n\n" *
+            "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n",
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"get_weather\",\"input\":{}}}\n\n" *
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"city\\\":\"}}\n\n" *
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"Oslo\\\"}\"}}\n\n" *
+            "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":2}\n\n",
+            "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":25}}\n\n" *
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        ]
+        server, base = sse_mock_server(chunks)
+        try
+            chat = Chat(service=AnthropicWireMock(base), model="mock", stream=true,
+                        tools=[GPTTool(func=GPTFunctionSignature(name="get_weather"))])
+            push!(chat, Message(Val(:system), "s"))
+            push!(chat, Message(Val(:user), "u"))
+            fired = Ref(0)
+            task = chatrequest!(chat; on_tool_call = tc -> (fired[] += 1))
+            res = fetch(task)
+            @test res isa LLMSuccess
+            m = res.message
+            @test m.content == "Checking." && !isnothing(m.tool_calls) &&
+                  length(m.tool_calls) == 1 && m.tool_calls[1].id == "toolu_1"
+            @test fired[] == 1
+            pc = m.provider_content
+            @test pc isa ProviderContent && pc.provider === :anthropic && length(pc.blocks) == 3
+            @test pc.blocks[1]["type"] == "thinking" &&
+                  pc.blocks[1]["thinking"] == "user wants weather" &&
+                  pc.blocks[1]["signature"] == "sig=="
+            @test pc.blocks[3]["type"] == "tool_use" &&
+                  pc.blocks[3]["input"] == Dict{String,Any}("city" => "Oslo")
+            @test res isa LLMSuccess && res.usage !== nothing && res.usage.completion_tokens == 25
+            # Re-encoding the streamed turn echoes the captured blocks verbatim.
+            msgs = [Message(role=UniLM.RoleUser, content="w?"), m,
+                    Message(role=UniLM.RoleTool, content="12C", tool_call_id="toolu_1")]
+            _, wire = UniLM._anthropic_messages(msgs)
+            @test wire[2][:content] === pc.blocks
+        finally
+            close(server)
+        end
     end
 
     @testset "P0-4 Anthropic error event is not success (ported to handle_sse_event!)" begin
@@ -185,6 +252,32 @@ end
         @test st === :error
         @test state.error !== nothing
         @test state.error["error"]["type"] == "overloaded_error"
+    end
+
+    @testset "P0-4 in-band stream error yields a typed failure (driver-level)" begin
+        # An HTTP-200 SSE stream that dies with a documented in-band `error`
+        # event (529-equivalent) must never surface as LLMSuccess with
+        # truncated content.
+        chunks = [
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n\n" *
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" *
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n",
+            "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n",
+        ]
+        server, base = sse_mock_server(chunks)
+        try
+            chat = Chat(service=AnthropicWireMock(base), model="mock", stream=true)
+            push!(chat, Message(Val(:system), "s"))
+            push!(chat, Message(Val(:user), "u"))
+            res = fetch(chatrequest!(chat))
+            @test !(res isa LLMSuccess)
+            @test res isa LLMFailure && res.status == 529
+            @test occursin("overloaded_error", res.response)
+            # The truncated partial text must not have been pushed into history.
+            @test all(m -> m.role != UniLM.RoleAssistant, chat.messages)
+        finally
+            close(server)
+        end
     end
 
     @testset "P0-5 Interactions streaming surfaces function calls" begin

@@ -12,6 +12,7 @@ Chat
 
 ```@docs
 Message
+ProviderContent
 ```
 
 ### Convenience Constructors

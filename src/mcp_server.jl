@@ -469,13 +469,33 @@ function _serve_stdio(server::MCPServer; input::IO=stdin, output::IO=stdout)
     end
 end
 
+# Localhost origins (any port, either scheme, IPv4/IPv6/name) are always
+# allowed: the Origin check exists to stop DNS-rebinding from foreign web
+# origins, and pages served from the developer's own machine are not that
+# threat. Matching is anchored, so lookalikes ("localhost.evil.example") fail.
+const _MCP_LOCALHOST_ORIGIN = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"i
+
+"""True when `origin` is a localhost origin or an exact member of `allowed_origins`."""
+_mcp_origin_allowed(origin::AbstractString, allowed_origins::Vector{String})::Bool =
+    origin in allowed_origins || occursin(_MCP_LOCALHOST_ORIGIN, origin)
+
 """
-    _serve_http(server::MCPServer; host="127.0.0.1", port=8080)
+    _serve_http(server::MCPServer; host="127.0.0.1", port=8080, allowed_origins=String[])
 
 Run the MCP server over HTTP. POST requests contain JSON-RPC messages.
+Requests carrying a non-localhost, non-allowlisted `Origin` header get 403.
 """
-function _serve_http(server::MCPServer; host::String="127.0.0.1", port::Int=8080)
+function _serve_http(server::MCPServer; host::String="127.0.0.1", port::Int=8080,
+                     allowed_origins::Vector{String}=String[])
     HTTP.serve!(host, port) do req
+        # Streamable HTTP requires Origin validation (DNS-rebinding defense).
+        # Requests without an Origin header are not browser cross-origin
+        # requests and pass; browser requests must come from localhost or an
+        # allowlisted origin. Checked before any method dispatch.
+        origin = HTTP.header(req, "Origin", "")
+        if !isempty(origin) && !_mcp_origin_allowed(origin, allowed_origins)
+            return HTTP.Response(403, "Forbidden: Origin not allowed")
+        end
         if req.method == "POST"
             body = String(req.body)
             parsed = try

@@ -15,6 +15,10 @@
   (text buffer, line carry, sticky event name, per-step assembly registry)
   instead of three loose buffer arguments. The seam is unexported; provider
   packages overriding `decode_agentic_stream` must adopt the new signature.
+- MCP HTTP server transport now validates the `Origin` header (a Streamable
+  HTTP requirement; DNS-rebinding defense): requests without an `Origin` and
+  requests from localhost origins are accepted, anything else gets 403 unless
+  listed in the new `allowed_origins` kwarg of `serve`.
 
 ### Fixed
 - Anthropic tool calling on thinking models (e.g. `claude-sonnet-5`): assistant

@@ -913,3 +913,66 @@ end
         close(httpserver)
     end
 end
+
+# ─── Origin validation (DNS-rebinding defense) ────────────────────────────────
+
+@testset "HTTP transport — Origin validation (localhost default + allowlist)" begin
+    server = _build_http_server()
+    port = _mcp_free_port()
+    httpserver = serve(server; transport=:http, port=port,
+        allowed_origins=["https://app.example.com"])
+    ping_body = JSON.json(Dict("jsonrpc" => "2.0", "id" => 1, "method" => "ping",
+        "params" => Dict()))
+    post(origin) = HTTP.post("http://127.0.0.1:$port",
+        ["Content-Type" => "application/json", "Origin" => origin], ping_body;
+        status_exception=false)
+    try
+        # No Origin header (non-browser client): allowed.
+        no_origin = HTTP.post("http://127.0.0.1:$port",
+            ["Content-Type" => "application/json"], ping_body; status_exception=false)
+        @test no_origin.status == 200
+
+        # Localhost origins: always allowed — any port, either scheme, any case.
+        for o in ("http://localhost:5173", "http://127.0.0.1",
+                  "https://LOCALHOST:8443", "http://[::1]:3000")
+            @test post(o).status == 200
+        end
+
+        # Allowlisted origin: allowed (exact match).
+        @test post("https://app.example.com").status == 200
+
+        # Everything else: 403 — including lookalike hosts and opaque origins.
+        for o in ("https://evil.example", "http://localhost.evil.example",
+                  "http://mylocalhost", "null",
+                  "https://app.example.com.evil.example")
+            @test post(o).status == 403
+        end
+
+        # The gate runs before method dispatch: DELETE with a bad Origin is 403.
+        del = HTTP.request("DELETE", "http://127.0.0.1:$port",
+            ["Origin" => "https://evil.example"]; status_exception=false)
+        @test del.status == 403
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "HTTP transport — Origin default (no allowlist): localhost only" begin
+    server2 = _build_http_server()
+    port2 = _mcp_free_port()
+    httpserver2 = serve(server2; transport=:http, port=port2)
+    ping_body = JSON.json(Dict("jsonrpc" => "2.0", "id" => 1, "method" => "ping",
+        "params" => Dict()))
+    try
+        okr = HTTP.post("http://127.0.0.1:$port2",
+            ["Content-Type" => "application/json", "Origin" => "http://localhost:3000"],
+            ping_body; status_exception=false)
+        @test okr.status == 200
+        badr = HTTP.post("http://127.0.0.1:$port2",
+            ["Content-Type" => "application/json", "Origin" => "https://app.example.com"],
+            ping_body; status_exception=false)
+        @test badr.status == 403   # not allowlisted here
+    finally
+        close(httpserver2)
+    end
+end

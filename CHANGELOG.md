@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## 0.11.3
 
 ### Fixed
 - Streaming (all providers, one shared SSE machine in `src/sse.jl`): `on_tool_call` now fires exactly once per completed streamed tool call (was: never); `stream_options.include_usage` no longer loses usage or turns a successful stream into `LLMFailure` (chat EOS is `data: [DONE]` only — `finish_reason` never ends the stream, and empty-`choices` chunks are tolerated, unbreaking Azure preambles and `: keep-alive` proxies); Anthropic mid-stream `error` events now produce `LLMFailure`(529 for `overloaded_error`)/`LLMCallError` instead of a truncated `LLMSuccess`; streamed messages keep assistant text alongside tool calls, and zero-argument streamed tool calls parse as `Dict{String,Any}()` instead of throwing. Failed SSE lines are logged and dropped, never re-queued; partial lines carry over verbatim (no whitespace loss at chunk boundaries).

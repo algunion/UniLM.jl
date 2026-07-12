@@ -60,4 +60,37 @@ end
     @test !isempty(payloads)                 # callback fired (incremental deltas and/or final message)
 end
 
+@testset "Anthropic Chat — thinking-model tool round-trip (claude-sonnet-5)" begin
+    # claude-sonnet-5 runs adaptive thinking by default: its tool turns open
+    # with thinking blocks that MUST be echoed verbatim on the next request.
+    # This round-trip returned HTTP 400 before provider-native content capture.
+    sig = GPTFunctionSignature(name="get_current_weather",
+        description="Get the current weather for a location",
+        parameters=Dict("type" => "object",
+            "properties" => Dict("location" => Dict("type" => "string", "description" => "City name")),
+            "required" => ["location"]))
+    chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-sonnet-5",
+                tools=[GPTTool(func=sig)], tool_choice="auto")
+    push!(chat, Message(Val(:system), "Use the weather tool when asked about current weather."))
+    push!(chat, Message(Val(:user), "What is the weather in Paris right now?"))
+    result = chatrequest!(chat)
+    @test result isa LLMSuccess
+    m = result.message
+    if m.finish_reason == UniLM.TOOL_CALLS
+        @test m.provider_content isa ProviderContent &&
+              m.provider_content.provider === :anthropic
+        push!(chat, Message(role=UniLM.RoleTool, tool_call_id=m.tool_calls[1].id,
+                            content="22C and clear"))
+        follow = chatrequest!(chat)   # the request that used to 400
+        @test follow isa LLMSuccess
+        @test !isempty(something(follow.message.content, ""))
+    else
+        # Adaptive thinking is model-decided; a no-tool answer — or a turn that
+        # burned the default max_tokens mid-thought ("length") — is a legal
+        # (weaker) outcome. Record it without failing the suite.
+        @test m.finish_reason in (UniLM.STOP, "length")
+        @info "claude-sonnet-5 answered without a tool call; round-trip not exercised this run"
+    end
+end
+
 end  # if ANTHROPIC_API_KEY

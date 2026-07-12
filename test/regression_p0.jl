@@ -281,11 +281,11 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
     end
 
     @testset "P0-5 Interactions streaming surfaces function calls" begin
-        tb = IOBuffer(); fb = IOBuffer(); le = Ref("")
+        state = UniLM.AgenticStreamState()
         seq = "event: step.start\ndata: {\"step\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"name\":\"get_weather\",\"arguments\":{\"city\":\"Oslo\"}}}\n\n" *
               "event: interaction.requires_action\ndata: {\"interaction\":{\"id\":\"i_1\",\"status\":\"requires_action\",\"model\":\"gemini-3.5-flash\"}}\n\n" *
               "data: [DONE]\n\n"
-        r = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, seq, tb, fb, le)
+        r = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, seq, state)
         # FIXED contract: the terminal result carries a response dict whose
         # output contains the function_call (today only step.delta text and
         # interaction.completed are handled — interactions.jl:219-228 — so a

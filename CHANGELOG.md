@@ -10,6 +10,12 @@
   Gemini responses — and echoed verbatim when the same provider encodes the
   conversation again. Never serialized on the OpenAI wire.
 
+### Changed
+- The agentic streaming decode seam now threads one `AgenticStreamState`
+  (text buffer, line carry, sticky event name, per-step assembly registry)
+  instead of three loose buffer arguments. The seam is unexported; provider
+  packages overriding `decode_agentic_stream` must adopt the new signature.
+
 ### Fixed
 - Anthropic tool calling on thinking models (e.g. `claude-sonnet-5`): assistant
   turns rebuilt from text+tool_calls dropped the thinking blocks the API

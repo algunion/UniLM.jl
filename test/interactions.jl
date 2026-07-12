@@ -72,11 +72,11 @@ end
 end
 
 @testset "Interactions stream decode (interaction.* SSE)" begin
-    tb = IOBuffer(); fb = IOBuffer(); ev = Ref("")
+    state = UniLM.AgenticStreamState()
     UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
-        "event: step.delta\ndata: {\"index\":1,\"delta\":{\"text\":\"One, \",\"type\":\"text\"}}\n\n", tb, fb, ev)
+        "event: step.delta\ndata: {\"index\":1,\"delta\":{\"text\":\"One, \",\"type\":\"text\"}}\n\n", state)
     st1 = UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
-        "event: step.delta\ndata: {\"index\":1,\"delta\":{\"text\":\"two.\",\"type\":\"text\"}}\n\n", tb, fb, ev)
+        "event: step.delta\ndata: {\"index\":1,\"delta\":{\"text\":\"two.\",\"type\":\"text\"}}\n\n", state)
     @test st1.terminal == :none
 
     # real interaction.completed carries NO steps → final output rebuilt from the deltas
@@ -84,7 +84,7 @@ end
         "model" => "gemini-3.1-flash-lite", "usage" => Dict("total_tokens" => 17)),
         "event_type" => "interaction.completed")
     st = UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
-        "event: interaction.completed\ndata: $(JSON.json(completed))\n\n", tb, fb, ev)
+        "event: interaction.completed\ndata: $(JSON.json(completed))\n\n", state)
     @test st.terminal == :completed
     @test st.data["response"]["id"] == "v1_s"
     @test st.data["response"]["output"][1]["type"] == "message"
@@ -92,7 +92,7 @@ end
 
     # [DONE] sentinel → terminal :done
     st2 = UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
-        "event: done\ndata: [DONE]\n\n", IOBuffer(), IOBuffer(), Ref(""))
+        "event: done\ndata: [DONE]\n\n", UniLM.AgenticStreamState())
     @test st2.terminal == :done
 end
 
@@ -118,31 +118,31 @@ end
 
 @testset "Interactions stream decode — carry-over + malformed handling" begin
     # (a) a chunk with NO newline is buffered whole (carry-over), nothing emitted yet
-    tb = IOBuffer(); fb = IOBuffer(); ev = Ref("")
-    st = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, "event: step.delta", tb, fb, ev)
+    state = UniLM.AgenticStreamState()
+    st = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, "event: step.delta", state)
     @test st.done == false && st.terminal == :none
     # the buffered partial line reassembles with the next chunk
     UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
-        "\ndata: {\"index\":0,\"delta\":{\"text\":\"hi\",\"type\":\"text\"}}\n\n", tb, fb, ev)
-    @test String(take!(tb)) == "hi"
+        "\ndata: {\"index\":0,\"delta\":{\"text\":\"hi\",\"type\":\"text\"}}\n\n", state)
+    @test String(take!(state.textbuff)) == "hi"
 
     # (b) a trailing fragment after the last newline is stashed for the next chunk
-    tb2 = IOBuffer(); fb2 = IOBuffer(); ev2 = Ref("")
+    state2 = UniLM.AgenticStreamState()
     UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
         "event: step.delta\ndata: {\"index\":0,\"delta\":{\"text\":\"a\",\"type\":\"text\"}}\n\n" *
-        "event: step.delta\ndata: {\"index\":0,\"delta\":{\"text\":\"b\"", tb2, fb2, ev2)
-    @test String(take!(tb2)) == "a"                       # first delta consumed
-    UniLM.decode_agentic_stream(GEMINIServiceEndpoint, ",\"type\":\"text\"}}\n\n", tb2, fb2, ev2)
-    @test String(take!(tb2)) == "b"                       # stashed fragment completed
+        "event: step.delta\ndata: {\"index\":0,\"delta\":{\"text\":\"b\"", state2)
+    @test String(take!(state2.textbuff)) == "a"                       # first delta consumed
+    UniLM.decode_agentic_stream(GEMINIServiceEndpoint, ",\"type\":\"text\"}}\n\n", state2)
+    @test String(take!(state2.textbuff)) == "b"                       # stashed fragment completed
 
     # (c) a malformed COMPLETE data line is dropped + counted (never re-queued
     # into the carry) — the shared machine's contract; no crash, stream continues.
     before = UniLM._SSE_DROPPED_LINES[]
-    tb3 = IOBuffer(); fb3 = IOBuffer(); ev3 = Ref("")
+    state3 = UniLM.AgenticStreamState()
     st3 = UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
-        "event: step.delta\ndata: {not valid json\n\n", tb3, fb3, ev3)
+        "event: step.delta\ndata: {not valid json\n\n", state3)
     @test st3.terminal == :none
-    @test isempty(take!(fb3))
+    @test isempty(take!(state3.carry))
     @test UniLM._SSE_DROPPED_LINES[] == before + 1
 end
 

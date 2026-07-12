@@ -1763,6 +1763,31 @@ end
     end
 end
 
+@testset "agentic stream state — default path delegates unchanged" begin
+    st = UniLM.AgenticStreamState()
+    r1 = UniLM.decode_agentic_stream(OPENAIServiceEndpoint,
+        "event: response.output_text.delta\ndata: {\"delta\":\"Hel\"}\n\n", st)
+    @test r1.done == false && r1.terminal == :none
+    r2 = UniLM.decode_agentic_stream(OPENAIServiceEndpoint,
+        "data: {\"delta\":\"lo\"}\n\n", st)
+    @test r2.done == false
+    @test String(take!(st.textbuff)) == "Hello"
+
+    # Terminal event still surfaces the payload.
+    st2 = UniLM.AgenticStreamState()
+    r3 = UniLM.decode_agentic_stream(OPENAIServiceEndpoint,
+        "event: response.completed\ndata: {\"response\":{\"id\":\"r1\",\"status\":\"completed\",\"model\":\"m\",\"output\":[]}}\n\n", st2)
+    @test r3.done == true && r3.terminal == :completed && r3.data["response"]["id"] == "r1"
+
+    # Partial line carries across chunks verbatim (layer-1 behavior intact).
+    st3 = UniLM.AgenticStreamState()
+    UniLM.decode_agentic_stream(OPENAIServiceEndpoint, "data: {\"del", st3)
+    r4 = UniLM.decode_agentic_stream(OPENAIServiceEndpoint, "ta\":\"x\"}\n\n", st3)
+    @test r4.done == false
+    # (the delta key only counts on the output_text event — nothing accumulated here)
+    @test String(take!(st3.textbuff)) == ""
+end
+
 # ─── Phase 3B: Respond parameter validation ──────────────────────────────────
 
 @testset "Respond parameter validation" begin
@@ -2075,11 +2100,11 @@ end
     @test obj.id == "resp_1"
 
     # stream-chunk default accumulates output_text deltas like _parse_response_stream_chunk
-    textbuff = IOBuffer(); failbuff = IOBuffer(); ev = Ref("")
+    state = UniLM.AgenticStreamState()
     chunk = "event: response.output_text.delta\ndata: {\"delta\":\"Hel\"}\n\n" *
             "event: response.output_text.delta\ndata: {\"delta\":\"lo\"}\n\n"
-    st = UniLM.decode_agentic_stream(OPENAIServiceEndpoint, chunk, textbuff, failbuff, ev)
-    @test String(take!(textbuff)) == "Hello"
+    st = UniLM.decode_agentic_stream(OPENAIServiceEndpoint, chunk, state)
+    @test String(take!(state.textbuff)) == "Hello"
     @test st.terminal == :none
 end
 
@@ -2097,11 +2122,11 @@ end
 end
 
 @testset "agentic stream default — detects response.completed terminal" begin
-    textbuff = IOBuffer(); failbuff = IOBuffer(); ev = Ref("")
+    state = UniLM.AgenticStreamState()
     completed = Dict("response" => Dict("id" => "resp_9", "status" => "completed",
                                         "model" => "gpt-5.5", "output" => Any[]))
     chunk = "event: response.completed\ndata: $(JSON.json(completed))\n\n"
-    st = UniLM.decode_agentic_stream(OPENAIServiceEndpoint, chunk, textbuff, failbuff, ev)
+    st = UniLM.decode_agentic_stream(OPENAIServiceEndpoint, chunk, state)
     @test st.terminal == :completed
     @test st.data isa AbstractDict && haskey(st.data, "response")
 end

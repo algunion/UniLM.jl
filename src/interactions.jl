@@ -195,19 +195,19 @@ decode_agentic(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)::ResponseObje
 # {"response": <OpenAI-shaped dict>}; since the completed event omits steps, the
 # message output is rebuilt from the deltas accumulated in `textbuff`.
 # Line assembly + framing now come from the shared machine (src/sse.jl).
-function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String, textbuff::IOBuffer,
-                               failbuff::IOBuffer, last_event::Ref{String})
-    for (ev, payload) in _sse_events!(failbuff, last_event, chunk)
-        payload == "[DONE]" && return (; done=true, event=last_event[], data=nothing, terminal=:done)
+function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
+                               state::AgenticStreamState)
+    for (ev, payload) in _sse_events!(state.carry, state.last_event, chunk)
+        payload == "[DONE]" && return (; done=true, event=state.last_event[], data=nothing, terminal=:done)
         try
             data = JSON.parse(payload; dicttype=Dict{String,Any})
             if ev == "step.delta"
                 d = get(data, "delta", nothing)
-                d isa AbstractDict && print(textbuff, get(d, "text", ""))
+                d isa AbstractDict && print(state.textbuff, get(d, "text", ""))
             elseif ev == "interaction.completed"
                 rdict = _interaction_response_dict(get(data, "interaction", data))
                 if isempty(rdict["output"])
-                    txt = String(take!(textbuff))
+                    txt = String(take!(state.textbuff))
                     isempty(txt) || (rdict["output"] = Any[_text_message(txt)])
                 end
                 return (; done=true, event=ev,
@@ -218,5 +218,5 @@ function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String, tex
             @debug "Interactions SSE: dropped undecodable data payload" event = ev payload = String(payload) exception = e
         end
     end
-    return (; done=false, event=last_event[], data=nothing, terminal=:none)
+    return (; done=false, event=state.last_event[], data=nothing, terminal=:none)
 end

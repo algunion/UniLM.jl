@@ -99,6 +99,14 @@ end
     notified as each tool call completes — exactly once per call — instead of waiting for
     the final message. See the [Streaming guide](@ref streaming_guide).
 
+!!! note "Gemini calls without wire ids"
+    Gemini's chat path (`generateContent`) may omit `FunctionCall.id`. UniLM assigns
+    such calls a synthetic positional id (`unilm_call_1`, `unilm_call_2`, …) so parallel
+    tool results correlate correctly; synthetic ids never appear on the wire
+    (the re-encoded request omits the id and correlates positionally, per the
+    API contract). The `unilm_call_` prefix is reserved. This applies to the chat
+    surface only — the Interactions API always returns server-generated call ids.
+
 ### Controlling Tool Choice
 
 ```julia

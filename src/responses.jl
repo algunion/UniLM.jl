@@ -997,6 +997,27 @@ end
 
 # ─── Streaming ───────────────────────────────────────────────────────────────
 
+"""
+    AgenticStreamState()
+
+Mutable per-stream assembly state for the agentic streaming seam
+([`decode_agentic_stream`](@ref)). Carries the layer-1/2 SSE machinery state
+(`carry` partial-line buffer, `last_event` sticky event name), the accumulated
+output text (`textbuff`), and — for providers whose terminal event omits the
+step list (Gemini Interactions) — a per-index registry of assembled steps:
+`steps` maps a step index to its (mutable) step dict, `args_json` accumulates
+partial function-call argument JSON per index, and `order` records first-seen
+index order for deterministic output rebuilding.
+"""
+Base.@kwdef mutable struct AgenticStreamState
+    textbuff::IOBuffer = IOBuffer()
+    carry::IOBuffer = IOBuffer()
+    last_event::Base.RefValue{String} = Ref("")
+    steps::Dict{Int,Dict{String,Any}} = Dict{Int,Dict{String,Any}}()
+    args_json::Dict{Int,String} = Dict{Int,String}()
+    order::Vector{Int} = Int[]
+end
+
 function _parse_response_stream_chunk(chunk::String, textbuff::IOBuffer, failbuff::IOBuffer,
                                       last_event::Ref{String}=Ref(""))
     # Layers 1–2 of the shared SSE machine (src/sse.jl): `failbuff` is the
@@ -1044,9 +1065,7 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
             stream_headers = push!(copy(auth_header(r.service)), "Accept-Encoding" => "identity")
             resp = HTTP.open("POST", url, stream_headers; status_exception=false, decompress=false) do io
                 io_ref[] = io
-                text_buffer = IOBuffer()
-                fail_buffer = IOBuffer()
-                last_event = Ref("")
+                state = AgenticStreamState()
                 done = Ref(false)
                 close_ref = Ref(false)
                 callback_buf = IOBuffer()  # tracks already-emitted text (emitted-length delta)
@@ -1056,15 +1075,15 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
                 while !eof(io) && !close_ref[] && !done[]
                     chunk = String(readavailable(io))
                     write(raw_buffer, chunk)
-                    status = decode_agentic_stream(r.service, chunk, text_buffer, fail_buffer, last_event)
+                    status = decode_agentic_stream(r.service, chunk, state)
                     if status.terminal == :completed && status.data isa AbstractDict && haskey(status.data, "response")
                         # Flush residual text buffer to callback before building the ResponseObject
-                        full = String(take!(text_buffer))
+                        full = String(take!(state.textbuff))
                         emitted = String(take!(callback_buf))
                         if sizeof(full) > sizeof(emitted) && !isnothing(callback)
                             callback(full[nextind(full, sizeof(emitted)):end], close_ref)
                         end
-                        print(text_buffer, full)
+                        print(state.textbuff, full)
                         print(callback_buf, full)
 
                         rdata = status.data["response"]
@@ -1090,12 +1109,12 @@ function _respond_stream(r::Respond, body::String, callback=nothing)
                         # stream) so a provider whose TERMINAL event omits the output — Gemini's
                         # `interaction.completed` carries no steps — can rebuild it from the
                         # deltas. OpenAI ignores this at assembly (its completed event has output).
-                        full = String(take!(text_buffer))
+                        full = String(take!(state.textbuff))
                         emitted = String(take!(callback_buf))
                         if sizeof(full) > sizeof(emitted) && !isnothing(callback)
                             callback(full[nextind(full, sizeof(emitted)):end], close_ref)
                         end
-                        print(text_buffer, full)
+                        print(state.textbuff, full)
                         print(callback_buf, full)
                     end
                 end
@@ -1145,9 +1164,15 @@ encode_agentic(service, r::Respond)::String = JSON.json(r)
 
 decode_agentic(service, resp::HTTP.Response)::ResponseObject = parse_response(resp)
 
-decode_agentic_stream(service, chunk::String, textbuff::IOBuffer, failbuff::IOBuffer,
-                      last_event::Ref{String}) =
-    _parse_response_stream_chunk(chunk, textbuff, failbuff, last_event)
+"""
+    decode_agentic_stream(service, chunk::String, state::AgenticStreamState)
+
+Streaming half of the agentic wire seam: consume one raw read's bytes,
+mutate `state`, and return `(; done, event, data, terminal)`. Default:
+OpenAI Responses SSE via `_parse_response_stream_chunk`.
+"""
+decode_agentic_stream(service, chunk::String, state::AgenticStreamState) =
+    _parse_response_stream_chunk(chunk, state.textbuff, state.carry, state.last_event)
 
 """
     respond(r::Respond; retries=0, callback=nothing)

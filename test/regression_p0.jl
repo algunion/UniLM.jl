@@ -281,26 +281,38 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
     end
 
     @testset "P0-5 Interactions streaming surfaces function calls" begin
-        tb = IOBuffer(); fb = IOBuffer(); le = Ref("")
-        seq = "event: step.start\ndata: {\"step\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"name\":\"get_weather\",\"arguments\":{\"city\":\"Oslo\"}}}\n\n" *
-              "event: interaction.requires_action\ndata: {\"interaction\":{\"id\":\"i_1\",\"status\":\"requires_action\",\"model\":\"gemini-3.5-flash\"}}\n\n" *
-              "data: [DONE]\n\n"
-        r = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, seq, tb, fb, le)
-        # FIXED contract: the terminal result carries a response dict whose
-        # output contains the function_call (today only step.delta text and
-        # interaction.completed are handled — interactions.jl:219-228 — so a
-        # tools+streaming interaction ends as :done with data=nothing and
-        # _respond_stream manufactures a ResponseFailure from a 200 stream).
+        # Real wire shape (live docs, verified 2026-07-12): a function call is
+        # a step.start with an empty arguments placeholder, arguments_delta
+        # partial-JSON string deltas, and a step.stop; requires_action is a
+        # STATUS on interaction.completed (there is no dedicated SSE event for
+        # it). The decoder must assemble the call and surface it in the
+        # terminal response's output.
+        st = UniLM.AgenticStreamState()
+        seq = "event: step.start\ndata: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"name\":\"get_weather\",\"arguments\":{}}}\n\n" *
+              "event: step.delta\ndata: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"arguments_delta\",\"arguments\":\"{\\\"city\\\":\"}}\n\n" *
+              "event: step.delta\ndata: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"arguments_delta\",\"arguments\":\"\\\"Oslo\\\"}\"}}\n\n" *
+              "event: step.stop\ndata: {\"event_type\":\"step.stop\",\"index\":0}\n\n" *
+              "event: interaction.completed\ndata: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"i_1\",\"status\":\"requires_action\",\"model\":\"gemini-3.5-flash\",\"usage\":{\"total_input_tokens\":5,\"total_output_tokens\":3,\"total_tokens\":8}}}\n\n" *
+              "event: done\ndata: [DONE]\n\n"
+        r = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, seq, st)
+        # FIXED contract: the terminal result is the completed interaction
+        # (status requires_action) whose rebuilt output carries the assembled
+        # function_call with its full arguments string.
         out = r.data isa AbstractDict ? get(get(r.data, "response", Dict{String,Any}()), "output", Any[]) : Any[]
-        @test_broken r.done == true && r.data !== nothing &&
-                     any(item -> item isa AbstractDict && get(item, "type", "") == "function_call" &&
-                                 get(item, "name", "") == "get_weather", out)
+        fc = findfirst(item -> item isa AbstractDict && get(item, "type", "") == "function_call", out)
+        ok = r.done == true && r.data !== nothing &&
+             get(get(r.data, "response", Dict{String,Any}()), "status", "") == "requires_action" &&
+             !isnothing(fc) &&
+             get(out[something(fc, 1)], "name", "") == "get_weather" &&
+             get(out[something(fc, 1)], "call_id", "") == "fc_1" &&
+             (JSON.parse(get(out[something(fc, 1)], "arguments", "{}"); dicttype=Dict{String,Any})["city"] == "Oslo")
+        @test ok
     end
 
     @testset "P0-6 Gemini id-less parallel call correlation" begin
-        # FunctionCall.id is Optional in the Gemini API — two id-less parallel
-        # calls currently both key tool_names[""] (gemini.jl:67,105,184),
-        # last-wins, so every functionResponse is attributed to the last call.
+        # FunctionCall.id is Optional in the Gemini API. FIXED contract: id-less
+        # parallel calls receive unique synthetic positional ids, so every
+        # functionResponse carries the right name with no fabricated wire id.
         resp_json = """
         {"candidates":[{"content":{"role":"model","parts":[
            {"functionCall":{"name":"get_weather","args":{"city":"Oslo"}}},
@@ -324,7 +336,7 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
         else
             false
         end
-        @test_broken ids_ok && corr_ok
+        @test ids_ok && corr_ok
     end
 
     @testset "P0-8 MCP stdio server survives non-object frames" begin

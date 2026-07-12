@@ -113,6 +113,14 @@ else
 end
 ```
 
+## Streaming
+
+Streamed Gemini Interactions assemble function calls from the wire's incremental
+step events: a streamed `respond(...; tools=…, stream=true)` finishes with status
+`requires_action` and its [`function_calls`](@ref) populated, exactly like the
+non-streamed form. Thought steps stream their signature and surface verbatim in
+`output`.
+
 ## See Also
 
 - [Responses API](@ref responses_guide) — OpenAI-specific `respond`/`Respond` details

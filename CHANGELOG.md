@@ -10,6 +10,12 @@
   Gemini responses — and echoed verbatim when the same provider encodes the
   conversation again. Never serialized on the OpenAI wire.
 
+### Changed
+- The agentic streaming decode seam now threads one `AgenticStreamState`
+  (text buffer, line carry, sticky event name, per-step assembly registry)
+  instead of three loose buffer arguments. The seam is unexported; provider
+  packages overriding `decode_agentic_stream` must adopt the new signature.
+
 ### Fixed
 - Anthropic tool calling on thinking models (e.g. `claude-sonnet-5`): assistant
   turns rebuilt from text+tool_calls dropped the thinking blocks the API
@@ -19,6 +25,15 @@
   `reasoning` stub (their `signature` was previously lost; `reasoning_items`
   no longer returns stub entries for them; filter `output` for type ==
   `"thought"`).
+- Gemini Interactions streaming with tools: function-call steps
+  (`step.start` + `arguments_delta` + `step.stop`) are now assembled and
+  surfaced in the terminal response's `output`, so streamed
+  `respond(...; tools=…)` returns a usable `requires_action` result instead
+  of failing on a 200 stream. Streamed thought steps keep their signature.
+- Gemini chat: parallel tool calls without wire `id`s now receive unique
+  synthetic positional ids (reserved prefix `unilm_call_`), fixing tool-result
+  correlation that previously collapsed to the last call; synthetic ids are
+  omitted on re-encode.
 
 ## 0.11.3
 

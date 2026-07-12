@@ -339,3 +339,55 @@ end
     rec = UniLM._gemini_model_parts(m_anth, Dict{String,String}())
     @test rec isa Vector{Dict{Symbol,Any}} && rec[1] == Dict{Symbol,Any}(:text => "hi")
 end
+
+@testset "decode — id-less parallel calls get unique synthetic ids" begin
+    body = """
+    {"candidates":[{"content":{"role":"model","parts":[
+       {"functionCall":{"name":"get_weather","args":{"city":"Oslo"}}},
+       {"functionCall":{"name":"get_time","args":{"tz":"CET"}}}]},
+      "finishReason":"STOP"}],
+     "usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":2,"totalTokenCount":3}}
+    """
+    dec = UniLM.decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(body)))
+    tcs = dec.message.tool_calls
+    @test length(tcs) == 2 && allunique([tc.id for tc in tcs])
+    @test all(tc -> startswith(tc.id, "unilm_call_"), tcs)
+
+    # Mixed: a real id is preserved; only the missing one is synthesized.
+    mixed = """
+    {"candidates":[{"content":{"role":"model","parts":[
+       {"functionCall":{"id":"real_1","name":"a","args":{}}},
+       {"functionCall":{"name":"b","args":{}}}]},
+      "finishReason":"STOP"}],
+     "usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}
+    """
+    dec2 = UniLM.decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(mixed)))
+    ids2 = [tc.id for tc in dec2.message.tool_calls]
+    @test ids2[1] == "real_1" && startswith(ids2[2], "unilm_call_") && allunique(ids2)
+end
+
+@testset "encode — synthetic ids are omitted from the wire (both part kinds)" begin
+    tcs = [GPTToolCall(id="unilm_call_1", func=UniLM.GPTFunction("get_weather", Dict{String,Any}("city" => "Oslo"))),
+           GPTToolCall(id="real_2",       func=UniLM.GPTFunction("get_time",    Dict{String,Any}("tz" => "CET")))]
+    m = Message(role=UniLM.RoleAssistant, tool_calls=tcs)
+    msgs = [Message(role=UniLM.RoleUser, content="hi"), m,
+            Message(role=UniLM.RoleTool, content="12C",   tool_call_id="unilm_call_1"),
+            Message(role=UniLM.RoleTool, content="14:00", tool_call_id="real_2")]
+    _, contents = UniLM._gemini_contents(msgs)
+    parts = contents[2][:parts]
+    @test !haskey(parts[1][:functionCall], :id)              # synthetic → omitted
+    @test parts[2][:functionCall][:id] == "real_2"           # real → kept
+    frs = [p[:functionResponse] for p in contents[3][:parts]]
+    @test frs[1][:name] == "get_weather" && !haskey(frs[1], :id)
+    @test frs[2][:name] == "get_time"    && frs[2][:id] == "real_2"
+end
+
+@testset "stream — id-less functionCall parts synthesize unique ids" begin
+    state = UniLM.StreamState()
+    payload = "{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[" *
+              "{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"Oslo\"}}}," *
+              "{\"functionCall\":{\"name\":\"get_time\",\"args\":{\"tz\":\"CET\"}}}]}}]}"
+    UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", payload, state)
+    ids = [state.tool_calls[i]["id"] for i in sort!(collect(keys(state.tool_calls)))]
+    @test length(ids) == 2 && allunique(ids) && all(id -> startswith(id, "unilm_call_"), ids)
+end

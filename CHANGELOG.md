@@ -73,6 +73,8 @@
 
 ### Changed
 - Behavior change: an Anthropic stream truncated after `message_delta` but before `message_stop` now completes as `LLMSuccess` (the driver's EOF + recorded-finish_reason rule) where it previously produced `LLMFailure`.
+- SSE parsing tolerates `data:` lines with or without the single optional space
+  after the colon (`data:{…}` and `data: {…}` are equivalent), per the SSE spec.
 
 ### Removed
 - Internal (unexported, documented) streaming seam `decode_stream_chunk` and `_parse_chunk`, replaced by `handle_sse_event!(service, event, payload, state) -> :continue | :done | :error` in `src/sse.jl` (no known external overriders).

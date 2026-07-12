@@ -1,8 +1,8 @@
 # ============================================================================
-# Known-defect regression suite: every `@test_broken` pins a confirmed,
-# reproduced bug until its fix lands. An unexpected pass errors CI, so a fix
-# must flip the test (@test_broken → @test) in the same commit. Ids (P0-n)
-# are stable tracking keys for the staged fixes. Fully offline (zero-spend).
+# Pinned regression contracts: each testset locks a behavior that a confirmed,
+# reproduced bug once violated, so any regression re-breaks it here first.
+# These are the drift gates for the fixes that shipped. Fully offline
+# (zero-spend).
 # ============================================================================
 
 using Sockets
@@ -20,18 +20,32 @@ using Sockets
 # (readavailable is undefined for server-side streams on 2.x, and a throwing
 # handler turns every response into a 500).
 function sse_mock_server(chunks::Vector{String})
-    tcp = Sockets.listen(Sockets.localhost, 0)
-    port = Int(Sockets.getsockname(tcp)[2])
-    close(tcp)
-    server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
-        read(http)                           # drain the request body
-        HTTP.setstatus(http, 200)
-        HTTP.setheader(http, "Content-Type" => "text/event-stream")
-        HTTP.startwrite(http)
-        for c in chunks
-            write(http, c)
-            flush(http)
-            sleep(0.4)
+    # Port TOCTOU: the ephemeral port is discovered by binding a probe socket
+    # that MUST be closed before HTTP.listen! can claim it — a window in which
+    # another listener can steal the port (a once-observed, otherwise-unexplained
+    # bind failure). Re-pick a fresh ephemeral port and retry a few times before
+    # giving up, so a lost race doesn't fail the run.
+    server = nothing
+    port = 0
+    for attempt in 1:3
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2])
+        close(tcp)
+        try
+            server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
+                read(http)                           # drain the request body
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "text/event-stream")
+                HTTP.startwrite(http)
+                for c in chunks
+                    write(http, c)
+                    flush(http)
+                    sleep(0.4)
+                end
+            end
+            break
+        catch
+            attempt == 3 && rethrow()
         end
     end
     server, "http://127.0.0.1:$port"
@@ -50,9 +64,9 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
                         state::UniLM.StreamState) =
     UniLM.handle_sse_event!(ANTHROPICServiceEndpoint, event, payload, state)
 
-@testset "P0 regression suite (review 2026-07-10)" begin
+@testset "pinned regression contracts" begin
 
-    @testset "P0-7 fork(chat) preserves every Chat field" begin
+    @testset "fork preserves every Chat field (drift gate)" begin
         kwargs = Dict{Symbol,Any}(
             :service => GenericOpenAIEndpoint("http://localhost:9999", ""),
             :model => "gpt-5.5", :history => false,
@@ -81,7 +95,7 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
                   setdiff(fieldnames(Chat), skip))
     end
 
-    @testset "P0-2 chat SSE unit contracts (ported to handle_sse_event! seam)" begin
+    @testset "chat SSE unit contracts (handle_sse_event! seam)" begin
         # (a) finish_reason=="stop" must NOT end the stream — only `data: [DONE]` may.
         state = UniLM.StreamState()
         carry = IOBuffer()
@@ -100,7 +114,7 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
         @test state2.usage !== nothing && isempty(String(take!(carry2)))
     end
 
-    @testset "P0-1/P0-2c streamed tool call end-to-end (fragmented)" begin
+    @testset "streamed tool call end-to-end (fragmented)" begin
         # One tool call whose arguments complete only in later reads, then a
         # usage-only chunk, then [DONE] — each in its own TCP write.
         chunks = [
@@ -121,10 +135,10 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
             fired = Ref(0)
             task = chatrequest!(chat; on_tool_call = tc -> (fired[] += 1))
             res = fetch(task)
-            # P0-1: the callback fires exactly once for the completed call
+            # The callback fires exactly once for the completed call
             # (driver-owned completion detection + fired_tool_calls guard).
             @test fired[] == 1
-            # P0-2c: the fragmented usage chunk must not turn success into failure.
+            # The fragmented usage chunk must not turn success into failure.
             @test res isa LLMSuccess
             # Usage from the final chunk must be captured.
             @test res isa LLMSuccess && res.usage !== nothing &&
@@ -134,7 +148,7 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
         end
     end
 
-    @testset "P0-15 _build_stream_message contracts" begin
+    @testset "_build_stream_message keeps text alongside tool calls; zero-arg args parse" begin
         # (a) Providers emit assistant text AND tool calls in one turn (Gemini-3
         # routinely, Anthropic text-before-tool_use). The builder must keep both;
         # today the text branch is skipped whenever tool_calls exist
@@ -164,7 +178,7 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
               msg2.tool_calls[1].func.arguments == Dict{String,Any}()
     end
 
-    @testset "P0-3 Anthropic thinking block round-trip" begin
+    @testset "Anthropic thinking block round-trip" begin
         resp_json = """
         {"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-5",
          "content":[{"type":"thinking","thinking":"user wants weather","signature":"sig=="},
@@ -191,7 +205,7 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
               _get(asst[end], :type) == "tool_use"
     end
 
-    @testset "P0-3 streamed thinking turn round-trips (driver-level)" begin
+    @testset "Anthropic streamed thinking turn round-trips (driver-level)" begin
         # Chunk boundaries group whole events (fragmentation is covered by the
         # unit contracts; this witnesses the DRIVER: assembly → Message →
         # provider_content → verbatim re-encode).
@@ -243,7 +257,7 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
         end
     end
 
-    @testset "P0-4 Anthropic error event is not success (ported to handle_sse_event!)" begin
+    @testset "Anthropic in-band stream error is not success (unit)" begin
         state = UniLM.StreamState()
         err_chunk = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n"
         st = UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), err_chunk, state)
@@ -256,7 +270,7 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
         @test state.error["error"]["type"] == "overloaded_error"
     end
 
-    @testset "P0-4 in-band stream error yields a typed failure (driver-level)" begin
+    @testset "in-band stream error yields a typed failure (driver-level)" begin
         # An HTTP-200 SSE stream that dies with a documented in-band `error`
         # event (529-equivalent) must never surface as LLMSuccess with
         # truncated content.
@@ -282,7 +296,7 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
         end
     end
 
-    @testset "P0-5 Interactions streaming surfaces function calls" begin
+    @testset "Interactions streaming surfaces function calls" begin
         # Real wire shape (live docs, verified 2026-07-12): a function call is
         # a step.start with an empty arguments placeholder, arguments_delta
         # partial-JSON string deltas, and a step.stop; requires_action is a
@@ -311,7 +325,7 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
         @test ok
     end
 
-    @testset "P0-6 Gemini id-less parallel call correlation" begin
+    @testset "Gemini id-less parallel call correlation" begin
         # FunctionCall.id is Optional in the Gemini API. FIXED contract: id-less
         # parallel calls receive unique synthetic positional ids, so every
         # functionResponse carries the right name with no fabricated wire id.
@@ -341,13 +355,13 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
         @test ids_ok && corr_ok
     end
 
-    @testset "P0-8 MCP stdio server survives non-object frames" begin
+    @testset "MCP stdio server survives non-object frames" begin
         # A JSON array (legacy batch — a message MUST be a single JSON object
         # per spec 2025-11-25) gets a -32600 Invalid Request response and the
         # serve loop continues: the following valid ping is answered normally.
         input = IOBuffer("""[{"jsonrpc":"2.0","id":1,"method":"ping"}]\n{"jsonrpc":"2.0","id":2,"method":"ping"}\n""")
         output = IOBuffer()
-        server = MCPServer("p0-test", "0.0.0")
+        server = MCPServer("pins-test", "0.0.0")
         ok = try
             UniLM._serve_stdio(server; input=input, output=output)
             lines = split(String(take!(output)), '\n'; keepempty=false)
@@ -360,7 +374,7 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
         @test ok
     end
 
-    @testset "P0-9 MCP client skips interleaved notifications" begin
+    @testset "MCP client skips interleaved notifications" begin
         # Server-initiated notifications (tools/list_changed, logging) are legal
         # at any time and must never be consumed as "the response": the client
         # reads until the frame with the matching id and returns that result.

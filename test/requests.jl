@@ -680,4 +680,12 @@ end
     r2 = UniLM._stream_error_result(chat, other, nothing)
     @test r2 isa LLMCallError && isnothing(r2.status)
     @test occursin("api_error", r2.error)
+
+    # A malformed inner `error` (a bare string, not an object) must not throw:
+    # with no `type` to key on it falls through to LLMCallError, carrying the
+    # raw payload rather than crashing the stream driver.
+    malformed = Dict{String,Any}("type" => "error", "error" => "not a dict")
+    r3 = UniLM._stream_error_result(chat, malformed, nothing)
+    @test r3 isa LLMCallError && isnothing(r3.status)
+    @test occursin("not a dict", r3.error)
 end

@@ -885,6 +885,8 @@ list_resources!(session) -> Vector{MCPResourceInfo}
 list_prompts!(session) -> Vector{MCPPromptInfo}
 ```
 
+When the server sends `notifications/tools/list_changed`, `session.tools_stale` is set to `true` to flag the cached tool list as out of date; call `list_tools!(session)` to refresh it (which clears the flag).
+
 ### Operations
 
 ```julia

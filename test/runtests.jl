@@ -33,8 +33,8 @@ end
         include("sse.jl")
     end
 
-    @testset "P0 regression suite" begin
-        include("regression_p0.jl")
+    @testset "pinned regression contracts" begin
+        include("regression_pins.jl")
     end
 
     @testset "responses.jl" begin

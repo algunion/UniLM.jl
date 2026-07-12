@@ -254,6 +254,32 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
         @test state.error["error"]["type"] == "overloaded_error"
     end
 
+    @testset "P0-4 in-band stream error yields a typed failure (driver-level)" begin
+        # An HTTP-200 SSE stream that dies with a documented in-band `error`
+        # event (529-equivalent) must never surface as LLMSuccess with
+        # truncated content.
+        chunks = [
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n\n" *
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" *
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n",
+            "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n",
+        ]
+        server, base = sse_mock_server(chunks)
+        try
+            chat = Chat(service=AnthropicWireMock(base), model="mock", stream=true)
+            push!(chat, Message(Val(:system), "s"))
+            push!(chat, Message(Val(:user), "u"))
+            res = fetch(chatrequest!(chat))
+            @test !(res isa LLMSuccess)
+            @test res isa LLMFailure && res.status == 529
+            @test occursin("overloaded_error", res.response)
+            # The truncated partial text must not have been pushed into history.
+            @test all(m -> m.role != UniLM.RoleAssistant, chat.messages)
+        finally
+            close(server)
+        end
+    end
+
     @testset "P0-5 Interactions streaming surfaces function calls" begin
         tb = IOBuffer(); fb = IOBuffer(); le = Ref("")
         seq = "event: step.start\ndata: {\"step\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"name\":\"get_weather\",\"arguments\":{\"city\":\"Oslo\"}}}\n\n" *

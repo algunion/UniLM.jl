@@ -657,3 +657,18 @@ end
     @test UniLM.encode_request(OPENAIServiceEndpoint, chat) == JSON.json(chat)
     @test UniLM.encode_request(DeepSeekEndpoint(api_key="x"), chat) == JSON.json(chat)
 end
+
+@testset "_stream_error_result maps in-band stream errors to typed results" begin
+    chat = Chat(model="gpt-5.5")
+    overloaded = Dict{String,Any}("type" => "error",
+        "error" => Dict{String,Any}("type" => "overloaded_error", "message" => "Overloaded"))
+    r = UniLM._stream_error_result(chat, overloaded, nothing)
+    @test r isa LLMFailure && r.status == 529
+    @test occursin("overloaded_error", r.response)
+
+    other = Dict{String,Any}("type" => "error",
+        "error" => Dict{String,Any}("type" => "api_error", "message" => "boom"))
+    r2 = UniLM._stream_error_result(chat, other, nothing)
+    @test r2 isa LLMCallError && isnothing(r2.status)
+    @test occursin("api_error", r2.error)
+end

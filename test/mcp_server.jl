@@ -482,7 +482,7 @@ end
 @testset "HTTP transport — valid JSON-RPC POST → 200 + result body (src 471–478,482)" begin
     server = _build_http_server()
     port = _mcp_free_port()
-    httpserver = serve(server; transport=:http, host="127.0.0.1", port=port)
+    httpserver = serve(server; transport=:http, host="127.0.0.1", port=port, block=false)
     try
         # initialize: drives _dispatch_mcp → _handle_initialize through the HTTP handler.
         body = JSON.json(Dict("jsonrpc" => "2.0", "id" => 1, "method" => "initialize",
@@ -524,7 +524,7 @@ end
 @testset "HTTP transport — malformed JSON → 400 + parse error -32700 (src 475–476)" begin
     server = _build_http_server()
     port = _mcp_free_port()
-    httpserver = serve(server; transport=:http, port=port)  # default host
+    httpserver = serve(server; transport=:http, port=port, block=false)  # default host
     try
         resp = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
             "{ not valid json at all"; status_exception=false)
@@ -542,7 +542,7 @@ end
 @testset "HTTP transport — notification (no id) → 202 empty (src 479–480)" begin
     server = _build_http_server()
     port = _mcp_free_port()
-    httpserver = serve(server; transport=:http, port=port)
+    httpserver = serve(server; transport=:http, port=port, block=false)
     try
         # Well-formed JSON-RPC with NO "id" → _dispatch_mcp returns nothing → 202.
         notif = JSON.json(Dict("jsonrpc" => "2.0", "method" => "notifications/initialized"))
@@ -558,7 +558,7 @@ end
 @testset "HTTP transport — DELETE → 200 (src 483–484); GET → 405 (src 485–486)" begin
     server = _build_http_server()
     port = _mcp_free_port()
-    httpserver = serve(server; transport=:http, port=port)
+    httpserver = serve(server; transport=:http, port=port, block=false)
     try
         del = HTTP.request("DELETE", "http://127.0.0.1:$port"; status_exception=false)
         @test del.status == 200
@@ -892,7 +892,7 @@ end
 @testset "HTTP transport — non-object frame → 400 + -32600 (not 500)" begin
     server = _build_http_server()
     port = _mcp_free_port()
-    httpserver = serve(server; transport=:http, port=port)
+    httpserver = serve(server; transport=:http, port=port, block=false)
     try
         for bad in ("""[{"jsonrpc":"2.0","id":1,"method":"ping"}]""", "\"str\"", "42")
             resp = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
@@ -920,7 +920,7 @@ end
     server = _build_http_server()
     port = _mcp_free_port()
     httpserver = serve(server; transport=:http, port=port,
-        allowed_origins=["https://app.example.com"])
+        allowed_origins=["https://app.example.com"], block=false)
     ping_body = JSON.json(Dict("jsonrpc" => "2.0", "id" => 1, "method" => "ping",
         "params" => Dict()))
     post(origin) = HTTP.post("http://127.0.0.1:$port",
@@ -960,7 +960,7 @@ end
 @testset "HTTP transport — Origin default (no allowlist): localhost only" begin
     server2 = _build_http_server()
     port2 = _mcp_free_port()
-    httpserver2 = serve(server2; transport=:http, port=port2)
+    httpserver2 = serve(server2; transport=:http, port=port2, block=false)
     ping_body = JSON.json(Dict("jsonrpc" => "2.0", "id" => 1, "method" => "ping",
         "params" => Dict()))
     try
@@ -975,4 +975,60 @@ end
     finally
         close(httpserver2)
     end
+end
+
+# ─── serve(:http) blocking semantics ─────────────────────────────────────────
+
+@testset "serve(:http) — block=false returns the running server handle" begin
+    server = _build_http_server()
+    port = _mcp_free_port()
+    handle = serve(server; transport=:http, port=port, block=false)
+    try
+        @test !isnothing(handle)
+        resp = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+            JSON.json(Dict("jsonrpc" => "2.0", "id" => 1, "method" => "ping",
+                "params" => Dict())); status_exception=false)
+        @test resp.status == 200
+    finally
+        close(handle)
+    end
+end
+
+@testset "serve(:http) — blocks by default until closed" begin
+    server = _build_http_server()
+    port = _mcp_free_port()
+    ping_body = JSON.json(Dict("jsonrpc" => "2.0", "id" => 1, "method" => "ping",
+        "params" => Dict()))
+    serve_task = @async serve(server; transport=:http, port=port)
+
+    # Bounded readiness poll: the listener is up once a request round-trips.
+    ready = timedwait(10.0) do
+        try
+            HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+                ping_body; status_exception=false).status == 200
+        catch
+            false
+        end
+    end
+    @test ready === :ok
+
+    # The server answers requests, yet serve has NOT returned: it blocks.
+    @test !istaskdone(serve_task)
+
+    # Interrupt the blocked wait; serve must close the listener on the way out.
+    schedule(serve_task, InterruptException(); error=true)
+    @test timedwait(() -> istaskdone(serve_task), 10.0) === :ok
+    @test istaskfailed(serve_task)   # the interrupt propagated out of serve
+
+    # The cleanup ran: the port stops accepting (bounded check).
+    gone = timedwait(10.0) do
+        try
+            HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+                ping_body; status_exception=false)
+            false
+        catch
+            true
+        end
+    end
+    @test gone === :ok
 end

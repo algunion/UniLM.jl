@@ -11,6 +11,10 @@
   conversation again. Never serialized on the OpenAI wire.
 
 ### Changed
+- **Breaking:** `serve(server; transport=:http)` now blocks until the server
+  is closed (matching stdio serving and `HTTP.serve`). Pass `block=false` for
+  the previous behavior: it returns the running server handle, which you
+  `close` yourself.
 - The agentic streaming decode seam now threads one `AgenticStreamState`
   (text buffer, line carry, sticky event name, per-step assembly registry)
   instead of three loose buffer arguments. The seam is unexported; provider

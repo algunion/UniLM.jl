@@ -480,14 +480,17 @@ _mcp_origin_allowed(origin::AbstractString, allowed_origins::Vector{String})::Bo
     origin in allowed_origins || occursin(_MCP_LOCALHOST_ORIGIN, origin)
 
 """
-    _serve_http(server::MCPServer; host="127.0.0.1", port=8080, allowed_origins=String[])
+    _serve_http(server::MCPServer; host="127.0.0.1", port=8080, allowed_origins=String[], block=true)
 
 Run the MCP server over HTTP. POST requests contain JSON-RPC messages.
 Requests carrying a non-localhost, non-allowlisted `Origin` header get 403.
+
+Blocks until the server is closed. With `block=false`, returns the running
+server immediately; close it with `close`.
 """
 function _serve_http(server::MCPServer; host::String="127.0.0.1", port::Int=8080,
-                     allowed_origins::Vector{String}=String[])
-    HTTP.serve!(host, port) do req
+                     allowed_origins::Vector{String}=String[], block::Bool=true)
+    http_server = HTTP.serve!(host, port) do req
         # Streamable HTTP requires Origin validation (DNS-rebinding defense).
         # Requests without an Origin header are not browser cross-origin
         # requests and pass; browser requests must come from localhost or an
@@ -517,6 +520,15 @@ function _serve_http(server::MCPServer; host::String="127.0.0.1", port::Int=8080
             HTTP.Response(405, "Method Not Allowed")
         end
     end
+    block || return http_server
+    # Same shape as HTTP.serve on both supported majors: block on the running
+    # server and close it even if the wait is interrupted (e.g. Ctrl-C).
+    try
+        wait(http_server)
+    finally
+        close(http_server)
+    end
+    nothing
 end
 
 """
@@ -525,13 +537,20 @@ end
 Start the MCP server using the specified transport.
 
 # Transports
-- `:stdio` (default): Read from stdin, write to stdout. For Claude Desktop/CLI integration.
-- `:http`: HTTP server. Accepts `host` (default `"127.0.0.1"`) and `port` (default `8080`).
+- `:stdio` (default): Read from stdin, write to stdout. For Claude Desktop/CLI
+  integration. Accepts `input`/`output` IO overrides; returns after EOF on `input`.
+- `:http`: HTTP server. Accepts `host` (default `"127.0.0.1"`), `port`
+  (default `8080`), `allowed_origins` (extra allowed `Origin` header values —
+  localhost origins and requests without an `Origin` are always accepted;
+  anything else gets 403), and `block` (default `true`: block until the server
+  is closed; `block=false` returns the running server — close it with `close`).
 
 # Examples
 ```julia
-serve(server)                            # stdio (default)
-serve(server; transport=:http, port=3000)  # HTTP on port 3000
+serve(server)                                    # stdio (default)
+serve(server; transport=:http, port=3000)        # HTTP; blocks until closed
+h = serve(server; transport=:http, block=false)  # HTTP; returns the server
+close(h)
 ```
 """
 function serve(server::MCPServer; transport::Symbol=:stdio, kwargs...)

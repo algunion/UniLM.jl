@@ -68,6 +68,13 @@ resources = list_resources!(session) # -> Vector{MCPResourceInfo}
 prompts  = list_prompts!(session)   # -> Vector{MCPPromptInfo}
 ```
 
+!!! note "Server notifications"
+    MCP servers may send notifications at any time, interleaved with
+    responses; the client skips them transparently and answers server `ping`
+    requests. After a `notifications/tools/list_changed`, the session's cached
+    tool list is marked stale — check `session.tools_stale` and call
+    `list_tools!` to refresh.
+
 ```@example mcp
 # MCPToolInfo fields
 info = MCPToolInfo(Dict{String,Any}(
@@ -287,8 +294,28 @@ println("review -> ", gresp["result"]["messages"][1]["content"]["text"])
 Start the server with [`serve`](@ref):
 
 ```julia
-serve(server)                             # stdio (default) — for Claude Desktop/CLI
-serve(server; transport=:http, port=3000)  # HTTP on port 3000
+serve(server)                              # stdio (default) — for Claude Desktop/CLI
+serve(server; transport=:http, port=3000)  # HTTP on port 3000 — blocks until closed
+```
+
+The HTTP transport blocks until the server is closed (like `HTTP.serve`). To
+keep working in the same session, pass `block=false` and close the returned
+server yourself:
+
+```julia
+handle = serve(server; transport=:http, port=3000, block=false)
+# ... interact with the running server ...
+close(handle)
+```
+
+The HTTP transport validates the `Origin` header (a DNS-rebinding defense the
+MCP spec requires): requests without an `Origin` header (curl, SDK clients)
+and requests from localhost origins always pass; any other browser origin gets
+403 unless you allowlist it:
+
+```julia
+serve(server; transport=:http, port=3000,
+      allowed_origins=["https://app.example.com"])
 ```
 
 ---

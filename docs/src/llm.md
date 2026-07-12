@@ -948,8 +948,20 @@ register_prompt!(server, name, handler; description=nothing, arguments=[])
 ### Serving
 
 ```julia
-serve(server; transport=:stdio)                         # default — stdio
-serve(server; transport=:http, host="127.0.0.1", port=8080)  # HTTP
+serve(server; transport=:stdio)                          # default — stdio
+serve(server; transport=:http, host="127.0.0.1", port=8080)  # HTTP — blocks until closed
+```
+
+The HTTP transport blocks until the server is closed (like `HTTP.serve`); pass
+`block=false` to get the running server handle back and `close` it yourself. It
+also validates the `Origin` header (DNS-rebinding defense): requests with no
+`Origin` header and localhost origins pass, any other origin gets 403 unless
+listed in `allowed_origins`.
+
+```julia
+handle = serve(server; transport=:http, port=8080, block=false,
+               allowed_origins=["https://app.example.com"])
+close(handle)
 ```
 
 ### Server Example

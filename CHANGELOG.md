@@ -23,6 +23,8 @@
   HTTP requirement; DNS-rebinding defense): requests without an `Origin` and
   requests from localhost origins are accepted, anything else gets 403 unless
   listed in the new `allowed_origins` kwarg of `serve`.
+- SSE parsing tolerates `data:` lines with or without the single optional space
+  after the colon (`data:{…}` and `data: {…}` are equivalent), per the SSE spec.
 
 ### Fixed
 - Anthropic tool calling on thinking models (e.g. `claude-sonnet-5`): assistant

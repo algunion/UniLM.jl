@@ -1182,15 +1182,15 @@ try
 
     # ═══════════════════════════════════════════════════════════════════════
     # Chat Completions: SUCCESSFUL streaming + non-stream retry recursion
-    # Covers requests.jl: 264–307 (stream accumulation, callbacks, on_tool_call,
-    # eos→_build_stream_message→LLMSuccess→_accumulate_cost!), 343–346 (non-stream
-    # retry-then-recover recursion), 355–356 (chatrequest! stream dispatch).
+    # Covers requests.jl `_chatrequeststream` (stream accumulation, callbacks,
+    # on_tool_call, eos→_build_stream_message→LLMSuccess→_accumulate_cost!) and
+    # `chatrequest!` (non-stream retry-then-recover recursion + stream dispatch).
     # The streamed resp.body is empty under HTTP 2.x → assert on the parsed
     # LLMSuccess message, never the raw body (mirrors the existing stream tests).
     # SSE chunk wire-format is reused verbatim from test/requests.jl.
     # ═══════════════════════════════════════════════════════════════════════
 
-    @testset "chatrequest! stream=true success → LLMSuccess via dispatch (355–356, 302–307)" begin
+    @testset "chatrequest! stream=true success → LLMSuccess via dispatch (_chatrequeststream)" begin
         # Content deltas "Hello" + " world", a usage chunk, then finish_reason stop + [DONE].
         response_status[] = 200
         response_headers[] = Pair{String,String}[]
@@ -1257,7 +1257,7 @@ try
         set_error!(200, "")
     end
 
-    @testset "chatrequest! stream on_tool_call fires with parsed GPTToolCall (263–280, 220–229)" begin
+    @testset "chatrequest! stream on_tool_call fires with parsed GPTToolCall (_fire_tool_calls! + _build_stream_message)" begin
         # A single streamed tool call: id, name, then argument fragments, finishing tool_calls.
         response_status[] = 200
         response_headers[] = Pair{String,String}[]
@@ -1294,9 +1294,9 @@ try
         set_error!(200, "")
     end
 
-    @testset "chatrequest! non-stream retry-then-recover recursion (343–346)" begin
+    @testset "chatrequest! non-stream retry-then-recover recursion (chatrequest! retry branch)" begin
         # First request: retryable 503 (drains queue entry 1) → recurse → 200 success (entry 2).
-        # retries defaults to 0 < _RETRY_MAX_ATTEMPTS, so 343–346 (delay/sleep/recurse) runs once.
+        # retries defaults to 0 < _RETRY_MAX_ATTEMPTS, so the delay/sleep/recurse branch runs once.
         success_body = JSON.json(Dict(
             "choices" => [Dict(
                 "finish_reason" => "stop",
@@ -1991,7 +1991,7 @@ try
     # spawned stream task — single-read, so the shared canned-response mock works.
     #
     # NOT covered deterministically here: the incremental text-delta branches
-    # (requests.jl:289–296, responses.jl:1071) which only fire when a content
+    # (requests.jl `_flush_delta!`, responses.jl `_respond_stream`) which only fire when a content
     # chunk arrives in a read BEFORE the terminal chunk (≥2 separate network
     # reads). A dedicated HTTP.listen! chunked-streaming mock covered them on
     # HTTP.jl 2.x, but FAILED on the HTTP.jl 1.x CI leg (EOFError — listen!
@@ -2000,11 +2000,11 @@ try
     # CI by the live integration streaming tests (real multi-chunk responses).
     # ═══════════════════════════════════════════════════════════════════════
 
-    # ── TARGET A: on_tool_call callback that THROWS is isolated (requests.jl:276)
+    # ── TARGET A: on_tool_call callback that THROWS is isolated (_fire_tool_calls!)
     @testset "stream on_tool_call callback error is swallowed, stream still succeeds" begin
         # Same single streamed tool call as the on_tool_call success test, but the
-        # user callback raises. Line 270–277 wraps on_tool_call in try/catch; the
-        # throw must hit the catch (276, @warn) and be SWALLOWED — the spawned task
+        # user callback raises. _fire_tool_calls! wraps on_tool_call in try/catch;
+        # the throw must hit the catch (the @warn) and be SWALLOWED — the spawned task
         # must NOT error. Falsifier: remove the try/catch around on_tool_call and the
         # task throws → result becomes LLMCallError, not LLMSuccess, and tool_calls
         # are never assembled. We also assert the assembled tool call survives, proving

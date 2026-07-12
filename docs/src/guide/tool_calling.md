@@ -102,7 +102,7 @@ end
 !!! note "Gemini calls without wire ids"
     Gemini's chat path (`generateContent`) may omit `FunctionCall.id`. UniLM assigns
     such calls a synthetic positional id (`unilm_call_1`, `unilm_call_2`, …) so parallel
-    tool results correlate correctly; synthetic ids never appear on the wire
+    tool results correlate correctly; synthetic ids never appear on the Gemini wire
     (the re-encoded request omits the id and correlates positionally, per the
     API contract). The `unilm_call_` prefix is reserved. This applies to the chat
     surface only — the Interactions API always returns server-generated call ids.

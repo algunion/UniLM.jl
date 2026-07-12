@@ -138,6 +138,12 @@ task = chatrequest!(chat, callback=(chunk, close) -> chunk isa String && print(c
 fetch(task)
 ```
 
+Streaming preserves provider-native fidelity too: for Anthropic streams, the
+content blocks (including thinking blocks and their signatures) are
+re-assembled verbatim from the SSE deltas and attached to the final
+`Message.provider_content`, so a streamed tool-calling turn round-trips
+exactly like a non-streamed one.
+
 Providers on the OpenAI-compatible Chat Completions standard (DeepSeek, Ollama, vLLM, LM
 Studio, …) stream through the same `stream=true` + callback path.
 

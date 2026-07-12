@@ -108,6 +108,17 @@ else
 end
 ```
 
+!!! note "Thinking models round-trip automatically"
+    Claude models that emit thinking blocks (e.g. `claude-sonnet-5`) require
+    those blocks — signatures intact — to be echoed verbatim on the next
+    request of a tool-calling turn. UniLM captures the provider-native content
+    on `Message.provider_content` at decode time (non-streaming and streaming)
+    and echoes it automatically when the same provider encodes the
+    conversation again, so multi-turn tool use works out of the box. Moving a
+    conversation to a different provider falls back to the neutral
+    text+tool_calls form (thinking is dropped, as other providers cannot
+    verify another vendor's signatures).
+
 ## Responses API Backend
 
 The Responses API also supports the `service` parameter:

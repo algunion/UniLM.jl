@@ -143,10 +143,13 @@ end
     refusal_message::Union{String,Nothing} = nothing
     tool_calls::Union{Nothing,Vector{GPTToolCall}} = nothing
     tool_call_id::Union{String,Nothing} = nothing         # required when role == "tool"
+    provider_content::Union{Nothing,ProviderContent} = nothing
 end
 ```
 
 **Validation**: at least one of `content`, `tool_calls`, or `refusal_message` must be non-`nothing`. `tool_call_id` is required when `role == "tool"`.
+
+`provider_content` carries provider-native blocks (e.g. Anthropic thinking) captured for verbatim round-trip; it never serializes on the OpenAI wire.
 
 **Convenience constructors**:
 
@@ -1128,7 +1131,7 @@ Thrown by `issendvalid` / internal validation when conversation structure is inv
 
 Every exported symbol (`names(UniLM)`), grouped by area:
 
-**Chat Completions**: `Chat`, `Message`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `GPTTool`, `GPTToolCall`, `GPTFunctionSignature`, `GPTFunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
+**Chat Completions**: `Chat`, `Message`, `ProviderContent`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `GPTTool`, `GPTToolCall`, `GPTFunctionSignature`, `GPTFunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
 
 **Responses API & Agentic**: `Respond`, `InputMessage`, `ResponseObject`, `ResponseSuccess`, `ResponseFailure`, `ResponseCallError`, `Reasoning`, `TextConfig`, `TextFormatSpec`, `respond`, `get_response`, `delete_response`, `cancel_response`, `list_input_items`, `compact_response`, `count_input_tokens`, `text_format`, `json_schema_format`, `json_object_format`
 - *Input builders*: `input_text`, `input_image`, `input_file`

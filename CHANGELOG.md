@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `ProviderContent` and `Message.provider_content`: provider-native assistant
+  content (Anthropic thinking/redacted_thinking blocks, Gemini parts with
+  text-part `thoughtSignature`s) is captured verbatim at decode time — for
+  both non-streaming and streaming responses — and echoed verbatim when the
+  same provider encodes the conversation again. Never serialized on the
+  OpenAI wire.
+
+### Fixed
+- Anthropic tool calling on thinking models (e.g. `claude-sonnet-5`): assistant
+  turns rebuilt from text+tool_calls dropped the thinking blocks the API
+  requires back verbatim, so multi-turn tool use failed with HTTP 400.
+- Gemini Interactions `thought` steps are now surfaced verbatim in
+  `ResponseObject.output` instead of being collapsed into an empty
+  `reasoning` stub (their `signature` was previously lost).
+
 ## 0.11.3
 
 ### Fixed

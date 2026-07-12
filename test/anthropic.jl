@@ -269,3 +269,84 @@ end
     @test msg.tool_calls[1].func.name == "get_weather"
     @test msg.tool_calls[1].func.arguments == Dict("location" => "Paris")
 end
+
+@testset "stream — provider-native blocks assembled verbatim (thinking + text + tool_use)" begin
+    state = UniLM.StreamState()
+    lines = [
+        "event: message_start",
+        "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}}",
+        "event: content_block_start",
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}",
+        "event: content_block_delta",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"user wants \"}}",
+        "event: content_block_delta",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"weather\"}}",
+        "event: content_block_delta",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig==\"}}",
+        "event: content_block_stop",
+        "data: {\"type\":\"content_block_stop\",\"index\":0}",
+        "event: content_block_start",
+        "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+        "event: content_block_delta",
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"Checking.\"}}",
+        "event: content_block_stop",
+        "data: {\"type\":\"content_block_stop\",\"index\":1}",
+        "event: content_block_start",
+        "data: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"get_weather\",\"input\":{}}}",
+        "event: content_block_delta",
+        "data: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"city\\\":\"}}",
+        "event: content_block_delta",
+        "data: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"Oslo\\\"}\"}}",
+        "event: content_block_stop",
+        "data: {\"type\":\"content_block_stop\",\"index\":2}",
+        "event: message_delta",
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":25}}",
+        "event: message_stop",
+        "data: {\"type\":\"message_stop\"}",
+    ]
+    st = UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), join(lines, "\n") * "\n", state)
+    @test st === :done
+    @test state.raw_provider === :anthropic
+    @test length(state.raw_blocks) == 3
+    @test state.raw_blocks[1]["type"] == "thinking" &&
+          state.raw_blocks[1]["thinking"] == "user wants weather" &&
+          state.raw_blocks[1]["signature"] == "sig=="
+    @test state.raw_blocks[2]["type"] == "text" && state.raw_blocks[2]["text"] == "Checking."
+    @test state.raw_blocks[3]["type"] == "tool_use" &&
+          state.raw_blocks[3]["input"] == Dict{String,Any}("city" => "Oslo")
+    @test isempty(state.raw_pending) && isempty(state.raw_json)
+    # Built message carries the blocks AND the neutral fields.
+    msg = UniLM._build_stream_message(state)
+    @test msg.provider_content isa ProviderContent
+    @test msg.provider_content.blocks === state.raw_blocks
+    @test msg.content == "Checking." && length(msg.tool_calls) == 1
+    # Encoder echoes the streamed turn verbatim — the streamed round-trip.
+    @test UniLM._anthropic_assistant_content(msg) === state.raw_blocks
+end
+
+@testset "stream — redacted_thinking snapshot and zero-arg tool_use finalize" begin
+    state = UniLM.StreamState()
+    lines = [
+        "event: content_block_start",
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"redacted_thinking\",\"data\":\"opaque==\"}}",
+        "event: content_block_stop",
+        "data: {\"type\":\"content_block_stop\",\"index\":0}",
+        "event: content_block_start",
+        "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"t2\",\"name\":\"ping\",\"input\":{}}}",
+        "event: content_block_stop",
+        "data: {\"type\":\"content_block_stop\",\"index\":1}",
+        "event: message_stop",
+        "data: {\"type\":\"message_stop\"}",
+    ]
+    st = UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), join(lines, "\n") * "\n", state)
+    @test st === :done
+    @test state.raw_blocks[1] == Dict{String,Any}("type" => "redacted_thinking", "data" => "opaque==")
+    # No input_json_delta arrived: the start snapshot's empty input survives.
+    @test state.raw_blocks[2]["input"] == Dict{String,Any}()
+
+    # A block whose stop never arrives is NOT finalized (truncated stream).
+    state2 = UniLM.StreamState()
+    UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""),
+        "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n", state2)
+    @test isempty(state2.raw_blocks) && haskey(state2.raw_pending, 0)
+end

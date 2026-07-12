@@ -196,6 +196,9 @@ end
 # and returns :error (the documented 529-equivalent arrives on an HTTP-200
 # stream — it must never build an LLMSuccess). `content_block_stop` on a tool
 # index marks that call complete for the driver's on_tool_call detection.
+# Content blocks are additionally snapshotted verbatim and re-assembled into
+# state.raw_blocks so streamed turns round-trip with provider-native fidelity
+# (thinking signatures intact).
 function handle_sse_event!(::Type{ANTHROPICServiceEndpoint}, event::AbstractString,
                            payload::AbstractString, state::StreamState)::Symbol
     ev = JSON.parse(payload; dicttype=Dict{String,Any})
@@ -208,8 +211,15 @@ function handle_sse_event!(::Type{ANTHROPICServiceEndpoint}, event::AbstractStri
         u = get(get(ev, "message", Dict{String,Any}()), "usage", nothing)
         u isa AbstractDict && (state.usage = _anthropic_usage(u))
     elseif t == "content_block_start"
-        cb = get(ev, "content_block", Dict{String,Any}())
-        if get(cb, "type", "") == "tool_use"
+        cb = get(ev, "content_block", nothing)   # no {} default: a missing block must not fabricate a raw entry
+        idx = get(ev, "index", nothing)
+        if idx isa Integer && cb isa Dict{String,Any}
+            # Verbatim snapshot for round-trip assembly. The parsed event owns
+            # this dict exclusively, so in-place delta accumulation is safe.
+            state.raw_pending[idx] = cb
+            state.raw_provider = :anthropic
+        end
+        if cb isa AbstractDict && get(cb, "type", "") == "tool_use"
             state.tool_calls[ev["index"]] = Dict{String,Any}(
                 "id" => get(cb, "id", ""), "type" => "function",
                 "function" => Dict{String,Any}("name" => get(cb, "name", ""), "arguments" => ""))
@@ -218,16 +228,34 @@ function handle_sse_event!(::Type{ANTHROPICServiceEndpoint}, event::AbstractStri
         idx = ev["index"]
         d = get(ev, "delta", Dict{String,Any}())
         dt = get(d, "type", "")
+        blk = get(state.raw_pending, idx, nothing)
         if dt == "text_delta"
             txt = get(d, "text", "")
             print(state.content, txt)
             print(state.pending_delta, txt)
-        elseif dt == "input_json_delta" && haskey(state.tool_calls, idx)
-            state.tool_calls[idx]["function"]["arguments"] *= get(d, "partial_json", "")
+            isnothing(blk) || (blk["text"] = get(blk, "text", "") * txt)
+        elseif dt == "input_json_delta"
+            pj = get(d, "partial_json", "")
+            haskey(state.tool_calls, idx) &&
+                (state.tool_calls[idx]["function"]["arguments"] *= pj)
+            isnothing(blk) || (state.raw_json[idx] = get(state.raw_json, idx, "") * pj)
+        elseif dt == "thinking_delta"
+            isnothing(blk) || (blk["thinking"] = get(blk, "thinking", "") * get(d, "thinking", ""))
+        elseif dt == "signature_delta"
+            isnothing(blk) || (blk["signature"] = get(blk, "signature", "") * get(d, "signature", ""))
         end
     elseif t == "content_block_stop"
         idx = get(ev, "index", nothing)
         idx isa Integer && haskey(state.tool_calls, idx) && (state.tool_calls[idx]["complete"] = true)
+        if idx isa Integer && haskey(state.raw_pending, idx)
+            blk = state.raw_pending[idx]
+            # Streamed tool input arrives as partial JSON: finalize to a parsed
+            # object so the block matches the non-streaming wire shape.
+            haskey(state.raw_json, idx) &&
+                (blk["input"] = _parse_tool_arguments(pop!(state.raw_json, idx)))
+            push!(state.raw_blocks, blk)
+            delete!(state.raw_pending, idx)
+        end
     elseif t == "message_delta"
         sr = get(get(ev, "delta", Dict{String,Any}()), "stop_reason", nothing)
         isnothing(sr) || (state.finish_reason = _anthropic_finish_reason(sr))

@@ -387,4 +387,30 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
         res = UniLM._mcp_request!(session, "ping")
         @test get(res, "ok", false) == true
     end
+
+    @testset "azure deployment env is read at call time" begin
+        # The Azure deployment map used to be baked from ENV at precompile/load
+        # time, so a deployment name exported AFTER the package loaded was
+        # ignored. FIXED contract: the deployment env var is read when the
+        # request URL is built, so a value set at runtime is honored.
+        model = "gpt-5.2"
+        # Keep the test hermetic: an explicit registration would shadow the env
+        # path, so drop any that exists and restore it afterwards.
+        had = haskey(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, model)
+        saved = had ? UniLM._MODEL_ENDPOINTS_AZURE_OPENAI[model] : nothing
+        had && delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, model)
+        try
+            withenv(
+                "AZURE_OPENAI_DEPLOY_NAME_GPT_5_2" => "runtime-deploy-xyz",
+                "AZURE_OPENAI_BASE_URL" => "https://rt.openai.azure.com",
+                "AZURE_OPENAI_API_VERSION" => "2099-01-01",
+            ) do
+                url = UniLM.get_url(AZUREServiceEndpoint,
+                                    Chat(service=AZUREServiceEndpoint, model=model))
+                @test occursin("/openai/deployments/runtime-deploy-xyz/chat/completions", url)
+            end
+        finally
+            had && (UniLM._MODEL_ENDPOINTS_AZURE_OPENAI[model] = saved)
+        end
+    end
 end

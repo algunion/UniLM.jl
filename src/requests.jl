@@ -25,7 +25,7 @@ get_url(chat::Chat) = get_url(chat.service, chat)
 get_url(emb::Embeddings) = get_url(emb.service, emb)
 
 get_url(::Type{OPENAIServiceEndpoint}, ::Chat) = OPENAI_BASE_URL * CHAT_COMPLETIONS_PATH
-get_url(::Type{AZUREServiceEndpoint}, chat::Chat) = ENV[AZURE_OPENAI_BASE_URL] * _MODEL_ENDPOINTS_AZURE_OPENAI[chat.model] * "/chat/completions?api-version=$(ENV[AZURE_OPENAI_API_VERSION])"
+get_url(::Type{AZUREServiceEndpoint}, chat::Chat) = ENV[AZURE_OPENAI_BASE_URL] * _azure_deployment_path(chat.model) * "/chat/completions?api-version=$(ENV[AZURE_OPENAI_API_VERSION])"
 get_url(::Type{GEMINIOpenAIServiceEndpoint}, ::Chat) = GEMINI_CHAT_URL
 
 get_url(::Type{OPENAIServiceEndpoint}, ::Embeddings) = OPENAI_BASE_URL * EMBEDDINGS_PATH

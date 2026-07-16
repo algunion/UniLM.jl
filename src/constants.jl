@@ -72,20 +72,30 @@ const REALTIME_WS_URL::String = "wss://api.openai.com/v1/realtime"
 """
     _MODEL_ENDPOINTS_AZURE_OPENAI
 
-Maps model names to Azure deployment paths. Populated from environment variables
-`AZURE_OPENAI_DEPLOY_NAME_GPT_5_2` and `AZURE_OPENAI_DEPLOY_NAME_GPT_5_2_MINI` at
-load time. Use [`add_azure_deploy_name!`](@ref) to register additional deployments.
+Explicit Azure model→deployment-path registrations added via
+[`add_azure_deploy_name!`](@ref). Starts empty. Deployment names configured
+through `AZURE_OPENAI_DEPLOY_NAME_*` environment variables are not stored here;
+they are read at call time by `_azure_deployment_path`, so a value exported to
+the environment after the package loads is still honored.
 """
-const _MODEL_ENDPOINTS_AZURE_OPENAI::Dict{String,String} = let
-    d = Dict{String,String}()
+const _MODEL_ENDPOINTS_AZURE_OPENAI::Dict{String,String} = Dict{String,String}()
 
-    if haskey(ENV, "AZURE_OPENAI_DEPLOY_NAME_GPT_5_2")
-        d["gpt-5.2"] = "/openai/deployments/" * ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_5_2"]
+"""
+    _azure_deployment_path(model::String) -> String
+
+Resolve the Azure deployment path (`/openai/deployments/<name>`) for `model`.
+An explicit registration via [`add_azure_deploy_name!`](@ref) takes precedence;
+otherwise the matching `AZURE_OPENAI_DEPLOY_NAME_*` environment variable is read
+**at call time**, so runtime configuration wins regardless of what the
+environment held when the package was loaded. Throws `KeyError(model)` when the
+model has neither a registration nor a configured deployment environment variable.
+"""
+function _azure_deployment_path(model::String)::String
+    haskey(_MODEL_ENDPOINTS_AZURE_OPENAI, model) && return _MODEL_ENDPOINTS_AZURE_OPENAI[model]
+    if model == "gpt-5.2" && haskey(ENV, "AZURE_OPENAI_DEPLOY_NAME_GPT_5_2")
+        return "/openai/deployments/" * ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_5_2"]
     end
-
-
-
-    d
+    throw(KeyError(model))
 end
 
 """

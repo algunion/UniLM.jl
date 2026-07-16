@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Azure OpenAI deployment names configured through `AZURE_OPENAI_DEPLOY_NAME_*`
+  environment variables are now read when the request URL is built, instead of
+  being captured once when the package loads. A deployment name exported after
+  `using UniLM` is honored; `add_azure_deploy_name!` registrations still take
+  precedence.
+
 ## 0.12.0
 
 ### Added

@@ -42,6 +42,7 @@ makedocs(;
             "Images" => "api/images.md",
             "Embeddings" => "api/embeddings.md",
             "Service Endpoints" => "api/endpoints.md",
+            "Request Config & Timeouts" => "api/config.md",
             "Result Types" => "api/results.md",
             "Cost Tracking" => "api/accounting.md",
             "MCP Client & Server" => "api/mcp.md",

@@ -1081,6 +1081,42 @@ Request functions call `validate_capability` internally and throw `ArgumentError
 
 ---
 
+## Request Configuration & Timeouts
+
+Every network operation is bounded. One struct carries all knobs — all time
+fields are seconds, `Inf` disables that bound:
+
+```julia
+Base.@kwdef struct RequestConfig
+    connect_timeout::Float64     = 10.0
+    request_timeout::Float64     = 600.0
+    stream_idle_timeout::Float64 = 120.0
+    total_deadline::Float64      = 900.0
+    max_attempts::Int            = 3
+    mcp_connect_timeout::Float64 = 120.0
+    mcp_request_timeout::Float64 = 120.0
+end
+```
+
+- `connect_timeout` — per-attempt connection establishment. `request_timeout` — per-attempt whole exchange (non-stream). `stream_idle_timeout` — byte-gap between raw stream chunks. `total_deadline` — across ALL attempts including backoff (streams: until first byte). `max_attempts` — wire attempts (`1` disables retries). `mcp_connect_timeout` / `mcp_request_timeout` — MCP handshake / per-exchange bounds.
+- **Validation**: every `Float64` field rejects `NaN` and values `≤ 0` with `ArgumentError` (`Inf` = disabled); `max_attempts ≥ 1`.
+- **Copy-with-overrides**: `RequestConfig(base::RequestConfig; kwargs...)`.
+- **Four channels, struct-wise precedence** (a channel supplies a complete struct):
+  1. per-call `config::Union{Nothing,RequestConfig}` keyword on request verbs;
+  2. dynamic scope: `with_request_config(f; kwargs...)` — merges kwargs over `current_config()` at entry; propagates into `Threads.@spawn`;
+  3. process default: `set_default_config!(cfg)` or `set_default_config!(; kwargs...)` (merges over the current default) — the channel for REPL/notebook sessions;
+  4. the built-in defaults above.
+  `current_config()` returns the ambient struct (active scope, else process default).
+
+```julia
+with_request_config(request_timeout=30.0, max_attempts=1) do
+    chatrequest!(chat)          # bounded, no retries, inside this scope only
+end
+set_default_config!(total_deadline=120.0)   # process-wide default
+```
+
+---
+
 ## Result Type Hierarchy
 
 All API call results inherit from `LLMRequestResponse`:
@@ -1158,6 +1194,25 @@ end
 
 Thrown by `issendvalid` / internal validation when conversation structure is invalid (e.g., missing system message position, consecutive same-role messages).
 
+```julia
+struct UniLMTimeout <: Exception
+    phase::Symbol        # :connect | :request | :stream_idle | :deadline
+    elapsed::Float64     # seconds, monotonic
+    limit::Float64
+end
+
+struct MCPTimeoutError <: Exception
+    phase::Symbol        # :connect | :request
+    elapsed::Float64
+    limit::Float64
+    msg::String          # names the applicable timeout override
+end
+```
+
+Raised when a `RequestConfig` bound is exceeded. Value-returning surfaces
+(chat, embeddings, responses) deliver `UniLMTimeout` inside their error
+results; the MCP surface throws `MCPTimeoutError`.
+
 ---
 
 ## Complete Exports List
@@ -1219,3 +1274,5 @@ Every exported symbol (`names(UniLM)`), grouped by area:
 **Realtime**: `RealtimeSession`, `RealtimeSecretSuccess`, `RealtimeFailure`, `RealtimeCallError`, `mint_realtime_secret`, `realtime_connect`, `realtime_send`, `realtime_receive`, `realtime_event`, `session_update`, `input_audio_append`, `response_create`
 
 **Result Types (base)**: `LLMRequestResponse`, `LLMSuccess`, `LLMFailure`, `LLMCallError`
+
+**Request Config & Timeouts**: `RequestConfig`, `current_config`, `with_request_config`, `set_default_config!`, `UniLMTimeout`, `MCPTimeoutError`

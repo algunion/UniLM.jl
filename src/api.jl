@@ -692,21 +692,23 @@ HTTP-level failure from the Chat Completions API. The server returned a non-200 
 end
 
 """
-    LLMCallError(; error, status=nothing, self, request_id=nothing)
+    LLMCallError(; error, status=nothing, self, request_id=nothing, cause=nothing)
 
-Exception-level error during a Chat Completions API call (network failure, JSON parse error, etc.).
+Exception-level error during a Chat Completions API call (network failure, JSON parse error, timeout, etc.).
 
 # Fields
 - `error::String`: The stringified exception.
-- `status::Union{Int,Nothing}`: HTTP status if available.
+- `status::Union{Int,Nothing}`: HTTP status if available (`nothing` for timeouts — no fabricated statuses).
 - `self::Chat`: The [`Chat`](@ref) object (unchanged).
 - `request_id::Union{String, Nothing}`: The HTTP request ID from headers, if available.
+- `cause::Union{Nothing,Exception}`: The underlying typed exception when one exists (e.g. a `UniLMTimeout` carrying phase/elapsed/limit).
 """
 @kwdef struct LLMCallError <: LLMRequestResponse
     error::String
     status::Union{Int,Nothing} = nothing
     self::Chat
     request_id::Union{String, Nothing} = nothing
+    cause::Union{Nothing,Exception} = nothing
 end
 
 
@@ -915,13 +917,16 @@ HTTP-level failure from the Embeddings API (non-2xx).
 end
 
 """
-    EmbeddingCallError(; error, status=nothing)
+    EmbeddingCallError(; error, status=nothing, cause=nothing)
 
-Exception-level error during an Embeddings API call (network, parse, etc.).
+Exception-level error during an Embeddings API call (network, parse, timeout, etc.).
+`cause` holds the underlying typed exception when one exists (e.g. a `UniLMTimeout`);
+`status` stays `nothing` for timeouts — no fabricated HTTP statuses.
 """
 @kwdef struct EmbeddingCallError <: LLMRequestResponse
     error::String
     status::Union{Int,Nothing} = nothing
+    cause::Union{Nothing,Exception} = nothing
 end
 
 """

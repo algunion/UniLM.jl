@@ -1125,7 +1125,7 @@ All API call results inherit from `LLMRequestResponse`:
 LLMRequestResponse (abstract)
 ├── LLMSuccess          — Chat Completions success (.message::Message, .self::Chat)
 ├── LLMFailure          — Chat Completions HTTP error (.response::String, .status::Int, .self::Chat)
-├── LLMCallError        — Chat Completions exception (.error::String, .status, .self::Chat)
+├── LLMCallError        — Chat Completions exception (.error::String, .status, .self::Chat, .cause::Union{Nothing,Exception})
 ├── ResponseSuccess     — Responses API success (.response::ResponseObject)
 ├── ResponseFailure     — Responses API HTTP error (.response::String, .status::Int)
 ├── ResponseCallError   — Responses API exception (.error::String, .status)

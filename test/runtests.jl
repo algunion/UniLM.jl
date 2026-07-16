@@ -29,6 +29,10 @@ end
         include("config.jl")
     end
 
+    @testset "deadline.jl" begin
+        include("deadline.jl")
+    end
+
     @testset "requests.jl" begin
         include("requests.jl")
     end

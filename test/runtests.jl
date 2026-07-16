@@ -25,6 +25,10 @@ end
         include("api.jl")
     end
 
+    @testset "config.jl" begin
+        include("config.jl")
+    end
+
     @testset "requests.jl" begin
         include("requests.jl")
     end

@@ -825,3 +825,76 @@ end
     finally
     end
 end
+
+# ─── MCP HTTP transport timeout contract ─────────────────────────────────────
+
+# HTTP MCP server that answers `initialize` (so mcp_connect succeeds) and the
+# `notifications/initialized` 202, but never responds to `tools/call` — the
+# request-phase watchdog must fire, WITHOUT tearing down the session (HTTP
+# request/response correlation is per-POST, so an HTTP timeout is not fatal).
+function _hm_mcp_http_mute_server()
+    httpserver = nothing
+    port = 0
+    for attempt in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2])
+        close(tcp)
+        try
+            httpserver = HTTP.serve!("127.0.0.1", port; verbose = false) do req
+                req.method == "DELETE" && return HTTP.Response(200, "")
+                req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+                parsed = JSON.parse(String(req.body); dicttype = Dict{String,Any})
+                method = get(parsed, "method", "")
+                id = get(parsed, "id", nothing)
+                if method == "initialize"
+                    return HTTP.Response(200, ["Content-Type" => "application/json"],
+                        JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id,
+                            "result" => Dict{String,Any}(
+                                "protocolVersion" => UniLM._MCP_PROTOCOL_VERSION,
+                                "capabilities" => Dict{String,Any}(),
+                                "serverInfo" => Dict{String,Any}("name" => "hm-http-mute", "version" => "0.0.0")))))
+                end
+                isnothing(id) && return HTTP.Response(202, "")   # notifications/initialized
+                wait(Condition())                                # tools/call: never respond
+                HTTP.Response(200, "")                           # unreachable
+            end
+            break
+        catch
+            attempt == 5 && rethrow()
+        end
+    end
+    (httpserver, "http://127.0.0.1:$(port)")
+end
+
+@testset "mcp: http request timeout yields MCPTimeoutError; session survives" begin
+    # FIXED contract: an HTTP MCP request against a mute peer times out with
+    # MCPTimeoutError(:request), but the session SURVIVES (:ready) — unlike
+    # stdio, HTTP correlation is per-POST so the timeout is not session-fatal.
+    httpserver, url = _hm_mcp_http_mute_server()
+    try
+        outcome = _hm_bounded() do
+            cfg = UniLM.RequestConfig(mcp_request_timeout = 0.5)
+            session = mcp_connect(url; config = cfg)
+            err = try
+                call_tool(session, "probe", Dict{String,Any}())
+                nothing
+            catch e
+                e
+            end
+            (err, session.status)
+        end
+        ok = try
+            outcome[1] === :ok && let (err, st) = outcome[2]
+                err isa UniLM.MCPTimeoutError && err.phase === :request && st === :ready
+            end
+        catch
+            false
+        end
+        @test_broken ok
+    finally
+        # In the green flow the `tools/call` handler parks at `wait(Condition())`,
+        # so a graceful close would spin in its quiesce loop waiting for that
+        # still-ACTIVE connection to drain; force-close severs it and returns.
+        HTTP.forceclose(httpserver)
+    end
+end

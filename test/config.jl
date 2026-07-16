@@ -38,3 +38,74 @@ end
     @test_throws ArgumentError RequestConfig(base; max_attempts=0)
     @test_throws MethodError RequestConfig(base; not_a_field=1.0)
 end
+
+@testset "channel precedence: kwarg > scope > process default" begin
+    initial = UniLM.current_config()   # outside any scope = the process default
+    try
+        set_default_config!(request_timeout=111.0)
+        @test current_config().request_timeout == 111.0
+        with_request_config(request_timeout=222.0) do
+            @test current_config().request_timeout == 222.0
+            # channel 1: an explicit per-call config beats the active scope
+            @test UniLM._resolve_config(RequestConfig(request_timeout=333.0)).request_timeout == 333.0
+            # nothing falls through to the scope
+            @test UniLM._resolve_config(nothing).request_timeout == 222.0
+        end
+        # scope exited → process default governs again
+        @test current_config().request_timeout == 111.0
+        @test UniLM._resolve_config(nothing).request_timeout == 111.0
+        # with_request_config returns f's value
+        @test with_request_config(() -> 42) == 42
+        # the scope pins a COMPLETE struct merged at entry: unmentioned fields
+        # come from the entry-time ambient config
+        with_request_config(max_attempts=9) do
+            @test current_config().request_timeout == 111.0
+            @test current_config().max_attempts == 9
+        end
+    finally
+        set_default_config!(initial)
+    end
+end
+
+@testset "set_default_config! merges over the process default, not the scope" begin
+    initial = UniLM.current_config()
+    try
+        set_default_config!(connect_timeout=5.0)
+        with_request_config(connect_timeout=77.0) do
+            newdef = set_default_config!(max_attempts=9)
+            # kwargs merged over the PROCESS default (5.0), not the scope (77.0)
+            @test newdef.connect_timeout == 5.0
+            @test newdef.max_attempts == 9
+            # the active scope still governs ambient resolution
+            @test current_config().connect_timeout == 77.0
+        end
+        @test current_config().connect_timeout == 5.0
+        @test current_config().max_attempts == 9
+        # whole-struct form returns and installs exactly the given struct
+        cfg = RequestConfig(request_timeout=42.0)
+        @test set_default_config!(cfg) == cfg
+        @test current_config() == cfg
+        # validation applies through the merge form too
+        @test_throws ArgumentError set_default_config!(request_timeout=NaN)
+    finally
+        set_default_config!(initial)
+    end
+end
+
+@testset "scope propagates into spawned tasks and is immune to default mutation" begin
+    initial = UniLM.current_config()
+    try
+        with_request_config(request_timeout=222.0) do
+            t = Threads.@spawn begin
+                sleep(0.2)   # let the process default mutate before reading
+                UniLM.current_config().request_timeout
+            end
+            set_default_config!(request_timeout=999.0)
+            @test fetch(t) == 222.0                            # task carries the scope
+            @test current_config().request_timeout == 222.0    # scope pinned at entry
+        end
+        @test current_config().request_timeout == 999.0
+    finally
+        set_default_config!(initial)
+    end
+end

@@ -72,3 +72,67 @@ function RequestConfig(base::RequestConfig; kwargs...)
         ntuple(i -> getfield(base, i), Val(fieldcount(RequestConfig))))
     return RequestConfig(; merge(fields, values(kwargs))...)
 end
+
+# ─── Resolution channels ─────────────────────────────────────────────────────
+# 1. per-call kwarg (config::Union{Nothing,RequestConfig}) → _resolve_config;
+# 2. dynamic scope — a ScopedValue, which propagates into Threads.@spawn;
+# 3. process default — REPL/notebook sessions cannot hold a dynamic scope
+#    across cells, so they mutate the process default instead;
+# 4. the @kwdef field defaults (the initial process default).
+
+const _REQUEST_CONFIG = ScopedValue{Union{Nothing,RequestConfig}}(nothing)
+
+# Process-default holder: an @atomic field gives lock-free, torn-write-free
+# swaps visible to all tasks (a plain global assignment has no such guarantee).
+mutable struct _ConfigHolder
+    @atomic cfg::RequestConfig
+end
+const _PROCESS_DEFAULT_CONFIG = _ConfigHolder(RequestConfig())
+
+"""
+    current_config() -> RequestConfig
+
+The ambient [`RequestConfig`](@ref): the innermost active
+[`with_request_config`](@ref) scope if any, otherwise the process default set
+by [`set_default_config!`](@ref) (initially the field defaults).
+"""
+current_config()::RequestConfig =
+    something(_REQUEST_CONFIG[], @atomic(_PROCESS_DEFAULT_CONFIG.cfg))
+
+"""
+    with_request_config(f; kwargs...)
+
+Run `f()` with a [`RequestConfig`](@ref) pinned in dynamic scope and return
+`f()`'s value. The given fields are merged over [`current_config`](@ref) once
+at entry; the resulting complete struct governs every UniLM call inside `f`,
+including tasks spawned inside the scope (scoped values propagate into
+`Threads.@spawn`). Mutating the process default while the scope is active does
+not affect it.
+
+```julia
+with_request_config(request_timeout=30.0, max_attempts=1) do
+    chatrequest!(chat)
+end
+```
+"""
+with_request_config(f::Function; kwargs...) =
+    with(f, _REQUEST_CONFIG => RequestConfig(current_config(); kwargs...))
+
+"""
+    set_default_config!(cfg::RequestConfig) -> RequestConfig
+    set_default_config!(; kwargs...) -> RequestConfig
+
+Set the process-wide default [`RequestConfig`](@ref) and return it. The
+keyword form merges the given fields over the CURRENT process default (never
+over an active scope). Intended for REPL/notebook sessions, which cannot hold
+a dynamic scope across cells; prefer [`with_request_config`](@ref) in
+programs.
+"""
+set_default_config!(cfg::RequestConfig)::RequestConfig =
+    (@atomic _PROCESS_DEFAULT_CONFIG.cfg = cfg)
+set_default_config!(; kwargs...)::RequestConfig =
+    set_default_config!(RequestConfig(@atomic(_PROCESS_DEFAULT_CONFIG.cfg); kwargs...))
+
+# Per-verb resolution: an explicit per-call config wins over every ambient channel.
+_resolve_config(c::Union{Nothing,RequestConfig})::RequestConfig =
+    c !== nothing ? c : current_config()

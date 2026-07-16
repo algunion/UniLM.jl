@@ -94,7 +94,10 @@ export
 
 # ─── Request Configuration & Timeouts ─────────────────────────────────────────
 export
-    RequestConfig
+    RequestConfig,
+    current_config,
+    with_request_config,
+    set_default_config!
 
 # ─── Chat Completions API ─────────────────────────────────────────────────────
 export

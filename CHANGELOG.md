@@ -37,6 +37,13 @@
   `InterruptException` (e.g. Ctrl-C) raised inside a tool function now
   propagates and aborts the loop instead of being recorded as a tool-call
   failure and retried. All other exceptions still become tool-error outcomes.
+- Tool-error messages now reach the model faithfully instead of wrapped in
+  exception-constructor noise. A tool that raises `error("kaboom")` is reported
+  to the model as `Error: kaboom` (previously `Error: ErrorException("kaboom")`);
+  other exceptions render through `showerror` (e.g. `KeyError: key "x" not found`)
+  rather than their `string(e)` constructor form. The single loop-level `Error: `
+  prefix is unchanged, so a tool whose own message already begins with `Error:` is
+  still not rewritten.
 - MCP client now validates and honors the negotiated protocol version and
   recovers expired HTTP sessions (Streamable HTTP, MCP spec 2025-11-25). After
   `initialize`, a server `protocolVersion` outside the client's supported set

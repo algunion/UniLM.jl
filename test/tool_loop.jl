@@ -112,6 +112,33 @@ end
     end
 end
 
+# ─── Faithful tool-error messages (no exception-constructor noise) ────────────
+
+@testset "tool errors reach the model unwrapped" begin
+    @testset "ErrorException stores its raw message, not the constructor form" begin
+        # `error("kaboom")` throws ErrorException("kaboom"). The stored error must
+        # be the raw "kaboom" — NOT `string(e)` == "ErrorException(\"kaboom\")",
+        # whose type-constructor noise would reach the model verbatim once the loop
+        # prepends its single "Error: " prefix.
+        outcome = UniLM._dispatch_tool("explode", Dict{String,Any}(),
+            (n, a) -> error("kaboom"))
+        @test !outcome.success
+        @test outcome.error == "kaboom"
+        @test !occursin("ErrorException", outcome.error)
+    end
+
+    @testset "non-ErrorException stores the readable showerror form" begin
+        # Any other exception renders through `showerror` (human-readable), never
+        # the bare `string(e)` constructor form: KeyError(:x) becomes
+        # "KeyError: key :x not found", not "KeyError(:x)".
+        outcome = UniLM._dispatch_tool("lookup", Dict{String,Any}(),
+            (n, a) -> throw(KeyError(:x)))
+        @test !outcome.success
+        @test outcome.error == sprint(showerror, KeyError(:x))
+        @test outcome.error != string(KeyError(:x))
+    end
+end
+
 # ─── ToolCallOutcome construction ────────────────────────────────────────────
 
 @testset "ToolCallOutcome" begin

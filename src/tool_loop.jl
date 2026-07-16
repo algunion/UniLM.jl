@@ -115,7 +115,13 @@ function _dispatch_tool(name::String, args::Dict{String,Any}, dispatcher::Functi
         # A user Ctrl-C (InterruptException) must abort the loop, not be recorded
         # as a tool failure and swallowed — propagate it before any conversion.
         e isa InterruptException && rethrow()
-        ToolCallOutcome(name, args, nothing, false, string(e))
+        # Store the tool's own message faithfully: `error("x")` carries it verbatim
+        # in `.msg`, and any other error renders through `showerror` (its
+        # human-readable form, e.g. `KeyError: key "x" not found`). `string(e)` would
+        # instead leak the constructor form (`ErrorException("x")`) — exception-type
+        # noise the model would otherwise have to see through.
+        ToolCallOutcome(name, args, nothing, false,
+                        e isa ErrorException ? e.msg : sprint(showerror, e))
     end
 end
 

@@ -538,4 +538,59 @@ end
             !isnothing(mcp_handle) && close(mcp_handle)
         end
     end
+
+    @testset "tool error reaches the model unwrapped (end-to-end loop)" begin
+        # Seam choice: a CallableTool whose callable raises `error("kaboom")`
+        # reproduces the MCP tool-loop bridge exactly — the bridge surfaces an
+        # `isError: true` result by RAISING `error(result.content)`, so for content
+        # "kaboom" the throw is the identical ErrorException("kaboom"), dispatched
+        # through the identical `_dispatch_tool` catch path in tool_loop!. The loop
+        # must hand the model the faithful "Error: kaboom" (one loop-level prefix),
+        # never "Error: ErrorException(\"kaboom\")". A local OpenAI-wire mock plays
+        # the model asking for the tool, so this stays offline (zero-spend).
+        explode = CallableTool(
+            GPTTool(func=GPTFunctionSignature(name="explode", description="always fails")),
+            (name, args) -> error("kaboom"))
+
+        # Turn 1: the model asks for the failing tool. Turn 2: it answers with text.
+        tool_call_body = JSON.json(Dict(
+            "id" => "chatcmpl-1", "object" => "chat.completion",
+            "choices" => [Dict("index" => 0, "finish_reason" => "tool_calls",
+                "message" => Dict("role" => "assistant",
+                    "tool_calls" => [Dict("id" => "call_1", "type" => "function",
+                        "function" => Dict("name" => "explode", "arguments" => "{}"))]))],
+            "usage" => Dict("prompt_tokens" => 5, "completion_tokens" => 3, "total_tokens" => 8)))
+        final_body = JSON.json(Dict(
+            "id" => "chatcmpl-2", "object" => "chat.completion",
+            "choices" => [Dict("index" => 0, "finish_reason" => "stop",
+                "message" => Dict("role" => "assistant", "content" => "Handled the failure."))],
+            "usage" => Dict("prompt_tokens" => 9, "completion_tokens" => 4, "total_tokens" => 13)))
+        api_server, api_base, calls = oai_wire_server(n -> n == 1 ? tool_call_body : final_body)
+
+        try
+            chat = Chat(service=GenericOpenAIEndpoint(api_base, ""), model="mock",
+                        tools=[explode])
+            push!(chat, Message(Val(:system), "You have one tool."))
+            push!(chat, Message(Val(:user), "Call explode."))
+
+            result = tool_loop!(chat; tools=[explode])
+
+            # The loop dispatched the failing tool, then finished on the text turn.
+            @test result.completed && result.response isa LLMSuccess
+            @test length(result.tool_calls) == 1 &&
+                  result.tool_calls[1].tool_name == "explode" &&
+                  !result.tool_calls[1].success
+            @test calls[] == 2
+            # The recorded outcome error is the faithful raw message, unwrapped.
+            @test result.tool_calls[1].error == "kaboom"
+
+            # The message the loop actually handed the model: the tool-role turn's
+            # content is exactly "Error: kaboom", with no ErrorException noise.
+            tool_msg = only(filter(m -> m.role == UniLM.RoleTool, chat.messages))
+            @test tool_msg.content == "Error: kaboom"
+            @test !occursin("ErrorException", tool_msg.content)
+        finally
+            close(api_server)
+        end
+    end
 end

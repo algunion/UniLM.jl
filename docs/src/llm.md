@@ -861,6 +861,7 @@ Native MCP client (JSON-RPC 2.0 over stdio or HTTP, spec 2025-11-25).
 ```julia
 MCPSession            # live connection — manages transport + cached tools/resources/prompts
 MCPToolInfo           # tool definition from tools/list
+MCPToolResult         # typed tools/call result: content, structured, is_error, parts
 MCPResourceInfo       # resource definition from resources/list
 MCPPromptInfo         # prompt definition from prompts/list
 MCPServerCapabilities # capabilities from initialize
@@ -890,11 +891,29 @@ When the server sends `notifications/tools/list_changed`, `session.tools_stale` 
 ### Operations
 
 ```julia
-call_tool(session, name, arguments) -> String
+call_tool(session, name, arguments) -> MCPToolResult
 read_resource(session, uri) -> String
 get_prompt(session, name, arguments) -> Vector{Dict}
 ping(session)
 ```
+
+### Tool Result
+
+`call_tool` returns a typed result — a tool-execution error (`isError: true`) is
+carried on `is_error`, **not** thrown; only JSON-RPC protocol errors throw (`MCPError`).
+
+```julia
+struct MCPToolResult
+    content::String                              # text parts joined by "\n"; non-text parts JSON-encoded
+    structured::Union{Nothing,Dict{String,Any}}  # server's structuredContent verbatim, or nothing
+    is_error::Bool                               # true when the tool reported an execution error (isError)
+    parts::Vector{Any}                           # raw content array verbatim
+end
+```
+
+The `mcp_tools` / `mcp_tools_respond` bridges surface `content` to the model on
+success (falling back to `JSON.json(structured)` when `content` is empty), and
+raise `content` as an error when `is_error` is set.
 
 ### Tool Bridge
 
@@ -1169,7 +1188,7 @@ Every exported symbol (`names(UniLM)`), grouped by area:
 
 **Forking**: `fork`
 
-**MCP Client**: `MCPSession`, `MCPToolInfo`, `MCPResourceInfo`, `MCPPromptInfo`, `MCPServerCapabilities`, `MCPTransport`, `StdioTransport`, `HTTPTransport`, `MCPError`, `mcp_connect`, `mcp_disconnect!`, `mcp_tools`, `mcp_tools_respond`, `list_tools!`, `list_resources!`, `list_prompts!`, `call_tool`, `read_resource`, `get_prompt`, `ping`
+**MCP Client**: `MCPSession`, `MCPToolInfo`, `MCPToolResult`, `MCPResourceInfo`, `MCPPromptInfo`, `MCPServerCapabilities`, `MCPTransport`, `StdioTransport`, `HTTPTransport`, `MCPError`, `mcp_connect`, `mcp_disconnect!`, `mcp_tools`, `mcp_tools_respond`, `list_tools!`, `list_resources!`, `list_prompts!`, `call_tool`, `read_resource`, `get_prompt`, `ping`
 
 **MCP Server**: `MCPServer`, `MCPServerTool`, `MCPServerResource`, `MCPServerResourceTemplate`, `MCPServerPrompt`, `MCPServerPrimitive`, `register_tool!`, `register_resource!`, `register_resource_template!`, `register_prompt!`, `serve`, `@mcp_tool`, `@mcp_resource`, `@mcp_prompt`
 

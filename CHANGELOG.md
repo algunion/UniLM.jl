@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Changed
+- **Breaking:** `call_tool(session, name, args)` now returns an `MCPToolResult`
+  instead of a bare `String`, and no longer throws when the tool reports an
+  execution error (`isError: true`). The struct carries `content::String` (the
+  rendered text, unchanged from before), `structured::Union{Nothing,Dict{String,Any}}`
+  (the server's `structuredContent` verbatim), `is_error::Bool`, and
+  `parts::Vector{Any}` (the raw content array) — so a tool-execution error is now
+  distinguishable from a JSON-RPC protocol error (still thrown as `MCPError`). The
+  `mcp_tools` / `mcp_tools_respond` tool-loop bridges are unchanged for callers:
+  they still hand the model a string (the faithful `content`), now surfacing
+  `structuredContent` when the content is otherwise empty and raising the tool's
+  own error content on `isError`.
+
 ### Fixed
 - Azure OpenAI deployment names configured through `AZURE_OPENAI_DEPLOY_NAME_*`
   environment variables are now read when the request URL is built, instead of

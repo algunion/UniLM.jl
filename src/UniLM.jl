@@ -435,6 +435,7 @@ export
 export
     MCPSession,
     MCPToolInfo,
+    MCPToolResult,
     MCPResourceInfo,
     MCPPromptInfo,
     MCPServerCapabilities,

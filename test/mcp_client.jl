@@ -330,18 +330,24 @@ end
             end
         end
 
-        @testset "call_tool returns exact computed result and sends args" begin
+        @testset "call_tool text-only result is a typed MCPToolResult, sends args" begin
             session = mcp_connect(url)
             try
                 captured[] = nothing
                 out = call_tool(session, "concat",
                     Dict{String,Any}("a" => "foo", "b" => "bar"))
-                @test out == "foo|bar"  # exact deterministic handler output
+                # Text-only result: typed struct; content is the joined text; no
+                # structuredContent; not an error; raw content array preserved verbatim.
+                @test out isa MCPToolResult
+                @test out.content == "foo|bar"    # exact deterministic handler output
+                @test out.is_error == false
+                @test out.structured === nothing
+                @test out.parts == Any[Dict{String,Any}("type" => "text", "text" => "foo|bar")]
                 # Prove the args reached the server over the wire.
                 @test captured[] == Dict{String,Any}("a" => "foo", "b" => "bar")
                 # Different args → different exact result (falsifies a constant-return bug).
                 @test call_tool(session, "concat",
-                    Dict{String,Any}("a" => "x", "b" => "yz")) == "x|yz"
+                    Dict{String,Any}("a" => "x", "b" => "yz")).content == "x|yz"
             finally
                 mcp_disconnect!(session)
             end
@@ -401,7 +407,7 @@ end
                 call_tool(session, "concat", Dict{String,Any}("a" => "p", "b" => "q"))
             end
             @test ran[]                       # block executed
-            @test ret == "p|q"                # block's value is returned
+            @test ret.content == "p|q"        # block's value (an MCPToolResult) is returned
             @test captured_session[].status == :closed  # auto-disconnected after block
         end
 
@@ -422,12 +428,30 @@ end
             end
         end
 
-        @testset "tool handler that throws → isError → ErrorException" begin
-            # Server CATCHES the handler error and returns isError=true content;
-            # the client's call_tool then raises a plain ErrorException (NOT MCPError).
+        @testset "tool execution error is returned typed, not thrown" begin
+            # Server CATCHES the handler error and returns isError=true content.
+            # call_tool must RETURN it as data (is_error=true, faithful content) —
+            # NOT throw — so a tool-execution error is distinguishable from a
+            # JSON-RPC protocol error (which still throws MCPError, tested above).
             session = mcp_connect(url)
             try
-                @test_throws ErrorException call_tool(session, "boom", Dict{String,Any}())
+                res = call_tool(session, "boom", Dict{String,Any}())
+                @test res isa MCPToolResult
+                @test res.is_error == true
+                @test res.content == "Error: kaboom"   # server's showerror text, verbatim
+                @test res.structured === nothing
+                @test res.parts == Any[Dict{String,Any}("type" => "text", "text" => "Error: kaboom")]
+                # The tool-loop bridge surfaces the faithful content by RAISING it,
+                # so the loop records an unsuccessful outcome (not a silent success).
+                boom = only(filter(t -> t.tool.func.name == "boom", mcp_tools(session)))
+                err = try
+                    boom.callable("boom", Dict{String,Any}())
+                    nothing
+                catch e
+                    e
+                end
+                @test err isa ErrorException
+                @test err.msg == "Error: kaboom"       # faithful content on the raised error
             finally
                 mcp_disconnect!(session)
             end
@@ -478,7 +502,7 @@ end
             @test session.server_info["name"] == "unilm-test-mcp"
             # Operations still return correct values through the SSE parser.
             @test call_tool(session, "concat",
-                Dict{String,Any}("a" => "se", "b" => "se")) == "se|se"
+                Dict{String,Any}("a" => "se", "b" => "se")).content == "se|se"
             @test read_resource(session, "probe://greeting") == "hello-from-resource"
         finally
             mcp_disconnect!(session)
@@ -584,10 +608,10 @@ end
                     @test session.server_info["version"] == "7.7.7"
                     # A real round-trip request → exact deterministic handler output.
                     @test call_tool(session, "concat",
-                        Dict{String,Any}("a" => "foo", "b" => "bar")) == "foo|bar"
+                        Dict{String,Any}("a" => "foo", "b" => "bar")).content == "foo|bar"
                     # Different args → different exact result (falsifies constant-return).
                     @test call_tool(session, "concat",
-                        Dict{String,Any}("a" => "x", "b" => "yz")) == "x|yz"
+                        Dict{String,Any}("a" => "x", "b" => "yz")).content == "x|yz"
                 finally
                     mcp_disconnect!(session)
                 end
@@ -724,12 +748,12 @@ end
 end
 
 @testset "MCP client call_tool non-text & non-dict content parts" begin
-    # `tools/call` content has THREE part shapes the client must handle distinctly:
-    #   - {"type":"text", "text":...}  → push the raw text          (covered already)
-    #   - a Dict with a non-"text" type → JSON-encode the whole part (mcp_client.jl:545)
-    #   - a non-Dict element (e.g. a bare string) → `string(part)`   (mcp_client.jl:548)
-    # The handler returns a mixed content array; call_tool must join them with "\n"
-    # in order, JSON-encoding the image part and stringifying the bare element.
+    # `tools/call` content has THREE part shapes the client must render distinctly:
+    #   - {"type":"text", "text":...}   → push the raw text
+    #   - a Dict with a non-"text" type → JSON-encode the whole part
+    #   - a non-Dict element (bare string) → `string(part)`
+    # call_tool joins them with "\n" in order (rendering preserved verbatim from
+    # before the MCPToolResult change), while `parts` keeps the raw array verbatim.
     port = _free_port()
     httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
         req.method == "DELETE" && return HTTP.Response(200, "")
@@ -758,7 +782,10 @@ end
         session = mcp_connect(url)
         try
             out = call_tool(session, "whatever", Dict{String,Any}())
-            lines = split(out, "\n")
+            @test out isa MCPToolResult
+            @test out.is_error == false
+            @test out.structured === nothing
+            lines = split(out.content, "\n")
             @test length(lines) == 3
             @test lines[1] == "alpha"                                  # text branch
             # Non-text Dict part → JSON-encoded whole part. Re-parse to assert exact
@@ -766,6 +793,82 @@ end
             img = JSON.parse(lines[2]; dicttype=Dict{String,Any})
             @test img == Dict{String,Any}("type" => "image", "data" => "QUJD", "mimeType" => "image/png")
             @test lines[3] == "bare-string-part"                       # non-Dict → string(part)
+            # The raw content array is preserved verbatim in `parts`.
+            @test out.parts == Any[
+                Dict{String,Any}("type" => "text", "text" => "alpha"),
+                Dict{String,Any}("type" => "image", "data" => "QUJD", "mimeType" => "image/png"),
+                "bare-string-part"]
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "MCP client call_tool surfaces structuredContent" begin
+    # A tools/call result may carry `structuredContent` (a typed object) alongside
+    # textual content or on its own. call_tool must capture it verbatim in
+    # `structured`. The tool-loop bridge returns `content` when present and falls
+    # back to a JSON encoding of `structured` only when `content` is empty.
+    structured_obj = Dict{String,Any}("temperature" => 21, "unit" => "C",
+        "nested" => Dict{String,Any}("ok" => true))
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        id = get(parsed, "id", nothing)
+        method = get(parsed, "method", "")
+        isnothing(id) && return HTTP.Response(202, "")
+        result = if method == "initialize"
+            Dict{String,Any}("protocolVersion" => UniLM._MCP_PROTOCOL_VERSION,
+                "capabilities" => Dict{String,Any}(),
+                "serverInfo" => Dict{String,Any}("name" => "structured", "version" => "1.0"))
+        elseif method == "tools/call"
+            tname = get(get(parsed, "params", Dict{String,Any}()), "name", "")
+            if tname == "with_text"
+                # structuredContent alongside a text part.
+                Dict{String,Any}(
+                    "content" => Any[Dict{String,Any}("type" => "text", "text" => "summary")],
+                    "structuredContent" => structured_obj,
+                    "isError" => false)
+            else
+                # "structured_only": structuredContent, empty textual content.
+                Dict{String,Any}(
+                    "content" => Any[],
+                    "structuredContent" => structured_obj,
+                    "isError" => false)
+            end
+        else
+            Dict{String,Any}()
+        end
+        HTTP.Response(200, ["Content-Type" => "application/json"],
+            JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id, "result" => result)))
+    end
+    url = "http://127.0.0.1:$port"
+    try
+        session = mcp_connect(url)
+        try
+            # (1) structuredContent alongside text: structured captured verbatim
+            # (including the nested object), text still rendered, not an error.
+            withtext = call_tool(session, "with_text", Dict{String,Any}())
+            @test withtext isa MCPToolResult
+            @test withtext.is_error == false
+            @test withtext.content == "summary"
+            @test withtext.structured == structured_obj
+            @test withtext.structured !== nothing
+            # Bridge returns the textual content when content is present (structured
+            # does NOT override a non-empty content).
+            @test UniLM._mcp_tool_dispatch(withtext) == "summary"
+
+            # (2) structured-only: content renders empty, structured captured verbatim.
+            sonly = call_tool(session, "structured_only", Dict{String,Any}())
+            @test sonly.content == ""
+            @test sonly.structured == structured_obj
+            @test sonly.is_error == false
+            # Bridge falls back to a JSON encoding of `structured` when content is empty.
+            @test JSON.parse(UniLM._mcp_tool_dispatch(sonly); dicttype=Dict{String,Any}) == structured_obj
         finally
             mcp_disconnect!(session)
         end
@@ -985,7 +1088,7 @@ end
         try
             @test session.server_info["name"] == "unilm-test-mcp"
             @test call_tool(session, "concat",
-                Dict{String,Any}("a" => "L", "b" => "R")) == "L|R"
+                Dict{String,Any}("a" => "L", "b" => "R")).content == "L|R"
         finally
             mcp_disconnect!(session)
         end
@@ -1018,7 +1121,7 @@ end
             list_tools!(session)
             @test session.tools_stale == false
             @test call_tool(session, "concat",
-                Dict{String,Any}("a" => "x", "b" => "y")) == "x|y"
+                Dict{String,Any}("a" => "x", "b" => "y")).content == "x|y"
             # The list_changed preceding that response marked the cache stale.
             @test session.tools_stale == true
         finally

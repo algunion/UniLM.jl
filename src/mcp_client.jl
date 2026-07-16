@@ -608,33 +608,69 @@ end
 # ─── Tool Operations ────────────────────────────────────────────────────────
 
 """
-    call_tool(session::MCPSession, name::String, arguments::Dict{String,Any}) -> String
+    MCPToolResult
 
-Call a tool on the MCP server and return the result as a string.
-Concatenates text content parts; non-text content is JSON-encoded.
+The typed result of a [`call_tool`](@ref) call, mirroring an MCP `tools/call`
+result. A tool-*execution* error (`isError: true` on the wire) is reported here
+as data (`is_error == true`), not thrown, so callers can distinguish it from a
+JSON-RPC *protocol* error (which still throws [`MCPError`](@ref)).
+
+# Fields
+- `content::String`: the content parts rendered to text — `text` parts joined
+  with `\\n`, each non-text part JSON-encoded.
+- `structured::Union{Nothing,Dict{String,Any}}`: the server's `structuredContent`
+  object verbatim when present, otherwise `nothing`.
+- `is_error::Bool`: `true` when the server flagged the call as a tool-execution
+  error (`isError`); the detail is carried in `content`.
+- `parts::Vector{Any}`: the raw `content` array exactly as received, before it is
+  rendered into `content::String`.
+
+The [`mcp_tools`](@ref) / [`mcp_tools_respond`](@ref) bridges surface this to a
+tool-calling loop: `content` on success (falling back to a JSON encoding of
+`structured` when `content` is empty), or a raised error carrying `content` when
+`is_error`.
 """
-function call_tool(session::MCPSession, name::String, arguments::Dict{String,Any}=Dict{String,Any}())::String
+struct MCPToolResult
+    content::String
+    structured::Union{Nothing,Dict{String,Any}}
+    is_error::Bool
+    parts::Vector{Any}
+end
+
+"""
+    call_tool(session::MCPSession, name::String, arguments::Dict{String,Any}) -> MCPToolResult
+
+Call a tool on the MCP server and return its result as an [`MCPToolResult`](@ref).
+
+`content` concatenates text content parts (non-text parts JSON-encoded);
+`structured` carries the server's `structuredContent` verbatim; `parts` is the raw
+content array. A tool-execution error (`isError: true`) is returned with
+`is_error == true` — it is **not** thrown. JSON-RPC protocol errors still throw
+[`MCPError`](@ref).
+"""
+function call_tool(session::MCPSession, name::String, arguments::Dict{String,Any}=Dict{String,Any}())::MCPToolResult
     result = _mcp_request!(session, "tools/call", Dict{String,Any}(
         "name" => name, "arguments" => arguments
     ))
-    content = get(result, "content", [])
-    is_error = get(result, "isError", false)
-    parts = String[]
+    content = get(result, "content", Any[])
+    is_error = get(result, "isError", false) === true
+    rendered = String[]
     for part in content
         if part isa Dict
             ptype = get(part, "type", "")
             if ptype == "text"
-                push!(parts, part["text"])
+                push!(rendered, part["text"])
             else
-                push!(parts, JSON.json(part))
+                push!(rendered, JSON.json(part))
             end
         else
-            push!(parts, string(part))
+            push!(rendered, string(part))
         end
     end
-    text = join(parts, "\n")
-    is_error && error("MCP tool '$name' returned error: $text")
-    text
+    text = join(rendered, "\n")
+    sc = get(result, "structuredContent", nothing)
+    structured = sc isa Dict{String,Any} ? sc : nothing
+    MCPToolResult(text, structured, is_error, content)
 end
 
 """
@@ -680,6 +716,15 @@ end
 
 # ─── Tool Bridge ─────────────────────────────────────────────────────────────
 
+# Surface an `MCPToolResult` to a tool-loop's string dispatcher. On success return
+# the rendered content, falling back to a JSON encoding of `structuredContent` when
+# the content is empty but structured data is present. A tool-execution error is
+# raised so the loop records an unsuccessful outcome carrying the faithful content.
+function _mcp_tool_dispatch(r::MCPToolResult)::String
+    r.is_error && error(r.content)
+    (isempty(r.content) && !isnothing(r.structured)) ? JSON.json(r.structured) : r.content
+end
+
 """
     mcp_tools(session::MCPSession) -> Vector{CallableTool{GPTTool}}
 
@@ -707,7 +752,7 @@ function mcp_tools(session::MCPSession)::Vector{CallableTool{GPTTool}}
         # Capture session and info.name in closure
         sref = session
         tname = info.name
-        callable = (_::String, args::Dict{String,Any}) -> call_tool(sref, tname, args)
+        callable = (_::String, args::Dict{String,Any}) -> _mcp_tool_dispatch(call_tool(sref, tname, args))
         CallableTool(schema, callable)
     end
 end
@@ -734,7 +779,7 @@ function mcp_tools_respond(session::MCPSession)::Vector{CallableTool{FunctionToo
         )
         sref = session
         tname = info.name
-        callable = (_::String, args::Dict{String,Any}) -> call_tool(sref, tname, args)
+        callable = (_::String, args::Dict{String,Any}) -> _mcp_tool_dispatch(call_tool(sref, tname, args))
         CallableTool(schema, callable)
     end
 end

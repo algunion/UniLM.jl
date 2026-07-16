@@ -64,7 +64,7 @@ end
     catch
         false
     end
-    @test_broken ok
+    @test ok
 end
 
 @testset "config: channel precedence kwarg > scope > process default; streams capture at spawn" begin

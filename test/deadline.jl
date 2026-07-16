@@ -208,3 +208,74 @@ end
     @test_throws InterruptException UniLM._with_deadline_task(
         () -> throw(InterruptException()), 5.0, :request)
 end
+
+@testset "idle guard fires within [limit, limit + period] absent touches" begin
+    limit = 1.0
+    period = min(limit / 4, 5.0)
+    t0 = time_ns()
+    fired_at = Ref(0.0)
+    closed = Threads.Atomic{Int}(0)
+    g = UniLM._idle_guard(limit) do
+        Threads.atomic_add!(closed, 1)
+        fired_at[] = (time_ns() - t0) / 1e9
+    end
+    @test g !== nothing
+    @test !UniLM._idle_fired(g)
+    @test timedwait(() -> UniLM._idle_fired(g), 10.0) === :ok
+    @test closed[] == 1
+    @test fired_at[] >= limit                    # never earlier than the limit
+    @test fired_at[] <= limit + period + 1.0     # one check-period quantization + CI slop
+    # the recorded breach gap is the quantity compared against the limit —
+    # drivers surface it as UniLMTimeout(:stream_idle).elapsed
+    @test limit <= UniLM._idle_gap_s(g) <= limit + period + 1.0
+    sleep(3 * period)                            # resolved guards never re-fire
+    @test closed[] == 1
+    @test limit <= UniLM._idle_gap_s(g) <= limit + period + 1.0   # frozen at breach, not still growing
+    UniLM._disarm!(g)                            # disarm after fire is a safe no-op
+    @test UniLM._idle_fired(g)
+end
+
+@testset "idle gap before any breach is the live gap since the last touch" begin
+    g = UniLM._idle_guard(() -> nothing, 30.0)
+    UniLM._touch!(g)
+    sleep(0.3)
+    gap = UniLM._idle_gap_s(g)
+    @test 0.2 <= gap < 5.0     # live gap tracks the wait since the touch
+    UniLM._touch!(g)
+    @test UniLM._idle_gap_s(g) < gap   # a touch resets the live gap
+    UniLM._disarm!(g)
+end
+
+@testset "touches reset the idle clock" begin
+    limit = 0.8
+    closed = Threads.Atomic{Int}(0)
+    g = UniLM._idle_guard(() -> Threads.atomic_add!(closed, 1), limit)
+    for _ in 1:6
+        sleep(0.3)          # every gap 0.3 < 0.8, but 1.8 s total > limit
+        UniLM._touch!(g)
+    end
+    @test !UniLM._idle_fired(g)
+    @test closed[] == 0
+    @test timedwait(() -> UniLM._idle_fired(g), 10.0) === :ok   # stop touching → fires
+    @test closed[] == 1
+    UniLM._disarm!(g)
+end
+
+@testset "disarm is idempotent and prevents firing" begin
+    closed = Threads.Atomic{Int}(0)
+    g = UniLM._idle_guard(() -> Threads.atomic_add!(closed, 1), 0.4)
+    @test UniLM._disarm!(g) === nothing
+    @test UniLM._disarm!(g) === nothing   # idempotent
+    sleep(1.0)
+    @test !UniLM._idle_fired(g)
+    @test closed[] == 0
+end
+
+@testset "Inf yields the nothing-guard; every operation no-ops" begin
+    g = UniLM._idle_guard(() -> error("must never run"), Inf)
+    @test g === nothing
+    @test UniLM._touch!(g) === nothing
+    @test UniLM._idle_fired(g) === false
+    @test UniLM._idle_gap_s(g) === 0.0
+    @test UniLM._disarm!(g) === nothing
+end

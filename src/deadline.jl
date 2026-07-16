@@ -246,3 +246,72 @@ function _with_deadline_task(f::Function, limit::Float64, phase::Symbol)
         close(timer)
     end
 end
+
+# Stream idle guard: a byte-gap watchdog. ONE periodic timer per stream (no
+# per-chunk allocation); _touch! stamps the monotonic clock on every raw
+# chunk, so SSE comments and keep-alive pings reset the clock by
+# construction. Breach = gap > limit, checked every period = min(limit/4, 5) s
+# — it fires within [limit, limit + period]. Resolution shares the
+# exactly-once CAS discipline: only the :armed → :fired winner runs close!().
+mutable struct _IdleGuard
+    @atomic state::Symbol       # :armed → :fired | :disarmed
+    @atomic last_byte::UInt64   # time_ns() of the most recent raw chunk
+    @atomic fired_gap::Float64  # the byte gap recorded at breach time (s)
+    const limit::Float64
+    timer::Union{Timer,Nothing}
+end
+
+"""
+    _idle_guard(close!, limit) -> guard
+
+Arm a byte-gap idle watchdog: once more than `limit` seconds pass without a
+[`_touch!`](@ref), `close!()` runs exactly once and `_idle_fired(guard)`
+turns true, with the breaching gap frozen for `_idle_gap_s(guard)` (an idle
+timeout is ABOUT the gap, so the gap — not whole-call time — is what error
+reporting surfaces as elapsed). Returns `nothing` when `limit == Inf` (all
+guard operations no-op on `nothing`). Call `_touch!(guard)` after every raw
+chunk and `_disarm!(guard)` on every exit path.
+"""
+function _idle_guard(close!::Function, limit::Float64)
+    limit == Inf && return nothing
+    guard = _IdleGuard(:armed, time_ns(), 0.0, limit, nothing)
+    period = min(limit / 4, 5.0)
+    guard.timer = Timer(period; interval=period) do timer
+        gap = (time_ns() - @atomic(guard.last_byte)) / 1e9
+        gap > guard.limit || return
+        # Record the gap BEFORE resolving: any reader that observes :fired
+        # then observes the recorded gap (a losing write is unobservable —
+        # the accessor gates on :fired).
+        @atomic guard.fired_gap = gap
+        (@atomicreplace guard.state :armed => :fired).success || return
+        try
+            close!()
+        catch e
+            @debug "idle-guard close! failed" exception = (e, catch_backtrace())
+        end
+        close(timer)   # resolved; stop the periodic ticks
+    end
+    return guard
+end
+
+_touch!(::Nothing) = nothing
+_touch!(guard::_IdleGuard)::Nothing = (@atomic guard.last_byte = time_ns(); nothing)
+
+_idle_fired(::Nothing) = false
+_idle_fired(guard::_IdleGuard)::Bool = (@atomic guard.state) === :fired
+
+_idle_gap_s(::Nothing) = 0.0
+function _idle_gap_s(guard::_IdleGuard)::Float64
+    (@atomic guard.state) === :fired && return @atomic guard.fired_gap
+    return (time_ns() - @atomic(guard.last_byte)) / 1e9
+end
+
+_disarm!(::Nothing) = nothing
+function _disarm!(guard::_IdleGuard)::Nothing
+    # Losing this CAS to :fired is fine — the resolution stands; disarming is
+    # only a promise that the guard will never fire in the FUTURE.
+    @atomicreplace guard.state :armed => :disarmed
+    timer = guard.timer
+    timer === nothing || close(timer)
+    return nothing
+end

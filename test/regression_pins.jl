@@ -413,4 +413,17 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
             had && (UniLM._MODEL_ENDPOINTS_AZURE_OPENAI[model] = saved)
         end
     end
+
+    @testset "tool loop propagates user interrupt" begin
+        # A bare `catch e` around tool dispatch must not convert a user Ctrl-C
+        # into a swallowed tool-error outcome. FIXED contract: InterruptException
+        # propagates so the loop aborts.
+        interrupting = (name, args) -> throw(InterruptException())
+        @test_throws InterruptException UniLM._dispatch_tool("boom", Dict{String,Any}(), interrupting)
+
+        # Every other exception keeps the existing behavior: a failed outcome.
+        failing = (name, args) -> error("kaboom")
+        outcome = UniLM._dispatch_tool("boom", Dict{String,Any}(), failing)
+        @test outcome.success == false && occursin("kaboom", outcome.error)
+    end
 end

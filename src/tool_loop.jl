@@ -104,6 +104,9 @@ function _dispatch_tool(name::String, args::Dict{String,Any}, dispatcher::Functi
         fcr = GPTFunctionCallResult(name, gptfunc, result_str)
         ToolCallOutcome(name, args, fcr, true, nothing)
     catch e
+        # A user Ctrl-C (InterruptException) must abort the loop, not be recorded
+        # as a tool failure and swallowed — propagate it before any conversion.
+        e isa InterruptException && rethrow()
         ToolCallOutcome(name, args, nothing, false, string(e))
     end
 end

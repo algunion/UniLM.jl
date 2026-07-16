@@ -8,6 +8,10 @@
   being captured once when the package loads. A deployment name exported after
   `using UniLM` is honored; `add_azure_deploy_name!` registrations still take
   precedence.
+- The tool-calling loop no longer swallows a user interrupt: an
+  `InterruptException` (e.g. Ctrl-C) raised inside a tool function now
+  propagates and aborts the loop instead of being recorded as a tool-call
+  failure and retried. All other exceptions still become tool-error outcomes.
 
 ## 0.12.0
 

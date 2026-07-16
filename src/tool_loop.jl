@@ -49,6 +49,14 @@ to_tool(x::FunctionTool) = x
 to_tool(x::CallableTool) = x
 to_tool(d::AbstractDict) = GPTTool(d)
 
+# Chat stores `Vector{GPTTool}` but accepts a `Vector{<:CallableTool}` at
+# construction (e.g. `Chat(tools=mcp_tools(session))`) by unwrapping each
+# wrapper's inner tool — no manual `map(t -> t.tool, tools)`. This completes the
+# `_chat_tools` fallback declared in api.jl: `CallableTool` is defined here, in a
+# file `include`d after api.jl. A wrapper whose `.tool` is not a `GPTTool` (e.g.
+# a `FunctionTool` from `mcp_tools_respond`) fails the conversion.
+_chat_tools(tools::Vector{<:CallableTool}) = GPTTool[ct.tool for ct in tools]
+
 """
     ToolCallOutcome
 
@@ -291,4 +299,29 @@ function tool_loop(input, dispatcher::Function; kwargs...)
     max_turns = pop!(kws, :max_turns, 10)
     r = Respond(; input, kws...)
     tool_loop(r, dispatcher; max_turns, retries)
+end
+
+"""
+    tool_loop(input::String; tools, max_turns=10, retries=0, kwargs...) -> ToolLoopResult
+
+No-dispatcher convenience form of the Responses-API tool loop for a plain-string prompt.
+Wraps `input` and `tools` in a [`Respond`](@ref) and delegates to
+[`tool_loop(::Respond)`](@ref), which dispatches each model-requested function call to the
+matching [`CallableTool`](@ref) callable.
+
+Keyword routing is explicit: `max_turns` and `retries` drive the loop, while every other
+keyword is forwarded verbatim to the [`Respond`](@ref) constructor — an unknown keyword
+raises there rather than being silently dropped. `tools` is required and must hold
+[`CallableTool`](@ref) entries (e.g. from [`mcp_tools_respond`](@ref)).
+
+# Example
+```julia
+session = mcp_connect("https://mcp.example.com/mcp")
+tools = mcp_tools_respond(session)
+result = tool_loop("List files in /tmp"; tools=tools)
+```
+"""
+function tool_loop(input::String; tools, max_turns::Int=10, retries::Int=0, kwargs...)::ToolLoopResult
+    r = Respond(; input, tools, kwargs...)
+    tool_loop(r; max_turns, retries)
 end

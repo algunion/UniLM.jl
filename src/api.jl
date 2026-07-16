@@ -459,6 +459,14 @@ end
 DeepSeekEndpoint(; api_key::String=ENV["DEEPSEEK_API_KEY"]) = DeepSeekEndpoint(api_key)
 
 
+# Coerce the `tools` keyword to the stored `Vector{GPTTool}`. This fallback is
+# the identity — a `Vector{GPTTool}` or `nothing` passes through unchanged. The
+# method that unwraps a `Vector{<:CallableTool}` into its inner `GPTTool`s lives
+# in tool_loop.jl, where `CallableTool` is defined (that file is `include`d
+# after this one). Conversion happens only here at construction; the field type
+# stays `Union{Vector{GPTTool},Nothing}`.
+_chat_tools(tools) = tools
+
 """
     chat = Chat()
 
@@ -541,6 +549,7 @@ Creates a new `Chat` object with default settings:
         _cumulative_cost
     )
         model = _resolve_model(service, model)
+        tools = _chat_tools(tools)  # accept a CallableTool vector, stored as GPTTools
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
         !isnothing(top_p) && !(0.0 <= top_p <= 1.0) && throw(ArgumentError("top_p must be in [0.0, 1.0]"))

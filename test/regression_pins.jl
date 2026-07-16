@@ -64,6 +64,45 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
                         state::UniLM.StreamState) =
     UniLM.handle_sse_event!(ANTHROPICServiceEndpoint, event, payload, state)
 
+# Non-streaming OpenAI-wire mock: the n-th POST (1-based) gets the JSON body
+# `responder(n)` returns, so a tool-call turn can be followed by a final
+# assistant turn. `calls` counts requests. Same ephemeral-port probe+retry as
+# sse_mock_server — the bind TOCTOU is real under load.
+function oai_wire_server(responder)
+    server = nothing
+    port = 0
+    calls = Ref(0)
+    for attempt in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2])
+        close(tcp)
+        try
+            server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
+                read(http)                           # drain the request body
+                n = (calls[] += 1)
+                body = responder(n)
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(http, body)
+            end
+            break
+        catch
+            attempt == 3 && rethrow()
+        end
+    end
+    server, "http://127.0.0.1:$port", calls
+end
+
+# Probe and release an ephemeral port. The bind window is why callers that then
+# start a server on it retry a failed bind.
+function _free_port()
+    tcp = Sockets.listen(Sockets.localhost, 0)
+    port = Int(Sockets.getsockname(tcp)[2])
+    close(tcp)
+    port
+end
+
 @testset "pinned regression contracts" begin
 
     @testset "fork preserves every Chat field (drift gate)" begin
@@ -425,5 +464,78 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
         failing = (name, args) -> error("kaboom")
         outcome = UniLM._dispatch_tool("boom", Dict{String,Any}(), failing)
         @test outcome.success == false && occursin("kaboom", outcome.error)
+    end
+
+    @testset "documented MCP quickstart drives a tool call end-to-end" begin
+        # The quickstart from docs/src/guide/mcp.md, run in-process and
+        # zero-spend: UniLM's own MCP server exposes one tool, a local
+        # OpenAI-wire mock plays the model asking for it, and the loop dispatches
+        # the call through the MCP client and finishes. The Chat is built
+        # DIRECTLY from `mcp_tools(session)` (a CallableTool vector) with no
+        # `map(t -> t.tool, …)` unwrap — that ergonomics fix is the point here.
+        mcp_srv = MCPServer("pins-e2e", "0.0.0")
+        tool_ran = Ref(false)
+        register_tool!(mcp_srv, "record_run", "Record that the model invoked it",
+            Dict{String,Any}("type" => "object", "properties" => Dict{String,Any}()),
+            args -> (tool_ran[] = true; "ok: ran"))
+
+        # Start the MCP server; retry the ephemeral-port bind as elsewhere.
+        mcp_handle = nothing
+        mcp_port = 0
+        for attempt in 1:3
+            mcp_port = _free_port()
+            try
+                mcp_handle = serve(mcp_srv; transport=:http, port=mcp_port, block=false)
+                break
+            catch
+                attempt == 3 && rethrow()
+            end
+        end
+
+        # Turn 1: the model asks for the MCP tool. Turn 2: it answers with text.
+        tool_call_body = JSON.json(Dict(
+            "id" => "chatcmpl-1", "object" => "chat.completion",
+            "choices" => [Dict("index" => 0, "finish_reason" => "tool_calls",
+                "message" => Dict("role" => "assistant",
+                    "tool_calls" => [Dict("id" => "call_1", "type" => "function",
+                        "function" => Dict("name" => "record_run", "arguments" => "{}"))]))],
+            "usage" => Dict("prompt_tokens" => 5, "completion_tokens" => 3, "total_tokens" => 8)))
+        final_body = JSON.json(Dict(
+            "id" => "chatcmpl-2", "object" => "chat.completion",
+            "choices" => [Dict("index" => 0, "finish_reason" => "stop",
+                "message" => Dict("role" => "assistant", "content" => "Recorded the run."))],
+            "usage" => Dict("prompt_tokens" => 9, "completion_tokens" => 4, "total_tokens" => 13)))
+        api_server, api_base, calls = oai_wire_server(n -> n == 1 ? tool_call_body : final_body)
+
+        session = nothing
+        try
+            session = mcp_connect("http://127.0.0.1:$mcp_port")
+            tools = mcp_tools(session)                  # Vector{CallableTool{GPTTool}}
+            @test tools isa Vector{CallableTool{GPTTool}} && length(tools) == 1
+
+            # Build Chat DIRECTLY from the CallableTool vector — no map-unwrap.
+            chat = Chat(service=GenericOpenAIEndpoint(api_base, ""), model="mock", tools=tools)
+            # The wrapper vector was unwrapped to the stored GPTTool vector.
+            @test chat.tools isa Vector{GPTTool} && length(chat.tools) == 1 &&
+                  chat.tools[1].func.name == "record_run"
+
+            push!(chat, Message(Val(:system), "You can record a run."))
+            push!(chat, Message(Val(:user), "Please record a run."))
+
+            result = tool_loop!(chat; tools)
+
+            # The model-driven call reached the MCP server and executed there.
+            @test tool_ran[]
+            # The loop finished on a text turn, having dispatched exactly the tool.
+            @test result.completed && result.response isa LLMSuccess
+            @test length(result.tool_calls) == 1 &&
+                  result.tool_calls[1].tool_name == "record_run" &&
+                  result.tool_calls[1].success
+            @test calls[] == 2                          # tool-call turn + final turn
+        finally
+            !isnothing(session) && mcp_disconnect!(session)
+            close(api_server)
+            !isnothing(mcp_handle) && close(mcp_handle)
+        end
     end
 end

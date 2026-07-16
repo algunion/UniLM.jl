@@ -238,19 +238,54 @@ function _transport_notify!(t::StdioTransport, msg::String)
     nothing
 end
 
-function _transport_disconnect!(t::StdioTransport)
+"""
+Tear a stdio transport down with a graceful escalation ladder, then null its
+handles. MCP spec: a compliant server exits when its stdin reaches EOF, so we close
+stdin first; if the process lingers we escalate SIGTERM. The FINAL rung is
+UNCONDITIONAL — a group-directed SIGKILL by the pgid captured at spawn (the child
+leads its own group, spawned detach=true) — so a grandchild the leader orphaned by
+exiting on stdin EOF cannot survive holding our pipe. POSIX reserves a pid while it
+still names a live process group, so the unconditional kill cannot hit a recycled
+pid even after the direct child was reaped; ESRCH (empty group) is the expected
+no-op. `grace_term`/`grace_kill` are exposed for suite-time control; production
+defaults are fixed. Best-effort and idempotent: safe from a disconnect and from the
+request/connect watchdog.
+"""
+function _kill_transport!(t::StdioTransport;
+                          grace_term::Float64=5.0, grace_kill::Float64=2.0)::Nothing
     proc = t.process
-    if !isnothing(proc) && process_running(proc)
+    pgid = t.pgid
+    if !isnothing(proc)
         inp = t.input
-        !isnothing(inp) && close(inp)
-        timedwait(() -> !process_running(proc), 5.0)
-        process_running(proc) && kill(proc)
+        !isnothing(inp) && (try; close(inp); catch; end)   # stdin EOF: compliant servers exit
+        if process_running(proc)
+            if timedwait(() -> !process_running(proc), grace_term) !== :ok
+                try; kill(proc); catch; end                  # SIGTERM
+                timedwait(() -> !process_running(proc), grace_kill)
+            end
+        end
+    end
+    # Final rung, UNCONDITIONAL: SIGKILL the whole process group by the spawn-captured
+    # pgid (getpid on a reaped Process may fail, so use the stored value). Reaps a
+    # grandchild the leader orphaned by exiting on stdin EOF.
+    if !isnothing(pgid)
+        rc = ccall(:kill, Cint, (Cint, Cint), -pgid, 9)
+        if rc != 0
+            e = Base.Libc.errno()
+            e == Base.Libc.ESRCH || @debug "MCP group SIGKILL failed" errno=e
+        end
     end
     t.process = nothing
     t.input = nothing
     t.output = nothing
+    t.pgid = nothing
     nothing
 end
+
+# Graceful disconnect uses the same ladder. `cfg` is accepted for signature parity
+# with the HTTP transport (which needs it for the DELETE) and ignored here.
+_transport_disconnect!(t::StdioTransport; cfg::Union{Nothing,RequestConfig}=nothing) =
+    _kill_transport!(t)
 
 function _transport_isconnected(t::StdioTransport)::Bool
     proc = t.process

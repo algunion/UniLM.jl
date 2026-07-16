@@ -1341,3 +1341,165 @@ end
         close(httpserver)
     end
 end
+
+# ─── WS4: StdioTransport teardown ladder — no child survivors ─────────────────
+# MCP spec: a compliant stdio server exits when its stdin reaches EOF, so
+# `_kill_transport!` closes stdin first and escalates (SIGTERM, then an
+# UNCONDITIONAL process-group SIGKILL) only as needed. The child leads its own
+# process group (spawned detach=true), so the final group-SIGKILL by the
+# spawn-captured pgid reaps a grandchild a wrapper forked and then orphaned by
+# exiting politely on EOF. Two shapes are covered: a well-behaved child (graceful
+# path — asserts the wiring: process/io handles AND pgid nulled) and a wrapper
+# that forks a group-resident grandchild (OS-level leak falsifier: pgrep finds
+# zero survivors after teardown).
+
+# Shared WS4 stdio fixture. A raw JSON-RPC child (only `using JSON`, so it starts
+# fast — no UniLM precompile): answers the handshake, advertises hang/incr/
+# notify_then_ok, and exits cleanly when stdin reaches EOF. `marker` is embedded in
+# a leading comment so the parent can pgrep/pkill it. No signal manipulation — it is
+# reaped by the ladder's stdin-EOF (graceful) or SIGTERM (hung-in-handler) step.
+function _ws4_raw_child_src(marker::String)
+    ver = UniLM._MCP_PROTOCOL_VERSION
+    """
+    # $marker
+    import JSON
+    counter = Ref(0)
+    while !eof(stdin)
+        line = readline(stdin)
+        isempty(line) && continue
+        msg = JSON.parse(line)
+        id = get(msg, "id", nothing)
+        method = get(msg, "method", "")
+        if method == "initialize"
+            println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict(
+                "protocolVersion"=>"$ver",
+                "capabilities"=>Dict("tools"=>Dict()),
+                "serverInfo"=>Dict("name"=>"ws4-fixture","version"=>"1.0")))))
+            flush(stdout)
+        elseif method == "notifications/initialized"
+            # no response
+        elseif method == "tools/list"
+            println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict(
+                "tools"=>[Dict("name"=>"hang","inputSchema"=>Dict("type"=>"object")),
+                          Dict("name"=>"incr","inputSchema"=>Dict("type"=>"object")),
+                          Dict("name"=>"notify_then_ok","inputSchema"=>Dict("type"=>"object"))]))))
+            flush(stdout)
+        elseif method == "tools/call"
+            name = get(get(msg,"params",Dict()), "name", "")
+            if name == "incr"
+                counter[] += 1
+                println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict(
+                    "content"=>[Dict("type"=>"text","text"=>string(counter[]))]))))
+                flush(stdout)
+            elseif name == "notify_then_ok"
+                println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","method"=>"notifications/message",
+                    "params"=>Dict("level"=>"info","data"=>"working"))))
+                flush(stdout)
+                sleep(0.2)
+                println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict(
+                    "content"=>[Dict("type"=>"text","text"=>"done")]))))
+                flush(stdout)
+            else  # hang: emit a notification first, then never respond
+                println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","method"=>"notifications/message",
+                    "params"=>Dict("level"=>"info","data"=>"before-hang"))))
+                flush(stdout)
+                while true; sleep(3600); end
+            end
+        elseif !isnothing(id)
+            println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict())))
+            flush(stdout)
+        end
+    end
+    """
+end
+
+@testset "WS4 stdio disconnect routes through the ladder (handles + pgid cleared)" begin
+    # Portable, deterministic wiring guard: mcp_disconnect! must delegate to
+    # _kill_transport!, which nulls process/input/output AND the spawn-captured pgid.
+    # RED on the wave base: the original _transport_disconnect! nulls the io handles
+    # but not `pgid` (the field/ladder do not exist yet). GREEN once disconnect routes
+    # through _kill_transport!. The actual group-SIGKILL of an orphaned grandchild is
+    # pinned by the hang_matrix pin flipped in Step 5 (cross-platform process detection
+    # is genuinely OS-specific — pgrep -f does not see an sh -c body on macOS — so that
+    # OS-verified fixture is owned by the red suite, not duplicated here).
+    marker = "UNILMDISC" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
+    jl = Base.julia_cmd()
+    cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    try
+        session = mcp_connect(cmd)
+        @test session.status == :ready
+        @test UniLM._transport_isconnected(session.transport) == true
+        @test session.transport.pgid !== nothing            # pgid captured at spawn (detached: child leads its own group)
+        mcp_disconnect!(session)
+        @test session.status == :closed
+        @test UniLM._transport_isconnected(session.transport) == false
+        @test session.transport.process === nothing
+        @test session.transport.pgid === nothing            # ladder cleared it (new behavior)
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+# WS4 wrapper fixture: forks a long-lived grandchild that INHERITS this child's
+# process group (this child leads its own group under the parent's detach=true
+# spawn), then answers only `initialize` and reads until stdin EOF. On disconnect
+# the ladder closes stdin (this child exits, ORPHANING the grandchild) and then
+# unconditionally group-SIGKILLs by the spawn-captured pgid — reaping the orphan.
+# The grandchild marker rides in the `sh -c` argv so the parent can pgrep/pkill it.
+function _ws4_wrapper_child_src(marker::String, gc_marker::String)
+    ver = UniLM._MCP_PROTOCOL_VERSION
+    """
+    # $marker
+    import JSON
+    run(pipeline(`sh -c 'while :; do sleep 1; done # $(gc_marker)'`); wait=false)
+    while !eof(stdin)
+        line = readline(stdin)
+        isempty(line) && continue
+        msg = JSON.parse(line)
+        id = get(msg, "id", nothing)
+        method = get(msg, "method", "")
+        if method == "initialize"
+            println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict(
+                "protocolVersion"=>"$ver",
+                "capabilities"=>Dict(),
+                "serverInfo"=>Dict("name"=>"ws4-wrapper","version"=>"1.0")))))
+            flush(stdout)
+        end
+    end
+    """
+end
+
+@testset "WS4 stdio teardown group-kills an orphaned grandchild (OS leak falsifier)" begin
+    # Falsifies "a wrapper's grandchild survives teardown". The child forks a
+    # long-lived grandchild sharing its process group, then exits on stdin EOF —
+    # orphaning it. The ladder's UNCONDITIONAL final rung group-SIGKILLs by the
+    # spawn-captured pgid, reaping the orphan even though the direct child already
+    # exited politely. LEAK FALSIFIER: after disconnect `pgrep -f gc_marker` must find
+    # zero — a survivor keeps `timedwait` from ever reaching :ok and fails the @test.
+    # The `pkill` in `finally` is a safety net, never the assertion.
+    marker = "UNILMWRAP" * string(rand(UInt64); base=16)
+    gc_marker = "UNILMGC" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _ws4_wrapper_child_src(marker, gc_marker)); close(io)
+    jl = Base.julia_cmd()
+    cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    _alive(m) = success(pipeline(`pgrep -f $m`; stdout=devnull, stderr=devnull))
+    try
+        session = mcp_connect(cmd)
+        @test session.status == :ready
+        @test session.transport.pgid !== nothing
+        # The grandchild came up and shares the group before we tear down.
+        @test timedwait(() -> _alive(gc_marker), 10.0) === :ok
+        mcp_disconnect!(session)
+        @test session.status == :closed
+        # The orphaned grandchild is gone: the unconditional group SIGKILL reaped it.
+        @test timedwait(() -> !_alive(gc_marker), 5.0) === :ok
+    finally
+        try; run(pipeline(`pkill -f $gc_marker`; stderr=devnull)); catch; end
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end

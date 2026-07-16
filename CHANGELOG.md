@@ -12,6 +12,19 @@
   `InterruptException` (e.g. Ctrl-C) raised inside a tool function now
   propagates and aborts the loop instead of being recorded as a tool-call
   failure and retried. All other exceptions still become tool-error outcomes.
+- MCP client now validates and honors the negotiated protocol version and
+  recovers expired HTTP sessions (Streamable HTTP, MCP spec 2025-11-25). After
+  `initialize`, a server `protocolVersion` outside the client's supported set
+  (`2025-11-25`, `2025-06-18`, `2025-03-26`) closes the transport and raises an
+  error naming both the requested and the returned version, instead of being
+  accepted unchecked; a supported older version is stored and used. Every HTTP
+  request after `initialize` now sends the negotiated `Mcp-Protocol-Version`
+  header (previously a fixed constant), while the `initialize` request itself
+  advertises the client's latest supported revision. A `404` on a request that
+  carries a live session id triggers a single re-initialize (fresh session id)
+  followed by one replay of the request before giving up, rather than failing
+  outright. `401`/`403` responses raise an error that names the status and
+  directs credentials to the `headers` kwarg of `mcp_connect`.
 
 ## 0.12.0
 

@@ -821,7 +821,7 @@ end
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
     end
 end

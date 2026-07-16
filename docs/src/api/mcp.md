@@ -8,6 +8,7 @@ and building MCP servers in Julia.
 ```@docs
 MCPSession
 MCPToolInfo
+MCPToolResult
 MCPResourceInfo
 MCPPromptInfo
 MCPServerCapabilities

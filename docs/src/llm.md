@@ -164,7 +164,7 @@ Message(Val(:user), "Hello!")
 
 ```julia
 # Mutating form — sends chat.messages, appends response when history=true
-chatrequest!(chat::Chat; retries::Int=0, callback=nothing, on_tool_call=nothing) -> LLMSuccess | LLMFailure | LLMCallError | Task
+chatrequest!(chat::Chat; config=nothing, callback=nothing, on_tool_call=nothing) -> LLMSuccess | LLMFailure | LLMCallError | Task
 
 # Keyword-argument convenience form — builds a Chat internally
 chatrequest!(; service=OPENAIServiceEndpoint, model="gpt-5.5",
@@ -175,7 +175,8 @@ chatrequest!(; service=OPENAIServiceEndpoint, model="gpt-5.5",
 - Non-streaming: returns `LLMSuccess`, `LLMFailure`, or `LLMCallError`.
 - Streaming (`stream=true`): returns a `Task`. Pass a `callback(chunk::Union{String,Message}, close::Ref{Bool})` — text deltas arrive as `String`s (verbatim, in order), then the assembled `Message` at end-of-stream.
 - Streaming tool calls: pass `on_tool_call(tc::GPTToolCall)` to be notified once per completed streamed tool call, as calls finish (see the [Streaming guide](@ref streaming_guide)).
-- Auto-retries on HTTP 408/429/500/502/503/504/529 with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers on 429 responses.
+- Retries transient statuses (408/429/500/502/503/504/529) with exponential backoff and jitter under the resolved [`RequestConfig`](@ref) — `max_attempts` (default 3) and `total_deadline` bound the attempts; `Retry-After` is honored. Timeouts surface as `LLMCallError` with `status=nothing` and the `UniLMTimeout` in `.cause`.
+- Streaming retry boundary: transient failures (including the in-band `overloaded_error`, the documented 529 equivalent) are retried inside the task only until the first `callback`/`on_tool_call` invocation; afterwards failures surface typed. A user `InterruptException` propagates — `fetch` throws a `TaskFailedException` instead of returning a result value.
 
 ### Conversation Management
 
@@ -838,7 +839,7 @@ end
 ### tool_loop! (Chat Completions)
 
 ```julia
-tool_loop!(chat, dispatcher; max_turns=10, retries=0) -> ToolLoopResult
+tool_loop!(chat, dispatcher; max_turns=10, config=nothing) -> ToolLoopResult
 tool_loop!(chat; tools::Vector{<:CallableTool}, kwargs...) -> ToolLoopResult
 ```
 

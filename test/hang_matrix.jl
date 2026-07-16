@@ -109,7 +109,7 @@ end
         catch
         end
     end
-    @test_broken ok
+    @test ok
 end
 
 # ─── HTTP hang/fault mock servers (all 127.0.0.1, race-free ephemeral bind) ───
@@ -236,7 +236,7 @@ UniLM.auth_header(::_HMInterruptService) = ["Content-Type" => "application/json"
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         close(srv)
     end
@@ -264,7 +264,7 @@ end
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         close(srv)
     end
@@ -293,7 +293,7 @@ end
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         close(srv)
     end
@@ -313,7 +313,7 @@ end
     catch e
         e isa InterruptException
     end
-    @test_broken ok
+    @test ok
 end
 
 @testset "repeated HTTP timeouts leak no tasks and do not poison the pool" begin
@@ -354,7 +354,7 @@ end
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         close(srv)
         close(hsrv)
@@ -570,7 +570,7 @@ end
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         close(srv)
     end

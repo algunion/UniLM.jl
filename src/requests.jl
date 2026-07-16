@@ -590,52 +590,62 @@ end
 
 
 """
-    chatrequest!(chat::Chat, retries=0, callback=nothing)
+    chatrequest!(chat::Chat; config=nothing, callback=nothing, on_tool_call=nothing)
 
-Send a request to the OpenAI API to generate a response to the messages in `conv`.
+Send `chat` to its provider and return a typed result.
 
-The `callback` function is called for each chunk of the response. The `close` Ref is also passed to the callback function, which can be used to close the stream (for example when not satisfied with the intermediate results and want to stop the stream).
-    
-    The signature of the callback function is:
-        `callback(chunk::Union{String, Message}, close::Ref{Bool})`
+Non-streaming (`chat.stream !== true`): returns `LLMSuccess`, `LLMFailure`, or
+`LLMCallError`. Transient statuses (408/429/500/502/503/504/529) are retried with
+backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`,
+`total_deadline`; `Retry-After` honored). Timeouts surface as `LLMCallError` with
+`status = nothing` and the `UniLMTimeout` in `cause` — no fabricated HTTP statuses.
+
+Streaming (`chat.stream === true`): returns a `Task` whose `fetch` yields the same
+typed results. `callback(chunk::Union{String,Message}, close::Ref{Bool})` receives
+text deltas then the final assembled `Message`; `on_tool_call(tc::GPTToolCall)` fires
+once per completed streamed tool call. A user `InterruptException` is never converted
+into a result value: it propagates, so `fetch` on the streaming task throws a
+`TaskFailedException` whose `task.exception` is the `InterruptException`.
+
+`config::Union{Nothing,RequestConfig}`: per-call timeout/retry budget; `nothing`
+resolves the ambient configuration (`with_request_config` scope, else the process
+default set via `set_default_config!`).
 """
-function chatrequest!(chat::Chat; retries::Int=0, callback=nothing, on_tool_call=nothing)
-    res = LLMCallError(error="uninitialized", status=0, self=chat)
+function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
+                      callback=nothing, on_tool_call=nothing)
+    cfg = _resolve_config(config)
+    t0 = time_ns()
     local resp
     try
         body = encode_request(chat.service, chat)
         if chat.stream !== true
-            resp = HTTP.post(get_url(chat), body=body, headers=auth_header(chat.service); status_exception=false)
+            resp = _http_with_retries(cfg, t0, "POST", get_url(chat),
+                                      auth_header(chat.service), body)
             if resp.status == 200
                 extracted = decode_response(chat.service, resp)
                 update!(chat, extracted.message)
                 result = LLMSuccess(message=extracted.message, self=chat, usage=extracted.usage)
                 _accumulate_cost!(chat, result)
                 return result
-            elseif _is_retryable(resp.status)
-                if retries < _RETRY_MAX_ATTEMPTS
-                    delay = _retry_delay(retries, resp)
-                    @warn "Request status: $(resp.status). Retrying in $(round(delay; digits=2))s..."
-                    sleep(delay)
-                    return chatrequest!(chat; retries=retries + 1, callback, on_tool_call)
-                else
-                    return LLMFailure(status=resp.status, response=String(resp.body), self=chat, request_id=_get_request_id(resp))
-                end
             else
-                @error "Request status: $(resp.status)"
-                return LLMFailure(status=resp.status, response=String(resp.body), self=chat, request_id=_get_request_id(resp))
+                # Retry/backoff already happened inside the shared loop; the last
+                # real response is the truthful outcome (a budget-exhausted 429 is
+                # a 429, not a fabricated timeout).
+                return LLMFailure(status=resp.status, response=String(resp.body),
+                                  self=chat, request_id=_get_request_id(resp))
             end
         else
-            task = _chatrequeststream(chat, body, callback; on_tool_call)
-            return task
+            return _chatrequeststream(chat, body, callback; on_tool_call)
         end
     catch e
-        @info "Error: $e"
+        e isa InterruptException && rethrow()
+        e isa UniLMTimeout && return LLMCallError(error=sprint(showerror, e), self=chat,
+                                                  status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        res = LLMCallError(error=string(e), self=chat, status=statuserror, request_id=req_id)
+        return LLMCallError(error=string(e), self=chat, status=statuserror,
+                            request_id=req_id, cause=e isa Exception ? e : nothing)
     end
-    return res
 end
 
 """
@@ -665,9 +675,11 @@ Send a request to the OpenAI API to generate a response to the messages in `conv
 - `logit_bias::Union{AbstractDict{String,Float64},Nothing} = nothing`: Modify the likelihood of specified tokens appearing in the completion.
 - `user::Union{String,Nothing} = nothing`: A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse.
 - `seed::Union{Int64,Nothing} = nothing`: This feature is in Beta. If specified, the system will make a best effort to sample deterministically.
+- `config::Union{Nothing,RequestConfig} = nothing`: Per-call timeout/retry budget; `nothing` resolves the ambient configuration (scoped, else process default).
 """
 function chatrequest!(; kws...)
-    filteredkws = filter(x -> x[1] != :messages && x[1] != :userprompt && x[1] != :systemprompt, kws)
+    filteredkws = filter(x -> x[1] ∉ (:messages, :userprompt, :systemprompt, :config), kws)
+    config = get(kws, :config, nothing)
     !haskey(kws, :messages) && (!haskey(kws, :userprompt) || !haskey(kws, :systemprompt)) && return LLMFailure(response="No messages and/or systemprompt/userprompt provided.", status=499, self=Chat(; filteredkws...))
     messages = get(kws, :messages, Message[])
     if haskey(kws, :userprompt) && haskey(kws, :systemprompt)
@@ -683,7 +695,7 @@ function chatrequest!(; kws...)
             push!(messages, kws[:userprompt])
         end
     end
-    chatrequest!(Chat(; messages=messages, filteredkws...))
+    chatrequest!(Chat(; messages=messages, filteredkws...); config)
 end
 
 

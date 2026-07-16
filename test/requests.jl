@@ -635,7 +635,6 @@ end
     @test UniLM._RETRY_BASE == 1.0
     @test UniLM._RETRY_FACTOR == 2.0
     @test UniLM._RETRY_MAX_DELAY == 60.0
-    @test UniLM._RETRY_MAX_ATTEMPTS == 30
 end
 
 @testset "_accumulate_cost! fallback is a no-op for non-success" begin

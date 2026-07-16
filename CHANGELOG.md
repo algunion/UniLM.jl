@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+- `tool_loop(input::String; tools, …)`: a no-dispatcher convenience method that
+  wraps the prompt and `tools` in a `Respond` and runs the Responses-API tool
+  loop, so `tool_loop("…"; tools=mcp_tools_respond(session))` works as a
+  documented one-liner. `max_turns`/`retries` drive the loop; every other
+  keyword is forwarded to the `Respond` constructor (an unknown one raises).
+
 ### Changed
 - **Breaking:** `call_tool(session, name, args)` now returns an `MCPToolResult`
   instead of a bare `String`, and no longer throws when the tool reports an
@@ -14,6 +21,11 @@
   they still hand the model a string (the faithful `content`), now surfacing
   `structuredContent` when the content is otherwise empty and raising the tool's
   own error content on `isError`.
+- `Chat(; tools=…)` now accepts a `Vector{<:CallableTool}` and stores the
+  unwrapped inner `GPTTool`s, so MCP tools bridge in directly —
+  `Chat(tools=mcp_tools(session))`, with no manual `map(t -> t.tool, tools)`.
+  The `tools` field type is unchanged (`Union{Vector{GPTTool},Nothing}`);
+  conversion happens only at construction.
 
 ### Fixed
 - Azure OpenAI deployment names configured through `AZURE_OPENAI_DEPLOY_NAME_*`

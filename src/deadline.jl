@@ -138,3 +138,111 @@ function _is_transport_error(e)::Bool
     _find_exception(x -> x isa UniLMTimeout, e) !== nothing && return false
     return _find_exception(_transport_shaped, e) !== nothing
 end
+
+# The guard's entire shared state is one atomic Symbol. Timer, clock origin,
+# and phase stay locals in the wrapper, so the CAS is the only cross-task
+# communication and the :done/:fired winner is decided exactly once.
+mutable struct _DeadlineGuard
+    @atomic state::Symbol   # :armed → :done | :fired
+end
+
+"""
+    _with_deadline(f, close!, limit, phase)
+
+Run `f()` under a hard deadline with HANDLE-mode enforcement: if `limit`
+seconds elapse first, `close!()` runs exactly once to close the guarded
+resource, which unblocks any read stuck inside `f` (blocked reads never
+return to a polling check; closing is the only universal unblocker). Returns
+`f()`'s value. `limit == Inf` calls `f()` directly with zero overhead.
+
+Resolution is exactly-once via one atomic CAS: completion swaps
+`:armed → :done`; the timer swaps `:armed → :fired`, and only the winner
+acts. If `f` returns after the guard fired (completion ≈ breach race) the
+result is real and is returned — the close side effect stands, and any
+long-lived state so closed must remain closed. If `f` throws:
+`InterruptException` always rethrows first; with the guard `:fired` the error
+is the echo of our own close and `UniLMTimeout(phase, …)` is thrown instead;
+otherwise the original error rethrows. A throwing `close!` is debug-logged,
+never propagated. The timer is always closed on exit.
+"""
+function _with_deadline(f::Function, close!::Function, limit::Float64, phase::Symbol)
+    limit == Inf && return f()
+    t0 = time_ns()
+    guard = _DeadlineGuard(:armed)
+    timer = Timer(limit) do _
+        (@atomicreplace guard.state :armed => :fired).success || return
+        try
+            close!()
+        catch e
+            @debug "deadline close! failed" phase exception = (e, catch_backtrace())
+        end
+    end
+    try
+        result = f()
+        @atomicreplace guard.state :armed => :done
+        # A lost swap means the guard fired as f completed; the result is
+        # real either way — return it.
+        return result
+    catch e
+        e isa InterruptException && rethrow()
+        if (@atomicreplace guard.state :armed => :done).success
+            rethrow()   # real failure; the guard resolved :done
+        else
+            # :fired won — the caught error is the echo of our own close.
+            throw(UniLMTimeout(phase, _elapsed_s(t0), limit))
+        end
+    finally
+        close(timer)
+    end
+end
+
+"""
+    _with_deadline_task(f, limit, phase)
+
+Run `f` under a hard deadline with TASK-mode enforcement, for opaque calls
+that expose no closeable handle: `f` runs in its own task, and on breach the
+guard delivers a private breach exception into it via
+`schedule(task, exc; error=true)` (IO-blocked tasks are parked at a yield
+point, so delivery unblocks them). The wrapper fetches the task and maps a
+breach-caused failure to `UniLMTimeout(phase, …)`. `InterruptException`
+rethrows first, whether it hit the wrapper or the worker. Other worker
+failures rethrow the worker's own exception (`TaskFailedException`
+unwrapped). `limit == Inf` calls `f()` directly. The timer is always closed
+on exit.
+
+Known limit: a worker inside an uninterruptible foreign call is unblocked
+only at its waiter; the foreign call itself ends on the OS's schedule.
+"""
+function _with_deadline_task(f::Function, limit::Float64, phase::Symbol)
+    limit == Inf && return f()
+    t0 = time_ns()
+    guard = _DeadlineGuard(:armed)
+    task = Threads.@spawn f()
+    timer = Timer(limit) do _
+        (@atomicreplace guard.state :armed => :fired).success || return
+        try
+            schedule(task, _DeadlineBreach(phase, limit); error=true)
+        catch e
+            # Undeliverable (worker already finishing, or not yet parked at a
+            # yield point): the fetch below settles it — a real result is
+            # returned as real.
+            @debug "deadline breach delivery failed" phase exception = (e, catch_backtrace())
+        end
+    end
+    try
+        result = fetch(task)
+        @atomicreplace guard.state :armed => :done
+        return result
+    catch e
+        e isa InterruptException && rethrow()
+        interrupted = _find_exception(x -> x isa InterruptException, e)
+        interrupted === nothing || throw(interrupted)
+        if _find_exception(x -> x isa _DeadlineBreach, e) !== nothing
+            throw(UniLMTimeout(phase, _elapsed_s(t0), limit))
+        end
+        @atomicreplace guard.state :armed => :done
+        throw(_unwrap_task_failure(e))
+    finally
+        close(timer)
+    end
+end

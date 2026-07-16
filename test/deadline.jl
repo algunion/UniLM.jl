@@ -89,3 +89,122 @@ end
     @test !UniLM._is_transport_error(timeout_err)
     @test !UniLM._is_transport_error(ArgumentError("not transport"))
 end
+
+@testset "handle mode: close! unblocks a blocked read and yields a typed timeout" begin
+    server = Sockets.listen(Sockets.localhost, 0)
+    port = Int(Sockets.getsockname(server)[2])
+    accepter = Threads.@spawn try
+        Sockets.accept(server)   # accept, hold, never write
+    catch
+        nothing
+    end
+    sock = Sockets.connect(Sockets.localhost, port)
+    try
+        t = Threads.@spawn try
+            UniLM._with_deadline(() -> read(sock, UInt8), () -> close(sock), 0.5, :request)
+        catch e
+            e
+        end
+        @test timedwait(() -> istaskdone(t), 10.0) === :ok   # bounded observation
+        e = fetch(t)
+        @test e isa UniLM.UniLMTimeout
+        @test e.phase === :request
+        @test e.limit == 0.5
+        @test 0.5 <= e.elapsed < 10.0
+    finally
+        close(server)
+        isopen(sock) && close(sock)
+        wait(accepter)
+    end
+end
+
+@testset "handle mode: fast completion never fires the guard" begin
+    closed = Ref(0)
+    @test UniLM._with_deadline(() -> :fast, () -> closed[] += 1, 5.0, :request) === :fast
+    sleep(0.2)   # a leaked timer would fire close! later; the finally must have closed it
+    @test closed[] == 0
+end
+
+@testset "handle mode: Inf runs f directly with no guard" begin
+    @test UniLM._with_deadline(() -> :direct, () -> error("must never run"), Inf, :request) === :direct
+end
+
+@testset "handle mode: a real result arriving after the breach is still returned" begin
+    closed = Ref(0)
+    res = UniLM._with_deadline(() -> (sleep(0.4); :survived), () -> closed[] += 1, 0.1, :request)
+    @test res === :survived   # the result is real; the close side effect stands
+    @test closed[] == 1
+end
+
+@testset "handle mode: guard resolves exactly once under completion/breach races" begin
+    # Completion time straddles the limit so :done and :fired race; the CAS
+    # must admit exactly one winner and close! must run at most once.
+    for _ in 1:40
+        closed = Threads.Atomic{Int}(0)
+        limit = 0.02
+        outcome = try
+            UniLM._with_deadline(() -> (sleep(limit * 2 * rand()); :real),
+                                 () -> Threads.atomic_add!(closed, 1), limit, :request)
+        catch e
+            e
+        end
+        @test closed[] in (0, 1)
+        @test outcome === :real || outcome isa UniLM.UniLMTimeout
+        outcome isa UniLM.UniLMTimeout && @test closed[] == 1
+    end
+end
+
+@testset "handle mode: post-breach errors surface as the timeout, real errors rethrow" begin
+    # f fails AFTER the guard fired: the error is the echo of our own close
+    e1 = try
+        UniLM._with_deadline(() -> (sleep(0.4); error("io closed echo")),
+                             () -> nothing, 0.1, :stream_idle)
+    catch e
+        e
+    end
+    @test e1 isa UniLM.UniLMTimeout && e1.phase === :stream_idle
+    # f fails BEFORE any breach: the original error rethrows untouched
+    e2 = try
+        UniLM._with_deadline(() -> throw(ArgumentError("real bug")), () -> nothing, 5.0, :request)
+    catch e
+        e
+    end
+    @test e2 isa ArgumentError && e2.msg == "real bug"
+end
+
+@testset "task mode: breach delivery terminates a blocked task" begin
+    t0 = time_ns()
+    t = Threads.@spawn try
+        UniLM._with_deadline_task(() -> (sleep(30); :never), 0.3, :request)
+    catch e
+        e
+    end
+    @test timedwait(() -> istaskdone(t), 10.0) === :ok
+    e = fetch(t)
+    @test e isa UniLM.UniLMTimeout
+    @test e.phase === :request
+    @test e.limit == 0.3
+    @test 0.3 <= e.elapsed < 10.0
+    @test (time_ns() - t0) / 1e9 < 10.0
+end
+
+@testset "task mode: Inf runs f directly; results and failures pass through" begin
+    @test UniLM._with_deadline_task(() -> :direct, Inf, :request) === :direct
+    @test UniLM._with_deadline_task(() -> 41 + 1, 5.0, :request) == 42
+    e = try
+        UniLM._with_deadline_task(() -> throw(ArgumentError("boom")), 5.0, :request)
+    catch ex
+        ex
+    end
+    @test e isa ArgumentError && e.msg == "boom"   # TaskFailedException unwrapped
+end
+
+@testset "interrupts rethrow first, never laundered into timeouts" begin
+    @test_throws InterruptException UniLM._with_deadline(
+        () -> throw(InterruptException()), () -> nothing, 5.0, :request)
+    # even when the guard has ALREADY fired, interrupt still wins
+    @test_throws InterruptException UniLM._with_deadline(
+        () -> (sleep(0.3); throw(InterruptException())), () -> nothing, 0.05, :request)
+    @test_throws InterruptException UniLM._with_deadline_task(
+        () -> throw(InterruptException()), 5.0, :request)
+end

@@ -360,3 +360,244 @@ end
         close(hsrv)
     end
 end
+
+# ─── Streaming SSE mock servers (raw-byte dribble; idle is a BYTE-gap) ────────
+
+# Write `s` to an HTTP.Stream in small byte-chunks separated by `gap` seconds,
+# so the client's readavailable() sees genuine mid-stream byte gaps. The SSE
+# payloads here are ASCII, so byte slicing never splits a character.
+function _hm_dribble(http, s::String; chunk::Int = 12, gap::Float64 = 0.3)
+    bytes = codeunits(s)
+    i = 1
+    while i <= length(bytes)
+        j = min(i + chunk - 1, length(bytes))
+        write(http, bytes[i:j])
+        flush(http)
+        sleep(gap)
+        i = j + 1
+    end
+end
+
+# Sends ONE valid content delta (no finish_reason), then goes silent forever.
+# The idle guard must fire on the byte-gap and surface a :stream_idle timeout.
+function _hm_first_event_then_hang_server()
+    ev = "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hi\"},\"finish_reason\":null}]}\n\n"
+    server = nothing
+    port = 0
+    for attempt in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2])
+        close(tcp)
+        try
+            server = HTTP.listen!("127.0.0.1", port; verbose = false) do http::HTTP.Stream
+                read(http)
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "text/event-stream")
+                HTTP.startwrite(http)
+                write(http, ev)
+                flush(http)
+                wait(Condition())   # silence past the idle limit → guard fires
+            end
+            break
+        catch
+            attempt == 5 && rethrow()
+        end
+    end
+    (server, "http://127.0.0.1:$(port)")
+end
+
+# A healthy but SLOW stream: the payload is dribbled in byte-chunks with gaps
+# BELOW the idle limit, and a would-be idle gap is bridged by SSE comment
+# ("ping") lines. Because idle is a raw-BYTE gap, comment bytes reset the clock
+# — the whole stream (total wall-clock > the idle limit) must survive.
+function _hm_trickle_ping_server()
+    head = "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n"
+    tail = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\" world\"},\"finish_reason\":null}]}\n\n" *
+           "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" *
+           "data: [DONE]\n\n"
+    server = nothing
+    port = 0
+    for attempt in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2])
+        close(tcp)
+        try
+            server = HTTP.listen!("127.0.0.1", port; verbose = false) do http::HTTP.Stream
+                read(http)
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "text/event-stream")
+                HTTP.startwrite(http)
+                _hm_dribble(http, head; chunk = 12, gap = 0.3)
+                for _ in 1:5                              # ~1.5 s bridged by pings (idle limit 1.0 s)
+                    write(http, ": ping\n\n")
+                    flush(http)
+                    sleep(0.3)
+                end
+                _hm_dribble(http, tail; chunk = 12, gap = 0.3)
+            end
+            break
+        catch
+            attempt == 5 && rethrow()
+        end
+    end
+    (server, "http://127.0.0.1:$(port)")
+end
+
+# Anthropic-wire mock: first connection dies with an in-band `overloaded_error`
+# event (the documented 529-equivalent on an HTTP-200 stream); the second
+# connection is a valid completion. Counts connections.
+function _hm_inband_then_valid_server()
+    calls = Ref(0)
+    err_frame = "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n"
+    ok_stream = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n" *
+                "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" *
+                "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n" *
+                "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n" *
+                "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\n" *
+                "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+    server = nothing
+    port = 0
+    for attempt in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2])
+        close(tcp)
+        try
+            server = HTTP.listen!("127.0.0.1", port; verbose = false) do http::HTTP.Stream
+                read(http)
+                n = (calls[] += 1)
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "text/event-stream")
+                HTTP.startwrite(http)
+                write(http, n == 1 ? err_frame : ok_stream)
+                flush(http)
+            end
+            break
+        catch
+            attempt == 5 && rethrow()
+        end
+    end
+    (server, "http://127.0.0.1:$(port)", calls)
+end
+
+# Routes chat streaming to a local mock server while delegating SSE semantics to
+# the real Anthropic handler — the URL seam the production endpoint lacks.
+struct _HMAnthropicWireMock <: UniLM.ServiceEndpoint
+    base_url::String
+end
+UniLM.get_url(s::_HMAnthropicWireMock, ::Chat) = s.base_url
+UniLM.auth_header(::_HMAnthropicWireMock) = ["Content-Type" => "application/json"]
+UniLM.handle_sse_event!(::_HMAnthropicWireMock, event::AbstractString, payload::AbstractString,
+                        state::UniLM.StreamState) =
+    UniLM.handle_sse_event!(ANTHROPICServiceEndpoint, event, payload, state)
+
+# ─── Streaming timeout contracts ─────────────────────────────────────────────
+
+@testset "stream: mute pre-first-byte yields typed timeout" begin
+    # FIXED contract: a mute peer that never sends response headers must not hang
+    # the stream — the first-byte deadline (min(remaining total, request_timeout))
+    # closes the connection and the stream task's result is LLMCallError with
+    # status === nothing and cause::UniLMTimeout.
+    srv, url, _ = _hm_mute_server()
+    try
+        chat = Chat(service = GenericOpenAIEndpoint(url, ""), model = "mock", stream = true)
+        push!(chat, Message(Val(:system), "s"))
+        push!(chat, Message(Val(:user), "u"))
+        outcome = _hm_bounded() do
+            cfg = UniLM.RequestConfig(request_timeout = 1.0, total_deadline = 2.0,
+                max_attempts = 1, stream_idle_timeout = 5.0)
+            fetch(chatrequest!(chat; config = cfg))
+        end
+        ok = try
+            outcome[1] === :ok && let res = outcome[2]
+                res isa LLMCallError && res.status === nothing && res.cause isa UniLM.UniLMTimeout
+            end
+        catch
+            false
+        end
+        @test_broken ok
+    finally
+        close(srv)
+    end
+end
+
+@testset "stream: mid-stream byte-gap yields typed timeout" begin
+    # FIXED contract: after the first byte, a raw-byte gap exceeding
+    # stream_idle_timeout (with NO terminal state recorded) closes the stream and
+    # surfaces UniLMTimeout(:stream_idle) as the LLMCallError cause.
+    srv, url = _hm_first_event_then_hang_server()
+    try
+        chat = Chat(service = GenericOpenAIEndpoint(url, ""), model = "mock", stream = true)
+        push!(chat, Message(Val(:system), "s"))
+        push!(chat, Message(Val(:user), "u"))
+        outcome = _hm_bounded() do
+            cfg = UniLM.RequestConfig(stream_idle_timeout = 1.0, request_timeout = 5.0,
+                total_deadline = 10.0, max_attempts = 1)
+            fetch(chatrequest!(chat; config = cfg))
+        end
+        ok = try
+            outcome[1] === :ok && let res = outcome[2]
+                res isa LLMCallError && res.cause isa UniLM.UniLMTimeout &&
+                    res.cause.phase === :stream_idle
+            end
+        catch
+            false
+        end
+        @test_broken ok
+    finally
+        # Handler parks mid-stream forever, so a graceful close would quiesce
+        # on the still-ACTIVE conn; force-close skips the quiesce loop.
+        HTTP.forceclose(srv)
+    end
+end
+
+@testset "stream: trickle and pings keep the stream alive" begin
+    # FIXED contract: a healthy but slow stream (bytes every 0.3 s, a >1 s gap
+    # bridged by SSE comment pings) must NOT be killed — idle resets on every raw
+    # chunk, so the completed stream is LLMSuccess. A 1-byte trickle keeping a
+    # stream alive is an accepted, documented consequence.
+    srv, url = _hm_trickle_ping_server()
+    try
+        chat = Chat(service = GenericOpenAIEndpoint(url, ""), model = "mock", stream = true)
+        push!(chat, Message(Val(:system), "s"))
+        push!(chat, Message(Val(:user), "u"))
+        outcome = _hm_bounded(bound = 15.0) do
+            cfg = UniLM.RequestConfig(stream_idle_timeout = 1.0, request_timeout = 5.0,
+                total_deadline = 10.0, max_attempts = 1)
+            fetch(chatrequest!(chat; config = cfg))
+        end
+        ok = try
+            outcome[1] === :ok && outcome[2] isa LLMSuccess
+        catch
+            false
+        end
+        @test_broken ok
+    finally
+        close(srv)
+    end
+end
+
+@testset "stream: in-band overload before first callback retries like its status twin" begin
+    # FIXED contract: an in-band `overloaded_error` (the 529-equivalent) arriving
+    # BEFORE the first callback is as retryable as its HTTP-status twin — the
+    # driver retries inside the stream task, the second attempt succeeds, and the
+    # result is LLMSuccess after exactly two connections.
+    srv, url, calls = _hm_inband_then_valid_server()
+    try
+        chat = Chat(service = _HMAnthropicWireMock(url), model = "mock", stream = true)
+        push!(chat, Message(Val(:system), "s"))
+        push!(chat, Message(Val(:user), "u"))
+        outcome = _hm_bounded() do
+            cfg = UniLM.RequestConfig(request_timeout = 5.0, total_deadline = 10.0,
+                max_attempts = 2, stream_idle_timeout = 5.0)
+            fetch(chatrequest!(chat; config = cfg))
+        end
+        ok = try
+            outcome[1] === :ok && outcome[2] isa LLMSuccess && calls[] == 2
+        catch
+            false
+        end
+        @test_broken ok
+    finally
+        close(srv)
+    end
+end

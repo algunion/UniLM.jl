@@ -1028,3 +1028,184 @@ end
         close(httpserver)
     end
 end
+
+# ─── Protocol-version negotiation & HTTP session recovery ─────────────────────
+# The client must validate the server's negotiated protocol version, carry the
+# negotiated value on every request after initialize, and re-initialize a single
+# time when the HTTP session expires (404). Each mock is a tiny in-process HTTP
+# handler (no real MCPServer needed) so the exact wire behavior is scripted.
+
+@testset "unsupported negotiated protocol version aborts the connection" begin
+    # The server returns a protocolVersion this client cannot speak. mcp_connect
+    # must refuse it and leave the transport CLOSED (no leaked connection),
+    # naming both the requested and the returned versions in the error.
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        id = get(parsed, "id", nothing)
+        isnothing(id) && return HTTP.Response(202, "")
+        result = Dict{String,Any}("protocolVersion" => "1999-01-01",  # unsupported
+            "capabilities" => Dict{String,Any}(),
+            "serverInfo" => Dict{String,Any}("name" => "ancient", "version" => "0.1"))
+        HTTP.Response(200, ["Content-Type" => "application/json"],
+            JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id, "result" => result)))
+    end
+    url = "http://127.0.0.1:$port"
+    transport = HTTPTransport(url)  # held so we can inspect it after the throw
+    leaked = nothing
+    try
+        msg = try
+            leaked = mcp_connect(transport)
+            ""  # no throw (old behavior) → empty message fails the asserts cleanly
+        catch e
+            e isa ErrorException ? e.msg : sprint(showerror, e)
+        end
+        @test contains(msg, "1999-01-01")                    # the rejected server version
+        @test contains(msg, UniLM._MCP_PROTOCOL_VERSION)     # the version we requested
+        @test UniLM._transport_isconnected(transport) == false  # transport closed on exit
+    finally
+        isnothing(leaked) || mcp_disconnect!(leaked)
+        close(httpserver)
+    end
+end
+
+@testset "older negotiated protocol version is honored on later request headers" begin
+    # The server negotiates DOWN to an older but still-supported revision. The
+    # session must work, and every request AFTER initialize must carry that
+    # negotiated version in Mcp-Protocol-Version — while the initialize request
+    # itself advertised the client's latest supported version.
+    negotiated = "2025-06-18"
+    seen = Dict{String,String}()  # method => Mcp-Protocol-Version header sent
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        method = get(parsed, "method", "")
+        seen[method] = HTTP.header(req, "Mcp-Protocol-Version", "")
+        id = get(parsed, "id", nothing)
+        isnothing(id) && return HTTP.Response(202, "")
+        result = method == "initialize" ?
+            Dict{String,Any}("protocolVersion" => negotiated,
+                "capabilities" => Dict{String,Any}(),
+                "serverInfo" => Dict{String,Any}("name" => "downgrader", "version" => "1.0")) :
+            Dict{String,Any}()
+        HTTP.Response(200, ["Content-Type" => "application/json"],
+            JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id, "result" => result)))
+    end
+    url = "http://127.0.0.1:$port"
+    session = mcp_connect(url)
+    try
+        @test session.protocol_version == negotiated       # stored on the session
+        @test ping(session) === nothing                    # session still works
+        @test seen["initialize"] == UniLM._MCP_PROTOCOL_VERSION  # init: client's latest
+        @test seen["ping"] == negotiated                   # after init: negotiated value
+    finally
+        mcp_disconnect!(session)
+    end
+end
+
+@testset "expired HTTP session is re-initialized and the request replayed" begin
+    # The first post-initialize request 404s (session expired), then the server
+    # succeeds. The client must re-initialize once (obtaining a fresh session id)
+    # and replay the request — the call returns normally, initialize ran twice.
+    init_count = Ref(0)
+    ping_count = Ref(0)
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        method = get(parsed, "method", "")
+        id = get(parsed, "id", nothing)
+        isnothing(id) && return HTTP.Response(202, "")
+        if method == "initialize"
+            init_count[] += 1
+            return HTTP.Response(200,
+                ["Content-Type" => "application/json", "Mcp-Session-Id" => "sess-$(init_count[])"],
+                JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id, "result" => Dict{String,Any}(
+                    "protocolVersion" => UniLM._MCP_PROTOCOL_VERSION,
+                    "capabilities" => Dict{String,Any}(),
+                    "serverInfo" => Dict{String,Any}("name" => "expiry", "version" => "1.0")))))
+        elseif method == "ping"
+            ping_count[] += 1
+            ping_count[] == 1 && return HTTP.Response(404, "session expired")  # first: gone
+            return HTTP.Response(200, ["Content-Type" => "application/json"],
+                JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id, "result" => Dict{String,Any}())))
+        end
+        HTTP.Response(200, ["Content-Type" => "application/json"],
+            JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id, "result" => Dict{String,Any}())))
+    end
+    url = "http://127.0.0.1:$port"
+    session = mcp_connect(url)
+    try
+        @test init_count[] == 1                          # one initialize at connect
+        @test session.transport.session_id == "sess-1"
+        @test ping(session) === nothing                  # 404 → re-init → replay ok
+        @test init_count[] == 2                          # re-initialized exactly once
+        @test ping_count[] == 2                          # first 404, replay succeeded
+        @test session.transport.session_id == "sess-2"   # fresh session id now in use
+    finally
+        mcp_disconnect!(session)
+    end
+end
+
+@testset "second HTTP session expiry after re-initialization aborts" begin
+    # If the replayed request ALSO 404s, the client gives up — no retry loop. It
+    # re-initializes exactly once, then the second expiry raises.
+    init_count = Ref(0)
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        method = get(parsed, "method", "")
+        id = get(parsed, "id", nothing)
+        isnothing(id) && return HTTP.Response(202, "")
+        if method == "initialize"
+            init_count[] += 1
+            return HTTP.Response(200,
+                ["Content-Type" => "application/json", "Mcp-Session-Id" => "sess-$(init_count[])"],
+                JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id, "result" => Dict{String,Any}(
+                    "protocolVersion" => UniLM._MCP_PROTOCOL_VERSION,
+                    "capabilities" => Dict{String,Any}(),
+                    "serverInfo" => Dict{String,Any}("name" => "always-expired", "version" => "1.0")))))
+        end
+        HTTP.Response(404, "session expired")  # every request reports the session gone
+    end
+    url = "http://127.0.0.1:$port"
+    session = mcp_connect(url)
+    try
+        @test_throws ErrorException ping(session)  # 404 → re-init → 404 again → give up
+        @test init_count[] == 2                    # re-initialized once, then stopped
+    finally
+        mcp_disconnect!(session)
+    end
+end
+
+@testset "HTTP 401 explains authentication is passed via headers" begin
+    # The server rejects with 401. The error must name the status and point the
+    # caller at the `headers` kwarg of mcp_connect (no built-in auth flow).
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        HTTP.Response(401, "Unauthorized")
+    end
+    url = "http://127.0.0.1:$port"
+    try
+        err = nothing
+        try
+            mcp_connect(url)  # the initialize POST is rejected
+        catch e
+            err = e
+        end
+        @test err isa ErrorException
+        @test contains(err.msg, "401")          # names the status
+        @test contains(err.msg, "headers")      # points at the headers kwarg…
+        @test contains(err.msg, "mcp_connect")  # …of mcp_connect
+    finally
+        close(httpserver)
+    end
+end

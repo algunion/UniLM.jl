@@ -9,7 +9,14 @@
 # ─── JSON-RPC 2.0 Framing (internal) ────────────────────────────────────────
 
 const _JSONRPC_VERSION = "2.0"
-const _MCP_PROTOCOL_VERSION = "2025-11-25"
+
+# Protocol revisions this client can negotiate over Streamable HTTP, preferred
+# (latest) first. 2024-11-05 is excluded: it predates Streamable HTTP and used
+# the separate HTTP+SSE dual-endpoint transport this client does not implement.
+const _MCP_SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
+
+# The version the client prefers and advertises: its latest supported revision.
+const _MCP_PROTOCOL_VERSION = first(_MCP_SUPPORTED_PROTOCOL_VERSIONS)
 
 struct _JSONRPCRequest
     id::Union{Int,String}
@@ -63,6 +70,17 @@ MCPError(d::Dict{String,Any}) = MCPError(d["code"], d["message"], get(d, "data",
 function Base.showerror(io::IO, e::MCPError)
     print(io, "MCPError($(e.code)): $(e.message)")
     !isnothing(e.data) && print(io, " data=", e.data)
+end
+
+"""
+    _MCPSessionExpired <: Exception
+
+Internal signal that an HTTP transport received `404 Not Found` while holding a
+session id — the server dropped the session. Caught by [`_mcp_request!`](@ref),
+which re-initializes and replays the request once; never surfaced to callers.
+"""
+struct _MCPSessionExpired <: Exception
+    body::String
 end
 
 # ─── MCP Types ───────────────────────────────────────────────────────────────
@@ -238,11 +256,15 @@ mutable struct HTTPTransport <: MCPTransport
     url::String
     headers::Vector{Pair{String,String}}
     session_id::Union{String,Nothing}
+    # Value sent in the `Mcp-Protocol-Version` header. Starts at the client's
+    # preferred revision (used for the initialize request) and is updated to the
+    # server-negotiated revision once the handshake succeeds.
+    protocol_version::String
     connected::Bool
     lock::ReentrantLock
     pending::Vector{String}  # frames from the last response body, not yet consumed
     function HTTPTransport(url::String; headers::Vector{Pair{String,String}}=Pair{String,String}[])
-        new(url, headers, nothing, false, ReentrantLock(), String[])
+        new(url, headers, nothing, _MCP_PROTOCOL_VERSION, false, ReentrantLock(), String[])
     end
 end
 
@@ -252,12 +274,25 @@ function _transport_send!(t::HTTPTransport, msg::String)::String
     hdrs = copy(t.headers)
     push!(hdrs, "Content-Type" => "application/json")
     push!(hdrs, "Accept" => "application/json, text/event-stream")
-    push!(hdrs, "Mcp-Protocol-Version" => _MCP_PROTOCOL_VERSION)
+    push!(hdrs, "Mcp-Protocol-Version" => t.protocol_version)
     !isnothing(t.session_id) && push!(hdrs, "Mcp-Session-Id" => t.session_id)
     resp = HTTP.post(t.url; body=msg, headers=hdrs, status_exception=false)
     # Capture session ID from response
     sid = HTTP.header(resp, "Mcp-Session-Id", "")
     !isempty(sid) && (t.session_id = sid)
+    # A 404 while holding a session id means the server expired the session;
+    # signal the request layer to re-initialize (Streamable HTTP session
+    # lifecycle) rather than failing the call.
+    if resp.status == 404 && !isnothing(t.session_id)
+        throw(_MCPSessionExpired(String(resp.body)))
+    end
+    # This client implements no authentication flow; credentials travel as
+    # request headers, so point the caller at the mechanism that supplies them.
+    if resp.status == 401 || resp.status == 403
+        error("MCP HTTP request rejected with status $(resp.status). The server " *
+              "requires authentication; pass credentials via the `headers` kwarg " *
+              "of mcp_connect (e.g. headers=[\"Authorization\" => \"Bearer <token>\"]).")
+    end
     resp.status == 200 || error("MCP HTTP request failed with status $(resp.status): $(String(resp.body))")
     ct = HTTP.header(resp, "Content-Type", "")
     empty!(t.pending)  # frames left over from a previous exchange are stale
@@ -282,7 +317,7 @@ end
 function _transport_notify!(t::HTTPTransport, msg::String)
     hdrs = copy(t.headers)
     push!(hdrs, "Content-Type" => "application/json")
-    push!(hdrs, "Mcp-Protocol-Version" => _MCP_PROTOCOL_VERSION)
+    push!(hdrs, "Mcp-Protocol-Version" => t.protocol_version)
     !isnothing(t.session_id) && push!(hdrs, "Mcp-Session-Id" => t.session_id)
     HTTP.post(t.url; body=msg, headers=hdrs, status_exception=false)
     nothing
@@ -304,6 +339,14 @@ function _transport_disconnect!(t::HTTPTransport)
 end
 
 _transport_isconnected(t::HTTPTransport) = t.connected
+
+# The negotiated protocol-version header and session reset only apply to
+# transports that carry HTTP session state; stdio transports ignore them.
+_set_protocol_version!(::MCPTransport, ::AbstractString) = nothing
+_set_protocol_version!(t::HTTPTransport, v::AbstractString) = (t.protocol_version = v; nothing)
+
+_reset_session!(::MCPTransport) = nothing
+_reset_session!(t::HTTPTransport) = (t.session_id = nothing; nothing)
 
 """Split an SSE response body into its `data:` payloads, in arrival order."""
 function _parse_sse_frames(body::String)::Vector{String}
@@ -344,15 +387,19 @@ mutable struct MCPSession
     status::Symbol  # :disconnected, :initializing, :ready, :closed
     _lock::ReentrantLock
     tools_stale::Bool
+    # The exact `initialize` params (protocolVersion, capabilities, clientInfo)
+    # retained so an expired HTTP session can be re-initialized transparently.
+    _init_params::Dict{String,Any}
 end
 
 # Sessions start with a fresh lock and a fresh (not stale) tool cache.
 function MCPSession(transport::MCPTransport, caps::MCPServerCapabilities,
                     server_info::Dict{String,Any}, tools::Vector{MCPToolInfo},
                     resources::Vector{MCPResourceInfo}, prompts::Vector{MCPPromptInfo},
-                    protocol_version::String, id_counter::Int, status::Symbol)
+                    protocol_version::String, id_counter::Int, status::Symbol;
+                    init_params::Dict{String,Any}=Dict{String,Any}())
     MCPSession(transport, caps, server_info, tools, resources, prompts,
-               protocol_version, id_counter, status, ReentrantLock(), false)
+               protocol_version, id_counter, status, ReentrantLock(), false, init_params)
 end
 
 """Allocate the next request id. Callers must hold `session._lock`."""
@@ -378,7 +425,7 @@ before the matching response are handled in place:
   [`MCPError`](@ref) (the server could not attribute the request).
 - Any other non-matching response frame is skipped with a warning.
 """
-function _mcp_request!(session::MCPSession, method::String, params::Union{Dict{String,Any},Nothing}=nothing)::Dict{String,Any}
+function _mcp_request_once!(session::MCPSession, method::String, params::Union{Dict{String,Any},Nothing}=nothing)::Dict{String,Any}
     lock(session._lock) do
         id = _next_id!(session)
         req = _JSONRPCRequest(id, method, params)
@@ -417,6 +464,32 @@ function _mcp_request!(session::MCPSession, method::String, params::Union{Dict{S
             end
             !isnothing(resp.error) && throw(MCPError(resp.error))
             return something(resp.result, Dict{String,Any}())
+        end
+    end
+end
+
+"""
+    _mcp_request!(session, method, params=nothing) -> Dict{String,Any}
+
+Run a request, transparently recovering from an expired HTTP session. On a 404
+carrying a live session id the client re-initializes once — obtaining a fresh
+session id — and replays the request a single time (MCP Streamable HTTP: the
+client re-initializes when the server reports the session gone). A second
+expiry aborts with an error; there is no retry loop. Every other outcome,
+including [`MCPError`](@ref), passes through unchanged.
+"""
+function _mcp_request!(session::MCPSession, method::String, params::Union{Dict{String,Any},Nothing}=nothing)::Dict{String,Any}
+    try
+        return _mcp_request_once!(session, method, params)
+    catch e
+        e isa _MCPSessionExpired || rethrow()
+        _mcp_reinitialize!(session)
+        try
+            return _mcp_request_once!(session, method, params)
+        catch e2
+            e2 isa _MCPSessionExpired || rethrow()
+            error("MCP HTTP session expired again immediately after " *
+                  "re-initialization; aborting.")
         end
     end
 end
@@ -462,6 +535,50 @@ function mcp_connect(url::String; headers::Vector{Pair{String,String}}=Pair{Stri
 end
 
 """
+Run the MCP `initialize` handshake on `session` from its stored `_init_params`,
+validate the server's protocol version, and send `notifications/initialized`.
+Returns the raw `initialize` result.
+
+The initialize request advertises the client's preferred protocol version in the
+`Mcp-Protocol-Version` header; once the server's version is accepted it becomes
+the header value for every subsequent request. If the server returns a version
+this client does not support, the transport is disconnected and an error naming
+both the requested and returned versions is thrown (MCP spec: the client SHOULD
+terminate the connection when it cannot support the negotiated version).
+"""
+function _mcp_handshake!(session::MCPSession)::Dict{String,Any}
+    requested = get(session._init_params, "protocolVersion", _MCP_PROTOCOL_VERSION)
+    # The initialize request advertises the client's preferred (latest) revision.
+    _set_protocol_version!(session.transport, _MCP_PROTOCOL_VERSION)
+    init_result = _mcp_request_once!(session, "initialize", session._init_params)
+    negotiated = get(init_result, "protocolVersion", requested)
+    if !(negotiated in _MCP_SUPPORTED_PROTOCOL_VERSIONS)
+        _transport_disconnect!(session.transport)
+        session.status = :closed
+        supported = join(_MCP_SUPPORTED_PROTOCOL_VERSIONS, ", ")
+        error("MCP server returned unsupported protocol version \"$(negotiated)\" " *
+              "(client requested \"$(requested)\"; supported: $(supported)). " *
+              "Connection closed.")
+    end
+    session.protocol_version = negotiated
+    # Every request after initialize carries the negotiated version.
+    _set_protocol_version!(session.transport, negotiated)
+    _mcp_notify!(session, "notifications/initialized")
+    init_result
+end
+
+"""
+Re-establish an expired HTTP session: drop the stale session id so the server
+issues a fresh one, then re-run the `initialize` handshake. Used by
+[`_mcp_request!`](@ref) when a request 404s.
+"""
+function _mcp_reinitialize!(session::MCPSession)
+    _reset_session!(session.transport)
+    _mcp_handshake!(session)
+    nothing
+end
+
+"""
     mcp_connect(transport::MCPTransport; client_name="UniLM.jl", protocol_version="2025-11-25") -> MCPSession
 
 Connect to an MCP server via the given transport. Performs initialization handshake
@@ -472,24 +589,23 @@ function mcp_connect(transport::MCPTransport;
                      client_version::String="0.8.0",
                      protocol_version::String=_MCP_PROTOCOL_VERSION)::MCPSession
     _transport_connect!(transport)
-    session = MCPSession(
-        transport, MCPServerCapabilities(), Dict{String,Any}(),
-        MCPToolInfo[], MCPResourceInfo[], MCPPromptInfo[],
-        protocol_version, 0, :initializing
-    )
-    # Initialize handshake
-    init_result = _mcp_request!(session, "initialize", Dict{String,Any}(
+    init_params = Dict{String,Any}(
         "protocolVersion" => protocol_version,
         "capabilities" => Dict{String,Any}(),
         "clientInfo" => Dict{String,Any}("name" => client_name, "version" => client_version)
-    ))
+    )
+    session = MCPSession(
+        transport, MCPServerCapabilities(), Dict{String,Any}(),
+        MCPToolInfo[], MCPResourceInfo[], MCPPromptInfo[],
+        protocol_version, 0, :initializing; init_params=init_params
+    )
+    # Initialize handshake: validates the negotiated protocol version, stores it
+    # on the session, and sends notifications/initialized.
+    init_result = _mcp_handshake!(session)
     session.server_info = get(init_result, "serverInfo", Dict{String,Any}())
     caps = get(init_result, "capabilities", Dict{String,Any}())
     session.server_capabilities = MCPServerCapabilities(caps)
-    session.protocol_version = get(init_result, "protocolVersion", protocol_version)
-    # Send initialized notification
-    _mcp_notify!(session, "notifications/initialized")
-    # Auto-populate tool cache if server supports tools
+    # Auto-populate caches for whatever the server advertises.
     !isnothing(session.server_capabilities.tools) && list_tools!(session)
     !isnothing(session.server_capabilities.resources) && list_resources!(session)
     !isnothing(session.server_capabilities.prompts) && list_prompts!(session)

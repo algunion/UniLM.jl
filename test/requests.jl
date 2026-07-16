@@ -639,13 +639,13 @@ end
 end
 
 @testset "_accumulate_cost! fallback is a no-op for non-success" begin
-    # requests.jl:90 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
+    # requests.jl:220 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
     # success types are specialized in accounting.jl, so a failure result must land here:
     # return nothing AND leave cumulative cost untouched (falsifies accidental accumulation).
     chat = Chat(model="gpt-4.1-nano")
     chat._cumulative_cost[] = 0.25
     failure = LLMFailure(response="server exploded", status=500, self=chat)
-    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 90
+    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 220
     @test UniLM._accumulate_cost!(chat, failure) === nothing
     @test cumulative_cost(chat) == 0.25       # unchanged: the fallback did not add anything
 

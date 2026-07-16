@@ -1,8 +1,18 @@
-# ─── Retry Infrastructure ────────────────────────────────────────────────────
+# ─── Bounded HTTP seam ───────────────────────────────────────────────────────
+# Every provider HTTP exchange routes through _http (one attempt),
+# _http_with_retries (the one retry loop) or _http_open (streaming). The seam
+# translates RequestConfig bounds into the resolved HTTP.jl major's native
+# timeout kwargs — they fire earlier, with better phase attribution — AND arms
+# an outer watchdog at the same bound as the guarantee of last resort. Native
+# timeout exceptions map to UniLMTimeout; all other transport exceptions
+# propagate unchanged.
 
 const _RETRY_BASE = 1.0
 const _RETRY_FACTOR = 2.0
 const _RETRY_MAX_DELAY = 60.0
+# Cap for the remaining recursive retry call sites; superseded by
+# RequestConfig.max_attempts and removed together with those call sites once
+# they route through _http_with_retries.
 const _RETRY_MAX_ATTEMPTS = 30
 
 _is_retryable(status::Integer)::Bool = status in (408, 429, 500, 502, 503, 504, 529)
@@ -16,6 +26,126 @@ function _retry_delay(retry::Integer, resp::HTTP.Response)::Float64
         !isnothing(parsed) && parsed > 0 && (delay = max(Float64(parsed), delay))
     end
     delay
+end
+
+# Backoff for exception-path retries, where no HTTP.Response (hence no
+# Retry-After header) exists. Same full-jitter curve as _retry_delay.
+_backoff_delay(retry::Integer)::Float64 =
+    rand() * min(_RETRY_BASE * _RETRY_FACTOR^retry, _RETRY_MAX_DELAY)
+
+# Resolved-at-load HTTP.jl major: the majors expose different native timeout
+# kwargs with different declared types, so translation branches on this.
+const _HTTP_MAJOR2 = pkgversion(HTTP) >= v"2"
+
+# The 1.x major declares its timeout kwargs as ::Int seconds. Round UP so the
+# native fast-path is never tighter than the configured Float64 bound (the
+# watchdog enforces the exact bound); 0 disables. Translating Inf FIRST
+# matters: round(Int, Inf) is an InexactError.
+_native_seconds_int(x::Float64)::Int = x == Inf ? 0 : max(1, ceil(Int, x))
+
+# The 2.x major accepts ::Real seconds but requires them finite: Inf must be
+# translated to the documented "off" value 0 BEFORE the call.
+_native_seconds_real(x::Float64)::Float64 = x == Inf ? 0.0 : x
+
+# Native kwargs for a non-streaming attempt. connect_timeout is passed
+# EXPLICITLY on the 2.x major: omitting it selects a 30 s library default,
+# not "off".
+function _native_timeout_kwargs(cfg::RequestConfig, bound::Float64; major2::Bool=_HTTP_MAJOR2)
+    return major2 ?
+        (connect_timeout = _native_seconds_real(cfg.connect_timeout),
+         request_timeout = _native_seconds_real(bound)) :
+        (connect_timeout = _native_seconds_int(cfg.connect_timeout),
+         readtimeout     = _native_seconds_int(bound))
+end
+
+# Native kwargs for a streaming attempt: bound connect on both majors. The
+# 2.x read_idle_timeout resets per read, matching byte-gap idle semantics, so
+# it rides along as a fast path. The 1.x readtimeout bounds the WHOLE
+# exchange — it would kill long healthy streams — so streams never set it and
+# the idle guard is the sole idle enforcement there.
+function _native_stream_kwargs(cfg::RequestConfig; major2::Bool=_HTTP_MAJOR2)
+    return major2 ?
+        (connect_timeout   = _native_seconds_real(cfg.connect_timeout),
+         read_idle_timeout = _native_seconds_real(cfg.stream_idle_timeout)) :
+        (connect_timeout   = _native_seconds_int(cfg.connect_timeout),)
+end
+
+# Phase attribution for a 2.x native TimeoutError operation label.
+_timeout_phase_2x(operation::AbstractString)::Symbol =
+    operation == "connect" || operation == "tls_handshake" ? :connect : :request
+
+# The 1.x major signals a connect timeout with a dedicated sentinel wrapped
+# inside HTTP.ConnectError. Resolve the type once; Union{} on majors that
+# lack it so `isa` never matches.
+const _CONNECT_TIMEOUT_1X =
+    isdefined(HTTP, :Connections) && isdefined(HTTP.Connections, :ConnectTimeout) ?
+        HTTP.Connections.ConnectTimeout : Union{}
+
+# Map a native HTTP.jl timeout exception (possibly nested in wrapper layers)
+# to UniLMTimeout; return nothing when `e` is not a timeout — the caller then
+# rethrows the original, so non-timeout transport errors propagate unchanged.
+function _map_native_timeout(e, cfg::RequestConfig, bound::Float64, t0::UInt64)::Union{Nothing,UniLMTimeout}
+    native = _find_exception(x -> x isa HTTP.TimeoutError, e)
+    if native !== nothing
+        phase = _HTTP_MAJOR2 ? _timeout_phase_2x(native.operation) : :request
+        limit = phase === :connect ? cfg.connect_timeout : bound
+        return UniLMTimeout(phase, _elapsed_s(t0), limit)
+    end
+    if _CONNECT_TIMEOUT_1X !== Union{} &&
+       _find_exception(x -> x isa _CONNECT_TIMEOUT_1X, e) !== nothing
+        return UniLMTimeout(:connect, _elapsed_s(t0), cfg.connect_timeout)
+    end
+    return nothing
+end
+
+# Retry-loop predicate: a per-attempt timeout (:connect/:request — a timeout
+# with budget left is worth another try) or a pure transport failure per
+# _is_transport_error. :deadline (budget spent), :stream_idle, interrupts,
+# and status-carrying errors all fall through to false via the classifier's
+# always-false set — ONE classifier, composed here, never duplicated.
+_retryable_exception(e)::Bool =
+    (e isa UniLMTimeout && (e.phase === :connect || e.phase === :request)) ||
+    _is_transport_error(e)
+
+"""
+    _http(method, url, headers=[], body=UInt8[]; cfg, remaining=Inf, kwargs...) -> HTTP.Response
+
+One bounded HTTP attempt. The per-attempt bound is
+`min(cfg.request_timeout, remaining)`; `remaining <= 0` throws
+`UniLMTimeout(:deadline, …)` without touching the network. Native per-major
+timeout kwargs are the fast path; a task-mode watchdog at the same bound is
+the guarantee of last resort. Native timeout exceptions map to
+[`UniLMTimeout`](@ref) (`:connect` where attributable, else `:request`);
+other transport exceptions propagate unchanged.
+
+Always imposes `status_exception=false` (callers branch on `resp.status`)
+and `retry=false`: this is ONE attempt — the retry budget lives in
+`_http_with_retries`, and the library's internal retry layer would multiply
+wire attempts behind the budget's back. `body` is a passthrough positional:
+`String`, `Vector{UInt8}`, and `HTTP.Form` are all handed to `HTTP.request`
+unconverted (callers keep their existing body shapes). Remaining kwargs pass
+through to `HTTP.request` (e.g. `decompress=false`).
+"""
+function _http(method::AbstractString, url::AbstractString,
+               headers=Pair{String,String}[], body=UInt8[];
+               cfg::RequestConfig=current_config(), remaining::Float64=Inf,
+               kwargs...)::HTTP.Response
+    remaining <= 0 &&
+        throw(UniLMTimeout(:deadline, max(cfg.total_deadline - remaining, 0.0), cfg.total_deadline))
+    bound = min(cfg.request_timeout, remaining)
+    t0 = time_ns()
+    native = _native_timeout_kwargs(cfg, bound)
+    try
+        return _with_deadline_task(bound, :request) do
+            HTTP.request(method, url, headers, body;
+                         kwargs..., status_exception=false, retry=false, native...)
+        end
+    catch e
+        e isa InterruptException && rethrow()
+        e isa UniLMTimeout && rethrow()
+        mapped = _map_native_timeout(e, cfg, bound, t0)
+        mapped === nothing ? rethrow() : throw(mapped)
+    end
 end
 
 # ─── URL Dispatch ─────────────────────────────────────────────────────────────

@@ -33,6 +33,10 @@ end
         include("deadline.jl")
     end
 
+    @testset "http seam (requests.jl)" begin
+        include("http_seam.jl")
+    end
+
     @testset "requests.jl" begin
         include("requests.jl")
     end

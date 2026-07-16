@@ -37,6 +37,10 @@ end
         include("regression_pins.jl")
     end
 
+    @testset "hang matrix" begin
+        include("hang_matrix.jl")
+    end
+
     @testset "responses.jl" begin
         include("responses.jl")
     end

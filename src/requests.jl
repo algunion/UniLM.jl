@@ -148,6 +148,84 @@ function _http(method::AbstractString, url::AbstractString,
     end
 end
 
+"""
+    _http_with_retries(cfg, t0, method, url, headers=[], body=UInt8[]; kwargs...) -> HTTP.Response
+
+The one retry loop. `t0` is the verb-entry monotonic origin (`time_ns()`).
+Runs at most `cfg.max_attempts` attempts inside `cfg.total_deadline`
+(breaching it throws `UniLMTimeout(:deadline, …)`); each attempt gets
+`min(cfg.request_timeout, remaining)` via [`_http`](@ref).
+
+Retryable = retryable status (408/429/500/502/503/504/529) ∪ per-attempt
+`UniLMTimeout(:connect|:request)` ∪ transport-level IO exceptions — never
+`InterruptException`. When the backoff (`Retry-After`/jitter) exceeds the
+remaining budget, fail NOW with the last real outcome: sleeping less and
+attempting with ~zero budget is a guaranteed mid-flight breach, and a
+budget-exhausted 429 is a 429, not a fabricated timeout. Intermediate
+retries log at debug; the final failure warns once.
+"""
+function _http_with_retries(cfg::RequestConfig, t0::UInt64,
+                            method::AbstractString, url::AbstractString,
+                            headers=Pair{String,String}[], body=UInt8[];
+                            kwargs...)::HTTP.Response
+    for attempt in 1:cfg.max_attempts
+        remaining = _remaining_s(cfg, t0)
+        remaining <= 0 && throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
+        final = attempt == cfg.max_attempts
+        resp = try
+            _http(method, url, headers, body; cfg, remaining, kwargs...)
+        catch e
+            e isa InterruptException && rethrow()
+            (_retryable_exception(e) && !final) || rethrow()
+            delay = _backoff_delay(attempt - 1)
+            if delay > _remaining_s(cfg, t0)
+                @warn "transport failure is retryable but the backoff exceeds the remaining total_deadline budget; giving up" attempt delay
+                rethrow()
+            end
+            @debug "retrying after transport failure" attempt delay exception = (e, catch_backtrace())
+            sleep(delay)
+            continue
+        end
+        if _is_retryable(resp.status) && !final
+            delay = _retry_delay(attempt - 1, resp)
+            if delay > _remaining_s(cfg, t0)
+                @warn "status is retryable but the backoff (Retry-After/jitter) exceeds the remaining total_deadline budget; returning the last response" status = resp.status attempt delay
+                return resp
+            end
+            @debug "retrying after retryable status" status = resp.status attempt delay
+            sleep(delay)
+            continue
+        end
+        _is_retryable(resp.status) &&
+            @warn "request failed with a retryable status after exhausting max_attempts" status = resp.status attempts = cfg.max_attempts
+        return resp
+    end
+    # Unreachable: max_attempts >= 1 and the final attempt never continues.
+    error("retry loop exited without an outcome")
+end
+
+"""
+    _http_open(f, method, url, headers; cfg, t0, kwargs...) -> HTTP.Response
+
+Streaming attempt seam: wraps `HTTP.open` with `status_exception=false`,
+`retry=false`, and the per-major native stream kwargs (connect bound on both
+majors; a byte-gap idle fast path only where the native read timeout has
+per-read reset semantics — a whole-exchange native bound would kill long
+healthy streams). `f(io)` receives the raw stream untouched: the first-byte
+deadline and the idle guard are the calling driver's job, because only the
+driver knows when the request body is written and the response headers
+arrive. `t0` is the driver's monotonic origin, accepted here so drivers
+thread one origin through the seam.
+"""
+function _http_open(f::Function, method::AbstractString, url::AbstractString, headers;
+                    cfg::RequestConfig, t0::UInt64, kwargs...)::HTTP.Response
+    native = _native_stream_kwargs(cfg)
+    return HTTP.open(method, url, headers;
+                     kwargs..., status_exception=false, retry=false, native...) do io
+        f(io)
+    end
+end
+
 # ─── URL Dispatch ─────────────────────────────────────────────────────────────
 # Endpoints are determined by (ServiceEndpoint, RequestType), not model name.
 

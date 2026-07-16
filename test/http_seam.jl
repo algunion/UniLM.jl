@@ -211,3 +211,108 @@ end
     @test e isa Exception
     @test !(e isa UniLM.UniLMTimeout)
 end
+
+@testset "retry budget: fail-N stops at max_attempts" begin
+    n = Threads.Atomic{Int}(0)
+    server, base = _seam_server(req -> begin
+        k = Threads.atomic_add!(n, 1)   # returns the OLD value
+        HTTP.Response(k < 2 ? 500 : 200, ["Content-Type" => "application/json"], Vector{UInt8}("{}"))
+    end)
+    try
+        # two 500s then 200: succeeds on the third attempt
+        cfg = RequestConfig(max_attempts=3, total_deadline=Inf)
+        resp = UniLM._http_with_retries(cfg, time_ns(), "GET", base * "/")
+        @test resp.status == 200
+        @test n[] == 3
+        # a budget of 2 returns the SECOND response (a 500) after exactly 2 attempts
+        n[] = 0
+        cfg2 = RequestConfig(max_attempts=2, total_deadline=Inf)
+        resp2 = @test_logs (:warn, r"max_attempts") match_mode=:any UniLM._http_with_retries(cfg2, time_ns(), "GET", base * "/")
+        @test resp2.status == 500
+        @test n[] == 2
+        # max_attempts=1 disables retries entirely
+        n[] = 0
+        resp3 = UniLM._http_with_retries(RequestConfig(max_attempts=1, total_deadline=Inf), time_ns(), "GET", base * "/")
+        @test resp3.status == 500
+        @test n[] == 1
+    finally
+        close(server)
+    end
+end
+
+@testset "retry budget: Retry-After beyond remaining deadline returns the last real response immediately" begin
+    server, base = _seam_server(req ->
+        HTTP.Response(429, ["Retry-After" => "20", "Content-Type" => "application/json"], Vector{UInt8}("{}")))
+    try
+        cfg = RequestConfig(max_attempts=3, total_deadline=5.0)
+        t_start = time_ns()
+        resp = @test_logs (:warn, r"budget") match_mode=:any UniLM._http_with_retries(cfg, time_ns(), "GET", base * "/")
+        @test resp.status == 429                       # the last REAL response — no fabricated timeout
+        @test (time_ns() - t_start) / 1e9 < 4.0        # returned now; never slept toward the 20 s
+    finally
+        close(server)
+    end
+end
+
+@testset "retry budget: an exhausted total_deadline throws :deadline before any attempt" begin
+    hits = Threads.Atomic{Int}(0)
+    server, base = _seam_server(req -> begin
+        Threads.atomic_add!(hits, 1)
+        HTTP.Response(200, [], Vector{UInt8}("{}"))
+    end)
+    try
+        cfg = RequestConfig(total_deadline=0.5, max_attempts=3)
+        t0 = time_ns() - UInt64(1_000_000_000)   # entered one second ago
+        e = try
+            UniLM._http_with_retries(cfg, t0, "GET", base * "/")
+        catch ex
+            ex
+        end
+        @test e isa UniLM.UniLMTimeout
+        @test e.phase === :deadline
+        @test e.limit == 0.5
+        @test e.elapsed >= 1.0
+        @test hits[] == 0
+    finally
+        close(server)
+    end
+end
+
+@testset "retry budget: per-attempt timeouts retry, then surface typed" begin
+    m = mute_server()
+    try
+        cfg = RequestConfig(request_timeout=0.3, max_attempts=2, total_deadline=Inf, connect_timeout=Inf)
+        t = Threads.@spawn try
+            UniLM._http_with_retries(cfg, time_ns(), "GET", "http://127.0.0.1:$(m.port)/")
+        catch e
+            e
+        end
+        @test timedwait(() -> istaskdone(t), 20.0) === :ok
+        e = fetch(t)
+        @test e isa UniLM.UniLMTimeout
+        @test e.phase === :request
+        @test m.accepted[] == 2   # both attempts reached the wire
+    finally
+        stop!(m)
+    end
+end
+
+@testset "_http_open: streaming seam round-trip passes io through untouched" begin
+    server, base = _seam_server(req ->
+        HTTP.Response(200, ["Content-Type" => "text/plain"], Vector{UInt8}("streamed-ok")))
+    try
+        cfg = RequestConfig()
+        body_out = Ref("")
+        resp = UniLM._http_open("POST", base * "/", ["Content-Type" => "application/json"];
+                                cfg, t0=time_ns()) do io
+            write(io, "{}")
+            HTTP.closewrite(io)
+            HTTP.startread(io)
+            body_out[] = String(read(io))
+        end
+        @test resp.status == 200
+        @test body_out[] == "streamed-ok"
+    finally
+        close(server)
+    end
+end

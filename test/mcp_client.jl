@@ -1312,3 +1312,32 @@ end
         close(httpserver)
     end
 end
+
+@testset "WS4 mcp_connect captures resolved config + auto_respawn" begin
+    captured = Ref{Any}(nothing)
+    server = _build_mcp_test_server(captured)
+    httpserver, url = _serve_mcp_json(server)
+    try
+        cfg = RequestConfig(current_config(); mcp_request_timeout = 7.0, mcp_connect_timeout = 11.0)
+        session = mcp_connect(url; config = cfg, auto_respawn = true)
+        try
+            # Captured verbatim on the session.
+            @test session.config.mcp_request_timeout == 7.0
+            @test session.config.mcp_connect_timeout == 11.0
+            @test session.auto_respawn == true
+            @test session._closed_by_timeout == false
+        finally
+            mcp_disconnect!(session)
+        end
+        # Default channel: no config kwarg ⇒ current_config() captured, auto_respawn OFF.
+        s2 = mcp_connect(url)
+        try
+            @test s2.config isa RequestConfig
+            @test s2.auto_respawn == false
+        finally
+            mcp_disconnect!(s2)
+        end
+    finally
+        close(httpserver)
+    end
+end

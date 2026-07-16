@@ -187,13 +187,24 @@ mutable struct StdioTransport <: MCPTransport
     process::Union{Base.Process,Nothing}
     input::Union{IO,Nothing}
     output::Union{IO,Nothing}
+    # Process-group id captured at spawn. Under detach=true the child is its own
+    # group leader, so its pgid == its pid. Retained so teardown can group-SIGKILL
+    # even after the direct child is reaped (when getpid(process) would fail). POSIX
+    # reserves a pid while it still names a live group, so this cannot target a
+    # recycled pid.
+    pgid::Union{Int32,Nothing}
     lock::ReentrantLock
-    StdioTransport(command::Cmd) = new(command, nothing, nothing, nothing, ReentrantLock())
+    StdioTransport(command::Cmd) = new(command, nothing, nothing, nothing, nothing, ReentrantLock())
 end
 
 function _transport_connect!(t::StdioTransport)
-    proc = open(t.command, read=true, write=true)
+    # Spawn in the child's own process group (detach=true) so the teardown ladder's
+    # final rung can group-SIGKILL grandchildren a wrapper forks (e.g. the node
+    # process `npx` launches) that would otherwise survive holding our stdio pipe.
+    # Teardown ladder: _kill_transport!.
+    proc = open(Cmd(t.command; detach=true), read=true, write=true)
     t.process = proc
+    t.pgid = getpid(proc)   # == the child's pgid under detach; capture while alive
     t.input = proc.in
     t.output = proc.out
     nothing
@@ -390,16 +401,31 @@ mutable struct MCPSession
     # The exact `initialize` params (protocolVersion, capabilities, clientInfo)
     # retained so an expired HTTP session can be re-initialized transparently.
     _init_params::Dict{String,Any}
+    # Timeout configuration resolved and captured at mcp_connect. Connect/initialize
+    # bounds come from here; the per-request bound resolves at call time (see call_tool).
+    config::RequestConfig
+    # When true, the next call on a session closed by a stdio request timeout respawns
+    # the server (same command, fresh handshake) instead of erroring. Default OFF: a
+    # silent respawn fabricates session continuity and in-memory server state is lost.
+    auto_respawn::Bool
+    # True only when `status == :closed` was reached via a request timeout (not a
+    # normal disconnect); gates the respawn-or-error decision on the next call.
+    _closed_by_timeout::Bool
 end
 
-# Sessions start with a fresh lock and a fresh (not stale) tool cache.
+# Sessions start with a fresh lock, a fresh (not stale) tool cache, default config,
+# respawn OFF, and not-timed-out. New keyword args default so existing positional
+# call sites (tests, handshake) construct unchanged.
 function MCPSession(transport::MCPTransport, caps::MCPServerCapabilities,
                     server_info::Dict{String,Any}, tools::Vector{MCPToolInfo},
                     resources::Vector{MCPResourceInfo}, prompts::Vector{MCPPromptInfo},
                     protocol_version::String, id_counter::Int, status::Symbol;
-                    init_params::Dict{String,Any}=Dict{String,Any}())
+                    init_params::Dict{String,Any}=Dict{String,Any}(),
+                    config::RequestConfig=RequestConfig(),
+                    auto_respawn::Bool=false)
     MCPSession(transport, caps, server_info, tools, resources, prompts,
-               protocol_version, id_counter, status, ReentrantLock(), false, init_params)
+               protocol_version, id_counter, status, ReentrantLock(), false, init_params,
+               config, auto_respawn, false)
 end
 
 """Allocate the next request id. Callers must hold `session._lock`."""
@@ -587,7 +613,10 @@ and populates tool cache.
 function mcp_connect(transport::MCPTransport;
                      client_name::String="UniLM.jl",
                      client_version::String="0.8.0",
-                     protocol_version::String=_MCP_PROTOCOL_VERSION)::MCPSession
+                     protocol_version::String=_MCP_PROTOCOL_VERSION,
+                     config::Union{Nothing,RequestConfig}=nothing,
+                     auto_respawn::Bool=false)::MCPSession
+    cfg = _resolve_config(config)
     _transport_connect!(transport)
     init_params = Dict{String,Any}(
         "protocolVersion" => protocol_version,
@@ -597,7 +626,8 @@ function mcp_connect(transport::MCPTransport;
     session = MCPSession(
         transport, MCPServerCapabilities(), Dict{String,Any}(),
         MCPToolInfo[], MCPResourceInfo[], MCPPromptInfo[],
-        protocol_version, 0, :initializing; init_params=init_params
+        protocol_version, 0, :initializing; init_params=init_params,
+        config=cfg, auto_respawn=auto_respawn
     )
     # Initialize handshake: validates the negotiated protocol version, stores it
     # on the session, and sends notifications/initialized.

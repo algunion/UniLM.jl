@@ -601,3 +601,227 @@ end
         close(srv)
     end
 end
+
+# ─── Subprocess MCP mock servers (stdio, newline-delimited JSON-RPC) ──────────
+
+# Build a `julia --startup-file=no -e <script>` command running `body`, with a
+# unique marker embedded in the argv so a hung child can be reaped by pkill even
+# without a Process handle. The child uses the same project so JSON is available.
+function _hm_stdio_cmd(body::String)
+    marker = "HMSTDIO" * string(rand(UInt64); base = 16)
+    proj = dirname(dirname(pathof(UniLM)))
+    script = "# $(marker)\n" * body
+    cmd = `$(Base.julia_cmd()) --startup-file=no --project=$(proj) -e $(script)`
+    (cmd, marker)
+end
+
+# Wrapper server: spawns a long-lived, separately-marked grandchild (an npx-style
+# wrapper's node child that holds our pipe), then answers only `initialize` and
+# goes mute. A naive kill of the direct child orphans the grandchild — only a
+# process-GROUP kill reaps it.
+function _hm_wrapper_child_cmd()
+    gc_marker = "HMGRANDCHILD" * string(rand(UInt64); base = 16)
+    proj = dirname(dirname(pathof(UniLM)))
+    body = """
+    using JSON
+    run(pipeline(`sh -c 'while :; do sleep 1; done # $(gc_marker)'`); wait = false)
+    while !eof(stdin)
+        line = readline(stdin)
+        isempty(line) && continue
+        msg = try
+            JSON.parse(line)
+        catch
+            nothing
+        end
+        msg === nothing && continue
+        if get(msg, "method", "") == "initialize"
+            resp = Dict("jsonrpc" => "2.0", "id" => get(msg, "id", 0), "result" => Dict(
+                "protocolVersion" => "2025-11-25", "capabilities" => Dict(),
+                "serverInfo" => Dict("name" => "hm-wrapper", "version" => "0.0.0")))
+            println(stdout, JSON.json(resp))
+            flush(stdout)
+        end
+    end
+    """
+    marker = "HMWRAPPER" * string(rand(UInt64); base = 16)
+    proj2 = dirname(dirname(pathof(UniLM)))
+    script = "# $(marker)\n" * body
+    cmd = `$(Base.julia_cmd()) --startup-file=no --project=$(proj2) -e $(script)`
+    (cmd, marker, gc_marker)
+end
+
+_hm_pkill(marker::AbstractString) = (try
+    run(pipeline(`pkill -f $(marker)`; stderr = devnull))
+catch
+end; nothing)
+
+_hm_alive(marker::AbstractString)::Bool = try
+    success(pipeline(`pgrep -f $(marker)`; stderr = devnull))
+catch
+    false
+end
+
+# A server that answers `initialize` (so mcp_connect SUCCEEDS) then swallows
+# every later request — the request-phase watchdog must fire on the next call.
+const _HM_HANDSHAKE_THEN_MUTE = raw"""
+using JSON
+while !eof(stdin)
+    line = readline(stdin)
+    isempty(line) && continue
+    msg = try
+        JSON.parse(line)
+    catch
+        nothing
+    end
+    msg === nothing && continue
+    if get(msg, "method", "") == "initialize"
+        resp = Dict("jsonrpc" => "2.0", "id" => get(msg, "id", 0), "result" => Dict(
+            "protocolVersion" => "2025-11-25", "capabilities" => Dict(),
+            "serverInfo" => Dict("name" => "hm-mute-after-init", "version" => "0.0.0")))
+        println(stdout, JSON.json(resp))
+        flush(stdout)
+    end
+    # notifications/initialized and every later request: swallowed, never answered.
+end
+"""
+
+# ─── MCP stdio timeout contracts ─────────────────────────────────────────────
+
+@testset "mcp: mute connect yields MCPTimeoutError naming the override" begin
+    # FIXED contract: a server that never answers `initialize` must not hang the
+    # connect — the handshake runs under mcp_connect_timeout and throws
+    # MCPTimeoutError(:connect) whose message names the per-connect override.
+    cmd, marker = _hm_stdio_cmd("while true; sleep(3600); end")
+    try
+        outcome = _hm_bounded() do
+            cfg = UniLM.RequestConfig(mcp_connect_timeout = 0.5)
+            try
+                mcp_connect(cmd; config = cfg)
+                (:connected, nothing)
+            catch e
+                (:threw, e)
+            end
+        end
+        ok = try
+            outcome[1] === :ok && let r = outcome[2]
+                r[1] === :threw && r[2] isa UniLM.MCPTimeoutError && r[2].phase === :connect &&
+                    occursin("mcp_connect_timeout", sprint(showerror, r[2]))
+            end
+        catch
+            false
+        end
+        @test_broken ok
+    finally
+        _hm_pkill(marker)
+    end
+end
+
+@testset "mcp: stdio request timeout is session-fatal; respawn is opt-in" begin
+    # FIXED contract: stdio framing has no id-demux, so a request timeout is
+    # SESSION-FATAL — the session becomes :closed and MCPTimeoutError(:request)
+    # is thrown. With auto_respawn=false (the default), the NEXT call on the
+    # closed session raises an error whose message names auto_respawn.
+    cmd, marker = _hm_stdio_cmd(_HM_HANDSHAKE_THEN_MUTE)
+    try
+        outcome = _hm_bounded() do
+            cfg = UniLM.RequestConfig(mcp_request_timeout = 0.5)
+            session = mcp_connect(cmd; config = cfg, auto_respawn = false)
+            first_err = try
+                call_tool(session, "probe", Dict{String,Any}())
+                nothing
+            catch e
+                e
+            end
+            st = session.status
+            second_err = try
+                call_tool(session, "probe", Dict{String,Any}())
+                nothing
+            catch e
+                e
+            end
+            (first_err, st, second_err)
+        end
+        ok = try
+            outcome[1] === :ok && let (fe, st, se) = outcome[2]
+                fe isa UniLM.MCPTimeoutError && fe.phase === :request && st === :closed &&
+                    se isa Exception && occursin("auto_respawn", sprint(showerror, se))
+            end
+        catch
+            false
+        end
+        @test_broken ok
+    finally
+        _hm_pkill(marker)
+    end
+end
+
+@testset "mcp: stdio teardown leaves no child processes (wrapper grandchild included)" begin
+    # FIXED contract: on a session-fatal timeout the transport is spawned
+    # detached (its own process group) and torn down by group-kill, so an
+    # npx-style wrapper's grandchild does NOT survive holding our pipe.
+    cmd, marker, gc_marker = _hm_wrapper_child_cmd()
+    try
+        outcome = _hm_bounded() do
+            cfg = UniLM.RequestConfig(mcp_request_timeout = 0.5)
+            session = mcp_connect(cmd; config = cfg, auto_respawn = false)
+            err = try
+                call_tool(session, "probe", Dict{String,Any}())
+                nothing
+            catch e
+                e
+            end
+            (err, session.status)
+        end
+        sleep(0.5)                        # let the OS reap the killed group
+        survivor = _hm_alive(gc_marker)
+        ok = try
+            outcome[1] === :ok && let (err, st) = outcome[2]
+                err isa UniLM.MCPTimeoutError && st === :closed && !survivor
+            end
+        catch
+            false
+        end
+        @test_broken ok
+    finally
+        _hm_pkill(gc_marker)
+        _hm_pkill(marker)
+    end
+end
+
+@testset "mcp: command-not-found fails immediately, not at the timer" begin
+    # FIXED contract: a nonexistent command surfaces the spawn error IMMEDIATELY
+    # (not swallowed to ride the connect timer). `dt < 2.0` with a 5 s connect
+    # timeout falsifies any implementation that let the failure ride the timer;
+    # the error must not be an MCPTimeoutError.
+    try
+        outcome = _hm_bounded() do
+            cfg = UniLM.RequestConfig(mcp_connect_timeout = 5.0)
+            badcmd = `this-command-truly-does-not-exist-$(rand(UInt32))`
+            t0 = time()
+            err = try
+                mcp_connect(badcmd; config = cfg)
+                nothing
+            catch e
+                e
+            end
+            (err, time() - t0)
+        end
+        ok = try
+            outcome[1] === :ok && let (err, dt) = outcome[2]
+                # Until the MCP client migration adds the `config` kwarg to
+                # mcp_connect, the call raises MethodError (a missing-kwarg
+                # dispatch failure) — NOT the real spawn error. A bare
+                # `err isa Exception` would let that MethodError satisfy the pin
+                # the moment the core config layer lands. Exclude MethodError so
+                # this pin cannot pass until the MCP client migration adds the
+                # kwarg and the genuine command-not-found process error surfaces.
+                err isa Exception && !(err isa MethodError) &&
+                    !(err isa UniLM.MCPTimeoutError) && dt < 2.0
+            end
+        catch
+            false
+        end
+        @test_broken ok
+    finally
+    end
+end

@@ -1055,7 +1055,11 @@ end
 # Map a recorded structured terminal-failure payload to a typed result. `status`
 # is the HTTP status when a response object completed normally, or `nothing` when
 # an idle close ate the transport EOF after the terminal was already recorded.
-function _agentic_terminal_result(te::Dict{String,Any}, status::Union{Int,Nothing}, io)
+# `status` is the HTTP status integer, whose concrete type differs across HTTP.jl
+# majors (`Int16` on 1.x, `Int64` on 2.x), so accept any `Integer`; `io` stays
+# untyped — it carries the request stream (whose concrete type also varies by
+# major) purely to read the x-request-id header.
+function _agentic_terminal_result(te::Dict{String,Any}, status::Union{Integer,Nothing}, io)
     req_id = !isnothing(io) ? _get_request_id(io) : nothing
     if haskey(te, "response")            # response.failed / response.incomplete
         ResponseFailure(response=JSON.json(te["response"]), status=something(status, 200), request_id=req_id)

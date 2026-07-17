@@ -67,12 +67,14 @@ provider — the exact quantity the idle guard watches, which provider keep-aliv
 
 | Provider | Model | Max inter-byte gap | Headroom vs 120s |
 |---|---|---|---|
-| OpenAI (reasoning) | — | — | — |
-| Anthropic (extended thinking) | — | — | — |
-| Gemini | — | — | — |
+| OpenAI (reasoning) | `gpt-5.5` | 8.5s (504 chunks, 16.1s stream) | 14× |
+| Anthropic (extended thinking) | — | not measured this release | — |
+| Gemini | `gemini-3.5-flash` | 15.9s (55 chunks, 19.8s stream) | 7.5× |
 
-The cells are filled from the measurement run at release close (any date-stamped);
-a healthy gap above `60s` raises the default before tagging.
+Measured 2026-07-18. The Gemini stream held a healthy ~16-second silent gap
+mid-thinking — the class of pause the byte-gap default must tolerate; both
+measured maxima sit well under the `60s` raise-the-default threshold. A healthy
+gap above `60s` in a future measurement raises the default before tagging.
 
 ## The four channels
 

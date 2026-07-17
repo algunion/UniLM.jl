@@ -604,6 +604,12 @@ extended to the whole-exchange watchdog in a later change.
 function _mcp_request!(session::MCPSession, method::String,
                        params::Union{Dict{String,Any},Nothing}=nothing;
                        timeout::Union{Nothing,Float64}=nothing)::Dict{String,Any}
+    # A session closed by a stdio request timeout cannot be reused: respawn (opt-in)
+    # or error before touching the transport. A no-op for live sessions and for
+    # sessions closed by a normal disconnect. Respawn's fresh handshake avoids this
+    # guard (it runs through _establish!), and its list_tools! re-enters here while
+    # status is :initializing, so the guard no-ops — no re-entrant respawn.
+    _ensure_live!(session)
     bound = _resolve_mcp_request_timeout(session, timeout)
     excfg = RequestConfig(session.config; request_timeout=bound)
     if session.transport isa StdioTransport
@@ -624,10 +630,14 @@ function _mcp_request!(session::MCPSession, method::String,
             end
             rethrow()
         end
-        # Exactly-once race: _with_deadline returns a real result even if the timer
-        # fired at ~completion. If the ladder already tore the transport down, the
-        # session cannot continue — reflect the close truthfully (spec: it stays closed).
-        if !_transport_isconnected(t)
+        # Exactly-once race: _with_deadline may return a real result even though the
+        # timer fired at ~completion and ran the kill ladder. Detect that the ladder
+        # ran by its own side effect — nulled transport handles — not by process
+        # liveness: a handle-backed transport with no spawned process (in-memory
+        # framing) reads as "no process" yet is perfectly usable, and must not be
+        # closed here. If the ladder tore the transport down mid-exchange the session
+        # cannot continue — reflect the close truthfully (it stays closed).
+        if isnothing(t.input) || isnothing(t.output)
             session.status = :closed
             session._closed_by_timeout = true
         end
@@ -766,6 +776,52 @@ function _finalize_connect!(session::MCPSession, init_result::Dict{String,Any})
     !isnothing(session.server_capabilities.resources) && list_resources!(session)
     !isnothing(session.server_capabilities.prompts) && list_prompts!(session)
     session.status = :ready
+    nothing
+end
+
+_closed_session_msg()::String =
+    "MCP stdio session was closed by a request timeout and cannot be reused: stdio " *
+    "framing carries no request id demux, so a late reply would misdeliver to the " *
+    "next caller. Reconnect explicitly, or pass auto_respawn=true to mcp_connect so " *
+    "the next call transparently respawns the server (its in-memory state is lost " *
+    "and tools are refetched)."
+
+"""Respawn a stdio session closed by a timeout: fresh transport (same command),
+captured config, fresh handshake. In-memory server state is lost and tools are
+refetched. Throws `MCPTimeoutError(:connect)` if the respawned server does not
+hand-shake in time."""
+function _respawn!(session::MCPSession)
+    session.transport isa StdioTransport ||
+        error("MCP auto-respawn is only supported for stdio sessions.")
+    old = session.transport
+    @warn "MCP stdio session was closed by a request timeout; respawning the server. \
+           In-memory server state is lost and tools are refetched." command=old.command
+    session.transport = StdioTransport(old.command)
+    session._id_counter = 0
+    session.tools_stale = false
+    session._closed_by_timeout = false
+    session.status = :initializing
+    init_result = try
+        _establish!(session)
+    catch e
+        session.status = :closed
+        session._closed_by_timeout = true
+        e isa UniLMTimeout &&
+            throw(MCPTimeoutError(:connect, e.elapsed, e.limit, _connect_timeout_msg(e.limit)))
+        rethrow()
+    end
+    _finalize_connect!(session, init_result)
+    nothing
+end
+
+"""Guard against reusing a session closed by a stdio request timeout: respawn when
+opted in, otherwise error with recovery guidance. A no-op for live sessions and
+for sessions closed by a normal disconnect."""
+function _ensure_live!(session::MCPSession)
+    if session.status === :closed && session._closed_by_timeout
+        session.auto_respawn || error(_closed_session_msg())
+        _respawn!(session)
+    end
     nothing
 end
 

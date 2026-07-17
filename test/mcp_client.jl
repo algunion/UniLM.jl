@@ -1001,6 +1001,13 @@ end
     @test session.tools_stale == false
     UniLM._mcp_request!(session, "ping")
     @test session.tools_stale == true
+    # A handle-backed (process-less) transport is perfectly usable: the exactly-once
+    # race check keys on nulled handles, not process liveness, so a completed request
+    # must NOT spuriously mark the session closed-by-timeout (which would make the next
+    # request respawn-or-error over a live session). Regression: the process-liveness
+    # proxy read this transport as "not connected" and closed it after one request.
+    @test session.status == :ready
+    @test session._closed_by_timeout == false
     # Refreshing the list stores the new tools and clears the flag.
     tools = list_tools!(session)
     @test [tl.name for tl in tools] == ["fresh"]
@@ -1681,6 +1688,95 @@ end
         @test err.phase === :connect
         @test err.limit == 0.5
         @test occursin("mcp_connect_timeout", err.msg)   # names the per-connect override
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+# ─── WS4: opt-in auto-respawn + call-time resolution into bridged closures ─────
+# A stdio request timeout is session-fatal (no id demux). The NEXT call decides:
+# with auto_respawn=true the server is transparently respawned (same command,
+# captured config, fresh handshake — in-memory state is LOST, tools refetched)
+# and the call retries ONCE; with auto_respawn=false (default) it errors, naming
+# the opt-in. Separately, a bridged tool closure passes NO timeout kwarg, so an
+# ambient with_request_config override must reach it through the scoped-config leg.
+
+@testset "WS4 auto-respawn on next call after a stdio timeout (opt-in), state lost" begin
+    marker = "UNILMRESPAWN" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
+    jl = Base.julia_cmd(); cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    try
+        session = mcp_connect(cmd; auto_respawn = true,
+            config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
+        try
+            @test call_tool(session, "incr", Dict{String,Any}()).content == "1"   # server state = 1
+            # Time out on `hang` → session-fatal close.
+            box = Ref{Any}(nothing)
+            w = @async (box[] = try call_tool(session, "hang", Dict{String,Any}()) catch e; e end)
+            @test timedwait(() -> istaskdone(w), 12.0) === :ok
+            @test box[] isa MCPTimeoutError
+            @test session.status == :closed
+            # Next call: respawns (loud @warn), server memory GONE ⇒ counter back to 1.
+            out = @test_logs (:warn,) match_mode=:any call_tool(session, "incr", Dict{String,Any}())
+            @test out.content == "1"                 # fresh process, NOT "2"
+            @test session.status == :ready
+            @test session._closed_by_timeout == false
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "WS4 closed-by-timeout session without auto_respawn errors naming the override" begin
+    marker = "UNILMNORESPAWN" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
+    jl = Base.julia_cmd(); cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    try
+        session = mcp_connect(cmd; auto_respawn = false,
+            config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
+        box = Ref{Any}(nothing)
+        w = @async (box[] = try call_tool(session, "hang", Dict{String,Any}()) catch e; e end)
+        @test timedwait(() -> istaskdone(w), 12.0) === :ok
+        @test session.status == :closed
+        err = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+        @test err isa ErrorException
+        @test occursin("auto_respawn=true", err.msg)     # names the opt-in
+        @test occursin("timeout", lowercase(err.msg))
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "WS4 bridged tool closure picks up ambient with_request_config (no kwargs)" begin
+    marker = "UNILMAMBIENT" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
+    jl = Base.julia_cmd(); cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    try
+        # Session default is large (120 s); the bridged closure passes NO timeout kwarg.
+        session = mcp_connect(cmd)   # default mcp_request_timeout = 120.0
+        try
+            tools = mcp_tools(session)
+            hang = only(filter(t -> t.tool.func.name == "hang", tools))
+            box = Ref{Any}(nothing)
+            # The 0.6 s ambient — not the 120 s session default — must bound the closure.
+            w = @async with_request_config(; mcp_request_timeout = 0.6) do
+                box[] = try hang.callable("hang", Dict{String,Any}()) catch e; e end
+            end
+            @test timedwait(() -> istaskdone(w), 12.0) === :ok
+            @test box[] isa MCPTimeoutError
+            @test box[].phase === :request
+            @test box[].limit == 0.6           # proves the ambient reached the closure
+        finally
+            session.status == :ready && mcp_disconnect!(session)
+        end
     finally
         try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
         rm(childfile; force=true)

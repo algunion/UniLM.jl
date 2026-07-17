@@ -1754,6 +1754,48 @@ end
     end
 end
 
+@testset "WS4 explicit disconnect after a stdio timeout clears the close reason" begin
+    # A request timeout leaves a stdio session respawn-eligible so the NEXT call
+    # can decide (respawn or error). But if the user disconnects explicitly in
+    # between, that decision no longer applies: an explicit mcp_disconnect! is a
+    # normal close and must win over the stale timeout flag. auto_respawn=true is
+    # the sharpest form here — if the flag survived the disconnect, the next call
+    # would silently respawn (with a @warn) instead of raising the plain
+    # not-connected error, despite the user having already closed the session.
+    marker = "UNILMDISCAFTERTO" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
+    jl = Base.julia_cmd(); cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    try
+        session = mcp_connect(cmd; auto_respawn = true,
+            config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
+        box = Ref{Any}(nothing)
+        w = @async (box[] = try call_tool(session, "hang", Dict{String,Any}()) catch e; e end)
+        @test timedwait(() -> istaskdone(w), 12.0) === :ok
+        @test box[] isa MCPTimeoutError
+        @test session.status == :closed
+        @test session._closed_by_timeout == true   # respawn-eligible so far
+
+        mcp_disconnect!(session)                    # explicit user intent: a normal close now
+        @test session._closed_by_timeout == false   # user intent must clear it
+
+        err = nothing
+        @test_logs begin   # zero patterns: ANY log record (e.g. the respawn @warn) fails this
+            err = try
+                call_tool(session, "incr", Dict{String,Any}())
+            catch e
+                e
+            end
+        end
+        @test err isa ErrorException
+        @test occursin("not connected", lowercase(err.msg))   # plain not-connected error
+        @test !occursin("auto_respawn", err.msg)               # never the respawn-naming guidance
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
 @testset "WS4 bridged tool closure picks up ambient with_request_config (no kwargs)" begin
     marker = "UNILMAMBIENT" * string(rand(UInt64); base=16)
     proj = dirname(dirname(pathof(UniLM)))

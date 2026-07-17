@@ -912,6 +912,10 @@ function mcp_disconnect!(session::MCPSession)
     _transport_disconnect!(session.transport;
         cfg=RequestConfig(session.config; request_timeout=session.config.mcp_request_timeout))
     session.status = :closed
+    # User intent wins: an explicit disconnect is a normal close, not a timeout, so
+    # the next call must never respawn or cite auto_respawn — even if this session
+    # was closed by a request timeout before the caller disconnected it.
+    session._closed_by_timeout = false
     nothing
 end
 

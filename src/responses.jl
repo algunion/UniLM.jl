@@ -1303,17 +1303,21 @@ if result isa ResponseSuccess
 end
 ```
 """
-function get_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function get_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+        config::Union{Nothing,RequestConfig}=nothing)
+    cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
         url = _agentic_url(service) * "/" * response_id
-        resp = HTTP.get(url, headers=auth_header(service); status_exception=false)
+        resp = _http("GET", url, auth_header(service); cfg=cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
             return ResponseSuccess(response=decode_agentic(service, resp))
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
+        e isa InterruptException && rethrow()
+        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
         return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
@@ -1331,17 +1335,21 @@ result = delete_response("resp_abc123")
 result["deleted"]  # => true
 ```
 """
-function delete_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function delete_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+        config::Union{Nothing,RequestConfig}=nothing)
+    cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
         url = _agentic_url(service) * "/" * response_id
-        resp = HTTP.request("DELETE", url, headers=auth_header(service); status_exception=false)
+        resp = _http("DELETE", url, auth_header(service); cfg=cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
+        e isa InterruptException && rethrow()
+        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
         return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
@@ -1365,8 +1373,10 @@ function list_input_items(response_id::String;
     limit::Int=20,
     order::String="desc",
     after::Union{String,Nothing}=nothing,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing)
 
+    cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
         url = _agentic_url(service) * "/" * response_id * "/input_items"
@@ -1374,13 +1384,15 @@ function list_input_items(response_id::String;
         !isnothing(after) && push!(params, "after=$after")
         url *= "?" * join(params, "&")
 
-        resp = HTTP.get(url, headers=auth_header(service); status_exception=false)
+        resp = _http("GET", url, auth_header(service); cfg=cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
+        e isa InterruptException && rethrow()
+        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
         return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
@@ -1403,17 +1415,21 @@ if cancel_result isa ResponseSuccess
 end
 ```
 """
-function cancel_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function cancel_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+        config::Union{Nothing,RequestConfig}=nothing)
+    cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
         url = _agentic_url(service) * "/" * response_id * "/cancel"
-        resp = HTTP.post(url, headers=auth_header(service); status_exception=false)
+        resp = _http("POST", url, auth_header(service); cfg=cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
             return ResponseSuccess(response=decode_agentic(service, resp))
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
+        e isa InterruptException && rethrow()
+        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
         return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
@@ -1445,19 +1461,23 @@ compacted = compact_response(model="gpt-5.5", input=[
 """
 function compact_response(; model::String="gpt-5.5",
     input::Any,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing)
 
+    cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
         url = _api_base_url(service) * RESPONSES_PATH * "/compact"
         body = JSON.json(Dict{Symbol,Any}(:model => model, :input => input))
-        resp = HTTP.post(url, body=body, headers=auth_header(service); status_exception=false)
+        resp = _http("POST", url, auth_header(service), body; cfg=cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
+        e isa InterruptException && rethrow()
+        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
         return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
@@ -1483,8 +1503,10 @@ function count_input_tokens(; model::String="gpt-5.5",
     input::Any,
     instructions::Union{String,Nothing}=nothing,
     tools::Union{Vector,Nothing}=nothing,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing)
 
+    cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
         url = _api_base_url(service) * RESPONSES_PATH * "/input_tokens"
@@ -1492,13 +1514,15 @@ function count_input_tokens(; model::String="gpt-5.5",
         !isnothing(instructions) && (d[:instructions] = instructions)
         !isnothing(tools) && (d[:tools] = tools)
         body = JSON.json(d)
-        resp = HTTP.post(url, body=body, headers=auth_header(service); status_exception=false)
+        resp = _http("POST", url, auth_header(service), body; cfg=cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
+        e isa InterruptException && rethrow()
+        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
         return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)

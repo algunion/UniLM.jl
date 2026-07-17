@@ -2145,3 +2145,53 @@ end
     @test e.cause === to
     @test ResponseCallError(error="x").cause === nothing   # default
 end
+
+using Sockets
+
+# Localhost HTTP server whose handler drains the request then holds the
+# connection open without ever writing a response (mute peer). `hold` outlives
+# the client's short timeout so the watchdog — not the server — ends the call.
+function _mute_http_server(; hold::Float64=5.0)
+    server = nothing; port = 0
+    for attempt in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+        try
+            server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
+                read(http); sleep(hold)
+            end
+            break
+        catch; attempt == 5 && rethrow(); end
+    end
+    server, "http://127.0.0.1:$port"
+end
+
+# Mock agentic endpoint whose base URL is swappable per test via a Ref holder.
+const _RESP_TIMEOUT_URL = Ref("http://127.0.0.1:0")
+struct _RespTimeoutMock <: UniLM.ServiceEndpoint end
+UniLM._api_base_url(::Type{_RespTimeoutMock}) = _RESP_TIMEOUT_URL[]
+UniLM.auth_header(::Type{_RespTimeoutMock}) = ["Content-Type" => "application/json"]
+
+@testset "lifecycle op: mute server yields a bounded typed timeout" begin
+    server, url = _mute_http_server()
+    _RESP_TIMEOUT_URL[] = url
+    cfg = RequestConfig(connect_timeout=0.5, request_timeout=0.5, total_deadline=1.0, max_attempts=1)
+    try
+        t = Threads.@spawn get_response("resp_x"; service=_RespTimeoutMock, config=cfg)
+        @test timedwait(() -> istaskdone(t), 10.0) == :ok
+        result = fetch(t)
+        @test result isa ResponseCallError
+        @test result.status === nothing
+        @test result.cause isa UniLM.UniLMTimeout
+        @test result.cause.phase in (:request, :connect)
+    finally
+        close(server)
+    end
+end
+
+@testset "lifecycle op: InterruptException is rethrown, never lands in a value" begin
+    struct _RespInterruptMock <: UniLM.ServiceEndpoint end
+    UniLM._api_base_url(::Type{_RespInterruptMock}) = "http://127.0.0.1:1"
+    UniLM.auth_header(::Type{_RespInterruptMock}) = throw(InterruptException())
+    @test_throws InterruptException get_response("resp_x"; service=_RespInterruptMock)
+end

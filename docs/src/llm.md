@@ -483,7 +483,7 @@ Respond(input="Hard math problem", model="o3", reasoning=Reasoning(effort="high"
 
 ```julia
 # Struct form
-respond(r::Respond; retries=0, callback=nothing) -> ResponseSuccess | ResponseFailure | ResponseCallError | Task
+respond(r::Respond; config=nothing, callback=nothing) -> ResponseSuccess | ResponseFailure | ResponseCallError | Task
 
 # Convenience — builds Respond internally
 respond(input; kwargs...) -> same
@@ -493,7 +493,7 @@ respond(callback::Function, input; kwargs...) -> Task
 ```
 
 - Streaming callback signature: `callback(chunk::Union{String, ResponseObject}, close::Ref{Bool})`
-- Auto-retries on HTTP 408/429/500/502/503/504/529 with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers.
+- Retries retryable statuses (408/429/500/502/503/504/529) up to `config.max_attempts` (default 3) with full-jitter backoff bounded by `config.total_deadline`; honors `Retry-After`. Every attempt is time-bounded — a silent peer fails with a typed timeout inside `ResponseCallError` (`status = nothing`, `cause::UniLMTimeout`), never a hang.
 - **Parameter validation**: `temperature` ∈ [0.0, 2.0], `top_p` ∈ [0.0, 1.0], `max_output_tokens` ≥ 1, `top_logprobs` ∈ [0, 20]. Out-of-range values throw `ArgumentError`.
 
 ### Response Accessors
@@ -1017,9 +1017,9 @@ struct FIMChoice; text, index, finish_reason; end
 struct FIMResponse; choices, usage, model, raw; end
 struct FIMSuccess <: LLMRequestResponse; response::FIMResponse; end
 struct FIMFailure <: LLMRequestResponse; response, status; end
-struct FIMCallError <: LLMRequestResponse; error, status; end
+struct FIMCallError <: LLMRequestResponse; error, status, cause; end
 
-fim_complete(fim::FIMCompletion; retries=0) -> LLMRequestResponse
+fim_complete(fim::FIMCompletion; config=nothing) -> LLMRequestResponse
 fim_complete(prompt; suffix=nothing, kwargs...) -> LLMRequestResponse  # convenience
 fim_text(result) -> String  # extract generated text
 ```
@@ -1041,7 +1041,7 @@ Continue from a partial assistant message. The model generates text continuing
 from the assistant's prefix. DeepSeek beta feature.
 
 ```julia
-prefix_complete(chat::Chat; retries=0) -> LLMRequestResponse
+prefix_complete(chat::Chat; config=nothing) -> LLMRequestResponse
 # Last message must be role=assistant with the prefix text
 ```
 

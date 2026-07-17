@@ -217,14 +217,16 @@ function _next_respond(r::Respond; input, previous_response_id=nothing)
 end
 
 """
-    tool_loop(r::Respond, dispatcher::Function; max_turns=10, retries=0) -> ToolLoopResult
+    tool_loop(r::Respond, dispatcher::Function; max_turns=10, config=nothing) -> ToolLoopResult
 
 Run a tool-calling loop on a [`Respond`](@ref) request. Dispatches function calls
 via `dispatcher(name, args)`, builds `function_call_output` input items, and chains
 via `previous_response_id`.
+
+Per-call `config::RequestConfig` overrides timeouts/retry budget.
 """
 function tool_loop(r::Respond, dispatcher::Function;
-                   max_turns::Int=10, retries::Int=0)::ToolLoopResult
+                   max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing)::ToolLoopResult
     all_outcomes = ToolCallOutcome[]
     turns = 0
     input = r.input
@@ -233,7 +235,7 @@ function tool_loop(r::Respond, dispatcher::Function;
     while turns < max_turns
         turns += 1
         req = _next_respond(r; input, previous_response_id=prev_id)
-        raw = respond(req; retries)
+        raw = respond(req; config)
         result = raw isa Task ? fetch(raw) : raw
 
         if result isa ResponseFailure
@@ -274,11 +276,13 @@ function tool_loop(r::Respond, dispatcher::Function;
 end
 
 """
-    tool_loop(r::Respond; max_turns=10, retries=0) -> ToolLoopResult
+    tool_loop(r::Respond; max_turns=10, config=nothing) -> ToolLoopResult
 
 No-dispatcher variant: extracts callables from [`CallableTool`](@ref) entries in `r.tools`.
+
+Per-call `config::RequestConfig` overrides timeouts/retry budget.
 """
-function tool_loop(r::Respond; max_turns::Int=10, retries::Int=0)::ToolLoopResult
+function tool_loop(r::Respond; max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing)::ToolLoopResult
     callables = Dict{String,Function}()
     if !isnothing(r.tools)
         for t in r.tools
@@ -291,31 +295,34 @@ function tool_loop(r::Respond; max_turns::Int=10, retries::Int=0)::ToolLoopResul
         isnothing(fn) && error("Unknown tool: $name")
         fn(name, args)
     end
-    tool_loop(r, dispatcher; max_turns, retries)
+    tool_loop(r, dispatcher; max_turns, config)
 end
 
 """
     tool_loop(input, dispatcher::Function; tools, kwargs...) -> ToolLoopResult
 
 Convenience form: creates a [`Respond`](@ref) and runs the tool loop.
+
+Per-call `config::RequestConfig` overrides timeouts/retry budget.
 """
 function tool_loop(input, dispatcher::Function; kwargs...)
     kws = Dict{Symbol,Any}(kwargs)
-    retries = pop!(kws, :retries, 0)
+    config = pop!(kws, :config, nothing)
     max_turns = pop!(kws, :max_turns, 10)
     r = Respond(; input, kws...)
-    tool_loop(r, dispatcher; max_turns, retries)
+    tool_loop(r, dispatcher; max_turns, config)
 end
 
 """
-    tool_loop(input::String; tools, max_turns=10, retries=0, kwargs...) -> ToolLoopResult
+    tool_loop(input::String; tools, max_turns=10, config=nothing, kwargs...) -> ToolLoopResult
 
 No-dispatcher convenience form of the Responses-API tool loop for a plain-string prompt.
 Wraps `input` and `tools` in a [`Respond`](@ref) and delegates to
 [`tool_loop(::Respond)`](@ref), which dispatches each model-requested function call to the
 matching [`CallableTool`](@ref) callable.
 
-Keyword routing is explicit: `max_turns` and `retries` drive the loop, while every other
+Keyword routing is explicit: `max_turns` and `config` drive the loop (`config::RequestConfig`
+overrides timeouts/retry budget), while every other
 keyword is forwarded verbatim to the [`Respond`](@ref) constructor — an unknown keyword
 raises there rather than being silently dropped. `tools` is required and must hold
 [`CallableTool`](@ref) entries (e.g. from [`mcp_tools_respond`](@ref)).
@@ -327,7 +334,7 @@ tools = mcp_tools_respond(session)
 result = tool_loop("List files in /tmp"; tools=tools)
 ```
 """
-function tool_loop(input::String; tools, max_turns::Int=10, retries::Int=0, kwargs...)::ToolLoopResult
+function tool_loop(input::String; tools, max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing, kwargs...)::ToolLoopResult
     r = Respond(; input, tools, kwargs...)
-    tool_loop(r; max_turns, retries)
+    tool_loop(r; max_turns, config)
 end

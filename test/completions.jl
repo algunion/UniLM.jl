@@ -108,3 +108,119 @@ end
     hdrs = UniLM.auth_header(ds)
     @test any(p -> p.first == "Authorization" && p.second == "Bearer test-key", hdrs)
 end
+
+@testset "FIMCallError carries an optional cause" begin
+    to = UniLM.UniLMTimeout(:request, 0.5, 0.5)
+    @test FIMCallError(error="timeout", status=nothing, cause=to).cause === to
+    @test FIMCallError(error="x").cause === nothing
+end
+
+# ─── config-seam migration: bounded timeouts + interrupt discipline ──────────
+
+using Sockets
+
+# Localhost mute server (drains request, then holds without responding).
+function _compl_mute_server(; hold::Float64=5.0)
+    server = nothing; port = 0
+    for attempt in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+        try
+            server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
+                read(http); sleep(hold)
+            end
+            break
+        catch; attempt == 5 && rethrow(); end
+    end
+    server, "http://127.0.0.1:$port"
+end
+
+# Localhost canned-status server (fixed status + headers + body).
+function _compl_canned_server(status::Int, body::String, hdrs::Vector{Pair{String,String}})
+    server = nothing; port = 0
+    for attempt in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+        try
+            server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
+                read(http)
+                HTTP.setstatus(http, status)
+                for (k, v) in hdrs; HTTP.setheader(http, k => v); end
+                HTTP.startwrite(http); write(http, body)
+            end
+            break
+        catch; attempt == 5 && rethrow(); end
+    end
+    server, "http://127.0.0.1:$port"
+end
+
+# Mock endpoint with :fim + :prefix_completion, base URL swappable per test.
+const _COMPL_URL = Ref("http://127.0.0.1:0")
+struct _ComplTimeoutMock <: UniLM.ServiceEndpoint end
+UniLM.provider_capabilities(::Type{_ComplTimeoutMock}) = Set([:fim, :prefix_completion])
+UniLM.auth_header(::Type{_ComplTimeoutMock}) = ["Content-Type" => "application/json"]
+UniLM.default_fim_model(::Type{_ComplTimeoutMock}) = "mock-fim"
+UniLM.get_url(::Type{_ComplTimeoutMock}, ::FIMCompletion) = _COMPL_URL[]
+UniLM._prefix_complete_url(::Type{_ComplTimeoutMock}) = _COMPL_URL[]
+
+@testset "fim_complete: mute server yields a bounded typed timeout" begin
+    server, url = _compl_mute_server()
+    _COMPL_URL[] = url
+    cfg = RequestConfig(request_timeout=0.5, total_deadline=1.0, max_attempts=1)
+    try
+        fim = FIMCompletion(service=_ComplTimeoutMock, model="mock-fim", prompt="def f():")
+        t = Threads.@spawn fim_complete(fim; config=cfg)
+        @test timedwait(() -> istaskdone(t), 10.0) == :ok
+        result = fetch(t)
+        @test result isa FIMCallError
+        @test result.status === nothing
+        @test result.cause isa UniLM.UniLMTimeout
+    finally
+        close(server)
+    end
+end
+
+@testset "fim_complete: Retry-After beyond the deadline fails immediately" begin
+    server, url = _compl_canned_server(503, "{}", ["Retry-After" => "3600"])
+    _COMPL_URL[] = url
+    cfg = RequestConfig(request_timeout=0.5, total_deadline=1.0, max_attempts=3)
+    try
+        fim = FIMCompletion(service=_ComplTimeoutMock, model="mock-fim", prompt="x")
+        t = Threads.@spawn fim_complete(fim; config=cfg)
+        @test timedwait(() -> istaskdone(t), 10.0) == :ok
+        result = fetch(t)
+        @test result isa FIMFailure
+        @test result.status == 503
+    finally
+        close(server)
+    end
+end
+
+@testset "fim_complete: InterruptException is rethrown" begin
+    struct _FimInterruptMock <: UniLM.ServiceEndpoint end
+    UniLM.provider_capabilities(::Type{_FimInterruptMock}) = Set([:fim])
+    UniLM.default_fim_model(::Type{_FimInterruptMock}) = "m"
+    UniLM.get_url(::Type{_FimInterruptMock}, ::FIMCompletion) = "http://127.0.0.1:1/v1/completions"
+    UniLM.auth_header(::Type{_FimInterruptMock}) = throw(InterruptException())
+    @test_throws InterruptException fim_complete(FIMCompletion(service=_FimInterruptMock, model="m", prompt="x"))
+end
+
+@testset "prefix_complete: mute server yields a bounded typed timeout" begin
+    server, url = _compl_mute_server()
+    _COMPL_URL[] = url
+    cfg = RequestConfig(request_timeout=0.5, total_deadline=1.0, max_attempts=1)
+    try
+        # `push!` refuses a lone assistant message on an empty chat (the
+        # empty-conversation guard), so build the assistant-prefix chat through the
+        # constructor — the same idiom the prefix mock-server testsets use.
+        chat = Chat(service=_ComplTimeoutMock, model="mock-fim",
+                    messages=[Message(role=UniLM.RoleAssistant, content="```python\n")])
+        t = Threads.@spawn prefix_complete(chat; config=cfg)
+        @test timedwait(() -> istaskdone(t), 10.0) == :ok
+        result = fetch(t)
+        @test result isa LLMCallError
+        @test result.cause isa UniLM.UniLMTimeout   # the timeout is threaded into LLMCallError.cause
+    finally
+        close(server)
+    end
+end

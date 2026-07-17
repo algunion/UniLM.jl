@@ -108,6 +108,9 @@ end
     error::String
     status::Union{Int,Nothing} = nothing
     request_id::Union{String, Nothing} = nothing
+    # Underlying exception when the failure is a timeout/transport error rather
+    # than an HTTP status (status stays `nothing` — no fabricated HTTP code).
+    cause::Union{Nothing,Exception} = nothing
 end
 
 # ─── FIM Accessors ─────────────────────────────────────────────────────────
@@ -148,34 +151,35 @@ end
 # ─── FIM Request ──────────────────────────────────────────────────────────
 
 """
-    fim_complete(fim::FIMCompletion; retries=0) -> LLMRequestResponse
+    fim_complete(fim::FIMCompletion; config=nothing) -> LLMRequestResponse
 
 Execute a FIM (Fill-in-the-Middle) completion request. Returns [`FIMSuccess`](@ref),
 [`FIMFailure`](@ref), or [`FIMCallError`](@ref).
+
+Per-call `config::RequestConfig` overrides timeouts and the retry budget; a silent
+peer fails with a typed timeout inside the [`FIMCallError`](@ref) result
+(`cause::UniLMTimeout`).
 """
-function fim_complete(fim::FIMCompletion; retries::Int=0)::LLMRequestResponse
+function fim_complete(fim::FIMCompletion; config::Union{Nothing,RequestConfig}=nothing)::LLMRequestResponse
     validate_capability(fim.service, :fim, "FIM Completion")
+    cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
         body = JSON.json(fim)
         url = get_url(fim.service, fim)
-        resp = HTTP.post(url, body=body, headers=auth_header(fim.service); status_exception=false)
+        resp = _http_with_retries(cfg, t0, "POST", url, auth_header(fim.service), body)
         if resp.status == 200
             return FIMSuccess(response=_parse_fim_response(resp))
-        elseif _is_retryable(resp.status)
-            if retries < _RETRY_MAX_ATTEMPTS
-                delay = _retry_delay(retries, resp)
-                @warn "Request status: $(resp.status). Retrying in $(round(delay; digits=2))s..."
-                sleep(delay)
-                return fim_complete(fim; retries=retries + 1)
-            else
-                return FIMFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
-            end
         else
+            # Retry/backoff already ran inside the shared loop; the last real
+            # response is the truthful outcome (a budget-exhausted 429 is a 429,
+            # not a fabricated timeout).
             return FIMFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
         e isa ArgumentError && rethrow()  # re-throw validation errors
+        e isa InterruptException && rethrow()
+        e isa UniLMTimeout && return FIMCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
         return FIMCallError(error=string(e), status=statuserror, request_id=req_id)
@@ -189,8 +193,8 @@ Convenience form: creates a [`FIMCompletion`](@ref) and executes it.
 """
 function fim_complete(prompt::String; suffix::Union{String,Nothing}=nothing, kwargs...)
     kws = Dict{Symbol,Any}(kwargs)
-    retries = pop!(kws, :retries, 0)
-    fim_complete(FIMCompletion(; prompt, suffix, kws...); retries)
+    config = pop!(kws, :config, nothing)
+    fim_complete(FIMCompletion(; prompt, suffix, kws...); config)
 end
 
 # ─── Chat Prefix Completion ──────────────────────────────────────────────
@@ -200,13 +204,17 @@ _prefix_complete_url(s::GenericOpenAIEndpoint) = rstrip(s.base_url, '/') * CHAT_
 _prefix_complete_url(s) = get_url(s, Chat())  # fallback for other endpoints
 
 """
-    prefix_complete(chat::Chat; retries=0) -> LLMRequestResponse
+    prefix_complete(chat::Chat; config=nothing) -> LLMRequestResponse
 
 Chat prefix completion: the model continues from a partial assistant message.
 The last message in `chat` must be `role=assistant` containing the text prefix
 to continue from.
 
 Supported by [`DeepSeekEndpoint`](@ref) (beta).
+
+Per-call `config::RequestConfig` overrides timeouts and the retry budget; a silent
+peer fails with a typed timeout inside the [`LLMCallError`](@ref) result
+(`cause::UniLMTimeout`).
 
 # Example
 ```julia
@@ -216,11 +224,11 @@ push!(chat, Message(role=RoleAssistant, content="```python\\n"))
 result = prefix_complete(chat)
 ```
 """
-function prefix_complete(chat::Chat; retries::Int=0)::LLMRequestResponse
+function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothing)::LLMRequestResponse
     validate_capability(chat.service, :prefix_completion, "Chat Prefix Completion")
     isempty(chat) && throw(ArgumentError("Chat must not be empty for prefix completion"))
     last(chat).role != RoleAssistant && throw(ArgumentError("Last message must be role=assistant for prefix completion"))
-
+    cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
         body_dict = JSON.lower(chat)
@@ -238,7 +246,7 @@ function prefix_complete(chat::Chat; retries::Int=0)::LLMRequestResponse
         body = JSON.json(body_dict)
 
         url = _prefix_complete_url(chat.service)
-        resp = HTTP.post(url, body=body, headers=auth_header(chat.service); status_exception=false)
+        resp = _http_with_retries(cfg, t0, "POST", url, auth_header(chat.service), body)
 
         if resp.status == 200
             extracted = extract_message(resp)
@@ -247,20 +255,15 @@ function prefix_complete(chat::Chat; retries::Int=0)::LLMRequestResponse
                 chat.messages[end] = extracted.message
             end
             return LLMSuccess(message=extracted.message, self=chat, usage=extracted.usage)
-        elseif _is_retryable(resp.status)
-            if retries < _RETRY_MAX_ATTEMPTS
-                delay = _retry_delay(retries, resp)
-                @warn "Request status: $(resp.status). Retrying in $(round(delay; digits=2))s..."
-                sleep(delay)
-                return prefix_complete(chat; retries=retries + 1)
-            else
-                return LLMFailure(status=resp.status, response=String(resp.body), self=chat, request_id=_get_request_id(resp))
-            end
         else
+            # Retry/backoff already ran inside the shared loop; the last real
+            # response is the truthful outcome.
             return LLMFailure(status=resp.status, response=String(resp.body), self=chat, request_id=_get_request_id(resp))
         end
     catch e
         e isa ArgumentError && rethrow()
+        e isa InterruptException && rethrow()
+        e isa UniLMTimeout && return LLMCallError(error=sprint(showerror, e), self=chat, status=nothing, cause=e)
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
         return LLMCallError(error=string(e), self=chat, request_id=req_id)
     end

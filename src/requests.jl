@@ -97,12 +97,13 @@ end
 # it rides along as a fast path. The 1.x readtimeout bounds the WHOLE
 # exchange — it would kill long healthy streams — so streams never set it and
 # the idle guard is the sole idle enforcement there.
-# INVARIANT: read-idle is the ONLY native mid-stream timer armed here. The
+# INVARIANT: read-idle is the ONLY native mid-stream timer armed here. Each
 # stream driver's catch maps every mid-stream HTTP.TimeoutError to :stream_idle
 # because HTTP.jl surfaces a read-idle breach with operation="request" —
 # indistinguishable by label from any other request-phase timeout. Adding a
 # native request_timeout (or any new mid-stream timer) to this set therefore
-# requires revisiting that mapping (see the catch in `_stream_attempt`).
+# requires revisiting that mapping (see the catches in `_stream_attempt` and
+# `_respond_stream`).
 function _native_stream_kwargs(cfg::RequestConfig; major2::Bool=_HTTP_MAJOR2)
     return major2 ?
         (connect_timeout   = _native_seconds_real(cfg.connect_timeout),

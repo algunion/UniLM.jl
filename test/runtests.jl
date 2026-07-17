@@ -129,6 +129,21 @@ end
     @testset "vector_stores" begin
         include("vector_stores.jl")
     end
+    @testset "videos" begin
+        include("videos.jl")
+    end
+    @testset "batch" begin
+        include("batch.jl")
+    end
+    @testset "moderations" begin
+        include("moderations.jl")
+    end
+    @testset "realtime" begin
+        include("realtime.jl")
+    end
+    @testset "fine_tuning" begin
+        include("fine_tuning.jl")
+    end
 
     @testset "webhooks" begin
         include("webhooks.jl")

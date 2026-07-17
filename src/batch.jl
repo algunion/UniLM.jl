@@ -55,61 +55,80 @@ _batch_err(e) = BatchCallError(error=string(e), status=(hasproperty(e, :status) 
 
 Create a batch job. `endpoint` is e.g. `"/v1/chat/completions"`, `"/v1/responses"`, or
 `"/v1/embeddings"`. `input_file_id` comes from `upload_file(path, "batch")`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
 function create_batch(input_file_id::String, endpoint::String; completion_window::String="24h",
-    metadata::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    metadata::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :batch, "Batch API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:input_file_id => input_file_id, :endpoint => endpoint, :completion_window => completion_window)
         !isnothing(metadata) && (d[:metadata] = metadata)
-        resp = HTTP.post(_api_base_url(service) * BATCHES_PATH, body=JSON.json(d), headers=auth_header(service); status_exception=false)
+        resp = _http("POST", _api_base_url(service) * BATCHES_PATH, auth_header(service),
+            JSON.json(d); cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 ? BatchSuccess(response=_parse_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             BatchFailure(response=String(resp.body), status=resp.status)
     catch e
+        e isa InterruptException && rethrow()
         _batch_err(e)
     end
 end
 
 """
     retrieve_batch(id; service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function retrieve_batch(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function retrieve_batch(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :batch, "Batch API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = HTTP.get(_api_base_url(service) * BATCHES_PATH * "/" * id, headers=auth_header(service); status_exception=false)
+        resp = _http("GET", _api_base_url(service) * BATCHES_PATH * "/" * id, auth_header(service);
+            cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 ? BatchSuccess(response=_parse_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             BatchFailure(response=String(resp.body), status=resp.status)
     catch e
+        e isa InterruptException && rethrow()
         _batch_err(e)
     end
 end
 
 """
     cancel_batch(id; service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function cancel_batch(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function cancel_batch(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :batch, "Batch API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = HTTP.post(_api_base_url(service) * BATCHES_PATH * "/" * id * "/cancel", headers=auth_header(service); status_exception=false)
+        resp = _http("POST", _api_base_url(service) * BATCHES_PATH * "/" * id * "/cancel", auth_header(service);
+            cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 ? BatchSuccess(response=_parse_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             BatchFailure(response=String(resp.body), status=resp.status)
     catch e
+        e isa InterruptException && rethrow()
         _batch_err(e)
     end
 end
 
 """
     list_batches(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function list_batches(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function list_batches(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :batch, "Batch API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         url = _api_base_url(service) * BATCHES_PATH
         params = String[]
         !isnothing(limit) && push!(params, "limit=$limit")
         !isnothing(after) && push!(params, "after=$after")
         !isempty(params) && (url *= "?" * join(params, "&"))
-        resp = HTTP.get(url, headers=auth_header(service); status_exception=false)
+        resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
             BatchListSuccess(response=BatchList(data=BatchObject[_parse_batch(b) for b in get(data, "data", [])], has_more=get(data, "has_more", false), raw=data))
@@ -117,6 +136,7 @@ function list_batches(; limit::Union{Int,Nothing}=nothing, after::Union{String,N
             BatchFailure(response=String(resp.body), status=resp.status)
         end
     catch e
+        e isa InterruptException && rethrow()
         _batch_err(e)
     end
 end
@@ -125,11 +145,13 @@ end
     poll_batch(id; interval=10.0, timeout=86400.0, service=OPENAIServiceEndpoint)
 
 Poll a batch until terminal (`completed`/`failed`/`cancelled`/`expired`) or timeout.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function poll_batch(id::String; interval::Real=10.0, timeout::Real=86400.0, service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function poll_batch(id::String; interval::Real=10.0, timeout::Real=86400.0, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     max_iters = max(1, ceil(Int, timeout / interval))
     for _ in 1:max_iters
-        r = retrieve_batch(id; service=service)
+        r = retrieve_batch(id; service=service, config=config)
         r isa BatchSuccess || return r
         r.response.status in ("completed", "failed", "cancelled", "expired") && return r
         sleep(interval)

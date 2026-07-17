@@ -10,10 +10,6 @@
 const _RETRY_BASE = 1.0
 const _RETRY_FACTOR = 2.0
 const _RETRY_MAX_DELAY = 60.0
-# Cap for the remaining recursive retry call sites; superseded by
-# RequestConfig.max_attempts and removed together with those call sites once
-# they route through _http_with_retries.
-const _RETRY_MAX_ATTEMPTS = 30
 
 _is_retryable(status::Integer)::Bool = status in (408, 429, 500, 502, 503, 504, 529)
 

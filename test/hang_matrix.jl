@@ -110,6 +110,67 @@ end
         end
     end
     @test ok
+
+    # Capture-at-spawn through a RUNNING STREAM — the clause only the streaming
+    # driver can prove. A stream started under a scoped idle limit must honor
+    # THAT limit even after the process default is mutated post-spawn, because
+    # the driver resolves `cfg` BEFORE `Threads.@spawn` and the task closes over
+    # the resolved struct. The server sends one delta then goes mute: under the
+    # captured idle=1.0 s the guard fires ~1.25 s in (well inside the bound); a
+    # driver that instead re-read the live default (30 s) would not finish in
+    # time. The pre-rearchitecture driver has no idle guard at all → hangs → red.
+    stream_captured = begin
+        ev = "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hi\"},\"finish_reason\":null}]}\n\n"
+        server = nothing
+        sport = 0
+        for attempt in 1:5
+            tcp = Sockets.listen(Sockets.localhost, 0)
+            sport = Int(Sockets.getsockname(tcp)[2])
+            close(tcp)
+            try
+                server = HTTP.listen!("127.0.0.1", sport; verbose = false) do http::HTTP.Stream
+                    read(http)
+                    HTTP.setstatus(http, 200)
+                    HTTP.setheader(http, "Content-Type" => "text/event-stream")
+                    HTTP.startwrite(http)
+                    write(http, ev)
+                    flush(http)
+                    sleep(8)   # mute past the captured idle limit and the bound below
+                end
+                break
+            catch
+                attempt == 5 && rethrow()
+            end
+        end
+        try
+            # Live process default = a LONG idle limit; a stream resolving live
+            # would inherit 30 s and miss the bound below.
+            UniLM.set_default_config!(UniLM.RequestConfig(stream_idle_timeout = 30.0, max_attempts = 1))
+            task = UniLM.with_request_config(stream_idle_timeout = 1.0, request_timeout = 5.0,
+                                             total_deadline = 10.0, max_attempts = 1) do
+                chat = Chat(service = GenericOpenAIEndpoint("http://127.0.0.1:$(sport)", ""),
+                            model = "mock", stream = true)
+                push!(chat, Message(Val(:system), "s"))
+                push!(chat, Message(Val(:user), "u"))
+                chatrequest!(chat)   # resolves scoped idle=1.0 at call entry, before the spawn
+            end
+            # Mutate the process default AGAIN post-spawn: the captured struct must win.
+            UniLM.set_default_config!(UniLM.RequestConfig(stream_idle_timeout = 30.0, max_attempts = 1))
+            done = timedwait(() -> istaskdone(task), 6.0)
+            res = done === :ok ? fetch(task) : nothing
+            done === :ok && res isa LLMCallError && res.cause isa UniLM.UniLMTimeout &&
+                res.cause.phase === :stream_idle
+        catch
+            false
+        finally
+            isnothing(server) || HTTP.forceclose(server)
+            try
+                UniLM.set_default_config!(UniLM.RequestConfig())
+            catch
+            end
+        end
+    end
+    @test stream_captured
 end
 
 # ─── HTTP hang/fault mock servers (all 127.0.0.1, race-free ephemeral bind) ───
@@ -514,7 +575,7 @@ UniLM.handle_sse_event!(::_HMAnthropicWireMock, event::AbstractString, payload::
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         close(srv)
     end
@@ -537,12 +598,21 @@ end
         ok = try
             outcome[1] === :ok && let res = outcome[2]
                 res isa LLMCallError && res.cause isa UniLM.UniLMTimeout &&
-                    res.cause.phase === :stream_idle
+                    res.cause.phase === :stream_idle &&
+                    res.cause.limit == 1.0 &&
+                    # CONTRACT: elapsed is the BYTE GAP since the last raw chunk,
+                    # not whole-call elapsed. Two mechanisms report the same gap:
+                    # HTTP 2.x's native read_idle_timeout wins at ~1.0 s, our own
+                    # guard (1.x, or if it wins the race) fires within
+                    # [limit, limit+period]=[1.0,1.25]. Either way the gap sits
+                    # near the 1.0 s limit — bounded well under the 10 s window a
+                    # whole-call or total-deadline figure could not satisfy.
+                    0.95 <= res.cause.elapsed <= 1.5
             end
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         # Handler parks mid-stream forever, so a graceful close would quiesce
         # on the still-ACTIVE conn; force-close skips the quiesce loop.
@@ -566,7 +636,11 @@ end
             fetch(chatrequest!(chat; config = cfg))
         end
         ok = try
-            outcome[1] === :ok && outcome[2] isa LLMSuccess
+            outcome[1] === :ok && outcome[2] isa LLMSuccess &&
+                # Content tightening: with the idle guard now ACTIVE, the sub-limit
+                # trickle + ping bridge must survive AND assemble in full — every
+                # delta forwarded, nothing truncated by a premature idle close.
+                outcome[2].message.content == "Hello world"
         catch
             false
         end
@@ -592,14 +666,84 @@ end
             fetch(chatrequest!(chat; config = cfg))
         end
         ok = try
-            outcome[1] === :ok && outcome[2] isa LLMSuccess && calls[] == 2
+            outcome[1] === :ok && outcome[2] isa LLMSuccess && calls[] == 2 &&
+                # Content tightening: the RETRIED second attempt is the one that
+                # produced the message — its assembled text must be the valid
+                # completion's ("ok"), never a remnant of the discarded overload.
+                outcome[2].message.content == "ok"
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         close(srv)
     end
+end
+
+@testset "stream: EOF-less terminal stream finalizes success at the idle gap" begin
+    # A provider wire with no end-of-stream sentinel (the Gemini shape): the terminal
+    # chunk records finish_reason, no sentinel follows, and the connection never closes.
+    # The idle guard must finalize SUCCESS (the turn completed), not a timeout.
+    server = nothing
+    port = 0
+    for attempt in 1:3
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2])
+        close(tcp)
+        try
+            server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
+                read(http)                            # drain the request body
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "text/event-stream")
+                HTTP.startwrite(http)
+                write(http, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"done.\"},\"finish_reason\":\"stop\"}]}\n\n")
+                flush(http)
+                sleep(15)   # hold the socket open far past the idle limit: no EOF, no sentinel
+            end
+            break
+        catch
+            attempt == 3 && rethrow()
+        end
+    end
+    try
+        chat = Chat(service=GenericOpenAIEndpoint("http://127.0.0.1:$port", ""), model="mock", stream=true)
+        push!(chat, Message(Val(:system), "s"))
+        push!(chat, Message(Val(:user), "u"))
+        cfg = RequestConfig(stream_idle_timeout=1.0, request_timeout=10.0,
+                            total_deadline=10.0, max_attempts=1)
+        task = chatrequest!(chat; config=cfg)
+        @test timedwait(() -> istaskdone(task), 10.0) === :ok
+        res = fetch(task)
+        @test res isa LLMSuccess
+        @test res.message.content == "done."
+        @test res.message.finish_reason == "stop"
+    finally
+        isnothing(server) || close(server)
+    end
+end
+
+@testset "stream: connect refusal surfaces a typed transport failure (task-boundary unwrap)" begin
+    # A refused FIRST connection must not hang and must not leak the raw HTTP.jl
+    # transport wrapper: the driver peels the `.error`-carrying ConnectError to
+    # its root across the task boundary (`_unwrap_exception`) and returns a typed
+    # LLMCallError. `max_attempts = 1` keeps it single-shot (no backoff wait);
+    # port 1 never listens → connection refused, the dead-endpoint shape the mock
+    # server suite also uses.
+    chat = Chat(service = GenericOpenAIEndpoint("http://127.0.0.1:1", ""),
+                model = "mock", stream = true)
+    push!(chat, Message(Val(:system), "s"))
+    push!(chat, Message(Val(:user), "u"))
+    outcome = _hm_bounded() do
+        cfg = UniLM.RequestConfig(connect_timeout = 2.0, request_timeout = 2.0,
+            total_deadline = 5.0, max_attempts = 1, stream_idle_timeout = 5.0)
+        fetch(chatrequest!(chat; config = cfg))
+    end
+    ok = try
+        outcome[1] === :ok && outcome[2] isa LLMCallError
+    catch
+        false
+    end
+    @test ok
 end
 
 @testset "embeddings: mute server yields typed timeout" begin

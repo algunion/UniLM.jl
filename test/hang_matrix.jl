@@ -378,46 +378,96 @@ end
 end
 
 @testset "repeated HTTP timeouts leak no tasks and do not poison the pool" begin
-    # FIXED contract (observable half): repeated timeouts to a mute peer each
-    # produce a typed timeout AND leave the client healthy — a subsequent request
-    # to a WORKING server still succeeds (the 2.x connection pool is not poisoned
-    # by a timed-out connection). The deeper task/timer-leak counting depends on
-    # the timeout-guard internals and lands with the green expansion of this pin.
-    srv, url, _ = _hm_mute_server(drain = true)
+    # FIXED contract: N=20 repeated timeouts to a mute peer each surface a TYPED
+    # timeout AND complete within a per-cycle bound — a driver task that leaked
+    # (never returned) shows up as :hung and fails the shape assertion — and they
+    # leave the client healthy on BOTH connection-pool keys: a FRESH peer succeeds
+    # (no process-global poison) AND the SAME host:port that just timed out, once
+    # responsive, succeeds. That same-key clause is the load-bearing one: a
+    # timed-out connection wrongly kept in the 2.x pool as reusable would be drawn
+    # by the same-key request and fail, whereas a different peer draws a fresh pool
+    # entry and can never witness the poison. A before/after live-guard COUNT would
+    # need a tracking accessor deadline.jl does not expose; the per-cycle bound is
+    # the task-completion evidence here.
     healthy_body = JSON.json(Dict{String,Any}(
         "id" => "c", "object" => "chat.completion",
         "choices" => [Dict{String,Any}("index" => 0, "finish_reason" => "stop",
             "message" => Dict{String,Any}("role" => "assistant", "content" => "pong"))],
         "usage" => Dict{String,Any}("prompt_tokens" => 1, "completion_tokens" => 1, "total_tokens" => 2)))
-    hsrv, hurl, _ = _hm_healthy_oai_server(healthy_body)
+    hsrv, hurl, _ = _hm_healthy_oai_server(healthy_body)   # fresh-peer (cross-key) probe
+
+    # One peer, two phases: it drains each request then holds past the client's
+    # request_timeout (the deadline fires → typed timeout) while `responsive` is
+    # false, and serves `healthy_body` once it flips true. Reusing this exact
+    # host:port for the final health check drives the pool's reuse path for a key
+    # that just timed out.
+    responsive = Ref(false)
+    tsrv = nothing
+    tport = 0
+    for attempt in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        tport = Int(Sockets.getsockname(tcp)[2])
+        close(tcp)
+        try
+            tsrv = HTTP.listen!("127.0.0.1", tport; verbose = false) do http::HTTP.Stream
+                read(http)
+                if responsive[]
+                    HTTP.setstatus(http, 200)
+                    HTTP.setheader(http, "Content-Type" => "application/json")
+                    HTTP.startwrite(http)
+                    write(http, healthy_body)
+                else
+                    sleep(3.0)   # outlast the 0.5 s request_timeout below, then reap
+                end
+            end
+            break
+        catch
+            attempt == 5 && rethrow()
+        end
+    end
+    turl = "http://127.0.0.1:$(tport)"
+
     try
-        outcome = _hm_bounded(bound = 15.0) do
+        outcome = _hm_bounded(bound = 30.0) do
             cfg = UniLM.RequestConfig(request_timeout = 0.5, total_deadline = 1.0, max_attempts = 1)
-            mute_chat = Chat(service = GenericOpenAIEndpoint(url, ""), model = "mock")
+            mute_chat = Chat(service = GenericOpenAIEndpoint(turl, ""), model = "mock")
             push!(mute_chat, Message(Val(:system), "s"))
             push!(mute_chat, Message(Val(:user), "u"))
-            all_typed = true
-            for _ in 1:5
-                r = chatrequest!(mute_chat; config = cfg)
-                all_typed &= (r isa LLMCallError && r.cause isa UniLM.UniLMTimeout)
+            # Each cycle runs on its own task, observed under a per-cycle bound: a
+            # task that never completes surfaces as :hung (never a suite hang), so
+            # the typed-outcome assertion doubles as a per-task no-leak check.
+            results = map(1:20) do _
+                t = Threads.@spawn chatrequest!(mute_chat; config = cfg)
+                timedwait(() -> istaskdone(t), 10.0) === :ok || return :hung
+                fetch(t)
             end
-            healthy_chat = Chat(service = GenericOpenAIEndpoint(hurl, ""), model = "mock")
-            push!(healthy_chat, Message(Val(:system), "s"))
-            push!(healthy_chat, Message(Val(:user), "u"))
-            hr = chatrequest!(healthy_chat;
+            # Fresh key: a brand-new peer still succeeds after the timeout storm.
+            fresh_chat = Chat(service = GenericOpenAIEndpoint(hurl, ""), model = "mock")
+            push!(fresh_chat, Message(Val(:system), "s"))
+            push!(fresh_chat, Message(Val(:user), "u"))
+            fresh = chatrequest!(fresh_chat;
                 config = UniLM.RequestConfig(request_timeout = 5.0, total_deadline = 10.0, max_attempts = 1))
-            (all_typed, hr)
+            # Same key (LAST): the port that just timed out 20× is now responsive;
+            # a request to that SAME host:port must succeed — the pool is not poisoned.
+            responsive[] = true
+            same_chat = Chat(service = GenericOpenAIEndpoint(turl, ""), model = "mock")
+            push!(same_chat, Message(Val(:system), "s"))
+            push!(same_chat, Message(Val(:user), "u"))
+            same = chatrequest!(same_chat;
+                config = UniLM.RequestConfig(request_timeout = 5.0, total_deadline = 10.0, max_attempts = 1))
+            (results, fresh, same)
         end
         ok = try
-            outcome[1] === :ok && let (all_typed, hr) = outcome[2]
-                all_typed && hr isa LLMSuccess
+            outcome[1] === :ok && let (results, fresh, same) = outcome[2]
+                all(r -> r isa LLMCallError && r.cause isa UniLM.UniLMTimeout, results) &&
+                    fresh isa LLMSuccess && same isa LLMSuccess
             end
         catch
             false
         end
         @test ok
     finally
-        close(srv)
+        HTTP.forceclose(tsrv)
         close(hsrv)
     end
 end

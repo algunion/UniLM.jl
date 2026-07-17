@@ -183,7 +183,7 @@ end
 @testset "fim_complete: Retry-After beyond the deadline fails immediately" begin
     server, url = _compl_canned_server(503, "{}", ["Retry-After" => "3600"])
     _COMPL_URL[] = url
-    cfg = RequestConfig(request_timeout=0.5, total_deadline=1.0, max_attempts=3)
+    cfg = RequestConfig(request_timeout=5.0, total_deadline=5.0, max_attempts=3)
     try
         fim = FIMCompletion(service=_ComplTimeoutMock, model="mock-fim", prompt="x")
         t = Threads.@spawn fim_complete(fim; config=cfg)

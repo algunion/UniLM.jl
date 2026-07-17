@@ -2171,6 +2171,7 @@ const _RESP_TIMEOUT_URL = Ref("http://127.0.0.1:0")
 struct _RespTimeoutMock <: UniLM.ServiceEndpoint end
 UniLM._api_base_url(::Type{_RespTimeoutMock}) = _RESP_TIMEOUT_URL[]
 UniLM.auth_header(::Type{_RespTimeoutMock}) = ["Content-Type" => "application/json"]
+UniLM.default_model(::Type{_RespTimeoutMock}) = "mock-model"   # Respond ctor resolves the model default via default_model(service)
 
 @testset "lifecycle op: mute server yields a bounded typed timeout" begin
     server, url = _mute_http_server()
@@ -2194,4 +2195,69 @@ end
     UniLM._api_base_url(::Type{_RespInterruptMock}) = "http://127.0.0.1:1"
     UniLM.auth_header(::Type{_RespInterruptMock}) = throw(InterruptException())
     @test_throws InterruptException get_response("resp_x"; service=_RespInterruptMock)
+end
+
+# Localhost HTTP server answering every request with a fixed status + headers + body.
+function _canned_http_server(status::Int, body::String, hdrs::Vector{Pair{String,String}})
+    server = nothing; port = 0
+    for attempt in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+        try
+            server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
+                read(http)
+                HTTP.setstatus(http, status)
+                for (k, v) in hdrs; HTTP.setheader(http, k => v); end
+                HTTP.startwrite(http)
+                write(http, body)
+            end
+            break
+        catch; attempt == 5 && rethrow(); end
+    end
+    server, "http://127.0.0.1:$port"
+end
+
+@testset "respond non-stream: mute server yields a bounded typed timeout" begin
+    server, url = _mute_http_server()
+    _RESP_TIMEOUT_URL[] = url
+    cfg = RequestConfig(connect_timeout=0.5, request_timeout=0.5, total_deadline=1.0, max_attempts=1)
+    try
+        r = Respond(input="hi", service=_RespTimeoutMock)
+        t = Threads.@spawn respond(r; config=cfg)
+        @test timedwait(() -> istaskdone(t), 10.0) == :ok
+        result = fetch(t)
+        @test result isa ResponseCallError
+        @test result.status === nothing
+        @test result.cause isa UniLM.UniLMTimeout
+        @test result.cause.phase in (:request, :connect)
+    finally
+        close(server)
+    end
+end
+
+@testset "respond non-stream: Retry-After beyond the deadline fails immediately, no sleep" begin
+    body = JSON.json(Dict("error" => Dict("message" => "slow down", "type" => "rate_limit")))
+    server, url = _canned_http_server(503, body, ["Retry-After" => "3600"])
+    _RESP_TIMEOUT_URL[] = url
+    # Timeouts sit well above the cold first-request latency of a fresh localhost server
+    # (connection setup + first-use compilation), so attempt 1 actually receives the 503;
+    # the 3600 s Retry-After still dwarfs total_deadline, so the budget check fails fast.
+    cfg = RequestConfig(request_timeout=5.0, total_deadline=5.0, max_attempts=3)
+    try
+        r = Respond(input="hi", service=_RespTimeoutMock)
+        t = Threads.@spawn respond(r; config=cfg)
+        @test timedwait(() -> istaskdone(t), 10.0) == :ok   # never sleeps the 3600s Retry-After
+        result = fetch(t)
+        @test result isa ResponseFailure
+        @test result.status == 503
+    finally
+        close(server)
+    end
+end
+
+@testset "respond non-stream: InterruptException is rethrown, never lands in a value" begin
+    struct _RespInterruptMock2 <: UniLM.ServiceEndpoint end
+    UniLM.default_model(::Type{_RespInterruptMock2}) = "mock-model"
+    UniLM.encode_agentic(::Type{_RespInterruptMock2}, ::Respond) = throw(InterruptException())
+    @test_throws InterruptException respond(Respond(input="x", service=_RespInterruptMock2))
 end

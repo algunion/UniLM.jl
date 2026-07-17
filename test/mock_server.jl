@@ -204,7 +204,7 @@ try
         set_error!(500, "Internal Server Error")
 
         r = Respond(input="test", service=MockServiceEndpoint)
-        result = respond(r; retries=30)
+        result = respond(r; config=RequestConfig(max_attempts=1))
 
         @test result isa ResponseFailure
         @test result.status == 500
@@ -214,7 +214,7 @@ try
         set_error!(503, "Service Unavailable")
 
         r = Respond(input="test", service=MockServiceEndpoint)
-        result = respond(r; retries=30)
+        result = respond(r; config=RequestConfig(max_attempts=1))
 
         @test result isa ResponseFailure
         @test result.status == 503
@@ -338,7 +338,7 @@ try
         set_error!(429, "Rate limited"; headers=["Retry-After" => "2"])
 
         r = Respond(input="test", service=MockServiceEndpoint)
-        result = respond(r; retries=30)
+        result = respond(r; config=RequestConfig(max_attempts=1))
 
         @test result isa ResponseFailure
         @test result.status == 429
@@ -1653,8 +1653,8 @@ try
     end
 
     @testset "respond() non-stream retry-then-recover recursion → ResponseSuccess (1137-1142)" begin
-        # First request: retryable 503 (queue entry 1) → retries(0) < _RETRY_MAX_ATTEMPTS → 1139-1142
-        # (delay/sleep/recurse) → 200 success (entry 2) → parse_response → ResponseSuccess.
+        # Default config (max_attempts=3): retryable 503 (queue entry 1) is retried within
+        # budget → 200 success (entry 2) → parse_response → ResponseSuccess.
         success_body = JSON.json(Dict(
             "id" => "resp_retry",
             "status" => "completed",
@@ -1664,7 +1664,7 @@ try
             "usage" => Dict("input_tokens" => 3, "output_tokens" => 1, "total_tokens" => 4)))
         response_queue[] = [(503, ""), (200, success_body)]
 
-        result = respond(Respond(input="x", service=MockServiceEndpoint))   # default retries=0
+        result = respond(Respond(input="x", service=MockServiceEndpoint))   # default config
         @test result isa ResponseSuccess
         @test result.response.id == "resp_retry"
         @test result.response.status == "completed"

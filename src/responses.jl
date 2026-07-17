@@ -1178,11 +1178,14 @@ decode_agentic_stream(service, chunk::String, state::AgenticStreamState) =
     _parse_response_stream_chunk(chunk, state.textbuff, state.carry, state.last_event)
 
 """
-    respond(r::Respond; retries=0, callback=nothing)
+    respond(r::Respond; config=nothing, callback=nothing)
 
 Send a request to the OpenAI Responses API.
 
 Returns `ResponseSuccess`, `ResponseFailure`, or `ResponseCallError`.
+
+Per-call `config::RequestConfig` overrides timeouts and the retry budget
+(`max_attempts`); the process/scoped defaults apply otherwise.
 
 For streaming, set `stream=true` and pass a `callback`:
 ```julia
@@ -1198,40 +1201,32 @@ if result isa ResponseSuccess
 end
 ```
 """
-function respond(r::Respond; retries::Int=0, callback=nothing)
-    res = ResponseCallError(error="uninitialized", status=0)
+function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callback=nothing)
+    cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
         body = encode_agentic(r.service, r)
 
-        # Streaming path
+        # Streaming path. cfg/t0 are resolved above so both paths share one
+        # budget origin once the stream driver adopts the retry seam.
         if !isnothing(r.stream) && r.stream
             return _respond_stream(r, body, callback)
         end
 
         url = get_url(r.service, r)
-        resp = HTTP.post(url, body=body, headers=auth_header(r.service); status_exception=false)
-
+        resp = _http_with_retries(cfg, t0, "POST", url, auth_header(r.service), body)
         if resp.status == 200
             return ResponseSuccess(response=decode_agentic(r.service, resp))
-        elseif _is_retryable(resp.status)
-            if retries < _RETRY_MAX_ATTEMPTS
-                delay = _retry_delay(retries, resp)
-                @warn "Request status: $(resp.status). Retrying in $(round(delay; digits=2))s..."
-                sleep(delay)
-                return respond(r; retries=retries + 1, callback=callback)
-            else
-                return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
-            end
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
+        e isa InterruptException && rethrow()
+        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        res = ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
+        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
     end
-    return res
 end
 
 """
@@ -1265,8 +1260,8 @@ end
 function respond(input; kwargs...)
     kws = Dict{Symbol,Any}(kwargs)
     callback = pop!(kws, :callback, nothing)
-    retries = pop!(kws, :retries, 0)
-    respond(Respond(; input=input, kws...); retries=retries, callback=callback)
+    config = pop!(kws, :config, nothing)
+    respond(Respond(; input=input, kws...); config=config, callback=callback)
 end
 
 """

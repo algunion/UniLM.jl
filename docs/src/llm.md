@@ -175,7 +175,7 @@ chatrequest!(; service=OPENAIServiceEndpoint, model="gpt-5.5",
 - Non-streaming: returns `LLMSuccess`, `LLMFailure`, or `LLMCallError`.
 - Streaming (`stream=true`): returns a `Task`. Pass a `callback(chunk::Union{String,Message}, close::Ref{Bool})` — text deltas arrive as `String`s (verbatim, in order), then the assembled `Message` at end-of-stream.
 - Streaming tool calls: pass `on_tool_call(tc::GPTToolCall)` to be notified once per completed streamed tool call, as calls finish (see the [Streaming guide](@ref streaming_guide)).
-- Retries transient statuses (408/429/500/502/503/504/529) with exponential backoff and jitter under the resolved [`RequestConfig`](@ref) — `max_attempts` (default 3) and `total_deadline` bound the attempts; `Retry-After` is honored. Timeouts surface as `LLMCallError` with `status=nothing` and the `UniLMTimeout` in `.cause`.
+- Retries transient statuses (408/429/500/502/503/504/529) with exponential backoff and jitter under the resolved [`RequestConfig`](@ref) — `max_attempts` (default 3) and `total_deadline` bound the attempts; `Retry-After` is honored, but a retry whose backoff would exceed the remaining `total_deadline` is not attempted — the call fails immediately with the last real response rather than sleeping past the deadline. Timeouts surface as `LLMCallError` with `status=nothing` and the `UniLMTimeout` in `.cause`.
 - Streaming retry boundary: transient failures (including the in-band `overloaded_error`, the documented 529 equivalent) are retried inside the task only until the first `callback`/`on_tool_call` invocation; afterwards failures surface typed. A user `InterruptException` propagates — `fetch` throws a `TaskFailedException` instead of returning a result value.
 
 ### Conversation Management
@@ -493,7 +493,7 @@ respond(callback::Function, input; kwargs...) -> Task
 ```
 
 - Streaming callback signature: `callback(chunk::Union{String, ResponseObject}, close::Ref{Bool})`
-- Retries retryable statuses (408/429/500/502/503/504/529) up to `config.max_attempts` (default 3) with full-jitter backoff bounded by `config.total_deadline`; honors `Retry-After`. Every attempt is time-bounded — a silent peer fails with a typed timeout inside `ResponseCallError` (`status = nothing`, `cause::UniLMTimeout`), never a hang.
+- Retries retryable statuses (408/429/500/502/503/504/529) up to `config.max_attempts` (default 3) with full-jitter backoff bounded by `config.total_deadline`; honors `Retry-After`, but a retry whose backoff would exceed the remaining deadline is not attempted — it fails immediately with the last real response instead of sleeping past it. Every attempt is time-bounded — a silent peer fails with a typed timeout inside `ResponseCallError` (`status = nothing`, `cause::UniLMTimeout`), never a hang.
 - **Parameter validation**: `temperature` ∈ [0.0, 2.0], `top_p` ∈ [0.0, 1.0], `max_output_tokens` ≥ 1, `top_logprobs` ∈ [0, 20]. Out-of-range values throw `ArgumentError`.
 
 ### Response Accessors
@@ -634,7 +634,7 @@ generate_image(ig::ImageGeneration; config=nothing) -> ImageSuccess | ImageFailu
 generate_image(prompt::String; kwargs...)       -> same   # convenience
 ```
 
-Retries transient statuses (408/429/500/502/503/504/529) inside the request budget (`RequestConfig.max_attempts`, default 3; `Retry-After` respected). Bound per call with `config=RequestConfig(...)`.
+Retries transient statuses (408/429/500/502/503/504/529) inside the request budget (`RequestConfig.max_attempts`, default 3; `Retry-After` respected) — a retry whose backoff would exceed the remaining `total_deadline` is not attempted, so the call fails immediately with the last real response rather than sleeping past it. Bound per call with `config=RequestConfig(...)`.
 
 ### Response Types
 
@@ -707,7 +707,7 @@ Model defaults: `"text-embedding-3-small"` for OpenAI, `"gemini-embedding-001"` 
 embeddingrequest!(emb::Embeddings; config=nothing) -> EmbeddingSuccess | EmbeddingFailure | EmbeddingCallError
 ```
 
-Returns an `EmbeddingSuccess`/`EmbeddingFailure`/`EmbeddingCallError` (a `<: LLMRequestResponse`). Fills `emb.embeddings` in-place; `embedding_vectors(result)` returns the vectors. Retries transient statuses (408/429/500/502/503/504/529) with backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`, `total_deadline`; `Retry-After` honored). Timeouts surface as `EmbeddingCallError` with `status=nothing` and the `UniLMTimeout` in `.cause`.
+Returns an `EmbeddingSuccess`/`EmbeddingFailure`/`EmbeddingCallError` (a `<: LLMRequestResponse`). Fills `emb.embeddings` in-place; `embedding_vectors(result)` returns the vectors. Retries transient statuses (408/429/500/502/503/504/529) with backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`, `total_deadline`; `Retry-After` honored), but a retry whose backoff would exceed the remaining deadline is not attempted — it fails immediately with the last real response rather than sleeping past it. Timeouts surface as `EmbeddingCallError` with `status=nothing` and the `UniLMTimeout` in `.cause`.
 
 ### Embeddings Example
 
@@ -846,8 +846,8 @@ tool_loop!(chat; tools::Vector{<:CallableTool}, kwargs...) -> ToolLoopResult
 ### tool_loop (Responses API)
 
 ```julia
-tool_loop(r::Respond, dispatcher; max_turns=10, retries=0) -> ToolLoopResult
-tool_loop(r::Respond; max_turns=10, retries=0) -> ToolLoopResult   # extracts callables from r.tools
+tool_loop(r::Respond, dispatcher; max_turns=10, config=nothing) -> ToolLoopResult
+tool_loop(r::Respond; max_turns=10, config=nothing) -> ToolLoopResult   # extracts callables from r.tools
 tool_loop(input, dispatcher; tools, kwargs...) -> ToolLoopResult    # convenience form
 ```
 
@@ -1133,13 +1133,13 @@ LLMRequestResponse (abstract)
 ├── LLMCallError        — Chat Completions exception (.error::String, .status, .self::Chat, .cause::Union{Nothing,Exception})
 ├── ResponseSuccess     — Responses API success (.response::ResponseObject)
 ├── ResponseFailure     — Responses API HTTP error (.response::String, .status::Int)
-├── ResponseCallError   — Responses API exception (.error::String, .status)
+├── ResponseCallError   — Responses API exception (.error::String, .status, .cause::Union{Nothing,Exception})
 ├── ImageSuccess        — Image Gen success (.response::ImageResponse)
 ├── ImageFailure        — Image Gen HTTP error (.response::String, .status::Int)
 ├── ImageCallError      — Image Gen exception (.error::String, .status)
 ├── FIMSuccess          — FIM success (.response::FIMResponse)
 ├── FIMFailure          — FIM HTTP error (.response::String, .status::Int)
-└── FIMCallError        — FIM exception (.error::String, .status)
+└── FIMCallError        — FIM exception (.error::String, .status, .cause::Union{Nothing,Exception})
 ```
 
 **Standard pattern-matching idiom**:

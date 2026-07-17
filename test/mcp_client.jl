@@ -1321,7 +1321,7 @@ end
     end
 end
 
-@testset "WS4 mcp_connect captures resolved config + auto_respawn" begin
+@testset "mcp_connect captures resolved config + auto_respawn" begin
     captured = Ref{Any}(nothing)
     server = _build_mcp_test_server(captured)
     httpserver, url = _serve_mcp_json(server)
@@ -1350,7 +1350,7 @@ end
     end
 end
 
-# ─── WS4: StdioTransport teardown ladder — no child survivors ─────────────────
+# ─── StdioTransport teardown ladder — no child survivors ─────────────────
 # MCP spec: a compliant stdio server exits when its stdin reaches EOF, so
 # `_kill_transport!` closes stdin first and escalates (SIGTERM, then an
 # UNCONDITIONAL process-group SIGKILL) only as needed. The child leads its own
@@ -1361,7 +1361,7 @@ end
 # that forks a group-resident grandchild (OS-level leak falsifier: pgrep finds
 # zero survivors after teardown).
 
-# Shared WS4 stdio fixture. A raw JSON-RPC child (only `using JSON`, so it starts
+# Shared stdio fixture. A raw JSON-RPC child (only `using JSON`, so it starts
 # fast — no UniLM precompile): answers the handshake, advertises hang/incr/
 # notify_then_ok, and exits cleanly when stdin reaches EOF. `marker` is embedded in
 # a leading comment so the parent can pgrep/pkill it. No signal manipulation — it is
@@ -1433,7 +1433,7 @@ function _ws4_raw_child_src(marker::String)
     """
 end
 
-@testset "WS4 stdio disconnect routes through the ladder (handles + pgid cleared)" begin
+@testset "stdio disconnect routes through the ladder (handles + pgid cleared)" begin
     # Portable, deterministic wiring guard: mcp_disconnect! must delegate to
     # _kill_transport!, which nulls process/input/output AND the spawn-captured pgid.
     # RED on the wave base: the original _transport_disconnect! nulls the io handles
@@ -1463,7 +1463,7 @@ end
     end
 end
 
-# WS4 wrapper fixture: forks a long-lived grandchild that INHERITS this child's
+# Wrapper fixture: forks a long-lived grandchild that INHERITS this child's
 # process group (this child leads its own group under the parent's detach=true
 # spawn), then answers only `initialize` and reads until stdin EOF. On disconnect
 # the ladder closes stdin (this child exits, ORPHANING the grandchild) and then
@@ -1492,7 +1492,7 @@ function _ws4_wrapper_child_src(marker::String, gc_marker::String)
     """
 end
 
-@testset "WS4 stdio teardown group-kills an orphaned grandchild (OS leak falsifier)" begin
+@testset "stdio teardown group-kills an orphaned grandchild (OS leak falsifier)" begin
     # Falsifies "a wrapper's grandchild survives teardown". The child forks a
     # long-lived grandchild sharing its process group, then exits on stdin EOF —
     # orphaning it. The ladder's UNCONDITIONAL final rung group-SIGKILLs by the
@@ -1524,7 +1524,7 @@ end
     end
 end
 
-@testset "WS4 HTTP request timeout is typed and non-fatal" begin
+@testset "mcp http request timeout is typed and non-fatal" begin
     hit = Ref(0)
     port = _free_port()
     httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
@@ -1574,7 +1574,7 @@ end
     end
 end
 
-# ─── WS4: stdio request timeout — whole-exchange watchdog, session-fatal ───────
+# ─── Stdio request timeout — whole-exchange watchdog, session-fatal ───────
 # The stdio request bound covers the ENTIRE lock-to-response exchange as ONE
 # deadline armed once at exchange start — request write, every interleaved
 # server→client frame, until the matching-id response. A pre-response
@@ -1585,7 +1585,7 @@ end
 # deadline fires through a leading notification, and it does not false-fire when
 # a real response follows one.
 
-@testset "WS4 stdio request timeout is whole-exchange and session-fatal" begin
+@testset "stdio request timeout is whole-exchange and session-fatal" begin
     marker = "UNILMSTDIOTMO" * string(rand(UInt64); base=16)
     proj = dirname(dirname(pathof(UniLM)))
     childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
@@ -1622,7 +1622,7 @@ end
     end
 end
 
-@testset "WS4 stdio deadline does not false-fire when response follows a notification" begin
+@testset "stdio deadline does not false-fire when response follows a notification" begin
     marker = "UNILMSTDIOOK" * string(rand(UInt64); base=16)
     proj = dirname(dirname(pathof(UniLM)))
     childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
@@ -1644,14 +1644,14 @@ end
     end
 end
 
-# ─── WS4: connect handshake watchdog + command-not-found immediacy ─────────────
+# ─── Connect handshake watchdog + command-not-found immediacy ─────────────
 # The whole spawn → initialize → notifications/initialized handshake runs under one
 # connect deadline. A mute server (never answers initialize) is group-killed at the
 # bound and surfaces MCPTimeoutError(:connect) naming the override; a nonexistent
 # command throws its spawn error synchronously inside the guard and must surface
 # immediately, never riding the connect timer to a timeout.
 
-@testset "WS4 mcp_connect: command-not-found fails immediately, not at the timer" begin
+@testset "mcp_connect: command-not-found fails immediately, not at the timer" begin
     # open() on a missing executable throws synchronously — must surface fast (well
     # under the connect bound), NOT ride the connect timer to MCPTimeoutError.
     t0 = time()
@@ -1668,7 +1668,7 @@ end
     @test elapsed < 5.0                  # far below the 30 s connect bound
 end
 
-@testset "WS4 mcp_connect: mute stdio server times out with a naming MCPTimeoutError" begin
+@testset "mcp_connect: mute stdio server times out with a naming MCPTimeoutError" begin
     marker = "UNILMCONNMUTE" * string(rand(UInt64); base=16)
     # A child that reads stdin but NEVER answers initialize: the handshake readline
     # blocks until the connect watchdog group-kills it.
@@ -1694,7 +1694,7 @@ end
     end
 end
 
-# ─── WS4: opt-in auto-respawn + call-time resolution into bridged closures ─────
+# ─── Opt-in auto-respawn + call-time resolution into bridged closures ─────
 # A stdio request timeout is session-fatal (no id demux). The NEXT call decides:
 # with auto_respawn=true the server is transparently respawned (same command,
 # captured config, fresh handshake — in-memory state is LOST, tools refetched)
@@ -1702,7 +1702,7 @@ end
 # the opt-in. Separately, a bridged tool closure passes NO timeout kwarg, so an
 # ambient with_request_config override must reach it through the scoped-config leg.
 
-@testset "WS4 auto-respawn on next call after a stdio timeout (opt-in), state lost" begin
+@testset "auto-respawn on next call after a stdio timeout (opt-in), state lost" begin
     marker = "UNILMRESPAWN" * string(rand(UInt64); base=16)
     proj = dirname(dirname(pathof(UniLM)))
     childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
@@ -1732,7 +1732,7 @@ end
     end
 end
 
-@testset "WS4 closed-by-timeout session without auto_respawn errors naming the override" begin
+@testset "closed-by-timeout session without auto_respawn errors naming the override" begin
     marker = "UNILMNORESPAWN" * string(rand(UInt64); base=16)
     proj = dirname(dirname(pathof(UniLM)))
     childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
@@ -1754,7 +1754,7 @@ end
     end
 end
 
-@testset "WS4 explicit disconnect after a stdio timeout clears the close reason" begin
+@testset "explicit disconnect after a stdio timeout clears the close reason" begin
     # A request timeout leaves a stdio session respawn-eligible so the NEXT call
     # can decide (respawn or error). But if the user disconnects explicitly in
     # between, that decision no longer applies: an explicit mcp_disconnect! is a
@@ -1796,7 +1796,7 @@ end
     end
 end
 
-@testset "WS4 bridged tool closure picks up ambient with_request_config (no kwargs)" begin
+@testset "bridged tool closure picks up ambient with_request_config (no kwargs)" begin
     marker = "UNILMAMBIENT" * string(rand(UInt64); base=16)
     proj = dirname(dirname(pathof(UniLM)))
     childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)

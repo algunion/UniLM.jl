@@ -92,7 +92,7 @@ end
             snap.max_attempts == 5
         end
         # The config machinery above satisfies precedence + snapshot on its own,
-        # so this pin would pass the moment the core config workstream merges —
+        # so this pin would pass the moment the core config machinery merges —
         # but its flip only lands with the requests migration that adds the
         # `config` kwarg to chatrequest! (the channel a running stream resolves
         # through). Gate on that kwarg so the pin cannot pass before its flip

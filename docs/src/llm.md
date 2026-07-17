@@ -1017,7 +1017,7 @@ struct FIMChoice; text, index, finish_reason; end
 struct FIMResponse; choices, usage, model, raw; end
 struct FIMSuccess <: LLMRequestResponse; response::FIMResponse; end
 struct FIMFailure <: LLMRequestResponse; response, status; end
-struct FIMCallError <: LLMRequestResponse; error, status; end
+struct FIMCallError <: LLMRequestResponse; error, status, cause; end
 
 fim_complete(fim::FIMCompletion; config=nothing) -> LLMRequestResponse
 fim_complete(prompt; suffix=nothing, kwargs...) -> LLMRequestResponse  # convenience

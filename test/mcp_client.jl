@@ -1554,3 +1554,64 @@ end
         close(httpserver)
     end
 end
+
+# ─── WS4: stdio request timeout — whole-exchange watchdog, session-fatal ───────
+# The stdio request bound covers the ENTIRE lock-to-response exchange as ONE
+# deadline armed once at exchange start — request write, every interleaved
+# server→client frame, until the matching-id response. A pre-response
+# notification must NOT reset it (a per-read watchdog would, reintroducing an
+# unbounded exchange). On breach the ladder group-kills the server (unblocking
+# the in-flight readline); stdio framing has no id demux, so the timeout is
+# SESSION-FATAL (contrast the non-fatal HTTP path above). Two directions: the
+# deadline fires through a leading notification, and it does not false-fire when
+# a real response follows one.
+
+@testset "WS4 stdio request timeout is whole-exchange and session-fatal" begin
+    marker = "UNILMSTDIOTMO" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
+    jl = Base.julia_cmd()
+    cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    try
+        # Bound below the child's notification→(never)response gap. `hang` emits a
+        # notification FIRST, then blocks forever: proves a pre-response notification
+        # does NOT reset the exchange deadline (whole-exchange rule).
+        session = mcp_connect(cmd; config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
+        box = Ref{Any}(nothing)
+        worker = @async (box[] = try call_tool(session, "hang", Dict{String,Any}()) catch e; e end)
+        @test timedwait(() -> istaskdone(worker), 12.0) === :ok   # absorbs the teardown ladder
+        err = box[]
+        @test err isa MCPTimeoutError
+        @test err.phase === :request
+        @test err.limit == 0.5
+        @test occursin("mcp_request_timeout", err.msg)   # pinned msg literal names the override
+        @test session.status == :closed              # stdio timeout IS session-fatal
+        @test session._closed_by_timeout == true
+        @test UniLM._transport_isconnected(session.transport) == false
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "WS4 stdio deadline does not false-fire when response follows a notification" begin
+    marker = "UNILMSTDIOOK" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
+    jl = Base.julia_cmd()
+    cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    try
+        # `notify_then_ok` emits a notification then the response ~0.2 s later; a 2 s
+        # bound must skip the notification and return the response without timing out.
+        session = mcp_connect(cmd; config = RequestConfig(current_config(); mcp_request_timeout = 2.0))
+        try
+            @test call_tool(session, "notify_then_ok", Dict{String,Any}()).content == "done"
+            @test session.status == :ready
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end

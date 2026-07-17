@@ -270,8 +270,11 @@ function _kill_transport!(t::StdioTransport;
     end
     # Final rung, UNCONDITIONAL: SIGKILL the whole process group by the spawn-captured
     # pgid (getpid on a reaped Process may fail, so use the stored value). Reaps a
-    # grandchild the leader orphaned by exiting on stdin EOF.
-    if !isnothing(pgid)
+    # grandchild the leader orphaned by exiting on stdin EOF. The `pgid > 0` guard is
+    # defense-in-depth: `kill(-0, 9)` (POSIX) would signal the CALLER's own process
+    # group, so a zero pgid must never reach the group kill even though no reachable
+    # spawn path produces one.
+    if !isnothing(pgid) && pgid > 0
         rc = ccall(:kill, Cint, (Cint, Cint), -pgid, 9)
         if rc != 0
             e = Base.Libc.errno()
@@ -604,7 +607,31 @@ function _mcp_request!(session::MCPSession, method::String,
     bound = _resolve_mcp_request_timeout(session, timeout)
     excfg = RequestConfig(session.config; request_timeout=bound)
     if session.transport isa StdioTransport
-        return _mcp_request_recover!(session, method, params; excfg=excfg)
+        t = session.transport
+        result = try
+            # ONE deadline for the whole lock-to-response exchange (armed once at
+            # exchange start): a burst of pre-response notifications cannot reset it.
+            # On breach the escalation ladder group-kills the server (unblocking the
+            # in-flight readline); stdio framing has no id demux, so a late reply
+            # could misdeliver — the timeout is therefore session-fatal.
+            _with_deadline(() -> _mcp_request_recover!(session, method, params; excfg=excfg),
+                           () -> _kill_transport!(t), bound, :request)
+        catch e
+            if e isa UniLMTimeout && e.phase === :request
+                session.status = :closed
+                session._closed_by_timeout = true
+                throw(MCPTimeoutError(:request, e.elapsed, e.limit, _request_timeout_msg(e.limit)))
+            end
+            rethrow()
+        end
+        # Exactly-once race: _with_deadline returns a real result even if the timer
+        # fired at ~completion. If the ladder already tore the transport down, the
+        # session cannot continue — reflect the close truthfully (spec: it stays closed).
+        if !_transport_isconnected(t)
+            session.status = :closed
+            session._closed_by_timeout = true
+        end
+        return result
     else
         try
             return _mcp_request_recover!(session, method, params; excfg=excfg)

@@ -28,10 +28,44 @@ function _retry_delay(retry::Integer, resp::HTTP.Response)::Float64
     delay
 end
 
-# Backoff for exception-path retries, where no HTTP.Response (hence no
-# Retry-After header) exists. Same full-jitter curve as _retry_delay.
-_backoff_delay(retry::Integer)::Float64 =
-    rand() * min(_RETRY_BASE * _RETRY_FACTOR^retry, _RETRY_MAX_DELAY)
+"""
+    _retry_pause(cfg, t0, attempt, resp) -> (action::Symbol, delay::Float64)
+
+Shared retry-budget arithmetic — the single implementation used by the non-stream
+retry loop and the stream driver. Computes the full-jitter backoff for `attempt`
+(1-based), honoring `Retry-After` when a response is available. Returns
+`(:sleep, delay)` when the pause fits the remaining total deadline, else
+`(:budget, delay)`: fail NOW with the last real outcome — sleeping less and attempting
+with ~zero budget is a guaranteed mid-flight breach, and sleeping past the deadline
+breaks the bound.
+"""
+function _retry_pause(cfg::RequestConfig, t0::UInt64, attempt::Int,
+                      resp::Union{HTTP.Response,Nothing})::Tuple{Symbol,Float64}
+    delay = _retry_delay(attempt - 1, isnothing(resp) ? HTTP.Response(0) : resp)
+    delay > _remaining_s(cfg, t0) ? (:budget, delay) : (:sleep, delay)
+end
+
+"""
+    _unwrap_exception(e)
+
+Peel task/transport wrappers to the root cause so timeout and interrupt classification
+works regardless of the HTTP.jl major's wrapping: `TaskFailedException` (internal
+request tasks), `CompositeException`, and wrapper exceptions exposing an
+`error::Exception` field (the HTTP.jl RequestError/ConnectError shape).
+"""
+function _unwrap_exception(e)
+    while true
+        if e isa TaskFailedException
+            e = e.task.exception
+        elseif e isa CompositeException && !isempty(e.exceptions)
+            e = first(e.exceptions)
+        elseif e isa Exception && hasproperty(e, :error) && getproperty(e, :error) isa Exception
+            e = getproperty(e, :error)
+        else
+            return e
+        end
+    end
+end
 
 # Resolved-at-load HTTP.jl major: the majors expose different native timeout
 # kwargs with different declared types, so translation branches on this.
@@ -63,6 +97,12 @@ end
 # it rides along as a fast path. The 1.x readtimeout bounds the WHOLE
 # exchange — it would kill long healthy streams — so streams never set it and
 # the idle guard is the sole idle enforcement there.
+# INVARIANT: read-idle is the ONLY native mid-stream timer armed here. The
+# stream driver's catch maps every mid-stream HTTP.TimeoutError to :stream_idle
+# because HTTP.jl surfaces a read-idle breach with operation="request" —
+# indistinguishable by label from any other request-phase timeout. Adding a
+# native request_timeout (or any new mid-stream timer) to this set therefore
+# requires revisiting that mapping (see the catch in `_stream_attempt`).
 function _native_stream_kwargs(cfg::RequestConfig; major2::Bool=_HTTP_MAJOR2)
     return major2 ?
         (connect_timeout   = _native_seconds_real(cfg.connect_timeout),
@@ -177,8 +217,8 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
         catch e
             e isa InterruptException && rethrow()
             (_retryable_exception(e) && !final) || rethrow()
-            delay = _backoff_delay(attempt - 1)
-            if delay > _remaining_s(cfg, t0)
+            action, delay = _retry_pause(cfg, t0, attempt, nothing)
+            if action === :budget
                 @warn "transport failure is retryable but the backoff exceeds the remaining total_deadline budget; giving up" attempt delay
                 rethrow()
             end
@@ -187,8 +227,8 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
             continue
         end
         if _is_retryable(resp.status) && !final
-            delay = _retry_delay(attempt - 1, resp)
-            if delay > _remaining_s(cfg, t0)
+            action, delay = _retry_pause(cfg, t0, attempt, resp)
+            if action === :budget
                 @warn "status is retryable but the backoff (Retry-After/jitter) exceeds the remaining total_deadline budget; returning the last response" status = resp.status attempt delay
                 return resp
             end
@@ -509,133 +549,305 @@ function _stream_error_result(chat::Chat, err::Dict{String,Any}, request_id)
         LLMCallError(error=JSON.json(err), self=chat, status=nothing, request_id=request_id)
 end
 
-function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing)
-    Threads.@spawn begin
-        io_ref = Ref{Union{HTTP.Stream,Nothing}}(nothing)
-        try
-            m = Ref{Union{Message,Nothing}}(nothing)
-            stream_usage = Ref{Union{TokenUsage,Nothing}}(nothing)
-            stream_error = Ref{Union{Dict{String,Any},Nothing}}(nothing)
-            raw_buffer = IOBuffer()  # wire bytes for non-200/truncation reporting (streamed resp.body is empty under HTTP 2.x)
-            # SSE must reach the parser uncompressed. Some providers (e.g. Anthropic) gzip even
-            # streamed responses, and HTTP.jl's streaming read loop does NOT auto-decompress on the
-            # 1.x major — raw gzip bytes hit the SSE parser, every chunk fails to decode, and no
-            # message is built (→ LLMFailure). Request identity encoding + disable decompression so
-            # `data:` lines arrive verbatim on both HTTP majors.
-            stream_headers = push!(copy(auth_header(chat.service)), "Accept-Encoding" => "identity")
-            resp = HTTP.open("POST", get_url(chat), stream_headers; status_exception=false, decompress=false) do io
-                io_ref[] = io
-                state = StreamState()
-                carry = IOBuffer()                 # layer-1 partial-line carry
-                current_event = Ref("")            # layer-2 sticky event name
-                close_ref = Ref(false)
-                status = :continue
-                write(io, body)
-                HTTP.closewrite(io)
-                HTTP.startread(io)
-                while !eof(io) && !close_ref[] && status === :continue
-                    raw = String(readavailable(io))
-                    write(raw_buffer, raw)
-                    status = _sse_dispatch!(chat.service, carry, current_event, raw, state)
+# Shared stream finalization: final tool-call sweep, message assembly, terminal
+# callback. Used by the normal end-of-stream path and by the EOF-less finalize rule.
+function _finalize_stream_message!(state::StreamState, callback, on_tool_call,
+                                   close_ref::Ref{Bool})
+    _fire_tool_calls!(on_tool_call, state, true)   # final sweep BEFORE the terminal callback
+    msg = _build_stream_message(state)
+    usage = state.usage
+    !isnothing(callback) && callback(msg, close_ref)
+    (; msg, usage)
+end
+
+"""
+    _stream_attempt(chat, body, callback, on_tool_call, cfg, t0, io_ref) -> (; result, resp)
+
+ONE streaming connection attempt with fresh accumulation state. `callback`/`on_tool_call`
+arrive pre-wrapped by `_stream_drive` (they flip its callback-fired flag). Returns the
+typed result plus the `HTTP.Response` (`nothing` on the EOF-less finalize path) so the
+caller can honor `Retry-After`; throws on connect/first-byte timeout and transport
+failures — retry classification is the caller's job. `StreamState`, the SSE line carry,
+and the raw byte log are all locals: a retried attempt cannot inherit partial SSE state.
+"""
+function _stream_attempt(chat, body, callback, on_tool_call,
+                         cfg::RequestConfig, t0::UInt64, io_ref)
+    state = StreamState()
+    m = Ref{Union{Message,Nothing}}(nothing)
+    stream_usage = Ref{Union{TokenUsage,Nothing}}(nothing)
+    stream_error = Ref{Union{Dict{String,Any},Nothing}}(nothing)
+    raw_buffer = IOBuffer()  # wire bytes for non-200/truncation reporting (streamed resp.body is empty under HTTP 2.x)
+    # Idle-guard handle is owned by deadline.jl (opaque here; `nothing` until armed and
+    # whenever the idle timeout is disabled) — hence the untyped Ref.
+    idle = Ref{Any}(nothing)
+    # SSE must reach the parser uncompressed. Some providers (e.g. Anthropic) gzip even
+    # streamed responses, and HTTP.jl's streaming read loop does NOT auto-decompress on the
+    # 1.x major — raw gzip bytes hit the SSE parser, every chunk fails to decode, and no
+    # message is built (→ LLMFailure). Request identity encoding + disable decompression so
+    # `data:` lines arrive verbatim on both HTTP majors.
+    stream_headers = push!(copy(auth_header(chat.service)), "Accept-Encoding" => "identity")
+    try
+        # Seam-routed: _http_open applies the per-major native timeout kwargs plus
+        # status_exception=false and retry=false (HTTP.jl's internal retries would
+        # silently multiply the attempt budget); decompress=false passes through.
+        resp = _http_open("POST", get_url(chat), stream_headers; cfg, t0, decompress=false) do io
+            io_ref[] = io
+            carry = IOBuffer()                 # layer-1 partial-line carry
+            current_event = Ref("")            # layer-2 sticky event name
+            close_ref = Ref(false)
+            status = :continue
+            # First byte = response headers received. The request-phase deadline guards
+            # the whole send/first-byte exchange; the total deadline governs a stream
+            # only up to this point — after it, only the idle guard runs (a long
+            # healthy stream is not a failure).
+            _with_deadline(() -> begin
+                    write(io, body)
+                    HTTP.closewrite(io)
+                    HTTP.startread(io)
+                end, () -> close(io),
+                min(_remaining_s(cfg, t0), cfg.request_timeout), :request)
+            idle[] = _idle_guard(() -> close(io), cfg.stream_idle_timeout)
+            while !eof(io) && !close_ref[] && status === :continue
+                raw = String(readavailable(io))
+                idle[] === nothing || _touch!(idle[])
+                write(raw_buffer, raw)
+                status = _sse_dispatch!(chat.service, carry, current_event, raw, state)
+                _fire_tool_calls!(on_tool_call, state, false)
+                _flush_delta!(callback, state, close_ref)
+            end
+            if status === :continue && !close_ref[]
+                # EOF flush: a final line the server never '\n'-terminated
+                # (e.g. `data: [DONE]` as the very last bytes) is still one
+                # complete line — dispatch it before finalizing.
+                tail = String(take!(carry))
+                if !isempty(tail)
+                    status = _sse_dispatch!(chat.service, carry, current_event, tail * "\n", state)
                     _fire_tool_calls!(on_tool_call, state, false)
                     _flush_delta!(callback, state, close_ref)
                 end
-                if status === :continue && !close_ref[]
-                    # EOF flush: a final line the server never '\n'-terminated
-                    # (e.g. `data: [DONE]` as the very last bytes) is still one
-                    # complete line — dispatch it before finalizing.
-                    tail = String(take!(carry))
-                    if !isempty(tail)
-                        status = _sse_dispatch!(chat.service, carry, current_event, tail * "\n", state)
-                        _fire_tool_calls!(on_tool_call, state, false)
-                        _flush_delta!(callback, state, close_ref)
-                    end
-                end
-                stream_error[] = state.error
-                # Terminal contract: `:done` is the sentinel EOS
-                # ([DONE] / message_stop). Gemini has NO sentinel — its handler
-                # never returns :done; its stream ends at EOF with finishReason
-                # recorded. EOF with NEITHER signal = truncated/garbage stream
-                # (or a non-200 error body) → no message → LLMFailure below.
-                finished = status === :done ||
-                           (status === :continue && !isnothing(state.finish_reason))
-                if isnothing(state.error) && !close_ref[] && finished
-                    _fire_tool_calls!(on_tool_call, state, true)   # final sweep BEFORE the terminal callback
-                    m[] = _build_stream_message(state)
-                    stream_usage[] = state.usage
-                    !isnothing(callback) && callback(m[], close_ref)
-                end
-                close_ref[] && @info "stream closed by user"
-                HTTP.closeread(io)
             end
-            if !isnothing(stream_error[])
-                # In-band `error` event on an HTTP-200 stream: never LLMSuccess.
-                _stream_error_result(chat, stream_error[], _get_request_id(resp))
-            elseif resp.status == 200 && !isnothing(m[])
-                msg = m[]::Message
-                update!(chat, msg)
-                result = LLMSuccess(message=msg, self=chat, usage=stream_usage[])
-                _accumulate_cost!(chat, result)
-                result
-            else
-                LLMFailure(status=resp.status, response=String(take!(raw_buffer)), self=chat, request_id=_get_request_id(resp))
+            stream_error[] = state.error
+            # Terminal contract: `:done` is the sentinel EOS
+            # ([DONE] / message_stop). Gemini has NO sentinel — its handler
+            # never returns :done; its stream ends at EOF with finishReason
+            # recorded. EOF with NEITHER signal = truncated/garbage stream
+            # (or a non-200 error body) → no message → LLMFailure below.
+            finished = status === :done ||
+                       (status === :continue && !isnothing(state.finish_reason))
+            if isnothing(state.error) && !close_ref[] && finished
+                fin = _finalize_stream_message!(state, callback, on_tool_call, close_ref)
+                m[] = fin.msg
+                stream_usage[] = fin.usage
             end
-        catch e
-            statuserror = hasproperty(e, :status) ? e.status : nothing
-            req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : _get_request_id(e)
-            LLMCallError(error=string(e), self=chat, status=statuserror, request_id=req_id)
+            close_ref[] && @info "stream closed by user"
+            HTTP.closeread(io)
         end
+        if !isnothing(stream_error[])
+            # In-band `error` event on an HTTP-200 stream: never LLMSuccess.
+            return (; result=_stream_error_result(chat, stream_error[], _get_request_id(resp)), resp)
+        elseif resp.status == 200 && !isnothing(m[])
+            msg = m[]::Message
+            update!(chat, msg)
+            result = LLMSuccess(message=msg, self=chat, usage=stream_usage[])
+            _accumulate_cost!(chat, result)
+            return (; result, resp)
+        else
+            return (; result=LLMFailure(status=resp.status, response=String(take!(raw_buffer)),
+                                        self=chat, request_id=_get_request_id(resp)), resp)
+        end
+    catch e
+        # Chain-walk: an interrupt nested inside a wrapper must still surface first.
+        _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
+        # A byte-gap idle breach reaches here two ways once the guard is armed
+        # (past the first byte): our own idle guard closed the socket (`_idle_fired`
+        # — the caught IOError is the echo of that close), OR HTTP 2.x's native
+        # `read_idle_timeout` fired first (an `HTTP.TimeoutError`; the streaming
+        # seam sets it to `stream_idle_timeout` as a fast path, so it can win the
+        # race against our guard's `limit + period` tick). Both are the SAME breach
+        # and map identically — never a retryable transport failure.
+        # INVARIANT: this blanket map is sound ONLY while the streaming attempt
+        # arms no native mid-stream timer besides read-idle. HTTP.jl (2.5.5)
+        # reports a streaming read-idle breach with the literal
+        # operation="request", indistinguishable by label from a whole-exchange
+        # request timeout — so a native request_timeout added to
+        # `_native_stream_kwargs` would surface here as a mislabeled,
+        # retry-suppressed :stream_idle. See the mirror note there before adding
+        # any new native streaming timer.
+        if idle[] !== nothing &&
+           (_idle_fired(idle[]) || _find_exception(x -> x isa HTTP.TimeoutError, e) !== nothing)
+            if !isnothing(state.finish_reason)
+                # EOF-less terminal streams (Gemini has no [DONE] sentinel): a recorded
+                # finish_reason means the turn completed — finalize SUCCESS through the
+                # normal build path. Trailing usage chunks past the gap are lost; accepted.
+                fin = _finalize_stream_message!(state, callback, on_tool_call, Ref(false))
+                update!(chat, fin.msg)
+                result = LLMSuccess(message=fin.msg, self=chat, usage=fin.usage)
+                _accumulate_cost!(chat, result)
+                return (; result, resp=nothing)
+            end
+            throw(UniLMTimeout(:stream_idle, _idle_gap_s(idle[]), cfg.stream_idle_timeout))
+        end
+        # A native timeout BEFORE the idle guard armed is the connect/first-byte
+        # phase; map it to the same phase-attributed UniLMTimeout the non-stream
+        # seam produces so a raw HTTP.TimeoutError never leaks as the failure cause.
+        mapped = _map_native_timeout(e, cfg, min(_remaining_s(cfg, t0), cfg.request_timeout), t0)
+        mapped === nothing || throw(mapped)
+        rethrow()
+    finally
+        idle[] === nothing || _disarm!(idle[])
     end
+end
+
+"""
+    _stream_drive(chat, body, callback, on_tool_call, cfg, t0) -> LLMRequestResponse
+
+Streaming request loop. Retry is legal only while NO user callback has fired — a
+retried attempt after user-visible output would replay or reorder it. Retryable
+pre-first-callback outcomes: retryable HTTP status, the in-band `overloaded_error`
+(documented 529 equivalent — `_stream_error_result` maps it to `LLMFailure(status=529)`,
+so the status rule covers both twins), a connect/request-phase `UniLMTimeout`, and
+transport IO failures. Backoff/budget arithmetic is `_retry_pause` — identical to the
+non-stream loop. `InterruptException` always rethrows; every other failure becomes a
+typed result value.
+"""
+function _stream_drive(chat, body, callback, on_tool_call, cfg::RequestConfig, t0::UInt64)
+    io_ref = Ref{Union{HTTP.Stream,Nothing}}(nothing)
+    callback_fired = Ref(false)
+    # Flip the flag immediately BEFORE user code runs (a throwing callback still
+    # counts as fired). Wrapping here keeps _flush_delta!/_fire_tool_calls!
+    # signatures untouched.
+    cb = isnothing(callback) ? nothing :
+         (chunk, close_ref) -> (callback_fired[] = true; callback(chunk, close_ref))
+    otc = isnothing(on_tool_call) ? nothing :
+          tc -> (callback_fired[] = true; on_tool_call(tc))
+    attempt = 0
+    try
+        while true
+            attempt += 1
+            _remaining_s(cfg, t0) <= 0.0 &&
+                throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
+            outcome = try
+                _stream_attempt(chat, body, cb, otc, cfg, t0, io_ref)
+            catch e
+                _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
+                u = _unwrap_exception(e)
+                retryable = (u isa UniLMTimeout && (u.phase === :connect || u.phase === :request)) ||
+                            _is_transport_error(u)
+                (retryable && !callback_fired[] && attempt < cfg.max_attempts) || rethrow()
+                action, delay = _retry_pause(cfg, t0, attempt, nothing)
+                if action !== :sleep
+                    @warn "stream retry abandoned: backoff exceeds the remaining deadline" attempt delay
+                    rethrow()
+                end
+                @debug "stream attempt failed; retrying" attempt exception = u
+                sleep(delay)
+                continue
+            end
+            result = outcome.result
+            if result isa LLMFailure && _is_retryable(result.status) &&
+               !callback_fired[] && attempt < cfg.max_attempts
+                action, delay = _retry_pause(cfg, t0, attempt, outcome.resp)
+                if action === :sleep
+                    @debug "retryable streamed status; retrying" attempt status = result.status
+                    sleep(delay)
+                    continue
+                end
+                # Budget cut: the last REAL outcome is the truthful answer — never a
+                # fabricated timeout. Stated once.
+                @warn "returning last streamed failure: backoff exceeds the remaining deadline" attempt status = result.status delay
+            end
+            return result
+        end
+    catch e
+        _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
+        u = _unwrap_exception(e)
+        req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : _get_request_id(e)
+        u isa UniLMTimeout &&
+            return LLMCallError(error=sprint(showerror, u), self=chat, status=nothing,
+                                request_id=req_id, cause=u)
+        statuserror = hasproperty(u, :status) ? u.status : nothing
+        return LLMCallError(error=string(e), self=chat, status=statuserror,
+                            request_id=req_id, cause=u isa Exception ? u : nothing)
+    end
+end
+
+"""
+    _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing,
+                       cfg=_resolve_config(nothing), t0=time_ns()) -> Task
+
+Spawn the streaming request task. `cfg` and `t0` are resolved/stamped at call entry —
+BEFORE the spawn — and the task closes over the resolved struct, so a running stream is
+immune to later changes of the process-default configuration.
+
+The returned task throws only for a user `InterruptException` (every other failure is a
+typed result value), so `fetch` then raises a `TaskFailedException` whose
+`task.exception` is the `InterruptException` — callers catching interrupts around
+`fetch` must unwrap it.
+"""
+function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing,
+                            cfg::RequestConfig=_resolve_config(nothing),
+                            t0::UInt64=time_ns())
+    Threads.@spawn _stream_drive(chat, body, callback, on_tool_call, cfg, t0)
 end
 
 
 """
-    chatrequest!(chat::Chat, retries=0, callback=nothing)
+    chatrequest!(chat::Chat; config=nothing, callback=nothing, on_tool_call=nothing)
 
-Send a request to the OpenAI API to generate a response to the messages in `conv`.
+Send `chat` to its provider and return a typed result.
 
-The `callback` function is called for each chunk of the response. The `close` Ref is also passed to the callback function, which can be used to close the stream (for example when not satisfied with the intermediate results and want to stop the stream).
-    
-    The signature of the callback function is:
-        `callback(chunk::Union{String, Message}, close::Ref{Bool})`
+Non-streaming (`chat.stream !== true`): returns `LLMSuccess`, `LLMFailure`, or
+`LLMCallError`. Transient statuses (408/429/500/502/503/504/529) are retried with
+backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`,
+`total_deadline`; `Retry-After` honored). Timeouts surface as `LLMCallError` with
+`status = nothing` and the `UniLMTimeout` in `cause` — no fabricated HTTP statuses.
+
+Streaming (`chat.stream === true`): returns a `Task` whose `fetch` yields the same
+typed results. `callback(chunk::Union{String,Message}, close::Ref{Bool})` receives
+text deltas then the final assembled `Message`; `on_tool_call(tc::GPTToolCall)` fires
+once per completed streamed tool call. A user `InterruptException` is never converted
+into a result value: it propagates, so `fetch` on the streaming task throws a
+`TaskFailedException` whose `task.exception` is the `InterruptException`.
+
+`config::Union{Nothing,RequestConfig}`: per-call timeout/retry budget; `nothing`
+resolves the ambient configuration (`with_request_config` scope, else the process
+default set via `set_default_config!`).
 """
-function chatrequest!(chat::Chat; retries::Int=0, callback=nothing, on_tool_call=nothing)
-    res = LLMCallError(error="uninitialized", status=0, self=chat)
+function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
+                      callback=nothing, on_tool_call=nothing)
+    cfg = _resolve_config(config)
+    t0 = time_ns()
     local resp
     try
         body = encode_request(chat.service, chat)
         if chat.stream !== true
-            resp = HTTP.post(get_url(chat), body=body, headers=auth_header(chat.service); status_exception=false)
+            resp = _http_with_retries(cfg, t0, "POST", get_url(chat),
+                                      auth_header(chat.service), body)
             if resp.status == 200
                 extracted = decode_response(chat.service, resp)
                 update!(chat, extracted.message)
                 result = LLMSuccess(message=extracted.message, self=chat, usage=extracted.usage)
                 _accumulate_cost!(chat, result)
                 return result
-            elseif _is_retryable(resp.status)
-                if retries < _RETRY_MAX_ATTEMPTS
-                    delay = _retry_delay(retries, resp)
-                    @warn "Request status: $(resp.status). Retrying in $(round(delay; digits=2))s..."
-                    sleep(delay)
-                    return chatrequest!(chat; retries=retries + 1, callback, on_tool_call)
-                else
-                    return LLMFailure(status=resp.status, response=String(resp.body), self=chat, request_id=_get_request_id(resp))
-                end
             else
-                @error "Request status: $(resp.status)"
-                return LLMFailure(status=resp.status, response=String(resp.body), self=chat, request_id=_get_request_id(resp))
+                # Retry/backoff already happened inside the shared loop; the last
+                # real response is the truthful outcome (a budget-exhausted 429 is
+                # a 429, not a fabricated timeout).
+                return LLMFailure(status=resp.status, response=String(resp.body),
+                                  self=chat, request_id=_get_request_id(resp))
             end
         else
-            task = _chatrequeststream(chat, body, callback; on_tool_call)
-            return task
+            return _chatrequeststream(chat, body, callback; on_tool_call, cfg, t0)
         end
     catch e
-        @info "Error: $e"
+        e isa InterruptException && rethrow()
+        e isa UniLMTimeout && return LLMCallError(error=sprint(showerror, e), self=chat,
+                                                  status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        res = LLMCallError(error=string(e), self=chat, status=statuserror, request_id=req_id)
+        return LLMCallError(error=string(e), self=chat, status=statuserror,
+                            request_id=req_id, cause=e isa Exception ? e : nothing)
     end
-    return res
 end
 
 """
@@ -665,9 +877,11 @@ Send a request to the OpenAI API to generate a response to the messages in `conv
 - `logit_bias::Union{AbstractDict{String,Float64},Nothing} = nothing`: Modify the likelihood of specified tokens appearing in the completion.
 - `user::Union{String,Nothing} = nothing`: A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse.
 - `seed::Union{Int64,Nothing} = nothing`: This feature is in Beta. If specified, the system will make a best effort to sample deterministically.
+- `config::Union{Nothing,RequestConfig} = nothing`: Per-call timeout/retry budget; `nothing` resolves the ambient configuration (scoped, else process default).
 """
 function chatrequest!(; kws...)
-    filteredkws = filter(x -> x[1] != :messages && x[1] != :userprompt && x[1] != :systemprompt, kws)
+    filteredkws = filter(x -> x[1] ∉ (:messages, :userprompt, :systemprompt, :config), kws)
+    config = get(kws, :config, nothing)
     !haskey(kws, :messages) && (!haskey(kws, :userprompt) || !haskey(kws, :systemprompt)) && return LLMFailure(response="No messages and/or systemprompt/userprompt provided.", status=499, self=Chat(; filteredkws...))
     messages = get(kws, :messages, Message[])
     if haskey(kws, :userprompt) && haskey(kws, :systemprompt)
@@ -683,40 +897,43 @@ function chatrequest!(; kws...)
             push!(messages, kws[:userprompt])
         end
     end
-    chatrequest!(Chat(; messages=messages, filteredkws...))
+    chatrequest!(Chat(; messages=messages, filteredkws...); config)
 end
 
 
 """
-    embeddingrequest!(emb::Embeddings; retries=0) -> LLMRequestResponse
+    embeddingrequest!(emb::Embeddings; config=nothing) -> LLMRequestResponse
 
 Send an Embeddings API request for the `input` in `emb`. Returns `EmbeddingSuccess`,
-`EmbeddingFailure` (non-2xx), or `EmbeddingCallError` (network/parse). The resulting
-vectors are filled into `emb.embeddings` in place and are also reachable via
+`EmbeddingFailure` (non-2xx), or `EmbeddingCallError` (network/parse/timeout). The
+resulting vectors are filled into `emb.embeddings` in place and are also reachable via
 `embedding_vectors(result)`.
+
+Transient statuses (408/429/500/502/503/504/529) are retried with backoff and jitter
+under the resolved [`RequestConfig`](@ref) (`config === nothing` resolves the ambient
+configuration). Timeouts surface as `EmbeddingCallError` with `status = nothing` and
+the `UniLMTimeout` in `cause`.
 """
-function embeddingrequest!(emb::Embeddings; retries::Int=0)
+function embeddingrequest!(emb::Embeddings; config::Union{Nothing,RequestConfig}=nothing)
+    cfg = _resolve_config(config)
+    t0 = time_ns()
     try
         body = JSON.json(emb)
-        resp = HTTP.post(get_url(emb), body=body, headers=auth_header(emb.service); status_exception=false)
+        resp = _http_with_retries(cfg, t0, "POST", get_url(emb),
+                                  auth_header(emb.service), body)
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
             update!(emb, data["data"])
             return EmbeddingSuccess(embeddings=emb, usage=_parse_usage(data), raw=data)
-        elseif _is_retryable(resp.status)
-            if retries < _RETRY_MAX_ATTEMPTS
-                delay = _retry_delay(retries, resp)
-                @warn "Request status: $(resp.status). Retrying in $(round(delay; digits=2))s..."
-                sleep(delay)
-                return embeddingrequest!(emb; retries=retries + 1)
-            else
-                return EmbeddingFailure(response=String(resp.body), status=resp.status)
-            end
         else
             return EmbeddingFailure(response=String(resp.body), status=resp.status)
         end
     catch e
+        e isa InterruptException && rethrow()
+        e isa UniLMTimeout && return EmbeddingCallError(error=sprint(showerror, e),
+                                                        status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
-        return EmbeddingCallError(error=string(e), status=statuserror)
+        return EmbeddingCallError(error=string(e), status=statuserror,
+                                  cause=e isa Exception ? e : nothing)
     end
 end

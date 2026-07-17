@@ -109,7 +109,68 @@ end
         catch
         end
     end
-    @test_broken ok
+    @test ok
+
+    # Capture-at-spawn through a RUNNING STREAM — the clause only the streaming
+    # driver can prove. A stream started under a scoped idle limit must honor
+    # THAT limit even after the process default is mutated post-spawn, because
+    # the driver resolves `cfg` BEFORE `Threads.@spawn` and the task closes over
+    # the resolved struct. The server sends one delta then goes mute: under the
+    # captured idle=1.0 s the guard fires ~1.25 s in (well inside the bound); a
+    # driver that instead re-read the live default (30 s) would not finish in
+    # time. The pre-rearchitecture driver has no idle guard at all → hangs → red.
+    stream_captured = begin
+        ev = "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hi\"},\"finish_reason\":null}]}\n\n"
+        server = nothing
+        sport = 0
+        for attempt in 1:5
+            tcp = Sockets.listen(Sockets.localhost, 0)
+            sport = Int(Sockets.getsockname(tcp)[2])
+            close(tcp)
+            try
+                server = HTTP.listen!("127.0.0.1", sport; verbose = false) do http::HTTP.Stream
+                    read(http)
+                    HTTP.setstatus(http, 200)
+                    HTTP.setheader(http, "Content-Type" => "text/event-stream")
+                    HTTP.startwrite(http)
+                    write(http, ev)
+                    flush(http)
+                    sleep(8)   # mute past the captured idle limit and the bound below
+                end
+                break
+            catch
+                attempt == 5 && rethrow()
+            end
+        end
+        try
+            # Live process default = a LONG idle limit; a stream resolving live
+            # would inherit 30 s and miss the bound below.
+            UniLM.set_default_config!(UniLM.RequestConfig(stream_idle_timeout = 30.0, max_attempts = 1))
+            task = UniLM.with_request_config(stream_idle_timeout = 1.0, request_timeout = 5.0,
+                                             total_deadline = 10.0, max_attempts = 1) do
+                chat = Chat(service = GenericOpenAIEndpoint("http://127.0.0.1:$(sport)", ""),
+                            model = "mock", stream = true)
+                push!(chat, Message(Val(:system), "s"))
+                push!(chat, Message(Val(:user), "u"))
+                chatrequest!(chat)   # resolves scoped idle=1.0 at call entry, before the spawn
+            end
+            # Mutate the process default AGAIN post-spawn: the captured struct must win.
+            UniLM.set_default_config!(UniLM.RequestConfig(stream_idle_timeout = 30.0, max_attempts = 1))
+            done = timedwait(() -> istaskdone(task), 6.0)
+            res = done === :ok ? fetch(task) : nothing
+            done === :ok && res isa LLMCallError && res.cause isa UniLM.UniLMTimeout &&
+                res.cause.phase === :stream_idle
+        catch
+            false
+        finally
+            isnothing(server) || HTTP.forceclose(server)
+            try
+                UniLM.set_default_config!(UniLM.RequestConfig())
+            catch
+            end
+        end
+    end
+    @test stream_captured
 end
 
 # ─── HTTP hang/fault mock servers (all 127.0.0.1, race-free ephemeral bind) ───
@@ -236,7 +297,7 @@ UniLM.auth_header(::_HMInterruptService) = ["Content-Type" => "application/json"
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         close(srv)
     end
@@ -264,7 +325,7 @@ end
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         close(srv)
     end
@@ -293,7 +354,7 @@ end
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         close(srv)
     end
@@ -313,50 +374,100 @@ end
     catch e
         e isa InterruptException
     end
-    @test_broken ok
+    @test ok
 end
 
 @testset "repeated HTTP timeouts leak no tasks and do not poison the pool" begin
-    # FIXED contract (observable half): repeated timeouts to a mute peer each
-    # produce a typed timeout AND leave the client healthy — a subsequent request
-    # to a WORKING server still succeeds (the 2.x connection pool is not poisoned
-    # by a timed-out connection). The deeper task/timer-leak counting depends on
-    # the timeout-guard internals and lands with the green expansion of this pin.
-    srv, url, _ = _hm_mute_server(drain = true)
+    # FIXED contract: N=20 repeated timeouts to a mute peer each surface a TYPED
+    # timeout AND complete within a per-cycle bound — a driver task that leaked
+    # (never returned) shows up as :hung and fails the shape assertion — and they
+    # leave the client healthy on BOTH connection-pool keys: a FRESH peer succeeds
+    # (no process-global poison) AND the SAME host:port that just timed out, once
+    # responsive, succeeds. That same-key clause is the load-bearing one: a
+    # timed-out connection wrongly kept in the 2.x pool as reusable would be drawn
+    # by the same-key request and fail, whereas a different peer draws a fresh pool
+    # entry and can never witness the poison. A before/after live-guard COUNT would
+    # need a tracking accessor deadline.jl does not expose; the per-cycle bound is
+    # the task-completion evidence here.
     healthy_body = JSON.json(Dict{String,Any}(
         "id" => "c", "object" => "chat.completion",
         "choices" => [Dict{String,Any}("index" => 0, "finish_reason" => "stop",
             "message" => Dict{String,Any}("role" => "assistant", "content" => "pong"))],
         "usage" => Dict{String,Any}("prompt_tokens" => 1, "completion_tokens" => 1, "total_tokens" => 2)))
-    hsrv, hurl, _ = _hm_healthy_oai_server(healthy_body)
+    hsrv, hurl, _ = _hm_healthy_oai_server(healthy_body)   # fresh-peer (cross-key) probe
+
+    # One peer, two phases: it drains each request then holds past the client's
+    # request_timeout (the deadline fires → typed timeout) while `responsive` is
+    # false, and serves `healthy_body` once it flips true. Reusing this exact
+    # host:port for the final health check drives the pool's reuse path for a key
+    # that just timed out.
+    responsive = Ref(false)
+    tsrv = nothing
+    tport = 0
+    for attempt in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        tport = Int(Sockets.getsockname(tcp)[2])
+        close(tcp)
+        try
+            tsrv = HTTP.listen!("127.0.0.1", tport; verbose = false) do http::HTTP.Stream
+                read(http)
+                if responsive[]
+                    HTTP.setstatus(http, 200)
+                    HTTP.setheader(http, "Content-Type" => "application/json")
+                    HTTP.startwrite(http)
+                    write(http, healthy_body)
+                else
+                    sleep(3.0)   # outlast the 0.5 s request_timeout below, then reap
+                end
+            end
+            break
+        catch
+            attempt == 5 && rethrow()
+        end
+    end
+    turl = "http://127.0.0.1:$(tport)"
+
     try
-        outcome = _hm_bounded(bound = 15.0) do
+        outcome = _hm_bounded(bound = 30.0) do
             cfg = UniLM.RequestConfig(request_timeout = 0.5, total_deadline = 1.0, max_attempts = 1)
-            mute_chat = Chat(service = GenericOpenAIEndpoint(url, ""), model = "mock")
+            mute_chat = Chat(service = GenericOpenAIEndpoint(turl, ""), model = "mock")
             push!(mute_chat, Message(Val(:system), "s"))
             push!(mute_chat, Message(Val(:user), "u"))
-            all_typed = true
-            for _ in 1:5
-                r = chatrequest!(mute_chat; config = cfg)
-                all_typed &= (r isa LLMCallError && r.cause isa UniLM.UniLMTimeout)
+            # Each cycle runs on its own task, observed under a per-cycle bound: a
+            # task that never completes surfaces as :hung (never a suite hang), so
+            # the typed-outcome assertion doubles as a per-task no-leak check.
+            results = map(1:20) do _
+                t = Threads.@spawn chatrequest!(mute_chat; config = cfg)
+                timedwait(() -> istaskdone(t), 10.0) === :ok || return :hung
+                fetch(t)
             end
-            healthy_chat = Chat(service = GenericOpenAIEndpoint(hurl, ""), model = "mock")
-            push!(healthy_chat, Message(Val(:system), "s"))
-            push!(healthy_chat, Message(Val(:user), "u"))
-            hr = chatrequest!(healthy_chat;
+            # Fresh key: a brand-new peer still succeeds after the timeout storm.
+            fresh_chat = Chat(service = GenericOpenAIEndpoint(hurl, ""), model = "mock")
+            push!(fresh_chat, Message(Val(:system), "s"))
+            push!(fresh_chat, Message(Val(:user), "u"))
+            fresh = chatrequest!(fresh_chat;
                 config = UniLM.RequestConfig(request_timeout = 5.0, total_deadline = 10.0, max_attempts = 1))
-            (all_typed, hr)
+            # Same key (LAST): the port that just timed out 20× is now responsive;
+            # a request to that SAME host:port must succeed — the pool is not poisoned.
+            responsive[] = true
+            same_chat = Chat(service = GenericOpenAIEndpoint(turl, ""), model = "mock")
+            push!(same_chat, Message(Val(:system), "s"))
+            push!(same_chat, Message(Val(:user), "u"))
+            same = chatrequest!(same_chat;
+                config = UniLM.RequestConfig(request_timeout = 5.0, total_deadline = 10.0, max_attempts = 1))
+            (results, fresh, same)
         end
         ok = try
-            outcome[1] === :ok && let (all_typed, hr) = outcome[2]
-                all_typed && hr isa LLMSuccess
+            outcome[1] === :ok && let (results, fresh, same) = outcome[2]
+                all(r -> r isa LLMCallError && r.cause isa UniLM.UniLMTimeout, results) &&
+                    fresh isa LLMSuccess && same isa LLMSuccess
             end
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
-        close(srv)
+        HTTP.forceclose(tsrv)
         close(hsrv)
     end
 end
@@ -514,7 +625,7 @@ UniLM.handle_sse_event!(::_HMAnthropicWireMock, event::AbstractString, payload::
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         close(srv)
     end
@@ -537,12 +648,21 @@ end
         ok = try
             outcome[1] === :ok && let res = outcome[2]
                 res isa LLMCallError && res.cause isa UniLM.UniLMTimeout &&
-                    res.cause.phase === :stream_idle
+                    res.cause.phase === :stream_idle &&
+                    res.cause.limit == 1.0 &&
+                    # CONTRACT: elapsed is the BYTE GAP since the last raw chunk,
+                    # not whole-call elapsed. Two mechanisms report the same gap:
+                    # HTTP 2.x's native read_idle_timeout wins at ~1.0 s, our own
+                    # guard (1.x, or if it wins the race) fires within
+                    # [limit, limit+period]=[1.0,1.25]. Either way the gap sits
+                    # near the 1.0 s limit — bounded well under the 10 s window a
+                    # whole-call or total-deadline figure could not satisfy.
+                    0.95 <= res.cause.elapsed <= 1.5
             end
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         # Handler parks mid-stream forever, so a graceful close would quiesce
         # on the still-ACTIVE conn; force-close skips the quiesce loop.
@@ -566,11 +686,15 @@ end
             fetch(chatrequest!(chat; config = cfg))
         end
         ok = try
-            outcome[1] === :ok && outcome[2] isa LLMSuccess
+            outcome[1] === :ok && outcome[2] isa LLMSuccess &&
+                # Content tightening: with the idle guard now ACTIVE, the sub-limit
+                # trickle + ping bridge must survive AND assemble in full — every
+                # delta forwarded, nothing truncated by a premature idle close.
+                outcome[2].message.content == "Hello world"
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         close(srv)
     end
@@ -592,13 +716,141 @@ end
             fetch(chatrequest!(chat; config = cfg))
         end
         ok = try
-            outcome[1] === :ok && outcome[2] isa LLMSuccess && calls[] == 2
+            outcome[1] === :ok && outcome[2] isa LLMSuccess && calls[] == 2 &&
+                # Content tightening: the RETRIED second attempt is the one that
+                # produced the message — its assembled text must be the valid
+                # completion's ("ok"), never a remnant of the discarded overload.
+                outcome[2].message.content == "ok"
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         close(srv)
+    end
+end
+
+@testset "stream: EOF-less terminal stream finalizes success at the idle gap" begin
+    # A provider wire with no end-of-stream sentinel (the Gemini shape): the terminal
+    # chunk records finish_reason, no sentinel follows, and the connection never closes.
+    # The idle guard must finalize SUCCESS (the turn completed), not a timeout.
+    server = nothing
+    port = 0
+    for attempt in 1:3
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2])
+        close(tcp)
+        try
+            server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
+                read(http)                            # drain the request body
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "text/event-stream")
+                HTTP.startwrite(http)
+                write(http, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"done.\"},\"finish_reason\":\"stop\"}]}\n\n")
+                flush(http)
+                sleep(15)   # hold the socket open far past the idle limit: no EOF, no sentinel
+            end
+            break
+        catch
+            attempt == 3 && rethrow()
+        end
+    end
+    try
+        chat = Chat(service=GenericOpenAIEndpoint("http://127.0.0.1:$port", ""), model="mock", stream=true)
+        push!(chat, Message(Val(:system), "s"))
+        push!(chat, Message(Val(:user), "u"))
+        cfg = RequestConfig(stream_idle_timeout=1.0, request_timeout=10.0,
+                            total_deadline=10.0, max_attempts=1)
+        task = chatrequest!(chat; config=cfg)
+        @test timedwait(() -> istaskdone(task), 10.0) === :ok
+        res = fetch(task)
+        @test res isa LLMSuccess
+        @test res.message.content == "done."
+        @test res.message.finish_reason == "stop"
+    finally
+        isnothing(server) || close(server)
+    end
+end
+
+@testset "stream: connect refusal surfaces a typed transport failure (task-boundary unwrap)" begin
+    # A refused FIRST connection must not hang and must not leak the raw HTTP.jl
+    # transport wrapper: the driver peels the `.error`-carrying ConnectError to
+    # its root across the task boundary (`_unwrap_exception`) and returns a typed
+    # LLMCallError. `max_attempts = 1` keeps it single-shot (no backoff wait);
+    # port 1 never listens → connection refused, the dead-endpoint shape the mock
+    # server suite also uses.
+    chat = Chat(service = GenericOpenAIEndpoint("http://127.0.0.1:1", ""),
+                model = "mock", stream = true)
+    push!(chat, Message(Val(:system), "s"))
+    push!(chat, Message(Val(:user), "u"))
+    outcome = _hm_bounded() do
+        cfg = UniLM.RequestConfig(connect_timeout = 2.0, request_timeout = 2.0,
+            total_deadline = 5.0, max_attempts = 1, stream_idle_timeout = 5.0)
+        fetch(chatrequest!(chat; config = cfg))
+    end
+    ok = try
+        outcome[1] === :ok && outcome[2] isa LLMCallError
+    catch
+        false
+    end
+    @test ok
+end
+
+@testset "embeddings: mute server yields typed timeout" begin
+    # Accept-then-silence listener: connections are accepted and never answered.
+    srv = Sockets.listen(Sockets.localhost, 0)
+    port = Int(Sockets.getsockname(srv)[2])
+    accepter = Threads.@spawn begin
+        try
+            while isopen(srv)
+                Sockets.accept(srv)   # hold the connection open, never respond
+            end
+        catch
+        end
+    end
+    try
+        emb = UniLM.Embeddings("x"; service=GenericOpenAIEndpoint("http://127.0.0.1:$port", ""),
+                               model="mock")
+        cfg = RequestConfig(connect_timeout=1.0, request_timeout=1.0,
+                            total_deadline=2.0, max_attempts=1)
+        t = Threads.@spawn embeddingrequest!(emb; config=cfg)
+        @test timedwait(() -> istaskdone(t), 10.0) === :ok
+        r = fetch(t)
+        @test r isa EmbeddingCallError
+        @test isnothing(r.status)
+        @test r.cause isa UniLM.UniLMTimeout
+        @test r.cause.phase in (:connect, :request, :deadline)
+    finally
+        close(srv)
+        wait(accepter)
+    end
+end
+
+@testset "embeddings: interrupt propagates, never laundered" begin
+    srv = Sockets.listen(Sockets.localhost, 0)
+    port = Int(Sockets.getsockname(srv)[2])
+    accepter = Threads.@spawn begin
+        try
+            while isopen(srv)
+                Sockets.accept(srv)
+            end
+        catch
+        end
+    end
+    try
+        emb = UniLM.Embeddings("x"; service=GenericOpenAIEndpoint("http://127.0.0.1:$port", ""),
+                               model="mock")
+        cfg = RequestConfig(connect_timeout=5.0, request_timeout=5.0,
+                            total_deadline=5.0, max_attempts=1)
+        t = Threads.@spawn embeddingrequest!(emb; config=cfg)
+        sleep(0.3)                                   # let it block inside the exchange
+        schedule(t, InterruptException(); error=true)
+        @test timedwait(() -> istaskdone(t), 10.0) === :ok
+        @test istaskfailed(t)                        # rethrown — not an EmbeddingCallError value
+        @test t.exception isa InterruptException
+    finally
+        close(srv)
+        wait(accepter)
     end
 end
 

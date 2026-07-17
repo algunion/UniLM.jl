@@ -128,7 +128,7 @@ end
 # ─── Chat Completions Loop ──────────────────────────────────────────────────
 
 """
-    tool_loop!(chat::Chat, dispatcher::Function; max_turns=10, retries=0, callback=nothing, on_tool_call=nothing) -> ToolLoopResult
+    tool_loop!(chat::Chat, dispatcher::Function; max_turns=10, config=nothing, callback=nothing, on_tool_call=nothing) -> ToolLoopResult
 
 Run a tool-calling loop on a [`Chat`](@ref). Repeatedly calls [`chatrequest!`](@ref),
 dispatches tool calls via `dispatcher(name, args)`, pushes tool-role messages back,
@@ -137,7 +137,7 @@ and repeats until a text response, API error, or `max_turns`.
 # Arguments
 - `dispatcher`: `(name::String, args::Dict{String,Any}) -> String`
 - `max_turns`: Maximum API round-trips (default 10).
-- `retries`: Retry count passed to `chatrequest!`.
+- `config`: Per-request [`RequestConfig`](@ref) passed to [`chatrequest!`](@ref) — each turn gets its own attempt/deadline budget.
 - `callback`: Streaming callback passed to `chatrequest!`.
 - `on_tool_call`: Tool call notification callback passed to `chatrequest!`.
 
@@ -150,14 +150,14 @@ result = tool_loop!(chat, (name, args) -> string(args["a"] + args["b"]))
 ```
 """
 function tool_loop!(chat::Chat, dispatcher::Function;
-                    max_turns::Int=10, retries::Int=0,
+                    max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing,
                     callback=nothing, on_tool_call=nothing)::ToolLoopResult
     all_outcomes = ToolCallOutcome[]
     turns = 0
 
     while turns < max_turns
         turns += 1
-        raw = chatrequest!(chat; retries, callback, on_tool_call)
+        raw = chatrequest!(chat; config, callback, on_tool_call)
         result = raw isa Task ? fetch(raw) : raw
 
         if result isa LLMFailure
@@ -192,7 +192,7 @@ end
 No-dispatcher variant: builds a dispatcher from [`CallableTool`](@ref) entries.
 """
 function tool_loop!(chat::Chat; tools::Vector{<:CallableTool},
-                    max_turns::Int=10, retries::Int=0,
+                    max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing,
                     callback=nothing, on_tool_call=nothing)::ToolLoopResult
     tool_map = Dict{String,Function}(_tool_name(ct) => ct.callable for ct in tools)
     dispatcher = (name, args) -> begin
@@ -200,7 +200,7 @@ function tool_loop!(chat::Chat; tools::Vector{<:CallableTool},
         isnothing(fn) && error("Unknown tool: $name")
         fn(name, args)
     end
-    tool_loop!(chat, dispatcher; max_turns, retries, callback, on_tool_call)
+    tool_loop!(chat, dispatcher; max_turns, config, callback, on_tool_call)
 end
 
 # ─── Responses API Loop ─────────────────────────────────────────────────────

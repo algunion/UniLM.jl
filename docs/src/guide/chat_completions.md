@@ -184,7 +184,7 @@ println(JSON.json(chat))
 
 ## Retry Behaviour
 
-`chatrequest!` automatically retries on transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) with exponential backoff and jitter (up to 30 attempts, max 60s delay). On 429 responses, the `Retry-After` header is respected. This is transparent and requires no configuration.
+`chatrequest!` automatically retries transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) with exponential backoff and jitter, honoring `Retry-After`. Attempts and total time are bounded by the resolved [`RequestConfig`](@ref) (`max_attempts`, default 3; `total_deadline`, default 900 s). Pass `config=RequestConfig(max_attempts=1)` to disable retries for a call, or set scoped/process-wide defaults with `with_request_config` / `set_default_config!`. Timeouts surface as `LLMCallError` with `status = nothing` and the `UniLMTimeout` (phase, elapsed, limit) in `.cause`.
 
 ## Parameter Validation
 

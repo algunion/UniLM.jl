@@ -731,6 +731,17 @@ end
         @test e2.status == 503
         @test e2.error == "err"
     end
+
+    @testset "call errors carry a typed cause" begin
+        root = ArgumentError("root failure")
+        e = LLMCallError(error="wrapped", self=chat, cause=root)
+        @test e.cause === root
+        @test isnothing(LLMCallError(error="x", self=chat).cause)   # additive default
+
+        ec = EmbeddingCallError(error="net", cause=root)
+        @test ec.cause === root
+        @test isnothing(EmbeddingCallError(error="net").cause)
+    end
 end
 
 @testset "Embeddings" begin

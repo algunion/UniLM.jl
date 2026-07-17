@@ -77,26 +77,26 @@ try
     # Chat Completions: error / retry paths
     # ═══════════════════════════════════════════════════════════════════════
 
-    @testset "chatrequest! with 500 (retry exhausted)" begin
+    @testset "chatrequest! with 500 (single attempt)" begin
         set_error!(500, "Internal Server Error")
 
         chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
-        result = chatrequest!(chat; retries=30)
+        result = chatrequest!(chat; config=RequestConfig(max_attempts=1))
         @test result isa LLMFailure
         @test result.status == 500
     end
 
-    @testset "chatrequest! with 503 (retry exhausted)" begin
+    @testset "chatrequest! with 503 (single attempt)" begin
         set_error!(503, "Service Unavailable")
 
         chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
-        result = chatrequest!(chat; retries=30)
+        result = chatrequest!(chat; config=RequestConfig(max_attempts=1))
         @test result isa LLMFailure
         @test result.status == 503
     end
@@ -322,14 +322,14 @@ try
     # 429 Rate Limit handling
     # ═══════════════════════════════════════════════════════════════════════
 
-    @testset "chatrequest! with 429 (retry exhausted)" begin
+    @testset "chatrequest! with 429 (single attempt)" begin
         set_error!(429, "Rate limited"; headers=["Retry-After" => "2"])
 
         chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
-        result = chatrequest!(chat; retries=30)
+        result = chatrequest!(chat; config=RequestConfig(max_attempts=1))
         @test result isa LLMFailure
         @test result.status == 429
     end
@@ -354,11 +354,11 @@ try
         @test result.status == 429
     end
 
-    @testset "embeddingrequest! with 429 (retry exhausted)" begin
+    @testset "embeddingrequest! with 429 (single attempt)" begin
         set_error!(429, "Rate limited"; headers=["Retry-After" => "2"])
 
         emb = UniLM.Embeddings("test"; service=MockServiceEndpoint)
-        result = embeddingrequest!(emb; retries=30)
+        result = embeddingrequest!(emb; config=RequestConfig(max_attempts=1))
         @test result isa EmbeddingFailure
         @test result.status == 429
 
@@ -378,18 +378,18 @@ try
         @test result.status == 401
     end
 
-    @testset "embeddingrequest! with 500 (retry exhausted)" begin
+    @testset "embeddingrequest! with 500 (single attempt)" begin
         set_error!(500, "Internal Server Error")
         emb = UniLM.Embeddings("test"; service=MockServiceEndpoint)
-        result = embeddingrequest!(emb; retries=30)
+        result = embeddingrequest!(emb; config=RequestConfig(max_attempts=1))
         @test result isa EmbeddingFailure
         @test result.status == 500
     end
 
-    @testset "embeddingrequest! with 503 (retry exhausted)" begin
+    @testset "embeddingrequest! with 503 (single attempt)" begin
         set_error!(503, "Service Unavailable")
         emb = UniLM.Embeddings("test"; service=MockServiceEndpoint)
-        result = embeddingrequest!(emb; retries=30)
+        result = embeddingrequest!(emb; config=RequestConfig(max_attempts=1))
         @test result isa EmbeddingFailure
         @test result.status == 503
     end
@@ -1294,9 +1294,9 @@ try
         set_error!(200, "")
     end
 
-    @testset "chatrequest! non-stream retry-then-recover recursion (chatrequest! retry branch)" begin
-        # First request: retryable 503 (drains queue entry 1) → recurse → 200 success (entry 2).
-        # retries defaults to 0 < _RETRY_MAX_ATTEMPTS, so the delay/sleep/recurse branch runs once.
+    @testset "chatrequest! non-stream retry-then-recover (shared retry loop)" begin
+        # First request: retryable 503 (drains queue entry 1) → retry → 200 success (entry 2).
+        # max_attempts defaults to 3, so the shared retry loop takes a second attempt.
         success_body = JSON.json(Dict(
             "choices" => [Dict(
                 "finish_reason" => "stop",
@@ -1308,7 +1308,7 @@ try
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
-        result = chatrequest!(chat)   # default retries=0 → genuinely retries
+        result = chatrequest!(chat)   # default config → genuinely retries once
 
         @test result isa LLMSuccess
         @test result.message.content == "recovered after retry"
@@ -1347,7 +1347,7 @@ try
         set_error!(200, "")
     end
 
-    @testset "embeddingrequest! retry-then-recover recursion (433–436)" begin
+    @testset "embeddingrequest! retry-then-recover (shared retry loop)" begin
         emb_body = JSON.json(Dict(
             "object" => "list", "model" => "mock-embedding",
             "data" => [Dict("object" => "embedding", "index" => 0, "embedding" => [1.0, 2.0])],
@@ -1355,7 +1355,7 @@ try
         response_queue[] = [(503, ""), (200, emb_body)]
 
         emb = UniLM.Embeddings("retry me"; service=MockServiceEndpoint)
-        result = embeddingrequest!(emb)   # default retries=0 → genuinely retries once
+        result = embeddingrequest!(emb)   # default config (max_attempts=3) → genuinely retries once
 
         @test result isa EmbeddingSuccess
         @test embedding_vectors(result) == [1.0, 2.0]

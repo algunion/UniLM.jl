@@ -173,7 +173,7 @@ reject it at request time.
 
 ## Retry Behaviour
 
-`generate_image` automatically retries on transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) with exponential backoff and jitter (up to 30 attempts, max 60s delay). On 429 responses, the `Retry-After` header is respected.
+`generate_image` retries transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) within the request budget configured by `RequestConfig` (`max_attempts`, default 3), with exponential backoff and jitter; on 429 the `Retry-After` header is respected. Override per call with `config=RequestConfig(...)`.
 
 ## See Also
 

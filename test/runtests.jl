@@ -57,6 +57,8 @@ end
         include("responses.jl")
     end
 
+    include("platform_seam_fixtures.jl")
+
     @testset "images.jl" begin
         include("images.jl")
     end
@@ -107,6 +109,40 @@ end
 
     @testset "files" begin
         include("files.jl")
+    end
+
+    @testset "audio" begin
+        include("audio.jl")
+    end
+
+    @testset "uploads" begin
+        include("uploads.jl")
+    end
+
+    @testset "containers" begin
+        include("containers.jl")
+    end
+
+    @testset "conversations" begin
+        include("conversations.jl")
+    end
+    @testset "vector_stores" begin
+        include("vector_stores.jl")
+    end
+    @testset "videos" begin
+        include("videos.jl")
+    end
+    @testset "batch" begin
+        include("batch.jl")
+    end
+    @testset "moderations" begin
+        include("moderations.jl")
+    end
+    @testset "realtime" begin
+        include("realtime.jl")
+    end
+    @testset "fine_tuning" begin
+        include("fine_tuning.jl")
     end
 
     @testset "webhooks" begin

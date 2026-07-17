@@ -45,57 +45,85 @@ _vid_resp(resp) = resp.status == 200 ?
     VideoSuccess(response=_parse_video(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
     VideoFailure(response=String(resp.body), status=resp.status)
 
-"""    create_video(; prompt, model="sora-2", seconds=nothing, size=nothing, input_reference=nothing, service=OPENAIServiceEndpoint)"""
+"""
+    create_video(; prompt, model="sora-2", seconds=nothing, size=nothing, input_reference=nothing, service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
 function create_video(; prompt::String, model::String="sora-2", seconds::Union{Int,Nothing}=nothing,
-    size::Union{String,Nothing}=nothing, input_reference::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    size::Union{String,Nothing}=nothing, input_reference::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :video, "Videos API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:model => model, :prompt => prompt)
         !isnothing(seconds) && (d[:seconds] = seconds)
         !isnothing(size) && (d[:size] = size)
         !isnothing(input_reference) && (d[:input_reference] = input_reference)
-        _vid_resp(HTTP.post(_api_base_url(service) * VIDEOS_PATH, body=JSON.json(d), headers=auth_header(service); status_exception=false))
+        _vid_resp(_http("POST", _api_base_url(service) * VIDEOS_PATH, auth_header(service),
+            JSON.json(d); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
+        e isa InterruptException && rethrow()
         _vid_err(e)
     end
 end
 
-"""    retrieve_video(id; service=OPENAIServiceEndpoint)"""
-function retrieve_video(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+"""
+    retrieve_video(id; service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
+function retrieve_video(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :video, "Videos API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        _vid_resp(HTTP.get(_api_base_url(service) * VIDEOS_PATH * "/" * id, headers=auth_header(service); status_exception=false))
+        _vid_resp(_http("GET", _api_base_url(service) * VIDEOS_PATH * "/" * id, auth_header(service);
+            cfg, remaining=_remaining_s(cfg, t0)))
     catch e
+        e isa InterruptException && rethrow()
         _vid_err(e)
     end
 end
 
-"""    list_videos(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)"""
-function list_videos(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+"""
+    list_videos(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
+function list_videos(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :video, "Videos API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         url = _api_base_url(service) * VIDEOS_PATH
         params = String[]
         !isnothing(limit) && push!(params, "limit=$limit")
         !isnothing(after) && push!(params, "after=$after")
         !isempty(params) && (url *= "?" * join(params, "&"))
-        resp = HTTP.get(url, headers=auth_header(service); status_exception=false)
+        resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 || return VideoFailure(response=String(resp.body), status=resp.status)
         data = JSON.parse(resp.body; dicttype=Dict{String,Any})
         VideoListSuccess(response=VideoList(data=Vector{Dict{String,Any}}(get(data, "data", [])), has_more=get(data, "has_more", false), raw=data))
     catch e
+        e isa InterruptException && rethrow()
         _vid_err(e)
     end
 end
 
-"""    video_content(id; service=OPENAIServiceEndpoint)  → VideoContentSuccess (raw bytes)"""
-function video_content(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+"""
+    video_content(id; service=OPENAIServiceEndpoint)  → VideoContentSuccess (raw bytes)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
+function video_content(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :video, "Videos API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = HTTP.get(_api_base_url(service) * VIDEOS_PATH * "/" * id * "/content", headers=auth_header(service); status_exception=false)
+        resp = _http("GET", _api_base_url(service) * VIDEOS_PATH * "/" * id * "/content", auth_header(service);
+            cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 ? VideoContentSuccess(content=Vector{UInt8}(resp.body)) :
             VideoFailure(response=String(resp.body), status=resp.status)
     catch e
+        e isa InterruptException && rethrow()
         _vid_err(e)
     end
 end

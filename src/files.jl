@@ -99,39 +99,45 @@ _callerr(::Type{FileCallError}, e) = FileCallError(error=string(e), status=(hasp
     upload_file(u::FileUpload) -> LLMRequestResponse
 
 Upload a file (multipart/form-data). Returns `FileSuccess`, `FileFailure`, or `FileCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function upload_file(u::FileUpload; retries::Int=0)
+function upload_file(u::FileUpload; config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(u.service, :files, "Files API")
+    cfg = _resolve_config(config)
+    t0 = time_ns()
     try
         form = HTTP.Form([
             "purpose" => u.purpose,
             "file" => HTTP.Multipart(basename(u.file), IOBuffer(read(u.file)), _mime_for(u.file)),
         ])
         url = _api_base_url(u.service) * FILES_PATH
-        resp = HTTP.post(url, auth_header_multipart(u.service), form; status_exception=false)
-        if resp.status == 200
-            return FileSuccess(response=_parse_file_object(JSON.parse(resp.body; dicttype=Dict{String,Any})))
-        elseif _is_retryable(resp.status) && retries < _RETRY_MAX_ATTEMPTS
-            sleep(_retry_delay(retries, resp))
-            return upload_file(u; retries=retries + 1)
-        else
-            return FileFailure(response=String(resp.body), status=resp.status)
-        end
+        resp = _http_with_retries(cfg, t0, "POST", url, auth_header_multipart(u.service), form)
+        return resp.status == 200 ?
+               FileSuccess(response=_parse_file_object(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
+               FileFailure(response=String(resp.body), status=resp.status)
     catch e
+        e isa InterruptException && rethrow()
         return _callerr(FileCallError, e)
     end
 end
-upload_file(path::String, purpose::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint) =
-    upload_file(FileUpload(service=service, file=path, purpose=purpose))
+upload_file(path::String, purpose::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing) =
+    upload_file(FileUpload(service=service, file=path, purpose=purpose); config=config)
 
 """
     list_files(; purpose=nothing, limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
 
 List uploaded files. Returns `FileListSuccess`, `FileFailure`, or `FileCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
 function list_files(; purpose::Union{String,Nothing}=nothing, limit::Union{Int,Nothing}=nothing,
-    after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :files, "Files API")
+    cfg = _resolve_config(config)
+    t0 = time_ns()
     try
         url = _api_base_url(service) * FILES_PATH
         params = String[]
@@ -139,7 +145,7 @@ function list_files(; purpose::Union{String,Nothing}=nothing, limit::Union{Int,N
         !isnothing(limit) && push!(params, "limit=$limit")
         !isnothing(after) && push!(params, "after=$after")
         !isempty(params) && (url *= "?" * join(params, "&"))
-        resp = HTTP.get(url, headers=auth_header(service); status_exception=false)
+        resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
             files = FileObject[_parse_file_object(f) for f in get(data, "data", [])]
@@ -148,6 +154,7 @@ function list_files(; purpose::Union{String,Nothing}=nothing, limit::Union{Int,N
             return FileFailure(response=String(resp.body), status=resp.status)
         end
     catch e
+        e isa InterruptException && rethrow()
         return _callerr(FileCallError, e)
     end
 end
@@ -156,16 +163,22 @@ end
     retrieve_file(file_id; service=OPENAIServiceEndpoint)
 
 Retrieve a file's metadata. Returns `FileSuccess`, `FileFailure`, or `FileCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function retrieve_file(file_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function retrieve_file(file_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :files, "Files API")
+    cfg = _resolve_config(config)
+    t0 = time_ns()
     try
         url = _api_base_url(service) * FILES_PATH * "/" * file_id
-        resp = HTTP.get(url, headers=auth_header(service); status_exception=false)
+        resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 ?
             FileSuccess(response=_parse_file_object(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             FileFailure(response=String(resp.body), status=resp.status)
     catch e
+        e isa InterruptException && rethrow()
         _callerr(FileCallError, e)
     end
 end
@@ -174,12 +187,17 @@ end
     delete_file(file_id; service=OPENAIServiceEndpoint)
 
 Delete a file. Returns `FileDeleteSuccess`, `FileFailure`, or `FileCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function delete_file(file_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function delete_file(file_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :files, "Files API")
+    cfg = _resolve_config(config)
+    t0 = time_ns()
     try
         url = _api_base_url(service) * FILES_PATH * "/" * file_id
-        resp = HTTP.request("DELETE", url, headers=auth_header(service); status_exception=false)
+        resp = _http("DELETE", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
             return FileDeleteSuccess(id=get(d, "id", file_id), deleted=get(d, "deleted", false))
@@ -187,6 +205,7 @@ function delete_file(file_id::String; service::ServiceEndpointSpec=OPENAIService
             return FileFailure(response=String(resp.body), status=resp.status)
         end
     catch e
+        e isa InterruptException && rethrow()
         _callerr(FileCallError, e)
     end
 end
@@ -196,16 +215,22 @@ end
 
 Download a file's raw bytes. Returns `FileContentSuccess` (`.content::Vector{UInt8}`),
 `FileFailure`, or `FileCallError`. Use [`save_file_content`](@ref) to write to disk.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function file_content(file_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function file_content(file_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :files, "Files API")
+    cfg = _resolve_config(config)
+    t0 = time_ns()
     try
         url = _api_base_url(service) * FILES_PATH * "/" * file_id * "/content"
-        resp = HTTP.get(url, headers=auth_header(service); status_exception=false)
+        resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 ?
             FileContentSuccess(content=Vector{UInt8}(resp.body)) :
             FileFailure(response=String(resp.body), status=resp.status)
     catch e
+        e isa InterruptException && rethrow()
         _callerr(FileCallError, e)
     end
 end

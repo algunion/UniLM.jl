@@ -49,50 +49,77 @@ _upl_resp(resp) = resp.status == 200 ?
     UploadSuccess(response=_parse_upload(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
     UploadFailure(response=String(resp.body), status=resp.status)
 
-"""    create_upload(; filename, purpose, bytes, mime_type, service=OPENAIServiceEndpoint)"""
-function create_upload(; filename::String, purpose::String, bytes::Int, mime_type::String, service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+"""
+    create_upload(; filename, purpose, bytes, mime_type, service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
+function create_upload(; filename::String, purpose::String, bytes::Int, mime_type::String, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :uploads, "Uploads API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:filename => filename, :purpose => purpose, :bytes => bytes, :mime_type => mime_type)
-        _upl_resp(HTTP.post(_api_base_url(service) * UPLOADS_PATH, body=JSON.json(d), headers=auth_header(service); status_exception=false))
+        _upl_resp(_http("POST", _api_base_url(service) * UPLOADS_PATH, auth_header(service),
+            JSON.json(d); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
+        e isa InterruptException && rethrow()
         _upl_err(e)
     end
 end
 
-"""    add_upload_part(upload_id, data::Vector{UInt8}; service=OPENAIServiceEndpoint)  (multipart)"""
-function add_upload_part(upload_id::String, data::Vector{UInt8}; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+"""
+    add_upload_part(upload_id, data::Vector{UInt8}; service=OPENAIServiceEndpoint)  (multipart)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
+function add_upload_part(upload_id::String, data::Vector{UInt8}; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :uploads, "Uploads API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         form = HTTP.Form(["data" => HTTP.Multipart("part", IOBuffer(data), "application/octet-stream")])
         url = _api_base_url(service) * UPLOADS_PATH * "/" * upload_id * "/parts"
-        resp = HTTP.post(url, auth_header_multipart(service), form; status_exception=false)
+        resp = _http("POST", url, auth_header_multipart(service), form; cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 || return UploadFailure(response=String(resp.body), status=resp.status)
         d = JSON.parse(resp.body; dicttype=Dict{String,Any})
         UploadPartSuccess(response=UploadPartObject(id=d["id"], raw=Dict{String,Any}(d)))
     catch e
+        e isa InterruptException && rethrow()
         _upl_err(e)
     end
 end
 
-"""    complete_upload(upload_id, part_ids; md5=nothing, service=OPENAIServiceEndpoint)"""
-function complete_upload(upload_id::String, part_ids::Vector{String}; md5::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+"""
+    complete_upload(upload_id, part_ids; md5=nothing, service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
+function complete_upload(upload_id::String, part_ids::Vector{String}; md5::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :uploads, "Uploads API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:part_ids => part_ids)
         !isnothing(md5) && (d[:md5] = md5)
-        _upl_resp(HTTP.post(_api_base_url(service) * UPLOADS_PATH * "/" * upload_id * "/complete", body=JSON.json(d), headers=auth_header(service); status_exception=false))
+        _upl_resp(_http("POST", _api_base_url(service) * UPLOADS_PATH * "/" * upload_id * "/complete",
+            auth_header(service), JSON.json(d); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
+        e isa InterruptException && rethrow()
         _upl_err(e)
     end
 end
 
-"""    cancel_upload(upload_id; service=OPENAIServiceEndpoint)"""
-function cancel_upload(upload_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+"""
+    cancel_upload(upload_id; service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
+function cancel_upload(upload_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :uploads, "Uploads API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        _upl_resp(HTTP.post(_api_base_url(service) * UPLOADS_PATH * "/" * upload_id * "/cancel", headers=auth_header(service); status_exception=false))
+        _upl_resp(_http("POST", _api_base_url(service) * UPLOADS_PATH * "/" * upload_id * "/cancel",
+            auth_header(service); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
+        e isa InterruptException && rethrow()
         _upl_err(e)
     end
 end

@@ -1366,7 +1366,7 @@ try
 
     # ═══════════════════════════════════════════════════════════════════════
     # FIM Completion: HTTP-executing function-body paths (completions.jl 156–177)
-    # Success, retry-recursion, retry-exhausted, non-retryable, and catch→CallError.
+    # Success, retry-then-recover (shared retry loop), retry-exhausted, non-retryable, and catch→CallError.
     # The mock declares :fim, so validate_capability passes and the HTTP call runs.
     # ═══════════════════════════════════════════════════════════════════════
 
@@ -1463,7 +1463,7 @@ try
 
     # ═══════════════════════════════════════════════════════════════════════
     # Chat Prefix Completion: HTTP-executing function-body paths (completions.jl 220–259)
-    # Success + message-construction loop (prefix flag), retry-recursion, failures, catch.
+    # Success + message-construction loop (prefix flag), retry-then-recover (shared retry loop), failures, catch.
     # ═══════════════════════════════════════════════════════════════════════
 
     @testset "prefix_complete success → LLMSuccess, prefix replaced, request carries prefix:true (220–244)" begin
@@ -1782,13 +1782,13 @@ try
     end
 
     # ═══════════════════════════════════════════════════════════════════════
-    # COVERAGE PUSH: success-parse + retry-recursion + tool-loop error wiring
+    # COVERAGE PUSH: success-parse + retry-then-recover (shared retry loop) + tool-loop error wiring
     # Targets src/images.jl (249, 252–255, 341–342, 354–355), src/files.jl
     # (97–98), src/tool_loop.jl (142, 144, 218, 220). Each retry test queues
     # EXACTLY the request count and asserts isempty(response_queue[]) afterward
-    # to prove the recursion fired (not the retries==MAX else-branch the existing
-    # "retry exhausted" tests cover). Default retries=0 → first jittered delay is
-    # rand()*1.0 < 1s, so no 30-deep real backoff.
+    # to prove the shared retry loop actually retried (not the max_attempts-exhausted
+    # branch the existing "retry exhausted" tests cover). Default max_attempts=3 → the
+    # first jittered delay is rand()*1.0 < 1s, so the test never blocks on a real backoff.
     # ═══════════════════════════════════════════════════════════════════════
 
     @testset "generate_image 200 success → ImageSuccess parsed (images.jl 249)" begin
@@ -1820,20 +1820,20 @@ try
     end
 
     @testset "generate_image 503→200 retry recursion → ImageSuccess (images.jl 252–255)" begin
-        # Queue exactly two responses: a retryable 503 then a parseable 200. With
-        # default retries=0 the 503 takes the _is_retryable && retries<MAX branch →
-        # recurses once. Draining the queue proves the recursion (second request) fired.
+        # Queue exactly two responses: a retryable 503 then a parseable 200. With the
+        # default max_attempts=3 budget, the shared retry loop retries once on the 503 →
+        # 200 success. Draining the queue proves the retry (second request) actually fired.
         response_queue[] = [(503, ""),
             (200, JSON.json(Dict("created" => 7,
                 "data" => [Dict("b64_json" => "UkVUUlk=")])))]
 
         ig = ImageGeneration(prompt="retry me", model="mock-img-R", service=MockServiceEndpoint)
-        result = generate_image(ig)   # retries defaults to 0
+        result = generate_image(ig)   # no config kwarg → default max_attempts=3
 
         @test result isa ImageSuccess
         @test result.response.created == 7
         @test image_data(result) == ["UkVUUlk="]
-        @test isempty(response_queue[])   # both queued responses consumed → retry recursed
+        @test isempty(response_queue[])   # both queued responses consumed → it retried then recovered
         set_error!(200, "")
     end
 
@@ -1878,12 +1878,12 @@ try
 
             e = ImageEdit(image=img, prompt="retry edit", mask=mask, model="mock-img-ER",
                           service=MockServiceEndpoint)
-            result = edit_image(e)   # retries defaults to 0
+            result = edit_image(e)   # no config kwarg → default max_attempts=3
 
             @test result isa ImageSuccess
             @test result.response.created == 9
             @test image_data(result) == ["RURJVA=="]
-            @test isempty(response_queue[])   # retry recursion drained both responses
+            @test isempty(response_queue[])   # both queued responses consumed → it retried then recovered
         finally
             rm(img; force=true)
             rm(mask; force=true)
@@ -1899,7 +1899,7 @@ try
         path = tempname() * ".txt"
         write(path, "hello")
         try
-            r = upload_file(path, "user_data"; service=MockServiceEndpoint)   # retries defaults to 0
+            r = upload_file(path, "user_data"; service=MockServiceEndpoint)   # no config kwarg → default max_attempts=3
 
             @test r isa FileSuccess
             @test r.response.id == "file-retry"
@@ -1907,7 +1907,7 @@ try
             @test r.response.created_at == 123
             @test r.response.filename == "r.txt"
             @test r.response.status == "processed"
-            @test isempty(response_queue[])   # both responses consumed → retry recursed
+            @test isempty(response_queue[])   # both responses consumed → it retried then recovered
         finally
             rm(path; force=true)
         end

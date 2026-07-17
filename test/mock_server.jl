@@ -2247,7 +2247,7 @@ try
         # realtime.jl:68 — the generic _realtime_ws_url(service) fallback returns REALTIME_WS_URL.
         # WSMockEndpoint overrides it (line 65), so a non-overridden service (the OPENAI type) must
         # hit the default. which().line pins the method; the value falsifies a wrong default URL.
-        @test which(UniLM._realtime_ws_url, (Type{OPENAIServiceEndpoint},)).line == 68
+        @test which(UniLM._realtime_ws_url, (Type{OPENAIServiceEndpoint},)).line == 73
         @test UniLM._realtime_ws_url(OPENAIServiceEndpoint) == UniLM.REALTIME_WS_URL
         @test UniLM._realtime_ws_url(OPENAIServiceEndpoint) == "wss://api.openai.com/v1/realtime"
     end

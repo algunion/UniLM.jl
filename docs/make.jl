@@ -30,6 +30,7 @@ makedocs(;
             "Retrieval & File Search" => "guide/retrieval.md",
             "Agentic Workflows" => "guide/agentic.md",
             "Streaming" => "guide/streaming.md",
+            "Timeouts & Retries" => "guide/timeouts.md",
             "Structured Output" => "guide/structured_output.md",
             "Cost Tracking" => "guide/cost_tracking.md",
             "Multi-Backend" => "guide/multi_backend.md",

@@ -1,4 +1,6 @@
-# Request Configuration & Timeouts
+# [Request Configuration & Timeouts](@id timeouts_api)
+
+See the [Timeouts & Retries guide](@ref timeouts_guide) for usage and rationale.
 
 Timeout, deadline, and retry-budget configuration for UniLM network
 operations, plus the typed timeout errors.

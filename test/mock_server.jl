@@ -1427,7 +1427,7 @@ try
     @testset "fim_complete retry exhausted → FIMFailure status 503 (169)" begin
         set_error!(503, "Service Unavailable")
         fim = FIMCompletion(service=MockServiceEndpoint, model="mock-fim", prompt="x")
-        result = fim_complete(fim; retries=30)   # already past _RETRY_MAX_ATTEMPTS → no recurse
+        result = fim_complete(fim; config=RequestConfig(max_attempts=1))
         @test result isa FIMFailure
         @test result.status == 503
         @test occursin("Service Unavailable", result.response)   # raw body surfaced
@@ -1528,7 +1528,7 @@ try
         chat = Chat(service=MockServiceEndpoint, model="mock-model", messages=[
             Message(role=UniLM.RoleUser, content="hi"),
             Message(role=UniLM.RoleAssistant, content="partial")])
-        result = prefix_complete(chat; retries=30)
+        result = prefix_complete(chat; config=RequestConfig(max_attempts=1))
         @test result isa LLMFailure
         @test result.status == 503
         @test occursin("Service Unavailable", result.response)

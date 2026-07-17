@@ -1019,7 +1019,7 @@ struct FIMSuccess <: LLMRequestResponse; response::FIMResponse; end
 struct FIMFailure <: LLMRequestResponse; response, status; end
 struct FIMCallError <: LLMRequestResponse; error, status; end
 
-fim_complete(fim::FIMCompletion; retries=0) -> LLMRequestResponse
+fim_complete(fim::FIMCompletion; config=nothing) -> LLMRequestResponse
 fim_complete(prompt; suffix=nothing, kwargs...) -> LLMRequestResponse  # convenience
 fim_text(result) -> String  # extract generated text
 ```
@@ -1041,7 +1041,7 @@ Continue from a partial assistant message. The model generates text continuing
 from the assistant's prefix. DeepSeek beta feature.
 
 ```julia
-prefix_complete(chat::Chat; retries=0) -> LLMRequestResponse
+prefix_complete(chat::Chat; config=nothing) -> LLMRequestResponse
 # Last message must be role=assistant with the prefix text
 ```
 

@@ -97,6 +97,12 @@ end
 # it rides along as a fast path. The 1.x readtimeout bounds the WHOLE
 # exchange — it would kill long healthy streams — so streams never set it and
 # the idle guard is the sole idle enforcement there.
+# INVARIANT: read-idle is the ONLY native mid-stream timer armed here. The
+# stream driver's catch maps every mid-stream HTTP.TimeoutError to :stream_idle
+# because HTTP.jl surfaces a read-idle breach with operation="request" —
+# indistinguishable by label from any other request-phase timeout. Adding a
+# native request_timeout (or any new mid-stream timer) to this set therefore
+# requires revisiting that mapping (see the catch in `_stream_attempt`).
 function _native_stream_kwargs(cfg::RequestConfig; major2::Bool=_HTTP_MAJOR2)
     return major2 ?
         (connect_timeout   = _native_seconds_real(cfg.connect_timeout),
@@ -659,6 +665,14 @@ function _stream_attempt(chat, body, callback, on_tool_call,
         # seam sets it to `stream_idle_timeout` as a fast path, so it can win the
         # race against our guard's `limit + period` tick). Both are the SAME breach
         # and map identically — never a retryable transport failure.
+        # INVARIANT: this blanket map is sound ONLY while the streaming attempt
+        # arms no native mid-stream timer besides read-idle. HTTP.jl (2.5.5)
+        # reports a streaming read-idle breach with the literal
+        # operation="request", indistinguishable by label from a whole-exchange
+        # request timeout — so a native request_timeout added to
+        # `_native_stream_kwargs` would surface here as a mislabeled,
+        # retry-suppressed :stream_idle. See the mirror note there before adding
+        # any new native streaming timer.
         if idle[] !== nothing &&
            (_idle_fired(idle[]) || _find_exception(x -> x isa HTTP.TimeoutError, e) !== nothing)
             if !isnothing(state.finish_reason)

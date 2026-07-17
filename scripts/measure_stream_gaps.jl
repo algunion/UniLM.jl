@@ -48,27 +48,30 @@ function measure(provider::String, model::String, url::String,
     hdrs = push!(copy(headers), "Accept-Encoding" => "identity")
     chunks = 0
     max_gap = 0.0
-    status = 0
     t_start = time_ns()
     last = t_start
-    HTTP.open("POST", url, hdrs; status_exception=false, decompress=false) do io
+    # Drain unconditionally while timing; the status lives on the HTTP.Response
+    # that HTTP.open RETURNS (inside the block, `io.message` is the outbound
+    # Request on the 2.x major — same access pattern as the library's own
+    # stream driver). A non-200 error body is small; timing it is harmless and
+    # the result row is filtered by status afterwards.
+    err_head = IOBuffer()
+    resp = HTTP.open("POST", url, hdrs; status_exception=false, decompress=false) do io
         write(io, body)
         HTTP.closewrite(io)
         HTTP.startread(io)
-        status = io.message.status
-        if status != 200
-            @warn "$provider returned HTTP $status" body=String(readavailable(io))
-            return
-        end
         while !eof(io)
-            _ = readavailable(io)
+            raw = readavailable(io)
             now = time_ns()
             gap = (now - last) / 1e9
             gap > max_gap && (max_gap = gap)
             last = now
             chunks += 1
+            err_head.size < 2048 && write(err_head, raw)
         end
     end
+    status = resp.status
+    status != 200 && @warn "$provider returned HTTP $status" body=String(take!(err_head))
     GapResult(provider, model, chunks, (time_ns() - t_start) / 1e9, max_gap, status)
 end
 
@@ -117,19 +120,33 @@ end
 
 function main()
     results = GapResult[]
+    attempted = 0
     for (name, f) in (("OPENAI_API_KEY", run_openai),
                       ("ANTHROPIC_API_KEY", run_anthropic),
                       ("GEMINI_API_KEY", run_gemini))
         try
             r = f()
-            r === nothing ? @info("skipped — $name unset") : push!(results, r)
+            if r === nothing
+                @info("skipped — $name unset")
+            else
+                attempted += 1
+                push!(results, r)
+            end
         catch e
+            attempted += 1
             @error "measurement failed" exception=(e, catch_backtrace())
         end
     end
     if isempty(results)
-        @warn "No providers configured — set at least one of OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY"
-        return
+        # Distinguish "nothing to measure" from "everything errored": a run that
+        # measured nothing must not look like a pass (exit 2 ≠ the kill-verdict 1).
+        if attempted == 0
+            # Keyless refusal is the guard working, not an error.
+            @warn "No providers configured — set at least one of OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY"
+            return
+        end
+        @warn "All $(attempted) configured provider(s) errored — nothing measured; see errors above"
+        exit(2)
     end
 
     @printf("\n  stream idle-gap measurement (default = %.0fs, kill threshold = %.0fs)\n\n",

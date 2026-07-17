@@ -730,6 +730,45 @@ function _mcp_reinitialize!(session::MCPSession; excfg::RequestConfig=session.co
     nothing
 end
 
+# ─── Connect handshake watchdog ──────────────────────────────────────────────
+
+_connect_timeout_msg(limit::Float64)::String =
+    "MCP server did not complete the initialize handshake within $(limit)s. " *
+    "Cold-starting a server (for example via `npx`) can legitimately take longer; " *
+    "raise the bound with mcp_connect(...; config=RequestConfig(current_config(); " *
+    "mcp_connect_timeout=<seconds>))."
+
+# stdio: the whole spawn+handshake runs under one connect watchdog (kill on breach).
+# http: no wrapper — each initialize/list POST is bounded per-POST inside _http.
+_connect_guard(f::Function, t::StdioTransport, bound::Float64) =
+    _with_deadline(f, () -> _kill_transport!(t), bound, :connect)
+_connect_guard(f::Function, ::HTTPTransport, ::Float64) = f()
+
+"""Spawn (stdio) / mark connected (http) and run the initialize handshake under the
+connect deadline. Returns the raw `initialize` result. A breach surfaces as
+`UniLMTimeout(:connect)`; the caller maps it to `MCPTimeoutError(:connect)`."""
+function _establish!(session::MCPSession)::Dict{String,Any}
+    t = session.transport
+    cfg = session.config
+    connect_excfg = RequestConfig(cfg; request_timeout=cfg.mcp_connect_timeout)
+    _connect_guard(t, cfg.mcp_connect_timeout) do
+        _transport_connect!(t)
+        _mcp_handshake!(session; excfg=connect_excfg)
+    end
+end
+
+"""Populate server info/capabilities and auto-list advertised primitives, then mark
+the session ready. Shared by initial connect and auto-respawn."""
+function _finalize_connect!(session::MCPSession, init_result::Dict{String,Any})
+    session.server_info = get(init_result, "serverInfo", Dict{String,Any}())
+    session.server_capabilities = MCPServerCapabilities(get(init_result, "capabilities", Dict{String,Any}()))
+    !isnothing(session.server_capabilities.tools) && list_tools!(session)
+    !isnothing(session.server_capabilities.resources) && list_resources!(session)
+    !isnothing(session.server_capabilities.prompts) && list_prompts!(session)
+    session.status = :ready
+    nothing
+end
+
 """
     mcp_connect(transport::MCPTransport; client_name="UniLM.jl", protocol_version="2025-11-25") -> MCPSession
 
@@ -743,7 +782,6 @@ function mcp_connect(transport::MCPTransport;
                      config::Union{Nothing,RequestConfig}=nothing,
                      auto_respawn::Bool=false)::MCPSession
     cfg = _resolve_config(config)
-    _transport_connect!(transport)
     init_params = Dict{String,Any}(
         "protocolVersion" => protocol_version,
         "capabilities" => Dict{String,Any}(),
@@ -755,18 +793,19 @@ function mcp_connect(transport::MCPTransport;
         protocol_version, 0, :initializing; init_params=init_params,
         config=cfg, auto_respawn=auto_respawn
     )
-    # Initialize handshake: validates the negotiated protocol version, stores it
-    # on the session, and sends notifications/initialized.
-    connect_excfg = RequestConfig(session.config; request_timeout=session.config.mcp_connect_timeout)
-    init_result = _mcp_handshake!(session; excfg=connect_excfg)
-    session.server_info = get(init_result, "serverInfo", Dict{String,Any}())
-    caps = get(init_result, "capabilities", Dict{String,Any}())
-    session.server_capabilities = MCPServerCapabilities(caps)
-    # Auto-populate caches for whatever the server advertises.
-    !isnothing(session.server_capabilities.tools) && list_tools!(session)
-    !isnothing(session.server_capabilities.resources) && list_resources!(session)
-    !isnothing(session.server_capabilities.prompts) && list_prompts!(session)
-    session.status = :ready
+    # The whole spawn → initialize → notifications/initialized handshake runs under
+    # one connect deadline (see _establish!); a breach surfaces as UniLMTimeout and is
+    # mapped to a naming MCPTimeoutError. A synchronous spawn failure (a nonexistent
+    # command) throws inside the guard before the timer fires and rethrows unchanged,
+    # so command-not-found surfaces immediately rather than riding the connect timer.
+    init_result = try
+        _establish!(session)
+    catch e
+        e isa UniLMTimeout &&
+            throw(MCPTimeoutError(:connect, e.elapsed, e.limit, _connect_timeout_msg(e.limit)))
+        rethrow()
+    end
+    _finalize_connect!(session, init_result)
     session
 end
 

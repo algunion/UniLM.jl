@@ -1636,3 +1636,53 @@ end
         rm(childfile; force=true)
     end
 end
+
+# ─── WS4: connect handshake watchdog + command-not-found immediacy ─────────────
+# The whole spawn → initialize → notifications/initialized handshake runs under one
+# connect deadline. A mute server (never answers initialize) is group-killed at the
+# bound and surfaces MCPTimeoutError(:connect) naming the override; a nonexistent
+# command throws its spawn error synchronously inside the guard and must surface
+# immediately, never riding the connect timer to a timeout.
+
+@testset "WS4 mcp_connect: command-not-found fails immediately, not at the timer" begin
+    # open() on a missing executable throws synchronously — must surface fast (well
+    # under the connect bound), NOT ride the connect timer to MCPTimeoutError.
+    t0 = time()
+    err = nothing
+    try
+        mcp_connect(`unilm-nonexistent-server-xyz123`;
+            config = RequestConfig(current_config(); mcp_connect_timeout = 30.0))
+    catch e
+        err = e
+    end
+    elapsed = time() - t0
+    @test err !== nothing
+    @test !(err isa MCPTimeoutError)     # spawn error, not the timer
+    @test elapsed < 5.0                  # far below the 30 s connect bound
+end
+
+@testset "WS4 mcp_connect: mute stdio server times out with a naming MCPTimeoutError" begin
+    marker = "UNILMCONNMUTE" * string(rand(UInt64); base=16)
+    # A child that reads stdin but NEVER answers initialize: the handshake readline
+    # blocks until the connect watchdog group-kills it.
+    child_src = "# $marker\nwhile !eof(stdin); readline(stdin); end\n"
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, child_src); close(io)
+    jl = Base.julia_cmd()
+    cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    try
+        box = Ref{Any}(nothing)
+        worker = @async (box[] = try
+            mcp_connect(cmd; config = RequestConfig(current_config(); mcp_connect_timeout = 0.5))
+        catch e; e end)
+        @test timedwait(() -> istaskdone(worker), 12.0) === :ok
+        err = box[]
+        @test err isa MCPTimeoutError
+        @test err.phase === :connect
+        @test err.limit == 0.5
+        @test occursin("mcp_connect_timeout", err.msg)   # names the per-connect override
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end

@@ -1043,7 +1043,8 @@ struct _LockProbeTransport <: UniLM.MCPTransport
     on_send::Function
     reply::String
 end
-UniLM._transport_send!(t::_LockProbeTransport, msg::String) = (t.on_send(msg); t.reply)
+UniLM._transport_send!(t::_LockProbeTransport, msg::String;
+                       cfg::UniLM.RequestConfig=UniLM.current_config()) = (t.on_send(msg); t.reply)
 
 @testset "whole exchange runs under the session lock" begin
     # The probe records whether session._lock is held while the request is on
@@ -1501,5 +1502,55 @@ end
         try; run(pipeline(`pkill -f $gc_marker`; stderr=devnull)); catch; end
         try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
         rm(childfile; force=true)
+    end
+end
+
+@testset "WS4 HTTP request timeout is typed and non-fatal" begin
+    hit = Ref(0)
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        id = get(parsed, "id", nothing); method = get(parsed, "method", "")
+        isnothing(id) && return HTTP.Response(202, "")
+        if method == "initialize"
+            return HTTP.Response(200, ["Content-Type" => "application/json"],
+                JSON.json(Dict{String,Any}("jsonrpc"=>"2.0","id"=>id,"result"=>Dict{String,Any}(
+                    "protocolVersion"=>UniLM._MCP_PROTOCOL_VERSION,
+                    "capabilities"=>Dict{String,Any}(),
+                    "serverInfo"=>Dict{String,Any}("name"=>"slow","version"=>"1.0")))))
+        elseif method == "tools/call"
+            if (hit[] += 1) == 1
+                sleep(3.0)   # first call: silent past the client's short bound
+            end
+            return HTTP.Response(200, ["Content-Type" => "application/json"],
+                JSON.json(Dict{String,Any}("jsonrpc"=>"2.0","id"=>id,"result"=>Dict{String,Any}(
+                    "content"=>[Dict{String,Any}("type"=>"text","text"=>"ok")]))))
+        end
+        HTTP.Response(200, ["Content-Type" => "application/json"],
+            JSON.json(Dict{String,Any}("jsonrpc"=>"2.0","id"=>id,"result"=>Dict{String,Any}())))
+    end
+    url = "http://127.0.0.1:$port"
+    try
+        session = mcp_connect(url; config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
+        try
+            err = nothing
+            try
+                call_tool(session, "slowtool", Dict{String,Any}())
+            catch e
+                err = e
+            end
+            @test err isa MCPTimeoutError
+            @test err.phase === :request
+            @test err.limit == 0.5
+            @test session.status == :ready          # HTTP timeout is NOT session-fatal
+            # Session survives: the retried call reaches the now-responsive server.
+            @test call_tool(session, "slowtool", Dict{String,Any}()).content == "ok"
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        close(httpserver)
     end
 end

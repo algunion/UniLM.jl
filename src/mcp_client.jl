@@ -76,8 +76,9 @@ end
     _MCPSessionExpired <: Exception
 
 Internal signal that an HTTP transport received `404 Not Found` while holding a
-session id — the server dropped the session. Caught by [`_mcp_request!`](@ref),
-which re-initializes and replays the request once; never surfaced to callers.
+session id — the server dropped the session. Caught by
+[`_mcp_request_recover!`](@ref), which re-initializes and replays the request
+once; never surfaced to callers.
 """
 struct _MCPSessionExpired <: Exception
     body::String
@@ -210,14 +211,15 @@ function _transport_connect!(t::StdioTransport)
     nothing
 end
 
-function _transport_send!(t::StdioTransport, msg::String)::String
+function _transport_send!(t::StdioTransport, msg::String;
+                          cfg::RequestConfig=current_config())::String
     inp = t.input
     isnothing(inp) && error("StdioTransport not connected")
     lock(t.lock) do
         write(inp, msg, "\n")
         flush(inp)
     end
-    _transport_read!(t)
+    _transport_read!(t)   # bounded by the whole-exchange watchdog in _mcp_request!
 end
 
 function _transport_read!(t::StdioTransport)::String
@@ -228,7 +230,8 @@ function _transport_read!(t::StdioTransport)::String
     line
 end
 
-function _transport_notify!(t::StdioTransport, msg::String)
+function _transport_notify!(t::StdioTransport, msg::String;
+                            cfg::RequestConfig=current_config())
     inp = t.input
     isnothing(inp) && error("StdioTransport not connected")
     lock(t.lock) do
@@ -316,13 +319,14 @@ end
 
 _transport_connect!(t::HTTPTransport) = (t.connected = true; nothing)
 
-function _transport_send!(t::HTTPTransport, msg::String)::String
+function _transport_send!(t::HTTPTransport, msg::String;
+                          cfg::RequestConfig=current_config())::String
     hdrs = copy(t.headers)
     push!(hdrs, "Content-Type" => "application/json")
     push!(hdrs, "Accept" => "application/json, text/event-stream")
     push!(hdrs, "Mcp-Protocol-Version" => t.protocol_version)
     !isnothing(t.session_id) && push!(hdrs, "Mcp-Session-Id" => t.session_id)
-    resp = HTTP.post(t.url; body=msg, headers=hdrs, status_exception=false)
+    resp = _http("POST", t.url, hdrs, msg; cfg=cfg, remaining=Inf)
     # Capture session ID from response
     sid = HTTP.header(resp, "Mcp-Session-Id", "")
     !isempty(sid) && (t.session_id = sid)
@@ -360,21 +364,22 @@ function _transport_read!(t::HTTPTransport)::String
     popfirst!(t.pending)
 end
 
-function _transport_notify!(t::HTTPTransport, msg::String)
+function _transport_notify!(t::HTTPTransport, msg::String;
+                            cfg::RequestConfig=current_config())
     hdrs = copy(t.headers)
     push!(hdrs, "Content-Type" => "application/json")
     push!(hdrs, "Mcp-Protocol-Version" => t.protocol_version)
     !isnothing(t.session_id) && push!(hdrs, "Mcp-Session-Id" => t.session_id)
-    HTTP.post(t.url; body=msg, headers=hdrs, status_exception=false)
+    _http("POST", t.url, hdrs, msg; cfg=cfg, remaining=Inf)
     nothing
 end
 
-function _transport_disconnect!(t::HTTPTransport)
+function _transport_disconnect!(t::HTTPTransport; cfg::RequestConfig=current_config())
     if t.connected && !isnothing(t.session_id)
         hdrs = copy(t.headers)
         push!(hdrs, "Mcp-Session-Id" => t.session_id)
         try
-            HTTP.request("DELETE", t.url; headers=hdrs, status_exception=false)
+            _http("DELETE", t.url, hdrs; cfg=cfg, remaining=Inf)
         catch e
             @debug "MCP HTTP disconnect failed" exception=e
         end
@@ -469,6 +474,31 @@ function _next_id!(session::MCPSession)::Int
     session._id_counter
 end
 
+"""Reject a per-call MCP timeout that would reintroduce an unbounded wait.
+NaN must be rejected explicitly (NaN ≤ 0 is false); Inf disables the bound."""
+function _validate_mcp_timeout(t::Float64)::Float64
+    (isnan(t) || t <= 0) &&
+        throw(ArgumentError("MCP timeout must be a positive number of seconds " *
+                            "(got $t); Inf disables the bound."))
+    t
+end
+
+"""Resolve the per-exchange MCP request bound: explicit kwarg > ambient scoped
+config's `mcp_request_timeout` (when a scope is set) > the session-captured config.
+Bridged tool closures pass no kwarg, so an ambient `with_request_config` reaches
+them through the scope leg."""
+function _resolve_mcp_request_timeout(session::MCPSession, timeout::Union{Nothing,Float64})::Float64
+    timeout !== nothing && return _validate_mcp_timeout(timeout)
+    amb = _REQUEST_CONFIG[]
+    amb !== nothing ? amb.mcp_request_timeout : session.config.mcp_request_timeout
+end
+
+_request_timeout_msg(limit::Float64)::String =
+    "MCP request exceeded the $(limit)s request timeout. Raise it for one call with " *
+    "call_tool(session, name, args; timeout=<seconds>), for a dynamic scope with " *
+    "with_request_config(; mcp_request_timeout=<seconds>), or per session with " *
+    "mcp_connect(...; config=RequestConfig(current_config(); mcp_request_timeout=<seconds>))."
+
 """
 Send a JSON-RPC request and return the parsed response, throwing MCPError on failure.
 
@@ -486,11 +516,13 @@ before the matching response are handled in place:
   [`MCPError`](@ref) (the server could not attribute the request).
 - Any other non-matching response frame is skipped with a warning.
 """
-function _mcp_request_once!(session::MCPSession, method::String, params::Union{Dict{String,Any},Nothing}=nothing)::Dict{String,Any}
+function _mcp_request_once!(session::MCPSession, method::String,
+                            params::Union{Dict{String,Any},Nothing}=nothing;
+                            excfg::RequestConfig=session.config)::Dict{String,Any}
     lock(session._lock) do
         id = _next_id!(session)
         req = _JSONRPCRequest(id, method, params)
-        raw = _transport_send!(session.transport, _jsonrpc_serialize(req))
+        raw = _transport_send!(session.transport, _jsonrpc_serialize(req); cfg=excfg)
         while true
             parsed = JSON.parse(raw; dicttype=Dict{String,Any})
             parsed isa Dict{String,Any} ||
@@ -504,12 +536,12 @@ function _mcp_request_once!(session::MCPSession, method::String, params::Union{D
                 elseif parsed["method"] == "ping"
                     # Server-initiated ping: answer with an empty result.
                     _transport_notify!(session.transport,
-                        JSON.json(_jsonrpc_result(frame_id, Dict{String,Any}())))
+                        JSON.json(_jsonrpc_result(frame_id, Dict{String,Any}())); cfg=excfg)
                 else
                     # Server-initiated request this client cannot serve.
                     _transport_notify!(session.transport,
                         JSON.json(_jsonrpc_error(frame_id, -32601,
-                            "Method not found: $(parsed["method"])")))
+                            "Method not found: $(parsed["method"])")); cfg=excfg)
                 end
                 raw = _transport_read!(session.transport)
                 continue
@@ -530,7 +562,7 @@ function _mcp_request_once!(session::MCPSession, method::String, params::Union{D
 end
 
 """
-    _mcp_request!(session, method, params=nothing) -> Dict{String,Any}
+    _mcp_request_recover!(session, method, params=nothing; excfg=session.config) -> Dict{String,Any}
 
 Run a request, transparently recovering from an expired HTTP session. On a 404
 carrying a live session id the client re-initializes once — obtaining a fresh
@@ -539,14 +571,18 @@ client re-initializes when the server reports the session gone). A second
 expiry aborts with an error; there is no retry loop. Every other outcome,
 including [`MCPError`](@ref), passes through unchanged.
 """
-function _mcp_request!(session::MCPSession, method::String, params::Union{Dict{String,Any},Nothing}=nothing)::Dict{String,Any}
+function _mcp_request_recover!(session::MCPSession, method::String,
+                               params::Union{Dict{String,Any},Nothing}=nothing;
+                               excfg::RequestConfig=session.config)::Dict{String,Any}
     try
-        return _mcp_request_once!(session, method, params)
+        return _mcp_request_once!(session, method, params; excfg=excfg)
     catch e
         e isa _MCPSessionExpired || rethrow()
-        _mcp_reinitialize!(session)
+        # Re-initialize at the connect bound (a fresh handshake is a connect action).
+        _mcp_reinitialize!(session;
+            excfg=RequestConfig(session.config; request_timeout=session.config.mcp_connect_timeout))
         try
-            return _mcp_request_once!(session, method, params)
+            return _mcp_request_once!(session, method, params; excfg=excfg)
         catch e2
             e2 isa _MCPSessionExpired || rethrow()
             error("MCP HTTP session expired again immediately after " *
@@ -555,10 +591,38 @@ function _mcp_request!(session::MCPSession, method::String, params::Union{Dict{S
     end
 end
 
+"""
+Guarded request entry point used by every discovery/operation verb. Resolves the
+per-exchange bound (call-time), routes through the 404-recovery wrapper, and maps
+a per-exchange timeout to a typed [`MCPTimeoutError`](@ref). HTTP timeouts are NOT
+session-fatal (request/response correlation is per-POST). The stdio branch is
+extended to the whole-exchange watchdog in a later change.
+"""
+function _mcp_request!(session::MCPSession, method::String,
+                       params::Union{Dict{String,Any},Nothing}=nothing;
+                       timeout::Union{Nothing,Float64}=nothing)::Dict{String,Any}
+    bound = _resolve_mcp_request_timeout(session, timeout)
+    excfg = RequestConfig(session.config; request_timeout=bound)
+    if session.transport isa StdioTransport
+        return _mcp_request_recover!(session, method, params; excfg=excfg)
+    else
+        try
+            return _mcp_request_recover!(session, method, params; excfg=excfg)
+        catch e
+            if e isa UniLMTimeout && e.phase in (:request, :connect)
+                throw(MCPTimeoutError(:request, e.elapsed, e.limit, _request_timeout_msg(e.limit)))
+            end
+            rethrow()
+        end
+    end
+end
+
 """Send a JSON-RPC notification (no response expected)."""
-function _mcp_notify!(session::MCPSession, method::String, params::Union{Dict{String,Any},Nothing}=nothing)
+function _mcp_notify!(session::MCPSession, method::String,
+                      params::Union{Dict{String,Any},Nothing}=nothing;
+                      excfg::RequestConfig=session.config)
     notif = _JSONRPCNotification(method, params)
-    _transport_notify!(session.transport, _jsonrpc_serialize(notif))
+    _transport_notify!(session.transport, _jsonrpc_serialize(notif); cfg=excfg)
 end
 
 # ─── Lifecycle ───────────────────────────────────────────────────────────────
@@ -607,14 +671,14 @@ this client does not support, the transport is disconnected and an error naming
 both the requested and returned versions is thrown (MCP spec: the client SHOULD
 terminate the connection when it cannot support the negotiated version).
 """
-function _mcp_handshake!(session::MCPSession)::Dict{String,Any}
+function _mcp_handshake!(session::MCPSession; excfg::RequestConfig=session.config)::Dict{String,Any}
     requested = get(session._init_params, "protocolVersion", _MCP_PROTOCOL_VERSION)
     # The initialize request advertises the client's preferred (latest) revision.
     _set_protocol_version!(session.transport, _MCP_PROTOCOL_VERSION)
-    init_result = _mcp_request_once!(session, "initialize", session._init_params)
+    init_result = _mcp_request_once!(session, "initialize", session._init_params; excfg=excfg)
     negotiated = get(init_result, "protocolVersion", requested)
     if !(negotiated in _MCP_SUPPORTED_PROTOCOL_VERSIONS)
-        _transport_disconnect!(session.transport)
+        _transport_disconnect!(session.transport; cfg=excfg)
         session.status = :closed
         supported = join(_MCP_SUPPORTED_PROTOCOL_VERSIONS, ", ")
         error("MCP server returned unsupported protocol version \"$(negotiated)\" " *
@@ -624,18 +688,18 @@ function _mcp_handshake!(session::MCPSession)::Dict{String,Any}
     session.protocol_version = negotiated
     # Every request after initialize carries the negotiated version.
     _set_protocol_version!(session.transport, negotiated)
-    _mcp_notify!(session, "notifications/initialized")
+    _mcp_notify!(session, "notifications/initialized"; excfg=excfg)
     init_result
 end
 
 """
 Re-establish an expired HTTP session: drop the stale session id so the server
 issues a fresh one, then re-run the `initialize` handshake. Used by
-[`_mcp_request!`](@ref) when a request 404s.
+[`_mcp_request_recover!`](@ref) when a request 404s.
 """
-function _mcp_reinitialize!(session::MCPSession)
+function _mcp_reinitialize!(session::MCPSession; excfg::RequestConfig=session.config)
     _reset_session!(session.transport)
-    _mcp_handshake!(session)
+    _mcp_handshake!(session; excfg=excfg)
     nothing
 end
 
@@ -666,7 +730,8 @@ function mcp_connect(transport::MCPTransport;
     )
     # Initialize handshake: validates the negotiated protocol version, stores it
     # on the session, and sends notifications/initialized.
-    init_result = _mcp_handshake!(session)
+    connect_excfg = RequestConfig(session.config; request_timeout=session.config.mcp_connect_timeout)
+    init_result = _mcp_handshake!(session; excfg=connect_excfg)
     session.server_info = get(init_result, "serverInfo", Dict{String,Any}())
     caps = get(init_result, "capabilities", Dict{String,Any}())
     session.server_capabilities = MCPServerCapabilities(caps)
@@ -708,7 +773,8 @@ end
 Gracefully disconnect from the MCP server.
 """
 function mcp_disconnect!(session::MCPSession)
-    _transport_disconnect!(session.transport)
+    _transport_disconnect!(session.transport;
+        cfg=RequestConfig(session.config; request_timeout=session.config.mcp_request_timeout))
     session.status = :closed
     nothing
 end
@@ -721,14 +787,14 @@ end
 Fetch the tool list from the MCP server. Handles pagination via cursor.
 Stores result in `session.tools`.
 """
-function list_tools!(session::MCPSession)::Vector{MCPToolInfo}
+function list_tools!(session::MCPSession; timeout::Union{Nothing,Float64}=nothing)::Vector{MCPToolInfo}
     all_tools = MCPToolInfo[]
     cursor = nothing
     pages = 0
     while true
         (pages += 1) > 1000 && error("MCP pagination exceeded 1000 pages")
         params = isnothing(cursor) ? Dict{String,Any}() : Dict{String,Any}("cursor" => cursor)
-        result = _mcp_request!(session, "tools/list", params)
+        result = _mcp_request!(session, "tools/list", params; timeout=timeout)
         for t in get(result, "tools", [])
             push!(all_tools, MCPToolInfo(t))
         end
@@ -829,10 +895,11 @@ content array. A tool-execution error (`isError: true`) is returned with
 `is_error == true` — it is **not** thrown. JSON-RPC protocol errors still throw
 [`MCPError`](@ref).
 """
-function call_tool(session::MCPSession, name::String, arguments::Dict{String,Any}=Dict{String,Any}())::MCPToolResult
+function call_tool(session::MCPSession, name::String,
+                   arguments::Dict{String,Any}=Dict{String,Any}();
+                   timeout::Union{Nothing,Float64}=nothing)::MCPToolResult
     result = _mcp_request!(session, "tools/call", Dict{String,Any}(
-        "name" => name, "arguments" => arguments
-    ))
+        "name" => name, "arguments" => arguments); timeout=timeout)
     content = get(result, "content", Any[])
     is_error = get(result, "isError", false) === true
     rendered = String[]

@@ -890,7 +890,7 @@ end
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         # In the green flow the `tools/call` handler parks at `wait(Condition())`,
         # so a graceful close would spin in its quiesce loop waiting for that

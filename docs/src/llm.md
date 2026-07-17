@@ -630,11 +630,11 @@ end
 ### generate_image
 
 ```julia
-generate_image(ig::ImageGeneration; retries=0) -> ImageSuccess | ImageFailure | ImageCallError
+generate_image(ig::ImageGeneration; config=nothing) -> ImageSuccess | ImageFailure | ImageCallError
 generate_image(prompt::String; kwargs...)       -> same   # convenience
 ```
 
-Auto-retries on 408/429/500/502/503/504/529 with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers.
+Retries transient statuses (408/429/500/502/503/504/529) inside the request budget (`RequestConfig.max_attempts`, default 3; `Retry-After` respected). Bound per call with `config=RequestConfig(...)`.
 
 ### Response Types
 

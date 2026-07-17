@@ -288,21 +288,21 @@ try
     # Image Generation: error / retry paths
     # ═══════════════════════════════════════════════════════════════════════
 
-    @testset "generate_image with 500 (retry exhausted)" begin
+    @testset "generate_image with 500 (single attempt)" begin
         set_error!(500, "Internal Server Error")
 
         ig = ImageGeneration(prompt="test", service=MockServiceEndpoint)
-        result = generate_image(ig; retries=30)
+        result = generate_image(ig; config=RequestConfig(max_attempts=1))
 
         @test result isa ImageFailure
         @test result.status == 500
     end
 
-    @testset "generate_image with 503 (retry exhausted)" begin
+    @testset "generate_image with 503 (single attempt)" begin
         set_error!(503, "Service Unavailable")
 
         ig = ImageGeneration(prompt="test", service=MockServiceEndpoint)
-        result = generate_image(ig; retries=30)
+        result = generate_image(ig; config=RequestConfig(max_attempts=1))
 
         @test result isa ImageFailure
         @test result.status == 503
@@ -344,11 +344,11 @@ try
         @test result.status == 429
     end
 
-    @testset "generate_image with 429 (retry exhausted)" begin
+    @testset "generate_image with 429 (single attempt)" begin
         set_error!(429, "Rate limited"; headers=["Retry-After" => "2"])
 
         ig = ImageGeneration(prompt="test", service=MockServiceEndpoint)
-        result = generate_image(ig; retries=30)
+        result = generate_image(ig; config=RequestConfig(max_attempts=1))
 
         @test result isa ImageFailure
         @test result.status == 429

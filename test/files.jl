@@ -40,4 +40,21 @@
         @test_throws ArgumentError list_files(service=UniLM.GEMINIOpenAIServiceEndpoint)
         @test UniLM.has_capability(UniLM.OPENAIServiceEndpoint, :files)
     end
+
+    @testset "config seam wiring" begin
+        fpath = tempname() * ".txt"
+        write(fpath, "probe")
+        try
+            u = UniLM.FileUpload(service=SeamProbe, file=fpath, purpose="user_data")
+            @test _reached_seam(upload_file(u; config=_TINY_DEADLINE), FileCallError)
+            @test _reached_seam(upload_file(fpath, "user_data"; service=SeamProbe, config=_TINY_DEADLINE), FileCallError)
+            @test _reached_seam(list_files(service=SeamProbe, config=_TINY_DEADLINE), FileCallError)
+            @test _reached_seam(retrieve_file("file-x"; service=SeamProbe, config=_TINY_DEADLINE), FileCallError)
+            @test _reached_seam(delete_file("file-x"; service=SeamProbe, config=_TINY_DEADLINE), FileCallError)
+            @test _reached_seam(file_content("file-x"; service=SeamProbe, config=_TINY_DEADLINE), FileCallError)
+            @test_throws MethodError upload_file(u; retries=1)
+        finally
+            rm(fpath; force=true)
+        end
+    end
 end

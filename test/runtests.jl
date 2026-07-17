@@ -57,6 +57,8 @@ end
         include("responses.jl")
     end
 
+    include("platform_seam_fixtures.jl")
+
     @testset "images.jl" begin
         include("images.jl")
     end

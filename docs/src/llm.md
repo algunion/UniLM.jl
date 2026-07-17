@@ -704,10 +704,10 @@ Model defaults: `"text-embedding-3-small"` for OpenAI, `"gemini-embedding-001"` 
 ### embeddingrequest!
 
 ```julia
-embeddingrequest!(emb::Embeddings; retries=0) -> EmbeddingSuccess | EmbeddingFailure | EmbeddingCallError
+embeddingrequest!(emb::Embeddings; config=nothing) -> EmbeddingSuccess | EmbeddingFailure | EmbeddingCallError
 ```
 
-Returns an `EmbeddingSuccess`/`EmbeddingFailure`/`EmbeddingCallError` (a `<: LLMRequestResponse`). Fills `emb.embeddings` in-place; `embedding_vectors(result)` returns the vectors. Auto-retries on transient statuses (408/429/500/502/503/504/529) with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers.
+Returns an `EmbeddingSuccess`/`EmbeddingFailure`/`EmbeddingCallError` (a `<: LLMRequestResponse`). Fills `emb.embeddings` in-place; `embedding_vectors(result)` returns the vectors. Retries transient statuses (408/429/500/502/503/504/529) with backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`, `total_deadline`; `Retry-After` honored). Timeouts surface as `EmbeddingCallError` with `status=nothing` and the `UniLMTimeout` in `.cause`.
 
 ### Embeddings Example
 

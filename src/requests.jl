@@ -700,35 +700,38 @@ end
 
 
 """
-    embeddingrequest!(emb::Embeddings; retries=0) -> LLMRequestResponse
+    embeddingrequest!(emb::Embeddings; config=nothing) -> LLMRequestResponse
 
 Send an Embeddings API request for the `input` in `emb`. Returns `EmbeddingSuccess`,
-`EmbeddingFailure` (non-2xx), or `EmbeddingCallError` (network/parse). The resulting
-vectors are filled into `emb.embeddings` in place and are also reachable via
+`EmbeddingFailure` (non-2xx), or `EmbeddingCallError` (network/parse/timeout). The
+resulting vectors are filled into `emb.embeddings` in place and are also reachable via
 `embedding_vectors(result)`.
+
+Transient statuses (408/429/500/502/503/504/529) are retried with backoff and jitter
+under the resolved [`RequestConfig`](@ref) (`config === nothing` resolves the ambient
+configuration). Timeouts surface as `EmbeddingCallError` with `status = nothing` and
+the `UniLMTimeout` in `cause`.
 """
-function embeddingrequest!(emb::Embeddings; retries::Int=0)
+function embeddingrequest!(emb::Embeddings; config::Union{Nothing,RequestConfig}=nothing)
+    cfg = _resolve_config(config)
+    t0 = time_ns()
     try
         body = JSON.json(emb)
-        resp = HTTP.post(get_url(emb), body=body, headers=auth_header(emb.service); status_exception=false)
+        resp = _http_with_retries(cfg, t0, "POST", get_url(emb),
+                                  auth_header(emb.service), body)
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
             update!(emb, data["data"])
             return EmbeddingSuccess(embeddings=emb, usage=_parse_usage(data), raw=data)
-        elseif _is_retryable(resp.status)
-            if retries < _RETRY_MAX_ATTEMPTS
-                delay = _retry_delay(retries, resp)
-                @warn "Request status: $(resp.status). Retrying in $(round(delay; digits=2))s..."
-                sleep(delay)
-                return embeddingrequest!(emb; retries=retries + 1)
-            else
-                return EmbeddingFailure(response=String(resp.body), status=resp.status)
-            end
         else
             return EmbeddingFailure(response=String(resp.body), status=resp.status)
         end
     catch e
+        e isa InterruptException && rethrow()
+        e isa UniLMTimeout && return EmbeddingCallError(error=sprint(showerror, e),
+                                                        status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
-        return EmbeddingCallError(error=string(e), status=statuserror)
+        return EmbeddingCallError(error=string(e), status=statuserror,
+                                  cause=e isa Exception ? e : nothing)
     end
 end

@@ -354,11 +354,11 @@ try
         @test result.status == 429
     end
 
-    @testset "embeddingrequest! with 429 (retry exhausted)" begin
+    @testset "embeddingrequest! with 429 (single attempt)" begin
         set_error!(429, "Rate limited"; headers=["Retry-After" => "2"])
 
         emb = UniLM.Embeddings("test"; service=MockServiceEndpoint)
-        result = embeddingrequest!(emb; retries=30)
+        result = embeddingrequest!(emb; config=RequestConfig(max_attempts=1))
         @test result isa EmbeddingFailure
         @test result.status == 429
 
@@ -378,18 +378,18 @@ try
         @test result.status == 401
     end
 
-    @testset "embeddingrequest! with 500 (retry exhausted)" begin
+    @testset "embeddingrequest! with 500 (single attempt)" begin
         set_error!(500, "Internal Server Error")
         emb = UniLM.Embeddings("test"; service=MockServiceEndpoint)
-        result = embeddingrequest!(emb; retries=30)
+        result = embeddingrequest!(emb; config=RequestConfig(max_attempts=1))
         @test result isa EmbeddingFailure
         @test result.status == 500
     end
 
-    @testset "embeddingrequest! with 503 (retry exhausted)" begin
+    @testset "embeddingrequest! with 503 (single attempt)" begin
         set_error!(503, "Service Unavailable")
         emb = UniLM.Embeddings("test"; service=MockServiceEndpoint)
-        result = embeddingrequest!(emb; retries=30)
+        result = embeddingrequest!(emb; config=RequestConfig(max_attempts=1))
         @test result isa EmbeddingFailure
         @test result.status == 503
     end
@@ -1347,7 +1347,7 @@ try
         set_error!(200, "")
     end
 
-    @testset "embeddingrequest! retry-then-recover recursion (433–436)" begin
+    @testset "embeddingrequest! retry-then-recover (shared retry loop)" begin
         emb_body = JSON.json(Dict(
             "object" => "list", "model" => "mock-embedding",
             "data" => [Dict("object" => "embedding", "index" => 0, "embedding" => [1.0, 2.0])],
@@ -1355,7 +1355,7 @@ try
         response_queue[] = [(503, ""), (200, emb_body)]
 
         emb = UniLM.Embeddings("retry me"; service=MockServiceEndpoint)
-        result = embeddingrequest!(emb)   # default retries=0 → genuinely retries once
+        result = embeddingrequest!(emb)   # default config (max_attempts=3) → genuinely retries once
 
         @test result isa EmbeddingSuccess
         @test embedding_vectors(result) == [1.0, 2.0]

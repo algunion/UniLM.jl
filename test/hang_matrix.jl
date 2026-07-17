@@ -602,6 +602,64 @@ end
     end
 end
 
+@testset "embeddings: mute server yields typed timeout" begin
+    # Accept-then-silence listener: connections are accepted and never answered.
+    srv = Sockets.listen(Sockets.localhost, 0)
+    port = Int(Sockets.getsockname(srv)[2])
+    accepter = Threads.@spawn begin
+        try
+            while isopen(srv)
+                Sockets.accept(srv)   # hold the connection open, never respond
+            end
+        catch
+        end
+    end
+    try
+        emb = UniLM.Embeddings("x"; service=GenericOpenAIEndpoint("http://127.0.0.1:$port", ""),
+                               model="mock")
+        cfg = RequestConfig(connect_timeout=1.0, request_timeout=1.0,
+                            total_deadline=2.0, max_attempts=1)
+        t = Threads.@spawn embeddingrequest!(emb; config=cfg)
+        @test timedwait(() -> istaskdone(t), 10.0) === :ok
+        r = fetch(t)
+        @test r isa EmbeddingCallError
+        @test isnothing(r.status)
+        @test r.cause isa UniLM.UniLMTimeout
+        @test r.cause.phase in (:connect, :request, :deadline)
+    finally
+        close(srv)
+        wait(accepter)
+    end
+end
+
+@testset "embeddings: interrupt propagates, never laundered" begin
+    srv = Sockets.listen(Sockets.localhost, 0)
+    port = Int(Sockets.getsockname(srv)[2])
+    accepter = Threads.@spawn begin
+        try
+            while isopen(srv)
+                Sockets.accept(srv)
+            end
+        catch
+        end
+    end
+    try
+        emb = UniLM.Embeddings("x"; service=GenericOpenAIEndpoint("http://127.0.0.1:$port", ""),
+                               model="mock")
+        cfg = RequestConfig(connect_timeout=5.0, request_timeout=5.0,
+                            total_deadline=5.0, max_attempts=1)
+        t = Threads.@spawn embeddingrequest!(emb; config=cfg)
+        sleep(0.3)                                   # let it block inside the exchange
+        schedule(t, InterruptException(); error=true)
+        @test timedwait(() -> istaskdone(t), 10.0) === :ok
+        @test istaskfailed(t)                        # rethrown — not an EmbeddingCallError value
+        @test t.exception isa InterruptException
+    finally
+        close(srv)
+        wait(accepter)
+    end
+end
+
 # ─── Subprocess MCP mock servers (stdio, newline-delimited JSON-RPC) ──────────
 
 # Build a `julia --startup-file=no -e <script>` command running `body`, with a

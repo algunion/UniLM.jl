@@ -188,6 +188,14 @@ result = fetch(task)     # LLMSuccess, or a call-error carrying the UniLMTimeout
 
 ## Retries
 
+Automatic retries apply to the inference verbs — `chatrequest!`, `embeddingrequest!`,
+`respond`, `fim_complete`, `prefix_complete`, `generate_image`, `edit_image`,
+`upload_file`, and the `tool_loop` family (streams retry only before the first
+callback fires). Platform and lifecycle verbs (batch, container, conversation,
+file, fine-tuning, moderation, upload, vector-store, video, audio, and the
+Responses lifecycle operations) make a single bounded attempt; `max_attempts` has
+no effect there.
+
 `max_attempts` (default 3) caps the total attempts. All attempts share the single
 `total_deadline`:
 

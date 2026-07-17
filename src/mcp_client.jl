@@ -840,10 +840,15 @@ function _ensure_live!(session::MCPSession)
 end
 
 """
-    mcp_connect(transport::MCPTransport; client_name="UniLM.jl", protocol_version="2025-11-25") -> MCPSession
+    mcp_connect(transport::MCPTransport; client_name="UniLM.jl", protocol_version="2025-11-25",
+                config=nothing, auto_respawn=false) -> MCPSession
 
 Connect to an MCP server via the given transport. Performs initialization handshake
-and populates tool cache.
+and populates tool cache. `config` (a [`RequestConfig`](@ref), default: the ambient
+configuration) is resolved and captured on the session — its `mcp_connect_timeout`
+bounds this handshake and `mcp_request_timeout` bounds each later exchange.
+`auto_respawn=true` lets a stdio session closed by a request timeout respawn its
+server (same command, captured config) and retry the next call once.
 """
 function mcp_connect(transport::MCPTransport;
                      client_name::String="UniLM.jl",

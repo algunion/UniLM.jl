@@ -45,72 +45,106 @@ _cont_resp(resp) = resp.status == 200 ?
     ContainerSuccess(response=_parse_container(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
     ContainerFailure(response=String(resp.body), status=resp.status)
 
-"""    create_container(; name, file_ids=nothing, expires_after=nothing, service=OPENAIServiceEndpoint)"""
+"""
+    create_container(; name, file_ids=nothing, expires_after=nothing, service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
 function create_container(; name::String, file_ids::Union{Vector{String},Nothing}=nothing,
-    expires_after::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    expires_after::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :containers, "Containers API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:name => name)
         !isnothing(file_ids) && (d[:file_ids] = file_ids)
         !isnothing(expires_after) && (d[:expires_after] = expires_after)
-        _cont_resp(HTTP.post(_api_base_url(service) * CONTAINERS_PATH, body=JSON.json(d), headers=auth_header(service); status_exception=false))
+        _cont_resp(_http("POST", _api_base_url(service) * CONTAINERS_PATH, auth_header(service),
+            JSON.json(d); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
+        e isa InterruptException && rethrow()
         _cont_err(e)
     end
 end
 
-"""    retrieve_container(id; service=OPENAIServiceEndpoint)"""
-function retrieve_container(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+"""
+    retrieve_container(id; service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
+function retrieve_container(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :containers, "Containers API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        _cont_resp(HTTP.get(_api_base_url(service) * CONTAINERS_PATH * "/" * id, headers=auth_header(service); status_exception=false))
+        _cont_resp(_http("GET", _api_base_url(service) * CONTAINERS_PATH * "/" * id, auth_header(service);
+            cfg, remaining=_remaining_s(cfg, t0)))
     catch e
+        e isa InterruptException && rethrow()
         _cont_err(e)
     end
 end
 
-"""    list_containers(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)"""
-function list_containers(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+"""
+    list_containers(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
+function list_containers(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :containers, "Containers API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         url = _api_base_url(service) * CONTAINERS_PATH
         params = String[]
         !isnothing(limit) && push!(params, "limit=$limit")
         !isnothing(after) && push!(params, "after=$after")
         !isempty(params) && (url *= "?" * join(params, "&"))
-        resp = HTTP.get(url, headers=auth_header(service); status_exception=false)
+        resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 || return ContainerFailure(response=String(resp.body), status=resp.status)
         data = JSON.parse(resp.body; dicttype=Dict{String,Any})
         ContainerListSuccess(response=ContainerList(data=Vector{Dict{String,Any}}(get(data, "data", [])), has_more=get(data, "has_more", false), raw=data))
     catch e
+        e isa InterruptException && rethrow()
         _cont_err(e)
     end
 end
 
-"""    delete_container(id; service=OPENAIServiceEndpoint)"""
-function delete_container(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+"""
+    delete_container(id; service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
+function delete_container(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :containers, "Containers API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = HTTP.request("DELETE", _api_base_url(service) * CONTAINERS_PATH * "/" * id, headers=auth_header(service); status_exception=false)
+        resp = _http("DELETE", _api_base_url(service) * CONTAINERS_PATH * "/" * id, auth_header(service);
+            cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 || return ContainerFailure(response=String(resp.body), status=resp.status)
         d = JSON.parse(resp.body; dicttype=Dict{String,Any})
         ContainerDeleteSuccess(id=get(d, "id", id), deleted=get(d, "deleted", false))
     catch e
+        e isa InterruptException && rethrow()
         _cont_err(e)
     end
 end
 
-"""    add_container_file(container_id, path; service=OPENAIServiceEndpoint)  (multipart upload)"""
-function add_container_file(container_id::String, path::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+"""
+    add_container_file(container_id, path; service=OPENAIServiceEndpoint)  (multipart upload)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
+function add_container_file(container_id::String, path::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :containers, "Containers API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         isfile(path) || throw(ArgumentError("file not found: $path"))
         form = HTTP.Form(["file" => HTTP.Multipart(basename(path), IOBuffer(read(path)), _mime_for(path))])
         url = _api_base_url(service) * CONTAINERS_PATH * "/" * container_id * "/files"
-        resp = HTTP.post(url, auth_header_multipart(service), form; status_exception=false)
+        resp = _http("POST", url, auth_header_multipart(service), form; cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 || return ContainerFailure(response=String(resp.body), status=resp.status)
         ContainerSuccess(response=_parse_container(JSON.parse(resp.body; dicttype=Dict{String,Any})))
     catch e
+        e isa InterruptException && rethrow()
         _cont_err(e)
     end
 end

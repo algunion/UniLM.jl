@@ -46,22 +46,26 @@ end
 
 Synthesize speech. On success returns `SpeechSuccess` with raw audio bytes; otherwise
 `AudioFailure`/`AudioCallError`. Use [`save_audio`](@ref) to write the bytes to disk.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function speak(s::SpeechRequest)
+function speak(s::SpeechRequest; config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(s.service, :audio, "Audio API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = HTTP.post(_api_base_url(s.service) * AUDIO_SPEECH_PATH, body=JSON.json(s),
-            headers=auth_header(s.service); status_exception=false)
+        resp = _http("POST", _api_base_url(s.service) * AUDIO_SPEECH_PATH, auth_header(s.service),
+            JSON.json(s); cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 ?
             SpeechSuccess(audio=Vector{UInt8}(resp.body), content_type=HTTP.header(resp, "Content-Type", "")) :
             AudioFailure(response=String(resp.body), status=resp.status)
     catch e
+        e isa InterruptException && rethrow()
         _audio_err(e)
     end
 end
 speak(input::String; voice::String="alloy", model::String="gpt-4o-mini-tts",
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint, kwargs...) =
-    speak(SpeechRequest(; service=service, model=model, input=input, voice=voice, kwargs...))
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing, kwargs...) =
+    speak(SpeechRequest(; service=service, model=model, input=input, voice=voice, kwargs...); config=config)
 
 """
     save_audio(r::SpeechSuccess, path) -> path
@@ -107,8 +111,9 @@ The transcript text from a [`transcribe`](@ref) or [`translate`](@ref) result.
 """
 transcript_text(r::TranscriptionSuccess) = r.text
 
-function _transcribe(t::TranscriptionRequest, path::String)
+function _transcribe(t::TranscriptionRequest, path::String; config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(t.service, :audio, "Audio API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         parts = Pair{String,Any}[
             "file" => HTTP.Multipart(basename(t.file), IOBuffer(read(t.file)), _mime_for(t.file)),
@@ -117,7 +122,8 @@ function _transcribe(t::TranscriptionRequest, path::String)
         !isnothing(t.prompt) && push!(parts, "prompt" => t.prompt)
         !isnothing(t.response_format) && push!(parts, "response_format" => t.response_format)
         !isnothing(t.temperature) && push!(parts, "temperature" => string(t.temperature))
-        resp = HTTP.post(_api_base_url(t.service) * path, auth_header_multipart(t.service), HTTP.Form(parts); status_exception=false)
+        resp = _http("POST", _api_base_url(t.service) * path, auth_header_multipart(t.service),
+            HTTP.Form(parts); cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
             if occursin("application/json", HTTP.header(resp, "Content-Type", ""))
                 d = JSON.parse(resp.body; dicttype=Dict{String,Any})
@@ -129,6 +135,7 @@ function _transcribe(t::TranscriptionRequest, path::String)
             AudioFailure(response=String(resp.body), status=resp.status)
         end
     catch e
+        e isa InterruptException && rethrow()
         _audio_err(e)
     end
 end
@@ -138,16 +145,20 @@ end
 
 Transcribe audio to text in the source language. Returns `TranscriptionSuccess`
 (`.text`, via [`transcript_text`](@ref)), `AudioFailure`, or `AudioCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-transcribe(t::TranscriptionRequest) = _transcribe(t, AUDIO_TRANSCRIPTIONS_PATH)
-transcribe(path::String; model::String="gpt-4o-transcribe", service::ServiceEndpointSpec=OPENAIServiceEndpoint, kwargs...) =
-    transcribe(TranscriptionRequest(; service=service, file=path, model=model, kwargs...))
+transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}=nothing) = _transcribe(t, AUDIO_TRANSCRIPTIONS_PATH; config=config)
+transcribe(path::String; model::String="gpt-4o-transcribe", service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing, kwargs...) =
+    transcribe(TranscriptionRequest(; service=service, file=path, model=model, kwargs...); config=config)
 
 """
     translate(t::TranscriptionRequest) / translate(path; model="whisper-1", kwargs...)
 
 Translate audio into English text.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-translate(t::TranscriptionRequest) = _transcribe(t, AUDIO_TRANSLATIONS_PATH)
-translate(path::String; model::String="whisper-1", service::ServiceEndpointSpec=OPENAIServiceEndpoint, kwargs...) =
-    translate(TranscriptionRequest(; service=service, file=path, model=model, kwargs...))
+translate(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}=nothing) = _transcribe(t, AUDIO_TRANSLATIONS_PATH; config=config)
+translate(path::String; model::String="whisper-1", service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing, kwargs...) =
+    translate(TranscriptionRequest(; service=service, file=path, model=model, kwargs...); config=config)

@@ -111,6 +111,18 @@ end
         include("files.jl")
     end
 
+    @testset "audio" begin
+        include("audio.jl")
+    end
+
+    @testset "uploads" begin
+        include("uploads.jl")
+    end
+
+    @testset "containers" begin
+        include("containers.jl")
+    end
+
     @testset "webhooks" begin
         include("webhooks.jl")
     end

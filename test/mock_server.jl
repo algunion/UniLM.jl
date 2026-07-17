@@ -1406,8 +1406,8 @@ try
     end
 
     @testset "fim_complete retry-then-recover recursion → FIMSuccess, queue drained (162–167)" begin
-        # First request: retryable 503 (drains entry 1) → retries=0 < _RETRY_MAX_ATTEMPTS → recurse
-        # → 200 success (entry 2). Both queued responses must be consumed (proves it really retried).
+        # First request: retryable 503 (drains entry 1) → the shared bounded retry loop
+        # retries under the default max_attempts=3 budget → 200 success (entry 2). Both queued responses must be consumed (proves it really retried).
         fim_body = JSON.json(Dict(
             "model" => "mock-fim",
             "choices" => [Dict("text" => "recovered", "index" => 0, "finish_reason" => "stop")],
@@ -1415,7 +1415,7 @@ try
         response_queue[] = [(503, ""), (200, fim_body)]
 
         fim = FIMCompletion(service=MockServiceEndpoint, model="mock-fim", prompt="x", suffix="y")
-        result = fim_complete(fim)   # default retries=0 → genuinely retries once
+        result = fim_complete(fim)   # default max_attempts=3 → genuinely retries once
 
         @test result isa FIMSuccess
         @test fim_text(result) == "recovered"
@@ -1514,7 +1514,7 @@ try
         chat = Chat(service=MockServiceEndpoint, model="mock-model", messages=[
             Message(role=UniLM.RoleUser, content="continue"),
             Message(role=UniLM.RoleAssistant, content="The answer is ")])
-        result = prefix_complete(chat)   # default retries=0 → genuinely retries once
+        result = prefix_complete(chat)   # default max_attempts=3 → genuinely retries once
 
         @test result isa LLMSuccess
         @test result.message.content == "recovered prefix"

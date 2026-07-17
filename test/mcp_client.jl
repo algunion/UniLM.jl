@@ -1400,11 +1400,23 @@ function _ws4_raw_child_src(marker::String)
                 println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict(
                     "content"=>[Dict("type"=>"text","text"=>"done")]))))
                 flush(stdout)
-            else  # hang: emit a notification first, then never respond
-                println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","method"=>"notifications/message",
-                    "params"=>Dict("level"=>"info","data"=>"before-hang"))))
-                flush(stdout)
-                while true; sleep(3600); end
+            else  # hang: stream notifications continuously (never the response) until
+                  # stdin EOF. Frames arrive every ~0.1 s — below the request bound — so
+                  # continuous frames must not reset the exchange deadline: a per-read
+                  # watchdog would reset on each frame and never fire, whereas a
+                  # whole-exchange deadline (armed once) fires at ~bound. The stream runs
+                  # in a background task while the main task blocks on stdin, so closing
+                  # stdin (the teardown ladder) makes the child exit promptly.
+                @async try
+                    while true
+                        println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","method"=>"notifications/message",
+                            "params"=>Dict("level"=>"info","data"=>"tick"))))
+                        flush(stdout)
+                        sleep(0.1)
+                    end
+                catch
+                end
+                while !eof(stdin); end
             end
         elseif !isnothing(id)
             println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict())))
@@ -1572,24 +1584,33 @@ end
     childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
     jl = Base.julia_cmd()
     cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    session = nothing
     try
-        # Bound below the child's notification→(never)response gap. `hang` emits a
-        # notification FIRST, then blocks forever: proves a pre-response notification
-        # does NOT reset the exchange deadline (whole-exchange rule).
+        # `hang` streams notifications continuously (every ~0.1 s, below the 0.5 s
+        # bound) and never sends the response. Continuous frames must NOT reset the
+        # exchange deadline: a per-read watchdog would reset on every frame and never
+        # fire (the worker would outlast the 12 s bound below), whereas the
+        # whole-exchange deadline — armed once at exchange start — fires at ~bound.
         session = mcp_connect(cmd; config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
         box = Ref{Any}(nothing)
         worker = @async (box[] = try call_tool(session, "hang", Dict{String,Any}()) catch e; e end)
-        @test timedwait(() -> istaskdone(worker), 12.0) === :ok   # absorbs the teardown ladder
+        @test timedwait(() -> istaskdone(worker), 12.0) === :ok   # a per-read reset would blow this bound
         err = box[]
         @test err isa MCPTimeoutError
         @test err.phase === :request
         @test err.limit == 0.5
+        @test err.elapsed < 3.0   # fired at ~bound through the frame stream, not the 12 s window
         @test occursin("mcp_request_timeout", err.msg)   # pinned msg literal names the override
         @test session.status == :closed              # stdio timeout IS session-fatal
         @test session._closed_by_timeout == true
         @test UniLM._transport_isconnected(session.transport) == false
     finally
-        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        # Self-sufficient teardown — never depend on the watchdog under test. Short
+        # ladder graces so a future red (watchdog silent, child still streaming) is
+        # reaped fast, not at the default 5+2 s; the childfile path is in argv, so a
+        # pkill on it is a reliable backstop.
+        session === nothing || (try; UniLM._kill_transport!(session.transport; grace_term=0.2, grace_kill=0.2); catch; end)
+        try; run(pipeline(`pkill -f $childfile`; stderr=devnull)); catch; end
         rm(childfile; force=true)
     end
 end

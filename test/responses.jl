@@ -2287,11 +2287,46 @@ function _sse_gap_server(chunks::Vector{String}; gap::Float64=0.25, idle_after::
     server, "http://127.0.0.1:$port"
 end
 
+# Read one full HTTP/1.1 request message (headers + body) from a raw socket before
+# acting on the connection, so a respond-or-close never races the client's still
+# in-flight body write. HTTP.jl streams the request body as a chunked write that on
+# the 1.x major arrives as a SEPARATE segment AFTER the head over a keep-alive
+# socket; a server that acts on only the head races that write (broken pipe / EPIPE).
+# Framing-aware (chunked terminator / Content-Length), never read-until-eof — a
+# keep-alive client half-closes only after it has read the response, so waiting on
+# eof here would deadlock.
+function _drain_http_request!(sock)
+    req = ""
+    while (he = findfirst("\r\n\r\n", req)) === nothing
+        chunk = readavailable(sock)
+        isempty(chunk) && return           # peer closed before completing the request
+        req *= String(chunk)
+    end
+    headers = SubString(req, 1, last(he))
+    if occursin(r"(?i)transfer-encoding:\s*chunked", headers)
+        while findfirst("0\r\n\r\n", req) === nothing   # terminating zero-length chunk
+            chunk = readavailable(sock)
+            isempty(chunk) && return
+            req *= String(chunk)
+        end
+    elseif (m = match(r"(?i)content-length:\s*(\d+)", headers)) !== nothing
+        want = last(he) + parse(Int, m.captures[1])
+        while sizeof(req) < want
+            chunk = readavailable(sock)
+            isempty(chunk) && return
+            req *= String(chunk)
+        end
+    end
+    return
+end
+
 # Localhost raw-TCP server: the FIRST connection is drained then closed abruptly
 # before any response byte (a connection-level failure the client must classify as
 # transport-retryable and retry); the SECOND connection serves `ok_body` as a
-# complete close-delimited HTTP/1.1 SSE response. Connections are handled serially
-# (the client retries serially), so no per-connection task is needed.
+# complete close-delimited HTTP/1.1 SSE response. Both legs drain the full request
+# first (see `_drain_http_request!`) so neither races the client's chunked body
+# write. Connections are handled serially (the client retries serially), so no
+# per-connection task is needed.
 function _reset_then_ok_server(ok_body::String)
     listener = nothing; port = 0
     for attempt in 1:5
@@ -2308,7 +2343,7 @@ function _reset_then_ok_server(ok_body::String)
                 sock = Sockets.accept(listener)
                 n += 1
                 try
-                    readavailable(sock)                     # best-effort drain of the request head
+                    _drain_http_request!(sock)              # consume the full request so a close/respond never races the body write
                     if n == 1
                         close(sock)                         # abrupt close → client sees a transport error
                     else

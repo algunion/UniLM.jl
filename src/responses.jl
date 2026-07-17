@@ -1214,10 +1214,15 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                     to = UniLMTimeout(:stream_idle, _idle_gap_s(guard), cfg.stream_idle_timeout)
                     return ResponseCallError(error=sprint(showerror, to), status=nothing, cause=to)
                 end
-                # A native timeout BEFORE the idle guard armed is the connect/first-byte phase;
-                # map it to the same phase-attributed UniLMTimeout the non-stream seam produces
-                # so a raw HTTP.TimeoutError never leaks as the failure cause.
-                mapped = e isa UniLMTimeout ? e :
+                # Unwrap to the root cause before classifying: HTTP.open's 1.x request
+                # machinery (ExceptionRequest) wraps an exception thrown from the streaming
+                # handler, so the first-byte/deadline `_with_deadline` UniLMTimeout arrives
+                # WRAPPED, not bare — the same `_unwrap_exception` the chat driver uses in
+                # `_stream_drive`. (2.x instead surfaces the native read timeout, which
+                # `_map_native_timeout` finds by chain walk; 1.x has no native stream timer,
+                # so the deadline guard is the only first-byte source and it must be unwrapped.)
+                u = _unwrap_exception(e)
+                mapped = u isa UniLMTimeout ? u :
                          _map_native_timeout(e, cfg, min(_remaining_s(cfg, t0), cfg.request_timeout), t0)
                 if mapped isa UniLMTimeout
                     if !callback_fired[] && attempt < cfg.max_attempts &&
@@ -1246,9 +1251,9 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                         sleep(delay); attempt += 1; continue
                     end
                 end
-                statuserror = hasproperty(e, :status) ? e.status : nothing
+                statuserror = hasproperty(u, :status) ? u.status : nothing
                 req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : _get_request_id(e)
-                return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
+                return ResponseCallError(error=string(e), status=statuserror, request_id=req_id, cause=u isa Exception ? u : nothing)
             finally
                 # Disarm on EVERY attempt exit — every return, every continue, and the
                 # interrupt rethrow (which is neither) — so the periodic idle timer never

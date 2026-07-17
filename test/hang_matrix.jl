@@ -710,7 +710,7 @@ end
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         _hm_pkill(marker)
     end

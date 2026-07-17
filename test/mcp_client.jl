@@ -1001,6 +1001,13 @@ end
     @test session.tools_stale == false
     UniLM._mcp_request!(session, "ping")
     @test session.tools_stale == true
+    # A handle-backed (process-less) transport is perfectly usable: the exactly-once
+    # race check keys on nulled handles, not process liveness, so a completed request
+    # must NOT spuriously mark the session closed-by-timeout (which would make the next
+    # request respawn-or-error over a live session). Regression: the process-liveness
+    # proxy read this transport as "not connected" and closed it after one request.
+    @test session.status == :ready
+    @test session._closed_by_timeout == false
     # Refreshing the list stores the new tools and clears the flag.
     tools = list_tools!(session)
     @test [tl.name for tl in tools] == ["fresh"]
@@ -1043,7 +1050,8 @@ struct _LockProbeTransport <: UniLM.MCPTransport
     on_send::Function
     reply::String
 end
-UniLM._transport_send!(t::_LockProbeTransport, msg::String) = (t.on_send(msg); t.reply)
+UniLM._transport_send!(t::_LockProbeTransport, msg::String;
+                       cfg::UniLM.RequestConfig=UniLM.current_config()) = (t.on_send(msg); t.reply)
 
 @testset "whole exchange runs under the session lock" begin
     # The probe records whether session._lock is held while the request is on
@@ -1310,5 +1318,509 @@ end
         @test contains(err.msg, "mcp_connect")  # …of mcp_connect
     finally
         close(httpserver)
+    end
+end
+
+@testset "WS4 mcp_connect captures resolved config + auto_respawn" begin
+    captured = Ref{Any}(nothing)
+    server = _build_mcp_test_server(captured)
+    httpserver, url = _serve_mcp_json(server)
+    try
+        cfg = RequestConfig(current_config(); mcp_request_timeout = 7.0, mcp_connect_timeout = 11.0)
+        session = mcp_connect(url; config = cfg, auto_respawn = true)
+        try
+            # Captured verbatim on the session.
+            @test session.config.mcp_request_timeout == 7.0
+            @test session.config.mcp_connect_timeout == 11.0
+            @test session.auto_respawn == true
+            @test session._closed_by_timeout == false
+        finally
+            mcp_disconnect!(session)
+        end
+        # Default channel: no config kwarg ⇒ current_config() captured, auto_respawn OFF.
+        s2 = mcp_connect(url)
+        try
+            @test s2.config isa RequestConfig
+            @test s2.auto_respawn == false
+        finally
+            mcp_disconnect!(s2)
+        end
+    finally
+        close(httpserver)
+    end
+end
+
+# ─── WS4: StdioTransport teardown ladder — no child survivors ─────────────────
+# MCP spec: a compliant stdio server exits when its stdin reaches EOF, so
+# `_kill_transport!` closes stdin first and escalates (SIGTERM, then an
+# UNCONDITIONAL process-group SIGKILL) only as needed. The child leads its own
+# process group (spawned detach=true), so the final group-SIGKILL by the
+# spawn-captured pgid reaps a grandchild a wrapper forked and then orphaned by
+# exiting politely on EOF. Two shapes are covered: a well-behaved child (graceful
+# path — asserts the wiring: process/io handles AND pgid nulled) and a wrapper
+# that forks a group-resident grandchild (OS-level leak falsifier: pgrep finds
+# zero survivors after teardown).
+
+# Shared WS4 stdio fixture. A raw JSON-RPC child (only `using JSON`, so it starts
+# fast — no UniLM precompile): answers the handshake, advertises hang/incr/
+# notify_then_ok, and exits cleanly when stdin reaches EOF. `marker` is embedded in
+# a leading comment so the parent can pgrep/pkill it. No signal manipulation — it is
+# reaped by the ladder's stdin-EOF (graceful) or SIGTERM (hung-in-handler) step.
+function _ws4_raw_child_src(marker::String)
+    ver = UniLM._MCP_PROTOCOL_VERSION
+    """
+    # $marker
+    import JSON
+    counter = Ref(0)
+    while !eof(stdin)
+        line = readline(stdin)
+        isempty(line) && continue
+        msg = JSON.parse(line)
+        id = get(msg, "id", nothing)
+        method = get(msg, "method", "")
+        if method == "initialize"
+            println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict(
+                "protocolVersion"=>"$ver",
+                "capabilities"=>Dict("tools"=>Dict()),
+                "serverInfo"=>Dict("name"=>"ws4-fixture","version"=>"1.0")))))
+            flush(stdout)
+        elseif method == "notifications/initialized"
+            # no response
+        elseif method == "tools/list"
+            println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict(
+                "tools"=>[Dict("name"=>"hang","inputSchema"=>Dict("type"=>"object")),
+                          Dict("name"=>"incr","inputSchema"=>Dict("type"=>"object")),
+                          Dict("name"=>"notify_then_ok","inputSchema"=>Dict("type"=>"object"))]))))
+            flush(stdout)
+        elseif method == "tools/call"
+            name = get(get(msg,"params",Dict()), "name", "")
+            if name == "incr"
+                counter[] += 1
+                println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict(
+                    "content"=>[Dict("type"=>"text","text"=>string(counter[]))]))))
+                flush(stdout)
+            elseif name == "notify_then_ok"
+                println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","method"=>"notifications/message",
+                    "params"=>Dict("level"=>"info","data"=>"working"))))
+                flush(stdout)
+                sleep(0.2)
+                println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict(
+                    "content"=>[Dict("type"=>"text","text"=>"done")]))))
+                flush(stdout)
+            else  # hang: stream notifications continuously (never the response) until
+                  # stdin EOF. Frames arrive every ~0.1 s — below the request bound — so
+                  # continuous frames must not reset the exchange deadline: a per-read
+                  # watchdog would reset on each frame and never fire, whereas a
+                  # whole-exchange deadline (armed once) fires at ~bound. The stream runs
+                  # in a background task while the main task blocks on stdin, so closing
+                  # stdin (the teardown ladder) makes the child exit promptly.
+                @async try
+                    while true
+                        println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","method"=>"notifications/message",
+                            "params"=>Dict("level"=>"info","data"=>"tick"))))
+                        flush(stdout)
+                        sleep(0.1)
+                    end
+                catch
+                end
+                while !eof(stdin); end
+            end
+        elseif !isnothing(id)
+            println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict())))
+            flush(stdout)
+        end
+    end
+    """
+end
+
+@testset "WS4 stdio disconnect routes through the ladder (handles + pgid cleared)" begin
+    # Portable, deterministic wiring guard: mcp_disconnect! must delegate to
+    # _kill_transport!, which nulls process/input/output AND the spawn-captured pgid.
+    # RED on the wave base: the original _transport_disconnect! nulls the io handles
+    # but not `pgid` (the field/ladder do not exist yet). GREEN once disconnect routes
+    # through _kill_transport!. The actual group-SIGKILL of an orphaned grandchild is
+    # pinned by the hang_matrix pin flipped in Step 5 (cross-platform process detection
+    # is genuinely OS-specific — pgrep -f does not see an sh -c body on macOS — so that
+    # OS-verified fixture is owned by the red suite, not duplicated here).
+    marker = "UNILMDISC" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
+    jl = Base.julia_cmd()
+    cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    try
+        session = mcp_connect(cmd)
+        @test session.status == :ready
+        @test UniLM._transport_isconnected(session.transport) == true
+        @test session.transport.pgid !== nothing            # pgid captured at spawn (detached: child leads its own group)
+        mcp_disconnect!(session)
+        @test session.status == :closed
+        @test UniLM._transport_isconnected(session.transport) == false
+        @test session.transport.process === nothing
+        @test session.transport.pgid === nothing            # ladder cleared it (new behavior)
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+# WS4 wrapper fixture: forks a long-lived grandchild that INHERITS this child's
+# process group (this child leads its own group under the parent's detach=true
+# spawn), then answers only `initialize` and reads until stdin EOF. On disconnect
+# the ladder closes stdin (this child exits, ORPHANING the grandchild) and then
+# unconditionally group-SIGKILLs by the spawn-captured pgid — reaping the orphan.
+# The grandchild marker rides in the `sh -c` argv so the parent can pgrep/pkill it.
+function _ws4_wrapper_child_src(marker::String, gc_marker::String)
+    ver = UniLM._MCP_PROTOCOL_VERSION
+    """
+    # $marker
+    import JSON
+    run(pipeline(`sh -c 'while :; do sleep 1; done # $(gc_marker)'`); wait=false)
+    while !eof(stdin)
+        line = readline(stdin)
+        isempty(line) && continue
+        msg = JSON.parse(line)
+        id = get(msg, "id", nothing)
+        method = get(msg, "method", "")
+        if method == "initialize"
+            println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict(
+                "protocolVersion"=>"$ver",
+                "capabilities"=>Dict(),
+                "serverInfo"=>Dict("name"=>"ws4-wrapper","version"=>"1.0")))))
+            flush(stdout)
+        end
+    end
+    """
+end
+
+@testset "WS4 stdio teardown group-kills an orphaned grandchild (OS leak falsifier)" begin
+    # Falsifies "a wrapper's grandchild survives teardown". The child forks a
+    # long-lived grandchild sharing its process group, then exits on stdin EOF —
+    # orphaning it. The ladder's UNCONDITIONAL final rung group-SIGKILLs by the
+    # spawn-captured pgid, reaping the orphan even though the direct child already
+    # exited politely. LEAK FALSIFIER: after disconnect `pgrep -f gc_marker` must find
+    # zero — a survivor keeps `timedwait` from ever reaching :ok and fails the @test.
+    # The `pkill` in `finally` is a safety net, never the assertion.
+    marker = "UNILMWRAP" * string(rand(UInt64); base=16)
+    gc_marker = "UNILMGC" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _ws4_wrapper_child_src(marker, gc_marker)); close(io)
+    jl = Base.julia_cmd()
+    cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    _alive(m) = success(pipeline(`pgrep -f $m`; stdout=devnull, stderr=devnull))
+    try
+        session = mcp_connect(cmd)
+        @test session.status == :ready
+        @test session.transport.pgid !== nothing
+        # The grandchild came up and shares the group before we tear down.
+        @test timedwait(() -> _alive(gc_marker), 10.0) === :ok
+        mcp_disconnect!(session)
+        @test session.status == :closed
+        # The orphaned grandchild is gone: the unconditional group SIGKILL reaped it.
+        @test timedwait(() -> !_alive(gc_marker), 5.0) === :ok
+    finally
+        try; run(pipeline(`pkill -f $gc_marker`; stderr=devnull)); catch; end
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "WS4 HTTP request timeout is typed and non-fatal" begin
+    hit = Ref(0)
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        id = get(parsed, "id", nothing); method = get(parsed, "method", "")
+        isnothing(id) && return HTTP.Response(202, "")
+        if method == "initialize"
+            return HTTP.Response(200, ["Content-Type" => "application/json"],
+                JSON.json(Dict{String,Any}("jsonrpc"=>"2.0","id"=>id,"result"=>Dict{String,Any}(
+                    "protocolVersion"=>UniLM._MCP_PROTOCOL_VERSION,
+                    "capabilities"=>Dict{String,Any}(),
+                    "serverInfo"=>Dict{String,Any}("name"=>"slow","version"=>"1.0")))))
+        elseif method == "tools/call"
+            if (hit[] += 1) == 1
+                sleep(3.0)   # first call: silent past the client's short bound
+            end
+            return HTTP.Response(200, ["Content-Type" => "application/json"],
+                JSON.json(Dict{String,Any}("jsonrpc"=>"2.0","id"=>id,"result"=>Dict{String,Any}(
+                    "content"=>[Dict{String,Any}("type"=>"text","text"=>"ok")]))))
+        end
+        HTTP.Response(200, ["Content-Type" => "application/json"],
+            JSON.json(Dict{String,Any}("jsonrpc"=>"2.0","id"=>id,"result"=>Dict{String,Any}())))
+    end
+    url = "http://127.0.0.1:$port"
+    try
+        session = mcp_connect(url; config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
+        try
+            err = nothing
+            try
+                call_tool(session, "slowtool", Dict{String,Any}())
+            catch e
+                err = e
+            end
+            @test err isa MCPTimeoutError
+            @test err.phase === :request
+            @test err.limit == 0.5
+            @test session.status == :ready          # HTTP timeout is NOT session-fatal
+            # Session survives: the retried call reaches the now-responsive server.
+            @test call_tool(session, "slowtool", Dict{String,Any}()).content == "ok"
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        close(httpserver)
+    end
+end
+
+# ─── WS4: stdio request timeout — whole-exchange watchdog, session-fatal ───────
+# The stdio request bound covers the ENTIRE lock-to-response exchange as ONE
+# deadline armed once at exchange start — request write, every interleaved
+# server→client frame, until the matching-id response. A pre-response
+# notification must NOT reset it (a per-read watchdog would, reintroducing an
+# unbounded exchange). On breach the ladder group-kills the server (unblocking
+# the in-flight readline); stdio framing has no id demux, so the timeout is
+# SESSION-FATAL (contrast the non-fatal HTTP path above). Two directions: the
+# deadline fires through a leading notification, and it does not false-fire when
+# a real response follows one.
+
+@testset "WS4 stdio request timeout is whole-exchange and session-fatal" begin
+    marker = "UNILMSTDIOTMO" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
+    jl = Base.julia_cmd()
+    cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    session = nothing
+    try
+        # `hang` streams notifications continuously (every ~0.1 s, below the 0.5 s
+        # bound) and never sends the response. Continuous frames must NOT reset the
+        # exchange deadline: a per-read watchdog would reset on every frame and never
+        # fire (the worker would outlast the 12 s bound below), whereas the
+        # whole-exchange deadline — armed once at exchange start — fires at ~bound.
+        session = mcp_connect(cmd; config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
+        box = Ref{Any}(nothing)
+        worker = @async (box[] = try call_tool(session, "hang", Dict{String,Any}()) catch e; e end)
+        @test timedwait(() -> istaskdone(worker), 12.0) === :ok   # a per-read reset would blow this bound
+        err = box[]
+        @test err isa MCPTimeoutError
+        @test err.phase === :request
+        @test err.limit == 0.5
+        @test err.elapsed < 3.0   # fired at ~bound through the frame stream, not the 12 s window
+        @test occursin("mcp_request_timeout", err.msg)   # pinned msg literal names the override
+        @test session.status == :closed              # stdio timeout IS session-fatal
+        @test session._closed_by_timeout == true
+        @test UniLM._transport_isconnected(session.transport) == false
+    finally
+        # Self-sufficient teardown — never depend on the watchdog under test. Short
+        # ladder graces so a future red (watchdog silent, child still streaming) is
+        # reaped fast, not at the default 5+2 s; the childfile path is in argv, so a
+        # pkill on it is a reliable backstop.
+        session === nothing || (try; UniLM._kill_transport!(session.transport; grace_term=0.2, grace_kill=0.2); catch; end)
+        try; run(pipeline(`pkill -f $childfile`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "WS4 stdio deadline does not false-fire when response follows a notification" begin
+    marker = "UNILMSTDIOOK" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
+    jl = Base.julia_cmd()
+    cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    try
+        # `notify_then_ok` emits a notification then the response ~0.2 s later; a 2 s
+        # bound must skip the notification and return the response without timing out.
+        session = mcp_connect(cmd; config = RequestConfig(current_config(); mcp_request_timeout = 2.0))
+        try
+            @test call_tool(session, "notify_then_ok", Dict{String,Any}()).content == "done"
+            @test session.status == :ready
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+# ─── WS4: connect handshake watchdog + command-not-found immediacy ─────────────
+# The whole spawn → initialize → notifications/initialized handshake runs under one
+# connect deadline. A mute server (never answers initialize) is group-killed at the
+# bound and surfaces MCPTimeoutError(:connect) naming the override; a nonexistent
+# command throws its spawn error synchronously inside the guard and must surface
+# immediately, never riding the connect timer to a timeout.
+
+@testset "WS4 mcp_connect: command-not-found fails immediately, not at the timer" begin
+    # open() on a missing executable throws synchronously — must surface fast (well
+    # under the connect bound), NOT ride the connect timer to MCPTimeoutError.
+    t0 = time()
+    err = nothing
+    try
+        mcp_connect(`unilm-nonexistent-server-xyz123`;
+            config = RequestConfig(current_config(); mcp_connect_timeout = 30.0))
+    catch e
+        err = e
+    end
+    elapsed = time() - t0
+    @test err !== nothing
+    @test !(err isa MCPTimeoutError)     # spawn error, not the timer
+    @test elapsed < 5.0                  # far below the 30 s connect bound
+end
+
+@testset "WS4 mcp_connect: mute stdio server times out with a naming MCPTimeoutError" begin
+    marker = "UNILMCONNMUTE" * string(rand(UInt64); base=16)
+    # A child that reads stdin but NEVER answers initialize: the handshake readline
+    # blocks until the connect watchdog group-kills it.
+    child_src = "# $marker\nwhile !eof(stdin); readline(stdin); end\n"
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, child_src); close(io)
+    jl = Base.julia_cmd()
+    cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    try
+        box = Ref{Any}(nothing)
+        worker = @async (box[] = try
+            mcp_connect(cmd; config = RequestConfig(current_config(); mcp_connect_timeout = 0.5))
+        catch e; e end)
+        @test timedwait(() -> istaskdone(worker), 12.0) === :ok
+        err = box[]
+        @test err isa MCPTimeoutError
+        @test err.phase === :connect
+        @test err.limit == 0.5
+        @test occursin("mcp_connect_timeout", err.msg)   # names the per-connect override
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+# ─── WS4: opt-in auto-respawn + call-time resolution into bridged closures ─────
+# A stdio request timeout is session-fatal (no id demux). The NEXT call decides:
+# with auto_respawn=true the server is transparently respawned (same command,
+# captured config, fresh handshake — in-memory state is LOST, tools refetched)
+# and the call retries ONCE; with auto_respawn=false (default) it errors, naming
+# the opt-in. Separately, a bridged tool closure passes NO timeout kwarg, so an
+# ambient with_request_config override must reach it through the scoped-config leg.
+
+@testset "WS4 auto-respawn on next call after a stdio timeout (opt-in), state lost" begin
+    marker = "UNILMRESPAWN" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
+    jl = Base.julia_cmd(); cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    try
+        session = mcp_connect(cmd; auto_respawn = true,
+            config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
+        try
+            @test call_tool(session, "incr", Dict{String,Any}()).content == "1"   # server state = 1
+            # Time out on `hang` → session-fatal close.
+            box = Ref{Any}(nothing)
+            w = @async (box[] = try call_tool(session, "hang", Dict{String,Any}()) catch e; e end)
+            @test timedwait(() -> istaskdone(w), 12.0) === :ok
+            @test box[] isa MCPTimeoutError
+            @test session.status == :closed
+            # Next call: respawns (loud @warn), server memory GONE ⇒ counter back to 1.
+            out = @test_logs (:warn,) match_mode=:any call_tool(session, "incr", Dict{String,Any}())
+            @test out.content == "1"                 # fresh process, NOT "2"
+            @test session.status == :ready
+            @test session._closed_by_timeout == false
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "WS4 closed-by-timeout session without auto_respawn errors naming the override" begin
+    marker = "UNILMNORESPAWN" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
+    jl = Base.julia_cmd(); cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    try
+        session = mcp_connect(cmd; auto_respawn = false,
+            config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
+        box = Ref{Any}(nothing)
+        w = @async (box[] = try call_tool(session, "hang", Dict{String,Any}()) catch e; e end)
+        @test timedwait(() -> istaskdone(w), 12.0) === :ok
+        @test session.status == :closed
+        err = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+        @test err isa ErrorException
+        @test occursin("auto_respawn=true", err.msg)     # names the opt-in
+        @test occursin("timeout", lowercase(err.msg))
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "WS4 explicit disconnect after a stdio timeout clears the close reason" begin
+    # A request timeout leaves a stdio session respawn-eligible so the NEXT call
+    # can decide (respawn or error). But if the user disconnects explicitly in
+    # between, that decision no longer applies: an explicit mcp_disconnect! is a
+    # normal close and must win over the stale timeout flag. auto_respawn=true is
+    # the sharpest form here — if the flag survived the disconnect, the next call
+    # would silently respawn (with a @warn) instead of raising the plain
+    # not-connected error, despite the user having already closed the session.
+    marker = "UNILMDISCAFTERTO" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
+    jl = Base.julia_cmd(); cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    try
+        session = mcp_connect(cmd; auto_respawn = true,
+            config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
+        box = Ref{Any}(nothing)
+        w = @async (box[] = try call_tool(session, "hang", Dict{String,Any}()) catch e; e end)
+        @test timedwait(() -> istaskdone(w), 12.0) === :ok
+        @test box[] isa MCPTimeoutError
+        @test session.status == :closed
+        @test session._closed_by_timeout == true   # respawn-eligible so far
+
+        mcp_disconnect!(session)                    # explicit user intent: a normal close now
+        @test session._closed_by_timeout == false   # user intent must clear it
+
+        err = nothing
+        @test_logs begin   # zero patterns: ANY log record (e.g. the respawn @warn) fails this
+            err = try
+                call_tool(session, "incr", Dict{String,Any}())
+            catch e
+                e
+            end
+        end
+        @test err isa ErrorException
+        @test occursin("not connected", lowercase(err.msg))   # plain not-connected error
+        @test !occursin("auto_respawn", err.msg)               # never the respawn-naming guidance
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "WS4 bridged tool closure picks up ambient with_request_config (no kwargs)" begin
+    marker = "UNILMAMBIENT" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
+    jl = Base.julia_cmd(); cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    try
+        # Session default is large (120 s); the bridged closure passes NO timeout kwarg.
+        session = mcp_connect(cmd)   # default mcp_request_timeout = 120.0
+        try
+            tools = mcp_tools(session)
+            hang = only(filter(t -> t.tool.func.name == "hang", tools))
+            box = Ref{Any}(nothing)
+            # The 0.6 s ambient — not the 120 s session default — must bound the closure.
+            w = @async with_request_config(; mcp_request_timeout = 0.6) do
+                box[] = try hang.callable("hang", Dict{String,Any}()) catch e; e end
+            end
+            @test timedwait(() -> istaskdone(w), 12.0) === :ok
+            @test box[] isa MCPTimeoutError
+            @test box[].phase === :request
+            @test box[].limit == 0.6           # proves the ambient reached the closure
+        finally
+            session.status == :ready && mcp_disconnect!(session)
+        end
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
     end
 end

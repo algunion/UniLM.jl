@@ -873,8 +873,8 @@ MCPError <: Exception # JSON-RPC error (code, message, data)
 ### Lifecycle
 
 ```julia
-mcp_connect(command::Cmd; ...) -> MCPSession     # stdio subprocess
-mcp_connect(url::String; headers=[], ...) -> MCPSession  # HTTP
+mcp_connect(command::Cmd; config=nothing, auto_respawn=false, ...) -> MCPSession        # stdio subprocess
+mcp_connect(url::String; headers=[], config=nothing, auto_respawn=false, ...) -> MCPSession  # HTTP
 mcp_connect(f::Function, args...; ...)            # do-block, auto-disconnect
 mcp_disconnect!(session)
 ```
@@ -882,7 +882,7 @@ mcp_disconnect!(session)
 ### Discovery
 
 ```julia
-list_tools!(session) -> Vector{MCPToolInfo}
+list_tools!(session; timeout=nothing) -> Vector{MCPToolInfo}
 list_resources!(session) -> Vector{MCPResourceInfo}
 list_prompts!(session) -> Vector{MCPPromptInfo}
 ```
@@ -892,11 +892,15 @@ When the server sends `notifications/tools/list_changed`, `session.tools_stale` 
 ### Operations
 
 ```julia
-call_tool(session, name, arguments) -> MCPToolResult
+call_tool(session, name, arguments; timeout=nothing) -> MCPToolResult
 read_resource(session, uri) -> String
 get_prompt(session, name, arguments) -> Vector{Dict}
 ping(session)
 ```
+
+Timeouts surface as the exported `MCPTimeoutError` (`phase` `:connect`/`:request`);
+a stdio request timeout closes the session (opt-in `auto_respawn` respawns on the
+next call), an HTTP request timeout does not.
 
 ### Tool Result
 

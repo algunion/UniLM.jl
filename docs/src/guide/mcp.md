@@ -102,6 +102,27 @@ messages = get_prompt(session, "review", Dict{String,Any}("code" => "x + 1"))
 ping(session)
 ```
 
+### Timeouts
+
+Every `mcp_connect` handshake and every `call_tool` / `list_tools!` exchange runs
+under a bound — set per session at connect time, or overridden for one call:
+
+```julia
+session = mcp_connect(`npx server`;
+    config=RequestConfig(current_config(); mcp_connect_timeout=10.0, mcp_request_timeout=30.0),
+    auto_respawn=true)
+
+call_tool(session, "read_file", Dict{String,Any}("path" => "/tmp/data.txt"); timeout=5.0)
+```
+
+A stdio request timeout closes the session — stdio framing carries no request-id
+demux, so a late reply could misdeliver to the next caller. With `auto_respawn=true`
+the next call transparently respawns the server (same command, fresh handshake;
+in-memory server state is lost and tools are refetched); without it, the next call
+raises an error naming the opt-in. An HTTP request timeout does not close the
+session — each exchange is an independent POST. Both surface as the typed
+[`MCPTimeoutError`](@ref).
+
 ### Bridging to tool_loop! (Chat Completions)
 
 [`mcp_tools`](@ref) converts MCP tools into `Vector{CallableTool{GPTTool}}` for use with

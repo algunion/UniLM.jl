@@ -665,9 +665,17 @@ end
 # ─── Lifecycle ───────────────────────────────────────────────────────────────
 
 """
-    mcp_connect(command::Cmd; client_name="UniLM.jl", protocol_version="2025-11-25") -> MCPSession
+    mcp_connect(command::Cmd; client_name="UniLM.jl", protocol_version="2025-11-25",
+                config=nothing, auto_respawn=false) -> MCPSession
 
 Connect to an MCP server via stdio transport (subprocess).
+
+`config::Union{Nothing,RequestConfig}` is resolved (`config` if given, else the
+ambient/process default) and captured on the session: `config.mcp_connect_timeout`
+bounds the spawn→initialize handshake, `config.mcp_request_timeout` is the default
+per-exchange bound. A stdio request timeout is session-fatal (no id demux); with
+`auto_respawn=true` the next call respawns the server (same command, fresh
+handshake — in-memory server state is lost), otherwise it errors.
 
 # Example
 ```julia
@@ -682,9 +690,15 @@ function mcp_connect(command::Cmd; kwargs...)::MCPSession
 end
 
 """
-    mcp_connect(url::String; headers=[], kwargs...) -> MCPSession
+    mcp_connect(url::String; headers=[], client_name="UniLM.jl", protocol_version="2025-11-25",
+                config=nothing, auto_respawn=false) -> MCPSession
 
 Connect to an MCP server via HTTP transport.
+
+`config::Union{Nothing,RequestConfig}` is resolved (`config` if given, else the
+ambient/process default) and captured on the session: `config.mcp_connect_timeout`
+bounds the connect step, `config.mcp_request_timeout` is the default per-exchange
+bound.
 
 # Example
 ```julia
@@ -908,6 +922,10 @@ end
 
 Fetch the tool list from the MCP server. Handles pagination via cursor.
 Stores result in `session.tools`.
+
+`timeout::Union{Nothing,Float64}` overrides the per-exchange bound for this call
+(kwarg > ambient [`with_request_config`](@ref) > session-captured config; Inf
+disables, NaN/≤0 rejected).
 """
 function list_tools!(session::MCPSession; timeout::Union{Nothing,Float64}=nothing)::Vector{MCPToolInfo}
     all_tools = MCPToolInfo[]
@@ -1016,6 +1034,10 @@ Call a tool on the MCP server and return its result as an [`MCPToolResult`](@ref
 content array. A tool-execution error (`isError: true`) is returned with
 `is_error == true` — it is **not** thrown. JSON-RPC protocol errors still throw
 [`MCPError`](@ref).
+
+`timeout::Union{Nothing,Float64}` overrides the per-exchange bound for this call
+(kwarg > ambient [`with_request_config`](@ref) > session-captured config; Inf
+disables, NaN/≤0 rejected).
 """
 function call_tool(session::MCPSession, name::String,
                    arguments::Dict{String,Any}=Dict{String,Any}();

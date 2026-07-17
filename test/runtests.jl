@@ -53,6 +53,10 @@ end
         include("hang_matrix.jl")
     end
 
+    @testset "seam guard (no unbounded HTTP calls)" begin
+        include("seam_guard.jl")
+    end
+
     @testset "responses.jl" begin
         include("responses.jl")
     end

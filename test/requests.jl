@@ -638,13 +638,13 @@ end
 end
 
 @testset "_accumulate_cost! fallback is a no-op for non-success" begin
-    # requests.jl:298 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
+    # requests.jl:332 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
     # success types are specialized in accounting.jl, so a failure result must land here:
     # return nothing AND leave cumulative cost untouched (falsifies accidental accumulation).
     chat = Chat(model="gpt-4.1-nano")
     chat._cumulative_cost[] = 0.25
     failure = LLMFailure(response="server exploded", status=500, self=chat)
-    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 298
+    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 332
     @test UniLM._accumulate_cost!(chat, failure) === nothing
     @test cumulative_cost(chat) == 0.25       # unchanged: the fallback did not add anything
 
@@ -687,4 +687,32 @@ end
     r3 = UniLM._stream_error_result(chat, malformed, nothing)
     @test r3 isa LLMCallError && isnothing(r3.status)
     @test occursin("not a dict", r3.error)
+end
+
+@testset "_retry_pause shares the retry-budget arithmetic" begin
+    cfg = RequestConfig(total_deadline=60.0, max_attempts=3)
+    t0 = time_ns()
+    # Attempt 1, no response: pure full-jitter backoff in [0, 1] — affordable against 60 s.
+    action, delay = UniLM._retry_pause(cfg, t0, 1, nothing)
+    @test action === :sleep && 0.0 <= delay <= 1.0
+
+    # Retry-After far beyond the remaining deadline → :budget carrying the honest delay.
+    ra = HTTP.Response(429, ["Retry-After" => "3600"])
+    action2, delay2 = UniLM._retry_pause(cfg, t0, 1, ra)
+    @test action2 === :budget && delay2 >= 3600.0
+
+    # An infinite deadline never cuts the budget.
+    action3, _ = UniLM._retry_pause(RequestConfig(total_deadline=Inf), t0, 1, ra)
+    @test action3 === :sleep
+end
+
+@testset "_unwrap_exception peels task and transport wrappers" begin
+    root = Base.IOError("read: connection reset by peer (ECONNRESET)", -54)
+    t = Task(() -> throw(root)); schedule(t); yield()
+    wrapped = TaskFailedException(t)
+    @test UniLM._unwrap_exception(wrapped) === root
+    @test UniLM._unwrap_exception(CompositeException([wrapped])) === root
+    @test UniLM._unwrap_exception(root) === root
+    ti = Task(() -> throw(InterruptException())); schedule(ti); yield()
+    @test UniLM._unwrap_exception(TaskFailedException(ti)) isa InterruptException
 end

@@ -28,10 +28,44 @@ function _retry_delay(retry::Integer, resp::HTTP.Response)::Float64
     delay
 end
 
-# Backoff for exception-path retries, where no HTTP.Response (hence no
-# Retry-After header) exists. Same full-jitter curve as _retry_delay.
-_backoff_delay(retry::Integer)::Float64 =
-    rand() * min(_RETRY_BASE * _RETRY_FACTOR^retry, _RETRY_MAX_DELAY)
+"""
+    _retry_pause(cfg, t0, attempt, resp) -> (action::Symbol, delay::Float64)
+
+Shared retry-budget arithmetic — the single implementation used by the non-stream
+retry loop and the stream driver. Computes the full-jitter backoff for `attempt`
+(1-based), honoring `Retry-After` when a response is available. Returns
+`(:sleep, delay)` when the pause fits the remaining total deadline, else
+`(:budget, delay)`: fail NOW with the last real outcome — sleeping less and attempting
+with ~zero budget is a guaranteed mid-flight breach, and sleeping past the deadline
+breaks the bound.
+"""
+function _retry_pause(cfg::RequestConfig, t0::UInt64, attempt::Int,
+                      resp::Union{HTTP.Response,Nothing})::Tuple{Symbol,Float64}
+    delay = _retry_delay(attempt - 1, isnothing(resp) ? HTTP.Response(0) : resp)
+    delay > _remaining_s(cfg, t0) ? (:budget, delay) : (:sleep, delay)
+end
+
+"""
+    _unwrap_exception(e)
+
+Peel task/transport wrappers to the root cause so timeout and interrupt classification
+works regardless of the HTTP.jl major's wrapping: `TaskFailedException` (internal
+request tasks), `CompositeException`, and wrapper exceptions exposing an
+`error::Exception` field (the HTTP.jl RequestError/ConnectError shape).
+"""
+function _unwrap_exception(e)
+    while true
+        if e isa TaskFailedException
+            e = e.task.exception
+        elseif e isa CompositeException && !isempty(e.exceptions)
+            e = first(e.exceptions)
+        elseif e isa Exception && hasproperty(e, :error) && getproperty(e, :error) isa Exception
+            e = getproperty(e, :error)
+        else
+            return e
+        end
+    end
+end
 
 # Resolved-at-load HTTP.jl major: the majors expose different native timeout
 # kwargs with different declared types, so translation branches on this.
@@ -177,8 +211,8 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
         catch e
             e isa InterruptException && rethrow()
             (_retryable_exception(e) && !final) || rethrow()
-            delay = _backoff_delay(attempt - 1)
-            if delay > _remaining_s(cfg, t0)
+            action, delay = _retry_pause(cfg, t0, attempt, nothing)
+            if action === :budget
                 @warn "transport failure is retryable but the backoff exceeds the remaining total_deadline budget; giving up" attempt delay
                 rethrow()
             end
@@ -187,8 +221,8 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
             continue
         end
         if _is_retryable(resp.status) && !final
-            delay = _retry_delay(attempt - 1, resp)
-            if delay > _remaining_s(cfg, t0)
+            action, delay = _retry_pause(cfg, t0, attempt, resp)
+            if action === :budget
                 @warn "status is retryable but the backoff (Retry-After/jitter) exceeds the remaining total_deadline budget; returning the last response" status = resp.status attempt delay
                 return resp
             end

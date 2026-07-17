@@ -781,7 +781,7 @@ end
         catch
             false
         end
-        @test_broken ok
+        @test ok
     finally
         _hm_pkill(gc_marker)
         _hm_pkill(marker)

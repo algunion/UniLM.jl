@@ -1169,7 +1169,6 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                     close_ref[] && @info "Response stream closed by user"
                     HTTP.closeread(io)
                 end
-                _disarm!(guard)
                 if resp.status == 200 && !isnothing(result[])
                     return ResponseSuccess(response=result[]::ResponseObject)
                 elseif !isnothing(terminal_error[])
@@ -1206,7 +1205,6 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                 # native streaming timer.
                 if guard !== nothing &&
                    (_idle_fired(guard) || _find_exception(x -> x isa HTTP.TimeoutError, e) !== nothing)
-                    _disarm!(guard)
                     # Terminal already recorded — the fire landed during the post-loop
                     # closeread on an EOF-less peer; trailing bytes past the gap are
                     # acceptable, so finalize the recorded outcome rather than a timeout.
@@ -1216,7 +1214,6 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                     to = UniLMTimeout(:stream_idle, _idle_gap_s(guard), cfg.stream_idle_timeout)
                     return ResponseCallError(error=sprint(showerror, to), status=nothing, cause=to)
                 end
-                guard !== nothing && _disarm!(guard)
                 # A native timeout BEFORE the idle guard armed is the connect/first-byte phase;
                 # map it to the same phase-attributed UniLMTimeout the non-stream seam produces
                 # so a raw HTTP.TimeoutError never leaks as the failure cause.
@@ -1252,6 +1249,12 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                 statuserror = hasproperty(e, :status) ? e.status : nothing
                 req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : _get_request_id(e)
                 return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
+            finally
+                # Disarm on EVERY attempt exit — every return, every continue, and the
+                # interrupt rethrow (which is neither) — so the periodic idle timer never
+                # outlives the attempt. `_disarm!` is idempotent and a no-op on `nothing`
+                # (mirror: _stream_attempt's finally in src/requests.jl).
+                guard !== nothing && _disarm!(guard)
             end
         end
     end

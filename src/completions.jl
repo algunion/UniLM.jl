@@ -108,6 +108,9 @@ end
     error::String
     status::Union{Int,Nothing} = nothing
     request_id::Union{String, Nothing} = nothing
+    # Underlying exception when the failure is a timeout/transport error rather
+    # than an HTTP status (status stays `nothing` — no fabricated HTTP code).
+    cause::Union{Nothing,Exception} = nothing
 end
 
 # ─── FIM Accessors ─────────────────────────────────────────────────────────

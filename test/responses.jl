@@ -2138,3 +2138,10 @@ end
     @test tr["name"] == "get_weather"
     @test tr["output"] == "sunny"
 end
+
+@testset "ResponseCallError carries an optional cause" begin
+    to = UniLM.UniLMTimeout(:request, 0.5, 0.5)
+    e = ResponseCallError(error="timeout", status=nothing, cause=to)
+    @test e.cause === to
+    @test ResponseCallError(error="x").cause === nothing   # default
+end

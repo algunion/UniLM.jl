@@ -108,3 +108,9 @@ end
     hdrs = UniLM.auth_header(ds)
     @test any(p -> p.first == "Authorization" && p.second == "Bearer test-key", hdrs)
 end
+
+@testset "FIMCallError carries an optional cause" begin
+    to = UniLM.UniLMTimeout(:request, 0.5, 0.5)
+    @test FIMCallError(error="timeout", status=nothing, cause=to).cause === to
+    @test FIMCallError(error="x").cause === nothing
+end

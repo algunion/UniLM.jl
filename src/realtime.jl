@@ -21,19 +21,24 @@ end
 Create an ephemeral client secret for client-side Realtime connections
 (`POST /v1/realtime/client_secrets`). `session` is an optional session-config dict.
 Returns `RealtimeSecretSuccess` (`.value`), `RealtimeFailure`, or `RealtimeCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function mint_realtime_secret(; session::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function mint_realtime_secret(; session::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :realtime, "Realtime API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}()
         !isnothing(session) && (d[:session] = session)
-        resp = HTTP.post(_api_base_url(service) * REALTIME_CLIENT_SECRETS_PATH, body=JSON.json(d), headers=auth_header(service); status_exception=false)
+        resp = _http("POST", _api_base_url(service) * REALTIME_CLIENT_SECRETS_PATH, auth_header(service),
+            JSON.json(d); cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 || return RealtimeFailure(response=String(resp.body), status=resp.status)
         data = JSON.parse(resp.body; dicttype=Dict{String,Any})
         cs = get(data, "client_secret", nothing)
         val = get(data, "value", cs isa AbstractDict ? get(cs, "value", "") : "")
         RealtimeSecretSuccess(value=val, raw=data)
     catch e
+        e isa InterruptException && rethrow()
         RealtimeCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end

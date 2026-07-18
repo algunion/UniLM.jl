@@ -112,6 +112,33 @@ end
     end
 end
 
+# ─── Faithful tool-error messages (no exception-constructor noise) ────────────
+
+@testset "tool errors reach the model unwrapped" begin
+    @testset "ErrorException stores its raw message, not the constructor form" begin
+        # `error("kaboom")` throws ErrorException("kaboom"). The stored error must
+        # be the raw "kaboom" — NOT `string(e)` == "ErrorException(\"kaboom\")",
+        # whose type-constructor noise would reach the model verbatim once the loop
+        # prepends its single "Error: " prefix.
+        outcome = UniLM._dispatch_tool("explode", Dict{String,Any}(),
+            (n, a) -> error("kaboom"))
+        @test !outcome.success
+        @test outcome.error == "kaboom"
+        @test !occursin("ErrorException", outcome.error)
+    end
+
+    @testset "non-ErrorException stores the readable showerror form" begin
+        # Any other exception renders through `showerror` (human-readable), never
+        # the bare `string(e)` constructor form: KeyError(:x) becomes
+        # "KeyError: key :x not found", not "KeyError(:x)".
+        outcome = UniLM._dispatch_tool("lookup", Dict{String,Any}(),
+            (n, a) -> throw(KeyError(:x)))
+        @test !outcome.success
+        @test outcome.error == sprint(showerror, KeyError(:x))
+        @test outcome.error != string(KeyError(:x))
+    end
+end
+
 # ─── ToolCallOutcome construction ────────────────────────────────────────────
 
 @testset "ToolCallOutcome" begin
@@ -158,4 +185,29 @@ end
     @test isnothing(r2.stream)  # streaming disabled in tool loop
     @test r2.model == "gpt-4o"
     @test r2.temperature == 0.5
+end
+
+# ─── tool_loop(::String; tools) convenience method ───────────────────────────
+
+@testset "tool_loop(::String; tools) exists and routes kwargs" begin
+    ct = CallableTool(FunctionTool(name="noop", description="does nothing"),
+                      (name, args) -> "ok")
+
+    # Exists, and `max_turns` is routed to the LOOP (not the Respond ctor, not
+    # swallowed): max_turns=0 makes the loop return before any HTTP call, so this
+    # stays offline. On code without the String method this line is a MethodError.
+    res = tool_loop("hi"; tools=[ct], max_turns=0)
+    @test res isa ToolLoopResult
+    @test res.turns_used == 0 && !res.completed
+
+    # `tools` is a required keyword.
+    @test_throws UndefKeywordError tool_loop("hi")
+
+    # A Respond-bound keyword is forwarded to the Respond constructor, which
+    # validates it there (temperature must be in [0, 2]).
+    @test_throws ArgumentError tool_loop("hi"; tools=[ct], temperature=5.0)
+
+    # An unknown keyword is not silently swallowed — it reaches (and is rejected
+    # by) the Respond constructor.
+    @test_throws MethodError tool_loop("hi"; tools=[ct], not_a_real_kwarg=1)
 end

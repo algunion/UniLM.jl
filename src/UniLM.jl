@@ -47,6 +47,8 @@ using SHA
 
 include("constants.jl")
 include("exceptions.jl")
+include("config.jl")
+include("deadline.jl")
 include("api.jl")
 include("requests.jl")
 include("sse.jl")
@@ -90,6 +92,15 @@ export
     MistralEndpoint,
     DeepSeekEndpoint,
     add_azure_deploy_name!
+
+# ─── Request Configuration & Timeouts ─────────────────────────────────────────
+export
+    RequestConfig,
+    current_config,
+    with_request_config,
+    set_default_config!,
+    UniLMTimeout,
+    MCPTimeoutError
 
 # ─── Chat Completions API ─────────────────────────────────────────────────────
 export
@@ -435,6 +446,7 @@ export
 export
     MCPSession,
     MCPToolInfo,
+    MCPToolResult,
     MCPResourceInfo,
     MCPPromptInfo,
     MCPServerCapabilities,

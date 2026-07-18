@@ -731,6 +731,17 @@ end
         @test e2.status == 503
         @test e2.error == "err"
     end
+
+    @testset "call errors carry a typed cause" begin
+        root = ArgumentError("root failure")
+        e = LLMCallError(error="wrapped", self=chat, cause=root)
+        @test e.cause === root
+        @test isnothing(LLMCallError(error="x", self=chat).cause)   # additive default
+
+        ec = EmbeddingCallError(error="net", cause=root)
+        @test ec.cause === root
+        @test isnothing(EmbeddingCallError(error="net").cause)
+    end
 end
 
 @testset "Embeddings" begin
@@ -992,4 +1003,25 @@ end
     lowered = JSON.lower(tc2)
     @test !haskey(lowered, :thoughtSignature) && !haskey(lowered, :thought_signature)
     @test Set(keys(lowered)) == Set([:id, :type, :function])
+end
+
+@testset "Chat ctor accepts a CallableTool vector (stores unwrapped GPTTools)" begin
+    # Ergonomics: `Chat(tools=mcp_tools(session))` must work without a manual
+    # `map(t -> t.tool, tools)`. The keyword accepts a CallableTool vector and
+    # the constructor unwraps each wrapper's inner GPTTool; the field stays
+    # `Vector{GPTTool}`.
+    sig = GPTFunctionSignature(name="lookup", description="Look something up",
+        parameters=Dict{String,Any}("type" => "object", "properties" => Dict{String,Any}()))
+    ct = CallableTool(GPTTool(func=sig), (name, args) -> "ok")
+    chat = Chat(model="gpt-test", tools=[ct])
+    @test chat.tools isa Vector{GPTTool}
+    @test length(chat.tools) == 1
+    @test chat.tools[1] === ct.tool           # the exact inner GPTTool, unwrapped
+    @test chat.tools[1].func.name == "lookup"
+    # The unwrapped vector is non-empty, so parallel_tool_calls is preserved.
+    chat2 = Chat(model="gpt-test", tools=[ct], parallel_tool_calls=true)
+    @test chat2.parallel_tool_calls == true
+    # A plain GPTTool vector still passes through unchanged.
+    gtool = GPTTool(func=sig)
+    @test Chat(model="gpt-test", tools=[gtool]).tools[1] === gtool
 end

@@ -222,7 +222,7 @@ end
 # ─── Request Functions ───────────────────────────────────────────────────────
 
 """
-    generate_image(ig::ImageGeneration; retries=0)
+    generate_image(ig::ImageGeneration)
 
 Send a request to the OpenAI Image Generation API.
 
@@ -237,33 +237,23 @@ if result isa ImageSuccess
     save_image(image_data(result)[1], "robot.png")
 end
 ```
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function generate_image(ig::ImageGeneration; retries::Int=0)
-    res = ImageCallError(error="uninitialized", status=0)
+function generate_image(ig::ImageGeneration; config::Union{Nothing,RequestConfig}=nothing)
+    cfg = _resolve_config(config)
+    t0 = time_ns()
     try
         body = JSON.json(ig)
         url = _api_base_url(ig.service) * IMAGES_GENERATIONS_PATH
-        resp = HTTP.post(url, body=body, headers=auth_header(ig.service); status_exception=false)
-
-        if resp.status == 200
-            return ImageSuccess(response=parse_image_response(resp))
-        elseif _is_retryable(resp.status)
-            if retries < _RETRY_MAX_ATTEMPTS
-                delay = _retry_delay(retries, resp)
-                @warn "Request status: $(resp.status). Retrying in $(round(delay; digits=2))s..."
-                sleep(delay)
-                return generate_image(ig; retries=retries + 1)
-            else
-                return ImageFailure(response=String(resp.body), status=resp.status)
-            end
-        else
-            return ImageFailure(response=String(resp.body), status=resp.status)
-        end
+        resp = _http_with_retries(cfg, t0, "POST", url, auth_header(ig.service), body)
+        return resp.status == 200 ?
+               ImageSuccess(response=parse_image_response(resp)) :
+               ImageFailure(response=String(resp.body), status=resp.status)
     catch e
-        statuserror = hasproperty(e, :status) ? e.status : nothing
-        res = ImageCallError(error=string(e), status=statuserror)
+        e isa InterruptException && rethrow()
+        return ImageCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
-    return res
 end
 
 """
@@ -291,8 +281,8 @@ if result isa ImageSuccess
 end
 ```
 """
-function generate_image(prompt::String; kwargs...)
-    generate_image(ImageGeneration(; prompt=prompt, kwargs...))
+function generate_image(prompt::String; config::Union{Nothing,RequestConfig}=nothing, kwargs...)
+    generate_image(ImageGeneration(; prompt=prompt, kwargs...); config=config)
 end
 
 
@@ -320,14 +310,18 @@ Sent as multipart/form-data to `/v1/images/edits`.
 end
 
 """
-    edit_image(e::ImageEdit; retries=0) -> LLMRequestResponse
+    edit_image(e::ImageEdit) -> LLMRequestResponse
     edit_image(image, prompt; mask=nothing, service=OPENAIServiceEndpoint, kwargs...)
 
 Edit/extend image(s) under a text prompt. Returns the same `ImageSuccess`/`ImageFailure`/
 `ImageCallError` shapes as [`generate_image`](@ref).
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function edit_image(e::ImageEdit; retries::Int=0)
+function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(e.service, :image_edits, "Image Edits API")
+    cfg = _resolve_config(config)
+    t0 = time_ns()
     try
         model = isempty(e.model) ? something(default_image_model(e.service), "") : e.model
         isempty(model) && throw(ArgumentError("model must be specified for image edits with $(typeof(e.service))"))
@@ -347,19 +341,15 @@ function edit_image(e::ImageEdit; retries::Int=0)
             !isnothing(v) && push!(parts, k => string(v))
         end
         url = _api_base_url(e.service) * IMAGES_EDITS_PATH
-        resp = HTTP.post(url, auth_header_multipart(e.service), HTTP.Form(parts); status_exception=false)
-        if resp.status == 200
-            return ImageSuccess(response=parse_image_response(resp))
-        elseif _is_retryable(resp.status) && retries < _RETRY_MAX_ATTEMPTS
-            sleep(_retry_delay(retries, resp))
-            return edit_image(e; retries=retries + 1)
-        else
-            return ImageFailure(response=String(resp.body), status=resp.status)
-        end
+        resp = _http_with_retries(cfg, t0, "POST", url, auth_header_multipart(e.service), HTTP.Form(parts))
+        return resp.status == 200 ?
+               ImageSuccess(response=parse_image_response(resp)) :
+               ImageFailure(response=String(resp.body), status=resp.status)
     catch err
+        err isa InterruptException && rethrow()
         return ImageCallError(error=string(err), status=(hasproperty(err, :status) ? err.status : nothing))
     end
 end
 edit_image(image, prompt::String; mask::Union{String,Nothing}=nothing,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint, kwargs...) =
-    edit_image(ImageEdit(; service=service, image=image, prompt=prompt, mask=mask, kwargs...))
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing, kwargs...) =
+    edit_image(ImageEdit(; service=service, image=image, prompt=prompt, mask=mask, kwargs...); config=config)

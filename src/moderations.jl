@@ -51,12 +51,16 @@ is_flagged(::ModerationCallError) = false
 
 Classify `input` (a `String`, or a vector of content parts) for policy violations (free).
 Returns `ModerationSuccess`, `ModerationFailure`, or `ModerationCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function moderate(input; model::String="omni-moderation-latest", service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function moderate(input; model::String="omni-moderation-latest", service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :moderation, "Moderations API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         body = JSON.json(Dict{Symbol,Any}(:model => model, :input => input))
-        resp = HTTP.post(_api_base_url(service) * MODERATIONS_PATH, body=body, headers=auth_header(service); status_exception=false)
+        resp = _http("POST", _api_base_url(service) * MODERATIONS_PATH, auth_header(service),
+            body; cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
             results = ModerationResult[
@@ -70,6 +74,7 @@ function moderate(input; model::String="omni-moderation-latest", service::Servic
             ModerationFailure(response=String(resp.body), status=resp.status)
         end
     catch e
+        e isa InterruptException && rethrow()
         ModerationCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end

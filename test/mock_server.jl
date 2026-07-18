@@ -77,26 +77,26 @@ try
     # Chat Completions: error / retry paths
     # ═══════════════════════════════════════════════════════════════════════
 
-    @testset "chatrequest! with 500 (retry exhausted)" begin
+    @testset "chatrequest! with 500 (single attempt)" begin
         set_error!(500, "Internal Server Error")
 
         chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
-        result = chatrequest!(chat; retries=30)
+        result = chatrequest!(chat; config=RequestConfig(max_attempts=1))
         @test result isa LLMFailure
         @test result.status == 500
     end
 
-    @testset "chatrequest! with 503 (retry exhausted)" begin
+    @testset "chatrequest! with 503 (single attempt)" begin
         set_error!(503, "Service Unavailable")
 
         chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
-        result = chatrequest!(chat; retries=30)
+        result = chatrequest!(chat; config=RequestConfig(max_attempts=1))
         @test result isa LLMFailure
         @test result.status == 503
     end
@@ -204,7 +204,7 @@ try
         set_error!(500, "Internal Server Error")
 
         r = Respond(input="test", service=MockServiceEndpoint)
-        result = respond(r; retries=30)
+        result = respond(r; config=RequestConfig(max_attempts=1))
 
         @test result isa ResponseFailure
         @test result.status == 500
@@ -214,7 +214,7 @@ try
         set_error!(503, "Service Unavailable")
 
         r = Respond(input="test", service=MockServiceEndpoint)
-        result = respond(r; retries=30)
+        result = respond(r; config=RequestConfig(max_attempts=1))
 
         @test result isa ResponseFailure
         @test result.status == 503
@@ -288,21 +288,21 @@ try
     # Image Generation: error / retry paths
     # ═══════════════════════════════════════════════════════════════════════
 
-    @testset "generate_image with 500 (retry exhausted)" begin
+    @testset "generate_image with 500 (single attempt)" begin
         set_error!(500, "Internal Server Error")
 
         ig = ImageGeneration(prompt="test", service=MockServiceEndpoint)
-        result = generate_image(ig; retries=30)
+        result = generate_image(ig; config=RequestConfig(max_attempts=1))
 
         @test result isa ImageFailure
         @test result.status == 500
     end
 
-    @testset "generate_image with 503 (retry exhausted)" begin
+    @testset "generate_image with 503 (single attempt)" begin
         set_error!(503, "Service Unavailable")
 
         ig = ImageGeneration(prompt="test", service=MockServiceEndpoint)
-        result = generate_image(ig; retries=30)
+        result = generate_image(ig; config=RequestConfig(max_attempts=1))
 
         @test result isa ImageFailure
         @test result.status == 503
@@ -322,14 +322,14 @@ try
     # 429 Rate Limit handling
     # ═══════════════════════════════════════════════════════════════════════
 
-    @testset "chatrequest! with 429 (retry exhausted)" begin
+    @testset "chatrequest! with 429 (single attempt)" begin
         set_error!(429, "Rate limited"; headers=["Retry-After" => "2"])
 
         chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
-        result = chatrequest!(chat; retries=30)
+        result = chatrequest!(chat; config=RequestConfig(max_attempts=1))
         @test result isa LLMFailure
         @test result.status == 429
     end
@@ -338,27 +338,27 @@ try
         set_error!(429, "Rate limited"; headers=["Retry-After" => "2"])
 
         r = Respond(input="test", service=MockServiceEndpoint)
-        result = respond(r; retries=30)
+        result = respond(r; config=RequestConfig(max_attempts=1))
 
         @test result isa ResponseFailure
         @test result.status == 429
     end
 
-    @testset "generate_image with 429 (retry exhausted)" begin
+    @testset "generate_image with 429 (single attempt)" begin
         set_error!(429, "Rate limited"; headers=["Retry-After" => "2"])
 
         ig = ImageGeneration(prompt="test", service=MockServiceEndpoint)
-        result = generate_image(ig; retries=30)
+        result = generate_image(ig; config=RequestConfig(max_attempts=1))
 
         @test result isa ImageFailure
         @test result.status == 429
     end
 
-    @testset "embeddingrequest! with 429 (retry exhausted)" begin
+    @testset "embeddingrequest! with 429 (single attempt)" begin
         set_error!(429, "Rate limited"; headers=["Retry-After" => "2"])
 
         emb = UniLM.Embeddings("test"; service=MockServiceEndpoint)
-        result = embeddingrequest!(emb; retries=30)
+        result = embeddingrequest!(emb; config=RequestConfig(max_attempts=1))
         @test result isa EmbeddingFailure
         @test result.status == 429
 
@@ -378,18 +378,18 @@ try
         @test result.status == 401
     end
 
-    @testset "embeddingrequest! with 500 (retry exhausted)" begin
+    @testset "embeddingrequest! with 500 (single attempt)" begin
         set_error!(500, "Internal Server Error")
         emb = UniLM.Embeddings("test"; service=MockServiceEndpoint)
-        result = embeddingrequest!(emb; retries=30)
+        result = embeddingrequest!(emb; config=RequestConfig(max_attempts=1))
         @test result isa EmbeddingFailure
         @test result.status == 500
     end
 
-    @testset "embeddingrequest! with 503 (retry exhausted)" begin
+    @testset "embeddingrequest! with 503 (single attempt)" begin
         set_error!(503, "Service Unavailable")
         emb = UniLM.Embeddings("test"; service=MockServiceEndpoint)
-        result = embeddingrequest!(emb; retries=30)
+        result = embeddingrequest!(emb; config=RequestConfig(max_attempts=1))
         @test result isa EmbeddingFailure
         @test result.status == 503
     end
@@ -1294,9 +1294,9 @@ try
         set_error!(200, "")
     end
 
-    @testset "chatrequest! non-stream retry-then-recover recursion (chatrequest! retry branch)" begin
-        # First request: retryable 503 (drains queue entry 1) → recurse → 200 success (entry 2).
-        # retries defaults to 0 < _RETRY_MAX_ATTEMPTS, so the delay/sleep/recurse branch runs once.
+    @testset "chatrequest! non-stream retry-then-recover (shared retry loop)" begin
+        # First request: retryable 503 (drains queue entry 1) → retry → 200 success (entry 2).
+        # max_attempts defaults to 3, so the shared retry loop takes a second attempt.
         success_body = JSON.json(Dict(
             "choices" => [Dict(
                 "finish_reason" => "stop",
@@ -1308,7 +1308,7 @@ try
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
-        result = chatrequest!(chat)   # default retries=0 → genuinely retries
+        result = chatrequest!(chat)   # default config → genuinely retries once
 
         @test result isa LLMSuccess
         @test result.message.content == "recovered after retry"
@@ -1347,7 +1347,7 @@ try
         set_error!(200, "")
     end
 
-    @testset "embeddingrequest! retry-then-recover recursion (433–436)" begin
+    @testset "embeddingrequest! retry-then-recover (shared retry loop)" begin
         emb_body = JSON.json(Dict(
             "object" => "list", "model" => "mock-embedding",
             "data" => [Dict("object" => "embedding", "index" => 0, "embedding" => [1.0, 2.0])],
@@ -1355,7 +1355,7 @@ try
         response_queue[] = [(503, ""), (200, emb_body)]
 
         emb = UniLM.Embeddings("retry me"; service=MockServiceEndpoint)
-        result = embeddingrequest!(emb)   # default retries=0 → genuinely retries once
+        result = embeddingrequest!(emb)   # default config (max_attempts=3) → genuinely retries once
 
         @test result isa EmbeddingSuccess
         @test embedding_vectors(result) == [1.0, 2.0]
@@ -1366,7 +1366,7 @@ try
 
     # ═══════════════════════════════════════════════════════════════════════
     # FIM Completion: HTTP-executing function-body paths (completions.jl 156–177)
-    # Success, retry-recursion, retry-exhausted, non-retryable, and catch→CallError.
+    # Success, retry-then-recover (shared retry loop), retry-exhausted, non-retryable, and catch→CallError.
     # The mock declares :fim, so validate_capability passes and the HTTP call runs.
     # ═══════════════════════════════════════════════════════════════════════
 
@@ -1406,8 +1406,8 @@ try
     end
 
     @testset "fim_complete retry-then-recover recursion → FIMSuccess, queue drained (162–167)" begin
-        # First request: retryable 503 (drains entry 1) → retries=0 < _RETRY_MAX_ATTEMPTS → recurse
-        # → 200 success (entry 2). Both queued responses must be consumed (proves it really retried).
+        # First request: retryable 503 (drains entry 1) → the shared bounded retry loop
+        # retries under the default max_attempts=3 budget → 200 success (entry 2). Both queued responses must be consumed (proves it really retried).
         fim_body = JSON.json(Dict(
             "model" => "mock-fim",
             "choices" => [Dict("text" => "recovered", "index" => 0, "finish_reason" => "stop")],
@@ -1415,7 +1415,7 @@ try
         response_queue[] = [(503, ""), (200, fim_body)]
 
         fim = FIMCompletion(service=MockServiceEndpoint, model="mock-fim", prompt="x", suffix="y")
-        result = fim_complete(fim)   # default retries=0 → genuinely retries once
+        result = fim_complete(fim)   # default max_attempts=3 → genuinely retries once
 
         @test result isa FIMSuccess
         @test fim_text(result) == "recovered"
@@ -1427,7 +1427,7 @@ try
     @testset "fim_complete retry exhausted → FIMFailure status 503 (169)" begin
         set_error!(503, "Service Unavailable")
         fim = FIMCompletion(service=MockServiceEndpoint, model="mock-fim", prompt="x")
-        result = fim_complete(fim; retries=30)   # already past _RETRY_MAX_ATTEMPTS → no recurse
+        result = fim_complete(fim; config=RequestConfig(max_attempts=1))
         @test result isa FIMFailure
         @test result.status == 503
         @test occursin("Service Unavailable", result.response)   # raw body surfaced
@@ -1463,7 +1463,7 @@ try
 
     # ═══════════════════════════════════════════════════════════════════════
     # Chat Prefix Completion: HTTP-executing function-body paths (completions.jl 220–259)
-    # Success + message-construction loop (prefix flag), retry-recursion, failures, catch.
+    # Success + message-construction loop (prefix flag), retry-then-recover (shared retry loop), failures, catch.
     # ═══════════════════════════════════════════════════════════════════════
 
     @testset "prefix_complete success → LLMSuccess, prefix replaced, request carries prefix:true (220–244)" begin
@@ -1514,7 +1514,7 @@ try
         chat = Chat(service=MockServiceEndpoint, model="mock-model", messages=[
             Message(role=UniLM.RoleUser, content="continue"),
             Message(role=UniLM.RoleAssistant, content="The answer is ")])
-        result = prefix_complete(chat)   # default retries=0 → genuinely retries once
+        result = prefix_complete(chat)   # default max_attempts=3 → genuinely retries once
 
         @test result isa LLMSuccess
         @test result.message.content == "recovered prefix"
@@ -1528,7 +1528,7 @@ try
         chat = Chat(service=MockServiceEndpoint, model="mock-model", messages=[
             Message(role=UniLM.RoleUser, content="hi"),
             Message(role=UniLM.RoleAssistant, content="partial")])
-        result = prefix_complete(chat; retries=30)
+        result = prefix_complete(chat; config=RequestConfig(max_attempts=1))
         @test result isa LLMFailure
         @test result.status == 503
         @test occursin("Service Unavailable", result.response)
@@ -1653,8 +1653,8 @@ try
     end
 
     @testset "respond() non-stream retry-then-recover recursion → ResponseSuccess (1137-1142)" begin
-        # First request: retryable 503 (queue entry 1) → retries(0) < _RETRY_MAX_ATTEMPTS → 1139-1142
-        # (delay/sleep/recurse) → 200 success (entry 2) → parse_response → ResponseSuccess.
+        # Default config (max_attempts=3): retryable 503 (queue entry 1) is retried within
+        # budget → 200 success (entry 2) → parse_response → ResponseSuccess.
         success_body = JSON.json(Dict(
             "id" => "resp_retry",
             "status" => "completed",
@@ -1664,7 +1664,7 @@ try
             "usage" => Dict("input_tokens" => 3, "output_tokens" => 1, "total_tokens" => 4)))
         response_queue[] = [(503, ""), (200, success_body)]
 
-        result = respond(Respond(input="x", service=MockServiceEndpoint))   # default retries=0
+        result = respond(Respond(input="x", service=MockServiceEndpoint))   # default config
         @test result isa ResponseSuccess
         @test result.response.id == "resp_retry"
         @test result.response.status == "completed"
@@ -1782,13 +1782,13 @@ try
     end
 
     # ═══════════════════════════════════════════════════════════════════════
-    # COVERAGE PUSH: success-parse + retry-recursion + tool-loop error wiring
+    # COVERAGE PUSH: success-parse + retry-then-recover (shared retry loop) + tool-loop error wiring
     # Targets src/images.jl (249, 252–255, 341–342, 354–355), src/files.jl
     # (97–98), src/tool_loop.jl (142, 144, 218, 220). Each retry test queues
     # EXACTLY the request count and asserts isempty(response_queue[]) afterward
-    # to prove the recursion fired (not the retries==MAX else-branch the existing
-    # "retry exhausted" tests cover). Default retries=0 → first jittered delay is
-    # rand()*1.0 < 1s, so no 30-deep real backoff.
+    # to prove the shared retry loop actually retried (not the max_attempts-exhausted
+    # branch the existing "retry exhausted" tests cover). Default max_attempts=3 → the
+    # first jittered delay is rand()*1.0 < 1s, so the test never blocks on a real backoff.
     # ═══════════════════════════════════════════════════════════════════════
 
     @testset "generate_image 200 success → ImageSuccess parsed (images.jl 249)" begin
@@ -1820,20 +1820,20 @@ try
     end
 
     @testset "generate_image 503→200 retry recursion → ImageSuccess (images.jl 252–255)" begin
-        # Queue exactly two responses: a retryable 503 then a parseable 200. With
-        # default retries=0 the 503 takes the _is_retryable && retries<MAX branch →
-        # recurses once. Draining the queue proves the recursion (second request) fired.
+        # Queue exactly two responses: a retryable 503 then a parseable 200. With the
+        # default max_attempts=3 budget, the shared retry loop retries once on the 503 →
+        # 200 success. Draining the queue proves the retry (second request) actually fired.
         response_queue[] = [(503, ""),
             (200, JSON.json(Dict("created" => 7,
                 "data" => [Dict("b64_json" => "UkVUUlk=")])))]
 
         ig = ImageGeneration(prompt="retry me", model="mock-img-R", service=MockServiceEndpoint)
-        result = generate_image(ig)   # retries defaults to 0
+        result = generate_image(ig)   # no config kwarg → default max_attempts=3
 
         @test result isa ImageSuccess
         @test result.response.created == 7
         @test image_data(result) == ["UkVUUlk="]
-        @test isempty(response_queue[])   # both queued responses consumed → retry recursed
+        @test isempty(response_queue[])   # both queued responses consumed → it retried then recovered
         set_error!(200, "")
     end
 
@@ -1878,12 +1878,12 @@ try
 
             e = ImageEdit(image=img, prompt="retry edit", mask=mask, model="mock-img-ER",
                           service=MockServiceEndpoint)
-            result = edit_image(e)   # retries defaults to 0
+            result = edit_image(e)   # no config kwarg → default max_attempts=3
 
             @test result isa ImageSuccess
             @test result.response.created == 9
             @test image_data(result) == ["RURJVA=="]
-            @test isempty(response_queue[])   # retry recursion drained both responses
+            @test isempty(response_queue[])   # both queued responses consumed → it retried then recovered
         finally
             rm(img; force=true)
             rm(mask; force=true)
@@ -1899,7 +1899,7 @@ try
         path = tempname() * ".txt"
         write(path, "hello")
         try
-            r = upload_file(path, "user_data"; service=MockServiceEndpoint)   # retries defaults to 0
+            r = upload_file(path, "user_data"; service=MockServiceEndpoint)   # no config kwarg → default max_attempts=3
 
             @test r isa FileSuccess
             @test r.response.id == "file-retry"
@@ -1907,7 +1907,7 @@ try
             @test r.response.created_at == 123
             @test r.response.filename == "r.txt"
             @test r.response.status == "processed"
-            @test isempty(response_queue[])   # both responses consumed → retry recursed
+            @test isempty(response_queue[])   # both responses consumed → it retried then recovered
         finally
             rm(path; force=true)
         end
@@ -2244,10 +2244,10 @@ try
     end
 
     @testset "realtime default WS URL (pure-unit)" begin
-        # realtime.jl:68 — the generic _realtime_ws_url(service) fallback returns REALTIME_WS_URL.
+        # realtime.jl:73 — the generic _realtime_ws_url(service) fallback returns REALTIME_WS_URL.
         # WSMockEndpoint overrides it (line 65), so a non-overridden service (the OPENAI type) must
         # hit the default. which().line pins the method; the value falsifies a wrong default URL.
-        @test which(UniLM._realtime_ws_url, (Type{OPENAIServiceEndpoint},)).line == 68
+        @test which(UniLM._realtime_ws_url, (Type{OPENAIServiceEndpoint},)).line == 73
         @test UniLM._realtime_ws_url(OPENAIServiceEndpoint) == UniLM.REALTIME_WS_URL
         @test UniLM._realtime_ws_url(OPENAIServiceEndpoint) == "wss://api.openai.com/v1/realtime"
     end

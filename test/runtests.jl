@@ -25,6 +25,18 @@ end
         include("api.jl")
     end
 
+    @testset "config.jl" begin
+        include("config.jl")
+    end
+
+    @testset "deadline.jl" begin
+        include("deadline.jl")
+    end
+
+    @testset "http seam (requests.jl)" begin
+        include("http_seam.jl")
+    end
+
     @testset "requests.jl" begin
         include("requests.jl")
     end
@@ -37,9 +49,19 @@ end
         include("regression_pins.jl")
     end
 
+    @testset "hang matrix" begin
+        include("hang_matrix.jl")
+    end
+
+    @testset "seam guard (no unbounded HTTP calls)" begin
+        include("seam_guard.jl")
+    end
+
     @testset "responses.jl" begin
         include("responses.jl")
     end
+
+    include("platform_seam_fixtures.jl")
 
     @testset "images.jl" begin
         include("images.jl")
@@ -93,6 +115,40 @@ end
         include("files.jl")
     end
 
+    @testset "audio" begin
+        include("audio.jl")
+    end
+
+    @testset "uploads" begin
+        include("uploads.jl")
+    end
+
+    @testset "containers" begin
+        include("containers.jl")
+    end
+
+    @testset "conversations" begin
+        include("conversations.jl")
+    end
+    @testset "vector_stores" begin
+        include("vector_stores.jl")
+    end
+    @testset "videos" begin
+        include("videos.jl")
+    end
+    @testset "batch" begin
+        include("batch.jl")
+    end
+    @testset "moderations" begin
+        include("moderations.jl")
+    end
+    @testset "realtime" begin
+        include("realtime.jl")
+    end
+    @testset "fine_tuning" begin
+        include("fine_tuning.jl")
+    end
+
     @testset "webhooks" begin
         include("webhooks.jl")
     end
@@ -123,6 +179,10 @@ end
 
     @testset "integration — tool loop" begin
         include("integration_tool_loop.jl")
+    end
+
+    @testset "integration — live MCP" begin
+        include("integration_mcp_live.jl")
     end
 
     # ── Slow tests run last ──────────────────────────────────────────────

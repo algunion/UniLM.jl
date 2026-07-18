@@ -243,3 +243,25 @@ end
 @testset "Constants - images path" begin
     @test UniLM.IMAGES_GENERATIONS_PATH == "/v1/images/generations"
 end
+
+@testset "images.jl — config seam wiring" begin
+    ig = ImageGeneration(prompt="probe", model="seam-probe-image", service=SeamProbe)
+    @test _reached_seam(generate_image(ig; config=_TINY_DEADLINE), ImageCallError)
+    @test _reached_seam(generate_image("probe"; model="seam-probe-image", service=SeamProbe,
+                                       config=_TINY_DEADLINE), ImageCallError)
+
+    imgpath = tempname() * ".png"
+    write(imgpath, UInt8[0x89, 0x50, 0x4e, 0x47])   # PNG magic; content is irrelevant (never sent)
+    try
+        e = ImageEdit(image=imgpath, prompt="probe", model="seam-probe-image", service=SeamProbe)
+        @test _reached_seam(edit_image(e; config=_TINY_DEADLINE), ImageCallError)
+        @test _reached_seam(edit_image(imgpath, "probe"; model="seam-probe-image",
+                                       service=SeamProbe, config=_TINY_DEADLINE), ImageCallError)
+    finally
+        rm(imgpath; force=true)
+    end
+
+    # retries kwarg is removed (hard cut, no shim)
+    @test_throws MethodError generate_image(ig; retries=1)
+    @test_throws MethodError edit_image(ImageEdit(image=imgpath, prompt="p", model="m", service=SeamProbe); retries=1)
+end

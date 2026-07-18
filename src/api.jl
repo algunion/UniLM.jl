@@ -459,6 +459,14 @@ end
 DeepSeekEndpoint(; api_key::String=ENV["DEEPSEEK_API_KEY"]) = DeepSeekEndpoint(api_key)
 
 
+# Coerce the `tools` keyword to the stored `Vector{GPTTool}`. This fallback is
+# the identity — a `Vector{GPTTool}` or `nothing` passes through unchanged. The
+# method that unwraps a `Vector{<:CallableTool}` into its inner `GPTTool`s lives
+# in tool_loop.jl, where `CallableTool` is defined (that file is `include`d
+# after this one). Conversion happens only here at construction; the field type
+# stays `Union{Vector{GPTTool},Nothing}`.
+_chat_tools(tools) = tools
+
 """
     chat = Chat()
 
@@ -541,6 +549,7 @@ Creates a new `Chat` object with default settings:
         _cumulative_cost
     )
         model = _resolve_model(service, model)
+        tools = _chat_tools(tools)  # accept a CallableTool vector, stored as GPTTools
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
         !isnothing(top_p) && !(0.0 <= top_p <= 1.0) && throw(ArgumentError("top_p must be in [0.0, 1.0]"))
@@ -683,21 +692,23 @@ HTTP-level failure from the Chat Completions API. The server returned a non-200 
 end
 
 """
-    LLMCallError(; error, status=nothing, self, request_id=nothing)
+    LLMCallError(; error, status=nothing, self, request_id=nothing, cause=nothing)
 
-Exception-level error during a Chat Completions API call (network failure, JSON parse error, etc.).
+Exception-level error during a Chat Completions API call (network failure, JSON parse error, timeout, etc.).
 
 # Fields
 - `error::String`: The stringified exception.
-- `status::Union{Int,Nothing}`: HTTP status if available.
+- `status::Union{Int,Nothing}`: HTTP status if available (`nothing` for timeouts — no fabricated statuses).
 - `self::Chat`: The [`Chat`](@ref) object (unchanged).
 - `request_id::Union{String, Nothing}`: The HTTP request ID from headers, if available.
+- `cause::Union{Nothing,Exception}`: The underlying typed exception when one exists (e.g. a `UniLMTimeout` carrying phase/elapsed/limit).
 """
 @kwdef struct LLMCallError <: LLMRequestResponse
     error::String
     status::Union{Int,Nothing} = nothing
     self::Chat
     request_id::Union{String, Nothing} = nothing
+    cause::Union{Nothing,Exception} = nothing
 end
 
 
@@ -906,13 +917,16 @@ HTTP-level failure from the Embeddings API (non-2xx).
 end
 
 """
-    EmbeddingCallError(; error, status=nothing)
+    EmbeddingCallError(; error, status=nothing, cause=nothing)
 
-Exception-level error during an Embeddings API call (network, parse, etc.).
+Exception-level error during an Embeddings API call (network, parse, timeout, etc.).
+`cause` holds the underlying typed exception when one exists (e.g. a `UniLMTimeout`);
+`status` stays `nothing` for timeouts — no fabricated HTTP statuses.
 """
 @kwdef struct EmbeddingCallError <: LLMRequestResponse
     error::String
     status::Union{Int,Nothing} = nothing
+    cause::Union{Nothing,Exception} = nothing
 end
 
 """

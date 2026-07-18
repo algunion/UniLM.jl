@@ -2138,3 +2138,306 @@ end
     @test tr["name"] == "get_weather"
     @test tr["output"] == "sunny"
 end
+
+@testset "ResponseCallError carries an optional cause" begin
+    to = UniLM.UniLMTimeout(:request, 0.5, 0.5)
+    e = ResponseCallError(error="timeout", status=nothing, cause=to)
+    @test e.cause === to
+    @test ResponseCallError(error="x").cause === nothing   # default
+end
+
+using Sockets
+
+# Localhost HTTP server whose handler drains the request then holds the
+# connection open without ever writing a response (mute peer). `hold` outlives
+# the client's short timeout so the watchdog — not the server — ends the call.
+function _mute_http_server(; hold::Float64=5.0)
+    server = nothing; port = 0
+    for attempt in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+        try
+            server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
+                read(http); sleep(hold)
+            end
+            break
+        catch; attempt == 5 && rethrow(); end
+    end
+    server, "http://127.0.0.1:$port"
+end
+
+# Mock agentic endpoint whose base URL is swappable per test via a Ref holder.
+const _RESP_TIMEOUT_URL = Ref("http://127.0.0.1:0")
+struct _RespTimeoutMock <: UniLM.ServiceEndpoint end
+UniLM._api_base_url(::Type{_RespTimeoutMock}) = _RESP_TIMEOUT_URL[]
+UniLM.auth_header(::Type{_RespTimeoutMock}) = ["Content-Type" => "application/json"]
+UniLM.default_model(::Type{_RespTimeoutMock}) = "mock-model"   # Respond ctor resolves the model default via default_model(service)
+
+@testset "lifecycle op: mute server yields a bounded typed timeout" begin
+    server, url = _mute_http_server()
+    _RESP_TIMEOUT_URL[] = url
+    cfg = RequestConfig(connect_timeout=0.5, request_timeout=0.5, total_deadline=1.0, max_attempts=1)
+    try
+        t = Threads.@spawn get_response("resp_x"; service=_RespTimeoutMock, config=cfg)
+        @test timedwait(() -> istaskdone(t), 10.0) == :ok
+        result = fetch(t)
+        @test result isa ResponseCallError
+        @test result.status === nothing
+        @test result.cause isa UniLM.UniLMTimeout
+        @test result.cause.phase in (:request, :connect)
+    finally
+        close(server)
+    end
+end
+
+@testset "lifecycle op: InterruptException is rethrown, never lands in a value" begin
+    struct _RespInterruptMock <: UniLM.ServiceEndpoint end
+    UniLM._api_base_url(::Type{_RespInterruptMock}) = "http://127.0.0.1:1"
+    UniLM.auth_header(::Type{_RespInterruptMock}) = throw(InterruptException())
+    @test_throws InterruptException get_response("resp_x"; service=_RespInterruptMock)
+end
+
+# Localhost HTTP server answering every request with a fixed status + headers + body.
+function _canned_http_server(status::Int, body::String, hdrs::Vector{Pair{String,String}})
+    server = nothing; port = 0
+    for attempt in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+        try
+            server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
+                read(http)
+                HTTP.setstatus(http, status)
+                for (k, v) in hdrs; HTTP.setheader(http, k => v); end
+                HTTP.startwrite(http)
+                write(http, body)
+            end
+            break
+        catch; attempt == 5 && rethrow(); end
+    end
+    server, "http://127.0.0.1:$port"
+end
+
+@testset "respond non-stream: mute server yields a bounded typed timeout" begin
+    server, url = _mute_http_server()
+    _RESP_TIMEOUT_URL[] = url
+    cfg = RequestConfig(connect_timeout=0.5, request_timeout=0.5, total_deadline=1.0, max_attempts=1)
+    try
+        r = Respond(input="hi", service=_RespTimeoutMock)
+        t = Threads.@spawn respond(r; config=cfg)
+        @test timedwait(() -> istaskdone(t), 10.0) == :ok
+        result = fetch(t)
+        @test result isa ResponseCallError
+        @test result.status === nothing
+        @test result.cause isa UniLM.UniLMTimeout
+        @test result.cause.phase in (:request, :connect)
+    finally
+        close(server)
+    end
+end
+
+@testset "respond non-stream: Retry-After beyond the deadline fails immediately, no sleep" begin
+    body = JSON.json(Dict("error" => Dict("message" => "slow down", "type" => "rate_limit")))
+    server, url = _canned_http_server(503, body, ["Retry-After" => "3600"])
+    _RESP_TIMEOUT_URL[] = url
+    # Timeouts sit well above the cold first-request latency of a fresh localhost server
+    # (connection setup + first-use compilation), so attempt 1 actually receives the 503;
+    # the 3600 s Retry-After still dwarfs total_deadline, so the budget check fails fast.
+    cfg = RequestConfig(request_timeout=5.0, total_deadline=5.0, max_attempts=3)
+    try
+        r = Respond(input="hi", service=_RespTimeoutMock)
+        t = Threads.@spawn respond(r; config=cfg)
+        @test timedwait(() -> istaskdone(t), 10.0) == :ok   # never sleeps the 3600s Retry-After
+        result = fetch(t)
+        @test result isa ResponseFailure
+        @test result.status == 503
+    finally
+        close(server)
+    end
+end
+
+@testset "respond non-stream: InterruptException is rethrown, never lands in a value" begin
+    struct _RespInterruptMock2 <: UniLM.ServiceEndpoint end
+    UniLM.default_model(::Type{_RespInterruptMock2}) = "mock-model"
+    UniLM.encode_agentic(::Type{_RespInterruptMock2}, ::Respond) = throw(InterruptException())
+    @test_throws InterruptException respond(Respond(input="x", service=_RespInterruptMock2))
+end
+
+# Localhost SSE server: writes each of `chunks` with `gap`s between flushes. When
+# `idle_after` is set it then holds the connection open for `hold`s (no more bytes)
+# to exercise the byte-gap guard; otherwise it returns, closing the stream. The
+# leading chunks let whole-call time accrue past `gap` each, so an idle breach's
+# recorded GAP (~limit) is provably smaller than whole-call elapsed.
+function _sse_gap_server(chunks::Vector{String}; gap::Float64=0.25, idle_after::Bool=false, hold::Float64=5.0)
+    server = nothing; port = 0
+    for attempt in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+        try
+            server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
+                read(http)
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "text/event-stream")
+                HTTP.startwrite(http)
+                for c in chunks; write(http, c); flush(http); sleep(gap); end
+                idle_after && sleep(hold)
+            end
+            break
+        catch; attempt == 5 && rethrow(); end
+    end
+    server, "http://127.0.0.1:$port"
+end
+
+# Read one full HTTP/1.1 request message (headers + body) from a raw socket before
+# acting on the connection, so a respond-or-close never races the client's still
+# in-flight body write. HTTP.jl streams the request body as a chunked write that on
+# the 1.x major arrives as a SEPARATE segment AFTER the head over a keep-alive
+# socket; a server that acts on only the head races that write (broken pipe / EPIPE).
+# Framing-aware (chunked terminator / Content-Length), never read-until-eof — a
+# keep-alive client half-closes only after it has read the response, so waiting on
+# eof here would deadlock.
+function _drain_http_request!(sock)
+    req = ""
+    while (he = findfirst("\r\n\r\n", req)) === nothing
+        chunk = readavailable(sock)
+        isempty(chunk) && return           # peer closed before completing the request
+        req *= String(chunk)
+    end
+    headers = SubString(req, 1, last(he))
+    if occursin(r"(?i)transfer-encoding:\s*chunked", headers)
+        while findfirst("0\r\n\r\n", req) === nothing   # terminating zero-length chunk
+            chunk = readavailable(sock)
+            isempty(chunk) && return
+            req *= String(chunk)
+        end
+    elseif (m = match(r"(?i)content-length:\s*(\d+)", headers)) !== nothing
+        want = last(he) + parse(Int, m.captures[1])
+        while sizeof(req) < want
+            chunk = readavailable(sock)
+            isempty(chunk) && return
+            req *= String(chunk)
+        end
+    end
+    return
+end
+
+# Localhost raw-TCP server: the FIRST connection is drained then closed abruptly
+# before any response byte (a connection-level failure the client must classify as
+# transport-retryable and retry); the SECOND connection serves `ok_body` as a
+# complete close-delimited HTTP/1.1 SSE response. Both legs drain the full request
+# first (see `_drain_http_request!`) so neither races the client's chunked body
+# write. Connections are handled serially (the client retries serially), so no
+# per-connection task is needed.
+function _reset_then_ok_server(ok_body::String)
+    listener = nothing; port = 0
+    for attempt in 1:5
+        try
+            listener = Sockets.listen(Sockets.localhost, 0)
+            port = Int(Sockets.getsockname(listener)[2])
+            break
+        catch; attempt == 5 && rethrow(); end
+    end
+    Threads.@spawn begin
+        n = 0
+        try
+            while true
+                sock = Sockets.accept(listener)
+                n += 1
+                try
+                    _drain_http_request!(sock)              # consume the full request so a close/respond never races the body write
+                    if n == 1
+                        close(sock)                         # abrupt close → client sees a transport error
+                    else
+                        write(sock, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n")
+                        write(sock, ok_body)
+                        close(sock)
+                    end
+                catch; try; close(sock); catch; end; end
+            end
+        catch; end   # listener closed at teardown
+    end
+    (; url="http://127.0.0.1:$port", stop=() -> close(listener))
+end
+
+@testset "respond stream: mute pre-first-byte yields a bounded typed timeout" begin
+    server, url = _mute_http_server()
+    _RESP_TIMEOUT_URL[] = url
+    cfg = RequestConfig(request_timeout=0.5, total_deadline=1.0, stream_idle_timeout=0.5, max_attempts=1)
+    try
+        t = respond(Respond(input="hi", service=_RespTimeoutMock, stream=true); config=cfg)
+        @test t isa Task
+        @test timedwait(() -> istaskdone(t), 10.0) == :ok
+        result = fetch(t)
+        @test result isa ResponseCallError
+        @test result.status === nothing
+        @test result.cause isa UniLM.UniLMTimeout
+        @test result.cause.phase in (:request, :connect)
+    finally
+        close(server)
+    end
+end
+
+@testset "respond stream: mid-stream byte-gap yields a bounded stream-idle timeout" begin
+    # Six deltas at 0.25s (each < the 1.0s idle limit, resetting the gap) accrue
+    # ~1.5s of whole-call time BEFORE the stream goes idle — so the recorded byte
+    # gap (~1.0s) is provably smaller than whole-call elapsed (~2.5s). This is what
+    # makes the elapsed assertion discriminate `_idle_gap_s` from `_elapsed_s(t0)`.
+    chunks = ["event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"$i\"}\n\n" for i in 1:6]
+    server, url = _sse_gap_server(chunks; gap=0.25, idle_after=true)
+    _RESP_TIMEOUT_URL[] = url
+    idle_limit = 1.0
+    period = min(idle_limit / 4, 5.0)   # guard fires within [limit, limit + period]
+    cfg = RequestConfig(request_timeout=2.0, total_deadline=30.0, stream_idle_timeout=idle_limit, max_attempts=1)
+    try
+        t = respond(Respond(input="hi", service=_RespTimeoutMock, stream=true); config=cfg)
+        @test timedwait(() -> istaskdone(t), 15.0) == :ok
+        result = fetch(t)
+        @test result isa ResponseCallError
+        @test result.status === nothing
+        @test result.cause isa UniLM.UniLMTimeout
+        @test result.cause.phase == :stream_idle
+        # elapsed is the byte GAP (~limit), NOT whole-call (~2.5s): [limit, limit+period] + slack.
+        @test idle_limit <= result.cause.elapsed <= idle_limit + period + 0.5
+    finally
+        close(server)
+    end
+end
+
+@testset "respond stream: a trickling stream is not killed" begin
+    # Bytes every 0.25s — 4x under the 1.0s idle limit (generous margin so CI load
+    # cannot spuriously fire the guard) — for ~1.75s, then a valid terminal.
+    body = String[]
+    for i in 1:6
+        push!(body, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"$i\"}\n\n")
+    end
+    push!(body, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"status\":\"completed\",\"model\":\"m\",\"output\":[]}}\n\n")
+    server, url = _sse_gap_server(body; gap=0.25, idle_after=false)
+    _RESP_TIMEOUT_URL[] = url
+    cfg = RequestConfig(request_timeout=2.0, total_deadline=30.0, stream_idle_timeout=1.0, max_attempts=1)
+    try
+        t = respond(Respond(input="hi", service=_RespTimeoutMock, stream=true); config=cfg)
+        @test timedwait(() -> istaskdone(t), 20.0) == :ok
+        result = fetch(t)
+        @test result isa ResponseSuccess
+        @test result.response.id == "r1"
+    finally
+        close(server)
+    end
+end
+
+@testset "respond stream: transport error before the first callback retries and recovers" begin
+    # Attempt 1's connection is reset before any byte (a transport failure the
+    # driver retries via _is_transport_error); attempt 2 streams a healthy terminal.
+    ok = "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r2\",\"status\":\"completed\",\"model\":\"m\",\"output\":[]}}\n\n"
+    srv = _reset_then_ok_server(ok)
+    _RESP_TIMEOUT_URL[] = srv.url
+    cfg = RequestConfig(request_timeout=2.0, total_deadline=30.0, stream_idle_timeout=2.0, max_attempts=3)
+    try
+        t = respond(Respond(input="hi", service=_RespTimeoutMock, stream=true); config=cfg)
+        @test timedwait(() -> istaskdone(t), 15.0) == :ok
+        result = fetch(t)
+        @test result isa ResponseSuccess
+        @test result.response.id == "r2"   # served on the SECOND (post-retry) connection
+    finally
+        srv.stop()
+    end
+end

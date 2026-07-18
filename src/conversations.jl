@@ -71,10 +71,10 @@ _parse_conversation(d::AbstractDict) = ConversationObject(id=d["id"], created_at
     metadata=get(d, "metadata", nothing), raw=Dict{String,Any}(d))
 _parse_conv_item(d::AbstractDict) = ConversationItem(id=get(d, "id", ""), type=get(d, "type", nothing), raw=Dict{String,Any}(d))
 
-function _conv_http(method::String, url::String, service; body::Union{String,Nothing}=nothing)
+function _conv_http(method::String, url::String, service, cfg::RequestConfig, remaining::Float64; body::Union{String,Nothing}=nothing)
     headers = auth_header(service)
-    isnothing(body) ? HTTP.request(method, url, headers; status_exception=false) :
-        HTTP.request(method, url, headers, body; status_exception=false)
+    isnothing(body) ? _http(method, url, headers; cfg, remaining) :
+        _http(method, url, headers, body; cfg, remaining)
 end
 
 _conv_err(e) = ConversationCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
@@ -86,58 +86,73 @@ _conv_err(e) = ConversationCallError(error=string(e), status=(hasproperty(e, :st
 
 Create a conversation. `items` is an optional vector of input items (e.g. `InputMessage`).
 Returns `ConversationSuccess`, `ConversationFailure`, or `ConversationCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
 function create_conversation(; items::Union{Vector,Nothing}=nothing, metadata::Union{AbstractDict,Nothing}=nothing,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :conversations, "Conversations API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}()
         !isnothing(items) && (d[:items] = items)
         !isnothing(metadata) && (d[:metadata] = metadata)
-        resp = _conv_http("POST", _api_base_url(service) * CONVERSATIONS_PATH, service; body=JSON.json(d))
+        resp = _conv_http("POST", _api_base_url(service) * CONVERSATIONS_PATH, service, cfg, _remaining_s(cfg, t0); body=JSON.json(d))
         resp.status == 200 ? ConversationSuccess(response=_parse_conversation(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             ConversationFailure(response=String(resp.body), status=resp.status)
     catch e
+        e isa InterruptException && rethrow()
         _conv_err(e)
     end
 end
 
 """
     retrieve_conversation(id; service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function retrieve_conversation(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function retrieve_conversation(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :conversations, "Conversations API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _conv_http("GET", _api_base_url(service) * CONVERSATIONS_PATH * "/" * id, service)
+        resp = _conv_http("GET", _api_base_url(service) * CONVERSATIONS_PATH * "/" * id, service, cfg, _remaining_s(cfg, t0))
         resp.status == 200 ? ConversationSuccess(response=_parse_conversation(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             ConversationFailure(response=String(resp.body), status=resp.status)
     catch e
+        e isa InterruptException && rethrow()
         _conv_err(e)
     end
 end
 
 """
     update_conversation(id, metadata; service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function update_conversation(id::String, metadata::AbstractDict; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function update_conversation(id::String, metadata::AbstractDict; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :conversations, "Conversations API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _conv_http("POST", _api_base_url(service) * CONVERSATIONS_PATH * "/" * id, service;
+        resp = _conv_http("POST", _api_base_url(service) * CONVERSATIONS_PATH * "/" * id, service, cfg, _remaining_s(cfg, t0);
             body=JSON.json(Dict{Symbol,Any}(:metadata => metadata)))
         resp.status == 200 ? ConversationSuccess(response=_parse_conversation(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             ConversationFailure(response=String(resp.body), status=resp.status)
     catch e
+        e isa InterruptException && rethrow()
         _conv_err(e)
     end
 end
 
 """
     delete_conversation(id; service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function delete_conversation(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function delete_conversation(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :conversations, "Conversations API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _conv_http("DELETE", _api_base_url(service) * CONVERSATIONS_PATH * "/" * id, service)
+        resp = _conv_http("DELETE", _api_base_url(service) * CONVERSATIONS_PATH * "/" * id, service, cfg, _remaining_s(cfg, t0))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
             ConversationDeleteSuccess(id=get(d, "id", id), deleted=get(d, "deleted", false))
@@ -145,6 +160,7 @@ function delete_conversation(id::String; service::ServiceEndpointSpec=OPENAIServ
             ConversationFailure(response=String(resp.body), status=resp.status)
         end
     catch e
+        e isa InterruptException && rethrow()
         _conv_err(e)
     end
 end
@@ -153,11 +169,14 @@ end
     add_conversation_items(conversation_id, items; service=OPENAIServiceEndpoint)
 
 Append input items to a conversation. Returns `ConversationItemListSuccess`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function add_conversation_items(conv_id::String, items::Vector; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function add_conversation_items(conv_id::String, items::Vector; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :conversations, "Conversations API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _conv_http("POST", _api_base_url(service) * CONVERSATIONS_PATH * "/" * conv_id * "/items", service;
+        resp = _conv_http("POST", _api_base_url(service) * CONVERSATIONS_PATH * "/" * conv_id * "/items", service, cfg, _remaining_s(cfg, t0);
             body=JSON.json(Dict{Symbol,Any}(:items => items)))
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
@@ -168,17 +187,21 @@ function add_conversation_items(conv_id::String, items::Vector; service::Service
             ConversationFailure(response=String(resp.body), status=resp.status)
         end
     catch e
+        e isa InterruptException && rethrow()
         _conv_err(e)
     end
 end
 
 """
     list_conversation_items(conversation_id; limit=nothing, order=nothing, after=nothing, service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
 function list_conversation_items(conv_id::String; limit::Union{Int,Nothing}=nothing,
     order::Union{String,Nothing}=nothing, after::Union{String,Nothing}=nothing,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :conversations, "Conversations API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         url = _api_base_url(service) * CONVERSATIONS_PATH * "/" * conv_id * "/items"
         params = String[]
@@ -186,7 +209,7 @@ function list_conversation_items(conv_id::String; limit::Union{Int,Nothing}=noth
         !isnothing(order) && push!(params, "order=$order")
         !isnothing(after) && push!(params, "after=$after")
         !isempty(params) && (url *= "?" * join(params, "&"))
-        resp = _conv_http("GET", url, service)
+        resp = _conv_http("GET", url, service, cfg, _remaining_s(cfg, t0))
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
             its = ConversationItem[_parse_conv_item(i) for i in get(data, "data", [])]
@@ -196,17 +219,21 @@ function list_conversation_items(conv_id::String; limit::Union{Int,Nothing}=noth
             ConversationFailure(response=String(resp.body), status=resp.status)
         end
     catch e
+        e isa InterruptException && rethrow()
         _conv_err(e)
     end
 end
 
 """
     delete_conversation_item(conversation_id, item_id; service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function delete_conversation_item(conv_id::String, item_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function delete_conversation_item(conv_id::String, item_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :conversations, "Conversations API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _conv_http("DELETE", _api_base_url(service) * CONVERSATIONS_PATH * "/" * conv_id * "/items/" * item_id, service)
+        resp = _conv_http("DELETE", _api_base_url(service) * CONVERSATIONS_PATH * "/" * conv_id * "/items/" * item_id, service, cfg, _remaining_s(cfg, t0))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
             ConversationDeleteSuccess(id=get(d, "id", item_id), deleted=get(d, "deleted", false))
@@ -214,6 +241,7 @@ function delete_conversation_item(conv_id::String, item_id::String; service::Ser
             ConversationFailure(response=String(resp.body), status=resp.status)
         end
     catch e
+        e isa InterruptException && rethrow()
         _conv_err(e)
     end
 end

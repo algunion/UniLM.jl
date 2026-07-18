@@ -49,6 +49,14 @@ to_tool(x::FunctionTool) = x
 to_tool(x::CallableTool) = x
 to_tool(d::AbstractDict) = GPTTool(d)
 
+# Chat stores `Vector{GPTTool}` but accepts a `Vector{<:CallableTool}` at
+# construction (e.g. `Chat(tools=mcp_tools(session))`) by unwrapping each
+# wrapper's inner tool — no manual `map(t -> t.tool, tools)`. This completes the
+# `_chat_tools` fallback declared in api.jl: `CallableTool` is defined here, in a
+# file `include`d after api.jl. A wrapper whose `.tool` is not a `GPTTool` (e.g.
+# a `FunctionTool` from `mcp_tools_respond`) fails the conversion.
+_chat_tools(tools::Vector{<:CallableTool}) = GPTTool[ct.tool for ct in tools]
+
 """
     ToolCallOutcome
 
@@ -104,14 +112,23 @@ function _dispatch_tool(name::String, args::Dict{String,Any}, dispatcher::Functi
         fcr = GPTFunctionCallResult(name, gptfunc, result_str)
         ToolCallOutcome(name, args, fcr, true, nothing)
     catch e
-        ToolCallOutcome(name, args, nothing, false, string(e))
+        # A user Ctrl-C (InterruptException) must abort the loop, not be recorded
+        # as a tool failure and swallowed — propagate it before any conversion.
+        e isa InterruptException && rethrow()
+        # Store the tool's own message faithfully: `error("x")` carries it verbatim
+        # in `.msg`, and any other error renders through `showerror` (its
+        # human-readable form, e.g. `KeyError: key "x" not found`). `string(e)` would
+        # instead leak the constructor form (`ErrorException("x")`) — exception-type
+        # noise the model would otherwise have to see through.
+        ToolCallOutcome(name, args, nothing, false,
+                        e isa ErrorException ? e.msg : sprint(showerror, e))
     end
 end
 
 # ─── Chat Completions Loop ──────────────────────────────────────────────────
 
 """
-    tool_loop!(chat::Chat, dispatcher::Function; max_turns=10, retries=0, callback=nothing, on_tool_call=nothing) -> ToolLoopResult
+    tool_loop!(chat::Chat, dispatcher::Function; max_turns=10, config=nothing, callback=nothing, on_tool_call=nothing) -> ToolLoopResult
 
 Run a tool-calling loop on a [`Chat`](@ref). Repeatedly calls [`chatrequest!`](@ref),
 dispatches tool calls via `dispatcher(name, args)`, pushes tool-role messages back,
@@ -120,7 +137,7 @@ and repeats until a text response, API error, or `max_turns`.
 # Arguments
 - `dispatcher`: `(name::String, args::Dict{String,Any}) -> String`
 - `max_turns`: Maximum API round-trips (default 10).
-- `retries`: Retry count passed to `chatrequest!`.
+- `config`: Per-request [`RequestConfig`](@ref) passed to [`chatrequest!`](@ref) — each turn gets its own attempt/deadline budget.
 - `callback`: Streaming callback passed to `chatrequest!`.
 - `on_tool_call`: Tool call notification callback passed to `chatrequest!`.
 
@@ -133,14 +150,14 @@ result = tool_loop!(chat, (name, args) -> string(args["a"] + args["b"]))
 ```
 """
 function tool_loop!(chat::Chat, dispatcher::Function;
-                    max_turns::Int=10, retries::Int=0,
+                    max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing,
                     callback=nothing, on_tool_call=nothing)::ToolLoopResult
     all_outcomes = ToolCallOutcome[]
     turns = 0
 
     while turns < max_turns
         turns += 1
-        raw = chatrequest!(chat; retries, callback, on_tool_call)
+        raw = chatrequest!(chat; config, callback, on_tool_call)
         result = raw isa Task ? fetch(raw) : raw
 
         if result isa LLMFailure
@@ -175,7 +192,7 @@ end
 No-dispatcher variant: builds a dispatcher from [`CallableTool`](@ref) entries.
 """
 function tool_loop!(chat::Chat; tools::Vector{<:CallableTool},
-                    max_turns::Int=10, retries::Int=0,
+                    max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing,
                     callback=nothing, on_tool_call=nothing)::ToolLoopResult
     tool_map = Dict{String,Function}(_tool_name(ct) => ct.callable for ct in tools)
     dispatcher = (name, args) -> begin
@@ -183,7 +200,7 @@ function tool_loop!(chat::Chat; tools::Vector{<:CallableTool},
         isnothing(fn) && error("Unknown tool: $name")
         fn(name, args)
     end
-    tool_loop!(chat, dispatcher; max_turns, retries, callback, on_tool_call)
+    tool_loop!(chat, dispatcher; max_turns, config, callback, on_tool_call)
 end
 
 # ─── Responses API Loop ─────────────────────────────────────────────────────
@@ -200,14 +217,16 @@ function _next_respond(r::Respond; input, previous_response_id=nothing)
 end
 
 """
-    tool_loop(r::Respond, dispatcher::Function; max_turns=10, retries=0) -> ToolLoopResult
+    tool_loop(r::Respond, dispatcher::Function; max_turns=10, config=nothing) -> ToolLoopResult
 
 Run a tool-calling loop on a [`Respond`](@ref) request. Dispatches function calls
 via `dispatcher(name, args)`, builds `function_call_output` input items, and chains
 via `previous_response_id`.
+
+Per-call `config::RequestConfig` overrides timeouts/retry budget.
 """
 function tool_loop(r::Respond, dispatcher::Function;
-                   max_turns::Int=10, retries::Int=0)::ToolLoopResult
+                   max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing)::ToolLoopResult
     all_outcomes = ToolCallOutcome[]
     turns = 0
     input = r.input
@@ -216,7 +235,7 @@ function tool_loop(r::Respond, dispatcher::Function;
     while turns < max_turns
         turns += 1
         req = _next_respond(r; input, previous_response_id=prev_id)
-        raw = respond(req; retries)
+        raw = respond(req; config)
         result = raw isa Task ? fetch(raw) : raw
 
         if result isa ResponseFailure
@@ -257,11 +276,13 @@ function tool_loop(r::Respond, dispatcher::Function;
 end
 
 """
-    tool_loop(r::Respond; max_turns=10, retries=0) -> ToolLoopResult
+    tool_loop(r::Respond; max_turns=10, config=nothing) -> ToolLoopResult
 
 No-dispatcher variant: extracts callables from [`CallableTool`](@ref) entries in `r.tools`.
+
+Per-call `config::RequestConfig` overrides timeouts/retry budget.
 """
-function tool_loop(r::Respond; max_turns::Int=10, retries::Int=0)::ToolLoopResult
+function tool_loop(r::Respond; max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing)::ToolLoopResult
     callables = Dict{String,Function}()
     if !isnothing(r.tools)
         for t in r.tools
@@ -274,18 +295,46 @@ function tool_loop(r::Respond; max_turns::Int=10, retries::Int=0)::ToolLoopResul
         isnothing(fn) && error("Unknown tool: $name")
         fn(name, args)
     end
-    tool_loop(r, dispatcher; max_turns, retries)
+    tool_loop(r, dispatcher; max_turns, config)
 end
 
 """
     tool_loop(input, dispatcher::Function; tools, kwargs...) -> ToolLoopResult
 
 Convenience form: creates a [`Respond`](@ref) and runs the tool loop.
+
+Per-call `config::RequestConfig` overrides timeouts/retry budget.
 """
 function tool_loop(input, dispatcher::Function; kwargs...)
     kws = Dict{Symbol,Any}(kwargs)
-    retries = pop!(kws, :retries, 0)
+    config = pop!(kws, :config, nothing)
     max_turns = pop!(kws, :max_turns, 10)
     r = Respond(; input, kws...)
-    tool_loop(r, dispatcher; max_turns, retries)
+    tool_loop(r, dispatcher; max_turns, config)
+end
+
+"""
+    tool_loop(input::String; tools, max_turns=10, config=nothing, kwargs...) -> ToolLoopResult
+
+No-dispatcher convenience form of the Responses-API tool loop for a plain-string prompt.
+Wraps `input` and `tools` in a [`Respond`](@ref) and delegates to
+[`tool_loop(::Respond)`](@ref), which dispatches each model-requested function call to the
+matching [`CallableTool`](@ref) callable.
+
+Keyword routing is explicit: `max_turns` and `config` drive the loop (`config::RequestConfig`
+overrides timeouts/retry budget), while every other
+keyword is forwarded verbatim to the [`Respond`](@ref) constructor — an unknown keyword
+raises there rather than being silently dropped. `tools` is required and must hold
+[`CallableTool`](@ref) entries (e.g. from [`mcp_tools_respond`](@ref)).
+
+# Example
+```julia
+session = mcp_connect("https://mcp.example.com/mcp")
+tools = mcp_tools_respond(session)
+result = tool_loop("List files in /tmp"; tools=tools)
+```
+"""
+function tool_loop(input::String; tools, max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing, kwargs...)::ToolLoopResult
+    r = Respond(; input, tools, kwargs...)
+    tool_loop(r; max_turns, config)
 end

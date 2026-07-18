@@ -59,75 +59,114 @@ end
 
 Create a fine-tuning job. `training_file` is a file id from `upload_file(path, "fine-tune")`.
 `method` is e.g. `Dict("type"=>"supervised", "supervised"=>Dict("hyperparameters"=>...))`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
 function create_fine_tuning_job(; model::String, training_file::String,
     validation_file::Union{String,Nothing}=nothing, method::Union{AbstractDict,Nothing}=nothing,
     suffix::Union{String,Nothing}=nothing, metadata::Union{AbstractDict,Nothing}=nothing,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:model => model, :training_file => training_file)
         !isnothing(validation_file) && (d[:validation_file] = validation_file)
         !isnothing(method) && (d[:method] = method)
         !isnothing(suffix) && (d[:suffix] = suffix)
         !isnothing(metadata) && (d[:metadata] = metadata)
-        _ft_job_resp(HTTP.post(_api_base_url(service) * FINE_TUNING_PATH, body=JSON.json(d), headers=auth_header(service); status_exception=false))
+        _ft_job_resp(_http("POST", _api_base_url(service) * FINE_TUNING_PATH, auth_header(service),
+            JSON.json(d); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
+        e isa InterruptException && rethrow()
         _ft_err(e)
     end
 end
 
-"""    retrieve_fine_tuning_job(id; service=OPENAIServiceEndpoint)"""
-function retrieve_fine_tuning_job(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+"""
+    retrieve_fine_tuning_job(id; service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
+function retrieve_fine_tuning_job(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        _ft_job_resp(HTTP.get(_api_base_url(service) * FINE_TUNING_PATH * "/" * id, headers=auth_header(service); status_exception=false))
+        _ft_job_resp(_http("GET", _api_base_url(service) * FINE_TUNING_PATH * "/" * id, auth_header(service);
+            cfg, remaining=_remaining_s(cfg, t0)))
     catch e
+        e isa InterruptException && rethrow()
         _ft_err(e)
     end
 end
 
-"""    cancel_fine_tuning_job(id; service=OPENAIServiceEndpoint)"""
-function cancel_fine_tuning_job(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+"""
+    cancel_fine_tuning_job(id; service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
+function cancel_fine_tuning_job(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        _ft_job_resp(HTTP.post(_api_base_url(service) * FINE_TUNING_PATH * "/" * id * "/cancel", headers=auth_header(service); status_exception=false))
+        _ft_job_resp(_http("POST", _api_base_url(service) * FINE_TUNING_PATH * "/" * id * "/cancel", auth_header(service);
+            cfg, remaining=_remaining_s(cfg, t0)))
     catch e
+        e isa InterruptException && rethrow()
         _ft_err(e)
     end
 end
 
-"""    list_fine_tuning_jobs(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)"""
-function list_fine_tuning_jobs(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+"""
+    list_fine_tuning_jobs(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
+function list_fine_tuning_jobs(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         url = _api_base_url(service) * FINE_TUNING_PATH
         params = String[]
         !isnothing(limit) && push!(params, "limit=$limit")
         !isnothing(after) && push!(params, "after=$after")
         !isempty(params) && (url *= "?" * join(params, "&"))
-        _ft_list_resp(HTTP.get(url, headers=auth_header(service); status_exception=false))
+        _ft_list_resp(_http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
+        e isa InterruptException && rethrow()
         _ft_err(e)
     end
 end
 
-"""    list_fine_tuning_events(id; service=OPENAIServiceEndpoint)"""
-function list_fine_tuning_events(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+"""
+    list_fine_tuning_events(id; service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
+function list_fine_tuning_events(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        _ft_list_resp(HTTP.get(_api_base_url(service) * FINE_TUNING_PATH * "/" * id * "/events", headers=auth_header(service); status_exception=false))
+        _ft_list_resp(_http("GET", _api_base_url(service) * FINE_TUNING_PATH * "/" * id * "/events", auth_header(service);
+            cfg, remaining=_remaining_s(cfg, t0)))
     catch e
+        e isa InterruptException && rethrow()
         _ft_err(e)
     end
 end
 
-"""    list_fine_tuning_checkpoints(id; service=OPENAIServiceEndpoint)"""
-function list_fine_tuning_checkpoints(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+"""
+    list_fine_tuning_checkpoints(id; service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+"""
+function list_fine_tuning_checkpoints(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        _ft_list_resp(HTTP.get(_api_base_url(service) * FINE_TUNING_PATH * "/" * id * "/checkpoints", headers=auth_header(service); status_exception=false))
+        _ft_list_resp(_http("GET", _api_base_url(service) * FINE_TUNING_PATH * "/" * id * "/checkpoints", auth_header(service);
+            cfg, remaining=_remaining_s(cfg, t0)))
     catch e
+        e isa InterruptException && rethrow()
         _ft_err(e)
     end
 end

@@ -164,7 +164,7 @@ Message(Val(:user), "Hello!")
 
 ```julia
 # Mutating form — sends chat.messages, appends response when history=true
-chatrequest!(chat::Chat; retries::Int=0, callback=nothing, on_tool_call=nothing) -> LLMSuccess | LLMFailure | LLMCallError | Task
+chatrequest!(chat::Chat; config=nothing, callback=nothing, on_tool_call=nothing) -> LLMSuccess | LLMFailure | LLMCallError | Task
 
 # Keyword-argument convenience form — builds a Chat internally
 chatrequest!(; service=OPENAIServiceEndpoint, model="gpt-5.5",
@@ -175,7 +175,8 @@ chatrequest!(; service=OPENAIServiceEndpoint, model="gpt-5.5",
 - Non-streaming: returns `LLMSuccess`, `LLMFailure`, or `LLMCallError`.
 - Streaming (`stream=true`): returns a `Task`. Pass a `callback(chunk::Union{String,Message}, close::Ref{Bool})` — text deltas arrive as `String`s (verbatim, in order), then the assembled `Message` at end-of-stream.
 - Streaming tool calls: pass `on_tool_call(tc::GPTToolCall)` to be notified once per completed streamed tool call, as calls finish (see the [Streaming guide](@ref streaming_guide)).
-- Auto-retries on HTTP 408/429/500/502/503/504/529 with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers on 429 responses.
+- Retries transient statuses (408/429/500/502/503/504/529) with exponential backoff and jitter under the resolved [`RequestConfig`](@ref) — `max_attempts` (default 3) and `total_deadline` bound the attempts; `Retry-After` is honored, but a retry whose backoff would exceed the remaining `total_deadline` is not attempted — the call fails immediately with the last real response rather than sleeping past the deadline. Timeouts surface as `LLMCallError` with `status=nothing` and the `UniLMTimeout` in `.cause`.
+- Streaming retry boundary: transient failures (including the in-band `overloaded_error`, the documented 529 equivalent) are retried inside the task only until the first `callback`/`on_tool_call` invocation; afterwards failures surface typed. A user `InterruptException` propagates — `fetch` throws a `TaskFailedException` instead of returning a result value.
 
 ### Conversation Management
 
@@ -482,7 +483,7 @@ Respond(input="Hard math problem", model="o3", reasoning=Reasoning(effort="high"
 
 ```julia
 # Struct form
-respond(r::Respond; retries=0, callback=nothing) -> ResponseSuccess | ResponseFailure | ResponseCallError | Task
+respond(r::Respond; config=nothing, callback=nothing) -> ResponseSuccess | ResponseFailure | ResponseCallError | Task
 
 # Convenience — builds Respond internally
 respond(input; kwargs...) -> same
@@ -492,7 +493,7 @@ respond(callback::Function, input; kwargs...) -> Task
 ```
 
 - Streaming callback signature: `callback(chunk::Union{String, ResponseObject}, close::Ref{Bool})`
-- Auto-retries on HTTP 408/429/500/502/503/504/529 with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers.
+- Retries retryable statuses (408/429/500/502/503/504/529) up to `config.max_attempts` (default 3) with full-jitter backoff bounded by `config.total_deadline`; honors `Retry-After`, but a retry whose backoff would exceed the remaining deadline is not attempted — it fails immediately with the last real response instead of sleeping past it. Every attempt is time-bounded — a silent peer fails with a typed timeout inside `ResponseCallError` (`status = nothing`, `cause::UniLMTimeout`), never a hang.
 - **Parameter validation**: `temperature` ∈ [0.0, 2.0], `top_p` ∈ [0.0, 1.0], `max_output_tokens` ≥ 1, `top_logprobs` ∈ [0, 20]. Out-of-range values throw `ArgumentError`.
 
 ### Response Accessors
@@ -629,11 +630,11 @@ end
 ### generate_image
 
 ```julia
-generate_image(ig::ImageGeneration; retries=0) -> ImageSuccess | ImageFailure | ImageCallError
+generate_image(ig::ImageGeneration; config=nothing) -> ImageSuccess | ImageFailure | ImageCallError
 generate_image(prompt::String; kwargs...)       -> same   # convenience
 ```
 
-Auto-retries on 408/429/500/502/503/504/529 with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers.
+Retries transient statuses (408/429/500/502/503/504/529) inside the request budget (`RequestConfig.max_attempts`, default 3; `Retry-After` respected) — a retry whose backoff would exceed the remaining `total_deadline` is not attempted, so the call fails immediately with the last real response rather than sleeping past it. Bound per call with `config=RequestConfig(...)`.
 
 ### Response Types
 
@@ -703,10 +704,10 @@ Model defaults: `"text-embedding-3-small"` for OpenAI, `"gemini-embedding-001"` 
 ### embeddingrequest!
 
 ```julia
-embeddingrequest!(emb::Embeddings; retries=0) -> EmbeddingSuccess | EmbeddingFailure | EmbeddingCallError
+embeddingrequest!(emb::Embeddings; config=nothing) -> EmbeddingSuccess | EmbeddingFailure | EmbeddingCallError
 ```
 
-Returns an `EmbeddingSuccess`/`EmbeddingFailure`/`EmbeddingCallError` (a `<: LLMRequestResponse`). Fills `emb.embeddings` in-place; `embedding_vectors(result)` returns the vectors. Auto-retries on transient statuses (408/429/500/502/503/504/529) with exponential backoff and jitter (up to 30 attempts). Respects `Retry-After` headers.
+Returns an `EmbeddingSuccess`/`EmbeddingFailure`/`EmbeddingCallError` (a `<: LLMRequestResponse`). Fills `emb.embeddings` in-place; `embedding_vectors(result)` returns the vectors. Retries transient statuses (408/429/500/502/503/504/529) with backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`, `total_deadline`; `Retry-After` honored), but a retry whose backoff would exceed the remaining deadline is not attempted — it fails immediately with the last real response rather than sleeping past it. Timeouts surface as `EmbeddingCallError` with `status=nothing` and the `UniLMTimeout` in `.cause`.
 
 ### Embeddings Example
 
@@ -838,15 +839,15 @@ end
 ### tool_loop! (Chat Completions)
 
 ```julia
-tool_loop!(chat, dispatcher; max_turns=10, retries=0) -> ToolLoopResult
+tool_loop!(chat, dispatcher; max_turns=10, config=nothing) -> ToolLoopResult
 tool_loop!(chat; tools::Vector{<:CallableTool}, kwargs...) -> ToolLoopResult
 ```
 
 ### tool_loop (Responses API)
 
 ```julia
-tool_loop(r::Respond, dispatcher; max_turns=10, retries=0) -> ToolLoopResult
-tool_loop(r::Respond; max_turns=10, retries=0) -> ToolLoopResult   # extracts callables from r.tools
+tool_loop(r::Respond, dispatcher; max_turns=10, config=nothing) -> ToolLoopResult
+tool_loop(r::Respond; max_turns=10, config=nothing) -> ToolLoopResult   # extracts callables from r.tools
 tool_loop(input, dispatcher; tools, kwargs...) -> ToolLoopResult    # convenience form
 ```
 
@@ -861,6 +862,7 @@ Native MCP client (JSON-RPC 2.0 over stdio or HTTP, spec 2025-11-25).
 ```julia
 MCPSession            # live connection — manages transport + cached tools/resources/prompts
 MCPToolInfo           # tool definition from tools/list
+MCPToolResult         # typed tools/call result: content, structured, is_error, parts
 MCPResourceInfo       # resource definition from resources/list
 MCPPromptInfo         # prompt definition from prompts/list
 MCPServerCapabilities # capabilities from initialize
@@ -871,8 +873,8 @@ MCPError <: Exception # JSON-RPC error (code, message, data)
 ### Lifecycle
 
 ```julia
-mcp_connect(command::Cmd; ...) -> MCPSession     # stdio subprocess
-mcp_connect(url::String; headers=[], ...) -> MCPSession  # HTTP
+mcp_connect(command::Cmd; config=nothing, auto_respawn=false, ...) -> MCPSession        # stdio subprocess
+mcp_connect(url::String; headers=[], config=nothing, auto_respawn=false, ...) -> MCPSession  # HTTP
 mcp_connect(f::Function, args...; ...)            # do-block, auto-disconnect
 mcp_disconnect!(session)
 ```
@@ -880,7 +882,7 @@ mcp_disconnect!(session)
 ### Discovery
 
 ```julia
-list_tools!(session) -> Vector{MCPToolInfo}
+list_tools!(session; timeout=nothing) -> Vector{MCPToolInfo}
 list_resources!(session) -> Vector{MCPResourceInfo}
 list_prompts!(session) -> Vector{MCPPromptInfo}
 ```
@@ -890,11 +892,33 @@ When the server sends `notifications/tools/list_changed`, `session.tools_stale` 
 ### Operations
 
 ```julia
-call_tool(session, name, arguments) -> String
+call_tool(session, name, arguments; timeout=nothing) -> MCPToolResult
 read_resource(session, uri) -> String
 get_prompt(session, name, arguments) -> Vector{Dict}
 ping(session)
 ```
+
+Timeouts surface as the exported `MCPTimeoutError` (`phase` `:connect`/`:request`);
+a stdio request timeout closes the session (opt-in `auto_respawn` respawns on the
+next call), an HTTP request timeout does not.
+
+### Tool Result
+
+`call_tool` returns a typed result — a tool-execution error (`isError: true`) is
+carried on `is_error`, **not** thrown; only JSON-RPC protocol errors throw (`MCPError`).
+
+```julia
+struct MCPToolResult
+    content::String                              # text parts joined by "\n"; non-text parts JSON-encoded
+    structured::Union{Nothing,Dict{String,Any}}  # server's structuredContent verbatim, or nothing
+    is_error::Bool                               # true when the tool reported an execution error (isError)
+    parts::Vector{Any}                           # raw content array verbatim
+end
+```
+
+The `mcp_tools` / `mcp_tools_respond` bridges surface `content` to the model on
+success (falling back to `JSON.json(structured)` when `content` is empty), and
+raise `content` as an error when `is_error` is set.
 
 ### Tool Bridge
 
@@ -997,9 +1021,9 @@ struct FIMChoice; text, index, finish_reason; end
 struct FIMResponse; choices, usage, model, raw; end
 struct FIMSuccess <: LLMRequestResponse; response::FIMResponse; end
 struct FIMFailure <: LLMRequestResponse; response, status; end
-struct FIMCallError <: LLMRequestResponse; error, status; end
+struct FIMCallError <: LLMRequestResponse; error, status, cause; end
 
-fim_complete(fim::FIMCompletion; retries=0) -> LLMRequestResponse
+fim_complete(fim::FIMCompletion; config=nothing) -> LLMRequestResponse
 fim_complete(prompt; suffix=nothing, kwargs...) -> LLMRequestResponse  # convenience
 fim_text(result) -> String  # extract generated text
 ```
@@ -1021,7 +1045,7 @@ Continue from a partial assistant message. The model generates text continuing
 from the assistant's prefix. DeepSeek beta feature.
 
 ```julia
-prefix_complete(chat::Chat; retries=0) -> LLMRequestResponse
+prefix_complete(chat::Chat; config=nothing) -> LLMRequestResponse
 # Last message must be role=assistant with the prefix text
 ```
 
@@ -1062,6 +1086,42 @@ Request functions call `validate_capability` internally and throw `ArgumentError
 
 ---
 
+## Request Configuration & Timeouts
+
+Every network operation is bounded. One struct carries all knobs — all time
+fields are seconds, `Inf` disables that bound:
+
+```julia
+Base.@kwdef struct RequestConfig
+    connect_timeout::Float64     = 10.0
+    request_timeout::Float64     = 600.0
+    stream_idle_timeout::Float64 = 120.0
+    total_deadline::Float64      = 900.0
+    max_attempts::Int            = 3
+    mcp_connect_timeout::Float64 = 120.0
+    mcp_request_timeout::Float64 = 120.0
+end
+```
+
+- `connect_timeout` — per-attempt connection establishment. `request_timeout` — per-attempt whole exchange (non-stream). `stream_idle_timeout` — byte-gap between raw stream chunks. `total_deadline` — across ALL attempts including backoff (streams: until first byte). `max_attempts` — wire attempts (`1` disables retries). `mcp_connect_timeout` / `mcp_request_timeout` — MCP handshake / per-exchange bounds.
+- **Validation**: every `Float64` field rejects `NaN` and values `≤ 0` with `ArgumentError` (`Inf` = disabled); `max_attempts ≥ 1`.
+- **Copy-with-overrides**: `RequestConfig(base::RequestConfig; kwargs...)`.
+- **Four channels, struct-wise precedence** (a channel supplies a complete struct):
+  1. per-call `config::Union{Nothing,RequestConfig}` keyword on request verbs;
+  2. dynamic scope: `with_request_config(f; kwargs...)` — merges kwargs over `current_config()` at entry; propagates into `Threads.@spawn`;
+  3. process default: `set_default_config!(cfg)` or `set_default_config!(; kwargs...)` (merges over the current default) — the channel for REPL/notebook sessions;
+  4. the built-in defaults above.
+  `current_config()` returns the ambient struct (active scope, else process default).
+
+```julia
+with_request_config(request_timeout=30.0, max_attempts=1) do
+    chatrequest!(chat)          # bounded, no retries, inside this scope only
+end
+set_default_config!(total_deadline=120.0)   # process-wide default
+```
+
+---
+
 ## Result Type Hierarchy
 
 All API call results inherit from `LLMRequestResponse`:
@@ -1070,16 +1130,16 @@ All API call results inherit from `LLMRequestResponse`:
 LLMRequestResponse (abstract)
 ├── LLMSuccess          — Chat Completions success (.message::Message, .self::Chat)
 ├── LLMFailure          — Chat Completions HTTP error (.response::String, .status::Int, .self::Chat)
-├── LLMCallError        — Chat Completions exception (.error::String, .status, .self::Chat)
+├── LLMCallError        — Chat Completions exception (.error::String, .status, .self::Chat, .cause::Union{Nothing,Exception})
 ├── ResponseSuccess     — Responses API success (.response::ResponseObject)
 ├── ResponseFailure     — Responses API HTTP error (.response::String, .status::Int)
-├── ResponseCallError   — Responses API exception (.error::String, .status)
+├── ResponseCallError   — Responses API exception (.error::String, .status, .cause::Union{Nothing,Exception})
 ├── ImageSuccess        — Image Gen success (.response::ImageResponse)
 ├── ImageFailure        — Image Gen HTTP error (.response::String, .status::Int)
 ├── ImageCallError      — Image Gen exception (.error::String, .status)
 ├── FIMSuccess          — FIM success (.response::FIMResponse)
 ├── FIMFailure          — FIM HTTP error (.response::String, .status::Int)
-└── FIMCallError        — FIM exception (.error::String, .status)
+└── FIMCallError        — FIM exception (.error::String, .status, .cause::Union{Nothing,Exception})
 ```
 
 **Standard pattern-matching idiom**:
@@ -1139,6 +1199,25 @@ end
 
 Thrown by `issendvalid` / internal validation when conversation structure is invalid (e.g., missing system message position, consecutive same-role messages).
 
+```julia
+struct UniLMTimeout <: Exception
+    phase::Symbol        # :connect | :request | :stream_idle | :deadline
+    elapsed::Float64     # seconds, monotonic
+    limit::Float64
+end
+
+struct MCPTimeoutError <: Exception
+    phase::Symbol        # :connect | :request
+    elapsed::Float64
+    limit::Float64
+    msg::String          # names the applicable timeout override
+end
+```
+
+Raised when a `RequestConfig` bound is exceeded. Value-returning surfaces
+(chat, embeddings, responses) deliver `UniLMTimeout` inside their error
+results; the MCP surface throws `MCPTimeoutError`.
+
 ---
 
 ## Complete Exports List
@@ -1169,7 +1248,7 @@ Every exported symbol (`names(UniLM)`), grouped by area:
 
 **Forking**: `fork`
 
-**MCP Client**: `MCPSession`, `MCPToolInfo`, `MCPResourceInfo`, `MCPPromptInfo`, `MCPServerCapabilities`, `MCPTransport`, `StdioTransport`, `HTTPTransport`, `MCPError`, `mcp_connect`, `mcp_disconnect!`, `mcp_tools`, `mcp_tools_respond`, `list_tools!`, `list_resources!`, `list_prompts!`, `call_tool`, `read_resource`, `get_prompt`, `ping`
+**MCP Client**: `MCPSession`, `MCPToolInfo`, `MCPToolResult`, `MCPResourceInfo`, `MCPPromptInfo`, `MCPServerCapabilities`, `MCPTransport`, `StdioTransport`, `HTTPTransport`, `MCPError`, `mcp_connect`, `mcp_disconnect!`, `mcp_tools`, `mcp_tools_respond`, `list_tools!`, `list_resources!`, `list_prompts!`, `call_tool`, `read_resource`, `get_prompt`, `ping`
 
 **MCP Server**: `MCPServer`, `MCPServerTool`, `MCPServerResource`, `MCPServerResourceTemplate`, `MCPServerPrompt`, `MCPServerPrimitive`, `register_tool!`, `register_resource!`, `register_resource_template!`, `register_prompt!`, `serve`, `@mcp_tool`, `@mcp_resource`, `@mcp_prompt`
 
@@ -1200,3 +1279,5 @@ Every exported symbol (`names(UniLM)`), grouped by area:
 **Realtime**: `RealtimeSession`, `RealtimeSecretSuccess`, `RealtimeFailure`, `RealtimeCallError`, `mint_realtime_secret`, `realtime_connect`, `realtime_send`, `realtime_receive`, `realtime_event`, `session_update`, `input_audio_append`, `response_create`
 
 **Result Types (base)**: `LLMRequestResponse`, `LLMSuccess`, `LLMFailure`, `LLMCallError`
+
+**Request Config & Timeouts**: `RequestConfig`, `current_config`, `with_request_config`, `set_default_config!`, `UniLMTimeout`, `MCPTimeoutError`

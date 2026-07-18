@@ -102,6 +102,40 @@ messages = get_prompt(session, "review", Dict{String,Any}("code" => "x + 1"))
 ping(session)
 ```
 
+### Timeouts
+
+Every `mcp_connect` handshake and every `call_tool` / `list_tools!` exchange runs
+under a bound — set per session at connect time, or overridden for one call:
+
+```julia
+session = mcp_connect(`npx server`;
+    config=RequestConfig(current_config(); mcp_connect_timeout=10.0, mcp_request_timeout=30.0),
+    auto_respawn=true)
+
+call_tool(session, "read_file", Dict{String,Any}("path" => "/tmp/data.txt"); timeout=5.0)
+```
+
+A stdio request timeout closes the session — stdio framing carries no request-id
+demux, so a late reply could misdeliver to the next caller. With `auto_respawn=true`
+the next call transparently respawns the server (same command, fresh handshake;
+in-memory server state is lost and tools are refetched); without it, the next call
+raises an error naming the opt-in. An HTTP request timeout does not close the
+session — each exchange is an independent POST. Both surface as the typed
+[`MCPTimeoutError`](@ref).
+
+Two boundaries of that contract, observed against real servers:
+
+- `auto_respawn` covers **hangs, not crashes**. It triggers only when the request
+  watchdog closed the session. A server that dies abruptly (killed, crashed)
+  surfaces a transport error (for example a broken-pipe `IOError`) on the call in
+  flight and the session is **not** respawned — reconnect with
+  [`mcp_connect`](@ref) explicitly.
+- When a wedged server also ignores polite shutdown (frozen rather than merely
+  slow), the timed-out call returns only after the escalation ladder completes:
+  the configured timeout plus up to ~7 seconds of stdin-EOF and SIGTERM grace
+  before the final process-group SIGKILL unblocks the read. The error is still
+  the typed `MCPTimeoutError`; its `elapsed` reflects that full wall time.
+
 ### Bridging to tool_loop! (Chat Completions)
 
 [`mcp_tools`](@ref) converts MCP tools into `Vector{CallableTool{GPTTool}}` for use with
@@ -111,7 +145,7 @@ ping(session)
 session = mcp_connect(`npx server`)
 tools = mcp_tools(session)
 
-chat = Chat(model="gpt-5.2", tools=map(t -> t.tool, tools))
+chat = Chat(model="gpt-5.2", tools=tools)
 push!(chat, Message(Val(:system), "You are a helpful assistant."))
 push!(chat, Message(Val(:user), "List files in /tmp"))
 result = tool_loop!(chat; tools)

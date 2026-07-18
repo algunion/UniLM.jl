@@ -1,5 +1,126 @@
 # Changelog
 
+## 0.13.0
+
+### Added
+- `RequestConfig` and four resolution channels bound and tune every request.
+  Fields (all `Float64` seconds unless noted; `Inf` disables a bound; the
+  constructor rejects `NaN` and non-positive values): `connect_timeout` (10.0),
+  `request_timeout` (600.0, whole non-streaming exchange), `stream_idle_timeout`
+  (120.0, byte-gap between raw stream chunks), `total_deadline` (900.0, across
+  all retry attempts; for streams, until the first byte), `max_attempts` (`Int`,
+  3), `mcp_connect_timeout` (120.0), `mcp_request_timeout` (120.0). Resolve a
+  config, in precedence order, via the per-call `config=` keyword on every
+  request verb, a `with_request_config(f; kwargs...)` dynamic scope (propagates
+  into `Threads.@spawn`), a process default set by `set_default_config!(cfg)` /
+  `set_default_config!(; kwargs...)`, or the built-in defaults. `current_config()`
+  returns the config in force. `RequestConfig(base; kwargs...)` copies with
+  overrides.
+- Typed timeout errors: `UniLMTimeout` (`phase` ∈ `:connect`/`:request`/
+  `:stream_idle`/`:deadline`, with `elapsed`/`limit` seconds) and
+  `MCPTimeoutError` (`phase` ∈ `:connect`/`:request`, whose message names the
+  applicable per-connect/per-call override). Value-returning surfaces carry the
+  timeout on a new `cause::Union{Nothing,Exception}` field of their call-error
+  result (`LLMCallError`, `EmbeddingCallError`, `ResponseCallError`, …) with
+  `status = nothing`; no fabricated HTTP status is invented for a timeout.
+- `mcp_connect(...; auto_respawn=false)` and a call-time `timeout` keyword on
+  `call_tool` / `list_tools!`. The request-phase timeout resolves at call time
+  (explicit `timeout` > ambient `with_request_config` scope > the config captured
+  at `mcp_connect`), so tools bridged into a tool loop — which pass no keywords —
+  still honor an ambient scope.
+- `tool_loop(input::String; tools, …)`: a no-dispatcher convenience method that
+  wraps the prompt and `tools` in a `Respond` and runs the Responses-API tool
+  loop, so `tool_loop("…"; tools=mcp_tools_respond(session))` works as a
+  documented one-liner. `max_turns` drives the loop and `config` bounds each
+  underlying request; every other keyword is forwarded to the `Respond`
+  constructor (an unknown one raises).
+
+### Changed
+- **Breaking:** the `retries` keyword is removed from every request verb
+  (`chatrequest!`, `embeddingrequest!`, `respond`, `fim_complete`,
+  `prefix_complete`, `generate_image`, `edit_image`, `upload_file`, and the
+  `tool_loop!` / `tool_loop` verbs). Retry behavior is now governed by
+  `RequestConfig.max_attempts` (default `3`). Migrate by intent: code that passed
+  `retries=30` — the real disable switch, since `retries=N` meant "N attempts
+  already spent" and `30` hit the ceiling — now passes
+  `config=RequestConfig(max_attempts=1)`; code that passed `retries=0` or nothing
+  (the old default seed, which allowed up to thirty attempts) needs no change and
+  takes the new default (`max_attempts=3`). There is no compatibility alias: the
+  old `retries` counted toward a 30-attempt ceiling (`retries=30` disabled
+  retries, `retries=0` allowed thirty) — the inverse of an attempt count — so any
+  silent shim would invert real call sites. A removed keyword raises `MethodError`.
+- **Breaking:** requests now carry bounded default timeouts, so an operation that
+  previously blocked forever on a silent or stalled peer instead fails with a
+  typed error once its bound elapses. Defaults (all overridable per call, per
+  scope, or process-wide via `RequestConfig`; set any field to `Inf` to disable
+  it): connect `10s`, whole non-streaming request `600s`, stream byte-gap idle
+  `120s`, total across retries `900s`, `max_attempts` `3`, MCP connect `120s`,
+  MCP request `120s`. Non-streaming timeouts land inside the existing error
+  result (`status = nothing`, timeout on `cause`); streaming timeouts surface when
+  the returned `Task` is `fetch`ed.
+- **Breaking:** an MCP **stdio** request that exceeds `mcp_request_timeout` now
+  closes the session (`status = :closed`) and throws `MCPTimeoutError`. Stdio
+  framing has no response-id demultiplexing, so a late reply could be misdelivered
+  to the next caller as a fabricated result — tearing the session down is the only
+  safe response. A subsequent call raises unless the session was opened with
+  `mcp_connect(...; auto_respawn=true)`, which respawns the server (fresh
+  handshake, logged with `@warn`) and retries the call once; in-memory server
+  state is lost on respawn, so respawn is opt-in. MCP **HTTP** request timeouts
+  are not session-fatal (request/response correlation is per-POST).
+- **Breaking:** `call_tool(session, name, args)` now returns an `MCPToolResult`
+  instead of a bare `String`, and no longer throws when the tool reports an
+  execution error (`isError: true`). The struct carries `content::String` (the
+  rendered text, unchanged from before), `structured::Union{Nothing,Dict{String,Any}}`
+  (the server's `structuredContent` verbatim), `is_error::Bool`, and
+  `parts::Vector{Any}` (the raw content array) — so a tool-execution error is now
+  distinguishable from a JSON-RPC protocol error (still thrown as `MCPError`). The
+  `mcp_tools` / `mcp_tools_respond` tool-loop bridges are unchanged for callers:
+  they still hand the model a string (the faithful `content`), now surfacing
+  `structuredContent` when the content is otherwise empty and raising the tool's
+  own error content on `isError`.
+- `Chat(; tools=…)` now accepts a `Vector{<:CallableTool}` and stores the
+  unwrapped inner `GPTTool`s, so MCP tools bridge in directly —
+  `Chat(tools=mcp_tools(session))`, with no manual `map(t -> t.tool, tools)`.
+  The `tools` field type is unchanged (`Union{Vector{GPTTool},Nothing}`);
+  conversion happens only at construction.
+
+### Fixed
+- A user interrupt (`InterruptException`, e.g. Ctrl-C) raised during a chat
+  request or inside a streaming task now propagates instead of being laundered
+  into a call-error result and retried. Every request catch layer rethrows an
+  interrupt first; a streamed interrupt surfaces as a `TaskFailedException` when
+  the returned `Task` is `fetch`ed. (Same class as the tool-loop interrupt fix
+  below.)
+- Azure OpenAI deployment names configured through `AZURE_OPENAI_DEPLOY_NAME_*`
+  environment variables are now read when the request URL is built, instead of
+  being captured once when the package loads. A deployment name exported after
+  `using UniLM` is honored; `add_azure_deploy_name!` registrations still take
+  precedence.
+- The tool-calling loop no longer swallows a user interrupt: an
+  `InterruptException` (e.g. Ctrl-C) raised inside a tool function now
+  propagates and aborts the loop instead of being recorded as a tool-call
+  failure and retried. All other exceptions still become tool-error outcomes.
+- Tool-error messages now reach the model faithfully instead of wrapped in
+  exception-constructor noise. A tool that raises `error("kaboom")` is reported
+  to the model as `Error: kaboom` (previously `Error: ErrorException("kaboom")`);
+  other exceptions render through `showerror` (e.g. `KeyError: key "x" not found`)
+  rather than their `string(e)` constructor form. The single loop-level `Error: `
+  prefix is unchanged, so a tool whose own message already begins with `Error:` is
+  still not rewritten.
+- MCP client now validates and honors the negotiated protocol version and
+  recovers expired HTTP sessions (Streamable HTTP, MCP spec 2025-11-25). After
+  `initialize`, a server `protocolVersion` outside the client's supported set
+  (`2025-11-25`, `2025-06-18`, `2025-03-26`) closes the transport and raises an
+  error naming both the requested and the returned version, instead of being
+  accepted unchecked; a supported older version is stored and used. Every HTTP
+  request after `initialize` now sends the negotiated `Mcp-Protocol-Version`
+  header (previously a fixed constant), while the `initialize` request itself
+  advertises the client's latest supported revision. A `404` on a request that
+  carries a live session id triggers a single re-initialize (fresh session id)
+  followed by one replay of the request before giving up, rather than failing
+  outright. `401`/`403` responses raise an error that names the status and
+  directs credentials to the `headers` kwarg of `mcp_connect`.
+
 ## 0.12.0
 
 ### Added

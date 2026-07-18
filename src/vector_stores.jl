@@ -86,11 +86,12 @@ _parse_vector_store(d::AbstractDict) = VectorStoreObject(id=d["id"], name=get(d,
 _parse_vs_batch(d::AbstractDict) = VectorStoreFileBatch(id=d["id"], status=get(d, "status", nothing),
     file_counts=Dict{String,Any}(get(d, "file_counts", Dict{String,Any}())), raw=Dict{String,Any}(d))
 
-# Shared HTTP wrapper: returns the raw HTTP.Response (or rethrows for the caller's catch).
-function _vs_http(method::String, url::String, service; body::Union{String,Nothing}=nothing)
+# Shared HTTP wrapper: routes through the request seam (returns the raw HTTP.Response, or
+# rethrows for the caller's catch). status_exception=false is imposed by _http.
+function _vs_http(method::String, url::String, service, cfg::RequestConfig, remaining::Float64; body::Union{String,Nothing}=nothing)
     headers = auth_header(service)
-    isnothing(body) ? HTTP.request(method, url, headers; status_exception=false) :
-        HTTP.request(method, url, headers, body; status_exception=false)
+    isnothing(body) ? _http(method, url, headers; cfg, remaining) :
+        _http(method, url, headers, body; cfg, remaining)
 end
 
 # ─── Requests ─────────────────────────────────────────────────────────────────
@@ -100,11 +101,15 @@ end
                         chunking_strategy=nothing, metadata=nothing, service=OPENAIServiceEndpoint)
 
 Create a vector store. Returns `VectorStoreSuccess`, `VectorStoreFailure`, or `VectorStoreCallError`.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
 function create_vector_store(; name::Union{String,Nothing}=nothing, file_ids::Union{Vector{String},Nothing}=nothing,
     expires_after::Union{AbstractDict,Nothing}=nothing, chunking_strategy::Union{AbstractDict,Nothing}=nothing,
-    metadata::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    metadata::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+    config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :vector_stores, "Vector Stores API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}()
         !isnothing(name) && (d[:name] = name)
@@ -112,41 +117,49 @@ function create_vector_store(; name::Union{String,Nothing}=nothing, file_ids::Un
         !isnothing(expires_after) && (d[:expires_after] = expires_after)
         !isnothing(chunking_strategy) && (d[:chunking_strategy] = chunking_strategy)
         !isnothing(metadata) && (d[:metadata] = metadata)
-        resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH, service; body=JSON.json(d))
+        resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH, service, cfg, _remaining_s(cfg, t0); body=JSON.json(d))
         resp.status == 200 ? VectorStoreSuccess(response=_parse_vector_store(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             VectorStoreFailure(response=String(resp.body), status=resp.status)
     catch e
+        e isa InterruptException && rethrow()
         VectorStoreCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end
 
 """
     retrieve_vector_store(id; service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function retrieve_vector_store(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function retrieve_vector_store(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :vector_stores, "Vector Stores API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _vs_http("GET", _api_base_url(service) * VECTOR_STORES_PATH * "/" * id, service)
+        resp = _vs_http("GET", _api_base_url(service) * VECTOR_STORES_PATH * "/" * id, service, cfg, _remaining_s(cfg, t0))
         resp.status == 200 ? VectorStoreSuccess(response=_parse_vector_store(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             VectorStoreFailure(response=String(resp.body), status=resp.status)
     catch e
+        e isa InterruptException && rethrow()
         VectorStoreCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end
 
 """
     list_vector_stores(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
 function list_vector_stores(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :vector_stores, "Vector Stores API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         url = _api_base_url(service) * VECTOR_STORES_PATH
         params = String[]
         !isnothing(limit) && push!(params, "limit=$limit")
         !isnothing(after) && push!(params, "after=$after")
         !isempty(params) && (url *= "?" * join(params, "&"))
-        resp = _vs_http("GET", url, service)
+        resp = _vs_http("GET", url, service, cfg, _remaining_s(cfg, t0))
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
             stores = VectorStoreObject[_parse_vector_store(s) for s in get(data, "data", [])]
@@ -155,17 +168,21 @@ function list_vector_stores(; limit::Union{Int,Nothing}=nothing, after::Union{St
             VectorStoreFailure(response=String(resp.body), status=resp.status)
         end
     catch e
+        e isa InterruptException && rethrow()
         VectorStoreCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end
 
 """
     delete_vector_store(id; service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function delete_vector_store(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function delete_vector_store(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :vector_stores, "Vector Stores API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _vs_http("DELETE", _api_base_url(service) * VECTOR_STORES_PATH * "/" * id, service)
+        resp = _vs_http("DELETE", _api_base_url(service) * VECTOR_STORES_PATH * "/" * id, service, cfg, _remaining_s(cfg, t0))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
             VectorStoreDeleteSuccess(id=get(d, "id", id), deleted=get(d, "deleted", false))
@@ -173,20 +190,24 @@ function delete_vector_store(id::String; service::ServiceEndpointSpec=OPENAIServ
             VectorStoreFailure(response=String(resp.body), status=resp.status)
         end
     catch e
+        e isa InterruptException && rethrow()
         VectorStoreCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end
 
 """
     add_vector_store_file(vector_store_id, file_id; chunking_strategy=nothing, service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
 function add_vector_store_file(vs_id::String, file_id::String; chunking_strategy::Union{AbstractDict,Nothing}=nothing,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :vector_stores, "Vector Stores API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:file_id => file_id)
         !isnothing(chunking_strategy) && (d[:chunking_strategy] = chunking_strategy)
-        resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH * "/" * vs_id * "/files", service; body=JSON.json(d))
+        resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH * "/" * vs_id * "/files", service, cfg, _remaining_s(cfg, t0); body=JSON.json(d))
         if resp.status == 200
             f = JSON.parse(resp.body; dicttype=Dict{String,Any})
             VectorStoreFileSuccess(response=VectorStoreFileObject(id=f["id"], status=get(f, "status", nothing), raw=Dict{String,Any}(f)))
@@ -194,37 +215,46 @@ function add_vector_store_file(vs_id::String, file_id::String; chunking_strategy
             VectorStoreFailure(response=String(resp.body), status=resp.status)
         end
     catch e
+        e isa InterruptException && rethrow()
         VectorStoreCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end
 
 """
     create_file_batch(vector_store_id, file_ids; chunking_strategy=nothing, service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
 function create_file_batch(vs_id::String, file_ids::Vector{String}; chunking_strategy::Union{AbstractDict,Nothing}=nothing,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :vector_stores, "Vector Stores API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:file_ids => file_ids)
         !isnothing(chunking_strategy) && (d[:chunking_strategy] = chunking_strategy)
-        resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH * "/" * vs_id * "/file_batches", service; body=JSON.json(d))
+        resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH * "/" * vs_id * "/file_batches", service, cfg, _remaining_s(cfg, t0); body=JSON.json(d))
         resp.status == 200 ? VectorStoreBatchSuccess(response=_parse_vs_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             VectorStoreFailure(response=String(resp.body), status=resp.status)
     catch e
+        e isa InterruptException && rethrow()
         VectorStoreCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end
 
 """
     retrieve_file_batch(vector_store_id, batch_id; service=OPENAIServiceEndpoint)
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
-function retrieve_file_batch(vs_id::String, batch_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+function retrieve_file_batch(vs_id::String, batch_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :vector_stores, "Vector Stores API")
+    cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _vs_http("GET", _api_base_url(service) * VECTOR_STORES_PATH * "/" * vs_id * "/file_batches/" * batch_id, service)
+        resp = _vs_http("GET", _api_base_url(service) * VECTOR_STORES_PATH * "/" * vs_id * "/file_batches/" * batch_id, service, cfg, _remaining_s(cfg, t0))
         resp.status == 200 ? VectorStoreBatchSuccess(response=_parse_vs_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             VectorStoreFailure(response=String(resp.body), status=resp.status)
     catch e
+        e isa InterruptException && rethrow()
         VectorStoreCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end
@@ -234,12 +264,14 @@ end
 
 Poll a file batch until it reaches a terminal status (`completed`/`failed`/`cancelled`) or the
 timeout elapses. Returns the terminal `VectorStoreBatchSuccess`, or a `VectorStoreCallError` on timeout.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
 function poll_file_batch(vs_id::String, batch_id::String; interval::Real=2.0, timeout::Real=300.0,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     max_iters = max(1, ceil(Int, timeout / interval))
     for _ in 1:max_iters
-        r = retrieve_file_batch(vs_id, batch_id; service=service)
+        r = retrieve_file_batch(vs_id, batch_id; service=service, config=config)
         r isa VectorStoreBatchSuccess || return r
         r.response.status in ("completed", "failed", "cancelled") && return r
         sleep(interval)

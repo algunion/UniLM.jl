@@ -513,9 +513,10 @@ mutable struct MCPSession
     # Timeout configuration resolved and captured at mcp_connect. Connect/initialize
     # bounds come from here; the per-request bound resolves at call time (see call_tool).
     config::RequestConfig
-    # When true, the next call on a session closed by a stdio request timeout respawns
-    # the server (same command, fresh handshake) instead of erroring. Default OFF: a
-    # silent respawn fabricates session continuity and in-memory server state is lost.
+    # When true, the next call on a session closed by a stdio request timeout or a
+    # server crash respawns the server (same command, fresh handshake) instead of
+    # erroring. Default OFF: a silent respawn fabricates session continuity and
+    # in-memory server state is lost.
     auto_respawn::Bool
     # Why the session reached :closed — :none (live, or a normal disconnect),
     # :timeout (request/connect watchdog), :crash (server process died or stdio
@@ -783,9 +784,10 @@ Connect to an MCP server via stdio transport (subprocess).
 `config::Union{Nothing,RequestConfig}` is resolved (`config` if given, else the
 ambient/process default) and captured on the session: `config.mcp_connect_timeout`
 bounds the spawn→initialize handshake, `config.mcp_request_timeout` is the default
-per-exchange bound. A stdio request timeout is session-fatal (no id demux); with
-`auto_respawn=true` the next call respawns the server (same command, fresh
-handshake — in-memory server state is lost), otherwise it errors.
+per-exchange bound. A stdio request timeout is session-fatal (no id demux), as
+is a server crash; with `auto_respawn=true` the next call respawns the server
+(same command, fresh handshake — in-memory server state is lost), otherwise it
+errors.
 
 # Example
 ```julia
@@ -1004,8 +1006,9 @@ Connect to an MCP server via the given transport. Performs initialization handsh
 and populates tool cache. `config` (a [`RequestConfig`](@ref), default: the ambient
 configuration) is resolved and captured on the session — its `mcp_connect_timeout`
 bounds this handshake and `mcp_request_timeout` bounds each later exchange.
-`auto_respawn=true` lets a stdio session closed by a request timeout respawn its
-server (same command, captured config) and retry the next call once.
+`auto_respawn=true` lets a stdio session closed by a request timeout or a server
+crash respawn its server (same command, captured config) and retry the next call
+once.
 """
 function mcp_connect(transport::MCPTransport;
                      client_name::String="UniLM.jl",

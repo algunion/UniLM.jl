@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.14.0
+
+### Breaking
+- Abrupt stdio MCP server death (killed, crashed, or broken pipe) now surfaces the
+  new typed `MCPCrashError` and closes the session, instead of leaking a raw
+  `Base.IOError`/`ErrorException` while the session stayed `:ready`. Code that
+  caught raw transport errors around MCP calls should catch `MCPCrashError`.
+
+### Added
+- `MCPCrashError` (exported): message with recovery guidance plus best-effort
+  `exitcode`/`termsignal` diagnostics.
+- `auto_respawn=true` now also respawns after a server crash (previously hangs
+  only); the crashing call always throws, the next call heals the session.
+
 ## 0.13.0
 
 ### Added

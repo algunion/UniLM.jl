@@ -181,6 +181,10 @@ end
         include("integration_tool_loop.jl")
     end
 
+    @testset "integration — live MCP" begin
+        include("integration_mcp_live.jl")
+    end
+
     # ── Slow tests run last ──────────────────────────────────────────────
 
     @testset "Aqua.jl quality checks" begin

@@ -868,6 +868,7 @@ MCPPromptInfo         # prompt definition from prompts/list
 MCPServerCapabilities # capabilities from initialize
 MCPTransport          # abstract (subtypes: StdioTransport, HTTPTransport)
 MCPError <: Exception # JSON-RPC error (code, message, data)
+MCPCrashError <: Exception # stdio server process exited / pipe broke (exitcode, termsignal, cause)
 ```
 
 ### Lifecycle
@@ -900,7 +901,9 @@ ping(session)
 
 Timeouts surface as the exported `MCPTimeoutError` (`phase` `:connect`/`:request`);
 a stdio request timeout closes the session (opt-in `auto_respawn` respawns on the
-next call), an HTTP request timeout does not.
+next call), an HTTP request timeout does not. A stdio server that exits or whose
+pipe breaks surfaces the exported `MCPCrashError` (the session closes with cause
+`:crash`; `auto_respawn` respawns the server on the next call).
 
 ### Tool Result
 
@@ -1212,11 +1215,20 @@ struct MCPTimeoutError <: Exception
     limit::Float64
     msg::String          # names the applicable timeout override
 end
+
+struct MCPCrashError <: Exception
+    msg::String                          # recovery guidance (embeds exit info)
+    exitcode::Union{Int,Nothing}         # exit code if the server exited and was reaped in time
+    termsignal::Union{Int,Nothing}       # signal number if the server was signal-killed
+    cause::Union{Exception,Nothing}      # underlying transport exception; nothing on clean read-EOF
+end
 ```
 
 Raised when a `RequestConfig` bound is exceeded. Value-returning surfaces
 (chat, embeddings, responses) deliver `UniLMTimeout` inside their error
-results; the MCP surface throws `MCPTimeoutError`.
+results; the MCP surface throws `MCPTimeoutError`. A stdio MCP server that exits
+or whose pipe breaks throws `MCPCrashError` instead (the session closes with
+cause `:crash`).
 
 ---
 
@@ -1248,7 +1260,7 @@ Every exported symbol (`names(UniLM)`), grouped by area:
 
 **Forking**: `fork`
 
-**MCP Client**: `MCPSession`, `MCPToolInfo`, `MCPToolResult`, `MCPResourceInfo`, `MCPPromptInfo`, `MCPServerCapabilities`, `MCPTransport`, `StdioTransport`, `HTTPTransport`, `MCPError`, `mcp_connect`, `mcp_disconnect!`, `mcp_tools`, `mcp_tools_respond`, `list_tools!`, `list_resources!`, `list_prompts!`, `call_tool`, `read_resource`, `get_prompt`, `ping`
+**MCP Client**: `MCPSession`, `MCPToolInfo`, `MCPToolResult`, `MCPResourceInfo`, `MCPPromptInfo`, `MCPServerCapabilities`, `MCPTransport`, `StdioTransport`, `HTTPTransport`, `MCPError`, `MCPCrashError`, `mcp_connect`, `mcp_disconnect!`, `mcp_tools`, `mcp_tools_respond`, `list_tools!`, `list_resources!`, `list_prompts!`, `call_tool`, `read_resource`, `get_prompt`, `ping`
 
 **MCP Server**: `MCPServer`, `MCPServerTool`, `MCPServerResource`, `MCPServerResourceTemplate`, `MCPServerPrompt`, `MCPServerPrimitive`, `register_tool!`, `register_resource!`, `register_resource_template!`, `register_prompt!`, `serve`, `@mcp_tool`, `@mcp_resource`, `@mcp_prompt`
 

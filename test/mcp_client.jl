@@ -2120,3 +2120,111 @@ end
     @test_throws ErrorException UniLM._transport_read!(t2)
     @test_throws ErrorException UniLM._transport_notify!(t2, "x")
 end
+
+# ─── MCPCrashError: server-death classification at the stdio boundaries ───────
+# A self-contained mini JSON-RPC server: serve_calls=N replies to N tools/calls
+# then reads the next and exits without replying; exit_after_list=true exits right
+# after the tools/list reply; error_frames=true stays alive answering every
+# tools/call with a JSON-RPC error frame.
+function _crash_child_src(marker::String; serve_calls::Int=0, exit_after_list::Bool=false,
+                          error_frames::Bool=false)
+    """
+    # $marker
+    using JSON
+    respond(id, result) = (println(JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>result))); flush(stdout))
+    respond_err(id) = (println(JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"error"=>Dict("code"=>-32000,"message"=>"boom")))); flush(stdout))
+    served = 0
+    while !eof(stdin)
+        line = readline(stdin)
+        isempty(line) && continue
+        msg = JSON.parse(line)
+        haskey(msg, "id") || continue
+        m = get(msg, "method", "")
+        if m == "initialize"
+            respond(msg["id"], Dict("protocolVersion"=>"2025-11-25",
+                "capabilities"=>Dict("tools"=>Dict()),
+                "serverInfo"=>Dict("name"=>"crashchild","version"=>"0")))
+        elseif m == "tools/list"
+            respond(msg["id"], Dict("tools"=>[Dict("name"=>"incr","description"=>"count",
+                "inputSchema"=>Dict("type"=>"object","properties"=>Dict()))]))
+            $(exit_after_list ? "exit(0)" : "")
+        elseif m == "tools/call"
+            $(error_frames ? "respond_err(msg[\"id\"]); continue" : "")
+            global served += 1
+            served > $(serve_calls) && exit(0)
+            respond(msg["id"], Dict("content"=>[Dict("type"=>"text","text"=>string(served))]))
+        else
+            respond(msg["id"], Dict())
+        end
+    end
+    """
+end
+
+function _crash_child_session(marker::String; kwargs...)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _crash_child_src(marker; kwargs...)); close(io)
+    jl = Base.julia_cmd()
+    cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    childfile, cmd
+end
+
+@testset "server death mid-exchange surfaces MCPCrashError and closes the session" begin
+    marker = "UNILMCRASHREAD" * string(rand(UInt64); base=16)
+    childfile, cmd = _crash_child_session(marker; serve_calls=1)
+    try
+        session = mcp_connect(cmd; config=RequestConfig(current_config(); mcp_request_timeout=30.0))
+        @test call_tool(session, "incr", Dict{String,Any}()).content == "1"
+        err = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+        @test err isa MCPCrashError
+        @test err.exitcode == 0 && err.termsignal === nothing   # child exit(0), settled diagnostics
+        @test occursin("auto_respawn", err.msg)
+        @test session.status === :closed
+        @test session._close_cause === :crash
+        @test session.transport.process === nothing              # ladder ran: handles nulled
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "call against an already-dead server surfaces MCPCrashError (either pipe limb)" begin
+    marker = "UNILMCRASHDEAD" * string(rand(UInt64); base=16)
+    childfile, cmd = _crash_child_session(marker; exit_after_list=true)
+    try
+        session = mcp_connect(cmd; config=RequestConfig(current_config(); mcp_request_timeout=30.0))
+        @test session.status === :ready
+        sleep(0.5)   # settle: child exits after tools/list; EITHER limb now yields the same type
+        err = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+        @test err isa MCPCrashError                              # type only: write-vs-read limb is platform-dependent
+        @test session._close_cause === :crash
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "JSON-RPC error frames stay MCPError: server alive, session untouched" begin
+    marker = "UNILMCRASHERRF" * string(rand(UInt64); base=16)
+    childfile, cmd = _crash_child_session(marker; error_frames=true)
+    try
+        session = mcp_connect(cmd; config=RequestConfig(current_config(); mcp_request_timeout=30.0))
+        err = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+        @test err isa MCPError
+        @test session.status === :ready
+        @test session._close_cause === :none
+        mcp_disconnect!(session)
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "server exiting before the handshake reply surfaces MCPCrashError from mcp_connect" begin
+    err = try
+        mcp_connect(`$(Base.julia_cmd()) --startup-file=no -e "exit(0)"`;
+                    config=RequestConfig(current_config(); mcp_connect_timeout=30.0))
+        nothing
+    catch e; e end
+    @test err isa MCPCrashError
+    @test occursin("connect handshake", err.msg)
+end

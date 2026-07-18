@@ -73,6 +73,48 @@ function Base.showerror(io::IO, e::MCPError)
 end
 
 """
+    MCPCrashError <: Exception
+
+The stdio MCP server process exited or its stdio pipe broke. The session is
+closed with cause `:crash`; with `auto_respawn=true` the next call respawns the
+server, otherwise it errors naming the opt-in.
+
+# Fields
+- `msg::String`: human-readable message with recovery guidance.
+- `exitcode::Union{Int,Nothing}`: exit code when the server exited on its own
+  and had been reaped in time; else `nothing`.
+- `termsignal::Union{Int,Nothing}`: signal number when the server was
+  signal-killed; else `nothing`.
+- `cause::Union{Exception,Nothing}`: underlying transport exception
+  (`nothing` for a clean read-EOF).
+
+Best-effort diagnostics: both `exitcode` and `termsignal` are `nothing` when the
+process had not been reaped when the pipe failure surfaced (or was still alive
+with a broken pipe).
+"""
+struct MCPCrashError <: Exception
+    msg::String
+    exitcode::Union{Int,Nothing}
+    termsignal::Union{Int,Nothing}
+    cause::Union{Exception,Nothing}
+end
+
+Base.showerror(io::IO, e::MCPCrashError) = print(io, "MCPCrashError: ", e.msg)
+
+function _crash_exit_info(exitcode::Union{Int,Nothing}, termsignal::Union{Int,Nothing})::String
+    termsignal !== nothing && return " (killed by signal $termsignal)"
+    exitcode !== nothing && return " (exit code $exitcode)"
+    ""
+end
+
+_crash_msg(context::String, exitcode::Union{Int,Nothing}, termsignal::Union{Int,Nothing})::String =
+    "MCP server crashed during $context: the server process exited or its stdio " *
+    "pipe broke$(_crash_exit_info(exitcode, termsignal)). The session is closed. " *
+    "Reconnect explicitly, or pass auto_respawn=true to mcp_connect so the next " *
+    "call transparently respawns the server (its in-memory state is lost and " *
+    "tools are refetched)."
+
+"""
     _MCPSessionExpired <: Exception
 
 Internal signal that an HTTP transport received `404 Not Found` while holding a
@@ -496,6 +538,31 @@ function MCPSession(transport::MCPTransport, caps::MCPServerCapabilities,
                config, auto_respawn, :none)
 end
 
+"""Best-effort exit diagnostics, captured BEFORE the teardown ladder (which reaps
+and nulls the process). Bounded settle: EOF/EPIPE can surface a beat before libuv
+reaps the child, so wait briefly for `process_exited` — for the pipe-broken-but-
+alive server this adds at most 2 s to a terminal error path."""
+function _exit_diagnostics(t::StdioTransport)::Tuple{Union{Int,Nothing},Union{Int,Nothing}}
+    proc = t.process
+    isnothing(proc) && return (nothing, nothing)
+    process_exited(proc) || timedwait(() -> process_exited(proc), 2.0)
+    process_exited(proc) || return (nothing, nothing)
+    proc.termsignal > 0 && return (nothing, Int(proc.termsignal))
+    (Int(proc.exitcode), nothing)
+end
+
+"""Classify a stdio transport failure as a server crash: capture diagnostics
+(pre-ladder), tear the transport down (also reaps a pipe-broken-but-alive server),
+close the session with cause `:crash`, and throw the typed error."""
+function _crash_close!(session::MCPSession, t::StdioTransport, tc::_TransportClosed,
+                       context::String)
+    exitcode, termsignal = _exit_diagnostics(t)
+    _kill_transport!(t)
+    session.status = :closed
+    session._close_cause = :crash
+    throw(MCPCrashError(_crash_msg(context, exitcode, termsignal), exitcode, termsignal, tc.cause))
+end
+
 """Allocate the next request id. Callers must hold `session._lock`."""
 function _next_id!(session::MCPSession)::Int
     session._id_counter += 1
@@ -665,6 +732,11 @@ function _mcp_request!(session::MCPSession, method::String,
                 session._close_cause = :timeout
                 throw(MCPTimeoutError(:request, e.elapsed, e.limit, _request_timeout_msg(e.limit)))
             end
+            # Crash classification AFTER the timeout branch: when the watchdog fired,
+            # the surfaced error is the timeout even though the kill ladder also broke
+            # the pipe. _find_exception sees through task wrapping.
+            tc = _find_exception(x -> x isa _TransportClosed, e)
+            tc !== nothing && _crash_close!(session, t, tc, "an MCP exchange")
             rethrow()
         end
         # Exactly-once race: the exchange returned a real result while the timer fired
@@ -890,10 +962,16 @@ function _respawn!(session::MCPSession)
     try
         _establish!(session)
     catch e
-        session.status = :closed
-        session._close_cause = :timeout
-        e isa UniLMTimeout &&
+        if e isa UniLMTimeout
+            session.status = :closed
+            session._close_cause = :timeout
             throw(MCPTimeoutError(:connect, e.elapsed, e.limit, _connect_timeout_msg(e.limit)))
+        end
+        tc = _find_exception(x -> x isa _TransportClosed, e)
+        tc !== nothing &&
+            _crash_close!(session, session.transport, tc, "an auto-respawn attempt")
+        session.status = :closed
+        session._close_cause = :crash
         rethrow()
     end
     nothing
@@ -951,6 +1029,10 @@ function mcp_connect(transport::MCPTransport;
     catch e
         e isa UniLMTimeout &&
             throw(MCPTimeoutError(:connect, e.elapsed, e.limit, _connect_timeout_msg(e.limit)))
+        tc = _find_exception(x -> x isa _TransportClosed, e)
+        if tc !== nothing && session.transport isa StdioTransport
+            _crash_close!(session, session.transport, tc, "the connect handshake")
+        end
         rethrow()
     end
     session

@@ -597,9 +597,12 @@ end
 """
 Guarded request entry point used by every discovery/operation verb. Resolves the
 per-exchange bound (call-time), routes through the 404-recovery wrapper, and maps
-a per-exchange timeout to a typed [`MCPTimeoutError`](@ref). HTTP timeouts are NOT
-session-fatal (request/response correlation is per-POST). The stdio branch is
-extended to the whole-exchange watchdog in a later change.
+a per-exchange timeout to a typed [`MCPTimeoutError`](@ref). The stdio branch arms
+the whole-exchange watchdog and a stdio timeout is session-fatal (no id demux) —
+EXCEPT during connect-phase discovery (status `:initializing`), which runs directly
+beneath the enclosing connect deadline in [`_establish!`](@ref) instead of arming a
+second, tighter watchdog. HTTP timeouts are NOT session-fatal (request/response
+correlation is per-POST).
 """
 function _mcp_request!(session::MCPSession, method::String,
                        params::Union{Dict{String,Any},Nothing}=nothing;
@@ -614,6 +617,15 @@ function _mcp_request!(session::MCPSession, method::String,
     excfg = RequestConfig(session.config; request_timeout=bound)
     if session.transport isa StdioTransport
         t = session.transport
+        # Connect-phase rule: discovery (list_tools!/list_resources!/list_prompts!)
+        # re-enters here from _finalize_connect! while the session is :initializing,
+        # already beneath the enclosing :connect deadline in _establish!. Arming the
+        # per-exchange request watchdog here would double-arm the exchange, and its
+        # completion-race tail (which closes the session on a ~deadline race) could
+        # tear a healthy connect down. Under :initializing, run the exchange directly
+        # and let the connect deadline bound it.
+        session.status === :initializing &&
+            return _mcp_request_recover!(session, method, params; excfg=excfg)
         result = try
             # ONE deadline for the whole lock-to-response exchange (armed once at
             # exchange start): a burst of pre-response notifications cannot reset it.
@@ -768,21 +780,32 @@ _connect_guard(f::Function, t::StdioTransport, bound::Float64) =
     _with_deadline(f, () -> _kill_transport!(t), bound, :connect)
 _connect_guard(f::Function, ::HTTPTransport, ::Float64) = f()
 
-"""Spawn (stdio) / mark connected (http) and run the initialize handshake under the
-connect deadline. Returns the raw `initialize` result. A breach surfaces as
-`UniLMTimeout(:connect)`; the caller maps it to `MCPTimeoutError(:connect)`."""
-function _establish!(session::MCPSession)::Dict{String,Any}
+"""Spawn (stdio) / mark connected (http), run the initialize handshake, and run
+tool/resource/prompt discovery — the whole spawn → ready sequence — under ONE
+connect deadline. On success the session is `:ready`. A breach surfaces as
+`UniLMTimeout(:connect)`; the caller maps it to `MCPTimeoutError(:connect)`.
+
+Discovery (`list_tools!`/`list_resources!`/`list_prompts!`) runs here, inside the
+connect guard, so a cold server slow to answer `tools/list` is bounded by
+`mcp_connect_timeout` — the phase and bound the connect-timeout message promises —
+not the tighter per-exchange `mcp_request_timeout`. Those discovery calls re-enter
+`_mcp_request!` while the session is `:initializing`; that path runs the exchange
+directly beneath this deadline (see [`_mcp_request!`](@ref))."""
+function _establish!(session::MCPSession)
     t = session.transport
     cfg = session.config
     connect_excfg = RequestConfig(cfg; request_timeout=cfg.mcp_connect_timeout)
     _connect_guard(t, cfg.mcp_connect_timeout) do
         _transport_connect!(t)
-        _mcp_handshake!(session; excfg=connect_excfg)
+        init_result = _mcp_handshake!(session; excfg=connect_excfg)
+        _finalize_connect!(session, init_result)
     end
 end
 
-"""Populate server info/capabilities and auto-list advertised primitives, then mark
-the session ready. Shared by initial connect and auto-respawn."""
+"""Populate server info/capabilities, auto-list advertised primitives, then mark the
+session ready. Runs inside the connect deadline (see [`_establish!`](@ref)), so its
+discovery is governed by `mcp_connect_timeout`. Shared by initial connect and
+auto-respawn."""
 function _finalize_connect!(session::MCPSession, init_result::Dict{String,Any})
     session.server_info = get(init_result, "serverInfo", Dict{String,Any}())
     session.server_capabilities = MCPServerCapabilities(get(init_result, "capabilities", Dict{String,Any}()))
@@ -815,7 +838,7 @@ function _respawn!(session::MCPSession)
     session.tools_stale = false
     session._closed_by_timeout = false
     session.status = :initializing
-    init_result = try
+    try
         _establish!(session)
     catch e
         session.status = :closed
@@ -824,7 +847,6 @@ function _respawn!(session::MCPSession)
             throw(MCPTimeoutError(:connect, e.elapsed, e.limit, _connect_timeout_msg(e.limit)))
         rethrow()
     end
-    _finalize_connect!(session, init_result)
     nothing
 end
 
@@ -868,19 +890,20 @@ function mcp_connect(transport::MCPTransport;
         protocol_version, 0, :initializing; init_params=init_params,
         config=cfg, auto_respawn=auto_respawn
     )
-    # The whole spawn → initialize → notifications/initialized handshake runs under
-    # one connect deadline (see _establish!); a breach surfaces as UniLMTimeout and is
-    # mapped to a naming MCPTimeoutError. A synchronous spawn failure (a nonexistent
-    # command) throws inside the guard before the timer fires and rethrows unchanged,
-    # so command-not-found surfaces immediately rather than riding the connect timer.
-    init_result = try
+    # The whole spawn → initialize → notifications/initialized → discovery sequence
+    # runs under one connect deadline (see _establish!): a cold server slow to
+    # hand-shake OR to answer tools/list is governed by mcp_connect_timeout, and a
+    # breach surfaces as UniLMTimeout mapped to a naming MCPTimeoutError. A synchronous
+    # spawn failure (a nonexistent command) throws inside the guard before the timer
+    # fires and rethrows unchanged, so command-not-found surfaces immediately rather
+    # than riding the connect timer.
+    try
         _establish!(session)
     catch e
         e isa UniLMTimeout &&
             throw(MCPTimeoutError(:connect, e.elapsed, e.limit, _connect_timeout_msg(e.limit)))
         rethrow()
     end
-    _finalize_connect!(session, init_result)
     session
 end
 

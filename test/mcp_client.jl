@@ -1824,3 +1824,131 @@ end
         rm(childfile; force=true)
     end
 end
+
+# ─── Connect-phase discovery is bounded by the CONNECT deadline ───────────
+# Handshake success is not readiness: mcp_connect also runs tools/list (and
+# resources/prompts) discovery before the session is usable. That discovery runs
+# INSIDE the one connect deadline, so a server slow (or mute) at tools/list is
+# governed by `mcp_connect_timeout` — the phase and bound the connect-timeout
+# message promises — not the tighter per-exchange `mcp_request_timeout`. Two
+# directions: a slow-but-finite tools/list under a tight request bound must still
+# connect and stay usable; a mute tools/list surfaces MCPTimeoutError(:connect).
+
+# Sibling of _ws4_raw_child_src for the discovery-phase deadline. Answers initialize
+# PROMPTLY; its tools/list reply is delayed by `list_delay` s, or withheld entirely
+# when `list_mute` (block on stdin until the connect watchdog closes it — the same
+# mute idiom as the connect-mute fixture). Advertises one `echo` tool so a
+# post-connect call_tool can witness a live transport. `marker` rides a leading
+# comment for pkill reaping.
+function _slow_list_child_src(marker::String; list_delay::Real=0.0, list_mute::Bool=false)
+    ver = UniLM._MCP_PROTOCOL_VERSION
+    list_reply = list_mute ?
+        "while !eof(stdin); readline(stdin); end" :
+        """
+        sleep($(Float64(list_delay)))
+        println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict(
+            "tools"=>[Dict("name"=>"echo","inputSchema"=>Dict("type"=>"object"))]))))
+        flush(stdout)
+        """
+    """
+    # $marker
+    import JSON
+    while !eof(stdin)
+        line = readline(stdin)
+        isempty(line) && continue
+        msg = JSON.parse(line)
+        id = get(msg, "id", nothing)
+        method = get(msg, "method", "")
+        if method == "initialize"
+            println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict(
+                "protocolVersion"=>"$ver",
+                "capabilities"=>Dict("tools"=>Dict()),
+                "serverInfo"=>Dict("name"=>"slow-list-fixture","version"=>"1.0")))))
+            flush(stdout)
+        elseif method == "notifications/initialized"
+            # no response
+        elseif method == "tools/list"
+            $list_reply
+        elseif method == "tools/call"
+            println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict(
+                "content"=>[Dict("type"=>"text","text"=>"echoed")]))))
+            flush(stdout)
+        elseif !isnothing(id)
+            println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict())))
+            flush(stdout)
+        end
+    end
+    """
+end
+
+@testset "connect-phase discovery is bounded by the connect deadline, not the request bound" begin
+    # tools/list is slow (0.8 s) under a TIGHT request bound (0.5 s) but a roomy
+    # connect bound (30 s). Discovery runs inside the connect deadline, so the
+    # connect must SUCCEED and the session stay usable. FALSIFIER (old path armed
+    # the per-exchange request watchdog around discovery): mcp_connect is killed at
+    # 0.5 s (wrong phase/bound), or the ~bound completion race erases the close and
+    # a :ready session escapes over a dead transport — either way call_tool cannot
+    # round-trip.
+    marker = "UNILMSLOWLIST" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _slow_list_child_src(marker; list_delay=0.8)); close(io)
+    jl = Base.julia_cmd()
+    cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    session = nothing
+    try
+        box = Ref{Any}(nothing)
+        worker = @async (box[] = try
+            mcp_connect(cmd; config = RequestConfig(current_config();
+                mcp_request_timeout = 0.5, mcp_connect_timeout = 30.0))
+        catch e; e end)
+        @test timedwait(() -> istaskdone(worker), 30.0) === :ok
+        result = box[]
+        @test result isa MCPSession          # not a thrown connect timeout
+        if result isa MCPSession
+            session = result
+            @test session.status == :ready
+            @test UniLM._transport_isconnected(session.transport) == true
+            # The transport is live: a post-connect call_tool round-trips (a :ready
+            # session over a dead transport raises "not connected"/IOError here).
+            call_res = try call_tool(session, "echo", Dict{String,Any}()) catch e; e end
+            @test call_res isa MCPToolResult
+            @test call_res isa MCPToolResult && call_res.content == "echoed"
+        end
+    finally
+        session === nothing || (try; mcp_disconnect!(session); catch; end)
+        try; run(pipeline(`pkill -f $childfile`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "connect-phase discovery timeout surfaces as MCPTimeoutError(:connect)" begin
+    # A server that answers initialize but goes MUTE on tools/list. Discovery is
+    # bounded by mcp_connect_timeout (1.5 s), NOT the 120 s default request bound,
+    # so it surfaces MCPTimeoutError(:connect) naming mcp_connect_timeout — reaped
+    # by the watchdog, no surviving child. FALSIFIER (old path bounded discovery by
+    # the 120 s request watchdog): the connect hangs past the observation window.
+    marker = "UNILMMUTELIST" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _slow_list_child_src(marker; list_mute=true)); close(io)
+    jl = Base.julia_cmd()
+    cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    # Liveness by the childfile path — it rides the julia argv (the marker rides the
+    # source comment, not argv, so pgrep -f on it would never match).
+    _alive() = success(pipeline(`pgrep -f $childfile`; stdout=devnull, stderr=devnull))
+    try
+        box = Ref{Any}(nothing)
+        worker = @async (box[] = try
+            mcp_connect(cmd; config = RequestConfig(current_config(); mcp_connect_timeout = 1.5))
+        catch e; e end)
+        @test timedwait(() -> istaskdone(worker), 12.0) === :ok
+        err = box[]
+        @test err isa MCPTimeoutError
+        @test err isa MCPTimeoutError && err.phase === :connect
+        @test err isa MCPTimeoutError && err.limit == 1.5
+        @test err isa MCPTimeoutError && occursin("mcp_connect_timeout", err.msg)
+        @test timedwait(() -> !_alive(), 5.0) === :ok   # watchdog reaped the child
+    finally
+        try; run(pipeline(`pkill -f $childfile`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end

@@ -232,7 +232,7 @@ end
             end
         end
         # The crash left the session neither closed-by-timeout nor respawned.
-        @test session._closed_by_timeout === false
+        @test session._close_cause === :none
     finally
         _live_reap(marker; pgid = session === nothing ? nothing : session.transport.pgid)
         rm(scratch; recursive = true, force = true)
@@ -289,7 +289,7 @@ end
                     round(wall; digits = 2), " s wall (limit 2.0 s + kill-ladder graces)")
         end
         @test session.status === :closed
-        @test session._closed_by_timeout === true
+        @test session._close_cause === :timeout
 
         # The final unconditional SIGKILL rung reaps even a stopped process.
         @test timedwait(() -> _live_survivors(marker) == 0, 8.0) === :ok

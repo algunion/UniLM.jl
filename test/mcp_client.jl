@@ -1007,7 +1007,7 @@ end
     # request respawn-or-error over a live session). Regression: the process-liveness
     # proxy read this transport as "not connected" and closed it after one request.
     @test session.status == :ready
-    @test session._closed_by_timeout == false
+    @test session._close_cause === :none
     # Refreshing the list stores the new tools and clears the flag.
     tools = list_tools!(session)
     @test [tl.name for tl in tools] == ["fresh"]
@@ -1333,7 +1333,7 @@ end
             @test session.config.mcp_request_timeout == 7.0
             @test session.config.mcp_connect_timeout == 11.0
             @test session.auto_respawn == true
-            @test session._closed_by_timeout == false
+            @test session._close_cause === :none
         finally
             mcp_disconnect!(session)
         end
@@ -1616,7 +1616,7 @@ end
         @test err.elapsed < 3.0   # fired at ~bound through the frame stream, not the 12 s window
         @test occursin("mcp_request_timeout", err.msg)   # pinned msg literal names the override
         @test session.status == :closed              # stdio timeout IS session-fatal
-        @test session._closed_by_timeout == true
+        @test session._close_cause === :timeout
         @test UniLM._transport_isconnected(session.transport) == false
     finally
         # Self-sufficient teardown — never depend on the watchdog under test. Short
@@ -1735,7 +1735,7 @@ end
             out = @test_logs (:warn,) match_mode=:any call_tool(session, "incr", Dict{String,Any}())
             @test out.content == "1"                 # fresh process, NOT "2"
             @test session.status == :ready
-            @test session._closed_by_timeout == false
+            @test session._close_cause === :none
         finally
             mcp_disconnect!(session)
         end
@@ -1792,10 +1792,10 @@ end
         @test timedwait(() -> istaskdone(w), 12.0) === :ok
         @test box[] isa MCPTimeoutError
         @test session.status == :closed
-        @test session._closed_by_timeout == true   # respawn-eligible so far
+        @test session._close_cause === :timeout   # respawn-eligible so far
 
         mcp_disconnect!(session)                    # explicit user intent: a normal close now
-        @test session._closed_by_timeout == false   # user intent must clear it
+        @test session._close_cause === :none   # user intent must clear it
 
         err = nothing
         @test_logs begin   # zero patterns: ANY log record (e.g. the respawn @warn) fails this
@@ -1992,14 +1992,14 @@ end
     @test err isa MCPTimeoutError && err.limit == 7.0
     @test err isa MCPTimeoutError && occursin("mcp_connect_timeout", err.msg)
     @test s.status == :closed
-    @test s._closed_by_timeout == true
+    @test s._close_cause === :timeout
 
     # fired=false ⇒ no-op even though a fresh StdioTransport has nil handles.
     s2 = mk(StdioTransport(`true`))
     @test isnothing(s2.transport.input) && isnothing(s2.transport.output)
     @test UniLM._guard_connect_completion!(s2, false, time_ns(), 7.0) === nothing
     @test s2.status == :ready
-    @test s2._closed_by_timeout == false
+    @test s2._close_cause === :none
 end
 
 # ─── Completion-race TOCTOU: detect the kill by guard STATE, not handle nulling ──
@@ -2081,7 +2081,7 @@ end
         @test res isa MCPToolResult && res.content == "slow-ok"
         # ...but the watchdog fired: the session is closed (RED on old — stayed :ready).
         @test session.status == :closed
-        @test session._closed_by_timeout == true
+        @test session._close_cause === :timeout
         # The next call sees a closed-by-timeout session and errors naming the opt-in
         # (RED on old — a raw closed-stream IOError escaped conversion here).
         err = try call_tool(session, "slowreply", Dict{String,Any}()); nothing catch e; e end

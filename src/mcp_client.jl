@@ -475,9 +475,10 @@ mutable struct MCPSession
     # the server (same command, fresh handshake) instead of erroring. Default OFF: a
     # silent respawn fabricates session continuity and in-memory server state is lost.
     auto_respawn::Bool
-    # True only when `status == :closed` was reached via a request timeout (not a
-    # normal disconnect); gates the respawn-or-error decision on the next call.
-    _closed_by_timeout::Bool
+    # Why the session reached :closed — :none (live, or a normal disconnect),
+    # :timeout (request/connect watchdog), :crash (server process died or stdio
+    # pipe broke). Gates the respawn-or-error decision on the next call.
+    _close_cause::Symbol
 end
 
 # Sessions start with a fresh lock, a fresh (not stale) tool cache, default config,
@@ -492,7 +493,7 @@ function MCPSession(transport::MCPTransport, caps::MCPServerCapabilities,
                     auto_respawn::Bool=false)
     MCPSession(transport, caps, server_info, tools, resources, prompts,
                protocol_version, id_counter, status, ReentrantLock(), false, init_params,
-               config, auto_respawn, false)
+               config, auto_respawn, :none)
 end
 
 """Allocate the next request id. Callers must hold `session._lock`."""
@@ -661,7 +662,7 @@ function _mcp_request!(session::MCPSession, method::String,
         catch e
             if e isa UniLMTimeout && e.phase === :request
                 session.status = :closed
-                session._closed_by_timeout = true
+                session._close_cause = :timeout
                 throw(MCPTimeoutError(:request, e.elapsed, e.limit, _request_timeout_msg(e.limit)))
             end
             rethrow()
@@ -676,7 +677,7 @@ function _mcp_request!(session::MCPSession, method::String,
         # transport is gone either way — reflect the close truthfully.
         if fired
             session.status = :closed
-            session._closed_by_timeout = true
+            session._close_cause = :timeout
         end
         return result
     else
@@ -844,7 +845,7 @@ no watchdog)."""
 function _guard_connect_completion!(session::MCPSession, fired::Bool, t0::UInt64, bound::Float64)
     if fired
         session.status = :closed
-        session._closed_by_timeout = true
+        session._close_cause = :timeout
         throw(MCPTimeoutError(:connect, _elapsed_s(t0), bound, _connect_timeout_msg(bound)))
     end
     nothing
@@ -884,13 +885,13 @@ function _respawn!(session::MCPSession)
     session.transport = StdioTransport(old.command)
     session._id_counter = 0
     session.tools_stale = false
-    session._closed_by_timeout = false
+    session._close_cause = :none
     session.status = :initializing
     try
         _establish!(session)
     catch e
         session.status = :closed
-        session._closed_by_timeout = true
+        session._close_cause = :timeout
         e isa UniLMTimeout &&
             throw(MCPTimeoutError(:connect, e.elapsed, e.limit, _connect_timeout_msg(e.limit)))
         rethrow()
@@ -902,7 +903,7 @@ end
 opted in, otherwise error with recovery guidance. A no-op for live sessions and
 for sessions closed by a normal disconnect."""
 function _ensure_live!(session::MCPSession)
-    if session.status === :closed && session._closed_by_timeout
+    if session.status === :closed && session._close_cause === :timeout
         session.auto_respawn || error(_closed_session_msg())
         _respawn!(session)
     end
@@ -991,7 +992,7 @@ function mcp_disconnect!(session::MCPSession)
     # User intent wins: an explicit disconnect is a normal close, not a timeout, so
     # the next call must never respawn or cite auto_respawn — even if this session
     # was closed by a request timeout before the caller disconnected it.
-    session._closed_by_timeout = false
+    session._close_cause = :none
     nothing
 end
 

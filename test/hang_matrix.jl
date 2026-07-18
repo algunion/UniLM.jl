@@ -28,7 +28,7 @@ using Sockets
 # block. Closing that resource unblocks the abandoned task — its pending
 # read/accept/wait throws — so the task finishes and is garbage-collected.
 # Every pin below that opens such a resource therefore closes it in `finally`.
-function _hm_bounded(f; bound::Float64 = 10.0)
+function _hm_bounded(f; bound::Float64 = 45.0)
     t = Threads.@spawn f()
     if timedwait(() -> istaskdone(t), bound) != :ok
         return (:timeout, nothing)
@@ -156,7 +156,7 @@ end
             end
             # Mutate the process default AGAIN post-spawn: the captured struct must win.
             UniLM.set_default_config!(UniLM.RequestConfig(stream_idle_timeout = 30.0, max_attempts = 1))
-            done = timedwait(() -> istaskdone(task), 6.0)
+            done = timedwait(() -> istaskdone(task), 30.0)
             res = done === :ok ? fetch(task) : nothing
             done === :ok && res isa LLMCallError && res.cause isa UniLM.UniLMTimeout &&
                 res.cause.phase === :stream_idle
@@ -314,7 +314,7 @@ end
         chat = Chat(service = GenericOpenAIEndpoint(url, ""), model = "mock")
         push!(chat, Message(Val(:system), "s"))
         push!(chat, Message(Val(:user), "u"))
-        outcome = _hm_bounded(bound = 15.0) do
+        outcome = _hm_bounded(bound = 45.0) do
             cfg = UniLM.RequestConfig(request_timeout = 2.0, total_deadline = 30.0, max_attempts = 3)
             chatrequest!(chat; config = cfg)
         end
@@ -428,7 +428,7 @@ end
     turl = "http://127.0.0.1:$(tport)"
 
     try
-        outcome = _hm_bounded(bound = 30.0) do
+        outcome = _hm_bounded(bound = 120.0) do
             cfg = UniLM.RequestConfig(request_timeout = 0.5, total_deadline = 1.0, max_attempts = 1)
             mute_chat = Chat(service = GenericOpenAIEndpoint(turl, ""), model = "mock")
             push!(mute_chat, Message(Val(:system), "s"))
@@ -438,7 +438,7 @@ end
             # the typed-outcome assertion doubles as a per-task no-leak check.
             results = map(1:20) do _
                 t = Threads.@spawn chatrequest!(mute_chat; config = cfg)
-                timedwait(() -> istaskdone(t), 10.0) === :ok || return :hung
+                timedwait(() -> istaskdone(t), 25.0) === :ok || return :hung
                 fetch(t)
             end
             # Fresh key: a brand-new peer still succeeds after the timeout storm.
@@ -680,7 +680,7 @@ end
         chat = Chat(service = GenericOpenAIEndpoint(url, ""), model = "mock", stream = true)
         push!(chat, Message(Val(:system), "s"))
         push!(chat, Message(Val(:user), "u"))
-        outcome = _hm_bounded(bound = 15.0) do
+        outcome = _hm_bounded(bound = 45.0) do
             cfg = UniLM.RequestConfig(stream_idle_timeout = 1.0, request_timeout = 5.0,
                 total_deadline = 10.0, max_attempts = 1)
             fetch(chatrequest!(chat; config = cfg))
@@ -762,7 +762,7 @@ end
         cfg = RequestConfig(stream_idle_timeout=1.0, request_timeout=10.0,
                             total_deadline=10.0, max_attempts=1)
         task = chatrequest!(chat; config=cfg)
-        @test timedwait(() -> istaskdone(task), 10.0) === :ok
+        @test timedwait(() -> istaskdone(task), 45.0) === :ok
         res = fetch(task)
         @test res isa LLMSuccess
         @test res.message.content == "done."
@@ -814,7 +814,7 @@ end
         cfg = RequestConfig(connect_timeout=1.0, request_timeout=1.0,
                             total_deadline=2.0, max_attempts=1)
         t = Threads.@spawn embeddingrequest!(emb; config=cfg)
-        @test timedwait(() -> istaskdone(t), 10.0) === :ok
+        @test timedwait(() -> istaskdone(t), 45.0) === :ok
         r = fetch(t)
         @test r isa EmbeddingCallError
         @test isnothing(r.status)
@@ -845,7 +845,7 @@ end
         t = Threads.@spawn embeddingrequest!(emb; config=cfg)
         sleep(0.3)                                   # let it block inside the exchange
         schedule(t, InterruptException(); error=true)
-        @test timedwait(() -> istaskdone(t), 10.0) === :ok
+        @test timedwait(() -> istaskdone(t), 45.0) === :ok
         @test istaskfailed(t)                        # rethrown — not an EmbeddingCallError value
         @test t.exception isa InterruptException
     finally

@@ -172,6 +172,48 @@ end
     @test e2 isa ArgumentError && e2.msg == "real bug"
 end
 
+@testset "reported handle mode: fast completion reports fired=false, no close!" begin
+    closed = Ref(0)
+    r, fired = UniLM._with_deadline_reported(() -> :fast, () -> closed[] += 1, 5.0, :request)
+    @test r === :fast
+    @test fired == false
+    sleep(0.2)            # a leaked timer would fire close! later
+    @test closed[] == 0
+end
+
+@testset "reported handle mode: a lost completion race reports fired=true from guard state" begin
+    # f returns AFTER the timer fires: the result is real, the :armed→:done CAS lost
+    # to :fired, so fired=true — read from GUARD STATE, independent of when close!
+    # settles. Deterministic: 0.4 s completion strictly past the 0.1 s limit.
+    closed = Ref(0)
+    r, fired = UniLM._with_deadline_reported(() -> (sleep(0.4); :survived),
+                                             () -> closed[] += 1, 0.1, :request)
+    @test r === :survived
+    @test fired == true
+    @test closed[] == 1   # close! ran exactly once
+end
+
+@testset "reported handle mode: Inf runs f directly and reports fired=false" begin
+    @test UniLM._with_deadline_reported(
+        () -> :direct, () -> error("must never run"), Inf, :request) === (:direct, false)
+end
+
+@testset "reported handle mode: f-throw conversion matches _with_deadline" begin
+    # post-breach echo → typed timeout (identical to _with_deadline)
+    e1 = try
+        UniLM._with_deadline_reported(() -> (sleep(0.4); error("echo")), () -> nothing, 0.1, :stream_idle)
+    catch e; e end
+    @test e1 isa UniLM.UniLMTimeout && e1.phase === :stream_idle
+    # a clean failure rethrows untouched (no tuple binding)
+    e2 = try
+        UniLM._with_deadline_reported(() -> throw(ArgumentError("real bug")), () -> nothing, 5.0, :request)
+    catch e; e end
+    @test e2 isa ArgumentError && e2.msg == "real bug"
+    # interrupt wins even after the guard fired
+    @test_throws InterruptException UniLM._with_deadline_reported(
+        () -> (sleep(0.3); throw(InterruptException())), () -> nothing, 0.05, :request)
+end
+
 @testset "task mode: breach delivery terminates a blocked task" begin
     t0 = time_ns()
     t = Threads.@spawn try

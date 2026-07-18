@@ -1953,21 +1953,17 @@ end
     end
 end
 
-@testset "connect completion-race symmetry: nulled handles ⇒ :closed + connect timeout" begin
-    # Mirror of the request-path completion-race tail on the connect path. The
-    # connect guard can return a real result while its timer fired at ~completion and
-    # ran the kill ladder (nulling the transport handles); a :ready session over a
-    # dead transport must not escape. _guard_connect_completion! reflects the close
-    # and surfaces the connect timeout. Deterministic — the post-race state (nulled
-    # handles, erased :ready) is constructed directly, no timing race.
+@testset "connect completion-race symmetry: fired ⇒ :closed + connect timeout" begin
+    # Mirror of the request-path completion tail on the connect path, keyed on GUARD
+    # STATE (fired), not handle side effects. fired=true (the connect watchdog fired
+    # as the do-block completed) ⇒ close + MCPTimeoutError(:connect); fired=false ⇒
+    # no-op, even if the handles happen to be nil (state, not handles, is authority).
     mk(tp) = MCPSession(tp, MCPServerCapabilities(), Dict{String,Any}(),
         MCPToolInfo[], MCPResourceInfo[], MCPPromptInfo[],
         UniLM._MCP_PROTOCOL_VERSION, 0, :ready)
 
-    # Ladder ran (handles nulled): close truthfully + throw MCPTimeoutError(:connect).
-    s = mk(StdioTransport(`true`))          # a fresh StdioTransport has nil handles
-    @test isnothing(s.transport.input) && isnothing(s.transport.output)
-    err = try UniLM._guard_connect_completion!(s, time_ns(), 7.0); nothing catch e; e end
+    s = mk(StdioTransport(`true`))
+    err = try UniLM._guard_connect_completion!(s, true, time_ns(), 7.0); nothing catch e; e end
     @test err isa MCPTimeoutError
     @test err isa MCPTimeoutError && err.phase === :connect
     @test err isa MCPTimeoutError && err.limit == 7.0
@@ -1975,16 +1971,101 @@ end
     @test s.status == :closed
     @test s._closed_by_timeout == true
 
-    # Live handles: no-op, session untouched.
+    # fired=false ⇒ no-op even though a fresh StdioTransport has nil handles.
     s2 = mk(StdioTransport(`true`))
-    s2.transport.input = IOBuffer(); s2.transport.output = IOBuffer()
-    @test UniLM._guard_connect_completion!(s2, time_ns(), 7.0) === nothing
+    @test isnothing(s2.transport.input) && isnothing(s2.transport.output)
+    @test UniLM._guard_connect_completion!(s2, false, time_ns(), 7.0) === nothing
     @test s2.status == :ready
     @test s2._closed_by_timeout == false
+end
 
-    # HTTP connect path has no closeable handle ⇒ never closed here.
-    s3 = mk(HTTPTransport("http://127.0.0.1:1"))
-    @test UniLM._guard_connect_completion!(s3, time_ns(), 7.0) === nothing
-    @test s3.status == :ready
-    @test s3._closed_by_timeout == false
+# ─── Completion-race TOCTOU: detect the kill by guard STATE, not handle nulling ──
+# The stdio request/connect tails must decide "the watchdog fired" from the guard's
+# :armed→:fired CAS (set atomically BEFORE close! begins), not from nulled transport
+# handles: _kill_transport! nulls handles only at the END of its grace ladder, so a
+# real reply landing during that ladder returns while the handles are still live —
+# the tail would then keep a :ready session over a dying transport and the NEXT call
+# raises a raw closed-stream IOError. This fixture makes that race deterministic.
+
+# The tool replies at `reply_delay` s (set > the request bound) so the exchange
+# watchdog fires FIRST and the real reply lands during the kill ladder; after
+# replying the child IGNORES stdin-EOF (spins) so _kill_transport! must escalate
+# through grace_term — handles stay un-nulled well past the reply. tools/list is
+# answered promptly, so connect succeeds; only tools/call is slow.
+function _slowreply_child_src(marker::String; reply_delay::Real)
+    ver = UniLM._MCP_PROTOCOL_VERSION
+    """
+    # $marker
+    import JSON
+    while !eof(stdin)
+        line = readline(stdin)
+        isempty(line) && continue
+        msg = JSON.parse(line)
+        id = get(msg, "id", nothing)
+        method = get(msg, "method", "")
+        if method == "initialize"
+            println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict(
+                "protocolVersion"=>"$ver",
+                "capabilities"=>Dict("tools"=>Dict()),
+                "serverInfo"=>Dict("name"=>"slowreply-fixture","version"=>"1.0")))))
+            flush(stdout)
+        elseif method == "notifications/initialized"
+            # no response
+        elseif method == "tools/list"
+            println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict(
+                "tools"=>[Dict("name"=>"slowreply","inputSchema"=>Dict("type"=>"object"))]))))
+            flush(stdout)
+        elseif method == "tools/call"
+            sleep($(Float64(reply_delay)))
+            println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict(
+                "content"=>[Dict("type"=>"text","text"=>"slow-ok")]))))
+            flush(stdout)
+            # Ignore stdin-EOF after replying: keep the process alive so the kill
+            # ladder must escalate and the handles stay un-nulled well past the reply.
+            while true; sleep(3600); end
+        elseif !isnothing(id)
+            println(stdout, JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>Dict())))
+            flush(stdout)
+        end
+    end
+    """
+end
+
+@testset "stdio completion race is detected by guard state, not handle nulling" begin
+    # slowreply replies at bound + 0.3 s (watchdog fires first) then ignores stdin-EOF
+    # so the handles are still live when the real reply returns: a LOST completion
+    # race. New code (guard-state detection) closes the session; old handle-inspecting
+    # code read live handles, kept it :ready over a dying transport, and the next call
+    # raised a raw closed-stream IOError. Deterministic — 0.8 > 0.5 always.
+    marker = "UNILMTOCTOU" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _slowreply_child_src(marker; reply_delay=0.8)); close(io)
+    jl = Base.julia_cmd()
+    cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    _alive() = success(pipeline(`pgrep -f $childfile`; stdout=devnull, stderr=devnull))
+    session = nothing
+    try
+        session = mcp_connect(cmd; auto_respawn = false,
+            config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
+        box = Ref{Any}(nothing)
+        worker = @async (box[] = try call_tool(session, "slowreply", Dict{String,Any}()) catch e; e end)
+        @test timedwait(() -> istaskdone(worker), 12.0) === :ok
+        res = box[]
+        # The reply is real and returns (completion race, not a thrown timeout).
+        @test res isa MCPToolResult
+        @test res isa MCPToolResult && res.content == "slow-ok"
+        # ...but the watchdog fired: the session is closed (RED on old — stayed :ready).
+        @test session.status == :closed
+        @test session._closed_by_timeout == true
+        # The next call sees a closed-by-timeout session and errors naming the opt-in
+        # (RED on old — a raw closed-stream IOError escaped conversion here).
+        err = try call_tool(session, "slowreply", Dict{String,Any}()); nothing catch e; e end
+        @test err isa ErrorException
+        @test err isa ErrorException && occursin("auto_respawn=true", err.msg)
+    finally
+        session === nothing || (try; UniLM._kill_transport!(session.transport; grace_term=0.2, grace_kill=0.2); catch; end)
+        try; run(pipeline(`pkill -f $childfile`; stderr=devnull)); catch; end
+        @test timedwait(() -> !_alive(), 5.0) === :ok   # no surviving child
+        rm(childfile; force=true)
+    end
 end

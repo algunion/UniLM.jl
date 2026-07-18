@@ -197,6 +197,55 @@ function _with_deadline(f::Function, close!::Function, limit::Float64, phase::Sy
 end
 
 """
+    _with_deadline_reported(f, close!, limit, phase) -> (result, fired::Bool)
+
+Additive twin of [`_with_deadline`](@ref) that reports one extra bit: whether the
+guard fired. Identical semantics — same exactly-once CAS, same `close!`-on-breach,
+same `InterruptException`-first / post-breach-echo → `UniLMTimeout` conversion on an
+`f` throw, same `finally close(timer)`. The ONLY difference is the success path:
+when `f` returns a real value it also reports `fired`, decided by GUARD STATE (the
+`:armed → :fired` CAS, set atomically BEFORE `close!` begins) — never by a side
+effect of `close!`. `(result, false)` on a clean win; `(result, true)` on a lost
+completion race (the timer fired as `f` completed — the result is real, but the
+close side effect ran or is running, so any long-lived resource it closed is gone).
+
+Callers that must react to a fired-but-completed exchange read `fired` instead of
+inspecting `close!`'s aftermath, which has a settling window (e.g. a kill ladder
+that nulls its handles only after a grace period). `limit == Inf` runs `f` directly
+and reports `(f(), false)`.
+"""
+function _with_deadline_reported(f::Function, close!::Function, limit::Float64, phase::Symbol)
+    limit == Inf && return (f(), false)
+    t0 = time_ns()
+    guard = _DeadlineGuard(:armed)
+    timer = Timer(limit) do _
+        (@atomicreplace guard.state :armed => :fired).success || return
+        try
+            close!()
+        catch e
+            @debug "deadline close! failed" phase exception = (e, catch_backtrace())
+        end
+    end
+    try
+        result = f()
+        # A lost swap means the timer already won (:fired) as f completed — the
+        # completion race. The result is real either way; report which happened.
+        fired = !(@atomicreplace guard.state :armed => :done).success
+        return (result, fired)
+    catch e
+        e isa InterruptException && rethrow()
+        if (@atomicreplace guard.state :armed => :done).success
+            rethrow()   # real failure; the guard resolved :done
+        else
+            # :fired won — the caught error is the echo of our own close.
+            throw(UniLMTimeout(phase, _elapsed_s(t0), limit))
+        end
+    finally
+        close(timer)
+    end
+end
+
+"""
     _with_deadline_task(f, limit, phase)
 
 Run `f` under a hard deadline with TASK-mode enforcement, for opaque calls

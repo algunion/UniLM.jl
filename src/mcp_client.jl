@@ -626,14 +626,14 @@ function _mcp_request!(session::MCPSession, method::String,
         # and let the connect deadline bound it.
         session.status === :initializing &&
             return _mcp_request_recover!(session, method, params; excfg=excfg)
-        result = try
+        result, fired = try
             # ONE deadline for the whole lock-to-response exchange (armed once at
             # exchange start): a burst of pre-response notifications cannot reset it.
             # On breach the escalation ladder group-kills the server (unblocking the
             # in-flight readline); stdio framing has no id demux, so a late reply
             # could misdeliver — the timeout is therefore session-fatal.
-            _with_deadline(() -> _mcp_request_recover!(session, method, params; excfg=excfg),
-                           () -> _kill_transport!(t), bound, :request)
+            _with_deadline_reported(() -> _mcp_request_recover!(session, method, params; excfg=excfg),
+                                    () -> _kill_transport!(t), bound, :request)
         catch e
             if e isa UniLMTimeout && e.phase === :request
                 session.status = :closed
@@ -642,14 +642,15 @@ function _mcp_request!(session::MCPSession, method::String,
             end
             rethrow()
         end
-        # Exactly-once race: _with_deadline may return a real result even though the
-        # timer fired at ~completion and ran the kill ladder. Detect that the ladder
-        # ran by its own side effect — nulled transport handles — not by process
-        # liveness: a handle-backed transport with no spawned process (in-memory
-        # framing) reads as "no process" yet is perfectly usable, and must not be
-        # closed here. If the ladder tore the transport down mid-exchange the session
-        # cannot continue — reflect the close truthfully (it stays closed).
-        if isnothing(t.input) || isnothing(t.output)
+        # Exactly-once race: the exchange returned a real result while the timer fired
+        # at ~completion and ran (or is still running) the kill ladder. Detect this by
+        # GUARD STATE — `fired`, the :armed→:fired CAS set atomically before close!
+        # begins — NOT by nulled handles: _kill_transport! nulls them only at the END
+        # of its grace ladder (grace_term + grace_kill), a settling window in which
+        # this tail would read live handles and wrongly keep the session :ready over a
+        # dying transport (the next call then raises a raw closed-stream IOError). The
+        # transport is gone either way — reflect the close truthfully.
+        if fired
             session.status = :closed
             session._closed_by_timeout = true
         end
@@ -774,11 +775,13 @@ _connect_timeout_msg(limit::Float64)::String =
     "raise the bound with mcp_connect(...; config=RequestConfig(current_config(); " *
     "mcp_connect_timeout=<seconds>))."
 
-# stdio: the whole spawn+handshake runs under one connect watchdog (kill on breach).
-# http: no wrapper — each initialize/list POST is bounded per-POST inside _http.
-_connect_guard(f::Function, t::StdioTransport, bound::Float64) =
-    _with_deadline(f, () -> _kill_transport!(t), bound, :connect)
-_connect_guard(f::Function, ::HTTPTransport, ::Float64) = f()
+# stdio: the whole spawn+handshake+discovery runs under one connect watchdog (kill on
+# breach). Returns whether the watchdog fired on a lost completion race (f returned a
+# real result as the timer fired). http: no wrapper — each initialize/list POST is
+# bounded per-POST inside _http — so the connect guard never fires.
+_connect_guard(f::Function, t::StdioTransport, bound::Float64)::Bool =
+    last(_with_deadline_reported(f, () -> _kill_transport!(t), bound, :connect))
+_connect_guard(f::Function, ::HTTPTransport, ::Float64)::Bool = (f(); false)
 
 """Spawn (stdio) / mark connected (http), run the initialize handshake, and run
 tool/resource/prompt discovery — the whole spawn → ready sequence — under ONE
@@ -797,23 +800,25 @@ function _establish!(session::MCPSession)
     bound = cfg.mcp_connect_timeout
     connect_excfg = RequestConfig(cfg; request_timeout=bound)
     t0 = time_ns()
-    _connect_guard(t, bound) do
+    fired = _connect_guard(t, bound) do
         _transport_connect!(t)
         init_result = _mcp_handshake!(session; excfg=connect_excfg)
         _finalize_connect!(session, init_result)
     end
-    _guard_connect_completion!(session, t0, bound)
+    _guard_connect_completion!(session, fired, t0, bound)
 end
 
-"""Connect-completion symmetry (mirror of the request-path completion-race tail):
-`_with_deadline` can return a real result while its timer fired at ~completion and
-ran the kill ladder, nulling the transport handles. A `:ready` session over a dead
-transport must never escape connect — reflect the close truthfully and surface the
-connect timeout naming `mcp_connect_timeout`. Stdio-only: the HTTP connect path has
-no closeable handle and no kill ladder, so its handles are never nulled here."""
-function _guard_connect_completion!(session::MCPSession, t0::UInt64, bound::Float64)
-    t = session.transport
-    if t isa StdioTransport && (isnothing(t.input) || isnothing(t.output))
+"""Connect-completion symmetry (mirror of the request-path completion-race tail): the
+connect guard can return a real result while its timer fired at ~completion and ran
+the kill ladder. Detected by GUARD STATE (`fired`, the :armed→:fired CAS set
+atomically before close! begins) — not by nulled handles, which _kill_transport!
+nulls only at the END of its grace ladder, a settling window in which the check would
+miss the kill. On a fired connect the session is `:ready` over a dying transport and
+must not escape: reflect the close and surface the connect timeout naming
+`mcp_connect_timeout`. `fired` is only ever true for stdio (the HTTP connect path has
+no watchdog)."""
+function _guard_connect_completion!(session::MCPSession, fired::Bool, t0::UInt64, bound::Float64)
+    if fired
         session.status = :closed
         session._closed_by_timeout = true
         throw(MCPTimeoutError(:connect, _elapsed_s(t0), bound, _connect_timeout_msg(bound)))

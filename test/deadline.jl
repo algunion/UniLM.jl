@@ -214,20 +214,63 @@ end
         () -> (sleep(0.3); throw(InterruptException())), () -> nothing, 0.05, :request)
 end
 
-@testset "task mode: breach delivery terminates a blocked task" begin
-    t0 = time_ns()
-    t = Threads.@spawn try
-        UniLM._with_deadline_task(() -> (sleep(30); :never), 0.3, :request)
+@testset "task mode: a breach throws a typed timeout and abandons the worker" begin
+    # NEW contract: on breach the wrapper throws UniLMTimeout and ABANDONS the
+    # worker — no exception is injected into it and it is not killed. The worker
+    # keeps running and completes on its own (in production its native per-major
+    # timeout at the same bound is the real executioner). The breach lands within
+    # [limit, limit + pollint], pollint = 0.1 s.
+    ran_to_end = Threads.Atomic{Int}(0)
+    limit = 0.2
+    err = try
+        UniLM._with_deadline_task(limit, :request) do
+            sleep(0.6)                       # still running when the wrapper breaches
+            Threads.atomic_add!(ran_to_end, 1)
+            :worker_done
+        end
     catch e
         e
     end
-    @test timedwait(() -> istaskdone(t), 10.0) === :ok
-    e = fetch(t)
-    @test e isa UniLM.UniLMTimeout
-    @test e.phase === :request
-    @test e.limit == 0.3
-    @test 0.3 <= e.elapsed < 10.0
-    @test (time_ns() - t0) / 1e9 < 10.0
+    @test err isa UniLM.UniLMTimeout
+    @test err.phase === :request
+    @test err.limit == limit
+    @test limit <= err.elapsed < limit + 2.0      # [limit, limit + pollint + CI slop]
+    @test ran_to_end[] == 0                        # worker not yet finished at breach time
+    # the abandoned worker was NOT terminated — it runs on to its own completion
+    @test timedwait(() -> ran_to_end[] == 1, 5.0) === :ok
+end
+
+@testset "task mode: an abandoned worker's later failure is stderr-silent" begin
+    # An abandoned worker that later throws its OWN exception (in production, its
+    # native timeout) is never fetched, so Julia discards the failure silently —
+    # no stray error logging escapes the seam. Confirms the current Julia
+    # behavior for unfetched Threads.@spawn failures, which the seam relies on.
+    path, io = mktemp()
+    threw = Threads.Atomic{Int}(0)
+    reached = :notrun
+    err = nothing
+    try
+        redirect_stderr(io) do
+            err = try
+                UniLM._with_deadline_task(0.2, :request) do
+                    sleep(0.4)               # still running when the wrapper breaches
+                    Threads.atomic_add!(threw, 1)
+                    error("post-breach worker failure — must be discarded silently")
+                end
+            catch ex
+                ex
+            end
+            reached = timedwait(() -> threw[] == 1, 5.0)   # worker reaches its own throw
+            GC.gc(); GC.gc(); sleep(0.2)                    # finalize the failed task
+        end
+    finally
+        flush(io); close(io)
+    end
+    captured = read(path, String)
+    rm(path; force=true)
+    @test err isa UniLM.UniLMTimeout        # the wrapper breached typed
+    @test reached === :ok                   # the abandoned worker really did throw
+    @test isempty(strip(captured))          # ...and its failure logged nothing
 end
 
 @testset "task mode: Inf runs f directly; results and failures pass through" begin

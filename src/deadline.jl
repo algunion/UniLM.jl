@@ -57,8 +57,11 @@ Base.showerror(io::IO, e::MCPTimeoutError) =
     print(io, "MCPTimeoutError: ", e.msg, " (", e.phase, " phase, limit ",
         e.limit, " s, elapsed ", round(e.elapsed; digits=3), " s)")
 
-# Watchdog task-mode delivery payload: thrown INTO the worker task on breach,
-# then mapped to UniLMTimeout by the wrapper. Never escapes the seam.
+# Retained for exception-classification stability only: the always-false
+# handling in `_is_transport_error` (and the driver-level classifier tests that
+# reference this type) keeps it part of the contract. Task-mode breach delivery
+# NO LONGER constructs or injects it — `_with_deadline_task` throws UniLMTimeout
+# directly from the wrapper and abandons the worker.
 struct _DeadlineBreach <: Exception
     phase::Symbol
     limit::Float64
@@ -224,50 +227,55 @@ end
     _with_deadline_task(f, limit, phase)
 
 Run `f` under a hard deadline with TASK-mode enforcement, for opaque calls
-that expose no closeable handle: `f` runs in its own task, and on breach the
-guard delivers a private breach exception into it via
-`schedule(task, exc; error=true)` (IO-blocked tasks are parked at a yield
-point, so delivery unblocks them). The wrapper fetches the task and maps a
-breach-caused failure to `UniLMTimeout(phase, …)`. `InterruptException`
-rethrows first, whether it hit the wrapper or the worker. Other worker
-failures rethrow the worker's own exception (`TaskFailedException`
-unwrapped). `limit == Inf` calls `f()` directly. The timer is always closed
-on exit.
+that expose no closeable handle. `f` runs in its own task and the wrapper
+waits for its completion for at most `limit` seconds (a monotonic bounded
+poll). On completion the worker's value is returned, or its exception
+rethrown — `InterruptException` first (bare or nested), otherwise the worker's
+own exception with any `TaskFailedException` layer stripped.
 
-Known limit: a worker inside an uninterruptible foreign call is unblocked
-only at its waiter; the foreign call itself ends on the OS's schedule.
+On breach the wrapper throws `UniLMTimeout(phase, …)` and ABANDONS the worker:
+no exception is injected into it and it is not killed. This is safe because
+every task-mode call also carries the native per-major timeout at the SAME
+bound (`_http` always passes native timeout kwargs; `limit == Inf` bypasses
+task mode entirely), so an abandoned worker self-terminates via its own native
+timeout almost immediately; its eventual result or exception is never fetched
+and Julia discards it silently (the worker is `Threads.@spawn`ed and never
+`errormonitor`ed). The watchdog is the guarantee of last resort for the WAIT,
+not an executioner — abandonment replaces cross-task exception injection
+(`schedule(task, exc; error=true)`), which can race the worker's natural
+wakeup and corrupt scheduler state under load.
+
+Breach latency is `[limit, limit + pollint]` with `pollint = 0.1` s (the
+completion poll interval), comparable to a one-shot `Timer(limit)`.
+`limit == Inf` calls `f()` directly. `_DeadlineBreach` is retained for
+exception-classification stability but is no longer produced or consumed here.
+
+Known limit: a worker inside an uninterruptible foreign call ends on the OS's
+schedule — the wait is bounded, the foreign call's own duration is not.
 """
 function _with_deadline_task(f::Function, limit::Float64, phase::Symbol)
     limit == Inf && return f()
     t0 = time_ns()
-    guard = _DeadlineGuard(:armed)
     task = Threads.@spawn f()
-    timer = Timer(limit) do _
-        (@atomicreplace guard.state :armed => :fired).success || return
-        try
-            schedule(task, _DeadlineBreach(phase, limit); error=true)
-        catch e
-            # Undeliverable (worker already finishing, or not yet parked at a
-            # yield point): the fetch below settles it — a real result is
-            # returned as real.
-            @debug "deadline breach delivery failed" phase exception = (e, catch_backtrace())
-        end
+    # Bounded wait: poll completion up to `limit` on a monotonic clock. Pin a
+    # tight 0.1 s pollint (not timedwait's default) so breach latency lands in
+    # [limit, limit + pollint], comparable to the old one-shot Timer.
+    if timedwait(() -> istaskdone(task), limit; pollint=0.1) !== :ok
+        # Breach: abandon the worker — no injection, no kill. It self-terminates
+        # via its native per-major timeout at the same bound; its later
+        # result/exception is never fetched and Julia discards it silently.
+        throw(UniLMTimeout(phase, _elapsed_s(t0), limit))
     end
+    # Completion within the bound: fetch and rethrow with the same discipline as
+    # handle mode — InterruptException first (bare or nested), else the worker's
+    # own exception with the TaskFailedException layer stripped.
     try
-        result = fetch(task)
-        @atomicreplace guard.state :armed => :done
-        return result
+        return fetch(task)
     catch e
         e isa InterruptException && rethrow()
         interrupted = _find_exception(x -> x isa InterruptException, e)
         interrupted === nothing || throw(interrupted)
-        if _find_exception(x -> x isa _DeadlineBreach, e) !== nothing
-            throw(UniLMTimeout(phase, _elapsed_s(t0), limit))
-        end
-        @atomicreplace guard.state :armed => :done
         throw(_unwrap_task_failure(e))
-    finally
-        close(timer)
     end
 end
 

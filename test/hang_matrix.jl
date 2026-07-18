@@ -333,7 +333,7 @@ end
 
 @testset "retry budget: Retry-After beyond remaining deadline fails immediately" begin
     # FIXED contract: when the server's Retry-After (60 s) exceeds the remaining
-    # total_deadline (~1 s), the loop NEVER sleeps past the deadline — it returns
+    # total_deadline (~5 s), the loop NEVER sleeps past the deadline — it returns
     # the real 429 immediately (LLMFailure(status=429)) after a single attempt.
     # `dt < 2.0` falsifies any implementation that honored the 60 s wait.
     srv, url, calls = _hm_status_server(status = 429, retry_after = 60, hang_after = 1)
@@ -342,7 +342,7 @@ end
         push!(chat, Message(Val(:system), "s"))
         push!(chat, Message(Val(:user), "u"))
         outcome = _hm_bounded() do
-            cfg = UniLM.RequestConfig(request_timeout = 1.0, total_deadline = 1.0, max_attempts = 5)
+            cfg = UniLM.RequestConfig(request_timeout = 5.0, total_deadline = 5.0, max_attempts = 5)
             t0 = time()
             res = chatrequest!(chat; config = cfg)
             (res, time() - t0)

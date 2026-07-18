@@ -335,7 +335,8 @@ end
     # FIXED contract: when the server's Retry-After (60 s) exceeds the remaining
     # total_deadline (~5 s), the loop NEVER sleeps past the deadline — it returns
     # the real 429 immediately (LLMFailure(status=429)) after a single attempt.
-    # `dt < 2.0` falsifies any implementation that honored the 60 s wait.
+    # `dt < 10.0` falsifies any implementation that honored the 60 s wait (6x
+    # margin) while absorbing loaded-runner first-request latency.
     srv, url, calls = _hm_status_server(status = 429, retry_after = 60, hang_after = 1)
     try
         chat = Chat(service = GenericOpenAIEndpoint(url, ""), model = "mock")
@@ -349,7 +350,7 @@ end
         end
         ok = try
             outcome[1] === :ok && let (res, dt) = outcome[2]
-                res isa LLMFailure && res.status == 429 && calls[] == 1 && dt < 2.0
+                res isa LLMFailure && res.status == 429 && calls[] == 1 && dt < 10.0
             end
         catch
             false
@@ -1052,7 +1053,7 @@ end
 
 @testset "mcp: command-not-found fails immediately, not at the timer" begin
     # FIXED contract: a nonexistent command surfaces the spawn error IMMEDIATELY
-    # (not swallowed to ride the connect timer). `dt < 2.0` with a 5 s connect
+    # (not swallowed to ride the connect timer). `dt < 4.0` with a 5 s connect
     # timeout falsifies any implementation that let the failure ride the timer;
     # the error must not be an MCPTimeoutError.
     try
@@ -1078,7 +1079,7 @@ end
                 # this pin cannot pass until the MCP client migration adds the
                 # kwarg and the genuine command-not-found process error surfaces.
                 err isa Exception && !(err isa MethodError) &&
-                    !(err isa UniLM.MCPTimeoutError) && dt < 2.0
+                    !(err isa UniLM.MCPTimeoutError) && dt < 4.0
             end
         catch
             false

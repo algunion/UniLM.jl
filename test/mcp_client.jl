@@ -2241,7 +2241,7 @@ end
             @test err isa MCPCrashError
             @test session.status === :closed && session._close_cause === :crash
             old_proc = session.transport.process   # === nothing (ladder nulled)
-            out = @test_logs (:warn,) match_mode=:any call_tool(session, "incr", Dict{String,Any}())
+            out = @test_logs (:warn, r"a server crash") match_mode=:any call_tool(session, "incr", Dict{String,Any}())
             @test out.content == "1"                       # fresh process: counter reset, NOT "2"
             @test session.status === :ready
             @test session._close_cause === :none

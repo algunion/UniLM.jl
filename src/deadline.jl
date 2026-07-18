@@ -165,36 +165,11 @@ is the echo of our own close and `UniLMTimeout(phase, …)` is thrown instead;
 otherwise the original error rethrows. A throwing `close!` is debug-logged,
 never propagated. The timer is always closed on exit.
 """
-function _with_deadline(f::Function, close!::Function, limit::Float64, phase::Symbol)
-    limit == Inf && return f()
-    t0 = time_ns()
-    guard = _DeadlineGuard(:armed)
-    timer = Timer(limit) do _
-        (@atomicreplace guard.state :armed => :fired).success || return
-        try
-            close!()
-        catch e
-            @debug "deadline close! failed" phase exception = (e, catch_backtrace())
-        end
-    end
-    try
-        result = f()
-        @atomicreplace guard.state :armed => :done
-        # A lost swap means the guard fired as f completed; the result is
-        # real either way — return it.
-        return result
-    catch e
-        e isa InterruptException && rethrow()
-        if (@atomicreplace guard.state :armed => :done).success
-            rethrow()   # real failure; the guard resolved :done
-        else
-            # :fired won — the caught error is the echo of our own close.
-            throw(UniLMTimeout(phase, _elapsed_s(t0), limit))
-        end
-    finally
-        close(timer)
-    end
-end
+# Delegates to _with_deadline_reported and drops the fired bit: ONE watchdog body,
+# so the exactly-once CAS lives in exactly one place. Inf composes — the reported
+# variant returns (f(), false) there, so first(...) is f() with no guard overhead.
+_with_deadline(f::Function, close!::Function, limit::Float64, phase::Symbol) =
+    first(_with_deadline_reported(f, close!, limit, phase))
 
 """
     _with_deadline_reported(f, close!, limit, phase) -> (result, fired::Bool)

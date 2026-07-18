@@ -1552,11 +1552,14 @@ end
     end
     url = "http://127.0.0.1:$port"
     try
-        session = mcp_connect(url; config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
+        # Generous session request bound: only the first call is meant to time out, so the
+        # tight 0.5 s bound rides that call (not the session). The post-recovery success
+        # call below then cannot lose a ~bound race on a loaded runner.
+        session = mcp_connect(url; config = RequestConfig(current_config(); mcp_request_timeout = 10.0))
         try
             err = nothing
             try
-                call_tool(session, "slowtool", Dict{String,Any}())
+                call_tool(session, "slowtool", Dict{String,Any}(); timeout = 0.5)
             catch e
                 err = e
             end
@@ -1564,7 +1567,8 @@ end
             @test err.phase === :request
             @test err.limit == 0.5
             @test session.status == :ready          # HTTP timeout is NOT session-fatal
-            # Session survives: the retried call reaches the now-responsive server.
+            # Session survives: the retried call reaches the now-responsive server; it
+            # inherits the generous session bound, so it cannot race the hair-trigger one.
             @test call_tool(session, "slowtool", Dict{String,Any}()).content == "ok"
         finally
             mcp_disconnect!(session)
@@ -1598,9 +1602,12 @@ end
         # exchange deadline: a per-read watchdog would reset on every frame and never
         # fire (the worker would outlast the 12 s bound below), whereas the
         # whole-exchange deadline — armed once at exchange start — fires at ~bound.
-        session = mcp_connect(cmd; config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
+        # Generous session bound; the tight 0.5 s bound rides only this `hang` call — the
+        # one meant to time out. (No success call shares the session here, but keeping the
+        # split uniform prevents a future one from inheriting the hair-trigger bound.)
+        session = mcp_connect(cmd; config = RequestConfig(current_config(); mcp_request_timeout = 10.0))
         box = Ref{Any}(nothing)
-        worker = @async (box[] = try call_tool(session, "hang", Dict{String,Any}()) catch e; e end)
+        worker = @async (box[] = try call_tool(session, "hang", Dict{String,Any}(); timeout = 0.5) catch e; e end)
         @test timedwait(() -> istaskdone(worker), 12.0) === :ok   # a per-read reset would blow this bound
         err = box[]
         @test err isa MCPTimeoutError
@@ -1629,9 +1636,11 @@ end
     jl = Base.julia_cmd()
     cmd = `$(jl) --startup-file=no --project=$proj $childfile`
     try
-        # `notify_then_ok` emits a notification then the response ~0.2 s later; a 2 s
+        # `notify_then_ok` emits a notification then the response ~0.2 s later; a generous
         # bound must skip the notification and return the response without timing out.
-        session = mcp_connect(cmd; config = RequestConfig(current_config(); mcp_request_timeout = 2.0))
+        # Nothing here is meant to time out, so the session bound stays generous — this
+        # success call must not race a tight bound against the fixture's internal delay.
+        session = mcp_connect(cmd; config = RequestConfig(current_config(); mcp_request_timeout = 10.0))
         try
             @test call_tool(session, "notify_then_ok", Dict{String,Any}()).content == "done"
             @test session.status == :ready
@@ -1708,13 +1717,17 @@ end
     childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
     jl = Base.julia_cmd(); cmd = `$(jl) --startup-file=no --project=$proj $childfile`
     try
+        # Generous session bound: the warm-up incr AND the respawn-retried incr below must
+        # not lose a ~bound race on a loaded runner (that would close the session and fail
+        # the :ready assertion). Only `hang` is meant to time out, so the tight 0.5 s bound
+        # rides that one call.
         session = mcp_connect(cmd; auto_respawn = true,
-            config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
+            config = RequestConfig(current_config(); mcp_request_timeout = 10.0))
         try
             @test call_tool(session, "incr", Dict{String,Any}()).content == "1"   # server state = 1
-            # Time out on `hang` → session-fatal close.
+            # Time out on `hang` → session-fatal close (the tight bound rides this call).
             box = Ref{Any}(nothing)
-            w = @async (box[] = try call_tool(session, "hang", Dict{String,Any}()) catch e; e end)
+            w = @async (box[] = try call_tool(session, "hang", Dict{String,Any}(); timeout = 0.5) catch e; e end)
             @test timedwait(() -> istaskdone(w), 12.0) === :ok
             @test box[] isa MCPTimeoutError
             @test session.status == :closed
@@ -1738,10 +1751,13 @@ end
     childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
     jl = Base.julia_cmd(); cmd = `$(jl) --startup-file=no --project=$proj $childfile`
     try
+        # Generous session bound; the tight 0.5 s bound rides only the `hang` call meant to
+        # time out (uniform with the other stdio-timeout testsets). The follow-up incr
+        # errors at the reuse guard before touching the transport, so it shares no bound.
         session = mcp_connect(cmd; auto_respawn = false,
-            config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
+            config = RequestConfig(current_config(); mcp_request_timeout = 10.0))
         box = Ref{Any}(nothing)
-        w = @async (box[] = try call_tool(session, "hang", Dict{String,Any}()) catch e; e end)
+        w = @async (box[] = try call_tool(session, "hang", Dict{String,Any}(); timeout = 0.5) catch e; e end)
         @test timedwait(() -> istaskdone(w), 12.0) === :ok
         @test session.status == :closed
         err = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
@@ -1767,10 +1783,12 @@ end
     childfile, io = mktemp(); write(io, _ws4_raw_child_src(marker)); close(io)
     jl = Base.julia_cmd(); cmd = `$(jl) --startup-file=no --project=$proj $childfile`
     try
+        # Generous session bound; the tight 0.5 s bound rides only the `hang` call meant to
+        # time out (uniform with the other stdio-timeout testsets).
         session = mcp_connect(cmd; auto_respawn = true,
-            config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
+            config = RequestConfig(current_config(); mcp_request_timeout = 10.0))
         box = Ref{Any}(nothing)
-        w = @async (box[] = try call_tool(session, "hang", Dict{String,Any}()) catch e; e end)
+        w = @async (box[] = try call_tool(session, "hang", Dict{String,Any}(); timeout = 0.5) catch e; e end)
         @test timedwait(() -> istaskdone(w), 12.0) === :ok
         @test box[] isa MCPTimeoutError
         @test session.status == :closed
@@ -1910,7 +1928,12 @@ end
             @test UniLM._transport_isconnected(session.transport) == true
             # The transport is live: a post-connect call_tool round-trips (a :ready
             # session over a dead transport raises "not connected"/IOError here).
-            call_res = try call_tool(session, "echo", Dict{String,Any}()) catch e; e end
+            # Post-connect success call. The session's tight 0.5 s request bound is KEPT
+            # here on purpose — it is the bound connect-phase discovery must ignore, the
+            # thing under test. Give this success call an explicit generous override:
+            # resolution is explicit > ambient > session, so 10.0 beats the session 0.5 and
+            # the call cannot lose a ~bound race on a loaded runner.
+            call_res = try call_tool(session, "echo", Dict{String,Any}(); timeout = 10.0) catch e; e end
             @test call_res isa MCPToolResult
             @test call_res isa MCPToolResult && call_res.content == "echoed"
         end
@@ -2045,10 +2068,12 @@ end
     _alive() = success(pipeline(`pgrep -f $childfile`; stdout=devnull, stderr=devnull))
     session = nothing
     try
+        # The tight 0.5 s bound rides this call — its 0.8 s reply deliberately overshoots
+        # it, deterministically firing the watchdog — while the session bound stays generous.
         session = mcp_connect(cmd; auto_respawn = false,
-            config = RequestConfig(current_config(); mcp_request_timeout = 0.5))
+            config = RequestConfig(current_config(); mcp_request_timeout = 10.0))
         box = Ref{Any}(nothing)
-        worker = @async (box[] = try call_tool(session, "slowreply", Dict{String,Any}()) catch e; e end)
+        worker = @async (box[] = try call_tool(session, "slowreply", Dict{String,Any}(); timeout = 0.5) catch e; e end)
         @test timedwait(() -> istaskdone(worker), 12.0) === :ok
         res = box[]
         # The reply is real and returns (completion race, not a thrown timeout).

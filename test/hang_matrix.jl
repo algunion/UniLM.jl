@@ -976,10 +976,13 @@ end
     cmd, marker = _hm_stdio_cmd(_HM_HANDSHAKE_THEN_MUTE)
     try
         outcome = _hm_bounded() do
-            cfg = UniLM.RequestConfig(mcp_request_timeout = 0.5)
+            # Generous session bound; the tight 0.5 s bound rides only the first probe (the
+            # one meant to time out). The second probe errors at the reuse guard before it
+            # touches the transport, so it shares no bound.
+            cfg = UniLM.RequestConfig(mcp_request_timeout = 10.0)
             session = mcp_connect(cmd; config = cfg, auto_respawn = false)
             first_err = try
-                call_tool(session, "probe", Dict{String,Any}())
+                call_tool(session, "probe", Dict{String,Any}(); timeout = 0.5)
                 nothing
             catch e
                 e
@@ -1014,10 +1017,12 @@ end
     cmd, marker, gc_marker = _hm_wrapper_child_cmd()
     try
         outcome = _hm_bounded() do
-            cfg = UniLM.RequestConfig(mcp_request_timeout = 0.5)
+            # Generous session bound; the tight 0.5 s bound rides only the probe meant to
+            # time out (its session-fatal close drives the teardown under test).
+            cfg = UniLM.RequestConfig(mcp_request_timeout = 10.0)
             session = mcp_connect(cmd; config = cfg, auto_respawn = false)
             err = try
-                call_tool(session, "probe", Dict{String,Any}())
+                call_tool(session, "probe", Dict{String,Any}(); timeout = 0.5)
                 nothing
             catch e
                 e
@@ -1125,10 +1130,12 @@ end
     httpserver, url = _hm_mcp_http_mute_server()
     try
         outcome = _hm_bounded() do
-            cfg = UniLM.RequestConfig(mcp_request_timeout = 0.5)
+            # Generous session bound; the tight 0.5 s bound rides only the probe meant to
+            # time out. The session then SURVIVES (:ready) — HTTP timeout is not fatal.
+            cfg = UniLM.RequestConfig(mcp_request_timeout = 10.0)
             session = mcp_connect(url; config = cfg)
             err = try
-                call_tool(session, "probe", Dict{String,Any}())
+                call_tool(session, "probe", Dict{String,Any}(); timeout = 0.5)
                 nothing
             catch e
                 e

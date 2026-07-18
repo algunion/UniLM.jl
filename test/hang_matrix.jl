@@ -457,15 +457,20 @@ end
                 config = UniLM.RequestConfig(request_timeout = 5.0, total_deadline = 10.0, max_attempts = 1))
             (results, fresh, same)
         end
-        ok = try
-            outcome[1] === :ok && let (results, fresh, same) = outcome[2]
-                all(r -> r isa LLMCallError && r.cause isa UniLM.UniLMTimeout, results) &&
-                    fresh isa LLMSuccess && same isa LLMSuccess
-            end
-        catch
-            false
-        end
-        @test ok
+        # Labeled sub-assertions (semantics identical to the former single @test):
+        # a future CI failure names the component that broke. When the whole cycle
+        # times out the fallback drives every clause red, matching the old outcome.
+        completed = outcome[1] === :ok
+        @test completed   # whole cycle finished within the 120 s bound — no suite-level hang
+        results, fresh, same = completed ? outcome[2] : (fill(:hung, 20), nothing, nothing)
+        # task hygiene: every one of the 20 driver tasks completed (none leaked as :hung)
+        @test count(==(:hung), results) == 0
+        # per-cycle typed outcomes: each of the 20 timeouts surfaced as a typed UniLMTimeout value
+        @test all(r -> r isa LLMCallError && r.cause isa UniLM.UniLMTimeout, results)
+        # cross-peer health: a brand-new peer still succeeds after the timeout storm
+        @test fresh isa LLMSuccess
+        # same-peer recovery: the exact host:port that timed out 20× succeeds once responsive
+        @test same isa LLMSuccess
     finally
         HTTP.forceclose(tsrv)
         close(hsrv)

@@ -2228,3 +2228,66 @@ end
     @test err isa MCPCrashError
     @test occursin("connect handshake", err.msg)
 end
+
+@testset "auto-respawn on next call after a server crash (opt-in), state lost" begin
+    marker = "UNILMCRASHRESPAWN" * string(rand(UInt64); base=16)
+    childfile, cmd = _crash_child_session(marker; serve_calls=1)
+    try
+        session = mcp_connect(cmd; auto_respawn=true,
+            config=RequestConfig(current_config(); mcp_request_timeout=30.0))
+        try
+            @test call_tool(session, "incr", Dict{String,Any}()).content == "1"
+            err = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+            @test err isa MCPCrashError
+            @test session.status === :closed && session._close_cause === :crash
+            old_proc = session.transport.process   # === nothing (ladder nulled)
+            out = @test_logs (:warn,) match_mode=:any call_tool(session, "incr", Dict{String,Any}())
+            @test out.content == "1"                       # fresh process: counter reset, NOT "2"
+            @test session.status === :ready
+            @test session._close_cause === :none
+            @test session.transport.process !== old_proc && session.transport.process !== nothing
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "crash-closed session without auto_respawn errors naming the opt-in" begin
+    marker = "UNILMCRASHNORSPWN" * string(rand(UInt64); base=16)
+    childfile, cmd = _crash_child_session(marker; serve_calls=0)
+    try
+        session = mcp_connect(cmd; auto_respawn=false,
+            config=RequestConfig(current_config(); mcp_request_timeout=30.0))
+        err1 = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+        @test err1 isa MCPCrashError
+        err2 = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+        @test err2 isa ErrorException
+        @test occursin("closed by a server crash", err2.msg)
+        @test occursin("auto_respawn", err2.msg)
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "explicit disconnect after a crash clears the cause: no respawn, no opt-in citation" begin
+    marker = "UNILMCRASHDISC" * string(rand(UInt64); base=16)
+    childfile, cmd = _crash_child_session(marker; serve_calls=0)
+    try
+        session = mcp_connect(cmd; auto_respawn=true,
+            config=RequestConfig(current_config(); mcp_request_timeout=30.0))
+        err = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+        @test err isa MCPCrashError
+        mcp_disconnect!(session)
+        @test session._close_cause === :none
+        err2 = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+        @test err2 isa ErrorException
+        @test !occursin("auto_respawn", err2.msg)   # normal-close reuse error, not the crash guidance
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end

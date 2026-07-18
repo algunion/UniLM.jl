@@ -944,7 +944,13 @@ _closed_session_msg()::String =
     "the next call transparently respawns the server (its in-memory state is lost " *
     "and tools are refetched)."
 
-"""Respawn a stdio session closed by a timeout: fresh transport (same command),
+_crashed_session_msg()::String =
+    "MCP stdio session was closed by a server crash and cannot be reused. " *
+    "Reconnect explicitly, or pass auto_respawn=true to mcp_connect so the next " *
+    "call transparently respawns the server (its in-memory state is lost and " *
+    "tools are refetched)."
+
+"""Respawn a stdio session closed by a timeout or a server crash: fresh transport (same command),
 captured config, fresh handshake. In-memory server state is lost and tools are
 refetched. Throws `MCPTimeoutError(:connect)` if the respawned server does not
 hand-shake in time."""
@@ -952,7 +958,8 @@ function _respawn!(session::MCPSession)
     session.transport isa StdioTransport ||
         error("MCP auto-respawn is only supported for stdio sessions.")
     old = session.transport
-    @warn "MCP stdio session was closed by a request timeout; respawning the server. \
+    reason = session._close_cause === :crash ? "a server crash" : "a request timeout"
+    @warn "MCP stdio session was closed by $reason; respawning the server. \
            In-memory server state is lost and tools are refetched." command=old.command
     session.transport = StdioTransport(old.command)
     session._id_counter = 0
@@ -977,12 +984,13 @@ function _respawn!(session::MCPSession)
     nothing
 end
 
-"""Guard against reusing a session closed by a stdio request timeout: respawn when
+"""Guard against reusing a session closed by a stdio request timeout or a server crash: respawn when
 opted in, otherwise error with recovery guidance. A no-op for live sessions and
 for sessions closed by a normal disconnect."""
 function _ensure_live!(session::MCPSession)
-    if session.status === :closed && session._close_cause === :timeout
-        session.auto_respawn || error(_closed_session_msg())
+    if session.status === :closed && session._close_cause !== :none
+        session.auto_respawn ||
+            error(session._close_cause === :crash ? _crashed_session_msg() : _closed_session_msg())
         _respawn!(session)
     end
     nothing

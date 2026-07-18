@@ -794,12 +794,31 @@ directly beneath this deadline (see [`_mcp_request!`](@ref))."""
 function _establish!(session::MCPSession)
     t = session.transport
     cfg = session.config
-    connect_excfg = RequestConfig(cfg; request_timeout=cfg.mcp_connect_timeout)
-    _connect_guard(t, cfg.mcp_connect_timeout) do
+    bound = cfg.mcp_connect_timeout
+    connect_excfg = RequestConfig(cfg; request_timeout=bound)
+    t0 = time_ns()
+    _connect_guard(t, bound) do
         _transport_connect!(t)
         init_result = _mcp_handshake!(session; excfg=connect_excfg)
         _finalize_connect!(session, init_result)
     end
+    _guard_connect_completion!(session, t0, bound)
+end
+
+"""Connect-completion symmetry (mirror of the request-path completion-race tail):
+`_with_deadline` can return a real result while its timer fired at ~completion and
+ran the kill ladder, nulling the transport handles. A `:ready` session over a dead
+transport must never escape connect — reflect the close truthfully and surface the
+connect timeout naming `mcp_connect_timeout`. Stdio-only: the HTTP connect path has
+no closeable handle and no kill ladder, so its handles are never nulled here."""
+function _guard_connect_completion!(session::MCPSession, t0::UInt64, bound::Float64)
+    t = session.transport
+    if t isa StdioTransport && (isnothing(t.input) || isnothing(t.output))
+        session.status = :closed
+        session._closed_by_timeout = true
+        throw(MCPTimeoutError(:connect, _elapsed_s(t0), bound, _connect_timeout_msg(bound)))
+    end
+    nothing
 end
 
 """Populate server info/capabilities, auto-list advertised primitives, then mark the

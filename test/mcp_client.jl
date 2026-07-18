@@ -1952,3 +1952,39 @@ end
         rm(childfile; force=true)
     end
 end
+
+@testset "connect completion-race symmetry: nulled handles ⇒ :closed + connect timeout" begin
+    # Mirror of the request-path completion-race tail on the connect path. The
+    # connect guard can return a real result while its timer fired at ~completion and
+    # ran the kill ladder (nulling the transport handles); a :ready session over a
+    # dead transport must not escape. _guard_connect_completion! reflects the close
+    # and surfaces the connect timeout. Deterministic — the post-race state (nulled
+    # handles, erased :ready) is constructed directly, no timing race.
+    mk(tp) = MCPSession(tp, MCPServerCapabilities(), Dict{String,Any}(),
+        MCPToolInfo[], MCPResourceInfo[], MCPPromptInfo[],
+        UniLM._MCP_PROTOCOL_VERSION, 0, :ready)
+
+    # Ladder ran (handles nulled): close truthfully + throw MCPTimeoutError(:connect).
+    s = mk(StdioTransport(`true`))          # a fresh StdioTransport has nil handles
+    @test isnothing(s.transport.input) && isnothing(s.transport.output)
+    err = try UniLM._guard_connect_completion!(s, time_ns(), 7.0); nothing catch e; e end
+    @test err isa MCPTimeoutError
+    @test err isa MCPTimeoutError && err.phase === :connect
+    @test err isa MCPTimeoutError && err.limit == 7.0
+    @test err isa MCPTimeoutError && occursin("mcp_connect_timeout", err.msg)
+    @test s.status == :closed
+    @test s._closed_by_timeout == true
+
+    # Live handles: no-op, session untouched.
+    s2 = mk(StdioTransport(`true`))
+    s2.transport.input = IOBuffer(); s2.transport.output = IOBuffer()
+    @test UniLM._guard_connect_completion!(s2, time_ns(), 7.0) === nothing
+    @test s2.status == :ready
+    @test s2._closed_by_timeout == false
+
+    # HTTP connect path has no closeable handle ⇒ never closed here.
+    s3 = mk(HTTPTransport("http://127.0.0.1:1"))
+    @test UniLM._guard_connect_completion!(s3, time_ns(), 7.0) === nothing
+    @test s3.status == :ready
+    @test s3._closed_by_timeout == false
+end

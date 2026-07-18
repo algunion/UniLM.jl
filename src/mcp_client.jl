@@ -89,8 +89,8 @@ server, otherwise it errors naming the opt-in.
   (`nothing` for a clean read-EOF).
 
 Best-effort diagnostics: both `exitcode` and `termsignal` are `nothing` when the
-process had not been reaped when the pipe failure surfaced (or was still alive
-with a broken pipe).
+process had not been reaped within a brief settle window after the failure
+surfaced (or was still alive with a broken pipe).
 """
 struct MCPCrashError <: Exception
     msg::String
@@ -700,11 +700,12 @@ correlation is per-POST).
 function _mcp_request!(session::MCPSession, method::String,
                        params::Union{Dict{String,Any},Nothing}=nothing;
                        timeout::Union{Nothing,Float64}=nothing)::Dict{String,Any}
-    # A session closed by a stdio request timeout cannot be reused: respawn (opt-in)
-    # or error before touching the transport. A no-op for live sessions and for
-    # sessions closed by a normal disconnect. Respawn's fresh handshake avoids this
-    # guard (it runs through _establish!), and its list_tools! re-enters here while
-    # status is :initializing, so the guard no-ops — no re-entrant respawn.
+    # A session closed by a stdio request timeout or a server crash cannot be reused:
+    # respawn (opt-in) or error before touching the transport. A no-op for live
+    # sessions and for sessions closed by a normal disconnect. Respawn's fresh
+    # handshake avoids this guard (it runs through _establish!), and its list_tools!
+    # re-enters here while status is :initializing, so the guard no-ops — no
+    # re-entrant respawn.
     _ensure_live!(session)
     bound = _resolve_mcp_request_timeout(session, timeout)
     excfg = RequestConfig(session.config; request_timeout=bound)
@@ -955,7 +956,7 @@ _crashed_session_msg()::String =
 """Respawn a stdio session closed by a timeout or a server crash: fresh transport (same command),
 captured config, fresh handshake. In-memory server state is lost and tools are
 refetched. Throws `MCPTimeoutError(:connect)` if the respawned server does not
-hand-shake in time."""
+hand-shake in time, or `MCPCrashError` if it dies during the respawn handshake."""
 function _respawn!(session::MCPSession)
     session.transport isa StdioTransport ||
         error("MCP auto-respawn is only supported for stdio sessions.")
@@ -1084,7 +1085,8 @@ function mcp_disconnect!(session::MCPSession)
     session.status = :closed
     # User intent wins: an explicit disconnect is a normal close, not a timeout, so
     # the next call must never respawn or cite auto_respawn — even if this session
-    # was closed by a request timeout before the caller disconnected it.
+    # was closed by a request timeout or a server crash before the caller
+    # disconnected it.
     session._close_cause = :none
     nothing
 end

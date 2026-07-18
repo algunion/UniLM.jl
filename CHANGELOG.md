@@ -7,6 +7,8 @@
   new typed `MCPCrashError` and closes the session, instead of leaking a raw
   `Base.IOError`/`ErrorException` while the session stayed `:ready`. Code that
   caught raw transport errors around MCP calls should catch `MCPCrashError`.
+- `mcp_connect` itself now throws `MCPCrashError` (instead of a raw transport
+  error) when the server dies during the connect handshake.
 
 ### Added
 - `MCPCrashError` (exported): message with recovery guidance plus best-effort

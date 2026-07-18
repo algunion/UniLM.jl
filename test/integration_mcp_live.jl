@@ -228,7 +228,7 @@ end
     end
 end
 
-# ─── Crash + auto_respawn=true → the real server is respawned on the next call ─
+# ─── 4. Crash + auto_respawn=true → the real server is respawned on the next call ─
 # The crash-classification twin of the timeout-respawn case: with auto_respawn=true
 # a stdio session closed by a server crash respawns the server (same command, fresh
 # handshake) on the NEXT call. The crashing call still throws MCPCrashError; the
@@ -301,7 +301,7 @@ end
     end
 end
 
-# ─── 4. Real hang via SIGSTOP → whole-exchange timeout + group-kill of a stopped process ─
+# ─── 5. Real hang via SIGSTOP → whole-exchange timeout + group-kill of a stopped process ─
 # A SIGSTOP'd server is frozen: it never answers and never reacts to stdin EOF or
 # SIGTERM. The whole-exchange watchdog must still terminate the call with a typed
 # MCPTimeoutError and the teardown ladder's UNCONDITIONAL final rung (group SIGKILL)
@@ -373,7 +373,7 @@ end
     end
 end
 
-# ─── 5. SIGSTOP timeout + auto_respawn=true → the real server is respawned ────
+# ─── 6. SIGSTOP timeout + auto_respawn=true → the real server is respawned ────
 # With auto_respawn=true a stdio session closed by a request timeout respawns the
 # server (same command, fresh handshake) on the NEXT call. The timed-out call
 # still throws; the following call transparently respawns the REAL server, emits
@@ -445,7 +445,7 @@ end
     end
 end
 
-# ─── 6. stdin-EOF politeness: a real server exits on the first teardown rung ──
+# ─── 7. stdin-EOF politeness: a real server exits on the first teardown rung ──
 # The teardown ladder closes stdin first; MCP spec says a compliant server exits
 # on stdin EOF. Measure how long the real server takes to exit, and validate the
 # shipped grace_term=5 s first rung against reality: a disconnect that returns in
@@ -476,7 +476,7 @@ end
     end
 end
 
-# ─── 7. Schema-variety probe against the everything server ───────────────────
+# ─── 8. Schema-variety probe against the everything server ───────────────────
 # The everything server advertises tools with richer JSON-Schema inputs (nested
 # $schema/properties/required). Assert they decode into the session's tool
 # registry without error and that a real tool call round-trips.

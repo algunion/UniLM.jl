@@ -246,7 +246,10 @@ not an executioner — abandonment replaces cross-task exception injection
 wakeup and corrupt scheduler state under load.
 
 Breach latency is `[limit, limit + pollint]` with `pollint = 0.1` s (the
-completion poll interval), comparable to a one-shot `Timer(limit)`.
+completion poll interval), comparable to a one-shot `Timer(limit)`. The SUCCESS
+path also pays up to one `pollint` of detection latency (completion is observed
+by polling, not event-driven fetch) — negligible against network round-trips,
+and streaming is handle-mode, unaffected.
 `limit == Inf` calls `f()` directly. `_DeadlineBreach` is retained for
 exception-classification stability but is no longer produced or consumed here.
 

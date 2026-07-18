@@ -177,6 +177,15 @@ Abstract type for MCP transport implementations. Subtypes must implement:
 """
 abstract type MCPTransport end
 
+"""Internal sentinel: a stdio pipe operation failed because the server process
+exited or the pipe broke. Thrown ONLY by the three stdio transport primitives;
+mapped to the exported `MCPCrashError` at the session boundaries. `cause` is the
+underlying exception, or `nothing` for the read-EOF case. Never leaks to users:
+every producer sits beneath one of the two mapping boundaries."""
+struct _TransportClosed <: Exception
+    cause::Union{Exception,Nothing}
+end
+
 """
     StdioTransport <: MCPTransport
 
@@ -215,9 +224,14 @@ function _transport_send!(t::StdioTransport, msg::String;
                           cfg::RequestConfig=current_config())::String
     inp = t.input
     isnothing(inp) && error("StdioTransport not connected")
-    lock(t.lock) do
-        write(inp, msg, "\n")
-        flush(inp)
+    try
+        lock(t.lock) do
+            write(inp, msg, "\n")
+            flush(inp)
+        end
+    catch e
+        e isa InterruptException && rethrow()
+        throw(_TransportClosed(e))
     end
     _transport_read!(t)   # bounded by the whole-exchange watchdog in _mcp_request!
 end
@@ -225,8 +239,13 @@ end
 function _transport_read!(t::StdioTransport)::String
     out = t.output
     isnothing(out) && error("StdioTransport not connected")
-    line = readline(out)
-    isempty(line) && error("MCP server closed connection")
+    line = try
+        readline(out)
+    catch e
+        e isa InterruptException && rethrow()
+        throw(_TransportClosed(e))
+    end
+    isempty(line) && throw(_TransportClosed(nothing))
     line
 end
 
@@ -234,9 +253,14 @@ function _transport_notify!(t::StdioTransport, msg::String;
                             cfg::RequestConfig=current_config())
     inp = t.input
     isnothing(inp) && error("StdioTransport not connected")
-    lock(t.lock) do
-        write(inp, msg, "\n")
-        flush(inp)
+    try
+        lock(t.lock) do
+            write(inp, msg, "\n")
+            flush(inp)
+        end
+    catch e
+        e isa InterruptException && rethrow()
+        throw(_TransportClosed(e))
     end
     nothing
 end

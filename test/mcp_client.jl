@@ -2094,3 +2094,29 @@ end
         rm(childfile; force=true)
     end
 end
+
+@testset "stdio primitives throw the typed transport-closed sentinel on a dead pipe" begin
+    # A child that exits immediately: both pipe limbs die.
+    child = `$(Base.julia_cmd()) --startup-file=no -e "exit(0)"`
+    t = UniLM.StdioTransport(child)
+    UniLM._transport_connect!(t)
+    @test timedwait(() -> process_exited(t.process), 30.0) === :ok
+    # Read limb: EOF -> sentinel with cause=nothing (empty-line condition unchanged).
+    err_r = try UniLM._transport_read!(t); nothing catch e; e end
+    @test err_r isa UniLM._TransportClosed
+    @test err_r.cause === nothing
+    # Write limb: write/flush to the dead pipe -> sentinel carrying the real cause.
+    # (Buffering may let one write through to a just-dead pipe; two attempts force it.)
+    err_w = nothing
+    for _ in 1:2
+        err_w = try UniLM._transport_notify!(t, "{\"jsonrpc\":\"2.0\",\"method\":\"x\"}"); nothing catch e; e end
+        err_w === nothing || break
+    end
+    @test err_w isa UniLM._TransportClosed
+    @test err_w.cause isa Exception
+    UniLM._kill_transport!(t)
+    # Not-connected paths unchanged: plain ErrorException, not the sentinel.
+    t2 = UniLM.StdioTransport(child)
+    @test_throws ErrorException UniLM._transport_read!(t2)
+    @test_throws ErrorException UniLM._transport_notify!(t2, "x")
+end

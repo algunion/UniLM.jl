@@ -238,7 +238,9 @@ call_tool(session, "read_file", Dict("path" => "/tmp/x"); timeout = 10.0)
   raises — unless you opened the session with `auto_respawn = true`, which
   respawns the same command (fresh handshake, logged loudly) and retries once.
   **In-memory server state is lost on respawn**, which is why it is off by
-  default; silent respawn would fabricate session continuity.
+  default; silent respawn would fabricate session continuity. It covers
+  timeout-closures only: a server that crashes outright surfaces a transport
+  error on the in-flight call and is never respawned — reconnect explicitly.
 - **Ambient scope reaches bridged tools.** Tools bridged into a tool loop pass no
   keyword arguments, so wrap the loop in `with_request_config` to bound their MCP
   calls:

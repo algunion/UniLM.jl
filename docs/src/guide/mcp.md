@@ -123,6 +123,19 @@ raises an error naming the opt-in. An HTTP request timeout does not close the
 session — each exchange is an independent POST. Both surface as the typed
 [`MCPTimeoutError`](@ref).
 
+Two boundaries of that contract, observed against real servers:
+
+- `auto_respawn` covers **hangs, not crashes**. It triggers only when the request
+  watchdog closed the session. A server that dies abruptly (killed, crashed)
+  surfaces a transport error (for example a broken-pipe `IOError`) on the call in
+  flight and the session is **not** respawned — reconnect with
+  [`mcp_connect`](@ref) explicitly.
+- When a wedged server also ignores polite shutdown (frozen rather than merely
+  slow), the timed-out call returns only after the escalation ladder completes:
+  the configured timeout plus up to ~7 seconds of stdin-EOF and SIGTERM grace
+  before the final process-group SIGKILL unblocks the read. The error is still
+  the typed `MCPTimeoutError`; its `elapsed` reflects that full wall time.
+
 ### Bridging to tool_loop! (Chat Completions)
 
 [`mcp_tools`](@ref) converts MCP tools into `Vector{CallableTool{GPTTool}}` for use with

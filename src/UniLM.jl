@@ -454,6 +454,7 @@ export
     StdioTransport,
     HTTPTransport,
     MCPError,
+    MCPCrashError,
     mcp_connect,
     mcp_disconnect!,
     mcp_tools,

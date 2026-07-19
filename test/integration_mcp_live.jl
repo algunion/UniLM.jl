@@ -47,15 +47,6 @@ function _live_bounded(f; bound::Float64 = 25.0)
     end
 end
 
-# The shape of an abrupt server death observed by the client: the next stdio
-# exchange fails on a broken pipe (write leg) or a closed stream (read leg). Not
-# a typed timeout — a crash is a transport failure, distinct from a hang.
-_live_transport_death(e)::Bool =
-    e isa Base.IOError || e isa EOFError ||
-    (e isa ErrorException && (occursin("closed connection", e.msg) ||
-                              occursin("broken pipe", lowercase(e.msg)) ||
-                              occursin("EPIPE", e.msg)))
-
 # Best-effort reap of a server generation: group-SIGKILL by the spawn-captured
 # pgid (reaches the node grandchild even after the wrapper is gone), then pkill by
 # marker as a backstop. A stopped process dies to SIGKILL, so no SIGCONT is needed.
@@ -190,20 +181,18 @@ end
     end
 end
 
-# ─── 3. Abrupt server death (kill -9 the group) surfaces a raw transport error ─
-# FINDING pin: the session-fatal + auto_respawn machinery is keyed on a request
-# TIMEOUT (the watchdog nulling the transport handles), NOT on abrupt death. When
-# the real server is killed, the next exchange fails with a raw broken-pipe /
-# closed-stream IOError; the session is neither respawned nor marked closed-by-
-# timeout — even with auto_respawn=true. auto_respawn covers hangs, not crashes.
-@testset "live MCP: killing the server group surfaces a raw transport error, no respawn" begin
+# ─── 3. Abrupt server death (kill -9 the group) is classified as a crash ──────
+# The next stdio exchange after the real server is killed fails on a broken pipe /
+# closed stream; the client classifies that transport death as a crash, captures
+# best-effort exit diagnostics, closes the session (cause :crash), and throws the
+# typed MCPCrashError carrying the kill signal. auto_respawn=false, so no respawn
+# fires — the crash is surfaced, not silently healed.
+@testset "live MCP: killing the server group surfaces typed MCPCrashError, session closed" begin
     scratch = mktempdir(; prefix = "mcplive_kill_")
     marker = basename(scratch)
     session = nothing
     try
-        # auto_respawn=true is the STRONGER setting: if respawn does not fire here,
-        # it certainly does not with the default auto_respawn=false either.
-        session = mcp_connect(_fs_cmd(scratch); auto_respawn = true)
+        session = mcp_connect(_fs_cmd(scratch); auto_respawn = false)
         pgid = session.transport.pgid
         warm = _live_bounded(bound = 12.0) do
             call_tool(session, "list_allowed_directories", Dict{String,Any}())
@@ -222,24 +211,97 @@ end
         end
         @test outcome[1] === :ok
         if outcome[1] === :ok
-            @test outcome[2][1] === :threw       # NOT respawned-and-returned
+            @test outcome[2][1] === :threw       # the crash surfaces, not a respawned result
             if outcome[2][1] === :threw
                 e = outcome[2][2]
-                @test _live_transport_death(e)
-                @test !(e isa MCPTimeoutError)
-                @test !occursin("auto_respawn", sprint(showerror, e))
+                @test e isa MCPCrashError
+                @test e.termsignal == 9          # SIGKILL, read back from the reaped process
                 println("  [live-mcp] post-crash error: ", sprint(showerror, e))
             end
         end
-        # The crash left the session neither closed-by-timeout nor respawned.
-        @test session._closed_by_timeout === false
+        # The transport death closed the session with a crash cause.
+        @test session.status === :closed
+        @test session._close_cause === :crash
     finally
         _live_reap(marker; pgid = session === nothing ? nothing : session.transport.pgid)
         rm(scratch; recursive = true, force = true)
     end
 end
 
-# ─── 4. Real hang via SIGSTOP → whole-exchange timeout + group-kill of a stopped process ─
+# ─── 4. Crash + auto_respawn=true → the real server is respawned on the next call ─
+# The crash-classification twin of the timeout-respawn case: with auto_respawn=true
+# a stdio session closed by a server crash respawns the server (same command, fresh
+# handshake) on the NEXT call. The crashing call still throws MCPCrashError; the
+# following call transparently respawns a FRESH process (new pid), emits the cause-
+# aware @warn, and round-trips a real tool call against it.
+@testset "live MCP: auto_respawn respawns the real server after a crash" begin
+    scratch = mktempdir(; prefix = "mcplive_respawn_crash_")
+    marker = basename(scratch)
+    session = nothing
+    pgid = nothing
+    try
+        session = mcp_connect(_fs_cmd(scratch); auto_respawn = true)
+        pgid = session.transport.pgid
+        pre_pid = getpid(session.transport.process)   # captured BEFORE the kill
+        warm = _live_bounded(bound = 12.0) do
+            call_tool(session, "list_allowed_directories", Dict{String,Any}())
+        end
+        @test warm[1] === :ok
+
+        _live_signal(-pgid, _LIVE_SIGKILL)            # kill the whole server group
+        @test timedwait(() -> _live_survivors(marker) == 0, 8.0) === :ok
+
+        # Call 1: hits the dead server, is classified as a crash, throws MCPCrashError.
+        first_outcome = _live_bounded(bound = 12.0) do
+            try
+                (:returned, call_tool(session, "list_allowed_directories", Dict{String,Any}()))
+            catch e
+                (:threw, e)
+            end
+        end
+        @test first_outcome[1] === :ok
+        if first_outcome[1] === :ok
+            @test first_outcome[2][1] === :threw
+            first_outcome[2][1] === :threw && @test first_outcome[2][2] isa MCPCrashError
+        end
+        @test session.status === :closed
+
+        # Call 2: transparently respawns a FRESH server (new pid), emits the crash-
+        # reason @warn, and round-trips a real tool call against the new process.
+        second_outcome = @test_logs (:warn, r"a server crash") match_mode = :any _live_bounded(bound = 25.0) do
+            try
+                (:returned, call_tool(session, "list_allowed_directories", Dict{String,Any}()))
+            catch e
+                (:threw, e)
+            end
+        end
+        @test second_outcome[1] === :ok
+        if second_outcome[1] === :ok
+            @test second_outcome[2][1] === :returned
+            if second_outcome[2][1] === :returned
+                @test second_outcome[2][2] isa MCPToolResult
+                @test second_outcome[2][2].is_error === false
+            end
+        end
+        @test session.status === :ready
+        @test session.transport.process !== nothing
+        @test getpid(session.transport.process) != pre_pid
+        println("  [live-mcp] auto_respawn: server respawned after crash; pid ",
+                pre_pid, " -> ", getpid(session.transport.process))
+
+        mcp_disconnect!(session)
+    finally
+        # Both generations share the same command (scratch-dir marker); reap by marker.
+        if session !== nothing
+            try; mcp_disconnect!(session); catch; end
+            try; _live_signal(-session.transport.pgid, _LIVE_SIGKILL); catch; end
+        end
+        _live_reap(marker; pgid = pgid)
+        rm(scratch; recursive = true, force = true)
+    end
+end
+
+# ─── 5. Real hang via SIGSTOP → whole-exchange timeout + group-kill of a stopped process ─
 # A SIGSTOP'd server is frozen: it never answers and never reacts to stdin EOF or
 # SIGTERM. The whole-exchange watchdog must still terminate the call with a typed
 # MCPTimeoutError and the teardown ladder's UNCONDITIONAL final rung (group SIGKILL)
@@ -289,7 +351,7 @@ end
                     round(wall; digits = 2), " s wall (limit 2.0 s + kill-ladder graces)")
         end
         @test session.status === :closed
-        @test session._closed_by_timeout === true
+        @test session._close_cause === :timeout
 
         # The final unconditional SIGKILL rung reaps even a stopped process.
         @test timedwait(() -> _live_survivors(marker) == 0, 8.0) === :ok
@@ -311,7 +373,7 @@ end
     end
 end
 
-# ─── 5. SIGSTOP timeout + auto_respawn=true → the real server is respawned ────
+# ─── 6. SIGSTOP timeout + auto_respawn=true → the real server is respawned ────
 # With auto_respawn=true a stdio session closed by a request timeout respawns the
 # server (same command, fresh handshake) on the NEXT call. The timed-out call
 # still throws; the following call transparently respawns the REAL server, emits
@@ -383,7 +445,7 @@ end
     end
 end
 
-# ─── 6. stdin-EOF politeness: a real server exits on the first teardown rung ──
+# ─── 7. stdin-EOF politeness: a real server exits on the first teardown rung ──
 # The teardown ladder closes stdin first; MCP spec says a compliant server exits
 # on stdin EOF. Measure how long the real server takes to exit, and validate the
 # shipped grace_term=5 s first rung against reality: a disconnect that returns in
@@ -414,7 +476,7 @@ end
     end
 end
 
-# ─── 7. Schema-variety probe against the everything server ───────────────────
+# ─── 8. Schema-variety probe against the everything server ───────────────────
 # The everything server advertises tools with richer JSON-Schema inputs (nested
 # $schema/properties/required). Assert they decode into the session's tool
 # registry without error and that a real tool call round-trips.

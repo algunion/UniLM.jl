@@ -125,11 +125,13 @@ session — each exchange is an independent POST. Both surface as the typed
 
 Two boundaries of that contract, observed against real servers:
 
-- `auto_respawn` covers **hangs, not crashes**. It triggers only when the request
-  watchdog closed the session. A server that dies abruptly (killed, crashed)
-  surfaces a transport error (for example a broken-pipe `IOError`) on the call in
-  flight and the session is **not** respawned — reconnect with
-  [`mcp_connect`](@ref) explicitly.
+- `auto_respawn` covers **hangs and crashes**. A request-watchdog timeout closes
+  the session with the typed [`MCPTimeoutError`](@ref); a server that dies
+  abruptly — killed, crashed, or its stdio pipe broken — closes it too, surfacing
+  the typed [`MCPCrashError`](@ref) (carrying the exit code or signal when known)
+  on the call in flight. Either way the next call respawns the server when
+  `auto_respawn=true` and errors naming the opt-in otherwise. HTTP sessions are
+  unaffected: each exchange is an independent POST.
 - When a wedged server also ignores polite shutdown (frozen rather than merely
   slow), the timed-out call returns only after the escalation ladder completes:
   the configured timeout plus up to ~7 seconds of stdin-EOF and SIGTERM grace

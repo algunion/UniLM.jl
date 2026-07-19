@@ -1007,7 +1007,7 @@ end
     # request respawn-or-error over a live session). Regression: the process-liveness
     # proxy read this transport as "not connected" and closed it after one request.
     @test session.status == :ready
-    @test session._closed_by_timeout == false
+    @test session._close_cause === :none
     # Refreshing the list stores the new tools and clears the flag.
     tools = list_tools!(session)
     @test [tl.name for tl in tools] == ["fresh"]
@@ -1333,7 +1333,7 @@ end
             @test session.config.mcp_request_timeout == 7.0
             @test session.config.mcp_connect_timeout == 11.0
             @test session.auto_respawn == true
-            @test session._closed_by_timeout == false
+            @test session._close_cause === :none
         finally
             mcp_disconnect!(session)
         end
@@ -1616,7 +1616,7 @@ end
         @test err.elapsed < 3.0   # fired at ~bound through the frame stream, not the 12 s window
         @test occursin("mcp_request_timeout", err.msg)   # pinned msg literal names the override
         @test session.status == :closed              # stdio timeout IS session-fatal
-        @test session._closed_by_timeout == true
+        @test session._close_cause === :timeout
         @test UniLM._transport_isconnected(session.transport) == false
     finally
         # Self-sufficient teardown — never depend on the watchdog under test. Short
@@ -1735,7 +1735,7 @@ end
             out = @test_logs (:warn,) match_mode=:any call_tool(session, "incr", Dict{String,Any}())
             @test out.content == "1"                 # fresh process, NOT "2"
             @test session.status == :ready
-            @test session._closed_by_timeout == false
+            @test session._close_cause === :none
         finally
             mcp_disconnect!(session)
         end
@@ -1792,10 +1792,10 @@ end
         @test timedwait(() -> istaskdone(w), 12.0) === :ok
         @test box[] isa MCPTimeoutError
         @test session.status == :closed
-        @test session._closed_by_timeout == true   # respawn-eligible so far
+        @test session._close_cause === :timeout   # respawn-eligible so far
 
         mcp_disconnect!(session)                    # explicit user intent: a normal close now
-        @test session._closed_by_timeout == false   # user intent must clear it
+        @test session._close_cause === :none   # user intent must clear it
 
         err = nothing
         @test_logs begin   # zero patterns: ANY log record (e.g. the respawn @warn) fails this
@@ -1992,14 +1992,14 @@ end
     @test err isa MCPTimeoutError && err.limit == 7.0
     @test err isa MCPTimeoutError && occursin("mcp_connect_timeout", err.msg)
     @test s.status == :closed
-    @test s._closed_by_timeout == true
+    @test s._close_cause === :timeout
 
     # fired=false ⇒ no-op even though a fresh StdioTransport has nil handles.
     s2 = mk(StdioTransport(`true`))
     @test isnothing(s2.transport.input) && isnothing(s2.transport.output)
     @test UniLM._guard_connect_completion!(s2, false, time_ns(), 7.0) === nothing
     @test s2.status == :ready
-    @test s2._closed_by_timeout == false
+    @test s2._close_cause === :none
 end
 
 # ─── Completion-race TOCTOU: detect the kill by guard STATE, not handle nulling ──
@@ -2081,7 +2081,7 @@ end
         @test res isa MCPToolResult && res.content == "slow-ok"
         # ...but the watchdog fired: the session is closed (RED on old — stayed :ready).
         @test session.status == :closed
-        @test session._closed_by_timeout == true
+        @test session._close_cause === :timeout
         # The next call sees a closed-by-timeout session and errors naming the opt-in
         # (RED on old — a raw closed-stream IOError escaped conversion here).
         err = try call_tool(session, "slowreply", Dict{String,Any}()); nothing catch e; e end
@@ -2091,6 +2091,203 @@ end
         session === nothing || (try; UniLM._kill_transport!(session.transport; grace_term=0.2, grace_kill=0.2); catch; end)
         try; run(pipeline(`pkill -f $childfile`; stderr=devnull)); catch; end
         @test timedwait(() -> !_alive(), 5.0) === :ok   # no surviving child
+        rm(childfile; force=true)
+    end
+end
+
+@testset "stdio primitives throw the typed transport-closed sentinel on a dead pipe" begin
+    # A child that exits immediately: both pipe limbs die.
+    child = `$(Base.julia_cmd()) --startup-file=no -e "exit(0)"`
+    t = UniLM.StdioTransport(child)
+    UniLM._transport_connect!(t)
+    @test timedwait(() -> process_exited(t.process), 30.0) === :ok
+    # Read limb: EOF -> sentinel with cause=nothing (empty-line condition unchanged).
+    err_r = try UniLM._transport_read!(t); nothing catch e; e end
+    @test err_r isa UniLM._TransportClosed
+    @test err_r.cause === nothing
+    # Write limb: write/flush to the dead pipe -> sentinel carrying the real cause.
+    # (Buffering may let one write through to a just-dead pipe; two attempts force it.)
+    err_w = nothing
+    for _ in 1:2
+        err_w = try UniLM._transport_notify!(t, "{\"jsonrpc\":\"2.0\",\"method\":\"x\"}"); nothing catch e; e end
+        err_w === nothing || break
+    end
+    @test err_w isa UniLM._TransportClosed
+    @test err_w.cause isa Exception
+    UniLM._kill_transport!(t)
+    # Not-connected paths unchanged: plain ErrorException, not the sentinel.
+    t2 = UniLM.StdioTransport(child)
+    @test_throws ErrorException UniLM._transport_read!(t2)
+    @test_throws ErrorException UniLM._transport_notify!(t2, "x")
+end
+
+# ─── MCPCrashError: server-death classification at the stdio boundaries ───────
+# A self-contained mini JSON-RPC server: serve_calls=N replies to N tools/calls
+# then reads the next and exits without replying; exit_after_list=true exits right
+# after the tools/list reply; error_frames=true stays alive answering every
+# tools/call with a JSON-RPC error frame.
+function _crash_child_src(marker::String; serve_calls::Int=0, exit_after_list::Bool=false,
+                          error_frames::Bool=false)
+    """
+    # $marker
+    using JSON
+    respond(id, result) = (println(JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"result"=>result))); flush(stdout))
+    respond_err(id) = (println(JSON.json(Dict("jsonrpc"=>"2.0","id"=>id,"error"=>Dict("code"=>-32000,"message"=>"boom")))); flush(stdout))
+    served = 0
+    while !eof(stdin)
+        line = readline(stdin)
+        isempty(line) && continue
+        msg = JSON.parse(line)
+        haskey(msg, "id") || continue
+        m = get(msg, "method", "")
+        if m == "initialize"
+            respond(msg["id"], Dict("protocolVersion"=>"2025-11-25",
+                "capabilities"=>Dict("tools"=>Dict()),
+                "serverInfo"=>Dict("name"=>"crashchild","version"=>"0")))
+        elseif m == "tools/list"
+            respond(msg["id"], Dict("tools"=>[Dict("name"=>"incr","description"=>"count",
+                "inputSchema"=>Dict("type"=>"object","properties"=>Dict()))]))
+            $(exit_after_list ? "exit(0)" : "")
+        elseif m == "tools/call"
+            $(error_frames ? "respond_err(msg[\"id\"]); continue" : "")
+            global served += 1
+            served > $(serve_calls) && exit(0)
+            respond(msg["id"], Dict("content"=>[Dict("type"=>"text","text"=>string(served))]))
+        else
+            respond(msg["id"], Dict())
+        end
+    end
+    """
+end
+
+function _crash_child_session(marker::String; kwargs...)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _crash_child_src(marker; kwargs...)); close(io)
+    jl = Base.julia_cmd()
+    cmd = `$(jl) --startup-file=no --project=$proj $childfile`
+    childfile, cmd
+end
+
+@testset "server death mid-exchange surfaces MCPCrashError and closes the session" begin
+    marker = "UNILMCRASHREAD" * string(rand(UInt64); base=16)
+    childfile, cmd = _crash_child_session(marker; serve_calls=1)
+    try
+        session = mcp_connect(cmd; config=RequestConfig(current_config(); mcp_request_timeout=30.0))
+        @test call_tool(session, "incr", Dict{String,Any}()).content == "1"
+        err = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+        @test err isa MCPCrashError
+        @test err.exitcode == 0 && err.termsignal === nothing   # child exit(0), settled diagnostics
+        @test occursin("auto_respawn", err.msg)
+        @test session.status === :closed
+        @test session._close_cause === :crash
+        @test session.transport.process === nothing              # ladder ran: handles nulled
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "call against an already-dead server surfaces MCPCrashError (either pipe limb)" begin
+    marker = "UNILMCRASHDEAD" * string(rand(UInt64); base=16)
+    childfile, cmd = _crash_child_session(marker; exit_after_list=true)
+    try
+        session = mcp_connect(cmd; config=RequestConfig(current_config(); mcp_request_timeout=30.0))
+        @test session.status === :ready
+        sleep(0.5)   # settle: child exits after tools/list; EITHER limb now yields the same type
+        err = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+        @test err isa MCPCrashError                              # type only: write-vs-read limb is platform-dependent
+        @test session._close_cause === :crash
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "JSON-RPC error frames stay MCPError: server alive, session untouched" begin
+    marker = "UNILMCRASHERRF" * string(rand(UInt64); base=16)
+    childfile, cmd = _crash_child_session(marker; error_frames=true)
+    try
+        session = mcp_connect(cmd; config=RequestConfig(current_config(); mcp_request_timeout=30.0))
+        err = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+        @test err isa MCPError
+        @test session.status === :ready
+        @test session._close_cause === :none
+        mcp_disconnect!(session)
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "server exiting before the handshake reply surfaces MCPCrashError from mcp_connect" begin
+    err = try
+        mcp_connect(`$(Base.julia_cmd()) --startup-file=no -e "exit(0)"`;
+                    config=RequestConfig(current_config(); mcp_connect_timeout=30.0))
+        nothing
+    catch e; e end
+    @test err isa MCPCrashError
+    @test occursin("connect handshake", err.msg)
+end
+
+@testset "auto-respawn on next call after a server crash (opt-in), state lost" begin
+    marker = "UNILMCRASHRESPAWN" * string(rand(UInt64); base=16)
+    childfile, cmd = _crash_child_session(marker; serve_calls=1)
+    try
+        session = mcp_connect(cmd; auto_respawn=true,
+            config=RequestConfig(current_config(); mcp_request_timeout=30.0))
+        try
+            @test call_tool(session, "incr", Dict{String,Any}()).content == "1"
+            err = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+            @test err isa MCPCrashError
+            @test session.status === :closed && session._close_cause === :crash
+            old_proc = session.transport.process   # === nothing (ladder nulled)
+            out = @test_logs (:warn, r"a server crash") match_mode=:any call_tool(session, "incr", Dict{String,Any}())
+            @test out.content == "1"                       # fresh process: counter reset, NOT "2"
+            @test session.status === :ready
+            @test session._close_cause === :none
+            @test session.transport.process !== old_proc && session.transport.process !== nothing
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "crash-closed session without auto_respawn errors naming the opt-in" begin
+    marker = "UNILMCRASHNORSPWN" * string(rand(UInt64); base=16)
+    childfile, cmd = _crash_child_session(marker; serve_calls=0)
+    try
+        session = mcp_connect(cmd; auto_respawn=false,
+            config=RequestConfig(current_config(); mcp_request_timeout=30.0))
+        err1 = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+        @test err1 isa MCPCrashError
+        err2 = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+        @test err2 isa ErrorException
+        @test occursin("closed by a server crash", err2.msg)
+        @test occursin("auto_respawn", err2.msg)
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+@testset "explicit disconnect after a crash clears the cause: no respawn, no opt-in citation" begin
+    marker = "UNILMCRASHDISC" * string(rand(UInt64); base=16)
+    childfile, cmd = _crash_child_session(marker; serve_calls=0)
+    try
+        session = mcp_connect(cmd; auto_respawn=true,
+            config=RequestConfig(current_config(); mcp_request_timeout=30.0))
+        err = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+        @test err isa MCPCrashError
+        mcp_disconnect!(session)
+        @test session._close_cause === :none
+        err2 = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
+        @test err2 isa ErrorException
+        @test !occursin("auto_respawn", err2.msg)   # normal-close reuse error, not the crash guidance
+    finally
+        try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
         rm(childfile; force=true)
     end
 end

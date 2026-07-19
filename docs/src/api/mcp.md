@@ -16,6 +16,7 @@ MCPTransport
 StdioTransport
 HTTPTransport
 MCPError
+MCPCrashError
 ```
 
 ## Client Functions

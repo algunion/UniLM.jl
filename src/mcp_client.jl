@@ -73,6 +73,48 @@ function Base.showerror(io::IO, e::MCPError)
 end
 
 """
+    MCPCrashError <: Exception
+
+The stdio MCP server process exited or its stdio pipe broke. The session is
+closed with cause `:crash`; with `auto_respawn=true` the next call respawns the
+server, otherwise it errors naming the opt-in.
+
+# Fields
+- `msg::String`: human-readable message with recovery guidance.
+- `exitcode::Union{Int,Nothing}`: exit code when the server exited on its own
+  and had been reaped in time; else `nothing`.
+- `termsignal::Union{Int,Nothing}`: signal number when the server was
+  signal-killed; else `nothing`.
+- `cause::Union{Exception,Nothing}`: underlying transport exception
+  (`nothing` for a clean read-EOF).
+
+Best-effort diagnostics: both `exitcode` and `termsignal` are `nothing` when the
+process had not been reaped within a brief settle window after the failure
+surfaced (or was still alive with a broken pipe).
+"""
+struct MCPCrashError <: Exception
+    msg::String
+    exitcode::Union{Int,Nothing}
+    termsignal::Union{Int,Nothing}
+    cause::Union{Exception,Nothing}
+end
+
+Base.showerror(io::IO, e::MCPCrashError) = print(io, "MCPCrashError: ", e.msg)
+
+function _crash_exit_info(exitcode::Union{Int,Nothing}, termsignal::Union{Int,Nothing})::String
+    termsignal !== nothing && return " (killed by signal $termsignal)"
+    exitcode !== nothing && return " (exit code $exitcode)"
+    ""
+end
+
+_crash_msg(context::String, exitcode::Union{Int,Nothing}, termsignal::Union{Int,Nothing})::String =
+    "MCP server crashed during $context: the server process exited or its stdio " *
+    "pipe broke$(_crash_exit_info(exitcode, termsignal)). The session is closed. " *
+    "Reconnect explicitly, or pass auto_respawn=true to mcp_connect so the next " *
+    "call transparently respawns the server (its in-memory state is lost and " *
+    "tools are refetched)."
+
+"""
     _MCPSessionExpired <: Exception
 
 Internal signal that an HTTP transport received `404 Not Found` while holding a
@@ -177,6 +219,15 @@ Abstract type for MCP transport implementations. Subtypes must implement:
 """
 abstract type MCPTransport end
 
+"""Internal sentinel: a stdio pipe operation failed because the server process
+exited or the pipe broke. Thrown ONLY by the three stdio transport primitives;
+mapped to the exported `MCPCrashError` at the session boundaries. `cause` is the
+underlying exception, or `nothing` for the read-EOF case. Never leaks to users:
+every producer sits beneath one of the two mapping boundaries."""
+struct _TransportClosed <: Exception
+    cause::Union{Exception,Nothing}
+end
+
 """
     StdioTransport <: MCPTransport
 
@@ -215,9 +266,14 @@ function _transport_send!(t::StdioTransport, msg::String;
                           cfg::RequestConfig=current_config())::String
     inp = t.input
     isnothing(inp) && error("StdioTransport not connected")
-    lock(t.lock) do
-        write(inp, msg, "\n")
-        flush(inp)
+    try
+        lock(t.lock) do
+            write(inp, msg, "\n")
+            flush(inp)
+        end
+    catch e
+        e isa InterruptException && rethrow()
+        throw(_TransportClosed(e))
     end
     _transport_read!(t)   # bounded by the whole-exchange watchdog in _mcp_request!
 end
@@ -225,8 +281,13 @@ end
 function _transport_read!(t::StdioTransport)::String
     out = t.output
     isnothing(out) && error("StdioTransport not connected")
-    line = readline(out)
-    isempty(line) && error("MCP server closed connection")
+    line = try
+        readline(out)
+    catch e
+        e isa InterruptException && rethrow()
+        throw(_TransportClosed(e))
+    end
+    isempty(line) && throw(_TransportClosed(nothing))
     line
 end
 
@@ -234,9 +295,14 @@ function _transport_notify!(t::StdioTransport, msg::String;
                             cfg::RequestConfig=current_config())
     inp = t.input
     isnothing(inp) && error("StdioTransport not connected")
-    lock(t.lock) do
-        write(inp, msg, "\n")
-        flush(inp)
+    try
+        lock(t.lock) do
+            write(inp, msg, "\n")
+            flush(inp)
+        end
+    catch e
+        e isa InterruptException && rethrow()
+        throw(_TransportClosed(e))
     end
     nothing
 end
@@ -447,13 +513,15 @@ mutable struct MCPSession
     # Timeout configuration resolved and captured at mcp_connect. Connect/initialize
     # bounds come from here; the per-request bound resolves at call time (see call_tool).
     config::RequestConfig
-    # When true, the next call on a session closed by a stdio request timeout respawns
-    # the server (same command, fresh handshake) instead of erroring. Default OFF: a
-    # silent respawn fabricates session continuity and in-memory server state is lost.
+    # When true, the next call on a session closed by a stdio request timeout or a
+    # server crash respawns the server (same command, fresh handshake) instead of
+    # erroring. Default OFF: a silent respawn fabricates session continuity and
+    # in-memory server state is lost.
     auto_respawn::Bool
-    # True only when `status == :closed` was reached via a request timeout (not a
-    # normal disconnect); gates the respawn-or-error decision on the next call.
-    _closed_by_timeout::Bool
+    # Why the session reached :closed — :none (live, or a normal disconnect),
+    # :timeout (request/connect watchdog), :crash (server process died or stdio
+    # pipe broke). Gates the respawn-or-error decision on the next call.
+    _close_cause::Symbol
 end
 
 # Sessions start with a fresh lock, a fresh (not stale) tool cache, default config,
@@ -468,7 +536,32 @@ function MCPSession(transport::MCPTransport, caps::MCPServerCapabilities,
                     auto_respawn::Bool=false)
     MCPSession(transport, caps, server_info, tools, resources, prompts,
                protocol_version, id_counter, status, ReentrantLock(), false, init_params,
-               config, auto_respawn, false)
+               config, auto_respawn, :none)
+end
+
+"""Best-effort exit diagnostics, captured BEFORE the teardown ladder (which reaps
+and nulls the process). Bounded settle: EOF/EPIPE can surface a beat before libuv
+reaps the child, so wait briefly for `process_exited` — for the pipe-broken-but-
+alive server this adds at most 2 s to a terminal error path."""
+function _exit_diagnostics(t::StdioTransport)::Tuple{Union{Int,Nothing},Union{Int,Nothing}}
+    proc = t.process
+    isnothing(proc) && return (nothing, nothing)
+    process_exited(proc) || timedwait(() -> process_exited(proc), 2.0)
+    process_exited(proc) || return (nothing, nothing)
+    proc.termsignal > 0 && return (nothing, Int(proc.termsignal))
+    (Int(proc.exitcode), nothing)
+end
+
+"""Classify a stdio transport failure as a server crash: capture diagnostics
+(pre-ladder), tear the transport down (also reaps a pipe-broken-but-alive server),
+close the session with cause `:crash`, and throw the typed error."""
+function _crash_close!(session::MCPSession, t::StdioTransport, tc::_TransportClosed,
+                       context::String)
+    exitcode, termsignal = _exit_diagnostics(t)
+    _kill_transport!(t)
+    session.status = :closed
+    session._close_cause = :crash
+    throw(MCPCrashError(_crash_msg(context, exitcode, termsignal), exitcode, termsignal, tc.cause))
 end
 
 """Allocate the next request id. Callers must hold `session._lock`."""
@@ -607,11 +700,12 @@ correlation is per-POST).
 function _mcp_request!(session::MCPSession, method::String,
                        params::Union{Dict{String,Any},Nothing}=nothing;
                        timeout::Union{Nothing,Float64}=nothing)::Dict{String,Any}
-    # A session closed by a stdio request timeout cannot be reused: respawn (opt-in)
-    # or error before touching the transport. A no-op for live sessions and for
-    # sessions closed by a normal disconnect. Respawn's fresh handshake avoids this
-    # guard (it runs through _establish!), and its list_tools! re-enters here while
-    # status is :initializing, so the guard no-ops — no re-entrant respawn.
+    # A session closed by a stdio request timeout or a server crash cannot be reused:
+    # respawn (opt-in) or error before touching the transport. A no-op for live
+    # sessions and for sessions closed by a normal disconnect. Respawn's fresh
+    # handshake avoids this guard (it runs through _establish!), and its list_tools!
+    # re-enters here while status is :initializing, so the guard no-ops — no
+    # re-entrant respawn.
     _ensure_live!(session)
     bound = _resolve_mcp_request_timeout(session, timeout)
     excfg = RequestConfig(session.config; request_timeout=bound)
@@ -637,9 +731,14 @@ function _mcp_request!(session::MCPSession, method::String,
         catch e
             if e isa UniLMTimeout && e.phase === :request
                 session.status = :closed
-                session._closed_by_timeout = true
+                session._close_cause = :timeout
                 throw(MCPTimeoutError(:request, e.elapsed, e.limit, _request_timeout_msg(e.limit)))
             end
+            # Crash classification AFTER the timeout branch: when the watchdog fired,
+            # the surfaced error is the timeout even though the kill ladder also broke
+            # the pipe. _find_exception sees through task wrapping.
+            tc = _find_exception(x -> x isa _TransportClosed, e)
+            tc !== nothing && _crash_close!(session, t, tc, "an MCP exchange")
             rethrow()
         end
         # Exactly-once race: the exchange returned a real result while the timer fired
@@ -652,7 +751,7 @@ function _mcp_request!(session::MCPSession, method::String,
         # transport is gone either way — reflect the close truthfully.
         if fired
             session.status = :closed
-            session._closed_by_timeout = true
+            session._close_cause = :timeout
         end
         return result
     else
@@ -686,9 +785,10 @@ Connect to an MCP server via stdio transport (subprocess).
 `config::Union{Nothing,RequestConfig}` is resolved (`config` if given, else the
 ambient/process default) and captured on the session: `config.mcp_connect_timeout`
 bounds the spawn→initialize handshake, `config.mcp_request_timeout` is the default
-per-exchange bound. A stdio request timeout is session-fatal (no id demux); with
-`auto_respawn=true` the next call respawns the server (same command, fresh
-handshake — in-memory server state is lost), otherwise it errors.
+per-exchange bound. A stdio request timeout is session-fatal (no id demux), as
+is a server crash; with `auto_respawn=true` the next call respawns the server
+(same command, fresh handshake — in-memory server state is lost), otherwise it
+errors.
 
 # Example
 ```julia
@@ -820,7 +920,7 @@ no watchdog)."""
 function _guard_connect_completion!(session::MCPSession, fired::Bool, t0::UInt64, bound::Float64)
     if fired
         session.status = :closed
-        session._closed_by_timeout = true
+        session._close_cause = :timeout
         throw(MCPTimeoutError(:connect, _elapsed_s(t0), bound, _connect_timeout_msg(bound)))
     end
     nothing
@@ -847,39 +947,53 @@ _closed_session_msg()::String =
     "the next call transparently respawns the server (its in-memory state is lost " *
     "and tools are refetched)."
 
-"""Respawn a stdio session closed by a timeout: fresh transport (same command),
+_crashed_session_msg()::String =
+    "MCP stdio session was closed by a server crash and cannot be reused. " *
+    "Reconnect explicitly, or pass auto_respawn=true to mcp_connect so the next " *
+    "call transparently respawns the server (its in-memory state is lost and " *
+    "tools are refetched)."
+
+"""Respawn a stdio session closed by a timeout or a server crash: fresh transport (same command),
 captured config, fresh handshake. In-memory server state is lost and tools are
 refetched. Throws `MCPTimeoutError(:connect)` if the respawned server does not
-hand-shake in time."""
+hand-shake in time, or `MCPCrashError` if it dies during the respawn handshake."""
 function _respawn!(session::MCPSession)
     session.transport isa StdioTransport ||
         error("MCP auto-respawn is only supported for stdio sessions.")
     old = session.transport
-    @warn "MCP stdio session was closed by a request timeout; respawning the server. \
+    reason = session._close_cause === :crash ? "a server crash" : "a request timeout"
+    @warn "MCP stdio session was closed by $reason; respawning the server. \
            In-memory server state is lost and tools are refetched." command=old.command
     session.transport = StdioTransport(old.command)
     session._id_counter = 0
     session.tools_stale = false
-    session._closed_by_timeout = false
+    session._close_cause = :none
     session.status = :initializing
     try
         _establish!(session)
     catch e
-        session.status = :closed
-        session._closed_by_timeout = true
-        e isa UniLMTimeout &&
+        if e isa UniLMTimeout
+            session.status = :closed
+            session._close_cause = :timeout
             throw(MCPTimeoutError(:connect, e.elapsed, e.limit, _connect_timeout_msg(e.limit)))
+        end
+        tc = _find_exception(x -> x isa _TransportClosed, e)
+        tc !== nothing &&
+            _crash_close!(session, session.transport, tc, "an auto-respawn attempt")
+        session.status = :closed
+        session._close_cause = :crash
         rethrow()
     end
     nothing
 end
 
-"""Guard against reusing a session closed by a stdio request timeout: respawn when
+"""Guard against reusing a session closed by a stdio request timeout or a server crash: respawn when
 opted in, otherwise error with recovery guidance. A no-op for live sessions and
 for sessions closed by a normal disconnect."""
 function _ensure_live!(session::MCPSession)
-    if session.status === :closed && session._closed_by_timeout
-        session.auto_respawn || error(_closed_session_msg())
+    if session.status === :closed && session._close_cause !== :none
+        session.auto_respawn ||
+            error(session._close_cause === :crash ? _crashed_session_msg() : _closed_session_msg())
         _respawn!(session)
     end
     nothing
@@ -893,8 +1007,9 @@ Connect to an MCP server via the given transport. Performs initialization handsh
 and populates tool cache. `config` (a [`RequestConfig`](@ref), default: the ambient
 configuration) is resolved and captured on the session — its `mcp_connect_timeout`
 bounds this handshake and `mcp_request_timeout` bounds each later exchange.
-`auto_respawn=true` lets a stdio session closed by a request timeout respawn its
-server (same command, captured config) and retry the next call once.
+`auto_respawn=true` lets a stdio session closed by a request timeout or a server
+crash respawn its server (same command, captured config) and retry the next call
+once.
 """
 function mcp_connect(transport::MCPTransport;
                      client_name::String="UniLM.jl",
@@ -926,6 +1041,10 @@ function mcp_connect(transport::MCPTransport;
     catch e
         e isa UniLMTimeout &&
             throw(MCPTimeoutError(:connect, e.elapsed, e.limit, _connect_timeout_msg(e.limit)))
+        tc = _find_exception(x -> x isa _TransportClosed, e)
+        if tc !== nothing && session.transport isa StdioTransport
+            _crash_close!(session, session.transport, tc, "the connect handshake")
+        end
         rethrow()
     end
     session
@@ -966,8 +1085,9 @@ function mcp_disconnect!(session::MCPSession)
     session.status = :closed
     # User intent wins: an explicit disconnect is a normal close, not a timeout, so
     # the next call must never respawn or cite auto_respawn — even if this session
-    # was closed by a request timeout before the caller disconnected it.
-    session._closed_by_timeout = false
+    # was closed by a request timeout or a server crash before the caller
+    # disconnected it.
+    session._close_cause = :none
     nothing
 end
 

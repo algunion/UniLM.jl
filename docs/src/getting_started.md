@@ -95,7 +95,7 @@ using JSON
 The simplest way to get started — one function call:
 
 ```@example gs
-result = respond("Explain Julia's type system in 3 bullet points")
+result = respond("Explain Julia's type system in 3 bullet points", model="gpt-5.4-mini")
 if result isa ResponseSuccess
     println(output_text(result))
 else
@@ -108,7 +108,7 @@ end
 For stateful, multi-turn conversations:
 
 ```@example gs
-chat = Chat(model="gpt-4o-mini")
+chat = Chat(model="gpt-5.4-mini")
 push!(chat, Message(Val(:system), "You are a concise Julia programming tutor."))
 push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
 result = chatrequest!(chat)
@@ -123,7 +123,7 @@ end
 
 ### Generating Images
 
-```@example gs
+```julia
 result = generate_image(
     "A watercolor painting of a friendly robot reading a Julia programming book",
     size="1024x1024", quality="medium"
@@ -145,7 +145,7 @@ For one-shot requests without managing `Chat` objects:
 result = chatrequest!(
     systemprompt="You are a calculator. Respond only with the number.",
     userprompt="What is 42 * 17?",
-    model="gpt-4o-mini",
+    model="gpt-5.4-mini",
     temperature=0.0
 )
 if result isa LLMSuccess
@@ -164,7 +164,7 @@ using UniLM
 using InteractiveUtils
 
 # Construct a chat to show the result type hierarchy
-chat = Chat()
+chat = Chat(model="gpt-5.4-mini")
 push!(chat, Message(Val(:system), "You are helpful."))
 push!(chat, Message(Val(:user), "Hello!"))
 
@@ -191,7 +191,7 @@ end
 For the Responses API:
 
 ```@example results
-result = respond("Hello!")
+result = respond("Hello!", model="gpt-5.4-mini")
 
 if result isa ResponseSuccess
     println(output_text(result))

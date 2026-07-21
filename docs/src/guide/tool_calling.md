@@ -77,7 +77,7 @@ When the model wants to call a function, the result message will have `finish_re
 
 ```@example tools
 chat = Chat(
-    model="gpt-5.2",
+    model="gpt-5.4-mini",
     tools=[weather_tool],
     tool_choice=UniLM.GPTToolChoice(func=:get_weather)
 )
@@ -156,7 +156,7 @@ weather_fn = function_tool(
         "required" => ["location"]
     )
 )
-result = respond("What's the weather in Tokyo? Use celsius.", tools=[weather_fn])
+result = respond("What's the weather in Tokyo? Use celsius.", tools=[weather_fn], model="gpt-5.4-mini")
 calls = function_calls(result)
 if !isempty(calls)
     println("Function: ", calls[1]["name"])
@@ -179,7 +179,8 @@ println("Context size: ", ws.search_context_size)
 ```@example tools
 result = respond(
     "What is the latest stable release of the Julia programming language?",
-    tools=[web_search()]
+    tools=[web_search()],
+    model="gpt-5.4-mini"
 )
 if result isa ResponseSuccess
     println(output_text(result))

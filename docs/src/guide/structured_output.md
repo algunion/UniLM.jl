@@ -18,7 +18,7 @@ using UniLM
 using JSON
 
 chat = Chat(
-    model="gpt-5.2",
+    model="gpt-5.4-mini",
     response_format=ResponseFormat()  # type="json_object"
 )
 push!(chat, Message(Val(:system), "You output JSON. Always respond with valid JSON."))
@@ -65,7 +65,7 @@ schema = ResponseFormat(UniLM.JsonSchemaAPI(
     strict=true
 ))
 
-chat = Chat(model="gpt-5.2", response_format=schema)
+chat = Chat(model="gpt-5.4-mini", response_format=schema)
 push!(chat, Message(Val(:system), "Return structured data about programming languages."))
 push!(chat, Message(Val(:user), "List Julia, Python, and Rust"))
 println("Schema name: ", schema.json_schema.name)
@@ -89,7 +89,7 @@ The Responses API uses [`TextConfig`](@ref) with convenience constructors:
 ### JSON Object
 
 ```@example structured
-result = respond("List 3 colors as a JSON object", text=json_object_format())
+result = respond("List 3 colors as a JSON object", text=json_object_format(), model="gpt-5.4-mini")
 if result isa ResponseSuccess
     println(output_text(result))
 else
@@ -129,7 +129,7 @@ println("Schema strict: ", fmt.format.strict)
 ```
 
 ```@example structured
-result = respond("List red, green, and blue with their hex codes", text=fmt)
+result = respond("List red, green, and blue with their hex codes", text=fmt, model="gpt-5.4-mini")
 if result isa ResponseSuccess
     println(JSON.json(JSON.parse(output_text(result)), 2))
 else

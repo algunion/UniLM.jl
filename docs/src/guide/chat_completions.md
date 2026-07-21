@@ -14,7 +14,7 @@ using JSON
 
 ```@example chat
 chat = Chat(
-    model="gpt-5.2",        # model name
+    model="gpt-5.4-mini",   # model name
     temperature=0.7,        # sampling temperature
 )
 println("Model: ", chat.model)
@@ -93,7 +93,7 @@ Skip the `Chat` object entirely for simple one-off requests:
 result = chatrequest!(
     systemprompt="You are a calculator. Respond only with the number.",
     userprompt="What is 42 * 17?",
-    model="gpt-4o-mini",
+    model="gpt-5.4-mini",
     temperature=0.0
 )
 if result isa LLMSuccess
@@ -108,7 +108,7 @@ end
 Because `chatrequest!` appends the response, you can keep chatting:
 
 ```@example chat
-chat = Chat(model="gpt-4o-mini")
+chat = Chat(model="gpt-5.4-mini")
 push!(chat, Message(Val(:system), "You are a concise Julia programming tutor."))
 push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
 result = chatrequest!(chat)

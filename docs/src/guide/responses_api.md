@@ -18,7 +18,7 @@ using JSON
 The simplest call — just a string:
 
 ```@example responses
-result = respond("Explain Julia's multiple dispatch in 2-3 sentences.")
+result = respond("Explain Julia's multiple dispatch in 2-3 sentences.", model="gpt-5.4-mini")
 if result isa ResponseSuccess
     println(output_text(result))
 else
@@ -61,7 +61,8 @@ Unlike Chat Completions where you push a system `Message`, the Responses API use
 ```@example responses
 result = respond(
     "Translate to French: The quick brown fox jumps over the lazy dog.",
-    instructions="You are a professional translator. Respond only with the translation."
+    instructions="You are a professional translator. Respond only with the translation.",
+    model="gpt-5.4-mini"
 )
 if result isa ResponseSuccess
     println(output_text(result))
@@ -101,7 +102,7 @@ println("Number of input messages: ", length(r.input))
 Chain requests using `previous_response_id` — no need to re-send the full history:
 
 ```@example responses
-r1 = respond("Tell me a one-liner programming joke.", instructions="Be concise.")
+r1 = respond("Tell me a one-liner programming joke.", instructions="Be concise.", model="gpt-5.4-mini")
 if r1 isa ResponseSuccess
     println(output_text(r1))
 else
@@ -111,7 +112,7 @@ end
 
 ```@example responses
 if r1 isa ResponseSuccess
-    r2 = respond("Explain why that's funny, in one sentence.", previous_response_id=r1.response.id)
+    r2 = respond("Explain why that's funny, in one sentence.", previous_response_id=r1.response.id, model="gpt-5.4-mini")
     if r2 isa ResponseSuccess
         println(output_text(r2))
     else
@@ -129,7 +130,8 @@ end
 ```@example responses
 result = respond(
     "What is the latest stable release of the Julia programming language?",
-    tools=[web_search()]
+    tools=[web_search()],
+    model="gpt-5.4-mini"
 )
 if result isa ResponseSuccess
     println(output_text(result))
@@ -166,7 +168,7 @@ println("Tool JSON: ", JSON.json(JSON.lower(weather_tool)))
 ```
 
 ```@example responses
-result = respond("What's the weather in Tokyo? Use celsius.", tools=[weather_tool])
+result = respond("What's the weather in Tokyo? Use celsius.", tools=[weather_tool], model="gpt-5.4-mini")
 calls = function_calls(result)
 if !isempty(calls)
     println("Function: ", calls[1]["name"])
@@ -218,7 +220,7 @@ println("Schema name: ", fmt.format.name)
 ```
 
 ```@example responses
-result = respond("List 5 popular colors", text=fmt)
+result = respond("List 5 popular colors", text=fmt, model="gpt-5.4-mini")
 if result isa ResponseSuccess
     println(JSON.json(JSON.parse(output_text(result)), 2))
 else
@@ -251,7 +253,7 @@ When you pass `store=true`, the response is saved on OpenAI's servers and can be
 retrieved, inspected, or deleted later:
 
 ```@example responses
-r = respond("Say 'stored response test' and nothing else.", store=true)
+r = respond("Say 'stored response test' and nothing else.", store=true, model="gpt-5.4-mini")
 if r isa ResponseSuccess
     rid = r.response.id
     println("Stored response ID: ", rid)
@@ -285,7 +287,8 @@ Attach arbitrary key-value metadata to any request for tracking, filtering, or d
 ```@example responses
 result = respond(
     "Say 'metadata test' and nothing else.",
-    metadata=Dict("env" => "docs", "request_id" => "demo_123")
+    metadata=Dict("env" => "docs", "request_id" => "demo_123"),
+    model="gpt-5.4-mini"
 )
 if result isa ResponseSuccess
     println(output_text(result))
@@ -299,7 +302,7 @@ end
 Control the processing tier for your request (`"auto"`, `"default"`, `"flex"`, `"priority"`):
 
 ```@example responses
-result = respond("Say 'tier test' and nothing else.", service_tier="auto")
+result = respond("Say 'tier test' and nothing else.", service_tier="auto", model="gpt-5.4-mini")
 if result isa ResponseSuccess
     println(output_text(result))
 else

@@ -81,12 +81,14 @@ julia> push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3
 
 julia> result = chatrequest!(chat)
 
-julia> result.message.content
-"Multiple dispatch is a feature in programming languages, including Julia, that allows the selection of a method to execute based on the types of all its arguments, rather than just the first one. This enables more flexible and expressive code, as it can define different behaviors for a function depending on the combination of argument types. It supports polymorphism, making it easier to write generic code that works with multiple types."
+julia> println(text(result))
+Multiple dispatch is a feature in programming languages, including Julia, that allows the selection of a method to execute based on the types of all its arguments, rather than just the first one. This enables more flexible and expressive code, as it can define different behaviors for a function depending on the combination of argument types. It supports polymorphism, making it easier to write generic code that works with multiple types.
 
 julia> length(chat)  # system + user + assistant
 3
 ```
+
+Use `issuccess(result)` / `isfailure(result)` to branch on the outcome; `text(result)` returns the reply text and throws `LLMResultError` on a failed call.
 
 ### One-Shot Convenience
 

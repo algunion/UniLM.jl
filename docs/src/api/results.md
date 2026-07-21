@@ -32,6 +32,30 @@ elseif result isa LLMCallError
 end
 ```
 
+## Result Helpers
+
+Predicates and an accessor for consuming any result — success or failure:
+
+```@docs
+issuccess
+isfailure
+text
+LLMResultError
+```
+
+`text` returns the assistant reply on a [`LLMSuccess`](@ref) (possibly `nothing`
+for a tool-calls-only turn) and throws an `LLMResultError` on a failure. Guard
+with `issuccess` / `isfailure`, or pattern-match the result type first:
+
+```julia
+result = chatrequest!(chat)
+if issuccess(result)
+    println(text(result))
+else
+    @warn "call did not succeed"
+end
+```
+
 ## Responses API Results
 
 See also the [Responses API reference](responses.md).

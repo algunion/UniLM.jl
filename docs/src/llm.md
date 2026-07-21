@@ -1203,6 +1203,14 @@ end
 Thrown by `issendvalid` / internal validation when conversation structure is invalid (e.g., missing system message position, consecutive same-role messages).
 
 ```julia
+struct LLMResultError <: Exception
+    result::Union{LLMFailure,LLMCallError}
+end
+```
+
+Thrown by `text(result)` when the result is not a success. `showerror` prints only the status and a trimmed (≤200-char) response excerpt — never the conversation, endpoint, or API key.
+
+```julia
 struct UniLMTimeout <: Exception
     phase::Symbol        # :connect | :request | :stream_idle | :deadline
     elapsed::Float64     # seconds, monotonic
@@ -1290,6 +1298,6 @@ Every exported symbol (`names(UniLM)`), grouped by area:
 
 **Realtime**: `RealtimeSession`, `RealtimeSecretSuccess`, `RealtimeFailure`, `RealtimeCallError`, `mint_realtime_secret`, `realtime_connect`, `realtime_send`, `realtime_receive`, `realtime_event`, `session_update`, `input_audio_append`, `response_create`
 
-**Result Types (base)**: `LLMRequestResponse`, `LLMSuccess`, `LLMFailure`, `LLMCallError`
+**Result Types (base)**: `LLMRequestResponse`, `LLMSuccess`, `LLMFailure`, `LLMCallError`, `LLMResultError`, `issuccess`, `isfailure`, `text`
 
 **Request Config & Timeouts**: `RequestConfig`, `current_config`, `with_request_config`, `set_default_config!`, `UniLMTimeout`, `MCPTimeoutError`

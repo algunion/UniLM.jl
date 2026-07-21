@@ -1,8 +1,8 @@
 # ─── Tool Loop Integration Tests ─────────────────────────────────────────────
 # Requires OPENAI_API_KEY environment variable
 
-if !haskey(ENV, "OPENAI_API_KEY")
-    @info "Skipping tool loop integration tests (OPENAI_API_KEY not set)"
+if !haskey(ENV, "OPENAI_API_KEY") || get(ENV, "UNILM_LIVE", "") != "1"
+    @info "Skipping tool loop integration tests (set UNILM_LIVE=1 and OPENAI_API_KEY to run live)"
 else
 
 # Shared tool schema: add(a, b) -> a + b

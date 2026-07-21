@@ -3,8 +3,8 @@
 # Run once when green; do not rerun. Exercises the agentic verb end-to-end:
 # encode → HTTP → decode → neutral ResponseObject accessors.
 
-if !haskey(ENV, "GEMINI_API_KEY")
-    @info "Skipping Gemini Interactions integration tests (GEMINI_API_KEY not set)"
+if !haskey(ENV, "GEMINI_API_KEY") || get(ENV, "UNILM_LIVE", "") != "1"
+    @info "Skipping Gemini Interactions integration tests (set UNILM_LIVE=1 and GEMINI_API_KEY to run live)"
 else
 
 @testset "Interactions — text" begin

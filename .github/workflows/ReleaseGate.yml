@@ -1,0 +1,29 @@
+name: Release gate
+# This workflow must be green before a release is registered.
+# JET runs a whole-package type-stability analysis that is expensive, so it is
+# restricted to release branches and manual dispatch instead of running on every
+# push or pull request.
+on:
+  push:
+    branches:
+      - 'release/**'
+  workflow_dispatch:
+jobs:
+  release-gate:
+    name: JET whole-package gate (Julia 1.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      # Turns on the JET whole-package analysis gated in test/runtests.jl.
+      # No provider API keys are set here: this gate is zero-spend. Live provider
+      # calls are covered by a separate manual workflow, not this gate.
+      UNILM_RUN_JET: 'true'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.12'
+          arch: x64
+      - uses: julia-actions/cache@v3
+      - uses: julia-actions/julia-buildpkg@v1
+      - uses: julia-actions/julia-runtest@v1

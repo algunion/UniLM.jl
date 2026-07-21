@@ -1,5 +1,5 @@
 # ─── Gemini Integration Tests (live) ─────────────────────────────────────────
-# Requires GEMINI_API_KEY (billing-enabled). Uses gemini-3.1-flash-lite (cheapest)
+# Requires UNILM_LIVE=1 and GEMINI_API_KEY (billing-enabled). Uses gemini-3.1-flash-lite (cheapest)
 # to minimize spend. Run once when green; do not rerun.
 
 if !haskey(ENV, "GEMINI_API_KEY") || get(ENV, "UNILM_LIVE", "") != "1"

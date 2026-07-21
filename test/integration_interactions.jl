@@ -1,5 +1,5 @@
 # ─── Gemini Interactions integration tests (live) ────────────────────────────
-# Requires GEMINI_API_KEY (billing-enabled). Uses gemini-3.1-flash-lite (cheapest).
+# Requires UNILM_LIVE=1 and GEMINI_API_KEY (billing-enabled). Uses gemini-3.1-flash-lite (cheapest).
 # Run once when green; do not rerun. Exercises the agentic verb end-to-end:
 # encode → HTTP → decode → neutral ResponseObject accessors.
 

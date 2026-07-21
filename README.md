@@ -100,8 +100,8 @@ julia> result = chatrequest!(
            temperature=0.0
        )
 
-julia> result.message.content
-"714"
+julia> println(text(result))
+714
 ```
 
 ### Image Generation

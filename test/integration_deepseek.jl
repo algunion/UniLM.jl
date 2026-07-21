@@ -1,5 +1,5 @@
 # ─── DeepSeek Integration Tests ──────────────────────────────────────────────
-# Requires DEEPSEEK_API_KEY environment variable
+# Requires UNILM_LIVE=1 and DEEPSEEK_API_KEY (both, or the suite skips).
 
 if !haskey(ENV, "DEEPSEEK_API_KEY") || get(ENV, "UNILM_LIVE", "") != "1"
     @info "Skipping DeepSeek integration tests (set UNILM_LIVE=1 and DEEPSEEK_API_KEY to run live)"

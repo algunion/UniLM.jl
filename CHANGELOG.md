@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased
+
+### Breaking
+- `push!(chat, msg)` and `pop!(chat)` now throw `InvalidConversationError` on an
+  invalid mutation (a conversation not started by a system message, a system
+  message after the start, consecutive same-role non-tool messages, or popping an
+  empty conversation) instead of emitting a warning and returning the chat
+  unchanged. The error message names the violated rule and the offending role and
+  never includes conversation content or endpoint configuration. Valid mutations
+  are unchanged.
+
+### Added
+- Result-consumption helpers: `issuccess` / `isfailure` for any request result,
+  `text(::LLMSuccess)` returning the reply content (`nothing` for tool-calls-only
+  turns), and `LLMResultError` — thrown by `text` on a `LLMFailure`/`LLMCallError`;
+  its `showerror` reveals only the status and a trimmed response excerpt.
+- "Release gate" workflow: runs the full test suite with JET whole-package analysis
+  enabled on `release/**` branches and manual dispatch. JET is expensive, so it
+  gates releases instead of running in routine push/PR CI; the workflow sets no
+  provider keys and makes no billed calls.
+
+### Changed
+- `GenericOpenAIEndpoint` and `DeepSeekEndpoint` now redact `api_key` when shown: a
+  short prefix plus a `…[redacted]` marker (never the full key or its length),
+  inherited when an endpoint prints nested inside a `Chat` or a result value.
+- Aqua's method-ambiguity check is enabled in the test suite (`ambiguities=true`)
+  after measuring zero ambiguities in the package.
+
+### CI and docs
+- Pull-request documentation builds run without provider API keys — examples render
+  offline — eliminating live-API spend on PRs; push, tag, and manual builds still
+  render live outputs. The routine CI test workflow no longer receives provider
+  keys at all.
+- Live integration suites are explicitly opt-in: set `UNILM_LIVE=1` in addition to
+  the provider key (the live MCP suite keeps its own `UNILM_LIVE_MCP=1` gate).
+- Every executed documentation example that makes a live call is pinned to each
+  provider's cheapest model (`gpt-5.4-mini`, `gemini-3.1-flash-lite`,
+  `claude-haiku-4-5`); image-generation examples are static code blocks that reuse
+  the committed sample image, so docs builds never bill for image generation.
+
 ## 0.14.0
 
 ### Breaking

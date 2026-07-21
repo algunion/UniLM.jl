@@ -8,4 +8,6 @@ AGENTS.md
 CLAUDE.md
 grounding/
 docs/superpowers/
+.superpowers/
+/.claude/
 

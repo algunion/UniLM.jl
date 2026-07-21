@@ -35,10 +35,12 @@
   keys at all.
 - Live integration suites are explicitly opt-in: set `UNILM_LIVE=1` in addition to
   the provider key (the live MCP suite keeps its own `UNILM_LIVE_MCP=1` gate).
-- Every executed documentation example that makes a live call is pinned to each
-  provider's cheapest model (`gpt-5.4-mini`, `gemini-3.1-flash-lite`,
+- Executed chat and agentic documentation examples that make live calls are pinned
+  to each provider's cheapest model (`gpt-5.4-mini`, `gemini-3.1-flash-lite`,
   `claude-haiku-4-5`); image-generation examples are static code blocks that reuse
   the committed sample image, so docs builds never bill for image generation.
+  Token-counting, response-compaction, embeddings, and FIM examples keep their API
+  defaults.
 
 ## 0.14.0
 

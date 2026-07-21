@@ -1,5 +1,5 @@
 # ─── Anthropic Integration Tests (live) ──────────────────────────────────────
-# Requires ANTHROPIC_API_KEY. Uses claude-haiku-4-5 (cheapest) to minimize spend.
+# Requires UNILM_LIVE=1 and ANTHROPIC_API_KEY. Uses claude-haiku-4-5 (cheapest) to minimize spend.
 
 if !haskey(ENV, "ANTHROPIC_API_KEY") || get(ENV, "UNILM_LIVE", "") != "1"
     @info "Skipping Anthropic integration tests (set UNILM_LIVE=1 and ANTHROPIC_API_KEY to run live)"

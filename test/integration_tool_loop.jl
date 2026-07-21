@@ -1,5 +1,5 @@
 # ─── Tool Loop Integration Tests ─────────────────────────────────────────────
-# Requires OPENAI_API_KEY environment variable
+# Requires UNILM_LIVE=1 and OPENAI_API_KEY (both, or the suite skips).
 
 if !haskey(ENV, "OPENAI_API_KEY") || get(ENV, "UNILM_LIVE", "") != "1"
     @info "Skipping tool loop integration tests (set UNILM_LIVE=1 and OPENAI_API_KEY to run live)"

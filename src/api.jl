@@ -819,6 +819,12 @@ end
     push!(chat::Chat, msg::Message)
 
     Add a message to the conversation. The goal here is to make invalid conversations unrepresentable.
+
+    Throws [`InvalidConversationError`](@ref) when the mutation would produce an
+    invalid conversation: a non-system message pushed onto an empty conversation
+    (it must start with a system message), a system message pushed once the
+    conversation has already started, or a message whose role repeats the last
+    message's role (consecutive tool-result messages are the one exception).
 """
 function Base.push!(chat::Chat, msg::Message)
     if msg.role == RoleSystem
@@ -837,6 +843,8 @@ end
     pop!(chat::Chat)
 
     Remove the last message from the conversation.
+
+    Throws [`InvalidConversationError`](@ref) when the conversation is empty.
 """
 function Base.pop!(chat::Chat)
     isempty(chat) && throw(InvalidConversationError("cannot pop! from an empty conversation"))

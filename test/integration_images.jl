@@ -1,6 +1,6 @@
 # ── Image Generation Integration Tests ───────────────────────────────────────
 # Real API calls that GENERATE images — billed per image, so they are opt-in.
-# Enable with UNILM_RUN_IMAGE_TESTS=true (also needs OPENAI_API_KEY). Off in CI.
+# Enable with UNILM_LIVE=1 and UNILM_RUN_IMAGE_TESTS=true (also needs OPENAI_API_KEY). Off in CI.
 
 if get(ENV, "UNILM_RUN_IMAGE_TESTS", "false") != "true" || !haskey(ENV, "OPENAI_API_KEY") || get(ENV, "UNILM_LIVE", "") != "1"
     @info "Skipping image generation integration tests (set UNILM_LIVE=1, UNILM_RUN_IMAGE_TESTS=true and OPENAI_API_KEY to enable — these make paid image API calls)"

@@ -188,7 +188,7 @@ end
     # ── Slow tests run last ──────────────────────────────────────────────
 
     @testset "Aqua.jl quality checks" begin
-        Aqua.test_all(UniLM; ambiguities=false)
+        Aqua.test_all(UniLM; ambiguities=true)
     end
 
     @testset "Type Stability (JET.jl)" begin

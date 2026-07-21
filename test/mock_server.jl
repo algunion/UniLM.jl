@@ -1918,8 +1918,10 @@ try
         set_error!(400, "Bad Request")
         expected_body = response_body[]   # the JSON error body chatrequest! will echo
 
+        # The endpoint forces a 400 regardless of the request body, so the
+        # conversation content is irrelevant: an empty chat still issues the
+        # request whose 400 must surface as an LLMFailure in `.result`.
         chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
-        push!(chat, Message(role=UniLM.RoleUser, content="hi"))
 
         result = tool_loop!(chat, (name, args) -> "x")
 
@@ -1939,8 +1941,9 @@ try
         # Reuse ChatDeadEndpoint (defined above): chatrequest! raises a connection
         # error → LLMCallError. tool_loop! must surface it as .result with .llm_error
         # wired to LLMCallError.error.
+        # The connection fails regardless of body; an empty chat still triggers
+        # the request attempt whose LLMCallError must surface in `.result`.
         chat = Chat(service=ChatDeadEndpoint, model="gpt-4o")
-        push!(chat, Message(role=UniLM.RoleUser, content="hi"))
 
         result = tool_loop!(chat, (name, args) -> "x")
 
@@ -2296,8 +2299,9 @@ try
         response_status[] = 401
         response_headers[] = ["x-request-id" => "mock-llm-fail-id-123"]
         response_body[] = "Unauthorized"
+        # Empty conversation: the mock forces a 401 regardless of the body, and
+        # the request_id propagation is what this exercises.
         chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
-        push!(chat, Message(Val(:user), "hi"))
         res_llm_fail = chatrequest!(chat)
         @test res_llm_fail isa LLMFailure
         @test res_llm_fail.status == 401
@@ -2307,8 +2311,8 @@ try
         response_status[] = 401
         response_headers[] = ["x-request-id" => "mock-llm-fail-stream-id-123"]
         response_body[] = "Unauthorized stream"
+        # Empty conversation: the mock forces a 401 regardless of the body.
         chat_stream = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true)
-        push!(chat_stream, Message(Val(:user), "hi"))
         res_llm_fail_stream = fetch(chatrequest!(chat_stream))
         @test res_llm_fail_stream isa LLMFailure
         @test res_llm_fail_stream.status == 401

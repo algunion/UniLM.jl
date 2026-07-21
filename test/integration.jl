@@ -1,5 +1,5 @@
-if !haskey(ENV, "OPENAI_API_KEY")
-    @info "Skipping OpenAI integration tests (OPENAI_API_KEY not set)"
+if !haskey(ENV, "OPENAI_API_KEY") || get(ENV, "UNILM_LIVE", "") != "1"
+    @info "Skipping OpenAI integration tests (set UNILM_LIVE=1 and OPENAI_API_KEY to run live)"
 else
 
 # Live tests run after many minutes of offline testsets. A connection pooled

@@ -1,8 +1,8 @@
 # ─── DeepSeek Integration Tests ──────────────────────────────────────────────
 # Requires DEEPSEEK_API_KEY environment variable
 
-if !haskey(ENV, "DEEPSEEK_API_KEY")
-    @info "Skipping DeepSeek integration tests (DEEPSEEK_API_KEY not set)"
+if !haskey(ENV, "DEEPSEEK_API_KEY") || get(ENV, "UNILM_LIVE", "") != "1"
+    @info "Skipping DeepSeek integration tests (set UNILM_LIVE=1 and DEEPSEEK_API_KEY to run live)"
 else
 
 @testset "DeepSeek Chat — basic" begin

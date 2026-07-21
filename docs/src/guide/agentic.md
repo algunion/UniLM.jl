@@ -12,7 +12,7 @@ using UniLM
 ## One call, two providers
 
 ```@example agentic
-result = respond("Explain multiple dispatch in one sentence.")
+result = respond("Explain multiple dispatch in one sentence.", model="gpt-5.4-mini")
 if result isa ResponseSuccess
     println(output_text(result))
 else
@@ -23,7 +23,7 @@ end
 Swap the provider with a single keyword:
 
 ```@example agentic
-result = respond("Explain multiple dispatch in one sentence."; service=GEMINIServiceEndpoint)
+result = respond("Explain multiple dispatch in one sentence."; service=GEMINIServiceEndpoint, model="gemini-3.1-flash-lite")
 if result isa ResponseSuccess
     println(output_text(result))
 else
@@ -39,7 +39,7 @@ Gemini Interactions exposes server-side hosted tools via
 
 ```@example agentic
 result = respond("What are the latest stable Julia releases?";
-                 service=GEMINIServiceEndpoint, tools=[gemini_google_search()])
+                 service=GEMINIServiceEndpoint, tools=[gemini_google_search()], model="gemini-3.1-flash-lite")
 if result isa ResponseSuccess
     println(output_text(result))
 else
@@ -104,7 +104,7 @@ Interactions decoder normalizes usage into the shared shape and
 are not modeled).
 
 ```@example agentic
-r = respond("What is 2+2?"; service=GEMINIServiceEndpoint)
+r = respond("What is 2+2?"; service=GEMINIServiceEndpoint, model="gemini-3.1-flash-lite")
 if r isa ResponseSuccess
     println("usage: ", token_usage(r))
     println("est. cost: \$", round(estimated_cost(r); digits=6))

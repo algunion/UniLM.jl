@@ -73,7 +73,7 @@ delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "my-custom-model")  # cleanup
 Native Gemini chat (real call, guarded so a failure never breaks the build):
 
 ```@example backends
-gemini_chat = Chat(service=GEMINIServiceEndpoint)   # default model: gemini-3.5-flash
+gemini_chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.1-flash-lite")   # native generateContent API
 push!(gemini_chat, Message(Val(:system), "You are a helpful assistant."))
 push!(gemini_chat, Message(Val(:user), "Say hello in one short sentence."))
 result = chatrequest!(gemini_chat)
@@ -97,7 +97,7 @@ chat = Chat(service=GEMINIOpenAIServiceEndpoint, model="gemini-2.5-flash")
 `max_tokens` is required on the wire and defaults to 4096 when you omit it.
 
 ```@example backends
-claude_chat = Chat(service=ANTHROPICServiceEndpoint)  # default: claude-opus-4-8
+claude_chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-4-5")  # native Messages API
 push!(claude_chat, Message(Val(:system), "You are a helpful assistant."))
 push!(claude_chat, Message(Val(:user), "Say hello in one short sentence."))
 result = chatrequest!(claude_chat)

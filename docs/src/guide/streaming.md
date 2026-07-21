@@ -13,7 +13,7 @@ using JSON
 Set `stream=true` and provide a callback:
 
 ```@example streaming
-chat = Chat(model="gpt-4o-mini", stream=true)
+chat = Chat(model="gpt-5.4-mini", stream=true)
 push!(chat, Message(Val(:system), "You are a poet."))
 push!(chat, Message(Val(:user), "Write a very short 2-line poem about coding."))
 task = chatrequest!(chat, callback=function(chunk, close)
@@ -85,7 +85,7 @@ nothing and can read `result.message.tool_calls` after `fetch`.
 The Responses API provides an even cleaner streaming interface using Julia's `do`-block syntax:
 
 ```@example streaming
-task = respond("Write a haiku about Julia programming.") do chunk, close
+task = respond("Write a haiku about Julia programming.", model="gpt-5.4-mini") do chunk, close
     if chunk isa String
         print(chunk)
     elseif chunk isa UniLM.ResponseObject

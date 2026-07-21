@@ -10,7 +10,7 @@ using JSON
 
 ## Basic Usage
 
-```@example images
+```julia
 result = generate_image(
     "A watercolor painting of a friendly robot reading a Julia programming book",
     size="1024x1024",

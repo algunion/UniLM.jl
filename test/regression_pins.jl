@@ -593,4 +593,43 @@ end
             close(api_server)
         end
     end
+
+    @testset "fail-loud push! leaves legitimate internal append flows intact" begin
+        # push!/pop! now throw on INVALID mutations. This pins that the normal
+        # response-append path (chatrequest! → update! → push!) still appends the
+        # assistant turn rather than throwing — driven keyless through a local
+        # OpenAI-wire mock (empty api key).
+        reply = JSON.json(Dict(
+            "id" => "chatcmpl-append", "object" => "chat.completion",
+            "choices" => [Dict("index" => 0, "finish_reason" => "stop",
+                "message" => Dict("role" => "assistant", "content" => "appended"))],
+            "usage" => Dict("prompt_tokens" => 3, "completion_tokens" => 1, "total_tokens" => 4)))
+        api_server, api_base, _ = oai_wire_server(_ -> reply)
+        try
+            chat = Chat(service=GenericOpenAIEndpoint(api_base, ""), model="mock")
+            push!(chat, Message(Val(:system), "sys"))
+            push!(chat, Message(Val(:user), "hi"))
+            result = chatrequest!(chat)
+            @test result isa LLMSuccess
+            @test length(chat) == 3                      # the assistant reply was appended
+            @test last(chat).role == UniLM.RoleAssistant
+            @test text(result) == "appended"
+        finally
+            close(api_server)
+        end
+    end
+
+    @testset "struct-stored api key never renders (endpoint show + nesting)" begin
+        # An earlier warn path interpolated the whole Chat — and thus the
+        # endpoint's stored api key — into a log line. The key is now redacted by
+        # the endpoint's `show`, and that redaction is inherited through nesting.
+        ep = GenericOpenAIEndpoint("https://api.example.com", "sk-live-secret123")
+        @test !occursin("secret123", sprint(show, ep))
+        @test occursin("[redacted]", sprint(show, ep))
+        chat = Chat(service=ep, model="mock",
+                    messages=[Message(Val(:system), "s"), Message(Val(:user), "u")])
+        fail = LLMFailure(response="body", status=500, self=chat)
+        @test !occursin("secret123", sprint(show, fail))   # nested inside a result value
+        @test !occursin("secret123", sprint(show, chat))   # nested inside a Chat
+    end
 end

@@ -1,3 +1,5 @@
+import InteractiveUtils
+
 @testset "Constants" begin
     @test UniLM.RoleSystem == "system"
     @test UniLM.RoleUser == "user"
@@ -545,12 +547,12 @@ end
         push!(chat, usr)
         @test length(chat) == 2
 
-        # Consecutive same-role rejected
-        push!(chat, usr)
+        # Consecutive same-role rejected — throws, conversation left unchanged
+        @test_throws InvalidConversationError push!(chat, usr)
         @test length(chat) == 2  # unchanged
 
-        # System not allowed after conversation started
-        push!(chat, sys)
+        # System not allowed after conversation started — throws, unchanged
+        @test_throws InvalidConversationError push!(chat, sys)
         @test length(chat) == 2  # unchanged
 
         # Assistant after user
@@ -591,8 +593,8 @@ end
         pop!(chat)
         @test length(chat) == 0
 
-        # Pop from empty - should warn but not error
-        pop!(chat)
+        # Pop from empty throws (fail loud, not a silent no-op)
+        @test_throws InvalidConversationError pop!(chat)
         @test length(chat) == 0
     end
 
@@ -628,13 +630,13 @@ end
         @test last(chat) == asst
     end
 
-    @testset "update! without history" begin
+    @testset "update! without history is a documented no-op (not a caller error)" begin
         chat = Chat(history=false)
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="q"))
         asst = Message(role=UniLM.RoleAssistant, content="a")
-        update!(chat, asst)
-        @test length(chat) == 2  # unchanged because history=false
+        @test update!(chat, asst) === chat   # returns the chat; does NOT throw
+        @test length(chat) == 2              # unchanged because history=false
     end
 
     @testset "issendvalid" begin
@@ -1024,4 +1026,146 @@ end
     # A plain GPTTool vector still passes through unchanged.
     gtool = GPTTool(func=sig)
     @test Chat(model="gpt-test", tools=[gtool]).tools[1] === gtool
+end
+
+@testset "fail-loud conversation mutations (throw, not warn)" begin
+    sys  = Message(role=UniLM.RoleSystem, content="s")
+    usr  = Message(role=UniLM.RoleUser, content="u")
+    asst = Message(role=UniLM.RoleAssistant, content="a")
+
+    @testset "empty conversation must start with a system message" begin
+        chat = Chat()
+        @test_throws InvalidConversationError push!(chat, usr)
+        @test_throws InvalidConversationError push!(chat, asst)
+        @test isempty(chat)                     # refused inputs never mutate the chat
+    end
+
+    @testset "a system message is only valid as the first message" begin
+        chat = Chat()
+        push!(chat, sys); push!(chat, usr)
+        @test_throws InvalidConversationError push!(chat, sys)
+        @test length(chat) == 2
+    end
+
+    @testset "no consecutive same-role (non-tool) messages" begin
+        chat = Chat()
+        push!(chat, sys); push!(chat, usr)
+        @test_throws InvalidConversationError push!(chat, usr)
+    end
+
+    @testset "pop! on empty throws" begin
+        @test_throws InvalidConversationError pop!(Chat())
+    end
+
+    @testset "thrown message names the rule + role, leaks no content/endpoint/key" begin
+        chat = Chat(service=GenericOpenAIEndpoint("https://api.example.com", "sk-live-secret123"),
+                    model="mock")
+        err = try
+            push!(chat, Message(role=UniLM.RoleUser, content="TOP-SECRET-PROMPT"))
+            nothing
+        catch e
+            e
+        end
+        @test err isa InvalidConversationError
+        shown = sprint(showerror, err)
+        @test occursin("system", shown)             # states the violated rule
+        @test occursin("user", shown)               # names the offending role
+        @test !occursin("TOP-SECRET-PROMPT", shown) # never the message content
+        @test !occursin("secret123", shown)         # never the api key
+        @test !occursin("api.example.com", shown)   # never the endpoint
+    end
+end
+
+@testset "endpoint api_key redaction in show" begin
+    ep = GenericOpenAIEndpoint("https://api.example.com", "sk-live-secret123")
+    s = sprint(show, ep)
+    @test occursin("[redacted]", s)
+    @test !occursin("secret123", s)
+    @test !occursin("sk-live-secret123", s)
+    @test occursin("https://api.example.com", s)      # non-secret fields still render
+
+    ds = DeepSeekEndpoint(api_key="ds-live-secret999")
+    sd = sprint(show, ds)
+    @test occursin("[redacted]", sd)
+    @test !occursin("secret999", sd)
+
+    # empty key (local no-auth server) is not a secret: no marker, no crash
+    @test !occursin("[redacted]", sprint(show, OllamaEndpoint()))
+
+    # nested: endpoint inside a Chat inside an LLMFailure must not leak the raw key
+    chat = Chat(service=ep, model="mock",
+                messages=[Message(Val(:system), "s"), Message(Val(:user), "u")])
+    fail = LLMFailure(response="upstream body", status=500, self=chat)
+    sf = sprint(show, fail)
+    @test occursin("[redacted]", sf)
+    @test !occursin("secret123", sf)
+    @test !occursin("sk-live-secret123", sf)
+end
+
+@testset "result consumption sugar (issuccess/isfailure/text/LLMResultError)" begin
+    chat = Chat(model="gpt-5.5",
+                messages=[Message(Val(:system), "s"), Message(Val(:user), "u")])
+    okmsg   = Message(role=UniLM.RoleAssistant, content="hello", finish_reason="stop")
+    ok      = LLMSuccess(message=okmsg, self=chat)
+    fail    = LLMFailure(response="boom", status=500, self=chat)
+    callerr = LLMCallError(error="network down", self=chat)
+
+    @testset "issuccess / isfailure" begin
+        @test issuccess(ok) === true
+        @test isfailure(ok) === false
+        @test issuccess(fail) === false
+        @test isfailure(fail) === true
+        @test issuccess(callerr) === false
+        @test isfailure(callerr) === true
+    end
+
+    @testset "issuccess spot-checks across result families (incl. platform API)" begin
+        @test issuccess(EmbeddingSuccess(embeddings=UniLM.Embeddings("x"), raw=Dict{String,Any}())) === true
+        @test issuccess(FileDeleteSuccess(id="f", deleted=true)) === true   # a platform-API success
+        @test isfailure(EmbeddingFailure(response="e", status=400)) === true
+    end
+
+    @testset "text() returns content on success; nothing for tool-calls-only" begin
+        @test text(ok) == "hello"
+        tc = GPTToolCall(id="c1", func=UniLM.GPTFunction("fn", Dict("a" => "b")))
+        toolmsg = Message(role=UniLM.RoleAssistant, tool_calls=[tc], finish_reason=UniLM.TOOL_CALLS)
+        @test text(LLMSuccess(message=toolmsg, self=chat)) === nothing
+    end
+
+    @testset "text() on failure/callerror throws a typed LLMResultError" begin
+        @test_throws LLMResultError text(fail)
+        @test_throws LLMResultError text(callerr)
+    end
+
+    @testset "LLMResultError.showerror shows status + trimmed excerpt, never chat/service/key" begin
+        chat2 = Chat(service=GenericOpenAIEndpoint("https://api.example.com", "sk-live-secret123"),
+                     model="mock",
+                     messages=[Message(Val(:system), "s"), Message(Val(:user), "u")])
+        bigbody = "E" * repeat("x", 500)
+        f2 = LLMFailure(response=bigbody, status=503, self=chat2)
+        err = try text(f2); catch e; e; end
+        @test err isa LLMResultError
+        se = sprint(showerror, err)
+        @test occursin("503", se)                # status shown
+        @test occursin("…", se)                  # body was trimmed (500 chars > 200)
+        @test !occursin(bigbody, se)             # full body not present
+        @test !occursin("secret123", se)         # never the api key
+        @test !occursin("api.example.com", se)   # never the endpoint
+        @test length(se) < 350                   # a short excerpt, not the whole payload
+    end
+
+    @testset "every LLMRequestResponse subtype is classified by its *Success name" begin
+        fallback = which(issuccess, Tuple{LLMRequestResponse})
+        n_success = 0
+        for T in InteractiveUtils.subtypes(LLMRequestResponse)
+            isconcretetype(T) || continue
+            if endswith(String(nameof(T)), "Success")
+                @test which(issuccess, Tuple{T}) !== fallback   # an explicit `= true` method exists
+                n_success += 1
+            else
+                @test which(issuccess, Tuple{T}) === fallback   # falls through to the `false` default
+            end
+        end
+        @test n_success >= 30    # ~34 success types across chat/embeddings/platform APIs
+    end
 end

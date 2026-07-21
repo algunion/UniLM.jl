@@ -458,6 +458,33 @@ struct DeepSeekEndpoint <: ServiceEndpoint
 end
 DeepSeekEndpoint(; api_key::String=ENV["DEEPSEEK_API_KEY"]) = DeepSeekEndpoint(api_key)
 
+# Render a stored API key as a short, non-reversible marker: a few leading
+# characters (only when the key is long enough that those aren't the whole
+# secret) followed by a fixed redaction tag. The tag is constant, so the key's
+# length is never revealed, and the full key is never emitted. Endpoints keep
+# their key in a struct field, so their `show` must redact it — otherwise the
+# key surfaces wherever an endpoint is printed, including nested inside a Chat or
+# a result value (Julia's default `show` recurses into fields via `show`).
+function _redact_api_key(key::AbstractString)
+    n = length(key)
+    n == 0 && return ""                       # empty (e.g. local no-auth) — nothing to hide
+    n > 6 ? string(first(key, 4), "…[redacted]") : "…[redacted]"
+end
+
+function Base.show(io::IO, e::GenericOpenAIEndpoint)
+    print(io, "GenericOpenAIEndpoint(")
+    show(io, e.base_url)
+    print(io, ", ")
+    show(io, _redact_api_key(e.api_key))
+    print(io, ")")
+end
+
+function Base.show(io::IO, e::DeepSeekEndpoint)
+    print(io, "DeepSeekEndpoint(")
+    show(io, _redact_api_key(e.api_key))
+    print(io, ")")
+end
+
 
 # Coerce the `tools` keyword to the stored `Vector{GPTTool}`. This fallback is
 # the identity — a `Vector{GPTTool}` or `nothing` passes through unchanged. The
@@ -711,7 +738,66 @@ Exception-level error during a Chat Completions API call (network failure, JSON 
     cause::Union{Nothing,Exception} = nothing
 end
 
+# ─── Result consumption ──────────────────────────────────────────────────────
 
+"""
+    issuccess(r::LLMRequestResponse) -> Bool
+
+`true` when `r` is a success result (any `*Success` type), `false` for every
+failure or call-error result. The generic method returns `false`; each concrete
+`*Success` result type gets its own `true` method (registered once every result
+type across the APIs is defined — see the bottom of `UniLM.jl`).
+
+```julia
+result = chatrequest!(chat)
+issuccess(result) ? println(text(result)) : @warn "call did not succeed"
+```
+"""
+issuccess(::LLMRequestResponse) = false
+
+"""
+    isfailure(r::LLMRequestResponse) -> Bool
+
+Negation of [`issuccess`](@ref): `true` for any failure or call-error result.
+"""
+isfailure(r::LLMRequestResponse) = !issuccess(r)
+
+"""
+    text(r::LLMSuccess) -> Union{String,Nothing}
+
+The assistant reply text — `r.message.content`. Can be `nothing` when the reply
+carries only tool calls (no text). On a [`LLMFailure`](@ref) or [`LLMCallError`](@ref),
+`text` throws an [`LLMResultError`](@ref); guard with [`issuccess`](@ref) /
+[`isfailure`](@ref), or pattern-match the result type first.
+"""
+text(r::LLMSuccess) = r.message.content
+
+"""
+    LLMResultError <: Exception
+
+Thrown by [`text`](@ref) when it is called on a non-success Chat result
+([`LLMFailure`](@ref) or [`LLMCallError`](@ref)). Carries the offending `result`.
+`showerror` prints only the status and a short (≤200-char) response excerpt —
+never the conversation, the service endpoint, or the API key.
+"""
+struct LLMResultError <: Exception
+    result::Union{LLMFailure,LLMCallError}
+end
+
+text(r::Union{LLMFailure,LLMCallError}) = throw(LLMResultError(r))
+
+_llm_result_status(r::LLMFailure)   = r.status
+_llm_result_status(r::LLMCallError) = r.status
+_llm_result_body(r::LLMFailure)     = r.response
+_llm_result_body(r::LLMCallError)   = r.error
+
+function Base.showerror(io::IO, e::LLMResultError)
+    status = _llm_result_status(e.result)
+    print(io, "LLMResultError: no text — the request did not succeed (status ",
+          isnothing(status) ? "unknown" : status, "). ")
+    body = _llm_result_body(e.result)
+    print(io, "Response: ", length(body) > 200 ? string(first(body, 200), "…") : body)
+end
 
 """
     is_send_valid(chat::Chat)::Bool
@@ -735,12 +821,15 @@ end
     Add a message to the conversation. The goal here is to make invalid conversations unrepresentable.
 """
 function Base.push!(chat::Chat, msg::Message)
-    inilen = length(chat)
-    msg.role == RoleSystem && isempty(chat) && push!(chat.messages, msg)
-    msg.role != RoleSystem && !isempty(chat) &&
-        (chat.messages[end].role != msg.role || msg.role == RoleTool) &&
-        push!(chat.messages, msg)
-    length(chat) == inilen && @warn "Cannot add message $msg to conversation: $chat"
+    if msg.role == RoleSystem
+        isempty(chat) ||
+            throw(InvalidConversationError("a system message is only valid as the first message; got :$(msg.role) after the conversation started"))
+    elseif isempty(chat)
+        throw(InvalidConversationError("conversation must start with a system message; got :$(msg.role)"))
+    elseif chat.messages[end].role == msg.role && msg.role != RoleTool
+        throw(InvalidConversationError("conversation cannot contain consecutive messages from the same role; got two :$(msg.role) in a row"))
+    end
+    push!(chat.messages, msg)
     return chat
 end
 
@@ -750,9 +839,8 @@ end
     Remove the last message from the conversation.
 """
 function Base.pop!(chat::Chat)
-    inilength = length(chat)
-    !isempty(chat) && pop!(chat.messages)
-    length(chat) == inilength && @warn "Cannot remove last message from an empty conversation: $chat"
+    isempty(chat) && throw(InvalidConversationError("cannot pop! from an empty conversation"))
+    pop!(chat.messages)
     return chat
 end
 

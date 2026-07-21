@@ -129,6 +129,10 @@ export
     LLMSuccess,
     LLMFailure,
     LLMCallError,
+    LLMResultError,
+    issuccess,
+    isfailure,
+    text,
     # Token usage and accounting
     TokenUsage,
     token_usage,
@@ -483,5 +487,20 @@ export
     @mcp_tool,
     @mcp_resource,
     @mcp_prompt
+
+# Every concrete result type whose exported name ends in `Success` reports
+# success; the generic `issuccess(::LLMRequestResponse)` fallback (in api.jl)
+# reports false, so every `*Failure`/`*CallError` reports false without a
+# per-type method. Registered here, after all API modules are included and their
+# result types exported, because those concrete types are defined across files
+# that load after api.jl. This keeps success/failure classification in one place
+# and self-maintaining: a new exported `*Success` result type is classified
+# automatically.
+for _name in names(@__MODULE__)
+    isdefined(@__MODULE__, _name) || continue
+    _T = getproperty(@__MODULE__, _name)
+    _T isa Type && _T <: LLMRequestResponse && endswith(String(_name), "Success") &&
+        @eval issuccess(::$_T) = true
+end
 
 end

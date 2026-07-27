@@ -11,7 +11,24 @@
   never includes conversation content or endpoint configuration. Valid mutations
   are unchanged.
 
+### Breaking (provider extension)
+- The OpenAI-wire request/response encoding and SSE handling are now an explicit
+  opt-in via the new exported `OpenAIWireEndpoint <: ServiceEndpoint` supertype. A
+  `ServiceEndpoint` subtype that does not implement the wire seam
+  (`encode_request` / `decode_response` / `handle_sse_event!`, and the agentic
+  decode/encode defaults) now fails with a `MethodError` at call time instead of
+  silently emitting OpenAI-shaped requests at a foreign API. Migration: subtype
+  `OpenAIWireEndpoint` instead of `ServiceEndpoint` for OpenAI-compatible
+  backends; backends with a genuinely different wire keep subtyping
+  `ServiceEndpoint` and implement the seam (see the new Custom Backends guide).
+  All built-in endpoints are unaffected.
+
 ### Added
+- `OpenAIWireEndpoint` abstract supertype (exported) and a "Custom Backends"
+  guide documenting the provider-extension contract.
+- A "Versioning & Stability" policy page (what 0.x means here, breaking-change
+  batching, alias guarantees, 1.0 intent) plus a "When to choose UniLM"
+  positioning section in the README.
 - Result-consumption helpers: `issuccess` / `isfailure` for any request result,
   `text(::LLMSuccess)` returning the reply content (`nothing` for tool-calls-only
   turns), and `LLMResultError` — thrown by `text` on a `LLMFailure`/`LLMCallError`;

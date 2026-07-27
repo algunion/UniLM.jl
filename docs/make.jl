@@ -21,6 +21,7 @@ makedocs(;
         "Home" => "index.md",
         "LLM Reference" => "llm.md",
         "Getting Started" => "getting_started.md",
+        "Versioning & Stability" => "stability.md",
         "Guide" => [
             "Chat Completions" => "guide/chat_completions.md",
             "Responses API" => "guide/responses_api.md",

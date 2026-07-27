@@ -9,6 +9,16 @@
 
 A **Julian**, type-safe interface to **LLM providers** with **first-class native backends** — OpenAI (Chat Completions + Responses), Anthropic (Messages), and Google Gemini (generateContent + agentic Interactions) — plus any **OpenAI-compatible** provider (Azure, DeepSeek, Mistral, Ollama, vLLM, LM Studio). Covers the **Chat Completions** & **Responses** APIs, a cross-provider agentic **`respond`** verb, **Image Generation/Edits**, **Embeddings**, **Files/Vector Stores**, **Conversations**, **Audio**, **Batch**, **Moderations**, **Fine-tuning**, **Webhooks**, **Realtime**, and **MCP** (client & server) — with built-in token/cost accounting and illegal states made unrepresentable.
 
+## When to choose UniLM
+
+UniLM speaks each provider's own wire API, not just the OpenAI-compatible protocol. Reach for it when you need:
+
+- **Native Anthropic and Gemini backends** — each speaks the provider's own format (Anthropic Messages, Gemini `generateContent`) rather than an OpenAI-compat shim, and round-trips provider-verbatim content, so reasoning state such as Anthropic thinking signatures and Gemini thought signatures survives across turns.
+- **An MCP client _and_ an MCP server in one package** — connect to external MCP servers (`MCPSession`) with tool-loop integration, and expose your own Julia functions as tools over MCP (`MCPServer`).
+- **Typed results with fail-loud invariants** — every call resolves to a concrete `LLMSuccess` / `LLMFailure` / `LLMCallError` result (with matching `Response…` types for the Responses API), and genuine faults such as timeouts raise typed exceptions (`UniLMTimeout`) instead of returning silent defaults.
+- **Built-in per-conversation cost accounting** — provider token counts are normalized to one shape, and each `Chat` accumulates a running USD estimate you read with `cumulative_cost`.
+- **Broad OpenAI platform-API coverage** — well beyond chat: Responses, Images, Embeddings, Files, Vector Stores, Conversations, Audio, Batch, Moderations, Fine-tuning, Webhooks, and Realtime.
+
 ## Features
 
 - **Chat Completions** — stateful conversations with automatic history management
@@ -312,3 +322,7 @@ Full documentation with guides and API reference: **[https://algunion.github.io/
 - [Structured Output Guide](https://algunion.github.io/UniLM.jl/dev/guide/structured_output/) — JSON Schema output
 - [Multi-Backend Guide](https://algunion.github.io/UniLM.jl/dev/guide/multi_backend/) — Azure, Gemini, DeepSeek, Ollama, and more
 - [MCP Guide](https://algunion.github.io/UniLM.jl/dev/guide/mcp/) — MCP client/server
+
+## Versioning & Stability
+
+UniLM is pre-1.0. While on `0.x`, **MINOR** releases (e.g. `0.13 → 0.14`) may carry breaking changes — each is listed under a **Breaking** heading in the [CHANGELOG](CHANGELOG.md) with migration notes — while **PATCH** releases never break. Breaking changes are batched into infrequent minors rather than dribbled across releases, and renamed identifiers keep working as aliases until at least `1.0`. See the [Versioning & Stability policy](https://algunion.github.io/UniLM.jl/dev/stability/) for the full contract.

@@ -81,6 +81,7 @@ include("mcp_server.jl")
 # ─── Service Endpoints ────────────────────────────────────────────────────────
 export
     ServiceEndpoint,
+    OpenAIWireEndpoint,
     ServiceEndpointSpec,
     OPENAIServiceEndpoint,
     AZUREServiceEndpoint,

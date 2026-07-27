@@ -2168,7 +2168,7 @@ end
 
 # Mock agentic endpoint whose base URL is swappable per test via a Ref holder.
 const _RESP_TIMEOUT_URL = Ref("http://127.0.0.1:0")
-struct _RespTimeoutMock <: UniLM.ServiceEndpoint end
+struct _RespTimeoutMock <: UniLM.OpenAIWireEndpoint end  # inherits the agentic wire; the mute server then times out
 UniLM._api_base_url(::Type{_RespTimeoutMock}) = _RESP_TIMEOUT_URL[]
 UniLM.auth_header(::Type{_RespTimeoutMock}) = ["Content-Type" => "application/json"]
 UniLM.default_model(::Type{_RespTimeoutMock}) = "mock-model"   # Respond ctor resolves the model default via default_model(service)
@@ -2191,7 +2191,7 @@ UniLM.default_model(::Type{_RespTimeoutMock}) = "mock-model"   # Respond ctor re
 end
 
 @testset "lifecycle op: InterruptException is rethrown, never lands in a value" begin
-    struct _RespInterruptMock <: UniLM.ServiceEndpoint end
+    struct _RespInterruptMock <: UniLM.OpenAIWireEndpoint end  # inherits _agentic_url so routing precedes the auth_header throw
     UniLM._api_base_url(::Type{_RespInterruptMock}) = "http://127.0.0.1:1"
     UniLM.auth_header(::Type{_RespInterruptMock}) = throw(InterruptException())
     @test_throws InterruptException get_response("resp_x"; service=_RespInterruptMock)

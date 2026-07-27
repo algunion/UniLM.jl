@@ -597,8 +597,10 @@ function _hm_inband_then_valid_server()
 end
 
 # Routes chat streaming to a local mock server while delegating SSE semantics to
-# the real Anthropic handler — the URL seam the production endpoint lacks.
-struct _HMAnthropicWireMock <: UniLM.ServiceEndpoint
+# the real Anthropic handler — the URL seam the production endpoint lacks. Subtypes
+# OpenAIWireEndpoint to inherit encode_request (the mock server ignores the body);
+# the handle_sse_event! override wins by specificity.
+struct _HMAnthropicWireMock <: UniLM.OpenAIWireEndpoint
     base_url::String
 end
 UniLM.get_url(s::_HMAnthropicWireMock, ::Chat) = s.base_url

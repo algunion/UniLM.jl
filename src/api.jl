@@ -373,23 +373,51 @@ json_schema(name::String, description::String, schema::AbstractDict; strict::Uni
 
 Abstract supertype for LLM service backends. Subtypes control URL routing and authentication.
 
+OpenAI-compatible backends subtype `OpenAIWireEndpoint` (itself a subtype of
+`ServiceEndpoint`) to inherit the chat request/response encoding and SSE handling;
+backends with a native wire (Anthropic, Gemini) subtype `ServiceEndpoint` directly
+and implement the wire seam (`encode_request`/`decode_response`/`handle_sse_event!`)
+themselves.
+
 Built-in subtypes:
 - `OPENAIServiceEndpoint` — OpenAI API (default)
 - `AZUREServiceEndpoint` — Azure OpenAI Service
 - `GEMINIOpenAIServiceEndpoint` — Google Gemini via OpenAI-compatible endpoint
 - `GEMINIServiceEndpoint` — Google Gemini native generateContent API
+- `ANTHROPICServiceEndpoint` — Anthropic (Claude) native Messages API
 - `GenericOpenAIEndpoint` — any OpenAI-compatible provider (Ollama, Mistral, vLLM, etc.)
 """
 abstract type ServiceEndpoint end
 
+"""
+    OpenAIWireEndpoint <: ServiceEndpoint
+
+Abstract supertype for backends that speak the OpenAI-compatible chat wire.
+Subtypes inherit the OpenAI Chat Completions request/response encoding
+(`encode_request`/`decode_response`) and the default SSE stream handling
+(`handle_sse_event!`) for free, so a new OpenAI-compatible provider defines only
+`get_url` and `auth_header` (plus, optionally, the `_api_base_url` pattern that
+routes the Responses/agentic surface).
+
+Backends that speak a genuinely different wire (Anthropic's Messages API, Gemini's
+native `generateContent`) subtype `ServiceEndpoint` directly and additionally
+implement `encode_request`, `decode_response`, and `handle_sse_event!`. A bare
+`ServiceEndpoint` subtype that omits those methods fails with a `MethodError` at
+call time rather than silently emitting OpenAI-shaped requests to a foreign API.
+
+Built-in OpenAI-wire subtypes: `OPENAIServiceEndpoint`, `AZUREServiceEndpoint`,
+`GEMINIOpenAIServiceEndpoint`, `GenericOpenAIEndpoint`, `DeepSeekEndpoint`.
+"""
+abstract type OpenAIWireEndpoint <: ServiceEndpoint end
+
 """OpenAI API service endpoint (default). Requires `OPENAI_API_KEY` env variable."""
-struct OPENAIServiceEndpoint <: ServiceEndpoint end
+struct OPENAIServiceEndpoint <: OpenAIWireEndpoint end
 
 """Azure OpenAI Service endpoint. Requires `AZURE_OPENAI_BASE_URL`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_API_VERSION` env variables."""
-struct AZUREServiceEndpoint <: ServiceEndpoint end
+struct AZUREServiceEndpoint <: OpenAIWireEndpoint end
 
 """Google Gemini endpoint (OpenAI-compatible). Requires `GEMINI_API_KEY` env variable."""
-struct GEMINIOpenAIServiceEndpoint <: ServiceEndpoint end
+struct GEMINIOpenAIServiceEndpoint <: OpenAIWireEndpoint end
 
 """Native Google Gemini `generateContent` API (`x-goog-api-key`; model in URL). Requires `GEMINI_API_KEY`."""
 struct GEMINIServiceEndpoint <: ServiceEndpoint end
@@ -399,7 +427,7 @@ Native wire format (content blocks, top-level `system`, `user`/`assistant` roles
 struct ANTHROPICServiceEndpoint <: ServiceEndpoint end
 
 """
-    GenericOpenAIEndpoint <: ServiceEndpoint
+    GenericOpenAIEndpoint <: OpenAIWireEndpoint
 
 Configurable endpoint for any OpenAI-compatible API provider. Supports Chat Completions,
 Embeddings, and (where the provider implements it) the Responses API.
@@ -418,7 +446,7 @@ chat = Chat(service=GenericOpenAIEndpoint("https://api.mistral.ai", ENV["MISTRAL
             model="mistral-large-latest")
 ```
 """
-struct GenericOpenAIEndpoint <: ServiceEndpoint
+struct GenericOpenAIEndpoint <: OpenAIWireEndpoint
     base_url::String
     api_key::String
 end
@@ -430,6 +458,13 @@ Type alias accepting both marker types (`OPENAIServiceEndpoint`) and instances
 (`GenericOpenAIEndpoint(...)`). Used as the type of `service` fields.
 """
 const ServiceEndpointSpec = Union{Type{<:ServiceEndpoint}, ServiceEndpoint}
+
+# OpenAI-wire counterpart of `ServiceEndpointSpec`: the marker-type-or-instance
+# domain of `OpenAIWireEndpoint`, used to type the OpenAI-wire seam defaults
+# (chat: `encode_request`/`decode_response`/`handle_sse_event!`; agentic:
+# `encode_agentic`/`decode_agentic`/`decode_agentic_stream`/`_agentic_url`).
+# Internal — deliberately unexported.
+const OpenAIWireEndpointSpec = Union{Type{<:OpenAIWireEndpoint}, OpenAIWireEndpoint}
 
 """
     OllamaEndpoint(; base_url="http://localhost:11434") -> GenericOpenAIEndpoint
@@ -446,14 +481,14 @@ Pre-configured endpoint for [Mistral AI](https://mistral.ai) API.
 MistralEndpoint(; api_key::String=ENV["MISTRAL_API_KEY"]) = GenericOpenAIEndpoint("https://api.mistral.ai", api_key)
 
 """
-    DeepSeekEndpoint <: ServiceEndpoint
+    DeepSeekEndpoint <: OpenAIWireEndpoint
 
 Pre-configured endpoint for [DeepSeek](https://deepseek.com) API. Supports chat completions,
 tool calling, FIM completion, and prefix completion.
 
 FIM and prefix completion use the beta base URL (`https://api.deepseek.com/beta`).
 """
-struct DeepSeekEndpoint <: ServiceEndpoint
+struct DeepSeekEndpoint <: OpenAIWireEndpoint
     api_key::String
 end
 DeepSeekEndpoint(; api_key::String=ENV["DEEPSEEK_API_KEY"]) = DeepSeekEndpoint(api_key)

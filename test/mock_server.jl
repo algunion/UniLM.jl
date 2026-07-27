@@ -37,7 +37,9 @@ mock_base_url = "http://127.0.0.1:$mock_port"
 
 # ─── Test Service Endpoint ────────────────────────────────────────────────────
 
-struct MockServiceEndpoint <: UniLM.ServiceEndpoint end
+# Speaks the OpenAI wire (chat + Responses/agentic + embeddings), so it inherits
+# encode_request/decode_response/handle_sse_event! and the agentic defaults.
+struct MockServiceEndpoint <: UniLM.OpenAIWireEndpoint end
 UniLM._api_base_url(::Type{MockServiceEndpoint}) = mock_base_url
 UniLM.get_url(::Type{MockServiceEndpoint}, ::Chat) = mock_base_url * UniLM.CHAT_COMPLETIONS_PATH
 UniLM.get_url(::Type{MockServiceEndpoint}, ::Embeddings) = mock_base_url * UniLM.EMBEDDINGS_PATH
@@ -868,7 +870,7 @@ try
     # ═══════════════════════════════════════════════════════════════════════
 
     @testset "chatrequest! catch block (connection error)" begin
-        struct ChatDeadEndpoint <: UniLM.ServiceEndpoint end
+        struct ChatDeadEndpoint <: UniLM.OpenAIWireEndpoint end  # inherits encode_request; the POST then hits a dead port
         UniLM.get_url(::Type{ChatDeadEndpoint}, ::Chat) = "http://127.0.0.1:1/v1/chat/completions"
         UniLM.auth_header(::Type{ChatDeadEndpoint}) = ["Content-Type" => "application/json"]
 
@@ -882,7 +884,7 @@ try
     end
 
     @testset "respond catch block (connection error)" begin
-        struct RespondDeadEndpoint <: UniLM.ServiceEndpoint end
+        struct RespondDeadEndpoint <: UniLM.OpenAIWireEndpoint end  # inherits encode_agentic/_agentic_url; the POST then hits a dead port
         UniLM._api_base_url(::Type{RespondDeadEndpoint}) = "http://127.0.0.1:1"
         UniLM.auth_header(::Type{RespondDeadEndpoint}) = ["Content-Type" => "application/json"]
         UniLM.default_model(::Type{RespondDeadEndpoint}) = "dead-model"

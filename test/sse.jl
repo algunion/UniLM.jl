@@ -26,13 +26,13 @@ function fragmented_sse_server(chunks::Vector{String}; gap::Float64=0.4)
     server, "http://127.0.0.1:$port"
 end
 
-# Test seam: an endpoint that speaks OpenAI-wire ROUTING to the local mock but
-# parses SSE with the ANTHROPIC handler — the sanctioned way to drive Anthropic
-# wire through the provider-agnostic driver without base-URL injection (the
-# Anthropic endpoint type does not currently support overriding its base URL).
-# Also witnesses that handle_sse_event! is an overridable seam, as
-# decode_stream_chunk was.
-struct AnthropicWireEndpoint <: UniLM.ServiceEndpoint
+# Test seam: an endpoint that speaks the OpenAI wire (request encoding + routing)
+# to the local mock but parses SSE with the ANTHROPIC handler — the sanctioned way
+# to drive Anthropic wire through the provider-agnostic driver without base-URL
+# injection (the Anthropic endpoint type does not currently support overriding its
+# base URL). Subtypes OpenAIWireEndpoint to inherit encode_request; overriding
+# handle_sse_event! witnesses that the SSE seam is overridable (as decode_stream_chunk was).
+struct AnthropicWireEndpoint <: UniLM.OpenAIWireEndpoint
     base_url::String
 end
 UniLM.get_url(s::AnthropicWireEndpoint, ::Chat) = s.base_url * "/v1/messages"

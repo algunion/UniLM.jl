@@ -47,15 +47,17 @@ UniLM.jl wraps four OpenAI API surfaces plus FIM completion:
 
 ```julia
 abstract type ServiceEndpoint end
-struct OPENAIServiceEndpoint <: ServiceEndpoint end   # default — uses OPENAI_API_KEY
-struct AZUREServiceEndpoint  <: ServiceEndpoint end   # uses AZURE_OPENAI_* env vars
+abstract type OpenAIWireEndpoint <: ServiceEndpoint end   # OpenAI-wire backends inherit encode/decode/SSE
+struct OPENAIServiceEndpoint <: OpenAIWireEndpoint end   # default — uses OPENAI_API_KEY
+struct AZUREServiceEndpoint  <: OpenAIWireEndpoint end   # uses AZURE_OPENAI_* env vars
 struct GEMINIServiceEndpoint <: ServiceEndpoint end       # native generateContent — GEMINI_API_KEY
-struct GEMINIOpenAIServiceEndpoint <: ServiceEndpoint end # Gemini via OpenAI-compat shim — GEMINI_API_KEY
+struct GEMINIOpenAIServiceEndpoint <: OpenAIWireEndpoint end # Gemini via OpenAI-compat shim — GEMINI_API_KEY
 struct ANTHROPICServiceEndpoint <: ServiceEndpoint end    # native Messages API — ANTHROPIC_API_KEY
-struct GenericOpenAIEndpoint <: ServiceEndpoint       # any OpenAI-compatible provider
+struct GenericOpenAIEndpoint <: OpenAIWireEndpoint    # any OpenAI-compatible provider
     base_url::String
     api_key::String
 end
+# DeepSeekEndpoint <: OpenAIWireEndpoint  (constructor below)
 
 # Convenience constructors
 OllamaEndpoint(; base_url="http://localhost:11434")   # Ollama local
@@ -1260,7 +1262,7 @@ Every exported symbol (`names(UniLM)`), grouped by area:
 
 **Cost Tracking**: `TokenUsage`, `token_usage`, `estimated_cost`, `cumulative_cost`, `DEFAULT_PRICING`
 
-**Service Endpoints**: `ServiceEndpoint`, `ServiceEndpointSpec`, `OPENAIServiceEndpoint`, `AZUREServiceEndpoint`, `GEMINIServiceEndpoint`, `GEMINIOpenAIServiceEndpoint`, `ANTHROPICServiceEndpoint`, `GenericOpenAIEndpoint`, `OllamaEndpoint`, `MistralEndpoint`, `DeepSeekEndpoint`, `add_azure_deploy_name!`
+**Service Endpoints**: `ServiceEndpoint`, `OpenAIWireEndpoint`, `ServiceEndpointSpec`, `OPENAIServiceEndpoint`, `AZUREServiceEndpoint`, `GEMINIServiceEndpoint`, `GEMINIOpenAIServiceEndpoint`, `ANTHROPICServiceEndpoint`, `GenericOpenAIEndpoint`, `OllamaEndpoint`, `MistralEndpoint`, `DeepSeekEndpoint`, `add_azure_deploy_name!`
 
 **Provider Capabilities**: `provider_capabilities`, `has_capability`
 

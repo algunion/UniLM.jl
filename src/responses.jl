@@ -1273,22 +1273,28 @@ end
 # ─── Request Functions ───────────────────────────────────────────────────────
 
 # ─── Agentic wire-translation seam ───────────────────────────────────────────
-# Parallel to the chat seam (src/requests.jl:252-273): three generics dispatched
-# on `service` translate between the neutral Respond/ResponseObject IR and a
-# provider's agentic wire. The untyped-`service` methods below are the OpenAI
-# Responses defaults; a provider with a different surface (Gemini Interactions)
-# overrides them. `respond`/`_respond_stream` call ONLY these generics,
-# so retry/HTTP/cost/streaming orchestration stays provider-agnostic.
+# Parallel to the chat seam (src/requests.jl): the generics dispatched on
+# `OpenAIWireEndpointSpec` translate between the neutral Respond/ResponseObject IR
+# and the OpenAI Responses wire, inherited by every `OpenAIWireEndpoint`. A provider
+# with a different surface (Gemini Interactions) subtypes `ServiceEndpoint` and
+# overrides them; a bare `ServiceEndpoint` subtype with no override fails loud
+# (MethodError) here. `respond`/`_respond_stream` call ONLY these generics, so
+# retry/HTTP/cost/streaming orchestration stays provider-agnostic.
 # NB: named `*_agentic`, NOT `decode_response` — that would collide with the chat
 # seam's `decode_response(service, ::HTTP.Response)` (identical argument types).
 
 get_url(r::Respond) = get_url(r.service, r)
-_agentic_url(service) = _api_base_url(service) * RESPONSES_PATH
+_agentic_url(service::OpenAIWireEndpointSpec) = _api_base_url(service) * RESPONSES_PATH
+# Generic delegator — deliberately NOT typed on `OpenAIWireEndpointSpec`. It only
+# forwards to `_agentic_url` (the typed, provider-specific URL builder above, which
+# Gemini Interactions overrides); typing this hop would strand Gemini, which
+# overrides `_agentic_url` but not this forwarder. A bare `ServiceEndpoint` still
+# fails loud one hop down, at `_agentic_url`.
 get_url(service, r::Respond) = _agentic_url(service)
 
-encode_agentic(service, r::Respond)::String = JSON.json(r)
+encode_agentic(service::OpenAIWireEndpointSpec, r::Respond)::String = JSON.json(r)
 
-decode_agentic(service, resp::HTTP.Response)::ResponseObject = parse_response(resp)
+decode_agentic(service::OpenAIWireEndpointSpec, resp::HTTP.Response)::ResponseObject = parse_response(resp)
 
 """
     decode_agentic_stream(service, chunk::String, state::AgenticStreamState)
@@ -1297,7 +1303,7 @@ Streaming half of the agentic wire seam: consume one raw read's bytes,
 mutate `state`, and return `(; done, event, data, terminal)`. Default:
 OpenAI Responses SSE via `_parse_response_stream_chunk`.
 """
-decode_agentic_stream(service, chunk::String, state::AgenticStreamState) =
+decode_agentic_stream(service::OpenAIWireEndpointSpec, chunk::String, state::AgenticStreamState) =
     _parse_response_stream_chunk(chunk, state.textbuff, state.carry, state.last_event)
 
 """

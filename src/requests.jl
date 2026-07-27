@@ -454,27 +454,31 @@ end
 
 # ─── Wire-translation seam ───────────────────────────────────────────────────
 # Generics translate between the neutral Chat/Message IR and a provider's wire
-# format. The untyped-`service` methods are the OpenAI-wire defaults — DeepSeek,
-# Azure, the Gemini OpenAI-compat shim, and GenericOpenAIEndpoint all speak this
-# format. Providers with a different wire (Anthropic, native Gemini) override
-# them. `chatrequest!`/`_chatrequeststream` call ONLY these generics plus the
-# streaming seam `handle_sse_event!` (src/sse.jl), so the retry/HTTP/cost/
-# tool-loop/streaming orchestration stays provider-agnostic.
+# format. The methods below are the OpenAI-wire defaults, dispatched on
+# `OpenAIWireEndpointSpec` — inherited by OPENAI, Azure, the Gemini OpenAI-compat
+# shim, GenericOpenAIEndpoint, and DeepSeek. Providers with a different wire
+# (Anthropic, native Gemini) subtype `ServiceEndpoint` directly and override them;
+# a bare `ServiceEndpoint` subtype with no override fails loud (MethodError) here
+# rather than emitting OpenAI-shaped requests at a foreign API.
+# `chatrequest!`/`_chatrequeststream` call ONLY these generics plus the streaming
+# seam `handle_sse_event!` (src/sse.jl), so the retry/HTTP/cost/tool-loop/streaming
+# orchestration stays provider-agnostic.
 
 """
     encode_request(service, chat::Chat) -> String
 
-Serialize `chat` into the provider's request body. Default: OpenAI Chat Completions JSON.
+Serialize `chat` into the provider's request body. The `OpenAIWireEndpoint`
+default emits OpenAI Chat Completions JSON.
 """
-encode_request(service, chat::Chat) = JSON.json(chat)
+encode_request(service::OpenAIWireEndpointSpec, chat::Chat) = JSON.json(chat)
 
 """
     decode_response(service, resp::HTTP.Response)
 
 Parse a provider's 200 response into `(; message::Message, usage::Union{TokenUsage,Nothing})`.
-Default: OpenAI Chat Completions (`extract_message`).
+The `OpenAIWireEndpoint` default reads OpenAI Chat Completions (`extract_message`).
 """
-decode_response(service, resp::HTTP.Response) = extract_message(resp)
+decode_response(service::OpenAIWireEndpointSpec, resp::HTTP.Response) = extract_message(resp)
 
 # ─── Streaming driver helpers ────────────────────────────────────────────────
 

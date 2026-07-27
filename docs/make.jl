@@ -34,6 +34,7 @@ makedocs(;
             "Structured Output" => "guide/structured_output.md",
             "Cost Tracking" => "guide/cost_tracking.md",
             "Multi-Backend" => "guide/multi_backend.md",
+            "Custom Backends" => "guide/custom_backends.md",
             "MCP (Model Context Protocol)" => "guide/mcp.md",
             "FIM & Prefix Completion" => "guide/completions.md",
         ],

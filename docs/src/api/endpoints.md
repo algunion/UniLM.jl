@@ -2,10 +2,11 @@
 
 Types for configuring **multi-backend** service endpoints.
 
-## Abstract Type
+## Abstract Types
 
 ```@docs
 UniLM.ServiceEndpoint
+UniLM.OpenAIWireEndpoint
 ```
 
 ## Built-in Endpoints

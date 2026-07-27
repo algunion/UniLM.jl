@@ -140,14 +140,15 @@ function _parse_tool_arguments(args::AbstractString)::Dict{String,Any}
 end
 
 # ─── OpenAI-wire default handler (Chat Completions SSE) ─────────────────────
-# The untyped-`service` method: DeepSeek, Azure, the Gemini OpenAI-compat shim,
-# and GenericOpenAIEndpoint all speak this wire. Contract:
+# Dispatched on `OpenAIWireEndpointSpec`: OPENAI, DeepSeek, Azure, the Gemini
+# OpenAI-compat shim, and GenericOpenAIEndpoint all inherit this wire. Providers
+# with a different SSE dialect (Anthropic, native Gemini) override it. Contract:
 # `[DONE]` is the ONLY end-of-stream — `finish_reason` is recorded but never
 # terminal (the stream_options.include_usage chunk trails it); `choices` may
 # be empty (usage-only chunks, Azure prompt-filter preambles) — iterate, never
 # index [1]; `usage` is captured from any chunk.
-function handle_sse_event!(service, event::AbstractString, payload::AbstractString,
-                           state::StreamState)::Symbol
+function handle_sse_event!(service::OpenAIWireEndpointSpec, event::AbstractString,
+                           payload::AbstractString, state::StreamState)::Symbol
     payload == "[DONE]" && return :done
     parsed = JSON.parse(payload; dicttype=Dict{String,Any})
     parsed isa AbstractDict || return :continue

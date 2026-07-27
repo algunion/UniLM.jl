@@ -51,11 +51,13 @@ function sse_mock_server(chunks::Vector{String})
     server, "http://127.0.0.1:$port"
 end
 
-# Test-only endpoint: routes chat streaming to a local mock server while
-# delegating SSE semantics to the real Anthropic handler. This is the URL seam
-# the production endpoint lacks (its base URL is a constant), so driver-level
-# stream behavior gets exercised end to end through _chatrequeststream.
-struct AnthropicWireMock <: UniLM.ServiceEndpoint   # Chat.service requires ServiceEndpointSpec
+# Test-only endpoint: OpenAI-wire request encoding (the mock server ignores the
+# body) with the SSE seam overridden to the real Anthropic handler, so driver-level
+# stream behavior is exercised end to end through _chatrequeststream. It subtypes
+# OpenAIWireEndpoint to inherit encode_request; the handle_sse_event! override wins
+# by specificity. This is the URL seam the production endpoint lacks (its base URL
+# is a constant).
+struct AnthropicWireMock <: UniLM.OpenAIWireEndpoint
     base_url::String
 end
 UniLM.get_url(s::AnthropicWireMock, ::Chat) = s.base_url
@@ -151,6 +153,39 @@ end
         st2 = UniLM._sse_dispatch!(OPENAIServiceEndpoint, carry2, Ref(""), usage_chunk, state2)
         @test st2 === :continue
         @test state2.usage !== nothing && isempty(String(take!(carry2)))
+    end
+
+    # Seam typing: a bare `ServiceEndpoint` subtype that omits the wire seam must
+    # fail loud (MethodError), not silently speak OpenAI wire at a foreign API; an
+    # `OpenAIWireEndpoint` subtype inherits the OpenAI wire byte-for-byte. On the
+    # pre-typing code every one of these `@test_throws` would fail — the untyped
+    # fallbacks accepted any `service`.
+    @testset "bare ServiceEndpoint fails loud on the wire seam; OpenAIWireEndpoint inherits it" begin
+        struct __RawSeamEndpoint <: UniLM.ServiceEndpoint end
+        UniLM.get_url(::Type{__RawSeamEndpoint}, ::Chat) = "http://127.0.0.1:1/v1/chat/completions"
+        UniLM.auth_header(::Type{__RawSeamEndpoint}) = ["Content-Type" => "application/json"]
+        UniLM._api_base_url(::Type{__RawSeamEndpoint}) = "http://127.0.0.1:1"
+
+        struct __WireSeamEndpoint <: UniLM.OpenAIWireEndpoint end
+        UniLM.get_url(::Type{__WireSeamEndpoint}, ::Chat) = "http://127.0.0.1:1/v1/chat/completions"
+        UniLM.auth_header(::Type{__WireSeamEndpoint}) = ["Content-Type" => "application/json"]
+        UniLM._api_base_url(::Type{__WireSeamEndpoint}) = "http://127.0.0.1:1"
+
+        chat = Chat(model="m", messages=[Message(role=UniLM.RoleSystem, content="s"),
+                                         Message(role=UniLM.RoleUser, content="u")])
+        raw_resp = HTTP.Response(200, [], Vector{UInt8}("{}"))
+
+        # Bare ServiceEndpoint: every wire-seam method (chat + agentic) MethodErrors.
+        @test_throws MethodError UniLM.encode_request(__RawSeamEndpoint, chat)
+        @test_throws MethodError UniLM.decode_response(__RawSeamEndpoint, raw_resp)
+        @test_throws MethodError UniLM.handle_sse_event!(__RawSeamEndpoint, "", "[DONE]", UniLM.StreamState())
+        @test_throws MethodError UniLM.encode_agentic(__RawSeamEndpoint, Respond(input="x", model="m", service=__RawSeamEndpoint))
+        @test_throws MethodError UniLM._agentic_url(__RawSeamEndpoint)
+
+        # OpenAIWireEndpoint subtype: inherits the OpenAI wire, identical to OPENAI.
+        @test UniLM.encode_request(__WireSeamEndpoint, chat) == UniLM.encode_request(OPENAIServiceEndpoint, chat)
+        @test UniLM.encode_request(__WireSeamEndpoint, chat) == JSON.json(chat)
+        @test UniLM.handle_sse_event!(__WireSeamEndpoint, "", "[DONE]", UniLM.StreamState()) === :done
     end
 
     @testset "streamed tool call end-to-end (fragmented)" begin

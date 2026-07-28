@@ -35,7 +35,7 @@ For **OpenAI**, use either conversational API — **Chat Completions** (`Chat`; 
 | :--------------------- | :--------------------------: | :---------------------------------: |
 | Stateful conversations |       `Chat` + `push!`       |       `previous_response_id`        |
 | System prompt          | `Message(Val(:system), ...)` |        `instructions` kwarg         |
-| Tool calling           |  `GPTTool` / `GPTToolCall`   |  `FunctionTool` / `function_tool`   |
+| Tool calling           |  `Tool` / `ToolCall`   |  `FunctionTool` / `function_tool`   |
 | Web search             |              —               |           `WebSearchTool`           |
 | File search            |              —               |          `FileSearchTool`           |
 | Streaming              |   `stream=true` + callback   |          `do`-block syntax          |

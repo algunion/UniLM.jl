@@ -140,7 +140,7 @@ Two boundaries of that contract, observed against real servers:
 
 ### Bridging to tool_loop! (Chat Completions)
 
-[`mcp_tools`](@ref) converts MCP tools into `Vector{CallableTool{GPTTool}}` for use with
+[`mcp_tools`](@ref) converts MCP tools into `Vector{CallableTool{Tool}}` for use with
 [`tool_loop!`](@ref):
 
 ```julia

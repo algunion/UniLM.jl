@@ -7,14 +7,14 @@ can decide to invoke functions you define, and you return the results.
 
 ### Defining Tools
 
-Wrap your function schema in a [`GPTTool`](@ref):
+Wrap your function schema in a [`Tool`](@ref):
 
 ```@example tools
 using UniLM
 using JSON
 
-weather_tool = GPTTool(
-    func=GPTFunctionSignature(
+weather_tool = Tool(
+    func=FunctionSignature(
         name="get_weather",
         description="Get current weather for a location",
         parameters=Dict(
@@ -42,8 +42,8 @@ schema (no extra keys, all required fields present). A strict schema must set
 sends no flag at all: the request body is identical to previous UniLM versions.
 
 ```@example tools
-strict_tool = GPTTool(
-    func=GPTFunctionSignature(
+strict_tool = Tool(
+    func=FunctionSignature(
         name="get_weather",
         description="Get current weather for a location",
         parameters=Dict(
@@ -249,7 +249,7 @@ respond(; previous_response_id=r1.response.id,
 Gemini Interactions adds server-side hosted tools — see the
 [Agentic Workflows guide](@ref agentic_guide) for [`gemini_google_search`](@ref)
 and friends. When Gemini returns tool calls, the provider's opaque reasoning
-token is preserved on [`GPTToolCall`](@ref)`.thought_signature` and echoed
+token is preserved on [`ToolCall`](@ref)`.thought_signature` and echoed
 automatically on the next turn.
 
 ## Automated Tool Loop
@@ -325,7 +325,7 @@ end
 
 ## See Also
 
-- [`GPTTool`](@ref), [`GPTFunctionSignature`](@ref) — Chat Completions tool types
+- [`Tool`](@ref), [`FunctionSignature`](@ref) — Chat Completions tool types
 - [`FunctionTool`](@ref), [`WebSearchTool`](@ref), [`FileSearchTool`](@ref) — Responses API tool types
 - [`function_tool`](@ref), [`web_search`](@ref), [`file_search`](@ref) — convenience constructors
 - [`CallableTool`](@ref), [`ToolCallOutcome`](@ref), [`ToolLoopResult`](@ref) — tool loop types

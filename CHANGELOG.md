@@ -15,8 +15,9 @@
 - The OpenAI-wire request/response encoding and SSE handling are now an explicit
   opt-in via the new exported `OpenAIWireEndpoint <: ServiceEndpoint` supertype. A
   `ServiceEndpoint` subtype that does not implement the wire seam
-  (`encode_request` / `decode_response` / `handle_sse_event!`, and the agentic
-  decode/encode defaults) now fails with a `MethodError` at call time instead of
+  (`encode_request` / `decode_response` / `handle_sse_event!`, the agentic
+  encode/decode/stream defaults, and `_agentic_url` routing) now fails with a
+  `MethodError` at call time instead of
   silently emitting OpenAI-shaped requests at a foreign API. Migration: subtype
   `OpenAIWireEndpoint` instead of `ServiceEndpoint` for OpenAI-compatible
   backends; backends with a genuinely different wire keep subtyping

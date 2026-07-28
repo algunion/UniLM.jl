@@ -51,7 +51,7 @@ println("chat2 length: ", length(chat2))
 ### Conversation Rules
 
 - The **first** message must have role `system`
-- Messages must **alternate roles** (no two consecutive messages from the same role)
+- Messages must **alternate roles** (no two consecutive messages from the same role; consecutive `tool` results are the exception)
 - At least `content`, `tool_calls`, or `refusal_message` must be non-`nothing`
 - Attempting to violate these rules throws [`InvalidConversationError`](@ref) — the invalid message is never added
 

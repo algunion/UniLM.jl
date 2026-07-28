@@ -192,11 +192,11 @@ isempty(chat)              # true if no messages
 chat[i]                    # index into messages
 ```
 
-**Important:** A `Chat` must begin with a system message. `push!` silently refuses a
-non-system message pushed onto an empty `Chat` (and refuses consecutive same-role
-messages, except `tool`), so `chat = Chat(); push!(chat, Message(Val(:user), "…"))`
-leaves the chat empty and the next request fails. Use `respond(input=…)` for a single
-turn without a system prompt.
+**Important:** A `Chat` must begin with a system message. `push!` throws
+[`InvalidConversationError`](@ref) on a non-system message pushed onto an empty `Chat`
+(and on consecutive same-role messages, except `tool`), so
+`chat = Chat(); push!(chat, Message(Val(:user), "…"))` raises rather than silently
+leaving the chat empty. Use `respond(input=…)` for a single turn without a system prompt.
 
 ### Tool Calling Types
 
@@ -942,6 +942,7 @@ mcp_tools_respond(session) -> Vector{CallableTool{FunctionTool}}  # for tool_loo
 session = mcp_connect(`npx -y @modelcontextprotocol/server-filesystem /tmp`)
 tools = mcp_tools(session)
 chat = Chat(model="gpt-5.2", tools=map(t -> t.tool, tools))
+push!(chat, Message(Val(:system), "You are a helpful assistant with filesystem access."))
 push!(chat, Message(Val(:user), "List files"))
 result = tool_loop!(chat; tools)
 mcp_disconnect!(session)

@@ -372,12 +372,12 @@ function extract_message(resp::HTTP.Response)
     message = choices[1]["message"]
     usage = _parse_usage(received_message)
     msg = if finish_reason == TOOL_CALLS && haskey(message, "tool_calls")
-        tcalls = GPTToolCall[]
+        tcalls = ToolCall[]
         for x in message["tool_calls"]
             fdict = x["function"]
             args = JSON.parse(fdict["arguments"]; dicttype=Dict{String,Any})
             gptfunc = GPTFunction(fdict["name"], args)
-            tc = GPTToolCall(id=x["id"], func=gptfunc)
+            tc = ToolCall(id=x["id"], func=gptfunc)
             push!(tcalls, tc)
         end
         Message(role=RoleAssistant, tool_calls=tcalls, finish_reason=TOOL_CALLS)
@@ -431,12 +431,12 @@ function _build_stream_message(state::StreamState)::Message
           !isempty(state.raw_pending)) ? nothing :
          ProviderContent(state.raw_provider, state.raw_blocks)
     if !isempty(state.tool_calls)
-        tcalls = GPTToolCall[]
+        tcalls = ToolCall[]
         for idx in sort!(collect(keys(state.tool_calls)))
             tc_data = state.tool_calls[idx]
             fdict = tc_data["function"]
             args = _parse_tool_arguments(fdict["arguments"])   # "" → Dict{String,Any}() (zero-arg tool call)
-            push!(tcalls, GPTToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
+            push!(tcalls, ToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
                 thought_signature=get(tc_data, "thought_signature", nothing)))
         end
         # Keep accumulated text ALONGSIDE the tool calls: providers emit
@@ -525,7 +525,7 @@ function _fire_tool_calls!(on_tool_call, state::StreamState, stream_done::Bool):
         end
         push!(state.fired_tool_calls, idx)   # before the user callback: a throwing callback must not re-fire
         try
-            on_tool_call(GPTToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
+            on_tool_call(ToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
                 thought_signature=get(tc_data, "thought_signature", nothing)))
         catch e
             @warn "on_tool_call callback error" exception = e
@@ -805,7 +805,7 @@ backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`,
 
 Streaming (`chat.stream === true`): returns a `Task` whose `fetch` yields the same
 typed results. `callback(chunk::Union{String,Message}, close::Ref{Bool})` receives
-text deltas then the final assembled `Message`; `on_tool_call(tc::GPTToolCall)` fires
+text deltas then the final assembled `Message`; `on_tool_call(tc::ToolCall)` fires
 once per completed streamed tool call. A user `InterruptException` is never converted
 into a result value: it propagates, so `fetch` on the streaming task throws a
 `TaskFailedException` whose `task.exception` is the `InterruptException`.
@@ -863,7 +863,7 @@ Send a request to the OpenAI API to generate a response to the messages in `conv
 - `userprompt::Union{Message,String}`: The user prompt message.
 - `messages::Conversation = Message[]`: The conversation history or the system/prompt messages.
 - `history::Bool = true`: Whether to include the conversation history in the request.
-- `tools::Union{Vector{GPTTool},Nothing} = nothing`: A list of tools the model may call.
+- `tools::Union{Vector{Tool},Nothing} = nothing`: A list of tools the model may call.
 - `tool_choice::Union{String,GPTToolChoice,Nothing} = nothing`: Controls which (if any) function is called by the model. e.g. "auto", "none", `GPTToolChoice`.
 - `parallel_tool_calls::Union{Bool,Nothing} = false`: Whether to enable parallel function calling.
 - `temperature::Union{Float64,Nothing} = nothing`: Sampling temperature (0.0-2.0). Higher values make output more random. Mutually exclusive with `top_p`.

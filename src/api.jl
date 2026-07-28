@@ -1,5 +1,5 @@
 """
-    GPTFunctionSignature(; name, description=nothing, parameters=nothing, strict=nothing)
+    FunctionSignature(; name, description=nothing, parameters=nothing, strict=nothing)
 
 Describes a function that can be called by the model in the Chat Completions API.
 
@@ -15,7 +15,7 @@ Describes a function that can be called by the model in the Chat Completions API
 
 # Example
 ```julia
-sig = GPTFunctionSignature(
+sig = FunctionSignature(
     name="get_weather",
     description="Get the current weather in a given location",
     parameters=Dict(
@@ -30,7 +30,7 @@ sig = GPTFunctionSignature(
 )
 ```
 """
-@kwdef mutable struct GPTFunctionSignature
+@kwdef mutable struct FunctionSignature
     name::String
     description::Union{String,Nothing} = nothing
     parameters::Union{AbstractDict,Nothing} = nothing
@@ -38,10 +38,10 @@ sig = GPTFunctionSignature(
 end
 
 # pre-0.10.3 positional arity (@kwdef defaults apply only to the keyword constructor)
-GPTFunctionSignature(name, description, parameters) =
-    GPTFunctionSignature(name, description, parameters, nothing)
+FunctionSignature(name, description, parameters) =
+    FunctionSignature(name, description, parameters, nothing)
 
-JSON.omit_null(::Type{GPTFunctionSignature}) = true
+JSON.omit_null(::Type{FunctionSignature}) = true
 
 """
     GPTImageContent(text, images)
@@ -72,7 +72,7 @@ function JSON.lower(x::GPTFunction)
 end
 
 """
-    GPTToolCall(; id, type="function", func)
+    ToolCall(; id, type="function", func)
 
 Represents a tool call returned by the model. Contains the call `id` (used to match
 results back), the tool `type`, and the [`GPTFunction`] with name and parsed arguments.
@@ -82,7 +82,7 @@ Gemini-3's opaque tool-call signature, which must be echoed verbatim on the next
 it is set by the Gemini decoder, ignored (`nothing`) by every other provider, and
 deliberately excluded from `JSON.lower` so OpenAI-wire serialization is unaffected.
 """
-@kwdef struct GPTToolCall
+@kwdef struct ToolCall
     id::String
     type::String = "function"
     func::GPTFunction
@@ -93,16 +93,16 @@ deliberately excluded from `JSON.lower` so OpenAI-wire serialization is unaffect
     thought_signature::Union{Nothing,String} = nothing
 end
 
-JSON.lower(x::GPTToolCall) = Dict(:id => x.id, :type => x.type, :function => x.func)
+JSON.lower(x::ToolCall) = Dict(:id => x.id, :type => x.type, :function => x.func)
 
 """
-    GPTTool(; type="function", func)
+    Tool(; type="function", func)
 
-Wraps a [`GPTFunctionSignature`](@ref) for use in the `tools` parameter of a [`Chat`](@ref).
+Wraps a [`FunctionSignature`](@ref) for use in the `tools` parameter of a [`Chat`](@ref).
 
 # Example
 ```julia
-tool = GPTTool(func=GPTFunctionSignature(
+tool = Tool(func=FunctionSignature(
     name="get_weather",
     description="Get the current weather",
     parameters=Dict("type" => "object", "properties" => Dict())
@@ -110,25 +110,25 @@ tool = GPTTool(func=GPTFunctionSignature(
 chat = Chat(tools=[tool])
 ```
 """
-@kwdef struct GPTTool
+@kwdef struct Tool
     type::String = "function"
-    func::GPTFunctionSignature
+    func::FunctionSignature
 end
 
 """
-    GPTTool(d::AbstractDict)
+    Tool(d::AbstractDict)
 
-Construct a [`GPTTool`](@ref) from a dict. Accepts both the bare format
+Construct a [`Tool`](@ref) from a dict. Accepts both the bare format
 `{"name": ...}` and the wrapped OpenAI format `{"type": "function", "function": {"name": ...}}`.
 """
-function GPTTool(d::AbstractDict)
+function Tool(d::AbstractDict)
     inner = haskey(d, "function") && d["function"] isa AbstractDict ? d["function"] : d
     strict = get(inner, "strict", nothing)
     strict isa Union{Bool,Nothing} ||
         throw(ArgumentError("tool \"strict\" must be a Bool or absent/null, got $(repr(strict))"))
-    GPTTool(
+    Tool(
         type=get(d, "type", "function"),
-        func=GPTFunctionSignature(
+        func=FunctionSignature(
             name=inner["name"],
             description=get(inner, "description", nothing),
             parameters=get(inner, "parameters", nothing),
@@ -137,7 +137,7 @@ function GPTTool(d::AbstractDict)
     )
 end
 
-JSON.lower(x::GPTTool) = Dict(:type => x.type, :function => x.func)
+JSON.lower(x::Tool) = Dict(:type => x.type, :function => x.func)
 
 
 @kwdef struct GPTToolChoice
@@ -149,7 +149,7 @@ JSON.lower(x::GPTToolChoice) = Dict(:type => x.type, :function => Dict(:name => 
 
 
 """
-    GPTFunctionCallResult{T}
+    FunctionCallResult{T}
 
 Holds the result of executing a function that was requested by the model via a tool call.
 
@@ -158,14 +158,50 @@ Holds the result of executing a function that was requested by the model via a t
 - `origincall::GPTFunction`: The original [`GPTFunction`] call from the model.
 - `result::T`: The result of executing the function.
 """
-struct GPTFunctionCallResult{T}
+struct FunctionCallResult{T}
     name::Union{String,Symbol}
     origincall::GPTFunction
     result::T
 end
 
-JSON.omit_null(::Type{<:GPTFunctionCallResult}) = true
-JSON.omit_empty(::Type{<:GPTFunctionCallResult}) = true
+JSON.omit_null(::Type{<:FunctionCallResult}) = true
+JSON.omit_empty(::Type{<:FunctionCallResult}) = true
+
+# ─── Provider-neutral aliases ─────────────────────────────────────────────────
+# The tool-surface structs above carry provider-neutral canonical names. These
+# exported `GPT*` consts preserve the former names so existing user code
+# (construction, dispatch, `isa`, field access, keyword constructors) keeps
+# working unchanged — plain type aliases, no deprecation warning, retained until
+# the 1.0 stability boundary. `GPTFunctionCallResult` stays a parametric
+# `UnionAll`, so `GPTFunctionCallResult{T}(...)` still constructs.
+
+"""
+    GPTTool
+
+Legacy alias for [`Tool`](@ref).
+"""
+const GPTTool = Tool
+
+"""
+    GPTToolCall
+
+Legacy alias for [`ToolCall`](@ref).
+"""
+const GPTToolCall = ToolCall
+
+"""
+    GPTFunctionSignature
+
+Legacy alias for [`FunctionSignature`](@ref).
+"""
+const GPTFunctionSignature = FunctionSignature
+
+"""
+    GPTFunctionCallResult
+
+Legacy alias for [`FunctionCallResult`](@ref).
+"""
+const GPTFunctionCallResult = FunctionCallResult
 
 """
     RoleSystem
@@ -245,7 +281,7 @@ Represents a single message in a Chat Completions conversation.
 - `name::Union{String,Nothing}`: Optional name for the participant.
 - `finish_reason::Union{String,Nothing}`: Why the model stopped generating (e.g. `"stop"`, `"tool_calls"`).
 - `refusal_message::Union{String,Nothing}`: Refusal text when content is filtered.
-- `tool_calls::Union{Nothing,Vector{GPTToolCall}}`: Tool calls requested by the assistant.
+- `tool_calls::Union{Nothing,Vector{ToolCall}}`: Tool calls requested by the assistant.
 - `tool_call_id::Union{String,Nothing}`: Required when `role` is `"tool"` — the ID of the tool call being responded to.
 - `provider_content::Union{Nothing,ProviderContent}`: Provider-native content blocks captured for verbatim round-trip (see [`ProviderContent`](@ref)); set by the Anthropic/Gemini decoders, `nothing` otherwise. Never serialized on the OpenAI wire.
 
@@ -265,7 +301,7 @@ Message(Val(:user), "Hello!")
     name::Union{String,Nothing} = nothing
     finish_reason::Union{String,Nothing} = nothing
     refusal_message::Union{String,Nothing} = nothing
-    tool_calls::Union{Nothing,Vector{GPTToolCall}} = nothing
+    tool_calls::Union{Nothing,Vector{ToolCall}} = nothing
     tool_call_id::Union{String,Nothing} = nothing
     provider_content::Union{Nothing,ProviderContent} = nothing
     function Message(role, content, name, finish_reason, refusal_message, tool_calls,
@@ -286,7 +322,7 @@ JSON.omit_null(::Type{Message}) = true
 
 # provider_content is a decode-side round-trip cache for provider-native
 # blocks, not a wire field: exclude it from serialization (same precedent as
-# GPTToolCall.thought_signature). Conditional insertion mirrors omit-null.
+# ToolCall.thought_signature). Conditional insertion mirrors omit-null.
 function JSON.lower(m::Message)
     d = Dict{Symbol,Any}(:role => m.role)
     isnothing(m.content)         || (d[:content] = m.content)
@@ -521,12 +557,12 @@ function Base.show(io::IO, e::DeepSeekEndpoint)
 end
 
 
-# Coerce the `tools` keyword to the stored `Vector{GPTTool}`. This fallback is
-# the identity — a `Vector{GPTTool}` or `nothing` passes through unchanged. The
-# method that unwraps a `Vector{<:CallableTool}` into its inner `GPTTool`s lives
+# Coerce the `tools` keyword to the stored `Vector{Tool}`. This fallback is
+# the identity — a `Vector{Tool}` or `nothing` passes through unchanged. The
+# method that unwraps a `Vector{<:CallableTool}` into its inner `Tool`s lives
 # in tool_loop.jl, where `CallableTool` is defined (that file is `include`d
 # after this one). Conversion happens only here at construction; the field type
-# stays `Union{Vector{GPTTool},Nothing}`.
+# stays `Union{Vector{Tool},Nothing}`.
 _chat_tools(tools) = tools
 
 """
@@ -542,7 +578,7 @@ Creates a new `Chat` object with default settings:
     model::String = ""
     messages::Conversation = Message[]
     history::Bool = true
-    tools::Union{Vector{GPTTool},Nothing} = nothing
+    tools::Union{Vector{Tool},Nothing} = nothing
     tool_choice::Union{String,GPTToolChoice,Nothing} = nothing # "auto" | "none" |
     parallel_tool_calls::Union{Bool,Nothing} = false
     temperature::Union{Float64,Nothing} = nothing # 0.0 - 2.0 - mutual exclusive with top_p
@@ -611,7 +647,7 @@ Creates a new `Chat` object with default settings:
         _cumulative_cost
     )
         model = _resolve_model(service, model)
-        tools = _chat_tools(tools)  # accept a CallableTool vector, stored as GPTTools
+        tools = _chat_tools(tools)  # accept a CallableTool vector, stored as Tools
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
         !isnothing(top_p) && !(0.0 <= top_p <= 1.0) && throw(ArgumentError("top_p must be in [0.0, 1.0]"))

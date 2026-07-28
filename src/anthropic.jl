@@ -108,7 +108,7 @@ function _anthropic_assistant_content(m::Message)
     blocks
 end
 
-function _anthropic_tool(t::GPTTool)
+function _anthropic_tool(t::Tool)
     f = t.func
     d = Dict{Symbol,Any}(:name => f.name,
         :input_schema => something(f.parameters, Dict("type" => "object", "properties" => Dict())))
@@ -160,7 +160,7 @@ function decode_response(::Type{ANTHROPICServiceEndpoint}, resp::HTTP.Response)
     pc = blocks isa AbstractVector && !isempty(blocks) ?
          ProviderContent(:anthropic, blocks) : nothing
     text = IOBuffer()
-    tool_calls = GPTToolCall[]
+    tool_calls = ToolCall[]
     for b in (blocks isa AbstractVector ? blocks : Any[])
         bt = get(b, "type", "")
         if bt == "text"
@@ -168,7 +168,7 @@ function decode_response(::Type{ANTHROPICServiceEndpoint}, resp::HTTP.Response)
         elseif bt == "tool_use"
             args = get(b, "input", Dict{String,Any}())
             args isa AbstractDict || (args = Dict{String,Any}())
-            push!(tool_calls, GPTToolCall(id=b["id"], func=GPTFunction(b["name"], args)))
+            push!(tool_calls, ToolCall(id=b["id"], func=GPTFunction(b["name"], args)))
         end
         # thinking / redacted_thinking blocks are not flattened into the neutral
         # fields; they ride along verbatim in provider_content.

@@ -122,7 +122,7 @@ function _gemini_model_parts(m::Message, tool_names)
     parts
 end
 
-function _gemini_tool(t::GPTTool)
+function _gemini_tool(t::Tool)
     f = t.func
     d = Dict{Symbol,Any}(:name => f.name)
     isnothing(f.description) || (d[:description] = f.description)
@@ -196,7 +196,7 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
     pc = parts isa AbstractVector && !isempty(parts) ?
          ProviderContent(:gemini, parts) : nothing
     text = IOBuffer()
-    tool_calls = GPTToolCall[]
+    tool_calls = ToolCall[]
     for p in (parts isa AbstractVector ? parts : Any[])
         if haskey(p, "text")
             print(text, p["text"])
@@ -206,7 +206,7 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
             args isa AbstractDict || (args = Dict{String,Any}())
             raw_id = get(fc, "id", "")
             id = isempty(raw_id) ? "unilm_call_$(length(tool_calls) + 1)" : raw_id
-            push!(tool_calls, GPTToolCall(id=id,
+            push!(tool_calls, ToolCall(id=id,
                 func=GPTFunction(get(fc, "name", ""), args),
                 thought_signature=get(p, "thoughtSignature", nothing)))
         end

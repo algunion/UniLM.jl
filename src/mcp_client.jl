@@ -1294,9 +1294,9 @@ function _mcp_tool_dispatch(r::MCPToolResult)::String
 end
 
 """
-    mcp_tools(session::MCPSession) -> Vector{CallableTool{GPTTool}}
+    mcp_tools(session::MCPSession) -> Vector{CallableTool{Tool}}
 
-Convert all tools from an MCP session into `CallableTool{GPTTool}` instances
+Convert all tools from an MCP session into `CallableTool{Tool}` instances
 that work directly with [`tool_loop!`](@ref) (Chat Completions API).
 
 Each tool's callable invokes `call_tool(session, name, args)` under the hood.
@@ -1310,9 +1310,9 @@ push!(chat, Message(Val(:user), "Do something"))
 result = tool_loop!(chat; tools)
 ```
 """
-function mcp_tools(session::MCPSession)::Vector{CallableTool{GPTTool}}
+function mcp_tools(session::MCPSession)::Vector{CallableTool{Tool}}
     map(session.tools) do info
-        schema = GPTTool(func=GPTFunctionSignature(
+        schema = Tool(func=FunctionSignature(
             name=info.name,
             description=info.description,
             parameters=info.input_schema
@@ -1353,6 +1353,6 @@ function mcp_tools_respond(session::MCPSession)::Vector{CallableTool{FunctionToo
 end
 
 # Extend to_tool protocol
-to_tool(info::MCPToolInfo) = GPTTool(func=GPTFunctionSignature(
+to_tool(info::MCPToolInfo) = Tool(func=FunctionSignature(
     name=info.name, description=info.description, parameters=info.input_schema
 ))

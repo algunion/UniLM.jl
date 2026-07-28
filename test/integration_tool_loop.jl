@@ -21,7 +21,7 @@ const _ADD_DISPATCHER = (name::String, args::Dict{String,Any}) -> string(args["a
 # ── Chat Completions ─────────────────────────────────────────────────────────
 
 @testset "tool_loop! — Chat Completions — dispatcher" begin
-    add_tool = GPTTool(func=GPTFunctionSignature(
+    add_tool = Tool(func=FunctionSignature(
         name="add", description="Add two numbers", parameters=_ADD_TOOL_SCHEMA))
 
     chat = Chat(model="gpt-5.4-mini", temperature=0.0, tools=[add_tool])
@@ -39,7 +39,7 @@ const _ADD_DISPATCHER = (name::String, args::Dict{String,Any}) -> string(args["a
 end
 
 @testset "tool_loop! — Chat Completions — CallableTool" begin
-    add_gpt = GPTTool(func=GPTFunctionSignature(
+    add_gpt = Tool(func=FunctionSignature(
         name="add", description="Add two numbers", parameters=_ADD_TOOL_SCHEMA))
     ct = CallableTool(add_gpt, _ADD_DISPATCHER)
 
@@ -112,7 +112,7 @@ end
 # ── Error handling ───────────────────────────────────────────────────────────
 
 @testset "tool_loop! — dispatcher error recovery" begin
-    add_tool = GPTTool(func=GPTFunctionSignature(
+    add_tool = Tool(func=FunctionSignature(
         name="add", description="Add two numbers", parameters=_ADD_TOOL_SCHEMA))
 
     failing_dispatcher = (name::String, args::Dict{String,Any}) -> error("tool crashed")

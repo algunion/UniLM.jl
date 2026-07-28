@@ -35,8 +35,8 @@ end
         @test haskey(server.tools, "greet")
     end
 
-    @testset "CallableTool{GPTTool} bridge" begin
-        gpt_tool = GPTTool(func=GPTFunctionSignature(
+    @testset "CallableTool{Tool} bridge" begin
+        gpt_tool = Tool(func=FunctionSignature(
             name="multiply", description="Multiply",
             parameters=Dict{String,Any}("type" => "object", "properties" => Dict{String,Any}(
                 "x" => Dict{String,Any}("type" => "number")))))

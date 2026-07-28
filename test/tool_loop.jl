@@ -1,10 +1,10 @@
 # ─── CallableTool ────────────────────────────────────────────────────────────
 
 @testset "CallableTool" begin
-    @testset "construction from GPTTool" begin
-        sig = GPTFunctionSignature(name="add", description="Add numbers",
+    @testset "construction from Tool" begin
+        sig = FunctionSignature(name="add", description="Add numbers",
             parameters=Dict("type"=>"object", "properties"=>Dict("a"=>Dict("type"=>"number"))))
-        tool = GPTTool(func=sig)
+        tool = Tool(func=sig)
         ct = CallableTool(tool, (name, args) -> "42")
         @test ct.tool === tool
         @test ct.callable isa Function
@@ -18,16 +18,16 @@
         @test UniLM._tool_name(ct) == "search"
     end
 
-    @testset "JSON serialization delegates to inner GPTTool" begin
-        sig = GPTFunctionSignature(name="fn1", description="desc")
-        tool = GPTTool(func=sig)
+    @testset "JSON serialization delegates to inner Tool" begin
+        sig = FunctionSignature(name="fn1", description="desc")
+        tool = Tool(func=sig)
         ct = CallableTool(tool, (n, a) -> "ok")
 
         lowered_tool = JSON.lower(tool)
         lowered_ct = JSON.lower(ct)
         @test lowered_ct == lowered_tool
         @test lowered_ct[:type] == "function"
-        @test lowered_ct[:function] isa GPTFunctionSignature
+        @test lowered_ct[:function] isa FunctionSignature
     end
 
     @testset "JSON serialization delegates to inner FunctionTool" begin
@@ -45,8 +45,8 @@ end
 # ─── to_tool ─────────────────────────────────────────────────────────────────
 
 @testset "to_tool" begin
-    @testset "identity for GPTTool" begin
-        tool = GPTTool(func=GPTFunctionSignature(name="t"))
+    @testset "identity for Tool" begin
+        tool = Tool(func=FunctionSignature(name="t"))
         @test to_tool(tool) === tool
     end
 
@@ -56,25 +56,25 @@ end
     end
 
     @testset "identity for CallableTool" begin
-        tool = GPTTool(func=GPTFunctionSignature(name="t"))
+        tool = Tool(func=FunctionSignature(name="t"))
         ct = CallableTool(tool, (n, a) -> "")
         @test to_tool(ct) === ct
     end
 
-    @testset "dict conversion to GPTTool (bare)" begin
+    @testset "dict conversion to Tool (bare)" begin
         d = Dict("name" => "myfn", "description" => "a fn",
             "parameters" => Dict("type" => "object"))
         result = to_tool(d)
-        @test result isa GPTTool
+        @test result isa Tool
         @test result.func.name == "myfn"
         @test result.func.description == "a fn"
     end
 
-    @testset "dict conversion to GPTTool (wrapped)" begin
+    @testset "dict conversion to Tool (wrapped)" begin
         d = Dict("type" => "function", "function" => Dict(
             "name" => "wrapped_fn", "description" => "wrapped"))
         result = to_tool(d)
-        @test result isa GPTTool
+        @test result isa Tool
         @test result.func.name == "wrapped_fn"
     end
 end
@@ -144,7 +144,7 @@ end
 @testset "ToolCallOutcome" begin
     @testset "success outcome" begin
         gf = UniLM.GPTFunction("fn", Dict{String,Any}("x" => 1))
-        fcr = GPTFunctionCallResult("fn", gf, "ok")
+        fcr = FunctionCallResult("fn", gf, "ok")
         o = ToolCallOutcome("fn", Dict{String,Any}("x" => 1), fcr, true, nothing)
         @test o.success
         @test o.tool_name == "fn"

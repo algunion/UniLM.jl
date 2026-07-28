@@ -56,7 +56,7 @@ end
 end
 
 @testset "DeepSeek Chat — function calling" begin
-    gptfsig = GPTFunctionSignature(
+    gptfsig = FunctionSignature(
         name="get_current_weather",
         description="Get the current weather for a location",
         parameters=Dict(
@@ -72,7 +72,7 @@ end
     chat = Chat(
         service=DeepSeekEndpoint(),
         model="deepseek-chat",
-        tools=[GPTTool(func=gptfsig)],
+        tools=[Tool(func=gptfsig)],
         tool_choice="auto"
     )
     push!(chat, Message(Val(:system), "Use the provided tools when asked about weather."))

@@ -17,13 +17,13 @@ else
 end
 
 @testset "Anthropic Chat — tool round-trip" begin
-    sig = GPTFunctionSignature(name="get_current_weather",
+    sig = FunctionSignature(name="get_current_weather",
         description="Get the current weather for a location",
         parameters=Dict("type" => "object",
             "properties" => Dict("location" => Dict("type" => "string", "description" => "City name")),
             "required" => ["location"]))
     chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-4-5", max_tokens=256,
-                tools=[GPTTool(func=sig)], tool_choice="auto")
+                tools=[Tool(func=sig)], tool_choice="auto")
     push!(chat, Message(Val(:system), "Use the weather tool when asked about weather."))
     push!(chat, Message(Val(:user), "What is the weather in Paris?"))
     result = chatrequest!(chat)
@@ -64,13 +64,13 @@ end
     # claude-sonnet-5 runs adaptive thinking by default: its tool turns open
     # with thinking blocks that MUST be echoed verbatim on the next request.
     # This round-trip returned HTTP 400 before provider-native content capture.
-    sig = GPTFunctionSignature(name="get_current_weather",
+    sig = FunctionSignature(name="get_current_weather",
         description="Get the current weather for a location",
         parameters=Dict("type" => "object",
             "properties" => Dict("location" => Dict("type" => "string", "description" => "City name")),
             "required" => ["location"]))
     chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-sonnet-5",
-                tools=[GPTTool(func=sig)], tool_choice="auto")
+                tools=[Tool(func=sig)], tool_choice="auto")
     push!(chat, Message(Val(:system), "Use the weather tool when asked about current weather."))
     push!(chat, Message(Val(:user), "What is the weather in Paris right now?"))
     result = chatrequest!(chat)

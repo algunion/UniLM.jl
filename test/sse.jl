@@ -384,7 +384,7 @@ end
         server, base = fragmented_sse_server(chunks)
         try
             chat = Chat(service=GenericOpenAIEndpoint(base, ""), model="mock", stream=true,
-                        tools=[GPTTool(func=GPTFunctionSignature(name="f1"))])
+                        tools=[Tool(func=FunctionSignature(name="f1"))])
             push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
             fired = String[]
             res = fetch(chatrequest!(chat; on_tool_call=tc -> push!(fired, tc.id)))

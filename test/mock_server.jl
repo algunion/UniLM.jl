@@ -980,7 +980,7 @@ try
             "usage" => Dict("prompt_tokens" => 10, "completion_tokens" => 5, "total_tokens" => 15)
         ))
 
-        tool = GPTTool(func=GPTFunctionSignature(
+        tool = Tool(func=FunctionSignature(
             name="add", description="Add two numbers",
             parameters=Dict("type"=>"object",
                 "properties"=>Dict("a"=>Dict("type"=>"number"),"b"=>Dict("type"=>"number")),
@@ -1039,7 +1039,7 @@ try
             "usage" => Dict("prompt_tokens" => 5, "completion_tokens" => 3, "total_tokens" => 8)
         ))
 
-        tool = GPTTool(func=GPTFunctionSignature(name="noop"))
+        tool = Tool(func=FunctionSignature(name="noop"))
         chat = Chat(service=MockServiceEndpoint, model="gpt-4o", tools=[tool])
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="go"))
@@ -1072,7 +1072,7 @@ try
             "usage" => Dict("prompt_tokens" => 10, "completion_tokens" => 5, "total_tokens" => 15)
         ))
 
-        tool = GPTTool(func=GPTFunctionSignature(name="add"))
+        tool = Tool(func=FunctionSignature(name="add"))
         chat = Chat(service=MockServiceEndpoint, model="gpt-4o", tools=[tool])
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="calc"))
@@ -1259,7 +1259,7 @@ try
         set_error!(200, "")
     end
 
-    @testset "chatrequest! stream on_tool_call fires with parsed GPTToolCall (_fire_tool_calls! + _build_stream_message)" begin
+    @testset "chatrequest! stream on_tool_call fires with parsed ToolCall (_fire_tool_calls! + _build_stream_message)" begin
         # A single streamed tool call: id, name, then argument fragments, finishing tool_calls.
         response_status[] = 200
         response_headers[] = Pair{String,String}[]
@@ -1270,13 +1270,13 @@ try
             """data: {"id":"c","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\n""" *
             """data: [DONE]"""
 
-        tool = GPTTool(func=GPTFunctionSignature(name="get_weather", description="Weather",
+        tool = Tool(func=FunctionSignature(name="get_weather", description="Weather",
             parameters=Dict("type"=>"object", "properties"=>Dict("location"=>Dict("type"=>"string")))))
         chat = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true, tools=[tool])
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="weather in NYC?"))
 
-        received_calls = GPTToolCall[]
+        received_calls = ToolCall[]
         on_tc = tc -> push!(received_calls, tc)
 
         result = fetch(chatrequest!(chat; on_tool_call=on_tc))
@@ -1288,7 +1288,7 @@ try
         @test result.message.tool_calls[1].id == "call_xyz"
         @test result.message.tool_calls[1].func.name == "get_weather"
         @test result.message.tool_calls[1].func.arguments["location"] == "NYC"
-        # on_tool_call fired exactly once, with the fully-parsed GPTToolCall.
+        # on_tool_call fired exactly once, with the fully-parsed ToolCall.
         @test length(received_calls) == 1
         @test received_calls[1].id == "call_xyz"
         @test received_calls[1].func.name == "get_weather"
@@ -2023,7 +2023,7 @@ try
             """data: {"id":"c","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}\n\n""" *
             """data: [DONE]"""
 
-        tool = GPTTool(func=GPTFunctionSignature(name="get_weather", description="Weather",
+        tool = Tool(func=FunctionSignature(name="get_weather", description="Weather",
             parameters=Dict("type"=>"object", "properties"=>Dict("location"=>Dict("type"=>"string")))))
         chat = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true, tools=[tool])
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
@@ -2072,14 +2072,14 @@ try
         response_queue[] = [(200, turn1), (200, turn2)]
 
         called = Ref(0)
-        add_tool = GPTTool(func=GPTFunctionSignature(name="add", description="Add two numbers",
+        add_tool = Tool(func=FunctionSignature(name="add", description="Add two numbers",
             parameters=Dict("type"=>"object",
                 "properties"=>Dict("a"=>Dict("type"=>"number"),"b"=>Dict("type"=>"number")),
                 "required"=>["a","b"])))
         ct = CallableTool(add_tool,
             (name, args) -> (called[] += 1; string(Int(args["a"]) + Int(args["b"]))))
 
-        # Chat.tools is typed Vector{GPTTool}: it carries the wire schema (inner GPTTool);
+        # Chat.tools is typed Vector{Tool}: it carries the wire schema (inner Tool);
         # the executable CallableTool is supplied via the tool_loop! `tools=` kwarg.
         chat = Chat(service=MockServiceEndpoint, model="gpt-4o", tools=[add_tool])
         push!(chat, Message(role=UniLM.RoleSystem, content="You are a calculator"))
@@ -2124,7 +2124,7 @@ try
         response_queue[] = [(200, turn1), (200, turn2)]
 
         add_called = Ref(0)
-        add_tool = GPTTool(func=GPTFunctionSignature(name="add", description="Add"))
+        add_tool = Tool(func=FunctionSignature(name="add", description="Add"))
         ct = CallableTool(add_tool, (name, args) -> (add_called[] += 1; "should-not-run"))
 
         chat = Chat(service=MockServiceEndpoint, model="gpt-4o", tools=[add_tool])

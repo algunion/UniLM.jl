@@ -45,9 +45,9 @@ end
     @test e.reason == "test reason"
 end
 
-@testset "GPTFunctionSignature" begin
+@testset "FunctionSignature" begin
     @testset "minimal creation" begin
-        sig = GPTFunctionSignature(name="test_fn")
+        sig = FunctionSignature(name="test_fn")
         @test sig.name == "test_fn"
         @test isnothing(sig.description)
         @test isnothing(sig.parameters)
@@ -55,18 +55,18 @@ end
 
     @testset "full creation" begin
         params = Dict("type" => "object", "properties" => Dict("x" => Dict("type" => "string")))
-        sig = GPTFunctionSignature(name="test_fn", description="A test", parameters=params)
+        sig = FunctionSignature(name="test_fn", description="A test", parameters=params)
         @test sig.name == "test_fn"
         @test sig.description == "A test"
         @test sig.parameters == params
     end
 
     @testset "JSON.jl config" begin
-        @test JSON.omit_null(GPTFunctionSignature) == true
+        @test JSON.omit_null(FunctionSignature) == true
     end
 
     @testset "serialization omit_null" begin
-        sig = GPTFunctionSignature(name="fn")
+        sig = FunctionSignature(name="fn")
         json = JSON.json(sig)
         parsed = JSON.parse(json)
         @test parsed["name"] == "fn"
@@ -75,16 +75,16 @@ end
     end
 
     @testset "strict field" begin
-        sig = GPTFunctionSignature(name="fn")
+        sig = FunctionSignature(name="fn")
         @test sig.strict === nothing
 
-        @test GPTFunctionSignature(name="fn", strict=true).strict === true
-        @test GPTFunctionSignature(name="fn", strict=false).strict === false
+        @test FunctionSignature(name="fn", strict=true).strict === true
+        @test FunctionSignature(name="fn", strict=false).strict === false
     end
 
     @testset "positional constructor back-compat" begin
         # pre-0.10.3 3-arg arity must keep working (patch release, non-breaking)
-        sig = GPTFunctionSignature("fn", "desc", Dict("type" => "object"))
+        sig = FunctionSignature("fn", "desc", Dict("type" => "object"))
         @test sig.name == "fn"
         @test sig.description == "desc"
         @test sig.strict === nothing
@@ -120,9 +120,9 @@ end
     @test parsed_args["location"] == "NYC"
 end
 
-@testset "GPTToolCall" begin
+@testset "ToolCall" begin
     func = UniLM.GPTFunction("test_fn", Dict("a" => "b"))
-    tc = GPTToolCall(id="call_123", func=func)
+    tc = ToolCall(id="call_123", func=func)
     @test tc.id == "call_123"
     @test tc.type == "function"
     @test tc.func.name == "test_fn"
@@ -134,9 +134,9 @@ end
     @test lowered[:type] == "function"
 end
 
-@testset "GPTTool" begin
-    sig = GPTFunctionSignature(name="my_tool")
-    tool = GPTTool(func=sig)
+@testset "Tool" begin
+    sig = FunctionSignature(name="my_tool")
+    tool = Tool(func=sig)
     @test tool.type == "function"
     @test tool.func.name == "my_tool"
 
@@ -148,7 +148,7 @@ end
     @testset "from bare dict" begin
         d = Dict("name" => "bare_fn", "description" => "A bare function",
             "parameters" => Dict("type" => "object"))
-        t = GPTTool(d)
+        t = Tool(d)
         @test t.type == "function"
         @test t.func.name == "bare_fn"
         @test t.func.description == "A bare function"
@@ -159,7 +159,7 @@ end
         d = Dict("type" => "function", "function" => Dict(
             "name" => "wrapped_fn", "description" => "Wrapped",
             "parameters" => Dict("type" => "object", "properties" => Dict())))
-        t = GPTTool(d)
+        t = Tool(d)
         @test t.type == "function"
         @test t.func.name == "wrapped_fn"
         @test t.func.description == "Wrapped"
@@ -172,7 +172,7 @@ end
 
         # F1: strict=true is transmitted INSIDE the "function" object of the
         # actual request body (Chat Completions nesting, not Responses top-level)
-        tool = GPTTool(func=GPTFunctionSignature(name="fn", description="d",
+        tool = Tool(func=FunctionSignature(name="fn", description="d",
             parameters=params, strict=true))
         chat = Chat(model="gpt-test", tools=[tool])
         body = JSON.parse(JSON.json(chat))
@@ -182,14 +182,14 @@ end
         # F2: default (no strict) → no strict key anywhere; the function object's
         # key SET matches pre-strict UniLM (structural pin — JSON dict key order
         # is not deterministic, so a byte-level pin would be brittle)
-        tool_default = GPTTool(func=GPTFunctionSignature(name="fn", description="d",
+        tool_default = Tool(func=FunctionSignature(name="fn", description="d",
             parameters=params))
         parsed = JSON.parse(JSON.json(tool_default))
         @test Set(keys(parsed["function"])) == Set(["name", "description", "parameters"])
         @test !haskey(parsed, "strict")
 
         # F3: strict=false is transmitted explicitly
-        tool_false = GPTTool(func=GPTFunctionSignature(name="fn", strict=false))
+        tool_false = Tool(func=FunctionSignature(name="fn", strict=false))
         @test JSON.parse(JSON.json(tool_false))["function"]["strict"] === false
     end
 
@@ -198,26 +198,26 @@ end
         d = Dict("type" => "function", "function" => Dict(
             "name" => "fn", "strict" => true,
             "parameters" => Dict("type" => "object")))
-        @test GPTTool(d).func.strict === true
+        @test Tool(d).func.strict === true
 
         # bare format
-        @test GPTTool(Dict("name" => "fn", "strict" => false)).func.strict === false
+        @test Tool(Dict("name" => "fn", "strict" => false)).func.strict === false
 
         # absent → nothing (API default, non-strict)
-        @test GPTTool(Dict("name" => "fn")).func.strict === nothing
+        @test Tool(Dict("name" => "fn")).func.strict === nothing
 
         # malformed non-Bool strict fails loud with a diagnostic error
-        @test_throws ArgumentError GPTTool(Dict("name" => "fn", "strict" => "true"))
-        @test_throws ArgumentError GPTTool(Dict("type" => "function",
+        @test_throws ArgumentError Tool(Dict("name" => "fn", "strict" => "true"))
+        @test_throws ArgumentError Tool(Dict("type" => "function",
             "function" => Dict("name" => "fn", "strict" => 1)))
 
         # round-trip: serialize → parse → reconstruct preserves strict
         for s in (true, false)
-            t = GPTTool(func=GPTFunctionSignature(name="rt", strict=s))
-            @test GPTTool(JSON.parse(JSON.json(t))).func.strict === s
+            t = Tool(func=FunctionSignature(name="rt", strict=s))
+            @test Tool(JSON.parse(JSON.json(t))).func.strict === s
         end
-        t = GPTTool(func=GPTFunctionSignature(name="rt"))
-        @test GPTTool(JSON.parse(JSON.json(t))).func.strict === nothing
+        t = Tool(func=FunctionSignature(name="rt"))
+        @test Tool(JSON.parse(JSON.json(t))).func.strict === nothing
     end
 end
 
@@ -231,27 +231,62 @@ end
     @test lowered[:function][:name] == :my_function
 end
 
-@testset "GPTFunctionCallResult" begin
+@testset "FunctionCallResult" begin
     func = UniLM.GPTFunction("test_fn", Dict("x" => "1"))
-    fcr = GPTFunctionCallResult("test_fn", func, "result_value")
+    fcr = FunctionCallResult("test_fn", func, "result_value")
     @test fcr.name == "test_fn"
     @test fcr.origincall === func
     @test fcr.result == "result_value"
 
-    @test JSON.omit_null(GPTFunctionCallResult{String}) == true
-    @test JSON.omit_empty(GPTFunctionCallResult{String}) == true
+    @test JSON.omit_null(FunctionCallResult{String}) == true
+    @test JSON.omit_empty(FunctionCallResult{String}) == true
 
     @testset "serialization honors omit_empty" begin
         # Observable consequence of api.jl:142 (omit_empty=true): an EMPTY result field is dropped,
         # a populated one is kept. Falsifies a regression where omit_empty stopped applying.
-        fcr_empty = GPTFunctionCallResult("get_weather", func, String[])
+        fcr_empty = FunctionCallResult("get_weather", func, String[])
         parsed_empty = JSON.parse(JSON.json(fcr_empty))
         @test parsed_empty["name"] == "get_weather"
         @test !haskey(parsed_empty, "result")           # empty vector omitted
-        fcr_val = GPTFunctionCallResult("get_weather", func, "sunny")
+        fcr_val = FunctionCallResult("get_weather", func, "sunny")
         parsed_val = JSON.parse(JSON.json(fcr_val))
         @test parsed_val["result"] == "sunny"            # non-empty kept
     end
+end
+
+@testset "legacy GPT* aliases construct, dispatch, and field-access (back-compat pin)" begin
+    # Pins the const-alias contract: pre-rename user code that constructs via the
+    # GPT* names, dispatches with `isa`, and reads fields must keep working after
+    # the structs were given provider-neutral canonical names. Silent aliases
+    # (no deprecation warning) until 1.0.
+
+    # Each alias binds to exactly the canonical type object.
+    @test GPTTool === Tool
+    @test GPTToolCall === ToolCall
+    @test GPTFunctionSignature === FunctionSignature
+    @test GPTFunctionCallResult === FunctionCallResult
+
+    # Construct via the old names (keyword ctor + nested old name).
+    tool = GPTTool(func=GPTFunctionSignature(name="f"))
+    @test tool isa Tool                       # canonical type
+    @test tool isa GPTTool                     # and the alias binding
+    @test tool.func.name == "f"
+
+    # Dict constructor reached through the alias.
+    @test GPTTool(Dict("name" => "g")).func.name == "g"
+
+    # ToolCall via the old name: isa + field access.
+    tc = GPTToolCall(id="c1", func=UniLM.GPTFunction("f", Dict{String,Any}("a" => 1)))
+    @test tc isa ToolCall
+    @test tc isa GPTToolCall
+    @test tc.id == "c1"
+
+    # The parametric alias must stay a UnionAll: `GPTFunctionCallResult{Int}`
+    # constructs positionally exactly like the canonical parametric type.
+    fcr = GPTFunctionCallResult{Int}("fn", UniLM.GPTFunction("fn", Dict{String,Any}()), 42)
+    @test fcr isa FunctionCallResult{Int}
+    @test fcr isa GPTFunctionCallResult{Int}
+    @test fcr.result === 42
 end
 
 @testset "Message" begin
@@ -293,7 +328,7 @@ end
 
     @testset "message with tool_calls" begin
         func = UniLM.GPTFunction("fn", Dict("a" => "b"))
-        tc = GPTToolCall(id="call_1", func=func)
+        tc = ToolCall(id="call_1", func=func)
         m = Message(role=UniLM.RoleAssistant, tool_calls=[tc], finish_reason=UniLM.TOOL_CALLS)
         @test length(m.tool_calls) == 1
         @test isnothing(m.content)
@@ -342,7 +377,7 @@ end
 
         # Wire isolation: provider_content NEVER serializes — byte-identical JSON.
         # (GPTFunction is unexported; this file qualifies it everywhere.)
-        tc = [GPTToolCall(id="c1", func=UniLM.GPTFunction("f", Dict{String,Any}("a" => 1)))]
+        tc = [ToolCall(id="c1", func=UniLM.GPTFunction("f", Dict{String,Any}("a" => 1)))]
         m_plain = Message(role=UniLM.RoleAssistant, content="ok", tool_calls=tc)
         m_pc = Message(role=UniLM.RoleAssistant, content="ok", tool_calls=tc,
                        provider_content=pc)
@@ -518,8 +553,8 @@ end
     end
 
     @testset "parallel_tool_calls preserved with tools" begin
-        sig = GPTFunctionSignature(name="fn")
-        chat = Chat(tools=[GPTTool(func=sig)], parallel_tool_calls=true)
+        sig = FunctionSignature(name="fn")
+        chat = Chat(tools=[Tool(func=sig)], parallel_tool_calls=true)
         @test chat.parallel_tool_calls == true
     end
 
@@ -567,8 +602,8 @@ end
         push!(chat, Message(role=UniLM.RoleUser, content="q"))
 
         func = UniLM.GPTFunction("fn", Dict("a" => "b"))
-        tc1 = GPTToolCall(id="call_1", func=func)
-        tc2 = GPTToolCall(id="call_2", func=func)
+        tc1 = ToolCall(id="call_1", func=func)
+        tc2 = ToolCall(id="call_2", func=func)
         asst = Message(role=UniLM.RoleAssistant, tool_calls=[tc1, tc2], finish_reason=UniLM.TOOL_CALLS)
         push!(chat, asst)
         @test length(chat) == 3
@@ -829,11 +864,11 @@ end
 end
 
 @testset "Chat JSON serialization - all optional fields" begin
-    sig = GPTFunctionSignature(name="fn")
+    sig = FunctionSignature(name="fn")
     chat = Chat(
         model="gpt-4o",
         temperature=0.7,
-        tools=[GPTTool(func=sig)],
+        tools=[Tool(func=sig)],
         tool_choice="auto",
         parallel_tool_calls=true,
         n=2,
@@ -996,10 +1031,10 @@ end
     end
 end
 
-@testset "GPTToolCall.thought_signature (Gemini-3 opaque echo)" begin
-    tc = GPTToolCall(id="fc_1", func=UniLM.GPTFunction("f", Dict("x" => 1)))
+@testset "ToolCall.thought_signature (Gemini-3 opaque echo)" begin
+    tc = ToolCall(id="fc_1", func=UniLM.GPTFunction("f", Dict("x" => 1)))
     @test isnothing(tc.thought_signature)                      # optional, defaults nothing
-    tc2 = GPTToolCall(id="fc_2", func=UniLM.GPTFunction("f", Dict()), thought_signature="SIG")
+    tc2 = ToolCall(id="fc_2", func=UniLM.GPTFunction("f", Dict()), thought_signature="SIG")
     @test tc2.thought_signature == "SIG"
     # MUST NOT leak into OpenAI wire serialization:
     lowered = JSON.lower(tc2)
@@ -1007,24 +1042,24 @@ end
     @test Set(keys(lowered)) == Set([:id, :type, :function])
 end
 
-@testset "Chat ctor accepts a CallableTool vector (stores unwrapped GPTTools)" begin
+@testset "Chat ctor accepts a CallableTool vector (stores unwrapped Tools)" begin
     # Ergonomics: `Chat(tools=mcp_tools(session))` must work without a manual
     # `map(t -> t.tool, tools)`. The keyword accepts a CallableTool vector and
-    # the constructor unwraps each wrapper's inner GPTTool; the field stays
-    # `Vector{GPTTool}`.
-    sig = GPTFunctionSignature(name="lookup", description="Look something up",
+    # the constructor unwraps each wrapper's inner Tool; the field stays
+    # `Vector{Tool}`.
+    sig = FunctionSignature(name="lookup", description="Look something up",
         parameters=Dict{String,Any}("type" => "object", "properties" => Dict{String,Any}()))
-    ct = CallableTool(GPTTool(func=sig), (name, args) -> "ok")
+    ct = CallableTool(Tool(func=sig), (name, args) -> "ok")
     chat = Chat(model="gpt-test", tools=[ct])
-    @test chat.tools isa Vector{GPTTool}
+    @test chat.tools isa Vector{Tool}
     @test length(chat.tools) == 1
-    @test chat.tools[1] === ct.tool           # the exact inner GPTTool, unwrapped
+    @test chat.tools[1] === ct.tool           # the exact inner Tool, unwrapped
     @test chat.tools[1].func.name == "lookup"
     # The unwrapped vector is non-empty, so parallel_tool_calls is preserved.
     chat2 = Chat(model="gpt-test", tools=[ct], parallel_tool_calls=true)
     @test chat2.parallel_tool_calls == true
-    # A plain GPTTool vector still passes through unchanged.
-    gtool = GPTTool(func=sig)
+    # A plain Tool vector still passes through unchanged.
+    gtool = Tool(func=sig)
     @test Chat(model="gpt-test", tools=[gtool]).tools[1] === gtool
 end
 
@@ -1127,7 +1162,7 @@ end
 
     @testset "text() returns content on success; nothing for tool-calls-only" begin
         @test text(ok) == "hello"
-        tc = GPTToolCall(id="c1", func=UniLM.GPTFunction("fn", Dict("a" => "b")))
+        tc = ToolCall(id="c1", func=UniLM.GPTFunction("fn", Dict("a" => "b")))
         toolmsg = Message(role=UniLM.RoleAssistant, tool_calls=[tc], finish_reason=UniLM.TOOL_CALLS)
         @test text(LLMSuccess(message=toolmsg, self=chat)) === nothing
     end

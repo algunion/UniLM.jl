@@ -137,7 +137,7 @@ end
 end
 
 @testset "function call" begin
-    gptfsig = GPTFunctionSignature(
+    gptfsig = FunctionSignature(
         name="get_current_weather",
         description="Getting the current weather",
         parameters=Dict(
@@ -152,7 +152,7 @@ end
 
     funchat = Chat(
         model="gpt-5.4-mini",
-        tools=[GPTTool(func=gptfsig)],
+        tools=[Tool(func=gptfsig)],
         tool_choice=UniLM.GPTToolChoice(func=:get_current_weather)
     )
     push!(funchat, Message(role=UniLM.RoleSystem, content="Act as a helpful AI agent. Always use the provided tools."))
@@ -187,7 +187,7 @@ end
         "required" => ["kwargs"],
         "additionalProperties" => false
     )
-    mktool(strict) = GPTTool(func=GPTFunctionSignature(
+    mktool(strict) = Tool(func=FunctionSignature(
         name="apply_kwargs", description="Apply keyword arguments",
         parameters=map_params, strict=strict))
     function strict_call(strict)

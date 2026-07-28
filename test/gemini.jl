@@ -52,12 +52,12 @@ end
 end
 
 @testset "encode — tools → functionDeclarations + toolConfig" begin
-    sig = GPTFunctionSignature(name="get_weather", description="Get weather",
+    sig = FunctionSignature(name="get_weather", description="Get weather",
         parameters=Dict("type" => "object",
                         "properties" => Dict("location" => Dict("type" => "string")),
                         "required" => ["location"]))
     chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash",
-                tools=[GPTTool(func=sig)], tool_choice="auto")
+                tools=[Tool(func=sig)], tool_choice="auto")
     push!(chat, Message(Val(:system), "s"))
     push!(chat, Message(Val(:user), "weather?"))
     body = JSON.parse(encode_request(GEMINIServiceEndpoint, chat))
@@ -73,7 +73,7 @@ end
     # push! requires the first-ever message on a fresh Chat to be system (api.jl:663-671)
     push!(chat, Message(Val(:system), "s"))
     push!(chat, Message(Val(:user), "weather?"))
-    tc = GPTToolCall(id="fc_1", func=GPTFunction("get_weather", Dict("location" => "Paris")),
+    tc = ToolCall(id="fc_1", func=GPTFunction("get_weather", Dict("location" => "Paris")),
                      thought_signature="SIG123")
     push!(chat, Message(role=RoleAssistant, tool_calls=[tc], finish_reason=TOOL_CALLS))
     push!(chat, Message(role=RoleTool, tool_call_id="fc_1", content="72F"))
@@ -101,7 +101,7 @@ end
     chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash")
     push!(chat, Message(Val(:system), "s"))
     push!(chat, Message(Val(:user), "weather?"))
-    tc = GPTToolCall(id="fc_1", func=GPTFunction("get_weather", Dict("location" => "Paris")))
+    tc = ToolCall(id="fc_1", func=GPTFunction("get_weather", Dict("location" => "Paris")))
     push!(chat, Message(role=RoleAssistant, tool_calls=[tc], finish_reason=TOOL_CALLS))
     push!(chat, Message(role=RoleTool, tool_call_id="fc_1", content="{\"temp_f\":72}"))
     body = JSON.parse(encode_request(GEMINIServiceEndpoint, chat))
@@ -113,8 +113,8 @@ end
     chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash")
     push!(chat, Message(Val(:system), "s"))
     push!(chat, Message(Val(:user), "weather in Paris and London?"))
-    tc1 = GPTToolCall(id="fc_1", func=GPTFunction("get_weather", Dict("location" => "Paris")))
-    tc2 = GPTToolCall(id="fc_2", func=GPTFunction("get_weather", Dict("location" => "London")))
+    tc1 = ToolCall(id="fc_1", func=GPTFunction("get_weather", Dict("location" => "Paris")))
+    tc2 = ToolCall(id="fc_2", func=GPTFunction("get_weather", Dict("location" => "London")))
     push!(chat, Message(role=RoleAssistant, tool_calls=[tc1, tc2], finish_reason=TOOL_CALLS))
     push!(chat, Message(role=RoleTool, tool_call_id="fc_1", content="72F"))
     push!(chat, Message(role=RoleTool, tool_call_id="fc_2", content="60F"))
@@ -321,7 +321,7 @@ end
         Dict{String,Any}("functionCall" => Dict{String,Any}(
             "id" => "fc1", "name" => "get_weather", "args" => Dict{String,Any}("city" => "Oslo"))),
     ]
-    tc = [GPTToolCall(id="fc1", func=GPTFunction("get_weather", Dict{String,Any}("city" => "Oslo")))]
+    tc = [ToolCall(id="fc1", func=GPTFunction("get_weather", Dict{String,Any}("city" => "Oslo")))]
     m = Message(role=UniLM.RoleAssistant, tool_calls=tc,
                 provider_content=ProviderContent(:gemini, parts))
     msgs = [Message(role=UniLM.RoleUser, content="w?"), m,
@@ -390,8 +390,8 @@ end
 end
 
 @testset "encode — synthetic ids are omitted from the wire (both part kinds)" begin
-    tcs = [GPTToolCall(id="unilm_call_1", func=UniLM.GPTFunction("get_weather", Dict{String,Any}("city" => "Oslo"))),
-           GPTToolCall(id="real_2",       func=UniLM.GPTFunction("get_time",    Dict{String,Any}("tz" => "CET")))]
+    tcs = [ToolCall(id="unilm_call_1", func=UniLM.GPTFunction("get_weather", Dict{String,Any}("city" => "Oslo"))),
+           ToolCall(id="real_2",       func=UniLM.GPTFunction("get_time",    Dict{String,Any}("tz" => "CET")))]
     m = Message(role=UniLM.RoleAssistant, tool_calls=tcs)
     msgs = [Message(role=UniLM.RoleUser, content="hi"), m,
             Message(role=UniLM.RoleTool, content="12C",   tool_call_id="unilm_call_1"),

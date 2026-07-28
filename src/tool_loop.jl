@@ -8,7 +8,7 @@
 """
     CallableTool{T}(tool, callable)
 
-Wraps a tool schema `T` ([`GPTTool`](@ref) or [`FunctionTool`](@ref)) with a callable.
+Wraps a tool schema `T` ([`Tool`](@ref) or [`FunctionTool`](@ref)) with a callable.
 JSON serialization delegates to the inner tool, preserving backward compatibility.
 
 # Fields
@@ -17,7 +17,7 @@ JSON serialization delegates to the inner tool, preserving backward compatibilit
 
 # Example
 ```julia
-tool = GPTTool(func=GPTFunctionSignature(name="add", description="Add two numbers",
+tool = Tool(func=FunctionSignature(name="add", description="Add two numbers",
     parameters=Dict("type"=>"object","properties"=>Dict("a"=>Dict("type"=>"number"),"b"=>Dict("type"=>"number")))))
 ct = CallableTool(tool, (name, args) -> string(args["a"] + args["b"]))
 ```
@@ -34,28 +34,28 @@ JSON.lower(ct::CallableTool) = JSON.lower(ct.tool)
 # interactions.jl (loaded before tool_loop.jl), CallableTool is defined just above.
 _interactions_tool(ct::CallableTool) = _interactions_tool(ct.tool)
 
-_tool_name(t::GPTTool) = t.func.name
+_tool_name(t::Tool) = t.func.name
 _tool_name(t::FunctionTool) = t.name
 _tool_name(ct::CallableTool) = _tool_name(ct.tool)
 
 """
     to_tool(x)
 
-Overloadable conversion protocol. Identity for GPTTool, FunctionTool, CallableTool.
-Converts AbstractDict to GPTTool. Package extensions can add methods for other types.
+Overloadable conversion protocol. Identity for Tool, FunctionTool, CallableTool.
+Converts AbstractDict to Tool. Package extensions can add methods for other types.
 """
-to_tool(x::GPTTool) = x
+to_tool(x::Tool) = x
 to_tool(x::FunctionTool) = x
 to_tool(x::CallableTool) = x
-to_tool(d::AbstractDict) = GPTTool(d)
+to_tool(d::AbstractDict) = Tool(d)
 
-# Chat stores `Vector{GPTTool}` but accepts a `Vector{<:CallableTool}` at
+# Chat stores `Vector{Tool}` but accepts a `Vector{<:CallableTool}` at
 # construction (e.g. `Chat(tools=mcp_tools(session))`) by unwrapping each
 # wrapper's inner tool — no manual `map(t -> t.tool, tools)`. This completes the
 # `_chat_tools` fallback declared in api.jl: `CallableTool` is defined here, in a
-# file `include`d after api.jl. A wrapper whose `.tool` is not a `GPTTool` (e.g.
+# file `include`d after api.jl. A wrapper whose `.tool` is not a `Tool` (e.g.
 # a `FunctionTool` from `mcp_tools_respond`) fails the conversion.
-_chat_tools(tools::Vector{<:CallableTool}) = GPTTool[ct.tool for ct in tools]
+_chat_tools(tools::Vector{<:CallableTool}) = Tool[ct.tool for ct in tools]
 
 """
     ToolCallOutcome
@@ -65,14 +65,14 @@ Per-call record from a tool dispatch.
 # Fields
 - `tool_name::String`: Name of the tool that was called.
 - `arguments::Dict{String,Any}`: Arguments passed to the tool.
-- `result::Union{GPTFunctionCallResult,Nothing}`: The result wrapper, or `nothing` on failure.
+- `result::Union{FunctionCallResult,Nothing}`: The result wrapper, or `nothing` on failure.
 - `success::Bool`: Whether the dispatch succeeded.
 - `error::Union{String,Nothing}`: Error message on failure.
 """
 struct ToolCallOutcome
     tool_name::String
     arguments::Dict{String,Any}
-    result::Union{GPTFunctionCallResult,Nothing}
+    result::Union{FunctionCallResult,Nothing}
     success::Bool
     error::Union{String,Nothing}
 end
@@ -102,14 +102,14 @@ end
 """
     _dispatch_tool(name, args, dispatcher) -> ToolCallOutcome
 
-Call `dispatcher(name, args)`, wrap result in [`GPTFunctionCallResult`](@ref),
+Call `dispatcher(name, args)`, wrap result in [`FunctionCallResult`](@ref),
 return a [`ToolCallOutcome`](@ref). Catches exceptions as error outcomes.
 """
 function _dispatch_tool(name::String, args::Dict{String,Any}, dispatcher::Function)::ToolCallOutcome
     try
         result_str = string(dispatcher(name, args))
         gptfunc = GPTFunction(name, args)
-        fcr = GPTFunctionCallResult(name, gptfunc, result_str)
+        fcr = FunctionCallResult(name, gptfunc, result_str)
         ToolCallOutcome(name, args, fcr, true, nothing)
     catch e
         # A user Ctrl-C (InterruptException) must abort the loop, not be recorded

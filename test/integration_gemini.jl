@@ -18,13 +18,13 @@ else
 end
 
 @testset "Gemini Chat — tool round-trip" begin
-    sig = GPTFunctionSignature(name="get_current_weather",
+    sig = FunctionSignature(name="get_current_weather",
         description="Get the current weather for a location",
         parameters=Dict("type" => "object",
             "properties" => Dict("location" => Dict("type" => "string", "description" => "City name")),
             "required" => ["location"]))
     chat = Chat(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite", max_tokens=256,
-                tools=[GPTTool(func=sig)], tool_choice="auto")
+                tools=[Tool(func=sig)], tool_choice="auto")
     push!(chat, Message(Val(:system), "Use the weather tool when asked about weather."))
     push!(chat, Message(Val(:user), "What is the weather in Paris?"))
     result = chatrequest!(chat)

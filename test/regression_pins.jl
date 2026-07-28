@@ -111,7 +111,7 @@ end
         kwargs = Dict{Symbol,Any}(
             :service => GenericOpenAIEndpoint("http://localhost:9999", ""),
             :model => "gpt-5.5", :history => false,
-            :tools => [GPTTool(func=GPTFunctionSignature(name="f"))],
+            :tools => [Tool(func=FunctionSignature(name="f"))],
             :tool_choice => "auto", :parallel_tool_calls => true,
             :temperature => 0.5, :n => 2, :stream => false, :stop => ["x"],
             :max_tokens => 10, :max_completion_tokens => 20,
@@ -203,7 +203,7 @@ end
         try
             chat = Chat(service=GenericOpenAIEndpoint(base, ""), model="mock",
                         stream=true,
-                        tools=[GPTTool(func=GPTFunctionSignature(name="get_weather"))])
+                        tools=[Tool(func=FunctionSignature(name="get_weather"))])
             push!(chat, Message(Val(:system), "s"))
             push!(chat, Message(Val(:user), "u"))
             fired = Ref(0)
@@ -302,7 +302,7 @@ end
         server, base = sse_mock_server(chunks)
         try
             chat = Chat(service=AnthropicWireMock(base), model="mock", stream=true,
-                        tools=[GPTTool(func=GPTFunctionSignature(name="get_weather"))])
+                        tools=[Tool(func=FunctionSignature(name="get_weather"))])
             push!(chat, Message(Val(:system), "s"))
             push!(chat, Message(Val(:user), "u"))
             fired = Ref(0)
@@ -545,13 +545,13 @@ end
         session = nothing
         try
             session = mcp_connect("http://127.0.0.1:$mcp_port")
-            tools = mcp_tools(session)                  # Vector{CallableTool{GPTTool}}
-            @test tools isa Vector{CallableTool{GPTTool}} && length(tools) == 1
+            tools = mcp_tools(session)                  # Vector{CallableTool{Tool}}
+            @test tools isa Vector{CallableTool{Tool}} && length(tools) == 1
 
             # Build Chat DIRECTLY from the CallableTool vector — no map-unwrap.
             chat = Chat(service=GenericOpenAIEndpoint(api_base, ""), model="mock", tools=tools)
-            # The wrapper vector was unwrapped to the stored GPTTool vector.
-            @test chat.tools isa Vector{GPTTool} && length(chat.tools) == 1 &&
+            # The wrapper vector was unwrapped to the stored Tool vector.
+            @test chat.tools isa Vector{Tool} && length(chat.tools) == 1 &&
                   chat.tools[1].func.name == "record_run"
 
             push!(chat, Message(Val(:system), "You can record a run."))
@@ -584,7 +584,7 @@ end
         # never "Error: ErrorException(\"kaboom\")". A local OpenAI-wire mock plays
         # the model asking for the tool, so this stays offline (zero-spend).
         explode = CallableTool(
-            GPTTool(func=GPTFunctionSignature(name="explode", description="always fails")),
+            Tool(func=FunctionSignature(name="explode", description="always fails")),
             (name, args) -> error("kaboom"))
 
         # Turn 1: the model asks for the failing tool. Turn 2: it answers with text.

@@ -111,6 +111,11 @@ export
     RoleSystem,
     RoleUser,
     RoleAssistant,
+    Tool,
+    ToolCall,
+    FunctionSignature,
+    FunctionCallResult,
+    # Legacy aliases (pre-rename names, retained until 1.0)
     GPTTool,
     GPTToolCall,
     GPTFunctionSignature,

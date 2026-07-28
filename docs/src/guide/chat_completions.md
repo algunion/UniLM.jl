@@ -53,15 +53,19 @@ println("chat2 length: ", length(chat2))
 - The **first** message must have role `system`
 - Messages must **alternate roles** (no two consecutive messages from the same role)
 - At least `content`, `tool_calls`, or `refusal_message` must be non-`nothing`
-- Attempting to violate these rules logs a warning and the message is **not added**
+- Attempting to violate these rules throws [`InvalidConversationError`](@ref) — the invalid message is never added
 
 ```@example chat
-# Demonstrate validation
+# Demonstrate validation — an invalid mutation throws and leaves the chat unchanged
 chat3 = Chat()
 push!(chat3, Message(Val(:system), "sys"))
 push!(chat3, Message(Val(:user), "hello"))
-push!(chat3, Message(Val(:user), "hello again"))  # rejected — same role
-println("Length after duplicate push: ", length(chat3), " (second user msg rejected)")
+try
+    push!(chat3, Message(Val(:user), "hello again"))  # same role — rejected
+catch e
+    println("Rejected: ", e isa InvalidConversationError)
+end
+println("Length after rejected push: ", length(chat3), " (still 2 — the invalid message was not added)")
 ```
 
 ## Sending Requests
@@ -120,13 +124,20 @@ end
 ```
 
 ```@example chat
-push!(chat, Message(Val(:user), "Give a short Julia code example of it."))
-result = chatrequest!(chat)
-if result isa LLMSuccess
-    println(result.message.content)
-    println("\nConversation length: ", length(chat))
+# `chatrequest!` appends the assistant reply on success, which is what makes the next
+# user turn valid. If the previous call appended none (e.g. it failed), pushing another
+# user message would throw InvalidConversationError — so guard the follow-up turn.
+if !isempty(chat) && chat[end].role == RoleAssistant
+    push!(chat, Message(Val(:user), "Give a short Julia code example of it."))
+    result = chatrequest!(chat)
+    if result isa LLMSuccess
+        println(result.message.content)
+        println("\nConversation length: ", length(chat))
+    else
+        println("Request failed — see result for details")
+    end
 else
-    println("Request failed — see result for details")
+    println("No assistant reply to build on — skipping the follow-up turn.")
 end
 ```
 

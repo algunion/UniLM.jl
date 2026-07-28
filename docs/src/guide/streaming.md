@@ -57,7 +57,7 @@ end)
 
 When the model streams tool calls, pass `on_tool_call` to be notified as each call
 completes. It fires **exactly once per tool call**, in call order, receiving a fully
-assembled [`GPTToolCall`](@ref) whose arguments are already parsed (a zero-argument call
+assembled [`ToolCall`](@ref) whose arguments are already parsed (a zero-argument call
 arrives as an empty `Dict`). The text `callback` and `on_tool_call` are independent, so a
 single request can stream assistant text and surface tool calls as they finish:
 

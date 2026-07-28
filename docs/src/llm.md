@@ -110,7 +110,7 @@ Respond(service=OPENAIServiceEndpoint, input="Hello")
     model::String = "gpt-5.5"
     messages::Vector{Message} = Message[]
     history::Bool = true
-    tools::Union{Vector{GPTTool},Nothing} = nothing
+    tools::Union{Vector{Tool},Nothing} = nothing
     tool_choice::Union{String,GPTToolChoice,Nothing} = nothing
     parallel_tool_calls::Union{Bool,Nothing} = false
     temperature::Union{Float64,Nothing} = nothing       # 0.0–2.0, mutually exclusive with top_p
@@ -143,7 +143,7 @@ end
     name::Union{String,Nothing} = nothing
     finish_reason::Union{String,Nothing} = nothing        # "stop", "tool_calls", "content_filter"
     refusal_message::Union{String,Nothing} = nothing
-    tool_calls::Union{Nothing,Vector{GPTToolCall}} = nothing
+    tool_calls::Union{Nothing,Vector{ToolCall}} = nothing
     tool_call_id::Union{String,Nothing} = nothing         # required when role == "tool"
     provider_content::Union{Nothing,ProviderContent} = nothing
 end
@@ -176,7 +176,7 @@ chatrequest!(; service=OPENAIServiceEndpoint, model="gpt-5.5",
 
 - Non-streaming: returns `LLMSuccess`, `LLMFailure`, or `LLMCallError`.
 - Streaming (`stream=true`): returns a `Task`. Pass a `callback(chunk::Union{String,Message}, close::Ref{Bool})` — text deltas arrive as `String`s (verbatim, in order), then the assembled `Message` at end-of-stream.
-- Streaming tool calls: pass `on_tool_call(tc::GPTToolCall)` to be notified once per completed streamed tool call, as calls finish (see the [Streaming guide](@ref streaming_guide)).
+- Streaming tool calls: pass `on_tool_call(tc::ToolCall)` to be notified once per completed streamed tool call, as calls finish (see the [Streaming guide](@ref streaming_guide)).
 - Retries transient statuses (408/429/500/502/503/504/529) with exponential backoff and jitter under the resolved [`RequestConfig`](@ref) — `max_attempts` (default 3) and `total_deadline` bound the attempts; `Retry-After` is honored, but a retry whose backoff would exceed the remaining `total_deadline` is not attempted — the call fails immediately with the last real response rather than sleeping past the deadline. Timeouts surface as `LLMCallError` with `status=nothing` and the `UniLMTimeout` in `.cause`.
 - Streaming retry boundary: transient failures (including the in-band `overloaded_error`, the documented 529 equivalent) are retried inside the task only until the first `callback`/`on_tool_call` invocation; afterwards failures surface typed. A user `InterruptException` propagates — `fetch` throws a `TaskFailedException` instead of returning a result value.
 
@@ -192,17 +192,17 @@ isempty(chat)              # true if no messages
 chat[i]                    # index into messages
 ```
 
-**Important:** A `Chat` must begin with a system message. `push!` silently refuses a
-non-system message pushed onto an empty `Chat` (and refuses consecutive same-role
-messages, except `tool`), so `chat = Chat(); push!(chat, Message(Val(:user), "…"))`
-leaves the chat empty and the next request fails. Use `respond(input=…)` for a single
-turn without a system prompt.
+**Important:** A `Chat` must begin with a system message. `push!` throws
+[`InvalidConversationError`](@ref) on a non-system message pushed onto an empty `Chat`
+(and on consecutive same-role messages, except `tool`), so
+`chat = Chat(); push!(chat, Message(Val(:user), "…"))` raises rather than silently
+leaving the chat empty. Use `respond(input=…)` for a single turn without a system prompt.
 
 ### Tool Calling Types
 
 ```julia
 # Define a function the model can call
-@kwdef struct GPTFunctionSignature
+@kwdef struct FunctionSignature
     name::String
     description::Union{String,Nothing} = nothing
     parameters::Union{AbstractDict,Nothing} = nothing   # JSON Schema dict
@@ -210,26 +210,30 @@ turn without a system prompt.
 end
 
 # Wrap it for the tools parameter
-@kwdef struct GPTTool
+@kwdef struct Tool
     type::String = "function"
-    func::GPTFunctionSignature
+    func::FunctionSignature
 end
-GPTTool(d::AbstractDict)   # construct from dict with keys "name", "description", "parameters", "strict"
+Tool(d::AbstractDict)   # construct from dict with keys "name", "description", "parameters", "strict"
 
 # Returned by model when it wants to call a function
-@kwdef struct GPTToolCall
+@kwdef struct ToolCall
     id::String
     type::String = "function"
     func::GPTFunction       # has .name::String and .arguments::AbstractDict
 end
 
 # Your result after executing the function
-struct GPTFunctionCallResult{T}
+struct FunctionCallResult{T}
     name::Union{String,Symbol}
     origincall::GPTFunction
     result::T
 end
 ```
+
+The pre-rename names `GPTTool`, `GPTToolCall`, `GPTFunctionSignature`, and
+`GPTFunctionCallResult` remain exported as aliases of these types, so existing
+code keeps working unchanged.
 
 ### ResponseFormat (Structured Output)
 
@@ -276,7 +280,7 @@ result = chatrequest!(
 ### Tool Calling Example (Chat)
 
 ```julia
-weather_tool = GPTTool(func=GPTFunctionSignature(
+weather_tool = Tool(func=FunctionSignature(
     name="get_weather",
     description="Get current weather",
     parameters=Dict(
@@ -805,7 +809,7 @@ Automated tool dispatch for both APIs. Wraps a tool schema with a callable funct
 
 ```julia
 struct CallableTool{T}
-    tool::T              # GPTTool or FunctionTool
+    tool::T              # Tool or FunctionTool
     callable::Function   # (name::String, args::Dict{String,Any}) -> String
 end
 ```
@@ -813,7 +817,7 @@ end
 ### to_tool
 
 ```julia
-to_tool(x)  # identity for GPTTool, FunctionTool, CallableTool; converts AbstractDict to GPTTool
+to_tool(x)  # identity for Tool, FunctionTool, CallableTool; converts AbstractDict to Tool
 ```
 
 ### ToolCallOutcome / ToolLoopResult
@@ -823,7 +827,7 @@ to_tool(x)  # identity for GPTTool, FunctionTool, CallableTool; converts Abstrac
 struct ToolCallOutcome
     tool_name::String
     arguments::Dict{String,Any}
-    result::Union{GPTFunctionCallResult,Nothing}
+    result::Union{FunctionCallResult,Nothing}
     success::Bool
     error::Union{String,Nothing}
 end
@@ -928,7 +932,7 @@ raise `content` as an error when `is_error` is set.
 ### Tool Bridge
 
 ```julia
-mcp_tools(session) -> Vector{CallableTool{GPTTool}}         # for tool_loop!
+mcp_tools(session) -> Vector{CallableTool{Tool}}         # for tool_loop!
 mcp_tools_respond(session) -> Vector{CallableTool{FunctionTool}}  # for tool_loop
 ```
 
@@ -938,6 +942,7 @@ mcp_tools_respond(session) -> Vector{CallableTool{FunctionTool}}  # for tool_loo
 session = mcp_connect(`npx -y @modelcontextprotocol/server-filesystem /tmp`)
 tools = mcp_tools(session)
 chat = Chat(model="gpt-5.2", tools=map(t -> t.tool, tools))
+push!(chat, Message(Val(:system), "You are a helpful assistant with filesystem access."))
 push!(chat, Message(Val(:user), "List files"))
 result = tool_loop!(chat; tools)
 mcp_disconnect!(session)
@@ -961,7 +966,7 @@ MCPServerPrimitive    # abstract (MCPServerTool, MCPServerResource, MCPServerRes
 ```julia
 register_tool!(server, name, description, schema, handler)
 register_tool!(server, name, description, handler)           # auto-schema from signature
-register_tool!(server, ct::CallableTool{GPTTool})            # bridge from Chat API
+register_tool!(server, ct::CallableTool{Tool})            # bridge from Chat API
 register_tool!(server, ct::CallableTool{FunctionTool})       # bridge from Responses API
 register_resource!(server, uri, name, handler; mime_type="text/plain", description=nothing)
 register_resource_template!(server, uri_template, name, handler; ...)
@@ -1246,7 +1251,8 @@ cause `:crash`).
 
 Every exported symbol (`names(UniLM)`), grouped by area:
 
-**Chat Completions**: `Chat`, `Message`, `ProviderContent`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `GPTTool`, `GPTToolCall`, `GPTFunctionSignature`, `GPTFunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
+**Chat Completions**: `Chat`, `Message`, `ProviderContent`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `Tool`, `ToolCall`, `FunctionSignature`, `FunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
+- *Legacy aliases* (pre-rename names, exported and non-breaking, retained until 1.0): `GPTTool` → `Tool`, `GPTToolCall` → `ToolCall`, `GPTFunctionSignature` → `FunctionSignature`, `GPTFunctionCallResult` → `FunctionCallResult`
 
 **Responses API & Agentic**: `Respond`, `InputMessage`, `ResponseObject`, `ResponseSuccess`, `ResponseFailure`, `ResponseCallError`, `Reasoning`, `TextConfig`, `TextFormatSpec`, `respond`, `get_response`, `delete_response`, `cancel_response`, `list_input_items`, `compact_response`, `count_input_tokens`, `text_format`, `json_schema_format`, `json_object_format`
 - *Input builders*: `input_text`, `input_image`, `input_file`

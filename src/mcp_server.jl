@@ -185,12 +185,12 @@ function register_tool!(server::MCPServer, name::String,
 end
 
 """
-    register_tool!(server, ct::CallableTool{GPTTool})
+    register_tool!(server, ct::CallableTool{Tool})
 
-Register a `CallableTool{GPTTool}` on the MCP server, bridging from UniLM's
+Register a `CallableTool{Tool}` on the MCP server, bridging from UniLM's
 Chat Completions tool type.
 """
-function register_tool!(server::MCPServer, ct::CallableTool{GPTTool})
+function register_tool!(server::MCPServer, ct::CallableTool{Tool})
     name = ct.tool.func.name
     desc = ct.tool.func.description
     schema = something(ct.tool.func.parameters,

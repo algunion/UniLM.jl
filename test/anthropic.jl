@@ -30,12 +30,12 @@ end
 end
 
 @testset "encode — tools become {name,description,input_schema}" begin
-    sig = GPTFunctionSignature(name="get_weather", description="Get weather",
+    sig = FunctionSignature(name="get_weather", description="Get weather",
         parameters=Dict("type" => "object",
                         "properties" => Dict("location" => Dict("type" => "string")),
                         "required" => ["location"]))
     chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-opus-4-8",
-                tools=[GPTTool(func=sig)], tool_choice="auto")
+                tools=[Tool(func=sig)], tool_choice="auto")
     push!(chat, Message(Val(:system), "s"))
     push!(chat, Message(Val(:user), "weather in Paris?"))
     body = JSON.parse(encode_request(ANTHROPICServiceEndpoint, chat))
@@ -51,7 +51,7 @@ end
     chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-opus-4-8")
     push!(chat, Message(Val(:system), "s"))
     push!(chat, Message(Val(:user), "weather?"))
-    tc = GPTToolCall(id="toolu_1", func=GPTFunction("get_weather", Dict("location" => "Paris")))
+    tc = ToolCall(id="toolu_1", func=GPTFunction("get_weather", Dict("location" => "Paris")))
     push!(chat, Message(role=RoleAssistant, tool_calls=[tc], finish_reason=TOOL_CALLS))
     push!(chat, Message(role=RoleTool, tool_call_id="toolu_1", content="72F"))
     body = JSON.parse(encode_request(ANTHROPICServiceEndpoint, chat))
@@ -181,7 +181,7 @@ end
         Dict{String,Any}("type" => "tool_use", "id" => "toolu_1", "name" => "get_weather",
                          "input" => Dict{String,Any}("city" => "Oslo")),
     ]
-    tc = [GPTToolCall(id="toolu_1", func=GPTFunction("get_weather", Dict{String,Any}("city" => "Oslo")))]
+    tc = [ToolCall(id="toolu_1", func=GPTFunction("get_weather", Dict{String,Any}("city" => "Oslo")))]
     m = Message(role=UniLM.RoleAssistant, tool_calls=tc,
                 provider_content=ProviderContent(:anthropic, blocks))
     # Verbatim echo: the SAME array object, blocks unmodified, thinking first.

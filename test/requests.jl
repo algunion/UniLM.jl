@@ -655,8 +655,8 @@ end
 end
 
 @testset "wire seam — OpenAI defaults are byte-identical to legacy path" begin
-    sig = GPTFunctionSignature(name="f", parameters=Dict("type" => "object", "properties" => Dict()))
-    chat = Chat(model="gpt-5.5", tools=[GPTTool(func=sig)], temperature=0.7,
+    sig = FunctionSignature(name="f", parameters=Dict("type" => "object", "properties" => Dict()))
+    chat = Chat(model="gpt-5.5", tools=[Tool(func=sig)], temperature=0.7,
                 stream=true, logit_bias=Dict("50256" => -100.0), seed=7)
     push!(chat, Message(Val(:system), "sys"))
     push!(chat, Message(Val(:user), "hi"))

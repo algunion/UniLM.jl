@@ -15,7 +15,7 @@ UniLM speaks each provider's own wire API, not just the OpenAI-compatible protoc
 
 - **Native Anthropic and Gemini backends** — each speaks the provider's own format (Anthropic Messages, Gemini `generateContent`) rather than an OpenAI-compat shim, and round-trips provider-verbatim content, so reasoning state such as Anthropic thinking signatures and Gemini thought signatures survives across turns.
 - **An MCP client _and_ an MCP server in one package** — connect to external MCP servers (`MCPSession`) with tool-loop integration, and expose your own Julia functions as tools over MCP (`MCPServer`).
-- **Typed results with fail-loud invariants** — every call resolves to a concrete `LLMSuccess` / `LLMFailure` / `LLMCallError` result (with matching `Response…` types for the Responses API), and genuine faults such as timeouts raise typed exceptions (`UniLMTimeout`) instead of returning silent defaults.
+- **Typed results with fail-loud invariants** — every call resolves to a concrete `LLMSuccess` / `LLMFailure` / `LLMCallError` result (with matching `Response…` types for the Responses API), and genuine faults such as timeouts raise typed exceptions (`UniLMTimeout`) instead of returning silent defaults, and invalid conversation mutations raise a typed `InvalidConversationError` rather than corrupting the conversation.
 - **Built-in per-conversation cost accounting** — provider token counts are normalized to one shape, and each `Chat` accumulates a running USD estimate you read with `cumulative_cost`.
 - **Broad OpenAI platform-API coverage** — well beyond chat: Responses, Images, Embeddings, Files, Vector Stores, Conversations, Audio, Batch, Moderations, Fine-tuning, Webhooks, and Realtime.
 
@@ -299,7 +299,7 @@ UniLM speaks each provider's own API (see [Multi-Backend Support](#multi-backend
 | :--------------------- | :--------------------------: | :---------------------------------: |
 | Stateful conversations |       `Chat` + `push!`       |       `previous_response_id`        |
 | System prompt          | `Message(Val(:system), ...)` |        `instructions` kwarg         |
-| Tool calling           |  `GPTTool` / `GPTToolCall`   |  `FunctionTool` / `function_tool`   |
+| Tool calling           |  `Tool` / `ToolCall`   |  `FunctionTool` / `function_tool`   |
 | Web search             |              —               |           `WebSearchTool`           |
 | File search            |              —               |          `FileSearchTool`           |
 | Streaming              |   `stream=true` + callback   |          `do`-block syntax          |

@@ -107,15 +107,15 @@ end
 end
 
 @testset "Tool bridge" begin
-    @testset "MCPToolInfo → GPTTool via to_tool" begin
+    @testset "MCPToolInfo → Tool via to_tool" begin
         info = MCPToolInfo("calc", "Calculator", Dict{String,Any}("type" => "object"), nothing)
         tool = to_tool(info)
-        @test tool isa GPTTool
+        @test tool isa Tool
         @test tool.func.name == "calc"
         @test tool.func.description == "Calculator"
     end
 
-    @testset "mcp_tools builds CallableTool{GPTTool}" begin
+    @testset "mcp_tools builds CallableTool{Tool}" begin
         # Create a minimal session with mock tools
         session = MCPSession(
             StdioTransport(`echo`),  # won't be used
@@ -132,7 +132,7 @@ end
         )
         tools = mcp_tools(session)
         @test length(tools) == 1
-        @test tools[1] isa CallableTool{GPTTool}
+        @test tools[1] isa CallableTool{Tool}
         @test tools[1].tool.func.name == "add"
     end
 

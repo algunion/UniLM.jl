@@ -49,9 +49,22 @@ println("Valid for sending: ", issendvalid(chat))
 ## Tools
 
 ```@docs
+Tool
+FunctionSignature
+ToolCall
+FunctionCallResult
+```
+
+### Legacy aliases
+
+The provider-neutral names above are canonical. These `GPT*` consts are exported
+aliases that keep pre-rename code working unchanged (silent, no deprecation
+warning; retained until the 1.0 stability boundary).
+
+```@docs
 GPTTool
-GPTFunctionSignature
 GPTToolCall
+GPTFunctionSignature
 GPTFunctionCallResult
 ```
 

@@ -24,8 +24,8 @@
     end
 
     @testset "fork shares tools (shallow copy)" begin
-        sig = GPTFunctionSignature(name="fn")
-        tools = [GPTTool(func=sig)]
+        sig = FunctionSignature(name="fn")
+        tools = [Tool(func=sig)]
         chat = Chat(tools=tools)
         forked = fork(chat)
 
@@ -61,10 +61,10 @@
     end
 
     @testset "fork preserves all config fields" begin
-        sig = GPTFunctionSignature(name="fn")
+        sig = FunctionSignature(name="fn")
         chat = Chat(
             model="gpt-4.1-mini",
-            tools=[GPTTool(func=sig)],
+            tools=[Tool(func=sig)],
             tool_choice="auto",
             parallel_tool_calls=true,
             temperature=0.5,
@@ -122,7 +122,7 @@
         # an explicit `false`, which WOULD be emitted on the wire and silently
         # turn parallel calling off for the fork.
         chat2 = Chat(model="gpt-5.5",
-                     tools=[GPTTool(func=GPTFunctionSignature(name="t"))],
+                     tools=[Tool(func=FunctionSignature(name="t"))],
                      parallel_tool_calls=nothing)
         @test fork(chat2).parallel_tool_calls === nothing
     end

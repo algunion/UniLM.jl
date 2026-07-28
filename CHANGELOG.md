@@ -39,6 +39,14 @@
   provider keys and makes no billed calls.
 
 ### Changed
+- Tool-surface types renamed to provider-neutral canonical names: `GPTTool` →
+  `Tool`, `GPTToolCall` → `ToolCall`, `GPTFunctionSignature` →
+  `FunctionSignature`, `GPTFunctionCallResult` → `FunctionCallResult`.
+  Non-breaking: the former `GPT*` names remain exported as `const` aliases —
+  construction, dispatch, `isa`, field access, and the parametric
+  `GPTFunctionCallResult{T}` all keep working unchanged. The `GPT*` aliases are
+  scheduled for removal at 1.0 per the new stability policy; docs teach the
+  neutral names as canonical.
 - `GenericOpenAIEndpoint` and `DeepSeekEndpoint` now redact `api_key` when shown: a
   short prefix plus a `…[redacted]` marker (never the full key or its length),
   inherited when an endpoint prints nested inside a `Chat` or a result value.

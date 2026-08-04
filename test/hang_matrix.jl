@@ -545,7 +545,7 @@ function _hm_trickle_ping_server()
                 HTTP.setheader(http, "Content-Type" => "text/event-stream")
                 HTTP.startwrite(http)
                 _hm_dribble(http, head; chunk = 12, gap = 0.3)
-                for _ in 1:5                              # ~1.5 s bridged by pings (idle limit 1.0 s)
+                for _ in 1:5                              # ~1.5 s bridged by pings (idle limit 1.5 s)
                     write(http, ": ping\n\n")
                     flush(http)
                     sleep(0.3)
@@ -679,17 +679,23 @@ end
 end
 
 @testset "stream: trickle and pings keep the stream alive" begin
-    # FIXED contract: a healthy but slow stream (bytes every 0.3 s, a >1 s gap
-    # bridged by SSE comment pings) must NOT be killed — idle resets on every raw
-    # chunk, so the completed stream is LLMSuccess. A 1-byte trickle keeping a
-    # stream alive is an accepted, documented consequence.
+    # FIXED contract: a healthy but slow stream (bytes every 0.3 s, a ~1.8 s
+    # data-quiet gap bridged by SSE comment pings) must NOT be killed — idle
+    # resets on every raw chunk, so the completed stream is LLMSuccess. A 1-byte
+    # trickle keeping a stream alive is an accepted, documented consequence.
     srv, url = _hm_trickle_ping_server()
     try
         chat = Chat(service = GenericOpenAIEndpoint(url, ""), model = "mock", stream = true)
         push!(chat, Message(Val(:system), "s"))
         push!(chat, Message(Val(:user), "u"))
         outcome = _hm_bounded(bound = 45.0) do
-            cfg = UniLM.RequestConfig(stream_idle_timeout = 1.0, request_timeout = 5.0,
+            # Idle limit widened 1.0 → 1.5 s for loaded runners: a scheduler/GC
+            # stall between raw reads can stretch a 0.3 s trickle gap past 1.0 s,
+            # spuriously tripping :stream_idle on a healthy stream. 1.5 s is 5x the
+            # 0.3 s trickle gap yet stays under the ~1.8 s data-quiet ping bridge
+            # (6 x 0.3 s sleeps), so a regression that stopped resetting idle on
+            # comment bytes still trips and fails here.
+            cfg = UniLM.RequestConfig(stream_idle_timeout = 1.5, request_timeout = 5.0,
                 total_deadline = 10.0, max_attempts = 1)
             fetch(chatrequest!(chat; config = cfg))
         end

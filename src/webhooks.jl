@@ -30,8 +30,8 @@ function _consteq(a::AbstractString, b::AbstractString)
     r == 0
 end
 
-_header_dict(headers::AbstractDict) = Dict(lowercase(string(k)) => string(v) for (k, v) in headers)
-_header_dict(headers) = Dict(lowercase(string(first(p))) => string(last(p)) for p in headers)
+_header_dict(headers::AbstractDict)::Dict{String,String} = Dict(lowercase(string(k)) => string(v) for (k, v) in headers)
+_header_dict(headers)::Dict{String,String} = Dict(lowercase(string(first(p))) => string(last(p)) for p in headers)
 
 """
     verify_webhook(payload::AbstractString, headers, secret::AbstractString; tolerance_seconds=300) -> Bool
@@ -61,7 +61,9 @@ function verify_webhook(payload::AbstractString, headers, secret::AbstractString
     catch
         return false
     end
-    signed = wid * "." * wts * "." * String(payload)
+    # `string(...)` is a single `::String` method, so the signed base is concretely a
+    # `String` regardless of how the header-map value types infer at this call.
+    signed = string(wid, ".", wts, ".", payload)
     expected = base64encode(_hmac_sha256(key, Vector{UInt8}(signed)))
     for part in split(wsig, ' ')
         seg = split(part, ',')

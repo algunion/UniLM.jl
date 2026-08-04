@@ -57,7 +57,13 @@ end
         @test occursin("OPENAIServiceEndpoint", err.msg)
     end
 
-    # src/requests.jl:42 — GenericOpenAIEndpoint base is the rstripped base_url (trailing
+    # Fail-loud total coverage: a non-OpenAI-wire endpoint (a native provider) has no
+    # platform/Responses base URL, so it raises ArgumentError rather than a bare MethodError.
+    # This keeps the abstract _api_base_url(service::ServiceEndpointSpec) dispatch total.
+    @test_throws ArgumentError UniLM._api_base_url(UniLM.ANTHROPICServiceEndpoint)
+    @test_throws ArgumentError UniLM._api_base_url(UniLM.GEMINIServiceEndpoint)
+
+    # GenericOpenAIEndpoint base is the rstripped base_url (trailing slash removed). A
     # slash removed). A base_url that ends in "/" proves the rstrip: without it, the slash
     # would survive.
     gen = UniLM.GenericOpenAIEndpoint("https://host.example/", "k")
@@ -638,13 +644,13 @@ end
 end
 
 @testset "_accumulate_cost! fallback is a no-op for non-success" begin
-    # requests.jl:335 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
+    # requests.jl:347 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
     # success types are specialized in accounting.jl, so a failure result must land here:
     # return nothing AND leave cumulative cost untouched (falsifies accidental accumulation).
     chat = Chat(model="gpt-4.1-nano")
     chat._cumulative_cost[] = 0.25
     failure = LLMFailure(response="server exploded", status=500, self=chat)
-    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 335
+    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 347
     @test UniLM._accumulate_cost!(chat, failure) === nothing
     @test cumulative_cost(chat) == 0.25       # unchanged: the fallback did not add anything
 

@@ -16,7 +16,7 @@ function get_url(::Type{GEMINIServiceEndpoint}, chat::Chat)
     end
 end
 
-_api_base_url(::Type{GEMINIServiceEndpoint}) =
+_resolve_base_url(::Type{GEMINIServiceEndpoint}) =
     throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))
 
 auth_header(::Type{GEMINIServiceEndpoint}) = [

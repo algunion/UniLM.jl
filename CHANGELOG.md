@@ -40,6 +40,12 @@
   provider keys and makes no billed calls.
 
 ### Changed
+- Type-strengthening pass driven by the new JET whole-package release gate: over-wide
+  internal seam signatures were narrowed and URL-construction inference made concrete,
+  bringing JET to zero findings. One user-visible effect: calling a platform API with a
+  native (non-OpenAI-wire) endpoint now raises a descriptive `ArgumentError` instead of
+  a bare `MethodError`.
+- Streaming keep-alive test margins widened for loaded CI runners (test-only).
 - Tool-surface types renamed to provider-neutral canonical names: `GPTTool` →
   `Tool`, `GPTToolCall` → `ToolCall`, `GPTFunctionSignature` →
   `FunctionSignature`, `GPTFunctionCallResult` → `FunctionCallResult`.

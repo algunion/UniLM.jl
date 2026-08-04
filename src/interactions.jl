@@ -13,7 +13,7 @@
 
 # ─── Routing (streaming is a BODY flag, so the URL is stream-independent) ─────
 
-_agentic_url(::Type{GEMINIServiceEndpoint}) = GEMINI_NATIVE_BASE * INTERACTIONS_PATH
+_agentic_url(::Type{GEMINIServiceEndpoint})::String = GEMINI_NATIVE_BASE * INTERACTIONS_PATH
 
 # ─── Request encoding (neutral Respond → Interactions body, snake_case) ───────
 

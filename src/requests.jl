@@ -266,15 +266,20 @@ end
 # ─── URL Dispatch ─────────────────────────────────────────────────────────────
 # Endpoints are determined by (ServiceEndpoint, RequestType), not model name.
 
-get_url(chat::Chat) = get_url(chat.service, chat)
-get_url(emb::Embeddings) = get_url(emb.service, emb)
+# Assert `::String` at the request-URL entry points: the per-endpoint `get_url` methods
+# each build a `String`, but the abstract `service`-typed dispatch can lose that precision
+# under coverage/`--check-bounds=yes` (which suppress the constant-folding that resolves it),
+# widening to `Union{Missing,…}`. The assertion is inference-independent and holds under any
+# Julia flags, keeping every `url` a concrete `String` at the HTTP seam.
+get_url(chat::Chat) = get_url(chat.service, chat)::String
+get_url(emb::Embeddings) = get_url(emb.service, emb)::String
 
-get_url(::Type{OPENAIServiceEndpoint}, ::Chat) = OPENAI_BASE_URL * CHAT_COMPLETIONS_PATH
-get_url(::Type{AZUREServiceEndpoint}, chat::Chat) = ENV[AZURE_OPENAI_BASE_URL] * _azure_deployment_path(chat.model) * "/chat/completions?api-version=$(ENV[AZURE_OPENAI_API_VERSION])"
-get_url(::Type{GEMINIOpenAIServiceEndpoint}, ::Chat) = GEMINI_CHAT_URL
+get_url(::Type{OPENAIServiceEndpoint}, ::Chat)::String = OPENAI_BASE_URL * CHAT_COMPLETIONS_PATH
+get_url(::Type{AZUREServiceEndpoint}, chat::Chat)::String = ENV[AZURE_OPENAI_BASE_URL] * _azure_deployment_path(chat.model) * "/chat/completions?api-version=$(ENV[AZURE_OPENAI_API_VERSION])"
+get_url(::Type{GEMINIOpenAIServiceEndpoint}, ::Chat)::String = GEMINI_CHAT_URL
 
-get_url(::Type{OPENAIServiceEndpoint}, ::Embeddings) = OPENAI_BASE_URL * EMBEDDINGS_PATH
-get_url(::Type{GEMINIOpenAIServiceEndpoint}, ::Embeddings) = GEMINI_OPENAI_BASE * "/embeddings"
+get_url(::Type{OPENAIServiceEndpoint}, ::Embeddings)::String = OPENAI_BASE_URL * EMBEDDINGS_PATH
+get_url(::Type{GEMINIOpenAIServiceEndpoint}, ::Embeddings)::String = GEMINI_OPENAI_BASE * "/embeddings"
 
 # Single typed entry over the per-endpoint `_resolve_base_url` dispatch. That method set is
 # wider than inference will union at an abstract `service::ServiceEndpointSpec` call — the
@@ -294,11 +299,11 @@ _resolve_base_url(::Type{<:ServiceEndpoint}) = throw(ArgumentError("base URL is 
 
 # ─── GenericOpenAIEndpoint dispatch ──────────────────────────────────────────
 
-get_url(s::GenericOpenAIEndpoint, ::Chat) = rstrip(s.base_url, '/') * CHAT_COMPLETIONS_PATH
-get_url(s::GenericOpenAIEndpoint, ::Embeddings) = rstrip(s.base_url, '/') * EMBEDDINGS_PATH
+get_url(s::GenericOpenAIEndpoint, ::Chat)::String = rstrip(s.base_url, '/') * CHAT_COMPLETIONS_PATH
+get_url(s::GenericOpenAIEndpoint, ::Embeddings)::String = rstrip(s.base_url, '/') * EMBEDDINGS_PATH
 _resolve_base_url(s::GenericOpenAIEndpoint) = String(rstrip(s.base_url, '/'))
 
-function auth_header(s::GenericOpenAIEndpoint)
+function auth_header(s::GenericOpenAIEndpoint)::Vector{Pair{String,String}}
     hdrs = ["Content-Type" => "application/json"]
     !isempty(s.api_key) && pushfirst!(hdrs, "Authorization" => "Bearer $(s.api_key)")
     hdrs
@@ -306,31 +311,31 @@ end
 
 # ─── DeepSeekEndpoint dispatch ───────────────────────────────────────────────
 
-get_url(s::DeepSeekEndpoint, ::Chat) = DEEPSEEK_BASE_URL * CHAT_COMPLETIONS_PATH
-get_url(s::DeepSeekEndpoint, ::Embeddings) = DEEPSEEK_BASE_URL * EMBEDDINGS_PATH
+get_url(s::DeepSeekEndpoint, ::Chat)::String = DEEPSEEK_BASE_URL * CHAT_COMPLETIONS_PATH
+get_url(s::DeepSeekEndpoint, ::Embeddings)::String = DEEPSEEK_BASE_URL * EMBEDDINGS_PATH
 _resolve_base_url(s::DeepSeekEndpoint) = DEEPSEEK_BASE_URL
 
-function auth_header(s::DeepSeekEndpoint)
+function auth_header(s::DeepSeekEndpoint)::Vector{Pair{String,String}}
     ["Authorization" => "Bearer $(s.api_key)", "Content-Type" => "application/json"]
 end
 
 # ─── Built-in endpoint auth ─────────────────────────────────────────────────
 
-function auth_header(::Type{OPENAIServiceEndpoint})
+function auth_header(::Type{OPENAIServiceEndpoint})::Vector{Pair{String,String}}
     [
         "Authorization" => "Bearer $(ENV[OPENAI_API_KEY])",
         "Content-Type" => "application/json"
     ]
 end
 
-function auth_header(::Type{AZUREServiceEndpoint})
+function auth_header(::Type{AZUREServiceEndpoint})::Vector{Pair{String,String}}
     [
         "api-key" => "$(ENV[AZURE_OPENAI_API_KEY])",
         "Content-Type" => "application/json"
     ]
 end
 
-function auth_header(::Type{GEMINIOpenAIServiceEndpoint})
+function auth_header(::Type{GEMINIOpenAIServiceEndpoint})::Vector{Pair{String,String}}
     [
         "Authorization" => "Bearer $(ENV[GEMINI_API_KEY])",
         "Content-Type" => "application/json"

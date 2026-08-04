@@ -8,7 +8,7 @@
 # ─── Routing & auth ──────────────────────────────────────────────────────────
 # Model is in the URL (like Azure); streaming is the URL METHOD, not a body flag.
 
-function get_url(::Type{GEMINIServiceEndpoint}, chat::Chat)
+function get_url(::Type{GEMINIServiceEndpoint}, chat::Chat)::String
     if chat.stream === true
         "$(GEMINI_NATIVE_BASE)/models/$(chat.model):streamGenerateContent?alt=sse"
     else
@@ -19,7 +19,7 @@ end
 _resolve_base_url(::Type{GEMINIServiceEndpoint}) =
     throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))
 
-auth_header(::Type{GEMINIServiceEndpoint}) = [
+auth_header(::Type{GEMINIServiceEndpoint})::Vector{Pair{String,String}} = [
     "x-goog-api-key" => ENV[GEMINI_API_KEY],
     "Content-Type"   => "application/json",
 ]

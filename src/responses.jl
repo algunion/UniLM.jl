@@ -1284,14 +1284,16 @@ end
 # NB: named `*_agentic`, NOT `decode_response` — that would collide with the chat
 # seam's `decode_response(service, ::HTTP.Response)` (identical argument types).
 
-get_url(r::Respond) = get_url(r.service, r)
-_agentic_url(service::OpenAIWireEndpointSpec) = _api_base_url(service) * RESPONSES_PATH
+get_url(r::Respond) = get_url(r.service, r)::String
+# `::String` assertion: `_api_base_url` is already String-typed, but assert here too so the
+# agentic URL stays concrete even where inference loses precision (coverage / --check-bounds).
+_agentic_url(service::OpenAIWireEndpointSpec) = (_api_base_url(service) * RESPONSES_PATH)::String
 # Generic delegator — deliberately NOT typed on `OpenAIWireEndpointSpec`. It only
 # forwards to `_agentic_url` (the typed, provider-specific URL builder above, which
 # Gemini Interactions overrides); typing this hop would strand Gemini, which
 # overrides `_agentic_url` but not this forwarder. A bare `ServiceEndpoint` still
 # fails loud one hop down, at `_agentic_url`.
-get_url(service, r::Respond) = _agentic_url(service)
+get_url(service, r::Respond) = _agentic_url(service)::String
 
 encode_agentic(service::OpenAIWireEndpointSpec, r::Respond)::String = JSON.json(r)
 

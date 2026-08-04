@@ -490,7 +490,10 @@ server immediately; close it with `close`.
 """
 function _serve_http(server::MCPServer; host::String="127.0.0.1", port::Int=8080,
                      allowed_origins::Vector{String}=String[], block::Bool=true)
-    http_server = HTTP.serve!(host, port) do req
+    # Request-handler form (HTTP.jl `stream=false`, the default): the handler receives a
+    # buffered `HTTP.Request` and returns an `HTTP.Response`. Annotating the argument keeps
+    # `HTTP.header(req, …)` — defined for `Request`/`Response`, not `Stream` — well-typed.
+    http_server = HTTP.serve!(host, port) do req::HTTP.Request
         # Streamable HTTP requires Origin validation (DNS-rebinding defense).
         # Requests without an Origin header are not browser cross-origin
         # requests and pass; browser requests must come from localhost or an

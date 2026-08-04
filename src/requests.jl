@@ -276,15 +276,27 @@ get_url(::Type{GEMINIOpenAIServiceEndpoint}, ::Chat) = GEMINI_CHAT_URL
 get_url(::Type{OPENAIServiceEndpoint}, ::Embeddings) = OPENAI_BASE_URL * EMBEDDINGS_PATH
 get_url(::Type{GEMINIOpenAIServiceEndpoint}, ::Embeddings) = GEMINI_OPENAI_BASE * "/embeddings"
 
-_api_base_url(::Type{OPENAIServiceEndpoint}) = OPENAI_BASE_URL
-_api_base_url(::Type{AZUREServiceEndpoint}) = throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))
-_api_base_url(::Type{GEMINIOpenAIServiceEndpoint}) = throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))
+# Single typed entry over the per-endpoint `_resolve_base_url` dispatch. That method set is
+# wider than inference will union at an abstract `service::ServiceEndpointSpec` call — the
+# `Type{<:ServiceEndpoint}` limb alone exceeds the union-split budget and widens to `Any` —
+# so the entry asserts the `String` result, keeping every caller's
+# `url = _api_base_url(service) * PATH` a concrete `String` instead of a widened union.
+_api_base_url(service::ServiceEndpointSpec) = _resolve_base_url(service)::String
+
+_resolve_base_url(::Type{OPENAIServiceEndpoint}) = OPENAI_BASE_URL
+_resolve_base_url(::Type{AZUREServiceEndpoint}) = throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))
+_resolve_base_url(::Type{GEMINIOpenAIServiceEndpoint}) = throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))
+# Fail-loud total coverage: any endpoint without a specific base URL (native providers,
+# user-defined subtypes) is not an OpenAI-wire platform endpoint. Total coverage keeps the
+# abstract dispatch free of latent MethodErrors (nothing for JET to flag as a missing method).
+_resolve_base_url(s::ServiceEndpoint) = throw(ArgumentError("base URL is not defined for $(typeof(s)); this endpoint is not an OpenAI-wire platform endpoint"))
+_resolve_base_url(::Type{<:ServiceEndpoint}) = throw(ArgumentError("base URL is not defined for this endpoint type; this endpoint is not an OpenAI-wire platform endpoint"))
 
 # ─── GenericOpenAIEndpoint dispatch ──────────────────────────────────────────
 
 get_url(s::GenericOpenAIEndpoint, ::Chat) = rstrip(s.base_url, '/') * CHAT_COMPLETIONS_PATH
 get_url(s::GenericOpenAIEndpoint, ::Embeddings) = rstrip(s.base_url, '/') * EMBEDDINGS_PATH
-_api_base_url(s::GenericOpenAIEndpoint) = rstrip(s.base_url, '/')
+_resolve_base_url(s::GenericOpenAIEndpoint) = String(rstrip(s.base_url, '/'))
 
 function auth_header(s::GenericOpenAIEndpoint)
     hdrs = ["Content-Type" => "application/json"]
@@ -296,7 +308,7 @@ end
 
 get_url(s::DeepSeekEndpoint, ::Chat) = DEEPSEEK_BASE_URL * CHAT_COMPLETIONS_PATH
 get_url(s::DeepSeekEndpoint, ::Embeddings) = DEEPSEEK_BASE_URL * EMBEDDINGS_PATH
-_api_base_url(s::DeepSeekEndpoint) = DEEPSEEK_BASE_URL
+_resolve_base_url(s::DeepSeekEndpoint) = DEEPSEEK_BASE_URL
 
 function auth_header(s::DeepSeekEndpoint)
     ["Authorization" => "Bearer $(s.api_key)", "Content-Type" => "application/json"]
@@ -427,9 +439,13 @@ function _build_stream_message(state::StreamState)::Message
     # Echo complete captures only: a block still pending (its stop line was
     # dropped as malformed) means the capture is incomplete — fall back to
     # neutral reconstruction rather than echo a partial turn.
-    pc = (isnothing(state.raw_provider) || isempty(state.raw_blocks) ||
+    # Bind the provider tag to a local so its `Symbol` type is carried past the
+    # `isnothing` guard into the ProviderContent constructor (a re-read of the
+    # mutable field would stay `Union{Symbol,Nothing}`).
+    provider = state.raw_provider
+    pc = (isnothing(provider) || isempty(state.raw_blocks) ||
           !isempty(state.raw_pending)) ? nothing :
-         ProviderContent(state.raw_provider, state.raw_blocks)
+         ProviderContent(provider, state.raw_blocks)
     if !isempty(state.tool_calls)
         tcalls = ToolCall[]
         for idx in sort!(collect(keys(state.tool_calls)))
@@ -571,7 +587,7 @@ caller can honor `Retry-After`; throws on connect/first-byte timeout and transpo
 failures — retry classification is the caller's job. `StreamState`, the SSE line carry,
 and the raw byte log are all locals: a retried attempt cannot inherit partial SSE state.
 """
-function _stream_attempt(chat, body, callback, on_tool_call,
+function _stream_attempt(chat::Chat, body, callback, on_tool_call,
                          cfg::RequestConfig, t0::UInt64, io_ref)
     state = StreamState()
     m = Ref{Union{Message,Nothing}}(nothing)
@@ -643,9 +659,10 @@ function _stream_attempt(chat, body, callback, on_tool_call,
             close_ref[] && @info "stream closed by user"
             HTTP.closeread(io)
         end
-        if !isnothing(stream_error[])
+        serr = stream_error[]
+        if !isnothing(serr)
             # In-band `error` event on an HTTP-200 stream: never LLMSuccess.
-            return (; result=_stream_error_result(chat, stream_error[], _get_request_id(resp)), resp)
+            return (; result=_stream_error_result(chat, serr, _get_request_id(resp)), resp)
         elseif resp.status == 200 && !isnothing(m[])
             msg = m[]::Message
             update!(chat, msg)
@@ -711,7 +728,7 @@ transport IO failures. Backoff/budget arithmetic is `_retry_pause` — identical
 non-stream loop. `InterruptException` always rethrows; every other failure becomes a
 typed result value.
 """
-function _stream_drive(chat, body, callback, on_tool_call, cfg::RequestConfig, t0::UInt64)
+function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestConfig, t0::UInt64)
     io_ref = Ref{Union{HTTP.Stream,Nothing}}(nothing)
     callback_fired = Ref(false)
     # Flip the flag immediately BEFORE user code runs (a throwing callback still
@@ -785,7 +802,7 @@ typed result value), so `fetch` then raises a `TaskFailedException` whose
 `task.exception` is the `InterruptException` — callers catching interrupts around
 `fetch` must unwrap it.
 """
-function _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing,
+function _chatrequeststream(chat::Chat, body, callback=nothing; on_tool_call=nothing,
                             cfg::RequestConfig=_resolve_config(nothing),
                             t0::UInt64=time_ns())
     Threads.@spawn _stream_drive(chat, body, callback, on_tool_call, cfg, t0)

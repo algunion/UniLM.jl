@@ -1175,8 +1175,8 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                 end
                 if resp.status == 200 && !isnothing(result[])
                     return ResponseSuccess(response=result[]::ResponseObject)
-                elseif !isnothing(terminal_error[])
-                    return _agentic_terminal_result(terminal_error[], resp.status, io_ref[])
+                elseif (te = terminal_error[]) !== nothing
+                    return _agentic_terminal_result(te, resp.status, io_ref[])
                 elseif _is_retryable(resp.status) && !callback_fired[] && attempt < cfg.max_attempts
                     action, delay = _retry_pause(cfg, t0, attempt, resp)
                     if action === :budget
@@ -1213,7 +1213,8 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                     # closeread on an EOF-less peer; trailing bytes past the gap are
                     # acceptable, so finalize the recorded outcome rather than a timeout.
                     !isnothing(result[]) && return ResponseSuccess(response=result[]::ResponseObject)
-                    !isnothing(terminal_error[]) && return _agentic_terminal_result(terminal_error[], nothing, io_ref[])
+                    te = terminal_error[]
+                    !isnothing(te) && return _agentic_terminal_result(te, nothing, io_ref[])
                     # elapsed = the byte GAP recorded at breach (not whole-call elapsed).
                     to = UniLMTimeout(:stream_idle, _idle_gap_s(guard), cfg.stream_idle_timeout)
                     return ResponseCallError(error=sprint(showerror, to), status=nothing, cause=to)

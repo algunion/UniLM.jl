@@ -1040,15 +1040,22 @@ function JSON.lower(emb::Embeddings)
     return d
 end
 
-function update!(emb::Embeddings, data::AbstractVector)
-    if emb.input isa String
-        _store_embedding!(emb.embeddings, data[1]["embedding"])
-    else
-        for item in data
-            idx = item["index"] + 1  # API uses 0-based indexing
-            _store_embedding!(emb.embeddings[idx], item["embedding"])
-        end
+# Dispatch on the concrete buffer shape rather than branching on `emb.input isa String`.
+# The two inner constructors pair a String input with a `Vector{Float64}` buffer and a
+# `Vector{String}` input with a `Vector{Vector{Float64}}` buffer, so the buffer type alone
+# selects the fill strategy — and each buffer limb has a matching method (no phantom
+# `_store_embedding!(::Vector{Vector{Float64}}, …)` split on the `input`-typed branch).
+update!(emb::Embeddings, data::AbstractVector) = _fill_embeddings!(emb.embeddings, data)
+
+_fill_embeddings!(dst::Vector{Float64}, data::AbstractVector) =
+    _store_embedding!(dst, data[1]["embedding"])
+
+function _fill_embeddings!(dst::Vector{Vector{Float64}}, data::AbstractVector)
+    for item in data
+        idx = item["index"] + 1  # API uses 0-based indexing
+        _store_embedding!(dst[idx], item["embedding"])
     end
+    return dst
 end
 
 # Copy an API-returned embedding into the preallocated buffer, resizing when the model's

@@ -271,8 +271,8 @@ end
 # under coverage/`--check-bounds=yes` (which suppress the constant-folding that resolves it),
 # widening to `Union{Missing,…}`. The assertion is inference-independent and holds under any
 # Julia flags, keeping every `url` a concrete `String` at the HTTP seam.
-get_url(chat::Chat) = get_url(chat.service, chat)::String
-get_url(emb::Embeddings) = get_url(emb.service, emb)::String
+get_url(chat::Chat)::String = get_url(chat.service, chat)::String
+get_url(emb::Embeddings)::String = get_url(emb.service, emb)::String
 
 get_url(::Type{OPENAIServiceEndpoint}, ::Chat)::String = OPENAI_BASE_URL * CHAT_COMPLETIONS_PATH
 get_url(::Type{AZUREServiceEndpoint}, chat::Chat)::String = ENV[AZURE_OPENAI_BASE_URL] * _azure_deployment_path(chat.model) * "/chat/completions?api-version=$(ENV[AZURE_OPENAI_API_VERSION])"
@@ -281,12 +281,12 @@ get_url(::Type{GEMINIOpenAIServiceEndpoint}, ::Chat)::String = GEMINI_CHAT_URL
 get_url(::Type{OPENAIServiceEndpoint}, ::Embeddings)::String = OPENAI_BASE_URL * EMBEDDINGS_PATH
 get_url(::Type{GEMINIOpenAIServiceEndpoint}, ::Embeddings)::String = GEMINI_OPENAI_BASE * "/embeddings"
 
-# Single typed entry over the per-endpoint `_resolve_base_url` dispatch. That method set is
-# wider than inference will union at an abstract `service::ServiceEndpointSpec` call — the
-# `Type{<:ServiceEndpoint}` limb alone exceeds the union-split budget and widens to `Any` —
-# so the entry asserts the `String` result, keeping every caller's
-# `url = _api_base_url(service) * PATH` a concrete `String` instead of a widened union.
-_api_base_url(service::ServiceEndpointSpec) = _resolve_base_url(service)::String
+# Single typed entry over the per-endpoint `_resolve_base_url` dispatch, whose method set is
+# wider than inference will union at an abstract `service::ServiceEndpointSpec` call (the
+# `Type{<:ServiceEndpoint}` limb exceeds the union-split budget → `Any`). A DECLARED
+# `::String` return (not a body typeassert) is a method-signature guarantee that holds under
+# that widening AND under coverage instrumentation, keeping every caller's `url` a `String`.
+_api_base_url(service::ServiceEndpointSpec)::String = _resolve_base_url(service)
 
 _resolve_base_url(::Type{OPENAIServiceEndpoint}) = OPENAI_BASE_URL
 _resolve_base_url(::Type{AZUREServiceEndpoint}) = throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))

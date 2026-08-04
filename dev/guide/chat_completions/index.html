@@ -35,55 +35,17 @@ if result isa LLMSuccess
     println(&quot;Conversation length: &quot;, length(chat))
 else
     println(&quot;Request failed — see result for details&quot;)
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">In Julia, **parametric types** are types that take one or more **type parameters**. They let you define a family of related types in a compact, reusable way.
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">In Julia, **parametric types** are types that are defined with one or more **type parameters**. These parameters let you make a family of related types from one definition.
 
 ## Basic idea
 
-Instead of defining separate types for `Int`, `Float64`, `String`, etc., you can define one type that is parameterized by the element type:
+Instead of defining separate types like:
 
-```julia
-struct Box{T}
-    value::T
-end
-```
+- `Point2DInt`
+- `Point2DFloat`
+- `Point2DString`
 
-Here, `Box{T}` is a parametric type, where `T` can be any type.
-
-Examples:
-
-```julia
-Box(1)        # Box{Int64}
-Box(3.14)     # Box{Float64}
-Box(&quot;hi&quot;)     # Box{String}
-```
-
-Each of these is a different concrete type:
-- `Box{Int64}`
-- `Box{Float64}`
-- `Box{String}`
-
-## Why use them?
-
-Parametric types are useful because they:
-
-- **Avoid code duplication**
-- **Preserve type information**
-- **Improve performance**
-- **Allow generic programming**
-
-For example, a vector type in Julia is parametric:
-
-```julia
-Vector{Int}
-Vector{Float64}
-Vector{String}
-```
-
-All are different concrete types.
-
-## Common syntax
-
-### Declaring a parametric struct
+you can define one parametric type:
 
 ```julia
 struct Point{T}
@@ -92,51 +54,92 @@ struct Point{T}
 end
 ```
 
-This means both fields have the same type `T`.
+Here, `T` is a **type parameter**.
 
-Usage:
+Examples:
 
 ```julia
-Point(1, 2)       # Point{Int64}
-Point(1.5, 2.5)    # Point{Float64}
+p1 = Point{Int}(1, 2)
+p2 = Point{Float64}(1.5, 2.5)
 ```
 
-### Multiple parameters
+So:
+
+- `Point{Int}` is a concrete type where `T = Int`
+- `Point{Float64}` is another concrete type where `T = Float64`
+
+## Why use them?
+
+Parametric types are useful because they:
+
+1. **Avoid code duplication**
+   - One definition works for many element types.
+
+2. **Preserve type information**
+   - Julia can generate efficient code when the parameter is known.
+
+3. **Improve flexibility**
+   - You can write generic code that works for many types.
+
+## Example with arrays
+
+Julia’s arrays are parametric too:
 
 ```julia
-struct PairBox{A,B}
+Vector{Int}
+Vector{Float64}
+Matrix{String}
+```
+
+These are all different concrete types.
+
+## Multiple parameters
+
+A type can have more than one parameter:
+
+```julia
+struct Pair{A,B}
     first::A
     second::B
 end
 ```
 
-### Type constraints
-
-You can restrict a parameter:
+Example:
 
 ```julia
-struct NumericBox{T&lt;:Number}
-    value::T
-end
+Pair{Int, String}(1, &quot;hi&quot;)
 ```
 
-This allows only subtypes of `Number`.
+## Important note: abstract vs concrete
 
-## Important concept: parametric vs abstract
+A parametric type definition like:
 
-A parametric type is often a **concrete type constructor**. For example:
-- `Array` is abstract/generic
-- `Array{Int,1}` is concrete
+```julia
+Point{T}
+```
 
-So `Array{T,N}` describes a family of array types.
+is a **type constructor**, not a single concrete type. The concrete types are things like:
 
-## Simple rule of thumb
+- `Point{Int}`
+- `Point{Float64}`
 
-If you want a type that works with different kinds of stored data while keeping that data’s type known, use a parametric type.
+## Type inference with parameters
+
+You can also let Julia infer the parameter:
+
+```julia
+Point(1, 2)        # usually creates Point{Int}
+Point(1.0, 2.0)    # usually creates Point{Float64}
+```
+
+## Summary
+
+Parametric types are **generic type templates** that let you define one type structure for many element types.
 
 If you want, I can also explain:
-1. **how parametric types differ from abstract types**, or
-2. **how they affect performance in Julia**.
+- how parametric types relate to **type stability**
+- the difference between **`Point{T}` and `Point`**
+- or how **parametric methods** work in Julia
 
 Finish reason: stop
 Conversation length: 3</code></pre><h3 id="One-Shot-Requests-via-Keywords"><a class="docs-heading-anchor" href="#One-Shot-Requests-via-Keywords">One-Shot Requests via Keywords</a><a id="One-Shot-Requests-via-Keywords-1"></a><a class="docs-heading-anchor-permalink" href="#One-Shot-Requests-via-Keywords" title="Permalink"></a></h3><p>Skip the <code>Chat</code> object entirely for simple one-off requests:</p><pre><code class="language-julia hljs">result = chatrequest!(
@@ -157,7 +160,7 @@ if result isa LLMSuccess
     println(result.message.content)
 else
     println(&quot;Request failed — see result for details&quot;)
-end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Multiple dispatch is a programming style where the function that gets called depends on the types of multiple arguments, not just one. In Julia, this lets you define several methods with the same function name and have Julia automatically choose the most specific one based on the types of all the inputs.</code></pre><pre><code class="language-julia hljs"># `chatrequest!` appends the assistant reply on success, which is what makes the next
+end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Multiple dispatch is a programming feature where a function chooses which method to run based on the types of *all* its arguments, not just the first one. In Julia, this lets you define several methods with the same function name and have the most specific one automatically selected at runtime.</code></pre><pre><code class="language-julia hljs"># `chatrequest!` appends the assistant reply on success, which is what makes the next
 # user turn valid. If the previous call appended none (e.g. it failed), pushing another
 # user message would throw InvalidConversationError — so guard the follow-up turn.
 if !isempty(chat) &amp;&amp; chat[end].role == RoleAssistant
@@ -172,13 +175,13 @@ if !isempty(chat) &amp;&amp; chat[end].role == RoleAssistant
 else
     println(&quot;No assistant reply to build on — skipping the follow-up turn.&quot;)
 end</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">```julia
-describe(x::Int, y::Int) = &quot;two integers&quot;
-describe(x::Int, y::String) = &quot;an integer and a string&quot;
-describe(x, y) = &quot;something else&quot;
+greet(x::Int, y::Int) = &quot;Two integers&quot;
+greet(x::String, y::String) = &quot;Two strings&quot;
+greet(x, y) = &quot;Something else&quot;
 
-describe(1, 2)        # &quot;two integers&quot;
-describe(1, &quot;hello&quot;)  # &quot;an integer and a string&quot;
-describe(1.5, true)   # &quot;something else&quot;
+greet(1, 2)         # &quot;Two integers&quot;
+greet(&quot;hi&quot;, &quot;bye&quot;)   # &quot;Two strings&quot;
+greet(1, &quot;bye&quot;)      # &quot;Something else&quot;
 ```
 
 Conversation length: 5</code></pre><h2 id="Checking-Conversation-Validity"><a class="docs-heading-anchor" href="#Checking-Conversation-Validity">Checking Conversation Validity</a><a id="Checking-Conversation-Validity-1"></a><a class="docs-heading-anchor-permalink" href="#Checking-Conversation-Validity" title="Permalink"></a></h2><pre><code class="language-julia hljs">println(&quot;Is chat valid? &quot;, issendvalid(chat))  # true — system + user
@@ -192,4 +195,4 @@ chat = Chat(service=DeepSeekEndpoint(), model=&quot;deepseek-chat&quot;)
 chat = Chat(service=OllamaEndpoint(), model=&quot;llama3.1&quot;)
 
 # Mistral
-chat = Chat(service=MistralEndpoint(), model=&quot;mistral-large-latest&quot;)</code></pre><p>See the <a href="../multi_backend/#backend_guide">Multi-Backend Guide</a> for the full list of providers and configuration.</p><h2 id="JSON-Serialization"><a class="docs-heading-anchor" href="#JSON-Serialization">JSON Serialization</a><a id="JSON-Serialization-1"></a><a class="docs-heading-anchor-permalink" href="#JSON-Serialization" title="Permalink"></a></h2><p>The <code>Chat</code> object serializes cleanly to JSON for the API:</p><pre><code class="language-julia hljs">println(JSON.json(chat))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">{&quot;messages&quot;:[{&quot;content&quot;:&quot;You are a concise Julia programming tutor.&quot;,&quot;role&quot;:&quot;system&quot;},{&quot;content&quot;:&quot;What is multiple dispatch? Answer in 2-3 sentences.&quot;,&quot;role&quot;:&quot;user&quot;},{&quot;content&quot;:&quot;Multiple dispatch is a programming style where the function that gets called depends on the types of multiple arguments, not just one. In Julia, this lets you define several methods with the same function name and have Julia automatically choose the most specific one based on the types of all the inputs.&quot;,&quot;finish_reason&quot;:&quot;stop&quot;,&quot;role&quot;:&quot;assistant&quot;},{&quot;content&quot;:&quot;Give a short Julia code example of it.&quot;,&quot;role&quot;:&quot;user&quot;},{&quot;content&quot;:&quot;```julia\ndescribe(x::Int, y::Int) = \&quot;two integers\&quot;\ndescribe(x::Int, y::String) = \&quot;an integer and a string\&quot;\ndescribe(x, y) = \&quot;something else\&quot;\n\ndescribe(1, 2)        # \&quot;two integers\&quot;\ndescribe(1, \&quot;hello\&quot;)  # \&quot;an integer and a string\&quot;\ndescribe(1.5, true)   # \&quot;something else\&quot;\n```&quot;,&quot;finish_reason&quot;:&quot;stop&quot;,&quot;role&quot;:&quot;assistant&quot;}],&quot;model&quot;:&quot;gpt-5.4-mini&quot;}</code></pre><h2 id="Retry-Behaviour"><a class="docs-heading-anchor" href="#Retry-Behaviour">Retry Behaviour</a><a id="Retry-Behaviour-1"></a><a class="docs-heading-anchor-permalink" href="#Retry-Behaviour" title="Permalink"></a></h2><p><code>chatrequest!</code> automatically retries transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) with exponential backoff and jitter, honoring <code>Retry-After</code>. Attempts and total time are bounded by the resolved <a href="../../api/config/#UniLM.RequestConfig"><code>RequestConfig</code></a> (<code>max_attempts</code>, default 3; <code>total_deadline</code>, default 900 s). Pass <code>config=RequestConfig(max_attempts=1)</code> to disable retries for a call, or set scoped/process-wide defaults with <code>with_request_config</code> / <code>set_default_config!</code>. Timeouts surface as <code>LLMCallError</code> with <code>status = nothing</code> and the <code>UniLMTimeout</code> (phase, elapsed, limit) in <code>.cause</code>.</p><h2 id="Parameter-Validation"><a class="docs-heading-anchor" href="#Parameter-Validation">Parameter Validation</a><a id="Parameter-Validation-1"></a><a class="docs-heading-anchor-permalink" href="#Parameter-Validation" title="Permalink"></a></h2><p>The <code>Chat</code> constructor validates parameter ranges at construction time:</p><table><tr><th style="text-align: left">Parameter</th><th style="text-align: left">Valid Range</th></tr><tr><td style="text-align: left"><code>temperature</code></td><td style="text-align: left">0.0–2.0</td></tr><tr><td style="text-align: left"><code>top_p</code></td><td style="text-align: left">0.0–1.0</td></tr><tr><td style="text-align: left"><code>n</code></td><td style="text-align: left">1–10</td></tr><tr><td style="text-align: left"><code>presence_penalty</code></td><td style="text-align: left">-2.0–2.0</td></tr><tr><td style="text-align: left"><code>frequency_penalty</code></td><td style="text-align: left">-2.0–2.0</td></tr></table><p>Out-of-range values throw <code>ArgumentError</code>. Additionally, <code>temperature</code> and <code>top_p</code> are mutually exclusive.</p><h2 id="See-Also"><a class="docs-heading-anchor" href="#See-Also">See Also</a><a id="See-Also-1"></a><a class="docs-heading-anchor-permalink" href="#See-Also" title="Permalink"></a></h2><ul><li><a href="../../llm/#Chat"><code>Chat</code></a> — full type reference</li><li><a href="../../llm/#Message"><code>Message</code></a> — message type reference</li><li><a href="../tool_calling/#tools_guide">Tool Calling</a> — function calling with Chat Completions</li><li><a href="../streaming/#streaming_guide">Streaming</a> — real-time streaming</li><li><a href="../structured_output/#structured_guide">Structured Output</a> — JSON-constrained generation</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../../stability/">« Versioning &amp; Stability</a><a class="docs-footer-nextpage" href="../responses_api/">Responses API »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Tuesday 4 August 2026 05:34">Tuesday 4 August 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+chat = Chat(service=MistralEndpoint(), model=&quot;mistral-large-latest&quot;)</code></pre><p>See the <a href="../multi_backend/#backend_guide">Multi-Backend Guide</a> for the full list of providers and configuration.</p><h2 id="JSON-Serialization"><a class="docs-heading-anchor" href="#JSON-Serialization">JSON Serialization</a><a id="JSON-Serialization-1"></a><a class="docs-heading-anchor-permalink" href="#JSON-Serialization" title="Permalink"></a></h2><p>The <code>Chat</code> object serializes cleanly to JSON for the API:</p><pre><code class="language-julia hljs">println(JSON.json(chat))</code></pre><pre class="documenter-example-output"><code class="nohighlight hljs ansi">{&quot;messages&quot;:[{&quot;content&quot;:&quot;You are a concise Julia programming tutor.&quot;,&quot;role&quot;:&quot;system&quot;},{&quot;content&quot;:&quot;What is multiple dispatch? Answer in 2-3 sentences.&quot;,&quot;role&quot;:&quot;user&quot;},{&quot;content&quot;:&quot;Multiple dispatch is a programming feature where a function chooses which method to run based on the types of *all* its arguments, not just the first one. In Julia, this lets you define several methods with the same function name and have the most specific one automatically selected at runtime.&quot;,&quot;finish_reason&quot;:&quot;stop&quot;,&quot;role&quot;:&quot;assistant&quot;},{&quot;content&quot;:&quot;Give a short Julia code example of it.&quot;,&quot;role&quot;:&quot;user&quot;},{&quot;content&quot;:&quot;```julia\ngreet(x::Int, y::Int) = \&quot;Two integers\&quot;\ngreet(x::String, y::String) = \&quot;Two strings\&quot;\ngreet(x, y) = \&quot;Something else\&quot;\n\ngreet(1, 2)         # \&quot;Two integers\&quot;\ngreet(\&quot;hi\&quot;, \&quot;bye\&quot;)   # \&quot;Two strings\&quot;\ngreet(1, \&quot;bye\&quot;)      # \&quot;Something else\&quot;\n```&quot;,&quot;finish_reason&quot;:&quot;stop&quot;,&quot;role&quot;:&quot;assistant&quot;}],&quot;model&quot;:&quot;gpt-5.4-mini&quot;}</code></pre><h2 id="Retry-Behaviour"><a class="docs-heading-anchor" href="#Retry-Behaviour">Retry Behaviour</a><a id="Retry-Behaviour-1"></a><a class="docs-heading-anchor-permalink" href="#Retry-Behaviour" title="Permalink"></a></h2><p><code>chatrequest!</code> automatically retries transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) with exponential backoff and jitter, honoring <code>Retry-After</code>. Attempts and total time are bounded by the resolved <a href="../../api/config/#UniLM.RequestConfig"><code>RequestConfig</code></a> (<code>max_attempts</code>, default 3; <code>total_deadline</code>, default 900 s). Pass <code>config=RequestConfig(max_attempts=1)</code> to disable retries for a call, or set scoped/process-wide defaults with <code>with_request_config</code> / <code>set_default_config!</code>. Timeouts surface as <code>LLMCallError</code> with <code>status = nothing</code> and the <code>UniLMTimeout</code> (phase, elapsed, limit) in <code>.cause</code>.</p><h2 id="Parameter-Validation"><a class="docs-heading-anchor" href="#Parameter-Validation">Parameter Validation</a><a id="Parameter-Validation-1"></a><a class="docs-heading-anchor-permalink" href="#Parameter-Validation" title="Permalink"></a></h2><p>The <code>Chat</code> constructor validates parameter ranges at construction time:</p><table><tr><th style="text-align: left">Parameter</th><th style="text-align: left">Valid Range</th></tr><tr><td style="text-align: left"><code>temperature</code></td><td style="text-align: left">0.0–2.0</td></tr><tr><td style="text-align: left"><code>top_p</code></td><td style="text-align: left">0.0–1.0</td></tr><tr><td style="text-align: left"><code>n</code></td><td style="text-align: left">1–10</td></tr><tr><td style="text-align: left"><code>presence_penalty</code></td><td style="text-align: left">-2.0–2.0</td></tr><tr><td style="text-align: left"><code>frequency_penalty</code></td><td style="text-align: left">-2.0–2.0</td></tr></table><p>Out-of-range values throw <code>ArgumentError</code>. Additionally, <code>temperature</code> and <code>top_p</code> are mutually exclusive.</p><h2 id="See-Also"><a class="docs-heading-anchor" href="#See-Also">See Also</a><a id="See-Also-1"></a><a class="docs-heading-anchor-permalink" href="#See-Also" title="Permalink"></a></h2><ul><li><a href="../../llm/#Chat"><code>Chat</code></a> — full type reference</li><li><a href="../../llm/#Message"><code>Message</code></a> — message type reference</li><li><a href="../tool_calling/#tools_guide">Tool Calling</a> — function calling with Chat Completions</li><li><a href="../streaming/#streaming_guide">Streaming</a> — real-time streaming</li><li><a href="../structured_output/#structured_guide">Structured Output</a> — JSON-constrained generation</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../../stability/">« Versioning &amp; Stability</a><a class="docs-footer-nextpage" href="../responses_api/">Responses API »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Tuesday 4 August 2026 06:45">Tuesday 4 August 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

@@ -37,7 +37,10 @@
 - "Release gate" workflow: runs the full test suite with JET whole-package analysis
   enabled on `release/**` branches and manual dispatch. JET is expensive, so it
   gates releases instead of running in routine push/PR CI; the workflow sets no
-  provider keys and makes no billed calls.
+  provider keys and makes no billed calls. The analysis is a pre-suite step — it
+  runs before the behavioural test files, so it reports on the package exactly as
+  `using UniLM` leaves it, not on a session the suites have extended with mock
+  endpoints and test-only method overloads.
 
 ### Changed
 - Type-strengthening pass driven by the new JET whole-package release gate: over-wide

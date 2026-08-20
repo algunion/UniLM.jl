@@ -21,6 +21,24 @@ function get_pkg_version(name::AbstractString)
 end
 
 @testset failfast=true "UniLM.jl" begin
+    # ── Whole-package type stability runs first ──────────────────────────
+    # JET analyses the package as a user gets it: freshly loaded, with only the
+    # methods `using UniLM` defines. Running it before the behavioural suites
+    # keeps that meaning — those suites define extra methods (mock endpoints,
+    # test-only overloads of internal seams) that widen dispatch tables and can
+    # change what inference concludes about package code. Analysing the polluted
+    # session would report on a method table no user ever has.
+    @testset "Type Stability (JET.jl)" begin
+        if VERSION >= v"1.12" && get(ENV, "UNILM_RUN_JET", "false") == "true"
+            @assert get_pkg_version("JET") >= v"0.11"
+            JET.test_package(UniLM;
+                target_modules=(UniLM,),
+                ignore_missing_comparison=true)
+        else
+            @info "JET.jl checks skipped (set UNILM_RUN_JET=true to enable)"
+        end
+    end
+
     @testset "api.jl" begin
         include("api.jl")
     end
@@ -189,17 +207,6 @@ end
 
     @testset "Aqua.jl quality checks" begin
         Aqua.test_all(UniLM; ambiguities=true)
-    end
-
-    @testset "Type Stability (JET.jl)" begin
-        if VERSION >= v"1.12" && get(ENV, "UNILM_RUN_JET", "false") == "true"
-            @assert get_pkg_version("JET") >= v"0.11"
-            JET.test_package(UniLM;
-                target_modules=(UniLM,),
-                ignore_missing_comparison=true)
-        else
-            @info "JET.jl checks skipped (set UNILM_RUN_JET=true to enable)"
-        end
     end
 
     @testset "integration — image generation" begin

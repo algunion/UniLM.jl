@@ -659,13 +659,15 @@ end
                     res.cause.phase === :stream_idle &&
                     res.cause.limit == 1.0 &&
                     # CONTRACT: elapsed is the BYTE GAP since the last raw chunk,
-                    # not whole-call elapsed. Two mechanisms report the same gap:
-                    # HTTP 2.x's native read_idle_timeout wins at ~1.0 s, our own
-                    # guard (1.x, or if it wins the race) fires within
-                    # [limit, limit+period]=[1.0,1.25]. Either way the gap sits
-                    # near the 1.0 s limit — bounded well under the 10 s window a
-                    # whole-call or total-deadline figure could not satisfy.
-                    0.95 <= res.cause.elapsed <= 1.5
+                    # not whole-call elapsed. Two mechanisms race to report it:
+                    # our guard fires within [limit, limit+period]=[1.0,1.25];
+                    # HTTP 2.x's native read_idle_timeout checks at the timeout's
+                    # own granularity, so its worst-case detection is ~2× the
+                    # limit (observed 2.04 s on loaded CI runners). The window
+                    # bounds detection LATENCY; the elapsed-is-the-gap semantics
+                    # are pinned exactly by the deterministic classifier test in
+                    # test/requests.jl.
+                    0.95 <= res.cause.elapsed <= 2.5
             end
         catch
             false
@@ -783,6 +785,9 @@ end
         task = chatrequest!(chat; config=cfg)
         @test timedwait(() -> istaskdone(task), 45.0) === :ok
         res = fetch(task)
+        # On failure, surface what came back (this contract has failed only on
+        # loaded CI runners, where nothing can be inspected interactively).
+        res isa LLMSuccess || @warn "EOF-less terminal stream testset diagnostics" result = res
         @test res isa LLMSuccess
         @test res.message.content == "done."
         @test res.message.finish_reason == "stop"

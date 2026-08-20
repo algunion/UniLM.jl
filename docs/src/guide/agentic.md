@@ -96,6 +96,13 @@ status = get_response("<interaction_id>"; service=GEMINIServiceEndpoint)
 cancel_response("<interaction_id>"; service=GEMINIServiceEndpoint)
 ```
 
+Note: a freshly created background interaction id may briefly return a
+`403 permission_denied` `ResponseFailure` before the resource becomes
+retrievable. Poll with a short delay before treating that as a real
+permission error. The automatic retry policy deliberately does not retry
+403 (permission errors are normally permanent), so this is the caller's
+poll loop to handle.
+
 ## Usage & cost (cross-provider)
 
 [`token_usage`](@ref) and [`estimated_cost`](@ref) work for Gemini too — the

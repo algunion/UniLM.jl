@@ -92,7 +92,16 @@ end
                               input="Write one sentence about the ocean.", background=true))
     @test started isa ResponseSuccess
     id = started.response.id
-    got = get_response(id; service=UniLM.GEMINIServiceEndpoint)   # bounded single poll
+    # A freshly created background id can briefly return 403 permission_denied
+    # before the resource becomes visible (observed live 2026-08-20: immediate
+    # GET 403, same id retrievable seconds later). Bounded poll retries ONLY
+    # that propagation shape; any other failure still fails immediately.
+    got = get_response(id; service=UniLM.GEMINIServiceEndpoint)
+    deadline = time() + 10
+    while got isa ResponseFailure && got.status == 403 && time() < deadline
+        sleep(1)
+        got = get_response(id; service=UniLM.GEMINIServiceEndpoint)
+    end
     @test got isa ResponseSuccess
     @test got.response.id == id
     @test got.response.status in ("in_progress", "completed")
@@ -101,12 +110,16 @@ end
 end
 
 @testset "Interactions — google_search grounded round-trip (live)" begin
+    # A thinking model answers well-known facts from memory and skips a merely
+    # permitted search — compel the tool: explicit instruction + a question
+    # about post-training state.
     res = respond(Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.7-flash",
-                          input="Who won the 2022 FIFA World Cup? Search if needed.",
+                          input="Use Google Search to find the current stable version of the Julia programming language, then answer with what the search returned.",
                           tools=[gemini_google_search()]))
     @test res isa ResponseSuccess
     @test !isempty(output_text(res))
     @test any(o -> get(o, "type", "") == "google_search_call", res.response.output)
+    @test any(o -> get(o, "type", "") == "google_search_result", res.response.output)
 end
 
 @testset "Interactions — streaming surfaces a function call (live)" begin

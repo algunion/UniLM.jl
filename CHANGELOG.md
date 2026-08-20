@@ -34,6 +34,9 @@
   `text(::LLMSuccess)` returning the reply content (`nothing` for tool-calls-only
   turns), and `LLMResultError` — thrown by `text` on a `LLMFailure`/`LLMCallError`;
   its `showerror` reveals only the status and a trimmed response excerpt.
+- Cost accounting: pricing entry for `gemini-3.7-flash` (introductory rate through
+  2026-12-31; the output rate includes thinking tokens). The live Gemini suites now
+  pin this model.
 - "Release gate" workflow: runs the full test suite with JET whole-package analysis
   enabled on `release/**` branches and manual dispatch. JET is expensive, so it
   gates releases instead of running in routine push/PR CI; the workflow sets no

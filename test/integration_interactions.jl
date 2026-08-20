@@ -1,5 +1,6 @@
 # ─── Gemini Interactions integration tests (live) ────────────────────────────
-# Requires UNILM_LIVE=1 and GEMINI_API_KEY (billing-enabled). Uses gemini-3.1-flash-lite (cheapest).
+# Requires UNILM_LIVE=1 and GEMINI_API_KEY (billing-enabled). Uses gemini-3.7-flash (a
+# thinking model; no max_tokens is passed, so the API's default output budget absorbs thoughts).
 # Run once when green; do not rerun. Exercises the agentic verb end-to-end:
 # encode → HTTP → decode → neutral ResponseObject accessors.
 
@@ -8,7 +9,7 @@ if !haskey(ENV, "GEMINI_API_KEY") || get(ENV, "UNILM_LIVE", "") != "1"
 else
 
 @testset "Interactions — text" begin
-    r = Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+    r = Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.7-flash",
                 input="Reply with exactly one word: hello")
     result = respond(r)
     @test result isa ResponseSuccess
@@ -17,7 +18,7 @@ else
 end
 
 @testset "Interactions — tool round-trip" begin
-    r = Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+    r = Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.7-flash",
                 input="What is the weather in Tokyo? Call the get_weather function.",
                 tools=[function_tool("get_weather", "Get current weather for a city",
                        parameters=Dict("type" => "object",
@@ -32,7 +33,7 @@ end
     # continue: submit the tool result via previous_interaction_id (observed shape:
     # function_result requires call_id + name + result)
     call = calls[1]
-    r2 = Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+    r2 = Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.7-flash",
                  previous_response_id=result.response.id,
                  input=[Dict("type" => "function_result", "call_id" => call["call_id"],
                              "name" => call["name"], "result" => Dict("temperature" => "22C"))])
@@ -43,7 +44,7 @@ end
 
 @testset "Interactions — streaming" begin
     payloads = Any[]
-    r = Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+    r = Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.7-flash",
                 input="Count from one to five.", stream=true)
     task = respond(r; callback=(c, _) -> push!(payloads, c))
     result = fetch(task)
@@ -54,7 +55,7 @@ end
 end
 
 @testset "Interactions — tool loop (live, neutral tool_result round-trip)" begin
-    r = Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+    r = Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.7-flash",
                 input="What is the weather in Tokyo? Use the get_weather tool, then tell me.",
                 tools=[function_tool("get_weather", "Get current weather for a city",
                     parameters=Dict("type" => "object",
@@ -70,7 +71,7 @@ end
 end
 
 @testset "Interactions — tool_choice required forces a call (live)" begin
-    forced = respond(Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+    forced = respond(Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.7-flash",
         input="Just say hello, nothing else.", tool_choice="required",
         tools=[function_tool("get_weather", "Get weather",
             parameters=Dict("type" => "object", "properties" => Dict("city" => Dict("type" => "string"))))]))
@@ -79,7 +80,7 @@ end
 end
 
 @testset "Interactions — estimated_cost > 0 (live usage)" begin
-    res = respond(Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+    res = respond(Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.7-flash",
                           input="Name three primary colors."))
     @test res isa ResponseSuccess
     @test token_usage(res).prompt_tokens > 0
@@ -87,7 +88,7 @@ end
 end
 
 @testset "Interactions — background create → poll → cancel (live)" begin
-    started = respond(Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+    started = respond(Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.7-flash",
                               input="Write one sentence about the ocean.", background=true))
     @test started isa ResponseSuccess
     id = started.response.id
@@ -100,7 +101,7 @@ end
 end
 
 @testset "Interactions — google_search grounded round-trip (live)" begin
-    res = respond(Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+    res = respond(Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.7-flash",
                           input="Who won the 2022 FIFA World Cup? Search if needed.",
                           tools=[gemini_google_search()]))
     @test res isa ResponseSuccess
@@ -112,7 +113,7 @@ end
     # Streamed tool use: the terminal event is interaction.completed with
     # status requires_action and NO steps — the function call must be
     # assembled from the incremental step events.
-    r = Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+    r = Respond(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.7-flash",
                 input="What is the weather in Oslo right now? Use the tool.",
                 stream=true, tool_choice="required",
                 tools=[function_tool("get_weather", "Get current weather for a city",

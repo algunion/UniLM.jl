@@ -1193,39 +1193,30 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                 # Interrupt-first, chain-walked: a user interrupt nested inside a task or
                 # transport wrapper must still surface before any timeout/transport mapping.
                 _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
-                # A byte-gap idle breach reaches here two ways once the guard is armed (past
-                # the first byte): our own idle guard closed the socket (`_idle_fired` — the
-                # caught IOError is the echo of that close), OR HTTP 2.x's native
-                # `read_idle_timeout` fired first (an `HTTP.TimeoutError`; the streaming seam
-                # sets it to `stream_idle_timeout` as a fast path, so it can win the race
-                # against our guard's `limit + period` tick). Both are the SAME breach and map
-                # identically to :stream_idle — never a retryable transport failure.
-                # INVARIANT: this blanket map is sound ONLY while the streaming attempt arms no
-                # native mid-stream timer besides read-idle. HTTP.jl (2.5.5) reports a
-                # read-idle breach with the literal operation="request", indistinguishable by
-                # label from a whole-exchange request timeout — so a native request_timeout
-                # added to `_native_stream_kwargs` would surface here as a mislabeled,
-                # retry-suppressed :stream_idle. See the mirror note there before adding any new
-                # native streaming timer.
-                if guard !== nothing &&
-                   (_idle_fired(guard) || _find_exception(x -> x isa HTTP.TimeoutError, e) !== nothing)
+                # Byte-gap idle breach: classified by `_classify_stream_timeout` from the
+                # seam's armed-timer set (our guard's close echo, or the 2.x native
+                # read-idle timer — which can fire before the first byte too, while the
+                # response-header wait is still in progress). Never a retryable transport
+                # failure, regardless of when in the attempt it fired.
+                breach = _classify_stream_timeout(e, guard, cfg, t0)
+                if breach !== nothing
                     # Terminal already recorded — the fire landed during the post-loop
                     # closeread on an EOF-less peer; trailing bytes past the gap are
                     # acceptable, so finalize the recorded outcome rather than a timeout.
                     !isnothing(result[]) && return ResponseSuccess(response=result[]::ResponseObject)
                     te = terminal_error[]
                     !isnothing(te) && return _agentic_terminal_result(te, nothing, io_ref[])
-                    # elapsed = the byte GAP recorded at breach (not whole-call elapsed).
-                    to = UniLMTimeout(:stream_idle, _idle_gap_s(guard), cfg.stream_idle_timeout)
-                    return ResponseCallError(error=sprint(showerror, to), status=nothing, cause=to)
+                    return ResponseCallError(error=sprint(showerror, breach), status=nothing, cause=breach)
                 end
                 # Unwrap to the root cause before classifying: HTTP.open's 1.x request
                 # machinery (ExceptionRequest) wraps an exception thrown from the streaming
                 # handler, so the first-byte/deadline `_with_deadline` UniLMTimeout arrives
                 # WRAPPED, not bare — the same `_unwrap_exception` the chat driver uses in
-                # `_stream_drive`. (2.x instead surfaces the native read timeout, which
-                # `_map_native_timeout` finds by chain walk; 1.x has no native stream timer,
-                # so the deadline guard is the only first-byte source and it must be unwrapped.)
+                # `_stream_drive`. (Native read-idle timeouts were consumed above; what
+                # `_map_native_timeout` still sees here is the connect phase — 2.x
+                # connect/TLS labels, 1.x connect sentinel — found by chain walk. The 1.x
+                # major arms no native stream timer, so there the deadline guard is the
+                # only first-byte source and it must be unwrapped.)
                 u = _unwrap_exception(e)
                 mapped = u isa UniLMTimeout ? u :
                          _map_native_timeout(e, cfg, min(_remaining_s(cfg, t0), cfg.request_timeout), t0)

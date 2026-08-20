@@ -67,6 +67,20 @@
 - Aqua's method-ambiguity check is enabled in the test suite (`ambiguities=true`)
   after measuring zero ambiguities in the package.
 
+### Fixed
+- Streaming: a byte-gap idle breach is now always classified as
+  `UniLMTimeout(:stream_idle)` — non-retryable — on the HTTP.jl 2.x major.
+  Previously the classification depended on when the breach fired: HTTP 2.x also
+  applies its native `read_idle_timeout` (armed at `stream_idle_timeout`) to the
+  response-header wait, so a breach landing before the first byte was reported as
+  a retryable `:request`-phase timeout with `request_timeout` as its limit, and a
+  mute stream could be silently retried. Whether real runs hit that window is
+  timing-sensitive (newer HTTP 2.6.x releases changed server task scheduling,
+  flipping it under load); the classifier now decides from which native timers
+  the streaming seam arms, so the phase is deterministic. Chat streaming and the
+  Responses streaming surface share the fix; HTTP 1.x behavior (idle-guard
+  enforcement only) is unchanged.
+
 ### CI and docs
 - Pull-request documentation builds run without provider API keys — examples render
   offline — eliminating live-API spend on PRs; push, tag, and manual builds still

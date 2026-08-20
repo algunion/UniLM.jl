@@ -644,13 +644,13 @@ end
 end
 
 @testset "_accumulate_cost! fallback is a no-op for non-success" begin
-    # requests.jl:352 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
+    # requests.jl:392 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
     # success types are specialized in accounting.jl, so a failure result must land here:
     # return nothing AND leave cumulative cost untouched (falsifies accidental accumulation).
     chat = Chat(model="gpt-4.1-nano")
     chat._cumulative_cost[] = 0.25
     failure = LLMFailure(response="server exploded", status=500, self=chat)
-    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 352
+    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 392
     @test UniLM._accumulate_cost!(chat, failure) === nothing
     @test cumulative_cost(chat) == 0.25       # unchanged: the fallback did not add anything
 
@@ -721,4 +721,65 @@ end
     @test UniLM._unwrap_exception(root) === root
     ti = Task(() -> throw(InterruptException())); schedule(ti); yield()
     @test UniLM._unwrap_exception(TaskFailedException(ti)) isa InterruptException
+end
+
+@testset "_classify_stream_timeout decides :stream_idle from the armed-timer set" begin
+    # Constructed exceptions + directly-constructed guard states: no servers, no
+    # timers, no timing — the classification is a pure function of (exception,
+    # guard state, config), so the phase can be pinned deterministically.
+    cfg = RequestConfig(stream_idle_timeout = 1.0)
+    t0 = time_ns()
+
+    # A FIRED guard is a breach on both majors — the caught error is the echo of
+    # our own close — and elapsed reports the frozen byte GAP, not call time.
+    fired = UniLM._IdleGuard(:fired, time_ns(), 1.23, 1.0, nothing)
+    to = UniLM._classify_stream_timeout(Base.IOError("read: connection reset", 0), fired, cfg, t0)
+    @test to isa UniLM.UniLMTimeout
+    @test to.phase === :stream_idle
+    @test to.elapsed == 1.23
+    @test to.limit == 1.0
+    @test !UniLM._retryable_exception(to)   # :stream_idle is never blanket-retried
+
+    if UniLM._HTTP_MAJOR2
+        # 2.x: with the read-idle fast path armed (finite idle bound), a native
+        # non-connect TimeoutError IS the read-idle timer by elimination — the
+        # streaming seam arms no other native non-connect timer. That holds even
+        # BEFORE the idle guard exists (guard === nothing): HTTP 2.x also bounds
+        # the response-header wait by read_idle_timeout, so the breach can land
+        # pre-first-byte and the phase must not depend on guard arming order.
+        e_req = HTTP.TimeoutError("request", Int64(1_000_000_000), Int64(0))
+        pre = UniLM._classify_stream_timeout(e_req, nothing, cfg, t0)
+        @test pre isa UniLM.UniLMTimeout
+        @test pre.phase === :stream_idle
+        @test pre.limit == 1.0
+        @test !UniLM._retryable_exception(pre)
+        # Same decision with an armed-but-unfired guard, and chain-walked out of
+        # a task wrapper (how a spawned attempt actually delivers it).
+        tt = Task(() -> throw(e_req)); schedule(tt); yield()
+        armed = UniLM._IdleGuard(:armed, time_ns(), 0.0, 1.0, nothing)
+        mid = UniLM._classify_stream_timeout(TaskFailedException(tt), armed, cfg, t0)
+        @test mid isa UniLM.UniLMTimeout && mid.phase === :stream_idle
+        # Connect/TLS-labeled native timeouts are NOT idle breaches: they fall
+        # through to the :connect mapping and remain retryable by phase.
+        e_conn = HTTP.TimeoutError("connect", Int64(1_000_000_000), Int64(0))
+        e_tls = HTTP.TimeoutError("tls_handshake", Int64(1_000_000_000), Int64(0))
+        @test UniLM._classify_stream_timeout(e_conn, nothing, cfg, t0) === nothing
+        @test UniLM._classify_stream_timeout(e_tls, nothing, cfg, t0) === nothing
+        # Idle disabled (Inf): the seam arms no read-idle timer, so a non-connect
+        # native timeout cannot be attributed to it.
+        @test UniLM._classify_stream_timeout(e_req, nothing,
+            RequestConfig(stream_idle_timeout = Inf), t0) === nothing
+    else
+        # 1.x: streams arm NO native read timer, so a native TimeoutError alone is
+        # never an idle breach — only the guard's own close (the fired branch) is.
+        @test UniLM._classify_stream_timeout(HTTP.TimeoutError(5), nothing, cfg, t0) === nothing
+        @test UniLM._classify_stream_timeout(HTTP.TimeoutError(5),
+            UniLM._IdleGuard(:armed, time_ns(), 0.0, 1.0, nothing), cfg, t0) === nothing
+    end
+
+    # Non-timeout exceptions without a fired guard are not breaches (fallthrough
+    # to transport classification), whether or not the guard is armed.
+    @test UniLM._classify_stream_timeout(Base.IOError("boom", 0), nothing, cfg, t0) === nothing
+    @test UniLM._classify_stream_timeout(Base.IOError("boom", 0),
+        UniLM._IdleGuard(:armed, time_ns(), 0.0, 1.0, nothing), cfg, t0) === nothing
 end

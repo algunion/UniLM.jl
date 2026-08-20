@@ -28,6 +28,10 @@ end
     # test-only overloads of internal seams) that widen dispatch tables and can
     # change what inference concludes about package code. Analysing the polluted
     # session would report on a method table no user ever has.
+    #
+    # The release-gate workflow runs the same analysis in a dedicated process,
+    # which is the authoritative one; this in-suite copy is the local equivalent
+    # and stays off unless UNILM_RUN_JET=true.
     @testset "Type Stability (JET.jl)" begin
         if VERSION >= v"1.12" && get(ENV, "UNILM_RUN_JET", "false") == "true"
             @assert get_pkg_version("JET") >= v"0.11"

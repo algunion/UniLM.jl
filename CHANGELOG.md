@@ -34,13 +34,17 @@
   `text(::LLMSuccess)` returning the reply content (`nothing` for tool-calls-only
   turns), and `LLMResultError` — thrown by `text` on a `LLMFailure`/`LLMCallError`;
   its `showerror` reveals only the status and a trimmed response excerpt.
-- "Release gate" workflow: runs the full test suite with JET whole-package analysis
-  enabled on `release/**` branches and manual dispatch. JET is expensive, so it
-  gates releases instead of running in routine push/PR CI; the workflow sets no
-  provider keys and makes no billed calls. The analysis is a pre-suite step — it
-  runs before the behavioural test files, so it reports on the package exactly as
-  `using UniLM` leaves it, not on a session the suites have extended with mock
-  endpoints and test-only method overloads.
+- "Release gate" workflow: on `release/**` branches and manual dispatch, runs a JET
+  whole-package type-stability analysis and then the full test suite. JET is
+  expensive, so it gates releases instead of running in routine push/PR CI; the
+  workflow sets no provider keys and makes no billed calls. The analysis is its own
+  step in its own process, ahead of the suite and without coverage instrumentation,
+  so it reports on the package exactly as `using UniLM` leaves it — not on a session
+  the test files have extended with mock endpoints and test-only method overloads,
+  which widen dispatch and change what inference concludes about package code. The
+  step fails on any package-code finding. The same analysis stays available inside
+  the test suite for local use behind `UNILM_RUN_JET=true`, where it likewise runs
+  ahead of the behavioural tests.
 
 ### Changed
 - Type-strengthening pass driven by the new JET whole-package release gate: over-wide

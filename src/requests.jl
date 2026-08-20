@@ -93,13 +93,14 @@ end
 # it rides along as a fast path. The 1.x readtimeout bounds the WHOLE
 # exchange — it would kill long healthy streams — so streams never set it and
 # the idle guard is the sole idle enforcement there.
-# INVARIANT: read-idle is the ONLY native mid-stream timer armed here. Each
-# stream driver's catch maps every mid-stream HTTP.TimeoutError to :stream_idle
-# because HTTP.jl surfaces a read-idle breach with operation="request" —
-# indistinguishable by label from any other request-phase timeout. Adding a
-# native request_timeout (or any new mid-stream timer) to this set therefore
-# requires revisiting that mapping (see the catches in `_stream_attempt` and
-# `_respond_stream`).
+# INVARIANT: connect and (2.x, finite idle bound) read-idle are the ONLY
+# native timers armed here. `_classify_stream_timeout` attributes every
+# non-connect native timeout on a streaming attempt to the read-idle timer BY
+# ELIMINATION, because HTTP.jl surfaces a read-idle breach with the literal
+# operation="request" — indistinguishable by label from any other
+# request-phase timeout. Adding a native request_timeout (or any new
+# streaming timer) to this set therefore requires revisiting that classifier
+# first.
 function _native_stream_kwargs(cfg::RequestConfig; major2::Bool=_HTTP_MAJOR2)
     return major2 ?
         (connect_timeout   = _native_seconds_real(cfg.connect_timeout),
@@ -133,6 +134,45 @@ function _map_native_timeout(e, cfg::RequestConfig, bound::Float64, t0::UInt64):
         return UniLMTimeout(:connect, _elapsed_s(t0), cfg.connect_timeout)
     end
     return nothing
+end
+
+"""
+    _classify_stream_timeout(e, idle, cfg, t0) -> Union{Nothing,UniLMTimeout}
+
+Classify a caught streaming-attempt exception as a byte-gap idle breach —
+`UniLMTimeout(:stream_idle, …)` — or return `nothing` for the caller's
+fallthrough (connect mapping / transport handling / rethrow).
+
+A breach is recognized from TWO timing-independent facts, never from whether
+the in-driver idle guard happened to be armed yet:
+
+1. `_idle_fired(idle)`: our own guard closed the socket — the caught error is
+   the echo of that close.
+2. A native `HTTP.TimeoutError` whose operation is NOT connect/TLS, while the
+   2.x read-idle fast path is armed (`cfg.stream_idle_timeout < Inf`). The
+   streaming seam arms no other native non-connect timer (see
+   `_native_stream_kwargs`), so such a timeout IS the read-idle timer by
+   elimination — regardless of where in the exchange it fired. In particular,
+   HTTP 2.x bounds the response-header wait by
+   `min(response_header_timeout, read_idle_timeout)`, so the byte-gap bound
+   can breach BEFORE the first byte arrives — before the idle guard exists.
+   Deciding from the armed-timer set keeps the phase deterministic across
+   that arming-order race (observed flipping with HTTP 2.6.x server-side
+   task-scheduling changes).
+
+`elapsed` reports the measured byte gap where the guard measured one; for a
+pre-first-byte breach the attempt's own elapsed time is the honest "no bytes
+for this long" bound. On the 1.x major fact 2 is structurally impossible
+(streams arm no native read timer there), leaving fact 1 — exactly the 1.x
+enforcement path.
+"""
+function _classify_stream_timeout(e, idle, cfg::RequestConfig, t0::UInt64)::Union{Nothing,UniLMTimeout}
+    native = _find_exception(x -> x isa HTTP.TimeoutError, e)
+    native_idle = native !== nothing && _HTTP_MAJOR2 && cfg.stream_idle_timeout < Inf &&
+                  _timeout_phase_2x(native.operation) !== :connect
+    (_idle_fired(idle) || native_idle) || return nothing
+    gap = idle === nothing ? _elapsed_s(t0) : _idle_gap_s(idle)
+    return UniLMTimeout(:stream_idle, gap, cfg.stream_idle_timeout)
 end
 
 # Retry-loop predicate: a per-attempt timeout (:connect/:request — a timeout
@@ -266,22 +306,27 @@ end
 # ─── URL Dispatch ─────────────────────────────────────────────────────────────
 # Endpoints are determined by (ServiceEndpoint, RequestType), not model name.
 
-get_url(chat::Chat) = get_url(chat.service, chat)
-get_url(emb::Embeddings) = get_url(emb.service, emb)
+# Assert `::String` at the request-URL entry points: the per-endpoint `get_url` methods
+# each build a `String`, but the abstract `service`-typed dispatch can lose that precision
+# under coverage/`--check-bounds=yes` (which suppress the constant-folding that resolves it),
+# widening to `Union{Missing,…}`. The assertion is inference-independent and holds under any
+# Julia flags, keeping every `url` a concrete `String` at the HTTP seam.
+get_url(chat::Chat)::String = get_url(chat.service, chat)::String
+get_url(emb::Embeddings)::String = get_url(emb.service, emb)::String
 
-get_url(::Type{OPENAIServiceEndpoint}, ::Chat) = OPENAI_BASE_URL * CHAT_COMPLETIONS_PATH
-get_url(::Type{AZUREServiceEndpoint}, chat::Chat) = ENV[AZURE_OPENAI_BASE_URL] * _azure_deployment_path(chat.model) * "/chat/completions?api-version=$(ENV[AZURE_OPENAI_API_VERSION])"
-get_url(::Type{GEMINIOpenAIServiceEndpoint}, ::Chat) = GEMINI_CHAT_URL
+get_url(::Type{OPENAIServiceEndpoint}, ::Chat)::String = OPENAI_BASE_URL * CHAT_COMPLETIONS_PATH
+get_url(::Type{AZUREServiceEndpoint}, chat::Chat)::String = ENV[AZURE_OPENAI_BASE_URL] * _azure_deployment_path(chat.model) * "/chat/completions?api-version=$(ENV[AZURE_OPENAI_API_VERSION])"
+get_url(::Type{GEMINIOpenAIServiceEndpoint}, ::Chat)::String = GEMINI_CHAT_URL
 
-get_url(::Type{OPENAIServiceEndpoint}, ::Embeddings) = OPENAI_BASE_URL * EMBEDDINGS_PATH
-get_url(::Type{GEMINIOpenAIServiceEndpoint}, ::Embeddings) = GEMINI_OPENAI_BASE * "/embeddings"
+get_url(::Type{OPENAIServiceEndpoint}, ::Embeddings)::String = OPENAI_BASE_URL * EMBEDDINGS_PATH
+get_url(::Type{GEMINIOpenAIServiceEndpoint}, ::Embeddings)::String = GEMINI_OPENAI_BASE * "/embeddings"
 
-# Single typed entry over the per-endpoint `_resolve_base_url` dispatch. That method set is
-# wider than inference will union at an abstract `service::ServiceEndpointSpec` call — the
-# `Type{<:ServiceEndpoint}` limb alone exceeds the union-split budget and widens to `Any` —
-# so the entry asserts the `String` result, keeping every caller's
-# `url = _api_base_url(service) * PATH` a concrete `String` instead of a widened union.
-_api_base_url(service::ServiceEndpointSpec) = _resolve_base_url(service)::String
+# Single typed entry over the per-endpoint `_resolve_base_url` dispatch, whose method set is
+# wider than inference will union at an abstract `service::ServiceEndpointSpec` call (the
+# `Type{<:ServiceEndpoint}` limb exceeds the union-split budget → `Any`). A DECLARED
+# `::String` return (not a body typeassert) is a method-signature guarantee that holds under
+# that widening AND under coverage instrumentation, keeping every caller's `url` a `String`.
+_api_base_url(service::ServiceEndpointSpec)::String = _resolve_base_url(service)
 
 _resolve_base_url(::Type{OPENAIServiceEndpoint}) = OPENAI_BASE_URL
 _resolve_base_url(::Type{AZUREServiceEndpoint}) = throw(ArgumentError("Responses API is only supported with OPENAIServiceEndpoint"))
@@ -294,11 +339,11 @@ _resolve_base_url(::Type{<:ServiceEndpoint}) = throw(ArgumentError("base URL is 
 
 # ─── GenericOpenAIEndpoint dispatch ──────────────────────────────────────────
 
-get_url(s::GenericOpenAIEndpoint, ::Chat) = rstrip(s.base_url, '/') * CHAT_COMPLETIONS_PATH
-get_url(s::GenericOpenAIEndpoint, ::Embeddings) = rstrip(s.base_url, '/') * EMBEDDINGS_PATH
+get_url(s::GenericOpenAIEndpoint, ::Chat)::String = rstrip(s.base_url, '/') * CHAT_COMPLETIONS_PATH
+get_url(s::GenericOpenAIEndpoint, ::Embeddings)::String = rstrip(s.base_url, '/') * EMBEDDINGS_PATH
 _resolve_base_url(s::GenericOpenAIEndpoint) = String(rstrip(s.base_url, '/'))
 
-function auth_header(s::GenericOpenAIEndpoint)
+function auth_header(s::GenericOpenAIEndpoint)::Vector{Pair{String,String}}
     hdrs = ["Content-Type" => "application/json"]
     !isempty(s.api_key) && pushfirst!(hdrs, "Authorization" => "Bearer $(s.api_key)")
     hdrs
@@ -306,31 +351,31 @@ end
 
 # ─── DeepSeekEndpoint dispatch ───────────────────────────────────────────────
 
-get_url(s::DeepSeekEndpoint, ::Chat) = DEEPSEEK_BASE_URL * CHAT_COMPLETIONS_PATH
-get_url(s::DeepSeekEndpoint, ::Embeddings) = DEEPSEEK_BASE_URL * EMBEDDINGS_PATH
+get_url(s::DeepSeekEndpoint, ::Chat)::String = DEEPSEEK_BASE_URL * CHAT_COMPLETIONS_PATH
+get_url(s::DeepSeekEndpoint, ::Embeddings)::String = DEEPSEEK_BASE_URL * EMBEDDINGS_PATH
 _resolve_base_url(s::DeepSeekEndpoint) = DEEPSEEK_BASE_URL
 
-function auth_header(s::DeepSeekEndpoint)
+function auth_header(s::DeepSeekEndpoint)::Vector{Pair{String,String}}
     ["Authorization" => "Bearer $(s.api_key)", "Content-Type" => "application/json"]
 end
 
 # ─── Built-in endpoint auth ─────────────────────────────────────────────────
 
-function auth_header(::Type{OPENAIServiceEndpoint})
+function auth_header(::Type{OPENAIServiceEndpoint})::Vector{Pair{String,String}}
     [
         "Authorization" => "Bearer $(ENV[OPENAI_API_KEY])",
         "Content-Type" => "application/json"
     ]
 end
 
-function auth_header(::Type{AZUREServiceEndpoint})
+function auth_header(::Type{AZUREServiceEndpoint})::Vector{Pair{String,String}}
     [
         "api-key" => "$(ENV[AZURE_OPENAI_API_KEY])",
         "Content-Type" => "application/json"
     ]
 end
 
-function auth_header(::Type{GEMINIOpenAIServiceEndpoint})
+function auth_header(::Type{GEMINIOpenAIServiceEndpoint})::Vector{Pair{String,String}}
     [
         "Authorization" => "Bearer $(ENV[GEMINI_API_KEY])",
         "Content-Type" => "application/json"
@@ -584,8 +629,12 @@ ONE streaming connection attempt with fresh accumulation state. `callback`/`on_t
 arrive pre-wrapped by `_stream_drive` (they flip its callback-fired flag). Returns the
 typed result plus the `HTTP.Response` (`nothing` on the EOF-less finalize path) so the
 caller can honor `Retry-After`; throws on connect/first-byte timeout and transport
-failures — retry classification is the caller's job. `StreamState`, the SSE line carry,
-and the raw byte log are all locals: a retried attempt cannot inherit partial SSE state.
+failures — retry classification is the caller's job. A breach of the byte-gap idle
+bound throws `UniLMTimeout(:stream_idle, …)` wherever in the attempt it fires (on the
+2.x major the native read-idle timer also bounds the response-header wait, so it can
+undercut the request-phase bound; see `_classify_stream_timeout`). `StreamState`, the
+SSE line carry, and the raw byte log are all locals: a retried attempt cannot inherit
+partial SSE state.
 """
 function _stream_attempt(chat::Chat, body, callback, on_tool_call,
                          cfg::RequestConfig, t0::UInt64, io_ref)
@@ -676,23 +725,13 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
     catch e
         # Chain-walk: an interrupt nested inside a wrapper must still surface first.
         _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
-        # A byte-gap idle breach reaches here two ways once the guard is armed
-        # (past the first byte): our own idle guard closed the socket (`_idle_fired`
-        # — the caught IOError is the echo of that close), OR HTTP 2.x's native
-        # `read_idle_timeout` fired first (an `HTTP.TimeoutError`; the streaming
-        # seam sets it to `stream_idle_timeout` as a fast path, so it can win the
-        # race against our guard's `limit + period` tick). Both are the SAME breach
-        # and map identically — never a retryable transport failure.
-        # INVARIANT: this blanket map is sound ONLY while the streaming attempt
-        # arms no native mid-stream timer besides read-idle. HTTP.jl (2.5.5)
-        # reports a streaming read-idle breach with the literal
-        # operation="request", indistinguishable by label from a whole-exchange
-        # request timeout — so a native request_timeout added to
-        # `_native_stream_kwargs` would surface here as a mislabeled,
-        # retry-suppressed :stream_idle. See the mirror note there before adding
-        # any new native streaming timer.
-        if idle[] !== nothing &&
-           (_idle_fired(idle[]) || _find_exception(x -> x isa HTTP.TimeoutError, e) !== nothing)
+        # Byte-gap idle breach: classified by `_classify_stream_timeout` from the
+        # seam's armed-timer set (our guard's close echo, or the 2.x native
+        # read-idle timer — which can fire before the first byte too, while the
+        # response-header wait is still in progress). Never a retryable
+        # transport failure, regardless of when in the attempt it fired.
+        breach = _classify_stream_timeout(e, idle[], cfg, t0)
+        if breach !== nothing
             if !isnothing(state.finish_reason)
                 # EOF-less terminal streams (Gemini has no [DONE] sentinel): a recorded
                 # finish_reason means the turn completed — finalize SUCCESS through the
@@ -703,11 +742,12 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
                 _accumulate_cost!(chat, result)
                 return (; result, resp=nothing)
             end
-            throw(UniLMTimeout(:stream_idle, _idle_gap_s(idle[]), cfg.stream_idle_timeout))
+            throw(breach)
         end
-        # A native timeout BEFORE the idle guard armed is the connect/first-byte
-        # phase; map it to the same phase-attributed UniLMTimeout the non-stream
-        # seam produces so a raw HTTP.TimeoutError never leaks as the failure cause.
+        # Remaining native timeouts are connect-phase (2.x connect/TLS labels,
+        # 1.x connect sentinel); map them to the same phase-attributed
+        # UniLMTimeout the non-stream seam produces so a raw HTTP.TimeoutError
+        # never leaks as the failure cause.
         mapped = _map_native_timeout(e, cfg, min(_remaining_s(cfg, t0), cfg.request_timeout), t0)
         mapped === nothing || throw(mapped)
         rethrow()

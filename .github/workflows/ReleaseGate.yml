@@ -13,11 +13,13 @@ jobs:
     name: JET whole-package gate (Julia 1.12)
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    env:
-      # Turns on the JET whole-package analysis gated in test/runtests.jl.
-      # No provider API keys are set here: this gate is zero-spend. Live provider
-      # calls are covered by a separate manual workflow, not this gate.
-      UNILM_RUN_JET: 'true'
+    # No provider API keys are set anywhere in this job: the gate is zero-spend.
+    # Live provider calls are covered by a separate manual workflow, not by this
+    # one. UNILM_RUN_JET is deliberately not set either — it gates an in-suite
+    # JET testset kept for local use, and the analysis here is its own step
+    # below, in its own process. Running it a second time inside the suite would
+    # only add JET's load and analysis cost to the timing-sensitive streaming
+    # and deadline tests.
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
@@ -26,4 +28,32 @@ jobs:
           arch: x64
       - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@v1
+      # The oracle for this gate. It runs in its own process, before the test
+      # suite, and analyses the package exactly as `using UniLM` leaves it: no
+      # coverage instrumentation, and none of the mock endpoints or test-only
+      # method overloads that the behavioural test files define. Those widen
+      # dispatch tables and change what inference concludes about package code,
+      # so an analysis run after them would describe a method table no user ever
+      # has. A separate process also keeps JET's own cost off the test suite,
+      # whose streaming and deadline tests assert on wall-clock bounds.
+      - name: JET whole-package analysis (freshly loaded package)
+        shell: julia --color=yes --startup-file=no {0}
+        run: |
+          using Pkg, TOML
+          Pkg.activate(; temp = true)
+          Pkg.develop(PackageSpec(path = pwd()))
+          # Analyse with the JET the test suite already pins, so the gate and the
+          # suite can never drift onto different analysers.
+          jet = TOML.parsefile(joinpath(pwd(), "test", "Project.toml"))["compat"]["JET"]
+          Pkg.add(PackageSpec(name = "JET", version = jet))
+
+          using UniLM, JET
+          report = JET.report_package(UniLM;
+              target_modules = (UniLM,),
+              ignore_missing_comparison = true)
+          findings = JET.get_reports(report)
+          show(stdout, MIME"text/plain"(), report)
+          println()
+          println("JET package-code findings: ", length(findings))
+          isempty(findings) || exit(1)
       - uses: julia-actions/julia-runtest@v1

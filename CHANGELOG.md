@@ -34,10 +34,17 @@
   `text(::LLMSuccess)` returning the reply content (`nothing` for tool-calls-only
   turns), and `LLMResultError` — thrown by `text` on a `LLMFailure`/`LLMCallError`;
   its `showerror` reveals only the status and a trimmed response excerpt.
-- "Release gate" workflow: runs the full test suite with JET whole-package analysis
-  enabled on `release/**` branches and manual dispatch. JET is expensive, so it
-  gates releases instead of running in routine push/PR CI; the workflow sets no
-  provider keys and makes no billed calls.
+- "Release gate" workflow: on `release/**` branches and manual dispatch, runs a JET
+  whole-package type-stability analysis and then the full test suite. JET is
+  expensive, so it gates releases instead of running in routine push/PR CI; the
+  workflow sets no provider keys and makes no billed calls. The analysis is its own
+  step in its own process, ahead of the suite and without coverage instrumentation,
+  so it reports on the package exactly as `using UniLM` leaves it — not on a session
+  the test files have extended with mock endpoints and test-only method overloads,
+  which widen dispatch and change what inference concludes about package code. The
+  step fails on any package-code finding. The same analysis stays available inside
+  the test suite for local use behind `UNILM_RUN_JET=true`, where it likewise runs
+  ahead of the behavioural tests.
 
 ### Changed
 - Type-strengthening pass driven by the new JET whole-package release gate: over-wide
@@ -59,6 +66,20 @@
   inherited when an endpoint prints nested inside a `Chat` or a result value.
 - Aqua's method-ambiguity check is enabled in the test suite (`ambiguities=true`)
   after measuring zero ambiguities in the package.
+
+### Fixed
+- Streaming: a byte-gap idle breach is now always classified as
+  `UniLMTimeout(:stream_idle)` — non-retryable — on the HTTP.jl 2.x major.
+  Previously the classification depended on when the breach fired: HTTP 2.x also
+  applies its native `read_idle_timeout` (armed at `stream_idle_timeout`) to the
+  response-header wait, so a breach landing before the first byte was reported as
+  a retryable `:request`-phase timeout with `request_timeout` as its limit, and a
+  mute stream could be silently retried. Whether real runs hit that window is
+  timing-sensitive (newer HTTP 2.6.x releases changed server task scheduling,
+  flipping it under load); the classifier now decides from which native timers
+  the streaming seam arms, so the phase is deterministic. Chat streaming and the
+  Responses streaming surface share the fix; HTTP 1.x behavior (idle-guard
+  enforcement only) is unchanged.
 
 ### CI and docs
 - Pull-request documentation builds run without provider API keys — examples render

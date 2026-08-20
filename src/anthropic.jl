@@ -7,9 +7,9 @@
 
 # ─── Routing & auth ──────────────────────────────────────────────────────────
 
-get_url(::Type{ANTHROPICServiceEndpoint}, ::Chat) = ANTHROPIC_BASE_URL * ANTHROPIC_MESSAGES_PATH
+get_url(::Type{ANTHROPICServiceEndpoint}, ::Chat)::String = ANTHROPIC_BASE_URL * ANTHROPIC_MESSAGES_PATH
 
-function auth_header(::Type{ANTHROPICServiceEndpoint})
+function auth_header(::Type{ANTHROPICServiceEndpoint})::Vector{Pair{String,String}}
     [
         "x-api-key" => ENV[ANTHROPIC_API_KEY],
         "anthropic-version" => ANTHROPIC_VERSION,

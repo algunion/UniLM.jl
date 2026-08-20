@@ -127,8 +127,8 @@ fim_text(::FIMCallError)::String = ""
 
 # ─── FIM URL Routing ──────────────────────────────────────────────────────
 
-get_url(s::DeepSeekEndpoint, ::FIMCompletion) = DEEPSEEK_BETA_BASE_URL * COMPLETIONS_PATH
-get_url(s::GenericOpenAIEndpoint, ::FIMCompletion) = rstrip(s.base_url, '/') * COMPLETIONS_PATH
+get_url(s::DeepSeekEndpoint, ::FIMCompletion)::String = DEEPSEEK_BETA_BASE_URL * COMPLETIONS_PATH
+get_url(s::GenericOpenAIEndpoint, ::FIMCompletion)::String = rstrip(s.base_url, '/') * COMPLETIONS_PATH
 # FIM is an OpenAI-compatible-only verb (DeepSeek beta + GenericOpenAIEndpoint); any other
 # endpoint is rejected up front by `validate_capability(:fim)`. These fail-loud fallbacks
 # give the router total coverage so `get_url(fim.service, fim)` types as `String` for any
@@ -172,7 +172,7 @@ function fim_complete(fim::FIMCompletion; config::Union{Nothing,RequestConfig}=n
     local resp
     try
         body = JSON.json(fim)
-        url = get_url(fim.service, fim)
+        url = get_url(fim.service, fim)::String
         resp = _http_with_retries(cfg, t0, "POST", url, auth_header(fim.service), body)
         if resp.status == 200
             return FIMSuccess(response=_parse_fim_response(resp))

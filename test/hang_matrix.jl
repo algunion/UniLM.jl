@@ -548,13 +548,13 @@ function _hm_trickle_ping_server()
                 HTTP.setstatus(http, 200)
                 HTTP.setheader(http, "Content-Type" => "text/event-stream")
                 HTTP.startwrite(http)
-                _hm_dribble(http, head; chunk = 12, gap = 0.3)
-                for _ in 1:5                              # ~1.5 s bridged by pings (idle limit 1.5 s)
+                _hm_dribble(http, head; chunk = 12, gap = 0.6)
+                for _ in 1:5                              # ~3.0 s bridged by pings (idle limit 3.0 s)
                     write(http, ": ping\n\n")
                     flush(http)
-                    sleep(0.3)
+                    sleep(0.6)
                 end
-                _hm_dribble(http, tail; chunk = 12, gap = 0.3)
+                _hm_dribble(http, tail; chunk = 12, gap = 0.6)
             end
             break
         catch
@@ -701,13 +701,15 @@ end
         push!(chat, Message(Val(:system), "s"))
         push!(chat, Message(Val(:user), "u"))
         outcome = _hm_bounded(bound = 45.0) do
-            # Idle limit widened 1.0 → 1.5 s for loaded runners: a scheduler/GC
-            # stall between raw reads can stretch a 0.3 s trickle gap past 1.0 s,
-            # spuriously tripping :stream_idle on a healthy stream. 1.5 s is 5x the
-            # 0.3 s trickle gap yet stays under the ~1.8 s data-quiet ping bridge
-            # (6 x 0.3 s sleeps), so a regression that stopped resetting idle on
-            # comment bytes still trips and fails here.
-            cfg = UniLM.RequestConfig(stream_idle_timeout = 1.5, request_timeout = 5.0,
+            # All timings here run at 2x the original cadence: shared CI runners
+            # exhibit scheduler/GC stalls that stretched a 0.3 s trickle gap to a
+            # measured 1.595 s — past the old 1.5 s limit — falsely killing a
+            # healthy stream. At 0.6 s gaps with a 3.0 s limit the stall budget
+            # is ~2.4 s against the ~1.3 s worst stall observed. The limit stays
+            # under the ~3.6 s data-quiet ping bridge (6 x 0.6 s sleeps), so a
+            # regression that stopped resetting idle on comment bytes still
+            # trips and fails here.
+            cfg = UniLM.RequestConfig(stream_idle_timeout = 3.0, request_timeout = 5.0,
                 total_deadline = 10.0, max_attempts = 1)
             fetch(chatrequest!(chat; config = cfg))
         end

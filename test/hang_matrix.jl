@@ -297,6 +297,7 @@ UniLM.auth_header(::_HMInterruptService) = ["Content-Type" => "application/json"
         catch
             false
         end
+        ok || @warn "hang-matrix composite check failed" outcome
         @test ok
     finally
         close(srv)
@@ -325,6 +326,7 @@ end
         catch
             false
         end
+        ok || @warn "hang-matrix composite check failed" outcome
         @test ok
     finally
         close(srv)
@@ -355,6 +357,7 @@ end
         catch
             false
         end
+        ok || @warn "hang-matrix composite check failed" outcome
         @test ok
     finally
         close(srv)
@@ -375,6 +378,7 @@ end
     catch e
         e isa InterruptException
     end
+    ok || @warn "hang-matrix composite check failed" outcome
     @test ok
 end
 
@@ -633,6 +637,7 @@ UniLM.handle_sse_event!(::_HMAnthropicWireMock, event::AbstractString, payload::
         catch
             false
         end
+        ok || @warn "hang-matrix composite check failed" outcome
         @test ok
     finally
         close(srv)
@@ -715,6 +720,7 @@ end
         catch
             false
         end
+        ok || @warn "hang-matrix composite check failed" outcome
         @test ok
     finally
         close(srv)
@@ -745,6 +751,7 @@ end
         catch
             false
         end
+        ok || @warn "hang-matrix composite check failed" outcome
         @test ok
     finally
         close(srv)
@@ -817,6 +824,7 @@ end
     catch
         false
     end
+    ok || @warn "hang-matrix composite check failed" outcome
     @test ok
 end
 
@@ -986,6 +994,7 @@ end
         catch
             false
         end
+        ok || @warn "hang-matrix composite check failed" outcome
         @test ok
     finally
         _hm_pkill(marker)
@@ -1028,6 +1037,7 @@ end
         catch
             false
         end
+        ok || @warn "hang-matrix composite check failed" outcome
         @test ok
     finally
         _hm_pkill(marker)
@@ -1062,6 +1072,7 @@ end
         catch
             false
         end
+        ok || @warn "hang-matrix composite check failed" outcome
         @test ok
     finally
         _hm_pkill(gc_marker)
@@ -1102,6 +1113,7 @@ end
         catch
             false
         end
+        ok || @warn "hang-matrix composite check failed" outcome
         @test ok
     finally
     end
@@ -1173,6 +1185,7 @@ end
         catch
             false
         end
+        ok || @warn "hang-matrix composite check failed" outcome
         @test ok
     finally
         # In the green flow the `tools/call` handler parks at `wait(Condition())`,

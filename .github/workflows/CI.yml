@@ -16,6 +16,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       UNILM_RUN_IMAGE_TESTS: 'false'  # image generation is billed per image; opt-in only
+      # HTTP.jl ≥ 2.6.2 schedules server tasks on the interactive thread pool
+      # (JuliaWeb/HTTP.jl#1342). Give that pool its own OS thread — 2 default
+      # + 1 interactive — so the in-process mock servers the suite spawns are
+      # never starved by test-side work: the hang-matrix idle-gap contracts
+      # assert sub-second margins that scheduling contention on a shared
+      # thread can blow nondeterministically.
+      JULIA_NUM_THREADS: '2,1'
     strategy:
       fail-fast: false
       matrix:

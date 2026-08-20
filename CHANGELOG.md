@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.15.0
 
 ### Breaking
 - `push!(chat, msg)` and `pop!(chat)` now throw `InvalidConversationError` on an

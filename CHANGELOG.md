@@ -61,6 +61,13 @@
   after measuring zero ambiguities in the package.
 
 ### CI and docs
+- The test environment admits JET 0.12 alongside 0.11 (`JET = "0.11, 0.12"`), keeping
+  the whole-package release gate on the current JET release; 0.12 is the first series
+  to support Julia 1.13. The gate still measures zero findings.
+- The CI matrix, documentation build, and release gate track the latest stable Julia
+  release instead of a pinned 1.12; the supported floor stays `julia = "1.12"`.
+  CompatHelper now also sweeps the `test/` and `docs/` environments, so their bounds
+  cannot go stale unnoticed.
 - Pull-request documentation builds run without provider API keys — examples render
   offline — eliminating live-API spend on PRs; push, tag, and manual builds still
   render live outputs. The routine CI test workflow no longer receives provider

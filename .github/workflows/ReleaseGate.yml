@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 jobs:
   release-gate:
-    name: JET whole-package gate (Julia 1.12)
+    name: JET whole-package gate (latest stable Julia)
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
         with:
-          version: '1.12'
+          version: '1'
           arch: x64
       - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@v1

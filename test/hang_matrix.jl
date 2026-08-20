@@ -789,7 +789,14 @@ end
         chat = Chat(service=GenericOpenAIEndpoint("http://127.0.0.1:$port", ""), model="mock", stream=true)
         push!(chat, Message(Val(:system), "s"))
         push!(chat, Message(Val(:user), "u"))
-        cfg = RequestConfig(stream_idle_timeout=1.0, request_timeout=10.0,
+        # Idle limit 3.0 s: on loaded runners the terminal event's DELIVERY has
+        # stalled up to a measured 1.88 s — with a 1.0 s limit the pre-first-byte
+        # breach won the race and there was no terminal state to finalize, so
+        # this success contract failed spuriously. 3.0 s still breaches well
+        # before the server's 15 s hold (native detection worst case ~2x limit)
+        # and inside the 10 s deadline, so the success-at-the-idle-gap path is
+        # still the one exercised.
+        cfg = RequestConfig(stream_idle_timeout=3.0, request_timeout=10.0,
                             total_deadline=10.0, max_attempts=1)
         task = chatrequest!(chat; config=cfg)
         @test timedwait(() -> istaskdone(task), 45.0) === :ok

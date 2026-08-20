@@ -15,10 +15,11 @@ jobs:
     timeout-minutes: 120
     env:
       # HTTP.jl ≥ 2.6.2 schedules server tasks on the interactive thread pool
-      # (JuliaWeb/HTTP.jl#1342): give it a dedicated OS thread (2 default + 1
-      # interactive) so in-process mock servers are never starved by test-side
-      # work — the idle-gap contracts assert sub-second margins.
-      JULIA_NUM_THREADS: '2,1'
+      # (JuliaWeb/HTTP.jl#1342): give it dedicated OS threads so in-process
+      # mock servers are never starved by test-side work — the idle-gap
+      # contracts assert second-scale margins. Public-repo Linux runners have
+      # 4 vCPUs; use them.
+      JULIA_NUM_THREADS: '4,2'
     # No provider API keys are set anywhere in this job: the gate is zero-spend.
     # Live provider calls are covered by a separate manual workflow, not by this
     # one. UNILM_RUN_JET is deliberately not set either — it gates an in-suite

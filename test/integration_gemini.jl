@@ -1,13 +1,14 @@
 # ─── Gemini Integration Tests (live) ─────────────────────────────────────────
-# Requires UNILM_LIVE=1 and GEMINI_API_KEY (billing-enabled). Uses gemini-3.1-flash-lite (cheapest)
-# to minimize spend. Run once when green; do not rerun.
+# Requires UNILM_LIVE=1 and GEMINI_API_KEY (billing-enabled). Uses gemini-3.7-flash — a
+# thinking model: max_tokens budgets include thought tokens, so limits carry reasoning
+# headroom (a tight budget yields an empty-text turn). Run once when green; do not rerun.
 
 if !haskey(ENV, "GEMINI_API_KEY") || get(ENV, "UNILM_LIVE", "") != "1"
     @info "Skipping Gemini integration tests (set UNILM_LIVE=1 and GEMINI_API_KEY to run live)"
 else
 
 @testset "Gemini Chat — basic" begin
-    chat = Chat(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite", max_tokens=64)
+    chat = Chat(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.7-flash", max_tokens=1024)
     push!(chat, Message(Val(:system), "You are a helpful assistant."))
     push!(chat, Message(Val(:user), "Reply with exactly: hello"))
     result = chatrequest!(chat)
@@ -23,7 +24,7 @@ end
         parameters=Dict("type" => "object",
             "properties" => Dict("location" => Dict("type" => "string", "description" => "City name")),
             "required" => ["location"]))
-    chat = Chat(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite", max_tokens=256,
+    chat = Chat(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.7-flash", max_tokens=2048,
                 tools=[Tool(func=sig)], tool_choice="auto")
     push!(chat, Message(Val(:system), "Use the weather tool when asked about weather."))
     push!(chat, Message(Val(:user), "What is the weather in Paris?"))
@@ -45,8 +46,8 @@ end
 
 @testset "Gemini Chat — streaming" begin
     payloads = Any[]
-    chat = Chat(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
-                max_tokens=128, stream=true)
+    chat = Chat(service=UniLM.GEMINIServiceEndpoint, model="gemini-3.7-flash",
+                max_tokens=1024, stream=true)
     push!(chat, Message(Val(:system), "You are helpful."))
     push!(chat, Message(Val(:user), "Count from 1 to 10, one number per line."))
     task = chatrequest!(chat; callback=(c, _) -> push!(payloads, c))

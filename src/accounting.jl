@@ -25,6 +25,9 @@ const DEFAULT_PRICING = Dict{String, PriceRow}(
     "claude-sonnet-5"  => _price(3.0, 0.30, 15.0),
     "claude-haiku-4-5" => _price(1.0, 0.10, 5.0),
     # Google Gemini (native + OpenAI-compat shim; live-verified 2026-07-07)
+    # gemini-3.7-flash: introductory rate through 2026-12-31, doubles 2027-01-01
+    # (Google pricing page, 2026-08-20); output rate includes thinking tokens.
+    "gemini-3.7-flash"      => _price(0.75, 0.075, 3.75),
     "gemini-3.5-flash"      => _price(1.5,  0.15,  9.0),
     "gemini-3.1-flash-lite" => _price(0.25, 0.025, 1.5),
     "gemini-2.5-flash"      => _price(0.3,  0.03,  2.5),

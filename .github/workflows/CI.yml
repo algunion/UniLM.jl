@@ -20,7 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1.12'
+          - '1'  # latest stable release; the supported floor is Project.toml's `julia` compat
           #- 'nightly' (JET fails for some reason on nightly)
         http:  # exercise both ends of the `HTTP = "1.9, 2"` compat range
           - '1'

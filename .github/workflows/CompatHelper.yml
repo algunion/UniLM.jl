@@ -16,4 +16,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COMPATHELPER_PRIV: ${{ secrets.DOCUMENTER_KEY }}
-        run: julia -e 'using CompatHelper; CompatHelper.main()'
+        # `subdirs` keeps the test and docs environments in the bump sweep; without
+        # it CompatHelper only tracks the root Project.toml and those bounds go stale.
+        run: julia -e 'using CompatHelper; CompatHelper.main(; subdirs=["", "test", "docs"])'

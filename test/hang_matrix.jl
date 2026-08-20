@@ -670,6 +670,11 @@ end
         catch
             false
         end
+        # On failure, surface WHAT came back — the composite check above cannot
+        # say which leg refused, and this testset has failed only on loaded CI
+        # runners where no interactive debugging is possible.
+        ok || @warn "mid-stream byte-gap testset diagnostics" tag = outcome[1] result =
+            outcome[2] cause = (outcome[2] isa LLMCallError ? outcome[2].cause : nothing)
         @test ok
     finally
         # Handler parks mid-stream forever, so a graceful close would quiesce

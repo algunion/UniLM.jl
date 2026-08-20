@@ -43,9 +43,13 @@ jobs:
           Pkg.activate(; temp = true)
           Pkg.develop(PackageSpec(path = pwd()))
           # Analyse with the JET the test suite already pins, so the gate and the
-          # suite can never drift onto different analysers.
+          # suite can never drift onto different analysers. Pkg.compat accepts the
+          # full compat syntax (ranges, comma lists) that PackageSpec(version=...)
+          # does not.
           jet = TOML.parsefile(joinpath(pwd(), "test", "Project.toml"))["compat"]["JET"]
-          Pkg.add(PackageSpec(name = "JET", version = jet))
+          Pkg.add("JET")
+          Pkg.compat("JET", jet)
+          Pkg.resolve()
 
           using UniLM, JET
           report = JET.report_package(UniLM;

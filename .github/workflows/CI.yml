@@ -20,7 +20,10 @@ jobs:
       fail-fast: false
       matrix:
         version:
-          - '1'  # latest stable release; the supported floor is Project.toml's `julia` compat
+          - '1'  # latest stable release
+          # When latest stable moves past the `julia` compat floor in
+          # Project.toml (1.12 as of 2026-08), add the floor version here as a
+          # second leg — otherwise the floor we advertise goes untested.
           #- 'nightly' (JET fails for some reason on nightly)
         http:  # exercise both ends of the `HTTP = "1.9, 2"` compat range
           - '1'

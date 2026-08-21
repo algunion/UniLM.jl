@@ -104,11 +104,57 @@
   results additionally define a `show` that names `cause` by TYPE instead of
   letting Julia's default recurse into it and reprint the dump; `.cause` itself is
   unchanged and still reachable.
+- The auth-header mask is bound to header position. The pattern had no leading
+  word boundary, so any longer word merely *ending* in a header name was matched
+  and everything after it erased — a message containing `reauthorization: <text>`
+  lost the text. Fail-safe, but destructive of diagnostics that never carried a
+  credential. The real names (`authorization`, `proxy-authorization`, `api-key`,
+  `x-api-key`, `x-goog-api-key`) are still masked in both the wire form and the
+  Julia pair form.
+- Caller-supplied values interpolated into request URLs are percent-encoded. Ids,
+  model names, pagination cursors and list filters went into path segments and
+  query values raw across the platform APIs (files, batches, uploads, containers,
+  conversations, vector stores, fine-tuning, videos), the Gemini model-in-URL and
+  the Realtime model query. A value carrying `/`, `?`, `#`, `&`, `=` or a space
+  silently re-shaped the request target — extra path segments, a spurious query
+  string or fragment, a smuggled parameter — or, on HTTP.jl 2.x, was rejected
+  client-side as a synthetic 400 that never reached the server. Only the
+  interpolated value is encoded; the templates' own separators and Gemini's
+  `:generateContent` verb colon stay literal. Ordinary identifiers draw from the
+  unreserved set, so the common case is byte-identical on the wire.
+- `edit_image` follows the declared-endpoint capability rule the four primary
+  verbs use. It validated unconditionally, so a user-defined endpoint — one that
+  declares no capabilities, because the package does not ship it — raised a raw
+  `MethodError` instead of dispatching. An endpoint that declares nothing now
+  passes through to the wire; one that declares its capabilities and omits image
+  edits still gets the typed `ArgumentError`.
+- Agentic streaming no longer costs O(n²) in delivered bytes. Emitting a delta
+  meant `take!`-ing the whole accumulated text plus a mirror of what had already
+  been sent, slicing the tail and re-printing both — four copies of the full text
+  per read. Deltas are now drained from a pending buffer the decoders append to,
+  matching the chat driver. Measured on the emission loop at 200/400/800/1600
+  reads: 0.98/3.4/12.7/49.4 MB allocated before, 33/63/129/261 KB after, with
+  byte-identical output. Callers see the identical delta sequence.
+
+### Added
+- `sse_dropped::Int` on `LLMSuccess`, `LLMFailure`, `ResponseSuccess` and
+  `ResponseFailure`. A `data:` payload the parser cannot read is dropped rather
+  than re-queued — a re-queued partial line is the stream-poisoning mechanism the
+  drop policy exists to prevent — but the only trace was a process-global counter
+  no caller could attribute to its own request, so a turn assembled from a
+  truncated wire was indistinguishable from a clean one. Every drop is now counted
+  on the stream that saw it and the count rides the result. It defaults to `0`, so
+  a non-streamed call reports `0` rather than nothing. Both drivers state a
+  non-zero count once per attempt at finalize, naming the model and the surface —
+  a warning, since an undecodable provider payload is anomalous by construction,
+  not the per-line debug message. A retried attempt starts from fresh state and
+  reports only its own. On a truncated stream (HTTP 200, no terminal event) the
+  `LLMFailure` now carries the count that explains why no message could be built.
 
 ### Changed
-These entries change behavior that previously succeeded silently. They are
-breaking in the sense that code relying on the silent path will now see an
-exception, and are collected here pending a version decision.
+These entries change behavior or public surface that callers may depend on. Most
+turn a silently-succeeding path into a typed exception; the rest change a result
+type or drop a field. They are collected here pending a version decision.
 
 - `Respond` fields the Gemini Interactions wire does not map now throw
   `ArgumentError` at encode time instead of being silently dropped. Structured
@@ -132,6 +178,10 @@ exception, and are collected here pending a version decision.
   flight waits for that exchange to finish instead of tearing the transport down
   under its reader — the same concurrency-1 semantics every other call obeys,
   bounded transitively by the exchange's own `mcp_request_timeout`.
+- **`HTTPTransport` no longer has a `lock` field.** Nothing ever took it.
+  Exchanges, notifications and the disconnect are all ordered by the session lock,
+  which is the only ordering an HTTP transport needs, so the field was a public
+  promise the type never kept. Code reading `transport.lock` must drop it.
 - `realtime_connect` and `realtime_receive` are bounded by `RequestConfig`, and
   `RealtimeSession` gained a `config` field carrying the budget resolved at
   connect time. The WebSocket was the one surface outside the bound-everything
@@ -148,6 +198,19 @@ exception, and are collected here pending a version decision.
   Only `"failed"` flips: `cancelled`, `expired`, `in_progress`, `queued` and
   `requires_action` are legitimate terminals of the background and tool-action
   flows and remain successes.
+- A **streamed** generation whose terminal event is `response.incomplete` is now a
+  `ResponseSuccess`, not a `ResponseFailure`. The streamed driver routed that
+  terminal to the typed-failure limb while the non-streamed path decoded the very
+  same object as a success, so whether a truncated generation had failed depended
+  on `stream` rather than on what happened. `response.incomplete` carries a real
+  terminal response object with usable partial output, and the truncation is
+  reported in `status` and `incomplete_details`; the streamed limb now finalizes
+  it exactly like `response.completed` — same result type, same status and
+  details, usage recorded, raw capture complete, deltas already delivered. Only
+  `"failed"` is a failure, on both paths. The typed-failure limb still catches an
+  `incomplete` terminal carrying no response object at all, which has no result to
+  hand back. Code that tested `result isa ResponseFailure` to detect a truncated
+  stream must read `response_status`/`incomplete_details` instead.
 - The four primary verbs — `chatrequest!`, `embeddingrequest!`, `respond` and
   `generate_image` — now validate provider capabilities before dispatch, giving a
   typed `ArgumentError` instead of a provider 404. Validation applies only to

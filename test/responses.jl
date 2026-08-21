@@ -2509,12 +2509,12 @@ end
         "id" => "resp_f1", "status" => "failed", "model" => "gpt-5.5", "output" => [],
         "error" => Dict("code" => "server_error", "message" => "the model failed"),
         "metadata" => Dict("run" => "r-7")))
-    port = 8000 + rand(1000:8000)
-    srv = HTTP.serve!("127.0.0.1", port; verbose=false) do req
-        HTTP.Response(200, ["Content-Type" => "application/json", "x-request-id" => "req_f1"], failed)
-    end
+    # OS-assigned port, not a guessed one: a hand-picked number can collide with a
+    # live local service and fail the test for a reason it is not about.
+    srv, url = _canned_http_server(200, failed,
+        ["Content-Type" => "application/json", "x-request-id" => "req_f1"])
     try
-        ep = GenericOpenAIEndpoint("http://127.0.0.1:$port", "sk-x")
+        ep = GenericOpenAIEndpoint(url, "sk-x")
         r = respond(Respond(service=ep, model="m", input="hi"))
         @test r isa ResponseFailure
         @test !issuccess(r)
@@ -2536,12 +2536,9 @@ end
     # converting them would break the background poll and tool-action flows.
     for st in ("completed", "in_progress", "queued", "requires_action", "cancelled", "incomplete")
         body = JSON.json(Dict("id" => "resp_$st", "status" => st, "model" => "gpt-5.5", "output" => []))
-        port = 8000 + rand(1000:8000)
-        srv = HTTP.serve!("127.0.0.1", port; verbose=false) do req
-            HTTP.Response(200, ["Content-Type" => "application/json"], body)
-        end
+        srv, url = _canned_http_server(200, body, ["Content-Type" => "application/json"])
         try
-            ep = GenericOpenAIEndpoint("http://127.0.0.1:$port", "sk-x")
+            ep = GenericOpenAIEndpoint(url, "sk-x")
             r = respond(Respond(service=ep, model="m", input="hi"))
             @test r isa ResponseSuccess
             @test r.response.status == st

@@ -350,3 +350,44 @@ end
         "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n", state2)
     @test isempty(state2.raw_blocks) && haskey(state2.raw_pending, 0)
 end
+
+@testset "an empty Anthropic turn is reported empty, not filled in" begin
+    # Truthful-empty contract (matching the OpenAI and Gemini decoders): a
+    # well-formed turn that produced no text is a real turn. Thinking models reach
+    # this routinely — the whole budget goes to thought blocks and the turn stops at
+    # max_tokens with no text block. Substituting prose put content nobody generated
+    # into the reply AND into the next request's history.
+    body = JSON.json(Dict("stop_reason" => "max_tokens", "content" => Any[],
+                          "usage" => Dict("input_tokens" => 5, "output_tokens" => 0)))
+    m = UniLM.decode_response(ANTHROPICServiceEndpoint,
+                              HTTP.Response(200, [], Vector{UInt8}(body))).message
+    @test m.role == UniLM.RoleAssistant
+    @test m.content == ""
+    @test !occursin("No response from the model", something(m.content, ""))
+
+    # Thinking-only: the thought blocks still ride along verbatim for round-trip.
+    thinking = JSON.json(Dict("stop_reason" => "max_tokens",
+        "content" => [Dict("type" => "thinking", "thinking" => "hmm", "signature" => "sig")],
+        "usage" => Dict("input_tokens" => 5, "output_tokens" => 100)))
+    mt = UniLM.decode_response(ANTHROPICServiceEndpoint,
+                               HTTP.Response(200, [], Vector{UInt8}(thinking))).message
+    @test mt.content == ""
+    @test mt.finish_reason == "length"
+    @test mt.provider_content.blocks[1]["type"] == "thinking"
+
+    # Unchanged neighbours: text, tool-only and the refusal path.
+    text_body = JSON.json(Dict("stop_reason" => "end_turn",
+        "content" => [Dict("type" => "text", "text" => "hello")]))
+    @test UniLM.decode_response(ANTHROPICServiceEndpoint,
+            HTTP.Response(200, [], Vector{UInt8}(text_body))).message.content == "hello"
+    tool_body = JSON.json(Dict("stop_reason" => "tool_use",
+        "content" => [Dict("type" => "tool_use", "id" => "t1", "name" => "f",
+                           "input" => Dict("a" => 1))]))
+    mtool = UniLM.decode_response(ANTHROPICServiceEndpoint,
+                HTTP.Response(200, [], Vector{UInt8}(tool_body))).message
+    @test isnothing(mtool.content) && length(mtool.tool_calls) == 1
+    refusal_body = JSON.json(Dict("stop_reason" => "refusal", "content" => Any[]))
+    mref = UniLM.decode_response(ANTHROPICServiceEndpoint,
+               HTTP.Response(200, [], Vector{UInt8}(refusal_body))).message
+    @test mref.refusal_message == "Model refused to respond."
+end

@@ -198,7 +198,12 @@ end
         @test m.refusal_message == "This content was filtered."
     end
 
-    @testset "fallback message" begin
+    @testset "an empty turn is reported empty, not filled in" begin
+        # Truthful-empty contract: a well-formed choice whose content is null is a
+        # real turn the model produced (a reasoning model can burn the whole
+        # completion budget on thought tokens and stop at "length"). The decoder
+        # reports it as the empty turn it is. Substituting prose used to put text
+        # nobody generated into the reply AND into the next request's history.
         body = Dict(
             "choices" => [Dict(
                 "finish_reason" => "length",
@@ -208,8 +213,30 @@ end
         resp = make_response(body)
         m = UniLM.extract_message(resp).message
         @test m.role == UniLM.RoleAssistant
-        @test m.content == "No response from the model."
+        @test m.content == ""
+        @test !occursin("No response from the model", something(m.content, ""))
         @test m.finish_reason == "length"
+    end
+
+    @testset "a tool-only turn keeps its calls whatever the finish_reason" begin
+        # Some providers close a tool-only turn with "stop" rather than "tool_calls".
+        # That used to land in the fallback branch, which fabricated text AND dropped
+        # the calls entirely.
+        body = Dict(
+            "choices" => [Dict(
+                "finish_reason" => "stop",
+                "message" => Dict("role" => "assistant", "content" => nothing,
+                    "tool_calls" => [Dict("id" => "call_1",
+                        "function" => Dict("name" => "get_weather",
+                                           "arguments" => "{\"city\":\"Cluj\"}"))]))]
+        )
+        m = UniLM.extract_message(make_response(body)).message
+        @test isnothing(m.content)
+        @test length(m.tool_calls) == 1
+        @test m.tool_calls[1].id == "call_1"
+        @test m.tool_calls[1].func.name == "get_weather"
+        @test m.tool_calls[1].func.arguments["city"] == "Cluj"
+        @test m.finish_reason == "stop"
     end
 
     @testset "length finish_reason preserves partial content" begin

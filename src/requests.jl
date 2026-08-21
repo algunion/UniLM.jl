@@ -622,15 +622,8 @@ function extract_message(resp::HTTP.Response)
     message = choices[1]["message"]
     usage = _parse_usage(received_message)
     msg = if finish_reason == TOOL_CALLS && haskey(message, "tool_calls")
-        tcalls = ToolCall[]
-        for x in message["tool_calls"]
-            fdict = x["function"]
-            args = JSON.parse(fdict["arguments"]; dicttype=Dict{String,Any})
-            gptfunc = GPTFunction(fdict["name"], args)
-            tc = ToolCall(id=x["id"], func=gptfunc)
-            push!(tcalls, tc)
-        end
-        Message(role=RoleAssistant, tool_calls=tcalls, finish_reason=TOOL_CALLS)
+        Message(role=RoleAssistant, tool_calls=_decode_tool_calls(message["tool_calls"]),
+                finish_reason=TOOL_CALLS)
     elseif haskey(message, "content") && !isnothing(message["content"])
         # Preserve content for ANY finish_reason (incl. "length"/truncated) — never discard partial output.
         Message(role=RoleAssistant, content=message["content"], finish_reason=finish_reason)
@@ -638,9 +631,34 @@ function extract_message(resp::HTTP.Response)
         # A refusal may arrive with finish_reason "content_filter" OR "stop" — capture it regardless.
         Message(role=RoleAssistant, refusal_message=message["refusal"], finish_reason=finish_reason)
     else
-        Message(role=RoleAssistant, content="No response from the model.", finish_reason=finish_reason)
+        # A well-formed choice that carries no text is a real turn, not a missing one:
+        # a reply that is only tool calls (some providers finish those with "stop"),
+        # or a reasoning model that spent the whole completion budget on thought
+        # tokens and finished with "length". Report what arrived. Substituting prose
+        # would inject text nobody generated into the reply AND into the next
+        # request's history, and — for the tool-only shape — silently drop the calls.
+        # A response with no choices at all is a different thing and already errors
+        # above, which the verb turns into its typed error result.
+        tcalls = get(message, "tool_calls", nothing)
+        isnothing(tcalls) || isempty(tcalls) ?
+            Message(role=RoleAssistant, content="", finish_reason=finish_reason) :
+            Message(role=RoleAssistant, tool_calls=_decode_tool_calls(tcalls),
+                    finish_reason=finish_reason)
     end
     (; message=msg, usage)
+end
+
+# OpenAI-wire `tool_calls` array → the neutral ToolCall vector. Shared by the
+# finish_reason=="tool_calls" branch and the empty-content branch, which reaches the
+# same shape when a provider finishes a tool-only turn with some other reason.
+function _decode_tool_calls(raw)::Vector{ToolCall}
+    tcalls = ToolCall[]
+    for x in raw
+        fdict = x["function"]
+        args = JSON.parse(fdict["arguments"]; dicttype=Dict{String,Any})
+        push!(tcalls, ToolCall(id=x["id"], func=GPTFunction(fdict["name"], args)))
+    end
+    tcalls
 end
 
 """Mutable accumulator for streaming Chat Completions chunks."""

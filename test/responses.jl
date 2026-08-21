@@ -2359,9 +2359,23 @@ function _reset_then_ok_server(ok_body::String)
 end
 
 @testset "respond stream: mute pre-first-byte yields a bounded typed timeout" begin
+    # Contract: a peer that never sends response headers fails with the FIRST
+    # bound the configuration arms for that wait, as a typed UniLMTimeout —
+    # never a raw transport error. The majors legitimately differ in which
+    # bound that is, so each branch pins its deterministic winner with a wide
+    # margin (the losing bound trails by >= 3.5 s; timers only ever fire late,
+    # so the margin cannot invert):
+    # - 2.x: the native read-idle timer also bounds the response-header wait
+    #   (HTTP caps that wait at min(response_header_timeout, read_idle_timeout)),
+    #   so a finite stream_idle_timeout below the request bound breaches first
+    #   and classifies :stream_idle carrying the idle limit — non-retryable.
+    # - 1.x: streams arm no native read timer; the request-phase deadline is
+    #   the only pre-first-byte enforcement → :request.
     server, url = _mute_http_server()
     _RESP_TIMEOUT_URL[] = url
-    cfg = RequestConfig(request_timeout=0.5, total_deadline=1.0, stream_idle_timeout=0.5, max_attempts=1)
+    cfg = UniLM._HTTP_MAJOR2 ?
+        RequestConfig(request_timeout=4.0, total_deadline=10.0, stream_idle_timeout=0.5, max_attempts=1) :
+        RequestConfig(request_timeout=1.0, total_deadline=10.0, stream_idle_timeout=5.0, max_attempts=1)
     try
         t = respond(Respond(input="hi", service=_RespTimeoutMock, stream=true); config=cfg)
         @test t isa Task
@@ -2370,7 +2384,12 @@ end
         @test result isa ResponseCallError
         @test result.status === nothing
         @test result.cause isa UniLM.UniLMTimeout
-        @test result.cause.phase in (:request, :connect)
+        if UniLM._HTTP_MAJOR2
+            @test result.cause.phase === :stream_idle
+            @test result.cause.limit == 0.5   # the idle bound, not the request bound
+        else
+            @test result.cause.phase === :request
+        end
     finally
         close(server)
     end

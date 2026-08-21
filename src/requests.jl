@@ -175,6 +175,34 @@ function _classify_stream_timeout(e, idle, cfg::RequestConfig, t0::UInt64)::Unio
     return UniLMTimeout(:stream_idle, gap, cfg.stream_idle_timeout)
 end
 
+"""
+    _with_recorded_deadline(f, close!, limit, phase, slot) -> f()
+
+[`_with_deadline`](@ref) with the typed outcome RECORDED into `slot` before the
+exception unwinds any further: on a breach (or any `UniLMTimeout` escaping
+`f`), `slot[]` is set to that timeout and the exception rethrows unchanged.
+
+Why recording matters: the streaming drivers run the deadline block INSIDE
+`HTTP.open`'s handler. When the bound fires, `close!` tears down the socket and
+the typed `UniLMTimeout` starts unwinding through the library's request
+machinery — which, on the 1.x major, still tries to finish the exchange on that
+socket (terminating chunk, connection cleanup) and can raise its own transport
+error (EPIPE/ECONNRESET) that REPLACES the in-flight typed exception. What then
+escapes `HTTP.open` is teardown noise with no `UniLMTimeout` in its chain. The
+recorded value lets the driver's catch restore the typed cause; transport
+errors with NO recorded bound are untouched and classify as today.
+`InterruptException` rethrows unrecorded.
+"""
+function _with_recorded_deadline(f::Function, close!::Function, limit::Float64,
+                                 phase::Symbol, slot::Ref{Union{Nothing,UniLMTimeout}})
+    try
+        return _with_deadline(f, close!, limit, phase)
+    catch e
+        e isa UniLMTimeout && (slot[] = e)
+        rethrow()
+    end
+end
+
 # Retry-loop predicate: a per-attempt timeout (:connect/:request — a timeout
 # with budget left is worth another try) or a pure transport failure per
 # _is_transport_error. :deadline (budget spent), :stream_idle, interrupts,
@@ -646,6 +674,10 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
     # Idle-guard handle is owned by deadline.jl (opaque here; `nothing` until armed and
     # whenever the idle timeout is disabled) — hence the untyped Ref.
     idle = Ref{Any}(nothing)
+    # Request-phase bound, recorded before it unwinds through HTTP.jl (see
+    # `_with_recorded_deadline`): the catch restores it as the surfaced cause
+    # when the library's teardown of the bound-closed socket replaces it.
+    bound = Ref{Union{Nothing,UniLMTimeout}}(nothing)
     # SSE must reach the parser uncompressed. Some providers (e.g. Anthropic) gzip even
     # streamed responses, and HTTP.jl's streaming read loop does NOT auto-decompress on the
     # 1.x major — raw gzip bytes hit the SSE parser, every chunk fails to decode, and no
@@ -666,12 +698,12 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
             # the whole send/first-byte exchange; the total deadline governs a stream
             # only up to this point — after it, only the idle guard runs (a long
             # healthy stream is not a failure).
-            _with_deadline(() -> begin
+            _with_recorded_deadline(() -> begin
                     write(io, body)
                     HTTP.closewrite(io)
                     HTTP.startread(io)
                 end, () -> close(io),
-                min(_remaining_s(cfg, t0), cfg.request_timeout), :request)
+                min(_remaining_s(cfg, t0), cfg.request_timeout), :request, bound)
             idle[] = _idle_guard(() -> close(io), cfg.stream_idle_timeout)
             while !eof(io) && !close_ref[] && status === :continue
                 raw = String(readavailable(io))
@@ -744,6 +776,14 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
             end
             throw(breach)
         end
+        # Recorded request-phase bound: the typed cause that initiated the
+        # teardown takes precedence over whatever the library surfaced while
+        # unwinding it (e.g. EPIPE from writing to the socket the bound
+        # closed). With no displacement this rethrows the same timeout the
+        # attempt already threw; it never masks an error that arrived with no
+        # bound fired.
+        bt = bound[]
+        bt === nothing || throw(bt)
         # Remaining native timeouts are connect-phase (2.x connect/TLS labels,
         # 1.x connect sentinel); map them to the same phase-attributed
         # UniLMTimeout the non-stream seam produces so a raw HTTP.TimeoutError

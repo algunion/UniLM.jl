@@ -644,13 +644,13 @@ end
 end
 
 @testset "_accumulate_cost! fallback is a no-op for non-success" begin
-    # requests.jl:392 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
+    # requests.jl:420 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
     # success types are specialized in accounting.jl, so a failure result must land here:
     # return nothing AND leave cumulative cost untouched (falsifies accidental accumulation).
     chat = Chat(model="gpt-4.1-nano")
     chat._cumulative_cost[] = 0.25
     failure = LLMFailure(response="server exploded", status=500, self=chat)
-    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 392
+    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 420
     @test UniLM._accumulate_cost!(chat, failure) === nothing
     @test cumulative_cost(chat) == 0.25       # unchanged: the fallback did not add anything
 
@@ -782,4 +782,64 @@ end
     @test UniLM._classify_stream_timeout(Base.IOError("boom", 0), nothing, cfg, t0) === nothing
     @test UniLM._classify_stream_timeout(Base.IOError("boom", 0),
         UniLM._IdleGuard(:armed, time_ns(), 0.0, 1.0, nothing), cfg, t0) === nothing
+end
+
+@testset "_with_recorded_deadline: the typed bound survives library teardown noise" begin
+    # Constructed exceptions, limit=Inf (no timer): the recording contract is a
+    # pure function of what escapes the deadline block, so it pins without
+    # timing. The driver catches consume the slot with the precedence rule
+    # "recorded typed cause wins over teardown noise" — on the 1.x major,
+    # HTTP.jl's cleanup of a bound-closed socket can raise EPIPE/reset while
+    # the typed UniLMTimeout is unwinding, and the replacement is what escapes
+    # HTTP.open; the slot is what restores the typed cause.
+    slotT() = Ref{Union{Nothing,UniLM.UniLMTimeout}}(nothing)
+
+    # A UniLMTimeout escaping the block is recorded AND rethrown unchanged
+    # (identity: the very exception, not a copy).
+    slot = slotT()
+    to = UniLM.UniLMTimeout(:request, 1.0, 1.0)
+    caught = try
+        UniLM._with_recorded_deadline(() -> throw(to), () -> nothing, Inf, :request, slot)
+        nothing
+    catch e
+        e
+    end
+    @test caught === to
+    @test slot[] === to
+    # Restoration shape the driver applies when teardown noise displaced the
+    # typed exception in flight: the recorded bound, not the noise, is surfaced
+    # — and the noise itself is no idle breach (it cannot re-enter typed
+    # classification through the byte-gap limb either).
+    noise = Base.IOError("write: broken pipe (EPIPE)", -32)
+    @test (slot[] !== nothing ? slot[] : noise) === to
+    @test UniLM._classify_stream_timeout(noise, nothing,
+        RequestConfig(stream_idle_timeout = 5.0), time_ns()) === nothing
+
+    # A transport error with NO bound fired is NOT recorded: it must keep
+    # surfacing as a transport failure (the connect-refusal contract).
+    slot = slotT()
+    caught = try
+        UniLM._with_recorded_deadline(() -> throw(noise), () -> nothing, Inf, :request, slot)
+        nothing
+    catch e
+        e
+    end
+    @test caught === noise
+    @test slot[] === nothing
+
+    # InterruptException rethrows unrecorded — user intent is never converted.
+    slot = slotT()
+    caught = try
+        UniLM._with_recorded_deadline(() -> throw(InterruptException()), () -> nothing, Inf, :request, slot)
+        nothing
+    catch e
+        e
+    end
+    @test caught isa InterruptException
+    @test slot[] === nothing
+
+    # Clean completion: value passes through, nothing recorded.
+    slot = slotT()
+    @test UniLM._with_recorded_deadline(() -> 42, () -> nothing, Inf, :request, slot) == 42
+    @test slot[] === nothing
 end

@@ -1,3 +1,5 @@
+import Sockets
+
 @testset "provider_capabilities" begin
     @test :chat in UniLM.provider_capabilities(OPENAIServiceEndpoint)
     @test :responses in UniLM.provider_capabilities(OPENAIServiceEndpoint)
@@ -224,12 +226,25 @@ end
     # The non-breaking rule: a custom backend declares nothing, so the package has no
     # basis to refuse it. It must reach the wire exactly as before.
     hits = Ref(0)
-    port = 8000 + rand(1000:8000)
-    srv = HTTP.serve!("127.0.0.1", port; verbose=false) do req
-        hits[] += 1
-        HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(Dict(
-            "choices" => [Dict("finish_reason" => "stop",
-                               "message" => Dict("role" => "assistant", "content" => "pong"))])))
+    # OS-assigned ephemeral port with bind retry (the fixture idiom used across this
+    # suite): a hand-picked port can collide with a live local service, whose reply
+    # would poison the assertion.
+    srv, port = nothing, 0
+    for attempt in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2])
+        close(tcp)
+        try
+            srv = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+                hits[] += 1
+                HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(Dict(
+                    "choices" => [Dict("finish_reason" => "stop",
+                                       "message" => Dict("role" => "assistant", "content" => "pong"))])))
+            end
+            break
+        catch
+            attempt == 5 && rethrow()
+        end
     end
     try
         ep = _UndeclaredEndpoint("http://127.0.0.1:$port")

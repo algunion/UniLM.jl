@@ -92,6 +92,68 @@ end
     end
 end
 
+# A timeout value that parks its own conversion. `_validated_timeout` calls
+# `Float64` on every field, and that happens strictly between the process
+# default's read and its write — so this pins one kwarg call inside its
+# read-modify-write window with no sleeps and no polling.
+mutable struct GatedSeconds <: Real
+    v::Float64
+    entered::Base.Event
+    release::Base.Event
+end
+GatedSeconds(v) = GatedSeconds(v, Base.Event(), Base.Event())
+Base.Float64(g::GatedSeconds) = (notify(g.entered); wait(g.release); g.v)
+
+@testset "kwarg set_default_config! composes and never loses a concurrent field" begin
+    initial = UniLM.current_config()
+    try
+        # Sequential composition: call 2 must not clobber call 1's field.
+        set_default_config!(RequestConfig())
+        set_default_config!(connect_timeout=11.0)
+        set_default_config!(request_timeout=22.0)
+        @test current_config().connect_timeout == 11.0
+        @test current_config().request_timeout == 22.0
+
+        # Deterministic lost-update: one call is held inside its merge window while
+        # a second completes end to end. A plain read-modify-write then writes a
+        # snapshot that predates the second call and silently drops its field.
+        set_default_config!(RequestConfig())
+        gate = GatedSeconds(11.0)
+        held = Threads.@spawn set_default_config!(connect_timeout=gate)
+        wait(gate.entered)                      # the held call has read, not yet written
+        set_default_config!(request_timeout=22.0)
+        notify(gate.release)                    # let it finish its write
+        wait(held)
+        @test current_config().connect_timeout == 11.0
+        @test current_config().request_timeout == 22.0
+
+        # Bounded concurrent hammer: each task owns one field and only ever raises
+        # it, so every field must be non-decreasing over time. A decrease is a
+        # write built from a stale snapshot.
+        fields = (:connect_timeout, :request_timeout, :stream_idle_timeout, :mcp_request_timeout)
+        set_default_config!(RequestConfig(; (f => 1.0 for f in fields)...))
+        regressions = Threads.Atomic{Int}(0)
+        @sync for i in eachindex(fields)
+            Threads.@spawn begin
+                high = fill(1.0, length(fields))     # task-local high-water marks
+                for k in 2:2000
+                    set_default_config!(; (fields[i] => Float64(k),)...)
+                    cur = current_config()
+                    for j in eachindex(fields)
+                        v = getfield(cur, fields[j])
+                        v < high[j] && Threads.atomic_add!(regressions, 1)
+                        high[j] = max(high[j], v)
+                    end
+                end
+            end
+        end
+        @test regressions[] == 0
+        @test all(getfield(current_config(), f) == 2000.0 for f in fields)
+    finally
+        set_default_config!(initial)
+    end
+end
+
 @testset "scope propagates into spawned tasks and is immune to default mutation" begin
     initial = UniLM.current_config()
     try

@@ -107,10 +107,12 @@ function upload_file(u::FileUpload; config::Union{Nothing,RequestConfig}=nothing
     cfg = _resolve_config(config)
     t0 = time_ns()
     try
-        form = HTTP.Form([
+        # A Form is consumed by the attempt that sends it, so the retry loop gets a
+        # factory: every attempt re-reads the file into its own multipart body.
+        form = _BodyFactory(() -> HTTP.Form([
             "purpose" => u.purpose,
             "file" => HTTP.Multipart(basename(u.file), IOBuffer(read(u.file)), _mime_for(u.file)),
-        ])
+        ]))
         url = _api_base_url(u.service) * FILES_PATH
         resp = _http_with_retries(cfg, t0, "POST", url, auth_header_multipart(u.service), form)
         return resp.status == 200 ?

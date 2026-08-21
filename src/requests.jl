@@ -13,15 +13,52 @@ const _RETRY_MAX_DELAY = 60.0
 
 _is_retryable(status::Integer)::Bool = status in (408, 429, 500, 502, 503, 504, 529)
 
+# RFC 7231 IMF-fixdate, the one HTTP-date form every sender must emit. Always GMT.
+const _IMF_FIXDATE = r"^[A-Za-z]{3}, (\d{2}) ([A-Za-z]{3}) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$"
+const _IMF_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+# Unix seconds for a UTC civil date-time (days-from-civil, era-based Gregorian).
+# Written out rather than pulled from `Dates` — that stdlib is not a dependency
+# of this package and one header form does not justify making it one.
+function _utc_epoch_seconds(y::Int, mo::Int, d::Int, h::Int, mi::Int, s::Int)::Float64
+    yr = y - (mo <= 2)
+    era = fld(yr, 400)
+    yoe = yr - era * 400
+    doy = div(153 * (mo + (mo > 2 ? -3 : 9)) + 2, 5) + d - 1
+    doe = yoe * 365 + div(yoe, 4) - div(yoe, 100) + doy
+    return (era * 146097 + doe - 719468) * 86400.0 + h * 3600 + mi * 60 + s
+end
+
+"""
+    _retry_after_seconds(resp) -> Union{Nothing,Float64}
+
+The wait `Retry-After` asks for, in seconds, or `nothing` when the header is
+absent or unparseable. RFC 7231 defines TWO forms and servers behind CDNs send
+both: delta-seconds, and an HTTP-date — reading only the first under-waits a 429
+storm by whatever the date form was asking for. A date already in the past
+yields `0.0`. Malformed values return `nothing` so the caller keeps its default
+backoff: a server sending garbage must never make a client throw.
+"""
+function _retry_after_seconds(resp::HTTP.Response)::Union{Nothing,Float64}
+    ra = strip(HTTP.header(resp, "Retry-After", ""))
+    isempty(ra) && return nothing
+    secs = tryparse(Int, ra)
+    isnothing(secs) || return max(0.0, Float64(secs))
+    m = match(_IMF_FIXDATE, ra)
+    isnothing(m) && return nothing
+    mo = findfirst(==(m[2]), _IMF_MONTHS)
+    isnothing(mo) && return nothing
+    due = _utc_epoch_seconds(parse(Int, m[3]), mo, parse(Int, m[1]),
+                             parse(Int, m[4]), parse(Int, m[5]), parse(Int, m[6]))
+    return max(0.0, due - time())
+end
+
 function _retry_delay(retry::Integer, resp::HTTP.Response)::Float64
     computed = min(_RETRY_BASE * _RETRY_FACTOR^retry, _RETRY_MAX_DELAY)
     delay = rand() * computed  # full jitter
-    ra = HTTP.header(resp, "Retry-After", "")
-    if !isempty(ra)
-        parsed = tryparse(Int, ra)
-        !isnothing(parsed) && parsed > 0 && (delay = max(Float64(parsed), delay))
-    end
-    delay
+    ra = _retry_after_seconds(resp)
+    return isnothing(ra) ? delay : max(ra, delay)
 end
 
 """
@@ -277,6 +314,24 @@ _retryable_exception(e)::Bool =
     _is_transport_error(e)
 
 """
+    _BodyFactory(build)
+
+A request body that must be rebuilt for every attempt. The seam owns retries and
+therefore passes `retry=false`, which also disables HTTP.jl's own mark/reset body
+rewind — nothing rewinds a consumable body between attempts. A multipart
+`HTTP.Form` read to EOF by attempt 1 would put a zero-length body on the wire on
+attempt 2, turning a transient 429/503 into a hard protocol failure. Wrapping the
+body in a factory makes each attempt construct a fresh, fully readable one;
+`build()` re-reads from its source rather than retaining a buffered copy.
+"""
+struct _BodyFactory{F}
+    build::F
+end
+
+_attempt_body(body) = body
+_attempt_body(f::_BodyFactory) = f.build()
+
+"""
     _http(method, url, headers=[], body=UInt8[]; cfg, remaining=Inf, kwargs...) -> HTTP.Response
 
 One bounded HTTP attempt. The per-attempt bound is
@@ -292,7 +347,8 @@ and `retry=false`: this is ONE attempt — the retry budget lives in
 `_http_with_retries`, and the library's internal retry layer would multiply
 wire attempts behind the budget's back. `body` is a passthrough positional:
 `String`, `Vector{UInt8}`, and `HTTP.Form` are all handed to `HTTP.request`
-unconverted (callers keep their existing body shapes). Remaining kwargs pass
+unconverted (callers keep their existing body shapes); a [`_BodyFactory`](@ref)
+is built here instead, so each attempt gets its own body. Remaining kwargs pass
 through to `HTTP.request` (e.g. `decompress=false`).
 """
 function _http(method::AbstractString, url::AbstractString,
@@ -306,7 +362,7 @@ function _http(method::AbstractString, url::AbstractString,
     native = _native_timeout_kwargs(cfg, bound)
     try
         return _with_deadline_task(bound, :request) do
-            HTTP.request(method, url, headers, body;
+            HTTP.request(method, url, headers, _attempt_body(body);
                          kwargs..., status_exception=false, retry=false, native...)
         end
     catch e

@@ -127,11 +127,21 @@ keyword form merges the given fields over the CURRENT process default (never
 over an active scope). Intended for REPL/notebook sessions, which cannot hold
 a dynamic scope across cells; prefer [`with_request_config`](@ref) in
 programs.
+
+The keyword form is a read-modify-write and retries on a compare-and-swap miss:
+a plain read-then-write loses one of two concurrent calls, because the loser
+installs a snapshot taken before the winner's write and silently drops its field.
 """
 set_default_config!(cfg::RequestConfig)::RequestConfig =
     (@atomic _PROCESS_DEFAULT_CONFIG.cfg = cfg)
-set_default_config!(; kwargs...)::RequestConfig =
-    set_default_config!(RequestConfig(@atomic(_PROCESS_DEFAULT_CONFIG.cfg); kwargs...))
+
+function set_default_config!(; kwargs...)::RequestConfig
+    while true
+        base = @atomic _PROCESS_DEFAULT_CONFIG.cfg
+        merged = RequestConfig(base; kwargs...)
+        (@atomicreplace _PROCESS_DEFAULT_CONFIG.cfg base => merged).success && return merged
+    end
+end
 
 # Per-verb resolution: an explicit per-call config wins over every ambient channel.
 _resolve_config(c::Union{Nothing,RequestConfig})::RequestConfig =

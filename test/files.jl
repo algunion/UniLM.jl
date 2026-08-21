@@ -58,3 +58,66 @@
         end
     end
 end
+
+using Sockets
+
+# Local upload target whose base URL is chosen after the listener binds.
+struct FilesRetryProbe <: UniLM.ServiceEndpoint end
+const _files_probe_base = Ref("")
+UniLM._resolve_base_url(::Type{FilesRetryProbe}) = _files_probe_base[]
+UniLM.auth_header(::Type{FilesRetryProbe}) =
+    ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{FilesRetryProbe}) = Set([:files])
+
+# Probe an ephemeral port, then serve on it; the close-then-rebind window can race.
+function _files_retry_server(handler)
+    for _ in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2])
+        close(tcp)
+        try
+            return HTTP.serve!(handler, "127.0.0.1", port; verbose=false), "http://127.0.0.1:$port"
+        catch e
+            e isa Base.IOError || rethrow()
+        end
+    end
+    error("could not bind an ephemeral port for the upload retry fixture")
+end
+
+@testset "upload_file: a retried attempt sends a complete multipart body" begin
+    # The seam disables HTTP.jl's own retry layer, so its mark/reset body rewind
+    # never runs. One Form handed to the retry loop is left consumed by attempt 1;
+    # attempt 2 would then put a zero-length body on the wire and a transient 503
+    # would turn into a hard 400. Every attempt must build a fresh Form.
+    payload = "multipart-retry-payload-" * repeat("x", 512)
+    fpath = tempname() * ".txt"
+    write(fpath, payload)
+    seen = Vector{Int}()          # body length per attempt, in order
+    complete = Ref(false)
+    server, base = _files_retry_server(req -> begin
+        body = String(copy(req.body))
+        push!(seen, sizeof(body))
+        if length(seen) == 1
+            return HTTP.Response(503, ["Retry-After" => "0"], Vector{UInt8}("{}"))
+        end
+        complete[] = occursin(payload, body) && occursin("user_data", body)
+        return HTTP.Response(200, ["Content-Type" => "application/json"],
+                             Vector{UInt8}(JSON.json(Dict(
+                                 "id" => "file-1", "bytes" => sizeof(payload), "created_at" => 1,
+                                 "filename" => basename(fpath), "purpose" => "user_data",
+                                 "status" => "processed"))))
+    end)
+    _files_probe_base[] = base
+    try
+        cfg = UniLM.RequestConfig(max_attempts=2, total_deadline=Inf)
+        r = upload_file(fpath, "user_data"; service=FilesRetryProbe, config=cfg)
+        @test length(seen) == 2                 # the 503 was actually retried
+        @test seen[2] >= seen[1]                # attempt 2 is not a truncated replay
+        @test complete[]                        # ...and carries the whole file + fields
+        @test r isa FileSuccess
+        @test r.response.id == "file-1"
+    finally
+        close(server)
+        rm(fpath; force=true)
+    end
+end

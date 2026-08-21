@@ -187,7 +187,12 @@ end
 function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
     data = JSON.parse(resp.body; dicttype=Dict{String,Any})
     cands = get(data, "candidates", [])
-    cand = isempty(cands) ? Dict{String,Any}() : cands[1]
+    # No candidate is not "the model said nothing" — there is no assistant turn to
+    # report at all (a prompt-level block is the usual cause). Fail loud with the
+    # provider's own diagnostics; the verb turns this into its typed error result.
+    isempty(cands) && error("Gemini response contained no candidates (promptFeedback: ",
+                            JSON.json(get(data, "promptFeedback", Dict{String,Any}())), ")")
+    cand = cands[1]
     fr_raw = get(cand, "finishReason", nothing)
     parts = get(get(cand, "content", Dict{String,Any}()), "parts", Any[])
     # Verbatim capture for round-trip: Gemini-3 attaches thoughtSignature to
@@ -221,8 +226,12 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
         Message(role=RoleAssistant, refusal_message="Model response blocked by safety filter.",
                 finish_reason=finish, provider_content=pc)
     else
-        Message(role=RoleAssistant, content=(isempty(txt) ? "No response from the model." : txt),
-                finish_reason=finish, provider_content=pc)
+        # A well-formed candidate that yields no text is a real, legitimate turn:
+        # thinking models routinely spend the whole completion budget on thought
+        # tokens (finishReason MAX_TOKENS, zero visible parts). Report the empty
+        # turn the provider actually sent — substituting prose here would inject
+        # content nobody generated into the reply and into the next request.
+        Message(role=RoleAssistant, content=txt, finish_reason=finish, provider_content=pc)
     end
     (; message=msg, usage)
 end

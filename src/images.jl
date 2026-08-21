@@ -192,9 +192,11 @@ end
 ```
 """
 function save_image(img_b64::String, filepath::String)
-    open(filepath, "w") do io
-        write(io, base64decode(img_b64))
-    end
+    # Decode BEFORE opening: `open(…, "w")` truncates, so decoding inside the block
+    # let a malformed payload destroy whatever already lived at `filepath` and leave
+    # a 0-byte stub. A decode failure must cost nothing.
+    bytes = base64decode(img_b64)
+    write(filepath, bytes)
     return filepath
 end
 

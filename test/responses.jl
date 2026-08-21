@@ -2513,3 +2513,54 @@ end
         close(server)
     end
 end
+
+@testset "a non-streamed failed generation is a failure, not a success" begin
+    # The streamed limb maps `response.failed` to ResponseFailure. The non-stream limb
+    # wrapped ANY HTTP 200 decode in ResponseSuccess, so the SAME failed generation
+    # reported issuccess()==true with `.response.status == "failed"` inside — the
+    # result type depended on `stream`, not on what happened.
+    failed = JSON.json(Dict(
+        "id" => "resp_f1", "status" => "failed", "model" => "gpt-5.5", "output" => [],
+        "error" => Dict("code" => "server_error", "message" => "the model failed"),
+        "metadata" => Dict("run" => "r-7")))
+    port = 8000 + rand(1000:8000)
+    srv = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        HTTP.Response(200, ["Content-Type" => "application/json", "x-request-id" => "req_f1"], failed)
+    end
+    try
+        ep = GenericOpenAIEndpoint("http://127.0.0.1:$port", "sk-x")
+        r = respond(Respond(service=ep, model="m", input="hi"))
+        @test r isa ResponseFailure
+        @test !issuccess(r)
+        @test r.request_id == "req_f1"
+        # Same surface the streamed limb produces: the terminal object's error and
+        # metadata are preserved verbatim in `response`.
+        raw = JSON.parse(r.response; dicttype=Dict{String,Any})
+        @test raw["status"] == "failed"
+        @test raw["error"]["message"] == "the model failed"
+        @test raw["metadata"]["run"] == "r-7"
+    finally
+        close(srv)
+    end
+end
+
+@testset "non-failed terminals stay successes" begin
+    # Only "failed" flips. Background runs (queued/in_progress), a cancelled or
+    # expired run, and a requires_action turn are legitimate non-failed terminals —
+    # converting them would break the background poll and tool-action flows.
+    for st in ("completed", "in_progress", "queued", "requires_action", "cancelled", "incomplete")
+        body = JSON.json(Dict("id" => "resp_$st", "status" => st, "model" => "gpt-5.5", "output" => []))
+        port = 8000 + rand(1000:8000)
+        srv = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+            HTTP.Response(200, ["Content-Type" => "application/json"], body)
+        end
+        try
+            ep = GenericOpenAIEndpoint("http://127.0.0.1:$port", "sk-x")
+            r = respond(Respond(service=ep, model="m", input="hi"))
+            @test r isa ResponseSuccess
+            @test r.response.status == st
+        finally
+            close(srv)
+        end
+    end
+end

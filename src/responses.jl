@@ -1388,7 +1388,16 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
         url = get_url(r.service, r)
         resp = _http_with_retries(cfg, t0, "POST", url, auth_header(r.service), body)
         if resp.status == 200
-            return ResponseSuccess(response=decode_agentic(r.service, resp))
+            decoded = decode_agentic(r.service, resp)
+            # A generation that came back `failed` is a failure, whichever way it was
+            # requested. The streamed limb already routes `response.failed` (OpenAI)
+            # and a failed interaction (Gemini) to ResponseFailure; wrapping the same
+            # outcome in ResponseSuccess here made `issuccess` depend on `stream`.
+            # ONLY "failed": cancelled, expired, in_progress and requires_action are
+            # legitimate terminals of the background and tool-action flows.
+            decoded.status == "failed" && return ResponseFailure(
+                response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
+            return ResponseSuccess(response=decoded)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end

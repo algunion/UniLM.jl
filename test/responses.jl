@@ -2573,6 +2573,43 @@ _delta_event(text::String) =
 _stream_cfg() = RequestConfig(request_timeout=5.0, total_deadline=30.0,
                               stream_idle_timeout=5.0, max_attempts=1)
 
+@testset "a streamed incomplete generation is a success, like the non-streamed one" begin
+    # Only "failed" is a failure, on BOTH paths. `response.incomplete` delivers a
+    # real terminal response object with usable partial output; the truncation is
+    # reported in `status`/`incomplete_details`, not by discarding the result. The
+    # non-streamed decode of this same object yields ResponseSuccess (see
+    # "non-failed terminals stay successes" above) — the streamed limb now matches
+    # it: same result type, same status, same details, same usage, same raw capture.
+    incomplete = Dict("type" => "response.incomplete", "response" => Dict(
+        "id" => "resp_inc", "status" => "incomplete", "model" => "gpt-5.5",
+        "output" => [Dict("type" => "message", "role" => "assistant",
+                          "content" => [Dict("type" => "output_text", "text" => "half an ans")])],
+        "incomplete_details" => Dict("reason" => "max_output_tokens"),
+        "metadata" => Dict("run" => "r-9"),
+        "usage" => Dict("input_tokens" => 4, "output_tokens" => 3, "total_tokens" => 7)))
+    chunks = [_delta_event("half an "), _delta_event("ans"),
+              "event: response.incomplete\ndata: " * JSON.json(incomplete) * "\n\n"]
+    server, url = _sse_gap_server(chunks; gap=0.1)
+    _RESP_TIMEOUT_URL[] = url
+    deltas = String[]
+    try
+        t = respond(Respond(input="hi", service=_RespTimeoutMock, stream=true); config=_stream_cfg(),
+                    callback=(c, _close) -> c isa String && push!(deltas, c))
+        @test timedwait(() -> istaskdone(t), 25.0) == :ok
+        res = fetch(t)
+        @test res isa ResponseSuccess
+        @test issuccess(res)
+        @test res.response.status == "incomplete"
+        @test incomplete_details(res)["reason"] == "max_output_tokens"     # preserved verbatim
+        @test res.response.raw["metadata"]["run"] == "r-9"                 # raw capture complete
+        @test output_text(res) == "half an ans"                            # partial output usable
+        @test token_usage(res).total_tokens == 7                           # usage recorded
+        @test join(deltas) == "half an ans"                                # deltas still delivered
+    finally
+        close(server)
+    end
+end
+
 @testset "streamed text deltas are disjoint slices, never re-prints" begin
     # Regression contract for the driver's delta emission: each callback payload is
     # the text that arrived since the previous one, so concatenating them

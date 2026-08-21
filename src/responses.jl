@@ -1103,7 +1103,7 @@ end
 function _agentic_terminal_result(te::Dict{String,Any}, status::Union{Integer,Nothing}, io,
                                   sse_dropped::Int=0)
     req_id = !isnothing(io) ? _get_request_id(io) : nothing
-    if haskey(te, "response")            # response.failed / response.incomplete
+    if haskey(te, "response")            # response.failed (or a terminal with no usable object)
         ResponseFailure(response=JSON.json(te["response"]), status=something(status, 200),
                         request_id=req_id, sse_dropped=sse_dropped)
     else                                  # bare `error` event
@@ -1128,7 +1128,7 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
         while true
             io_ref[] = nothing
             result = Ref{Union{ResponseObject,Nothing}}(nothing)
-            terminal_error = Ref{Union{Dict{String,Any},Nothing}}(nothing)  # structured failed/incomplete/error payload
+            terminal_error = Ref{Union{Dict{String,Any},Nothing}}(nothing)  # structured failed/error payload
             # Fresh per attempt (a retried attempt must not inherit partial SSE state)
             # and owned OUT here so the `finally` can report what this connection dropped.
             state = AgenticStreamState()
@@ -1183,8 +1183,14 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                             write(raw_buffer, chunk)
                         end
                         status = decode_agentic_stream(r.service, chunk, state)
-                        if status.terminal == :completed && status.data isa AbstractDict && haskey(status.data, "response")
-                            # Flush residual text deltas to the callback before building the ResponseObject
+                        if status.terminal in (:completed, :incomplete) &&
+                           status.data isa AbstractDict && haskey(status.data, "response")
+                            # BOTH terminals carry a real response object, so both finalize
+                            # the same way: `incomplete` reports its truncation in `status` /
+                            # `incomplete_details` and still holds usable partial output.
+                            # Discarding it would make the result type depend on `stream` —
+                            # the non-streamed decode of this same object is a success, and
+                            # only `status == "failed"` is a failure on either path.
                             _flush_agentic_delta!(callback, state, close_ref, callback_fired)
                             rdata = status.data["response"]
                             result[] = ResponseObject(
@@ -1204,7 +1210,9 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                             end
                         elseif status.terminal in (:failed, :incomplete, :error) && !isnothing(status.data)
                             # Structured terminal failure mid-stream (HTTP itself may be 200): keep the
-                            # response's own error/incomplete details instead of dropping them.
+                            # response's own error details instead of dropping them. `:incomplete`
+                            # reaches here only when the terminal carries NO response object — a
+                            # malformed terminal, which has no result to hand back.
                             terminal_error[] = status.data
                             done[] = true
                         else
@@ -1425,8 +1433,10 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
             # requested. The streamed limb already routes `response.failed` (OpenAI)
             # and a failed interaction (Gemini) to ResponseFailure; wrapping the same
             # outcome in ResponseSuccess here made `issuccess` depend on `stream`.
-            # ONLY "failed": cancelled, expired, in_progress and requires_action are
-            # legitimate terminals of the background and tool-action flows.
+            # ONLY "failed": cancelled, expired, in_progress, requires_action and
+            # incomplete are legitimate terminals of the background, tool-action and
+            # truncated-output flows — a truncated generation still carries usable
+            # partial output, and says so in `status`/`incomplete_details`.
             decoded.status == "failed" && return ResponseFailure(
                 response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
             return ResponseSuccess(response=decoded)

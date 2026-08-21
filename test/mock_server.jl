@@ -1621,22 +1621,26 @@ try
         set_error!(200, "")
     end
 
-    @testset "_respond_stream 200 + response.incomplete → ResponseFailure w/ incomplete details (1012-1013,1063-1067,1080-1083)" begin
-        # terminal=:incomplete with a `response` key. HTTP status is 200, but this must NOT be a
-        # silent success: terminal_error[] is set (1063-1067) and 1080-1083 surfaces the response's
-        # own details as a ResponseFailure (status carries the HTTP 200).
+    @testset "_respond_stream 200 + response.incomplete → ResponseSuccess w/ incomplete details" begin
+        # terminal=:incomplete with a `response` key: a REAL terminal response object
+        # carrying usable partial output. Only "failed" is a failure — on this path and
+        # on the non-streamed one alike — so the truncation is reported in `status` /
+        # `incomplete_details`, not by discarding the result.
         response_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] =
             "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":" *
-            "{\"id\":\"resp_inc\",\"status\":\"incomplete\"," *
+            "{\"id\":\"resp_inc\",\"status\":\"incomplete\",\"model\":\"gpt-4o\"," *
+            "\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":" *
+            "[{\"type\":\"output_text\",\"text\":\"half an\"}]}]," *
             "\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n"
 
         result = fetch(respond(Respond(input="x", service=MockServiceEndpoint, stream=true)))
-        @test result isa ResponseFailure
-        @test result.status == 200                 # HTTP itself was 200; structured terminal failure
-        @test occursin("resp_inc", result.response)
-        @test occursin("max_output_tokens", result.response)   # incomplete reason preserved
+        @test result isa ResponseSuccess
+        @test result.response.id == "resp_inc"
+        @test result.response.status == "incomplete"
+        @test incomplete_details(result)["reason"] == "max_output_tokens"   # reason preserved
+        @test output_text(result) == "half an"                             # partial output usable
         set_error!(200, "")
     end
 
@@ -2286,16 +2290,15 @@ try
         @test res_fail.status == 400
         @test res_fail.request_id == "mock-resp-fail-id-123"
 
-        # 3. Test ResponseFailure request_id propagation (streaming)
-        response_status[] = 200
+        # 3. Test ResponseFailure request_id propagation (streaming). A non-200 is the
+        # streamed failure the driver reports from the response itself; `incomplete`
+        # is a success on this path, so it cannot stand in for one.
+        response_status[] = 400
         response_headers[] = ["x-request-id" => "mock-resp-fail-stream-id-123"]
-        response_body[] =
-            "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":" *
-            "{\"id\":\"resp_inc\",\"status\":\"incomplete\"," *
-            "\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n"
+        response_body[] = "bad request payload"
         res_fail_stream = fetch(respond(Respond(input="x", service=MockServiceEndpoint, stream=true)))
         @test res_fail_stream isa ResponseFailure
-        @test res_fail_stream.status == 200
+        @test res_fail_stream.status == 400
         @test res_fail_stream.request_id == "mock-resp-fail-stream-id-123"
 
         # 4. Test LLMFailure request_id propagation (non-streaming)

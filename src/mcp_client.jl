@@ -379,6 +379,9 @@ mutable struct HTTPTransport <: MCPTransport
     # server-negotiated revision once the handshake succeeds.
     protocol_version::String
     connected::Bool
+    # Not the serialization point: whole exchanges, notifications and the disconnect
+    # are ordered by the SESSION lock (one exchange at a time), which is the only
+    # ordering an HTTP transport needs. Kept as part of the public struct's surface.
     lock::ReentrantLock
     pending::Vector{String}  # frames from the last response body, not yet consumed
     function HTTPTransport(url::String; headers::Vector{Pair{String,String}}=Pair{String,String}[])
@@ -388,14 +391,37 @@ end
 
 _transport_connect!(t::HTTPTransport) = (t.connected = true; nothing)
 
-function _transport_send!(t::HTTPTransport, msg::String;
-                          cfg::RequestConfig=current_config())::String
+"""Headers carried by EVERY MCP Streamable-HTTP POST: the JSON body type, the dual
+Accept the transport requires (the server may answer with a JSON body or an SSE
+stream — for a notification too), the protocol revision currently in force, and the
+session id once the server assigned one. One header set for requests and
+notifications alike: a notification that advertises less than a request is one a
+spec-strict server may refuse."""
+function _mcp_post_headers(t::HTTPTransport)::Vector{Pair{String,String}}
     hdrs = copy(t.headers)
     push!(hdrs, "Content-Type" => "application/json")
     push!(hdrs, "Accept" => "application/json, text/event-stream")
     push!(hdrs, "Mcp-Protocol-Version" => t.protocol_version)
     !isnothing(t.session_id) && push!(hdrs, "Mcp-Session-Id" => t.session_id)
-    resp = _http("POST", t.url, hdrs, msg; cfg=cfg, remaining=Inf)
+    hdrs
+end
+
+"""Fail loud on an HTTP status the MCP transport cannot use. `401`/`403` name the
+mechanism that supplies credentials (this client implements no authentication flow —
+credentials travel as request headers); any other status is reported with its body.
+Never returns."""
+function _mcp_http_status_error(resp::HTTP.Response)
+    if resp.status == 401 || resp.status == 403
+        error("MCP HTTP request rejected with status $(resp.status). The server " *
+              "requires authentication; pass credentials via the `headers` kwarg " *
+              "of mcp_connect (e.g. headers=[\"Authorization\" => \"Bearer <token>\"]).")
+    end
+    error("MCP HTTP request failed with status $(resp.status): $(String(resp.body))")
+end
+
+function _transport_send!(t::HTTPTransport, msg::String;
+                          cfg::RequestConfig=current_config())::String
+    resp = _http("POST", t.url, _mcp_post_headers(t), msg; cfg=cfg, remaining=Inf)
     # Capture session ID from response
     sid = HTTP.header(resp, "Mcp-Session-Id", "")
     !isempty(sid) && (t.session_id = sid)
@@ -405,14 +431,7 @@ function _transport_send!(t::HTTPTransport, msg::String;
     if resp.status == 404 && !isnothing(t.session_id)
         throw(_MCPSessionExpired(String(resp.body)))
     end
-    # This client implements no authentication flow; credentials travel as
-    # request headers, so point the caller at the mechanism that supplies them.
-    if resp.status == 401 || resp.status == 403
-        error("MCP HTTP request rejected with status $(resp.status). The server " *
-              "requires authentication; pass credentials via the `headers` kwarg " *
-              "of mcp_connect (e.g. headers=[\"Authorization\" => \"Bearer <token>\"]).")
-    end
-    resp.status == 200 || error("MCP HTTP request failed with status $(resp.status): $(String(resp.body))")
+    resp.status == 200 || _mcp_http_status_error(resp)
     ct = HTTP.header(resp, "Content-Type", "")
     empty!(t.pending)  # frames left over from a previous exchange are stale
     if startswith(ct, "text/event-stream")
@@ -435,11 +454,15 @@ end
 
 function _transport_notify!(t::HTTPTransport, msg::String;
                             cfg::RequestConfig=current_config())
-    hdrs = copy(t.headers)
-    push!(hdrs, "Content-Type" => "application/json")
-    push!(hdrs, "Mcp-Protocol-Version" => t.protocol_version)
-    !isnothing(t.session_id) && push!(hdrs, "Mcp-Session-Id" => t.session_id)
-    _http("POST", t.url, hdrs, msg; cfg=cfg, remaining=Inf)
+    resp = _http("POST", t.url, _mcp_post_headers(t), msg; cfg=cfg, remaining=Inf)
+    # A notification carries no response frame to demux, but its STATUS is the server's
+    # only channel for refusing it (202 Accepted is the usual acceptance). Dropping the
+    # status turns a rejected `notifications/initialized` into a session the client
+    # believes is initialized and the server does not. A 404 stays in this loud bucket
+    # rather than signalling session expiry: the expiry path re-initializes and replays
+    # a REQUEST, and re-entering it from a notification would recurse through the
+    # handshake's own notification.
+    200 <= resp.status < 300 || _mcp_http_status_error(resp)
     nothing
 end
 
@@ -468,12 +491,22 @@ _set_protocol_version!(t::HTTPTransport, v::AbstractString) = (t.protocol_versio
 _reset_session!(::MCPTransport) = nothing
 _reset_session!(t::HTTPTransport) = (t.session_id = nothing; nothing)
 
-"""Split an SSE response body into its `data:` payloads, in arrival order."""
+"""Split an SSE response body into its JSON-RPC frames, in arrival order — ONE frame
+per event. The body is cut into events at blank lines (the SSE event delimiter, which
+the streaming machine's layers do not see: layer 1 drops blank lines because no
+supported provider needs the boundary), then each event's fields are framed by the
+shared [`_sse_events!`](@ref). That buys the spec's two rules the transport needs: the
+space after `data:` is OPTIONAL, and an event carrying several `data:` lines is ONE
+payload, its lines joined with `\\n`."""
 function _parse_sse_frames(body::String)::Vector{String}
     frames = String[]
-    for line in split(body, "\n")
-        stripped = strip(line)
-        startswith(stripped, "data: ") && push!(frames, stripped[7:end])
+    carry, event = IOBuffer(), Ref("")
+    for block in eachsplit(body, r"\r?\n\r?\n")
+        # Layer 1 emits only lines it has seen terminated; the appended newline
+        # completes an event whose last line ends at the delimiter (or at EOF).
+        payloads = _sse_events!(carry, event, block * "\n")
+        isempty(payloads) && continue
+        push!(frames, join((payload for (_, payload) in payloads), "\n"))
     end
     frames
 end
@@ -591,6 +624,19 @@ function _resolve_mcp_request_timeout(session::MCPSession, timeout::Union{Nothin
     timeout !== nothing && return _validate_mcp_timeout(timeout)
     amb = _REQUEST_CONFIG[]
     amb !== nothing ? amb.mcp_request_timeout : session.config.mcp_request_timeout
+end
+
+"""Select the bound for ONE exchange. Connect-phase exchanges — handshake discovery
+re-entering [`_mcp_request!`](@ref) from [`_finalize_connect!`](@ref) while the session
+is `:initializing` — belong to the connect phase and are governed by
+`mcp_connect_timeout`, the bound the connect-timeout message names; every other
+exchange takes the resolved per-call request bound. An explicit per-call `timeout` is
+a deliberate override and wins in either phase (and is validated in both)."""
+function _mcp_exchange_bound(session::MCPSession, timeout::Union{Nothing,Float64})::Float64
+    requested = _resolve_mcp_request_timeout(session, timeout)
+    timeout === nothing && session.status === :initializing &&
+        return session.config.mcp_connect_timeout
+    requested
 end
 
 _request_timeout_msg(limit::Float64)::String =
@@ -721,7 +767,7 @@ function _mcp_request!(session::MCPSession, method::String,
         # re-enters here while status is :initializing, so the guard no-ops — no
         # re-entrant respawn.
         _ensure_live!(session)
-        bound = _resolve_mcp_request_timeout(session, timeout)
+        bound = _mcp_exchange_bound(session, timeout)
         excfg = RequestConfig(session.config; request_timeout=bound)
         if session.transport isa StdioTransport
             t = session.transport
@@ -772,10 +818,17 @@ function _mcp_request!(session::MCPSession, method::String,
             end
             return result
         else
+            # HTTP arms no exchange watchdog: `excfg` bounds each POST inside _http, so
+            # the bound selected above IS the enforcement — including the connect-phase
+            # substitution, which needs no `:initializing` bypass here (there is no
+            # second watchdog to double-arm). A breach while :initializing IS a connect
+            # timeout and must name that override, not the per-exchange one.
             try
                 return _mcp_request_recover!(session, method, params; excfg=excfg)
             catch e
                 if e isa UniLMTimeout && e.phase in (:request, :connect)
+                    session.status === :initializing && throw(MCPTimeoutError(
+                        :connect, e.elapsed, e.limit, _connect_timeout_msg(e.limit)))
                     throw(MCPTimeoutError(:request, e.elapsed, e.limit, _request_timeout_msg(e.limit)))
                 end
                 rethrow()
@@ -784,12 +837,16 @@ function _mcp_request!(session::MCPSession, method::String,
     end
 end
 
-"""Send a JSON-RPC notification (no response expected)."""
+"""Send a JSON-RPC notification (no response expected). Runs under `session._lock`:
+a notification travels over the same transport an exchange may be holding (the HTTP
+endpoint, the stdio pipe) and touches the same transport state, so it is serialized
+WITH exchanges rather than interleaved into one. Re-entrant — the handshake already
+holds the lock when an expired HTTP session is re-initialized mid-request."""
 function _mcp_notify!(session::MCPSession, method::String,
                       params::Union{Dict{String,Any},Nothing}=nothing;
                       excfg::RequestConfig=session.config)
     notif = _JSONRPCNotification(method, params)
-    _transport_notify!(session.transport, _jsonrpc_serialize(notif); cfg=excfg)
+    @lock session._lock _transport_notify!(session.transport, _jsonrpc_serialize(notif); cfg=excfg)
 end
 
 # ─── Lifecycle ───────────────────────────────────────────────────────────────
@@ -1123,16 +1180,23 @@ end
     mcp_disconnect!(session::MCPSession)
 
 Gracefully disconnect from the MCP server.
+
+Takes the session lock, so a disconnect racing a call in flight WAITS for that
+exchange to finish instead of tearing the transport down under its reader — the same
+concurrency-1 semantics every other call obeys. The wait stays bounded transitively:
+the exchange ahead runs under its own `mcp_request_timeout`.
 """
 function mcp_disconnect!(session::MCPSession)
-    _transport_disconnect!(session.transport;
-        cfg=RequestConfig(session.config; request_timeout=session.config.mcp_request_timeout))
-    session.status = :closed
-    # User intent wins: an explicit disconnect is a normal close, not a timeout, so
-    # the next call must never respawn or cite auto_respawn — even if this session
-    # was closed by a request timeout or a server crash before the caller
-    # disconnected it.
-    session._close_cause = :none
+    @lock session._lock begin
+        _transport_disconnect!(session.transport;
+            cfg=RequestConfig(session.config; request_timeout=session.config.mcp_request_timeout))
+        session.status = :closed
+        # User intent wins: an explicit disconnect is a normal close, not a timeout, so
+        # the next call must never respawn or cite auto_respawn — even if this session
+        # was closed by a request timeout or a server crash before the caller
+        # disconnected it.
+        session._close_cause = :none
+    end
     nothing
 end
 

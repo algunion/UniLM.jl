@@ -228,6 +228,9 @@ Send a request to the OpenAI Image Generation API.
 
 Returns [`ImageSuccess`](@ref), [`ImageFailure`](@ref), or [`ImageCallError`](@ref).
 
+Throws `ArgumentError` before any network I/O when `ig.service` is an endpoint type
+that declares its capabilities and does not list `:images`.
+
 # Examples
 ```julia
 ig = ImageGeneration(prompt="A cute robot learning Julia", quality="high")
@@ -241,6 +244,7 @@ end
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
 function generate_image(ig::ImageGeneration; config::Union{Nothing,RequestConfig}=nothing)
+    _validate_declared_capability(ig.service, :images, "Image Generation API")
     cfg = _resolve_config(config)
     t0 = time_ns()
     try

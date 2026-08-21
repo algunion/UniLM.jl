@@ -2108,16 +2108,18 @@ end
     @test st.terminal == :none
 end
 
-@testset "respond() consults get_url dispatch for its URL" begin
-    # Azure and the Gemini OpenAI-compat shim have no agentic surface: get_url(service,
-    # ::Respond) → _api_base_url throws, which respond() catches as a ResponseCallError.
-    # Pins that respond() routes its URL through the get_url dispatch (not a hardcoded path).
-    # (Native GEMINIServiceEndpoint IS supported now — Interactions — so it is
-    # deliberately excluded here.)
+@testset "respond() rejects a declared-incapable endpoint before any dispatch" begin
+    # Azure and the Gemini OpenAI-compat shim have no agentic surface, and both
+    # DECLARE their capabilities without :responses — so respond() refuses up front
+    # rather than building a URL and attempting a call. (Native GEMINIServiceEndpoint
+    # IS supported — Interactions — and is deliberately excluded here.)
     for svc in (AZUREServiceEndpoint, GEMINIOpenAIServiceEndpoint)
-        r = respond(Respond(service=svc, input="x"))
-        @test r isa ResponseCallError
-        @test occursin("only supported with OPENAIServiceEndpoint", r.error)
+        @test_throws ArgumentError respond(Respond(service=svc, input="x"))
+        # The URL dispatch that used to produce this rejection still says so: respond()
+        # routes through get_url, it does not hardcode a path.
+        err = try UniLM.get_url(svc, Respond(service=svc, input="x")); nothing catch e; e end
+        @test err isa ArgumentError
+        @test occursin("only supported with OPENAIServiceEndpoint", err.msg)
     end
 end
 

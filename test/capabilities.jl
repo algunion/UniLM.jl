@@ -162,3 +162,83 @@ end
     @test haskey(UniLM.DEFAULT_PRICING, "claude-opus-4-8")
     @test UniLM.DEFAULT_PRICING["claude-haiku-4-5"].output ≈ 5.0 / 1_000_000
 end
+
+# A user-defined endpoint — the documented way to reach an OpenAI-compatible
+# backend this package does not ship. It declares NO capabilities, which is
+# exactly why the request verbs must not refuse it.
+struct _UndeclaredEndpoint <: UniLM.OpenAIWireEndpoint
+    base_url::String
+end
+UniLM._api_base_url(e::_UndeclaredEndpoint) = e.base_url
+UniLM.auth_header(::_UndeclaredEndpoint) = ["Content-Type" => "application/json"]
+UniLM.get_url(e::_UndeclaredEndpoint, ::Chat) = e.base_url * "/v1/chat/completions"
+UniLM.get_url(chat::Chat, e::_UndeclaredEndpoint) = UniLM.get_url(e, chat)
+
+@testset "declared-capability predicate separates 'lacks it' from 'never said'" begin
+    # provider_capabilities has no fallback method, so the two cases are distinct:
+    # a declared endpoint answers, an undeclared one has no applicable method.
+    @test UniLM._capability_declared(OPENAIServiceEndpoint)
+    @test UniLM._capability_declared(AZUREServiceEndpoint)
+    @test UniLM._capability_declared(GenericOpenAIEndpoint("http://x", ""))
+    @test !UniLM._capability_declared(_UndeclaredEndpoint("http://x"))
+
+    # Declared and lacking → throws. Declared and having → returns. Undeclared → returns.
+    @test_throws ArgumentError UniLM._validate_declared_capability(AZUREServiceEndpoint, :images, "Images")
+    @test UniLM._validate_declared_capability(OPENAIServiceEndpoint, :images, "Images") === nothing
+    @test UniLM._validate_declared_capability(_UndeclaredEndpoint("http://x"), :images, "Images") === nothing
+
+    # The agentic surface is declared under two names across the shipped wires.
+    @test UniLM._validate_agentic_capability(OPENAIServiceEndpoint) === nothing      # :responses
+    @test UniLM._validate_agentic_capability(GEMINIServiceEndpoint) === nothing      # :agentic
+    @test UniLM._validate_agentic_capability(GenericOpenAIEndpoint("http://x", "")) === nothing
+    @test UniLM._validate_agentic_capability(_UndeclaredEndpoint("http://x")) === nothing
+    @test_throws ArgumentError UniLM._validate_agentic_capability(AZUREServiceEndpoint)
+    @test_throws ArgumentError UniLM._validate_agentic_capability(ANTHROPICServiceEndpoint)
+end
+
+# Declares capabilities but no :chat — every shipped endpoint declares :chat, so the
+# chat verb's gate needs an endpoint that says "I do embeddings, not chat".
+struct _NoChatEndpoint <: UniLM.OpenAIWireEndpoint end
+UniLM.provider_capabilities(::Type{_NoChatEndpoint}) = Set([:embeddings])
+
+@testset "the four primary verbs validate before any network I/O" begin
+    # The docs promise capability validation before dispatch; the verbs did none, so
+    # e.g. generate_image against an endpoint that declares no :images opened a live
+    # POST. The check now precedes every I/O statement — including URL construction —
+    # so a rejection cannot have touched the network: there is no local fixture here
+    # to hit, and a call that reached the wire would fail differently.
+    @test_throws ArgumentError generate_image(ImageGeneration(prompt="p", service=AZUREServiceEndpoint))
+    @test_throws ArgumentError generate_image("p"; service=AZUREServiceEndpoint)
+    @test_throws ArgumentError embeddingrequest!(UniLM.Embeddings("x"; service=AZUREServiceEndpoint,
+                                                                  model="text-embedding-3-small"))
+    @test_throws ArgumentError respond(Respond(service=AZUREServiceEndpoint, input="x"))
+    @test_throws ArgumentError chatrequest!(Chat(service=_NoChatEndpoint, model="m",
+                                                 messages=[Message(Val(:user), "hi")]))
+    # The message names the feature and what the provider does support.
+    err = try generate_image(ImageGeneration(prompt="p", service=AZUREServiceEndpoint)); nothing catch e; e end
+    @test occursin("Image Generation API is not supported", err.msg)
+    @test occursin("chat", err.msg)
+end
+
+@testset "an undeclared endpoint still dispatches" begin
+    # The non-breaking rule: a custom backend declares nothing, so the package has no
+    # basis to refuse it. It must reach the wire exactly as before.
+    hits = Ref(0)
+    port = 8000 + rand(1000:8000)
+    srv = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        hits[] += 1
+        HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(Dict(
+            "choices" => [Dict("finish_reason" => "stop",
+                               "message" => Dict("role" => "assistant", "content" => "pong"))])))
+    end
+    try
+        ep = _UndeclaredEndpoint("http://127.0.0.1:$port")
+        chat = Chat(service=ep, model="m", messages=[Message(Val(:user), "ping")])
+        r = chatrequest!(chat; config=RequestConfig(max_attempts=1, total_deadline=10.0))
+        @test r isa LLMSuccess
+        @test text(r) == "pong"
+        @test hits[] == 1
+    finally
+        close(srv)
+    end
+end

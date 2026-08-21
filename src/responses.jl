@@ -1358,6 +1358,10 @@ callback(chunk::Union{String, ResponseObject}, close::Ref{Bool})
 A user `InterruptException` during a stream is not swallowed — it rethrows
 inside the task and surfaces as a `TaskFailedException` at `fetch`.
 
+Throws `ArgumentError` before any network I/O when `r.service` is an endpoint type
+that declares its capabilities and lists neither `:responses` (OpenAI wire) nor
+`:agentic` (Gemini Interactions).
+
 # Examples
 ```julia
 r = Respond(input="Tell me a joke")
@@ -1368,6 +1372,7 @@ end
 ```
 """
 function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callback=nothing)
+    _validate_agentic_capability(r.service)
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try

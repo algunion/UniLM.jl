@@ -41,6 +41,46 @@ function validate_capability(service, cap::Symbol, feature_name::String)
     throw(ArgumentError("$feature_name is not supported by $(typeof(service)). Supported: $caps"))
 end
 
+"""
+    _capability_declared(service) -> Bool
+
+Whether this endpoint type declares its capabilities at all.
+
+`provider_capabilities` has no fallback method, so "undeclared" is exactly "no
+applicable method" — never an empty set. That distinction is what lets a
+capability check reject a KNOWN-incapable provider without also rejecting a
+user-defined endpoint, which is the documented way to reach an OpenAI-compatible
+backend this package does not ship and which cannot declare anything.
+"""
+_capability_declared(service)::Bool = applicable(provider_capabilities, service)
+
+"""
+    _validate_declared_capability(service, cap::Symbol, feature_name::String)
+
+[`validate_capability`](@ref) restricted to endpoints that declared their
+capabilities: an undeclared endpoint passes through untouched. Used by the request
+verbs, where refusing to dispatch a custom backend would be a false negative — the
+package has no basis for claiming what someone else's server does not support.
+"""
+_validate_declared_capability(service, cap::Symbol, feature_name::String) =
+    _capability_declared(service) ? validate_capability(service, cap, feature_name) : nothing
+
+"""
+    _validate_agentic_capability(service)
+
+Declaration-aware gate for [`respond`](@ref), which drives two wires that name the
+same surface differently: the OpenAI wire declares `:responses` (Responses API) and
+the Gemini native wire declares `:agentic` (Interactions). Either declaration
+admits the verb; only an endpoint that declares its capabilities and lists neither
+is rejected.
+"""
+function _validate_agentic_capability(service)
+    _capability_declared(service) || return nothing
+    (has_capability(service, :responses) || has_capability(service, :agentic)) && return nothing
+    caps = join(sort(collect(provider_capabilities(service))), ", ")
+    throw(ArgumentError("Responses API is not supported by $(typeof(service)). Supported: $caps"))
+end
+
 # ─── Default Model Resolution ──────────────────────────────────────────────
 
 """

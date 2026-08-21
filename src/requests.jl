@@ -1099,9 +1099,14 @@ into a result value: it propagates, so `fetch` on the streaming task throws a
 `config::Union{Nothing,RequestConfig}`: per-call timeout/retry budget; `nothing`
 resolves the ambient configuration (`with_request_config` scope, else the process
 default set via `set_default_config!`).
+
+Throws `ArgumentError` before any network I/O when `chat.service` is an endpoint
+type that declares its capabilities and does not list `:chat`. A custom endpoint
+declares none and is dispatched unvalidated.
 """
 function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
                       callback=nothing, on_tool_call=nothing)
+    _validate_declared_capability(chat.service, :chat, "Chat Completions API")
     cfg = _resolve_config(config)
     t0 = time_ns()
     local resp
@@ -1200,8 +1205,12 @@ Transient statuses (408/429/500/502/503/504/529) are retried with backoff and ji
 under the resolved [`RequestConfig`](@ref) (`config === nothing` resolves the ambient
 configuration). Timeouts surface as `EmbeddingCallError` with `status = nothing` and
 the `UniLMTimeout` in `cause`.
+
+Throws `ArgumentError` before any network I/O when `emb.service` is an endpoint type
+that declares its capabilities and does not list `:embeddings`.
 """
 function embeddingrequest!(emb::Embeddings; config::Union{Nothing,RequestConfig}=nothing)
+    _validate_declared_capability(emb.service, :embeddings, "Embeddings API")
     cfg = _resolve_config(config)
     t0 = time_ns()
     try

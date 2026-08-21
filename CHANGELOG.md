@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.16.0
 
 ### Fixed
 - Gemini Interactions streaming: an interaction whose terminal status is

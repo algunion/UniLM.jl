@@ -724,8 +724,12 @@ end
     # RFC 7231 allows delta-seconds OR an IMF-fixdate (always GMT). Ignoring the
     # date form under-waits during a 429 storm: at retry 0 the jitter is capped at
     # _RETRY_BASE (1 s), so any delay above that can only come from the header.
-    ahead = HTTP.Response(429, ["Retry-After" => _imf_fixdate(time() + 3)])
-    @test UniLM._retry_delay(0, ahead) > 2.0
+    # The fixdate floors to whole seconds and the runner can stall between
+    # constructing it and evaluating the delay, so the gap must dwarf both: a 6 s
+    # header with the discriminating bound at the 1 s jitter cap tolerates the
+    # floor plus ~4 s of stall without ever passing on jitter alone.
+    ahead = HTTP.Response(429, ["Retry-After" => _imf_fixdate(time() + 6)])
+    @test UniLM._retry_delay(0, ahead) > 1.0
 
     # Ground truth for the date math: RFC 7231's own example instant.
     @test _imf_fixdate(784111777) == "Sun, 06 Nov 1994 08:49:37 GMT"
@@ -733,7 +737,7 @@ end
 
     # Parser: future date → the remaining gap; past date → 0; garbage → nothing
     # (the caller then keeps its default backoff — a server must never make us throw).
-    @test UniLM._retry_after_seconds(ahead) ≈ 3.0 atol = 1.5
+    @test 2.0 <= UniLM._retry_after_seconds(ahead) <= 6.0
     @test UniLM._retry_after_seconds(HTTP.Response(429, ["Retry-After" => "Sun, 06 Nov 1994 08:49:37 GMT"])) == 0.0
     @test UniLM._retry_after_seconds(HTTP.Response(429, ["Retry-After" => "next tuesday"])) === nothing
     @test UniLM._retry_after_seconds(HTTP.Response(429, ["Retry-After" => "Sun, 06 Nov 1994 08:49:37 PST"])) === nothing

@@ -130,6 +130,12 @@ function realtime_connect(handler; model::String="gpt-realtime-2",
     catch e
         e isa InterruptException && rethrow()
         err = _unwrap_task_failure(e)
+        # A typed timeout raised inside the handler can come back wrapped: on the
+        # 1.x major the WS handler runs inside the client request layers, which
+        # wrap an escaping exception in RequestError. The typed error is the
+        # contract — surface it over the transport wrapper.
+        typed = _find_exception(x -> x isa UniLMTimeout, err)
+        typed !== nothing && throw(typed)
         # The native bounds above race the watchdog at the same limit, and only
         # handshake timers are armed, so a native timeout raised before the handler
         # was entered IS the open phase breaching: report it as the same typed error.

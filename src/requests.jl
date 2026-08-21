@@ -105,9 +105,12 @@ end
 # authenticates with its own header — Anthropic `x-api-key`, Gemini native
 # `x-goog-api-key`, Azure `api-key` — has its key printed verbatim inside the
 # request dump that some transport exceptions carry in their message. Matches the
-# wire form (`name: value`) and the Julia pair form (`"name" => "value"`).
+# wire form (`name: value`) and the Julia pair form (`"name" => "value"`). The
+# leading `\b` holds a name to header position, so a longer word merely ENDING in
+# one (`reauthorization:`) is left alone; the alternation stays longest-first so the
+# leftmost match of `x-api-key` starts at its own `x`, not at its `api-key` tail.
 const _AUTH_HEADER_PATTERN =
-    r"(?i)(x-goog-api-key|x-api-key|api-key|proxy-authorization|authorization)(\"?\s*(?::|=>|=)\s*\"?)([^\r\n\"]*)"
+    r"(?i)\b(x-goog-api-key|x-api-key|api-key|proxy-authorization|authorization)(\"?\s*(?::|=>|=)\s*\"?)([^\r\n\"]*)"
 
 # Replace every auth-shaped header value with the same short, non-reversible
 # marker the endpoint `show` methods use.

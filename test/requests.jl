@@ -761,7 +761,7 @@ end
 end
 
 @testset "_accumulate_cost! fallback is a no-op for non-success" begin
-    # requests.jl:585 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
+    # requests.jl:588 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
     # success types are specialized in accounting.jl, so a failure result must land here:
     # return nothing AND leave cumulative cost untouched (falsifies accidental accumulation).
     # The line is a locator, not the contract: re-point it (here and in the note above)
@@ -769,7 +769,7 @@ end
     chat = Chat(model="gpt-4.1-nano")
     chat._cumulative_cost[] = 0.25
     failure = LLMFailure(response="server exploded", status=500, self=chat)
-    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 585
+    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 588
     @test UniLM._accumulate_cost!(chat, failure) === nothing
     @test cumulative_cost(chat) == 0.25       # unchanged: the fallback did not add anything
 
@@ -1126,6 +1126,31 @@ Base.showerror(io::IO, e::_DumpingError) = print(io, e.dump)
     t = Task(() -> error("inner boom")); schedule(t)
     @test_throws TaskFailedException wait(t)
     @test UniLM._error_text(try wait(t) catch e; e end) == "inner boom"
+end
+
+@testset "the auth mask matches header names, not words that merely end in one" begin
+    # The pattern had no leading word boundary, so any longer word ending in a header
+    # name took its value with it: `reauthorization: <text>` was redacted. Fail-safe,
+    # but it deletes diagnostic text that never carried a credential.
+    secret = "secret-value-0123456789"
+    for word in ("reauthorization", "xauthorization", "deauthorization")
+        @test UniLM._mask_auth_headers("$word: $secret") == "$word: $secret"
+    end
+
+    # Every real header name still loses its value, in header position, on both forms.
+    for name in ("authorization", "Authorization", "x-api-key", "x-goog-api-key",
+                 "api-key", "proxy-authorization")
+        wire = UniLM._mask_auth_headers("$name: $secret")
+        pair = UniLM._mask_auth_headers("\"$name\" => \"$secret\"")
+        @test !occursin(secret, wire)
+        @test !occursin(secret, pair)
+        @test startswith(wire, "$name: secr…[redacted]")
+    end
+
+    # The alternation order is load-bearing: `x-api-key` must claim its own tail, and
+    # `api-key` must still match where a non-word character precedes it.
+    @test UniLM._mask_auth_headers("x-api-key: $secret") == "x-api-key: secr…[redacted]"
+    @test UniLM._mask_auth_headers("api-key: $secret") == "api-key: secr…[redacted]"
 end
 
 @testset "a transport failure mid-exchange cannot leak the configured key" begin

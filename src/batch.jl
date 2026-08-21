@@ -56,7 +56,7 @@ _batch_err(e) = BatchCallError(error=_error_text(e), status=(hasproperty(e, :sta
 Create a batch job. `endpoint` is e.g. `"/v1/chat/completions"`, `"/v1/responses"`, or
 `"/v1/embeddings"`. `input_file_id` comes from `upload_file(path, "batch")`.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function create_batch(input_file_id::String, endpoint::String; completion_window::String="24h",
     metadata::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
@@ -79,7 +79,7 @@ end
 """
     retrieve_batch(id; service=OPENAIServiceEndpoint)
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function retrieve_batch(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :batch, "Batch API")
@@ -98,7 +98,7 @@ end
 """
     cancel_batch(id; service=OPENAIServiceEndpoint)
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function cancel_batch(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :batch, "Batch API")
@@ -117,7 +117,7 @@ end
 """
     list_batches(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function list_batches(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :batch, "Batch API")
@@ -146,7 +146,7 @@ end
 
 Poll a batch until terminal (`completed`/`failed`/`cancelled`/`expired`) or timeout.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function poll_batch(id::String; interval::Real=10.0, timeout::Real=86400.0, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     max_iters = max(1, ceil(Int, timeout / interval))

@@ -3,6 +3,165 @@
 ## Unreleased
 
 ### Fixed
+- Gemini Interactions streaming: an interaction whose terminal status is
+  `"failed"` reported terminal completion, so the driver built a
+  `ResponseSuccess` and dropped the wire's error and metadata. It now takes the
+  typed-failure limb, and the response is overlaid on a copy of the raw
+  interaction, so a streamed result keeps the same status/error/metadata/raw
+  surface the non-streamed decode preserves.
+- Gemini Interactions: a step with `content: null` — spec-legal for a
+  `model_output` that produced no parts — threw a `MethodError` while decoding.
+  It was user-visible on the non-streamed path and silently swallowed as a
+  dropped SSE line on the streamed one. Null or absent content now decodes as no
+  parts.
+- Gemini Interactions streaming: a stream whose text deltas arrived in the same
+  read as `interaction.completed` delivered **zero** deltas to the callback,
+  because the terminal rebuild consumed the driver's text buffer. The rebuild
+  now reads the buffer back without consuming it.
+- MCP over HTTP: the transport's SSE reader required `data: ` with the space
+  (rejecting spec-legal `data:foo`) and emitted one frame per data line,
+  corrupting any event whose payload spans several `data:` lines. The body now
+  goes through the shared SSE machine, cutting events at blank lines and joining
+  each event's data lines with a newline.
+- MCP over HTTP: notifications omitted the dual `Accept` header the request path
+  sends and ignored the response status, so a server's rejection of
+  `notifications/initialized` vanished and left a session the client believed was
+  initialized. Both paths now share one header set and one status policy; a
+  non-2xx notification fails loud, naming the status and body, which means a
+  rejected `notifications/initialized` now fails `mcp_connect`.
+- MCP over HTTP: connect-phase exchanges (handshake discovery, status
+  `:initializing`) were bounded by `mcp_request_timeout` instead of
+  `mcp_connect_timeout`, aborting handshakes the connect budget still covered. A
+  breach there is now classified `:connect` and names that override.
+- MCP over HTTP: `_mcp_notify!` reached the transport without the session lock;
+  it now takes it re-entrantly, so notifications are serialized with exchanges.
+- Multipart uploads: the request seam owns retries and passes `retry=false`,
+  which also disables HTTP.jl's body rewind, so a single form handed to the retry
+  loop was left consumed by the first attempt and the second put a zero-length
+  multipart body on the wire — a transient 429/503 became a hard protocol
+  failure. Non-replayable bodies now travel as a factory and are rebuilt per
+  attempt, re-reading from source rather than buffering a copy. `edit_image` also
+  validates its file paths before the loop, so a missing file is reported once, up
+  front.
+- `Retry-After` in its HTTP-date form is now honored. RFC 7231 allows
+  delta-seconds **or** an HTTP-date and servers behind CDNs send both; only the
+  seconds form was parsed, so the date form was silently ignored and the client
+  under-waited a 429 storm by whatever the header actually asked for. The parsed
+  date goes through the same clamping and deadline arithmetic as the seconds
+  form: a past date yields zero, and a malformed value still yields the default
+  backoff — a server sending garbage must never make a client throw.
+- Decoders no longer fabricate text for an empty turn. The OpenAI, Anthropic and
+  Gemini decoders each substituted `"No response from the model."` whenever a turn
+  produced no text — content the provider never sent, which then landed in the
+  returned `Message` and in the next request's history. Reasoning models hit this
+  routinely, spending the whole completion budget on thought tokens. An empty turn
+  is now reported as the empty turn it is. A response with no candidates or
+  choices at all remains a different thing — there is no assistant turn to report
+  — and still fails loud into the verb's typed error result.
+- OpenAI-wire tool calls are now decoded whenever they are present, whatever the
+  finish reason. A tool-only reply finishing with anything other than
+  `"tool_calls"` — which some providers do — previously fell into the empty-turn
+  fallback, which fabricated prose *and* dropped the calls.
+- MCP server: survives spec-legal parameter shapes (`params: null` and positional
+  `params` no longer crash a request). Errors below the tool handler now answer
+  JSON-RPC `-32603` with a generic message, with the exception and backtrace
+  logged locally rather than shipped to the peer, since an exception string can
+  carry file paths and argument values a remote client has no business reading.
+  Frames and request bodies are capped at 16 MiB on both transports and an
+  oversized one is answered rather than parsed — parsing an attacker-sized payload
+  allocates a multiple of it, which is an out-of-memory kill rather than a
+  protocol error. Tool-handler exceptions are unaffected: they still reach the
+  client as tool results (`isError`), which is what lets a model correct itself.
+- Embeddings: a response that misses or duplicates a row index is now an
+  `EmbeddingCallError` instead of a zero vector. The buffers are pre-zeroed, so an
+  uncovered slot stayed a valid-looking all-zero embedding that still compares,
+  normalizes and indexes — a silent corruption. A response must now cover every
+  input exactly once.
+- `save_image` decodes the payload **before** opening the destination. `open(…,
+  "w")` truncates, so decoding inside the block let a malformed payload destroy
+  whatever already lived at the path and leave a 0-byte stub. A failed save now
+  costs nothing.
+- The Azure model-to-deployment registry is now lock-guarded. It is read while
+  building every Azure request URL and written by `add_azure_deploy_name!`,
+  potentially from another task; a `Dict` write that rehashes reallocates the
+  arrays a reader is walking, which yields a wrong hit or a bounds error rather
+  than merely a stale answer.
+- The keyword form of `set_default_config!` is now atomic. It is a
+  read-modify-write on the process default, so two concurrent calls read the same
+  snapshot and the second write installed a state predating the first, silently
+  dropping its field. The merge now runs in a compare-and-swap loop.
+- API keys and request bodies are redacted before they reach a result value. A
+  mid-exchange transport failure on HTTP.jl 1.x arrives as an error whose
+  rendering is a full request dump — every header and the whole body — and the
+  library masks only `Authorization`, `Proxy-Authorization` and `Cookie` there, so
+  a provider authenticating with its own header (Anthropic `x-api-key`, Gemini
+  `x-goog-api-key`, Azure `api-key`) had its key in cleartext inside the
+  user-visible `.error` of the returned result, and from there in logs and bug
+  reports. Every error-construction site now renders through one helper that
+  prefers the root cause's own text and then masks auth-shaped header values as
+  defense in depth. The same redaction covers debug/warn logs, the displayed form
+  of MCP transports and sessions, and a minted Realtime client secret. Call-error
+  results additionally define a `show` that names `cause` by TYPE instead of
+  letting Julia's default recurse into it and reprint the dump; `.cause` itself is
+  unchanged and still reachable.
+
+### Changed
+These entries change behavior that previously succeeded silently. They are
+breaking in the sense that code relying on the silent path will now see an
+exception, and are collected here pending a version decision.
+
+- `Respond` fields the Gemini Interactions wire does not map now throw
+  `ArgumentError` at encode time instead of being silently dropped. Structured
+  output via `text`, `reasoning`, `metadata` and others simply vanished between
+  the caller's request and the wire. The unmapped set is derived from
+  `fieldnames(Respond)`, so a newly added field is unsupported until deliberately
+  mapped, and the error names the offending fields.
+- `is_flagged` throws `ArgumentError` on a failed moderation call. A failed call
+  has no verdict, and returning `false` made "not flagged" indistinguishable from
+  "never checked".
+- `verify_webhook` throws `ArgumentError` for a signing secret that is not valid
+  base64, and rejects non-finite timestamps, instead of failing verification as
+  though the signature were wrong. A malformed secret is a configuration error,
+  not a failed verification.
+- `token_usage` and `estimated_cost` throw `ArgumentError` for result types
+  outside the token-billed APIs (audio, batch, files, moderations, vector stores,
+  video, …), where they previously raised `MethodError`. Those calls report no
+  token usage at all, and a `0.0` would be indistinguishable from a genuinely free
+  call.
+- `mcp_disconnect!` now takes the session lock, so a disconnect racing a call in
+  flight waits for that exchange to finish instead of tearing the transport down
+  under its reader — the same concurrency-1 semantics every other call obeys,
+  bounded transitively by the exchange's own `mcp_request_timeout`.
+- `realtime_connect` and `realtime_receive` are bounded by `RequestConfig`, and
+  `RealtimeSession` gained a `config` field carrying the budget resolved at
+  connect time. The WebSocket was the one surface outside the bound-everything
+  guarantee: a peer that accepted TCP and never completed the upgrade, or a
+  connected peer that went silent, blocked the caller forever. `connect_timeout`
+  now bounds **only** the open phase and `stream_idle_timeout` bounds
+  `realtime_receive`; a live session's lifetime stays deliberately unbounded,
+  since it is the caller's to decide. The two-argument `RealtimeSession`
+  constructor is retained and inherits the ambient config.
+- A non-streamed generation whose terminal status is `"failed"` is now a
+  `ResponseFailure` on both agentic wires, carrying the wire body verbatim so
+  error and metadata are preserved. The streamed limb already did this, so
+  `issuccess` depended on how the call was made rather than on what happened.
+  Only `"failed"` flips: `cancelled`, `expired`, `in_progress`, `queued` and
+  `requires_action` are legitimate terminals of the background and tool-action
+  flows and remain successes.
+- The four primary verbs — `chatrequest!`, `embeddingrequest!`, `respond` and
+  `generate_image` — now validate provider capabilities before dispatch, giving a
+  typed `ArgumentError` instead of a provider 404. Validation applies only to
+  endpoints that **declare** their capabilities (`respond` accepts either
+  `:responses` or `:agentic`, since the two agentic wires name the same surface
+  differently). A custom endpoint that declares nothing passes through
+  unvalidated: refusing to dispatch a backend the package knows nothing about
+  would be a false negative.
+- `call_tool` and `get_prompt` accept any `AbstractDict` for `arguments`, so the
+  natural `Dict("k" => "v")` form works without conversion.
+
+## 0.15.1
+
+### Fixed
 - Streaming: the byte-gap idle watchdog read the clock before loading the
   last-byte stamp, so a chunk arriving between the two reads made the unsigned
   gap wrap to an astronomically large value and killed a healthy,

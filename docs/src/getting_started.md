@@ -217,3 +217,4 @@ end
 | Use any provider               | [Multi-Backend Guide](@ref backend_guide)        |
 | Track token usage & cost       | [Cost Tracking Guide](@ref cost_guide)           |
 | Ground answers in your files   | [Retrieval & File Search](@ref retrieval_guide)  |
+| Bound timeouts, retries, fan-out | [Timeouts & Retries](@ref timeouts_guide)      |

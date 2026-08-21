@@ -67,7 +67,7 @@ _moderation_verdict(row::AbstractDict)::Bool = haskey(row, "flagged") ? row["fla
 Classify `input` (a `String`, or a vector of content parts) for policy violations (free).
 Returns `ModerationSuccess`, `ModerationFailure`, or `ModerationCallError`.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function moderate(input; model::String="omni-moderation-latest", service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :moderation, "Moderations API")

@@ -163,6 +163,14 @@ end
     register_tool!(server, name, description, input_schema, handler)
 
 Register a tool on the MCP server with an explicit JSON Schema.
+
+`handler(args::Dict{String,Any})` receives the client's `arguments` object. An
+exception it raises is NOT a protocol error: the message is relayed to the client
+as tool content with `isError: true`, so a model can see the failure and correct
+itself. Write handlers with that in mind — raise with a message you are willing to
+show both the model and the client, and never one carrying secrets or internals.
+Errors below the handler (in dispatch itself) answer a generic JSON-RPC `-32603`
+instead, with the detail going to the server's logs.
 """
 function register_tool!(server::MCPServer, name::String,
                         description::Union{String,Nothing},
@@ -634,6 +642,16 @@ Start the MCP server using the specified transport.
   localhost origins and requests without an `Origin` are always accepted;
   anything else gets 403), and `block` (default `true`: block until the server
   is closed; `block=false` returns the running server — close it with `close`).
+
+# Robustness contract
+Both transports cap an incoming frame (stdio) or request body (HTTP) at 16 MiB and
+answer an oversized one with JSON-RPC `-32600` rather than parsing it — parsing an
+attacker-sized payload allocates a multiple of it, which is an out-of-memory kill
+rather than a protocol error. Any unhandled error while dispatching a request is
+answered with a generic `-32603` "Internal error" and logged locally, so one bad
+frame cannot take the transport down and no exception text (file paths, argument
+values) reaches the peer. Tool-handler exceptions are excluded: they reach the
+client as tool results — see [`register_tool!`](@ref).
 
 # Examples
 ```julia

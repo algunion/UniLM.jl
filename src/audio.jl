@@ -47,7 +47,7 @@ end
 Synthesize speech. On success returns `SpeechSuccess` with raw audio bytes; otherwise
 `AudioFailure`/`AudioCallError`. Use [`save_audio`](@ref) to write the bytes to disk.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function speak(s::SpeechRequest; config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(s.service, :audio, "Audio API")
@@ -146,7 +146,7 @@ end
 Transcribe audio to text in the source language. Returns `TranscriptionSuccess`
 (`.text`, via [`transcript_text`](@ref)), `AudioFailure`, or `AudioCallError`.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}=nothing) = _transcribe(t, AUDIO_TRANSCRIPTIONS_PATH; config=config)
 transcribe(path::String; model::String="gpt-4o-transcribe", service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing, kwargs...) =
@@ -157,7 +157,7 @@ transcribe(path::String; model::String="gpt-4o-transcribe", service::ServiceEndp
 
 Translate audio into English text.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 translate(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}=nothing) = _transcribe(t, AUDIO_TRANSLATIONS_PATH; config=config)
 translate(path::String; model::String="whisper-1", service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing, kwargs...) =

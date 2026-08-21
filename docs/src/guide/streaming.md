@@ -155,3 +155,9 @@ Studio, …) stream through the same `stream=true` + callback path.
 - On completion, the Chat Completions callback receives a `Message`; the Responses API callback receives a `ResponseObject`.
 - **Streamed usage**: set `stream_options=Dict("include_usage" => true)` to capture token usage — it lands on the result's `.usage` once the stream completes. Empty-`choices` chunks, `:` keep-alive comment lines, and provider preambles (e.g. Azure content-filter results) are all tolerated without affecting the stream.
 - A provider error mid-stream on an otherwise-`200` response (e.g. an Anthropic `overloaded_error`) surfaces as an `LLMFailure`/`LLMCallError`, never a truncated `LLMSuccess` — the `else` branch in the examples above catches it.
+- **One `Chat` per in-flight call.** A `Chat` is unsynchronized mutable state, so do not share one across concurrent streams, and do not `push!` to it while its stream task is still running. Use [`fork`](@ref) to fan out — see [Concurrency](@ref timeout_concurrency).
+
+## See Also
+
+- [Timeouts & Retries](@ref timeouts_guide) — the stream idle bound, what a
+  completed-then-torn-down turn resolves to, and the concurrency contracts.

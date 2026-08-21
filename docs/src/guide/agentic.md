@@ -81,9 +81,9 @@ result = tool_loop("What's the weather in Paris?"; service=GEMINIServiceEndpoint
 Use [`tool_result`](@ref) to return a function's output on the next turn:
 
 ```julia
-r2 = respond(; service=GEMINIServiceEndpoint,
-             previous_response_id=r1.response.id,
-             input=[tool_result("call_abc", "get_weather", "72F and sunny")])
+r2 = respond(Respond(; service=GEMINIServiceEndpoint,
+                     previous_response_id=r1.response.id,
+                     input=[tool_result("call_abc", "get_weather", "72F and sunny")]))
 ```
 
 ## Lifecycle (background requests)

@@ -83,7 +83,7 @@ julia> result.response.model
 ### Chat Completions
 
 ```julia
-julia> chat = Chat(model="gpt-4o-mini")
+julia> chat = Chat(model="gpt-5.4-mini")
 
 julia> push!(chat, Message(Val(:system), "You are a concise Julia programming tutor."))
 
@@ -106,7 +106,7 @@ Use `issuccess(result)` / `isfailure(result)` to branch on the outcome; `text(re
 julia> result = chatrequest!(
            systemprompt="You are a calculator. Respond only with the number.",
            userprompt="What is 42 * 17?",
-           model="gpt-4o-mini",
+           model="gpt-5.4-mini",
            temperature=0.0
        )
 
@@ -322,6 +322,44 @@ Full documentation with guides and API reference: **[https://algunion.github.io/
 - [Structured Output Guide](https://algunion.github.io/UniLM.jl/dev/guide/structured_output/) — JSON Schema output
 - [Multi-Backend Guide](https://algunion.github.io/UniLM.jl/dev/guide/multi_backend/) — Azure, Gemini, DeepSeek, Ollama, and more
 - [MCP Guide](https://algunion.github.io/UniLM.jl/dev/guide/mcp/) — MCP client/server
+- [Timeouts & Retries Guide](https://algunion.github.io/UniLM.jl/dev/guide/timeouts/) — bounds, typed failures, retry and concurrency contracts
+
+## Timeouts & Concurrency
+
+Every network operation waits on a peer only under a bounded, configurable limit,
+and reports a breach as a typed error. All bounds live on one `RequestConfig`,
+resolved per call:
+
+```julia
+# Per call
+chatrequest!(chat; config=RequestConfig(request_timeout=60.0, max_attempts=1))
+
+# For a block of calls (propagates into spawned tasks)
+with_request_config(request_timeout=30.0) do
+    chatrequest!(chat)
+    embeddingrequest!(emb)
+end
+
+set_default_config!(stream_idle_timeout=300.0)   # process-wide, for notebooks
+```
+
+A timeout surfaces as the call's usual error result with `status = nothing` and a
+`UniLMTimeout` (`phase`, `elapsed`, `limit`) on `.cause` — never a hang and never a
+fabricated HTTP status. `max_attempts` (default 3) applies to the inference verbs;
+platform and lifecycle verbs make a single bounded attempt.
+
+Two concurrency rules are worth knowing before you fan out:
+
+- **One `Chat` per in-flight call.** A `Chat` is unsynchronized mutable state, so
+  use `fork(chat)` / `fork(chat, n)` to fan out rather than sharing one. The
+  stateless verbs (`respond`, `embeddingrequest!`, `generate_image`) need no such
+  care, and an `MCPSession` is concurrency-1 — one session per worker.
+- **Prefer HTTP 2.x for high fan-out.** HTTP 1.x shares one process-global
+  connection pool across all hosts, capped at `max(16, 4 × nthreads())`, so a wide
+  fan-out silently queues there.
+
+The [Timeouts & Retries guide](https://algunion.github.io/UniLM.jl/dev/guide/timeouts/)
+has the full contract, including the stream idle bound and the sharp edges.
 
 ## Versioning & Stability
 

@@ -90,9 +90,10 @@ println(JSON.json(r))
 ```
 
 ```@example quickstart
-# Image Generation request
+# Image Generation request. `model` is a sentinel that resolves at serialization
+# time, so the field itself stays "" — read the body to see what gets sent.
 ig = ImageGeneration(prompt="A watercolor Julia logo", quality="high")
-println("Image model: ", ig.model)
+println("Image model field: ", repr(ig.model))
 println(JSON.json(ig))
 ```
 
@@ -145,6 +146,7 @@ end
 - [Responses API Guide](@ref responses_guide) — the newer Responses API
 - [Image Generation Guide](@ref images_guide) — create images from text prompts
 - [MCP Guide](@ref mcp_guide) — connect to MCP servers or build your own
+- [Timeouts & Retries](@ref timeouts_guide) — `RequestConfig`, typed timeout failures, retry and concurrency contracts
 - [API Reference](@ref chat_api) — full type and function reference
 
 ### Platform APIs

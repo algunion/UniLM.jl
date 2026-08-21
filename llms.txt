@@ -17,8 +17,10 @@ Install: `using Pkg; Pkg.add("UniLM")` (registered in Julia's General registry; 
 - [Tool Calling](https://algunion.github.io/UniLM.jl/dev/guide/tool_calling/): function tools + automated `tool_loop`
 - [Retrieval & File Search](https://algunion.github.io/UniLM.jl/dev/guide/retrieval/): end-to-end RAG (files → vector store → `file_search`)
 - [Streaming](https://algunion.github.io/UniLM.jl/dev/guide/streaming/): callback / `do`-block, across providers
+- [Timeouts & Retries](https://algunion.github.io/UniLM.jl/dev/guide/timeouts/): `RequestConfig`, the typed timeout failures, retry and concurrency contracts
 - [Structured Output](https://algunion.github.io/UniLM.jl/dev/guide/structured_output/): JSON-schema-constrained generation
 - [Multi-Backend](https://algunion.github.io/UniLM.jl/dev/guide/multi_backend/): native + OpenAI-compatible providers
+- [Custom Backends](https://algunion.github.io/UniLM.jl/dev/guide/custom_backends/): implement a new `ServiceEndpoint`
 - [MCP](https://algunion.github.io/UniLM.jl/dev/guide/mcp/): Model Context Protocol client & server
 - [Cost Tracking](https://algunion.github.io/UniLM.jl/dev/guide/cost_tracking/): token usage + USD estimation
 - [Embeddings](https://algunion.github.io/UniLM.jl/dev/guide/embeddings/)
@@ -27,7 +29,7 @@ Install: `using Pkg; Pkg.add("UniLM")` (registered in Julia's General registry; 
 
 ## Gotchas for code generation
 
-- A `Chat` must start with a **system** message; `push!` silently drops a non-system message pushed onto an empty `Chat`. Use `respond(input=...)` for a single turn without a system prompt.
+- A `Chat` must start with a **system** message; `push!` **throws** `InvalidConversationError` for a non-system message pushed onto an empty `Chat` (and for consecutive same-role messages, except `tool`). Use `respond(input=...)` for a single turn without a system prompt.
 - Real defaults: OpenAI `gpt-5.5`; native Gemini `gemini-3.5-flash`; native Anthropic `claude-opus-4-8` (auto `max_tokens` 4096); image `gpt-image-2`; embeddings `text-embedding-3-small`.
 - Prefer the Responses API / `respond` for new code. Native Anthropic = `ANTHROPICServiceEndpoint`; native Gemini = `GEMINIServiceEndpoint`; the OpenAI-compat Gemini shim (needed for embeddings) = `GEMINIOpenAIServiceEndpoint`.
 - Requests validate provider capabilities at call time and return typed results (`*Success` / `*Failure` / `*CallError`) instead of throwing. `estimated_cost` returns `0.0` for any model not in `DEFAULT_PRICING` (pass `pricing=` for custom models).

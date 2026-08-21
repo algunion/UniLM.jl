@@ -163,10 +163,16 @@ UniLM.jl works with any model name string. Common choices:
 | Model            | Usage                  |
 | :--------------- | :--------------------- |
 | `"gpt-5.5"`      | Best quality (default) |
-| `"gpt-4o-mini"`  | Fast and cheap         |
+| `"gpt-5.4-mini"` | Fast and cheap         |
 | `"gpt-4.1-mini"` | Balanced performance   |
 | `"o3"`           | Extended reasoning     |
 | `"o4-mini"`      | Fast reasoning         |
+
+All five are keys in [`DEFAULT_PRICING`](@ref), so cost accounting works out of
+the box. Any other model name is accepted — it is just a string on the wire — but
+an unpriced one silently estimates at `0.0` — see
+[Unpriced models return \$0 silently](@ref unpriced-zero) before relying on
+`estimated_cost`.
 
 ## Using Other Providers
 

@@ -1,3 +1,5 @@
+import InteractiveUtils
+
 @testset "TokenUsage" begin
     @testset "defaults" begin
         u = TokenUsage()
@@ -270,6 +272,50 @@ end
     @test token_usage(EmbeddingCallError(error="net")) == zero
     # sanity: a zero TokenUsage really is all-zero (so the equality above is meaningful)
     @test zero.prompt_tokens == 0 && zero.completion_tokens == 0 && zero.total_tokens == 0
+end
+
+@testset "results outside the token-billed APIs throw, they do not report zero" begin
+    # `token_usage`/`estimated_cost` are documented on the LLMRequestResponse
+    # supertype, but only the chat/Responses/embedding/image families carry usage.
+    # Every other result type used to reach the caller as a raw MethodError from
+    # inside the library; a fabricated 0.0 would be worse still — it is
+    # indistinguishable from a genuinely free call and quietly under-counts spend.
+    speech = SpeechSuccess(audio=UInt8[0x01], content_type="audio/mpeg")
+    @test_throws ArgumentError token_usage(speech)
+    @test_throws ArgumentError estimated_cost(speech)
+    # An explicit model does not conjure usage out of a result that has none.
+    @test_throws ArgumentError estimated_cost(speech; model="gpt-4.1")
+    err = try; estimated_cost(speech); catch e; e; end
+    @test contains(sprint(showerror, err), "SpeechSuccess")   # names the offending type
+
+    # The fallback covers the supertype, so no concrete result type falls through
+    # to a MethodError any more.
+    concrete = [T for T in InteractiveUtils.subtypes(UniLM.LLMRequestResponse) if isconcretetype(T)]
+    @test length(concrete) > 50
+    @test all(T -> hasmethod(token_usage, Tuple{T}), concrete)
+    @test all(T -> hasmethod(estimated_cost, Tuple{T}), concrete)
+
+    # Types that DO carry usage keep their exact behaviour: the fallback is only
+    # reached when no more specific method exists.
+    fallback = which(token_usage, Tuple{UniLM.LLMRequestResponse})
+    chat = Chat(model="gpt-4.1")
+    covered = (LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=chat,
+                   usage=TokenUsage(prompt_tokens=1000, completion_tokens=500)),
+               LLMFailure(response="e", status=500, self=chat),
+               LLMCallError(error="e", self=chat),
+               ResponseFailure(response="e", status=500),
+               ResponseCallError(error="e"),
+               ImageFailure(response="e", status=400),
+               ImageCallError(error="e"),
+               EmbeddingFailure(response="e", status=500),
+               EmbeddingCallError(error="e"))
+    for r in covered
+        @test which(token_usage, Tuple{typeof(r)}) !== fallback
+        @test token_usage(r) isa TokenUsage
+    end
+    @test token_usage(covered[1]) == TokenUsage(prompt_tokens=1000, completion_tokens=500)
+    @test estimated_cost(covered[1]) ≈ (1000 * 2.0 + 500 * 8.0) / 1_000_000
+    @test estimated_cost(covered[2]) == 0.0     # a failure is still a priced zero
 end
 
 @testset "Gemini pricing rows" begin

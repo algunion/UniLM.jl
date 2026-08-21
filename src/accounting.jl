@@ -40,8 +40,15 @@ const DEFAULT_PRICING = Dict{String, PriceRow}(
 """
     token_usage(result::LLMRequestResponse) -> TokenUsage
 
-Extract token usage from any API result. Returns zero-usage for failures.
+Extract token usage from a token-billed API result (chat, Responses, embeddings and
+their image counterparts); failures of those APIs report zero usage.
+
+Results from APIs that do not report token usage at all — audio, files, batches,
+moderations, vector stores, video, … — **throw** an `ArgumentError`. A zero would be
+indistinguishable from a genuinely free call and would quietly under-count spend.
 """
+token_usage(r::LLMRequestResponse)::TokenUsage = throw(ArgumentError(
+    "$(typeof(r)) carries no token usage or pricing information"))
 token_usage(r::LLMSuccess)::TokenUsage = something(r.usage, TokenUsage())
 token_usage(r::ResponseSuccess)::TokenUsage = begin
     u = r.response.usage
@@ -65,6 +72,10 @@ token_usage(::EmbeddingCallError)::TokenUsage = TokenUsage()
 
 Estimate the cost in USD for a single API call result.
 If `model` is not provided, it is inferred from the result when possible.
+
+Returns `0.0` for results that carry no billable usage (failures) or an unpriced
+model. Throws `ArgumentError` for result types outside the token-billed APIs — see
+[`token_usage`](@ref); their price is not a zero this function can report.
 """
 function estimated_cost(result::LLMRequestResponse;
     model::Union{String,Nothing}=nothing,

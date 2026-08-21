@@ -114,8 +114,9 @@
 - Caller-supplied values interpolated into request URLs are percent-encoded. Ids,
   model names, pagination cursors and list filters went into path segments and
   query values raw across the platform APIs (files, batches, uploads, containers,
-  conversations, vector stores, fine-tuning, videos), the Gemini model-in-URL and
-  the Realtime model query. A value carrying `/`, `?`, `#`, `&`, `=` or a space
+  conversations, vector stores, fine-tuning, videos), the Responses lifecycle
+  operations (response ids, pagination cursors and filters), the Azure deployment
+  path, the Gemini model-in-URL and the Realtime model query. A value carrying `/`, `?`, `#`, `&`, `=` or a space
   silently re-shaped the request target — extra path segments, a spurious query
   string or fragment, a smuggled parameter — or, on HTTP.jl 2.x, was rejected
   client-side as a synthetic 400 that never reached the server. Only the

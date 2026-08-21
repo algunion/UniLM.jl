@@ -1344,8 +1344,15 @@ struct MCPToolResult
     parts::Vector{Any}
 end
 
+# JSON-RPC params are objects with string keys, so any AbstractDict a caller
+# writes is accepted and normalized here. Without this the natural literal
+# `Dict("path" => "/x")` — which infers Dict{String,String} — is a MethodError.
+_mcp_arguments(d::AbstractDict)::Dict{String,Any} =
+    Dict{String,Any}(string(k) => v for (k, v) in d)
+_mcp_arguments(d::Dict{String,Any})::Dict{String,Any} = d
+
 """
-    call_tool(session::MCPSession, name::String, arguments::Dict{String,Any}) -> MCPToolResult
+    call_tool(session::MCPSession, name::String, arguments::AbstractDict) -> MCPToolResult
 
 Call a tool on the MCP server and return its result as an [`MCPToolResult`](@ref).
 
@@ -1360,10 +1367,10 @@ content array. A tool-execution error (`isError: true`) is returned with
 disables, NaN/≤0 rejected).
 """
 function call_tool(session::MCPSession, name::String,
-                   arguments::Dict{String,Any}=Dict{String,Any}();
+                   arguments::AbstractDict=Dict{String,Any}();
                    timeout::Union{Nothing,Float64}=nothing)::MCPToolResult
     result = _mcp_request!(session, "tools/call", Dict{String,Any}(
-        "name" => name, "arguments" => arguments); timeout=timeout)
+        "name" => name, "arguments" => _mcp_arguments(arguments)); timeout=timeout)
     content = get(result, "content", Any[])
     is_error = get(result, "isError", false) === true
     rendered = String[]
@@ -1405,13 +1412,13 @@ function read_resource(session::MCPSession, uri::String)::String
 end
 
 """
-    get_prompt(session::MCPSession, name::String, arguments::Dict{String,Any}=Dict()) -> Vector{Dict{String,Any}}
+    get_prompt(session::MCPSession, name::String, arguments::AbstractDict=Dict()) -> Vector{Dict{String,Any}}
 
 Get a rendered prompt from the MCP server. Returns the messages array.
 """
-function get_prompt(session::MCPSession, name::String, arguments::Dict{String,Any}=Dict{String,Any}())::Vector{Dict{String,Any}}
+function get_prompt(session::MCPSession, name::String, arguments::AbstractDict=Dict{String,Any}())::Vector{Dict{String,Any}}
     result = _mcp_request!(session, "prompts/get", Dict{String,Any}(
-        "name" => name, "arguments" => arguments
+        "name" => name, "arguments" => _mcp_arguments(arguments)
     ))
     get(result, "messages", Dict{String,Any}[])
 end

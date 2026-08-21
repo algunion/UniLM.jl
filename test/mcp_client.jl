@@ -2847,3 +2847,45 @@ end
     @test occursin("status=:ready", ss)
     @test occursin("tools=1", ss)
 end
+
+@testset "call_tool accepts the natural Dict literal" begin
+    # `Dict("path" => "/x")` infers Dict{String,String}, so a signature demanding
+    # Dict{String,Any} MethodErrors on the exact form the docs show. Arguments are
+    # any AbstractDict; the JSON-RPC params are built as Dict{String,Any} inside.
+    @test !isempty(methods(call_tool, (UniLM.MCPSession, String, Dict{String,String})))
+    @test !isempty(methods(call_tool, (UniLM.MCPSession, String, Dict{Symbol,Any})))
+    @test !isempty(methods(get_prompt, (UniLM.MCPSession, String, Dict{String,String})))
+
+    # A live round trip against the in-process server proves the conversion, not
+    # just the signature: the server sees a JSON object with the caller's entries.
+    port = 8000 + rand(1000:8000)
+    seen = Ref{Any}(nothing)
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        body = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        if body["method"] == "initialize"
+            return HTTP.Response(200, ["Content-Type" => "application/json"],
+                JSON.json(Dict("jsonrpc" => "2.0", "id" => body["id"],
+                    "result" => Dict("protocolVersion" => "2025-06-18",
+                        "capabilities" => Dict("tools" => Dict()),
+                        "serverInfo" => Dict("name" => "t", "version" => "1")))))
+        elseif body["method"] == "tools/call"
+            seen[] = body["params"]["arguments"]
+            return HTTP.Response(200, ["Content-Type" => "application/json"],
+                JSON.json(Dict("jsonrpc" => "2.0", "id" => body["id"],
+                    "result" => Dict("content" => [Dict("type" => "text", "text" => "ok")]))))
+        end
+        HTTP.Response(200, ["Content-Type" => "application/json"],
+            JSON.json(Dict("jsonrpc" => "2.0", "id" => get(body, "id", 0), "result" => Dict())))
+    end
+    try
+        session = mcp_connect("http://127.0.0.1:$port")
+        res = call_tool(session, "read_file", Dict("path" => "/x"))   # Dict{String,String}
+        @test res.content == "ok"
+        @test seen[] == Dict{String,Any}("path" => "/x")
+        @test call_tool(session, "read_file", Dict(:path => "/y")).content == "ok"
+        @test seen[] == Dict{String,Any}("path" => "/y")
+        mcp_disconnect!(session)
+    finally
+        close(httpserver)
+    end
+end

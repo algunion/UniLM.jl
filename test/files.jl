@@ -121,3 +121,21 @@ end
         rm(fpath; force=true)
     end
 end
+
+@testset "Files API — a separator-bearing id and filter stay single values" begin
+    t = _recorded_targets() do
+        retrieve_file(_HOSTILE_ID; service=URLProbe)
+        delete_file(_HOSTILE_ID; service=URLProbe)
+        file_content(_HOSTILE_ID; service=URLProbe)
+        list_files(; purpose=_HOSTILE_ID, limit=2, after=_HOSTILE_ID, service=URLProbe)
+    end
+    @test t == ["/v1/files/$_HOSTILE_ENC",
+                "/v1/files/$_HOSTILE_ENC",
+                "/v1/files/$_HOSTILE_ENC/content",
+                "/v1/files?purpose=$_HOSTILE_ENC&limit=2&after=$_HOSTILE_ENC"]
+    g = _recorded_targets() do
+        retrieve_file("file-abc123"; service=URLProbe)
+        list_files(; purpose="user_data", after="file-abc123", service=URLProbe)
+    end
+    @test g == ["/v1/files/file-abc123", "/v1/files?purpose=user_data&after=file-abc123"]
+end

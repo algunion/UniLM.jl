@@ -87,6 +87,12 @@ _realtime_native_kwargs(cfg::RequestConfig) = _HTTP_MAJOR2 ?
      response_header_timeout = _native_seconds_real(cfg.connect_timeout)) :
     (connect_timeout = _native_seconds_int(cfg.connect_timeout),)
 
+# Split out of `realtime_connect` so the target the WebSocket opens is assertable
+# without a live upgrade: the two supported HTTP majors name the server-side
+# socket's request field differently, so a listener cannot read it back portably.
+_realtime_url(service, model::String)::String =
+    _realtime_ws_url(service) * "?model=" * _uripart(model)
+
 """
     realtime_connect(handler; model="gpt-realtime-2", service=OPENAIServiceEndpoint, config=nothing)
 
@@ -108,7 +114,7 @@ function realtime_connect(handler; model::String="gpt-realtime-2",
                           config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :realtime, "Realtime API")
     cfg = _resolve_config(config)
-    url = _realtime_ws_url(service) * "?model=" * model
+    url = _realtime_url(service, model)
     t0 = time_ns()
     open_done = Threads.Atomic{Bool}(false)
     # auth_header_multipart drops the JSON Content-Type, which is meaningless on a WS upgrade.

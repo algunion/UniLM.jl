@@ -1,3 +1,31 @@
+# ─── URL construction ─────────────────────────────────────────────────────────
+
+"""
+    _uripart(x) -> String
+
+Percent-encode a caller-supplied value for use as **one** URL path segment or
+**one** query value. Everything outside `A-Z a-z 0-9 - . _` is encoded, so an
+id, model name or pagination cursor containing `/`, `?`, `#`, `&`, `=`, `:` or a
+space is delivered as data instead of silently re-shaping the request target
+(extra path segments, a spurious query string or fragment, a smuggled
+parameter). Only the interpolated value is encoded — the template's own
+separators stay literal.
+
+Typical identifiers (`file-abc123`, `gemini-2.0-flash`) draw from that safe set,
+so encoding them is a byte-for-byte no-op. The set is one character narrower
+than RFC 3986's unreserved set (`~` is encoded too); that is over-encoding, not
+a change in meaning, since a server decodes `%7E` back to `~`.
+
+`HTTP.escapeuri` is re-exported from `URIs` by both supported HTTP majors, which
+resolve it to the same `URIs` implementation, so no direct `URIs` dependency is
+needed.
+"""
+_uripart(s::AbstractString)::String = HTTP.escapeuri(s)
+
+# Integers reach a URL only as generated bounds (`limit=`), never as caller text;
+# their decimal form is unreserved, so the encoder would be a no-op.
+_uripart(n::Integer)::String = string(n)
+
 # ─── Base URLs & API Key Env Var Names ────────────────────────────────────────
 
 const OPENAI_BASE_URL::String = "https://api.openai.com"

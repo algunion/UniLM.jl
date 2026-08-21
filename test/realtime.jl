@@ -162,3 +162,16 @@ end
     @test r.value == secret             # the field itself is untouched
     @test r.raw["expires_at"] == 1234
 end
+
+@testset "realtime WS URL — the model is a query value, not a URL shaper" begin
+    # Asserted on the built string rather than through a listener: the two HTTP
+    # majors name the server-side WebSocket's request field differently, so there
+    # is no portable way to read the target back off a live upgrade.
+    _rt_live_url[] = "ws://127.0.0.1:1/v1/realtime"
+    @test UniLM._realtime_url(RTLiveEndpoint, "gpt-realtime-2") ==
+          "ws://127.0.0.1:1/v1/realtime?model=gpt-realtime-2"   # golden: byte-identical
+    @test UniLM._realtime_url(RTLiveEndpoint, "a b/../c?x=1#f") ==
+          "ws://127.0.0.1:1/v1/realtime?model=a%20b%2F..%2Fc%3Fx%3D1%23f"
+    @test UniLM._realtime_url(OPENAIServiceEndpoint, "gpt-realtime-2") ==
+          UniLM.REALTIME_WS_URL * "?model=gpt-realtime-2"
+end

@@ -115,7 +115,7 @@ function retrieve_conversation(id::String; service::ServiceEndpointSpec=OPENAISe
     validate_capability(service, :conversations, "Conversations API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _conv_http("GET", _api_base_url(service) * CONVERSATIONS_PATH * "/" * id, service, cfg, _remaining_s(cfg, t0))
+        resp = _conv_http("GET", _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0))
         resp.status == 200 ? ConversationSuccess(response=_parse_conversation(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             ConversationFailure(response=String(resp.body), status=resp.status)
     catch e
@@ -133,7 +133,7 @@ function update_conversation(id::String, metadata::AbstractDict; service::Servic
     validate_capability(service, :conversations, "Conversations API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _conv_http("POST", _api_base_url(service) * CONVERSATIONS_PATH * "/" * id, service, cfg, _remaining_s(cfg, t0);
+        resp = _conv_http("POST", _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0);
             body=JSON.json(Dict{Symbol,Any}(:metadata => metadata)))
         resp.status == 200 ? ConversationSuccess(response=_parse_conversation(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             ConversationFailure(response=String(resp.body), status=resp.status)
@@ -152,7 +152,7 @@ function delete_conversation(id::String; service::ServiceEndpointSpec=OPENAIServ
     validate_capability(service, :conversations, "Conversations API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _conv_http("DELETE", _api_base_url(service) * CONVERSATIONS_PATH * "/" * id, service, cfg, _remaining_s(cfg, t0))
+        resp = _conv_http("DELETE", _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
             ConversationDeleteSuccess(id=get(d, "id", id), deleted=get(d, "deleted", false))
@@ -176,7 +176,7 @@ function add_conversation_items(conv_id::String, items::Vector; service::Service
     validate_capability(service, :conversations, "Conversations API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _conv_http("POST", _api_base_url(service) * CONVERSATIONS_PATH * "/" * conv_id * "/items", service, cfg, _remaining_s(cfg, t0);
+        resp = _conv_http("POST", _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(conv_id) * "/items", service, cfg, _remaining_s(cfg, t0);
             body=JSON.json(Dict{Symbol,Any}(:items => items)))
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
@@ -203,11 +203,11 @@ function list_conversation_items(conv_id::String; limit::Union{Int,Nothing}=noth
     validate_capability(service, :conversations, "Conversations API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        url = _api_base_url(service) * CONVERSATIONS_PATH * "/" * conv_id * "/items"
+        url = _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(conv_id) * "/items"
         params = String[]
-        !isnothing(limit) && push!(params, "limit=$limit")
-        !isnothing(order) && push!(params, "order=$order")
-        !isnothing(after) && push!(params, "after=$after")
+        !isnothing(limit) && push!(params, "limit=$(_uripart(limit))")
+        !isnothing(order) && push!(params, "order=$(_uripart(order))")
+        !isnothing(after) && push!(params, "after=$(_uripart(after))")
         !isempty(params) && (url *= "?" * join(params, "&"))
         resp = _conv_http("GET", url, service, cfg, _remaining_s(cfg, t0))
         if resp.status == 200
@@ -233,7 +233,7 @@ function delete_conversation_item(conv_id::String, item_id::String; service::Ser
     validate_capability(service, :conversations, "Conversations API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _conv_http("DELETE", _api_base_url(service) * CONVERSATIONS_PATH * "/" * conv_id * "/items/" * item_id, service, cfg, _remaining_s(cfg, t0))
+        resp = _conv_http("DELETE", _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(conv_id) * "/items/" * _uripart(item_id), service, cfg, _remaining_s(cfg, t0))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
             ConversationDeleteSuccess(id=get(d, "id", item_id), deleted=get(d, "deleted", false))

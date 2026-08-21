@@ -146,9 +146,9 @@ function list_files(; purpose::Union{String,Nothing}=nothing, limit::Union{Int,N
     try
         url = _api_base_url(service) * FILES_PATH
         params = String[]
-        !isnothing(purpose) && push!(params, "purpose=$purpose")
-        !isnothing(limit) && push!(params, "limit=$limit")
-        !isnothing(after) && push!(params, "after=$after")
+        !isnothing(purpose) && push!(params, "purpose=$(_uripart(purpose))")
+        !isnothing(limit) && push!(params, "limit=$(_uripart(limit))")
+        !isnothing(after) && push!(params, "after=$(_uripart(after))")
         !isempty(params) && (url *= "?" * join(params, "&"))
         resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
@@ -177,7 +177,7 @@ function retrieve_file(file_id::String; service::ServiceEndpointSpec=OPENAIServi
     cfg = _resolve_config(config)
     t0 = time_ns()
     try
-        url = _api_base_url(service) * FILES_PATH * "/" * file_id
+        url = _api_base_url(service) * FILES_PATH * "/" * _uripart(file_id)
         resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 ?
             FileSuccess(response=_parse_file_object(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
@@ -201,7 +201,7 @@ function delete_file(file_id::String; service::ServiceEndpointSpec=OPENAIService
     cfg = _resolve_config(config)
     t0 = time_ns()
     try
-        url = _api_base_url(service) * FILES_PATH * "/" * file_id
+        url = _api_base_url(service) * FILES_PATH * "/" * _uripart(file_id)
         resp = _http("DELETE", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
@@ -229,7 +229,7 @@ function file_content(file_id::String; service::ServiceEndpointSpec=OPENAIServic
     cfg = _resolve_config(config)
     t0 = time_ns()
     try
-        url = _api_base_url(service) * FILES_PATH * "/" * file_id * "/content"
+        url = _api_base_url(service) * FILES_PATH * "/" * _uripart(file_id) * "/content"
         resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 ?
             FileContentSuccess(content=Vector{UInt8}(resp.body)) :

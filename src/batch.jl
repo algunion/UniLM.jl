@@ -85,7 +85,7 @@ function retrieve_batch(id::String; service::ServiceEndpointSpec=OPENAIServiceEn
     validate_capability(service, :batch, "Batch API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _http("GET", _api_base_url(service) * BATCHES_PATH * "/" * id, auth_header(service);
+        resp = _http("GET", _api_base_url(service) * BATCHES_PATH * "/" * _uripart(id), auth_header(service);
             cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 ? BatchSuccess(response=_parse_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             BatchFailure(response=String(resp.body), status=resp.status)
@@ -104,7 +104,7 @@ function cancel_batch(id::String; service::ServiceEndpointSpec=OPENAIServiceEndp
     validate_capability(service, :batch, "Batch API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _http("POST", _api_base_url(service) * BATCHES_PATH * "/" * id * "/cancel", auth_header(service);
+        resp = _http("POST", _api_base_url(service) * BATCHES_PATH * "/" * _uripart(id) * "/cancel", auth_header(service);
             cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 ? BatchSuccess(response=_parse_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             BatchFailure(response=String(resp.body), status=resp.status)
@@ -125,8 +125,8 @@ function list_batches(; limit::Union{Int,Nothing}=nothing, after::Union{String,N
     try
         url = _api_base_url(service) * BATCHES_PATH
         params = String[]
-        !isnothing(limit) && push!(params, "limit=$limit")
-        !isnothing(after) && push!(params, "after=$after")
+        !isnothing(limit) && push!(params, "limit=$(_uripart(limit))")
+        !isnothing(after) && push!(params, "after=$(_uripart(after))")
         !isempty(params) && (url *= "?" * join(params, "&"))
         resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200

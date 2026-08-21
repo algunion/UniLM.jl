@@ -77,7 +77,7 @@ function add_upload_part(upload_id::String, data::Vector{UInt8}; service::Servic
     cfg = _resolve_config(config); t0 = time_ns()
     try
         form = HTTP.Form(["data" => HTTP.Multipart("part", IOBuffer(data), "application/octet-stream")])
-        url = _api_base_url(service) * UPLOADS_PATH * "/" * upload_id * "/parts"
+        url = _api_base_url(service) * UPLOADS_PATH * "/" * _uripart(upload_id) * "/parts"
         resp = _http("POST", url, auth_header_multipart(service), form; cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 || return UploadFailure(response=String(resp.body), status=resp.status)
         d = JSON.parse(resp.body; dicttype=Dict{String,Any})
@@ -99,7 +99,7 @@ function complete_upload(upload_id::String, part_ids::Vector{String}; md5::Union
     try
         d = Dict{Symbol,Any}(:part_ids => part_ids)
         !isnothing(md5) && (d[:md5] = md5)
-        _upl_resp(_http("POST", _api_base_url(service) * UPLOADS_PATH * "/" * upload_id * "/complete",
+        _upl_resp(_http("POST", _api_base_url(service) * UPLOADS_PATH * "/" * _uripart(upload_id) * "/complete",
             auth_header(service), JSON.json(d); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
@@ -116,7 +116,7 @@ function cancel_upload(upload_id::String; service::ServiceEndpointSpec=OPENAISer
     validate_capability(service, :uploads, "Uploads API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        _upl_resp(_http("POST", _api_base_url(service) * UPLOADS_PATH * "/" * upload_id * "/cancel",
+        _upl_resp(_http("POST", _api_base_url(service) * UPLOADS_PATH * "/" * _uripart(upload_id) * "/cancel",
             auth_header(service); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()

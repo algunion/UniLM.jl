@@ -524,6 +524,38 @@ end
     end
 end
 
+@testset "Azure deployment path encodes the deployment name" begin
+    # A deployment name is one path segment of caller data: a `/`, `?` or `#`
+    # inside it must not add segments or open a query string on the wire. The
+    # registry keeps the name as registered; encoding happens where the path is
+    # built, so what callers read back from the registry is unchanged.
+    try
+        UniLM.add_azure_deploy_name!("hostile-deploy-model", "d n/../x?y=1#f")
+        @test UniLM._azure_deployment_path("hostile-deploy-model") ==
+              "/openai/deployments/d%20n%2F..%2Fx%3Fy%3D1%23f"
+
+        # A real-shaped name draws from the unreserved set: byte-identical no-op.
+        UniLM.add_azure_deploy_name!("plain-deploy-model", "my-deploy_01")
+        @test UniLM._azure_deployment_path("plain-deploy-model") ==
+              "/openai/deployments/my-deploy_01"
+
+        # End to end: the encoded segment reaches the URL, while the operator's
+        # own base URL and api-version stay literal.
+        withenv(
+            "AZURE_OPENAI_BASE_URL" => "https://myazure.openai.azure.com",
+            "AZURE_OPENAI_API_VERSION" => "2024-02-01",
+        ) do
+            url = UniLM.get_url(UniLM.AZUREServiceEndpoint,
+                                Chat(service=UniLM.AZUREServiceEndpoint, model="hostile-deploy-model"))
+            @test url == "https://myazure.openai.azure.com/openai/deployments/" *
+                         "d%20n%2F..%2Fx%3Fy%3D1%23f/chat/completions?api-version=2024-02-01"
+        end
+    finally
+        delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "hostile-deploy-model")
+        delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "plain-deploy-model")
+    end
+end
+
 @testset "Azure URL generation" begin
     UniLM.add_azure_deploy_name!("gpt-4o-test", "my-gpt4o-deploy")
     withenv(

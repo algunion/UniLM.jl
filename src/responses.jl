@@ -1526,7 +1526,7 @@ function get_response(response_id::String; service::ServiceEndpointSpec=OPENAISe
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
-        url = _agentic_url(service) * "/" * response_id
+        url = _agentic_url(service) * "/" * _uripart(response_id)
         resp = _http("GET", url, auth_header(service); cfg=cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
             return ResponseSuccess(response=decode_agentic(service, resp))
@@ -1558,7 +1558,7 @@ function delete_response(response_id::String; service::ServiceEndpointSpec=OPENA
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
-        url = _agentic_url(service) * "/" * response_id
+        url = _agentic_url(service) * "/" * _uripart(response_id)
         resp = _http("DELETE", url, auth_header(service); cfg=cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
@@ -1597,9 +1597,12 @@ function list_input_items(response_id::String;
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
-        url = _agentic_url(service) * "/" * response_id * "/input_items"
-        params = ["limit=$limit", "order=$order"]
-        !isnothing(after) && push!(params, "after=$after")
+        url = _agentic_url(service) * "/" * _uripart(response_id) * "/input_items"
+        # Only the values are encoded; the template's own `?`, `=` and `&` stay
+        # literal, so a cursor containing them is a parameter value, not a
+        # smuggled extra parameter.
+        params = ["limit=$(_uripart(limit))", "order=$(_uripart(order))"]
+        !isnothing(after) && push!(params, "after=$(_uripart(after))")
         url *= "?" * join(params, "&")
 
         resp = _http("GET", url, auth_header(service); cfg=cfg, remaining=_remaining_s(cfg, t0))
@@ -1638,7 +1641,7 @@ function cancel_response(response_id::String; service::ServiceEndpointSpec=OPENA
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
-        url = _agentic_url(service) * "/" * response_id * "/cancel"
+        url = _agentic_url(service) * "/" * _uripart(response_id) * "/cancel"
         resp = _http("POST", url, auth_header(service); cfg=cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
             return ResponseSuccess(response=decode_agentic(service, resp))

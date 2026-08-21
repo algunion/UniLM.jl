@@ -55,6 +55,11 @@ end
     @test UniLM._is_transport_error(Base.IOError("connection reset", 0))
     @test UniLM._is_transport_error(EOFError())
     @test UniLM._is_transport_error(HTTP.ConnectError("http://127.0.0.1:9", ErrorException("refused")))
+    # A raw read/write syscall fault is the same connection-level failure: a peer
+    # reset observed straight off the socket surfaces as SystemError("read", …)
+    # rather than an IOError on some platforms.
+    @test UniLM._is_transport_error(Base.SystemError("read", 54))
+    @test UniLM._is_transport_error(Base.SystemError("write: broken pipe", 32))
     # unwrapped across task/composite layers
     t2 = Threads.@spawn throw(Base.IOError("reset mid-task", 0))
     try
@@ -332,6 +337,22 @@ end
     @test limit <= UniLM._idle_gap_s(g) <= 2 * limit + 0.5   # frozen at breach, not still growing
     UniLM._disarm!(g)                            # disarm after fire is a safe no-op
     @test UniLM._idle_fired(g)
+end
+
+@testset "idle gap saturates instead of wrapping when a touch beats the clock read" begin
+    # The gap is two separate reads — the `last_byte` stamp and a clock sample —
+    # so a concurrent `_touch!` between them can leave the stamp AHEAD of the
+    # sample. An unsigned subtraction wraps there (~1.8e10 s), which exceeds
+    # every configured limit and would kill a healthy, actively-streaming
+    # connection. The gap must saturate at zero instead.
+    t = time_ns()
+    @test UniLM._gap_s(t - UInt64(2_000_000_000), t) ≈ 2.0
+    @test UniLM._gap_s(t, t) == 0.0
+    @test UniLM._gap_s(t + UInt64(1_000_000_000), t) == 0.0   # stamp ahead of the clock
+    # ...and the accessor the drivers report through is built on it: a guard
+    # stamped in the future reports no gap, never a wrapped one.
+    g = UniLM._IdleGuard(:armed, time_ns() + UInt64(1_000_000_000), 0.0, 1.0, nothing)
+    @test UniLM._idle_gap_s(g) == 0.0
 end
 
 @testset "idle gap before any breach is the live gap since the last touch" begin

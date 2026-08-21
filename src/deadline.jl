@@ -117,6 +117,11 @@ end
 # seam's mapping, which carries phase attribution).
 function _transport_shaped(x)::Bool
     x isa Base.IOError && return true
+    # A read/write syscall fault on a live socket is the same connection-level
+    # failure as an IOError — a peer reset read straight off the socket surfaces
+    # as SystemError("read", ECONNRESET) rather than an IOError on some
+    # platforms, and must classify identically.
+    x isa Base.SystemError && return true
     x isa EOFError && return true
     x isa HTTP.HTTPError || return false
     x isa HTTP.StatusError && return false
@@ -128,7 +133,7 @@ end
     _is_transport_error(e) -> Bool
 
 True when `e` is a connection-level IO failure worth another attempt
-(IOError/EOFError/DNS/connect-shaped), unwrapped across `TaskFailedException`,
+(IOError/SystemError/EOFError/DNS/connect-shaped), unwrapped across `TaskFailedException`,
 `CompositeException`, and both HTTP majors' cause-carrying wrappers. Always
 false for `InterruptException` (user intent wins, even when nested beside a
 transport error), `_DeadlineBreach` and `UniLMTimeout` (timeouts are policy,
@@ -312,7 +317,11 @@ function _idle_guard(close!::Function, limit::Float64)
     guard = _IdleGuard(:armed, time_ns(), 0.0, limit, nothing)
     period = min(limit / 4, 5.0)
     guard.timer = Timer(period; interval=period) do timer
-        gap = (time_ns() - @atomic(guard.last_byte)) / 1e9
+        # Load the stamp BEFORE sampling the clock (see `_gap_s`): the other
+        # order lets a concurrent `_touch!` land between the two reads and turn
+        # the difference negative — i.e. wrapping.
+        last_byte = @atomic guard.last_byte
+        gap = _gap_s(last_byte, time_ns())
         gap > guard.limit || return
         # Record the gap BEFORE resolving: any reader that observes :fired
         # then observes the recorded gap (a losing write is unobservable —
@@ -329,6 +338,14 @@ function _idle_guard(close!::Function, limit::Float64)
     return guard
 end
 
+# Byte gap in seconds, SATURATING. The stamp and the clock are two separate
+# reads, so a `_touch!` from the reading task can land between them and leave
+# `last_byte` ahead of `now`. The unsigned subtraction wraps there (~1.8e10 s),
+# which exceeds every configured limit and would kill a healthy, actively
+# streaming connection; clamp to zero — no bytes-in-the-future gap is real.
+_gap_s(last_byte::UInt64, now::UInt64)::Float64 =
+    (now >= last_byte ? now - last_byte : zero(UInt64)) / 1e9
+
 _touch!(::Nothing) = nothing
 _touch!(guard::_IdleGuard)::Nothing = (@atomic guard.last_byte = time_ns(); nothing)
 
@@ -338,7 +355,8 @@ _idle_fired(guard::_IdleGuard)::Bool = (@atomic guard.state) === :fired
 _idle_gap_s(::Nothing) = 0.0
 function _idle_gap_s(guard::_IdleGuard)::Float64
     (@atomic guard.state) === :fired && return @atomic guard.fired_gap
-    return (time_ns() - @atomic(guard.last_byte)) / 1e9
+    last_byte = @atomic guard.last_byte     # stamp first, clock second — see `_gap_s`
+    return _gap_s(last_byte, time_ns())
 end
 
 _disarm!(::Nothing) = nothing

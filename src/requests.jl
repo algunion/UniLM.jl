@@ -100,6 +100,46 @@ function _unwrap_exception(e)
     end
 end
 
+# Header names whose VALUE is a credential. HTTP.jl masks only Authorization,
+# Proxy-Authorization and Cookie when it renders a request, so a provider that
+# authenticates with its own header — Anthropic `x-api-key`, Gemini native
+# `x-goog-api-key`, Azure `api-key` — has its key printed verbatim inside the
+# request dump that some transport exceptions carry in their message. Matches the
+# wire form (`name: value`) and the Julia pair form (`"name" => "value"`).
+const _AUTH_HEADER_PATTERN =
+    r"(?i)(x-goog-api-key|x-api-key|api-key|proxy-authorization|authorization)(\"?\s*(?::|=>|=)\s*\"?)([^\r\n\"]*)"
+
+# Replace every auth-shaped header value with the same short, non-reversible
+# marker the endpoint `show` methods use.
+_mask_auth_headers(s::AbstractString)::String =
+    replace(s, _AUTH_HEADER_PATTERN => function (hit)
+        m = match(_AUTH_HEADER_PATTERN, hit)
+        string(m[1], m[2], _redact_api_key(m[3]))
+    end)
+
+"""
+    _error_text(e) -> String
+
+The one renderer for the user-visible `error::String` of every `*CallError` result.
+
+Prefers the root cause's `showerror` text over `string(e)`: the wrapper layers add
+no diagnostic value, and on HTTP.jl 1.x the wrapper's own rendering is a full
+request dump — headers and body included. Then masks auth-shaped header values as
+defense in depth, so a credential cannot reach a result value (or a log line, or a
+bug report) no matter which library layer produced the text.
+"""
+function _error_text(e)::String
+    u = _unwrap_exception(e)
+    txt = try
+        u isa Exception ? sprint(showerror, u) : string(u)
+    catch
+        # A showerror that itself throws must not replace a typed failure with a
+        # crash: name the type and move on.
+        string(typeof(u))
+    end
+    _mask_auth_headers(txt)
+end
+
 # Resolved-at-load HTTP.jl major: the majors expose different native timeout
 # kwargs with different declared types, so translation branches on this.
 const _HTTP_MAJOR2 = pkgversion(HTTP) >= v"2"
@@ -1010,7 +1050,7 @@ function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestCon
             return LLMCallError(error=sprint(showerror, u), self=chat, status=nothing,
                                 request_id=req_id, cause=u)
         statuserror = hasproperty(u, :status) ? u.status : nothing
-        return LLMCallError(error=string(e), self=chat, status=statuserror,
+        return LLMCallError(error=_error_text(e), self=chat, status=statuserror,
                             request_id=req_id, cause=u isa Exception ? u : nothing)
     end
 end
@@ -1089,7 +1129,7 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
                                                   status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return LLMCallError(error=string(e), self=chat, status=statuserror,
+        return LLMCallError(error=_error_text(e), self=chat, status=statuserror,
                             request_id=req_id, cause=e isa Exception ? e : nothing)
     end
 end
@@ -1177,7 +1217,7 @@ function embeddingrequest!(emb::Embeddings; config::Union{Nothing,RequestConfig}
         e isa UniLMTimeout && return EmbeddingCallError(error=sprint(showerror, e),
                                                         status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
-        return EmbeddingCallError(error=string(e), status=statuserror,
+        return EmbeddingCallError(error=_error_text(e), status=statuserror,
                                   cause=e isa Exception ? e : nothing)
     end
 end

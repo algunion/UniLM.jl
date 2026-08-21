@@ -90,7 +90,7 @@ end
 "Local/transport error from a Files API call (the request never completed)."
 @kwdef struct FileCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
 
-_callerr(::Type{FileCallError}, e) = FileCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+_callerr(::Type{FileCallError}, e) = FileCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
 
 # ─── Requests ─────────────────────────────────────────────────────────────────
 

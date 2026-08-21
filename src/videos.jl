@@ -40,7 +40,7 @@ end
 @kwdef struct VideoCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
 
 _parse_video(d::AbstractDict) = VideoObject(id=d["id"], status=get(d, "status", nothing), model=get(d, "model", nothing), raw=Dict{String,Any}(d))
-_vid_err(e) = VideoCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+_vid_err(e) = VideoCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
 _vid_resp(resp) = resp.status == 200 ?
     VideoSuccess(response=_parse_video(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
     VideoFailure(response=String(resp.body), status=resp.status)

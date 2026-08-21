@@ -90,6 +90,6 @@ function moderate(input; model::String="omni-moderation-latest", service::Servic
         end
     catch e
         e isa InterruptException && rethrow()
-        ModerationCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        ModerationCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end

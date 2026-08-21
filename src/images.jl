@@ -252,7 +252,7 @@ function generate_image(ig::ImageGeneration; config::Union{Nothing,RequestConfig
                ImageFailure(response=String(resp.body), status=resp.status)
     catch e
         e isa InterruptException && rethrow()
-        return ImageCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        return ImageCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end
 
@@ -355,7 +355,7 @@ function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing)
                ImageFailure(response=String(resp.body), status=resp.status)
     catch err
         err isa InterruptException && rethrow()
-        return ImageCallError(error=string(err), status=(hasproperty(err, :status) ? err.status : nothing))
+        return ImageCallError(error=_error_text(err), status=(hasproperty(err, :status) ? err.status : nothing))
     end
 end
 edit_image(image, prompt::String; mask::Union{String,Nothing}=nothing,

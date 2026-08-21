@@ -1287,7 +1287,7 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                 end
                 statuserror = hasproperty(u, :status) ? u.status : nothing
                 req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : _get_request_id(e)
-                return ResponseCallError(error=string(e), status=statuserror, request_id=req_id, cause=u isa Exception ? u : nothing)
+                return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id, cause=u isa Exception ? u : nothing)
             finally
                 # Disarm on EVERY attempt exit — every return, every continue, and the
                 # interrupt rethrow (which is neither) — so the periodic idle timer never
@@ -1389,7 +1389,7 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
         e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
+        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -1479,7 +1479,7 @@ function get_response(response_id::String; service::ServiceEndpointSpec=OPENAISe
         e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
+        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -1511,7 +1511,7 @@ function delete_response(response_id::String; service::ServiceEndpointSpec=OPENA
         e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
+        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -1554,7 +1554,7 @@ function list_input_items(response_id::String;
         e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
+        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -1591,7 +1591,7 @@ function cancel_response(response_id::String; service::ServiceEndpointSpec=OPENA
         e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
+        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -1639,7 +1639,7 @@ function compact_response(; model::String="gpt-5.5",
         e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
+        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -1684,6 +1684,6 @@ function count_input_tokens(; model::String="gpt-5.5",
         e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
+        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
     end
 end

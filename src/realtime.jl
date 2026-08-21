@@ -39,7 +39,7 @@ function mint_realtime_secret(; session::Union{AbstractDict,Nothing}=nothing, se
         RealtimeSecretSuccess(value=val, raw=data)
     catch e
         e isa InterruptException && rethrow()
-        RealtimeCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        RealtimeCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end
 

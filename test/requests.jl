@@ -461,6 +461,40 @@ end
         @test UniLM._MODEL_ENDPOINTS_AZURE_OPENAI["test-model"] == "/openai/deployments/my-deploy"
         delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "test-model")
     end
+
+    @testset "registry survives concurrent readers and writers" begin
+        # The registry is read while building every Azure request URL. `Dict` is not
+        # concurrency-safe: a write that rehashes reallocates the arrays a reader is
+        # walking, so an unsynchronized lookup can miss a present key or throw.
+        added = ["race-model-$i" for i in 1:64]
+        try
+            UniLM.add_azure_deploy_name!("snapshot-model", "snap-deploy")
+            @test UniLM._azure_deployment_path("snapshot-model") == "/openai/deployments/snap-deploy"
+            @test_throws KeyError UniLM._azure_deployment_path("never-registered-model")
+
+            bad = Threads.Atomic{Int}(0)
+            @sync begin
+                Threads.@spawn for k in added
+                    UniLM.add_azure_deploy_name!(k, "deploy-" * k)   # forces repeated rehashes
+                end
+                for _ in 1:3
+                    Threads.@spawn for _ in 1:5000
+                        ok = try
+                            UniLM._azure_deployment_path("snapshot-model") == "/openai/deployments/snap-deploy"
+                        catch
+                            false                                     # a torn read throws
+                        end
+                        ok || Threads.atomic_add!(bad, 1)
+                    end
+                end
+            end
+            @test bad[] == 0
+            @test all(UniLM._azure_deployment_path(k) == "/openai/deployments/deploy-" * k for k in added)
+        finally
+            delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "snapshot-model")
+            foreach(k -> delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, k), added)
+        end
+    end
 end
 
 @testset "Azure URL generation" begin

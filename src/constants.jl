@@ -80,6 +80,14 @@ the environment after the package loads is still honored.
 """
 const _MODEL_ENDPOINTS_AZURE_OPENAI::Dict{String,String} = Dict{String,String}()
 
+# The registry is read while building every Azure request URL and written by
+# `add_azure_deploy_name!`, potentially from another task. `Dict` is not
+# concurrency-safe: a write that rehashes reallocates the slot/key/value arrays
+# while a reader is walking them, which yields a wrong hit or a bounds error, not
+# just a stale answer. Both sides serialize here; the lock is uncontended in the
+# normal case (registrations happen once, at configuration time).
+const _AZURE_DEPLOY_LOCK = ReentrantLock()
+
 """
     _azure_deployment_path(model::String) -> String
 
@@ -91,7 +99,10 @@ environment held when the package was loaded. Throws `KeyError(model)` when the
 model has neither a registration nor a configured deployment environment variable.
 """
 function _azure_deployment_path(model::String)::String
-    haskey(_MODEL_ENDPOINTS_AZURE_OPENAI, model) && return _MODEL_ENDPOINTS_AZURE_OPENAI[model]
+    # One locked lookup, not haskey-then-getindex: two probes of a concurrently
+    # mutated Dict can disagree even when each is individually consistent.
+    registered = @lock _AZURE_DEPLOY_LOCK get(_MODEL_ENDPOINTS_AZURE_OPENAI, model, nothing)
+    isnothing(registered) || return registered
     if model == "gpt-5.2" && haskey(ENV, "AZURE_OPENAI_DEPLOY_NAME_GPT_5_2")
         return "/openai/deployments/" * ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_5_2"]
     end
@@ -109,7 +120,7 @@ add_azure_deploy_name!("gpt-5.2", "my-gpt52-deployment")
 ```
 """
 function add_azure_deploy_name!(model::String, deploy_name::String)
-    _MODEL_ENDPOINTS_AZURE_OPENAI[model] = "/openai/deployments/" * deploy_name
+    @lock _AZURE_DEPLOY_LOCK (_MODEL_ENDPOINTS_AZURE_OPENAI[model] = "/openai/deployments/" * deploy_name)
 end
 
 # ─── Gemini (OpenAI-compatible) ───────────────────────────────────────────────

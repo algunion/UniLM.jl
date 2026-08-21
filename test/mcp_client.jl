@@ -2818,3 +2818,32 @@ end
         rm(childfile; force=true)
     end
 end
+
+@testset "transport and session shows redact caller credentials" begin
+    # The documented way to authenticate an MCP HTTP server is a caller header
+    # ("Authorization" => "Bearer <token>"), which the transport stores verbatim.
+    # A default field dump therefore printed the token at the REPL, under @show,
+    # and into any log that rendered the transport or the session holding it.
+    token = "Bearer mcp-tok-SECRET-99887766"
+    t = UniLM.HTTPTransport("https://mcp.example.com/mcp";
+                            headers=["Authorization" => token, "X-Trace" => "t-42"])
+    s = sprint(show, t)
+    @test !occursin(token, s)
+    @test !occursin("SECRET-99887766", s)
+    @test occursin("Bear…[redacted]", s)          # same marker the endpoint shows use
+    @test occursin("Authorization", s)            # the header NAME is not a secret
+    @test occursin("\"X-Trace\" => \"t-42\"", s)  # non-auth headers render in full
+    @test occursin("https://mcp.example.com/mcp", s)
+    @test occursin("connected=false", s)
+
+    session = UniLM.MCPSession(t, UniLM.MCPServerCapabilities(), Dict{String,Any}(),
+                               [UniLM.MCPToolInfo("echo", nothing, nothing, nothing)],
+                               UniLM.MCPResourceInfo[], UniLM.MCPPromptInfo[],
+                               "2025-06-18", 0, :ready)
+    ss = sprint(show, session)
+    @test !occursin(token, ss)
+    @test !occursin("SECRET-99887766", ss)
+    @test occursin("Bear…[redacted]", ss)
+    @test occursin("status=:ready", ss)
+    @test occursin("tools=1", ss)
+end

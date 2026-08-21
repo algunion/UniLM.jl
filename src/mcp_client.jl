@@ -391,6 +391,27 @@ end
 
 _transport_connect!(t::HTTPTransport) = (t.connected = true; nothing)
 
+# Caller-supplied headers are where MCP credentials live (the documented usage is
+# `"Authorization" => "Bearer <token>"`), and a default field dump prints them in
+# full at the REPL, under @show, and into any log that renders the transport. Show
+# the header NAMES and redact every auth-shaped value, matching the policy the
+# service-endpoint shows already apply to a stored API key.
+function _redacted_headers(headers)::Vector{Pair{String,String}}
+    [lowercase(k) in ("authorization", "proxy-authorization", "x-api-key",
+                      "x-goog-api-key", "api-key", "cookie") ?
+     (k => _redact_api_key(v)) : (k => v) for (k, v) in headers]
+end
+
+function Base.show(io::IO, t::HTTPTransport)
+    print(io, "HTTPTransport(")
+    show(io, t.url)
+    print(io, ", headers=")
+    show(io, _redacted_headers(t.headers))
+    print(io, ", connected=", t.connected,
+          ", protocol_version=", repr(t.protocol_version),
+          ", session_id=", isnothing(t.session_id) ? "nothing" : "<set>", ")")
+end
+
 """Headers carried by EVERY MCP Streamable-HTTP POST: the JSON body type, the dual
 Accept the transport requires (the server may answer with a JSON body or an SSE
 stream — for a notification too), the protocol revision currently in force, and the
@@ -574,6 +595,20 @@ function MCPSession(transport::MCPTransport, caps::MCPServerCapabilities,
     MCPSession(transport, caps, server_info, tools, resources, prompts,
                protocol_version, id_counter, status, ReentrantLock(), false, init_params,
                config, auto_respawn, :none)
+end
+
+# A session reaches the credential through its transport, so a default field dump
+# prints the caller's token as surely as the transport's own would. Render the
+# transport through its (redacting) show and summarize the rest: what a user wants
+# from printing a session is where it points, whether it is live, and what it found.
+function Base.show(io::IO, s::MCPSession)
+    print(io, "MCPSession(")
+    show(io, s.transport)
+    print(io, ", status=:", s.status,
+          ", protocol_version=", repr(s.protocol_version),
+          ", tools=", length(s.tools), s.tools_stale ? " (stale)" : "",
+          ", resources=", length(s.resources),
+          ", prompts=", length(s.prompts), ")")
 end
 
 """Best-effort exit diagnostics, captured BEFORE the teardown ladder (which reaps

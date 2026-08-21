@@ -354,8 +354,12 @@ function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing)
             for img in images
                 push!(parts, "image[]" => HTTP.Multipart(basename(img), IOBuffer(read(img)), _mime_for(img)))
             end
-            isnothing(e.mask) ||
-                push!(parts, "mask" => HTTP.Multipart(basename(e.mask), IOBuffer(read(e.mask)), _mime_for(e.mask)))
+            # Bind the optional mask to a local before testing it: the guard then
+            # narrows the path that reads the file to a plain path string, instead
+            # of re-reading a nullable field on every use.
+            mask = e.mask
+            isnothing(mask) ||
+                push!(parts, "mask" => HTTP.Multipart(basename(mask), IOBuffer(read(mask)), _mime_for(mask)))
             for (k, f) in (("n", :n), ("size", :size), ("quality", :quality),
                 ("input_fidelity", :input_fidelity), ("background", :background), ("output_format", :output_format))
                 v = getfield(e, f)

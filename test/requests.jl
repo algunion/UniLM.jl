@@ -784,6 +784,13 @@ end
     # a wait beyond the remaining deadline is reported as :budget, never slept.
     action, delay = UniLM._retry_pause(RequestConfig(total_deadline=1.0), time_ns(), 1, ahead)
     @test action === :budget && delay > 2.0
+
+    # Reading a capture asserts that the group actually matched. Every group of the
+    # fixdate pattern is mandatory, so this branch is unreachable through the header
+    # parser — a pattern with an optional group is the only way to reach it, and it
+    # must name the group loudly rather than hand `nothing` on to the date math.
+    @test UniLM._fixdate_int(match(r"^(\d+)$", "42"), 1) == 42
+    @test_throws ArgumentError UniLM._fixdate_int(match(r"^x(\d+)?$", "x"), 1)
 end
 
 @testset "Retry constants" begin
@@ -793,7 +800,7 @@ end
 end
 
 @testset "_accumulate_cost! fallback is a no-op for non-success" begin
-    # requests.jl:588 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
+    # requests.jl:599 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
     # success types are specialized in accounting.jl, so a failure result must land here:
     # return nothing AND leave cumulative cost untouched (falsifies accidental accumulation).
     # The line is a locator, not the contract: re-point it (here and in the note above)
@@ -801,7 +808,7 @@ end
     chat = Chat(model="gpt-4.1-nano")
     chat._cumulative_cost[] = 0.25
     failure = LLMFailure(response="server exploded", status=500, self=chat)
-    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 588
+    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 599
     @test UniLM._accumulate_cost!(chat, failure) === nothing
     @test cumulative_cost(chat) == 0.25       # unchanged: the fallback did not add anything
 

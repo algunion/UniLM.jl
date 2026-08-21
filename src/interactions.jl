@@ -259,7 +259,9 @@ function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
                         # NOT accumulated: summaries are display material, not
                         # the answer and not replay material (the signature is).
                         t = get(d, "text", "")
-                        t isa AbstractString && print(state.textbuff, t)
+                        # Both buffers: `textbuff` is the full accumulation the terminal
+                        # rebuild reads, `pending_delta` is what the driver forwards.
+                        t isa AbstractString && (print(state.textbuff, t); print(state.pending_delta, t))
                     end
                 end
             elseif ev == "interaction.completed"
@@ -305,10 +307,11 @@ function _assembled_interaction_output(state::AgenticStreamState)::Vector{Any}
             push!(out, Dict{String,Any}(step))   # thought + hosted-tool steps: raw, signature intact
         end
     end
-    # Read the accumulated text back WITHOUT consuming it: the driver owns
-    # textbuff and emits deltas by diffing it against what it has already sent,
-    # so draining here would swallow every delta that shared a read with the
-    # terminal event (a stream arriving in one read would emit nothing).
+    # Read the accumulated text back WITHOUT consuming it: `textbuff` is the
+    # stream's running accumulation, and the terminal rebuild is a reader of it,
+    # not its owner. (Deltas reach the callback from `pending_delta`, so draining
+    # here no longer swallows them — but it would still hand a truncated
+    # accumulation to anything that inspects the state after the terminal.)
     txt = String(take!(state.textbuff))
     print(state.textbuff, txt)
     isempty(txt) || push!(out, _text_message(txt))

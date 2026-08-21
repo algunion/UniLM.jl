@@ -1012,11 +1012,11 @@ end
 Mutable per-stream assembly state for the agentic streaming seam
 ([`decode_agentic_stream`](@ref)). Carries the layer-1/2 SSE machinery state
 (`carry` partial-line buffer, `last_event` sticky event name), the accumulated
-output text (`textbuff`), and — for providers whose terminal event omits the
-step list (Gemini Interactions) — a per-index registry of assembled steps:
-`steps` maps a step index to its (mutable) step dict, `args_json` accumulates
-partial function-call argument JSON per index, and `order` records first-seen
-index order for deterministic output rebuilding.
+output text (`textbuff`), the not-yet-forwarded text deltas (`pending_delta`),
+and — for providers whose terminal event omits the step list (Gemini
+Interactions) — a per-index registry of assembled steps: `steps` maps a step index to its (mutable) step dict,
+`args_json` accumulates partial function-call argument JSON per index, and
+`order` records first-seen index order for deterministic output rebuilding.
 """
 Base.@kwdef mutable struct AgenticStreamState
     textbuff::IOBuffer = IOBuffer()
@@ -1025,19 +1025,25 @@ Base.@kwdef mutable struct AgenticStreamState
     steps::Dict{Int,Dict{String,Any}} = Dict{Int,Dict{String,Any}}()
     args_json::Dict{Int,String} = Dict{Int,String}()
     order::Vector{Int} = Int[]
+    # Text deltas collected by the decoder, not yet forwarded to the callback;
+    # the driver drains THIS buffer per read (twin of `StreamState.pending_delta`).
+    # `textbuff` keeps the full accumulation for providers whose terminal event
+    # omits the output, but it is never re-read to compute a delta.
+    pending_delta::IOBuffer = IOBuffer()
 end
 
-function _parse_response_stream_chunk(chunk::String, textbuff::IOBuffer, failbuff::IOBuffer,
-                                      last_event::Ref{String}=Ref(""))
-    # Layers 1–2 of the shared SSE machine (src/sse.jl): `failbuff` is the
-    # partial-line carry (verbatim, never stripped), `last_event` the sticky
+function _parse_response_stream_chunk(chunk::String, state::AgenticStreamState)
+    # Layers 1–2 of the shared SSE machine (src/sse.jl): `state.carry` is the
+    # partial-line carry (verbatim, never stripped), `state.last_event` the sticky
     # event name. Event dispatch below is unchanged. A COMPLETE line whose
     # payload fails to parse is logged + counted + dropped — never re-queued.
-    for (ev, payload) in _sse_events!(failbuff, last_event, chunk)
+    for (ev, payload) in _sse_events!(state.carry, state.last_event, chunk)
         try
             data = JSON.parse(payload; dicttype=Dict{String,Any})
             if ev == "response.output_text.delta"
-                print(textbuff, get(data, "delta", ""))
+                d = get(data, "delta", "")
+                print(state.textbuff, d)
+                print(state.pending_delta, d)
             elseif ev == "response.completed"
                 return (; done=true, event=ev, data, terminal=:completed)
             elseif ev == "response.failed"
@@ -1055,7 +1061,25 @@ function _parse_response_stream_chunk(chunk::String, textbuff::IOBuffer, failbuf
             @debug "Responses SSE: dropped undecodable data payload" event = ev payload = String(payload) exception = e
         end
     end
-    return (; done=false, event=last_event[], data=nothing, terminal=:none)
+    return (; done=false, event=state.last_event[], data=nothing, terminal=:none)
+end
+
+"""
+    _flush_agentic_delta!(callback, state, close_ref, fired::Ref{Bool}) -> Nothing
+
+Forward collected-but-unsent agentic text deltas verbatim, and record that user
+code ran. The decoder collects on `state.pending_delta`; draining that one small
+buffer per read is what keeps a long stream linear — the emitted-length diff it
+replaces re-copied the whole accumulated text (and its mirror) on every read.
+Twin of the chat driver's `_flush_delta!` (src/requests.jl).
+"""
+function _flush_agentic_delta!(callback, state::AgenticStreamState, close_ref,
+                               fired::Ref{Bool})::Nothing
+    delta = String(take!(state.pending_delta))
+    (isnothing(callback) || isempty(delta)) && return nothing
+    fired[] = true            # before user code runs: a throwing callback still counts as fired
+    callback(delta, close_ref)
+    nothing
 end
 
 # Map a recorded structured terminal-failure payload to a typed result. `status`
@@ -1112,10 +1136,9 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                 # status_exception=false and retry=false; decompress=false passes through.
                 resp = _http_open("POST", url, stream_headers; cfg=cfg, t0=t0, decompress=false) do io
                     io_ref[] = io
-                    state = AgenticStreamState()
+                    state = AgenticStreamState()   # fresh per attempt: no inherited partial SSE state
                     done = Ref(false)
                     close_ref = Ref(false)
-                    callback_buf = IOBuffer()  # tracks already-emitted text (emitted-length delta)
                     # First byte = response headers received. The request-phase deadline guards
                     # the whole send/first-byte exchange; the total deadline governs a stream
                     # only up to this point — after it, only the idle guard runs (a long
@@ -1146,16 +1169,8 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                         end
                         status = decode_agentic_stream(r.service, chunk, state)
                         if status.terminal == :completed && status.data isa AbstractDict && haskey(status.data, "response")
-                            # Flush residual text buffer to callback before building the ResponseObject
-                            full = String(take!(state.textbuff))
-                            emitted = String(take!(callback_buf))
-                            if sizeof(full) > sizeof(emitted) && !isnothing(callback)
-                                callback_fired[] = true
-                                callback(full[nextind(full, sizeof(emitted)):end], close_ref)
-                            end
-                            print(state.textbuff, full)
-                            print(callback_buf, full)
-
+                            # Flush residual text deltas to the callback before building the ResponseObject
+                            _flush_agentic_delta!(callback, state, close_ref, callback_fired)
                             rdata = status.data["response"]
                             result[] = ResponseObject(
                                 id=rdata["id"],
@@ -1178,18 +1193,11 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                             terminal_error[] = status.data
                             done[] = true
                         else
-                            # Retain full accumulated text (emitted-length tracking, like the chat
-                            # stream) so a provider whose TERMINAL event omits the output — Gemini's
-                            # `interaction.completed` carries no steps — can rebuild it from the
-                            # deltas. OpenAI ignores this at assembly (its completed event has output).
-                            full = String(take!(state.textbuff))
-                            emitted = String(take!(callback_buf))
-                            if sizeof(full) > sizeof(emitted) && !isnothing(callback)
-                                callback_fired[] = true
-                                callback(full[nextind(full, sizeof(emitted)):end], close_ref)
-                            end
-                            print(state.textbuff, full)
-                            print(callback_buf, full)
+                            # Forward this read's deltas. The decoder ALSO accumulates them in
+                            # `state.textbuff`, which a provider whose TERMINAL event omits the
+                            # output — Gemini's `interaction.completed` carries no steps — rebuilds
+                            # from. OpenAI ignores it (its completed event has output).
+                            _flush_agentic_delta!(callback, state, close_ref, callback_fired)
                         end
                         at_eof && break
                     end
@@ -1342,7 +1350,7 @@ mutate `state`, and return `(; done, event, data, terminal)`. Default:
 OpenAI Responses SSE via `_parse_response_stream_chunk`.
 """
 decode_agentic_stream(service::OpenAIWireEndpointSpec, chunk::String, state::AgenticStreamState) =
-    _parse_response_stream_chunk(chunk, state.textbuff, state.carry, state.last_event)
+    _parse_response_stream_chunk(chunk, state)
 
 """
     respond(r::Respond; config=nothing, callback=nothing)

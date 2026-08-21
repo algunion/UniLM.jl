@@ -714,11 +714,10 @@ end
 @testset "_parse_response_stream_chunk" begin
     @testset "text delta" begin
         chunk = "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n"
-        textbuff = IOBuffer()
-        failbuff = IOBuffer()
-        result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
+        st = UniLM.AgenticStreamState()
+        result = UniLM._parse_response_stream_chunk(chunk, st)
         @test result.done == false
-        @test String(take!(textbuff)) == "Hello"
+        @test String(take!(st.textbuff)) == "Hello"
     end
 
     @testset "completed event" begin
@@ -732,34 +731,31 @@ end
             )
         )
         chunk = "event: response.completed\ndata: $(JSON.json(resp_data))\n\n"
-        textbuff = IOBuffer()
-        failbuff = IOBuffer()
-        result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
+        st = UniLM.AgenticStreamState()
+        result = UniLM._parse_response_stream_chunk(chunk, st)
         @test result.done == true
         @test !isnothing(result.data)
         @test result.data["response"]["id"] == "resp_1"
     end
 
     @testset "empty chunk" begin
-        textbuff = IOBuffer()
-        failbuff = IOBuffer()
-        result = UniLM._parse_response_stream_chunk("", textbuff, failbuff)
+        st = UniLM.AgenticStreamState()
+        result = UniLM._parse_response_stream_chunk("", st)
         @test result.done == false
     end
 
-    @testset "malformed JSON goes to failbuff" begin
+    @testset "malformed JSON stays in the carry" begin
         chunk = "event: response.output_text.delta\ndata: {invalid json"
-        textbuff = IOBuffer()
-        failbuff = IOBuffer()
-        result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
+        st = UniLM.AgenticStreamState()
+        result = UniLM._parse_response_stream_chunk(chunk, st)
         @test result.done == false
-        @test !isempty(take!(failbuff))
+        @test !isempty(take!(st.carry))
     end
 
     @testset "response.failed → terminal :failed with structured error" begin
         chunk = "event: response.failed\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"r\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"boom\"}}}\n\n"
-        textbuff = IOBuffer(); failbuff = IOBuffer()
-        result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
+        st = UniLM.AgenticStreamState()
+        result = UniLM._parse_response_stream_chunk(chunk, st)
         @test result.done == true
         @test result.terminal == :failed
         @test result.data["response"]["error"]["code"] == "server_error"
@@ -767,8 +763,8 @@ end
 
     @testset "bare error event → terminal :error" begin
         chunk = "event: error\ndata: {\"type\":\"error\",\"code\":\"rate_limit\",\"message\":\"slow down\"}\n\n"
-        textbuff = IOBuffer(); failbuff = IOBuffer()
-        result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
+        st = UniLM.AgenticStreamState()
+        result = UniLM._parse_response_stream_chunk(chunk, st)
         @test result.done == true
         @test result.terminal == :error
         @test result.data["message"] == "slow down"
@@ -776,11 +772,11 @@ end
 
     @testset "unknown event degrades to :none without throwing" begin
         chunk = "event: response.reasoning_text.delta\ndata: {\"type\":\"response.reasoning_text.delta\",\"delta\":\"thinking\"}\n\n"
-        textbuff = IOBuffer(); failbuff = IOBuffer()
-        result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
+        st = UniLM.AgenticStreamState()
+        result = UniLM._parse_response_stream_chunk(chunk, st)
         @test result.done == false
         @test result.terminal == :none
-        @test isempty(take!(textbuff))   # reasoning deltas are not emitted as output text
+        @test isempty(take!(st.textbuff))   # reasoning deltas are not emitted as output text
     end
 end
 
@@ -1679,45 +1675,38 @@ end
     @testset "multiple deltas in one chunk" begin
         chunk = "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n" *
                 "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\" World\"}\n\n"
-        textbuff = IOBuffer()
-        failbuff = IOBuffer()
-        result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
+        st = UniLM.AgenticStreamState()
+        result = UniLM._parse_response_stream_chunk(chunk, st)
         @test result.done == false
-        @test String(take!(textbuff)) == "Hello World"
+        @test String(take!(st.textbuff)) == "Hello World"
     end
 
     @testset "non-text event type (ignored)" begin
         chunk = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n"
-        textbuff = IOBuffer()
-        failbuff = IOBuffer()
-        result = UniLM._parse_response_stream_chunk(chunk, textbuff, failbuff)
+        st = UniLM.AgenticStreamState()
+        result = UniLM._parse_response_stream_chunk(chunk, st)
         @test result.done == false
-        @test isempty(take!(textbuff))
+        @test isempty(take!(st.textbuff))
     end
 
     @testset "whitespace-only chunk" begin
-        textbuff = IOBuffer()
-        failbuff = IOBuffer()
-        result = UniLM._parse_response_stream_chunk("  \n  \n  ", textbuff, failbuff)
+        st = UniLM.AgenticStreamState()
+        result = UniLM._parse_response_stream_chunk("  \n  \n  ", st)
         @test result.done == false
     end
 end
 
 @testset "_parse_response_stream_chunk chunk-boundary persistence" begin
     @testset "boundary mid-data preserves delta across calls" begin
-        text_buffer = IOBuffer()
-        fail_buffer = IOBuffer()
-        last_event = Ref("")
+        st = UniLM.AgenticStreamState()
 
         UniLM._parse_response_stream_chunk(
             "event: response.output_text.delta\ndata: {\"delta\":\"Hello\"}\n\n" *
-            "event: response.output_text.delta\ndata: {\"delta\":\" Wo",
-            text_buffer, fail_buffer, last_event)
+            "event: response.output_text.delta\ndata: {\"delta\":\" Wo", st)
         UniLM._parse_response_stream_chunk(
-            "rld\"}\n\nevent: response.output_text.delta\ndata: {\"delta\":\"!\"}\n\n",
-            text_buffer, fail_buffer, last_event)
+            "rld\"}\n\nevent: response.output_text.delta\ndata: {\"delta\":\"!\"}\n\n", st)
 
-        @test String(take!(text_buffer)) == "Hello World!"
+        @test String(take!(st.textbuff)) == "Hello World!"
     end
 
     @testset "every byte-split position roundtrips" begin
@@ -1728,14 +1717,10 @@ end
         bytes = Vector{UInt8}(sse)
 
         for k in 1:length(bytes)-1
-            text_buffer = IOBuffer()
-            fail_buffer = IOBuffer()
-            last_event = Ref("")
-            UniLM._parse_response_stream_chunk(String(bytes[1:k]),
-                                               text_buffer, fail_buffer, last_event)
-            UniLM._parse_response_stream_chunk(String(bytes[k+1:end]),
-                                               text_buffer, fail_buffer, last_event)
-            got = String(take!(text_buffer))
+            st = UniLM.AgenticStreamState()
+            UniLM._parse_response_stream_chunk(String(bytes[1:k]), st)
+            UniLM._parse_response_stream_chunk(String(bytes[k+1:end]), st)
+            got = String(take!(st.textbuff))
             @test got == expected
         end
     end
@@ -1743,22 +1728,22 @@ end
 
 @testset "_parse_response_stream_chunk — shared-machine framing" begin
     @testset "data:-without-space accepted (old parser required the space)" begin
-        textbuff = IOBuffer(); failbuff = IOBuffer()
+        st = UniLM.AgenticStreamState()
         r = UniLM._parse_response_stream_chunk(
-            "event: response.output_text.delta\ndata:{\"delta\":\"X\"}\n\n", textbuff, failbuff)
+            "event: response.output_text.delta\ndata:{\"delta\":\"X\"}\n\n", st)
         @test r.done == false
-        @test String(take!(textbuff)) == "X"
+        @test String(take!(st.textbuff)) == "X"
     end
 
     @testset "malformed COMPLETE line dropped + counted, carry stays clean" begin
         before = UniLM._SSE_DROPPED_LINES[]
-        textbuff = IOBuffer(); failbuff = IOBuffer()
+        st = UniLM.AgenticStreamState()
         r = UniLM._parse_response_stream_chunk(
             "event: response.output_text.delta\ndata: {invalid json\n\n" *
-            "event: response.output_text.delta\ndata: {\"delta\":\"ok\"}\n\n", textbuff, failbuff)
+            "event: response.output_text.delta\ndata: {\"delta\":\"ok\"}\n\n", st)
         @test r.done == false
-        @test String(take!(textbuff)) == "ok"          # the NEXT line was not poisoned
-        @test isempty(take!(failbuff))
+        @test String(take!(st.textbuff)) == "ok"          # the NEXT line was not poisoned
+        @test isempty(take!(st.carry))
         @test UniLM._SSE_DROPPED_LINES[] == before + 1
     end
 end
@@ -2562,5 +2547,52 @@ end
         finally
             close(srv)
         end
+    end
+end
+
+# One `response.completed` SSE event carrying `text` as the whole output.
+_completed_event(text::String, usage::Int) =
+    "event: response.completed\ndata: " * JSON.json(Dict(
+        "type" => "response.completed",
+        "response" => Dict("id" => "resp_ok", "status" => "completed", "model" => "gpt-5.5",
+            "output" => [Dict("type" => "message", "role" => "assistant",
+                              "content" => [Dict("type" => "output_text", "text" => text)])],
+            "usage" => Dict("input_tokens" => 1, "output_tokens" => usage - 1,
+                            "total_tokens" => usage)))) * "\n\n"
+
+_delta_event(text::String) =
+    "event: response.output_text.delta\ndata: " *
+    JSON.json(Dict("type" => "response.output_text.delta", "delta" => text)) * "\n\n"
+
+# Streaming config used by the terminal-contract fixtures below: generous enough
+# that a shared-runner scheduling stall cannot turn a healthy stream into a
+# byte-gap breach, and single-attempt so a retry can never mask the outcome.
+_stream_cfg() = RequestConfig(request_timeout=5.0, total_deadline=30.0,
+                              stream_idle_timeout=5.0, max_attempts=1)
+
+@testset "streamed text deltas are disjoint slices, never re-prints" begin
+    # Regression contract for the driver's delta emission: each callback payload is
+    # the text that arrived since the previous one, so concatenating them
+    # reproduces the output EXACTLY. A driver that re-printed its accumulated
+    # buffer per chunk would still end with the right final text but would emit
+    # "Hel", "Hello ", "Hello world" — a concatenation three times too long.
+    text = "Hello world"
+    chunks = [_delta_event("Hel"), _delta_event("lo "), _delta_event("world"),
+              _completed_event(text, 3)]
+    server, url = _sse_gap_server(chunks; gap=0.1)
+    _RESP_TIMEOUT_URL[] = url
+    deltas = String[]
+    try
+        t = respond(Respond(input="hi", service=_RespTimeoutMock, stream=true); config=_stream_cfg(),
+                    callback=(c, _close) -> c isa String && push!(deltas, c))
+        @test timedwait(() -> istaskdone(t), 25.0) == :ok
+        res = fetch(t)
+        @test res isa ResponseSuccess
+        @test join(deltas) == text
+        @test sum(sizeof, deltas; init=0) == sizeof(text)   # no byte emitted twice
+        @test all(!isempty, deltas)                          # and none emitted empty
+        @test output_text(res) == text
+    finally
+        close(server)
     end
 end

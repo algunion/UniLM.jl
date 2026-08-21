@@ -334,7 +334,7 @@ Edit/extend image(s) under a text prompt. Returns the same `ImageSuccess`/`Image
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
 function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing)
-    validate_capability(e.service, :image_edits, "Image Edits API")
+    _validate_declared_capability(e.service, :image_edits, "Image Edits API")
     cfg = _resolve_config(config)
     t0 = time_ns()
     try

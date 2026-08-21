@@ -174,6 +174,60 @@ end
     @test r.message.content == "partial"
 end
 
+@testset "decode — an empty-text turn is reported truthfully, never fabricated" begin
+    # Observed with thinking models: the whole completion budget goes to thought
+    # tokens and the turn comes back well-formed with no text part. Substituting
+    # prose the provider never sent injects fabricated content into the
+    # conversation and into the next request's history.
+    budget_spent = """
+    {"candidates":[{"finishReason":"MAX_TOKENS"}],
+     "usageMetadata":{"promptTokenCount":9,"candidatesTokenCount":0,
+                      "thoughtsTokenCount":128,"totalTokenCount":137}}
+    """
+    r = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(budget_spent)))
+    @test r.message.content == ""
+    @test !occursin("No response from the model", something(r.message.content, ""))
+    @test isnothing(r.message.tool_calls)
+    @test r.message.finish_reason == "length"
+    @test r.usage.reasoning_tokens == 128
+
+    # Same rule for an explicit empty parts array under STOP.
+    empty_stop = """
+    {"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"STOP"}],
+     "usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":0,"totalTokenCount":4}}
+    """
+    r2 = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(empty_stop)))
+    @test r2.message.content == ""
+    @test r2.message.finish_reason == STOP
+
+    # A tool-only turn keeps content nothing (unchanged) — no placeholder there either.
+    tool_only = """
+    {"candidates":[{"content":{"role":"model","parts":[
+        {"functionCall":{"id":"fc1","name":"ping","args":{}}}]},"finishReason":"STOP"}],
+     "usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":1,"totalTokenCount":3}}
+    """
+    r3 = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(tool_only)))
+    @test isnothing(r3.message.content)
+    @test r3.message.tool_calls[1].func.name == "ping"
+end
+
+@testset "decode — zero candidates fails loud instead of inventing a turn" begin
+    # No candidate is not "the model said nothing": there is no assistant turn to
+    # report. Throw so the verb returns its typed error result carrying the
+    # provider's own diagnostics, rather than a Message nobody sent.
+    blocked = """{"promptFeedback":{"blockReason":"SAFETY"},
+                  "usageMetadata":{"promptTokenCount":3,"totalTokenCount":3}}"""
+    err = try
+        decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(blocked)))
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("candidate", lowercase(err.msg))
+    @test occursin("SAFETY", err.msg)          # the provider's diagnostics survive
+end
+
 @testset "decode — SAFETY → content_filter refusal" begin
     body = JSON.json(Dict("candidates" => [Dict(
         "content" => Dict("role" => "model", "parts" => []),

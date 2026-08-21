@@ -599,13 +599,16 @@ end
 A generation whose terminal status is `"failed"` is reported as a
 `ResponseFailure`, not a success — on both agentic wires, streamed and
 non-streamed alike. The failure carries the wire body verbatim, so the response's
-own `error` and `metadata` are preserved on `.response`. Non-streamed, only
-`"failed"` flips: `cancelled`, `expired`, `in_progress`, `queued` and
-`requires_action` are legitimate terminals of the background and tool-action
-flows and stay `ResponseSuccess`, inspectable via [`response_status`](@ref) and
-[`incomplete_details`](@ref). Streamed, a terminal `response.incomplete` event
-also resolves to `ResponseFailure`, so check the result type rather than
-assuming a stream that produced deltas ended in success.
+own `error` and `metadata` are preserved on `.response`. Only `"failed"` flips:
+`incomplete`, `cancelled`, `expired`, `in_progress`, `queued` and
+`requires_action` are legitimate terminals of the capped, background and
+tool-action flows and stay `ResponseSuccess`, inspectable via
+[`response_status`](@ref) and [`incomplete_details`](@ref). An `incomplete`
+generation — one cut short by a token or output cap — therefore arrives as a
+`ResponseSuccess` carrying its partial output, `.response.status ==
+"incomplete"`, and the wire's `incomplete_details` verbatim. A terminal
+`response.incomplete` event decodes exactly as the non-streamed body does, so
+`issuccess` reflects what happened rather than how the call was made.
 
 ### Responses API Examples
 
@@ -1379,11 +1382,11 @@ status and body, and every `*CallError` wraps a transport/exception. Fields of t
 five primary families:
 
 ```julia
-LLMSuccess        (.message::Message, .self::Chat, .usage::Union{TokenUsage,Nothing})
-LLMFailure        (.response::String, .status::Int, .self::Chat, .request_id::Union{String,Nothing})
+LLMSuccess        (.message::Message, .self::Chat, .usage::Union{TokenUsage,Nothing}, .sse_dropped::Int)
+LLMFailure        (.response::String, .status::Int, .self::Chat, .request_id::Union{String,Nothing}, .sse_dropped::Int)
 LLMCallError      (.error::String, .status::Union{Int,Nothing}, .self::Chat, .request_id::Union{String,Nothing}, .cause::Union{Nothing,Exception})
-ResponseSuccess   (.response::ResponseObject)
-ResponseFailure   (.response::String, .status::Int, .request_id::Union{String,Nothing})
+ResponseSuccess   (.response::ResponseObject, .sse_dropped::Int)
+ResponseFailure   (.response::String, .status::Int, .request_id::Union{String,Nothing}, .sse_dropped::Int)
 ResponseCallError (.error::String, .status::Union{Int,Nothing}, .request_id::Union{String,Nothing}, .cause::Union{Nothing,Exception})
 EmbeddingSuccess  (.embeddings::Embeddings, .usage::Union{TokenUsage,Nothing}, .raw::Dict{String,Any})
 EmbeddingFailure  (.response::String, .status::Int)
@@ -1399,6 +1402,11 @@ FIMCallError      (.error::String, .status::Union{Int,Nothing}, .request_id::Uni
 `request_id` carries the provider's `x-request-id` header for support escalation.
 It exists on the six Chat / Responses / FIM failure and call-error types above;
 the image and embedding limbs do not carry it.
+
+`sse_dropped` (default `0`) counts the undecodable SSE `data:` payloads dropped
+while assembling **that** streamed turn. It is `0` for a non-streamed call and
+for a clean stream; anything higher means the result was built from an incomplete
+wire — see [Streaming](@ref streaming_guide).
 
 **Credentials never reach a result value.** API keys and request bodies are
 redacted from the `error` strings these types carry, and a `*CallError`'s

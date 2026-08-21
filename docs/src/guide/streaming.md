@@ -147,6 +147,19 @@ exactly like a non-streamed one.
 Providers on the OpenAI-compatible Chat Completions standard (DeepSeek, Ollama, vLLM, LM
 Studio, …) stream through the same `stream=true` + callback path.
 
+## Dropped SSE Payloads
+
+An SSE `data:` payload the parser cannot read is dropped rather than allowed to
+abort the turn, and each drop is counted for that stream. The count rides the
+result as `sse_dropped` — on `LLMSuccess`, `LLMFailure`, `ResponseSuccess` and
+`ResponseFailure` alike — and a single warning naming the count, model and
+surface fires once the stream finalizes, not per line. `sse_dropped == 0` means a
+clean stream, and is what a non-streamed call always reports. A non-zero count
+means the turn was assembled from an incomplete wire: a provider-side or
+transport anomaly, never routine operation. On a truncated stream it is often the
+reason no message could be built at all, so it is worth reading on a failure
+result as well as on a success.
+
 ## Notes
 
 - Streaming runs on a **separate Julia thread** via `Threads.@spawn`. Make sure Julia is started with multiple threads (`julia -t auto`).

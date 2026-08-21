@@ -1073,6 +1073,77 @@ UniLM._transport_send!(t::_LockProbeTransport, msg::String;
     @test session._id_counter == 1
 end
 
+# ─── The request bound covers the exchange, not the wait for it ──────────────
+# One lock serializes whole exchanges (stdio framing carries no id demux), so a
+# caller can wait behind the exchange in progress. The per-exchange watchdog must
+# therefore be armed only once the lock is HELD: a bound burning while queueing
+# expires during the HOLDER's healthy exchange and group-kills its server, which
+# reaches the holder as a crash it never caused. The queue wait stays bounded
+# transitively — the caller ahead runs under its own bound.
+
+"""Stdio transport with no subprocess: in-memory streams stand in for the pipes and a
+task plays the server, answering each request `delay_for(id)` seconds after it arrives.
+If the teardown ladder runs meanwhile (transport handles nulled) the server closes the
+read stream instead — what a group-killed server's pipe does to a read in flight."""
+function _paced_stdio_session(delay_for::Function; request_timeout::Float64=30.0)
+    t = UniLM.StdioTransport(`cat`)      # never spawned: the streams below are the pipes
+    to_server, to_client = Base.BufferStream(), Base.BufferStream()
+    t.input, t.output = to_server, to_client
+    session = UniLM.MCPSession(t, UniLM.MCPServerCapabilities(), Dict{String,Any}(),
+        UniLM.MCPToolInfo[], UniLM.MCPResourceInfo[], UniLM.MCPPromptInfo[],
+        UniLM._MCP_PROTOCOL_VERSION, 0, :ready;
+        config=RequestConfig(current_config(); mcp_request_timeout=request_timeout))
+    received = Threads.Atomic{Int}(0)
+    server = Threads.@spawn begin
+        while true
+            line = readline(to_server)
+            isempty(line) && break
+            id = get(JSON.parse(line; dicttype=Dict{String,Any}), "id", nothing)
+            isnothing(id) && continue          # a client notification: nothing to answer
+            Threads.atomic_add!(received, 1)
+            due = time() + delay_for(id)
+            while time() < due
+                isnothing(t.output) && (close(to_client); return)   # torn down mid-exchange
+                sleep(0.05)
+            end
+            println(to_client, JSON.json(Dict{String,Any}(
+                "jsonrpc" => "2.0", "id" => id, "result" => Dict{String,Any}("served" => id))))
+            flush(to_client)
+        end
+    end
+    session, t, received, to_server, server
+end
+
+@testset "a queued caller's request bound never kills the holder's healthy exchange" begin
+    # The holder's exchange is slow but perfectly healthy; the waiter's bound is
+    # shorter than that occupancy. A bound armed before the lock is acquired burns
+    # while queueing and tears the transport down under the holder, which then reports
+    # a crash for someone else's queue wait; armed after acquisition it bounds only
+    # the waiter's own exchange, which starts when it takes the lock.
+    session, t, received, to_server, server = _paced_stdio_session(id -> id == 1 ? 5.0 : 0.0)
+    holder_result, waiter_result = Ref{Any}(nothing), Ref{Any}(nothing)
+    holder_kept_transport = Ref(false)
+    try
+        holder = Threads.@spawn begin
+            holder_result[] = try UniLM._mcp_request!(session, "slow/exchange") catch e; e end
+            holder_kept_transport[] = !isnothing(t.output)   # no teardown ran under it
+        end
+        @test timedwait(() -> received[] >= 1, 30.0) === :ok   # holder is inside the exchange
+        waiter = Threads.@spawn (waiter_result[] =
+            try UniLM._mcp_request!(session, "quick/exchange"; timeout=2.0) catch e; e end)
+        @test timedwait(() -> istaskdone(holder) && istaskdone(waiter), 60.0) === :ok
+        @test holder_result[] == Dict{String,Any}("served" => 1)
+        @test holder_kept_transport[]
+        @test waiter_result[] == Dict{String,Any}("served" => 2)
+        @test session.status === :ready
+        @test session._close_cause === :none
+    finally
+        close(to_server)
+        UniLM._kill_transport!(t)
+        @test timedwait(() -> istaskdone(server), 10.0) === :ok
+    end
+end
+
 # ─── HTTP transport: multi-frame SSE bodies ──────────────────────────────────
 
 @testset "HTTP SSE body: notification AFTER the response is not mistaken for it" begin
@@ -1703,6 +1774,47 @@ end
     end
 end
 
+"""A stdio child that greets on stdout with a line that is not JSON-RPC — the shape of
+a server logging to stdout before it speaks the protocol. It keeps reading stdin, so
+only the teardown ladder (stdin EOF) ends it."""
+function _banner_child_src(marker::String)
+    """
+    # $marker
+    println(stdout, "listening on stdio (this line is not JSON-RPC)")
+    flush(stdout)
+    while !eof(stdin); readline(stdin); end
+    """
+end
+
+@testset "connect failing outside the timeout and crash shapes still kills the server" begin
+    # Once the server is spawned, every failure before the session is established owns
+    # a live child holding our pipes — a stdout banner that breaks JSON parsing, an
+    # `initialize` error frame, a rejected protocol version. Teardown must be
+    # unconditional, not a per-exception-shape branch that the next new failure mode
+    # escapes. Here the banner is neither a timeout nor a dead process, the two shapes
+    # that used to be the only ones torn down.
+    marker = "UNILMBANNER" * string(rand(UInt64); base=16)
+    childfile, io = mktemp(); write(io, _banner_child_src(marker)); close(io)
+    cmd = `$(Base.julia_cmd()) --startup-file=no $childfile`
+    _alive() = success(pipeline(`pgrep -f $childfile`; stdout=devnull, stderr=devnull))
+    t = UniLM.StdioTransport(cmd)   # held here, so the child's pipes cannot close by GC
+    try
+        err = try
+            mcp_connect(t; config=RequestConfig(current_config(); mcp_connect_timeout=30.0))
+            nothing
+        catch e; e end
+        @test err !== nothing
+        @test !(err isa MCPTimeoutError)   # the banner fails parsing long before the bound
+        @test !(err isa MCPCrashError)     # nothing died: the server is alive and well
+        @test isnothing(t.process)         # the teardown ladder ran (handles nulled)
+        @test timedwait(() -> !_alive(), 15.0) === :ok   # ...and the server is gone
+    finally
+        try; UniLM._kill_transport!(t; grace_term=1.0, grace_kill=1.0); catch; end
+        try; run(pipeline(`pkill -f $childfile`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
 # ─── Opt-in auto-respawn + call-time resolution into bridged closures ─────
 # A stdio request timeout is session-fatal (no id demux). The NEXT call decides:
 # with auto_respawn=true the server is transparently respawned (same command,
@@ -1810,6 +1922,122 @@ end
         @test !occursin("auto_respawn", err.msg)               # never the respawn-naming guidance
     finally
         try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+# ─── Respawn is check-then-act on shared session state ───────────────────────
+# The liveness check reads status/cause and the respawn it triggers rewrites the
+# transport, the id counter and the status. Both must run under the same acquisition
+# as the exchange they guard, or concurrent callers each spawn a server: the losers'
+# transports are overwritten, their processes outlive every kill ladder (nothing
+# holds a handle to them any more) and their handshakes interleave on the shared id
+# counter. And when a respawn attempt fails, it has diagnosed nothing new about the
+# session — the recorded close cause must survive it.
+
+"""A raw JSON-RPC stdio child with no package dependencies (it matches the request id
+with a regex), so a respawn costs a bare Julia start. Every start appends a line to
+`countfile`, whose line count is therefore the number of servers spawned. It advertises
+no capabilities — connect is spawn + initialize — answers every other request with the
+same `ok` result, and exits when stdin reaches EOF."""
+function _respawn_race_child_src(marker::String, countfile::String)
+    ver = UniLM._MCP_PROTOCOL_VERSION
+    """
+    # $marker
+    open(raw"$countfile", "a") do io; println(io, "spawn"); end
+    init = "{\\"protocolVersion\\":\\"$ver\\",\\"capabilities\\":{},\\"serverInfo\\":{\\"name\\":\\"respawn-race\\",\\"version\\":\\"1.0\\"}}"
+    ok = "{\\"content\\":[{\\"type\\":\\"text\\",\\"text\\":\\"ok\\"}]}"
+    while !eof(stdin)
+        line = readline(stdin)
+        m = match(r"\\"id\\":(\\d+)", line)
+        m === nothing && continue
+        body = occursin("\\"method\\":\\"initialize\\"", line) ? init : ok
+        println(stdout, "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":" * m.captures[1] * ",\\"result\\":" * body * "}")
+        flush(stdout)
+    end
+    """
+end
+
+@testset "concurrent callers respawn a closed session exactly once" begin
+    # Each round closes the session the way a request timeout does, then releases N
+    # callers at once. Counts only — which caller wins the respawn, and in what order
+    # the others run their exchange, is a scheduling detail.
+    marker = "UNILMRESPAWNRACE" * string(rand(UInt64); base=16)
+    countfile, cio = mktemp(); close(cio)
+    childfile, io = mktemp(); write(io, _respawn_race_child_src(marker, countfile)); close(io)
+    cmd = `$(Base.julia_cmd()) --startup-file=no $childfile`
+    _servers_spawned() = countlines(countfile)
+    # pgrep exits nonzero when nothing matches, which `read` surfaces as an error.
+    _servers_alive() = try
+        count(!isempty, split(read(`pgrep -f $childfile`, String), "\n"))
+    catch; 0 end
+    callers, rounds = 4, 20
+    spawns, alive, served = Int[], Int[], Int[]
+    stalled = false
+    session = nothing
+    try
+        session = mcp_connect(cmd; auto_respawn=true, config=RequestConfig(current_config();
+            mcp_connect_timeout=15.0, mcp_request_timeout=15.0))
+        for _ in 1:rounds
+            UniLM._kill_transport!(session.transport; grace_term=2.0, grace_kill=1.0)
+            session.status = :closed
+            session._close_cause = :timeout       # the session-fatal close respawn exists for
+            before = _servers_spawned()
+            gate = Base.Event()
+            tasks = [Threads.@spawn begin
+                         wait(gate)
+                         try call_tool(session, "ok", Dict{String,Any}()) catch e; e end
+                     end for _ in 1:callers]
+            sleep(0.1); notify(gate)              # release every caller together
+            if timedwait(() -> all(istaskdone, tasks), 90.0) !== :ok
+                stalled = true
+                break
+            end
+            results = fetch.(tasks)
+            push!(served, count(r -> r isa MCPToolResult && r.content == "ok", results))
+            push!(spawns, _servers_spawned() - before)
+            push!(alive, _servers_alive())
+            last(spawns) == 1 || break            # already refuted: the assertions report it
+        end
+        @test !stalled
+        @test spawns == fill(1, rounds)           # exactly one server per closed session
+        @test served == fill(callers, rounds)     # every caller got a real result
+        @test alive == fill(1, rounds)            # no server orphaned by an overwritten transport
+        @test session.status === :ready
+    finally
+        session === nothing ||
+            (try; UniLM._kill_transport!(session.transport; grace_term=1.0, grace_kill=1.0); catch; end)
+        try; run(pipeline(`pkill -f $childfile`; stderr=devnull)); catch; end
+        rm(childfile; force=true); rm(countfile; force=true)
+    end
+end
+
+@testset "a respawn that fails to connect keeps the recorded close cause" begin
+    # The fresh server never reaches a handshake (a non-JSON banner), so the attempt
+    # learned nothing about why the session closed: the recorded cause must survive —
+    # the next call still reports the timeout that closed the session, not a fabricated
+    # crash — and the half-established server must not outlive the attempt.
+    marker = "UNILMRESPAWNFAIL" * string(rand(UInt64); base=16)
+    childfile, io = mktemp(); write(io, _banner_child_src(marker)); close(io)
+    cmd = `$(Base.julia_cmd()) --startup-file=no $childfile`
+    _alive() = success(pipeline(`pgrep -f $childfile`; stdout=devnull, stderr=devnull))
+    session = UniLM.MCPSession(UniLM.StdioTransport(cmd), UniLM.MCPServerCapabilities(),
+        Dict{String,Any}(), UniLM.MCPToolInfo[], UniLM.MCPResourceInfo[], UniLM.MCPPromptInfo[],
+        UniLM._MCP_PROTOCOL_VERSION, 7, :closed;
+        config=RequestConfig(current_config(); mcp_connect_timeout=30.0), auto_respawn=true)
+    session._close_cause = :timeout
+    try
+        err = @test_logs (:warn, r"respawning the server") match_mode=:any (
+            try UniLM._ensure_live!(session); nothing catch e; e end)
+        @test err !== nothing
+        @test !(err isa MCPCrashError)              # a banner is not a dead process
+        @test session.status === :closed
+        @test session._close_cause === :timeout     # the recorded cause survives the attempt
+        @test isnothing(session.transport.process)  # the failed attempt's server was killed
+        @test timedwait(() -> !_alive(), 15.0) === :ok
+    finally
+        try; UniLM._kill_transport!(session.transport; grace_term=1.0, grace_kill=1.0); catch; end
+        try; run(pipeline(`pkill -f $childfile`; stderr=devnull)); catch; end
         rm(childfile; force=true)
     end
 end

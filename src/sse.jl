@@ -15,8 +15,26 @@ Count of complete SSE lines whose payload failed to decode. Such lines are
 (re-queueing a failed line without its newline is the Azure/proxy
 stream-poisoning mechanism the old parsers shared). Observability hook for
 tests and debugging; monotonically increasing, process-global.
+
+Process-global means no caller can attribute a drop to its OWN request. Every
+drop is therefore ALSO counted on the stream state that saw it, and that
+per-stream count rides the result (`sse_dropped` on `LLMSuccess`/`LLMFailure`/
+`ResponseSuccess`/`ResponseFailure`).
 """
 const _SSE_DROPPED_LINES = Threads.Atomic{Int}(0)
+
+"""
+    _warn_sse_drops(n::Int, model, surface::AbstractString) -> Nothing
+
+State a stream's dropped-payload count ONCE, at finalize. A drop means the
+provider sent a `data:` payload this parser could not read, so the turn was
+assembled from an incomplete wire — anomalous by construction, never routine,
+hence `@warn` rather than the per-line `@debug`. Silent when nothing was dropped.
+"""
+function _warn_sse_drops(n::Int, model, surface::AbstractString)::Nothing
+    n == 0 || @warn "SSE: undecodable data payloads dropped during the stream" count = n model surface
+    nothing
+end
 
 """
     _sse_complete_lines!(carry::IOBuffer, chunk::String) -> Vector{SubString{String}}
@@ -103,8 +121,8 @@ function handle_sse_event! end
 Layer-3 glue: frames `chunk` via [`_sse_events!`](@ref) and feeds each data
 payload to [`handle_sse_event!`](@ref). Returns the first non-`:continue`
 status, else `:continue`. A COMPLETE line whose handler throws is
-`@debug`-logged, counted in `_SSE_DROPPED_LINES`, and DROPPED — never
-re-queued.
+`@debug`-logged, counted in `_SSE_DROPPED_LINES` **and in `state.sse_dropped`**,
+and DROPPED — never re-queued.
 """
 function _sse_dispatch!(service, carry::IOBuffer, current_event::Ref{String},
                         chunk::String, state::StreamState)::Symbol
@@ -113,6 +131,7 @@ function _sse_dispatch!(service, carry::IOBuffer, current_event::Ref{String},
             handle_sse_event!(service, event, payload, state)
         catch e
             Threads.atomic_add!(_SSE_DROPPED_LINES, 1)
+            state.sse_dropped += 1
             @debug "SSE: dropped undecodable data payload" event payload = String(payload) exception = (e, catch_backtrace())
             :continue
         end

@@ -4,7 +4,7 @@
 # ============================================================================
 using UniLM
 using UniLM: StreamState, _build_stream_message, TOOL_CALLS, STOP
-using Test, HTTP, JSON, Sockets
+using Test, HTTP, JSON, Sockets, Logging
 
 # Fragmenting SSE mock (portable across HTTP 1.9/2.x — same intersection APIs
 # as test/regression_p0.jl's: no listen!(stream=true), drain with read()).
@@ -411,5 +411,83 @@ end
         finally
             close(server)
         end
+    end
+end
+
+@testset "driver — per-turn SSE drop count" begin
+    # The drop policy keeps a poisoned line from killing the turn, but a truncated
+    # stream was indistinguishable from a clean one: the only trace was a
+    # process-global counter no caller can attribute to its own request. The count
+    # now rides the result, and a drop — an undecodable provider payload, never
+    # routine — is stated once per turn.
+    _dropwarns(logs) = count(l -> l.level == Logging.Warn &&
+        occursin("undecodable data payloads dropped", string(l.message)), logs)
+
+    @testset "one undecodable payload → sse_dropped == 1 and exactly one warning" begin
+        chunks = [
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hel\"},\"finish_reason\":null}]}\n\n",
+            "data: {invalid json\n\n",
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+        ]
+        server, base = fragmented_sse_server(chunks)
+        try
+            chat = Chat(service=GenericOpenAIEndpoint(base, ""), model="mock", stream=true)
+            push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
+            # The driver runs in a spawned task, which inherits the logger in force
+            # AT SPAWN — so the whole call happens under the collector, not just the fetch.
+            logs, res = Test.collect_test_logs(min_level=Logging.Warn) do
+                fetch(chatrequest!(chat))
+            end
+            @test res isa LLMSuccess
+            @test res.message.content == "Hello"   # the surviving lines still built the turn
+            @test res.sse_dropped == 1
+            @test _dropwarns(logs) == 1
+        finally
+            close(server)
+        end
+    end
+
+    @testset "clean stream → sse_dropped == 0, no warning" begin
+        chunks = [
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ]
+        server, base = fragmented_sse_server(chunks)
+        try
+            chat = Chat(service=GenericOpenAIEndpoint(base, ""), model="mock", stream=true)
+            push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
+            logs, res = Test.collect_test_logs(min_level=Logging.Warn) do
+                fetch(chatrequest!(chat))
+            end
+            @test res isa LLMSuccess && res.sse_dropped == 0
+            @test _dropwarns(logs) == 0
+        finally
+            close(server)
+        end
+    end
+
+    @testset "a dropped line on a stream that never terminates still reports on the failure" begin
+        # Truncated stream: no [DONE], no finish_reason → LLMFailure. The drop count
+        # is exactly what tells the caller WHY the terminal never arrived.
+        chunks = ["data: {invalid json\n\n"]
+        server, base = fragmented_sse_server(chunks)
+        try
+            chat = Chat(service=GenericOpenAIEndpoint(base, ""), model="mock", stream=true)
+            push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
+            res = fetch(chatrequest!(chat))
+            @test res isa LLMFailure
+            @test res.sse_dropped == 1
+        finally
+            close(server)
+        end
+    end
+
+    @testset "the non-streamed path reports no drops" begin
+        # `sse_dropped` defaults to 0, so a path that never ran the SSE machine is
+        # truthfully quiet rather than absent.
+        st = StreamState()
+        @test st.sse_dropped == 0
+        @test LLMSuccess(message=Message(role=UniLM.RoleAssistant, content="x"),
+                         self=Chat(model="m")).sse_dropped == 0
     end
 end

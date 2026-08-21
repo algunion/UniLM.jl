@@ -687,6 +687,11 @@ end
     raw_pending::Dict{Int,Dict{String,Any}} = Dict{Int,Dict{String,Any}}()
     raw_json::Dict{Int,String} = Dict{Int,String}()
     raw_provider::Union{Symbol,Nothing} = nothing
+    # Undecodable `data:` payloads dropped while assembling THIS stream (the
+    # process-global `_SSE_DROPPED_LINES` cannot be attributed to one request).
+    # Rides the result as `sse_dropped`, so a turn built from a truncated wire is
+    # distinguishable from a clean one.
+    sse_dropped::Int = 0
 end
 
 function _build_stream_message(state::StreamState)::Message
@@ -807,18 +812,20 @@ function _fire_tool_calls!(on_tool_call, state::StreamState, stream_done::Bool):
 end
 
 """
-    _stream_error_result(chat, err::Dict{String,Any}, request_id)
+    _stream_error_result(chat, err::Dict{String,Any}, request_id, sse_dropped=0)
 
 Map an in-band SSE `error` payload (`state.error`) to a typed non-success
 result: `overloaded_error` is the documented
 529-equivalent → `LLMFailure(status=529)` (status-keyed policies see it);
-any other in-band error type → `LLMCallError` (no fabricated HTTP status).
+any other in-band error type → `LLMCallError` (no fabricated HTTP status, and
+no drop count — `LLMCallError` describes an exception, not a decoded stream).
 """
-function _stream_error_result(chat::Chat, err::Dict{String,Any}, request_id)
+function _stream_error_result(chat::Chat, err::Dict{String,Any}, request_id, sse_dropped::Int=0)
     inner = get(err, "error", nothing)
     etype = inner isa AbstractDict ? get(inner, "type", "") : ""
     etype == "overloaded_error" ?
-        LLMFailure(status=529, response=JSON.json(err), self=chat, request_id=request_id) :
+        LLMFailure(status=529, response=JSON.json(err), self=chat, request_id=request_id,
+                   sse_dropped=sse_dropped) :
         LLMCallError(error=JSON.json(err), self=chat, status=nothing, request_id=request_id)
 end
 
@@ -842,9 +849,10 @@ end
 # Commit a completed streamed turn: history update, typed success, cost accrual.
 # Shared by the clean end-of-stream path and the teardown-recovery path, so a
 # turn recovered from teardown noise is committed exactly like a clean one.
-function _stream_success(chat::Chat, msg::Message, usage::Union{TokenUsage,Nothing})
+function _stream_success(chat::Chat, msg::Message, usage::Union{TokenUsage,Nothing},
+                         sse_dropped::Int)
     update!(chat, msg)
-    result = LLMSuccess(message=msg, self=chat, usage=usage)
+    result = LLMSuccess(message=msg, self=chat, usage=usage, sse_dropped=sse_dropped)
     _accumulate_cost!(chat, result)
     return result
 end
@@ -951,12 +959,15 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
         serr = stream_error[]
         if !isnothing(serr)
             # In-band `error` event on an HTTP-200 stream: never LLMSuccess.
-            return (; result=_stream_error_result(chat, serr, _get_request_id(resp)), resp)
+            return (; result=_stream_error_result(chat, serr, _get_request_id(resp),
+                                                  state.sse_dropped), resp)
         elseif resp.status == 200 && !isnothing(m[])
-            return (; result=_stream_success(chat, m[]::Message, stream_usage[]), resp)
+            return (; result=_stream_success(chat, m[]::Message, stream_usage[],
+                                             state.sse_dropped), resp)
         else
             return (; result=LLMFailure(status=resp.status, response=String(take!(raw_buffer)),
-                                        self=chat, request_id=_get_request_id(resp)), resp)
+                                        self=chat, request_id=_get_request_id(resp),
+                                        sse_dropped=state.sse_dropped), resp)
         end
     catch e
         # Chain-walk: an interrupt nested inside a wrapper must still surface first.
@@ -980,7 +991,7 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
         if isnothing(state.error) && (!isnothing(m[]) || !isnothing(state.finish_reason)) &&
            _stream_teardown_noise(e, breach)
             fin = _finalize_stream_message!(state, callback, on_tool_call, Ref(false), m)
-            return (; result=_stream_success(chat, fin.msg, fin.usage), resp=nothing)
+            return (; result=_stream_success(chat, fin.msg, fin.usage, state.sse_dropped), resp=nothing)
         end
         breach === nothing || throw(breach)
         # Recorded request-phase bound: the typed cause that initiated the
@@ -1000,6 +1011,9 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
         rethrow()
     finally
         idle[] === nothing || _disarm!(idle[])
+        # One statement per attempt, on every exit — a retried attempt starts from a
+        # fresh StreamState, so each connection reports only what IT dropped.
+        _warn_sse_drops(state.sse_dropped, chat.model, "chat stream")
     end
 end
 

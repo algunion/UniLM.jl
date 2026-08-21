@@ -281,6 +281,7 @@ function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
             # terminal rebuild reads the accumulated state.
         catch e
             Threads.atomic_add!(_SSE_DROPPED_LINES, 1)
+            state.sse_dropped += 1
             @debug "Interactions SSE: dropped undecodable data payload" event = ev payload = String(payload) exception = e
         end
     end

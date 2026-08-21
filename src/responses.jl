@@ -779,6 +779,9 @@ Successful response from the Responses API. Access the parsed response via `.res
 """
 @kwdef struct ResponseSuccess <: LLMRequestResponse
     response::ResponseObject
+    # Undecodable SSE `data:` payloads dropped while assembling this streamed
+    # turn — 0 for a non-streamed call, and for a clean stream.
+    sse_dropped::Int = 0
 end
 
 """
@@ -790,6 +793,9 @@ HTTP-level failure from the Responses API. Contains the response body, status co
     response::String
     status::Int
     request_id::Union{String, Nothing} = nothing
+    # Undecodable SSE `data:` payloads dropped during a streamed attempt — 0 for a
+    # non-streamed call. On a truncated stream this is often why no terminal arrived.
+    sse_dropped::Int = 0
 end
 
 """
@@ -1013,8 +1019,9 @@ Mutable per-stream assembly state for the agentic streaming seam
 ([`decode_agentic_stream`](@ref)). Carries the layer-1/2 SSE machinery state
 (`carry` partial-line buffer, `last_event` sticky event name), the accumulated
 output text (`textbuff`), the not-yet-forwarded text deltas (`pending_delta`),
-and — for providers whose terminal event omits the step list (Gemini
-Interactions) — a per-index registry of assembled steps: `steps` maps a step index to its (mutable) step dict,
+the per-stream drop count (`sse_dropped`), and — for providers whose terminal
+event omits the step list (Gemini Interactions) — a per-index registry of
+assembled steps: `steps` maps a step index to its (mutable) step dict,
 `args_json` accumulates partial function-call argument JSON per index, and
 `order` records first-seen index order for deterministic output rebuilding.
 """
@@ -1030,6 +1037,9 @@ Base.@kwdef mutable struct AgenticStreamState
     # `textbuff` keeps the full accumulation for providers whose terminal event
     # omits the output, but it is never re-read to compute a delta.
     pending_delta::IOBuffer = IOBuffer()
+    # Undecodable `data:` payloads dropped while assembling THIS stream; rides the
+    # result as `sse_dropped` (the process-global counter cannot be attributed).
+    sse_dropped::Int = 0
 end
 
 function _parse_response_stream_chunk(chunk::String, state::AgenticStreamState)
@@ -1058,6 +1068,7 @@ function _parse_response_stream_chunk(chunk::String, state::AgenticStreamState)
             # hosted-tool progress) degrades gracefully — as do unknown types.
         catch e
             Threads.atomic_add!(_SSE_DROPPED_LINES, 1)
+            state.sse_dropped += 1
             @debug "Responses SSE: dropped undecodable data payload" event = ev payload = String(payload) exception = e
         end
     end
@@ -1089,10 +1100,12 @@ end
 # majors (`Int16` on 1.x, `Int64` on 2.x), so accept any `Integer`; `io` stays
 # untyped — it carries the request stream (whose concrete type also varies by
 # major) purely to read the x-request-id header.
-function _agentic_terminal_result(te::Dict{String,Any}, status::Union{Integer,Nothing}, io)
+function _agentic_terminal_result(te::Dict{String,Any}, status::Union{Integer,Nothing}, io,
+                                  sse_dropped::Int=0)
     req_id = !isnothing(io) ? _get_request_id(io) : nothing
     if haskey(te, "response")            # response.failed / response.incomplete
-        ResponseFailure(response=JSON.json(te["response"]), status=something(status, 200), request_id=req_id)
+        ResponseFailure(response=JSON.json(te["response"]), status=something(status, 200),
+                        request_id=req_id, sse_dropped=sse_dropped)
     else                                  # bare `error` event
         ResponseCallError(error=get(te, "message", JSON.json(te)),
             status=(status == 200 ? nothing : status), request_id=req_id)
@@ -1116,6 +1129,9 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
             io_ref[] = nothing
             result = Ref{Union{ResponseObject,Nothing}}(nothing)
             terminal_error = Ref{Union{Dict{String,Any},Nothing}}(nothing)  # structured failed/incomplete/error payload
+            # Fresh per attempt (a retried attempt must not inherit partial SSE state)
+            # and owned OUT here so the `finally` can report what this connection dropped.
+            state = AgenticStreamState()
             raw_buffer = IOBuffer()  # wire bytes for non-200 reporting (streamed resp.body is empty under HTTP 2.x)
             guard = nothing          # idle-guard handle (owned by deadline.jl); nothing until armed
             # Request-phase bound, recorded before it unwinds through HTTP.jl (see
@@ -1136,7 +1152,6 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                 # status_exception=false and retry=false; decompress=false passes through.
                 resp = _http_open("POST", url, stream_headers; cfg=cfg, t0=t0, decompress=false) do io
                     io_ref[] = io
-                    state = AgenticStreamState()   # fresh per attempt: no inherited partial SSE state
                     done = Ref(false)
                     close_ref = Ref(false)
                     # First byte = response headers received. The request-phase deadline guards
@@ -1214,20 +1229,22 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                     HTTP.closeread(io)
                 end
                 if resp.status == 200 && !isnothing(result[])
-                    return ResponseSuccess(response=result[]::ResponseObject)
+                    return ResponseSuccess(response=result[]::ResponseObject, sse_dropped=state.sse_dropped)
                 elseif (te = terminal_error[]) !== nothing
-                    return _agentic_terminal_result(te, resp.status, io_ref[])
+                    return _agentic_terminal_result(te, resp.status, io_ref[], state.sse_dropped)
                 elseif _is_retryable(resp.status) && !callback_fired[] && attempt < cfg.max_attempts
                     action, delay = _retry_pause(cfg, t0, attempt, resp)
                     if action === :budget
                         # Never sleep past the deadline; return the last real response.
                         @warn "Response stream: retry backoff exceeds the remaining total_deadline; returning the last response" status = resp.status
-                        return ResponseFailure(response=String(take!(raw_buffer)), status=resp.status, request_id=_get_request_id(resp))
+                        return ResponseFailure(response=String(take!(raw_buffer)), status=resp.status,
+                                               request_id=_get_request_id(resp), sse_dropped=state.sse_dropped)
                     end
                     @debug "Response stream retryable status; retrying" status = resp.status attempt
                     sleep(delay); attempt += 1; continue
                 else
-                    return ResponseFailure(response=String(take!(raw_buffer)), status=resp.status, request_id=_get_request_id(resp))
+                    return ResponseFailure(response=String(take!(raw_buffer)), status=resp.status,
+                                           request_id=_get_request_id(resp), sse_dropped=state.sse_dropped)
                 end
             catch e
                 # Interrupt-first, chain-walked: a user interrupt nested inside a task or
@@ -1247,9 +1264,10 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                 # Failures that are not teardown-shaped still surface. Twin of the
                 # chat driver's rule in `_stream_attempt`.
                 if _stream_teardown_noise(e, breach)
-                    !isnothing(result[]) && return ResponseSuccess(response=result[]::ResponseObject)
+                    !isnothing(result[]) &&
+                        return ResponseSuccess(response=result[]::ResponseObject, sse_dropped=state.sse_dropped)
                     te = terminal_error[]
-                    !isnothing(te) && return _agentic_terminal_result(te, nothing, io_ref[])
+                    !isnothing(te) && return _agentic_terminal_result(te, nothing, io_ref[], state.sse_dropped)
                 end
                 breach === nothing ||
                     return ResponseCallError(error=sprint(showerror, breach), status=nothing, cause=breach)
@@ -1308,6 +1326,9 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                 # outlives the attempt. `_disarm!` is idempotent and a no-op on `nothing`
                 # (mirror: _stream_attempt's finally in src/requests.jl).
                 guard !== nothing && _disarm!(guard)
+                # One statement per attempt, on every exit; a retried attempt starts from a
+                # fresh state, so each connection reports only what IT dropped.
+                _warn_sse_drops(state.sse_dropped, r.model, "agentic stream")
             end
         end
     end

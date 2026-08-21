@@ -745,7 +745,7 @@ discounted cached-input rate.
 end
 
 """
-    LLMSuccess(; message, self, usage=nothing)
+    LLMSuccess(; message, self, usage=nothing, sse_dropped=0)
 
 Successful Chat Completions API response.
 
@@ -753,11 +753,15 @@ Successful Chat Completions API response.
 - `message::Message`: The assistant's reply message.
 - `self::Chat`: The updated [`Chat`](@ref) object (with the new message appended if `history=true`).
 - `usage::Union{TokenUsage, Nothing}`: Token usage statistics from the API.
+- `sse_dropped::Int`: Undecodable SSE `data:` payloads dropped while assembling
+  this streamed turn — `0` for a non-streamed call, and for a clean stream.
+  Non-zero means the turn was built from an incomplete wire.
 """
 @kwdef struct LLMSuccess <: LLMRequestResponse
     message::Message
     self::Chat
     usage::Union{TokenUsage, Nothing} = nothing
+    sse_dropped::Int = 0
 end
 
 _get_request_id(resp::HTTP.Response) = (val = HTTP.header(resp, "x-request-id", ""); isempty(val) ? nothing : val)
@@ -772,7 +776,7 @@ function _get_request_id(e::Any)
 end
 
 """
-    LLMFailure(; response, status, self, request_id=nothing)
+    LLMFailure(; response, status, self, request_id=nothing, sse_dropped=0)
 
 HTTP-level failure from the Chat Completions API. The server returned a non-200 status.
 
@@ -781,12 +785,16 @@ HTTP-level failure from the Chat Completions API. The server returned a non-200 
 - `status::Int`: The HTTP status code.
 - `self::Chat`: The [`Chat`](@ref) object (unchanged).
 - `request_id::Union{String, Nothing}`: The HTTP request ID from headers, if available.
+- `sse_dropped::Int`: Undecodable SSE `data:` payloads dropped during a streamed
+  attempt — `0` for a non-streamed call. On a truncated stream (HTTP 200, no
+  terminal event) this is often the reason no message could be built.
 """
 @kwdef struct LLMFailure <: LLMRequestResponse
     response::String
     status::Int
     self::Chat
     request_id::Union{String, Nothing} = nothing
+    sse_dropped::Int = 0
 end
 
 """

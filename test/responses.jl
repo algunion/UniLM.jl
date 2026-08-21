@@ -1745,6 +1745,7 @@ end
         @test String(take!(st.textbuff)) == "ok"          # the NEXT line was not poisoned
         @test isempty(take!(st.carry))
         @test UniLM._SSE_DROPPED_LINES[] == before + 1
+        @test st.sse_dropped == 1        # ... and attributed to THIS stream, not just the process
     end
 end
 
@@ -2550,6 +2551,8 @@ end
     end
 end
 
+using Logging
+
 # One `response.completed` SSE event carrying `text` as the whole output.
 _completed_event(text::String, usage::Int) =
     "event: response.completed\ndata: " * JSON.json(Dict(
@@ -2592,6 +2595,67 @@ _stream_cfg() = RequestConfig(request_timeout=5.0, total_deadline=30.0,
         @test sum(sizeof, deltas; init=0) == sizeof(text)   # no byte emitted twice
         @test all(!isempty, deltas)                          # and none emitted empty
         @test output_text(res) == text
+    finally
+        close(server)
+    end
+end
+
+@testset "an undecodable streamed payload is counted on the result and warned once" begin
+    # The drop policy keeps a poisoned line from killing the turn, but a truncated
+    # stream used to be indistinguishable from a clean one: the only trace was a
+    # process-global counter. The count now rides the result, and a drop — always
+    # an anomalous provider payload — is stated once per turn.
+    chunks = [_delta_event("ok"),
+              "event: response.output_text.delta\ndata: {not valid json\n\n",
+              _completed_event("ok", 2)]
+    server, url = _sse_gap_server(chunks; gap=0.1)
+    _RESP_TIMEOUT_URL[] = url
+    try
+        # The driver runs in a spawned task, which inherits the logger in force AT
+        # SPAWN — so the whole call, not just the fetch, happens under the collector.
+        logs, res = Test.collect_test_logs(min_level=Logging.Warn) do
+            t = respond(Respond(input="hi", service=_RespTimeoutMock, stream=true); config=_stream_cfg())
+            @test timedwait(() -> istaskdone(t), 25.0) == :ok
+            fetch(t)
+        end
+        @test res isa ResponseSuccess
+        @test res.sse_dropped == 1
+        @test output_text(res) == "ok"     # the surviving lines still built the turn
+        @test count(l -> l.level == Logging.Warn &&
+                         occursin("undecodable data payloads dropped", string(l.message)), logs) == 1
+    finally
+        close(server)
+    end
+end
+
+@testset "a clean stream reports zero drops and warns nothing" begin
+    chunks = [_delta_event("ok"), _completed_event("ok", 2)]
+    server, url = _sse_gap_server(chunks; gap=0.1)
+    _RESP_TIMEOUT_URL[] = url
+    try
+        logs, res = Test.collect_test_logs(min_level=Logging.Warn) do
+            t = respond(Respond(input="hi", service=_RespTimeoutMock, stream=true); config=_stream_cfg())
+            @test timedwait(() -> istaskdone(t), 25.0) == :ok
+            fetch(t)
+        end
+        @test res isa ResponseSuccess
+        @test res.sse_dropped == 0
+        @test isempty(filter(l -> occursin("undecodable data payloads dropped",
+                                           string(l.message)), logs))
+    finally
+        close(server)
+    end
+end
+
+@testset "a non-streamed agentic result reports no drops" begin
+    # `sse_dropped` defaults to 0, so a path that never ran the SSE machine is
+    # truthfully quiet rather than absent.
+    body = JSON.json(Dict("id" => "r", "status" => "completed", "model" => "m", "output" => []))
+    server, url = _canned_http_server(200, body, ["Content-Type" => "application/json"])
+    _RESP_TIMEOUT_URL[] = url
+    try
+        r = respond(Respond(input="hi", service=_RespTimeoutMock))
+        @test r isa ResponseSuccess && r.sse_dropped == 0
     finally
         close(server)
     end

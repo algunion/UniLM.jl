@@ -144,6 +144,7 @@ end
     @test st3.terminal == :none
     @test isempty(take!(state3.carry))
     @test UniLM._SSE_DROPPED_LINES[] == before + 1
+    @test state3.sse_dropped == 1        # ... and attributed to THIS stream, not just the process
 end
 
 @testset "Interactions encode — tool-result translation" begin
@@ -423,6 +424,32 @@ end
         @test res isa ResponseSuccess
         @test join(deltas) == "Hello world"      # nothing swallowed by the terminal rebuild
         @test output_text(res) == "Hello world"  # ... and the final output is still complete
+    finally
+        close(server)
+    end
+end
+
+@testset "Interactions stream — a dropped payload is counted on the result" begin
+    # An undecodable data line is dropped so it cannot poison the carry; the count
+    # is what tells the caller the turn was assembled from an incomplete wire.
+    sse = "event: step.delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"ok\"}}\n\n" *
+          "event: step.delta\ndata: {not valid json\n\n" *
+          "event: interaction.completed\ndata: " *
+          JSON.json(Dict("event_type" => "interaction.completed",
+                         "interaction" => Dict("id" => "v1_d", "status" => "completed", "model" => "m",
+                                               "usage" => Dict("total_tokens" => 2)))) * "\n\n" *
+          "event: done\ndata: [DONE]\n\n"
+    server, url = _ix_sse_server(sse)
+    _IX_MOCK_URL[] = url
+    try
+        t = respond(Respond(service=_IxStreamMock, input="hi", stream=true);
+                    config=RequestConfig(request_timeout=5.0, total_deadline=20.0,
+                                         stream_idle_timeout=5.0, max_attempts=1))
+        @test timedwait(() -> istaskdone(t), 25.0) == :ok
+        res = fetch(t)
+        @test res isa ResponseSuccess
+        @test res.sse_dropped == 1
+        @test output_text(res) == "ok"
     finally
         close(server)
     end

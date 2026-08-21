@@ -488,12 +488,16 @@ tool/resource/prompt lists.
 
 Create via [`mcp_connect`](@ref). Disconnect via [`mcp_disconnect!`](@ref).
 
-Requests are serialized: each request/response exchange (including its id
-allocation) runs under an internal session lock, and interleaved server →
-client frames are handled in place (notifications skipped, server `ping`
-requests answered). After the server sends
-`notifications/tools/list_changed`, `tools_stale` is `true` until the next
-[`list_tools!`](@ref).
+Requests are serialized: each call (its liveness/respawn check, id allocation and
+request/response exchange) runs under an internal session lock, and interleaved
+server → client frames are handled in place (notifications skipped, server `ping`
+requests answered). A concurrent caller therefore waits for the call in progress,
+and `mcp_request_timeout` bounds its own exchange — measured from the moment it
+takes the lock, not from the moment it asked — so one call's wait behind another
+never counts against it, and never tears down a healthy exchange in progress. The
+wait itself stays bounded, transitively: the call ahead runs under that same
+per-exchange bound. After the server sends `notifications/tools/list_changed`,
+`tools_stale` is `true` until the next [`list_tools!`](@ref).
 """
 mutable struct MCPSession
     transport::MCPTransport
@@ -688,10 +692,14 @@ function _mcp_request_recover!(session::MCPSession, method::String,
 end
 
 """
-Guarded request entry point used by every discovery/operation verb. Resolves the
-per-exchange bound (call-time), routes through the 404-recovery wrapper, and maps
-a per-exchange timeout to a typed [`MCPTimeoutError`](@ref). The stdio branch arms
-the whole-exchange watchdog and a stdio timeout is session-fatal (no id demux) —
+Guarded request entry point used by every discovery/operation verb. Holds the session
+lock for the whole call — liveness check, any auto-respawn it triggers, and the
+exchange — resolves the per-exchange bound (call-time), routes through the
+404-recovery wrapper, and maps a per-exchange timeout to a typed
+[`MCPTimeoutError`](@ref). The stdio branch arms the whole-exchange watchdog only
+once the lock is HELD, so `mcp_request_timeout` bounds the exchange itself and never
+the wait behind another caller (that wait is bounded transitively: the caller ahead
+is running under its own bound). A stdio timeout is session-fatal (no id demux) —
 EXCEPT during connect-phase discovery (status `:initializing`), which runs directly
 beneath the enclosing connect deadline in [`_establish!`](@ref) instead of arming a
 second, tighter watchdog. HTTP timeouts are NOT session-fatal (request/response
@@ -700,68 +708,78 @@ correlation is per-POST).
 function _mcp_request!(session::MCPSession, method::String,
                        params::Union{Dict{String,Any},Nothing}=nothing;
                        timeout::Union{Nothing,Float64}=nothing)::Dict{String,Any}
-    # A session closed by a stdio request timeout or a server crash cannot be reused:
-    # respawn (opt-in) or error before touching the transport. A no-op for live
-    # sessions and for sessions closed by a normal disconnect. Respawn's fresh
-    # handshake avoids this guard (it runs through _establish!), and its list_tools!
-    # re-enters here while status is :initializing, so the guard no-ops — no
-    # re-entrant respawn.
-    _ensure_live!(session)
-    bound = _resolve_mcp_request_timeout(session, timeout)
-    excfg = RequestConfig(session.config; request_timeout=bound)
-    if session.transport isa StdioTransport
-        t = session.transport
-        # Connect-phase rule: discovery (list_tools!/list_resources!/list_prompts!)
-        # re-enters here from _finalize_connect! while the session is :initializing,
-        # already beneath the enclosing :connect deadline in _establish!. Arming the
-        # per-exchange request watchdog here would double-arm the exchange, and its
-        # completion-race tail (which closes the session on a ~deadline race) could
-        # tear a healthy connect down. Under :initializing, run the exchange directly
-        # and let the connect deadline bound it.
-        session.status === :initializing &&
-            return _mcp_request_recover!(session, method, params; excfg=excfg)
-        result, fired = try
-            # ONE deadline for the whole lock-to-response exchange (armed once at
-            # exchange start): a burst of pre-response notifications cannot reset it.
-            # On breach the escalation ladder group-kills the server (unblocking the
-            # in-flight readline); stdio framing has no id demux, so a late reply
-            # could misdeliver — the timeout is therefore session-fatal.
-            _with_deadline_reported(() -> _mcp_request_recover!(session, method, params; excfg=excfg),
-                                    () -> _kill_transport!(t), bound, :request)
-        catch e
-            if e isa UniLMTimeout && e.phase === :request
+    # ONE acquisition spans liveness check → respawn → exchange. The liveness check is
+    # check-then-act on session state (status, transport, id counter): unsynchronized,
+    # two callers on a closed session both respawn, the loser's overwritten transport
+    # orphans its server process beyond every kill ladder, and the two handshakes
+    # interleave on the shared id counter. The exchange below re-locks re-entrantly.
+    @lock session._lock begin
+        # A session closed by a stdio request timeout or a server crash cannot be reused:
+        # respawn (opt-in) or error before touching the transport. A no-op for live
+        # sessions and for sessions closed by a normal disconnect. Respawn's fresh
+        # handshake avoids this guard (it runs through _establish!), and its list_tools!
+        # re-enters here while status is :initializing, so the guard no-ops — no
+        # re-entrant respawn.
+        _ensure_live!(session)
+        bound = _resolve_mcp_request_timeout(session, timeout)
+        excfg = RequestConfig(session.config; request_timeout=bound)
+        if session.transport isa StdioTransport
+            t = session.transport
+            # Connect-phase rule: discovery (list_tools!/list_resources!/list_prompts!)
+            # re-enters here from _finalize_connect! while the session is :initializing,
+            # already beneath the enclosing :connect deadline in _establish!. Arming the
+            # per-exchange request watchdog here would double-arm the exchange, and its
+            # completion-race tail (which closes the session on a ~deadline race) could
+            # tear a healthy connect down. Under :initializing, run the exchange directly
+            # and let the connect deadline bound it.
+            session.status === :initializing &&
+                return _mcp_request_recover!(session, method, params; excfg=excfg)
+            result, fired = try
+                # ONE deadline for the whole exchange, armed once the lock is held: a
+                # burst of pre-response notifications cannot reset it, and time spent
+                # waiting for the lock cannot consume it — a bound armed before the
+                # acquisition would expire during the HOLDER's healthy exchange and
+                # group-kill its server, surfacing to the holder as a crash. On breach
+                # the escalation ladder group-kills the server (unblocking the in-flight
+                # readline); stdio framing has no id demux, so a late reply could
+                # misdeliver — the timeout is therefore session-fatal.
+                _with_deadline_reported(() -> _mcp_request_recover!(session, method, params; excfg=excfg),
+                                        () -> _kill_transport!(t), bound, :request)
+            catch e
+                if e isa UniLMTimeout && e.phase === :request
+                    session.status = :closed
+                    session._close_cause = :timeout
+                    throw(MCPTimeoutError(:request, e.elapsed, e.limit, _request_timeout_msg(e.limit)))
+                end
+                # Crash classification AFTER the timeout branch: when the watchdog fired,
+                # the surfaced error is the timeout even though the kill ladder also broke
+                # the pipe. _find_exception sees through task wrapping.
+                tc = _find_exception(x -> x isa _TransportClosed, e)
+                tc !== nothing && _crash_close!(session, t, tc, "an MCP exchange")
+                rethrow()
+            end
+            # Exactly-once race: the exchange returned a real result while the timer fired
+            # at ~completion and ran (or is still running) the kill ladder. Detect this by
+            # GUARD STATE — `fired`, the :armed→:fired CAS set atomically before close!
+            # begins — NOT by nulled handles: _kill_transport! nulls them only at the END
+            # of its grace ladder (grace_term + grace_kill), a settling window in which
+            # this tail would read live handles and wrongly keep the session :ready over a
+            # dying transport (the next call then raises a raw closed-stream IOError). The
+            # transport is gone either way — reflect the close truthfully.
+            if fired
                 session.status = :closed
                 session._close_cause = :timeout
-                throw(MCPTimeoutError(:request, e.elapsed, e.limit, _request_timeout_msg(e.limit)))
             end
-            # Crash classification AFTER the timeout branch: when the watchdog fired,
-            # the surfaced error is the timeout even though the kill ladder also broke
-            # the pipe. _find_exception sees through task wrapping.
-            tc = _find_exception(x -> x isa _TransportClosed, e)
-            tc !== nothing && _crash_close!(session, t, tc, "an MCP exchange")
-            rethrow()
-        end
-        # Exactly-once race: the exchange returned a real result while the timer fired
-        # at ~completion and ran (or is still running) the kill ladder. Detect this by
-        # GUARD STATE — `fired`, the :armed→:fired CAS set atomically before close!
-        # begins — NOT by nulled handles: _kill_transport! nulls them only at the END
-        # of its grace ladder (grace_term + grace_kill), a settling window in which
-        # this tail would read live handles and wrongly keep the session :ready over a
-        # dying transport (the next call then raises a raw closed-stream IOError). The
-        # transport is gone either way — reflect the close truthfully.
-        if fired
-            session.status = :closed
-            session._close_cause = :timeout
-        end
-        return result
-    else
-        try
-            return _mcp_request_recover!(session, method, params; excfg=excfg)
-        catch e
-            if e isa UniLMTimeout && e.phase in (:request, :connect)
-                throw(MCPTimeoutError(:request, e.elapsed, e.limit, _request_timeout_msg(e.limit)))
+            return result
+        else
+            try
+                return _mcp_request_recover!(session, method, params; excfg=excfg)
+            catch e
+                if e isa UniLMTimeout && e.phase in (:request, :connect)
+                    throw(MCPTimeoutError(:request, e.elapsed, e.limit, _request_timeout_msg(e.limit)))
+                end
+                rethrow()
             end
-            rethrow()
         end
     end
 end
@@ -953,15 +971,35 @@ _crashed_session_msg()::String =
     "call transparently respawns the server (its in-memory state is lost and " *
     "tools are refetched)."
 
+"""Tear down a stdio transport whose connect sequence failed, then let the failure
+escape. UNCONDITIONAL by design: once the server is spawned, ANY failure before the
+session is established — a stdout banner that breaks JSON parsing, an `initialize`
+error frame, a rejected protocol version — leaves a live child holding our pipes, so
+teardown must not be a per-exception-shape branch that the next new failure mode
+escapes. Crash-shaped failures route through [`_crash_close!`](@ref), which captures
+exit diagnostics, tears down and throws the typed error; everything else is torn down
+here and the session marked closed. A no-op for HTTP transports (no child process)."""
+function _abort_connect!(session::MCPSession, e, context::String)
+    t = session.transport
+    t isa StdioTransport || return nothing
+    tc = _find_exception(x -> x isa _TransportClosed, e)
+    tc === nothing || _crash_close!(session, t, tc, context)   # throws
+    _kill_transport!(t)   # idempotent: a watchdog breach already ran the ladder
+    session.status = :closed
+    nothing
+end
+
 """Respawn a stdio session closed by a timeout or a server crash: fresh transport (same command),
 captured config, fresh handshake. In-memory server state is lost and tools are
 refetched. Throws `MCPTimeoutError(:connect)` if the respawned server does not
-hand-shake in time, or `MCPCrashError` if it dies during the respawn handshake."""
+hand-shake in time, or `MCPCrashError` if it dies during the respawn handshake.
+Callers must hold `session._lock` (see [`_ensure_live!`](@ref))."""
 function _respawn!(session::MCPSession)
     session.transport isa StdioTransport ||
         error("MCP auto-respawn is only supported for stdio sessions.")
     old = session.transport
-    reason = session._close_cause === :crash ? "a server crash" : "a request timeout"
+    recorded = session._close_cause
+    reason = recorded === :crash ? "a server crash" : "a request timeout"
     @warn "MCP stdio session was closed by $reason; respawning the server. \
            In-memory server state is lost and tools are refetched." command=old.command
     session.transport = StdioTransport(old.command)
@@ -972,16 +1010,18 @@ function _respawn!(session::MCPSession)
     try
         _establish!(session)
     catch e
+        # Tear the half-established server down whatever went wrong (_abort_connect!
+        # throws for crash-shaped failures, which ARE a fresh diagnosis).
+        _abort_connect!(session, e, "an auto-respawn attempt")
         if e isa UniLMTimeout
-            session.status = :closed
             session._close_cause = :timeout
             throw(MCPTimeoutError(:connect, e.elapsed, e.limit, _connect_timeout_msg(e.limit)))
         end
-        tc = _find_exception(x -> x isa _TransportClosed, e)
-        tc !== nothing &&
-            _crash_close!(session, session.transport, tc, "an auto-respawn attempt")
-        session.status = :closed
-        session._close_cause = :crash
+        # The attempt is cleared to :none above, so a non-:none cause here was diagnosed
+        # BY the attempt (the connect-completion tail records :timeout) and stands.
+        # Otherwise the attempt learned nothing about why the session closed: keep the
+        # recorded cause, so the next call still reports the reason that closed it.
+        session._close_cause === :none && (session._close_cause = recorded)
         rethrow()
     end
     nothing
@@ -989,12 +1029,17 @@ end
 
 """Guard against reusing a session closed by a stdio request timeout or a server crash: respawn when
 opted in, otherwise error with recovery guidance. A no-op for live sessions and
-for sessions closed by a normal disconnect."""
+for sessions closed by a normal disconnect. Check and respawn run under
+`session._lock` so they cannot interleave: concurrent callers on one closed session
+respawn exactly ONE server, and the callers that lose the race find it already live.
+Re-entrant — [`_mcp_request!`](@ref) already holds the lock across the whole call."""
 function _ensure_live!(session::MCPSession)
-    if session.status === :closed && session._close_cause !== :none
-        session.auto_respawn ||
-            error(session._close_cause === :crash ? _crashed_session_msg() : _closed_session_msg())
-        _respawn!(session)
+    @lock session._lock begin
+        if session.status === :closed && session._close_cause !== :none
+            session.auto_respawn ||
+                error(session._close_cause === :crash ? _crashed_session_msg() : _closed_session_msg())
+            _respawn!(session)
+        end
     end
     nothing
 end
@@ -1039,12 +1084,12 @@ function mcp_connect(transport::MCPTransport;
     try
         _establish!(session)
     catch e
+        # Never leave a spawned server behind: the teardown runs for every failure
+        # shape (see _abort_connect!), which also throws the typed crash error when
+        # the failure was the server dying.
+        _abort_connect!(session, e, "the connect handshake")
         e isa UniLMTimeout &&
             throw(MCPTimeoutError(:connect, e.elapsed, e.limit, _connect_timeout_msg(e.limit)))
-        tc = _find_exception(x -> x isa _TransportClosed, e)
-        if tc !== nothing && session.transport isa StdioTransport
-            _crash_close!(session, session.transport, tc, "the connect handshake")
-        end
         rethrow()
     end
     session

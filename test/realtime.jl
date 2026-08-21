@@ -145,3 +145,20 @@ end
         close(srv)
     end
 end
+
+@testset "RealtimeSecretSuccess show redacts the minted credential" begin
+    # `.value` IS a live client secret and `.raw` carries it a second time, so the
+    # default field dump hands it to anyone who echoes the result at the REPL or
+    # logs it. Both must be unprintable while staying reachable programmatically.
+    secret = "ek_live_SECRET0123456789abcdef"
+    r = UniLM.RealtimeSecretSuccess(value=secret,
+        raw=Dict{String,Any}("client_secret" => Dict{String,Any}("value" => secret),
+                             "expires_at" => 1234))
+    s = sprint(show, r)
+    @test !occursin(secret, s)
+    @test !occursin("SECRET0123456789", s)
+    @test occursin("ek_l…[redacted]", s)
+    @test occursin("raw=<2 keys>", s)   # raw is summarized, never dumped
+    @test r.value == secret             # the field itself is untouched
+    @test r.raw["expires_at"] == 1234
+end

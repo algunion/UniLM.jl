@@ -159,3 +159,14 @@ function realtime_receive(s::RealtimeSession)
     fired && throw(UniLMTimeout(:stream_idle, _elapsed_s(t0), limit))
     return JSON.parse(String(raw); dicttype=Dict{String,Any})
 end
+
+# A minted client secret is a live credential: the default field dump prints it
+# twice (`value` and again inside `raw`), so a REPL echo or a log line hands it
+# out. Redact the value and report `raw` by size only — the parsed payload stays
+# reachable programmatically, it just stops printing itself.
+# (Defined here, below `_realtime_ws_url`, so that seam keeps its source line.)
+function Base.show(io::IO, r::RealtimeSecretSuccess)
+    print(io, "RealtimeSecretSuccess(value=")
+    show(io, _redact_api_key(r.value))
+    print(io, ", raw=<", length(r.raw), " keys>)")
+end

@@ -1297,3 +1297,28 @@ end
         close(httpserver)
     end
 end
+
+@testset "HTTP transport — bodyless POST → 400 parse error, server alive" begin
+    # A POST carrying no payload is legal HTTP and reaches the handler like any
+    # other. HTTP.jl does not hand it the same body object as a POST with bytes:
+    # a zero-length request has its own representation, which answers no size
+    # question. The size guard must still measure it, so an empty payload comes
+    # back as the JSON-RPC parse error it is (-32700) rather than as a transport
+    # failure that takes the exchange down.
+    server = _build_http_server()
+    port = _mcp_free_port()
+    httpserver = serve(server; transport=:http, port=port, block=false)
+    try
+        empty = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"], "";
+            status_exception=false)
+        @test empty.status == 400
+        @test JSON.parse(String(empty.body))["error"]["code"] == -32700
+        ok = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+            JSON.json(Dict("jsonrpc" => "2.0", "id" => 4, "method" => "ping", "params" => Dict()));
+            status_exception=false)
+        @test ok.status == 200                     # still serving
+        @test JSON.parse(String(ok.body))["id"] == 4
+    finally
+        close(httpserver)
+    end
+end

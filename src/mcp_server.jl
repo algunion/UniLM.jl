@@ -565,6 +565,19 @@ const _MCP_LOCALHOST_ORIGIN = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)
 _mcp_origin_allowed(origin::AbstractString, allowed_origins::Vector{String})::Bool =
     origin in allowed_origins || occursin(_MCP_LOCALHOST_ORIGIN, origin)
 
+# Payload byte count of a request body already buffered by the transport. HTTP.jl
+# does not hand a request handler one type: 1.x passes a `Vector{UInt8}`, 2.x a
+# body object whose `length` is the payload size — `sizeof` would measure that
+# wrapper struct instead of the bytes. A request that carried no payload gets a
+# separate zero-length representation in 2.x that answers no `length` at all, so
+# it needs its own arm; without one a bodyless POST fails to dispatch and takes
+# the exchange down with a transport error instead of a JSON-RPC reply.
+_request_body_bytes(body::AbstractVector{UInt8})::Int = length(body)
+@static if isdefined(HTTP, :EmptyBody)
+    _request_body_bytes(::HTTP.EmptyBody)::Int = 0
+    _request_body_bytes(body::HTTP.AbstractBody)::Int = length(body)
+end
+
 """
     _serve_http(server::MCPServer; host="127.0.0.1", port=8080, allowed_origins=String[], block=true)
 
@@ -590,12 +603,10 @@ function _serve_http(server::MCPServer; host::String="127.0.0.1", port::Int=8080
         end
         if req.method == "POST"
             # Reject an oversized body before it is copied into a String and parsed
-            # (see _MCP_MAX_FRAME_BYTES). `length` is the byte count on both HTTP.jl
-            # majors — 1.x hands a request handler a `Vector{UInt8}`, 2.x a body
-            # wrapper — whereas `sizeof` measures the 2.x wrapper struct, not the
-            # payload. The transport buffers the request before the handler runs, so
-            # this bounds the parse rather than the read.
-            if length(req.body) > _MCP_MAX_FRAME_BYTES
+            # (see _MCP_MAX_FRAME_BYTES and _request_body_bytes). The transport
+            # buffers the request before the handler runs, so this bounds the parse
+            # rather than the read.
+            if _request_body_bytes(req.body) > _MCP_MAX_FRAME_BYTES
                 return HTTP.Response(413, "Payload Too Large")
             end
             body = String(req.body)

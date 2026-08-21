@@ -30,6 +30,17 @@ function _utc_epoch_seconds(y::Int, mo::Int, d::Int, h::Int, mi::Int, s::Int)::F
     return (era * 146097 + doe - 719468) * 86400.0 + h * 3600 + mi * 60 + s
 end
 
+# Read capture group `i` of an _IMF_FIXDATE match as an integer. Every group in
+# that pattern is mandatory, so a successful match fills all six; a capture is
+# nullable in general, and reading one straight into `parse` would leave that
+# invariant asserted nowhere and surface a violation as a MethodError inside
+# `parse` instead of naming the group that came back empty.
+function _fixdate_int(m::RegexMatch, i::Int)::Int
+    cap = m[i]
+    isnothing(cap) && throw(ArgumentError("IMF-fixdate group $i did not capture"))
+    return parse(Int, cap)
+end
+
 """
     _retry_after_seconds(resp) -> Union{Nothing,Float64}
 
@@ -49,8 +60,8 @@ function _retry_after_seconds(resp::HTTP.Response)::Union{Nothing,Float64}
     isnothing(m) && return nothing
     mo = findfirst(==(m[2]), _IMF_MONTHS)
     isnothing(mo) && return nothing
-    due = _utc_epoch_seconds(parse(Int, m[3]), mo, parse(Int, m[1]),
-                             parse(Int, m[4]), parse(Int, m[5]), parse(Int, m[6]))
+    due = _utc_epoch_seconds(_fixdate_int(m, 3), mo, _fixdate_int(m, 1),
+                             _fixdate_int(m, 4), _fixdate_int(m, 5), _fixdate_int(m, 6))
     return max(0.0, due - time())
 end
 

@@ -326,6 +326,45 @@ end
     end
 end
 
+@testset "edit_image: the optional mask reaches the wire only when supplied" begin
+    # The mask is optional and the body factory decides per attempt whether to add
+    # its part, so both shapes have to be pinned: supplied, the part carries the
+    # file's own name and bytes; omitted, no mask part is emitted at all.
+    img_marker = "edit-image-marker-" * repeat("i", 64)
+    mask_marker = "edit-mask-marker-" * repeat("m", 64)
+    imgpath = tempname() * ".png"
+    maskpath = tempname() * ".png"
+    write(imgpath, img_marker)
+    write(maskpath, mask_marker)
+    bodies = Vector{String}()
+    server, base = _images_retry_server(req -> begin
+        push!(bodies, String(copy(req.body)))
+        return HTTP.Response(200, ["Content-Type" => "application/json"],
+                             Vector{UInt8}(JSON.json(Dict("created" => 1,
+                                                          "data" => [Dict("b64_json" => "aGVsbG8=")]))))
+    end)
+    _images_probe_base[] = base
+    try
+        cfg = UniLM.RequestConfig(max_attempts=1, total_deadline=Inf)
+        with_mask = edit_image(imgpath, "a prompt"; model="probe-edit", service=ImagesRetryProbe,
+                               mask=maskpath, config=cfg)
+        @test with_mask isa ImageSuccess
+        @test occursin("name=\"mask\"", bodies[end])
+        @test occursin("filename=\"$(basename(maskpath))\"", bodies[end])
+        @test occursin(mask_marker, bodies[end])
+
+        without_mask = edit_image(imgpath, "a prompt"; model="probe-edit",
+                                  service=ImagesRetryProbe, config=cfg)
+        @test without_mask isa ImageSuccess
+        @test !occursin("name=\"mask\"", bodies[end])   # nothing mask-shaped slipped in
+        @test occursin(img_marker, bodies[end])         # ...and the image still did
+    finally
+        close(server)
+        rm(imgpath; force=true)
+        rm(maskpath; force=true)
+    end
+end
+
 # A user-defined endpoint that declares NO capabilities — the documented way to reach
 # an OpenAI-compatible backend this package does not ship, and which therefore cannot
 # say what it supports.

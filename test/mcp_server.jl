@@ -1032,3 +1032,268 @@ end
     end
     @test gone === :ok
 end
+
+# ─── Spec-legal `params` shapes: omitted / null / positional ──────────────────
+# Every `_handle_*` takes `params::Dict{String,Any}`. JSON-RPC lets `params` be
+# omitted or null (no arguments) and permits a positional array, so the raw member
+# has to be normalized before dispatch — otherwise those frames reach the handlers
+# as `nothing`/`Vector` and fail to dispatch at all.
+
+"A server with one tool, for frames that must reach a real `_handle_*`."
+function _build_params_server()
+    server = MCPServer("params-shapes", "1.0.0")
+    register_tool!(server, "shout", "Uppercase",
+        Dict{String,Any}("type" => "object",
+            "properties" => Dict{String,Any}("s" => Dict{String,Any}("type" => "string"))),
+        args -> uppercase(string(get(args, "s", ""))))
+    server
+end
+
+@testset "dispatch — omitted/null params are empty params; positional is -32602" begin
+    server = _build_params_server()
+    # `"params": null` and an omitted `params` both mean "no arguments".
+    for req in (Dict{String,Any}("jsonrpc" => "2.0", "id" => 1, "method" => "tools/list",
+                    "params" => nothing),
+                Dict{String,Any}("jsonrpc" => "2.0", "id" => 1, "method" => "tools/list"))
+        resp = UniLM._dispatch_mcp(server, req)
+        @test !haskey(resp, "error")
+        @test length(resp["result"]["tools"]) == 1
+    end
+    # A positional array cannot name this server's arguments → Invalid params, and
+    # the request keeps its id (it is answerable, unlike an unparsable frame).
+    for positional in (Any[1, 2], Any[], "str", 42, true)
+        resp = UniLM._dispatch_mcp(server, Dict{String,Any}(
+            "jsonrpc" => "2.0", "id" => 4, "method" => "tools/list", "params" => positional))
+        @test resp["id"] == 4
+        @test resp["error"]["code"] == -32602
+        @test contains(resp["error"]["message"], "Invalid params")
+        @test !haskey(resp, "result")
+    end
+    # A notification (no id) is still answered with nothing whatever params holds.
+    @test isnothing(UniLM._dispatch_mcp(server, Dict{String,Any}(
+        "jsonrpc" => "2.0", "method" => "notifications/initialized", "params" => nothing)))
+    @test isnothing(UniLM._dispatch_mcp(server, Dict{String,Any}(
+        "jsonrpc" => "2.0", "method" => "notifications/initialized", "params" => Any[1])))
+    # Non-`Dict{String,Any}` mappings are accepted by value, not rejected by type.
+    resp = UniLM._dispatch_mcp(server, Dict{String,Any}(
+        "jsonrpc" => "2.0", "id" => 5, "method" => "tools/call",
+        "params" => Dict{String,String}("name" => "shout")))
+    @test resp["result"]["isError"] == false
+end
+
+@testset "stdio — a null-params frame is answered and the loop keeps serving" begin
+    server = _build_params_server()
+    input = IOBuffer()
+    output = IOBuffer()
+    # Frame 2 carries the spec-legal `"params": null`. Reaching a handler typed
+    # `::Dict{String,Any}` as `nothing` raised a MethodError from inside the read
+    # loop, which had no guard — the loop exited and frames 3-5 were never read.
+    write(input,
+        JSON.json(Dict("jsonrpc" => "2.0", "id" => 1, "method" => "tools/list", "params" => Dict())), "\n",
+        """{"jsonrpc":"2.0","id":2,"method":"tools/list","params":null}""", "\n",
+        JSON.json(Dict("jsonrpc" => "2.0", "id" => 3, "method" => "tools/list", "params" => Dict())), "\n",
+        JSON.json(Dict("jsonrpc" => "2.0", "id" => 4, "method" => "tools/list", "params" => Dict())), "\n",
+        JSON.json(Dict("jsonrpc" => "2.0", "id" => 5, "method" => "tools/call",
+            "params" => Dict("name" => "shout", "arguments" => Dict("s" => "ok")))), "\n")
+    seekstart(input)
+
+    UniLM._serve_stdio(server; input, output)
+
+    seekstart(output)
+    lines = filter(!isempty, split(String(take!(output)), "\n"))
+    @test length(lines) == 5                       # all five frames answered
+    @test eof(input)                               # the loop consumed the whole stream
+    ids = [JSON.parse(l)["id"] for l in lines]
+    @test ids == [1, 2, 3, 4, 5]
+    @test !any(l -> haskey(JSON.parse(l), "error"), lines)
+    @test length(JSON.parse(lines[2])["result"]["tools"]) == 1   # null params ⇒ empty params
+    @test JSON.parse(lines[5])["result"]["content"][1]["text"] == "OK"
+end
+
+@testset "stdio — positional params → -32602, loop keeps serving" begin
+    server = _build_params_server()
+    input = IOBuffer()
+    output = IOBuffer()
+    write(input, """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":[1,2]}""", "\n",
+        JSON.json(Dict("jsonrpc" => "2.0", "id" => 2, "method" => "tools/list", "params" => Dict())), "\n")
+    seekstart(input)
+
+    UniLM._serve_stdio(server; input, output)
+
+    seekstart(output)
+    lines = filter(!isempty, split(String(take!(output)), "\n"))
+    @test length(lines) == 2
+    err = JSON.parse(lines[1])
+    @test err["id"] == 1
+    @test err["error"]["code"] == -32602
+    @test JSON.parse(lines[2])["id"] == 2          # the loop survived and served on
+    @test haskey(JSON.parse(lines[2]), "result")
+end
+
+@testset "HTTP transport — null/positional params answered as JSON-RPC, not 500" begin
+    server = _build_params_server()
+    port = _mcp_free_port()
+    httpserver = serve(server; transport=:http, port=port, block=false)
+    try
+        # Un-normalized, this MethodError escaped to a bare empty-body 500.
+        nul = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+            """{"jsonrpc":"2.0","id":1,"method":"tools/list","params":null}""";
+            status_exception=false)
+        @test nul.status == 200
+        @test length(JSON.parse(String(nul.body))["result"]["tools"]) == 1
+
+        pos = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+            """{"jsonrpc":"2.0","id":2,"method":"tools/list","params":[1,2]}""";
+            status_exception=false)
+        # An answerable request carrying a JSON-RPC-level error: 200 with the error body.
+        @test pos.status == 200
+        parsed = JSON.parse(String(pos.body))
+        @test parsed["id"] == 2
+        @test parsed["error"]["code"] == -32602
+
+        ok = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+            JSON.json(Dict("jsonrpc" => "2.0", "id" => 3, "method" => "ping", "params" => Dict()));
+            status_exception=false)
+        @test ok.status == 200                     # still serving
+    finally
+        close(httpserver)
+    end
+end
+
+# ─── Dispatch-layer faults: contained, generic, logged ────────────────────────
+
+"A `resources/read` frame whose non-string `uri` reaches `match(::Regex, uri)` in the
+template scan — a client-triggerable internal fault that is not a tool error."
+_internal_fault_request(id) = Dict{String,Any}("jsonrpc" => "2.0", "id" => id,
+    "method" => "resources/read", "params" => Dict{String,Any}("uri" => 42))
+
+@testset "dispatch fault → generic -32603, internals logged not returned" begin
+    server = MCPServer("fault-probe", "1.0.0")
+    register_resource_template!(server, "file://{name}", "Files", p -> "c")
+    # The fault is real: unguarded dispatch throws rather than returning a response.
+    @test_throws MethodError UniLM._dispatch_mcp(server, _internal_fault_request(77))
+
+    resp = @test_logs (:error,) match_mode=:any UniLM._dispatch_guarded(server, _internal_fault_request(77))
+    @test resp["id"] == 77
+    @test resp["error"]["code"] == -32603
+    @test resp["error"]["message"] == "Internal error"     # generic, no exception text
+    body = JSON.json(resp)
+    for internal in ("MethodError", "match", "Regex", ".jl", "mcp_server", "Stacktrace")
+        @test !contains(body, internal)
+    end
+    @test !haskey(resp["error"], "data")
+    # The same frame without an id is a notification: dispatch returns before the
+    # handler runs, so there is nothing to fault on and nothing to answer — a
+    # notification never gets a response, error or otherwise.
+    @test isnothing(UniLM._dispatch_guarded(server,
+        Dict{String,Any}("jsonrpc" => "2.0", "method" => "resources/read",
+            "params" => Dict{String,Any}("uri" => 42))))
+end
+
+@testset "dispatch fault does not stop either transport" begin
+    server = MCPServer("fault-transport", "1.0.0")
+    register_resource_template!(server, "file://{name}", "Files", p -> "c")
+    input = IOBuffer()
+    output = IOBuffer()
+    write(input, JSON.json(_internal_fault_request(1)), "\n",
+        JSON.json(Dict("jsonrpc" => "2.0", "id" => 2, "method" => "ping", "params" => Dict())), "\n")
+    seekstart(input)
+    @test_logs (:error,) match_mode=:any UniLM._serve_stdio(server; input, output)
+    seekstart(output)
+    lines = filter(!isempty, split(String(take!(output)), "\n"))
+    @test length(lines) == 2
+    @test JSON.parse(lines[1])["error"]["code"] == -32603
+    @test haskey(JSON.parse(lines[2]), "result")   # loop alive
+
+    port = _mcp_free_port()
+    httpserver = serve(server; transport=:http, port=port, block=false)
+    try
+        r = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+            JSON.json(_internal_fault_request(3)); status_exception=false)
+        @test r.status == 200                      # a JSON-RPC error body, not a bare 500
+        parsed = JSON.parse(String(r.body))
+        @test parsed["id"] == 3
+        @test parsed["error"]["code"] == -32603
+        @test parsed["error"]["message"] == "Internal error"
+        ok = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+            JSON.json(Dict("jsonrpc" => "2.0", "id" => 4, "method" => "ping", "params" => Dict()));
+            status_exception=false)
+        @test ok.status == 200
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "tool-handler errors still reach the client as tool results" begin
+    # The guard must not swallow this path: a failing tool is reported as an
+    # `isError` result carrying the message, which is how a model self-corrects.
+    server = MCPServer("tool-error", "1.0.0")
+    register_tool!(server, "boom", "Always fails", Dict{String,Any}("type" => "object"),
+        args -> error("tool detail the model needs"))
+    resp = UniLM._dispatch_guarded(server, Dict{String,Any}("jsonrpc" => "2.0", "id" => 1,
+        "method" => "tools/call", "params" => Dict{String,Any}("name" => "boom")))
+    @test !haskey(resp, "error")                   # not a protocol-level error
+    @test resp["result"]["isError"] == true
+    @test contains(resp["result"]["content"][1]["text"], "tool detail the model needs")
+end
+
+# ─── Frame size cap ───────────────────────────────────────────────────────────
+
+@testset "_read_frame bounds what it buffers" begin
+    cap = UniLM._MCP_MAX_FRAME_BYTES
+    @test cap == 16 * 1024 * 1024
+    # Bytes past the cap are drained, not buffered: the returned line stays at the cap.
+    line, overflow = UniLM._read_frame(IOBuffer(repeat('a', cap + 1) * "\n"), cap)
+    @test overflow
+    @test sizeof(line) == cap
+    # Frames at or under the cap are returned whole, with no overflow flag.
+    small, ov = UniLM._read_frame(IOBuffer("{\"a\":1}\n{\"b\":2}\n"), cap)
+    @test (small, ov) == ("{\"a\":1}", false)
+    # A CRLF line ending is trimmed like `readline` does, and framing is per-line.
+    crlf, _ = UniLM._read_frame(IOBuffer("{\"a\":1}\r\n"), cap)
+    @test crlf == "{\"a\":1}"
+    # A final line without a newline is still a frame; then EOF.
+    io = IOBuffer("tail")
+    @test UniLM._read_frame(io, cap) == ("tail", false)
+    @test eof(io)
+end
+
+@testset "stdio — over-cap frame → -32600 unparsed, loop keeps serving" begin
+    server = MCPServer("frame-cap", "1.0.0")
+    input = IOBuffer()
+    output = IOBuffer()
+    # Not valid JSON either: if the cap did not short-circuit, JSON.parse would run
+    # on the whole payload and answer -32700 instead of -32600.
+    write(input, repeat('a', UniLM._MCP_MAX_FRAME_BYTES + 1), "\n",
+        JSON.json(Dict("jsonrpc" => "2.0", "id" => 9, "method" => "ping", "params" => Dict())), "\n")
+    seekstart(input)
+
+    UniLM._serve_stdio(server; input, output)
+
+    seekstart(output)
+    lines = filter(!isempty, split(String(take!(output)), "\n"))
+    @test length(lines) == 2
+    err = JSON.parse(lines[1])
+    @test err["id"] === nothing                    # unparsed ⇒ no id to correlate
+    @test err["error"]["code"] == -32600
+    @test contains(err["error"]["message"], "exceeds")
+    @test JSON.parse(lines[2])["id"] == 9          # the next frame is served normally
+end
+
+@testset "HTTP transport — over-cap body → 413 before parsing, server alive" begin
+    server = _build_http_server()
+    port = _mcp_free_port()
+    httpserver = serve(server; transport=:http, port=port, block=false)
+    try
+        over = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+            repeat('a', UniLM._MCP_MAX_FRAME_BYTES + 1); status_exception=false)
+        @test over.status == 413                   # not the 400 a parse attempt would give
+        under = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+            JSON.json(Dict("jsonrpc" => "2.0", "id" => 1, "method" => "ping", "params" => Dict()));
+            status_exception=false)
+        @test under.status == 200                  # still serving
+        @test JSON.parse(String(under.body))["id"] == 1
+    finally
+        close(httpserver)
+    end
+end

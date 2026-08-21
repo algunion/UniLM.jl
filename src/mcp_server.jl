@@ -403,13 +403,27 @@ function _handle_prompts_get(server::MCPServer, id, params::Dict{String,Any})
     end
 end
 
+"""
+Normalize the `params` member of a JSON-RPC request into the by-name `Dict` every
+handler takes. `params` is optional and may be `null` (both mean "no arguments"),
+and JSON-RPC also permits a positional array — which no method here accepts, so an
+array yields `nothing` and the caller answers Invalid params instead of failing to
+dispatch.
+"""
+_mcp_named_params(::Nothing) = Dict{String,Any}()
+_mcp_named_params(p::Dict{String,Any}) = p
+_mcp_named_params(p::AbstractDict) = Dict{String,Any}(p)
+_mcp_named_params(::Any) = nothing
+
 """Route a parsed JSON-RPC request to the appropriate handler."""
 function _dispatch_mcp(server::MCPServer, parsed::Dict{String,Any})
     id = get(parsed, "id", nothing)
     method = get(parsed, "method", "")
-    params = get(parsed, "params", Dict{String,Any}())
     # Notifications (no id) — handle silently
     isnothing(id) && return nothing
+    params = _mcp_named_params(get(parsed, "params", nothing))
+    isnothing(params) && return _jsonrpc_error(id, -32602,
+        "Invalid params: expected an object of by-name arguments")
     if method == "initialize"
         _handle_initialize(server, id, params)
     elseif method == "tools/list"
@@ -436,14 +450,78 @@ end
 # ─── Transports ──────────────────────────────────────────────────────────────
 
 """
+Dispatch one request, converting any unhandled error into an Internal error
+response so a single bad frame cannot take the transport down with it. The client
+gets a generic message — an exception string can carry file paths, argument values
+and other server internals that a remote peer has no business reading — while the
+exception and its backtrace are logged locally.
+
+Handler-raised tool errors are NOT routed here: those reach the client as tool
+results (`isError`), which is what lets a model see and correct its own mistake.
+"""
+function _dispatch_guarded(server::MCPServer, parsed::Dict{String,Any})
+    try
+        _dispatch_mcp(server, parsed)
+    catch e
+        e isa InterruptException && rethrow()
+        @error "MCP request dispatch failed" method=get(parsed, "method", "") exception=(e, catch_backtrace())
+        id = get(parsed, "id", nothing)
+        isnothing(id) ? nothing : _jsonrpc_error(id, -32603, "Internal error")
+    end
+end
+
+# Largest frame accepted on either transport. JSON.parse of an attacker-sized
+# payload allocates a multiple of the payload itself, so an unbounded frame is an
+# out-of-memory kill, not a protocol error. 16 MiB sits far above any legitimate
+# message (the biggest realistic frame is a base64 resource blob) and far below a
+# heap-exhausting one.
+const _MCP_MAX_FRAME_BYTES = 16 * 1024 * 1024
+
+"""
+Read one newline-delimited frame from `input`, keeping at most `limit` bytes.
+Bytes past the limit are drained and discarded rather than buffered, so an
+oversized frame costs a bounded amount of memory instead of its own size.
+Returns the line (trailing CRLF removed, as `readline` does) and whether it
+overflowed the limit.
+"""
+function _read_frame(input::IO, limit::Int)
+    buf = IOBuffer()
+    kept = 0
+    overflow = false
+    while !eof(input)
+        b = read(input, UInt8)
+        b == UInt8('\n') && break
+        if kept < limit
+            write(buf, b)
+            kept += 1
+        else
+            overflow = true
+        end
+    end
+    line = String(take!(buf))
+    endswith(line, '\r') && (line = line[1:end-1])
+    (line, overflow)
+end
+
+"""
     _serve_stdio(server::MCPServer; input=stdin, output=stdout)
 
 Run the MCP server over stdio. Reads JSON-RPC messages from `input` (one per line),
 dispatches them, and writes responses to `output`. Diagnostic logs go to stderr.
+
+The loop survives every malformed frame: parse errors, wrong-shape frames,
+oversized frames and internal dispatch failures are all answered as JSON-RPC
+errors and serving continues.
 """
 function _serve_stdio(server::MCPServer; input::IO=stdin, output::IO=stdout)
     while !eof(input)
-        line = readline(input)
+        line, overflow = _read_frame(input, _MCP_MAX_FRAME_BYTES)
+        if overflow
+            response = _jsonrpc_error(nothing, -32600, "Invalid Request: frame exceeds $(_MCP_MAX_FRAME_BYTES) bytes")
+            println(output, JSON.json(response))
+            flush(output)
+            continue
+        end
         isempty(strip(line)) && continue
         parsed = try
             JSON.parse(line; dicttype=Dict{String,Any})
@@ -461,7 +539,7 @@ function _serve_stdio(server::MCPServer; input::IO=stdin, output::IO=stdout)
             flush(output)
             continue
         end
-        response = _dispatch_mcp(server, parsed)
+        response = _dispatch_guarded(server, parsed)
         # Notifications produce no response
         isnothing(response) && continue
         println(output, JSON.json(response))
@@ -503,6 +581,15 @@ function _serve_http(server::MCPServer; host::String="127.0.0.1", port::Int=8080
             return HTTP.Response(403, "Forbidden: Origin not allowed")
         end
         if req.method == "POST"
+            # Reject an oversized body before it is copied into a String and parsed
+            # (see _MCP_MAX_FRAME_BYTES). `length` is the byte count on both HTTP.jl
+            # majors — 1.x hands a request handler a `Vector{UInt8}`, 2.x a body
+            # wrapper — whereas `sizeof` measures the 2.x wrapper struct, not the
+            # payload. The transport buffers the request before the handler runs, so
+            # this bounds the parse rather than the read.
+            if length(req.body) > _MCP_MAX_FRAME_BYTES
+                return HTTP.Response(413, "Payload Too Large")
+            end
             body = String(req.body)
             parsed = try
                 JSON.parse(body; dicttype=Dict{String,Any})
@@ -512,7 +599,7 @@ function _serve_http(server::MCPServer; host::String="127.0.0.1", port::Int=8080
             if !(parsed isa Dict{String,Any})
                 return HTTP.Response(400, JSON.json(_jsonrpc_error(nothing, -32600, "Invalid Request: expected a single JSON-RPC object")))
             end
-            response = _dispatch_mcp(server, parsed)
+            response = _dispatch_guarded(server, parsed)
             if isnothing(response)
                 return HTTP.Response(202, "")
             end

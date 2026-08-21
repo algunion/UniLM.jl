@@ -803,6 +803,9 @@ Exception-level error during a Responses API call (network, parsing, etc.).
     cause::Union{Nothing,Exception} = nothing
 end
 
+Base.show(io::IO, r::ResponseCallError) =
+    _show_call_error(io, "ResponseCallError", r.error, r.status, r.request_id, r.cause)
+
 
 # ─── Accessor Functions ──────────────────────────────────────────────────────
 

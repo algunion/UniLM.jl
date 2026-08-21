@@ -113,6 +113,9 @@ end
     cause::Union{Nothing,Exception} = nothing
 end
 
+Base.show(io::IO, r::FIMCallError) =
+    _show_call_error(io, "FIMCallError", r.error, r.status, r.request_id, r.cause)
+
 # ─── FIM Accessors ─────────────────────────────────────────────────────────
 
 """

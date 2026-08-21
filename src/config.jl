@@ -36,6 +36,15 @@ The constructor throws `ArgumentError` for `NaN` or non-positive time values
 (`NaN` is rejected explicitly because it compares false against every bound
 and would silently disable the timeout), and for `max_attempts < 1`.
 
+!!! warning "`connect_timeout = Inf` is unsupported on the HTTP 1.x major"
+    A task-mode watchdog abandons its worker on breach instead of killing it,
+    which is safe only because the same attempt carries a native bound that ends
+    that worker on its own. On the 1.x major `connect_timeout` is the only native
+    bound covering connection acquisition (the native read bound starts after the
+    request is written), so disabling it leaves an abandoned worker with nothing
+    to terminate it, and the wait is genuinely unbounded. Disable it only on the
+    2.x major, whose per-attempt request bound also covers acquisition.
+
 The two-argument form copies `base` with the named fields overridden, under
 the same validation.
 

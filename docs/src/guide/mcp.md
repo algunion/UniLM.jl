@@ -57,6 +57,19 @@ mcp_connect(`npx server`) do session
 end  # session is disconnected here
 ```
 
+!!! note "A session is concurrency-1"
+    Every call on an [`MCPSession`](@ref) — its liveness check, id allocation and
+    request/response exchange — runs under one session lock, so a concurrent
+    caller waits for the exchange in progress. The queued caller's
+    `mcp_request_timeout` is measured **from the moment it takes the lock**, not
+    from when it asked, so waiting behind another call never counts against its
+    own bound; the wait stays bounded transitively, because the call ahead runs
+    under that same per-exchange bound. [`mcp_disconnect!`](@ref) takes the lock
+    too, so a disconnect racing a call in flight waits for that exchange to finish
+    instead of tearing the transport down under its reader. For real parallelism,
+    open one session per concurrent worker — see
+    [Concurrency](@ref timeout_concurrency).
+
 ### Discovering Tools, Resources, and Prompts
 
 After connecting, the session auto-populates tool/resource/prompt caches. You can also
@@ -381,4 +394,5 @@ OpenAI's servers, while `mcp_connect` runs tools locally.
 
 - [Tool Calling Guide](@ref tools_guide) — function tools and automated tool loop
 - [MCP API Reference](@ref mcp_api) — full type and function reference
+- [Timeouts & Retries](@ref timeouts_guide) — MCP bounds and the concurrency-1 contract
 - [`CallableTool`](@ref), [`tool_loop!`](@ref), [`tool_loop`](@ref) — tool loop integration

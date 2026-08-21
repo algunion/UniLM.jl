@@ -1,14 +1,17 @@
 # [Timeouts & Retries](@id timeouts_guide)
 
-Every UniLM operation — a provider request, a stream, or an MCP exchange —
-completes or fails with a **typed** error within a bounded, configurable time.
-There is no code path that blocks forever on a silent or stalled peer. This guide
-covers the bounds, how to change them, and the typed failures you get when one
-fires.
+Every UniLM operation — a provider request, a stream, an MCP exchange, or a
+Realtime WebSocket — waits on a peer only under a bounded, configurable limit, and
+reports a breach as a **typed** error. This guide covers the bounds, how to change
+them, and the typed failures you get when one fires.
+
+One deliberate exception: an open Realtime session's *lifetime* is the caller's to
+decide, so nothing bounds it (see [Realtime sessions](@ref timeout_realtime)).
 
 ## The one config struct
 
-All bounds live on a single [`RequestConfig`](@ref):
+All bounds live on a single [`RequestConfig`](@ref), resolved per call on every
+request verb (and captured at connect time by the MCP and Realtime sessions):
 
 | Field | Default | Bounds |
 |---|---|---|
@@ -24,6 +27,16 @@ All timeout fields are seconds (`Float64`). Set any of them to `Inf` to disable
 that bound. The constructor **rejects** `NaN` and non-positive values with an
 `ArgumentError`, and requires `max_attempts ≥ 1` — a silently-`NaN` bound would
 compare false against every check and reintroduce an unbounded wait.
+
+!!! warning "`connect_timeout = Inf` is unsupported on the HTTP 1.x major"
+    Every task-mode watchdog abandons its worker on breach rather than killing it,
+    which is safe only because the same attempt also carries a native bound that
+    ends the worker on its own. On the 1.x major, `connect_timeout` is the only
+    native bound covering connection acquisition — the native read bound starts
+    counting after the request is written — so disabling it leaves an abandoned
+    worker with nothing to terminate it. The wait you asked to be unbounded stays
+    unbounded, and the worker may never self-terminate. Disable it only on the 2.x
+    major, where the per-attempt request bound also covers acquisition.
 
 ```julia
 using UniLM
@@ -130,8 +143,12 @@ Do nothing and you get the table above.
 Streams are governed differently from single-shot requests:
 
 - **Until the first byte**, a stream is bound by `min(total_deadline,
-  request_timeout)`. A stream that never starts fails typed like any other
-  request.
+  request_timeout)` — and on the HTTP 2.x major additionally by
+  `stream_idle_timeout`, because that major bounds the response-header wait by
+  the read-idle timer. The effective pre-first-byte bound there is
+  `min(total_deadline, request_timeout, stream_idle_timeout)`, and a breach
+  attributable to the idle timer reports phase `:stream_idle` even though no byte
+  ever arrived. A stream that never starts fails typed like any other request.
 - **After the first byte**, only the **idle** bound runs: `stream_idle_timeout`
   is the maximum gap between raw byte chunks off the socket — NOT between parsed
   events. SSE comment lines and Anthropic `ping` events are real bytes, so they
@@ -142,10 +159,19 @@ Streams are governed differently from single-shot requests:
   "healthy but slow" from "hung but trickling" is not possible from byte timing
   alone, and the safe choice is to not kill a stream that is still delivering
   bytes.
-- **EOF-less streams (Gemini)** have no terminal sentinel; the stream ends at EOF.
-  If the idle guard fires *after* a terminal state was already recorded, the
-  result is finalized as a **success** (trailing usage bytes past the gap may be
-  lost — accepted), not a timeout.
+- **A completed turn is never discarded or re-sent.** Once a stream has recorded
+  its terminal state — the assembled message, or (for providers that send no
+  end-of-stream sentinel) the provider's own completion marker — anything that
+  goes wrong while the connection is torn down is *teardown noise*: an idle
+  breach, the native read-idle timer, a transport reset, a truncated read. The
+  generation is already billed and its deltas already delivered, so the result is
+  finalized as a **success** rather than failed or retried; re-POSTing it would
+  bill a second generation for one caller request. Trailing bytes past the
+  breach (a late usage frame) may be lost — accepted. This holds on every
+  provider and on both the Chat and agentic stream drivers. Gemini is the
+  clearest case, since its stream has no sentinel at all and simply ends at EOF.
+  Failures that are *not* teardown-shaped — a throwing callback, a decoding bug
+  — still surface as failures.
 
 ```julia
 # Raise the idle bound for a reasoning-heavy stream expected to go quiet:
@@ -153,6 +179,39 @@ chatrequest!(chat; config = RequestConfig(stream_idle_timeout = 300.0)) do chunk
     chunk isa String && print(chunk)
 end
 ```
+
+## [Realtime sessions](@id timeout_realtime)
+
+The Realtime WebSocket surface takes the same `config=` keyword and resolves it
+the same four ways. Two phases are bounded, and one deliberately is not:
+
+```julia
+realtime_connect(model = "gpt-realtime-2",
+                 config = RequestConfig(connect_timeout = 5.0,
+                                        stream_idle_timeout = 30.0)) do session
+    realtime_send(session, response_create())
+    event = realtime_receive(session)     # bounded by stream_idle_timeout
+end
+```
+
+- **Opening** is bounded by `connect_timeout`. A peer that accepts the TCP
+  connection but never finishes the upgrade throws
+  `UniLMTimeout(:connect, …)` instead of blocking.
+- **`realtime_receive`** is bounded by `stream_idle_timeout`, taken from the
+  config the session captured at connect time. A breach throws
+  `UniLMTimeout(:stream_idle, …)`. A parked socket read cannot be polled out of,
+  so the guard closes the socket to unblock it — and HTTP.jl's WebSocket close
+  gives the peer up to ~5 s to acknowledge, so the breach surfaces within
+  `[limit, limit + ~5 s]` rather than exactly at the limit. Set the bound with
+  that grace in mind; `Inf` disables it and parks indefinitely.
+- **The session's lifetime is not bounded.** Once your handler is running, how
+  long it stays connected is your decision, not a timeout's — a Realtime session
+  is *meant* to sit idle waiting for the user to speak. Bound the conversation
+  yourself if you need to.
+
+The unlike-HTTP shapes here are that Realtime **throws** rather than returning a
+typed result value, and that `realtime_connect` makes a single attempt —
+`max_attempts` does not apply to it.
 
 ## Typed failures
 
@@ -194,9 +253,9 @@ Automatic retries apply to the inference verbs — `chatrequest!`, `embeddingreq
 `respond`, `fim_complete`, `prefix_complete`, `generate_image`, `edit_image`,
 `upload_file`, and the `tool_loop` family (streams retry only before the first
 callback fires). Platform and lifecycle verbs (batch, container, conversation,
-file, fine-tuning, moderation, upload, vector-store, video, audio, and the
-Responses lifecycle operations) make a single bounded attempt; `max_attempts` has
-no effect there.
+file, fine-tuning, moderation, upload, vector-store, video, audio, realtime, and
+the Responses lifecycle operations) make a single bounded attempt; `max_attempts`
+has no effect there.
 
 `max_attempts` (default 3) caps the total attempts. All attempts share the single
 `total_deadline`:
@@ -254,6 +313,72 @@ end
 - **MCP over HTTP** is not session-fatal on a request timeout (request/response
   correlation is per-POST); the session survives.
 
+## [Concurrency](@id timeout_concurrency)
+
+Bounds are per operation; the rules below say how many operations may share one
+object, and what waiting behind another operation costs you.
+
+### One `Chat` per in-flight call
+
+A [`Chat`](@ref) is mutable, unsynchronized state. `push!`ing the response and
+accumulating the running cost are plain, unlocked mutations, so two concurrent
+calls sharing one `Chat` can interleave into a corrupted conversation or a lost
+cost update. This is by design — locking every conversation would tax the
+overwhelmingly common single-threaded use to buy safety for a pattern with a
+better answer.
+
+That answer is [`fork`](@ref), the sanctioned fan-out. It deep-copies `messages`
+and gives the copy its own cost accumulator, so the forks share nothing mutable:
+
+```julia
+# Fan out four independent continuations of the same conversation:
+tasks = map(fork(chat, 4)) do f
+    push!(f, Message(Val(:user), "Continue differently."))
+    Threads.@spawn chatrequest!(f)
+end
+results = fetch.(tasks)
+```
+
+The same rule reads forward: never hand one `Chat` to two `tool_loop!` calls, and
+do not `push!` to a `Chat` while a streaming task on it is still running.
+
+The stateless verbs have no such constraint — [`respond`](@ref),
+[`embeddingrequest!`](@ref) and [`generate_image`](@ref) take a fresh request
+struct per call and are safe to run concurrently as-is.
+
+### An MCP session is concurrency-1
+
+Every call on an [`MCPSession`](@ref) — liveness check, id allocation, and the
+request/response exchange — runs under one session lock, so a concurrent caller
+waits for the exchange in progress. Two consequences worth planning around:
+
+- The queued caller's `mcp_request_timeout` is measured **from the moment it
+  takes the lock**, not from when it asked. Waiting behind another call never
+  counts against your own bound, and never tears down a healthy exchange. The
+  wait itself stays bounded transitively, since the call ahead runs under that
+  same per-exchange bound.
+- `mcp_disconnect!` takes the lock too, so a disconnect racing a call in flight
+  **waits** for that exchange to finish rather than tearing the transport down
+  under its reader.
+
+For genuine MCP parallelism, open one session per concurrent worker.
+
+### Pick the HTTP major for your fan-out
+
+UniLM supports both HTTP.jl majors, and they pool connections very differently:
+
+- **HTTP 1.x** shares one **process-global** connection pool across *all* hosts,
+  capped at `max(16, 4 × Threads.nthreads())`. Past that cap, acquiring a
+  connection queues — so a wide fan-out silently serializes, and the queueing
+  happens below the layer any `RequestConfig` bound can see except
+  `connect_timeout` (which is why `connect_timeout = Inf` is unsupported there).
+- **HTTP 2.x** pools per host with no per-host cap by default, and its
+  per-attempt request bound also covers connection acquisition.
+
+**For high fan-out, prefer HTTP 2.x.** On 1.x, either keep concurrency under the
+cap or raise it with `HTTP.set_default_connection_limit!(n)` before the first
+request.
+
 ## Migrating from `retries`
 
 The `retries` keyword is **removed** (no compatibility alias). It was a recursion
@@ -279,4 +404,5 @@ A removed keyword raises `MethodError` — there is no silent behavior change.
 
 - [Streaming](@ref streaming_guide) — the callback / do-block streaming API.
 - [MCP (Model Context Protocol)](@ref mcp_guide) — the MCP client and server.
+- [Realtime API](@ref realtime_api) — the WebSocket type/function reference.
 - [Timeouts & Request Configuration](@ref timeouts_api) — the type/function reference.

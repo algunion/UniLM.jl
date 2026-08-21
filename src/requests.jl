@@ -447,7 +447,10 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
                 @warn "transport failure is retryable but the backoff exceeds the remaining total_deadline budget; giving up" attempt delay
                 rethrow()
             end
-            @debug "retrying after transport failure" attempt delay exception = (e, catch_backtrace())
+            # Log the ROOT CAUSE, never the wrapper: on HTTP.jl 1.x the wrapper
+            # renders as a full request dump (headers included), which would put
+            # the credential in the debug log. Twin of the stream driver below.
+            @debug "retrying after transport failure" attempt delay exception = (_unwrap_exception(e), catch_backtrace())
             sleep(delay)
             continue
         end

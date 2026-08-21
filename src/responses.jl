@@ -1279,7 +1279,7 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                 if _is_transport_error(e) && !callback_fired[] && attempt < cfg.max_attempts
                     action, delay = _retry_pause(cfg, t0, attempt, nothing)
                     if action === :budget
-                        @warn "Response stream: retry backoff exceeds the remaining total_deadline; failing now" error = string(e)
+                        @warn "Response stream: retry backoff exceeds the remaining total_deadline; failing now" error = _error_text(e)
                     else
                         @debug "Response stream transport error; retrying" attempt
                         sleep(delay); attempt += 1; continue

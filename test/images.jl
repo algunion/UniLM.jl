@@ -326,6 +326,53 @@ end
     end
 end
 
+# A user-defined endpoint that declares NO capabilities — the documented way to reach
+# an OpenAI-compatible backend this package does not ship, and which therefore cannot
+# say what it supports.
+struct ImagesUndeclaredProbe <: UniLM.ServiceEndpoint
+    base_url::String
+end
+UniLM._resolve_base_url(e::ImagesUndeclaredProbe) = e.base_url
+UniLM.auth_header(::ImagesUndeclaredProbe) =
+    ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
+
+@testset "edit_image validates capabilities only where they were declared" begin
+    imgpath = tempname() * ".png"
+    write(imgpath, UInt8[0x89, 0x50, 0x4e, 0x47])
+    try
+        # Declared and lacking :image_edits → refused before any I/O, naming the feature.
+        err = try
+            edit_image(ImageEdit(image=imgpath, prompt="p", model="m", service=AZUREServiceEndpoint))
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("Image Edits API is not supported", err.msg)
+
+        # Undeclared → nothing to check against, so the call must reach the wire. It
+        # used to die on a raw MethodError from provider_capabilities instead.
+        hits = Ref(0)
+        server, base = _images_retry_server(_ -> begin
+            hits[] += 1
+            HTTP.Response(200, ["Content-Type" => "application/json"],
+                          Vector{UInt8}(JSON.json(Dict("created" => 1,
+                                                       "data" => [Dict("b64_json" => "aGVsbG8=")]))))
+        end)
+        try
+            r = edit_image(imgpath, "p"; model="m", service=ImagesUndeclaredProbe(base),
+                           config=UniLM.RequestConfig(max_attempts=1, total_deadline=10.0))
+            @test r isa ImageSuccess
+            @test image_data(r)[1] == "aGVsbG8="
+            @test hits[] == 1
+        finally
+            close(server)
+        end
+    finally
+        rm(imgpath; force=true)
+    end
+end
+
 using Base64
 
 @testset "save_image decodes before it opens the destination" begin

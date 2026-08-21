@@ -379,13 +379,9 @@ mutable struct HTTPTransport <: MCPTransport
     # server-negotiated revision once the handshake succeeds.
     protocol_version::String
     connected::Bool
-    # Not the serialization point: whole exchanges, notifications and the disconnect
-    # are ordered by the SESSION lock (one exchange at a time), which is the only
-    # ordering an HTTP transport needs. Kept as part of the public struct's surface.
-    lock::ReentrantLock
     pending::Vector{String}  # frames from the last response body, not yet consumed
     function HTTPTransport(url::String; headers::Vector{Pair{String,String}}=Pair{String,String}[])
-        new(url, headers, nothing, _MCP_PROTOCOL_VERSION, false, ReentrantLock(), String[])
+        new(url, headers, nothing, _MCP_PROTOCOL_VERSION, false, String[])
     end
 end
 

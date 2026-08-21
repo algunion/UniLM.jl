@@ -861,6 +861,37 @@ end
         @test emb.embeddings[2] ≈ vecs[2]
         @test emb.embeddings[3] ≈ vecs[3]
     end
+
+    @testset "update! rejects a response that does not cover every input" begin
+        # The buffers are pre-zeroed, so an uncovered slot stays an all-zero vector
+        # that still normalizes, compares and indexes — a corrupt embedding no caller
+        # can distinguish from a real one. Any response that does not fill each slot
+        # exactly once is an error.
+        row(i, v) = Dict{String,Any}("index" => i, "embedding" => fill(v, 4))
+
+        # Fewer rows than inputs (the silent zero-vector case).
+        @test_throws ArgumentError update!(UniLM.Embeddings(["a", "b", "c"]), [row(0, 1.0), row(1, 2.0)])
+        # More rows than inputs, and a duplicated or out-of-range index.
+        @test_throws ArgumentError update!(UniLM.Embeddings(["a", "b"]),
+            [row(0, 1.0), row(1, 2.0), row(1, 3.0)])
+        @test_throws ArgumentError update!(UniLM.Embeddings(["a", "b"]), [row(0, 1.0), row(0, 2.0)])
+        @test_throws ArgumentError update!(UniLM.Embeddings(["a", "b"]), [row(0, 1.0), row(7, 2.0)])
+        @test_throws ArgumentError update!(UniLM.Embeddings(["a", "b"]), [row(0, 1.0), row(-1, 2.0)])
+        # Single-input requests take the same contract: exactly one row.
+        @test_throws ArgumentError update!(UniLM.Embeddings("a"), Dict{String,Any}[])
+        @test_throws ArgumentError update!(UniLM.Embeddings("a"), [row(0, 1.0), row(1, 2.0)])
+
+        # The message names the mismatch rather than failing on an index later.
+        err = try; update!(UniLM.Embeddings(["a", "b", "c"]), [row(0, 1.0), row(1, 2.0)]); catch e; e; end
+        @test contains(sprint(showerror, err), "2 rows for 3 inputs")
+
+        # A complete response still fills every slot, in any row order.
+        ok = UniLM.Embeddings(["a", "b", "c"])
+        update!(ok, [row(2, 3.0), row(0, 1.0), row(1, 2.0)])
+        @test [v[1] for v in ok.embeddings] == [1.0, 2.0, 3.0]
+        @test all(v -> length(v) == 4, ok.embeddings)
+    end
+
 end
 
 @testset "Chat JSON serialization - all optional fields" begin

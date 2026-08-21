@@ -32,18 +32,44 @@
         @test verify_webhook(payload, Dict("webhook-id" => 1, "webhook-timestamp" => 2, "webhook-signature" => "v1,x"), secret; tolerance_seconds=Inf) == false
     end
 
-    @testset "malformed secret base64 → false (not thrown)" begin
-        # Reaches src/webhooks.jl:62: a FRESH timestamp passes the replay window (lines 55-57),
-        # so control flows to base64decode (line 60). The secret body is not valid base64, so
-        # base64decode THROWS and the catch returns false. If the try/catch were removed, this
-        # would propagate the DecodeError instead of returning a Bool — so a thrown error here
-        # (rather than `== false`) falsifies the guard.
+    @testset "malformed secret base64 → ArgumentError (a config error, not a verdict)" begin
+        # A FRESH timestamp passes the replay window, so control reaches base64decode.
+        # The secret body is not valid base64: that is this endpoint's misconfiguration,
+        # and answering `false` would silently reject every inbound webhook forever,
+        # indistinguishable from an attacker's bad signature.
         recent = string(round(Int, time()))
         bad_headers = merge(headers, Dict("webhook-timestamp" => recent))
-        @test verify_webhook(payload, bad_headers, "whsec_!!!not-base64!!!") == false
+        @test_throws ArgumentError verify_webhook(payload, bad_headers, "whsec_!!!not-base64!!!")
         # Same malformed body without the whsec_ prefix (the secret[7:end] strip is bypassed,
-        # base64decode still throws on the raw body) — also caught → false.
-        @test verify_webhook(payload, bad_headers, "@@@not base64@@@") == false
+        # base64decode still fails on the raw body).
+        @test_throws ArgumentError verify_webhook(payload, bad_headers, "@@@not base64@@@")
+        err = try; verify_webhook(payload, bad_headers, "whsec_!!!not-base64!!!"); catch e; e; end
+        @test contains(sprint(showerror, err), "not valid base64")
+        # A well-formed secret with a wrong signature is still a plain `false`: only
+        # genuine verification failures return, so `false` keeps one meaning.
+        @test verify_webhook(payload, bad_headers, secret) == false
+    end
+
+    @testset "non-finite timestamps do not slip past the replay window" begin
+        # `tryparse(Float64, "NaN")` is NaN, and every comparison with NaN is false —
+        # `abs(time() - NaN) > tolerance` waved the frame through with the window on.
+        # The signatures below are genuine (computed over the literal timestamp), so
+        # only the freshness check can reject them.
+        key = UniLM.base64decode("MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw")
+        wid = headers["webhook-id"]
+        for wts in ("NaN", "nan", "Inf", "-Inf", "inf")
+            sig = UniLM.base64encode(UniLM._hmac_sha256(key, Vector{UInt8}(string(wid, ".", wts, ".", payload))))
+            h = merge(headers, Dict("webhook-timestamp" => wts, "webhook-signature" => "v1,$sig"))
+            @test verify_webhook(payload, h, secret) == false
+            # With the window explicitly disabled the same frames verify, proving the
+            # signatures are valid and the rejection above came from the time check.
+            @test verify_webhook(payload, h, secret; tolerance_seconds=Inf) == true
+        end
+        # A finite, fresh timestamp with a genuine signature still passes.
+        now = string(round(Int, time()))
+        sig = UniLM.base64encode(UniLM._hmac_sha256(key, Vector{UInt8}(string(wid, ".", now, ".", payload))))
+        @test verify_webhook(payload, merge(headers,
+            Dict("webhook-timestamp" => now, "webhook-signature" => "v1,$sig")), secret) == true
     end
 
     @testset "parse_webhook" begin

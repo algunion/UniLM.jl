@@ -41,9 +41,13 @@ Verify an OpenAI webhook signature (Standard Webhooks). `payload` is the raw req
 `webhook-signature`; `secret` is the endpoint signing secret (with or without the `whsec_`
 prefix). Returns `true` iff a fresh, validly-signed `v1` signature is present.
 
-Replay protection: timestamps outside `±tolerance_seconds` of now are rejected — pass
-`tolerance_seconds=Inf` to skip the time check (e.g. when replaying a stored fixture). Uses
-a constant-time digest compare.
+Replay protection: timestamps outside `±tolerance_seconds` of now are rejected, as are
+timestamps that are not finite numbers — pass `tolerance_seconds=Inf` to skip the time
+check (e.g. when replaying a stored fixture). Uses a constant-time digest compare.
+
+Throws `ArgumentError` when `secret` is not valid base64: that is a misconfiguration
+of this endpoint, and reporting it as an unverified signature would silently drop
+every webhook. A `false` return therefore always means the message failed verification.
 """
 function verify_webhook(payload::AbstractString, headers, secret::AbstractString; tolerance_seconds::Real=300)
     h = _header_dict(headers)
@@ -53,13 +57,20 @@ function verify_webhook(payload::AbstractString, headers, secret::AbstractString
     (isempty(wid) || isempty(wts) || isempty(wsig)) && return false
     if isfinite(tolerance_seconds)
         ts = tryparse(Float64, wts)
-        (isnothing(ts) || abs(time() - ts) > tolerance_seconds) && return false
+        # A non-finite timestamp is not a point in time: every comparison against
+        # NaN is false, so `abs(time() - ts) > tolerance` would wave "NaN" through
+        # the replay window. Reject it as the malformed message it is.
+        (isnothing(ts) || !isfinite(ts) || abs(time() - ts) > tolerance_seconds) && return false
     end
     sec = startswith(secret, "whsec_") ? secret[7:end] : secret
+    # A secret that will not base64-decode is a configuration error on this side,
+    # not a forged message. Returning false here would silently reject every
+    # inbound webhook forever, indistinguishable from an attacker's bad signature.
     key = try
         base64decode(sec)
-    catch
-        return false
+    catch e
+        e isa InterruptException && rethrow()
+        throw(ArgumentError("webhook signing secret is not valid base64"))
     end
     # `string(...)` is a single `::String` method, so the signed base is concretely a
     # `String` regardless of how the header-map value types infer at this call.

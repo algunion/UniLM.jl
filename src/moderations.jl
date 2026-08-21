@@ -39,12 +39,27 @@ end
     is_flagged(r) -> Bool
 
 True if any moderation result is flagged. Works on `ModerationResult`/`ModerationResponse`/`ModerationSuccess`.
+
+A call that did not succeed has no verdict, so [`ModerationFailure`](@ref) and
+[`ModerationCallError`](@ref) **throw** an `ArgumentError` rather than answering
+`false`: in the usual `is_flagged(moderate(text)) && reject()` shape, a `false`
+from a failed call would wave unmoderated content straight through. Check
+`issuccess` first, or handle the throw, and decide explicitly what an
+unavailable verdict should mean.
 """
 is_flagged(m::ModerationResult) = m.flagged
 is_flagged(r::ModerationResponse) = any(is_flagged, r.results)
 is_flagged(r::ModerationSuccess) = is_flagged(r.response)
-is_flagged(::ModerationFailure) = false
-is_flagged(::ModerationCallError) = false
+is_flagged(r::ModerationFailure) = throw(ArgumentError(
+    "moderation call failed with HTTP $(r.status) — no verdict; inspect the ModerationFailure result"))
+is_flagged(r::ModerationCallError) = throw(ArgumentError(
+    "moderation call did not complete ($(r.error)) — no verdict; inspect the ModerationCallError result"))
+
+"""The `flagged` verdict of one result row. A row without it is a malformed
+response, not a clean verdict, so it fails the call instead of defaulting to
+`false` — `moderate` turns the throw into a `ModerationCallError`."""
+_moderation_verdict(row::AbstractDict)::Bool = haskey(row, "flagged") ? row["flagged"] :
+    throw(ArgumentError("moderation result row has no \"flagged\" field"))
 
 """
     moderate(input; model="omni-moderation-latest", service=OPENAIServiceEndpoint)
@@ -64,7 +79,7 @@ function moderate(input; model::String="omni-moderation-latest", service::Servic
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
             results = ModerationResult[
-                ModerationResult(flagged=get(r, "flagged", false),
+                ModerationResult(flagged=_moderation_verdict(r),
                     categories=Dict{String,Any}(get(r, "categories", Dict{String,Any}())),
                     category_scores=Dict{String,Any}(get(r, "category_scores", Dict{String,Any}())),
                     raw=Dict{String,Any}(r))

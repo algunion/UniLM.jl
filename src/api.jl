@@ -1047,12 +1047,29 @@ end
 # `_store_embedding!(::Vector{Vector{Float64}}, …)` split on the `input`-typed branch).
 update!(emb::Embeddings, data::AbstractVector) = _fill_embeddings!(emb.embeddings, data)
 
-_fill_embeddings!(dst::Vector{Float64}, data::AbstractVector) =
+# The buffers start pre-zeroed, so any slot the response does not cover would stay a
+# valid-looking all-zero vector — a silently corrupt embedding that still compares,
+# normalizes and indexes. A response that does not cover every input exactly once is
+# therefore an error, not a partial fill (`embeddingrequest!` reports it as an
+# `EmbeddingCallError`).
+function _fill_embeddings!(dst::Vector{Float64}, data::AbstractVector)
+    length(data) == 1 || throw(ArgumentError(
+        "embeddings response carries $(length(data)) rows for 1 input"))
     _store_embedding!(dst, data[1]["embedding"])
+end
 
 function _fill_embeddings!(dst::Vector{Vector{Float64}}, data::AbstractVector)
+    n = length(dst)
+    length(data) == n || throw(ArgumentError(
+        "embeddings response carries $(length(data)) rows for $n inputs"))
+    seen = falses(n)
     for item in data
         idx = item["index"] + 1  # API uses 0-based indexing
+        checkbounds(Bool, dst, idx) || throw(ArgumentError(
+            "embeddings response row index $(item["index"]) is out of range for $n inputs"))
+        seen[idx] && throw(ArgumentError(
+            "embeddings response repeats row index $(item["index"])"))
+        seen[idx] = true
         _store_embedding!(dst[idx], item["embedding"])
     end
     return dst

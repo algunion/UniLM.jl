@@ -111,6 +111,11 @@
   credential. The real names (`authorization`, `proxy-authorization`, `api-key`,
   `x-api-key`, `x-goog-api-key`) are still masked in both the wire form and the
   Julia pair form.
+- The MCP HTTP server answers a bodyless `POST` with the same `-32700` JSON-RPC
+  parse error a malformed body gets, instead of crashing the handler into a 500.
+  On HTTP.jl 2.x a payload-less request carries a typed empty body that supports
+  no `length`; body size is now read through a shape-dispatched helper on both
+  majors.
 - Caller-supplied values interpolated into request URLs are percent-encoded. Ids,
   model names, pagination cursors and list filters went into path segments and
   query values raw across the platform APIs (files, batches, uploads, containers,

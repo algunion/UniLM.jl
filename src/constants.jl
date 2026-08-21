@@ -125,14 +125,21 @@ otherwise the matching `AZURE_OPENAI_DEPLOY_NAME_*` environment variable is read
 **at call time**, so runtime configuration wins regardless of what the
 environment held when the package was loaded. Throws `KeyError(model)` when the
 model has neither a registration nor a configured deployment environment variable.
+
+The deployment name is percent-encoded here, where the path is built: it is one
+path segment, so a `/`, `?` or `#` inside it must travel as data rather than add
+segments or open a query string. The registry keeps names exactly as registered
+— encoding is a property of the wire, not of what a caller stored.
 """
 function _azure_deployment_path(model::String)::String
+    prefix = "/openai/deployments/"
     # One locked lookup, not haskey-then-getindex: two probes of a concurrently
     # mutated Dict can disagree even when each is individually consistent.
     registered = @lock _AZURE_DEPLOY_LOCK get(_MODEL_ENDPOINTS_AZURE_OPENAI, model, nothing)
-    isnothing(registered) || return registered
+    # The registry stores the assembled path, so the name is what follows the prefix.
+    isnothing(registered) || return prefix * _uripart(chopprefix(registered, prefix))
     if model == "gpt-5.2" && haskey(ENV, "AZURE_OPENAI_DEPLOY_NAME_GPT_5_2")
-        return "/openai/deployments/" * ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_5_2"]
+        return prefix * _uripart(ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_5_2"])
     end
     throw(KeyError(model))
 end

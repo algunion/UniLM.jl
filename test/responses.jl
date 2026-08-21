@@ -2509,12 +2509,12 @@ end
         "id" => "resp_f1", "status" => "failed", "model" => "gpt-5.5", "output" => [],
         "error" => Dict("code" => "server_error", "message" => "the model failed"),
         "metadata" => Dict("run" => "r-7")))
-    port = 8000 + rand(1000:8000)
-    srv = HTTP.serve!("127.0.0.1", port; verbose=false) do req
-        HTTP.Response(200, ["Content-Type" => "application/json", "x-request-id" => "req_f1"], failed)
-    end
+    # OS-assigned port, not a guessed one: a hand-picked number can collide with a
+    # live local service and fail the test for a reason it is not about.
+    srv, url = _canned_http_server(200, failed,
+        ["Content-Type" => "application/json", "x-request-id" => "req_f1"])
     try
-        ep = GenericOpenAIEndpoint("http://127.0.0.1:$port", "sk-x")
+        ep = GenericOpenAIEndpoint(url, "sk-x")
         r = respond(Respond(service=ep, model="m", input="hi"))
         @test r isa ResponseFailure
         @test !issuccess(r)
@@ -2536,12 +2536,9 @@ end
     # converting them would break the background poll and tool-action flows.
     for st in ("completed", "in_progress", "queued", "requires_action", "cancelled", "incomplete")
         body = JSON.json(Dict("id" => "resp_$st", "status" => st, "model" => "gpt-5.5", "output" => []))
-        port = 8000 + rand(1000:8000)
-        srv = HTTP.serve!("127.0.0.1", port; verbose=false) do req
-            HTTP.Response(200, ["Content-Type" => "application/json"], body)
-        end
+        srv, url = _canned_http_server(200, body, ["Content-Type" => "application/json"])
         try
-            ep = GenericOpenAIEndpoint("http://127.0.0.1:$port", "sk-x")
+            ep = GenericOpenAIEndpoint(url, "sk-x")
             r = respond(Respond(service=ep, model="m", input="hi"))
             @test r isa ResponseSuccess
             @test r.response.status == st
@@ -2696,4 +2693,74 @@ end
     finally
         close(server)
     end
+end
+
+# ─── Lifecycle URL construction ───────────────────────────────────────────────
+# A response id and a pagination cursor are caller data, not URL structure. The
+# recorder reads back `req.target`, the unparsed origin-form target on both
+# supported HTTP majors, so a value that leaks its own `/`, `?` or `#` shows up
+# as extra path segments / a query / a fragment instead of one encoded segment.
+
+"Run `f(base_url)` against a local recorder; returns the raw request targets it saw, in order."
+function _recorded_lifecycle_targets(f::Function, body::String)
+    seen = String[]
+    handler = req -> (push!(seen, req.target);
+                      HTTP.Response(200, ["Content-Type" => "application/json"], body))
+    # Probe an ephemeral port, then serve on it; the close-then-rebind window can race.
+    for _ in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2])
+        close(tcp)
+        server = try
+            HTTP.serve!(handler, "127.0.0.1", port; verbose=false)
+        catch e
+            e isa Base.IOError || rethrow()
+            continue
+        end
+        try
+            f("http://127.0.0.1:$port")
+        finally
+            close(server)
+        end
+        return seen
+    end
+    error("could not bind an ephemeral port for the request-target recorder")
+end
+
+# One id carrying every separator a URL template is built from.
+const _RESP_HOSTILE_ID = "a b/../c?x=1#f"
+const _RESP_HOSTILE_ENC = "a%20b%2F..%2Fc%3Fx%3D1%23f"
+
+_lifecycle_body(id::String) =
+    JSON.json(Dict("id" => id, "status" => "completed", "model" => "m", "output" => []))
+
+# Drive all four lifecycle verbs; each returns its own typed value on failure, and
+# these tests assert on the recorded target only.
+function _drive_lifecycle(base::String, id::String; after::Union{String,Nothing}=nothing)
+    ep = GenericOpenAIEndpoint(base, "sk-x")
+    get_response(id; service=ep)
+    delete_response(id; service=ep)
+    cancel_response(id; service=ep)
+    list_input_items(id; service=ep, after=after)
+    nothing
+end
+
+@testset "lifecycle URLs encode a hostile response id and cursor into one segment each" begin
+    targets = _recorded_lifecycle_targets(_lifecycle_body("resp_ok")) do base
+        _drive_lifecycle(base, _RESP_HOSTILE_ID; after="p q/r")
+    end
+    seg = "/v1/responses/" * _RESP_HOSTILE_ENC
+    @test targets == [seg, seg, seg * "/cancel",
+                      seg * "/input_items?limit=20&order=desc&after=p%20q%2Fr"]
+end
+
+@testset "a plain response id and cursor are byte-identical no-ops" begin
+    # Ordinary ids and cursors draw from the unreserved set, so encoding must not
+    # move a single byte of the URLs this package built before.
+    targets = _recorded_lifecycle_targets(_lifecycle_body("resp_abc123")) do base
+        _drive_lifecycle(base, "resp_abc123"; after="resp_item_9")
+    end
+    seg = "/v1/responses/resp_abc123"
+    @test targets == [seg, seg, seg * "/cancel",
+                      seg * "/input_items?limit=20&order=desc&after=resp_item_9"]
 end

@@ -76,7 +76,7 @@ function retrieve_container(id::String; service::ServiceEndpointSpec=OPENAIServi
     validate_capability(service, :containers, "Containers API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        _cont_resp(_http("GET", _api_base_url(service) * CONTAINERS_PATH * "/" * id, auth_header(service);
+        _cont_resp(_http("GET", _api_base_url(service) * CONTAINERS_PATH * "/" * _uripart(id), auth_header(service);
             cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
@@ -95,8 +95,8 @@ function list_containers(; limit::Union{Int,Nothing}=nothing, after::Union{Strin
     try
         url = _api_base_url(service) * CONTAINERS_PATH
         params = String[]
-        !isnothing(limit) && push!(params, "limit=$limit")
-        !isnothing(after) && push!(params, "after=$after")
+        !isnothing(limit) && push!(params, "limit=$(_uripart(limit))")
+        !isnothing(after) && push!(params, "after=$(_uripart(after))")
         !isempty(params) && (url *= "?" * join(params, "&"))
         resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 || return ContainerFailure(response=String(resp.body), status=resp.status)
@@ -117,7 +117,7 @@ function delete_container(id::String; service::ServiceEndpointSpec=OPENAIService
     validate_capability(service, :containers, "Containers API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _http("DELETE", _api_base_url(service) * CONTAINERS_PATH * "/" * id, auth_header(service);
+        resp = _http("DELETE", _api_base_url(service) * CONTAINERS_PATH * "/" * _uripart(id), auth_header(service);
             cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 || return ContainerFailure(response=String(resp.body), status=resp.status)
         d = JSON.parse(resp.body; dicttype=Dict{String,Any})
@@ -139,7 +139,7 @@ function add_container_file(container_id::String, path::String; service::Service
     try
         isfile(path) || throw(ArgumentError("file not found: $path"))
         form = HTTP.Form(["file" => HTTP.Multipart(basename(path), IOBuffer(read(path)), _mime_for(path))])
-        url = _api_base_url(service) * CONTAINERS_PATH * "/" * container_id * "/files"
+        url = _api_base_url(service) * CONTAINERS_PATH * "/" * _uripart(container_id) * "/files"
         resp = _http("POST", url, auth_header_multipart(service), form; cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 || return ContainerFailure(response=String(resp.body), status=resp.status)
         ContainerSuccess(response=_parse_container(JSON.parse(resp.body; dicttype=Dict{String,Any})))

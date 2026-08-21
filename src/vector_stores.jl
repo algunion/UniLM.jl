@@ -135,7 +135,7 @@ function retrieve_vector_store(id::String; service::ServiceEndpointSpec=OPENAISe
     validate_capability(service, :vector_stores, "Vector Stores API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _vs_http("GET", _api_base_url(service) * VECTOR_STORES_PATH * "/" * id, service, cfg, _remaining_s(cfg, t0))
+        resp = _vs_http("GET", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0))
         resp.status == 200 ? VectorStoreSuccess(response=_parse_vector_store(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             VectorStoreFailure(response=String(resp.body), status=resp.status)
     catch e
@@ -156,8 +156,8 @@ function list_vector_stores(; limit::Union{Int,Nothing}=nothing, after::Union{St
     try
         url = _api_base_url(service) * VECTOR_STORES_PATH
         params = String[]
-        !isnothing(limit) && push!(params, "limit=$limit")
-        !isnothing(after) && push!(params, "after=$after")
+        !isnothing(limit) && push!(params, "limit=$(_uripart(limit))")
+        !isnothing(after) && push!(params, "after=$(_uripart(after))")
         !isempty(params) && (url *= "?" * join(params, "&"))
         resp = _vs_http("GET", url, service, cfg, _remaining_s(cfg, t0))
         if resp.status == 200
@@ -182,7 +182,7 @@ function delete_vector_store(id::String; service::ServiceEndpointSpec=OPENAIServ
     validate_capability(service, :vector_stores, "Vector Stores API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _vs_http("DELETE", _api_base_url(service) * VECTOR_STORES_PATH * "/" * id, service, cfg, _remaining_s(cfg, t0))
+        resp = _vs_http("DELETE", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
             VectorStoreDeleteSuccess(id=get(d, "id", id), deleted=get(d, "deleted", false))
@@ -207,7 +207,7 @@ function add_vector_store_file(vs_id::String, file_id::String; chunking_strategy
     try
         d = Dict{Symbol,Any}(:file_id => file_id)
         !isnothing(chunking_strategy) && (d[:chunking_strategy] = chunking_strategy)
-        resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH * "/" * vs_id * "/files", service, cfg, _remaining_s(cfg, t0); body=JSON.json(d))
+        resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(vs_id) * "/files", service, cfg, _remaining_s(cfg, t0); body=JSON.json(d))
         if resp.status == 200
             f = JSON.parse(resp.body; dicttype=Dict{String,Any})
             VectorStoreFileSuccess(response=VectorStoreFileObject(id=f["id"], status=get(f, "status", nothing), raw=Dict{String,Any}(f)))
@@ -232,7 +232,7 @@ function create_file_batch(vs_id::String, file_ids::Vector{String}; chunking_str
     try
         d = Dict{Symbol,Any}(:file_ids => file_ids)
         !isnothing(chunking_strategy) && (d[:chunking_strategy] = chunking_strategy)
-        resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH * "/" * vs_id * "/file_batches", service, cfg, _remaining_s(cfg, t0); body=JSON.json(d))
+        resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(vs_id) * "/file_batches", service, cfg, _remaining_s(cfg, t0); body=JSON.json(d))
         resp.status == 200 ? VectorStoreBatchSuccess(response=_parse_vs_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             VectorStoreFailure(response=String(resp.body), status=resp.status)
     catch e
@@ -250,7 +250,7 @@ function retrieve_file_batch(vs_id::String, batch_id::String; service::ServiceEn
     validate_capability(service, :vector_stores, "Vector Stores API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _vs_http("GET", _api_base_url(service) * VECTOR_STORES_PATH * "/" * vs_id * "/file_batches/" * batch_id, service, cfg, _remaining_s(cfg, t0))
+        resp = _vs_http("GET", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(vs_id) * "/file_batches/" * _uripart(batch_id), service, cfg, _remaining_s(cfg, t0))
         resp.status == 200 ? VectorStoreBatchSuccess(response=_parse_vs_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             VectorStoreFailure(response=String(resp.body), status=resp.status)
     catch e

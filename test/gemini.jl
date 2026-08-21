@@ -13,6 +13,17 @@ using Test, HTTP, JSON
     @test UniLM.get_url(schat) == "$(GEMINI_NATIVE_BASE)/models/gemini-3.5-flash:streamGenerateContent?alt=sse"
 end
 
+@testset "routing — a separator-bearing model cannot re-shape the URL" begin
+    # The model is data in a path segment; the `:generateContent` verb colon and
+    # the `?alt=sse` query are the template's own structure and stay literal.
+    m = "a b/../c?x=1#f"
+    enc = "a%20b%2F..%2Fc%3Fx%3D1%23f"
+    @test UniLM.get_url(Chat(service=GEMINIServiceEndpoint, model=m)) ==
+          "$(GEMINI_NATIVE_BASE)/models/$enc:generateContent"
+    @test UniLM.get_url(Chat(service=GEMINIServiceEndpoint, model=m, stream=true)) ==
+          "$(GEMINI_NATIVE_BASE)/models/$enc:streamGenerateContent?alt=sse"
+end
+
 @testset "auth — x-goog-api-key" begin
     withenv("GEMINI_API_KEY" => "test-key") do
         h = Dict(UniLM.auth_header(GEMINIServiceEndpoint))

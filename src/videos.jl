@@ -77,7 +77,7 @@ function retrieve_video(id::String; service::ServiceEndpointSpec=OPENAIServiceEn
     validate_capability(service, :video, "Videos API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        _vid_resp(_http("GET", _api_base_url(service) * VIDEOS_PATH * "/" * id, auth_header(service);
+        _vid_resp(_http("GET", _api_base_url(service) * VIDEOS_PATH * "/" * _uripart(id), auth_header(service);
             cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
@@ -96,8 +96,8 @@ function list_videos(; limit::Union{Int,Nothing}=nothing, after::Union{String,No
     try
         url = _api_base_url(service) * VIDEOS_PATH
         params = String[]
-        !isnothing(limit) && push!(params, "limit=$limit")
-        !isnothing(after) && push!(params, "after=$after")
+        !isnothing(limit) && push!(params, "limit=$(_uripart(limit))")
+        !isnothing(after) && push!(params, "after=$(_uripart(after))")
         !isempty(params) && (url *= "?" * join(params, "&"))
         resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 || return VideoFailure(response=String(resp.body), status=resp.status)
@@ -118,7 +118,7 @@ function video_content(id::String; service::ServiceEndpointSpec=OPENAIServiceEnd
     validate_capability(service, :video, "Videos API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        resp = _http("GET", _api_base_url(service) * VIDEOS_PATH * "/" * id * "/content", auth_header(service);
+        resp = _http("GET", _api_base_url(service) * VIDEOS_PATH * "/" * _uripart(id) * "/content", auth_header(service);
             cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 ? VideoContentSuccess(content=Vector{UInt8}(resp.body)) :
             VideoFailure(response=String(resp.body), status=resp.status)

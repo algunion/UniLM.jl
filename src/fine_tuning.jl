@@ -91,7 +91,7 @@ function retrieve_fine_tuning_job(id::String; service::ServiceEndpointSpec=OPENA
     validate_capability(service, :fine_tuning, "Fine-tuning API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        _ft_job_resp(_http("GET", _api_base_url(service) * FINE_TUNING_PATH * "/" * id, auth_header(service);
+        _ft_job_resp(_http("GET", _api_base_url(service) * FINE_TUNING_PATH * "/" * _uripart(id), auth_header(service);
             cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
@@ -108,7 +108,7 @@ function cancel_fine_tuning_job(id::String; service::ServiceEndpointSpec=OPENAIS
     validate_capability(service, :fine_tuning, "Fine-tuning API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        _ft_job_resp(_http("POST", _api_base_url(service) * FINE_TUNING_PATH * "/" * id * "/cancel", auth_header(service);
+        _ft_job_resp(_http("POST", _api_base_url(service) * FINE_TUNING_PATH * "/" * _uripart(id) * "/cancel", auth_header(service);
             cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
@@ -127,8 +127,8 @@ function list_fine_tuning_jobs(; limit::Union{Int,Nothing}=nothing, after::Union
     try
         url = _api_base_url(service) * FINE_TUNING_PATH
         params = String[]
-        !isnothing(limit) && push!(params, "limit=$limit")
-        !isnothing(after) && push!(params, "after=$after")
+        !isnothing(limit) && push!(params, "limit=$(_uripart(limit))")
+        !isnothing(after) && push!(params, "after=$(_uripart(after))")
         !isempty(params) && (url *= "?" * join(params, "&"))
         _ft_list_resp(_http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
@@ -146,7 +146,7 @@ function list_fine_tuning_events(id::String; service::ServiceEndpointSpec=OPENAI
     validate_capability(service, :fine_tuning, "Fine-tuning API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        _ft_list_resp(_http("GET", _api_base_url(service) * FINE_TUNING_PATH * "/" * id * "/events", auth_header(service);
+        _ft_list_resp(_http("GET", _api_base_url(service) * FINE_TUNING_PATH * "/" * _uripart(id) * "/events", auth_header(service);
             cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
@@ -163,7 +163,7 @@ function list_fine_tuning_checkpoints(id::String; service::ServiceEndpointSpec=O
     validate_capability(service, :fine_tuning, "Fine-tuning API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        _ft_list_resp(_http("GET", _api_base_url(service) * FINE_TUNING_PATH * "/" * id * "/checkpoints", auth_header(service);
+        _ft_list_resp(_http("GET", _api_base_url(service) * FINE_TUNING_PATH * "/" * _uripart(id) * "/checkpoints", auth_header(service);
             cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()

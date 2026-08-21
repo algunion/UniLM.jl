@@ -9,10 +9,13 @@
 # Model is in the URL (like Azure); streaming is the URL METHOD, not a body flag.
 
 function get_url(::Type{GEMINIServiceEndpoint}, chat::Chat)::String
+    # The model names a path segment; the `:<verb>` suffix and `?alt=sse` are the
+    # template's own structure, so only the model is encoded.
+    m = _uripart(chat.model)
     if chat.stream === true
-        "$(GEMINI_NATIVE_BASE)/models/$(chat.model):streamGenerateContent?alt=sse"
+        "$(GEMINI_NATIVE_BASE)/models/$m:streamGenerateContent?alt=sse"
     else
-        "$(GEMINI_NATIVE_BASE)/models/$(chat.model):generateContent"
+        "$(GEMINI_NATIVE_BASE)/models/$m:generateContent"
     end
 end
 

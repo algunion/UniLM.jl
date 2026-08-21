@@ -2478,3 +2478,36 @@ end
         srv.stop()
     end
 end
+
+@testset "respond stream: a byte-gap kill inside a user callback fails typed, never as a 200" begin
+    # The guard closes the socket to unblock a blocked read. When that close lands
+    # while the driver sits inside a user callback, the truncated read comes back
+    # as a CLEAN EOF: the loop exits with NO exception to classify, and the killed
+    # stream surfaced as ResponseFailure(status=200) carrying the partial bytes.
+    # Scaling: one delta arrives at once, the callback holds the driver for 5.0 s
+    # — past the 2.0 s idle limit plus its [limit, 2*limit] detection window even
+    # with a shared-runner stall — and the server holds the connection for 12.0 s
+    # so the peer never ends the stream first.
+    chunks = ["event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"]
+    server, url = _sse_gap_server(chunks; gap=0.1, idle_after=true, hold=12.0)
+    _RESP_TIMEOUT_URL[] = url
+    cfg = RequestConfig(request_timeout=5.0, total_deadline=60.0, stream_idle_timeout=2.0, max_attempts=1)
+    try
+        t = respond(Respond(input="hi", service=_RespTimeoutMock, stream=true); config=cfg,
+                    callback=(_chunk, _close) -> sleep(5.0))
+        # Bounded observation gates every read of the task: a driver that never
+        # returns must FAIL this pin, never hang the suite.
+        bounded = timedwait(() -> istaskdone(t), 40.0) == :ok
+        @test bounded
+        if bounded
+            result = fetch(t)
+            @test result isa ResponseCallError
+            @test result isa ResponseCallError && result.status === nothing
+            @test result isa ResponseCallError && result.cause isa UniLM.UniLMTimeout
+            @test result isa ResponseCallError && result.cause isa UniLM.UniLMTimeout &&
+                  result.cause.phase === :stream_idle
+        end
+    finally
+        close(server)
+    end
+end

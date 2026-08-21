@@ -644,13 +644,13 @@ end
 end
 
 @testset "_accumulate_cost! fallback is a no-op for non-success" begin
-    # requests.jl:420 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
+    # requests.jl:486 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
     # success types are specialized in accounting.jl, so a failure result must land here:
     # return nothing AND leave cumulative cost untouched (falsifies accidental accumulation).
     chat = Chat(model="gpt-4.1-nano")
     chat._cumulative_cost[] = 0.25
     failure = LLMFailure(response="server exploded", status=500, self=chat)
-    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 420
+    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 486
     @test UniLM._accumulate_cost!(chat, failure) === nothing
     @test cumulative_cost(chat) == 0.25       # unchanged: the fallback did not add anything
 
@@ -842,4 +842,109 @@ end
     slot = slotT()
     @test UniLM._with_recorded_deadline(() -> 42, () -> nothing, Inf, :request, slot) == 42
     @test slot[] === nothing
+end
+
+@testset "_with_recorded_deadline: a lost completion race surfaces the typed bound" begin
+    # The timer can win the resolution CAS and close the guarded socket at the
+    # very moment the guarded call returns: nothing throws, yet the resource is
+    # gone. Left unreported, the next read raises a bare IOError on the closed
+    # socket, which classifies as a RETRYABLE transport failure — an extra billed
+    # wire attempt, with the request phase lost. Deterministic by construction:
+    # completion at 0.4 s is strictly past the 0.1 s bound (the shape the
+    # reported-mode race test in test/deadline.jl uses).
+    slot = Ref{Union{Nothing,UniLM.UniLMTimeout}}(nothing)
+    closed = Ref(0)
+    caught = try
+        UniLM._with_recorded_deadline(() -> (sleep(0.4); :survived),
+                                      () -> closed[] += 1, 0.1, :request, slot)
+    catch e
+        e
+    end
+    @test caught isa UniLM.UniLMTimeout
+    @test caught.phase === :request && caught.limit == 0.1
+    @test slot[] === caught                   # recorded: the driver restores it over teardown noise
+    @test closed[] == 1                       # the guard really did close the resource
+    @test UniLM._retryable_exception(caught)  # a :request bound keeps its budgeted retry
+    # A clean win is untouched: the value passes through and nothing is recorded.
+    slot2 = Ref{Union{Nothing,UniLM.UniLMTimeout}}(nothing)
+    @test UniLM._with_recorded_deadline(() -> :fast, () -> closed[] += 1, 5.0, :request, slot2) === :fast
+    @test slot2[] === nothing
+    @test closed[] == 1
+end
+
+@testset "stream finalize is at-most-once and records the terminal message" begin
+    # Message assembly `take!`s the accumulation buffers, so a SECOND finalize
+    # would deliver another terminal callback carrying an EMPTY message — and
+    # commit that empty turn. The recorded-message slot is the structural guard:
+    # a re-entry (a late byte-gap fire unwinding through the breach path after
+    # the stream already ended) returns the recorded turn and fires nothing.
+    state = UniLM.StreamState()
+    print(state.content, "hello world")
+    state.finish_reason = "stop"
+    m = Ref{Union{Message,Nothing}}(nothing)
+    seen = Message[]
+    cb = (x, _) -> x isa Message && push!(seen, x)
+    fin1 = UniLM._finalize_stream_message!(state, cb, nothing, Ref(false), m)
+    @test fin1.msg.content == "hello world"
+    @test m[] === fin1.msg                    # recorded before the terminal callback returns
+    fin2 = UniLM._finalize_stream_message!(state, cb, nothing, Ref(false), m)
+    @test fin2.msg === fin1.msg               # the recorded turn, never a rebuild from emptied buffers
+    @test length(seen) == 1                   # exactly one terminal callback
+end
+
+@testset "teardown noise is distinguished from a real failure" begin
+    # The predicate both stream drivers consult once a terminal result is
+    # recorded. Connection-level errors, typed bounds, and an already classified
+    # byte-gap breach are the teardown of an exchange that already finished: they
+    # must neither re-POST a billed generation nor discard it. Anything else — a
+    # throwing user callback, a bug in decoding — still surfaces.
+    cfg = RequestConfig(stream_idle_timeout=1.0)
+    t0 = time_ns()
+    idle_breach = UniLM.UniLMTimeout(:stream_idle, 1.0, 1.0)
+    @test UniLM._stream_teardown_noise(Base.IOError("read: connection reset", 0), nothing)
+    @test UniLM._stream_teardown_noise(EOFError(), nothing)
+    @test UniLM._stream_teardown_noise(Base.SystemError("read", 54), nothing)
+    @test UniLM._stream_teardown_noise(UniLM.UniLMTimeout(:request, 1.0, 1.0), nothing)
+    @test UniLM._stream_teardown_noise(ArgumentError("anything"), idle_breach)
+    @test !UniLM._stream_teardown_noise(ArgumentError("callback bug"), nothing)
+
+    # The breach argument is why this takes the CLASSIFIED result and not the
+    # guard handle. Whichever timer wins the byte-gap race must read as teardown:
+    # our own guard's close echoes as an IOError (transport-shaped anyway), but
+    # the 2.x native read-idle timer surfaces as an HTTP.TimeoutError, which is
+    # deliberately NEITHER transport-shaped NOR a UniLMTimeout — only the
+    # classifier recognises it, and missing it discards a completed turn.
+    fired = UniLM._IdleGuard(:fired, time_ns(), 1.0, 1.0, nothing)
+    own_close = Base.IOError("read: connection reset", 0)
+    @test UniLM._stream_teardown_noise(own_close,
+        UniLM._classify_stream_timeout(own_close, fired, cfg, t0))
+    if UniLM._HTTP_MAJOR2
+        native = HTTP.TimeoutError("request", Int64(1_000_000_000), Int64(0))
+        @test !UniLM._is_transport_error(native)          # not transport-shaped by design
+        @test UniLM._stream_teardown_noise(native,
+            UniLM._classify_stream_timeout(native, nothing, cfg, t0))
+    end
+end
+
+@testset "a guard that fired turns a clean loop exit into the typed breach" begin
+    # Closing the socket is how a guard unblocks a blocked read; when the close
+    # lands while the driver is inside a user callback, the truncated read comes
+    # back as a CLEAN EOF and the loop exits with NO exception to classify. The
+    # exit path must therefore consult the guards itself, or a killed stream is
+    # reported as a 200 with partial bytes.
+    cfg = RequestConfig(stream_idle_timeout=2.0)
+    empty_bound = Ref{Union{Nothing,UniLM.UniLMTimeout}}(nothing)
+    fired = UniLM._IdleGuard(:fired, time_ns(), 1.75, 2.0, nothing)
+    idle = UniLM._exit_breach(fired, empty_bound, cfg)
+    @test idle isa UniLM.UniLMTimeout
+    @test idle.phase === :stream_idle
+    @test idle.elapsed == 1.75      # the frozen byte gap, not whole-call time
+    @test idle.limit == 2.0
+    # A recorded request bound with no idle fire surfaces as that bound.
+    req = UniLM.UniLMTimeout(:request, 3.0, 3.0)
+    @test UniLM._exit_breach(nothing, Ref{Union{Nothing,UniLM.UniLMTimeout}}(req), cfg) === req
+    # Nothing fired: a clean EOF is a clean EOF.
+    @test UniLM._exit_breach(nothing, empty_bound, cfg) === nothing
+    @test UniLM._exit_breach(UniLM._IdleGuard(:armed, time_ns(), 0.0, 2.0, nothing),
+                             empty_bound, cfg) === nothing
 end

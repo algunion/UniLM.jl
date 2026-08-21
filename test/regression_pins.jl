@@ -19,7 +19,7 @@ using Sockets
 # (the 2.x major rejects it); the request body is drained with `read`
 # (readavailable is undefined for server-side streams on 2.x, and a throwing
 # handler turns every response into a 500).
-function sse_mock_server(chunks::Vector{String})
+function sse_mock_server(chunks::Vector{String}; hold::Float64=0.0)
     # Port TOCTOU: the ephemeral port is discovered by binding a probe socket
     # that MUST be closed before HTTP.listen! can claim it — a window in which
     # another listener can steal the port (a once-observed, otherwise-unexplained
@@ -42,6 +42,10 @@ function sse_mock_server(chunks::Vector{String})
                     flush(http)
                     sleep(0.4)
                 end
+                # `hold` keeps the connection open with no further bytes, so a
+                # test can let the client's byte-gap guard — not the peer — end
+                # the stream.
+                hold > 0 && sleep(hold)
             end
             break
         catch
@@ -95,6 +99,93 @@ function oai_wire_server(responder)
     end
     server, "http://127.0.0.1:$port", calls
 end
+
+# Read one full HTTP/1.1 request message (headers + body) from a raw socket
+# before answering, so a respond-or-close never races the client's still
+# in-flight body write (HTTP.jl streams the request body as a chunked write that
+# can arrive as a SEPARATE segment after the head). Framing-aware (chunked
+# terminator / Content-Length), never read-until-eof: a keep-alive client
+# half-closes only after reading the response, so waiting on eof would deadlock.
+function drain_http_message!(sock)
+    req = ""
+    while (he = findfirst("\r\n\r\n", req)) === nothing
+        chunk = readavailable(sock)
+        isempty(chunk) && return
+        req *= String(chunk)
+    end
+    headers = SubString(req, 1, last(he))
+    if occursin(r"(?i)transfer-encoding:\s*chunked", headers)
+        while findfirst("0\r\n\r\n", req) === nothing
+            chunk = readavailable(sock)
+            isempty(chunk) && return
+            req *= String(chunk)
+        end
+    elseif (m = match(r"(?i)content-length:\s*(\d+)", headers)) !== nothing
+        want = last(he) + parse(Int, m.captures[1])
+        while sizeof(req) < want
+            chunk = readavailable(sock)
+            isempty(chunk) && return
+            req *= String(chunk)
+        end
+    end
+    return
+end
+
+# Localhost raw-TCP server serving ONE scripted SSE response per connection, then
+# closing. `framing` decides how the body is delimited:
+#   :close — `Connection: close`: the body ends at EOF, so the stream's last line
+#            can arrive without its trailing newline (a real provider shape)
+#   :cut   — chunked with the terminating chunk's TRAILER section cut off, so the
+#            read that FOLLOWS a fully delivered stream fails
+# Connections are counted, so a retried (duplicate) POST is visible to the test.
+function scripted_sse_server(body::String; framing::Symbol=:close)
+    listener = nothing
+    for attempt in 1:5
+        try
+            listener = Sockets.listen(Sockets.localhost, 0)
+            break
+        catch
+            attempt == 5 && rethrow()
+        end
+    end
+    port = Int(Sockets.getsockname(listener)[2])
+    posts = Threads.Atomic{Int}(0)
+    Threads.@spawn begin
+        try
+            while true
+                sock = Sockets.accept(listener)
+                Threads.atomic_add!(posts, 1)
+                try
+                    drain_http_message!(sock)
+                    if framing === :cut
+                        write(sock, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n")
+                        write(sock, string(string(sizeof(body); base=16), "\r\n", body, "\r\n"))
+                        write(sock, "0\r\n")   # terminating chunk, trailer section cut
+                    else
+                        write(sock, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n")
+                        write(sock, body)
+                    end
+                    close(sock)
+                catch
+                    try; close(sock); catch; end
+                end
+            end
+        catch
+        end   # listener closed at teardown
+    end
+    (; url="http://127.0.0.1:$port", posts, stop=() -> close(listener))
+end
+
+# Agentic mock endpoint whose base URL is swappable per test (mirrors the chat
+# side's AnthropicWireMock: the URL seam the production endpoints lack).
+const PIN_AGENTIC_URL = Ref("http://127.0.0.1:0")
+struct PinAgenticMock <: UniLM.OpenAIWireEndpoint end
+UniLM._api_base_url(::Type{PinAgenticMock}) = PIN_AGENTIC_URL[]
+UniLM.auth_header(::Type{PinAgenticMock}) = ["Content-Type" => "application/json"]
+UniLM.default_model(::Type{PinAgenticMock}) = "mock-model"
+
+const AGENTIC_DELTA = "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n"
+agentic_completed(id) = "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"$id\",\"status\":\"completed\",\"model\":\"m\",\"output\":[]}}"
 
 # Probe and release an ephemeral port. The bind window is why callers that then
 # start a server on it retry a failed bind.
@@ -365,6 +456,151 @@ end
             @test occursin("overloaded_error", res.response)
             # The truncated partial text must not have been pushed into history.
             @test all(m -> m.role != UniLM.RoleAssistant, chat.messages)
+        finally
+            close(server)
+        end
+    end
+
+    @testset "stream teardown after a completed turn: chat and agentic twins" begin
+        # One wire shape, both drivers: a stream that delivers its provider
+        # terminal and then dies while the connection is torn down (the chunked
+        # terminator's trailer section is cut, so the read AFTER the last event
+        # fails). The generation is complete and billed, so neither driver may
+        # discard it or re-POST it — a retry bills a second generation for one
+        # caller request. Written in a single burst, no inter-chunk sleeps.
+        chat_body = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello world\"},\"finish_reason\":null}]}\n\n" *
+                    "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" *
+                    "data: [DONE]\n\n"
+
+        # (a) chat, with a callback: the fault lands on the read that FOLLOWS the
+        # last event, so the driver never reached its finalize step and has no
+        # assembled message to fall back on — the provider's own completion
+        # marker (finish_reason) is what says the turn is complete. It must be
+        # delivered: exactly one terminal callback, committed to the
+        # conversation, on a single wire attempt.
+        srv = scripted_sse_server(chat_body; framing=:cut)
+        try
+            chat = Chat(service=GenericOpenAIEndpoint(srv.url, ""), model="mock", stream=true,
+                        messages=[Message(role=UniLM.RoleSystem, content="s"),
+                                  Message(role=UniLM.RoleUser, content="u")])
+            deltas = Ref(0); terminals = Message[]
+            cfg = RequestConfig(request_timeout=5.0, total_deadline=30.0,
+                                stream_idle_timeout=5.0, max_attempts=3)
+            task = chatrequest!(chat; config=cfg,
+                callback=(x, _c) -> x isa Message ? push!(terminals, x) : (deltas[] += 1))
+            # Bounded observation gates every read of the task: a driver that
+            # never returns must FAIL this pin, never hang the suite.
+            bounded = timedwait(() -> istaskdone(task), 20.0) === :ok
+            @test bounded
+            if bounded
+                res = fetch(task)
+                @test res isa LLMSuccess
+                @test res isa LLMSuccess && res.message.content == "hello world"
+                @test length(terminals) == 1                  # exactly one terminal delivery
+                @test length(terminals) == 1 && terminals[1].content == "hello world"  # the real turn, not an empty one
+                @test last(chat.messages).content == "hello world"   # update! committed it
+                @test srv.posts[] == 1
+            end
+        finally
+            srv.stop()
+        end
+
+        # (b) chat, callback-less: nothing was user-visible, so the pre-fix path
+        # was free to retry — a second billed generation for one request.
+        srv = scripted_sse_server(chat_body; framing=:cut)
+        try
+            chat = Chat(service=GenericOpenAIEndpoint(srv.url, ""), model="mock", stream=true,
+                        messages=[Message(role=UniLM.RoleSystem, content="s"),
+                                  Message(role=UniLM.RoleUser, content="u")])
+            cfg = RequestConfig(request_timeout=5.0, total_deadline=30.0,
+                                stream_idle_timeout=5.0, max_attempts=3)
+            task = chatrequest!(chat; config=cfg)
+            bounded = timedwait(() -> istaskdone(task), 20.0) === :ok
+            @test bounded
+            if bounded
+                res = fetch(task)
+                @test res isa LLMSuccess
+                @test res isa LLMSuccess && res.message.content == "hello world"
+                @test srv.posts[] == 1    # one wire attempt: no duplicate generation
+            end
+        finally
+            srv.stop()
+        end
+
+        # (c) the agentic twin on the same wire shape.
+        agentic_body = AGENTIC_DELTA * agentic_completed("r3") * "\n\n"
+        srv = scripted_sse_server(agentic_body; framing=:cut)
+        PIN_AGENTIC_URL[] = srv.url
+        try
+            cfg = RequestConfig(request_timeout=5.0, total_deadline=30.0,
+                                stream_idle_timeout=5.0, max_attempts=3)
+            t = respond(Respond(input="hi", service=PinAgenticMock, stream=true); config=cfg)
+            bounded = timedwait(() -> istaskdone(t), 20.0) === :ok
+            @test bounded
+            if bounded
+                result = fetch(t)
+                @test result isa ResponseSuccess
+                @test result isa ResponseSuccess && result.response.id == "r3"
+                @test srv.posts[] == 1
+            end
+        finally
+            srv.stop()
+        end
+    end
+
+    @testset "agentic stream: a terminal event whose trailing newline was cut still completes" begin
+        # SSE lines are newline-delimited, but a stream can end with its last line
+        # unterminated — the peer closes right after the payload. That line is
+        # still one COMPLETE line: the carry must be flushed at EOF before the
+        # outcome is decided (the chat driver already does), or a completed
+        # response reads as a truncated stream (ResponseFailure on HTTP 200).
+        srv = scripted_sse_server(AGENTIC_DELTA * agentic_completed("r6"); framing=:close)
+        PIN_AGENTIC_URL[] = srv.url
+        cfg = RequestConfig(request_timeout=5.0, total_deadline=30.0,
+                            stream_idle_timeout=5.0, max_attempts=1)
+        try
+            t = respond(Respond(input="hi", service=PinAgenticMock, stream=true); config=cfg)
+            bounded = timedwait(() -> istaskdone(t), 20.0) === :ok
+            @test bounded
+            if bounded
+                result = fetch(t)
+                @test result isa ResponseSuccess
+                @test result isa ResponseSuccess && result.response.id == "r6"
+            end
+        finally
+            srv.stop()
+        end
+    end
+
+    @testset "a byte-gap kill inside a user callback fails typed, never as a 200" begin
+        # The guard closes the socket to unblock a blocked read. When that close
+        # lands while the driver sits inside a user callback, the truncated read
+        # comes back as a CLEAN EOF: the loop exits with NO exception to
+        # classify, and the killed stream surfaced as LLMFailure(status=200)
+        # carrying the partial bytes. Scaling: one non-terminal delta arrives at
+        # once, the callback holds the driver 5.0 s — past the 2.0 s idle limit
+        # plus its [limit, 2*limit] detection window even under a shared-runner
+        # stall — and the server holds the connection open 12.0 s, so the peer
+        # never ends the stream first.
+        chunks = ["data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n"]
+        server, base = sse_mock_server(chunks; hold=12.0)
+        try
+            chat = Chat(service=GenericOpenAIEndpoint(base, ""), model="mock", stream=true,
+                        messages=[Message(role=UniLM.RoleSystem, content="s"),
+                                  Message(role=UniLM.RoleUser, content="u")])
+            cfg = RequestConfig(request_timeout=5.0, total_deadline=60.0,
+                                stream_idle_timeout=2.0, max_attempts=1)
+            task = chatrequest!(chat; config=cfg, callback=(_chunk, _close) -> sleep(5.0))
+            bounded = timedwait(() -> istaskdone(task), 40.0) === :ok
+            @test bounded
+            if bounded
+                res = fetch(task)
+                @test res isa LLMCallError
+                @test res isa LLMCallError && res.cause isa UniLM.UniLMTimeout
+                @test res isa LLMCallError && res.cause isa UniLM.UniLMTimeout &&
+                      res.cause.phase === :stream_idle
+                @test all(m -> m.role != UniLM.RoleAssistant, chat.messages)   # nothing committed
+            end
         finally
             close(server)
         end

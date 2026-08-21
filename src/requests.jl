@@ -94,18 +94,29 @@ end
 # exchange — it would kill long healthy streams — so streams never set it and
 # the idle guard is the sole idle enforcement there.
 # INVARIANT: connect and (2.x, finite idle bound) read-idle are the ONLY
-# native timers armed here. `_classify_stream_timeout` attributes every
-# non-connect native timeout on a streaming attempt to the read-idle timer BY
-# ELIMINATION, because HTTP.jl surfaces a read-idle breach with the literal
-# operation="request" — indistinguishable by label from any other
-# request-phase timeout. Adding a native request_timeout (or any new
-# streaming timer) to this set therefore requires revisiting that classifier
-# first.
-function _native_stream_kwargs(cfg::RequestConfig; major2::Bool=_HTTP_MAJOR2)
-    return major2 ?
-        (connect_timeout   = _native_seconds_real(cfg.connect_timeout),
-         read_idle_timeout = _native_seconds_real(cfg.stream_idle_timeout)) :
-        (connect_timeout   = _native_seconds_int(cfg.connect_timeout),)
+# native timers armed here WHILE THE IDLE BOUND IS FINITE.
+# `_classify_stream_timeout` attributes every non-connect native timeout on a
+# streaming attempt to the read-idle timer BY ELIMINATION, because HTTP.jl
+# surfaces a read-idle breach with the literal operation="request" —
+# indistinguishable by label from any other request-phase timeout. The
+# header-wait cap below is armed ONLY when the idle bound is disabled, exactly
+# so the elimination stays sound (that classifier requires
+# `stream_idle_timeout < Inf`); adding any other streaming timer requires
+# revisiting the classifier first.
+function _native_stream_kwargs(cfg::RequestConfig, bound::Float64=Inf; major2::Bool=_HTTP_MAJOR2)
+    major2 || return (connect_timeout = _native_seconds_int(cfg.connect_timeout),)
+    kw = (connect_timeout   = _native_seconds_real(cfg.connect_timeout),
+          read_idle_timeout = _native_seconds_real(cfg.stream_idle_timeout))
+    # Idle bound disabled: nothing above bounds the response-header wait, and the
+    # driver's request-phase watchdog cannot help either — its `close(io)` is
+    # swallowed before response headers exist on this major — so a mute peer
+    # would stall forever. Cap the header wait natively at the same request
+    # bound. ONLY in this branch: with a finite idle bound read_idle_timeout
+    # already bounds that wait (2.x waits min(response_header_timeout,
+    # read_idle_timeout)), and a second native non-connect timer would break the
+    # by-elimination attribution in `_classify_stream_timeout`.
+    return (cfg.stream_idle_timeout == Inf && bound < Inf) ?
+        (kw..., response_header_timeout = bound) : kw
 end
 
 # Phase attribution for a 2.x native TimeoutError operation label.
@@ -176,6 +187,47 @@ function _classify_stream_timeout(e, idle, cfg::RequestConfig, t0::UInt64)::Unio
 end
 
 """
+    _stream_teardown_noise(e, breach) -> Bool
+
+True when `e` is the TEARDOWN of a stream rather than its outcome: an already
+classified byte-gap breach (`breach`, from [`_classify_stream_timeout`] — the
+echo of our own guard's close OR the native read-idle timer, whichever won the
+race), a connection-level failure, or a typed bound. Both stream drivers consult
+this once a terminal result is recorded — teardown noise must then neither
+discard a billed generation nor re-POST it — while anything else (a throwing
+user callback, a decoding bug) still surfaces as a failure.
+
+Taking the CLASSIFIED breach rather than the guard handle is load-bearing: on
+HTTP 2.x the native read-idle timer can fire before our own guard, and it
+surfaces as an `HTTP.TimeoutError`, which is deliberately neither
+transport-shaped nor a `UniLMTimeout`. Only the classifier recognises it.
+"""
+_stream_teardown_noise(e, breach::Union{Nothing,UniLMTimeout})::Bool =
+    breach !== nothing || _is_transport_error(e) ||
+    _find_exception(x -> x isa UniLMTimeout, e) !== nothing
+
+"""
+    _exit_breach(idle, bound, cfg) -> Union{Nothing,UniLMTimeout}
+
+The typed breach owed by a read loop that exited WITHOUT an exception. Closing
+the socket is how a guard unblocks a blocked read, so a close landing while the
+driver is inside a user callback truncates the read into a clean EOF and the
+loop simply ends — with nothing to classify, a killed stream would be reported
+as a 200 carrying partial bytes. Returns the byte-gap breach when the idle guard
+fired, else the recorded request-phase bound, else `nothing` (a clean EOF really
+is the end of the stream).
+
+Reads guard STATE here, unlike `_stream_teardown_noise`, which needs the
+classifier: this path exists only because OUR guard's `close` turns a blocked
+read into a clean EOF. The 2.x native read-idle timer never reaches here — it
+raises from the read, so it always takes the throwing path.
+"""
+_exit_breach(idle, bound::Ref{Union{Nothing,UniLMTimeout}},
+             cfg::RequestConfig)::Union{Nothing,UniLMTimeout} =
+    _idle_fired(idle) ?
+        UniLMTimeout(:stream_idle, _idle_gap_s(idle), cfg.stream_idle_timeout) : bound[]
+
+"""
     _with_recorded_deadline(f, close!, limit, phase, slot) -> f()
 
 [`_with_deadline`](@ref) with the typed outcome RECORDED into `slot` before the
@@ -192,15 +244,27 @@ escapes `HTTP.open` is teardown noise with no `UniLMTimeout` in its chain. The
 recorded value lets the driver's catch restore the typed cause; transport
 errors with NO recorded bound are untouched and classify as today.
 `InterruptException` rethrows unrecorded.
+
+The completion race is recorded and raised the same way: when `f` returns a real
+value but the timer already won the resolution CAS, the guarded socket has been
+closed even though nothing threw. Nothing else would report that — the next read
+would raise a bare IOError on the closed socket, which classifies as a RETRYABLE
+transport failure (an extra billed wire attempt, with the phase lost) — so the
+bound that actually fired is recorded and thrown here instead.
 """
 function _with_recorded_deadline(f::Function, close!::Function, limit::Float64,
                                  phase::Symbol, slot::Ref{Union{Nothing,UniLMTimeout}})
-    try
-        return _with_deadline(f, close!, limit, phase)
+    t0 = time_ns()
+    result, fired = try
+        _with_deadline_reported(f, close!, limit, phase)
     catch e
         e isa UniLMTimeout && (slot[] = e)
         rethrow()
     end
+    fired || return result
+    bound = UniLMTimeout(phase, _elapsed_s(t0), limit)
+    slot[] = bound
+    throw(bound)
 end
 
 # Retry-loop predicate: a per-attempt timeout (:connect/:request — a timeout
@@ -316,7 +380,9 @@ Streaming attempt seam: wraps `HTTP.open` with `status_exception=false`,
 `retry=false`, and the per-major native stream kwargs (connect bound on both
 majors; a byte-gap idle fast path only where the native read timeout has
 per-read reset semantics — a whole-exchange native bound would kill long
-healthy streams). `f(io)` receives the raw stream untouched: the first-byte
+healthy streams — plus, where the idle bound is disabled, a native cap on the
+response-header wait at `min(request_timeout, remaining)`). `f(io)` receives
+the raw stream untouched: the first-byte
 deadline and the idle guard are the calling driver's job, because only the
 driver knows when the request body is written and the response headers
 arrive. `t0` is the driver's monotonic origin, accepted here so drivers
@@ -324,7 +390,7 @@ thread one origin through the seam.
 """
 function _http_open(f::Function, method::AbstractString, url::AbstractString, headers;
                     cfg::RequestConfig, t0::UInt64, kwargs...)::HTTP.Response
-    native = _native_stream_kwargs(cfg)
+    native = _native_stream_kwargs(cfg, min(cfg.request_timeout, _remaining_s(cfg, t0)))
     return HTTP.open(method, url, headers;
                      kwargs..., status_exception=false, retry=false, native...) do io
         f(io)
@@ -640,14 +706,30 @@ function _stream_error_result(chat::Chat, err::Dict{String,Any}, request_id)
 end
 
 # Shared stream finalization: final tool-call sweep, message assembly, terminal
-# callback. Used by the normal end-of-stream path and by the EOF-less finalize rule.
+# callback. Used by the normal end-of-stream path and by the teardown-recovery
+# rule. AT MOST ONCE per attempt, structurally: `m` records the assembled
+# message and is itself the guard, because assembly `take!`s the accumulation
+# buffers — a second call would deliver ANOTHER terminal callback carrying an
+# EMPTY message and commit that empty turn.
 function _finalize_stream_message!(state::StreamState, callback, on_tool_call,
-                                   close_ref::Ref{Bool})
+                                   close_ref::Ref{Bool}, m::Ref{Union{Message,Nothing}})
+    recorded = m[]
+    isnothing(recorded) || return (; msg=recorded, usage=state.usage)
     _fire_tool_calls!(on_tool_call, state, true)   # final sweep BEFORE the terminal callback
     msg = _build_stream_message(state)
-    usage = state.usage
+    m[] = msg          # record BEFORE the callback: re-entry must find the turn, not rebuild it
     !isnothing(callback) && callback(msg, close_ref)
-    (; msg, usage)
+    (; msg, usage=state.usage)
+end
+
+# Commit a completed streamed turn: history update, typed success, cost accrual.
+# Shared by the clean end-of-stream path and the teardown-recovery path, so a
+# turn recovered from teardown noise is committed exactly like a clean one.
+function _stream_success(chat::Chat, msg::Message, usage::Union{TokenUsage,Nothing})
+    update!(chat, msg)
+    result = LLMSuccess(message=msg, self=chat, usage=usage)
+    _accumulate_cost!(chat, result)
+    return result
 end
 
 """
@@ -655,9 +737,9 @@ end
 
 ONE streaming connection attempt with fresh accumulation state. `callback`/`on_tool_call`
 arrive pre-wrapped by `_stream_drive` (they flip its callback-fired flag). Returns the
-typed result plus the `HTTP.Response` (`nothing` on the EOF-less finalize path) so the
-caller can honor `Retry-After`; throws on connect/first-byte timeout and transport
-failures — retry classification is the caller's job. A breach of the byte-gap idle
+typed result plus the `HTTP.Response` (`nothing` when the turn was recovered from
+teardown noise) so the caller can honor `Retry-After`; throws on connect/first-byte
+timeout and transport failures — retry classification is the caller's job. A breach of the byte-gap idle
 bound throws `UniLMTimeout(:stream_idle, …)` wherever in the attempt it fires (on the
 2.x major the native read-idle timer also bounds the response-header wait, so it can
 undercut the request-phase bound; see `_classify_stream_timeout`). `StreamState`, the
@@ -732,10 +814,19 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
             # (or a non-200 error body) → no message → LLMFailure below.
             finished = status === :done ||
                        (status === :continue && !isnothing(state.finish_reason))
-            if isnothing(state.error) && !close_ref[] && finished
-                fin = _finalize_stream_message!(state, callback, on_tool_call, close_ref)
-                m[] = fin.msg
-                stream_usage[] = fin.usage
+            if isnothing(state.error) && !close_ref[]
+                if finished
+                    stream_usage[] =
+                        _finalize_stream_message!(state, callback, on_tool_call, close_ref, m).usage
+                else
+                    # No terminal, no exception: a guard's close landing while the
+                    # driver was inside a user callback truncates the read into a
+                    # clean EOF, so the loop just ends. Raise what the throwing
+                    # path would have raised, or the kill reads as a 200 with
+                    # partial bytes (or, worse, as a truncated success).
+                    breach = _exit_breach(idle[], bound, cfg)
+                    breach === nothing || throw(breach)
+                end
             end
             close_ref[] && @info "stream closed by user"
             HTTP.closeread(io)
@@ -745,11 +836,7 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
             # In-band `error` event on an HTTP-200 stream: never LLMSuccess.
             return (; result=_stream_error_result(chat, serr, _get_request_id(resp)), resp)
         elseif resp.status == 200 && !isnothing(m[])
-            msg = m[]::Message
-            update!(chat, msg)
-            result = LLMSuccess(message=msg, self=chat, usage=stream_usage[])
-            _accumulate_cost!(chat, result)
-            return (; result, resp)
+            return (; result=_stream_success(chat, m[]::Message, stream_usage[]), resp)
         else
             return (; result=LLMFailure(status=resp.status, response=String(take!(raw_buffer)),
                                         self=chat, request_id=_get_request_id(resp)), resp)
@@ -763,19 +850,22 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
         # response-header wait is still in progress). Never a retryable
         # transport failure, regardless of when in the attempt it fired.
         breach = _classify_stream_timeout(e, idle[], cfg, t0)
-        if breach !== nothing
-            if !isnothing(state.finish_reason)
-                # EOF-less terminal streams (Gemini has no [DONE] sentinel): a recorded
-                # finish_reason means the turn completed — finalize SUCCESS through the
-                # normal build path. Trailing usage chunks past the gap are lost; accepted.
-                fin = _finalize_stream_message!(state, callback, on_tool_call, Ref(false))
-                update!(chat, fin.msg)
-                result = LLMSuccess(message=fin.msg, self=chat, usage=fin.usage)
-                _accumulate_cost!(chat, result)
-                return (; result, resp=nothing)
-            end
-            throw(breach)
+        # Teardown of an exchange that already produced its answer. The turn is
+        # complete when EITHER the terminal message is recorded (`m[]`) or the
+        # provider's own completion marker is (`state.finish_reason` — the only
+        # signal an EOF-less provider gives, and all that survives when the
+        # connection dies on the read that would have carried the sentinel). The
+        # generation is billed and its deltas are already delivered, so teardown
+        # noise must neither discard it nor re-POST it (the caller's retry limbs
+        # would bill a second generation). Failures that are NOT teardown-shaped
+        # — a throwing user callback, a decoding bug — still surface below.
+        # Finalization is at-most-once, so this never doubles the terminal callback.
+        if isnothing(state.error) && (!isnothing(m[]) || !isnothing(state.finish_reason)) &&
+           _stream_teardown_noise(e, breach)
+            fin = _finalize_stream_message!(state, callback, on_tool_call, Ref(false), m)
+            return (; result=_stream_success(chat, fin.msg, fin.usage), resp=nothing)
         end
+        breach === nothing || throw(breach)
         # Recorded request-phase bound: the typed cause that initiated the
         # teardown takes precedence over whatever the library surfaced while
         # unwinding it (e.g. EPIPE from writing to the socket the bound

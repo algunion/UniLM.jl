@@ -1072,10 +1072,11 @@ end
 # The agentic streaming driver. Retries only BEFORE the first callback fires (the
 # spawned task is the return value). A silent peer fails typed: a missing first
 # byte within min(remaining, request_timeout) is a :request timeout; a byte-gap
-# beyond stream_idle_timeout is a :stream_idle timeout. An EOF-less provider whose
-# terminal event is already recorded finalizes as success even if the idle guard
-# closes the socket while draining the trailing bytes. InterruptException always
-# rethrows first (surfaces as a TaskFailedException at fetch).
+# beyond stream_idle_timeout is a :stream_idle timeout. Once the terminal event is
+# recorded the response stands: a connection failure or bound breach raised while
+# the socket is torn down finalizes the recorded outcome rather than discarding or
+# re-POSTing a billed generation. InterruptException always rethrows first
+# (surfaces as a TaskFailedException at fetch).
 function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig, t0::UInt64)
     Threads.@spawn begin
         io_ref = Ref{Union{HTTP.Stream,Nothing}}(nothing)
@@ -1122,10 +1123,21 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                     # Byte-gap guard: reset on every raw read (SSE comments and provider
                     # keep-alives reset the clock by construction).
                     guard = _idle_guard(() -> close(io), cfg.stream_idle_timeout)
-                    while !eof(io) && !close_ref[] && !done[]
-                        chunk = String(readavailable(io))
-                        _touch!(guard)
-                        write(raw_buffer, chunk)
+                    at_eof = false
+                    while !close_ref[] && !done[]
+                        if eof(io)
+                            # EOF flush (mirrors the chat driver): a peer can end
+                            # its last line WITHOUT the trailing newline — a
+                            # terminal event as the very last bytes is still ONE
+                            # COMPLETE line. Feed the newline that terminates it,
+                            # then stop. With an empty carry this decodes nothing.
+                            chunk = "\n"
+                            at_eof = true
+                        else
+                            chunk = String(readavailable(io))
+                            _touch!(guard)
+                            write(raw_buffer, chunk)
+                        end
                         status = decode_agentic_stream(r.service, chunk, state)
                         if status.terminal == :completed && status.data isa AbstractDict && haskey(status.data, "response")
                             # Flush residual text buffer to callback before building the ResponseObject
@@ -1173,6 +1185,16 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                             print(state.textbuff, full)
                             print(callback_buf, full)
                         end
+                        at_eof && break
+                    end
+                    if !done[] && !close_ref[]
+                        # No terminal, no exception: a guard's close landing while
+                        # the driver was inside a user callback truncates the read
+                        # into a clean EOF, so the loop just ends. Raise what the
+                        # throwing path would have raised, or the kill reads as a
+                        # 200 carrying partial bytes (mirror: _stream_attempt).
+                        breach = _exit_breach(guard, bound, cfg)
+                        breach === nothing || throw(breach)
                     end
                     close_ref[] && @info "Response stream closed by user"
                     HTTP.closeread(io)
@@ -1203,15 +1225,20 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                 # response-header wait is still in progress). Never a retryable transport
                 # failure, regardless of when in the attempt it fired.
                 breach = _classify_stream_timeout(e, guard, cfg, t0)
-                if breach !== nothing
-                    # Terminal already recorded — the fire landed during the post-loop
-                    # closeread on an EOF-less peer; trailing bytes past the gap are
-                    # acceptable, so finalize the recorded outcome rather than a timeout.
+                # Teardown of an exchange that already produced its answer: the
+                # RECORDED terminal is the outcome, and a connection failure or a
+                # bound breach raised while the socket is torn down must neither
+                # discard a billed generation nor re-POST it (the retry limbs
+                # below would bill a second one for a single caller request).
+                # Failures that are not teardown-shaped still surface. Twin of the
+                # chat driver's rule in `_stream_attempt`.
+                if _stream_teardown_noise(e, breach)
                     !isnothing(result[]) && return ResponseSuccess(response=result[]::ResponseObject)
                     te = terminal_error[]
                     !isnothing(te) && return _agentic_terminal_result(te, nothing, io_ref[])
-                    return ResponseCallError(error=sprint(showerror, breach), status=nothing, cause=breach)
                 end
+                breach === nothing ||
+                    return ResponseCallError(error=sprint(showerror, breach), status=nothing, cause=breach)
                 # Unwrap to the root cause before classifying: HTTP.open's 1.x request
                 # machinery (ExceptionRequest) wraps an exception thrown from the streaming
                 # handler, so the first-byte/deadline `_with_deadline` UniLMTimeout arrives

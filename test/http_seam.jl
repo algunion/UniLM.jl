@@ -80,6 +80,68 @@ stop!(m::MuteServer) = (close(m.server); wait(m.task); nothing)
     @test s1.connect_timeout === 10
 end
 
+@testset "streaming translation: a disabled idle bound still caps the header wait" begin
+    # With the byte-gap bound off, the 2.x major arms NO native non-connect timer,
+    # and the request-phase watchdog's `close(io)` is swallowed before response
+    # headers exist — a mute peer would stall forever. Cap the header wait
+    # natively at the same request bound instead. ONLY in that branch: with a
+    # finite idle bound, read_idle_timeout already bounds the header wait
+    # (HTTP 2.x waits min(response_header_timeout, read_idle_timeout)), and a
+    # second native non-connect timer would break the by-elimination phase
+    # attribution `_classify_stream_timeout` relies on.
+    off = UniLM._native_stream_kwargs(RequestConfig(stream_idle_timeout=Inf), 3.0; major2=true)
+    @test off.read_idle_timeout === 0.0
+    @test off.response_header_timeout === 3.0
+    on = UniLM._native_stream_kwargs(RequestConfig(stream_idle_timeout=7.0), 3.0; major2=true)
+    @test on.read_idle_timeout === 7.0
+    @test !haskey(on, :response_header_timeout)
+    # No finite request bound to cap with: nothing to arm.
+    @test !haskey(UniLM._native_stream_kwargs(RequestConfig(stream_idle_timeout=Inf), Inf; major2=true),
+                  :response_header_timeout)
+    # The 1.x major has no such kwarg — and needs none: its `close(io)` really
+    # does break the socket, so the watchdog already bounds the header wait.
+    @test !haskey(UniLM._native_stream_kwargs(RequestConfig(stream_idle_timeout=Inf), 3.0; major2=false),
+                  :response_header_timeout)
+end
+
+@testset "streaming with the idle bound disabled still fails typed at the request bound" begin
+    # End-to-end guarantee behind the translation above: a peer that accepts the
+    # connection and never sends response headers must fail as a typed
+    # UniLMTimeout(:request) at the configured bound, with the byte-gap guard
+    # switched off. The bounded observation below is the falsifier — an unbounded
+    # wait fails the test instead of hanging the suite.
+    if UniLM._HTTP_MAJOR2
+        m = mute_server()
+        cfg = RequestConfig(connect_timeout=Inf, request_timeout=1.0, total_deadline=Inf,
+                            stream_idle_timeout=Inf, max_attempts=1)
+        try
+            chat = Chat(model="mock", stream=true,
+                        service=GenericOpenAIEndpoint("http://127.0.0.1:$(m.port)", ""),
+                        messages=[Message(role=UniLM.RoleSystem, content="s"),
+                                  Message(role=UniLM.RoleUser, content="u")])
+            task = chatrequest!(chat; config=cfg)
+            # Bounded observation FIRST, and every assertion that reads the task
+            # is gated on it: an unbounded wait must fail this test, never hang it.
+            bounded = timedwait(() -> istaskdone(task), 15.0) === :ok
+            @test bounded
+            if bounded
+                res = fetch(task)
+                @test res isa LLMCallError
+                @test res.cause isa UniLM.UniLMTimeout
+                @test res.cause.phase === :request
+                @test m.accepted[] == 1    # one wire attempt; the bound is not a retry storm
+            end
+        finally
+            stop!(m)
+        end
+    else
+        # 1.x arms no native stream read timer at all — the watchdog is the whole
+        # enforcement there, and the streaming kwargs stay connect-only.
+        s1 = UniLM._native_stream_kwargs(RequestConfig(stream_idle_timeout=Inf), 1.0; major2=false)
+        @test collect(keys(s1)) == [:connect_timeout]
+    end
+end
+
 @testset "native timeout exceptions map to UniLMTimeout with phase attribution" begin
     cfg = RequestConfig(connect_timeout=1.0)
     t0 = time_ns()
@@ -118,6 +180,7 @@ end
     @test !UniLM._retryable_exception(UniLM._DeadlineBreach(:request, 1.0))
     @test UniLM._retryable_exception(Base.IOError("reset", 0))
     @test UniLM._retryable_exception(EOFError())
+    @test UniLM._retryable_exception(Base.SystemError("read", 54))   # syscall-level peer reset
     @test !UniLM._retryable_exception(ArgumentError("nope"))
 end
 

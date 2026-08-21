@@ -15,9 +15,12 @@ ImageEdit
 using UniLM
 using JSON
 
-# Minimal request
+# Minimal request. `model` is a sentinel: it stays "" on the struct and resolves
+# only when the request is serialized, so read the wire body to see what will be
+# sent rather than the field.
 ig = ImageGeneration(prompt="A watercolor painting of a sunset")
-println("Model: ", ig.model)
+println("Model field: ", repr(ig.model))
+println("Model on the wire: ", JSON.parse(JSON.json(ig))["model"])
 println("Prompt: ", ig.prompt)
 
 # Full options
@@ -106,7 +109,7 @@ end
 
 | Parameter            | Type   | Default           | Description                        |
 | :------------------- | :----- | :---------------- | :--------------------------------- |
-| `model`              | String | `"gpt-image-2"` | Image generation model             |
+| `model`              | String | `""`              | Sentinel; resolves on serialization to `"gpt-image-2"` for OpenAI |
 | `prompt`             | String | *(required)*      | Text description of the image      |
 | `n`                  | Int    | `1`               | Number of images (1–10)            |
 | `size`               | String | `"auto"`          | `"1024x1024"`, `"1536x1024"`, etc. |
@@ -115,3 +118,8 @@ end
 | `output_format`      | String | `"png"`           | `"png"`, `"webp"`, `"jpeg"`        |
 | `output_compression` | Int    | —                 | 0–100, for webp/jpeg               |
 | `user`               | String | —                 | End-user identifier                |
+| `input_fidelity`     | String | —                 | How closely to preserve an input image |
+| `moderation`         | String | —                 | Content-moderation strictness      |
+
+Defaults shown as quoted strings other than `model` are the **API's** defaults for
+an omitted field; the struct stores `nothing` and omits them from the request body.

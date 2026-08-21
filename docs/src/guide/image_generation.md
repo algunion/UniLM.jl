@@ -55,13 +55,24 @@ println(JSON.json(ig))
 
 | Parameter            | Values                                                | Default           |
 | :------------------- | :---------------------------------------------------- | :---------------- |
-| `model`              | `"gpt-image-2"`                                     | `"gpt-image-2"` |
+| `model`              | `"gpt-image-2"`                                       | `""` (see below)  |
 | `size`               | `"1024x1024"`, `"1536x1024"`, `"1024x1536"`, `"auto"` | API default       |
 | `quality`            | `"low"`, `"medium"`, `"high"`, `"auto"`               | API default       |
 | `background`         | `"transparent"`, `"opaque"`, `"auto"`                 | API default       |
 | `output_format`      | `"png"`, `"webp"`, `"jpeg"`                           | API default       |
 | `output_compression` | `0`–`100` (for webp/jpeg)                             | API default       |
 | `n`                  | `1`–`10`                                              | `1`               |
+| `input_fidelity`     | provider-defined                                      | API default       |
+| `moderation`         | provider-defined                                      | API default       |
+
+!!! note "`model` is a sentinel, not a resolved default"
+    Unlike [`Chat`](@ref), `ImageGeneration` does not resolve its model at
+    construction. The field holds `""` and resolves only when the request is
+    serialized — to `"gpt-image-2"` for OpenAI — so
+    `ImageGeneration(prompt="…").model` reads back as the empty string. Pass
+    `model=` explicitly if you need to read it, or inspect `JSON.json(ig)` to see
+    what will go on the wire. A service with no default image model throws
+    `ArgumentError` at serialization.
 
 ## Multiple Images
 

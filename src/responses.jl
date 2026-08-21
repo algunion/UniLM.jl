@@ -436,10 +436,13 @@ end
     tool_result(call_id, name, output) -> Dict
 
 Neutral multi-turn tool-result input item for the agentic verb. Feed a function's
-output back via `respond(previous_response_id=id, input=[tool_result(...)])` or through
-[`tool_loop`](@ref). Wire-neutral: OpenAI serializes it as `function_call_output`
-(ignoring `name`); the Gemini encoder translates it to `function_result` (which requires
-`name`). `output` is the function's return value as a string.
+output back via
+`respond(Respond(; previous_response_id=id, input=[tool_result(...)]))` — `respond`
+takes the input positionally or as a `Respond`, so a keyword-only call is a
+`MethodError` — or through [`tool_loop`](@ref). Wire-neutral: OpenAI serializes it
+as `function_call_output` (ignoring `name`); the Gemini encoder translates it to
+`function_result` (which requires `name`). `output` is the function's return value
+as a string.
 """
 tool_result(call_id::AbstractString, name::AbstractString, output::AbstractString) =
     Dict{String,Any}("type" => "function_call_output", "call_id" => call_id,

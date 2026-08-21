@@ -212,7 +212,7 @@ println("URL: ", UniLM.get_url(emb))
 | Embeddings | Widely adopted | OpenAI, Gemini, Mistral, Ollama, vLLM |
 | Responses API | Emerging (Open Responses) | OpenAI, Ollama, vLLM, Amazon Bedrock |
 | FIM Completion | Provider-specific | DeepSeek (beta), Ollama, vLLM |
-| Image Generation | Limited | OpenAI, Gemini, Ollama |
+| Image Generation | Limited | OpenAI |
 
 *Anthropic compat layer is not production-recommended by Anthropic.
 

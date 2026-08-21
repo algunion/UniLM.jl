@@ -12,12 +12,16 @@ using Base64
 # ─── Request Type ─────────────────────────────────────────────────────────────
 
 """
-    ImageGeneration(; prompt, model="gpt-image-2", kwargs...)
+    ImageGeneration(; prompt, model="", kwargs...)
 
 Configuration struct for an OpenAI Image Generation API request.
 
 # Key Fields
-- `model::String`: Model to use (default: `"gpt-image-2"`)
+- `model::String`: Model to use. The default is the sentinel `""`, which resolves
+  at serialization time to the service's default image model (`"gpt-image-2"` for
+  OpenAI) — so the field READS BACK as `""` until you set it explicitly, and a
+  service with no default image model throws `ArgumentError` when the request is
+  serialized. Inspect `JSON.json(ig)` to see the model that will go on the wire.
 - `prompt::String`: A text description of the desired image
 - `n::Union{Int,Nothing}`: Number of images to generate (1–10)
 - `size::Union{String,Nothing}`: Size (`"1024x1024"`, `"1536x1024"`, `"1024x1536"`, `"auto"`)
@@ -26,6 +30,8 @@ Configuration struct for an OpenAI Image Generation API request.
 - `output_format::Union{String,Nothing}`: File format (`"png"`, `"webp"`, `"jpeg"`)
 - `output_compression::Union{Int,Nothing}`: Compression (0–100, for `"webp"` and `"jpeg"`)
 - `user::Union{String,Nothing}`: End-user identifier
+- `input_fidelity::Union{String,Nothing}`: How closely to preserve an input image
+- `moderation::Union{String,Nothing}`: Content-moderation strictness
 
 # Examples
 ```julia
@@ -182,6 +188,9 @@ image_data(::ImageCallError) = String[]
     save_image(img_b64::String, filepath::String)
 
 Decode a base64-encoded image and save it to a file.
+
+Decoding happens **before** `filepath` is opened, so a malformed payload raises
+without touching whatever already lives there — a failed save costs nothing.
 
 # Examples
 ```julia

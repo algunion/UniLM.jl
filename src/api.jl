@@ -891,13 +891,19 @@ function Base.showerror(io::IO, e::LLMResultError)
 end
 
 """
-    is_send_valid(chat::Chat)::Bool
+    issendvalid(chat::Chat)::Bool
 
     Check if the conversation is valid for sending to the API.
 
-    This check employs a rough heuristic that works for practical purposes. 
-            
-    It checks if the conversation has at least two messages, the first message is from the system, the last message is from the user, and there are no consecutive messages from the same role. However, this is not a foolproof check and may not work in all cases (e.g. imagine that you passed another system message in the middle of the conversation).
+    Returns `true` only when the conversation has at least two messages, the first
+    is a system message, the LAST is a user message, and no two adjacent messages
+    share a role. Note the last two clauses are stricter than [`push!`](@ref),
+    which permits consecutive `tool` messages — this check has no such exemption,
+    and a conversation ending in a tool result is `false` here.
+
+    This is a heuristic, not a proof: it cannot catch every malformed shape (a
+    second system message in the middle passes the adjacency test). It never
+    throws — a `false` is a verdict, not an error.
 """
 function issendvalid(chat::Chat)::Bool
     length(chat) > 1 &&

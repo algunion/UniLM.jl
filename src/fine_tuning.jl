@@ -60,7 +60,7 @@ end
 Create a fine-tuning job. `training_file` is a file id from `upload_file(path, "fine-tune")`.
 `method` is e.g. `Dict("type"=>"supervised", "supervised"=>Dict("hyperparameters"=>...))`.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function create_fine_tuning_job(; model::String, training_file::String,
     validation_file::Union{String,Nothing}=nothing, method::Union{AbstractDict,Nothing}=nothing,
@@ -85,7 +85,7 @@ end
 """
     retrieve_fine_tuning_job(id; service=OPENAIServiceEndpoint)
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function retrieve_fine_tuning_job(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")
@@ -102,7 +102,7 @@ end
 """
     cancel_fine_tuning_job(id; service=OPENAIServiceEndpoint)
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function cancel_fine_tuning_job(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")
@@ -119,7 +119,7 @@ end
 """
     list_fine_tuning_jobs(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function list_fine_tuning_jobs(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")
@@ -140,7 +140,7 @@ end
 """
     list_fine_tuning_events(id; service=OPENAIServiceEndpoint)
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function list_fine_tuning_events(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")
@@ -157,7 +157,7 @@ end
 """
     list_fine_tuning_checkpoints(id; service=OPENAIServiceEndpoint)
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function list_fine_tuning_checkpoints(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")

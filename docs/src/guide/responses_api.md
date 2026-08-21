@@ -413,13 +413,16 @@ end
 | `prompt`                 | Dict           | —            | Prompt template reference                                 |
 | `prompt_cache_key`       | String         | —            | Cache key for prompt caching                              |
 | `prompt_cache_retention` | String         | —            | `"in-memory"` or `"24h"`                                  |
+| `safety_identifier`      | String         | —            | Stable end-user identifier; replaces the deprecated `user` |
 | `conversation`           | Any            | —            | Conversation context (String or Dict)                     |
 | `context_management`     | Vector         | —            | Context management strategies                             |
 | `stream_options`         | Dict           | —            | Streaming options (e.g. `include_usage`)                  |
 
 ## Retry Behaviour
 
-`respond` automatically retries on transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) with exponential backoff and jitter (up to 30 attempts, max 60s delay). On 429 responses, the `Retry-After` header is respected. This applies to all Responses API functions (`respond`, `get_response`, `delete_response`, etc.).
+`respond` automatically retries transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) with full-jitter exponential backoff, honoring `Retry-After`. Attempts and total time are bounded by the resolved [`RequestConfig`](@ref) (`max_attempts`, default 3; `total_deadline`, default 900 s), and a retry whose backoff would exceed the remaining deadline is not attempted — the call fails immediately with the last real response rather than sleeping past it. Pass `config=RequestConfig(max_attempts=1)` to disable retries for a call, or set scoped/process-wide defaults with `with_request_config` / `set_default_config!`. Timeouts surface as `ResponseCallError` with `status = nothing` and the `UniLMTimeout` (phase, elapsed, limit) in `.cause`.
+
+This applies to `respond` only. The Responses **lifecycle** operations — [`get_response`](@ref), [`delete_response`](@ref), [`cancel_response`](@ref), [`list_input_items`](@ref), [`compact_response`](@ref), [`count_input_tokens`](@ref) — make a single bounded attempt; `max_attempts` has no effect on them. See [Timeouts & Retries](@ref timeouts_guide).
 
 ## Parameter Validation
 

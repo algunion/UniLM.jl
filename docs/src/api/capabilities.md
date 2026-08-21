@@ -5,6 +5,33 @@ Functions for querying and validating provider capabilities.
 Each service endpoint declares which API features it supports. Request functions
 validate capabilities before dispatching, giving clear errors instead of HTTP 404s.
 
+## What "validate before dispatch" means
+
+Validation comes in two strengths, and which one applies depends on the verb:
+
+- **Platform and lifecycle verbs** — files, vector stores, conversations,
+  moderations, audio, batch, fine-tuning, containers, uploads, video, realtime,
+  FIM, prefix completion, image *edits* — validate **strictly**. An endpoint that
+  declares no capabilities at all is rejected, because these surfaces are
+  OpenAI-shaped and a backend that has not declared them would simply 404.
+- **The four primary verbs** — [`chatrequest!`](@ref) (`:chat`),
+  [`embeddingrequest!`](@ref) (`:embeddings`), [`respond`](@ref) (`:responses`
+  **or** `:agentic`, since the two agentic wires name the same surface
+  differently), and [`generate_image`](@ref) (`:images`) — validate only endpoints
+  that **declare** their capabilities. An endpoint with no
+  `provider_capabilities` method passes through unvalidated.
+
+That asymmetry is deliberate. Defining a `ServiceEndpoint` subtype is the
+documented way to reach an OpenAI-compatible backend this package does not ship,
+and such a backend cannot declare anything — refusing to dispatch it would be a
+false negative about a server the package knows nothing about. "Undeclared" is
+therefore *no applicable method*, never an empty capability set. Declaring
+capabilities is opt-in strictness: once your endpoint declares, the four primary
+verbs hold it to that declaration like any built-in.
+
+A rejection throws `ArgumentError` naming the feature and listing what the
+provider does support.
+
 ## Functions
 
 ```@docs

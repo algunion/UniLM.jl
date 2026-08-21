@@ -242,8 +242,8 @@ println(r.tool_choice)
 Return a tool's output on the next turn with [`tool_result`](@ref):
 
 ```julia
-respond(; previous_response_id=r1.response.id,
-        input=[tool_result("call_abc", "get_weather", "72F and sunny")])
+respond(Respond(; previous_response_id=r1.response.id,
+                input=[tool_result("call_abc", "get_weather", "72F and sunny")]))
 ```
 
 Gemini Interactions adds server-side hosted tools — see the

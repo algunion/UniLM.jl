@@ -100,7 +100,10 @@ _callerr(::Type{FileCallError}, e) = FileCallError(error=_error_text(e), status=
 
 Upload a file (multipart/form-data). Returns `FileSuccess`, `FileFailure`, or `FileCallError`.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout and retry budget for
+this call. Unlike the other Files verbs this one DOES retry: the multipart form is
+rebuilt for every attempt, so a transient 429/503 is retried rather than resent as an
+already-consumed form.
 """
 function upload_file(u::FileUpload; config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(u.service, :files, "Files API")
@@ -132,7 +135,7 @@ upload_file(path::String, purpose::String; service::ServiceEndpointSpec=OPENAISe
 
 List uploaded files. Returns `FileListSuccess`, `FileFailure`, or `FileCallError`.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function list_files(; purpose::Union{String,Nothing}=nothing, limit::Union{Int,Nothing}=nothing,
     after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
@@ -166,7 +169,7 @@ end
 
 Retrieve a file's metadata. Returns `FileSuccess`, `FileFailure`, or `FileCallError`.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function retrieve_file(file_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing)
@@ -190,7 +193,7 @@ end
 
 Delete a file. Returns `FileDeleteSuccess`, `FileFailure`, or `FileCallError`.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function delete_file(file_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing)
@@ -218,7 +221,7 @@ end
 Download a file's raw bytes. Returns `FileContentSuccess` (`.content::Vector{UInt8}`),
 `FileFailure`, or `FileCallError`. Use [`save_file_content`](@ref) to write to disk.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function file_content(file_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing)

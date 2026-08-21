@@ -22,7 +22,7 @@ Create an ephemeral client secret for client-side Realtime connections
 (`POST /v1/realtime/client_secrets`). `session` is an optional session-config dict.
 Returns `RealtimeSecretSuccess` (`.value`), `RealtimeFailure`, or `RealtimeCallError`.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function mint_realtime_secret(; session::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :realtime, "Realtime API")

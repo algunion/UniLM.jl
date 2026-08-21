@@ -48,7 +48,7 @@ _vid_resp(resp) = resp.status == 200 ?
 """
     create_video(; prompt, model="sora-2", seconds=nothing, size=nothing, input_reference=nothing, service=OPENAIServiceEndpoint)
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function create_video(; prompt::String, model::String="sora-2", seconds::Union{Int,Nothing}=nothing,
     size::Union{String,Nothing}=nothing, input_reference::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint,
@@ -71,7 +71,7 @@ end
 """
     retrieve_video(id; service=OPENAIServiceEndpoint)
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function retrieve_video(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :video, "Videos API")
@@ -88,7 +88,7 @@ end
 """
     list_videos(; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function list_videos(; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :video, "Videos API")
@@ -112,7 +112,7 @@ end
 """
     video_content(id; service=OPENAIServiceEndpoint)  → VideoContentSuccess (raw bytes)
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function video_content(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :video, "Videos API")

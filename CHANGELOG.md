@@ -3,6 +3,72 @@
 ## Unreleased
 
 ### Fixed
+- Streaming: the byte-gap idle watchdog read the clock before loading the
+  last-byte stamp, so a chunk arriving between the two reads made the unsigned
+  gap wrap to an astronomically large value and killed a healthy,
+  actively-streaming connection with a spurious `:stream_idle` timeout. The gap
+  is now computed stamp-first and saturating. The probability per check was
+  tiny, but it scaled with concurrent streams, so sustained high-concurrency
+  streaming workloads would eventually hit it.
+- Streaming: a completed turn now survives connection-teardown noise on both
+  streaming surfaces. Previously, once the terminal event had been delivered, a
+  transport error raised while the socket wound down (a reset from the peer, a
+  framing fault on the read that would have carried the end-of-stream sentinel)
+  could either discard the finished generation (surfacing a call error after
+  the user's callback already received the result) or — when no callback was
+  registered — re-send the entire request, billing a second generation for one
+  call. The recorded outcome now stands: finalization and the terminal callback
+  are structurally at-most-once, teardown noise after completion neither
+  discards nor re-POSTs, and the chat surface also recognizes the provider's
+  recorded finish reason as completion when the connection dies on the very
+  read that would have carried the closing sentinel. Failures that are not
+  teardown-shaped (a throwing user callback, a decoding defect) surface
+  exactly as before.
+- Streaming: a watchdog kill that lands while the driver is inside a user
+  callback truncates the socket read into a clean end-of-stream, so the read
+  loop ended without an exception and the kill was reported as a status-200
+  failure carrying partial bytes (or, with a recorded finish reason, as a
+  silently truncated success). Both drivers now consult the guards on the
+  no-exception exit path and surface the same typed `:stream_idle`/`:request`
+  timeout the throwing path produces.
+- Streaming: when the request-phase bound fires at the same instant the guarded
+  call completes, the watchdog closes the socket without anything unwinding;
+  the next read then raised a bare `IOError` that classified as a retryable
+  transport failure — one extra billed wire attempt and a lost phase. The
+  fired bound is now detected from guard state and surfaces as the typed
+  `:request` timeout.
+- Responses/Interactions streaming: a terminal event arriving as the very last
+  bytes of the stream without a trailing newline was never dispatched (the
+  chat surface already handled this), so a completed response surfaced as a
+  status-200 failure. The agentic read loop now feeds the terminating newline
+  at end-of-stream.
+- Streaming on HTTP 2.x with `stream_idle_timeout=Inf`: nothing bounded the
+  response-header wait (the request-phase watchdog's close is inert before
+  response headers exist on that major), so a mute peer stalled the stream
+  task indefinitely. The header wait is now natively capped at the effective
+  request bound whenever the idle bound is disabled, and breaches surface as
+  typed `:request` timeouts.
+- `SystemError` now classifies as a connection-level transport error: a peer
+  reset can surface as a raw `SystemError("read", ECONNRESET)` rather than an
+  `IOError`, and previously was neither retried nor mapped to a typed cause.
+- MCP: `mcp_request_timeout` now bounds a call's own exchange, measured from
+  the moment it acquires the session lock — not from the moment it asked. A
+  caller queued behind a concurrent exchange on the same session previously
+  burned its bound while waiting and, on breach, group-killed the server in
+  the middle of the holder's healthy exchange, which then surfaced to the
+  holder as a fabricated server-crash error.
+- MCP: the liveness check, auto-respawn, and the exchange now run under one
+  session-lock acquisition. Two concurrent calls on a session closed by a
+  timeout or crash previously could both observe it closed and both respawn,
+  spawning two server processes — one of them orphaned beyond the kill
+  ladder — and interleaving their handshakes on shared session state.
+- MCP: once a server process is spawned, any connect or respawn failure now
+  tears it down before the error propagates. Previously only timeout- and
+  crash-shaped failures did (a stdout banner that breaks JSON-RPC framing, or
+  an `initialize` error reply, leaked a live child process holding the
+  session's pipes), and a failed respawn attempt relabelled every recorded
+  close cause as a crash; the recorded cause is now preserved unless the
+  attempt itself diagnosed a new one.
 - Streaming: when the request-phase bound (first-byte deadline) closes a mute
   connection, the typed `UniLMTimeout` is now recorded before it unwinds
   through HTTP.jl and is restored as the surfaced cause. Previously — observed
@@ -13,6 +79,12 @@
   instead of the promised `UniLMTimeout`. Transport errors that arrive with no
   bound fired (for example a refused connection) classify exactly as before.
   Chat streaming and the Responses streaming surface share the fix.
+
+### Added
+- `test/load_probe.jl`: standalone, opt-in concurrency/load harness (not part
+  of `Pkg.test`) driving hundreds of concurrent mixed streaming and
+  non-streaming calls against local mock providers, with cross-talk markers,
+  descriptor/task-leak plateaus, retry-storm and teardown-noise batches.
 
 ## 0.15.0
 

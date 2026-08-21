@@ -13,15 +13,52 @@ const _RETRY_MAX_DELAY = 60.0
 
 _is_retryable(status::Integer)::Bool = status in (408, 429, 500, 502, 503, 504, 529)
 
+# RFC 7231 IMF-fixdate, the one HTTP-date form every sender must emit. Always GMT.
+const _IMF_FIXDATE = r"^[A-Za-z]{3}, (\d{2}) ([A-Za-z]{3}) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$"
+const _IMF_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+# Unix seconds for a UTC civil date-time (days-from-civil, era-based Gregorian).
+# Written out rather than pulled from `Dates` — that stdlib is not a dependency
+# of this package and one header form does not justify making it one.
+function _utc_epoch_seconds(y::Int, mo::Int, d::Int, h::Int, mi::Int, s::Int)::Float64
+    yr = y - (mo <= 2)
+    era = fld(yr, 400)
+    yoe = yr - era * 400
+    doy = div(153 * (mo + (mo > 2 ? -3 : 9)) + 2, 5) + d - 1
+    doe = yoe * 365 + div(yoe, 4) - div(yoe, 100) + doy
+    return (era * 146097 + doe - 719468) * 86400.0 + h * 3600 + mi * 60 + s
+end
+
+"""
+    _retry_after_seconds(resp) -> Union{Nothing,Float64}
+
+The wait `Retry-After` asks for, in seconds, or `nothing` when the header is
+absent or unparseable. RFC 7231 defines TWO forms and servers behind CDNs send
+both: delta-seconds, and an HTTP-date — reading only the first under-waits a 429
+storm by whatever the date form was asking for. A date already in the past
+yields `0.0`. Malformed values return `nothing` so the caller keeps its default
+backoff: a server sending garbage must never make a client throw.
+"""
+function _retry_after_seconds(resp::HTTP.Response)::Union{Nothing,Float64}
+    ra = strip(HTTP.header(resp, "Retry-After", ""))
+    isempty(ra) && return nothing
+    secs = tryparse(Int, ra)
+    isnothing(secs) || return max(0.0, Float64(secs))
+    m = match(_IMF_FIXDATE, ra)
+    isnothing(m) && return nothing
+    mo = findfirst(==(m[2]), _IMF_MONTHS)
+    isnothing(mo) && return nothing
+    due = _utc_epoch_seconds(parse(Int, m[3]), mo, parse(Int, m[1]),
+                             parse(Int, m[4]), parse(Int, m[5]), parse(Int, m[6]))
+    return max(0.0, due - time())
+end
+
 function _retry_delay(retry::Integer, resp::HTTP.Response)::Float64
     computed = min(_RETRY_BASE * _RETRY_FACTOR^retry, _RETRY_MAX_DELAY)
     delay = rand() * computed  # full jitter
-    ra = HTTP.header(resp, "Retry-After", "")
-    if !isempty(ra)
-        parsed = tryparse(Int, ra)
-        !isnothing(parsed) && parsed > 0 && (delay = max(Float64(parsed), delay))
-    end
-    delay
+    ra = _retry_after_seconds(resp)
+    return isnothing(ra) ? delay : max(ra, delay)
 end
 
 """

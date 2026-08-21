@@ -637,6 +637,58 @@ end
     end
 end
 
+# IMF-fixdate for a UTC instant, derived independently of the parser under test
+# (civil-from-days; the parser computes the inverse). Weekday from the epoch:
+# 1970-01-01 was a Thursday.
+const _IMF_WD = ("Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed")
+const _IMF_MO = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+function _imf_fixdate(t::Real)::String
+    days, secs = fldmod(floor(Int, t), 86400)
+    z = days + 719468
+    era = fld(z, 146097)
+    doe = z - era * 146097
+    yoe = div(doe - div(doe, 1460) + div(doe, 36524) - div(doe, 146096), 365)
+    doy = doe - (365 * yoe + div(yoe, 4) - div(yoe, 100))
+    mp = div(5 * doy + 2, 153)
+    d = doy - div(153 * mp + 2, 5) + 1
+    m = mp < 10 ? mp + 3 : mp - 9
+    y = yoe + era * 400 + (m <= 2)
+    h, r = fldmod(secs, 3600)
+    mi, s = fldmod(r, 60)
+    return string(_IMF_WD[mod(days, 7)+1], ", ", lpad(d, 2, '0'), " ", _IMF_MO[m], " ", y, " ",
+                  lpad(h, 2, '0'), ":", lpad(mi, 2, '0'), ":", lpad(s, 2, '0'), " GMT")
+end
+
+@testset "Retry-After accepts both RFC 7231 forms" begin
+    # RFC 7231 allows delta-seconds OR an IMF-fixdate (always GMT). Ignoring the
+    # date form under-waits during a 429 storm: at retry 0 the jitter is capped at
+    # _RETRY_BASE (1 s), so any delay above that can only come from the header.
+    ahead = HTTP.Response(429, ["Retry-After" => _imf_fixdate(time() + 3)])
+    @test UniLM._retry_delay(0, ahead) > 2.0
+
+    # Ground truth for the date math: RFC 7231's own example instant.
+    @test _imf_fixdate(784111777) == "Sun, 06 Nov 1994 08:49:37 GMT"
+    @test UniLM._utc_epoch_seconds(1994, 11, 6, 8, 49, 37) == 784111777.0
+
+    # Parser: future date → the remaining gap; past date → 0; garbage → nothing
+    # (the caller then keeps its default backoff — a server must never make us throw).
+    @test UniLM._retry_after_seconds(ahead) ≈ 3.0 atol = 1.5
+    @test UniLM._retry_after_seconds(HTTP.Response(429, ["Retry-After" => "Sun, 06 Nov 1994 08:49:37 GMT"])) == 0.0
+    @test UniLM._retry_after_seconds(HTTP.Response(429, ["Retry-After" => "next tuesday"])) === nothing
+    @test UniLM._retry_after_seconds(HTTP.Response(429, ["Retry-After" => "Sun, 06 Nov 1994 08:49:37 PST"])) === nothing
+    @test UniLM._retry_after_seconds(HTTP.Response(429)) === nothing
+    @test UniLM._retry_after_seconds(HTTP.Response(429, ["Retry-After" => "7"])) == 7.0
+
+    # A past date and garbage both fall back to jitter alone.
+    past = HTTP.Response(429, ["Retry-After" => "Sun, 06 Nov 1994 08:49:37 GMT"])
+    @test 0.0 <= UniLM._retry_delay(0, past) <= 1.0
+
+    # The date form goes through the SAME budget arithmetic as the seconds form:
+    # a wait beyond the remaining deadline is reported as :budget, never slept.
+    action, delay = UniLM._retry_pause(RequestConfig(total_deadline=1.0), time_ns(), 1, ahead)
+    @test action === :budget && delay > 2.0
+end
+
 @testset "Retry constants" begin
     @test UniLM._RETRY_BASE == 1.0
     @test UniLM._RETRY_FACTOR == 2.0
@@ -644,13 +696,15 @@ end
 end
 
 @testset "_accumulate_cost! fallback is a no-op for non-success" begin
-    # requests.jl:486 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
+    # requests.jl:542 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
     # success types are specialized in accounting.jl, so a failure result must land here:
     # return nothing AND leave cumulative cost untouched (falsifies accidental accumulation).
+    # The line is a locator, not the contract: re-point it (here and in the note above)
+    # whenever code is added above the stub.
     chat = Chat(model="gpt-4.1-nano")
     chat._cumulative_cost[] = 0.25
     failure = LLMFailure(response="server exploded", status=500, self=chat)
-    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 486
+    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 542
     @test UniLM._accumulate_cost!(chat, failure) === nothing
     @test cumulative_cost(chat) == 0.25       # unchanged: the fallback did not add anything
 

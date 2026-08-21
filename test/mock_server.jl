@@ -727,9 +727,10 @@ try
         @test poll_batch("batch-1"; interval=0.01, timeout=0.03, service=MockServiceEndpoint) isa BatchCallError
         @test poll_file_batch("vs-1", "batch-1"; interval=0.01, timeout=0.03, service=MockServiceEndpoint) isa VectorStoreCallError
 
-        # moderations is_flagged is failure-safe
-        @test is_flagged(ModerationFailure(response="x", status=500)) == false
-        @test is_flagged(ModerationCallError(error="x")) == false
+        # a failed moderation call produced no verdict, so is_flagged has nothing to
+        # report: it throws rather than answering "not flagged" for content nobody scored
+        @test_throws ArgumentError is_flagged(ModerationFailure(response="x", status=500))
+        @test_throws ArgumentError is_flagged(ModerationCallError(error="x"))
 
         set_error!(200, "")
     end

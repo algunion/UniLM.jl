@@ -17,7 +17,24 @@ _agentic_url(::Type{GEMINIServiceEndpoint})::String = GEMINI_NATIVE_BASE * INTER
 
 # ─── Request encoding (neutral Respond → Interactions body, snake_case) ───────
 
+# The neutral Respond fields this wire maps. Everything else is derived from
+# `fieldnames(Respond)`, so a field added to the neutral request is unsupported
+# here until it is deliberately mapped — new surfaces fail loud by default.
+const _INTERACTIONS_MAPPED_FIELDS = (:service, :model, :input, :instructions, :tools, :tool_choice,
+    :temperature, :top_p, :max_output_tokens, :stream, :store, :previous_response_id, :background)
+const _INTERACTIONS_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Respond), _INTERACTIONS_MAPPED_FIELDS))
+
+# A set field the body never carries would vanish between the caller's request and
+# the wire (structured output via `text`, `reasoning`, `metadata`, …). Refuse instead.
+function _interactions_reject_unmapped(r::Respond)
+    set = Symbol[f for f in _INTERACTIONS_UNMAPPED_FIELDS if !isnothing(getfield(r, f))]
+    isempty(set) || throw(ArgumentError(
+        "Gemini Interactions does not support the Respond field(s) $(join(set, ", ")) — " *
+        "unset them or send the request to an OpenAI Responses service"))
+end
+
 function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
+    _interactions_reject_unmapped(r)
     body = Dict{Symbol,Any}(:model => r.model, :input => _interactions_input(r.input))
     isnothing(r.instructions) || (body[:system_instruction] = r.instructions)
     isnothing(r.tools) || (body[:tools] = [_interactions_tool(t) for t in r.tools])
@@ -119,7 +136,8 @@ function _interaction_output(steps)::Vector{Any}
         t = get(s, "type", "")
         if t == "model_output"
             parts = Any[]
-            for c in get(s, "content", ())
+            # `content` is null on a model_output step that produced no parts.
+            for c in _as_iter(get(s, "content", ()))
                 c isa AbstractDict && get(c, "type", "") == "text" &&
                     push!(parts, Dict{String,Any}("type" => "output_text", "text" => get(c, "text", "")))
             end
@@ -164,13 +182,20 @@ function _interaction_usage(u::AbstractDict)
         "output_tokens_details" => Dict{String,Any}("reasoning_tokens" => _n("total_thought_tokens")))
 end
 
-# OpenAI-Responses-shaped dict (used by non-stream decode + streaming assembly).
-_interaction_response_dict(data::AbstractDict) = Dict{String,Any}(
-    "id" => get(data, "id", ""),
-    "status" => get(data, "status", ""),
-    "model" => get(data, "model", ""),
-    "output" => _interaction_output(get(data, "steps", Any[])),
-    "usage" => _interaction_usage(get(data, "usage", nothing)))
+# OpenAI-Responses-shaped dict for the streamed terminal. The normalized views are
+# overlaid on a COPY of the raw interaction, because the driver reads the response
+# object AND its raw capture from this one dict: keeping the wire's other fields
+# (error, metadata, …) gives a streamed result the same surface the non-stream
+# `_interaction_response_object` preserves.
+function _interaction_response_dict(data::AbstractDict)::Dict{String,Any}
+    d = Dict{String,Any}(data)
+    d["id"] = get(data, "id", "")
+    d["status"] = get(data, "status", "")
+    d["model"] = get(data, "model", "")
+    d["output"] = _interaction_output(get(data, "steps", Any[]))
+    d["usage"] = _interaction_usage(get(data, "usage", nothing))
+    d
+end
 
 function _interaction_response_object(data::AbstractDict)::ResponseObject
     ResponseObject(
@@ -242,8 +267,12 @@ function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
                 if isempty(rdict["output"])
                     rdict["output"] = _assembled_interaction_output(state)
                 end
+                # A failed interaction takes the driver's typed-failure limb (as
+                # OpenAI's response.failed does); every other terminal status —
+                # completed, requires_action — is a normal result.
+                term = rdict["status"] == "failed" ? :failed : :completed
                 return (; done=true, event=ev,
-                        data=Dict{String,Any}("response" => rdict), terminal=:completed)
+                        data=Dict{String,Any}("response" => rdict), terminal=term)
             end
             # step.stop needs no handling beyond what assembly already holds:
             # arguments are complete once their deltas stop arriving, and the
@@ -276,7 +305,12 @@ function _assembled_interaction_output(state::AgenticStreamState)::Vector{Any}
             push!(out, Dict{String,Any}(step))   # thought + hosted-tool steps: raw, signature intact
         end
     end
+    # Read the accumulated text back WITHOUT consuming it: the driver owns
+    # textbuff and emits deltas by diffing it against what it has already sent,
+    # so draining here would swallow every delta that shared a read with the
+    # terminal event (a stream arriving in one read would emit nothing).
     txt = String(take!(state.textbuff))
+    print(state.textbuff, txt)
     isempty(txt) || push!(out, _text_message(txt))
     out
 end

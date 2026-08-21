@@ -312,6 +312,150 @@ end
                                      error=nothing, metadata=nothing, raw=rd)) == "Hi there"
 end
 
+using Sockets
+
+# Localhost SSE endpoint riding the Interactions wire seam, so the real streaming
+# driver runs offline. The handler writes the whole event stream in ONE flush, so
+# the driver sees the text deltas and the terminal event in a single read — the
+# shape a short generation actually produces.
+const _IX_MOCK_URL = Ref("http://127.0.0.1:0")
+struct _IxStreamMock <: UniLM.ServiceEndpoint end
+UniLM._agentic_url(::Type{_IxStreamMock}) = _IX_MOCK_URL[]
+UniLM.encode_agentic(::Type{_IxStreamMock}, r::Respond) = UniLM.encode_agentic(GEMINIServiceEndpoint, r)
+UniLM.decode_agentic_stream(::Type{_IxStreamMock}, chunk::String, st::UniLM.AgenticStreamState) =
+    UniLM.decode_agentic_stream(GEMINIServiceEndpoint, chunk, st)
+UniLM.auth_header(::Type{_IxStreamMock}) = ["Content-Type" => "application/json"]
+UniLM.default_model(::Type{_IxStreamMock}) = "mock-model"
+
+function _ix_sse_server(body::String)
+    server = nothing; port = 0
+    for attempt in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+        try
+            server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
+                read(http)
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "text/event-stream")
+                HTTP.startwrite(http)
+                write(http, body)
+            end
+            break
+        catch; attempt == 5 && rethrow(); end
+    end
+    server, "http://127.0.0.1:$port"
+end
+
+@testset "Interactions stream — a failed interaction is a typed failure, not a success" begin
+    interaction = Dict("id" => "v1_x", "object" => "interaction", "status" => "failed",
+        "model" => "gemini-3.1-flash-lite",
+        "error" => Dict("code" => "safety_block", "message" => "blocked"),
+        "metadata" => Dict("trace" => "t7"),
+        "usage" => Dict("total_input_tokens" => 3, "total_output_tokens" => 0, "total_tokens" => 3))
+    ro = UniLM.decode_agentic(GEMINIServiceEndpoint,
+        HTTP.Response(200, [], Vector{UInt8}(JSON.json(interaction))))
+    @test ro.status == "failed" && ro.error["code"] == "safety_block" && ro.metadata["trace"] == "t7"
+
+    st = UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "event: interaction.completed\ndata: " *
+        JSON.json(Dict("event_type" => "interaction.completed", "interaction" => interaction)) * "\n\n",
+        UniLM.AgenticStreamState())
+    # the driver's typed-failure limb, exactly as OpenAI's response.failed takes it
+    @test st.terminal == :failed
+    rd = st.data["response"]
+    @test rd["status"] == "failed"
+    @test rd["error"] == ro.error                          # error surface kept
+    @test rd["metadata"] == ro.metadata                    # metadata surface kept
+    @test issubset(keys(ro.raw), keys(rd))                 # raw capture not reduced vs non-stream
+    res = UniLM._agentic_terminal_result(st.data, 200, nothing)
+    @test res isa ResponseFailure && res.status == 200
+    @test JSON.parse(res.response; dicttype=Dict{String,Any})["error"]["code"] == "safety_block"
+end
+
+@testset "Interactions decode — null step content is empty, not a crash" begin
+    # `content: null` is spec-legal: a model_output step that produced no parts.
+    body = Dict("id" => "v1_n", "status" => "completed", "model" => "gemini-3.1-flash-lite",
+        "steps" => [Dict("type" => "model_output", "content" => nothing),
+                    Dict("type" => "model_output",
+                         "content" => [Dict("type" => "text", "text" => "ok")])])
+    ro = UniLM.decode_agentic(GEMINIServiceEndpoint,
+        HTTP.Response(200, [], Vector{UInt8}(JSON.json(body))))
+    @test output_text(ro) == "ok"
+    @test ro.output[1]["content"] == Any[]
+
+    # streamed: a throw here is swallowed by the SSE drop policy (counted as a
+    # dropped line), turning a clean interaction into a failure or an idle stall.
+    before = UniLM._SSE_DROPPED_LINES[]
+    st = UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+        "event: interaction.completed\ndata: " *
+        JSON.json(Dict("event_type" => "interaction.completed", "interaction" => body)) * "\n\n",
+        UniLM.AgenticStreamState())
+    @test UniLM._SSE_DROPPED_LINES[] == before
+    @test st.terminal == :completed
+    @test st.data["response"]["output"][1]["content"] == Any[]
+    @test st.data["response"]["output"][2]["content"][1]["text"] == "ok"
+end
+
+@testset "Interactions stream — a one-read stream still delivers its text deltas" begin
+    sse = "event: step.delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"Hello \"}}\n\n" *
+          "event: step.delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"world\"}}\n\n" *
+          "event: interaction.completed\ndata: {\"event_type\":\"interaction.completed\",\"interaction\":{\"id\":\"i_1r\",\"status\":\"completed\",\"model\":\"m\",\"usage\":{\"total_tokens\":3}}}\n\n" *
+          "event: done\ndata: [DONE]\n\n"
+    # (a) decode layer: the terminal rebuild must leave the driver-owned text buffer
+    # intact — the driver emits deltas by diffing it against what it already sent.
+    st = UniLM.AgenticStreamState()
+    r = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, sse, st)
+    @test r.terminal == :completed
+    @test r.data["response"]["output"][1]["content"][1]["text"] == "Hello world"
+    @test String(take!(st.textbuff)) == "Hello world"
+
+    # (b) end-to-end through the real driver: every delta reaches the callback.
+    server, url = _ix_sse_server(sse)
+    _IX_MOCK_URL[] = url
+    deltas = String[]
+    try
+        t = respond(Respond(service=_IxStreamMock, input="hi", stream=true);
+                    config=RequestConfig(request_timeout=5.0, total_deadline=20.0,
+                                         stream_idle_timeout=5.0, max_attempts=1),
+                    callback=(c, _close) -> c isa String && push!(deltas, c))
+        @test timedwait(() -> istaskdone(t), 25.0) == :ok
+        res = fetch(t)
+        @test res isa ResponseSuccess
+        @test join(deltas) == "Hello world"      # nothing swallowed by the terminal rebuild
+        @test output_text(res) == "Hello world"  # ... and the final output is still complete
+    finally
+        close(server)
+    end
+end
+
+@testset "Interactions encode — an unsupported Respond field fails loud" begin
+    # Every field the Interactions body maps, set at once: the encoding is
+    # byte-for-byte the one this wire produced before the guard existed.
+    r = Respond(service=GEMINIServiceEndpoint, model="gemini-3.1-flash-lite", input="Say hi",
+                instructions="Be terse", tools=[function_tool("get_weather", "Get weather")],
+                tool_choice="auto", temperature=0.2, max_output_tokens=64,
+                previous_response_id="v1_prev", store=true, background=false, stream=true)
+    @test UniLM.encode_agentic(GEMINIServiceEndpoint, r) ==
+        """{"background":false,"generation_config":{"max_output_tokens":64,"temperature":0.2,"tool_choice":{"allowed_tools":{"mode":"auto"}}},"input":"Say hi","model":"gemini-3.1-flash-lite","previous_interaction_id":"v1_prev","store":true,"stream":true,"system_instruction":"Be terse","tools":[{"description":"Get weather","name":"get_weather","type":"function"}]}"""
+
+    # A field this wire has no mapping for must not vanish from the request.
+    cases = (:text => UniLM.TextConfig(), :reasoning => UniLM.Reasoning(effort="low"),
+             :metadata => Dict("k" => "v"), :truncation => "auto",
+             :parallel_tool_calls => true, :user => "u1", :include => ["a"],
+             :max_tool_calls => 2, :service_tier => "flex", :top_logprobs => 3,
+             :prompt => Dict("id" => "p"), :prompt_cache_key => "k",
+             :prompt_cache_retention => "24h", :safety_identifier => "s",
+             :conversation => "conv_1", :context_management => [Dict("type" => "x")],
+             :stream_options => Dict("include_usage" => true))
+    @test Set(first.(cases)) == Set(UniLM._INTERACTIONS_UNMAPPED_FIELDS)   # every unmapped field covered
+    for (field, value) in cases
+        rr = Respond(; service=GEMINIServiceEndpoint, input="x", (field => value,)...)
+        err = try UniLM.encode_agentic(GEMINIServiceEndpoint, rr); nothing catch e; e end
+        @test err isa ArgumentError
+        @test err isa ArgumentError && occursin(String(field), err.msg)
+    end
+end
+
 @testset "Interactions stream — byte re-split invariance of assembly" begin
     golden = "event: step.start\ndata: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"function_call\",\"id\":\"fc_s\",\"name\":\"f\",\"arguments\":{}}}\n\n" *
              "event: step.delta\ndata: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"arguments_delta\",\"arguments\":\"{\\\"a\\\":1}\"}}\n\n" *

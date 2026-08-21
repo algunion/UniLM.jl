@@ -77,7 +77,7 @@ function _conv_http(method::String, url::String, service, cfg::RequestConfig, re
         _http(method, url, headers, body; cfg, remaining)
 end
 
-_conv_err(e) = ConversationCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+_conv_err(e) = ConversationCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
 
 # ─── Requests ─────────────────────────────────────────────────────────────────
 

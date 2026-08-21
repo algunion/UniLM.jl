@@ -809,6 +809,26 @@ Exception-level error during a Chat Completions API call (network failure, JSON 
     cause::Union{Nothing,Exception} = nothing
 end
 
+# Every call-error result keeps the raw exception in `cause` — dispatching on it is
+# the point of the field. Julia's default `show` recurses into it, though, and a
+# transport wrapper renders as a full request dump on HTTP.jl 1.x, so printing the
+# result would undo the redaction its `error` string already went through. Name the
+# cause by TYPE instead: the object stays untouched and still reachable, it just
+# stops printing its payload. Shared by the Chat/Embeddings/Responses/FIM results.
+function _show_call_error(io::IO, name::AbstractString, err::AbstractString,
+                          status, request_id, cause)
+    print(io, name, "(error=")
+    show(io, err)
+    print(io, ", status=", repr(status))
+    isnothing(request_id) || print(io, ", request_id=", repr(request_id))
+    print(io, ", cause=")
+    isnothing(cause) ? print(io, "nothing") : print(io, typeof(cause))
+    print(io, ")")
+end
+
+Base.show(io::IO, r::LLMCallError) =
+    _show_call_error(io, "LLMCallError", r.error, r.status, r.request_id, r.cause)
+
 # ─── Result consumption ──────────────────────────────────────────────────────
 
 """
@@ -1119,6 +1139,9 @@ Exception-level error during an Embeddings API call (network, parse, timeout, et
     status::Union{Int,Nothing} = nothing
     cause::Union{Nothing,Exception} = nothing
 end
+
+Base.show(io::IO, r::EmbeddingCallError) =
+    _show_call_error(io, "EmbeddingCallError", r.error, r.status, nothing, r.cause)
 
 """
     embedding_vectors(r::EmbeddingSuccess)

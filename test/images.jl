@@ -325,3 +325,26 @@ end
         rm(imgpath; force=true)
     end
 end
+
+using Base64
+
+@testset "save_image decodes before it opens the destination" begin
+    # `open(path, "w")` truncates on entry, so decoding inside the block meant a
+    # malformed payload destroyed whatever already lived there and left a 0-byte
+    # stub. A decode that cannot succeed must cost the caller nothing.
+    path = tempname() * ".png"
+    original = "PRECIOUS ORIGINAL BYTES"
+    write(path, original)
+    try
+        @test_throws ArgumentError save_image("!!!not base64!!!", path)
+        @test isfile(path)
+        @test read(path, String) == original      # untouched, not a 0-byte stub
+
+        # The happy path still writes, and still overwrites.
+        payload = base64encode("new image bytes")
+        @test save_image(payload, path) == path
+        @test read(path, String) == "new image bytes"
+    finally
+        rm(path; force=true)
+    end
+end

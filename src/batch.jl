@@ -48,7 +48,7 @@ _parse_batch(d::AbstractDict) = BatchObject(id=d["id"], status=get(d, "status", 
     output_file_id=get(d, "output_file_id", nothing), error_file_id=get(d, "error_file_id", nothing),
     request_counts=Dict{String,Any}(get(d, "request_counts", Dict{String,Any}())), raw=Dict{String,Any}(d))
 
-_batch_err(e) = BatchCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+_batch_err(e) = BatchCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
 
 """
     create_batch(input_file_id, endpoint; completion_window="24h", metadata=nothing, service=OPENAIServiceEndpoint)

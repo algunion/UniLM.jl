@@ -40,7 +40,7 @@ end
 @kwdef struct ContainerCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
 
 _parse_container(d::AbstractDict) = ContainerObject(id=d["id"], status=get(d, "status", nothing), name=get(d, "name", nothing), raw=Dict{String,Any}(d))
-_cont_err(e) = ContainerCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+_cont_err(e) = ContainerCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
 _cont_resp(resp) = resp.status == 200 ?
     ContainerSuccess(response=_parse_container(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
     ContainerFailure(response=String(resp.body), status=resp.status)

@@ -803,6 +803,9 @@ Exception-level error during a Responses API call (network, parsing, etc.).
     cause::Union{Nothing,Exception} = nothing
 end
 
+Base.show(io::IO, r::ResponseCallError) =
+    _show_call_error(io, "ResponseCallError", r.error, r.status, r.request_id, r.cause)
+
 
 # ─── Accessor Functions ──────────────────────────────────────────────────────
 
@@ -1279,7 +1282,7 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                 if _is_transport_error(e) && !callback_fired[] && attempt < cfg.max_attempts
                     action, delay = _retry_pause(cfg, t0, attempt, nothing)
                     if action === :budget
-                        @warn "Response stream: retry backoff exceeds the remaining total_deadline; failing now" error = string(e)
+                        @warn "Response stream: retry backoff exceeds the remaining total_deadline; failing now" error = _error_text(e)
                     else
                         @debug "Response stream transport error; retrying" attempt
                         sleep(delay); attempt += 1; continue
@@ -1287,7 +1290,7 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                 end
                 statuserror = hasproperty(u, :status) ? u.status : nothing
                 req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : _get_request_id(e)
-                return ResponseCallError(error=string(e), status=statuserror, request_id=req_id, cause=u isa Exception ? u : nothing)
+                return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id, cause=u isa Exception ? u : nothing)
             finally
                 # Disarm on EVERY attempt exit — every return, every continue, and the
                 # interrupt rethrow (which is neither) — so the periodic idle timer never
@@ -1355,6 +1358,10 @@ callback(chunk::Union{String, ResponseObject}, close::Ref{Bool})
 A user `InterruptException` during a stream is not swallowed — it rethrows
 inside the task and surfaces as a `TaskFailedException` at `fetch`.
 
+Throws `ArgumentError` before any network I/O when `r.service` is an endpoint type
+that declares its capabilities and lists neither `:responses` (OpenAI wire) nor
+`:agentic` (Gemini Interactions).
+
 # Examples
 ```julia
 r = Respond(input="Tell me a joke")
@@ -1365,6 +1372,7 @@ end
 ```
 """
 function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callback=nothing)
+    _validate_agentic_capability(r.service)
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
@@ -1380,7 +1388,16 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
         url = get_url(r.service, r)
         resp = _http_with_retries(cfg, t0, "POST", url, auth_header(r.service), body)
         if resp.status == 200
-            return ResponseSuccess(response=decode_agentic(r.service, resp))
+            decoded = decode_agentic(r.service, resp)
+            # A generation that came back `failed` is a failure, whichever way it was
+            # requested. The streamed limb already routes `response.failed` (OpenAI)
+            # and a failed interaction (Gemini) to ResponseFailure; wrapping the same
+            # outcome in ResponseSuccess here made `issuccess` depend on `stream`.
+            # ONLY "failed": cancelled, expired, in_progress and requires_action are
+            # legitimate terminals of the background and tool-action flows.
+            decoded.status == "failed" && return ResponseFailure(
+                response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
+            return ResponseSuccess(response=decoded)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
@@ -1389,7 +1406,7 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
         e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
+        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -1479,7 +1496,7 @@ function get_response(response_id::String; service::ServiceEndpointSpec=OPENAISe
         e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
+        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -1511,7 +1528,7 @@ function delete_response(response_id::String; service::ServiceEndpointSpec=OPENA
         e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
+        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -1554,7 +1571,7 @@ function list_input_items(response_id::String;
         e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
+        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -1591,7 +1608,7 @@ function cancel_response(response_id::String; service::ServiceEndpointSpec=OPENA
         e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
+        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -1639,7 +1656,7 @@ function compact_response(; model::String="gpt-5.5",
         e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
+        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -1684,6 +1701,6 @@ function count_input_tokens(; model::String="gpt-5.5",
         e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=string(e), status=statuserror, request_id=req_id)
+        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
     end
 end

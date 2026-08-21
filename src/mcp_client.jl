@@ -391,6 +391,27 @@ end
 
 _transport_connect!(t::HTTPTransport) = (t.connected = true; nothing)
 
+# Caller-supplied headers are where MCP credentials live (the documented usage is
+# `"Authorization" => "Bearer <token>"`), and a default field dump prints them in
+# full at the REPL, under @show, and into any log that renders the transport. Show
+# the header NAMES and redact every auth-shaped value, matching the policy the
+# service-endpoint shows already apply to a stored API key.
+function _redacted_headers(headers)::Vector{Pair{String,String}}
+    [lowercase(k) in ("authorization", "proxy-authorization", "x-api-key",
+                      "x-goog-api-key", "api-key", "cookie") ?
+     (k => _redact_api_key(v)) : (k => v) for (k, v) in headers]
+end
+
+function Base.show(io::IO, t::HTTPTransport)
+    print(io, "HTTPTransport(")
+    show(io, t.url)
+    print(io, ", headers=")
+    show(io, _redacted_headers(t.headers))
+    print(io, ", connected=", t.connected,
+          ", protocol_version=", repr(t.protocol_version),
+          ", session_id=", isnothing(t.session_id) ? "nothing" : "<set>", ")")
+end
+
 """Headers carried by EVERY MCP Streamable-HTTP POST: the JSON body type, the dual
 Accept the transport requires (the server may answer with a JSON body or an SSE
 stream — for a notification too), the protocol revision currently in force, and the
@@ -574,6 +595,20 @@ function MCPSession(transport::MCPTransport, caps::MCPServerCapabilities,
     MCPSession(transport, caps, server_info, tools, resources, prompts,
                protocol_version, id_counter, status, ReentrantLock(), false, init_params,
                config, auto_respawn, :none)
+end
+
+# A session reaches the credential through its transport, so a default field dump
+# prints the caller's token as surely as the transport's own would. Render the
+# transport through its (redacting) show and summarize the rest: what a user wants
+# from printing a session is where it points, whether it is live, and what it found.
+function Base.show(io::IO, s::MCPSession)
+    print(io, "MCPSession(")
+    show(io, s.transport)
+    print(io, ", status=:", s.status,
+          ", protocol_version=", repr(s.protocol_version),
+          ", tools=", length(s.tools), s.tools_stale ? " (stale)" : "",
+          ", resources=", length(s.resources),
+          ", prompts=", length(s.prompts), ")")
 end
 
 """Best-effort exit diagnostics, captured BEFORE the teardown ladder (which reaps
@@ -1309,8 +1344,15 @@ struct MCPToolResult
     parts::Vector{Any}
 end
 
+# JSON-RPC params are objects with string keys, so any AbstractDict a caller
+# writes is accepted and normalized here. Without this the natural literal
+# `Dict("path" => "/x")` — which infers Dict{String,String} — is a MethodError.
+_mcp_arguments(d::AbstractDict)::Dict{String,Any} =
+    Dict{String,Any}(string(k) => v for (k, v) in d)
+_mcp_arguments(d::Dict{String,Any})::Dict{String,Any} = d
+
 """
-    call_tool(session::MCPSession, name::String, arguments::Dict{String,Any}) -> MCPToolResult
+    call_tool(session::MCPSession, name::String, arguments::AbstractDict) -> MCPToolResult
 
 Call a tool on the MCP server and return its result as an [`MCPToolResult`](@ref).
 
@@ -1325,10 +1367,10 @@ content array. A tool-execution error (`isError: true`) is returned with
 disables, NaN/≤0 rejected).
 """
 function call_tool(session::MCPSession, name::String,
-                   arguments::Dict{String,Any}=Dict{String,Any}();
+                   arguments::AbstractDict=Dict{String,Any}();
                    timeout::Union{Nothing,Float64}=nothing)::MCPToolResult
     result = _mcp_request!(session, "tools/call", Dict{String,Any}(
-        "name" => name, "arguments" => arguments); timeout=timeout)
+        "name" => name, "arguments" => _mcp_arguments(arguments)); timeout=timeout)
     content = get(result, "content", Any[])
     is_error = get(result, "isError", false) === true
     rendered = String[]
@@ -1370,13 +1412,13 @@ function read_resource(session::MCPSession, uri::String)::String
 end
 
 """
-    get_prompt(session::MCPSession, name::String, arguments::Dict{String,Any}=Dict()) -> Vector{Dict{String,Any}}
+    get_prompt(session::MCPSession, name::String, arguments::AbstractDict=Dict()) -> Vector{Dict{String,Any}}
 
 Get a rendered prompt from the MCP server. Returns the messages array.
 """
-function get_prompt(session::MCPSession, name::String, arguments::Dict{String,Any}=Dict{String,Any}())::Vector{Dict{String,Any}}
+function get_prompt(session::MCPSession, name::String, arguments::AbstractDict=Dict{String,Any}())::Vector{Dict{String,Any}}
     result = _mcp_request!(session, "prompts/get", Dict{String,Any}(
-        "name" => name, "arguments" => arguments
+        "name" => name, "arguments" => _mcp_arguments(arguments)
     ))
     get(result, "messages", Dict{String,Any}[])
 end

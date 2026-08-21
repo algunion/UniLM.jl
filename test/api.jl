@@ -1235,3 +1235,31 @@ end
         @test n_success >= 30    # ~34 success types across chat/embeddings/platform APIs
     end
 end
+# Stand-in for a transport wrapper whose default show dumps the request it carries
+# (the HTTP.jl 1.x RequestError shape). Top level: structs cannot live in a testset.
+struct _CauseDumpError <: Exception; dump::String; end
+
+@testset "call-error shows name the cause instead of dumping it" begin
+    # `cause` keeps the raw exception on purpose — callers dispatch on it. Julia's
+    # default show recurses into it, though, so a transport wrapper that renders as
+    # a request dump (HTTP.jl 1.x) put the credential back into the printed result
+    # after `.error` had already been redacted.
+    token = "sk-ant-SECRETVALUE0123456789"
+    dumping = _CauseDumpError("HTTP.Request:\nPOST /v1/messages\r\nx-api-key: $token\r\n\r\n{}")
+    chat = Chat(model="gpt-5.5", messages=[Message(Val(:system), "s"), Message(Val(:user), "u")])
+    results = (LLMCallError(error="transport failed", self=chat, status=nothing, cause=dumping),
+               EmbeddingCallError(error="transport failed", cause=dumping),
+               ResponseCallError(error="transport failed", request_id="req_9", cause=dumping),
+               FIMCallError(error="transport failed", cause=dumping))
+    for r in results
+        s = sprint(show, r)
+        @test !occursin(token, s)
+        @test !occursin("SECRETVALUE", s)
+        @test occursin("transport failed", s)        # the redacted message still shows
+        @test occursin("_CauseDumpError", s)           # the cause is named by TYPE
+        @test r.cause === dumping                    # …and still reachable
+    end
+    @test occursin("request_id=\"req_9\"", sprint(show, results[3]))
+    # No cause: the field renders as nothing, not as an empty type name.
+    @test occursin("cause=nothing", sprint(show, LLMCallError(error="x", self=chat)))
+end

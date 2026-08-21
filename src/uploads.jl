@@ -44,7 +44,7 @@ function _parse_upload(d::AbstractDict)
     UploadObject(id=d["id"], status=get(d, "status", nothing), filename=get(d, "filename", nothing),
         bytes=get(d, "bytes", nothing), file=(f isa AbstractDict ? _parse_file_object(f) : nothing), raw=Dict{String,Any}(d))
 end
-_upl_err(e) = UploadCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+_upl_err(e) = UploadCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
 _upl_resp(resp) = resp.status == 200 ?
     UploadSuccess(response=_parse_upload(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
     UploadFailure(response=String(resp.body), status=resp.status)

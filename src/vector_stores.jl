@@ -122,7 +122,7 @@ function create_vector_store(; name::Union{String,Nothing}=nothing, file_ids::Un
             VectorStoreFailure(response=String(resp.body), status=resp.status)
     catch e
         e isa InterruptException && rethrow()
-        VectorStoreCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        VectorStoreCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end
 
@@ -140,7 +140,7 @@ function retrieve_vector_store(id::String; service::ServiceEndpointSpec=OPENAISe
             VectorStoreFailure(response=String(resp.body), status=resp.status)
     catch e
         e isa InterruptException && rethrow()
-        VectorStoreCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        VectorStoreCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end
 
@@ -169,7 +169,7 @@ function list_vector_stores(; limit::Union{Int,Nothing}=nothing, after::Union{St
         end
     catch e
         e isa InterruptException && rethrow()
-        VectorStoreCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        VectorStoreCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end
 
@@ -191,7 +191,7 @@ function delete_vector_store(id::String; service::ServiceEndpointSpec=OPENAIServ
         end
     catch e
         e isa InterruptException && rethrow()
-        VectorStoreCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        VectorStoreCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end
 
@@ -216,7 +216,7 @@ function add_vector_store_file(vs_id::String, file_id::String; chunking_strategy
         end
     catch e
         e isa InterruptException && rethrow()
-        VectorStoreCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        VectorStoreCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end
 
@@ -237,7 +237,7 @@ function create_file_batch(vs_id::String, file_ids::Vector{String}; chunking_str
             VectorStoreFailure(response=String(resp.body), status=resp.status)
     catch e
         e isa InterruptException && rethrow()
-        VectorStoreCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        VectorStoreCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end
 
@@ -255,7 +255,7 @@ function retrieve_file_batch(vs_id::String, batch_id::String; service::ServiceEn
             VectorStoreFailure(response=String(resp.body), status=resp.status)
     catch e
         e isa InterruptException && rethrow()
-        VectorStoreCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        VectorStoreCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end
 

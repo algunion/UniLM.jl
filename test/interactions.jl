@@ -474,3 +474,59 @@ end
     end
     @test ok
 end
+
+# Non-streaming Interactions mock: the SAME decode_agentic seam the native endpoint
+# uses, pointed at a local fixture. Kept off the real endpoint so no other test's URL
+# dispatch is disturbed.
+const _IX_NONSTREAM_URL = Ref("http://127.0.0.1:0")
+struct _IxNonStreamMock <: UniLM.ServiceEndpoint end
+UniLM._agentic_url(::Type{_IxNonStreamMock}) = _IX_NONSTREAM_URL[]
+UniLM.encode_agentic(::Type{_IxNonStreamMock}, r::Respond) = UniLM.encode_agentic(GEMINIServiceEndpoint, r)
+UniLM.decode_agentic(::Type{_IxNonStreamMock}, resp::HTTP.Response) =
+    UniLM.decode_agentic(GEMINIServiceEndpoint, resp)
+UniLM.auth_header(::Type{_IxNonStreamMock}) = ["Content-Type" => "application/json"]
+UniLM.default_model(::Type{_IxNonStreamMock}) = "mock-model"
+
+@testset "a non-streamed failed interaction is a failure, not a success" begin
+    # Same contract as the OpenAI wire: `respond` decodes both wires through the one
+    # decode_agentic seam, so a failed interaction must produce the ResponseFailure its
+    # streamed twin produces rather than a ResponseSuccess carrying status "failed".
+    bodies = Dict(
+        "failed" => JSON.json(Dict(
+            "id" => "int_f1", "status" => "failed", "model" => "gemini-3.1-flash-lite",
+            "steps" => [], "error" => Dict("code" => "safety_block", "message" => "blocked"),
+            "metadata" => Dict("trace" => "t-9"))),
+        "completed" => JSON.json(Dict(
+            "id" => "int_ok", "status" => "completed", "model" => "gemini-3.1-flash-lite",
+            "steps" => [])),
+        "requires_action" => JSON.json(Dict(
+            "id" => "int_ra", "status" => "requires_action", "model" => "gemini-3.1-flash-lite",
+            "steps" => [])))
+    which = Ref("failed")
+    tcp = Sockets.listen(Sockets.localhost, 0)
+    port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+    srv = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        HTTP.Response(200, ["Content-Type" => "application/json"], bodies[which[]])
+    end
+    _IX_NONSTREAM_URL[] = "http://127.0.0.1:$port/v1beta/interactions"
+    try
+        r = respond(Respond(service=_IxNonStreamMock, input="hi"))
+        @test r isa ResponseFailure
+        @test !issuccess(r)
+        raw = JSON.parse(r.response; dicttype=Dict{String,Any})
+        @test raw["status"] == "failed"
+        @test raw["error"]["code"] == "safety_block"   # error surface preserved
+        @test raw["metadata"]["trace"] == "t-9"        # metadata surface preserved
+
+        # Only "failed" flips: a completed interaction and a requires_action turn
+        # (the tool-action flow) stay successes.
+        for st in ("completed", "requires_action")
+            which[] = st
+            r2 = respond(Respond(service=_IxNonStreamMock, input="hi"))
+            @test r2 isa ResponseSuccess
+            @test r2.response.status == st
+        end
+    finally
+        close(srv)
+    end
+end

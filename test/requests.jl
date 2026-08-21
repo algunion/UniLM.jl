@@ -198,7 +198,12 @@ end
         @test m.refusal_message == "This content was filtered."
     end
 
-    @testset "fallback message" begin
+    @testset "an empty turn is reported empty, not filled in" begin
+        # Truthful-empty contract: a well-formed choice whose content is null is a
+        # real turn the model produced (a reasoning model can burn the whole
+        # completion budget on thought tokens and stop at "length"). The decoder
+        # reports it as the empty turn it is. Substituting prose used to put text
+        # nobody generated into the reply AND into the next request's history.
         body = Dict(
             "choices" => [Dict(
                 "finish_reason" => "length",
@@ -208,8 +213,30 @@ end
         resp = make_response(body)
         m = UniLM.extract_message(resp).message
         @test m.role == UniLM.RoleAssistant
-        @test m.content == "No response from the model."
+        @test m.content == ""
+        @test !occursin("No response from the model", something(m.content, ""))
         @test m.finish_reason == "length"
+    end
+
+    @testset "a tool-only turn keeps its calls whatever the finish_reason" begin
+        # Some providers close a tool-only turn with "stop" rather than "tool_calls".
+        # That used to land in the fallback branch, which fabricated text AND dropped
+        # the calls entirely.
+        body = Dict(
+            "choices" => [Dict(
+                "finish_reason" => "stop",
+                "message" => Dict("role" => "assistant", "content" => nothing,
+                    "tool_calls" => [Dict("id" => "call_1",
+                        "function" => Dict("name" => "get_weather",
+                                           "arguments" => "{\"city\":\"Cluj\"}"))]))]
+        )
+        m = UniLM.extract_message(make_response(body)).message
+        @test isnothing(m.content)
+        @test length(m.tool_calls) == 1
+        @test m.tool_calls[1].id == "call_1"
+        @test m.tool_calls[1].func.name == "get_weather"
+        @test m.tool_calls[1].func.arguments["city"] == "Cluj"
+        @test m.finish_reason == "stop"
     end
 
     @testset "length finish_reason preserves partial content" begin
@@ -730,7 +757,7 @@ end
 end
 
 @testset "_accumulate_cost! fallback is a no-op for non-success" begin
-    # requests.jl:542 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
+    # requests.jl:585 — the generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub. Only
     # success types are specialized in accounting.jl, so a failure result must land here:
     # return nothing AND leave cumulative cost untouched (falsifies accidental accumulation).
     # The line is a locator, not the contract: re-point it (here and in the note above)
@@ -738,7 +765,7 @@ end
     chat = Chat(model="gpt-4.1-nano")
     chat._cumulative_cost[] = 0.25
     failure = LLMFailure(response="server exploded", status=500, self=chat)
-    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 542
+    @test which(UniLM._accumulate_cost!, (Chat, typeof(failure))).line == 585
     @test UniLM._accumulate_cost!(chat, failure) === nothing
     @test cumulative_cost(chat) == 0.25       # unchanged: the fallback did not add anything
 
@@ -1035,4 +1062,94 @@ end
     @test UniLM._exit_breach(nothing, empty_bound, cfg) === nothing
     @test UniLM._exit_breach(UniLM._IdleGuard(:armed, time_ns(), 0.0, 2.0, nothing),
                              empty_bound, cfg) === nothing
+end
+
+using Sockets
+
+# Stand-in for the HTTP.jl 1.x transport error whose rendering IS a full request
+# dump. Declared at top level because a struct cannot be defined inside a testset.
+struct _DumpingError <: Exception; dump::String; end
+Base.showerror(io::IO, e::_DumpingError) = print(io, e.dump)
+
+@testset "_error_text never lets a credential reach a result value" begin
+    # HTTP.jl 1.x renders a mid-exchange transport failure as a FULL request dump —
+    # every header and the body — and its masking covers only Authorization,
+    # Proxy-Authorization and Cookie. Providers that authenticate with their own
+    # header (Anthropic x-api-key, Gemini native x-goog-api-key, Azure api-key)
+    # therefore had the key in cleartext inside `.error`. The redaction layer is
+    # major-agnostic, so a stand-in exception whose showerror IS such a dump is the
+    # testable contract on either major.
+    anth  = "sk-ant-api03-SECRETVALUE0123456789"
+    goog  = "AIzaSyGOOGLENATIVESECRET123"
+    az    = "azure-key-0011223344556677"
+    bear  = "Bearer sk-proxy-SECRET-99887766"
+    dump = """
+    HTTP.Exceptions.RequestError:
+    HTTP.Request:
+    POST /v1/messages HTTP/1.1
+    Host: api.anthropic.com
+    x-api-key: $anth
+    x-goog-api-key: $goog
+    api-key: $az
+    Authorization: $bear
+    Content-Type: application/json
+
+    {"model":"claude-opus-4","messages":[{"role":"user","content":"hi"}]}
+    Underlying error:
+    IOError: read: connection reset by peer (ECONNRESET)
+    """
+    out = UniLM._error_text(_DumpingError(dump))
+    for secret in (anth, goog, az, bear)
+        @test !occursin(secret, out)
+    end
+    # A short, non-reversible marker survives — enough to tell WHICH key was in play.
+    @test occursin("sk-a…[redacted]", out)
+    @test occursin("AIza…[redacted]", out)
+    @test occursin("azur…[redacted]", out)
+    @test occursin("Bear…[redacted]", out)
+    # Non-auth headers and the underlying cause stay intact: this is redaction, not truncation.
+    @test occursin("Content-Type: application/json", out)
+    @test occursin("ECONNRESET", out)
+
+    # Julia's pair rendering of a header vector is masked the same way.
+    pairs = "[\"x-api-key\" => \"$anth\", \"content-type\" => \"application/json\"]"
+    @test !occursin(anth, UniLM._mask_auth_headers(pairs))
+    @test occursin("\"content-type\" => \"application/json\"", UniLM._mask_auth_headers(pairs))
+
+    # Root cause preferred over the wrapper: showerror text, wrappers peeled.
+    @test UniLM._error_text(ErrorException("boom")) == "boom"
+    @test occursin("UniLMTimeout", UniLM._error_text(UniLM.UniLMTimeout(:request, 1.0, 2.0)))
+    t = Task(() -> error("inner boom")); schedule(t)
+    @test_throws TaskFailedException wait(t)
+    @test UniLM._error_text(try wait(t) catch e; e end) == "inner boom"
+end
+
+@testset "a transport failure mid-exchange cannot leak the configured key" begin
+    # End-to-end absence contract on the live seam: a peer that accepts and
+    # immediately closes drives the non-stream driver into its catch, and whatever
+    # the HTTP major hands over there must not carry the endpoint's key into the
+    # typed result — nor into the result's printed form.
+    key = "sk-live-MUSTNOTLEAK-0123456789"
+    listener = Sockets.listen(Sockets.localhost, 0)
+    port = Int(Sockets.getsockname(listener)[2])
+    @async begin
+        try
+            while true
+                close(Sockets.accept(listener))   # abrupt close, mid-exchange
+            end
+        catch
+        end
+    end
+    try
+        ep = GenericOpenAIEndpoint("http://127.0.0.1:$port", key)
+        chat = Chat(service=ep, model="m",
+                    messages=[Message(role=UniLM.RoleUser, content="hello")])
+        r = chatrequest!(chat; config=RequestConfig(max_attempts=1, connect_timeout=3.0,
+                                                    request_timeout=5.0, total_deadline=10.0))
+        @test r isa LLMCallError
+        @test !occursin(key, r.error)
+        @test !occursin(key, sprint(show, r))
+    finally
+        close(listener)
+    end
 end

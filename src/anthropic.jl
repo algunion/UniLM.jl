@@ -182,8 +182,13 @@ function decode_response(::Type{ANTHROPICServiceEndpoint}, resp::HTTP.Response)
         Message(role=RoleAssistant, refusal_message="Model refused to respond.",
                 finish_reason=finish, provider_content=pc)
     else
-        Message(role=RoleAssistant, content=(isempty(txt) ? "No response from the model." : txt),
-                finish_reason=finish, provider_content=pc)
+        # A well-formed turn that produced no text is a real turn: thinking models
+        # routinely spend the whole budget on thought blocks and stop at max_tokens
+        # with no text block at all. Report the empty turn the provider sent —
+        # substituting prose would inject content nobody generated into the reply and
+        # into the next request's history (the thinking blocks themselves ride along
+        # verbatim in provider_content).
+        Message(role=RoleAssistant, content=txt, finish_reason=finish, provider_content=pc)
     end
     (; message=msg, usage)
 end

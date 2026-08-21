@@ -113,6 +113,9 @@ end
     cause::Union{Nothing,Exception} = nothing
 end
 
+Base.show(io::IO, r::FIMCallError) =
+    _show_call_error(io, "FIMCallError", r.error, r.status, r.request_id, r.cause)
+
 # ─── FIM Accessors ─────────────────────────────────────────────────────────
 
 """
@@ -188,7 +191,7 @@ function fim_complete(fim::FIMCompletion; config::Union{Nothing,RequestConfig}=n
         e isa UniLMTimeout && return FIMCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return FIMCallError(error=string(e), status=statuserror, request_id=req_id)
+        return FIMCallError(error=_error_text(e), status=statuserror, request_id=req_id)
     end
 end
 
@@ -271,6 +274,6 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
         e isa InterruptException && rethrow()
         e isa UniLMTimeout && return LLMCallError(error=sprint(showerror, e), self=chat, status=nothing, cause=e)
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return LLMCallError(error=string(e), self=chat, request_id=req_id)
+        return LLMCallError(error=_error_text(e), self=chat, request_id=req_id)
     end
 end

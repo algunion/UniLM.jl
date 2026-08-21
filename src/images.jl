@@ -192,9 +192,11 @@ end
 ```
 """
 function save_image(img_b64::String, filepath::String)
-    open(filepath, "w") do io
-        write(io, base64decode(img_b64))
-    end
+    # Decode BEFORE opening: `open(…, "w")` truncates, so decoding inside the block
+    # let a malformed payload destroy whatever already lived at `filepath` and leave
+    # a 0-byte stub. A decode failure must cost nothing.
+    bytes = base64decode(img_b64)
+    write(filepath, bytes)
     return filepath
 end
 
@@ -228,6 +230,9 @@ Send a request to the OpenAI Image Generation API.
 
 Returns [`ImageSuccess`](@ref), [`ImageFailure`](@ref), or [`ImageCallError`](@ref).
 
+Throws `ArgumentError` before any network I/O when `ig.service` is an endpoint type
+that declares its capabilities and does not list `:images`.
+
 # Examples
 ```julia
 ig = ImageGeneration(prompt="A cute robot learning Julia", quality="high")
@@ -241,6 +246,7 @@ end
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
 """
 function generate_image(ig::ImageGeneration; config::Union{Nothing,RequestConfig}=nothing)
+    _validate_declared_capability(ig.service, :images, "Image Generation API")
     cfg = _resolve_config(config)
     t0 = time_ns()
     try
@@ -252,7 +258,7 @@ function generate_image(ig::ImageGeneration; config::Union{Nothing,RequestConfig
                ImageFailure(response=String(resp.body), status=resp.status)
     catch e
         e isa InterruptException && rethrow()
-        return ImageCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        return ImageCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
     end
 end
 
@@ -355,7 +361,7 @@ function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing)
                ImageFailure(response=String(resp.body), status=resp.status)
     catch err
         err isa InterruptException && rethrow()
-        return ImageCallError(error=string(err), status=(hasproperty(err, :status) ? err.status : nothing))
+        return ImageCallError(error=_error_text(err), status=(hasproperty(err, :status) ? err.status : nothing))
     end
 end
 edit_image(image, prompt::String; mask::Union{String,Nothing}=nothing,

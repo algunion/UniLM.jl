@@ -42,7 +42,7 @@ end
 
 _parse_ft_job(d::AbstractDict) = FineTuningJob(id=d["id"], status=get(d, "status", nothing),
     model=get(d, "model", nothing), fine_tuned_model=get(d, "fine_tuned_model", nothing), raw=Dict{String,Any}(d))
-_ft_err(e) = FineTuningCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+_ft_err(e) = FineTuningCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
 _ft_job_resp(resp) = resp.status == 200 ?
     FineTuningSuccess(response=_parse_ft_job(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
     FineTuningFailure(response=String(resp.body), status=resp.status)

@@ -100,6 +100,46 @@ function _unwrap_exception(e)
     end
 end
 
+# Header names whose VALUE is a credential. HTTP.jl masks only Authorization,
+# Proxy-Authorization and Cookie when it renders a request, so a provider that
+# authenticates with its own header — Anthropic `x-api-key`, Gemini native
+# `x-goog-api-key`, Azure `api-key` — has its key printed verbatim inside the
+# request dump that some transport exceptions carry in their message. Matches the
+# wire form (`name: value`) and the Julia pair form (`"name" => "value"`).
+const _AUTH_HEADER_PATTERN =
+    r"(?i)(x-goog-api-key|x-api-key|api-key|proxy-authorization|authorization)(\"?\s*(?::|=>|=)\s*\"?)([^\r\n\"]*)"
+
+# Replace every auth-shaped header value with the same short, non-reversible
+# marker the endpoint `show` methods use.
+_mask_auth_headers(s::AbstractString)::String =
+    replace(s, _AUTH_HEADER_PATTERN => function (hit)
+        m = match(_AUTH_HEADER_PATTERN, hit)
+        string(m[1], m[2], _redact_api_key(m[3]))
+    end)
+
+"""
+    _error_text(e) -> String
+
+The one renderer for the user-visible `error::String` of every `*CallError` result.
+
+Prefers the root cause's `showerror` text over `string(e)`: the wrapper layers add
+no diagnostic value, and on HTTP.jl 1.x the wrapper's own rendering is a full
+request dump — headers and body included. Then masks auth-shaped header values as
+defense in depth, so a credential cannot reach a result value (or a log line, or a
+bug report) no matter which library layer produced the text.
+"""
+function _error_text(e)::String
+    u = _unwrap_exception(e)
+    txt = try
+        u isa Exception ? sprint(showerror, u) : string(u)
+    catch
+        # A showerror that itself throws must not replace a typed failure with a
+        # crash: name the type and move on.
+        string(typeof(u))
+    end
+    _mask_auth_headers(txt)
+end
+
 # Resolved-at-load HTTP.jl major: the majors expose different native timeout
 # kwargs with different declared types, so translation branches on this.
 const _HTTP_MAJOR2 = pkgversion(HTTP) >= v"2"
@@ -407,7 +447,10 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
                 @warn "transport failure is retryable but the backoff exceeds the remaining total_deadline budget; giving up" attempt delay
                 rethrow()
             end
-            @debug "retrying after transport failure" attempt delay exception = (e, catch_backtrace())
+            # Log the ROOT CAUSE, never the wrapper: on HTTP.jl 1.x the wrapper
+            # renders as a full request dump (headers included), which would put
+            # the credential in the debug log. Twin of the stream driver below.
+            @debug "retrying after transport failure" attempt delay exception = (_unwrap_exception(e), catch_backtrace())
             sleep(delay)
             continue
         end
@@ -579,15 +622,8 @@ function extract_message(resp::HTTP.Response)
     message = choices[1]["message"]
     usage = _parse_usage(received_message)
     msg = if finish_reason == TOOL_CALLS && haskey(message, "tool_calls")
-        tcalls = ToolCall[]
-        for x in message["tool_calls"]
-            fdict = x["function"]
-            args = JSON.parse(fdict["arguments"]; dicttype=Dict{String,Any})
-            gptfunc = GPTFunction(fdict["name"], args)
-            tc = ToolCall(id=x["id"], func=gptfunc)
-            push!(tcalls, tc)
-        end
-        Message(role=RoleAssistant, tool_calls=tcalls, finish_reason=TOOL_CALLS)
+        Message(role=RoleAssistant, tool_calls=_decode_tool_calls(message["tool_calls"]),
+                finish_reason=TOOL_CALLS)
     elseif haskey(message, "content") && !isnothing(message["content"])
         # Preserve content for ANY finish_reason (incl. "length"/truncated) — never discard partial output.
         Message(role=RoleAssistant, content=message["content"], finish_reason=finish_reason)
@@ -595,9 +631,34 @@ function extract_message(resp::HTTP.Response)
         # A refusal may arrive with finish_reason "content_filter" OR "stop" — capture it regardless.
         Message(role=RoleAssistant, refusal_message=message["refusal"], finish_reason=finish_reason)
     else
-        Message(role=RoleAssistant, content="No response from the model.", finish_reason=finish_reason)
+        # A well-formed choice that carries no text is a real turn, not a missing one:
+        # a reply that is only tool calls (some providers finish those with "stop"),
+        # or a reasoning model that spent the whole completion budget on thought
+        # tokens and finished with "length". Report what arrived. Substituting prose
+        # would inject text nobody generated into the reply AND into the next
+        # request's history, and — for the tool-only shape — silently drop the calls.
+        # A response with no choices at all is a different thing and already errors
+        # above, which the verb turns into its typed error result.
+        tcalls = get(message, "tool_calls", nothing)
+        isnothing(tcalls) || isempty(tcalls) ?
+            Message(role=RoleAssistant, content="", finish_reason=finish_reason) :
+            Message(role=RoleAssistant, tool_calls=_decode_tool_calls(tcalls),
+                    finish_reason=finish_reason)
     end
     (; message=msg, usage)
+end
+
+# OpenAI-wire `tool_calls` array → the neutral ToolCall vector. Shared by the
+# finish_reason=="tool_calls" branch and the empty-content branch, which reaches the
+# same shape when a provider finishes a tool-only turn with some other reason.
+function _decode_tool_calls(raw)::Vector{ToolCall}
+    tcalls = ToolCall[]
+    for x in raw
+        fdict = x["function"]
+        args = JSON.parse(fdict["arguments"]; dicttype=Dict{String,Any})
+        push!(tcalls, ToolCall(id=x["id"], func=GPTFunction(fdict["name"], args)))
+    end
+    tcalls
 end
 
 """Mutable accumulator for streaming Chat Completions chunks."""
@@ -1010,7 +1071,7 @@ function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestCon
             return LLMCallError(error=sprint(showerror, u), self=chat, status=nothing,
                                 request_id=req_id, cause=u)
         statuserror = hasproperty(u, :status) ? u.status : nothing
-        return LLMCallError(error=string(e), self=chat, status=statuserror,
+        return LLMCallError(error=_error_text(e), self=chat, status=statuserror,
                             request_id=req_id, cause=u isa Exception ? u : nothing)
     end
 end
@@ -1056,9 +1117,14 @@ into a result value: it propagates, so `fetch` on the streaming task throws a
 `config::Union{Nothing,RequestConfig}`: per-call timeout/retry budget; `nothing`
 resolves the ambient configuration (`with_request_config` scope, else the process
 default set via `set_default_config!`).
+
+Throws `ArgumentError` before any network I/O when `chat.service` is an endpoint
+type that declares its capabilities and does not list `:chat`. A custom endpoint
+declares none and is dispatched unvalidated.
 """
 function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
                       callback=nothing, on_tool_call=nothing)
+    _validate_declared_capability(chat.service, :chat, "Chat Completions API")
     cfg = _resolve_config(config)
     t0 = time_ns()
     local resp
@@ -1089,7 +1155,7 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
                                                   status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return LLMCallError(error=string(e), self=chat, status=statuserror,
+        return LLMCallError(error=_error_text(e), self=chat, status=statuserror,
                             request_id=req_id, cause=e isa Exception ? e : nothing)
     end
 end
@@ -1157,8 +1223,12 @@ Transient statuses (408/429/500/502/503/504/529) are retried with backoff and ji
 under the resolved [`RequestConfig`](@ref) (`config === nothing` resolves the ambient
 configuration). Timeouts surface as `EmbeddingCallError` with `status = nothing` and
 the `UniLMTimeout` in `cause`.
+
+Throws `ArgumentError` before any network I/O when `emb.service` is an endpoint type
+that declares its capabilities and does not list `:embeddings`.
 """
 function embeddingrequest!(emb::Embeddings; config::Union{Nothing,RequestConfig}=nothing)
+    _validate_declared_capability(emb.service, :embeddings, "Embeddings API")
     cfg = _resolve_config(config)
     t0 = time_ns()
     try
@@ -1177,7 +1247,7 @@ function embeddingrequest!(emb::Embeddings; config::Union{Nothing,RequestConfig}
         e isa UniLMTimeout && return EmbeddingCallError(error=sprint(showerror, e),
                                                         status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
-        return EmbeddingCallError(error=string(e), status=statuserror,
+        return EmbeddingCallError(error=_error_text(e), status=statuserror,
                                   cause=e isa Exception ? e : nothing)
     end
 end

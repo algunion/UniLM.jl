@@ -6,7 +6,7 @@
 @kwdef struct AudioFailure <: LLMRequestResponse; response::String; status::Int; end
 "Local/transport error from an Audio API call (the request never completed)."
 @kwdef struct AudioCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
-_audio_err(e) = AudioCallError(error=string(e), status=(hasproperty(e, :status) ? e.status : nothing))
+_audio_err(e) = AudioCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
 
 # ─── Text-to-speech (JSON request, binary response) ──────────────────────────
 

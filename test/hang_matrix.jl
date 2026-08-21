@@ -316,7 +316,11 @@ end
         push!(chat, Message(Val(:system), "s"))
         push!(chat, Message(Val(:user), "u"))
         outcome = _hm_bounded(bound = 45.0) do
-            cfg = UniLM.RequestConfig(request_timeout = 2.0, total_deadline = 30.0, max_attempts = 3)
+            # request_timeout only has to outlast a localhost round-trip: at 2.0 s a
+            # shared-runner stall (measured ~1.9 s) turned an answered 503 into a
+            # per-attempt timeout, and the budget contract then read a timeout instead
+            # of the last real response. 5.0 s keeps the 503s the ones being counted.
+            cfg = UniLM.RequestConfig(request_timeout = 5.0, total_deadline = 30.0, max_attempts = 3)
             chatrequest!(chat; config = cfg)
         end
         ok = try

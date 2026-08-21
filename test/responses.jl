@@ -2396,42 +2396,57 @@ end
 end
 
 @testset "respond stream: mid-stream byte-gap yields a bounded stream-idle timeout" begin
-    # Six deltas at 0.25s (each < the 1.0s idle limit, resetting the gap) accrue
-    # ~1.5s of whole-call time BEFORE the stream goes idle — so the recorded byte
-    # gap (~1.0s) is provably smaller than whole-call elapsed (~2.5s). This is what
-    # makes the elapsed assertion discriminate `_idle_gap_s` from `_elapsed_s(t0)`.
-    chunks = ["event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"$i\"}\n\n" for i in 1:6]
-    server, url = _sse_gap_server(chunks; gap=0.25, idle_after=true)
+    # The scenario is scaled so the elapsed assertion keeps DISCRIMINATING the byte
+    # gap from whole-call time on shared runners, where scheduler/delivery stalls of
+    # ~1.9 s between a server write and client-side processing have been measured:
+    #   * 8 deltas at 0.5 s put the client's LAST byte ~3.5 s into the call, and each
+    #     delta is 4x under the 2.0 s idle limit, so a stall cannot fire the guard early;
+    #   * detection window [0.95*2.0, 2*2.0+0.5] = [1.9, 4.5]: the package's own guard
+    #     fires within [limit, limit + limit/4] = [2.0, 2.5], while HTTP 2.x's native
+    #     read-idle timer checks periodically and so detects at up to ~2x the limit
+    #     (the 0.95 floor covers the skew between its last read and our own stamp);
+    #   * whole-call elapsed is therefore >= 3.5 + 2.0 = 5.5 s — a full second ABOVE
+    #     the window's ceiling, so an implementation reporting call time rather than
+    #     the byte gap still fails here. Widening the window alone would have erased
+    #     exactly that discrimination.
+    chunks = ["event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"$i\"}\n\n" for i in 1:8]
+    server, url = _sse_gap_server(chunks; gap=0.5, idle_after=true, hold=12.0)   # hold outlasts worst-case detection
     _RESP_TIMEOUT_URL[] = url
-    idle_limit = 1.0
-    period = min(idle_limit / 4, 5.0)   # guard fires within [limit, limit + period]
-    cfg = RequestConfig(request_timeout=2.0, total_deadline=30.0, stream_idle_timeout=idle_limit, max_attempts=1)
+    idle_limit = 2.0
+    # First-byte exchange bound only (streams arm no whole-call native timer); 5.0 s
+    # keeps a runner stall from landing as a :request timeout instead of :stream_idle.
+    cfg = RequestConfig(request_timeout=5.0, total_deadline=30.0, stream_idle_timeout=idle_limit, max_attempts=1)
     try
         t = respond(Respond(input="hi", service=_RespTimeoutMock, stream=true); config=cfg)
-        @test timedwait(() -> istaskdone(t), 15.0) == :ok
+        @test timedwait(() -> istaskdone(t), 25.0) == :ok
         result = fetch(t)
         @test result isa ResponseCallError
         @test result.status === nothing
         @test result.cause isa UniLM.UniLMTimeout
         @test result.cause.phase == :stream_idle
-        # elapsed is the byte GAP (~limit), NOT whole-call (~2.5s): [limit, limit+period] + slack.
-        @test idle_limit <= result.cause.elapsed <= idle_limit + period + 0.5
+        # elapsed is the byte GAP, NOT whole-call (>= 5.5 s): see the window above.
+        @test 0.95 * idle_limit <= result.cause.elapsed <= 2 * idle_limit + 0.5
     finally
         close(server)
     end
 end
 
 @testset "respond stream: a trickling stream is not killed" begin
-    # Bytes every 0.25s — 4x under the 1.0s idle limit (generous margin so CI load
-    # cannot spuriously fire the guard) — for ~1.75s, then a valid terminal.
+    # Bytes every 0.6 s — 5x under the 3.0 s idle limit — for ~4.2 s, then a valid
+    # terminal. Both numbers carry the shared-runner budget: a measured ~1.9 s
+    # scheduler/delivery stall on a 0.6 s cadence still reads as a 2.5 s gap, inside
+    # the 3.0 s limit, so a healthy stream is never falsely killed. The total stream
+    # (4.2 s) stays comfortably ABOVE the limit, so an implementation that bounded the
+    # WHOLE call instead of the byte gap is still refuted here.
     body = String[]
     for i in 1:6
         push!(body, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"$i\"}\n\n")
     end
     push!(body, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"status\":\"completed\",\"model\":\"m\",\"output\":[]}}\n\n")
-    server, url = _sse_gap_server(body; gap=0.25, idle_after=false)
+    server, url = _sse_gap_server(body; gap=0.6, idle_after=false)
     _RESP_TIMEOUT_URL[] = url
-    cfg = RequestConfig(request_timeout=2.0, total_deadline=30.0, stream_idle_timeout=1.0, max_attempts=1)
+    # request_timeout bounds only the first-byte exchange; 5.0 s absorbs a runner stall there.
+    cfg = RequestConfig(request_timeout=5.0, total_deadline=30.0, stream_idle_timeout=3.0, max_attempts=1)
     try
         t = respond(Respond(input="hi", service=_RespTimeoutMock, stream=true); config=cfg)
         @test timedwait(() -> istaskdone(t), 20.0) == :ok
@@ -2449,7 +2464,10 @@ end
     ok = "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r2\",\"status\":\"completed\",\"model\":\"m\",\"output\":[]}}\n\n"
     srv = _reset_then_ok_server(ok)
     _RESP_TIMEOUT_URL[] = srv.url
-    cfg = RequestConfig(request_timeout=2.0, total_deadline=30.0, stream_idle_timeout=2.0, max_attempts=3)
+    # No assertion here depends on the timeout values — they only must not fire. Both
+    # sit at 5.0 s so a shared-runner stall (measured ~1.9 s) on the reconnect cannot
+    # turn the retry-and-recover contract into a non-retryable :stream_idle timeout.
+    cfg = RequestConfig(request_timeout=5.0, total_deadline=30.0, stream_idle_timeout=5.0, max_attempts=3)
     try
         t = respond(Respond(input="hi", service=_RespTimeoutMock, stream=true); config=cfg)
         @test timedwait(() -> istaskdone(t), 15.0) == :ok

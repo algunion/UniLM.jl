@@ -220,11 +220,17 @@ end
     # keeps running and completes on its own (in production its native per-major
     # timeout at the same bound is the real executioner). The breach lands within
     # [limit, limit + pollint], pollint = 0.1 s.
+    #
+    # Shared-runner budget: scheduler stalls of ~1.9 s have been measured between a
+    # task becoming runnable and being observed. The worker therefore runs 4.0 s —
+    # far past the worst-case breach observation (0.3 s + stall) — so it is still
+    # unfinished at breach time, and the elapsed window carries the same stall on
+    # top of the poll quantization.
     ran_to_end = Threads.Atomic{Int}(0)
     limit = 0.2
     err = try
         UniLM._with_deadline_task(limit, :request) do
-            sleep(0.6)                       # still running when the wrapper breaches
+            sleep(4.0)                       # still running when the wrapper breaches
             Threads.atomic_add!(ran_to_end, 1)
             :worker_done
         end
@@ -234,10 +240,10 @@ end
     @test err isa UniLM.UniLMTimeout
     @test err.phase === :request
     @test err.limit == limit
-    @test limit <= err.elapsed < limit + 2.0      # [limit, limit + pollint + CI slop]
+    @test limit <= err.elapsed < limit + 3.0      # [limit, limit + pollint + runner stall]
     @test ran_to_end[] == 0                        # worker not yet finished at breach time
     # the abandoned worker was NOT terminated — it runs on to its own completion
-    @test timedwait(() -> ran_to_end[] == 1, 5.0) === :ok
+    @test timedwait(() -> ran_to_end[] == 1, 15.0) === :ok
 end
 
 @testset "task mode: an abandoned worker's later failure is stderr-silent" begin
@@ -253,14 +259,17 @@ end
         redirect_stderr(io) do
             err = try
                 UniLM._with_deadline_task(0.2, :request) do
-                    sleep(0.4)               # still running when the wrapper breaches
+                    # 3.0 s (not a hair past the 0.2 s bound): a ~1.9 s shared-runner
+                    # scheduler stall must not let the worker finish before the
+                    # wrapper observes the breach, or no timeout is produced at all.
+                    sleep(3.0)               # still running when the wrapper breaches
                     Threads.atomic_add!(threw, 1)
                     error("post-breach worker failure — must be discarded silently")
                 end
             catch ex
                 ex
             end
-            reached = timedwait(() -> threw[] == 1, 5.0)   # worker reaches its own throw
+            reached = timedwait(() -> threw[] == 1, 15.0)   # worker reaches its own throw
             GC.gc(); GC.gc(); sleep(0.2)                    # finalize the failed task
         end
     finally
@@ -295,7 +304,12 @@ end
 end
 
 @testset "idle guard fires within [limit, limit + period] absent touches" begin
-    limit = 1.0
+    # 3.0 s limit, not 1.0 s: the fire time and the recorded gap are both wall-clock
+    # quantities, so a shared-runner scheduler stall (measured ~1.9 s) is added on top
+    # of the guard's own [limit, limit + period] detection. At a 3.0 s limit the
+    # detection ceiling below — 2*limit + 0.5 = 6.5 s — absorbs that stall while
+    # still refuting a guard whose effective period had drifted.
+    limit = 3.0
     period = min(limit / 4, 5.0)
     t0 = time_ns()
     fired_at = Ref(0.0)
@@ -309,13 +323,13 @@ end
     @test timedwait(() -> UniLM._idle_fired(g), 10.0) === :ok
     @test closed[] == 1
     @test fired_at[] >= limit                    # never earlier than the limit
-    @test fired_at[] <= limit + period + 1.0     # one check-period quantization + CI slop
+    @test fired_at[] <= 2 * limit + 0.5          # check-period quantization + runner stall
     # the recorded breach gap is the quantity compared against the limit —
     # drivers surface it as UniLMTimeout(:stream_idle).elapsed
-    @test limit <= UniLM._idle_gap_s(g) <= limit + period + 1.0
+    @test limit <= UniLM._idle_gap_s(g) <= 2 * limit + 0.5
     sleep(3 * period)                            # resolved guards never re-fire
     @test closed[] == 1
-    @test limit <= UniLM._idle_gap_s(g) <= limit + period + 1.0   # frozen at breach, not still growing
+    @test limit <= UniLM._idle_gap_s(g) <= 2 * limit + 0.5   # frozen at breach, not still growing
     UniLM._disarm!(g)                            # disarm after fire is a safe no-op
     @test UniLM._idle_fired(g)
 end
@@ -332,11 +346,15 @@ end
 end
 
 @testset "touches reset the idle clock" begin
-    limit = 0.8
+    # Cadence 0.6 s against a 3.0 s limit (5x margin): a shared-runner scheduler
+    # stall of ~1.9 s between touches still reads as a 2.5 s gap and must NOT fire
+    # the guard. The total touch span (3.6 s) stays ABOVE the limit, so a guard that
+    # measured whole elapsed time instead of the byte gap is still refuted.
+    limit = 3.0
     closed = Threads.Atomic{Int}(0)
     g = UniLM._idle_guard(() -> Threads.atomic_add!(closed, 1), limit)
     for _ in 1:6
-        sleep(0.3)          # every gap 0.3 < 0.8, but 1.8 s total > limit
+        sleep(0.6)          # every gap 0.6 < 3.0, but 3.6 s total > limit
         UniLM._touch!(g)
     end
     @test !UniLM._idle_fired(g)

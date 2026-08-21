@@ -1087,6 +1087,10 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
             terminal_error = Ref{Union{Dict{String,Any},Nothing}}(nothing)  # structured failed/incomplete/error payload
             raw_buffer = IOBuffer()  # wire bytes for non-200 reporting (streamed resp.body is empty under HTTP 2.x)
             guard = nothing          # idle-guard handle (owned by deadline.jl); nothing until armed
+            # Request-phase bound, recorded before it unwinds through HTTP.jl (see
+            # `_with_recorded_deadline`): the catch restores it as the surfaced cause
+            # when the library's teardown of the bound-closed socket replaces it.
+            bound = Ref{Union{Nothing,UniLMTimeout}}(nothing)
             try
                 url = get_url(r.service, r)
                 remaining = _remaining_s(cfg, t0)
@@ -1109,12 +1113,12 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                     # the whole send/first-byte exchange; the total deadline governs a stream
                     # only up to this point — after it, only the idle guard runs (a long
                     # healthy stream is not a failure).
-                    _with_deadline(() -> begin
+                    _with_recorded_deadline(() -> begin
                             write(io, body)
                             HTTP.closewrite(io)
                             HTTP.startread(io)
                         end, () -> close(io),
-                        min(_remaining_s(cfg, t0), cfg.request_timeout), :request)
+                        min(_remaining_s(cfg, t0), cfg.request_timeout), :request, bound)
                     # Byte-gap guard: reset on every raw read (SSE comments and provider
                     # keep-alives reset the clock by construction).
                     guard = _idle_guard(() -> close(io), cfg.stream_idle_timeout)
@@ -1218,7 +1222,14 @@ function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig,
                 # major arms no native stream timer, so there the deadline guard is the
                 # only first-byte source and it must be unwrapped.)
                 u = _unwrap_exception(e)
-                mapped = u isa UniLMTimeout ? u :
+                # A recorded request-phase bound takes precedence over whatever the
+                # library surfaced while unwinding it (e.g. EPIPE from writing to the
+                # socket the bound closed); with no displacement it equals the timeout
+                # the attempt already threw, and it never masks an error that arrived
+                # with no bound fired.
+                bt = bound[]
+                mapped = bt !== nothing ? bt :
+                         u isa UniLMTimeout ? u :
                          _map_native_timeout(e, cfg, min(_remaining_s(cfg, t0), cfg.request_timeout), t0)
                 if mapped isa UniLMTimeout
                     if !callback_fired[] && attempt < cfg.max_attempts &&

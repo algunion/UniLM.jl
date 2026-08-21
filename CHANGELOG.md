@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Streaming: when the request-phase bound (first-byte deadline) closes a mute
+  connection, the typed `UniLMTimeout` is now recorded before it unwinds
+  through HTTP.jl and is restored as the surfaced cause. Previously — observed
+  on the HTTP 1.x major under CI load — the library's teardown of the closed
+  socket could raise its own transport error (for example a broken-pipe
+  `IOError` from writing the terminating chunk), which replaced the in-flight
+  typed exception, so the result carried a raw transport error as its cause
+  instead of the promised `UniLMTimeout`. Transport errors that arrive with no
+  bound fired (for example a refused connection) classify exactly as before.
+  Chat streaming and the Responses streaming surface share the fix.
+
 ## 0.15.0
 
 ### Breaking

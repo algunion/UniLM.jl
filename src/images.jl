@@ -325,23 +325,31 @@ function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing)
     try
         model = isempty(e.model) ? something(default_image_model(e.service), "") : e.model
         isempty(model) && throw(ArgumentError("model must be specified for image edits with $(typeof(e.service))"))
-        parts = Pair{String,Any}["prompt" => e.prompt, "model" => model]
         images = e.image isa String ? [e.image] : e.image
+        # Validate up front: a missing file is the caller's error, reported before
+        # any wire attempt rather than once per attempt from inside the retry loop.
         for img in images
             isfile(img) || throw(ArgumentError("image not found: $img"))
-            push!(parts, "image[]" => HTTP.Multipart(basename(img), IOBuffer(read(img)), _mime_for(img)))
         end
-        if !isnothing(e.mask)
-            isfile(e.mask) || throw(ArgumentError("mask not found: $(e.mask)"))
-            push!(parts, "mask" => HTTP.Multipart(basename(e.mask), IOBuffer(read(e.mask)), _mime_for(e.mask)))
-        end
-        for (k, f) in (("n", :n), ("size", :size), ("quality", :quality),
-            ("input_fidelity", :input_fidelity), ("background", :background), ("output_format", :output_format))
-            v = getfield(e, f)
-            !isnothing(v) && push!(parts, k => string(v))
+        isnothing(e.mask) || isfile(e.mask) || throw(ArgumentError("mask not found: $(e.mask)"))
+        # A Form is consumed by the attempt that sends it, so the retry loop gets a
+        # factory: every attempt re-reads the images into its own multipart body.
+        body = _BodyFactory() do
+            parts = Pair{String,Any}["prompt" => e.prompt, "model" => model]
+            for img in images
+                push!(parts, "image[]" => HTTP.Multipart(basename(img), IOBuffer(read(img)), _mime_for(img)))
+            end
+            isnothing(e.mask) ||
+                push!(parts, "mask" => HTTP.Multipart(basename(e.mask), IOBuffer(read(e.mask)), _mime_for(e.mask)))
+            for (k, f) in (("n", :n), ("size", :size), ("quality", :quality),
+                ("input_fidelity", :input_fidelity), ("background", :background), ("output_format", :output_format))
+                v = getfield(e, f)
+                !isnothing(v) && push!(parts, k => string(v))
+            end
+            HTTP.Form(parts)
         end
         url = _api_base_url(e.service) * IMAGES_EDITS_PATH
-        resp = _http_with_retries(cfg, t0, "POST", url, auth_header_multipart(e.service), HTTP.Form(parts))
+        resp = _http_with_retries(cfg, t0, "POST", url, auth_header_multipart(e.service), body)
         return resp.status == 200 ?
                ImageSuccess(response=parse_image_response(resp)) :
                ImageFailure(response=String(resp.body), status=resp.status)

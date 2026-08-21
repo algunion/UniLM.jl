@@ -265,3 +265,63 @@ end
     @test_throws MethodError generate_image(ig; retries=1)
     @test_throws MethodError edit_image(ImageEdit(image=imgpath, prompt="p", model="m", service=SeamProbe); retries=1)
 end
+
+using Sockets
+
+# Local image-edit target whose base URL is chosen after the listener binds.
+struct ImagesRetryProbe <: UniLM.ServiceEndpoint end
+const _images_probe_base = Ref("")
+UniLM._resolve_base_url(::Type{ImagesRetryProbe}) = _images_probe_base[]
+UniLM.auth_header(::Type{ImagesRetryProbe}) =
+    ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{ImagesRetryProbe}) = Set([:image_edits])
+
+# Probe an ephemeral port, then serve on it; the close-then-rebind window can race.
+function _images_retry_server(handler)
+    for _ in 1:5
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2])
+        close(tcp)
+        try
+            return HTTP.serve!(handler, "127.0.0.1", port; verbose=false), "http://127.0.0.1:$port"
+        catch e
+            e isa Base.IOError || rethrow()
+        end
+    end
+    error("could not bind an ephemeral port for the image-edit retry fixture")
+end
+
+@testset "edit_image: a retried attempt sends a complete multipart body" begin
+    # Same rewind gap as the file-upload path: the seam owns retries and disables
+    # HTTP.jl's, so a single Form is consumed by attempt 1 and attempt 2 would put
+    # an empty body on the wire. Every attempt must build a fresh Form.
+    marker = "image-retry-marker-" * repeat("z", 256)
+    imgpath = tempname() * ".png"
+    write(imgpath, marker)
+    seen = Vector{Int}()          # body length per attempt, in order
+    complete = Ref(false)
+    server, base = _images_retry_server(req -> begin
+        body = String(copy(req.body))
+        push!(seen, sizeof(body))
+        if length(seen) == 1
+            return HTTP.Response(503, ["Retry-After" => "0"], Vector{UInt8}("{}"))
+        end
+        complete[] = occursin(marker, body) && occursin("a prompt", body)
+        return HTTP.Response(200, ["Content-Type" => "application/json"],
+                             Vector{UInt8}(JSON.json(Dict("created" => 1,
+                                                          "data" => [Dict("b64_json" => "aGVsbG8=")]))))
+    end)
+    _images_probe_base[] = base
+    try
+        cfg = UniLM.RequestConfig(max_attempts=2, total_deadline=Inf)
+        r = edit_image(imgpath, "a prompt"; model="probe-edit", service=ImagesRetryProbe, config=cfg)
+        @test length(seen) == 2                 # the 503 was actually retried
+        @test seen[2] >= seen[1]                # attempt 2 is not a truncated replay
+        @test complete[]                        # ...and carries the whole image + prompt
+        @test r isa ImageSuccess
+        @test image_data(r)[1] == "aGVsbG8="
+    finally
+        close(server)
+        rm(imgpath; force=true)
+    end
+end

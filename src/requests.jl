@@ -277,6 +277,24 @@ _retryable_exception(e)::Bool =
     _is_transport_error(e)
 
 """
+    _BodyFactory(build)
+
+A request body that must be rebuilt for every attempt. The seam owns retries and
+therefore passes `retry=false`, which also disables HTTP.jl's own mark/reset body
+rewind — nothing rewinds a consumable body between attempts. A multipart
+`HTTP.Form` read to EOF by attempt 1 would put a zero-length body on the wire on
+attempt 2, turning a transient 429/503 into a hard protocol failure. Wrapping the
+body in a factory makes each attempt construct a fresh, fully readable one;
+`build()` re-reads from its source rather than retaining a buffered copy.
+"""
+struct _BodyFactory{F}
+    build::F
+end
+
+_attempt_body(body) = body
+_attempt_body(f::_BodyFactory) = f.build()
+
+"""
     _http(method, url, headers=[], body=UInt8[]; cfg, remaining=Inf, kwargs...) -> HTTP.Response
 
 One bounded HTTP attempt. The per-attempt bound is
@@ -292,7 +310,8 @@ and `retry=false`: this is ONE attempt — the retry budget lives in
 `_http_with_retries`, and the library's internal retry layer would multiply
 wire attempts behind the budget's back. `body` is a passthrough positional:
 `String`, `Vector{UInt8}`, and `HTTP.Form` are all handed to `HTTP.request`
-unconverted (callers keep their existing body shapes). Remaining kwargs pass
+unconverted (callers keep their existing body shapes); a [`_BodyFactory`](@ref)
+is built here instead, so each attempt gets its own body. Remaining kwargs pass
 through to `HTTP.request` (e.g. `decompress=false`).
 """
 function _http(method::AbstractString, url::AbstractString,
@@ -306,7 +325,7 @@ function _http(method::AbstractString, url::AbstractString,
     native = _native_timeout_kwargs(cfg, bound)
     try
         return _with_deadline_task(bound, :request) do
-            HTTP.request(method, url, headers, body;
+            HTTP.request(method, url, headers, _attempt_body(body);
                          kwargs..., status_exception=false, retry=false, native...)
         end
     catch e

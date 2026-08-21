@@ -164,6 +164,23 @@ end
     # Multi-frame bodies come back complete and in arrival order.
     multi = "data: {\"a\":1}\n\nevent: message\ndata: {\"b\":2}\n\n"
     @test UniLM._parse_sse_frames(multi) == ["{\"a\":1}", "{\"b\":2}"]
+
+    # The space after `data:` is OPTIONAL per the SSE spec; a server that omits it
+    # sends a legal frame the transport must still see.
+    @test UniLM._parse_sse_frames("data:{\"a\":1}\n\n") == ["{\"a\":1}"]
+
+    # Several `data:` lines inside ONE event are ONE payload, joined with '\n'
+    # (SSE data-field concatenation) — not one frame per line.
+    two_line = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":7,\ndata: \"result\":{\"ok\":true}}\n\n"
+    joined = UniLM._parse_sse_frames(two_line)
+    @test length(joined) == 1
+    @test joined[1] == "{\"jsonrpc\":\"2.0\",\"id\":7,\n\"result\":{\"ok\":true}}"
+    @test JSON.parse(joined[1])["result"]["ok"] === true
+
+    # Comments (keep-alives) and non-data fields carry no payload.
+    @test UniLM._parse_sse_frames(": keep-alive\n\nid: 9\nretry: 100\ndata: {\"b\":2}\n\n") == ["{\"b\":2}"]
+    # CRLF framing is tolerated (one trailing '\r' per line is chopped).
+    @test UniLM._parse_sse_frames("data: {\"c\":3}\r\n\r\n") == ["{\"c\":3}"]
 end
 
 @testset "Transport construction" begin
@@ -512,6 +529,42 @@ end
     end
 end
 
+@testset "MCP client ↔ HTTP server framed as spec-legal SSE (no space, split data)" begin
+    # Two spec-legal framings a stricter reader must accept: `data:` WITHOUT the
+    # optional space, and one event whose payload is split across two `data:` lines
+    # (SSE concatenates them with '\n'). The split point is the opening brace — always
+    # a token boundary — so the rejoined text is the same JSON-RPC message. The whole
+    # client lifecycle (handshake, discovery, tool call) must work through them.
+    captured = Ref{Any}(nothing)
+    server = _build_mcp_test_server(captured)
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        resp = UniLM._dispatch_mcp(server, parsed)
+        isnothing(resp) && return HTTP.Response(202, "")
+        js = JSON.json(resp)
+        sse = "event: message\ndata:" * js[1:1] * "\ndata:" * js[2:end] * "\n\n"
+        HTTP.Response(200, ["Content-Type" => "text/event-stream"], sse)
+    end
+    url = "http://127.0.0.1:$port"
+    try
+        session = mcp_connect(url)
+        try
+            @test session.status == :ready
+            @test session.server_info["name"] == "unilm-test-mcp"
+            @test call_tool(session, "concat",
+                Dict{String,Any}("a" => "no", "b" => "space")).content == "no|space"
+            @test read_resource(session, "probe://greeting") == "hello-from-resource"
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        close(httpserver)
+    end
+end
+
 @testset "MCP client HTTPTransport DELETE-on-disconnect path" begin
     # Server echoes back an Mcp-Session-Id; the client captures it, so
     # mcp_disconnect! takes the branch that issues a DELETE to the endpoint.
@@ -647,6 +700,83 @@ end
         @test err isa ErrorException                    # raised, not swallowed
         @test contains(err.msg, "MCP HTTP request failed with status 500")
         @test contains(err.msg, "upstream exploded")    # body echoed into the error
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "MCP client HTTPTransport notification carries the request path's headers" begin
+    # A notification is an ordinary Streamable-HTTP POST: the server may answer it
+    # with JSON or with an SSE stream, so it must advertise the SAME dual Accept the
+    # request path sends (plus the negotiated protocol revision). Omitting Accept
+    # entitles a spec-strict server to refuse the notification.
+    notify_accept = Ref("<none>")
+    notify_proto = Ref("<none>")
+    notify_ctype = Ref("<none>")
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        id = get(parsed, "id", nothing)
+        if isnothing(id)
+            notify_accept[] = HTTP.header(req, "Accept", "<none>")
+            notify_proto[] = HTTP.header(req, "Mcp-Protocol-Version", "<none>")
+            notify_ctype[] = HTTP.header(req, "Content-Type", "<none>")
+            return HTTP.Response(202, "")
+        end
+        HTTP.Response(200, ["Content-Type" => "application/json"],
+            JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id, "result" => Dict{String,Any}(
+                "protocolVersion" => UniLM._MCP_PROTOCOL_VERSION,
+                "capabilities" => Dict{String,Any}(),
+                "serverInfo" => Dict{String,Any}("name" => "header-probe", "version" => "1.0")))))
+    end
+    url = "http://127.0.0.1:$port"
+    try
+        session = mcp_connect(url)   # sends notifications/initialized
+        try
+            @test notify_accept[] == "application/json, text/event-stream"
+            @test notify_proto[] == UniLM._MCP_PROTOCOL_VERSION
+            @test notify_ctype[] == "application/json"
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "MCP client HTTPTransport notification rejected by status fails loud" begin
+    # A spec-strict server can refuse `notifications/initialized` (unsupported
+    # revision, missing header, expired session). Ignoring the notification's status
+    # makes that refusal vanish and leaves a half-initialized session behind, so the
+    # client must surface it with the status and body named — same failure family as
+    # the request path.
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        id = get(parsed, "id", nothing)
+        isnothing(id) && return HTTP.Response(400, "notification rejected")
+        HTTP.Response(200, ["Content-Type" => "application/json"],
+            JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id, "result" => Dict{String,Any}(
+                "protocolVersion" => UniLM._MCP_PROTOCOL_VERSION,
+                "capabilities" => Dict{String,Any}(),
+                "serverInfo" => Dict{String,Any}("name" => "strict", "version" => "1.0")))))
+    end
+    url = "http://127.0.0.1:$port"
+    try
+        err = nothing
+        try
+            mcp_connect(url)
+        catch e
+            err = e
+        end
+        msg = isnothing(err) ? "" : sprint(showerror, err)
+        ok = err isa ErrorException && contains(msg, "400") && contains(msg, "notification rejected")
+        ok || @warn "rejected MCP notification did not fail loud" err
+        @test ok
     finally
         close(httpserver)
     end
@@ -1071,6 +1201,97 @@ UniLM._transport_send!(t::_LockProbeTransport, msg::String;
     @test held_during_send[]
     # The id allocated under that same lock made it onto the wire.
     @test session._id_counter == 1
+end
+
+# Minimal MCPTransport for the notification-lock probe.
+struct _NotifyProbeTransport <: UniLM.MCPTransport
+    on_notify::Function
+end
+UniLM._transport_notify!(t::_NotifyProbeTransport, msg::String;
+                         cfg::UniLM.RequestConfig=UniLM.current_config()) = (t.on_notify(msg); nothing)
+
+@testset "notifications are sent under the session lock" begin
+    # A notification touches the same transport an exchange may be using (the HTTP
+    # endpoint, the stdio pipe) and mutates transport state, so it must be serialized
+    # by the SAME session lock — not slipped alongside an exchange in flight.
+    session_box = Ref{Any}(nothing)
+    held_during_notify = Ref(false)
+    sent = Ref("")
+    probe = _NotifyProbeTransport(msg -> begin
+        held_during_notify[] = islocked(session_box[]._lock)
+        sent[] = msg
+    end)
+    session = UniLM.MCPSession(probe, UniLM.MCPServerCapabilities(), Dict{String,Any}(),
+        UniLM.MCPToolInfo[], UniLM.MCPResourceInfo[], UniLM.MCPPromptInfo[],
+        UniLM._MCP_PROTOCOL_VERSION, 0, :ready)
+    session_box[] = session
+    UniLM._mcp_notify!(session, "notifications/initialized")
+    @test held_during_notify[]
+    @test JSON.parse(sent[])["method"] == "notifications/initialized"
+end
+
+@testset "disconnect waits for the exchange in flight (concurrency-1)" begin
+    # An explicit disconnect must not tear the transport down under a call in flight.
+    # It takes the same session lock the exchange holds, so it runs AFTER that
+    # exchange finishes. The fixture reports the true order: it answers `tools/call`
+    # only once released, and records the DELETE the disconnect issues.
+    order = String[]
+    order_lock = ReentrantLock()
+    in_call = Channel{Nothing}(1)    # server → test: the tools/call arrived
+    release = Channel{Nothing}(1)    # test → server: answer it now
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        if req.method == "DELETE"
+            @lock order_lock push!(order, "delete")
+            return HTTP.Response(200, "")
+        end
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        id = get(parsed, "id", nothing)
+        method = get(parsed, "method", "")
+        isnothing(id) && return HTTP.Response(202, ["Mcp-Session-Id" => "sess-cc1"], "")
+        result = if method == "initialize"
+            Dict{String,Any}("protocolVersion" => UniLM._MCP_PROTOCOL_VERSION,
+                "capabilities" => Dict{String,Any}(),
+                "serverInfo" => Dict{String,Any}("name" => "slow-call", "version" => "1.0"))
+        elseif method == "tools/call"
+            put!(in_call, nothing)   # the exchange is on the wire, holding the lock…
+            take!(release)           # …and stays there until the test releases it
+            @lock order_lock push!(order, "call")
+            Dict{String,Any}("content" => [Dict{String,Any}("type" => "text", "text" => "ok")])
+        else
+            Dict{String,Any}()
+        end
+        HTTP.Response(200,
+            ["Content-Type" => "application/json", "Mcp-Session-Id" => "sess-cc1"],
+            JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id, "result" => result)))
+    end
+    url = "http://127.0.0.1:$port"
+    session = mcp_connect(url;
+        config = RequestConfig(current_config(); mcp_request_timeout = 60.0))
+    call_outcome, disconnect_outcome = Ref{Any}(nothing), Ref{Any}(nothing)
+    try
+        @test session.transport.session_id == "sess-cc1"   # the DELETE branch will be taken
+        caller = Threads.@spawn (call_outcome[] =
+            try call_tool(session, "slow", Dict{String,Any}()) catch e; e end)
+        @test timedwait(() -> isready(in_call), 30.0) === :ok
+        disconnector = Threads.@spawn (disconnect_outcome[] =
+            try mcp_disconnect!(session) catch e; e end)
+        put!(release, nothing)
+        @test timedwait(() -> istaskdone(caller) && istaskdone(disconnector), 60.0) === :ok
+        # The racing call completed — or failed TYPED. Never a raw transport crash.
+        ok = call_outcome[] isa MCPToolResult ? call_outcome[].content == "ok" :
+             call_outcome[] isa Union{MCPError,MCPTimeoutError,MCPCrashError}
+        ok || @warn "call racing a disconnect ended untyped" outcome = call_outcome[]
+        @test ok
+        @test disconnect_outcome[] === nothing
+        @test session.status == :closed
+        @test UniLM._transport_isconnected(session.transport) == false
+        # The lock ordered them: the server answered the call BEFORE the DELETE arrived.
+        @test (@lock order_lock copy(order)) == ["call", "delete"]
+    finally
+        close(httpserver)
+    end
 end
 
 # ─── The request bound covers the exchange, not the wait for it ──────────────
@@ -1644,6 +1865,84 @@ end
         finally
             mcp_disconnect!(session)
         end
+    finally
+        close(httpserver)
+    end
+end
+
+# ─── HTTP connect phase is governed by the connect bound ─────────────────────
+# Handshake discovery (tools/list & friends, driven by _finalize_connect! while the
+# session is :initializing) belongs to the CONNECT phase: a cold server slow to answer
+# it must be bounded by mcp_connect_timeout — the phase and bound the connect-timeout
+# message promises — not by the tighter per-exchange mcp_request_timeout. Both
+# directions are pinned: the generous connect bound lets slow discovery through, and a
+# breach of a tight connect bound is classified :connect and names that override.
+
+"HTTP fixture: `initialize` advertises tools; `tools/list` answers after `list_delay` s."
+function _slow_discovery_server(list_delay::Real)
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        req.method == "POST" || return HTTP.Response(405, "Method Not Allowed")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        id = get(parsed, "id", nothing)
+        method = get(parsed, "method", "")
+        isnothing(id) && return HTTP.Response(202, "")
+        result = if method == "initialize"
+            Dict{String,Any}("protocolVersion" => UniLM._MCP_PROTOCOL_VERSION,
+                "capabilities" => Dict{String,Any}("tools" => Dict{String,Any}()),
+                "serverInfo" => Dict{String,Any}("name" => "slow-discovery", "version" => "1.0"))
+        elseif method == "tools/list"
+            sleep(list_delay)
+            Dict{String,Any}("tools" => [Dict{String,Any}("name" => "late",
+                "inputSchema" => Dict{String,Any}("type" => "object"))])
+        else
+            Dict{String,Any}()
+        end
+        HTTP.Response(200, ["Content-Type" => "application/json"],
+            JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id, "result" => result)))
+    end
+    (httpserver, "http://127.0.0.1:$port")
+end
+
+@testset "HTTP connect-phase discovery is bounded by the connect deadline" begin
+    # Discovery is slower than the per-exchange request bound and far inside the
+    # connect bound: connect must succeed. Bounding it by mcp_request_timeout would
+    # abort a handshake the connect budget still covers.
+    httpserver, url = _slow_discovery_server(1.5)
+    try
+        session = mcp_connect(url;
+            config = RequestConfig(current_config();
+                mcp_connect_timeout = 60.0, mcp_request_timeout = 0.5))
+        try
+            @test session.status == :ready
+            @test [t.name for t in session.tools] == ["late"]
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "HTTP connect-phase timeout is typed :connect and names the connect override" begin
+    # Inverted budgets: the CONNECT bound is the tight one and discovery breaches it.
+    # The failure belongs to the connect phase, so it must surface as
+    # MCPTimeoutError(:connect) naming mcp_connect_timeout — not the request bound,
+    # which does not govern this phase.
+    httpserver, url = _slow_discovery_server(2.0)
+    try
+        err = nothing
+        try
+            mcp_connect(url; config = RequestConfig(current_config();
+                mcp_connect_timeout = 0.5, mcp_request_timeout = 20.0))
+        catch e
+            err = e
+        end
+        ok = err isa MCPTimeoutError && err.phase === :connect && err.limit == 0.5 &&
+             contains(err.msg, "mcp_connect_timeout")
+        ok || @warn "connect-phase HTTP discovery timeout misclassified" err
+        @test ok
     finally
         close(httpserver)
     end

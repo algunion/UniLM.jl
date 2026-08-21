@@ -63,7 +63,7 @@ end
 
 # ─── WebSocket transport ──────────────────────────────────────────────────────
 
-"""A live Realtime WebSocket session. Created by [`realtime_connect`](@ref)."""
+"""A live Realtime WebSocket session. Created by [`realtime_connect`](@ref), which resolves a [`RequestConfig`](@ref) and captures it on `config` — [`realtime_receive`](@ref) reads its `stream_idle_timeout` from there. The two-argument constructor inherits the ambient config."""
 mutable struct RealtimeSession
     ws::Any; model::String
     config::RequestConfig   # connect-time budget; bounds realtime_receive

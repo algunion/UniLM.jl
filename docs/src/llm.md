@@ -80,7 +80,7 @@ UniLM talks to **native** provider APIs where it implements them, and rides the 
 | Chat Completions (OpenAI-compat) | OpenAI, Azure, DeepSeek, Mistral, Ollama, vLLM, LM Studio, Gemini (compat shim) |
 | Embeddings (OpenAI-compat) | OpenAI, Gemini (compat shim), Mistral, Ollama, vLLM |
 | Responses API | OpenAI, Ollama, vLLM, Amazon Bedrock (emerging Open Responses) |
-| Image Generation | OpenAI, Gemini, Ollama |
+| Image Generation | OpenAI |
 
 Anthropic and native Gemini use their **own** APIs here (`ANTHROPICServiceEndpoint` / `GEMINIServiceEndpoint`) — not an OpenAI-compat shim — and that is the recommended path. The OpenAI-compat Gemini shim (`GEMINIOpenAIServiceEndpoint`) exists for embeddings and drop-in compatibility.
 
@@ -119,16 +119,34 @@ Respond(service=OPENAIServiceEndpoint, input="Hello")
     stream::Union{Bool,Nothing} = nothing
     stop::Union{Vector{String},String,Nothing} = nothing # max 4 sequences
     max_tokens::Union{Int64,Nothing} = nothing
+    max_completion_tokens::Union{Int64,Nothing} = nothing # preferred over max_tokens; reasoning models reject max_tokens
     presence_penalty::Union{Float64,Nothing} = nothing   # -2.0 to 2.0
     response_format::Union{ResponseFormat,Nothing} = nothing
     frequency_penalty::Union{Float64,Nothing} = nothing  # -2.0 to 2.0
     logit_bias::Union{AbstractDict{String,Float64},Nothing} = nothing
     user::Union{String,Nothing} = nothing
     seed::Union{Int64,Nothing} = nothing
+    reasoning_effort::Union{String,Nothing} = nothing    # none|minimal|low|medium|high|xhigh
+    stream_options::Union{AbstractDict,Nothing} = nothing # e.g. Dict("include_usage" => true)
+    verbosity::Union{String,Nothing} = nothing           # low|medium|high
+    store::Union{Bool,Nothing} = nothing
+    metadata::Union{AbstractDict,Nothing} = nothing
+    service_tier::Union{String,Nothing} = nothing        # auto|default|flex|scale|priority
+    logprobs::Union{Bool,Nothing} = nothing
+    top_logprobs::Union{Int64,Nothing} = nothing
+    prediction::Union{AbstractDict,Nothing} = nothing
+    modalities::Union{Vector{String},Nothing} = nothing
+    audio::Union{AbstractDict,Nothing} = nothing
+    web_search_options::Union{AbstractDict,Nothing} = nothing
+    prompt_cache_key::Union{String,Nothing} = nothing
+    safety_identifier::Union{String,Nothing} = nothing   # replaces deprecated `user`
 end
 ```
 
-- **Model defaults**: `"gpt-5.5"` for OpenAI, `"gemini-3.5-flash"` for native Gemini, `"claude-opus-4-8"` for native Anthropic, `"deepseek-chat"` for DeepSeek. For `GenericOpenAIEndpoint` / `OllamaEndpoint`, model must be specified explicitly.
+A 35th field, `_cumulative_cost::Ref{Float64}`, is internal bookkeeping for
+[`cumulative_cost`](@ref) — read it through that accessor, never directly.
+
+- **Model defaults**: the declared default is the sentinel `""`; the constructor resolves it, so `Chat().model` reads back `"gpt-5.5"`. Per provider: `"gpt-5.5"` for OpenAI, `"gpt-5.2"` for Azure, `"gemini-3.5-flash"` for Gemini (native and OpenAI-compat), `"claude-opus-4-8"` for native Anthropic, `"deepseek-chat"` for DeepSeek. For `GenericOpenAIEndpoint` / `OllamaEndpoint` there is no default — an unset model throws `ArgumentError` at construction.
 - `history=true`: responses are automatically appended to `messages`.
 - `temperature` and `top_p` are mutually exclusive (constructor throws `ArgumentError`).
 - `parallel_tool_calls` is auto-set to `nothing` when `tools` is `nothing`.
@@ -186,17 +204,29 @@ chatrequest!(; service=OPENAIServiceEndpoint, model="gpt-5.5",
 push!(chat, message)       # append a Message (the FIRST message must be a system Message)
 pop!(chat)                 # remove last message
 update!(chat, message)     # append if history=true
-issendvalid(chat) -> Bool  # check conversation rules (≥2 messages, first is system, no consecutive same-role except tool)
+issendvalid(chat) -> Bool  # check conversation rules (see below)
 length(chat)               # number of messages
 isempty(chat)              # true if no messages
 chat[i]                    # index into messages
 ```
 
+`issendvalid` is `true` only when ALL of these hold — note it is stricter than
+`push!`, with no tool exemption:
+
+1. at least 2 messages;
+2. the first message is a system message;
+3. the **last** message is a user message;
+4. no two adjacent messages share a role — including `tool`, which `push!` does
+   permit consecutively.
+
 **Important:** A `Chat` must begin with a system message. `push!` throws
-[`InvalidConversationError`](@ref) on a non-system message pushed onto an empty `Chat`
-(and on consecutive same-role messages, except `tool`), so
+[`InvalidConversationError`](@ref) on a non-system message pushed onto an empty `Chat`,
+on a system message pushed once the conversation has started, and on consecutive
+same-role messages (except `tool`), so
 `chat = Chat(); push!(chat, Message(Val(:user), "…"))` raises rather than silently
-leaving the chat empty. Use `respond(input=…)` for a single turn without a system prompt.
+leaving the chat empty. `pop!` on an empty `Chat` likewise throws
+`InvalidConversationError` rather than returning `nothing`. Use `respond(input=…)`
+for a single turn without a system prompt.
 
 ### Tool Calling Types
 
@@ -221,6 +251,10 @@ Tool(d::AbstractDict)   # construct from dict with keys "name", "description", "
     id::String
     type::String = "function"
     func::GPTFunction       # has .name::String and .arguments::AbstractDict
+    # Gemini-3's opaque tool-call signature. Set only by the Gemini decoder
+    # (nothing on every other provider) and echoed verbatim on the next turn;
+    # deliberately excluded from JSON.lower, so OpenAI-wire bytes are unchanged.
+    thought_signature::Union{Nothing,String} = nothing
 end
 
 # Your result after executing the function
@@ -334,10 +368,10 @@ result = fetch(task)  # LLMSuccess when complete
 ```julia
 @kwdef struct Respond
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
-    model::String = "gpt-5.5"
-    input::Union{String, Vector}                             # String or Vector{InputMessage}
+    model::String = "gpt-5.5"                                # declared as "" and resolved by the constructor
+    input::Union{String, Vector}                             # String, Vector{InputMessage}, or Vector{Dict}
     instructions::Union{String,Nothing} = nothing
-    tools::Union{Vector,Nothing} = nothing                  # Vector of ResponseTool subtypes
+    tools::Union{Vector,Nothing} = nothing                  # untyped: accepts ResponseTool, CallableTool, and Dict
     tool_choice::Union{String,AbstractDict,Nothing} = nothing  # "auto"/"none"/"required", or a tool_choice_* Dict (see below)
     parallel_tool_calls::Union{Bool,Nothing} = nothing
     temperature::Union{Float64,Nothing} = nothing           # 0.0–2.0, mutually exclusive with top_p
@@ -360,11 +394,20 @@ result = fetch(task)  # LLMSuccess when complete
     prompt_cache_key::Union{String,Nothing} = nothing
     prompt_cache_retention::Union{String,Nothing} = nothing  # "in-memory","24h"
     safety_identifier::Union{String,Nothing} = nothing
-    conversation::Union{Any,Nothing} = nothing
+    conversation::Union{Any,Nothing} = nothing              # String or Dict; the declared type collapses to Any
     context_management::Union{Vector,Nothing} = nothing
     stream_options::Union{AbstractDict,Nothing} = nothing
 end
 ```
+
+!!! warning "Gemini Interactions rejects unmappable fields"
+    With `service=GEMINIServiceEndpoint`, a set `Respond` field the Interactions
+    wire has no equivalent for throws `ArgumentError` at encode time rather than
+    being silently dropped, so a request never goes out quietly ignoring what you
+    asked for. That wire maps `model`, `input`, `instructions`, `tools`,
+    `tool_choice`, `temperature`, `top_p`, `max_output_tokens`, `stream`, `store`,
+    `previous_response_id`, and `background`; leave every other field unset, or
+    send the request to an OpenAI Responses service.
 
 ### Input Helpers
 
@@ -374,10 +417,13 @@ InputMessage(role="user", content="Hello")
 InputMessage(role="user", content=[input_text("Describe:"), input_image("https://...")])
 
 # Content part constructors
-input_text(text::String)                                    # → Dict(:type=>"input_text", :text=>...)
-input_image(url::String; detail=nothing)                    # → Dict(:type=>"input_image", ...) detail: "auto","low","high"
-input_file(; url=nothing, id=nothing)                       # → Dict(:type=>"input_file", ...) provide url or file id
+input_text(text::String)                                              # → Dict(:type=>"input_text", :text=>...)
+input_image(url=nothing; detail=nothing, file_id=nothing)             # → Dict(:type=>"input_image", ...); pass url OR file_id, detail: "auto","low","high"
+input_file(; url=nothing, id=nothing, file_data=nothing, filename=nothing)  # → Dict(:type=>"input_file", ...); pass one of url / id / file_data (base64)
 ```
+
+`input_image` and `input_file` throw `ArgumentError` when none of their
+source arguments is given.
 
 ### Tool Types
 
@@ -392,8 +438,10 @@ abstract type ResponseTool end
 end
 
 @kwdef struct WebSearchTool <: ResponseTool
+    type::String = "web_search"                             # GA; legacy "web_search_preview"
     search_context_size::String = "medium"                  # "low","medium","high"
     user_location::Union{AbstractDict,Nothing} = nothing
+    filters::Union{AbstractDict,Nothing} = nothing          # "allowed_domains"/"blocked_domains" (GA only)
 end
 
 @kwdef struct FileSearchTool <: ResponseTool
@@ -405,12 +453,19 @@ end
 ```
 
 ```julia
+# Reach a remote MCP server (server_url), an OpenAI connector (connector_id, e.g.
+# "connector_googledrive"), or a Secure MCP Tunnel (tunnel_id) — hence no single
+# required target field beyond server_label.
 @kwdef struct MCPTool <: ResponseTool
     server_label::String
-    server_url::String
+    server_url::Union{String, Nothing} = nothing
+    connector_id::Union{String, Nothing} = nothing
+    authorization::Union{String, Nothing} = nothing         # OAuth access token
+    server_description::Union{String, Nothing} = nothing
     require_approval::Union{String, AbstractDict, Nothing} = "never"
-    allowed_tools::Union{Vector{String}, Nothing} = nothing
+    allowed_tools::Union{Vector{String}, AbstractDict, Nothing} = nothing
     headers::Union{AbstractDict, Nothing} = nothing
+    tunnel_id::Union{String, Nothing} = nothing
 end
 
 @kwdef struct ComputerUseTool <: ResponseTool
@@ -438,9 +493,10 @@ end
 ```julia
 function_tool(name, description=nothing; parameters=nothing, strict=nothing)
 function_tool(d::AbstractDict)           # from dict with keys "name", "description", "parameters"
-web_search(; context_size="medium", location=nothing)
+web_search(; context_size="medium", location=nothing, type="web_search", filters=nothing)
 file_search(store_ids; max_results=nothing, ranking=nothing, filters=nothing)
-mcp_tool(label, url; require_approval="never", allowed_tools=nothing, headers=nothing)
+mcp_tool(label, url=nothing; require_approval="never", allowed_tools=nothing, headers=nothing,
+         connector_id=nothing, authorization=nothing, server_description=nothing, tunnel_id=nothing)
 computer_use(; display_width=1024, display_height=768, environment=nothing)
 image_generation_tool(; kwargs...)
 code_interpreter(; container=nothing, file_ids=nothing)
@@ -459,13 +515,14 @@ end
 
 @kwdef struct TextConfig
     format::TextFormatSpec = TextFormatSpec()
+    verbosity::Union{String,Nothing} = nothing              # "low","medium","high" (gpt-5.x)
 end
 ```
 
 **Convenience constructors**:
 
 ```julia
-text_format(; kwargs...)                                     # generic TextConfig
+text_format(; verbosity=nothing, kwargs...)                  # kwargs go to TextFormatSpec; verbosity to TextConfig
 json_schema_format(name, description, schema; strict=nothing) # JSON Schema output
 json_schema_format(d::AbstractDict)                          # from dict with keys "name", "description", "schema"
 json_object_format()                                         # unstructured JSON
@@ -533,11 +590,22 @@ count_input_tokens(; model="gpt-5.5", input, instructions=nothing, tools=nothing
     model::String
     output::Vector{Any}
     usage::Union{Dict{String,Any},Nothing} = nothing
-    error::Union{Any,Nothing} = nothing
+    error::Union{Dict{String,Any}, String, Nothing} = nothing   # provider error object, or a plain message
     metadata::Union{Dict{String,Any},Nothing} = nothing
     raw::Dict{String,Any}
 end
 ```
+
+A generation whose terminal status is `"failed"` is reported as a
+`ResponseFailure`, not a success — on both agentic wires, streamed and
+non-streamed alike. The failure carries the wire body verbatim, so the response's
+own `error` and `metadata` are preserved on `.response`. Non-streamed, only
+`"failed"` flips: `cancelled`, `expired`, `in_progress`, `queued` and
+`requires_action` are legitimate terminals of the background and tool-action
+flows and stay `ResponseSuccess`, inspectable via [`response_status`](@ref) and
+[`incomplete_details`](@ref). Streamed, a terminal `response.incomplete` event
+also resolves to `ResponseFailure`, so check the result type rather than
+assuming a stream that produced deltas ended in success.
 
 ### Responses API Examples
 
@@ -621,7 +689,7 @@ println(tokens["input_tokens"])
 ```julia
 @kwdef struct ImageGeneration
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
-    model::String = "gpt-image-2"
+    model::String = ""                                      # sentinel — see below
     prompt::String
     n::Union{Int,Nothing} = nothing                         # 1–10
     size::Union{String,Nothing} = nothing                   # "1024x1024","1536x1024","1024x1536","auto"
@@ -630,8 +698,17 @@ println(tokens["input_tokens"])
     output_format::Union{String,Nothing} = nothing          # "png","webp","jpeg"
     output_compression::Union{Int,Nothing} = nothing        # 0–100 (webp/jpeg only)
     user::Union{String,Nothing} = nothing
+    input_fidelity::Union{String,Nothing} = nothing         # how closely to follow an input image
+    moderation::Union{String,Nothing} = nothing             # content-moderation strictness
 end
 ```
+
+Unlike `Chat` and `Respond`, `ImageGeneration` does **not** resolve its model at
+construction: the field stays `""` and resolves at serialization time, to
+`"gpt-image-2"` for OpenAI. So `ImageGeneration(prompt="…").model` reads back as
+the empty string — pass `model=` explicitly if you need to read it, or inspect
+`JSON.json(ig)` to see what will go on the wire. A service with no default image
+model throws `ArgumentError` at serialization.
 
 ### generate_image
 
@@ -695,17 +772,23 @@ result = generate_image("Minimalist logo",
 ```julia
 struct Embeddings
     service::ServiceEndpointSpec     # default: OPENAIServiceEndpoint
-    model::String                    # default resolved per provider
+    model::String                    # default resolved per provider at construction
     input::Union{String,Vector{String}}
-    embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}
+    embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}   # pre-allocated, filled in place
     user::Union{String,Nothing}
+    dimensions::Union{Int,Nothing}          # requested output dimensionality
+    encoding_format::Union{String,Nothing}  # e.g. "float", "base64"
 end
 
-Embeddings(input::String; service=OPENAIServiceEndpoint, model="text-embedding-3-small")
-Embeddings(input::Vector{String}; service=OPENAIServiceEndpoint, model="text-embedding-3-small")
+Embeddings(input::String; service=OPENAIServiceEndpoint, model="",
+           dimensions=nothing, encoding_format=nothing, user=nothing)
+Embeddings(input::Vector{String}; service=OPENAIServiceEndpoint, model="",
+           dimensions=nothing, encoding_format=nothing, user=nothing)
 ```
 
-Model defaults: `"text-embedding-3-small"` for OpenAI, `"gemini-embedding-001"` for Gemini. For generic/DeepSeek endpoints, model must be specified explicitly.
+Model defaults: `"text-embedding-3-small"` for OpenAI, `"gemini-embedding-001"` for Gemini (OpenAI-compat shim). For generic/DeepSeek endpoints, model must be specified explicitly or the constructor throws `ArgumentError`. An empty `Vector{String}` input also throws.
+
+The `embeddings` buffer is pre-allocated to `something(dimensions, 1536)` zeros per input and filled in place. Because a pre-zeroed slot would be indistinguishable from a real vector, a response that does not cover every input exactly once — a missing or duplicated row index — is reported as an `EmbeddingCallError` rather than left as zeros.
 
 ### embeddingrequest!
 
@@ -742,21 +825,42 @@ similarity = dot(emb.embeddings[1], emb.embeddings[2]) /
     prompt_tokens::Int = 0
     completion_tokens::Int = 0
     total_tokens::Int = 0
+    cached_tokens::Int = 0      # subset of prompt_tokens served from the prompt cache
+    reasoning_tokens::Int = 0   # subset of completion_tokens spent on hidden reasoning
 end
 ```
+
+`cached_tokens` and `reasoning_tokens` come from the providers' `*_tokens_details`
+objects and default to `0` when the provider omits them. `cached_tokens` is
+load-bearing for cost: it is billed at the discounted cached-input rate.
 
 ### Functions
 
 ```julia
-token_usage(result::LLMSuccess)::Union{TokenUsage, Nothing}      # extract TokenUsage from a Chat result
-token_usage(result::ResponseSuccess)::Union{TokenUsage, Nothing}  # extract from Responses API result
+token_usage(result::LLMRequestResponse)::TokenUsage   # never Nothing — zero usage for a failure
+estimated_cost(result; model=nothing, pricing=DEFAULT_PRICING)   # per-call cost estimate (Float64)
+cumulative_cost(chat::Chat)::Float64                             # running total for a Chat instance
 
-estimated_cost(result; model=nothing, pricing=DEFAULT_PRICING)     # per-call cost estimate (Float64)
-cumulative_cost(chat::Chat)::Float64                               # running total for a Chat instance
-
-DEFAULT_PRICING   # Dict{String, PriceRow} where PriceRow = @NamedTuple{input, cached_input, output} (USD per 1M tokens)
-# NOTE: estimated_cost returns 0.0 for any model NOT in this dict — pass pricing= to price custom models
+DEFAULT_PRICING   # Dict{String, PriceRow} where PriceRow = @NamedTuple{input, cached_input, output}
 ```
+
+- **`token_usage` returns a `TokenUsage`, never `nothing`**, for every result of a
+  token-billed API — chat, Responses, embeddings, and their image counterparts.
+  Failures of those APIs report all-zero usage.
+- **Both functions throw `ArgumentError` for result types outside the token-billed
+  APIs** — audio, batch, container, conversation, file, fine-tuning, moderation,
+  upload, vector-store, video, realtime. Those calls carry no token usage at all,
+  and a `0.0` would be indistinguishable from a genuinely free call.
+- **`DEFAULT_PRICING` values are USD *per token*, not per 1M tokens** — provider
+  list prices divided by `1_000_000` (e.g. `"gpt-5.5"` is
+  `(input = 5.0e-6, cached_input = 5.0e-7, output = 3.0e-5)`). A `pricing=`
+  dict you supply must use the same per-token convention, or your estimate is
+  off by a factor of a million.
+- `estimated_cost` returns `0.0` for any model **not** in the pricing dict — pass
+  `pricing=` to price custom models. The formula bills
+  `min(cached_tokens, prompt_tokens)` at `cached_input`, the remaining prompt
+  tokens at `input`, and `completion_tokens` at `output` (reasoning tokens are
+  already counted within completion tokens).
 
 ### Cost Tracking Example
 
@@ -845,9 +949,12 @@ end
 ### tool_loop! (Chat Completions)
 
 ```julia
-tool_loop!(chat, dispatcher; max_turns=10, config=nothing) -> ToolLoopResult
-tool_loop!(chat; tools::Vector{<:CallableTool}, kwargs...) -> ToolLoopResult
+tool_loop!(chat, dispatcher; max_turns=10, config=nothing, callback=nothing, on_tool_call=nothing) -> ToolLoopResult
+tool_loop!(chat; tools::Vector{<:CallableTool}, kwargs...) -> ToolLoopResult   # kwargs as above
 ```
+
+`callback` and `on_tool_call` are the streaming hooks from `chatrequest!`, applied
+to every turn of the loop.
 
 ### tool_loop (Responses API)
 
@@ -905,11 +1012,32 @@ get_prompt(session, name, arguments) -> Vector{Dict}
 ping(session)
 ```
 
+`call_tool` and `get_prompt` accept any `AbstractDict` for `arguments`, so the
+natural `Dict("path" => "/tmp/x")` form works without conversion.
+
 Timeouts surface as the exported `MCPTimeoutError` (`phase` `:connect`/`:request`);
 a stdio request timeout closes the session (opt-in `auto_respawn` respawns on the
 next call), an HTTP request timeout does not. A stdio server that exits or whose
 pipe breaks surfaces the exported `MCPCrashError` (the session closes with cause
 `:crash`; `auto_respawn` respawns the server on the next call).
+
+### Session Concurrency (concurrency-1)
+
+An `MCPSession` serializes everything: each call's liveness check, id allocation
+and request/response exchange runs under one session lock, so a concurrent caller
+waits for the exchange in progress.
+
+- The queued caller's `mcp_request_timeout` is measured **from the moment it takes
+  the lock**, not from when it asked — waiting behind another call never counts
+  against its own bound, and the wait stays bounded transitively because the call
+  ahead runs under that same per-exchange bound.
+- `mcp_disconnect!` takes the lock too, so a disconnect racing a call in flight
+  **waits** for that exchange to finish instead of tearing the transport down
+  under its reader.
+- Interleaved server → client frames are handled in place: notifications are
+  skipped and server `ping` requests answered.
+
+For genuine parallelism, open one session per concurrent worker.
 
 ### Tool Result
 
@@ -1000,6 +1128,25 @@ handle = serve(server; transport=:http, port=8080, block=false,
 close(handle)
 ```
 
+### Error and Limit Contracts
+
+- **A throwing tool handler is a tool result, not a protocol error.** The
+  exception's message is returned to the client as tool content with
+  `isError: true`, which is exactly what lets a model see and correct its own
+  mistake. Write handlers accordingly: raise with a message you are willing to
+  show the model *and* the client, since it is relayed verbatim.
+- **Dispatch-layer errors are generic.** Any unhandled error below the handler
+  answers JSON-RPC `-32603` with the message `"Internal error"` — the exception
+  and backtrace go to the server's own logs, not to the peer, because an
+  exception string can carry file paths and argument values a remote client has
+  no business reading. A single bad frame never takes the transport down.
+- **Frames and request bodies are capped at 16 MiB** on both transports. An
+  oversized frame is answered with `-32600` rather than parsed, since parsing an
+  attacker-sized payload allocates a multiple of it — an out-of-memory kill
+  rather than a protocol error.
+- The server tolerates spec-legal parameter shapes: `params: null` and positional
+  `params` do not crash it.
+
 ### Server Example
 
 ```julia
@@ -1020,7 +1167,7 @@ Supported by DeepSeek (beta), Ollama, vLLM.
 ```julia
 @kwdef struct FIMCompletion
     service::ServiceEndpointSpec
-    model::String = "deepseek-chat"
+    model::String = ""    # sentinel: resolves at serialization to "deepseek-chat" for DeepSeek
     prompt::String
     suffix::Union{String,Nothing} = nothing
     max_tokens::Union{Int,Nothing} = 128
@@ -1030,13 +1177,18 @@ end
 struct FIMChoice; text, index, finish_reason; end
 struct FIMResponse; choices, usage, model, raw; end
 struct FIMSuccess <: LLMRequestResponse; response::FIMResponse; end
-struct FIMFailure <: LLMRequestResponse; response, status; end
-struct FIMCallError <: LLMRequestResponse; error, status, cause; end
+struct FIMFailure <: LLMRequestResponse; response, status, request_id; end
+struct FIMCallError <: LLMRequestResponse; error, status, request_id, cause; end
 
 fim_complete(fim::FIMCompletion; config=nothing) -> LLMRequestResponse
 fim_complete(prompt; suffix=nothing, kwargs...) -> LLMRequestResponse  # convenience
 fim_text(result) -> String  # extract generated text
 ```
+
+Unlike `Chat`, `FIMCompletion` does not resolve its model at construction — the
+field stays `""` until serialization, where it becomes `"deepseek-chat"` for
+`DeepSeekEndpoint`. Endpoints without a default FIM model must set `model=`
+explicitly, or serialization throws `ArgumentError`.
 
 ### FIM Example
 
@@ -1073,7 +1225,9 @@ result = prefix_complete(chat)
 
 ## Provider Capabilities
 
-Each endpoint declares supported features. Request functions validate before dispatch.
+Each endpoint declares supported features. Request functions validate before
+dispatch, so an unsupported feature is an `ArgumentError` naming what the provider
+does support, not an HTTP 404.
 
 ```julia
 provider_capabilities(service) -> Set{Symbol}
@@ -1092,7 +1246,24 @@ has_capability(service, cap::Symbol) -> Bool
 | DeepSeek | `:chat`, `:tools`, `:fim`, `:prefix_completion`, `:json_output` |
 | Generic | `:chat`, `:embeddings`, `:fim`, `:tools`, `:responses` |
 
-Request functions call `validate_capability` internally and throw `ArgumentError` if the provider does not support the requested feature. You do not need to check capabilities manually before making requests.
+Validation comes in two strengths, and the difference matters if you write your
+own endpoint:
+
+- **Platform and lifecycle verbs** (files, vector stores, conversations,
+  moderations, audio, batch, fine-tuning, containers, uploads, video, realtime,
+  FIM, prefix completion, image *edits*) validate **strictly**: an endpoint with
+  no declaration at all is rejected, because those surfaces are OpenAI-shaped and
+  a non-OpenAI backend would just 404.
+- **The four primary verbs** — `chatrequest!` (`:chat`), `embeddingrequest!`
+  (`:embeddings`), `respond` (`:responses` **or** `:agentic`), and
+  `generate_image` (`:images`) — validate only endpoints that **declare** their
+  capabilities. A custom endpoint that defines no `provider_capabilities` method
+  passes through unvalidated: the package has no basis for claiming what someone
+  else's OpenAI-compatible server cannot do, and refusing to dispatch it would be
+  a false negative. Declaring capabilities is therefore opt-in strictness — once
+  you declare, you are held to the declaration.
+
+Either way you never need to check capabilities manually before a request.
 
 ---
 
@@ -1130,27 +1301,108 @@ end
 set_default_config!(total_deadline=120.0)   # process-wide default
 ```
 
+### Which verbs retry
+
+`max_attempts` applies to the inference verbs only: `chatrequest!`,
+`embeddingrequest!`, `respond`, `fim_complete`, `prefix_complete`,
+`generate_image`, `edit_image`, `upload_file`, and the `tool_loop` family
+(streams retry only before the first callback fires). Platform and lifecycle verbs
+— batch, container, conversation, file, fine-tuning, moderation, upload,
+vector-store, video, audio, realtime, and the Responses lifecycle operations —
+make a **single bounded attempt**, and `max_attempts` has no effect on them.
+
+### Sharp edges
+
+- **`connect_timeout = Inf` is unsupported on the HTTP 1.x major.** A breached
+  task-mode watchdog abandons its worker rather than killing it, relying on the
+  attempt's native bound to end it; on 1.x `connect_timeout` is the only native
+  bound covering connection acquisition, so disabling it can leave a worker that
+  never self-terminates. Safe on the 2.x major, whose request bound also covers
+  acquisition.
+- **Streams, pre-first-byte, on HTTP 2.x** are additionally bounded by
+  `stream_idle_timeout` (that major caps the response-header wait with the
+  read-idle timer), so the effective bound is
+  `min(total_deadline, request_timeout, stream_idle_timeout)` and a breach reports
+  phase `:stream_idle` even though no byte arrived.
+- **A completed turn is never discarded or re-sent.** Once a stream records its
+  terminal state, teardown noise — idle breach, transport reset, truncated read —
+  finalizes it as a success rather than failing or retrying it, on every provider
+  and both stream drivers. Re-POSTing would bill a second generation.
+- **Realtime**: `realtime_connect` bounds the open phase with `connect_timeout`;
+  `realtime_receive` bounds the read with `stream_idle_timeout` and surfaces a
+  breach within `[limit, limit + ~5 s]` (the WebSocket close waits for the peer's
+  acknowledgement). An open session's lifetime is deliberately unbounded.
+
+### Concurrency
+
+- **One `Chat` per in-flight call.** `messages` and the cumulative-cost `Ref` are
+  unsynchronized by design; use `fork(chat)` / `fork(chat, n)` to fan out.
+  `respond`, `embeddingrequest!` and `generate_image` take a fresh request struct
+  per call and need no such care.
+- **An `MCPSession` is concurrency-1** (whole-exchange lock; a queued caller's
+  bound starts when it takes the lock; `mcp_disconnect!` waits for the in-flight
+  exchange). One session per concurrent worker.
+- **HTTP 1.x pools connections process-globally across hosts**, capped at
+  `max(16, 4 × Threads.nthreads())`; HTTP 2.x pools per host with no default cap.
+  Prefer HTTP 2.x for high fan-out.
+
 ---
 
 ## Result Type Hierarchy
 
-All API call results inherit from `LLMRequestResponse`:
+All 66 API call result types inherit from `LLMRequestResponse`, in 16 per-API
+families:
 
 ```
-LLMRequestResponse (abstract)
-├── LLMSuccess          — Chat Completions success (.message::Message, .self::Chat)
-├── LLMFailure          — Chat Completions HTTP error (.response::String, .status::Int, .self::Chat)
-├── LLMCallError        — Chat Completions exception (.error::String, .status, .self::Chat, .cause::Union{Nothing,Exception})
-├── ResponseSuccess     — Responses API success (.response::ResponseObject)
-├── ResponseFailure     — Responses API HTTP error (.response::String, .status::Int)
-├── ResponseCallError   — Responses API exception (.error::String, .status, .cause::Union{Nothing,Exception})
-├── ImageSuccess        — Image Gen success (.response::ImageResponse)
-├── ImageFailure        — Image Gen HTTP error (.response::String, .status::Int)
-├── ImageCallError      — Image Gen exception (.error::String, .status)
-├── FIMSuccess          — FIM success (.response::FIMResponse)
-├── FIMFailure          — FIM HTTP error (.response::String, .status::Int)
-└── FIMCallError        — FIM exception (.error::String, .status, .cause::Union{Nothing,Exception})
+LLMRequestResponse   (abstract parent of every result type below)
+│
+├─ Chat Completions   LLMSuccess · LLMFailure · LLMCallError
+├─ Responses API      ResponseSuccess · ResponseFailure · ResponseCallError
+├─ Embeddings         EmbeddingSuccess · EmbeddingFailure · EmbeddingCallError
+├─ Image Generation   ImageSuccess · ImageFailure · ImageCallError
+├─ FIM Completion     FIMSuccess · FIMFailure · FIMCallError
+├─ Files              FileSuccess · FileListSuccess · FileContentSuccess · FileDeleteSuccess · FileFailure · FileCallError
+├─ Vector Stores      VectorStoreSuccess · VectorStoreListSuccess · VectorStoreFileSuccess · VectorStoreBatchSuccess · VectorStoreDeleteSuccess · VectorStoreFailure · VectorStoreCallError
+├─ Conversations      ConversationSuccess · ConversationItemSuccess · ConversationItemListSuccess · ConversationDeleteSuccess · ConversationFailure · ConversationCallError
+├─ Moderations        ModerationSuccess · ModerationFailure · ModerationCallError
+├─ Audio              SpeechSuccess · TranscriptionSuccess · AudioFailure · AudioCallError
+├─ Batch              BatchSuccess · BatchListSuccess · BatchFailure · BatchCallError
+├─ Fine-tuning        FineTuningSuccess · FineTuningListSuccess · FineTuningFailure · FineTuningCallError
+├─ Containers         ContainerSuccess · ContainerListSuccess · ContainerDeleteSuccess · ContainerFailure · ContainerCallError
+├─ Uploads            UploadSuccess · UploadPartSuccess · UploadFailure · UploadCallError
+├─ Videos             VideoSuccess · VideoListSuccess · VideoContentSuccess · VideoFailure · VideoCallError
+└─ Realtime           RealtimeSecretSuccess · RealtimeFailure · RealtimeCallError
 ```
+
+Every `*Success` wraps a parsed response object, every `*Failure` carries the HTTP
+status and body, and every `*CallError` wraps a transport/exception. Fields of the
+five primary families:
+
+```julia
+LLMSuccess        (.message::Message, .self::Chat, .usage::Union{TokenUsage,Nothing})
+LLMFailure        (.response::String, .status::Int, .self::Chat, .request_id::Union{String,Nothing})
+LLMCallError      (.error::String, .status::Union{Int,Nothing}, .self::Chat, .request_id::Union{String,Nothing}, .cause::Union{Nothing,Exception})
+ResponseSuccess   (.response::ResponseObject)
+ResponseFailure   (.response::String, .status::Int, .request_id::Union{String,Nothing})
+ResponseCallError (.error::String, .status::Union{Int,Nothing}, .request_id::Union{String,Nothing}, .cause::Union{Nothing,Exception})
+EmbeddingSuccess  (.embeddings::Embeddings, .usage::Union{TokenUsage,Nothing}, .raw::Dict{String,Any})
+EmbeddingFailure  (.response::String, .status::Int)
+EmbeddingCallError(.error::String, .status::Union{Int,Nothing}, .cause::Union{Nothing,Exception})
+ImageSuccess      (.response::ImageResponse)
+ImageFailure      (.response::String, .status::Int)
+ImageCallError    (.error::String, .status::Union{Int,Nothing})
+FIMSuccess        (.response::FIMResponse)
+FIMFailure        (.response::String, .status::Int, .request_id::Union{String,Nothing})
+FIMCallError      (.error::String, .status::Union{Int,Nothing}, .request_id::Union{String,Nothing}, .cause::Union{Nothing,Exception})
+```
+
+`request_id` carries the provider's `x-request-id` header for support escalation.
+It exists on the six Chat / Responses / FIM failure and call-error types above;
+the image and embedding limbs do not carry it.
+
+**Credentials never reach a result value.** API keys and request bodies are
+redacted from the `error` strings these types carry, and a `*CallError`'s
+`cause` is named by type rather than dumped when the result is displayed.
 
 **Standard pattern-matching idiom**:
 
@@ -1207,7 +1459,7 @@ struct InvalidConversationError <: Exception
 end
 ```
 
-Thrown by `issendvalid` / internal validation when conversation structure is invalid (e.g., missing system message position, consecutive same-role messages).
+Thrown by `push!` (a non-system message onto an empty `Chat`, a system message after the conversation started, or a same-role repeat other than `tool`) and by `pop!` on an empty `Chat`. `issendvalid` never throws — it returns a `Bool`.
 
 ```julia
 struct LLMResultError <: Exception

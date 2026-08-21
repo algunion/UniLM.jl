@@ -5,6 +5,28 @@ event transport and ephemeral client-secret minting; audio is exchanged as
 base64 PCM inside events. WebRTC media capture and SIP telephony are out of
 scope. OpenAI only.
 
+## Bounds
+
+[`realtime_connect`](@ref) takes a `config::Union{Nothing,RequestConfig}`,
+resolves it the usual four ways, and captures it on the session's `config` field:
+
+- **The open phase** is bounded by `connect_timeout` — a peer that accepts the
+  TCP connection but never completes the upgrade throws
+  `UniLMTimeout(:connect, …)` rather than blocking.
+- **[`realtime_receive`](@ref)** is bounded by the session's
+  `stream_idle_timeout` and throws `UniLMTimeout(:stream_idle, …)` on a breach.
+  Unblocking a parked read means closing the socket, and HTTP.jl's WebSocket
+  close allows the peer up to ~5 s to acknowledge, so the breach surfaces within
+  `[limit, limit + ~5 s]`.
+- **The session's lifetime is deliberately unbounded.** Once your handler runs,
+  how long it stays connected is your decision — a Realtime session is meant to
+  sit idle waiting for input.
+
+Realtime throws rather than returning a typed result value, and `realtime_connect`
+makes a single attempt; `max_attempts` does not apply. A minted client secret is a
+live credential, so [`RealtimeSecretSuccess`](@ref) redacts it when displayed —
+read `.value` programmatically. See [Timeouts & Retries](@ref timeout_realtime).
+
 ## Session and Result Types
 
 ```@docs

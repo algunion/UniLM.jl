@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Azure deployment registry: a registered value that did not carry the
+  `/openai/deployments/` prefix every registration writes was silently encoded
+  whole and re-prefixed, producing a request path nobody registered. The reader
+  now throws an `ArgumentError` naming the malformed entry.
+
 ## 0.16.0
 
 ### Fixed

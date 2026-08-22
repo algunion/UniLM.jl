@@ -524,6 +524,21 @@ end
     end
 end
 
+@testset "Azure deployment registry rejects a malformed entry" begin
+    # `add_azure_deploy_name!` is the registry's only writer and always stores the
+    # assembled `/openai/deployments/<name>` path, so an entry without that prefix
+    # can only come from a write straight into the dict. Recovering the name by
+    # chopping a prefix that is not there would encode the WHOLE entry and
+    # re-prefix it, inventing a deployment path nobody registered. The reader
+    # names the bad entry instead of silently repairing it.
+    try
+        UniLM._MODEL_ENDPOINTS_AZURE_OPENAI["malformed-entry-model"] = "my-deploy_01"
+        @test_throws ArgumentError UniLM._azure_deployment_path("malformed-entry-model")
+    finally
+        delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "malformed-entry-model")
+    end
+end
+
 @testset "Azure deployment path encodes the deployment name" begin
     # A deployment name is one path segment of caller data: a `/`, `?` or `#`
     # inside it must not add segments or open a query string on the wire. The

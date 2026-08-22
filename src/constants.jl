@@ -125,6 +125,10 @@ otherwise the matching `AZURE_OPENAI_DEPLOY_NAME_*` environment variable is read
 **at call time**, so runtime configuration wins regardless of what the
 environment held when the package was loaded. Throws `KeyError(model)` when the
 model has neither a registration nor a configured deployment environment variable.
+Throws `ArgumentError` naming the entry when a registered value does not carry the
+`/openai/deployments/` prefix every registration writes — such a value could only
+come from a write straight into the registry, and re-encoding it whole would
+produce a deployment path nobody registered.
 
 The deployment name is percent-encoded here, where the path is built: it is one
 path segment, so a `/`, `?` or `#` inside it must travel as data rather than add
@@ -136,8 +140,17 @@ function _azure_deployment_path(model::String)::String
     # One locked lookup, not haskey-then-getindex: two probes of a concurrently
     # mutated Dict can disagree even when each is individually consistent.
     registered = @lock _AZURE_DEPLOY_LOCK get(_MODEL_ENDPOINTS_AZURE_OPENAI, model, nothing)
-    # The registry stores the assembled path, so the name is what follows the prefix.
-    isnothing(registered) || return prefix * _uripart(chopprefix(registered, prefix))
+    if !isnothing(registered)
+        # The registry stores the assembled path, so the name is what follows the
+        # prefix. `add_azure_deploy_name!` always writes it, so an entry lacking it
+        # was put in the dict past that accessor; chopping a prefix that is not
+        # there would keep the WHOLE entry, encode it and re-prefix it into a path
+        # nobody registered. Name the bad entry instead of silently repairing it.
+        startswith(registered, prefix) || throw(ArgumentError(
+            "malformed Azure deployment registry entry for model $(repr(model)): " *
+            "$(repr(registered)) does not start with $(repr(prefix))"))
+        return prefix * _uripart(chopprefix(registered, prefix))
+    end
     if model == "gpt-5.2" && haskey(ENV, "AZURE_OPENAI_DEPLOY_NAME_GPT_5_2")
         return prefix * _uripart(ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_5_2"])
     end

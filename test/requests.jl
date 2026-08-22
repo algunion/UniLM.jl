@@ -524,6 +524,16 @@ end
     end
 end
 
+@testset "_uripart over-encodes the tilde (golden)" begin
+    # GOLDEN: `~` is unreserved in RFC 3986, but the escaper's safe set is one
+    # character narrower, so it travels as `%7E` — over-encoding, not a change in
+    # meaning, since a server decodes it back. Pinned here so an HTTP.jl/URIs
+    # upgrade that silently widens or narrows that set fails on this line instead
+    # of on whichever request target happens to carry a tilde.
+    @test UniLM._uripart("~") == "%7E"
+    @test UniLM._uripart("file-abc123") == "file-abc123"   # unreserved id: byte-for-byte no-op
+end
+
 @testset "Azure deployment registry rejects a malformed entry" begin
     # `add_azure_deploy_name!` is the registry's only writer and always stores the
     # assembled `/openai/deployments/<name>` path, so an entry without that prefix

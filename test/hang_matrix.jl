@@ -205,6 +205,32 @@ function _hm_mute_server(; drain::Bool = false)
     (srv, "http://127.0.0.1:$(port)", acceptor)
 end
 
+# A mute-peer scenario has a PRECONDITION: the peer must still be holding the
+# accepted connection when the client's own deadline fires. If that loopback
+# socket dies first, the client's write lands on a dead peer (EPIPE) or a reset
+# one (ECONNRESET) and the driver correctly reports that transport failure — but
+# the mute condition never held, so the outcome carries no information about the
+# timeout contract and the scenario has to be run again.
+#
+# CONSTRAINT: this predicate must match ONLY that signature. Every other wrong
+# outcome — a success, a different result type, a timeout classified into the
+# wrong phase, a task that never finished — is the CONTRACT failing and is
+# reported on the first attempt, never retried. A retry is bounded anyway, so a
+# contract break that did produce this signature deterministically still turns
+# red once the attempts are spent.
+const _HM_DEAD_PEER = (Base.UV_EPIPE, Base.UV_ECONNRESET)
+
+function _hm_peer_died(outcome)::Bool
+    outcome[1] === :ok || return false
+    res = outcome[2]
+    res isa LLMCallError || return false
+    # Typed first: the IOError can arrive nested in transport wrappers. The
+    # message is the fallback for a driver limb that keeps only the rendered text.
+    return UniLM._find_exception(e -> e isa Base.IOError && e.code in _HM_DEAD_PEER,
+                                 res.cause) !== nothing ||
+           occursin(r"EPIPE|ECONNRESET", res.error)
+end
+
 # HTTP server that returns a fixed retryable status (optionally with Retry-After)
 # and counts requests. After `hang_after` requests it stops responding — an
 # over-budget tripwire: a client that exceeds the attempt budget blocks here and
@@ -624,28 +650,32 @@ UniLM.handle_sse_event!(::_HMAnthropicWireMock, event::AbstractString, payload::
     # the stream — the first-byte deadline (min(remaining total, request_timeout))
     # closes the connection and the stream task's result is LLMCallError with
     # status === nothing and cause::UniLMTimeout.
-    srv, url, _ = _hm_mute_server()
-    try
-        chat = Chat(service = GenericOpenAIEndpoint(url, ""), model = "mock", stream = true)
-        push!(chat, Message(Val(:system), "s"))
-        push!(chat, Message(Val(:user), "u"))
-        outcome = _hm_bounded() do
-            cfg = UniLM.RequestConfig(request_timeout = 1.0, total_deadline = 2.0,
-                max_attempts = 1, stream_idle_timeout = 5.0)
-            fetch(chatrequest!(chat; config = cfg))
-        end
-        ok = try
-            outcome[1] === :ok && let res = outcome[2]
-                res isa LLMCallError && res.status === nothing && res.cause isa UniLM.UniLMTimeout
+    ok, outcome = false, (:unrun, nothing)
+    for _ in 1:3   # whole-scenario re-runs, gated by `_hm_peer_died` — see its constraint
+        srv, url, _ = _hm_mute_server()
+        try
+            chat = Chat(service = GenericOpenAIEndpoint(url, ""), model = "mock", stream = true)
+            push!(chat, Message(Val(:system), "s"))
+            push!(chat, Message(Val(:user), "u"))
+            outcome = _hm_bounded() do
+                cfg = UniLM.RequestConfig(request_timeout = 1.0, total_deadline = 2.0,
+                    max_attempts = 1, stream_idle_timeout = 5.0)
+                fetch(chatrequest!(chat; config = cfg))
             end
-        catch
-            false
+            ok = try
+                outcome[1] === :ok && let res = outcome[2]
+                    res isa LLMCallError && res.status === nothing && res.cause isa UniLM.UniLMTimeout
+                end
+            catch
+                false
+            end
+        finally
+            close(srv)
         end
-        ok || @warn "hang-matrix composite check failed" outcome
-        @test ok
-    finally
-        close(srv)
+        (ok || !_hm_peer_died(outcome)) && break   # only a lost precondition retries
     end
+    ok || @warn "hang-matrix composite check failed" outcome
+    @test ok
 end
 
 @testset "stream: mid-stream byte-gap yields typed timeout" begin

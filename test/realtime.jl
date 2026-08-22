@@ -116,6 +116,15 @@ end
 @testset "realtime session survives past the connect budget" begin
     # Falsifies the obvious way to get the bound wrong: arming a handshake timer
     # that outlives the upgrade would kill a healthy, deliberately quiet session.
+    #
+    # Budget: a loopback upgrade costs tens of milliseconds, but an instrumented
+    # shared runner adds scheduler/delivery stalls of ~2 s before the handshake is
+    # observed, so the connect bound is 3.0 s. A WHOLE second: the 1.x major's
+    # native connect bound is integer seconds (rounded up), so a fractional budget
+    # would arm the two majors at different effective limits. The handler then
+    # stays quiet for 8.0 s — a timer that outlived the upgrade fires by
+    # 3.0 s + that same ~2 s stall = 5.0 s, well inside the quiet window, so the
+    # gap between "still alive" and "would have been killed" stays wide.
     port = let s = Sockets.listen(Sockets.localhost, 0)
         p = Int(Sockets.getsockname(s)[2])
         close(s)
@@ -130,14 +139,14 @@ end
     try
         got = Ref{Any}(nothing)
         t = Threads.@spawn realtime_connect(model="gpt-realtime-2", service=RTLiveEndpoint,
-                                            config=RequestConfig(connect_timeout=1.0,
+                                            config=RequestConfig(connect_timeout=3.0,
                                                                  stream_idle_timeout=Inf,
                                                                  total_deadline=Inf)) do sess
-            sleep(2.5)                       # idle well past the connect budget
+            sleep(8.0)                       # idle well past the connect budget
             realtime_send(sess, session_update(Dict("voice" => "alloy")))
             got[] = realtime_receive(sess)
         end
-        @test timedwait(() -> istaskdone(t), 30.0) === :ok
+        @test timedwait(() -> istaskdone(t), 45.0) === :ok
         fetch(t)
         @test got[]["type"] == "session.update"
         @test got[]["session"]["voice"] == "alloy"

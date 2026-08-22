@@ -524,6 +524,31 @@ end
     end
 end
 
+@testset "_uripart over-encodes the tilde (golden)" begin
+    # GOLDEN: `~` is unreserved in RFC 3986, but the escaper's safe set is one
+    # character narrower, so it travels as `%7E` — over-encoding, not a change in
+    # meaning, since a server decodes it back. Pinned here so an HTTP.jl/URIs
+    # upgrade that silently widens or narrows that set fails on this line instead
+    # of on whichever request target happens to carry a tilde.
+    @test UniLM._uripart("~") == "%7E"
+    @test UniLM._uripart("file-abc123") == "file-abc123"   # unreserved id: byte-for-byte no-op
+end
+
+@testset "Azure deployment registry rejects a malformed entry" begin
+    # `add_azure_deploy_name!` is the registry's only writer and always stores the
+    # assembled `/openai/deployments/<name>` path, so an entry without that prefix
+    # can only come from a write straight into the dict. Recovering the name by
+    # chopping a prefix that is not there would encode the WHOLE entry and
+    # re-prefix it, inventing a deployment path nobody registered. The reader
+    # names the bad entry instead of silently repairing it.
+    try
+        UniLM._MODEL_ENDPOINTS_AZURE_OPENAI["malformed-entry-model"] = "my-deploy_01"
+        @test_throws ArgumentError UniLM._azure_deployment_path("malformed-entry-model")
+    finally
+        delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "malformed-entry-model")
+    end
+end
+
 @testset "Azure deployment path encodes the deployment name" begin
     # A deployment name is one path segment of caller data: a `/`, `?` or `#`
     # inside it must not add segments or open a query string on the wire. The

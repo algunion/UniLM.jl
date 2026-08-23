@@ -32,10 +32,14 @@ end
     schema = UniLM._json_schema_type(Dict{String,Any})
     @test schema["type"] == "object"
 
-    # mcp_schema.jl:41 — the AbstractDict fallback (non-String-keyed dicts). Must hit line 41
-    # (NOT the Dict{String,T} method on line 39) and emit a bare object schema with NO
-    # "additionalProperties" key. Falsifies dispatch leaking to the string-keyed branch.
-    @test which(UniLM._json_schema_type, (Type{Dict{Symbol,Int}},)).line == 41
+    # The AbstractDict fallback in mcp_schema.jl (non-String-keyed dicts): a bare object schema
+    # with NO "additionalProperties" key. The file/module pin catches a stray definition
+    # elsewhere or a test-local override; the method-identity check falsifies dispatch leaking
+    # to the Dict{String,T} branch, which lives in the same file and so shares both.
+    m = which(UniLM._json_schema_type, (Type{Dict{Symbol,Int}},))
+    @test basename(String(m.file)) == "mcp_schema.jl"
+    @test m.module === UniLM
+    @test m !== which(UniLM._json_schema_type, (Type{Dict{String,Int}},))
     sym_schema = UniLM._json_schema_type(Dict{Symbol,Int})
     @test sym_schema == Dict{String,Any}("type" => "object")
     @test !haskey(sym_schema, "additionalProperties")

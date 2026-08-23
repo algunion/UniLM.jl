@@ -2254,10 +2254,13 @@ try
     end
 
     @testset "realtime default WS URL (pure-unit)" begin
-        # realtime.jl:73 — the generic _realtime_ws_url(service) fallback returns REALTIME_WS_URL.
-        # WSMockEndpoint overrides it (line 65), so a non-overridden service (the OPENAI type) must
-        # hit the default. which().line pins the method; the value falsifies a wrong default URL.
-        @test which(UniLM._realtime_ws_url, (Type{OPENAIServiceEndpoint},)).line == 73
+        # The generic _realtime_ws_url(service) fallback in realtime.jl returns REALTIME_WS_URL.
+        # This suite overrides it for WSMockEndpoint, so a non-overridden service (the OPENAI
+        # type) must still resolve to the package definition: the file/module pin falsifies a
+        # test-local override leaking into dispatch, the value falsifies a wrong default URL.
+        m = which(UniLM._realtime_ws_url, (Type{OPENAIServiceEndpoint},))
+        @test basename(String(m.file)) == "realtime.jl"
+        @test m.module === UniLM
         @test UniLM._realtime_ws_url(OPENAIServiceEndpoint) == UniLM.REALTIME_WS_URL
         @test UniLM._realtime_ws_url(OPENAIServiceEndpoint) == "wss://api.openai.com/v1/realtime"
     end

@@ -112,7 +112,10 @@ end
         cfg = UniLM.RequestConfig(max_attempts=2, total_deadline=Inf)
         r = upload_file(fpath, "user_data"; service=FilesRetryProbe, config=cfg)
         @test length(seen) == 2                 # the 503 was actually retried
-        @test seen[2] >= seen[1]                # attempt 2 is not a truncated replay
+        # Attempt totals are not comparable: each rebuild draws a fresh random
+        # boundary, whose hex width varies on HTTP.jl 1.x. A truncated or empty
+        # replay still cannot reach the size of the payload it must carry.
+        @test seen[2] >= sizeof(payload)
         @test complete[]                        # ...and carries the whole file + fields
         @test r isa FileSuccess
         @test r.response.id == "file-1"

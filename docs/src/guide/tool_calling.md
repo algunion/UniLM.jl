@@ -5,6 +5,10 @@ can decide to invoke functions you define, and you return the results.
 
 ## Chat Completions Tool Calling
 
+GPT-5.6 models require `reasoning_effort="none"` when using Chat tools.
+Use [`Respond`](@ref) to combine reasoning with tool calls; GPT-6 Astra tools
+also require the Responses API.
+
 ### Defining Tools
 
 Wrap your function schema in a [`Tool`](@ref):
@@ -111,13 +115,13 @@ end
 
 ```julia
 # Let the model decide
-chat = Chat(tools=[weather_tool], tool_choice="auto")
+chat = Chat(tools=[weather_tool], tool_choice="auto", reasoning_effort="none")
 
 # Force the model to use a tool
-chat = Chat(tools=[weather_tool], tool_choice="required")
+chat = Chat(tools=[weather_tool], tool_choice="required", reasoning_effort="none")
 
 # Prevent tool use
-chat = Chat(tools=[weather_tool], tool_choice="none")
+chat = Chat(tools=[weather_tool], tool_choice="none", reasoning_effort="none")
 ```
 
 ## Responses API Tool Calling

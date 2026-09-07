@@ -21,11 +21,11 @@ _agentic_url(::Type{GEMINIServiceEndpoint})::String = GEMINI_NATIVE_BASE * INTER
 # `fieldnames(Respond)`, so a field added to the neutral request is unsupported
 # here until it is deliberately mapped — new surfaces fail loud by default.
 const _INTERACTIONS_MAPPED_FIELDS = (:service, :model, :input, :instructions, :tools, :tool_choice,
-    :temperature, :top_p, :max_output_tokens, :stream, :store, :previous_response_id, :background)
+    :temperature, :top_p, :max_output_tokens, :stream, :store, :previous_response_id, :background, :reasoning)
 const _INTERACTIONS_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Respond), _INTERACTIONS_MAPPED_FIELDS))
 
 # A set field the body never carries would vanish between the caller's request and
-# the wire (structured output via `text`, `reasoning`, `metadata`, …). Refuse instead.
+# the wire (structured output via `text`, `metadata`, …). Refuse instead.
 function _interactions_reject_unmapped(r::Respond)
     set = Symbol[f for f in _INTERACTIONS_UNMAPPED_FIELDS if !isnothing(getfield(r, f))]
     isempty(set) || throw(ArgumentError(
@@ -35,6 +35,7 @@ end
 
 function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
     _interactions_reject_unmapped(r)
+    _gemini_validate_sampling(r.model, r.temperature, r.top_p)
     body = Dict{Symbol,Any}(:model => r.model, :input => _interactions_input(r.input))
     isnothing(r.instructions) || (body[:system_instruction] = r.instructions)
     isnothing(r.tools) || (body[:tools] = [_interactions_tool(t) for t in r.tools])
@@ -43,6 +44,16 @@ function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
     isnothing(r.top_p)             || (gen[:top_p] = r.top_p)
     isnothing(r.max_output_tokens)  || (gen[:max_output_tokens] = r.max_output_tokens)
     isnothing(r.tool_choice)        || (gen[:tool_choice] = _interactions_tool_choice(r.tool_choice))
+    if (reasoning = r.reasoning) !== nothing
+        isnothing(reasoning.context) && isnothing(reasoning.mode) || throw(ArgumentError(
+            "Gemini Interactions does not support reasoning context or mode"))
+        effort = reasoning.effort
+        isnothing(effort) || (gen[:thinking_level] = _gemini_thinking_level(r.model, effort))
+        summary = _reasoning_summary(reasoning)
+        isnothing(summary) || summary == "auto" || throw(ArgumentError(
+            "Gemini Interactions supports only Reasoning(summary=\"auto\")"))
+        isnothing(summary) || (gen[:thinking_summaries] = summary)
+    end
     isempty(gen) || (body[:generation_config] = gen)
     # Neutral continuation handle (previous_response_id) → Gemini's server-state id.
     isnothing(r.previous_response_id) || (body[:previous_interaction_id] = r.previous_response_id)
@@ -222,8 +233,7 @@ decode_agentic(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)::ResponseObje
 # The terminal output[] is rebuilt from the assembled steps: function_call
 # steps (arguments kept as the accumulated JSON string — the reused
 # function_calls accessor JSON.parses strings), thought steps surfaced raw
-# (signature assembled from deltas), and one text message from the
-# accumulated text deltas.
+# (signature assembled from deltas), and text messages in their original step order.
 function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
                                state::AgenticStreamState)
     for (ev, payload) in _sse_events!(state.carry, state.last_event, chunk)
@@ -237,6 +247,18 @@ function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
                     haskey(state.steps, idx) || push!(state.order, idx)
                     state.steps[idx] = step
                     delete!(state.args_json, idx)   # a re-sent start must not inherit stale argument bytes
+                    if get(step, "type", "") == "model_output"
+                        buffer = IOBuffer()
+                        state.text_by_step[idx] = buffer
+                        for c in _as_iter(get(step, "content", nothing))
+                            if c isa AbstractDict && get(c, "type", "") == "text"
+                                txt = get(c, "text", "")
+                                print(buffer, txt)
+                                print(state.textbuff, txt)
+                                print(state.pending_delta, txt)
+                            end
+                        end
+                    end
                 end
             elseif ev == "step.delta"
                 idx = get(data, "index", nothing)
@@ -259,9 +281,17 @@ function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
                         # NOT accumulated: summaries are display material, not
                         # the answer and not replay material (the signature is).
                         t = get(d, "text", "")
-                        # Both buffers: `textbuff` is the full accumulation the terminal
-                        # rebuild reads, `pending_delta` is what the driver forwards.
-                        t isa AbstractString && (print(state.textbuff, t); print(state.pending_delta, t))
+                        # `textbuff` is the full accumulation diagnostics can read;
+                        # `pending_delta` is what the driver forwards.
+                        if t isa AbstractString && !isempty(t)
+                            get!(state.steps, idx) do
+                                push!(state.order, idx)
+                                Dict{String,Any}("type" => "model_output", "content" => Any[])
+                            end
+                            print(get!(IOBuffer, state.text_by_step, idx), t)
+                            print(state.textbuff, t)
+                            print(state.pending_delta, t)
+                        end
                     end
                 end
             elseif ev == "interaction.completed"
@@ -275,6 +305,8 @@ function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
                 term = rdict["status"] == "failed" ? :failed : :completed
                 return (; done=true, event=ev,
                         data=Dict{String,Any}("response" => rdict), terminal=term)
+            elseif ev == "error"
+                return (; done=true, event=ev, data, terminal=:error)
             end
             # step.stop needs no handling beyond what assembly already holds:
             # arguments are complete once their deltas stop arriving, and the
@@ -289,8 +321,7 @@ function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
 end
 
 # Rebuild OpenAI-shaped output[] from the streamed step assembly (the terminal
-# interaction.completed event carries no steps). Order: first-seen step order,
-# then the accumulated text (if any) as a single assistant message.
+# interaction.completed event carries no steps), in first-seen step order.
 function _assembled_interaction_output(state::AgenticStreamState)::Vector{Any}
     out = Any[]
     for idx in state.order
@@ -304,17 +335,16 @@ function _assembled_interaction_output(state::AgenticStreamState)::Vector{Any}
                 "call_id" => get(step, "id", ""),
                 "name" => get(step, "name", ""),
                 "arguments" => args))
+        elseif t == "model_output"
+            buffer = get(state.text_by_step, idx, nothing)
+            if isnothing(buffer)
+                append!(out, _interaction_output([step]))
+            else
+                push!(out, _text_message(String(take!(copy(buffer)))))
+            end
         elseif !isempty(t)
             push!(out, Dict{String,Any}(step))   # thought + hosted-tool steps: raw, signature intact
         end
     end
-    # Read the accumulated text back WITHOUT consuming it: `textbuff` is the
-    # stream's running accumulation, and the terminal rebuild is a reader of it,
-    # not its owner. (Deltas reach the callback from `pending_delta`, so draining
-    # here no longer swallows them — but it would still hand a truncated
-    # accumulation to anything that inspects the state after the terminal.)
-    txt = String(take!(state.textbuff))
-    print(state.textbuff, txt)
-    isempty(txt) || push!(out, _text_message(txt))
     out
 end

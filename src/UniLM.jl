@@ -21,7 +21,7 @@ UniLM.jl provides:
 using UniLM
 
 # Chat Completions
-chat = Chat(model=\"gpt-5.5\")
+chat = Chat(model=\"gpt-5.6-sol\")
 push!(chat, Message(Val(:system), \"You are a helpful assistant\"))
 push!(chat, Message(Val(:user), \"Hello!\"))
 result = chatrequest!(chat)
@@ -167,6 +167,7 @@ export
     TextConfig,
     TextFormatSpec,
     Reasoning,
+    PromptCacheOptions,
     ResponseObject,
     # Result types
     ResponseSuccess,

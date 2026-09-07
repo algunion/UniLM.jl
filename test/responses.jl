@@ -386,7 +386,7 @@ end
 @testset "Respond" begin
     @testset "minimal creation" begin
         r = Respond(input="Tell me a joke")
-        @test r.model == "gpt-5.5"
+        @test r.model == "gpt-5.6-sol"
         @test r.input == "Tell me a joke"
         @test r.service == UniLM.OPENAIServiceEndpoint
         @test isnothing(r.instructions)
@@ -447,7 +447,7 @@ end
     @testset "JSON serialization" begin
         r = Respond(input="Hello", instructions="Be nice", temperature=0.7)
         lowered = JSON.lower(r)
-        @test lowered[:model] == "gpt-5.5"
+        @test lowered[:model] == "gpt-5.6-sol"
         @test lowered[:input] == "Hello"
         @test lowered[:instructions] == "Be nice"
         @test lowered[:temperature] == 0.7
@@ -471,7 +471,7 @@ end
         json_str = JSON.json(r)
         parsed = JSON.parse(json_str)
 
-        @test parsed["model"] == "gpt-5.5"
+        @test parsed["model"] == "gpt-5.6-sol"
         @test parsed["input"] isa Vector
         @test parsed["input"][1]["role"] == "user"
         @test parsed["tools"] isa Vector
@@ -1126,19 +1126,17 @@ end
         @test isnothing(r.summary)
     end
 
-    @testset "JSON serialization includes generate_summary" begin
+    @testset "JSON serialization maps the deprecated summary alias" begin
         r = Reasoning(effort="medium", generate_summary="detailed")
         lowered = JSON.lower(r)
         @test lowered[:effort] == "medium"
-        @test lowered[:generate_summary] == "detailed"
-        @test !haskey(lowered, :summary)
+        @test lowered[:summary] == "detailed"
+        @test !haskey(lowered, :generate_summary)
     end
 
     @testset "both generate_summary and summary" begin
         r = Reasoning(effort="low", generate_summary="auto", summary="concise")
-        lowered = JSON.lower(r)
-        @test lowered[:generate_summary] == "auto"
-        @test lowered[:summary] == "concise"
+        @test_throws ArgumentError JSON.lower(r)
     end
 end
 
@@ -1308,7 +1306,7 @@ end
     @test parsed["service_tier"] == "flex"
     @test parsed["safety_identifier"] == "safe_1"
     @test parsed["prompt_cache_retention"] == "24h"
-    @test parsed["reasoning"]["generate_summary"] == "concise"
+    @test parsed["reasoning"]["summary"] == "concise"
 end
 
 # ─── Expanded coverage: TextConfig ────────────────────────────────────────────
@@ -1349,7 +1347,7 @@ end
         @test r.generate_summary == "detailed"
         @test isnothing(r.effort)
         lowered = JSON.lower(r)
-        @test lowered[:generate_summary] == "detailed"
+        @test lowered[:summary] == "detailed"
         @test !haskey(lowered, :effort)
     end
 
@@ -1368,11 +1366,11 @@ end
     end
 
     @testset "JSON round-trip with all fields" begin
-        r = Reasoning(effort="high", generate_summary="concise", summary="auto")
+        r = Reasoning(effort="high", generate_summary="auto", summary="auto")
         json_str = JSON.json(r)
         parsed = JSON.parse(json_str)
         @test parsed["effort"] == "high"
-        @test parsed["generate_summary"] == "concise"
+        @test !haskey(parsed, "generate_summary")
         @test parsed["summary"] == "auto"
     end
 end

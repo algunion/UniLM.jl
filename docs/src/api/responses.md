@@ -192,6 +192,7 @@ println("JSON format: ", jf.format.type)
 
 ```@docs
 Reasoning
+PromptCacheOptions
 ```
 
 ```@example responses_api

@@ -605,26 +605,47 @@ json_object_format() = TextConfig(format=TextFormatSpec(type="json_object"))
 
 
 """
-    Reasoning(; effort=nothing, summary=nothing, generate_summary=nothing)
+    Reasoning(; effort=nothing, summary=nothing, generate_summary=nothing, context=nothing, mode=nothing)
 
-Reasoning configuration for reasoning models (gpt-5.x, o-series).
+Reasoning configuration for OpenAI and Gemini Interactions models.
 
-- `effort`: `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, or `"xhigh"` (supported values are
-  model-dependent; passed through verbatim).
+- `effort`: model-dependent; OpenAI also supports `"max"` and `"ultra"` on selected
+  models. Gemini 3.8 supports `"low"`, `"medium"`, and `"high"`.
 - `summary`: `"auto"`, `"concise"`, or `"detailed"` — request a reasoning summary in the output.
-- `generate_summary`: deprecated alias of `summary`; prefer `summary`.
+- `generate_summary`: deprecated alias serialized as `summary`; prefer `summary`.
+  Gemini Interactions accepts `summary="auto"` for thought summaries.
+- `context`: OpenAI persisted reasoning: `"auto"`, `"current_turn"`, or `"all_turns"`.
+- `mode`: OpenAI `"standard"` or `"pro"` execution; pro can consume more tokens.
 """
 @kwdef struct Reasoning
     effort::Union{String,Nothing} = nothing
     generate_summary::Union{String,Nothing} = nothing
     summary::Union{String,Nothing} = nothing
+    context::Union{String,Nothing} = nothing
+    mode::Union{String,Nothing} = nothing
+    function Reasoning(effort, generate_summary, summary, context=nothing, mode=nothing)
+        isnothing(context) || context in ("auto", "current_turn", "all_turns") ||
+            throw(ArgumentError("reasoning context must be auto, current_turn, or all_turns"))
+        isnothing(mode) || mode in ("standard", "pro") ||
+            throw(ArgumentError("reasoning mode must be standard or pro"))
+        new(effort, generate_summary, summary, context, mode)
+    end
+end
+
+function _reasoning_summary(r::Reasoning)::Union{String,Nothing}
+    if !isnothing(r.summary) && !isnothing(r.generate_summary) && r.summary != r.generate_summary
+        throw(ArgumentError("summary and generate_summary must agree when both are set"))
+    end
+    isnothing(r.summary) ? r.generate_summary : r.summary
 end
 
 function JSON.lower(r::Reasoning)
     d = Dict{Symbol,Any}()
     !isnothing(r.effort) && (d[:effort] = r.effort)
-    !isnothing(r.generate_summary) && (d[:generate_summary] = r.generate_summary)
-    !isnothing(r.summary) && (d[:summary] = r.summary)
+    summary = _reasoning_summary(r)
+    isnothing(summary) || (d[:summary] = summary)
+    isnothing(r.context) || (d[:context] = r.context)
+    isnothing(r.mode) || (d[:mode] = r.mode)
     return d
 end
 
@@ -632,12 +653,37 @@ end
 # ─── Main Request Type ────────────────────────────────────────────────────────
 
 """
-    Respond(; model="gpt-5.5", input, kwargs...)
+    PromptCacheOptions(; mode=nothing, ttl=nothing)
+
+OpenAI prompt-cache controls for GPT-5.6 and later. `mode` is `"implicit"` or
+`"explicit"`; the supported `ttl` is `"30m"`. Explicit mode caches only prefixes
+marked with `prompt_cache_breakpoint` in input content blocks.
+"""
+@kwdef struct PromptCacheOptions
+    mode::Union{String,Nothing} = nothing
+    ttl::Union{String,Nothing} = nothing
+    function PromptCacheOptions(mode, ttl)
+        isnothing(mode) || mode in ("implicit", "explicit") ||
+            throw(ArgumentError("prompt cache mode must be implicit or explicit"))
+        isnothing(ttl) || ttl == "30m" || throw(ArgumentError("prompt cache ttl must be 30m"))
+        new(mode, ttl)
+    end
+end
+
+function JSON.lower(options::PromptCacheOptions)
+    d = Dict{Symbol,Any}()
+    isnothing(options.mode) || (d[:mode] = options.mode)
+    isnothing(options.ttl) || (d[:ttl] = options.ttl)
+    d
+end
+
+"""
+    Respond(; model="gpt-5.6-sol", input, kwargs...)
 
 Configuration struct for an OpenAI Responses API request.
 
 # Key Fields
-- `model::String`: Model to use (default: `"gpt-5.5"`)
+- `model::String`: Model to use (default: `"gpt-5.6-sol"`)
 - `input::Any`: A `String` or `Vector{InputMessage}` — the prompt input
 - `instructions::String`: System-level instructions
 - `tools::Vector`: Available tools (`FunctionTool`, `WebSearchTool`, `FileSearchTool`)
@@ -696,35 +742,38 @@ Respond(input="Solve this math problem...", model="o3", reasoning=Reasoning(effo
     background::Union{Bool,Nothing} = nothing
     include::Union{Vector{String},Nothing} = nothing
     max_tool_calls::Union{Int64,Nothing} = nothing
-    service_tier::Union{String,Nothing} = nothing      # "auto", "default", "flex", "priority"
+    service_tier::Union{String,Nothing} = nothing      # "auto", "default", "flex", "priority", "fast"
     top_logprobs::Union{Int64,Nothing} = nothing       # 0-20
     prompt::Union{AbstractDict,Nothing} = nothing
     prompt_cache_key::Union{String,Nothing} = nothing
-    prompt_cache_retention::Union{String,Nothing} = nothing  # "in-memory", "24h"
+    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory", "24h" (older models)
     safety_identifier::Union{String,Nothing} = nothing
     conversation::Union{Any,Nothing} = nothing         # String or Dict
     context_management::Union{Vector,Nothing} = nothing
     stream_options::Union{AbstractDict,Nothing} = nothing
+    prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing
     function Respond(service, model, input, instructions, tools, tool_choice,
         parallel_tool_calls, temperature, top_p, max_output_tokens,
         stream, text, reasoning, truncation, store, metadata,
         previous_response_id, user, background, include, max_tool_calls,
         service_tier, top_logprobs, prompt, prompt_cache_key,
         prompt_cache_retention, safety_identifier, conversation,
-        context_management, stream_options)
+        context_management, stream_options, prompt_cache_options=nothing)
         model = _resolve_model(service, model)
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
         !isnothing(top_p) && !(0.0 <= top_p <= 1.0) && throw(ArgumentError("top_p must be in [0.0, 1.0]"))
         !isnothing(max_output_tokens) && max_output_tokens < 1 && throw(ArgumentError("max_output_tokens must be >= 1"))
         !isnothing(top_logprobs) && !(0 <= top_logprobs <= 20) && throw(ArgumentError("top_logprobs must be in [0, 20]"))
+        isnothing(prompt_cache_retention) || isnothing(prompt_cache_options) || throw(ArgumentError(
+            "prompt_cache_retention and prompt_cache_options cannot be combined"))
         new(service, model, input, instructions, tools, tool_choice,
             parallel_tool_calls, temperature, top_p, max_output_tokens,
             stream, text, reasoning, truncation, store, metadata,
             previous_response_id, user, background, include, max_tool_calls,
             service_tier, top_logprobs, prompt, prompt_cache_key,
             prompt_cache_retention, safety_identifier, conversation,
-            context_management, stream_options)
+            context_management, stream_options, prompt_cache_options)
     end
 end
 
@@ -735,7 +784,7 @@ function JSON.lower(r::Respond)
         :reasoning, :truncation, :store, :metadata, :previous_response_id,
         :user, :background, :include, :max_tool_calls, :service_tier,
         :top_logprobs, :prompt, :prompt_cache_key, :prompt_cache_retention,
-        :safety_identifier, :conversation, :context_management, :stream_options)
+        :safety_identifier, :conversation, :context_management, :stream_options, :prompt_cache_options)
         v = getfield(r, f)
         !isnothing(v) && (d[f] = v)
     end
@@ -1024,6 +1073,7 @@ event omits the step list (Gemini Interactions) — a per-index registry of
 assembled steps: `steps` maps a step index to its (mutable) step dict,
 `args_json` accumulates partial function-call argument JSON per index, and
 `order` records first-seen index order for deterministic output rebuilding.
+`text_by_step` holds a typed IOBuffer for each model-output step, including initial text.
 """
 Base.@kwdef mutable struct AgenticStreamState
     textbuff::IOBuffer = IOBuffer()
@@ -1032,6 +1082,9 @@ Base.@kwdef mutable struct AgenticStreamState
     steps::Dict{Int,Dict{String,Any}} = Dict{Int,Dict{String,Any}}()
     args_json::Dict{Int,String} = Dict{Int,String}()
     order::Vector{Int} = Int[]
+    # Separate buffers preserve Interactions step order without repeatedly
+    # copying an ever-growing text string on every streamed delta.
+    text_by_step::Dict{Int,IOBuffer} = Dict{Int,IOBuffer}()
     # Text deltas collected by the decoder, not yet forwarded to the callback;
     # the driver drains THIS buffer per read (twin of `StreamState.pending_delta`).
     # `textbuff` keeps the full accumulation for providers whose terminal event
@@ -1463,7 +1516,7 @@ Convenience method: create a [`Respond`](@ref) from `input` + keyword arguments 
 result = respond("Tell me a joke")
 
 # With instructions and model
-result = respond("Translate: Hello", instructions="You are a translator", model="gpt-5.5")
+result = respond("Translate: Hello", instructions="You are a translator", model="gpt-5.6-sol")
 
 # With tools
 result = respond("Search for Julia news", tools=[web_search()])
@@ -1672,7 +1725,7 @@ Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys.
 
 # Examples
 ```julia
-compacted = compact_response(model="gpt-5.5", input=[
+compacted = compact_response(model="gpt-5.6-sol", input=[
     InputMessage(role="user", content="Hello"),
     Dict("type" => "message", "role" => "assistant", "status" => "completed",
          "content" => [Dict("type" => "output_text", "text" => "Hi there!")])
@@ -1680,7 +1733,7 @@ compacted = compact_response(model="gpt-5.5", input=[
 # Use compacted["output"] as input to the next request
 ```
 """
-function compact_response(; model::String="gpt-5.5",
+function compact_response(; model::String="gpt-5.6-sol",
     input::Any,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing)
@@ -1716,11 +1769,11 @@ Returns a Dict with `"object"` (`"response.input_tokens"`) and `"input_tokens"` 
 
 # Examples
 ```julia
-result = count_input_tokens(model="gpt-5.5", input="Tell me a joke")
+result = count_input_tokens(model="gpt-5.6-sol", input="Tell me a joke")
 println("Input tokens: ", result["input_tokens"])
 ```
 """
-function count_input_tokens(; model::String="gpt-5.5",
+function count_input_tokens(; model::String="gpt-5.6-sol",
     input::Any,
     instructions::Union{String,Nothing}=nothing,
     tools::Union{Vector,Nothing}=nothing,

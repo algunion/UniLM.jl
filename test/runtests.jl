@@ -133,6 +133,10 @@ end
         include("interactions.jl")
     end
 
+    @testset "current provider contracts" begin
+        include("provider_compat.jl")
+    end
+
     @testset "files" begin
         include("files.jl")
     end
@@ -197,6 +201,10 @@ end
 
     @testset "integration — interactions" begin
         include("integration_interactions.jl")
+    end
+
+    @testset "integration — current provider contracts" begin
+        include("integration_provider_compat.jl")
     end
 
     @testset "integration — tool loop" begin

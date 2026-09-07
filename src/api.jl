@@ -569,7 +569,7 @@ _chat_tools(tools) = tools
     chat = Chat()
 
 Creates a new `Chat` object with default settings:
-- `model` is set to `gpt-5.5`
+- `model` is set to `gpt-5.6-sol`
 - `messages` is set to an empty `Vector{Message}`
 - `history` is set to `true`
 """
@@ -594,12 +594,12 @@ Creates a new `Chat` object with default settings:
     logit_bias::Union{AbstractDict{String,Float64},Nothing} = nothing
     user::Union{String,Nothing} = nothing
     seed::Union{Int64,Nothing} = nothing
-    reasoning_effort::Union{String,Nothing} = nothing      # none|minimal|low|medium|high|xhigh
+    reasoning_effort::Union{String,Nothing} = nothing      # model-dependent reasoning effort
     stream_options::Union{AbstractDict,Nothing} = nothing  # e.g. {"include_usage": true}
     verbosity::Union{String,Nothing} = nothing             # low|medium|high
     store::Union{Bool,Nothing} = nothing
     metadata::Union{AbstractDict,Nothing} = nothing
-    service_tier::Union{String,Nothing} = nothing          # auto|default|flex|scale|priority
+    service_tier::Union{String,Nothing} = nothing          # auto|default|flex|scale|priority|fast
     logprobs::Union{Bool,Nothing} = nothing
     top_logprobs::Union{Int64,Nothing} = nothing
     prediction::Union{AbstractDict,Nothing} = nothing
@@ -652,6 +652,8 @@ Creates a new `Chat` object with default settings:
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
         !isnothing(top_p) && !(0.0 <= top_p <= 1.0) && throw(ArgumentError("top_p must be in [0.0, 1.0]"))
         !isnothing(n) && !(1 <= n <= 10) && throw(ArgumentError("n must be in [1, 10]"))
+        !isnothing(max_tokens) && max_tokens < 1 && throw(ArgumentError("max_tokens must be >= 1"))
+        !isnothing(max_completion_tokens) && max_completion_tokens < 1 && throw(ArgumentError("max_completion_tokens must be >= 1"))
         !isnothing(presence_penalty) && !(-2.0 <= presence_penalty <= 2.0) && throw(ArgumentError("presence_penalty must be in [-2.0, 2.0]"))
         !isnothing(frequency_penalty) && !(-2.0 <= frequency_penalty <= 2.0) && throw(ArgumentError("frequency_penalty must be in [-2.0, 2.0]"))
         return new(

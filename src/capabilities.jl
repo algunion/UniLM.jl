@@ -89,9 +89,9 @@ end
 Return the default chat/completions model for the given service endpoint.
 Returns `nothing` for generic endpoints (model must be specified explicitly).
 """
-default_model(::Type{OPENAIServiceEndpoint})  = "gpt-5.5"
+default_model(::Type{OPENAIServiceEndpoint})  = "gpt-5.6-sol"
 default_model(::Type{AZUREServiceEndpoint})   = "gpt-5.2"
-default_model(::Type{GEMINIOpenAIServiceEndpoint})  = "gemini-3.5-flash"
+default_model(::Type{GEMINIOpenAIServiceEndpoint})  = "gemini-3.8-flash"
 default_model(::DeepSeekEndpoint)              = "deepseek-chat"
 default_model(::GenericOpenAIEndpoint)          = nothing
 
@@ -117,4 +117,41 @@ function _resolve_model(service, model::String)
     dm = default_model(service)
     isnothing(dm) && throw(ArgumentError("model must be specified when using $(typeof(service))"))
     dm
+end
+
+_model_family(model::AbstractString, family::AbstractString) =
+    model == family || startswith(model, family * "-")
+
+# Model-specific restrictions belong to the native endpoint. A compatible
+# server or Azure deployment may use the same name with a different contract.
+function _validate_astra(model::String, temperature, top_p, effort, logprobs)
+    _model_family(model, "gpt-6-astra") || return nothing
+    isnothing(temperature) && isnothing(top_p) && isnothing(logprobs) || throw(ArgumentError(
+        "$model does not support sampling controls or log probabilities"))
+    effort in ("none", "minimal") && throw(ArgumentError("$model requires at least low reasoning effort"))
+    nothing
+end
+
+function encode_request(::Type{OPENAIServiceEndpoint}, chat::Chat)::String
+    _validate_astra(chat.model, chat.temperature, chat.top_p, chat.reasoning_effort,
+                    isnothing(chat.top_logprobs) ? chat.logprobs : chat.top_logprobs)
+    if _model_family(chat.model, "gpt-6-astra") && !isnothing(chat.tools) && !isempty(chat.tools)
+        throw(ArgumentError("GPT-6 Astra tool calling requires Respond and the Responses API"))
+    end
+    if _model_family(chat.model, "gpt-5.6") && !isnothing(chat.tools) && !isempty(chat.tools) && chat.reasoning_effort != "none"
+        throw(ArgumentError("GPT-5.6 Chat tools require reasoning_effort=\"none\"; use Respond for reasoning with tools"))
+    end
+    JSON.json(chat)
+end
+
+function encode_agentic(::Type{OPENAIServiceEndpoint}, r::Respond)::String
+    effort = isnothing(r.reasoning) ? nothing : r.reasoning.effort
+    _validate_astra(r.model, r.temperature, r.top_p, effort, r.top_logprobs)
+    if any(f -> _model_family(r.model, f), ("gpt-5.6", "gpt-6-astra")) && !isnothing(r.prompt_cache_retention)
+        throw(ArgumentError("$(r.model) uses prompt_cache_options=PromptCacheOptions(ttl=\"30m\"), not prompt_cache_retention"))
+    end
+    if _model_family(r.model, "gpt-6-astra") && !isnothing(r.include) && "message.output_text.logprobs" in r.include
+        throw(ArgumentError("GPT-6 Astra does not support log probabilities"))
+    end
+    JSON.json(r)
 end

@@ -109,7 +109,7 @@ end
 
     # optional generation_config fields (top_p / max_output_tokens) + background pass through
     b2 = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
-        Respond(service=GEMINIServiceEndpoint, input="x",
+        Respond(service=GEMINIServiceEndpoint, model="gemini-3.5-flash", input="x",
                 top_p=0.9, max_output_tokens=128, background=true)); dicttype=Dict{String,Any})
     @test b2["generation_config"]["top_p"] == 0.9
     @test b2["generation_config"]["max_output_tokens"] == 128
@@ -505,14 +505,15 @@ end
         """{"background":false,"generation_config":{"max_output_tokens":64,"temperature":0.2,"tool_choice":{"allowed_tools":{"mode":"auto"}}},"input":"Say hi","model":"gemini-3.1-flash-lite","previous_interaction_id":"v1_prev","store":true,"stream":true,"system_instruction":"Be terse","tools":[{"description":"Get weather","name":"get_weather","type":"function"}]}"""
 
     # A field this wire has no mapping for must not vanish from the request.
-    cases = (:text => UniLM.TextConfig(), :reasoning => UniLM.Reasoning(effort="low"),
+    cases = (:text => UniLM.TextConfig(),
              :metadata => Dict("k" => "v"), :truncation => "auto",
              :parallel_tool_calls => true, :user => "u1", :include => ["a"],
              :max_tool_calls => 2, :service_tier => "flex", :top_logprobs => 3,
              :prompt => Dict("id" => "p"), :prompt_cache_key => "k",
              :prompt_cache_retention => "24h", :safety_identifier => "s",
              :conversation => "conv_1", :context_management => [Dict("type" => "x")],
-             :stream_options => Dict("include_usage" => true))
+             :stream_options => Dict("include_usage" => true),
+             :prompt_cache_options => PromptCacheOptions(mode="explicit"))
     @test Set(first.(cases)) == Set(UniLM._INTERACTIONS_UNMAPPED_FIELDS)   # every unmapped field covered
     for (field, value) in cases
         rr = Respond(; service=GEMINIServiceEndpoint, input="x", (field => value,)...)

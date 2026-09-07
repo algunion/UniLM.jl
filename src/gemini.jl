@@ -2,7 +2,7 @@
 # Google Gemini native generateContent API
 # Plugs into the wire-translation seam (encode_request / decode_response /
 # handle_sse_event! from sse.jl) so all chat orchestration is shared.
-# Wire shape verified against ai.google.dev live docs on 2026-07-07.
+# https://ai.google.dev/gemini-api/docs/latest-model
 # ============================================================================
 
 # ─── Routing & auth ──────────────────────────────────────────────────────────
@@ -31,11 +31,47 @@ auth_header(::Type{GEMINIServiceEndpoint})::Vector{Pair{String,String}} = [
 
 provider_capabilities(::Type{GEMINIServiceEndpoint}) = Set([:chat, :tools, :streaming, :agentic])
 
-default_model(::Type{GEMINIServiceEndpoint}) = "gemini-3.5-flash"
+default_model(::Type{GEMINIServiceEndpoint}) = "gemini-3.8-flash"
+
+function _gemini_validate_sampling(model::String, temperature, top_p)
+    if _model_family(model, "gemini-3.8-flash") &&
+       (!isnothing(temperature) || !isnothing(top_p))
+        throw(ArgumentError("$model does not support temperature or top_p; use reasoning effort instead"))
+    end
+    nothing
+end
+
+function _gemini_thinking_level(model::String, effort::String; native::Bool=false)::String
+    effort in ("minimal", "low", "medium", "high") || throw(ArgumentError(
+        "Gemini thinking effort must be minimal, low, medium, or high (got $(repr(effort)))"))
+    if effort == "minimal" && any(f -> _model_family(model, f), ("gemini-3.7-flash", "gemini-3.8-flash"))
+        throw(ArgumentError("$model supports low, medium, or high thinking effort"))
+    end
+    native && startswith(model, "gemini-2.5-") && throw(ArgumentError(
+        "Gemini 2.5 generateContent uses thinkingBudget; use Respond with Reasoning for thinking levels"))
+    effort
+end
+
+# Fail closed when a neutral option has no native translation. The parallel-tool
+# default predates the native backend; Gemini determines parallelism itself.
+const _GEMINI_CHAT_MAPPED_FIELDS = (:service, :model, :messages, :history, :tools,
+    :tool_choice, :parallel_tool_calls, :temperature, :top_p, :n, :stream, :stop,
+    :max_tokens, :max_completion_tokens, :reasoning_effort, :_cumulative_cost)
+const _GEMINI_CHAT_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Chat), _GEMINI_CHAT_MAPPED_FIELDS))
+
+function _gemini_validate_chat(chat::Chat)
+    _gemini_validate_sampling(chat.model, chat.temperature, chat.top_p)
+    isnothing(chat.n) || chat.n == 1 || throw(ArgumentError("Native Gemini Chat returns one candidate; n must be 1"))
+    fields = Symbol[f for f in _GEMINI_CHAT_UNMAPPED_FIELDS if !isnothing(getfield(chat, f))]
+    isempty(fields) || throw(ArgumentError(
+        "Native Gemini Chat does not support field(s) $(join(fields, ", ")); use a supported option or GEMINIOpenAIServiceEndpoint"))
+    nothing
+end
 
 # ─── Request encoding (neutral Chat → Gemini generateContent body) ───────────
 
 function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
+    _gemini_validate_chat(chat)
     body = Dict{Symbol,Any}()
     sysinstr, contents = _gemini_contents(chat.messages)
     isnothing(sysinstr) || (body[:systemInstruction] = Dict(:parts => [Dict(:text => sysinstr)]))
@@ -53,6 +89,9 @@ function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
     isnothing(chat.temperature) || (gen[:temperature] = chat.temperature)
     isnothing(chat.top_p)       || (gen[:topP] = chat.top_p)
     isnothing(chat.stop)        || (gen[:stopSequences] = chat.stop isa String ? [chat.stop] : chat.stop)
+    if (effort = chat.reasoning_effort) !== nothing
+        gen[:thinkingConfig] = Dict(:thinkingLevel => uppercase(_gemini_thinking_level(chat.model, effort; native=true)))
+    end
     isempty(gen) || (body[:generationConfig] = gen)
     # NB: `stream` is expressed in the URL method (get_url), never in the body.
     JSON.json(body)
@@ -129,14 +168,15 @@ function _gemini_tool(t::Tool)
     f = t.func
     d = Dict{Symbol,Any}(:name => f.name)
     isnothing(f.description) || (d[:description] = f.description)
-    isnothing(f.parameters)  || (d[:parameters] = f.parameters)
+    # Neutral tools carry JSON Schema, not Google's restricted OpenAPI Schema.
+    isnothing(f.parameters)  || (d[:parametersJsonSchema] = f.parameters)
     d
 end
 
 _gemini_tool_config(tc::String) = Dict(:functionCallingConfig => Dict(:mode =>
     tc == "auto"     ? "AUTO" :
     tc == "none"     ? "NONE" :
-    tc == "required" ? "ANY"  : "AUTO"))
+    tc == "required" ? "ANY"  : throw(ArgumentError("Unknown Gemini tool_choice $(repr(tc))"))))
 _gemini_tool_config(tc::GPTToolChoice) = Dict(:functionCallingConfig =>
     Dict(:mode => "ANY", :allowedFunctionNames => [string(tc.func)]))
 
@@ -206,7 +246,7 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
     text = IOBuffer()
     tool_calls = ToolCall[]
     for p in (parts isa AbstractVector ? parts : Any[])
-        if haskey(p, "text")
+        if haskey(p, "text") && get(p, "thought", false) !== true
             print(text, p["text"])
         elseif haskey(p, "functionCall")
             fc = p["functionCall"]
@@ -251,13 +291,26 @@ function handle_sse_event!(::Type{GEMINIServiceEndpoint}, event::AbstractString,
                            payload::AbstractString, state::StreamState)::Symbol
     ev = JSON.parse(payload; dicttype=Dict{String,Any})
     ev isa AbstractDict || return :continue
+    if (err = get(ev, "error", nothing)) isa AbstractDict
+        state.error = Dict{String,Any}(err)
+        return :error
+    end
+    feedback = get(ev, "promptFeedback", nothing)
+    if feedback isa AbstractDict && haskey(feedback, "blockReason")
+        state.error = Dict{String,Any}("message" => "Gemini prompt blocked", "promptFeedback" => feedback)
+        return :error
+    end
     cands = get(ev, "candidates", nothing)
     if cands isa AbstractVector
         for cand in cands
             cand isa AbstractDict || continue
             for p in get(get(cand, "content", Dict{String,Any}()), "parts", Any[])
                 p isa AbstractDict || continue
-                if haskey(p, "text")
+                # Preserve every part, including a signature-only final chunk.
+                # Combining text parts can invalidate their thought signatures.
+                state.raw_provider = :gemini
+                push!(state.raw_blocks, p)
+                if haskey(p, "text") && get(p, "thought", false) !== true
                     txt = p["text"]
                     if txt isa AbstractString
                         print(state.content, txt)
@@ -281,6 +334,9 @@ function handle_sse_event!(::Type{GEMINIServiceEndpoint}, event::AbstractString,
             fr = get(cand, "finishReason", nothing)
             isnothing(fr) ||
                 (state.finish_reason = isempty(state.tool_calls) ? _gemini_finish_reason(fr) : TOOL_CALLS)
+            if state.finish_reason == CONTENT_FILTER && position(state.content) == 0
+                print(state.refusal, "Model response blocked by safety filter.")
+            end
         end
     end
     u = get(ev, "usageMetadata", nothing)

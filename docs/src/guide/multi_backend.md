@@ -7,7 +7,8 @@ across OpenAI (Responses) and Gemini (Interactions); see [Agentic Workflows](@re
 Native OpenAI, Anthropic, and Gemini are first-class backends with their own wire formats (each
 exercised by live integration tests), not OpenAI-compatible shims.
 
-Switching backends requires only changing the `service` parameter.
+Select the backend with `service`. Model names and supported generation controls
+remain provider-specific; unsupported native Gemini options raise `ArgumentError`.
 
 ## Available Backends
 
@@ -65,7 +66,7 @@ delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "my-custom-model")  # cleanup
 !!! warning "Breaking change since v0.10.3"
     `GEMINIServiceEndpoint` now targets Google's **native `generateContent` API**
     (auth header `x-goog-api-key`, model in the URL, default model
-    `gemini-3.5-flash`). The old **OpenAI-compatible** Gemini path is renamed
+    `gemini-3.8-flash`). The old **OpenAI-compatible** Gemini path is renamed
     [`GEMINIOpenAIServiceEndpoint`](@ref). Migrate code that relied on the
     OpenAI-compatible behavior — including `Embeddings(...; service=GEMINIServiceEndpoint)`,
     which the native endpoint does not support — to `GEMINIOpenAIServiceEndpoint`.
@@ -73,7 +74,8 @@ delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "my-custom-model")  # cleanup
 Native Gemini chat (real call, guarded so a failure never breaks the build):
 
 ```@example backends
-gemini_chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.1-flash-lite")   # native generateContent API
+gemini_chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash",
+                   reasoning_effort="low", max_tokens=1024)
 push!(gemini_chat, Message(Val(:system), "You are a helpful assistant."))
 push!(gemini_chat, Message(Val(:user), "Say hello in one short sentence."))
 result = chatrequest!(gemini_chat)
@@ -87,8 +89,32 @@ end
 To keep using the OpenAI-compatible endpoint, switch the service type:
 
 ```julia
-chat = Chat(service=GEMINIOpenAIServiceEndpoint, model="gemini-2.5-flash")
+chat = Chat(service=GEMINIOpenAIServiceEndpoint, model="gemini-3.8-flash",
+            reasoning_effort="low")
 ```
+
+### Current model controls
+
+As of September 7, 2026, Gemini 3.8 Flash supports `reasoning_effort="low"`,
+`"medium"`, or `"high"`. Native Chat maps this to `thinkingConfig.thinkingLevel`.
+The completion cap includes thinking tokens, so a very small cap can produce
+an empty answer. Gemini 3.8 rejects `temperature`, `top_p`, and minimal thinking.
+Native Gemini tool declarations use `parametersJsonSchema`, preserving standard
+JSON Schema constraints such as `additionalProperties`.
+
+Native Chat returns one candidate and does not implement `response_format` or
+OpenAI-specific options such as `seed`, `metadata`, and `stream_options`.
+Those options fail explicitly. Gemini determines parallel tool use; the inherited
+`parallel_tool_calls` setting does not constrain native Gemini.
+See [Google's migration guide](https://ai.google.dev/gemini-api/docs/latest-model).
+
+OpenAI defaults to `gpt-5.6-sol`. GPT-5.6 Chat Completions tool calling requires
+an explicit `reasoning_effort="none"`; use Responses for reasoning with tools.
+For inexpensive testing, use `gpt-5.6-luna` and low or no reasoning.
+Use `Respond(model="gpt-6-astra", ...)` for Astra tool workflows: Astra tools require
+Responses, and Astra rejects sampling controls, log probabilities, and no reasoning.
+The existing `service_tier` field accepts `"fast"`; OpenAI still accepts `"priority"`
+as an alias. See [OpenAI's migration guide](https://developers.openai.com/api/docs/guides/latest-model).
 
 ## Anthropic (native Messages API)
 

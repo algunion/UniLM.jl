@@ -800,6 +800,8 @@ end
     # The idle guard must finalize SUCCESS (the turn completed), not a timeout.
     server = nothing
     port = 0
+    headers_at = Ref{UInt64}(0)
+    flushed_at = Ref{UInt64}(0)
     for attempt in 1:3
         tcp = Sockets.listen(Sockets.localhost, 0)
         port = Int(Sockets.getsockname(tcp)[2])
@@ -810,8 +812,10 @@ end
                 HTTP.setstatus(http, 200)
                 HTTP.setheader(http, "Content-Type" => "text/event-stream")
                 HTTP.startwrite(http)
+                headers_at[] = time_ns()
                 write(http, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"done.\"},\"finish_reason\":\"stop\"}]}\n\n")
                 flush(http)
+                flushed_at[] = time_ns()
                 sleep(15)   # hold the socket open far past the idle limit: no EOF, no sentinel
             end
             break
@@ -832,12 +836,16 @@ end
         # still the one exercised.
         cfg = RequestConfig(stream_idle_timeout=3.0, request_timeout=10.0,
                             total_deadline=10.0, max_attempts=1)
+        started_at = time_ns()
         task = chatrequest!(chat; config=cfg)
         @test timedwait(() -> istaskdone(task), 45.0) === :ok
         res = fetch(task)
         # On failure, surface what came back (this contract has failed only on
         # loaded CI runners, where nothing can be inspected interactively).
-        res isa LLMSuccess || @warn "EOF-less terminal stream testset diagnostics" result = res
+        if !(res isa LLMSuccess)
+            elapsed(at) = at == 0 ? nothing : Float64(at - started_at) / 1e9
+            @warn "EOF-less terminal stream testset diagnostics" result=res elapsed=elapsed(time_ns()) headers_after=elapsed(headers_at[]) flushed_after=elapsed(flushed_at[])
+        end
         @test res isa LLMSuccess
         @test res.message.content == "done."
         @test res.message.finish_reason == "stop"

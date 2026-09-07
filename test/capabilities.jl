@@ -133,9 +133,9 @@ end
     # default_model — Type dispatch for OPENAI/AZURE/GEMINI (capabilities.jl 55-57),
     # instance dispatch for DeepSeek (line 58). Each distinct return value uniquely
     # identifies (and covers) its specific method, and falsifies a wrong model string.
-    @test UniLM.default_model(OPENAIServiceEndpoint) == "gpt-5.5"
+    @test UniLM.default_model(OPENAIServiceEndpoint) == "gpt-5.6-sol"
     @test UniLM.default_model(AZUREServiceEndpoint) == "gpt-5.2"
-    @test UniLM.default_model(GEMINIOpenAIServiceEndpoint) == "gemini-3.5-flash"
+    @test UniLM.default_model(GEMINIOpenAIServiceEndpoint) == "gemini-3.8-flash"
     @test UniLM.default_model(ds) == "deepseek-chat"
 
     # default_embedding_model — Type dispatch for OPENAI/GEMINI (62/63), instance for DeepSeek (64→nothing)

@@ -29,7 +29,7 @@ UniLM speaks each provider's own wire API, not just the OpenAI-compatible protoc
 - **Embeddings** — text embedding generation with `text-embedding-3-small`
 - **Files, Vector Stores & Conversations** — upload files, build vector stores for `file_search`, and manage server-side conversation state
 - **Audio, Batch & Moderations** — TTS/transcription, async 50%-off bulk jobs, and free safety classification
-- **Realtime, Fine-tuning, Webhooks, Containers, Uploads & Videos** — WebSocket realtime, custom models, signed-webhook verification, and more
+- **Realtime, Fine-tuning, Webhooks, Containers, Uploads & Videos** — WebSocket realtime, custom models, signed-webhook verification, and more. See provider availability limits for [fine-tuning](docs/src/api/fine_tuning.md) and [videos](docs/src/api/videos.md).
 - **Streaming** — real-time token streaming with `do`-block syntax
 - **Structured Output** — JSON Schema–constrained generation
 - **Multi-Backend** — OpenAI, Azure, Gemini, Anthropic, DeepSeek, Ollama, Mistral, vLLM, LM Studio, and any OpenAI-compatible provider
@@ -77,7 +77,7 @@ julia> output_text(result)
 "Julia's multiple dispatch means a function can have many method definitions, and Julia chooses which one to run based on the types of *all* arguments in a call (not just the first). This makes it easy to write generic code while still getting specialized, high-performance behavior for specific type combinations."
 
 julia> result.response.model
-"gpt-5.5"
+"gpt-5.6-sol"
 ```
 
 ### Chat Completions
@@ -279,7 +279,7 @@ UniLM.jl is built around **neutral verbs**: the same `Chat` + `chatrequest!` (to
 chat = Chat(service=AZUREServiceEndpoint, model="gpt-5.2")
 
 # Gemini (native generateContent)
-chat = Chat(service=GEMINIServiceEndpoint)          # default: gemini-3.5-flash
+chat = Chat(service=GEMINIServiceEndpoint)          # default: gemini-3.8-flash
 
 # Anthropic (native Messages API)
 chat = Chat(service=ANTHROPICServiceEndpoint)       # default: claude-opus-4-8

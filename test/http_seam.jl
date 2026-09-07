@@ -304,14 +304,24 @@ end
 end
 
 @testset "retry budget: Retry-After beyond remaining deadline returns the last real response immediately" begin
-    server, base = _seam_server(req ->
-        HTTP.Response(429, ["Retry-After" => "20", "Content-Type" => "application/json"], Vector{UInt8}("{}")))
+    hits = Threads.Atomic{Int}(0)
+    server, base = _seam_server(req -> begin
+        Threads.atomic_add!(hits, 1)
+        HTTP.Response(429, ["Retry-After" => "20", "Content-Type" => "application/json"], Vector{UInt8}("{}"))
+    end)
     try
         cfg = RequestConfig(max_attempts=3, total_deadline=5.0)
+        perform() = @test_logs (:warn, r"budget") match_mode=:any UniLM._http_with_retries(cfg, time_ns(), "GET", base * "/")
+        # Compile the request and warning-capture path before timing retry
+        # behavior. First-call JIT time is unrelated to the Retry-After wait.
+        perform()
+        hits[] = 0
         t_start = time_ns()
-        resp = @test_logs (:warn, r"budget") match_mode=:any UniLM._http_with_retries(cfg, time_ns(), "GET", base * "/")
+        resp = perform()
+        elapsed = (time_ns() - t_start) / 1e9
         @test resp.status == 429                       # the last REAL response — no fabricated timeout
-        @test (time_ns() - t_start) / 1e9 < 4.0        # returned now; never slept toward the 20 s
+        @test hits[] == 1                              # no extra request after refusing the retry
+        @test elapsed < 4.0                            # returned now; never slept toward the 20 s
     finally
         close(server)
     end

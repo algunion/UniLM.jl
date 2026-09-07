@@ -44,12 +44,15 @@ prefix). Returns `true` iff a fresh, validly-signed `v1` signature is present.
 Replay protection: timestamps outside `±tolerance_seconds` of now are rejected, as are
 timestamps that are not finite numbers — pass `tolerance_seconds=Inf` to skip the time
 check (e.g. when replaying a stored fixture). Uses a constant-time digest compare.
+Negative or NaN tolerances throw `ArgumentError`.
 
 Throws `ArgumentError` when `secret` is not valid base64: that is a misconfiguration
 of this endpoint, and reporting it as an unverified signature would silently drop
 every webhook. A `false` return therefore always means the message failed verification.
 """
 function verify_webhook(payload::AbstractString, headers, secret::AbstractString; tolerance_seconds::Real=300)
+    !isnan(tolerance_seconds) && tolerance_seconds >= 0 || throw(ArgumentError(
+        "tolerance_seconds must be nonnegative; only Inf explicitly disables replay protection"))
     h = _header_dict(headers)
     wid = get(h, "webhook-id", "")
     wts = get(h, "webhook-timestamp", "")

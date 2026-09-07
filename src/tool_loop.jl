@@ -87,6 +87,7 @@ Result of a tool dispatch loop.
 - `tool_calls::Vector{ToolCallOutcome}`: History of all tool dispatches.
 - `turns_used::Int`: Number of API round-trips.
 - `completed::Bool`: Whether the loop terminated normally (text response).
+  Truncated output or a pending server action leaves this `false`.
 - `llm_error::Union{String,Nothing}`: Error message if not completed.
 """
 struct ToolLoopResult
@@ -168,6 +169,10 @@ function tool_loop!(chat::Chat, dispatcher::Function;
 
         msg = result.message
 
+        if msg.finish_reason == "length"
+            return ToolLoopResult(result, all_outcomes, turns, false, "Model output was truncated by the token limit")
+        end
+
         if msg.finish_reason != TOOL_CALLS || isnothing(msg.tool_calls)
             return ToolLoopResult(result, all_outcomes, turns, true, nothing)
         end
@@ -244,10 +249,17 @@ function tool_loop(r::Respond, dispatcher::Function;
             return ToolLoopResult(result, all_outcomes, turns, false, result.error)
         end
 
+        status = result.response.status
+        if status ∉ ("completed", "requires_action")
+            return ToolLoopResult(result, all_outcomes, turns, false, "Response did not complete (status=$status)")
+        end
+
         calls = function_calls(result)
 
         if isempty(calls)
-            return ToolLoopResult(result, all_outcomes, turns, true, nothing)
+            completed = status == "completed"
+            return ToolLoopResult(result, all_outcomes, turns, completed,
+                completed ? nothing : "Response requires an action this tool loop cannot perform")
         end
 
         output_items = Any[]

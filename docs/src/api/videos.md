@@ -1,5 +1,8 @@
 # [Videos API](@id videos_api)
 
+OpenAI schedules this API and Sora 2 for shutdown on September 24, 2026,
+with no replacement listed. See [OpenAI's deprecation schedule](https://developers.openai.com/api/docs/deprecations).
+
 Create, retrieve, and list Sora video-generation jobs, and download their
 rendered content. Generation is asynchronous — create a job, poll it with
 [`retrieve_video`](@ref) until it is ready, then fetch the file with

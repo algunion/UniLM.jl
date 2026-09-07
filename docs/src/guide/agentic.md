@@ -33,6 +33,18 @@ end
 
 ## Hosted tools (Gemini)
 
+Control Gemini thinking with the same typed configuration used by OpenAI:
+
+```julia
+r = Respond(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", input="Explain recursion briefly.",
+            reasoning=Reasoning(effort="low", summary="auto"), max_output_tokens=1024)
+```
+
+This maps to Interactions `generation_config.thinking_level` and
+`thinking_summaries`. Gemini 3.8 supports low, medium, and high effort and rejects
+`temperature` and `top_p`. Continue with `previous_response_id` to preserve server
+state and signatures. [Google thinking documentation](https://ai.google.dev/gemini-api/docs/thinking).
+
 Gemini Interactions exposes server-side hosted tools via
 [`gemini_google_search`](@ref), [`gemini_code_execution`](@ref), and
 [`gemini_url_context`](@ref) — pass them in `tools=`:
@@ -107,7 +119,7 @@ poll loop to handle.
 
 [`token_usage`](@ref) and [`estimated_cost`](@ref) work for Gemini too — the
 Interactions decoder normalizes usage into the shared shape and
-[`DEFAULT_PRICING`](@ref) includes `gemini-3.5-flash` (hosted-tool per-call fees
+[`DEFAULT_PRICING`](@ref) includes `gemini-3.8-flash` (hosted-tool per-call fees
 are not modeled).
 
 ```@example agentic
@@ -127,6 +139,9 @@ step events: a streamed `respond(...; tools=…, stream=true)` finishes with sta
 `requires_action` and its [`function_calls`](@ref) populated, exactly like the
 non-streamed form. Thought steps stream their signature and surface verbatim in
 `output`.
+Initial text in `step.start` and subsequent deltas are both included, in step
+order. Thought summaries stay separate from answer text, while signatures remain
+available in the provider's raw steps.
 
 ## See Also
 

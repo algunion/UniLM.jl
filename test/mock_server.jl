@@ -959,6 +959,29 @@ try
     # Tool Loop: Chat Completions
     # ═══════════════════════════════════════════════════════════════════════
 
+    @testset "tool loops preserve incomplete results without executing partial calls" begin
+        response_status[] = 200
+        response_body[] = JSON.json(Dict("choices" => [Dict("finish_reason" => "length",
+            "message" => Dict("role" => "assistant", "content" => "partial"))]))
+        chat = Chat(service=MockServiceEndpoint,
+            messages=[Message(Val(:system), "s"), Message(Val(:user), "go")])
+        result = tool_loop!(chat, (name, args) -> error("must not execute"))
+        @test !result.completed
+        @test result.response.message.content == "partial"
+        @test occursin("truncated", result.llm_error)
+        for status in ("incomplete", "in_progress", "requires_action")
+            response_body[] = JSON.json(Dict("id" => "r", "model" => "mock", "status" => status,
+                "output" => (status == "incomplete" ? [Dict("type" => "function_call",
+                    "call_id" => "c", "name" => "partial", "arguments" => "{")] : [])))
+            result = tool_loop(Respond(service=MockServiceEndpoint, input="go"),
+                (name, args) -> error("must not execute"))
+            @test !result.completed
+            @test result.response.response.status == status
+            @test isempty(result.tool_calls)
+            @test result.turns_used == 1
+        end
+    end
+
     @testset "tool_loop! two-turn cycle (Chat)" begin
         response_status[] = 200
 

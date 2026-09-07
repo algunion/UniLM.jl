@@ -34,7 +34,7 @@ end
 
 @testset "capabilities & default" begin
     @test UniLM.provider_capabilities(GEMINIServiceEndpoint) == Set([:chat, :tools, :streaming, :agentic])
-    @test UniLM.default_model(GEMINIServiceEndpoint) == "gemini-3.5-flash"
+    @test UniLM.default_model(GEMINIServiceEndpoint) == "gemini-3.8-flash"
     @test_throws ArgumentError UniLM._api_base_url(GEMINIServiceEndpoint)
 end
 
@@ -75,7 +75,7 @@ end
     fd = body["tools"][1]["functionDeclarations"][1]
     @test fd["name"] == "get_weather"
     @test fd["description"] == "Get weather"
-    @test fd["parameters"]["type"] == "object"
+    @test fd["parametersJsonSchema"]["type"] == "object"
     @test body["toolConfig"]["functionCallingConfig"]["mode"] == "AUTO"
 end
 

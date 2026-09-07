@@ -178,7 +178,7 @@ else
 end
 ```
 
-## Reasoning (O-Series Models)
+## Reasoning and Prompt Caching
 
 For models like `o3` that support extended reasoning:
 
@@ -192,6 +192,23 @@ println("Model: ", r.model)
 println("Reasoning effort: ", r.reasoning.effort)
 println(JSON.json(r))
 ```
+
+GPT-5.6 also supports persisted reasoning and execution modes. Configure them
+through typed options; supported effort levels depend on the model:
+
+```@example responses
+r = Respond(input="Explain Julia multiple dispatch", model="gpt-5.6-luna",
+    reasoning=Reasoning(effort="low", context="current_turn", mode="standard"),
+    prompt_cache_options=PromptCacheOptions(mode="implicit", ttl="30m"))
+println(JSON.json(r))
+```
+
+GPT-5.6 and later use `prompt_cache_options` instead of `prompt_cache_retention`.
+Explicit cache mode requires breakpoints in input content blocks. See
+[OpenAI's caching guide](https://developers.openai.com/api/docs/guides/prompt-caching)
+for breakpoint placement and cache-write billing, and
+[the reasoning guide](https://developers.openai.com/api/docs/guides/reasoning)
+for persisted reasoning and pro mode.
 
 ## Structured Output
 
@@ -388,7 +405,7 @@ end
 
 | Parameter                | Type           | Default      | Description                                               |
 | :----------------------- | :------------- | :----------- | :-------------------------------------------------------- |
-| `model`                  | String         | `"gpt-5.5"`  | Model to use                                              |
+| `model`                  | String         | `"gpt-5.6-sol"`  | Model to use                                              |
 | `input`                  | `Union{String, Vector}` | *(required)* | String or `Vector{InputMessage}`                   |
 | `instructions`           | String         | —            | System-level instructions                                 |
 | `tools`                  | Vector         | —            | Available tools (function, web search, file search)       |
@@ -399,7 +416,7 @@ end
 | `max_output_tokens`      | Int64          | —            | Maximum tokens in the response                            |
 | `stream`                 | Bool           | —            | Enable streaming                                          |
 | `text`                   | TextConfig     | —            | Output format (text, json_object, json_schema)            |
-| `reasoning`              | Reasoning      | —            | Reasoning config for O-series models                      |
+| `reasoning`              | Reasoning      | —            | Effort, summary, persisted context, and execution mode    |
 | `truncation`             | String         | —            | `"auto"` or `"disabled"`                                  |
 | `store`                  | Bool           | —            | Store response for later retrieval                        |
 | `metadata`               | Dict           | —            | Arbitrary key-value metadata                              |
@@ -408,11 +425,12 @@ end
 | `background`             | Bool           | —            | Run in background (cancellable)                           |
 | `include`                | Vector{String} | —            | Extra data to include (e.g. `"file_search_call.results"`) |
 | `max_tool_calls`         | Int64          | —            | Max number of tool calls per turn                         |
-| `service_tier`           | String         | —            | `"auto"`, `"default"`, `"flex"`, `"priority"`             |
+| `service_tier`           | String         | —            | `"auto"`, `"default"`, `"flex"`, `"fast"` (`"priority"` alias) |
 | `top_logprobs`           | Int64          | —            | 0–20, top log probabilities                               |
 | `prompt`                 | Dict           | —            | Prompt template reference                                 |
 | `prompt_cache_key`       | String         | —            | Cache key for prompt caching                              |
-| `prompt_cache_retention` | String         | —            | `"in-memory"` or `"24h"`                                  |
+| `prompt_cache_options`   | PromptCacheOptions | —        | Cache mode and TTL for GPT-5.6 and later                  |
+| `prompt_cache_retention` | String         | —            | `"in_memory"` or `"24h"`, depending on the older model     |
 | `safety_identifier`      | String         | —            | Stable end-user identifier; replaces the deprecated `user` |
 | `conversation`           | Any            | —            | Conversation context (String or Dict)                     |
 | `context_management`     | Vector         | —            | Context management strategies                             |

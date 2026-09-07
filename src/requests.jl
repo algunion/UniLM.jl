@@ -829,12 +829,18 @@ end
     _stream_error_result(chat, err::Dict{String,Any}, request_id, sse_dropped=0)
 
 Map an in-band SSE `error` payload (`state.error`) to a typed non-success
-result: `overloaded_error` is the documented
+result: a Gemini numeric error code preserves the reported status;
+`overloaded_error` is the documented
 529-equivalent → `LLMFailure(status=529)` (status-keyed policies see it);
 any other in-band error type → `LLMCallError` (no fabricated HTTP status, and
 no drop count — `LLMCallError` describes an exception, not a decoded stream).
 """
 function _stream_error_result(chat::Chat, err::Dict{String,Any}, request_id, sse_dropped::Int=0)
+    code = get(err, "code", nothing)
+    if code isa Integer && 400 <= code <= 599
+        return LLMFailure(status=Int(code), response=JSON.json(err), self=chat,
+                          request_id=request_id, sse_dropped=sse_dropped)
+    end
     inner = get(err, "error", nothing)
     etype = inner isa AbstractDict ? get(inner, "type", "") : ""
     etype == "overloaded_error" ?
@@ -1194,8 +1200,8 @@ chatrequest!(; kwargs...)
 Send a request to the OpenAI API to generate a response to the messages in `conv`.
 
 # Keyword Arguments
-- `service::Type{<:ServiceEndpoint} = AZUREServiceEndpoint`: The service endpoint to use (e.g., `AZUREServiceEndpoint`, `OPENAIServiceEndpoint`).
-- `model::String = "gpt-5.5"`: The model to use for the chat completion.
+- `service::ServiceEndpointSpec = OPENAIServiceEndpoint`: The provider endpoint type or instance.
+- `model::String = "gpt-5.6-sol"`: The model to use for the chat completion.
 - `systemprompt::Union{Message,String}`: The system prompt message.
 - `userprompt::Union{Message,String}`: The user prompt message.
 - `messages::Conversation = Message[]`: The conversation history or the system/prompt messages.

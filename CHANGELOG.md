@@ -2,7 +2,42 @@
 
 ## Unreleased
 
+### Changed
+- Default models are now `gpt-5.6-sol` for OpenAI chat and Responses,
+  `gemini-3.8-flash` for Gemini, and `gpt-transcribe` for transcription.
+- Native Gemini 3.8 rejects unsupported sampling controls locally. Native Gemini Chat
+  now rejects unmapped options instead of silently ignoring them.
+- GPT-6 Astra requests validate unsupported reasoning and sampling options;
+  tool callers receive guidance to use the Responses API.
+- GPT-5.6 Chat tools require explicit `reasoning_effort="none"`; reasoning with
+  tools uses Responses.
+
+### Added
+- Provider availability notices for OpenAI video retirement and fine-tuning restrictions.
+- OpenAI persisted reasoning (`Reasoning.context`), execution mode
+  (`Reasoning.mode`), and validated `PromptCacheOptions` for GPT-5.6 and later.
+- Gemini thinking control through `Chat.reasoning_effort` and `Respond.reasoning`,
+  including Interactions thought summaries with `Reasoning(summary="auto")`.
+- Typed transcription `languages` and `keywords`, with native multipart encoding
+  and compatibility for a singular language hint.
+- Current GPT-6, GPT-5.6, and Gemini 3.8 price estimates and inexpensive live
+  coverage using GPT-5.6 Luna and Gemini 3.8 Flash.
+
 ### Fixed
+- Tool loops preserve truncated or incomplete responses as unfinished results
+  and do not execute partial function calls.
+- Webhook verification rejects NaN and negative replay tolerances; only an
+  explicit positive infinity disables the replay window.
+- Gemini function schemas use `parametersJsonSchema`, allowing standard JSON
+  Schema constraints that the restricted `parameters` field rejects.
+- Streamed Gemini chat preserves all provider parts and thought signatures;
+  thought summaries are excluded from answer text and in-band errors terminate.
+- Interactions streaming preserves initial text in `step.start` and the order
+  of text and tool steps, using per-step buffers for text accumulation.
+- Deprecated `Reasoning.generate_summary` serializes as `summary`; conflicting
+  aliases raise `ArgumentError`. Chat token limits reject nonpositive values.
+- Cost estimates recognize dated model snapshots instead of silently reporting
+  zero when only the corresponding base model is priced.
 - Azure deployment registry: a registered value that did not carry the
   `/openai/deployments/` prefix every registration writes was silently encoded
   whole and re-prefixed, producing a request path nobody registered. The reader

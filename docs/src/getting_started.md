@@ -54,7 +54,7 @@ export AZURE_OPENAI_DEPLOY_NAME_GPT_5_2="your-gpt52-deployment"
 
 ### Google Gemini
 
-Native `generateContent` API (default model `gemini-3.5-flash`):
+Native `generateContent` API (default model `gemini-3.8-flash`):
 
 ```bash
 export GEMINI_API_KEY="your-gemini-key"

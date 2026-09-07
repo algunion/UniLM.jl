@@ -107,7 +107,7 @@ Respond(service=OPENAIServiceEndpoint, input="Hello")
 ```julia
 @kwdef struct Chat
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
-    model::String = "gpt-5.5"
+    model::String = ""
     messages::Vector{Message} = Message[]
     history::Bool = true
     tools::Union{Vector{Tool},Nothing} = nothing
@@ -126,12 +126,12 @@ Respond(service=OPENAIServiceEndpoint, input="Hello")
     logit_bias::Union{AbstractDict{String,Float64},Nothing} = nothing
     user::Union{String,Nothing} = nothing
     seed::Union{Int64,Nothing} = nothing
-    reasoning_effort::Union{String,Nothing} = nothing    # none|minimal|low|medium|high|xhigh
+    reasoning_effort::Union{String,Nothing} = nothing    # model-dependent reasoning effort
     stream_options::Union{AbstractDict,Nothing} = nothing # e.g. Dict("include_usage" => true)
     verbosity::Union{String,Nothing} = nothing           # low|medium|high
     store::Union{Bool,Nothing} = nothing
     metadata::Union{AbstractDict,Nothing} = nothing
-    service_tier::Union{String,Nothing} = nothing        # auto|default|flex|scale|priority
+    service_tier::Union{String,Nothing} = nothing        # auto|default|flex|scale|priority|fast
     logprobs::Union{Bool,Nothing} = nothing
     top_logprobs::Union{Int64,Nothing} = nothing
     prediction::Union{AbstractDict,Nothing} = nothing
@@ -146,7 +146,7 @@ end
 A 35th field, `_cumulative_cost::Ref{Float64}`, is internal bookkeeping for
 [`cumulative_cost`](@ref) — read it through that accessor, never directly.
 
-- **Model defaults**: the declared default is the sentinel `""`; the constructor resolves it, so `Chat().model` reads back `"gpt-5.5"`. Per provider: `"gpt-5.5"` for OpenAI, `"gpt-5.2"` for Azure, `"gemini-3.5-flash"` for Gemini (native and OpenAI-compat), `"claude-opus-4-8"` for native Anthropic, `"deepseek-chat"` for DeepSeek. For `GenericOpenAIEndpoint` / `OllamaEndpoint` there is no default — an unset model throws `ArgumentError` at construction.
+- **Model defaults**: the declared default is the sentinel `""`; the constructor resolves it, so `Chat().model` reads back `"gpt-5.6-sol"`. Per provider: `"gpt-5.6-sol"` for OpenAI, `"gpt-5.2"` for Azure, `"gemini-3.8-flash"` for Gemini (native and OpenAI-compat), `"claude-opus-4-8"` for native Anthropic, `"deepseek-chat"` for DeepSeek. For `GenericOpenAIEndpoint` / `OllamaEndpoint` there is no default — an unset model throws `ArgumentError` at construction.
 - `history=true`: responses are automatically appended to `messages`.
 - `temperature` and `top_p` are mutually exclusive (constructor throws `ArgumentError`).
 - `parallel_tool_calls` is auto-set to `nothing` when `tools` is `nothing`.
@@ -187,7 +187,7 @@ Message(Val(:user), "Hello!")
 chatrequest!(chat::Chat; config=nothing, callback=nothing, on_tool_call=nothing) -> LLMSuccess | LLMFailure | LLMCallError | Task
 
 # Keyword-argument convenience form — builds a Chat internally
-chatrequest!(; service=OPENAIServiceEndpoint, model="gpt-5.5",
+chatrequest!(; service=OPENAIServiceEndpoint, model="gpt-5.6-sol",
     systemprompt, userprompt, messages=Message[], history=true,
     tools=nothing, tool_choice=nothing, temperature=nothing, ...) -> same
 ```
@@ -368,7 +368,7 @@ result = fetch(task)  # LLMSuccess when complete
 ```julia
 @kwdef struct Respond
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
-    model::String = "gpt-5.5"                                # declared as "" and resolved by the constructor
+    model::String = ""                                # declared as "" and resolved by the constructor
     input::Union{String, Vector}                             # String, Vector{InputMessage}, or Vector{Dict}
     instructions::Union{String,Nothing} = nothing
     tools::Union{Vector,Nothing} = nothing                  # untyped: accepts ResponseTool, CallableTool, and Dict
@@ -388,15 +388,16 @@ result = fetch(task)  # LLMSuccess when complete
     background::Union{Bool,Nothing} = nothing
     include::Union{Vector{String},Nothing} = nothing
     max_tool_calls::Union{Int64,Nothing} = nothing
-    service_tier::Union{String,Nothing} = nothing           # "auto","default","flex","priority"
+    service_tier::Union{String,Nothing} = nothing           # "auto","default","flex","priority","fast"
     top_logprobs::Union{Int64,Nothing} = nothing            # 0–20
     prompt::Union{AbstractDict,Nothing} = nothing
     prompt_cache_key::Union{String,Nothing} = nothing
-    prompt_cache_retention::Union{String,Nothing} = nothing  # "in-memory","24h"
+    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory","24h" (older models)
     safety_identifier::Union{String,Nothing} = nothing
     conversation::Union{Any,Nothing} = nothing              # String or Dict; the declared type collapses to Any
     context_management::Union{Vector,Nothing} = nothing
     stream_options::Union{AbstractDict,Nothing} = nothing
+    prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing
 end
 ```
 
@@ -406,7 +407,8 @@ end
     being silently dropped, so a request never goes out quietly ignoring what you
     asked for. That wire maps `model`, `input`, `instructions`, `tools`,
     `tool_choice`, `temperature`, `top_p`, `max_output_tokens`, `stream`, `store`,
-    `previous_response_id`, and `background`; leave every other field unset, or
+    `previous_response_id`, `background`, and `reasoning` (effort and automatic
+    summaries only); leave every other field unset, or
     send the request to an OpenAI Responses service.
 
 ### Input Helpers
@@ -528,19 +530,37 @@ json_schema_format(d::AbstractDict)                          # from dict with ke
 json_object_format()                                         # unstructured JSON
 ```
 
-### Reasoning (O-series models)
+### Reasoning controls
 
 ```julia
 @kwdef struct Reasoning
     effort::Union{String,Nothing} = nothing                 # "none","low","medium","high"
-    generate_summary::Union{String,Nothing} = nothing       # "auto","concise","detailed"
-    summary::Union{String,Nothing} = nothing                # deprecated alias
+    generate_summary::Union{String,Nothing} = nothing       # deprecated alias, serialized as summary
+    summary::Union{String,Nothing} = nothing                # "auto","concise","detailed"
+    context::Union{String,Nothing} = nothing                # "auto","current_turn","all_turns"
+    mode::Union{String,Nothing} = nothing                   # "standard","pro"
 end
 ```
 
 ```julia
 Respond(input="Hard math problem", model="o3", reasoning=Reasoning(effort="high"))
 ```
+
+GPT-5.6 and later use typed prompt-cache options in Responses:
+
+```julia
+@kwdef struct PromptCacheOptions
+    mode::Union{String,Nothing} = nothing  # "implicit" or "explicit"
+    ttl::Union{String,Nothing} = nothing   # "30m"
+end
+Respond(input="Hello", model="gpt-5.6-luna",
+        reasoning=Reasoning(effort="low", context="current_turn", mode="standard"),
+        prompt_cache_options=PromptCacheOptions(mode="explicit", ttl="30m"))
+```
+
+Use `prompt_cache_options` in place of legacy `prompt_cache_retention` for these
+models. Explicit mode requires cache breakpoints in input content to create cache
+writes. [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
 
 ### respond
 
@@ -577,8 +597,8 @@ get_response(id::String; service=OPENAIServiceEndpoint)           -> ResponseSuc
 delete_response(id::String; service=OPENAIServiceEndpoint)        -> Dict | ResponseFailure | ResponseCallError
 list_input_items(id::String; limit=20, order="desc", after=nothing, service=OPENAIServiceEndpoint) -> Dict | ...
 cancel_response(id::String; service=OPENAIServiceEndpoint)        -> ResponseSuccess | ...
-compact_response(; model="gpt-5.5", input, service=OPENAIServiceEndpoint) -> Dict | ...
-count_input_tokens(; model="gpt-5.5", input, instructions=nothing, tools=nothing, service=OPENAIServiceEndpoint) -> Dict | ...
+compact_response(; model="gpt-5.6-sol", input, service=OPENAIServiceEndpoint) -> Dict | ...
+count_input_tokens(; model="gpt-5.6-sol", input, instructions=nothing, tools=nothing, service=OPENAIServiceEndpoint) -> Dict | ...
 ```
 
 ### ResponseObject
@@ -668,7 +688,7 @@ end
 
 # Reasoning (O-series)
 result = respond("Prove that √2 is irrational", model="o3",
-    reasoning=Reasoning(effort="high", generate_summary="concise"))
+    reasoning=Reasoning(effort="high", summary="concise"))
 
 # Multimodal input
 result = respond([
@@ -855,15 +875,22 @@ DEFAULT_PRICING   # Dict{String, PriceRow} where PriceRow = @NamedTuple{input, c
   upload, vector-store, video, realtime. Those calls carry no token usage at all,
   and a `0.0` would be indistinguishable from a genuinely free call.
 - **`DEFAULT_PRICING` values are USD *per token*, not per 1M tokens** — provider
-  list prices divided by `1_000_000` (e.g. `"gpt-5.5"` is
-  `(input = 5.0e-6, cached_input = 5.0e-7, output = 3.0e-5)`). A `pricing=`
+  list prices divided by `1_000_000` (e.g. `"gpt-5.6-sol"` is
+  `(input = 4.0e-6, cached_input = 4.0e-7, output = 2.0e-5)`). A `pricing=`
   dict you supply must use the same per-token convention, or your estimate is
   off by a factor of a million.
-- `estimated_cost` returns `0.0` for any model **not** in the pricing dict — pass
+- Dated OpenAI snapshots use their base model's row unless an exact snapshot row
+  is supplied. Other unpriced models return `0.0` — pass
   `pricing=` to price custom models. The formula bills
   `min(cached_tokens, prompt_tokens)` at `cached_input`, the remaining prompt
   tokens at `input`, and `completion_tokens` at `output` (reasoning tokens are
   already counted within completion tokens).
+
+Current OpenAI and Gemini rows were checked September 7, 2026. These are estimates
+for standard short-context text requests, excluding cache writes, long-context
+surcharges, nonstandard service tiers, multimodal rates, and hosted-tool fees.
+Gemini 3.8/3.7 Flash introductory rates expire December 31, 2026; refresh pricing
+before estimating later calls.
 
 ### Cost Tracking Example
 
@@ -1514,7 +1541,7 @@ Every exported symbol (`names(UniLM)`), grouped by area:
 **Chat Completions**: `Chat`, `Message`, `ProviderContent`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `Tool`, `ToolCall`, `FunctionSignature`, `FunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
 - *Legacy aliases* (pre-rename names, exported and non-breaking, retained until 1.0): `GPTTool` → `Tool`, `GPTToolCall` → `ToolCall`, `GPTFunctionSignature` → `FunctionSignature`, `GPTFunctionCallResult` → `FunctionCallResult`
 
-**Responses API & Agentic**: `Respond`, `InputMessage`, `ResponseObject`, `ResponseSuccess`, `ResponseFailure`, `ResponseCallError`, `Reasoning`, `TextConfig`, `TextFormatSpec`, `respond`, `get_response`, `delete_response`, `cancel_response`, `list_input_items`, `compact_response`, `count_input_tokens`, `text_format`, `json_schema_format`, `json_object_format`
+**Responses API & Agentic**: `Respond`, `InputMessage`, `ResponseObject`, `ResponseSuccess`, `ResponseFailure`, `ResponseCallError`, `Reasoning`, `PromptCacheOptions`, `TextConfig`, `TextFormatSpec`, `respond`, `get_response`, `delete_response`, `cancel_response`, `list_input_items`, `compact_response`, `count_input_tokens`, `text_format`, `json_schema_format`, `json_object_format`
 - *Input builders*: `input_text`, `input_image`, `input_file`
 - *Tool types*: `ResponseTool`, `FunctionTool`, `WebSearchTool`, `FileSearchTool`, `MCPTool`, `ComputerUseTool`, `ComputerTool`, `ImageGenerationTool`, `CodeInterpreterTool`, `LocalShellTool`, `ShellTool`, `ApplyPatchTool`, `CustomTool`
 - *Tool constructors*: `function_tool`, `web_search`, `file_search`, `mcp_tool`, `computer_use`, `computer_tool`, `image_generation_tool`, `code_interpreter`, `local_shell`, `shell`, `apply_patch_tool`, `custom_tool`, `tool_result`, `mcp_approval_response`

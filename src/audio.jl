@@ -78,23 +78,32 @@ end
 # ─── Transcription / translation (multipart upload → text or JSON) ───────────
 
 """
-    TranscriptionRequest(; file, model="gpt-4o-transcribe", service=OPENAIServiceEndpoint)
+    TranscriptionRequest(; file, model="gpt-transcribe", service=OPENAIServiceEndpoint)
 
 An audio transcription/translation request. `file` is a path on disk; optional
-`language`, `prompt`, `response_format`, and `temperature` refine decoding.
+`languages`, `keywords`, `prompt`, `response_format`, and `temperature` refine decoding.
+For `gpt-transcribe`, a legacy singular `language` is translated to `languages`.
+Other models retain their singular `language` field. Never set both forms.
 Pass to [`transcribe`](@ref) or [`translate`](@ref).
 """
 @kwdef struct TranscriptionRequest
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
     file::String
-    model::String = "gpt-4o-transcribe"
+    model::String = "gpt-transcribe"
     language::Union{String,Nothing} = nothing
     prompt::Union{String,Nothing} = nothing
     response_format::Union{String,Nothing} = nothing
     temperature::Union{Float64,Nothing} = nothing
-    function TranscriptionRequest(service, file, model, language, prompt, response_format, temperature)
+    languages::Union{Vector{String},Nothing} = nothing
+    keywords::Union{Vector{String},Nothing} = nothing
+    function TranscriptionRequest(service, file, model, language, prompt, response_format, temperature,
+                                  languages=nothing, keywords=nothing)
         isfile(file) || throw(ArgumentError("file not found: $file"))
-        new(service, file, model, language, prompt, response_format, temperature)
+        isnothing(language) || isnothing(languages) || throw(ArgumentError("Set language or languages, not both"))
+        if !isnothing(keywords) && any(k -> occursin(r"[<>\r\n]", k), keywords)
+            throw(ArgumentError("Transcription keywords cannot contain <, >, or line breaks"))
+        end
+        new(service, file, model, language, prompt, response_format, temperature, languages, keywords)
     end
 end
 
@@ -111,17 +120,31 @@ The transcript text from a [`transcribe`](@ref) or [`translate`](@ref) result.
 """
 transcript_text(r::TranscriptionSuccess) = r.text
 
+function _transcription_parts(t::TranscriptionRequest)::Vector{Pair{String,Any}}
+    parts = Pair{String,Any}[
+        "file" => HTTP.Multipart(basename(t.file), IOBuffer(read(t.file)), _mime_for(t.file)),
+        "model" => t.model]
+    languages = t.languages
+    if !isnothing(t.language)
+        if _model_family(t.model, "gpt-transcribe")
+            languages = [t.language]
+        else
+            push!(parts, "language" => t.language)
+        end
+    end
+    isnothing(languages) || append!(parts, ("languages[]" => lang for lang in languages))
+    isnothing(t.keywords) || append!(parts, ("keywords[]" => word for word in t.keywords))
+    !isnothing(t.prompt) && push!(parts, "prompt" => t.prompt)
+    !isnothing(t.response_format) && push!(parts, "response_format" => t.response_format)
+    !isnothing(t.temperature) && push!(parts, "temperature" => string(t.temperature))
+    parts
+end
+
 function _transcribe(t::TranscriptionRequest, path::String; config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(t.service, :audio, "Audio API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        parts = Pair{String,Any}[
-            "file" => HTTP.Multipart(basename(t.file), IOBuffer(read(t.file)), _mime_for(t.file)),
-            "model" => t.model]
-        !isnothing(t.language) && push!(parts, "language" => t.language)
-        !isnothing(t.prompt) && push!(parts, "prompt" => t.prompt)
-        !isnothing(t.response_format) && push!(parts, "response_format" => t.response_format)
-        !isnothing(t.temperature) && push!(parts, "temperature" => string(t.temperature))
+        parts = _transcription_parts(t)
         resp = _http("POST", _api_base_url(t.service) * path, auth_header_multipart(t.service),
             HTTP.Form(parts); cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
@@ -141,7 +164,7 @@ function _transcribe(t::TranscriptionRequest, path::String; config::Union{Nothin
 end
 
 """
-    transcribe(t::TranscriptionRequest) / transcribe(path; model="gpt-4o-transcribe", kwargs...)
+    transcribe(t::TranscriptionRequest) / transcribe(path; model="gpt-transcribe", kwargs...)
 
 Transcribe audio to text in the source language. Returns `TranscriptionSuccess`
 (`.text`, via [`transcript_text`](@ref)), `AudioFailure`, or `AudioCallError`.
@@ -149,7 +172,7 @@ Transcribe audio to text in the source language. Returns `TranscriptionSuccess`
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}=nothing) = _transcribe(t, AUDIO_TRANSCRIPTIONS_PATH; config=config)
-transcribe(path::String; model::String="gpt-4o-transcribe", service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing, kwargs...) =
+transcribe(path::String; model::String="gpt-transcribe", service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing, kwargs...) =
     transcribe(TranscriptionRequest(; service=service, file=path, model=model, kwargs...); config=config)
 
 """

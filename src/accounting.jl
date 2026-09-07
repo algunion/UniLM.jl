@@ -4,10 +4,16 @@ const PriceRow = @NamedTuple{input::Float64, cached_input::Float64, output::Floa
 """Build a [`PriceRow`](@ref) from per-1M-token USD figures (input, cached-input, output)."""
 _price(i, c, o) = (input = i / 1_000_000, cached_input = c / 1_000_000, output = o / 1_000_000)
 
-"""Default per-token pricing, verified against the live OpenAI pricing page on 2026-06-21
+"""Default per-token pricing; current OpenAI and Gemini rows verified on 2026-09-07
 (prices drift — re-verify before relying on them). Cached input is billed at the discounted
-`cached_input` rate; reasoning tokens are already counted within output tokens."""
+`cached_input` rate; reasoning tokens are already counted within output tokens.
+These are standard short-context text rates: cache writes, long-context surcharges,
+service-tier adjustments, multimodal rates, and hosted-tool fees are not included."""
 const DEFAULT_PRICING = Dict{String, PriceRow}(
+    "gpt-6-astra"   => _price(10.0, 1.0, 50.0),
+    "gpt-5.6-sol"   => _price(4.0,  0.40, 20.0),
+    "gpt-5.6-terra" => _price(2.0,  0.20, 12.0),
+    "gpt-5.6-luna"  => _price(0.20, 0.02, 1.20),
     # GPT-5.x  (live-verified 2026-06-21)
     "gpt-5.5"       => _price(5.0,  0.50,  30.0),
     "gpt-5.4"       => _price(2.5,  0.25,  15.0),
@@ -25,8 +31,9 @@ const DEFAULT_PRICING = Dict{String, PriceRow}(
     "claude-sonnet-5"  => _price(3.0, 0.30, 15.0),
     "claude-haiku-4-5" => _price(1.0, 0.10, 5.0),
     # Google Gemini (native + OpenAI-compat shim; live-verified 2026-07-07)
-    # gemini-3.7-flash: introductory rate through 2026-12-31, doubles 2027-01-01
-    # (Google pricing page, 2026-08-20); output rate includes thinking tokens.
+    # Gemini 3.8/3.7 Flash: introductory rates through 2026-12-31, doubled
+    # on 2027-01-01 (Google pricing page, 2026-09-07); output includes thinking.
+    "gemini-3.8-flash"      => _price(0.75, 0.075, 3.75),
     "gemini-3.7-flash"      => _price(0.75, 0.075, 3.75),
     "gemini-3.5-flash"      => _price(1.5,  0.15,  9.0),
     "gemini-3.1-flash-lite" => _price(0.25, 0.025, 1.5),
@@ -94,6 +101,12 @@ function estimated_cost(result::LLMRequestResponse;
         return 0.0
     end
     rates = get(pricing, mdl, nothing)
+    if isnothing(rates)
+        # OpenAI often returns a dated snapshot for an alias. Strip only the
+        # documented date suffix, preserving arbitrary custom model names.
+        alias = replace(mdl, r"-\d{4}-\d{2}-\d{2}$" => "")
+        rates = get(pricing, alias, nothing)
+    end
     isnothing(rates) && return 0.0
     cached = min(u.cached_tokens, u.prompt_tokens)        # cached input billed at the discounted rate
     fresh = u.prompt_tokens - cached

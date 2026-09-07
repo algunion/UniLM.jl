@@ -1,5 +1,9 @@
 # [Fine-tuning API](@id fine_tuning_api)
 
+OpenAI restricts new jobs to eligible existing customers. Job creation ends
+January 6, 2027; inference remains available until the base model retires.
+See [OpenAI's availability schedule](https://developers.openai.com/api/docs/deprecations).
+
 Create, retrieve, cancel, and list fine-tuning jobs, and list a job's events and
 checkpoints. Training and validation data is uploaded via the [Files API](@ref files_api)
 with `purpose="fine-tune"`. OpenAI only.

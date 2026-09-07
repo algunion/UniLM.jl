@@ -2,15 +2,27 @@
 
 ## Unreleased
 
-### Changed
+## 0.17.0
+
+### Breaking
 - Default models are now `gpt-5.6-sol` for OpenAI chat and Responses,
   `gemini-3.8-flash` for Gemini, and `gpt-transcribe` for transcription.
+  Set `model` explicitly to retain a previous model where the provider still
+  offers it.
 - Native Gemini 3.8 rejects unsupported sampling controls locally. Native Gemini Chat
-  now rejects unmapped options instead of silently ignoring them.
+  now rejects unmapped options instead of silently ignoring them. Remove
+  `temperature` and `top_p` for Gemini 3.8, and use `reasoning_effort` to control
+  thinking. Remove other unsupported options reported by validation.
 - GPT-6 Astra requests validate unsupported reasoning and sampling options;
   tool callers receive guidance to use the Responses API.
 - GPT-5.6 Chat tools require explicit `reasoning_effort="none"`; reasoning with
-  tools uses Responses.
+  tools uses `Respond` and `respond` instead.
+- For GPT-5.6 and later, replace legacy `prompt_cache_retention` with typed
+  `PromptCacheOptions`, passed through `Respond(prompt_cache_options=...)`.
+
+### Changed
+- Documentation builds and releases run examples offline by default. Live
+  examples require the manual Documentation workflow's `live_examples` input.
 
 ### Added
 - Provider availability notices for OpenAI video retirement and fine-tuning restrictions.

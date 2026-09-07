@@ -8,6 +8,11 @@ on:
   # Allow manual (re)builds for any ref — e.g. to (re)deploy versioned docs for a
   # release tag whose TagBot push did not trigger this workflow.
   workflow_dispatch:
+    inputs:
+      live_examples:
+        description: Run billed examples using configured provider API keys
+        type: boolean
+        default: false
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
@@ -29,16 +34,16 @@ jobs:
             using Pkg
             Pkg.develop(PackageSpec(path=pwd()))
             Pkg.instantiate()'
-      # PR builds render docs examples offline (no provider keys) to avoid live
-      # API spend; push, tag, and manual builds pass keys to render live outputs.
+      # Automatic builds and releases render examples without provider keys.
+      # Live examples incur API spend and require an explicit manual opt-in.
       - name: Build and deploy (offline examples)
-        if: github.event_name == 'pull_request'
+        if: github.event_name != 'workflow_dispatch' || !inputs.live_examples
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
         run: julia --project=docs/ docs/make.jl
       - name: Build and deploy (live examples)
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch' && inputs.live_examples
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}

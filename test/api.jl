@@ -543,6 +543,22 @@ end
         @test chat.seed == 42
     end
 
+    @testset "positional constructor back-compat" begin
+        # 35 positional arguments through v0.18; prompt_cache_options and moderation
+        # extend the full form to 37. Omitted trailing fields are nothing.
+        ref = Chat(model="gpt-5.4-mini", temperature=0.5, safety_identifier="u1",
+                   prompt_cache_options=PromptCacheOptions(mode="implicit"),
+                   moderation=ModerationConfig(model="omni-moderation-latest"))
+        vals = Any[getfield(ref, f) for f in fieldnames(Chat)]
+        @test length(vals) == 37
+        old = Chat(vals[1:35]...)
+        @test (old.model, old.temperature, old.safety_identifier) == ("gpt-5.4-mini", 0.5, "u1")
+        @test isnothing(old.prompt_cache_options) && isnothing(old.moderation)
+        @test Chat(vals[1:36]...).prompt_cache_options == ref.prompt_cache_options
+        full = Chat(vals...)
+        @test full.prompt_cache_options == ref.prompt_cache_options && full.moderation == ref.moderation
+    end
+
     @testset "temperature and top_p mutual exclusion" begin
         @test_throws ArgumentError Chat(temperature=0.2, top_p=0.5)
     end

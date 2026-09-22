@@ -108,7 +108,10 @@ JSON Schema constraints such as `additionalProperties`.
 
 `response_format` is mapped natively: JSON object and JSON Schema output become
 `generationConfig.responseFormat` (see [Structured Output](@ref structured_guide)).
-`safety_identifier` is mapped natively to the request label `safety_identifier`.
+`safety_identifier` is mapped natively to the request label `safety_identifier`;
+label values allow at most 63 characters of lowercase letters (international characters
+allowed), numeric characters, underscores, and dashes, so a value such as an email address
+or a 64-character SHA-256 hex digest throws `ArgumentError` at encode time.
 Native Chat returns one candidate and does not implement OpenAI-specific options
 such as `seed`, `metadata`, and `stream_options`; those options fail explicitly.
 Gemini determines parallel tool use; the inherited `parallel_tool_calls` setting
@@ -131,6 +134,8 @@ as an alias. See [OpenAI's migration guide](https://developers.openai.com/api/do
 `ANTHROPICServiceEndpoint` calls Anthropic's native `/v1/messages` API
 (`x-api-key` + `anthropic-version` headers). Default model `claude-opus-4-8`;
 `max_tokens` is required on the wire and defaults to 4096 when you omit it.
+A `Chat` with the OpenAI-only `moderation` or `prompt_cache_options` set throws
+`ArgumentError` at encode time instead of sending the request without them.
 
 ```@example backends
 claude_chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-4-5")  # native Messages API

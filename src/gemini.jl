@@ -93,6 +93,20 @@ function _gemini_validate_chat(chat::Chat)
     nothing
 end
 
+# Request label values (GenerateContentRequest.labels in the Gemini API discovery
+# document): at most 63 characters (Unicode code points), only lowercase letters,
+# numeric characters, underscores, and dashes; international characters are allowed.
+const _GEMINI_LABEL_VALUE = r"\A[\p{Ll}\p{Lo}\p{N}_-]{0,63}\z"
+
+function _gemini_safety_label(id::String)::String
+    occursin(_GEMINI_LABEL_VALUE, id) || throw(ArgumentError(
+        "Native Gemini sends safety_identifier as a request label; label values allow at most " *
+        "63 characters, only lowercase letters (international characters allowed), numeric " *
+        "characters, underscores, and dashes (got $(length(id)) characters). A 64-character " *
+        "hex hash such as a SHA-256 digest is one character too long for a Gemini label."))
+    id
+end
+
 # ─── Request encoding (neutral Chat → Gemini generateContent body) ───────────
 
 function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
@@ -120,7 +134,8 @@ function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
     (fmt = _gemini_response_format(chat.response_format)) === nothing || (gen[:responseFormat] = fmt)
     isempty(gen) || (body[:generationConfig] = gen)
     # Request labels carry an aggregator's end-user id under Google's documented key.
-    isnothing(chat.safety_identifier) || (body[:labels] = Dict(:safety_identifier => chat.safety_identifier))
+    isnothing(chat.safety_identifier) ||
+        (body[:labels] = Dict(:safety_identifier => _gemini_safety_label(chat.safety_identifier)))
     # NB: `stream` is expressed in the URL method (get_url), never in the body.
     JSON.json(body)
 end

@@ -125,9 +125,10 @@ _model_family(model::AbstractString, family::AbstractString) =
 
 # Model-specific restrictions belong to the native endpoint. A compatible
 # server or Azure deployment may use the same name with a different contract.
-function _validate_astra(model::String, temperature, top_p, effort, logprobs)
+# `logprobs`: whether the request asks for log probabilities (`logprobs=false` does not).
+function _validate_astra(model::String, temperature, top_p, effort, logprobs::Bool)
     _model_family(model, "gpt-6-astra") || return nothing
-    isnothing(temperature) && isnothing(top_p) && isnothing(logprobs) || throw(ArgumentError(
+    isnothing(temperature) && isnothing(top_p) && !logprobs || throw(ArgumentError(
         "$model does not support sampling controls or log probabilities"))
     effort in ("none", "minimal") && throw(ArgumentError("$model requires at least low reasoning effort"))
     nothing
@@ -142,12 +143,21 @@ function _validate_gpt6_sampling(model::String, effort, sampling::Bool, fix::Str
         "or log probabilities; set $fix or remove them"))
 end
 
+# GPT-6 Sol and Luna list reasoning efforts none, low, medium, high, xhigh and max;
+# for a request that used "minimal", OpenAI's migration guide says to start with "low".
+function _validate_gpt6_effort(model::String, effort)
+    effort == "minimal" && any(f -> _model_family(model, f), ("gpt-6-sol", "gpt-6-luna")) &&
+        throw(ArgumentError("$model does not support minimal reasoning effort; use \"low\""))
+    nothing
+end
+
 # Chat Completions function calling on these families requires reasoning effort "none".
 const _NO_REASONING_CHAT_TOOLS = ("gpt-5.6" => "GPT-5.6", "gpt-6-sol" => "GPT-6 Sol", "gpt-6-luna" => "GPT-6 Luna")
 
 function encode_request(::Type{OPENAIServiceEndpoint}, chat::Chat)::String
     _validate_astra(chat.model, chat.temperature, chat.top_p, chat.reasoning_effort,
-                    isnothing(chat.top_logprobs) ? chat.logprobs : chat.top_logprobs)
+                    chat.logprobs === true || !isnothing(chat.top_logprobs))
+    _validate_gpt6_effort(chat.model, chat.reasoning_effort)
     _validate_gpt6_sampling(chat.model, chat.reasoning_effort,
         !isnothing(chat.temperature) || !isnothing(chat.top_p) || !isnothing(chat.top_logprobs) ||
             chat.logprobs === true,
@@ -169,7 +179,8 @@ end
 
 function encode_agentic(::Type{OPENAIServiceEndpoint}, r::Respond)::String
     effort = isnothing(r.reasoning) ? nothing : r.reasoning.effort
-    _validate_astra(r.model, r.temperature, r.top_p, effort, r.top_logprobs)
+    _validate_astra(r.model, r.temperature, r.top_p, effort, !isnothing(r.top_logprobs))
+    _validate_gpt6_effort(r.model, effort)
     _validate_gpt6_sampling(r.model, effort,
         !isnothing(r.temperature) || !isnothing(r.top_p) || !isnothing(r.top_logprobs) ||
             (!isnothing(r.include) && "message.output_text.logprobs" in r.include),

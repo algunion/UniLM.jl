@@ -418,6 +418,22 @@ end
         @test r.truncation == "auto"
     end
 
+    @testset "positional constructor back-compat" begin
+        # 30 or 31 positional arguments through v0.18; moderation extends the full
+        # form to 32. Omitted trailing fields are nothing.
+        ref = Respond(model="gpt-5.4-mini", input="hi", instructions="be brief",
+                      prompt_cache_options=PromptCacheOptions(mode="implicit"),
+                      moderation=ModerationConfig(model="omni-moderation-latest"))
+        vals = Any[getfield(ref, f) for f in fieldnames(Respond)]
+        @test length(vals) == 32
+        r30 = Respond(vals[1:30]...)
+        @test (r30.model, r30.input, r30.instructions) == ("gpt-5.4-mini", "hi", "be brief")
+        @test isnothing(r30.prompt_cache_options) && isnothing(r30.moderation)
+        r31 = Respond(vals[1:31]...)
+        @test r31.prompt_cache_options == ref.prompt_cache_options && isnothing(r31.moderation)
+        @test Respond(vals...).moderation == ref.moderation
+    end
+
     @testset "temperature and top_p mutual exclusion" begin
         @test_throws ArgumentError Respond(input="test", temperature=0.5, top_p=0.9)
     end

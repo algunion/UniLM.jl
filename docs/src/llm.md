@@ -160,7 +160,7 @@ through that accessor, never directly.
 - `temperature` and `top_p` are mutually exclusive (constructor throws `ArgumentError`).
 - `parallel_tool_calls` is auto-set to `nothing` when `tools` is `nothing`.
 - **Parameter validation**: the constructor validates ranges at construction time — `temperature` ∈ [0.0, 2.0], `top_p` ∈ [0.0, 1.0], `n` ∈ [1, 10], `presence_penalty` ∈ [-2.0, 2.0], `frequency_penalty` ∈ [-2.0, 2.0]. Out-of-range values throw `ArgumentError`.
-- `prompt_cache_options` is supported for gpt-5.6 and later (the provider rejects it on older models); Chat Completions takes only its `mode` and `ttl` — a native OpenAI `Chat` with `prewarm` or `comparison_response_id` set throws `ArgumentError` at encode time. `moderation` takes a [`ModerationConfig`](@ref).
+- `prompt_cache_options` is supported for gpt-5.6 and later (gpt-5.4-mini answered HTTP 400 "prompt_cache_options is not supported on this model" on 2026-09-22); Chat Completions takes only its `mode` and `ttl` — a native OpenAI `Chat` with `prewarm` or `comparison_response_id` set throws `ArgumentError` at encode time. `Message` content is a plain string, so Chat messages cannot carry cache breakpoints, and the Chat Completions reference says an explicit-mode request without breakpoints "does not use prompt caching": `mode="explicit"` on a `Chat` turns prompt caching off. `moderation` takes a [`ModerationConfig`](@ref).
 
 ### Message
 
@@ -458,7 +458,7 @@ abstract type ResponseTool end
     async::Union{Bool,Nothing} = nothing                    # GPT-6 async tool calling
     allowed_callers::Union{Vector{String},Nothing} = nothing  # "direct" and/or "programmatic"; anything else throws
     defer_loading::Union{Bool,Nothing} = nothing            # loaded via tool search
-    output_schema::Union{Dict{String,Any},Nothing} = nothing  # JSON Schema of the string output
+    output_schema::Union{AbstractDict,Nothing} = nothing    # JSON Schema of the string output
 end
 
 @kwdef struct WebSearchTool <: ResponseTool
@@ -498,7 +498,9 @@ end
     environment::Union{String, Nothing} = nothing
 end
 
-# Enumerated fields are validated at construction (ArgumentError).
+# action, moderation, partial_images, and input_fidelity are validated at construction
+# (ArgumentError); quality, background, and output_format pass through unchecked
+# (the accepted quality values depend on the model).
 @kwdef struct ImageGenerationTool <: ResponseTool
     background::Union{String, Nothing} = nothing
     output_format::Union{String, Nothing} = nothing
@@ -510,7 +512,7 @@ end
     moderation::Union{String, Nothing} = nothing            # "auto","low"
     partial_images::Union{Int, Nothing} = nothing           # 0–3
     input_fidelity::Union{String, Nothing} = nothing        # "high","low"
-    input_image_mask::Union{Dict{String,Any}, Nothing} = nothing  # "file_id" or "image_url"
+    input_image_mask::Union{AbstractDict, Nothing} = nothing  # "file_id" or "image_url"
 end
 
 @kwdef struct CodeInterpreterTool <: ResponseTool
@@ -522,8 +524,10 @@ end
 **Convenience constructors**:
 
 ```julia
-function_tool(name, description=nothing; parameters=nothing, strict=nothing)
-function_tool(d::AbstractDict)           # from dict with keys "name", "description", "parameters"
+function_tool(name, description=nothing; parameters=nothing, strict=nothing, async=nothing,
+              allowed_callers=nothing, defer_loading=nothing, output_schema=nothing)
+function_tool(d::AbstractDict)           # from a dict with "name" and optionally "description", "parameters", "strict",
+                                         # "async", "allowed_callers", "defer_loading", "output_schema"
 web_search(; context_size="medium", location=nothing, type="web_search", filters=nothing)
 file_search(store_ids; max_results=nothing, ranking=nothing, filters=nothing)
 mcp_tool(label, url=nothing; require_approval="never", allowed_tools=nothing, headers=nothing,
@@ -591,8 +595,9 @@ Respond(input="Hello", model="gpt-5.6-luna",
 
 Use `prompt_cache_options` in place of legacy `prompt_cache_retention` for these
 models. Explicit mode requires cache breakpoints in input content to create cache
-writes — mark them with `input_text(text; cache_breakpoint=true)`. Chat Completions
-takes only `mode` and `ttl` (a native OpenAI `Chat` with `prewarm` or
+writes — mark them with `input_text(text; cache_breakpoint=true)`, a Responses input
+part; `Chat` messages cannot carry one, so explicit mode on a `Chat` means no prompt
+caching. Chat Completions takes only `mode` and `ttl` (a native OpenAI `Chat` with `prewarm` or
 `comparison_response_id` set throws `ArgumentError`). Diagnostics requested with
 `comparison_response_id` come back in `r.response.raw["prompt_cache_diagnostics"]`.
 Unset fields are omitted.
@@ -940,16 +945,18 @@ DEFAULT_PRICING   # Dict{String, PriceRow} where PriceRow = @NamedTuple{input, c
   dict you supply must use the same per-token convention, or your estimate is
   off by a factor of a million.
 - Dated OpenAI snapshots use their base model's row unless an exact snapshot row
-  is supplied. Other unpriced models return `0.0` — pass
+  is supplied, and a versioned `jev-X.Y.Z` id without its own row is priced at the
+  `jev-latest` row. Other unpriced models return `0.0` — pass
   `pricing=` to price custom models. The formula bills
   `min(cached_tokens, prompt_tokens)` at `cached_input`, the remaining prompt
   tokens at `input`, and `completion_tokens` at `output` (reasoning tokens are
   already counted within completion tokens).
 
-Current OpenAI and Gemini rows were checked September 7, 2026. These are estimates
-for standard short-context text requests, excluding cache writes, long-context
+Current OpenAI, Gemini, and TypeSafe rows were verified September 22, 2026 (Anthropic
+rows July 6, 2026). These are estimates for standard short-context text requests,
+excluding cache writes, long-context
 surcharges, nonstandard service tiers, multimodal rates, and hosted-tool fees.
-Gemini 3.8/3.7 Flash introductory rates expire December 31, 2026; refresh pricing
+Gemini 3.8/3.7/3.6 Flash introductory rates expire December 31, 2026; refresh pricing
 before estimating later calls.
 
 ### Cost Tracking Example

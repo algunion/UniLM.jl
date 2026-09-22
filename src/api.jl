@@ -581,7 +581,10 @@ Responses API only:
 
 Chat Completions accepts only `mode` and `ttl`: a [`Chat`](@ref) for
 `OPENAIServiceEndpoint` with `prewarm` or `comparison_response_id` set throws
-`ArgumentError` when encoded. Unset fields are omitted from the request. See
+`ArgumentError` when encoded. [`Message`](@ref) content is a plain string, so a `Chat`
+cannot mark cache breakpoints: with `mode="explicit"` its request has none, and per the
+Chat Completions reference such a request does not use prompt caching. Unset fields are
+omitted from the request. See
 [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
 """
 @kwdef struct PromptCacheOptions
@@ -652,8 +655,10 @@ Creates a new `Chat` object with default settings:
 
 OpenAI options, omitted from the request when unset:
 - `prompt_cache_options::Union{PromptCacheOptions,Nothing}`: prompt-cache `mode` and
-  `ttl` ([`PromptCacheOptions`](@ref)); supported for gpt-5.6 and later; the provider
-  rejects it on older models.
+  `ttl` ([`PromptCacheOptions`](@ref)); supported for gpt-5.6 and later (gpt-5.4-mini
+  answered HTTP 400 "prompt_cache_options is not supported on this model" on
+  2026-09-22). Chat messages cannot carry cache breakpoints, so `mode="explicit"` means
+  the request does not use prompt caching.
 - `moderation::Union{ModerationConfig,Nothing}`: moderated completions
   ([`ModerationConfig`](@ref)).
 """

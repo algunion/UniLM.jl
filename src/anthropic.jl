@@ -36,6 +36,12 @@ default_max_tokens(::Type{ANTHROPICServiceEndpoint}, ::AbstractString) = _ANTHRO
 # ─── Request encoding (neutral Chat → Anthropic Messages body) ───────────────
 
 function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
+    # OpenAI request controls with no Messages counterpart: dropping a moderation
+    # policy or cache setting would send a request the caller did not ask for.
+    for f in (:moderation, :prompt_cache_options)
+        isnothing(getfield(chat, f)) || throw(ArgumentError(
+            "Anthropic Messages does not support $f; it is an OpenAI-only option"))
+    end
     body = Dict{Symbol,Any}(:model => chat.model)
     # max_tokens is REQUIRED by Anthropic; fall back to the moderate default.
     body[:max_tokens] = something(chat.max_completion_tokens, chat.max_tokens,

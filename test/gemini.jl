@@ -500,6 +500,9 @@ end
     # an OpenAI-shaped Dict json_schema carries its schema the same way
     @test gen(ResponseFormat(Dict("name" => "capital", "schema" => schema, "strict" => true))) ==
           Dict("responseFormat" => Dict("text" => Dict("mimeType" => "APPLICATION_JSON", "schema" => schema)))
+    # ... and so does a Symbol-keyed one
+    @test gen(ResponseFormat(Dict(:name => "capital", :schema => schema))) ==
+          Dict("responseFormat" => Dict("text" => Dict("mimeType" => "APPLICATION_JSON", "schema" => schema)))
     @test gen(UniLM.json_object()) == Dict("responseFormat" => Dict("text" => Dict("mimeType" => "APPLICATION_JSON")))
     @test isnothing(gen(ResponseFormat(type="text")))            # plain text: no format, no generationConfig
     # every other shape fails loud instead of vanishing from the request
@@ -517,6 +520,20 @@ end
         "contents" => [Dict("role" => "user", "parts" => [Dict("text" => "hi")])],
         "labels" => Dict("safety_identifier" => "user-42"))
     @test !haskey(JSON.parse(encode_request(GEMINIServiceEndpoint, Chat(service=GEMINIServiceEndpoint))), "labels")
+    # Label values: at most 63 characters, only lowercase letters, numeric characters,
+    # underscores, and dashes; international characters are allowed.
+    label(id) = JSON.parse(encode_request(GEMINIServiceEndpoint,
+        Chat(service=GEMINIServiceEndpoint, safety_identifier=id)))["labels"]["safety_identifier"]
+    for ok in ("user_session_123", repeat("a", 63), "ünïcode-7", "用户_7")
+        @test label(ok) == ok
+    end
+    hexhash = repeat("0123456789abcdef", 4)          # 64 characters, like a SHA-256 hex digest
+    for bad in ("User@Example.com", "UPPER", "with space", "trailing\n", "a.b", hexhash, repeat("é", 64))
+        err = try label(bad); nothing catch e; e end
+        @test err isa ArgumentError && occursin("at most 63 characters", err.msg)
+    end
+    err = try label(hexhash); nothing catch e; e end
+    @test occursin("(got 64 characters)", err.msg) && occursin("one character too long for a Gemini label", err.msg)
 end
 
 @testset "encode — response_format and safety_identifier are mapped; other options still fail closed" begin

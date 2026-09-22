@@ -1007,9 +1007,10 @@ token_usage(::SystemOneCallError)::TokenUsage = TokenUsage()
 Estimate the USD cost of one System One evaluation. Only input tokens are
 billed — output tokens are currently free, which the shipped `jev-*` price rows
 encode as an output rate of `0.0`. The model is taken from the response (the
-versioned id that answered) unless `model` overrides it; a versioned `jev-X.Y.Z`
-id without its own row is priced at the `jev-latest` row, and any other unpriced
-name returns `0.0`.
+versioned id that answered) unless `model` overrides it. An id with a dated snapshot
+suffix uses its base id's row; a versioned `jev-X.Y.Z` id without its own row is
+priced at the `jev-latest` row (assuming a later Jev keeps the price TypeSafe lists
+for Jev 1.13); any other unpriced name returns `0.0`.
 """
 function estimated_cost(result::SystemOneSuccess; model::Union{String,Nothing}=nothing,
                         pricing::Dict{String,PriceRow}=DEFAULT_PRICING)::Float64

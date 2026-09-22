@@ -161,7 +161,7 @@ FunctionTool(
     async::Union{Bool,Nothing} = nothing
     allowed_callers::Union{Vector{String},Nothing} = nothing
     defer_loading::Union{Bool,Nothing} = nothing
-    output_schema::Union{Dict{String,Any},Nothing} = nothing
+    output_schema::Union{AbstractDict,Nothing} = nothing
     function FunctionTool(name, description, parameters, strict, async, allowed_callers, defer_loading, output_schema)
         bad = isnothing(allowed_callers) ? () : filter(∉(("direct", "programmatic")), allowed_callers)
         isempty(bad) || throw(ArgumentError(
@@ -301,8 +301,10 @@ images inline during a response.
 - `input_image_mask`: inpainting mask, `Dict("file_id" => …)` or `Dict("image_url" => …)`
 - `quality`: `"low"`, `"medium"`, `"high"`, `"auto"`; the 2.5 models add `"xhigh"` and `"max"`
 
-The enumerated fields are validated at construction (`ArgumentError`); unset fields
-are omitted from the request.
+`action`, `moderation`, `partial_images`, and `input_fidelity` are validated at
+construction (`ArgumentError`). `quality`, `background`, and `output_format` are passed
+through unchecked (the accepted `quality` values depend on the model). Unset fields are
+omitted from the request.
 """
 @kwdef struct ImageGenerationTool <: ResponseTool
     background::Union{String, Nothing} = nothing
@@ -315,7 +317,7 @@ are omitted from the request.
     moderation::Union{String, Nothing} = nothing
     partial_images::Union{Int, Nothing} = nothing
     input_fidelity::Union{String, Nothing} = nothing
-    input_image_mask::Union{Dict{String,Any}, Nothing} = nothing
+    input_image_mask::Union{AbstractDict, Nothing} = nothing
     function ImageGenerationTool(background, output_format, output_compression, quality, size,
             model=nothing, action=nothing, moderation=nothing, partial_images=nothing,
             input_fidelity=nothing, input_image_mask=nothing)
@@ -497,20 +499,28 @@ code_interpreter(; container::Union{AbstractDict, Nothing}=nothing,
 # Convenience constructors (existing)
 
 """
-    function_tool(name, description=nothing; parameters=nothing, strict=nothing)
+    function_tool(name, description=nothing; parameters=nothing, strict=nothing,
+                  async=nothing, allowed_callers=nothing, defer_loading=nothing,
+                  output_schema=nothing)
 
 Shorthand constructor for [`FunctionTool`](@ref).
 """
 function_tool(name::String, description::Union{String,Nothing}=nothing;
     parameters::Union{AbstractDict,Nothing}=nothing,
-    strict::Union{Bool,Nothing}=nothing) =
-    FunctionTool(name=name, description=description, parameters=parameters, strict=strict)
+    strict::Union{Bool,Nothing}=nothing,
+    async::Union{Bool,Nothing}=nothing,
+    allowed_callers::Union{Vector{String},Nothing}=nothing,
+    defer_loading::Union{Bool,Nothing}=nothing,
+    output_schema::Union{AbstractDict,Nothing}=nothing) =
+    FunctionTool(; name, description, parameters, strict, async, allowed_callers, defer_loading, output_schema)
 
 """
     function_tool(d::AbstractDict)
 
 Construct a [`FunctionTool`](@ref) from a dict. Accepts both the bare format
 `{"name": ...}` and the wrapped format `{"type": "function", "function": {"name": ...}}`.
+The keys `"description"`, `"parameters"`, `"strict"`, `"async"`, `"allowed_callers"`,
+`"defer_loading"`, and `"output_schema"` are copied when present.
 """
 function function_tool(d::AbstractDict)
     inner = haskey(d, "function") && d["function"] isa AbstractDict ? d["function"] : d
@@ -518,7 +528,11 @@ function function_tool(d::AbstractDict)
         name=inner["name"],
         description=get(inner, "description", nothing),
         parameters=get(inner, "parameters", nothing),
-        strict=get(inner, "strict", nothing)
+        strict=get(inner, "strict", nothing),
+        async=get(inner, "async", nothing),
+        allowed_callers=get(inner, "allowed_callers", nothing),
+        defer_loading=get(inner, "defer_loading", nothing),
+        output_schema=get(inner, "output_schema", nothing)
     )
 end
 

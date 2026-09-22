@@ -10,7 +10,9 @@ Two accessors do the work: [`token_usage`](@ref) (raw counts) and [`estimated_co
 
 !!! warning "The silent \$0 footgun"
     [`estimated_cost`](@ref) returns `0.0` — with no error and no warning — for any model
-    that is not a key in [`DEFAULT_PRICING`](@ref). The tutorial model `gpt-4o-mini` is **not**
+    that is not a key in [`DEFAULT_PRICING`](@ref) and has no fallback row (a dated snapshot
+    uses its base model's row; a versioned `jev-X.Y.Z` id uses the `jev-latest` row).
+    The tutorial model `gpt-4o-mini` is **not**
     priced, so cost tracking on it reports `\$0.00` until you supply your own pricing. See
     [Unpriced models return \$0 silently](@ref unpriced-zero) below.
 
@@ -71,7 +73,8 @@ println("gpt-5.2 row: ", DEFAULT_PRICING["gpt-5.2"])
 ## [Unpriced models return \$0 silently](@id unpriced-zero)
 
 If the model key is absent from the pricing table, `estimated_cost` returns `0.0` — it does
-**not** raise. This bites the tutorial model `gpt-4o-mini`:
+**not** raise. (Two fallbacks apply first: a dated snapshot uses its base model's row, and a
+versioned `jev-X.Y.Z` id uses the `jev-latest` row.) This bites the tutorial model `gpt-4o-mini`:
 
 ```@example cost
 println("gpt-4o-mini priced? ", haskey(DEFAULT_PRICING, "gpt-4o-mini"))
@@ -171,8 +174,9 @@ println("jev-1.13.0 row: ", DEFAULT_PRICING["jev-1.13.0"])
 `result.response.model` — the version that actually answered — not the alias the request
 named. A request sent as `jev-latest` therefore looks up the version behind the alias
 at that moment (for example `jev-1.13.0`), so log
-`result.response.model` alongside the cost if you need to explain a bill later. As
-everywhere else, an unpriced name returns `0.0` silently:
+`result.response.model` alongside the cost if you need to explain a bill later. A
+versioned `jev-X.Y.Z` id without its own row is priced at the `jev-latest` row; as
+everywhere else, any other unpriced name returns `0.0` silently:
 
 ```@example cost
 ticket = "Help! My payouts have been failing for 3 days."
@@ -195,8 +199,8 @@ far fewer input tokens than N calls. See [Typed Judgments with Jev](@ref system_
 
 ## Prices drift
 
-[`DEFAULT_PRICING`](@ref) is a hardcoded snapshot (OpenAI verified 2026-06-21, Anthropic
-2026-07-06, Gemini 2026-07-07, TypeSafe 2026-09-22). Provider list prices change; re-verify against the provider's
+[`DEFAULT_PRICING`](@ref) is a hardcoded snapshot (current OpenAI, Gemini, and TypeSafe rows
+verified 2026-09-22; Anthropic 2026-07-06). Provider list prices change; re-verify against the provider's
 current pricing before relying on any number, and pass your own `pricing=` dict when you need
 authoritative figures.
 

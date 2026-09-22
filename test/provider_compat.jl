@@ -114,12 +114,15 @@ end
         chat = Chat(; model, tools, reasoning_effort="none")
         @test JSON.parse(UniLM.encode_request(chat.service, chat))["reasoning_effort"] == "none"
     end
-    for kw in ((temperature=0.5,), (top_p=0.5,), (reasoning_effort="none",),
+    for kw in ((temperature=0.5,), (top_p=0.5,), (reasoning_effort="none",), (logprobs=true,), (top_logprobs=2,),
                (tools=[Tool(func=FunctionSignature(name="ping"))],))
         chat = Chat(model="gpt-6-astra"; kw...)
         @test_throws ArgumentError UniLM.encode_request(chat.service, chat)
     end
-    for kw in ((temperature=0.5,), (reasoning=Reasoning(effort="none"),))
+    # logprobs=false requests no log probabilities: the same rule as GPT-6 Sol and Luna.
+    astra = Chat(model="gpt-6-astra", logprobs=false)
+    @test JSON.parse(UniLM.encode_request(astra.service, astra))["logprobs"] == false
+    for kw in ((temperature=0.5,), (top_logprobs=2,), (reasoning=Reasoning(effort="none"),))
         r = Respond(model="gpt-6-astra", input="hello"; kw...)
         @test_throws ArgumentError UniLM.encode_agentic(r.service, r)
     end
@@ -195,7 +198,9 @@ end
                     include=["message.output_text.logprobs"])
         body = JSON.parse(UniLM.encode_agentic(r.service, r))
         @test (body["top_p"], body["top_logprobs"], body["include"]) == (0.5, 2, ["message.output_text.logprobs"])
-        # logprobs=false and unrelated include entries are not log-probability requests.
+        # logprobs=false and unrelated include entries are not log-probability requests:
+        # a live gpt-6-luna Chat call with logprobs=false at the default effort succeeded
+        # on 2026-09-22.
         chat = Chat(; model, logprobs=false)
         @test JSON.parse(UniLM.encode_request(chat.service, chat))["logprobs"] == false
         r = Respond(; model, input="hi", include=["reasoning.encrypted_content"])
@@ -204,6 +209,13 @@ end
         err = try UniLM.encode_agentic(OPENAIServiceEndpoint,
                 Respond(; model, input="hi", prompt_cache_retention="24h")); nothing catch e; e end
         @test err isa ArgumentError && occursin("prompt_cache_options", err.msg)
+        # Neither model lists a "minimal" reasoning effort; the error points to "low".
+        for request in (() -> UniLM.encode_request(OPENAIServiceEndpoint, Chat(; model, reasoning_effort="minimal")),
+                        () -> UniLM.encode_agentic(OPENAIServiceEndpoint,
+                                  Respond(; model, input="hi", reasoning=Reasoning(effort="minimal"))))
+            err = try request(); nothing catch e; e end
+            @test err isa ArgumentError && err.msg == "$model does not support minimal reasoning effort; use \"low\""
+        end
     end
     older = Respond(model="gpt-5.5", input="hi", prompt_cache_retention="24h")
     @test JSON.parse(UniLM.encode_agentic(older.service, older))["prompt_cache_retention"] == "24h"
@@ -211,6 +223,8 @@ end
     generic = Chat(service=GenericOpenAIEndpoint("http://localhost:9999", ""), model="gpt-6-sol",
                    temperature=0.2, tools=tools)
     @test JSON.parse(UniLM.encode_request(generic.service, generic))["temperature"] == 0.2
+    generic = Chat(service=generic.service, model="gpt-6-sol", reasoning_effort="minimal")
+    @test JSON.parse(UniLM.encode_request(generic.service, generic))["reasoning_effort"] == "minimal"
 end
 
 @testset "PromptCacheOptions prewarm and diagnostics; Chat prompt_cache_options wire key" begin
@@ -320,6 +334,23 @@ end
     legacy = FunctionTool("get_weather", "Weather", Dict("type" => "object"), true)
     @test JSON.parse(JSON.json(legacy)) == Dict("type" => "function", "name" => "get_weather",
         "description" => "Weather", "parameters" => Dict("type" => "object"), "strict" => true)
+
+    # Schema and mask dicts accept any key type, like `parameters`.
+    @test JSON.parse(JSON.json(FunctionTool(name="f", output_schema=Dict(:type => "object")))) ==
+          Dict("type" => "function", "name" => "f", "output_schema" => Dict("type" => "object"))
+    @test JSON.parse(JSON.json(ImageGenerationTool(input_image_mask=Dict(:file_id => "file_1")))) ==
+          Dict("type" => "image_generation", "input_image_mask" => Dict("file_id" => "file_1"))
+
+    # function_tool carries the current fields from a dict (bare or wrapped) and as keywords.
+    spec = JSON.parse("""{"name": "f", "async": true, "allowed_callers": ["direct"],
+                          "defer_loading": true, "output_schema": {"type": "object"}}""")
+    want = Dict("type" => "function", "name" => "f", "async" => true, "allowed_callers" => ["direct"],
+                "defer_loading" => true, "output_schema" => Dict("type" => "object"))
+    @test JSON.parse(JSON.json(function_tool(spec))) == want
+    @test JSON.parse(JSON.json(function_tool(Dict("type" => "function", "function" => spec)))) == want
+    @test JSON.parse(JSON.json(function_tool("f"; async=true, allowed_callers=["direct"], defer_loading=true,
+                                             output_schema=Dict(:type => "object")))) == want
+    @test_throws ArgumentError function_tool(Dict("name" => "f", "allowed_callers" => ["indirect"]))
 end
 
 @testset "Prompt-cache breakpoints and configuration updates" begin

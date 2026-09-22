@@ -100,8 +100,9 @@ model. Throws `ArgumentError` for result types outside the token-billed APIs —
 Model lookup: the exact id first, then the id without a dated snapshot suffix
 (`gpt-5.4-mini-2026-03-17` → `gpt-5.4-mini`). A versioned Jev id with no row of its
 own (`jev-X.Y.Z`, e.g. a release newer than this table) is priced at the `jev-latest`
-row, because TypeSafe publishes one input price for the Jev family; the same lookup
-prices [`SystemOneSuccess`](@ref) results.
+row. That is an assumption: TypeSafe lists one price, for Jev 1.13; a later version is
+assumed to keep it until the pricing page says otherwise. The same lookup prices
+[`SystemOneSuccess`](@ref) results.
 """
 function estimated_cost(result::LLMRequestResponse;
     model::Union{String,Nothing}=nothing,

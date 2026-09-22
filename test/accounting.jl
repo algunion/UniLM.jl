@@ -131,8 +131,9 @@ end
     end
 
     @testset "versioned Jev id without a row is priced at jev-latest" begin
-        # TypeSafe publishes one input price for Jev ($42 per Btok; output free), and
-        # responses report the versioned id that answered, e.g. a release newer than the table.
+        # Assumption: TypeSafe lists one price, for Jev 1.13 ($42 per Btok of input; output
+        # free); a later version is assumed to keep it until the pricing page says otherwise.
+        # Responses report the versioned id that answered, e.g. a release newer than the table.
         ju = TokenUsage(prompt_tokens=1_000_000, completion_tokens=500, total_tokens=1_000_500)
         s1(model) = SystemOneSuccess(UniLM.SystemOneResponse(model, Dict{String,UniLM.SystemOneAnswer}(),
             ju, nothing, Dict{String,Any}()))
@@ -146,6 +147,8 @@ end
         end
         # A caller-supplied table without a jev-latest row has no family rate to fall back to.
         @test estimated_cost(s1("jev-1.14.0"); pricing=Dict("gpt-5.4" => DEFAULT_PRICING["gpt-5.4"])) == 0.0
+        # A dated snapshot suffix is stripped before the lookup: the base version's row applies.
+        @test estimated_cost(s1("jev-1.13.0-2026-09-22")) == estimated_cost(s1("jev-1.13.0")) > 0
     end
 end
 

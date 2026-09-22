@@ -631,8 +631,9 @@ end
 ```
 
 [`estimated_cost`](@ref) prices the **versioned** id in `r.response.model`, not
-the alias the request named, and returns `0.0` for a model that is not a key in
-[`DEFAULT_PRICING`](@ref). See [Cost Tracking](@ref cost_guide).
+the alias the request named. A versioned `jev-X.Y.Z` id without its own row is priced
+at the `jev-latest` row; any other model that is not a key in
+[`DEFAULT_PRICING`](@ref) returns `0.0`. See [Cost Tracking](@ref cost_guide).
 
 ## Designing good questions
 

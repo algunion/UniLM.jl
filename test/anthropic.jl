@@ -75,6 +75,17 @@ end
     @test_throws ArgumentError encode_request(ANTHROPICServiceEndpoint, chat)
 end
 
+@testset "encode — OpenAI-only moderation and prompt_cache_options fail loud" begin
+    for (field, kw) in ((:moderation, (moderation=ModerationConfig(model="omni-moderation-latest", input_mode="block"),)),
+                        (:prompt_cache_options, (prompt_cache_options=PromptCacheOptions(mode="implicit", ttl="30m"),)))
+        chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-opus-4-8",
+                    messages=[Message(Val(:user), "q")]; kw...)
+        err = try encode_request(ANTHROPICServiceEndpoint, chat); nothing catch e; e end
+        @test err isa ArgumentError &&
+              err.msg == "Anthropic Messages does not support $field; it is an OpenAI-only option"
+    end
+end
+
 @testset "decode — plain text" begin
     body = JSON.json(Dict("type" => "message", "role" => "assistant",
         "stop_reason" => "end_turn",

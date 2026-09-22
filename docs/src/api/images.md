@@ -112,14 +112,15 @@ end
 | `model`              | String | `""`              | Sentinel; resolves on serialization to `"gpt-image-2"` for OpenAI |
 | `prompt`             | String | *(required)*      | Text description of the image      |
 | `n`                  | Int    | `1`               | Number of images (1–10)            |
-| `size`               | String | `"auto"`          | `"1024x1024"`, `"1536x1024"`, etc. |
-| `quality`            | String | `"auto"`          | `"low"`, `"medium"`, `"high"`      |
+| `size`               | String | `"auto"`          | `"1024x1024"`, `"1536x1024"`, etc.; on `gpt-image-2` and later any `WIDTHxHEIGHT` with multiples of 16, up to `3840x2160` |
+| `quality`            | String | `"auto"`          | `"low"`, `"medium"`, `"high"`; `"xhigh"` and `"max"` on `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` |
 | `background`         | String | `"auto"`          | `"transparent"`, `"opaque"`        |
 | `output_format`      | String | `"png"`           | `"png"`, `"webp"`, `"jpeg"`        |
 | `output_compression` | Int    | —                 | 0–100, for webp/jpeg               |
 | `user`               | String | —                 | End-user identifier                |
-| `input_fidelity`     | String | —                 | How closely to preserve an input image |
-| `moderation`         | String | —                 | Content-moderation strictness      |
+| `moderation`         | String | `"auto"`          | `"auto"`, `"low"`                  |
 
 Defaults shown as quoted strings other than `model` are the **API's** defaults for
 an omitted field; the struct stores `nothing` and omits them from the request body.
+`input_fidelity` is an edit parameter: set it on [`ImageEdit`](@ref) —
+`ImageGeneration` does not accept it.

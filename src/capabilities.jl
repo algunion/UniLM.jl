@@ -133,14 +133,31 @@ function _validate_astra(model::String, temperature, top_p, effort, logprobs)
     nothing
 end
 
+# GPT-6 Sol and Luna accept sampling controls and log probabilities only at
+# reasoning effort "none". An omitted effort is the provider default, "medium".
+function _validate_gpt6_sampling(model::String, effort, sampling::Bool, fix::String)
+    sampling && effort != "none" && any(f -> _model_family(model, f), ("gpt-6-sol", "gpt-6-luna")) || return nothing
+    shown = isnothing(effort) ? "\"medium (default)\"" : repr(effort)
+    throw(ArgumentError("$model with reasoning effort $shown does not support sampling controls " *
+        "or log probabilities; set $fix or remove them"))
+end
+
+# Chat Completions function calling on these families requires reasoning effort "none".
+const _NO_REASONING_CHAT_TOOLS = ("gpt-5.6" => "GPT-5.6", "gpt-6-sol" => "GPT-6 Sol", "gpt-6-luna" => "GPT-6 Luna")
+
 function encode_request(::Type{OPENAIServiceEndpoint}, chat::Chat)::String
     _validate_astra(chat.model, chat.temperature, chat.top_p, chat.reasoning_effort,
                     isnothing(chat.top_logprobs) ? chat.logprobs : chat.top_logprobs)
+    _validate_gpt6_sampling(chat.model, chat.reasoning_effort,
+        !isnothing(chat.temperature) || !isnothing(chat.top_p) || !isnothing(chat.top_logprobs) ||
+            chat.logprobs === true,
+        "reasoning_effort=\"none\"")
     if _model_family(chat.model, "gpt-6-astra") && !isnothing(chat.tools) && !isempty(chat.tools)
         throw(ArgumentError("GPT-6 Astra tool calling requires Respond and the Responses API"))
     end
-    if _model_family(chat.model, "gpt-5.6") && !isnothing(chat.tools) && !isempty(chat.tools) && chat.reasoning_effort != "none"
-        throw(ArgumentError("GPT-5.6 Chat tools require reasoning_effort=\"none\"; use Respond for reasoning with tools"))
+    family = findfirst(p -> _model_family(chat.model, p.first), _NO_REASONING_CHAT_TOOLS)
+    if !isnothing(family) && !isnothing(chat.tools) && !isempty(chat.tools) && chat.reasoning_effort != "none"
+        throw(ArgumentError("$(_NO_REASONING_CHAT_TOOLS[family].second) Chat tools require reasoning_effort=\"none\"; use Respond for reasoning with tools"))
     end
     JSON.json(chat)
 end
@@ -148,7 +165,11 @@ end
 function encode_agentic(::Type{OPENAIServiceEndpoint}, r::Respond)::String
     effort = isnothing(r.reasoning) ? nothing : r.reasoning.effort
     _validate_astra(r.model, r.temperature, r.top_p, effort, r.top_logprobs)
-    if any(f -> _model_family(r.model, f), ("gpt-5.6", "gpt-6-astra")) && !isnothing(r.prompt_cache_retention)
+    _validate_gpt6_sampling(r.model, effort,
+        !isnothing(r.temperature) || !isnothing(r.top_p) || !isnothing(r.top_logprobs) ||
+            (!isnothing(r.include) && "message.output_text.logprobs" in r.include),
+        "reasoning=Reasoning(effort=\"none\")")
+    if (_model_family(r.model, "gpt-5.6") || _model_family(r.model, "gpt-6")) && !isnothing(r.prompt_cache_retention)
         throw(ArgumentError("$(r.model) uses prompt_cache_options=PromptCacheOptions(ttl=\"30m\"), not prompt_cache_retention"))
     end
     if _model_family(r.model, "gpt-6-astra") && !isnothing(r.include) && "message.output_text.logprobs" in r.include

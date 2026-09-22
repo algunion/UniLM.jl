@@ -4,16 +4,19 @@ const PriceRow = @NamedTuple{input::Float64, cached_input::Float64, output::Floa
 """Build a [`PriceRow`](@ref) from per-1M-token USD figures (input, cached-input, output)."""
 _price(i, c, o) = (input = i / 1_000_000, cached_input = c / 1_000_000, output = o / 1_000_000)
 
-"""Default per-token pricing; current OpenAI and Gemini rows verified on 2026-09-07, TypeSafe 2026-09-22
+"""Default per-token pricing; current OpenAI, Gemini, and TypeSafe rows verified on 2026-09-22
 (prices drift — re-verify before relying on them). Cached input is billed at the discounted
 `cached_input` rate; reasoning tokens are already counted within output tokens.
 These are standard short-context text rates: cache writes, long-context surcharges,
 service-tier adjustments, multimodal rates, and hosted-tool fees are not included."""
 const DEFAULT_PRICING = Dict{String, PriceRow}(
     "gpt-6-astra"   => _price(10.0, 1.0, 50.0),
+    "gpt-6-sol"     => _price(2.0,  0.20, 10.0),
+    "gpt-6-luna"    => _price(0.10, 0.01, 0.50),
     "gpt-5.6-sol"   => _price(4.0,  0.40, 20.0),
     "gpt-5.6-terra" => _price(2.0,  0.20, 12.0),
     "gpt-5.6-luna"  => _price(0.20, 0.02, 1.20),
+    "gpt-5.4-nano"  => _price(0.20, 0.02, 1.25),
     # GPT-5.x  (live-verified 2026-06-21)
     "gpt-5.5"       => _price(5.0,  0.50,  30.0),
     "gpt-5.4"       => _price(2.5,  0.25,  15.0),
@@ -89,6 +92,12 @@ If `model` is not provided, it is inferred from the result when possible.
 Returns `0.0` for results that carry no billable usage (failures) or an unpriced
 model. Throws `ArgumentError` for result types outside the token-billed APIs — see
 [`token_usage`](@ref); their price is not a zero this function can report.
+
+Model lookup: the exact id first, then the id without a dated snapshot suffix
+(`gpt-5.4-mini-2026-03-17` → `gpt-5.4-mini`). A versioned Jev id with no row of its
+own (`jev-X.Y.Z`, e.g. a release newer than this table) is priced at the `jev-latest`
+row, because TypeSafe publishes one input price for the Jev family; the same lookup
+prices [`SystemOneSuccess`](@ref) results.
 """
 function estimated_cost(result::LLMRequestResponse;
     model::Union{String,Nothing}=nothing,
@@ -106,17 +115,22 @@ function estimated_cost(result::LLMRequestResponse;
     else
         return 0.0
     end
-    rates = get(pricing, mdl, nothing)
-    if isnothing(rates)
-        # OpenAI often returns a dated snapshot for an alias. Strip only the
-        # documented date suffix, preserving arbitrary custom model names.
-        alias = replace(mdl, r"-\d{4}-\d{2}-\d{2}$" => "")
-        rates = get(pricing, alias, nothing)
-    end
+    rates = _price_row(pricing, mdl)
     isnothing(rates) && return 0.0
     cached = min(u.cached_tokens, u.prompt_tokens)        # cached input billed at the discounted rate
     fresh = u.prompt_tokens - cached
     fresh * rates.input + cached * rates.cached_input + u.completion_tokens * rates.output
+end
+
+# Exact id, then the dated-snapshot alias (OpenAI often answers an alias with a
+# dated snapshot; only the documented date suffix is stripped, so arbitrary custom
+# names stay unpriced), then the Jev family rate for a versioned Jev id.
+function _price_row(pricing::Dict{String,PriceRow}, model::String)::Union{PriceRow,Nothing}
+    rates = get(pricing, model, nothing)
+    isnothing(rates) || return rates
+    rates = get(pricing, replace(model, r"-\d{4}-\d{2}-\d{2}$" => ""), nothing)
+    isnothing(rates) || return rates
+    occursin(r"^jev-\d+\.\d+\.\d+$", model) ? get(pricing, "jev-latest", nothing) : nothing
 end
 
 # Override the stub from requests.jl to accumulate cost automatically

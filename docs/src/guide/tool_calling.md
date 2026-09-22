@@ -5,9 +5,9 @@ can decide to invoke functions you define, and you return the results.
 
 ## Chat Completions Tool Calling
 
-GPT-5.6 models require `reasoning_effort="none"` when using Chat tools.
-Use [`Respond`](@ref) to combine reasoning with tool calls; GPT-6 Astra tools
-also require the Responses API.
+GPT-5.6, GPT-6 Sol, and GPT-6 Luna models require `reasoning_effort="none"` when
+using Chat tools. Use [`Respond`](@ref) to combine reasoning with tool calls; GPT-6
+Astra tools also require the Responses API.
 
 ### Defining Tools
 

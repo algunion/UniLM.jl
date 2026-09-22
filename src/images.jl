@@ -24,14 +24,18 @@ Configuration struct for an OpenAI Image Generation API request.
   serialized. Inspect `JSON.json(ig)` to see the model that will go on the wire.
 - `prompt::String`: A text description of the desired image
 - `n::Union{Int,Nothing}`: Number of images to generate (1–10)
-- `size::Union{String,Nothing}`: Size (`"1024x1024"`, `"1536x1024"`, `"1024x1536"`, `"auto"`)
-- `quality::Union{String,Nothing}`: Quality level (`"low"`, `"medium"`, `"high"`, `"auto"`)
+- `size::Union{String,Nothing}`: Size (`"1024x1024"`, `"1536x1024"`, `"1024x1536"`, `"auto"`).
+  On `gpt-image-2` and later, any `WIDTHxHEIGHT` with both edges multiples of 16, up to
+  `3840x2160` (aspect ratio between 1:3 and 3:1)
+- `quality::Union{String,Nothing}`: Quality level (`"low"`, `"medium"`, `"high"`, `"auto"`);
+  `gpt-image-2.5-flare` and `gpt-image-2.5-sunburst` also accept `"xhigh"` and `"max"`
 - `background::Union{String,Nothing}`: Background (`"transparent"`, `"opaque"`, `"auto"`)
 - `output_format::Union{String,Nothing}`: File format (`"png"`, `"webp"`, `"jpeg"`)
 - `output_compression::Union{Int,Nothing}`: Compression (0–100, for `"webp"` and `"jpeg"`)
 - `user::Union{String,Nothing}`: End-user identifier
-- `input_fidelity::Union{String,Nothing}`: How closely to preserve an input image
-- `moderation::Union{String,Nothing}`: Content-moderation strictness
+- `moderation::Union{String,Nothing}`: Content-moderation strictness (`"auto"`, `"low"`)
+
+`input_fidelity` is an image-edit parameter: set it on [`ImageEdit`](@ref), not here.
 
 # Examples
 ```julia
@@ -59,7 +63,6 @@ ImageGeneration(
     output_format::Union{String,Nothing} = nothing
     output_compression::Union{Int,Nothing} = nothing
     user::Union{String,Nothing} = nothing
-    input_fidelity::Union{String,Nothing} = nothing
     moderation::Union{String,Nothing} = nothing
 end
 
@@ -71,7 +74,7 @@ function JSON.lower(ig::ImageGeneration)
         model = dm
     end
     d = Dict{Symbol,Any}(:model => model, :prompt => ig.prompt)
-    for f in (:n, :size, :quality, :background, :output_format, :output_compression, :user, :input_fidelity, :moderation)
+    for f in (:n, :size, :quality, :background, :output_format, :output_compression, :user, :moderation)
         v = getfield(ig, f)
         !isnothing(v) && (d[f] = v)
     end

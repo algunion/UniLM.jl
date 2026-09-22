@@ -108,8 +108,11 @@ Those options fail explicitly. Gemini determines parallel tool use; the inherite
 `parallel_tool_calls` setting does not constrain native Gemini.
 See [Google's migration guide](https://ai.google.dev/gemini-api/docs/latest-model).
 
-OpenAI defaults to `gpt-5.6-sol`. GPT-5.6 Chat Completions tool calling requires
-an explicit `reasoning_effort="none"`; use Responses for reasoning with tools.
+OpenAI defaults to `gpt-5.6-sol`. GPT-5.6, GPT-6 Sol, and GPT-6 Luna Chat
+Completions tool calling requires an explicit `reasoning_effort="none"`; use
+Responses for reasoning with tools. GPT-6 Sol and Luna also reject `temperature`,
+`top_p`, and log probabilities unless reasoning effort is `"none"` (an omitted
+effort is the provider default, `"medium"`).
 For inexpensive testing, use `gpt-5.6-luna` and low or no reasoning.
 Use `Respond(model="gpt-6-astra", ...)` for Astra tool workflows: Astra tools require
 Responses, and Astra rejects sampling controls, log probabilities, and no reasoning.

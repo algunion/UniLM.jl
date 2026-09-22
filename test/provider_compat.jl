@@ -160,6 +160,169 @@ end
     @test copy.reasoning == r.reasoning
 end
 
+@testset "GPT-6 Sol and Luna: Chat tools and sampling need reasoning effort none" begin
+    tools = [Tool(func=FunctionSignature(name="ping"))]
+    for (model, family) in ("gpt-6-sol" => "GPT-6 Sol", "gpt-6-luna" => "GPT-6 Luna")
+        err = try UniLM.encode_request(OPENAIServiceEndpoint, Chat(; model, tools)); nothing catch e; e end
+        @test err isa ArgumentError &&
+              startswith(err.msg, "$family Chat tools require reasoning_effort=\"none\"") && occursin("Respond", err.msg)
+        @test_throws ArgumentError UniLM.encode_request(OPENAIServiceEndpoint, Chat(; model, tools, reasoning_effort="low"))
+        chat = Chat(; model, tools, reasoning_effort="none")
+        @test JSON.parse(UniLM.encode_request(chat.service, chat))["reasoning_effort"] == "none"
+
+        # Omitted effort is the provider default ("medium"), so it is rejected like "low".
+        for (effort, shown) in ((nothing, "\"medium (default)\""), ("low", "\"low\""))
+            for kw in ((temperature=0.2,), (top_p=0.5,), (top_logprobs=2,), (logprobs=true,))
+                err = try UniLM.encode_request(OPENAIServiceEndpoint,
+                        Chat(; model, reasoning_effort=effort, kw...)); nothing catch e; e end
+                @test err isa ArgumentError && err.msg == "$model with reasoning effort $shown does not " *
+                    "support sampling controls or log probabilities; set reasoning_effort=\"none\" or remove them"
+            end
+            reasoning = isnothing(effort) ? nothing : Reasoning(; effort)
+            for kw in ((temperature=0.2,), (top_p=0.5,), (top_logprobs=2,),
+                       (include=["message.output_text.logprobs"],))
+                err = try UniLM.encode_agentic(OPENAIServiceEndpoint,
+                        Respond(; model, input="hi", reasoning, kw...)); nothing catch e; e end
+                @test err isa ArgumentError && err.msg == "$model with reasoning effort $shown does not " *
+                    "support sampling controls or log probabilities; set reasoning=Reasoning(effort=\"none\") or remove them"
+            end
+        end
+        chat = Chat(; model, reasoning_effort="none", temperature=0.2, logprobs=true, top_logprobs=2)
+        body = JSON.parse(UniLM.encode_request(chat.service, chat))
+        @test (body["temperature"], body["logprobs"], body["top_logprobs"]) == (0.2, true, 2)
+        r = Respond(; model, input="hi", reasoning=Reasoning(effort="none"), top_p=0.5, top_logprobs=2,
+                    include=["message.output_text.logprobs"])
+        body = JSON.parse(UniLM.encode_agentic(r.service, r))
+        @test (body["top_p"], body["top_logprobs"], body["include"]) == (0.5, 2, ["message.output_text.logprobs"])
+        # logprobs=false and unrelated include entries are not log-probability requests.
+        chat = Chat(; model, logprobs=false)
+        @test JSON.parse(UniLM.encode_request(chat.service, chat))["logprobs"] == false
+        r = Respond(; model, input="hi", include=["reasoning.encrypted_content"])
+        @test JSON.parse(UniLM.encode_agentic(r.service, r))["include"] == ["reasoning.encrypted_content"]
+        # GPT-5.6 and later configure cache lifetime through prompt_cache_options.ttl.
+        err = try UniLM.encode_agentic(OPENAIServiceEndpoint,
+                Respond(; model, input="hi", prompt_cache_retention="24h")); nothing catch e; e end
+        @test err isa ArgumentError && occursin("prompt_cache_options", err.msg)
+    end
+    older = Respond(model="gpt-5.5", input="hi", prompt_cache_retention="24h")
+    @test JSON.parse(UniLM.encode_agentic(older.service, older))["prompt_cache_retention"] == "24h"
+    # The restrictions belong to the native endpoint; a compatible server keeps its own contract.
+    generic = Chat(service=GenericOpenAIEndpoint("http://localhost:9999", ""), model="gpt-6-sol",
+                   temperature=0.2, tools=tools)
+    @test JSON.parse(UniLM.encode_request(generic.service, generic))["temperature"] == 0.2
+end
+
+@testset "PromptCacheOptions prewarm and diagnostics; Chat prompt_cache_options wire key" begin
+    @test isempty(JSON.lower(PromptCacheOptions()))
+    @test JSON.parse(JSON.json(PromptCacheOptions(mode="explicit", ttl="30m"))) ==
+          Dict("mode" => "explicit", "ttl" => "30m")
+    @test JSON.parse(JSON.json(PromptCacheOptions(prewarm=true, comparison_response_id="resp_1"))) ==
+          Dict("prewarm" => true, "comparison_response_id" => "resp_1")
+    @test JSON.parse(JSON.json(PromptCacheOptions(prewarm=false))) == Dict("prewarm" => false)
+    @test PromptCacheOptions("explicit", "30m") == PromptCacheOptions(mode="explicit", ttl="30m")
+    @test_throws ArgumentError PromptCacheOptions(mode="typo", prewarm=true)
+    @test_throws ArgumentError PromptCacheOptions(ttl="24h", comparison_response_id="resp_1")
+
+    chat = Chat(model="gpt-5.6-luna", prompt_cache_options=PromptCacheOptions(mode="explicit", ttl="30m"))
+    @test JSON.parse(JSON.json(chat))["prompt_cache_options"] == Dict("mode" => "explicit", "ttl" => "30m")
+    @test JSON.parse(UniLM.encode_request(chat.service, chat))["prompt_cache_options"] ==
+          Dict("mode" => "explicit", "ttl" => "30m")
+    @test !haskey(JSON.parse(JSON.json(Chat(model="gpt-5.6-luna"))), "prompt_cache_options")
+    r = Respond(input="hi", model="gpt-5.6-luna",
+                prompt_cache_options=PromptCacheOptions(prewarm=true, comparison_response_id="resp_1"))
+    @test JSON.parse(UniLM.encode_agentic(r.service, r))["prompt_cache_options"] ==
+          Dict("prewarm" => true, "comparison_response_id" => "resp_1")
+    # Native Gemini Chat has no equivalent, so the field fails loud there.
+    @test_throws ArgumentError UniLM.encode_request(GEMINIServiceEndpoint,
+        Chat(service=GEMINIServiceEndpoint, prompt_cache_options=PromptCacheOptions(mode="explicit")))
+end
+
+@testset "ModerationConfig validation and wire shape on Chat and Respond" begin
+    err = try ModerationConfig(); nothing catch e; e end
+    @test err isa ArgumentError && err.msg == "ModerationConfig needs a model or a policy mode"
+    @test_throws ArgumentError ModerationConfig(model="omni-moderation-latest", input_mode="flag")
+    @test_throws ArgumentError ModerationConfig(output_mode="typo")
+    full = ModerationConfig(model="omni-moderation-latest", input_mode="block", output_mode="score")
+    golden = Dict("model" => "omni-moderation-latest",
+                  "policy" => Dict("input" => Dict("mode" => "block"), "output" => Dict("mode" => "score")))
+    @test JSON.parse(JSON.json(full)) == golden
+    @test JSON.parse(JSON.json(ModerationConfig(model="omni-moderation-latest"))) ==
+          Dict("model" => "omni-moderation-latest")
+    @test JSON.parse(JSON.json(ModerationConfig(output_mode="block"))) ==
+          Dict("policy" => Dict("output" => Dict("mode" => "block")))
+
+    chat = Chat(model="gpt-5.4-mini", moderation=full)
+    @test JSON.parse(UniLM.encode_request(chat.service, chat))["moderation"] == golden
+    r = Respond(model="gpt-5.4-mini", input="hi", moderation=full)
+    @test JSON.parse(UniLM.encode_agentic(r.service, r))["moderation"] == golden
+    @test !haskey(JSON.parse(JSON.json(Chat(model="gpt-5.4-mini"))), "moderation")
+    @test !haskey(JSON.parse(JSON.json(Respond(input="hi"))), "moderation")
+    @test UniLM._next_respond(r; input="next").moderation == full    # tool_loop keeps it
+    # The native Gemini wires have no equivalent, so the field fails loud there.
+    @test_throws ArgumentError UniLM.encode_request(GEMINIServiceEndpoint,
+        Chat(service=GEMINIServiceEndpoint, moderation=full))
+    @test_throws ArgumentError UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input="hi", moderation=full))
+end
+
+@testset "ImageGeneration no longer carries the edit-only input_fidelity" begin
+    @test !hasfield(ImageGeneration, :input_fidelity)
+    @test hasfield(ImageEdit, :input_fidelity)
+    @test_throws MethodError ImageGeneration(prompt="x", input_fidelity="high")
+    @test_throws MethodError generate_image("x"; input_fidelity="high")    # fails before any request
+    ig = ImageGeneration(prompt="x", model="gpt-image-2.5-flare", quality="xhigh", size="1536x864", moderation="low")
+    @test JSON.parse(JSON.json(ig)) == Dict("model" => "gpt-image-2.5-flare", "prompt" => "x",
+        "quality" => "xhigh", "size" => "1536x864", "moderation" => "low")
+end
+
+@testset "ImageGenerationTool and FunctionTool current fields" begin
+    t = ImageGenerationTool(model="gpt-image-2.5-flare", action="edit", moderation="low", partial_images=2,
+        input_fidelity="high", input_image_mask=Dict("file_id" => "file_mask"), quality="max")
+    @test JSON.parse(JSON.json(t)) == Dict("type" => "image_generation", "model" => "gpt-image-2.5-flare",
+        "action" => "edit", "moderation" => "low", "partial_images" => 2, "input_fidelity" => "high",
+        "input_image_mask" => Dict("file_id" => "file_mask"), "quality" => "max")
+    @test JSON.parse(JSON.json(ImageGenerationTool())) == Dict("type" => "image_generation")
+    @test JSON.parse(JSON.json(ImageGenerationTool("opaque", "png", 80, "high", "1024x1024"))) ==
+          Dict("type" => "image_generation", "background" => "opaque", "output_format" => "png",
+               "output_compression" => 80, "quality" => "high", "size" => "1024x1024")
+    @test ImageGenerationTool(action="auto", partial_images=0).action == "auto"
+    for kw in ((action="typo",), (moderation="high",), (partial_images=4,), (partial_images=-1,),
+               (input_fidelity="medium",))
+        @test_throws ArgumentError ImageGenerationTool(; kw...)
+    end
+
+    schema = Dict("type" => "object", "properties" => Dict("ok" => Dict("type" => "boolean")))
+    f = FunctionTool(name="lookup", parameters=Dict("type" => "object", "properties" => Dict()),
+        async=true, allowed_callers=["direct", "programmatic"], defer_loading=true, output_schema=schema)
+    @test JSON.parse(JSON.json(f)) == Dict("type" => "function", "name" => "lookup",
+        "parameters" => Dict("type" => "object", "properties" => Dict()), "async" => true,
+        "allowed_callers" => ["direct", "programmatic"], "defer_loading" => true, "output_schema" => schema)
+    @test JSON.parse(JSON.json(FunctionTool(name="bare"))) == Dict("type" => "function", "name" => "bare")
+    legacy = FunctionTool("get_weather", "Weather", Dict("type" => "object"), true)
+    @test JSON.parse(JSON.json(legacy)) == Dict("type" => "function", "name" => "get_weather",
+        "description" => "Weather", "parameters" => Dict("type" => "object"), "strict" => true)
+end
+
+@testset "Prompt-cache breakpoints and configuration updates" begin
+    @test JSON.parse(JSON.json(input_text("Stable prefix"; cache_breakpoint=true))) == Dict("type" => "input_text",
+        "text" => "Stable prefix", "prompt_cache_breakpoint" => Dict("mode" => "explicit"))
+    @test JSON.parse(JSON.json(input_text("plain"))) == Dict("type" => "input_text", "text" => "plain")
+    @test input_text("plain"; cache_breakpoint=false) == input_text("plain")
+    @test JSON.parse(JSON.json(configuration_update(effort="high"))) ==
+          Dict("type" => "configuration_update", "reasoning" => Dict("effort" => "high"))
+    for effort in ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+        @test configuration_update(; effort)[:reasoning][:effort] == effort
+    end
+    @test_throws ArgumentError configuration_update(effort="ultra")
+    @test_throws UndefKeywordError configuration_update()
+    r = Respond(model="gpt-6-luna", prompt_cache_options=PromptCacheOptions(mode="explicit"),
+        input=[configuration_update(effort="low"),
+               InputMessage(role="user", content=[input_text("Stable prefix"; cache_breakpoint=true)])])
+    body = JSON.parse(UniLM.encode_agentic(r.service, r))
+    @test body["input"][1] == Dict("type" => "configuration_update", "reasoning" => Dict("effort" => "low"))
+    @test body["input"][2]["content"][1]["prompt_cache_breakpoint"] == Dict("mode" => "explicit")
+end
+
 @testset "Current transcription multipart arrays and legacy language" begin
     mktemp() do path, io
         write(io, "synthetic audio fixture")

@@ -56,14 +56,16 @@ println(JSON.json(ig))
 | Parameter            | Values                                                | Default           |
 | :------------------- | :---------------------------------------------------- | :---------------- |
 | `model`              | `"gpt-image-2"`                                       | `""` (see below)  |
-| `size`               | `"1024x1024"`, `"1536x1024"`, `"1024x1536"`, `"auto"` | API default       |
-| `quality`            | `"low"`, `"medium"`, `"high"`, `"auto"`               | API default       |
+| `size`               | `"1024x1024"`, `"1536x1024"`, `"1024x1536"`, `"auto"`; on `gpt-image-2` and later any `WIDTHxHEIGHT` with multiples of 16, up to `3840x2160` | API default       |
+| `quality`            | `"low"`, `"medium"`, `"high"`, `"auto"`; `"xhigh"`, `"max"` on `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` | API default       |
 | `background`         | `"transparent"`, `"opaque"`, `"auto"`                 | API default       |
 | `output_format`      | `"png"`, `"webp"`, `"jpeg"`                           | API default       |
 | `output_compression` | `0`–`100` (for webp/jpeg)                             | API default       |
 | `n`                  | `1`–`10`                                              | `1`               |
-| `input_fidelity`     | provider-defined                                      | API default       |
-| `moderation`         | provider-defined                                      | API default       |
+| `moderation`         | `"auto"`, `"low"`                                     | API default       |
+
+`input_fidelity` is an image-edit parameter and belongs on [`ImageEdit`](@ref);
+`ImageGeneration` does not accept it.
 
 !!! note "`model` is a sentinel, not a resolved default"
     Unlike [`Chat`](@ref), `ImageGeneration` does not resolve its model at

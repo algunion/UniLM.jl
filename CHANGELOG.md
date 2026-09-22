@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### Added
+- TypeSafe System One (Jev) client on `POST /v1/systemone`: `ask` evaluates every
+  question against one ingestion of the state in a single request, with the three
+  question primitives `choice` / `score` / `noul` and the matching typed answers
+  `ChoiceAnswer` / `ScoreAnswer` / `NoulAnswer` (an unrecognised answer type is
+  preserved as `UnknownAnswer` rather than dropped). Results are
+  `SystemOneSuccess` / `SystemOneFailure` / `SystemOneCallError`; the accessors
+  `answers`, `answer`, `getindex`, `haskey` and `keys` throw `SystemOneError` on a
+  failed call instead of reading as an empty set of answers. `list_models` lists
+  the aliases the account may name, and `token_usage` / `estimated_cost` price a
+  call against the versioned model that answered — only input tokens are billed.
+  The endpoint type is `TYPESAFEServiceEndpoint` (`TYPESAFE_API_KEY`,
+  `TYPESAFE_BASE_URL`, `TYPESAFE_DEFAULT_MODEL`), which declares only
+  `:system_one` and `:models`, so the chat, agentic and embedding verbs reject it
+  up front.
+- Natural-language control flow on top of that client. `@branch` is a `switch`
+  whose cases are written in plain language: the option names become the criteria
+  of one Choice question, only the selected body is evaluated, and a `_` line
+  catches an answer below `min_confidence`. `nl"..."` lifts a description into the
+  type domain as a `Meaning`, so a meaning is writable in an ordinary method
+  signature; `nl_dispatch` resolves every `Meaning` slot of a generic function in a
+  single request and calls the method Julia's own dispatch selects, leaving the
+  remaining arguments to dispatch on their types. `meanings` previews the options
+  exactly as they will be sent, and `LowConfidenceError` is raised when an answer
+  falls below the threshold and no fallback was given.
+- A "System One (TypeSafe Jev)" documentation section: a guide to typed judgments
+  with Jev, a guide to multiple dispatch on natural language, and an API reference
+  page.
+
+### Fixed
+- Auth-header masking indexed the result of its own re-match directly. `match`
+  is typed `Union{Nothing,RegexMatch}` and a capture group `Union{Nothing,SubString}`,
+  which Julia 1.13 surfaces as a type instability in the one renderer every
+  `*CallError` passes through. Both are now guarded: an unmatched hit is handed
+  back unchanged instead of being indexed.
+
 ## 0.17.0
 
 ### Breaking

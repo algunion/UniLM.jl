@@ -26,6 +26,8 @@ UniLM speaks each provider's own wire API, not just the OpenAI-compatible protoc
 - **Image Generation & Edits** — create and edit images with `gpt-image-2`
 - **Tool/Function Calling** — first-class support for function tools in both APIs, with automated `tool_loop`
 - **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool loop integration
+- **System One (TypeSafe Jev)** — typed judgments instead of generated text: `ask` answers `choice` / `score` / `noul` questions about a piece of state with a calibrated distribution, in one request
+- **Multiple Dispatch on Natural Language** — `nl"..."` is an ordinary Julia type, so `nl_dispatch` lets a Jev answer select which method runs; `@branch` is the same single-request decision inline
 - **Embeddings** — text embedding generation with `text-embedding-3-small`
 - **Files, Vector Stores & Conversations** — upload files, build vector stores for `file_search`, and manage server-side conversation state
 - **Audio, Batch & Moderations** — TTS/transcription, async 50%-off bulk jobs, and free safety classification
@@ -291,6 +293,62 @@ chat = Chat(service=DeepSeekEndpoint(), model="deepseek-chat")
 chat = Chat(service=OllamaEndpoint(), model="llama3.1")
 ```
 
+TypeSafe's System One endpoint (`TYPESAFEServiceEndpoint`, `TYPESAFE_API_KEY`) is deliberately absent from that table: it answers enumerated questions rather than generating text, so `Chat` / `respond` / `Embeddings` reject it up front. It has its own section below.
+
+## System One: Typed Judgments and Dispatch on Natural Language
+
+[TypeSafe](https://docs.typesafe.ai)'s System One model **Jev** does not write text. It reads a piece of state and answers the questions you enumerated with a typed value and a probability distribution over the outcomes you named — one request, no parsing, no tool loop ([System One](https://docs.typesafe.ai/concepts/system-one)). Only input tokens are billed ([Models](https://docs.typesafe.ai/models)).
+
+```bash
+export TYPESAFE_API_KEY="..."
+```
+
+**Typed judgments** — every question is answered against one ingestion of the state:
+
+```julia
+using UniLM
+
+r = ask("Help! My payouts have been failing for 3 days and nobody has replied to my emails.",
+    "department" => choice("Which team should handle this ticket?", (
+        billing   = "Payments, invoicing, payouts, refunds",
+        technical = "Bugs, outages, integrations",
+        sales     = "Pricing, upgrades, new accounts")),
+    "urgency" => score("How urgent is this ticket?",
+        ["Can wait", "Needs attention this week", "Needs attention today"]),
+    "is_frustrated" => noul("Is the customer frustrated?"))
+
+r isa SystemOneSuccess && println(r["department"].choice, "  confidence ", r["department"].confidence)
+# => billing  confidence 1.0
+```
+
+**Multiple dispatch on natural language** — `nl"..."` is a Julia type, so a meaning is writable in an ordinary method signature. `nl_dispatch` asks Jev which declared meaning fits the input, then Julia's own dispatch picks the method:
+
+```julia
+route(::nl"the customer wants a refund", ticket)           = :refund
+route(::nl"the customer reports a bug in the app", ticket) = :bug
+route(::nl"anything else", ticket)                         = :other
+
+meanings(route)   # the options exactly as they will be sent, no request made
+
+nl_dispatch(route, "My package arrived crushed and the screen is cracked. I want my money back.")
+# => :refund
+```
+
+**`@branch`** — the same single Choice request, inline, when the decision belongs to one call site:
+
+```julia
+ticket = "My package arrived crushed and the screen is cracked. I want my money back."
+
+action = @branch ticket min_confidence=0.6 begin
+    "the customer wants a refund"           => refund!(ticket)
+    "the customer reports a bug in the app" => file_bug!(ticket)
+    "the customer asks a pricing question"  => quote_price(ticket)
+    _                                       => escalate(ticket)
+end
+```
+
+Only the selected body runs, and a confidence below the threshold takes `_` rather than guessing. See the [System One guide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/) and [Multiple Dispatch on Natural Language](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/).
+
 ## Chat Completions vs Responses (OpenAI)
 
 UniLM speaks each provider's own API (see [Multi-Backend Support](#multi-backend-support)). For **OpenAI**, you can use either of two conversational APIs. **Chat Completions** (`Chat` + `chatrequest!`) is the portable path — it's also how the native Anthropic and Gemini backends and every OpenAI-compatible provider work. **Responses** (`respond`) is OpenAI's newer API, and the basis for the cross-provider agentic verb (which also targets Gemini Interactions). They map like this:
@@ -322,6 +380,8 @@ Full documentation with guides and API reference: **[https://algunion.github.io/
 - [Structured Output Guide](https://algunion.github.io/UniLM.jl/dev/guide/structured_output/) — JSON Schema output
 - [Multi-Backend Guide](https://algunion.github.io/UniLM.jl/dev/guide/multi_backend/) — Azure, Gemini, DeepSeek, Ollama, and more
 - [MCP Guide](https://algunion.github.io/UniLM.jl/dev/guide/mcp/) — MCP client/server
+- [System One Guide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/) — typed judgments with Jev: `ask`, `choice` / `score` / `noul`, confidence gating
+- [Multiple Dispatch on Natural Language](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/) — `nl"..."` meanings in method signatures, `nl_dispatch`, `@branch`
 - [Timeouts & Retries Guide](https://algunion.github.io/UniLM.jl/dev/guide/timeouts/) — bounds, typed failures, retry and concurrency contracts
 
 ## Timeouts & Concurrency

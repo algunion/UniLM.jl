@@ -12,6 +12,7 @@
 ## What is UniLM.jl?
 
 UniLM.jl provides a **Julian**, type-safe interface to **LLM providers** with **first-class native backends** — OpenAI (Chat Completions + Responses), Anthropic (Messages), and Google Gemini (generateContent + agentic Interactions) — plus any **OpenAI-compatible** provider (Azure, DeepSeek, Mistral, Ollama, vLLM, LM Studio). It covers Chat Completions & Responses, a cross-provider agentic `respond` verb, Image Generation/Edits, Embeddings, Files/Vector Stores, Conversations, Audio, Batch, Moderations, Fine-tuning, Webhooks, Realtime, and MCP (client & server) — with built-in token/cost accounting.
+It also speaks TypeSafe's System One model **Jev**, which answers enumerated questions about a piece of state with a typed, calibrated judgment instead of generated text — and which can select a Julia method by natural-language meaning.
 
 ### Key Features
 
@@ -20,6 +21,8 @@ UniLM.jl provides a **Julian**, type-safe interface to **LLM providers** with **
 - 🖼️ **Image Generation & Edits** — create and edit images with `gpt-image-2`
 - 🔧 **Tool/Function Calling** — first-class function tools in both APIs, with an automated `tool_loop`
 - 🔌 **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool-loop integration
+- ⚖️ **System One (TypeSafe Jev)** — typed judgments instead of generated text: `ask` answers `choice` / `score` / `noul` questions about a piece of state with a calibrated distribution, in one request
+- 🔀 **Multiple Dispatch on Natural Language** — `nl"..."` is an ordinary Julia type, so `nl_dispatch` lets a Jev answer select which method runs; `@branch` is the same single-request decision inline
 - 📊 **Embeddings** — text embedding generation
 - 💰 **Cost & Token Accounting** — per-call `estimated_cost`, per-`Chat` `cumulative_cost`, and a built-in multi-provider pricing table
 - 🌊 **Streaming** — real-time token streaming with `do`-block syntax

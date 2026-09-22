@@ -29,6 +29,11 @@ for the model class, and [How to build with
 TypeSafe](https://docs.typesafe.ai/concepts/how-to-build-with-system-one) for
 the workflow it implies.
 
+Because the answer is already a branch decision, it also drives Julia's control
+flow directly: [Multiple Dispatch on Natural Language](@ref nl_dispatch_guide)
+turns a meaning into a method signature, so a Jev answer selects which method
+runs.
+
 ## Setup
 
 Set the API key:
@@ -385,7 +390,7 @@ function handle(message::AbstractString)
 
     reply = respond(message;
         instructions = "You are the $(intent.choice) specialist. Answer in two sentences.",
-        model = "gpt-5.4-mini")
+        model = "gpt-5.6-luna")
     reply isa ResponseSuccess ? (handler = :llm, text = output_text(reply)) :
                                 queue_for_human(message)
 end
@@ -416,7 +421,7 @@ const BLOCK_AT, REVIEW_AT = 0.8, 0.3
 const HAZARDS = ("leaks_secrets", "gives_dosage", "enables_harm")
 
 function guarded_reply(question::AbstractString)
-    draft = respond(question; model = "gpt-5.4-mini")
+    draft = respond(question; model = "gpt-5.6-luna")
     draft isa ResponseSuccess || return (:error, output_text(draft))
     text = output_text(draft)
 
@@ -447,7 +452,7 @@ const AUTO_ACCEPT = 0.8   # start high; lower it as you measure on your own docu
 
 function checked_answer(passage::AbstractString, question::AbstractString)
     drafted = respond("$question\n\nAnswer in one sentence, using only this passage:\n$passage";
-                      model = "gpt-5.4-mini")
+                      model = "gpt-5.6-luna")
     drafted isa ResponseSuccess || return (verdict = :unchecked, claim = output_text(drafted))
     claim = output_text(drafted)
 
@@ -597,6 +602,8 @@ TypeSafe maintains per version — re-read it when you move a pin.
 
 ## See also
 
+- [Multiple Dispatch on Natural Language](@ref nl_dispatch_guide) — `nl"..."`
+  meanings in method signatures, `nl_dispatch`, and the `@branch` switch
 - [TypeSafe System One API (Jev)](@ref system_one_api) — every type, verb and
   accessor, plus the full error table
 - [Service Endpoints](../api/endpoints.md) — [`TYPESAFEServiceEndpoint`](@ref UniLM.TYPESAFEServiceEndpoint) and the environment variables

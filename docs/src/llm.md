@@ -38,11 +38,13 @@ UniLM.jl wraps four OpenAI API surfaces plus FIM completion:
 3. **Image Generation** (`ImageGeneration` + `generate_image`) — text-to-image with `gpt-image-2`. OpenAI only.
 4. **Embeddings** (`Embeddings` + `embeddingrequest!`) — vector embeddings. Multi-provider via `service` parameter.
 5. **FIM Completion** (`FIMCompletion` + `fim_complete`) — code infilling. DeepSeek, Ollama, vLLM.
+6. **System One** (`ask`, plus `nl_dispatch` and `@branch`) — TypeSafe's Jev: enumerated questions about a piece of `state`, answered with a typed value and a calibrated probability distribution instead of generated text. `service=TYPESAFEServiceEndpoint` only; not a chat backend.
 
 **Which API to use:**
 - **Chat Completions** — best for multi-turn conversations; broadest provider support. Use for chat, tool calling, or streaming across any supported backend.
 - **Responses API** — simpler for single-shot or chained requests; built-in web search, file search, MCP, computer use tools. OpenAI Responses plus Google's Gemini Interactions via the unified `respond` verb (see the Agentic Workflows guide).
 - **FIM Completion** — code infilling between prefix and suffix. DeepSeek, Ollama, vLLM only.
+- **System One** — classify, rank, screen or route unstructured input when the outcomes are a fixed set you can enumerate and you want a probability, not prose. `ask` returns typed results; `nl_dispatch` turns the answer into ordinary Julia multiple dispatch and `@branch` into an inline switch, both throwing rather than guessing a branch.
 
 ---
 

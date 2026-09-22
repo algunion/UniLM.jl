@@ -1396,7 +1396,8 @@ result[name]; haskey(result, name); keys(result)    # same, on Success or Respon
 `questions` accepts `name => question` pairs (vector, tuple, `NamedTuple`, or
 `AbstractDict`), or bare questions auto-named `"q1"`, `"q2"`, … in order. Mixing
 the two, repeating a name, or passing none is an `ArgumentError`. Both verbs ride
-the shared retry seam, so `RequestConfig.max_attempts` applies to 408/429/5xx.
+the shared retry seam, so `RequestConfig.max_attempts` applies to 408, 429, 500,
+502, 503, 504 and 529.
 
 ### Example
 

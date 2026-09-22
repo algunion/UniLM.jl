@@ -400,6 +400,8 @@ end
         @test_throws UniLM.SystemOneError answers(r)
         @test_throws UniLM.SystemOneError answer(r, "department")
         @test_throws UniLM.SystemOneError r["department"]
+        @test_throws UniLM.SystemOneError haskey(r, "x")
+        @test_throws UniLM.SystemOneError keys(r)
         e = try answers(r) catch err; err end
         @test e isa UniLM.SystemOneError
         @test contains(sprint(showerror, e), string(status))
@@ -419,6 +421,10 @@ end
     # A call error has no answers either.
     ce = SystemOneCallError(error="connect refused")
     @test_throws UniLM.SystemOneError answers(ce)
+    @test_throws UniLM.SystemOneError answer(ce, "department")
+    @test_throws UniLM.SystemOneError ce["department"]
+    @test_throws UniLM.SystemOneError haskey(ce, "x")
+    @test_throws UniLM.SystemOneError keys(ce)
     @test contains(sprint(showerror, UniLM.SystemOneError(ce)), "connect refused")
 end
 
@@ -450,6 +456,18 @@ end
     @test_throws ArgumentError embeddingrequest!(
         Embeddings("hi"; model="jev-latest", service=TYPESAFEServiceEndpoint))
     @test_throws ArgumentError moderate("hi"; service=TYPESAFEServiceEndpoint)
+
+    # A verb resolves its model before the capability check, so the refusal has to
+    # come from this endpoint's `default_model` too — an ArgumentError naming the
+    # surface, never the MethodError a missing method would raise.
+    @test_throws ArgumentError respond("hi"; service=TYPESAFEServiceEndpoint)
+    nomodel = try respond("hi"; service=TYPESAFEServiceEndpoint) catch e; e end
+    @test !(nomodel isa MethodError)
+    @test contains(sprint(showerror, nomodel), "system_one")
+    @test_throws ArgumentError Chat(service=TYPESAFEServiceEndpoint)
+    # Naming the endpoint is fine; only sending the request is refused.
+    @test Chat(model="jev-latest", service=TYPESAFEServiceEndpoint) isa Chat
+    @test Embeddings("hi"; model="jev-latest", service=TYPESAFEServiceEndpoint) isa Embeddings
     # Whatever they do, it is never a success.
     for f in (() -> chatrequest!(chat),
               () -> respond("hi"; model="jev-latest", service=TYPESAFEServiceEndpoint),

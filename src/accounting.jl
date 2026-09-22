@@ -4,7 +4,7 @@ const PriceRow = @NamedTuple{input::Float64, cached_input::Float64, output::Floa
 """Build a [`PriceRow`](@ref) from per-1M-token USD figures (input, cached-input, output)."""
 _price(i, c, o) = (input = i / 1_000_000, cached_input = c / 1_000_000, output = o / 1_000_000)
 
-"""Default per-token pricing; current OpenAI and Gemini rows verified on 2026-09-07
+"""Default per-token pricing; current OpenAI and Gemini rows verified on 2026-09-07, TypeSafe 2026-09-22
 (prices drift — re-verify before relying on them). Cached input is billed at the discounted
 `cached_input` rate; reasoning tokens are already counted within output tokens.
 These are standard short-context text rates: cache writes, long-context surcharges,

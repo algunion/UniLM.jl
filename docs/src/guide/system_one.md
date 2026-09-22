@@ -50,7 +50,8 @@ Two optional variables change where the call goes and what it names:
 | `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` | API root override, for a proxy or a mock server. |
 | `TYPESAFE_DEFAULT_MODEL` | `jev-latest` | The model [`ask`](@ref) names when a call does not. |
 
-Both are read at call time, so exporting them after `using UniLM` still works.
+All three are read at call time, so exporting them after `using UniLM` still
+works.
 
 `jev-latest` is an alias that moves when a new version ships. That is what you
 want while you are building. Once you have tuned a confidence threshold against
@@ -59,10 +60,13 @@ a specific version, pin the versioned id — `ask(...; model="jev-1.13.0")` or
 schedule ([Models](https://docs.typesafe.ai/models)).
 
 [`TYPESAFEServiceEndpoint`](@ref UniLM.TYPESAFEServiceEndpoint) is not a chat
-backend. It declares only `:system_one` and `:models`, so
-[`chatrequest!`](@ref), [`respond`](@ref) and [`embeddingrequest!`](@ref) reject
-it up front with an `ArgumentError` from capability validation rather than
-posting a request the service would not answer. See [Provider
+backend. It declares only `:system_one` and `:models`, so the verbs reject it up
+front with an `ArgumentError` rather than posting a request the service would
+not answer: [`chatrequest!`](@ref), [`respond`](@ref),
+[`embeddingrequest!`](@ref) and the other platform verbs. Constructing a
+[`Chat`](@ref) or an [`Embeddings`](@ref embeddings_api) that names the endpoint
+is allowed; only sending one is refused. Omitting `model=` is refused too,
+because this endpoint has no chat default to resolve. See [Provider
 Capabilities](@ref capabilities_api).
 
 ## First request
@@ -243,8 +247,9 @@ is not ([State](https://docs.typesafe.ai/concepts/state)).
 
 ## Reading answers
 
-[`ask`](@ref) returns exactly one of three types and never throws for a failed
-call:
+Any call that reaches the service returns one of the three result types below; a
+wrong `service` or a malformed request (duplicate or blank question names,
+invalid criteria) is an `ArgumentError` raised before any request is sent.
 
 | Result | Meaning |
 | :--- | :--- |
@@ -256,6 +261,8 @@ On a success, three equivalent accessors reach an answer, and the usual
 `Dict`-like queries work:
 
 ```julia
+ticket = "Help! My payouts have been failing for 3 days and nobody has replied to my emails."
+
 r = ask(ticket,
     "urgency"     => score("How urgent is this ticket?",
                            ["Can wait", "Needs attention this week", "Needs attention today"]),
@@ -264,7 +271,7 @@ r = ask(ticket,
 if r isa SystemOneSuccess
     a = r["urgency"]              # getindex
     a = answer(r, :urgency)       # by Symbol or String
-    all = answers(r)              # Dict{String,SystemOneAnswer}
+    every = answers(r)            # Dict{String,SystemOneAnswer}
 
     println(a.score)              # probability-weighted position over the levels
     println(a.confidence)         # how peaked the distribution is
@@ -347,7 +354,7 @@ if r isa SystemOneSuccess
 end
 ```
 
-Each of the two `choice` questions above ends in an `other` option. Give the
+Two of the three Choice questions above end in an `other` option. Give the
 model a way to say "none of these" whenever the enumeration might not cover
 every input, otherwise the probability has nowhere to go but onto an option that
 does not fit.
@@ -501,7 +508,7 @@ threshold matters.
 | Limit | Value |
 | :--- | :--- |
 | Choice options | 1–255 per question ([Choice](https://docs.typesafe.ai/primitives/choice)) |
-| Score levels | 1–10 per question ([Score](https://docs.typesafe.ai/primitives/score)) |
+| Score levels | 1–10 per question, TypeSafe advises at least two ([Score](https://docs.typesafe.ai/primitives/score)) |
 | Context | 64k tokens per request; 32k for `state` plus the single longest question ([Models](https://docs.typesafe.ai/models)) |
 | Rate limits | 250,000 tokens/second and 1,200 requests/minute, over either → 429; TypeSafe documents these as subject to change without notice ([Models](https://docs.typesafe.ai/models)) |
 
@@ -517,7 +524,7 @@ throw an `ArgumentError` locally.
 | 401 | the key was present but invalid | `error_type = "authentication_error"` |
 | 403 | no `Authorization` header reached the service | `error_type = "authentication_error"` |
 | 422 | schema validation failed | `error_type = nothing`; `message` lists each field path as `"<path>: <reason>"`, e.g. `questions.department.choice.criteria: Field required` |
-| 429, 5xx | rate limit or service-side failure (including the non-standard `529 Overloaded`) | retried by the request seam |
+| 429, 500, 502, 503, 504, 529 | rate limit or service-side failure (including the non-standard `529 Overloaded`) | retried by the request seam |
 
 A non-2xx response is a [`SystemOneFailure`](@ref) carrying `.status`,
 `.error_type`, `.message` (extracted from whichever of the service's three
@@ -534,6 +541,10 @@ body). The full table is on the [API reference page](@ref system_one_api).
 come back as they are, because an identical retry cannot fix them.
 
 ```julia
+state     = "Help! My payouts have been failing for 3 days."
+questions = ["urgency" => score("How urgent is this ticket?",
+                                ["Can wait", "Needs attention this week", "Needs attention today"])]
+
 # Per call.
 r = ask(state, questions; config = RequestConfig(request_timeout = 20.0, max_attempts = 5))
 
@@ -552,6 +563,10 @@ Only **input** tokens are billed; output tokens are currently free
 ([Models](https://docs.typesafe.ai/models)).
 
 ```julia
+r = ask("Help! My payouts have been failing for 3 days.",
+        "urgency" => score("How urgent is this ticket?",
+                           ["Can wait", "Needs attention this week", "Needs attention today"]))
+
 if r isa SystemOneSuccess
     u = token_usage(r)                     # prompt_tokens = input, completion_tokens = output
     println(u.prompt_tokens, " billable tokens")

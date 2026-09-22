@@ -185,7 +185,7 @@ Keywords go between the state and the block, written `key = value`:
 | :--- | :--- |
 | `model` | model name; omitted, the client default applies |
 | `min_confidence` | threshold in `0 … 1`; below it, take `_` or throw [`LowConfidenceError`](@ref) |
-| `instructions` | the question's instructions (default: a generic "select the option that best describes the state") |
+| `instructions` | the question's instructions (default: `"Select the option that best describes the provided state."`) |
 | `service` | endpoint type (default `TYPESAFEServiceEndpoint`) |
 | `config` | `RequestConfig` for this call |
 

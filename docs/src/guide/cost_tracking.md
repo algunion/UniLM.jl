@@ -174,6 +174,9 @@ named. A request sent as `jev-latest` therefore looks up `jev-1.13.0`, so log
 everywhere else, an unpriced name returns `0.0` silently:
 
 ```julia
+ticket = "Help! My payouts have been failing for 3 days."
+levels = ["Can wait", "Needs attention this week", "Needs attention today"]
+
 r = ask(ticket, "urgency" => score("How urgent is this ticket?", levels))
 if r isa SystemOneSuccess
     u = token_usage(r)
@@ -189,7 +192,7 @@ far fewer input tokens than N calls. See [Typed Judgments with Jev](@ref system_
 ## Prices drift
 
 [`DEFAULT_PRICING`](@ref) is a hardcoded snapshot (OpenAI verified 2026-06-21, Anthropic
-2026-07-06, Gemini 2026-07-07). Provider list prices change; re-verify against the provider's
+2026-07-06, Gemini 2026-07-07, TypeSafe 2026-09-22). Provider list prices change; re-verify against the provider's
 current pricing before relying on any number, and pass your own `pricing=` dict when you need
 authoritative figures.
 

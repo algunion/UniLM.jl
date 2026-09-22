@@ -18,13 +18,25 @@ root and `TYPESAFE_DEFAULT_MODEL` the default model name.
 
 This endpoint speaks neither the OpenAI chat wire nor any other chat wire: it
 declares only `:system_one` and `:models`, so [`ask`](@ref) and
-[`list_models`](@ref) accept it and `chatrequest!`, `respond`,
-`embeddingrequest!` and the OpenAI platform verbs reject it up front with an
-`ArgumentError` rather than posting a request no server here would answer.
+[`list_models`](@ref) accept it while the verbs — `chatrequest!`, `respond`,
+`embeddingrequest!`, `moderate` and the other OpenAI platform verbs — reject it
+up front with an `ArgumentError` rather than posting a request no server here
+would answer. Building a `Chat` or an `Embeddings` that names this endpoint is
+allowed; only sending one is refused.
 """
 struct TYPESAFEServiceEndpoint <: ServiceEndpoint end
 
 provider_capabilities(::Type{TYPESAFEServiceEndpoint}) = Set([:system_one, :models])
+
+# A chat/agentic verb resolves its model before any capability check runs, so an
+# endpoint with no `default_model` method would surface the refusal as a
+# MethodError from deep inside the constructor. Refuse in the same words the
+# capability check uses, so `respond(...; service=TYPESAFEServiceEndpoint)` reads
+# the same with or without a `model=`.
+default_model(::Type{TYPESAFEServiceEndpoint}) = throw(ArgumentError(
+    "Chat and agentic APIs are not supported by TYPESAFEServiceEndpoint. Supported: " *
+    join(sort(collect(provider_capabilities(TYPESAFEServiceEndpoint))), ", ") *
+    ". `ask` is the System One verb."))
 
 # Trailing slashes are stripped before a path is appended, matching the
 # official SDKs — an override of "https://host/" must not produce "//v1/...".
@@ -260,7 +272,8 @@ is level `0`: the answer's `score` and its `probabilities` keys live on that
 same 0-based scale.
 
 Each level is a string, an object, or an array — never `nothing`. The server
-accepts 1 to 10 levels.
+accepts 1 to 10 levels, and TypeSafe advises at least two: a one-level rubric
+gives the model nothing to place the state against.
 
 ```julia
 score("How urgent is this ticket?",
@@ -575,8 +588,8 @@ A TypeSafe call that reached the service and came back non-2xx.
 # Fields
 - `response::String`: the raw body, kept verbatim.
 - `status::Int`: the HTTP status. 401 (invalid key) and 403 (no key) are both
-  auth failures; 400 and 422 are request problems; 408/429/5xx are the retryable
-  band.
+  auth failures; 400 and 422 are request problems; 408, 429, 500, 502, 503, 504
+  and 529 are the retryable band.
 - `request_id::Union{Nothing,String}`: `x-typesafe-request-id`, present on error
   responses too.
 - `error_type::Union{Nothing,String}`: `detail.error_type` when the body uses the
@@ -909,7 +922,9 @@ keyed by question name.
 
 A [`SystemOneFailure`](@ref) or [`SystemOneCallError`](@ref) **throws**
 [`SystemOneError`](@ref): a call that produced no answers must not read as a
-call that answered with none.
+call that answered with none. [`answer`](@ref), `getindex`, `haskey` and `keys`
+throw the same error on those two results — a call that never answered has no
+key set to query either.
 """
 answers(r::SystemOneResponse)::Dict{String,SystemOneAnswer} = r.answers
 answers(r::SystemOneSuccess)::Dict{String,SystemOneAnswer} = r.response.answers
@@ -934,7 +949,10 @@ Base.getindex(r::Union{SystemOneFailure,SystemOneCallError}, ::Union{AbstractStr
     throw(SystemOneError(r))
 Base.haskey(r::Union{SystemOneSuccess,SystemOneResponse}, name::Union{AbstractString,Symbol}) =
     haskey(answers(r), String(name))
+Base.haskey(r::Union{SystemOneFailure,SystemOneCallError}, ::Union{AbstractString,Symbol}) =
+    throw(SystemOneError(r))
 Base.keys(r::Union{SystemOneSuccess,SystemOneResponse}) = keys(answers(r))
+Base.keys(r::Union{SystemOneFailure,SystemOneCallError}) = throw(SystemOneError(r))
 
 # ─── Accounting ──────────────────────────────────────────────────────────────
 # These live here rather than in accounting.jl because that file is included

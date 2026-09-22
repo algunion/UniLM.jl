@@ -293,7 +293,7 @@ chat = Chat(service=DeepSeekEndpoint(), model="deepseek-chat")
 chat = Chat(service=OllamaEndpoint(), model="llama3.1")
 ```
 
-TypeSafe's System One endpoint (`TYPESAFEServiceEndpoint`, `TYPESAFE_API_KEY`) is deliberately absent from that table: it answers enumerated questions rather than generating text, so `Chat` / `respond` / `Embeddings` reject it up front. It has its own section below.
+TypeSafe's System One endpoint (`TYPESAFEServiceEndpoint`, `TYPESAFE_API_KEY`) is deliberately absent from that table: it answers enumerated questions rather than generating text, so `chatrequest!`, `respond`, `embeddingrequest!` and the other platform verbs reject it up front with an `ArgumentError` (naming it on a `Chat` or an `Embeddings` is allowed; sending the request is not). It has its own section below.
 
 ## System One: Typed Judgments and Dispatch on Natural Language
 

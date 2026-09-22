@@ -95,7 +95,7 @@ filled in only by the object shape.
 | 405 | Wrong method for the path | `nothing`, message `"Method Not Allowed"` |
 | 422 | Schema validation failed | `nothing`; the message joins each validation entry as `"<field path>: <reason>"`, e.g. `questions.department.choice.criteria: Field required` |
 | 429 | Rate limit (tokens/second or requests/minute) | `nothing` unless the service sends the object shape; retried by the request seam |
-| 5xx | Service-side failure, including the non-standard `529 Overloaded` | retried by the request seam |
+| 500, 502, 503, 504, 529 | Service-side failure, including the non-standard `529 Overloaded` | retried by the request seam |
 
 [`ask`](@ref) and [`list_models`](@ref) ride the package's shared retry seam, so
 `RequestConfig.max_attempts` applies: 408, 429, 500, 502, 503, 504 and 529 are
@@ -105,8 +105,10 @@ cannot fix them. A call that never produced a response at all (a timeout, a
 transport failure, a missing key, or a 200 whose body was not a usable set of
 answers) is a [`SystemOneCallError`](@ref).
 
-Both verbs always return one of the three result types; `issuccess` separates
-them.
+Any call that reaches the service returns one of the three result types, and
+`issuccess` separates them; a wrong `service` or a malformed request (duplicate
+or blank question names, invalid criteria) is an `ArgumentError` raised before
+any request is sent.
 
 ## Usage
 

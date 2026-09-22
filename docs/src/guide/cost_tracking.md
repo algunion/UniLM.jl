@@ -169,19 +169,23 @@ println("jev-1.13.0 row: ", DEFAULT_PRICING["jev-1.13.0"])
 
 [`estimated_cost`](@ref)`(::SystemOneSuccess)` prices the **versioned** model id in
 `result.response.model` — the version that actually answered — not the alias the request
-named. A request sent as `jev-latest` therefore looks up `jev-1.13.0`, so log
+named. A request sent as `jev-latest` therefore looks up the version behind the alias
+at that moment (for example `jev-1.13.0`), so log
 `result.response.model` alongside the cost if you need to explain a bill later. As
 everywhere else, an unpriced name returns `0.0` silently:
 
-```julia
+```@example cost
 ticket = "Help! My payouts have been failing for 3 days."
 levels = ["Can wait", "Needs attention this week", "Needs attention today"]
 
 r = ask(ticket, "urgency" => score("How urgent is this ticket?", levels))
 if r isa SystemOneSuccess
+    println(answer(r, "urgency"))
     u = token_usage(r)
     println(u.prompt_tokens, " billable input tokens on ", r.response.model)
     println("USD ", estimated_cost(r))
+else
+    println("Request failed — ", r)
 end
 ```
 

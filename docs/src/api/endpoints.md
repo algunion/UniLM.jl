@@ -92,6 +92,8 @@ using UniLM
 # Register a custom deployment for a specific model
 UniLM.add_azure_deploy_name!("gpt-5.2", "my-gpt52-deploy")
 println("Registered deployment: ", UniLM._MODEL_ENDPOINTS_AZURE_OPENAI["gpt-5.2"])
+delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "gpt-5.2")  # cleanup
+nothing # hide
 ```
 
 ## Selecting a Backend

@@ -374,7 +374,7 @@ items = [
          "content" => [Dict("type" => "output_text",
             "text" => "Julia is a high-performance programming language for technical computing.")])
 ]
-result = compact_response(input=items)
+result = compact_response(input=items, model="gpt-5.4-mini")
 if result isa Dict
     println("Compact succeeded")
     println("Output items: ", length(result["output"]))

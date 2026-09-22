@@ -58,9 +58,9 @@ result = fim_complete("def hello():",
 FIM returns [`FIMSuccess`](@ref), [`FIMFailure`](@ref), or [`FIMCallError`](@ref):
 
 ```@example completions
-# Accessor works on all result types
-println(fim_text(FIMFailure(response="err", status=400)))
-println(fim_text(FIMCallError(error="network")))
+# The accessor works on every result type; a failure has no text, so it returns ""
+println(repr(fim_text(FIMFailure(response="err", status=400))))
+println(repr(fim_text(FIMCallError(error="network"))))
 ```
 
 ### Provider Support
@@ -109,6 +109,7 @@ println(result.message.content)
 chat = Chat(service=DeepSeekEndpoint("k"))
 push!(chat, Message(Val(:system), "sys"))
 push!(chat, Message(Val(:user), "hello"))
+println("Last role: ", chat[end].role)
 # This would throw — last message is not assistant:
 # prefix_complete(chat)  # ArgumentError
 ```

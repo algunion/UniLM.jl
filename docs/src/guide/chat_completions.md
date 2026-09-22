@@ -144,7 +144,10 @@ end
 ## Checking Conversation Validity
 
 ```@example chat
-println("Is chat valid? ", issendvalid(chat))  # true — system + user
+fresh = Chat(model="gpt-5.4-mini")
+push!(fresh, Message(Val(:system), "You are a concise Julia programming tutor."))
+push!(fresh, Message(Val(:user), "What is multiple dispatch?"))
+println("Is chat valid? ", issendvalid(fresh))  # true — system + user
 
 empty_chat = Chat()
 println("Is empty chat valid? ", issendvalid(empty_chat))  # false

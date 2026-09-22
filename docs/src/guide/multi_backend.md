@@ -59,6 +59,7 @@ If your Azure deployment has a custom name:
 UniLM.add_azure_deploy_name!("my-custom-model", "my-deployment-name")
 println("Registered deployments: ", collect(keys(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI)))
 delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "my-custom-model")  # cleanup
+nothing # hide
 ```
 
 ## Google Gemini

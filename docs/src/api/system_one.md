@@ -112,8 +112,11 @@ any request is sent.
 
 ## Usage
 
-```julia
+```@example jev
 using UniLM
+
+route(team) = println("route to ", team)   # stand-ins for your own handlers
+escalate()  = println("escalate to a human")
 
 result = ask(
     "Help! My payouts have been failing for 3 days and nobody has replied to my emails.",
@@ -127,23 +130,30 @@ result = ask(
         yes = "The customer expresses frustration or impatience",
         no  = "The customer is neutral or satisfied"))
 
-if issuccess(result)
-    println(result["department"].choice)              # "billing"
+if result isa SystemOneSuccess
+    println(result["department"].choice)              # e.g. "billing"
     println(result["department"].probabilities)       # every option, not just the winner
-    println(result["urgency"].score)                  # 1.98 on the 0..2 rubric
-    println(result["is_frustrated"].noul)             # 0.98
-    println(result.response.model)                    # "jev-1.13.0" — the version that answered
+    println(result["urgency"].score)                  # e.g. 1.98 on the 0..2 rubric
+    println(result["is_frustrated"].noul)             # e.g. 0.98
+    println(result.response.model)                    # e.g. "jev-1.13.0" — the version that answered
+    println(token_usage(result).prompt_tokens)        # the billed input tokens
     println(estimated_cost(result))                   # only input tokens are billed
 
     # Confidence is the second axis: act when the distribution is concentrated,
     # hand the rest to a human or a larger model.
     d = result["department"]
     d.confidence >= 0.8 ? route(d.choice) : escalate()
+else
+    println("Request failed — ", result)
 end
 
 # The models the account may name in `model`.
 models = list_models()
-issuccess(models) && println([m.name for m in models.models])
+if models isa TypeSafeModelsSuccess
+    println([m.name for m in models.models])
+else
+    println("Request failed — ", models)
+end
 ```
 
 All questions in one call share one ingestion of the `state`, so batching many

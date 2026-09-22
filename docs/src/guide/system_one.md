@@ -74,7 +74,7 @@ Capabilities](@ref capabilities_api).
 One call carries the state once and every question you want answered about it.
 Answers come back keyed by the names you chose:
 
-```julia
+```@example jev
 using UniLM
 
 r = ask(
@@ -100,13 +100,15 @@ if r isa SystemOneSuccess
     println("answered by:   ", r.response.model)
     # => answered by:   jev-1.13.0
 else
-    println(r)   # a SystemOneFailure or a SystemOneCallError — `ask` never throws
+    println("Request failed — ", r)   # a SystemOneFailure or a SystemOneCallError — `ask` never throws
 end
 ```
 
-The `# =>` lines are the output of that exact request against a live service,
-and every number the service reports is rounded to two decimals. The rest of
-what came back with it:
+The `# =>` lines are the output of that exact request in one recorded run
+against the live service, and every number the service reports is rounded to
+two decimals. The output rendered under the block is the docs build's own call:
+a fresh answer, or the typed error when the build ran without a key. The rest
+of what came back with the recorded run:
 
 ```julia
 r["department"].probabilities["billing"]     # => 1.0
@@ -251,7 +253,7 @@ object. Name the part a question is about with its key in backticks inside the
 instructions, and keep the content itself in the state rather than in the
 question:
 
-```julia
+```@example jev
 state = (
     ticket_message = "I was charged twice for order A-104. Please refund the duplicate.",
     order          = (id = "A-104", charges = [49, 49]),
@@ -260,6 +262,13 @@ state = (
 r = ask(state,
     "refund_requested" => noul("Does `ticket_message` request a refund?"),
     "policy_allows"    => noul("Does `refund_policy` allow refunding the duplicate charge in `order`?"))
+
+if r isa SystemOneSuccess
+    println("refund_requested: ", answer(r, "refund_requested"))
+    println("policy_allows:    ", answer(r, "policy_allows"))
+else
+    println("Request failed — ", r)
+end
 ```
 
 The backtick form is a prompting convention the model reads, not a server-side
@@ -283,7 +292,7 @@ invalid criteria) is an `ArgumentError` raised before any request is sent.
 On a success, three equivalent accessors reach an answer, and the usual
 `Dict`-like queries work:
 
-```julia
+```@example jev
 ticket = "Help! My payouts have been failing for 3 days and nobody has replied to my emails."
 
 r = ask(ticket,
@@ -304,6 +313,8 @@ if r isa SystemOneSuccess
 
     haskey(r, "wants_human") && println(r["wants_human"].noul)
     println(collect(keys(r)))     # the question names that came back
+else
+    println("Request failed — ", r)
 end
 ```
 
@@ -343,7 +354,7 @@ That economics makes **speculative** questions worth asking: include the ones
 whose answers only matter for some inputs and let the code ignore the rest
 ([Speculative fan-out](https://docs.typesafe.ai/patterns/fan-out)).
 
-```julia
+```@example jev
 TRIAGE = (
     department = choice("Which team should handle this ticket?", (
         returns  = "Exchanges, wrong or damaged items",
@@ -371,9 +382,13 @@ if r isa SystemOneSuccess
     detail = d.choice == "returns"  ? r["return_reason"].choice :
              d.choice == "shipping" ? r["shipping_issue"].choice : nothing
     # Both speculative answers came back; the code reads at most one and drops the other.
+    println("department: ", d.choice, ", detail: ", detail)
     for (team, p) in d.probabilities
         team != d.choice && p > 0.25 && println("also notify: ", team)
     end
+    println("billable input tokens: ", token_usage(r).prompt_tokens)
+else
+    println("Request failed — ", r)
 end
 ```
 
@@ -504,10 +519,14 @@ retriever first, and give the model only the judgment
 [`list_models`](@ref) returns the names the authenticated account may put in
 `model`:
 
-```julia
+```@example jev
 m = list_models()
-m isa TypeSafeModelsSuccess && for card in m.models
-    println(card.name, "  ", card.release_date, "  ", card.description)
+if m isa TypeSafeModelsSuccess
+    for card in m.models
+        println(card.name, "  ", card.release_date, "  ", card.description)
+    end
+else
+    println("Request failed — ", m)
 end
 ```
 
@@ -566,7 +585,7 @@ header, the id to quote in a support report), `.retry_after` (seconds, from
 `total_deadline`, honouring `Retry-After`. The rest — 400, 401, 403, 404, 422 —
 come back as they are, because an identical retry cannot fix them.
 
-```julia
+```@example jev
 state     = "Help! My payouts have been failing for 3 days."
 questions = ["urgency" => score("How urgent is this ticket?",
                                 ["Can wait", "Needs attention this week", "Needs attention today"])]
@@ -575,8 +594,16 @@ questions = ["urgency" => score("How urgent is this ticket?",
 r = ask(state, questions; config = RequestConfig(request_timeout = 20.0, max_attempts = 5))
 
 # Or for a whole scope, including tasks spawned inside it.
-with_request_config(request_timeout = 20.0, max_attempts = 1) do
+scoped = with_request_config(request_timeout = 20.0, max_attempts = 1) do
     ask(state, questions)
+end
+
+for res in (r, scoped)
+    if res isa SystemOneSuccess
+        println(answer(res, "urgency"))
+    else
+        println("Request failed — ", res)
+    end
 end
 ```
 
@@ -588,15 +615,18 @@ as a partial success. See [Timeouts & Retries](@ref timeouts_guide).
 Only **input** tokens are billed; output tokens are currently free
 ([Models](https://docs.typesafe.ai/models)).
 
-```julia
+```@example jev
 r = ask("Help! My payouts have been failing for 3 days.",
         "urgency" => score("How urgent is this ticket?",
                            ["Can wait", "Needs attention this week", "Needs attention today"]))
 
 if r isa SystemOneSuccess
+    println(answer(r, "urgency"))
     u = token_usage(r)                     # prompt_tokens = input, completion_tokens = output
     println(u.prompt_tokens, " billable tokens")
     println("USD ", estimated_cost(r))     # priced against r.response.model
+else
+    println("Request failed — ", r)
 end
 ```
 

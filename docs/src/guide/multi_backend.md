@@ -100,13 +100,19 @@ As of September 7, 2026, Gemini 3.8 Flash supports `reasoning_effort="low"`,
 `"medium"`, or `"high"`. Native Chat maps this to `thinkingConfig.thinkingLevel`.
 The completion cap includes thinking tokens, so a very small cap can produce
 an empty answer. Gemini 3.8 rejects `temperature`, `top_p`, and minimal thinking.
+On the Interactions API (`respond`), `temperature` and `top_p` stay mapped to
+`generation_config` for models that accept them (`gemini-3.7-flash` accepted both
+on September 22, 2026).
 Native Gemini tool declarations use `parametersJsonSchema`, preserving standard
 JSON Schema constraints such as `additionalProperties`.
 
-Native Chat returns one candidate and does not implement `response_format` or
-OpenAI-specific options such as `seed`, `metadata`, and `stream_options`.
-Those options fail explicitly. Gemini determines parallel tool use; the inherited
-`parallel_tool_calls` setting does not constrain native Gemini.
+`response_format` is mapped natively: JSON object and JSON Schema output become
+`generationConfig.responseFormat` (see [Structured Output](@ref structured_guide)).
+`safety_identifier` is mapped natively to the request label `safety_identifier`.
+Native Chat returns one candidate and does not implement OpenAI-specific options
+such as `seed`, `metadata`, and `stream_options`; those options fail explicitly.
+Gemini determines parallel tool use; the inherited `parallel_tool_calls` setting
+does not constrain native Gemini.
 See [Google's migration guide](https://ai.google.dev/gemini-api/docs/latest-model).
 
 OpenAI defaults to `gpt-5.6-sol`. GPT-5.6 Chat Completions tool calling requires

@@ -479,3 +479,109 @@ end
     ids = [state.tool_calls[i]["id"] for i in sort!(collect(keys(state.tool_calls)))]
     @test length(ids) == 2 && allunique(ids) && all(id -> startswith(id, "unilm_call_"), ids)
 end
+
+@testset "encode — response_format → generationConfig.responseFormat.text (wire golden)" begin
+    schema = Dict("type" => "object",
+                  "properties" => Dict("city" => Dict("type" => "string"), "country" => Dict("type" => "string")),
+                  "required" => ["city", "country"], "additionalProperties" => false)
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", reasoning_effort="low", max_tokens=1024,
+                response_format=UniLM.json_schema("capital", "A capital city", schema; strict=true),
+                messages=[Message(role=RoleUser, content="Give the capital of Norway as JSON.")])
+    # TextResponseFormat.mimeType is an enum on this wire: "application/json" is a 400.
+    @test JSON.parse(encode_request(GEMINIServiceEndpoint, chat)) == Dict(
+        "contents" => [Dict("role" => "user", "parts" => [Dict("text" => "Give the capital of Norway as JSON.")])],
+        "generationConfig" => Dict("maxOutputTokens" => 1024, "thinkingConfig" => Dict("thinkingLevel" => "LOW"),
+            "responseFormat" => Dict("text" => Dict("mimeType" => "APPLICATION_JSON", "schema" => schema))))
+
+    gen(rf) = get(JSON.parse(encode_request(GEMINIServiceEndpoint,
+        Chat(service=GEMINIServiceEndpoint, response_format=rf))), "generationConfig", nothing)
+    # an OpenAI-shaped Dict json_schema carries its schema the same way
+    @test gen(ResponseFormat(Dict("name" => "capital", "schema" => schema, "strict" => true))) ==
+          Dict("responseFormat" => Dict("text" => Dict("mimeType" => "APPLICATION_JSON", "schema" => schema)))
+    @test gen(UniLM.json_object()) == Dict("responseFormat" => Dict("text" => Dict("mimeType" => "APPLICATION_JSON")))
+    @test isnothing(gen(ResponseFormat(type="text")))            # plain text: no format, no generationConfig
+    # every other shape fails loud instead of vanishing from the request
+    for rf in (ResponseFormat(type="xml"), ResponseFormat(type="json_schema"),
+               ResponseFormat(Dict("name" => "no_schema")), ResponseFormat("json_object", Dict("schema" => schema)),
+               ResponseFormat("text", Dict("schema" => schema)))
+        @test_throws ArgumentError encode_request(GEMINIServiceEndpoint, Chat(service=GEMINIServiceEndpoint, response_format=rf))
+    end
+end
+
+@testset "encode — safety_identifier → top-level labels (wire golden)" begin
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", safety_identifier="user-42",
+                messages=[Message(role=RoleUser, content="hi")])
+    @test JSON.parse(encode_request(GEMINIServiceEndpoint, chat)) == Dict(
+        "contents" => [Dict("role" => "user", "parts" => [Dict("text" => "hi")])],
+        "labels" => Dict("safety_identifier" => "user-42"))
+    @test !haskey(JSON.parse(encode_request(GEMINIServiceEndpoint, Chat(service=GEMINIServiceEndpoint))), "labels")
+end
+
+@testset "encode — response_format and safety_identifier are mapped; other options still fail closed" begin
+    @test :response_format ∉ UniLM._GEMINI_CHAT_UNMAPPED_FIELDS
+    @test :safety_identifier ∉ UniLM._GEMINI_CHAT_UNMAPPED_FIELDS
+    err = try encode_request(GEMINIServiceEndpoint, Chat(service=GEMINIServiceEndpoint, seed=7)); nothing catch e; e end
+    @test err isa ArgumentError && occursin("seed", err.msg)
+end
+
+@testset "thinking levels — one row per model family of the provider table" begin
+    # (family, accepted level, rejected level, error fragment), transcribed from the
+    # "Controlling thinking" table (ai.google.dev/gemini-api/docs/thinking, 2026-09-22).
+    # A row allowing all four levels can only reject a non-level.
+    three, four = "supports low, medium, or high thinking effort", "must be minimal, low, medium, or high"
+    rows = (("gemini-3.8-flash",            "medium",  "minimal", three),
+            ("gemini-3.7-flash",            "high",    "minimal", three),
+            ("gemini-3.6-flash",            "minimal", "xhigh",   four),
+            ("gemini-3.5-flash-lite",       "minimal", "none",    four),
+            ("gemini-3.1-pro-preview",      "medium",  "minimal", three),
+            ("gemini-3.1-flash-lite-image", "minimal", "low",     "supports minimal or high thinking effort"),
+            ("gemini-3-flash-preview",      "minimal", "xhigh",   four),
+            ("gemini-3-pro-preview",        "high",    "medium",  "supports low or high thinking effort"),
+            ("gemini-3.5-flash",            "minimal", "xhigh",   four),
+            ("gemini-2.5-pro",              "low",     "minimal", three),
+            ("gemini-2.5-flash",            "medium",  "minimal", three),
+            ("gemini-2.5-flash-lite",       "high",    "minimal", three))
+    @test Set(first.(rows)) == Set(first.(UniLM._GEMINI_THINKING_LEVELS))   # every table row is covered
+    level(model, effort) = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint, Respond(
+        service=GEMINIServiceEndpoint, model=model, input="x", reasoning=Reasoning(effort=effort))))["generation_config"]["thinking_level"]
+    native(model, effort) = JSON.parse(encode_request(GEMINIServiceEndpoint, Chat(
+        service=GEMINIServiceEndpoint, model=model, reasoning_effort=effort)))["generationConfig"]["thinkingConfig"]["thinkingLevel"]
+    @testset "$family" for (family, ok, bad, fragment) in rows
+        @test level(family, ok) == ok
+        if startswith(family, "gemini-2.5-")   # generateContent on 2.5 takes a thinking budget, never a level
+            @test_throws ArgumentError native(family, ok)
+        else
+            @test native(family, ok) == uppercase(ok)
+        end
+        err = try level(family, bad); nothing catch e; e end
+        @test err isa ArgumentError && occursin(fragment, err.msg)
+        @test_throws ArgumentError native(family, bad)
+    end
+end
+
+@testset "thinking levels — the longest matching family wins; unlisted families keep the generic check" begin
+    table = (("fam-a", ("low",)), ("fam-a-b", ("high",)))
+    @test UniLM._gemini_thinking_levels("fam-a-b-2", table) == ("high",)          # both match
+    @test UniLM._gemini_thinking_levels("fam-a-b-2", reverse(table)) == ("high",) # order-independent
+    @test UniLM._gemini_thinking_levels("fam-a-2", table) == ("low",)
+    @test isnothing(UniLM._gemini_thinking_levels("fam-c", table))
+    @test UniLM._gemini_thinking_levels("gemini-3.5-flash-lite-preview") == ("minimal", "low", "medium", "high")
+    @test isnothing(UniLM._gemini_thinking_levels("gemini-flash-latest"))
+    @test UniLM._gemini_thinking_level("gemini-flash-latest", "minimal") == "minimal"
+    @test_throws ArgumentError UniLM._gemini_thinking_level("gemini-flash-latest", "xhigh")
+end
+
+@testset "pricing — Gemini 3.6 Flash, 3.5 Flash-Lite, and Embedding 2 rows" begin
+    # Google pricing page, 2026-09-22: standard paid tier, USD per 1M tokens.
+    usage = TokenUsage(prompt_tokens=1000, completion_tokens=500, cached_tokens=200)
+    for (model, input, cached, output) in (("gemini-3.6-flash", 0.75, 0.075, 3.75),
+                                           ("gemini-3.5-flash-lite", 0.30, 0.03, 2.50))
+        r = LLMSuccess(message=Message(role=RoleAssistant, content="x"),
+                       self=Chat(service=GEMINIServiceEndpoint, model=model), usage=usage)
+        @test estimated_cost(r) ≈ (800 * input + 200 * cached + 500 * output) / 1_000_000
+    end
+    emb = Embeddings("hello"; service=GEMINIOpenAIServiceEndpoint, model="gemini-embedding-2")
+    es = EmbeddingSuccess(embeddings=emb, usage=TokenUsage(prompt_tokens=500_000, completion_tokens=7),
+                          raw=Dict{String,Any}())
+    @test estimated_cost(es) ≈ 500_000 * 0.20 / 1_000_000            # input only; output rate is zero
+end

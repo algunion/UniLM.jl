@@ -23,13 +23,16 @@ end
 Swap the provider with a single keyword:
 
 ```@example agentic
-result = respond("Explain multiple dispatch in one sentence."; service=GEMINIServiceEndpoint, model="gemini-3.1-flash-lite")
+result = respond("Explain multiple dispatch in one sentence."; service=GEMINIServiceEndpoint, model="gemini-3.8-flash")
 if result isa ResponseSuccess
     println(output_text(result))
 else
     println("Request failed — ", output_text(result))
 end
 ```
+
+Google shuts down `gemini-3.1-flash-lite` on May 7, 2027 and names
+`gemini-3.5-flash-lite` as its replacement.
 
 ## Hosted tools (Gemini)
 
@@ -51,7 +54,7 @@ Gemini Interactions exposes server-side hosted tools via
 
 ```@example agentic
 result = respond("What are the latest stable Julia releases?";
-                 service=GEMINIServiceEndpoint, tools=[gemini_google_search()], model="gemini-3.1-flash-lite")
+                 service=GEMINIServiceEndpoint, tools=[gemini_google_search()], model="gemini-3.8-flash")
 if result isa ResponseSuccess
     println(output_text(result))
 else
@@ -123,7 +126,7 @@ Interactions decoder normalizes usage into the shared shape and
 are not modeled).
 
 ```@example agentic
-r = respond("What is 2+2?"; service=GEMINIServiceEndpoint, model="gemini-3.1-flash-lite")
+r = respond("What is 2+2?"; service=GEMINIServiceEndpoint, model="gemini-3.8-flash")
 if r isa ResponseSuccess
     println("usage: ", token_usage(r))
     println("est. cost: \$", round(estimated_cost(r); digits=6))

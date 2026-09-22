@@ -95,6 +95,12 @@ embeddingrequest!(emb)
     Different providers return different embedding dimensions. The default pre-allocation
     assumes 1536 dimensions (OpenAI's `text-embedding-3-small`).
 
+!!! note "Gemini embedding models"
+    `gemini-embedding-001`, the default for `GEMINIOpenAIServiceEndpoint`, shuts down on
+    May 14, 2028. Its successor `gemini-embedding-2` is generally available and works
+    through the same OpenAI-compatible endpoint:
+    `Embeddings("test"; service=GEMINIOpenAIServiceEndpoint, model="gemini-embedding-2")`.
+
 ## In-Place Design
 
 The `Embeddings` struct pre-allocates the embedding vectors at construction time.

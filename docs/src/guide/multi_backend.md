@@ -123,6 +123,8 @@ Completions tool calling requires an explicit `reasoning_effort="none"`; use
 Responses for reasoning with tools. GPT-6 Sol and Luna also reject `temperature`,
 `top_p`, and log probabilities unless reasoning effort is `"none"` (an omitted
 effort is the provider default, `"medium"`).
+On the native OpenAI endpoint, GPT-6 Sol and Luna also refuse `"minimal"`
+reasoning effort; use `"low"` instead.
 For inexpensive testing, use `gpt-5.6-luna` and low or no reasoning.
 Use `Respond(model="gpt-6-astra", ...)` for Astra tool workflows: Astra tools require
 Responses, and Astra rejects sampling controls, log probabilities, and no reasoning.

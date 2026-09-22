@@ -715,7 +715,8 @@ Reasoning configuration for OpenAI and Gemini Interactions models.
 
 - `effort`: OpenAI accepts `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`,
   `"xhigh"`, and `"max"`; each model supports a subset (GPT-6 Astra has no `"none"`
-  or `"minimal"`; gpt-5.4-mini and gpt-5.4-nano stop at `"xhigh"`). Gemini 3.8
+  or `"minimal"`; gpt-5.4-mini and gpt-5.4-nano stop at `"xhigh"`). GPT-6 Sol and
+  Luna refuse `"minimal"` on the native OpenAI endpoint; use `"low"`. Gemini 3.8
   supports `"low"`, `"medium"`, and `"high"`.
 - `summary`: `"auto"`, `"concise"`, or `"detailed"` — request a reasoning summary in the output.
 - `generate_summary`: deprecated alias serialized as `summary`; prefer `summary`.

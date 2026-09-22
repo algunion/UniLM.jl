@@ -65,6 +65,8 @@ has_capability
 | `:uploads` | Resumable Uploads API |
 | `:video` | Video generation (Sora) |
 | `:realtime` | Realtime API |
+| `:system_one` | TypeSafe System One evaluation ([`ask`](@ref)) |
+| `:models` | Model listing ([`list_models`](@ref)) |
 
 ## Capabilities by Provider
 
@@ -78,7 +80,8 @@ for (name, svc) in [
     ("Gemini (OpenAI-compat)", GEMINIOpenAIServiceEndpoint),
     ("Anthropic",              ANTHROPICServiceEndpoint),
     ("DeepSeek",               DeepSeekEndpoint("k")),
-    ("Generic",                GenericOpenAIEndpoint("http://x", ""))
+    ("Generic",                GenericOpenAIEndpoint("http://x", "")),
+    ("TypeSafe (System One)",  TYPESAFEServiceEndpoint)
 ]
     caps = join(sort(collect(provider_capabilities(svc))), ", ")
     println("$name: $caps")

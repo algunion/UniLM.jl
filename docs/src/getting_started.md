@@ -74,6 +74,19 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 export DEEPSEEK_API_KEY="sk-..."
 ```
 
+### TypeSafe System One (Jev)
+
+Typed judgments and calibrated probabilities instead of generated text — routing,
+screening, ranking and verification that your code can act on directly:
+
+```bash
+export TYPESAFE_API_KEY="..."
+```
+
+Optional: `TYPESAFE_BASE_URL` overrides the API root (default
+`https://api.typesafe.ai`) and `TYPESAFE_DEFAULT_MODEL` the model used when a call
+names none (default `jev-latest`). See [Typed Judgments with Jev](@ref system_one_guide).
+
 ### Ollama (local — no key needed)
 
 Just have the Ollama server running on `localhost:11434`. No API key required.

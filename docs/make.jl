@@ -39,6 +39,9 @@ makedocs(;
             "MCP (Model Context Protocol)" => "guide/mcp.md",
             "FIM & Prefix Completion" => "guide/completions.md",
         ],
+        "System One (TypeSafe Jev)" => [
+            "Typed Judgments with Jev" => "guide/system_one.md",
+        ],
         "API Reference" => [
             "Chat Types" => "api/chat.md",
             "Responses Types" => "api/responses.md",

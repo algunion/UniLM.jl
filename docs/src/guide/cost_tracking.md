@@ -156,6 +156,36 @@ Note that non-OpenAI embedding models (e.g. Ollama's `nomic-embed-text`,
 `gemini-embedding-001`) are not in the default table and hit the same silent-`\$0` behavior —
 supply `pricing=` for them too.
 
+## System One (TypeSafe Jev) is input-only
+
+A [`SystemOneSuccess`](@ref) reports usage through the same [`TokenUsage`](@ref) shape:
+`prompt_tokens` is the service's `input_tokens`, `completion_tokens` its `output_tokens`,
+and `total_tokens` their sum. Only **input** tokens are billed — output tokens are
+currently free, which the shipped `jev-*` rows encode as an output rate of `0.0`:
+
+```@example cost
+println("jev-1.13.0 row: ", DEFAULT_PRICING["jev-1.13.0"])
+```
+
+[`estimated_cost`](@ref)`(::SystemOneSuccess)` prices the **versioned** model id in
+`result.response.model` — the version that actually answered — not the alias the request
+named. A request sent as `jev-latest` therefore looks up `jev-1.13.0`, so log
+`result.response.model` alongside the cost if you need to explain a bill later. As
+everywhere else, an unpriced name returns `0.0` silently:
+
+```julia
+r = ask(ticket, "urgency" => score("How urgent is this ticket?", levels))
+if r isa SystemOneSuccess
+    u = token_usage(r)
+    println(u.prompt_tokens, " billable input tokens on ", r.response.model)
+    println("USD ", estimated_cost(r))
+end
+```
+
+Batching matters more here than the per-token rate: every question in one
+[`ask`](@ref) shares a single ingestion of the state, so N questions in one call bill
+far fewer input tokens than N calls. See [Typed Judgments with Jev](@ref system_one_guide).
+
 ## Prices drift
 
 [`DEFAULT_PRICING`](@ref) is a hardcoded snapshot (OpenAI verified 2026-06-21, Anthropic

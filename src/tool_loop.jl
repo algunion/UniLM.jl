@@ -144,7 +144,7 @@ and repeats until a text response, API error, or `max_turns`.
 
 # Example
 ```julia
-chat = Chat(model="gpt-5-mini", tools=[tool])
+chat = Chat(model="gpt-5.4-mini", tools=[tool])
 push!(chat, Message(Val(:system), "You are a calculator"))
 push!(chat, Message(Val(:user), "What is 3+5?"))
 result = tool_loop!(chat, (name, args) -> string(args["a"] + args["b"]))

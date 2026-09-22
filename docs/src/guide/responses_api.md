@@ -180,12 +180,12 @@ end
 
 ## Reasoning and Prompt Caching
 
-For models like `o3` that support extended reasoning:
+For reasoning models such as `gpt-5.4-mini`:
 
 ```@example responses
 r = Respond(
     input="Prove that √2 is irrational",
-    model="o3",
+    model="gpt-5.4-mini",
     reasoning=Reasoning(effort="high", summary="detailed")
 )
 println("Model: ", r.model)
@@ -204,11 +204,31 @@ println(JSON.json(r))
 ```
 
 GPT-5.6 and later use `prompt_cache_options` instead of `prompt_cache_retention`.
-Explicit cache mode requires breakpoints in input content blocks. See
+Explicit cache mode requires breakpoints in input content blocks; mark one with
+`input_text(text; cache_breakpoint=true)`. `PromptCacheOptions(prewarm=true)` prepares
+the cache without generating output (the response has an empty `output`), and
+`comparison_response_id` requests cache diagnostics, returned in
+`result.response.raw["prompt_cache_diagnostics"]`. On GPT-6 models, a
+[`configuration_update`](@ref) input item changes reasoning effort between responses
+without rewriting the cached prefix. See
 [OpenAI's caching guide](https://developers.openai.com/api/docs/guides/prompt-caching)
 for breakpoint placement and cache-write billing, and
 [the reasoning guide](https://developers.openai.com/api/docs/guides/reasoning)
 for persisted reasoning and pro mode.
+
+## Moderation
+
+Set `moderation` to a [`ModerationConfig`](@ref) to have OpenAI run a moderation model
+over the request input and the generated output. `input_mode` and `output_mode` pick the
+policy for each side, `"score"` or `"block"`; unset parts are omitted from the request.
+The result comes back in `result.response.raw["moderation"]`, with `"input"` and
+`"output"` moderation results. `Chat` takes the same field.
+
+```@example responses
+r = Respond(input="Summarize this support ticket", model="gpt-5.4-mini",
+    moderation=ModerationConfig(model="omni-moderation-latest", input_mode="block", output_mode="score"))
+println(JSON.json(r))
+```
 
 ## Structured Output
 
@@ -316,7 +336,7 @@ end
 
 ## Service Tier
 
-Control the processing tier for your request (`"auto"`, `"default"`, `"flex"`, `"priority"`):
+Control the processing tier for your request (`"auto"`, `"default"`, `"flex"`, `"scale"`, `"priority"`/`"fast"`, `"ultrafast"`):
 
 ```@example responses
 result = respond("Say 'tier test' and nothing else.", service_tier="auto", model="gpt-5.4-mini")
@@ -425,16 +445,17 @@ end
 | `background`             | Bool           | —            | Run in background (cancellable)                           |
 | `include`                | Vector{String} | —            | Extra data to include (e.g. `"file_search_call.results"`) |
 | `max_tool_calls`         | Int64          | —            | Max number of tool calls per turn                         |
-| `service_tier`           | String         | —            | `"auto"`, `"default"`, `"flex"`, `"fast"` (`"priority"` alias) |
+| `service_tier`           | String         | —            | `"auto"`, `"default"`, `"flex"`, `"scale"`, `"fast"` (`"priority"` alias), `"ultrafast"` |
 | `top_logprobs`           | Int64          | —            | 0–20, top log probabilities                               |
-| `prompt`                 | Dict           | —            | Prompt template reference                                 |
+| `prompt`                 | Dict           | —            | Prompt template reference; the reusable prompts API (`v1/prompts`) shuts down on November 30, 2026 |
 | `prompt_cache_key`       | String         | —            | Cache key for prompt caching                              |
-| `prompt_cache_options`   | PromptCacheOptions | —        | Cache mode and TTL for GPT-5.6 and later                  |
+| `prompt_cache_options`   | PromptCacheOptions | —        | Cache mode, TTL, prewarm, and diagnostics for GPT-5.6 and later |
 | `prompt_cache_retention` | String         | —            | `"in_memory"` or `"24h"`, depending on the older model     |
 | `safety_identifier`      | String         | —            | Stable end-user identifier; replaces the deprecated `user` |
 | `conversation`           | Any            | —            | Conversation context (String or Dict)                     |
 | `context_management`     | Vector         | —            | Context management strategies                             |
 | `stream_options`         | Dict           | —            | Streaming options (e.g. `include_usage`)                  |
+| `moderation`             | ModerationConfig | —          | Moderation model and input/output policy                  |
 
 ## Retry Behaviour
 

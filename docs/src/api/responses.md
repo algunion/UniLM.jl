@@ -83,6 +83,7 @@ InputMessage
 input_text
 input_image
 input_file
+configuration_update
 ```
 
 ### Multimodal Input
@@ -188,11 +189,12 @@ jf = json_object_format()
 println("JSON format: ", jf.format.type)
 ```
 
-## Reasoning
+## Reasoning, Prompt Caching & Moderation
 
 ```@docs
 Reasoning
 PromptCacheOptions
+ModerationConfig
 ```
 
 ```@example responses_api

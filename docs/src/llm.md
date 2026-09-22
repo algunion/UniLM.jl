@@ -146,17 +146,21 @@ Respond(service=OPENAIServiceEndpoint, input="Hello")
     web_search_options::Union{AbstractDict,Nothing} = nothing
     prompt_cache_key::Union{String,Nothing} = nothing
     safety_identifier::Union{String,Nothing} = nothing   # replaces deprecated `user`
+    _cumulative_cost::Ref{Float64} = Ref(0.0)            # internal
+    prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing  # gpt-5.6 and later
+    moderation::Union{ModerationConfig,Nothing} = nothing
 end
 ```
 
-A 35th field, `_cumulative_cost::Ref{Float64}`, is internal bookkeeping for
-[`cumulative_cost`](@ref) — read it through that accessor, never directly.
+`_cumulative_cost` is internal bookkeeping for [`cumulative_cost`](@ref) — read it
+through that accessor, never directly.
 
 - **Model defaults**: the declared default is the sentinel `""`; the constructor resolves it, so `Chat().model` reads back `"gpt-5.6-sol"`. Per provider: `"gpt-5.6-sol"` for OpenAI, `"gpt-5.2"` for Azure, `"gemini-3.8-flash"` for Gemini (native and OpenAI-compat), `"claude-opus-4-8"` for native Anthropic, `"deepseek-chat"` for DeepSeek. For `GenericOpenAIEndpoint` / `OllamaEndpoint` there is no default — an unset model throws `ArgumentError` at construction.
 - `history=true`: responses are automatically appended to `messages`.
 - `temperature` and `top_p` are mutually exclusive (constructor throws `ArgumentError`).
 - `parallel_tool_calls` is auto-set to `nothing` when `tools` is `nothing`.
 - **Parameter validation**: the constructor validates ranges at construction time — `temperature` ∈ [0.0, 2.0], `top_p` ∈ [0.0, 1.0], `n` ∈ [1, 10], `presence_penalty` ∈ [-2.0, 2.0], `frequency_penalty` ∈ [-2.0, 2.0]. Out-of-range values throw `ArgumentError`.
+- `prompt_cache_options` is supported for gpt-5.6 and later (the provider rejects it on older models); Chat Completions takes only its `mode` and `ttl`. `moderation` takes a [`ModerationConfig`](@ref).
 
 ### Message
 
@@ -394,9 +398,9 @@ result = fetch(task)  # LLMSuccess when complete
     background::Union{Bool,Nothing} = nothing
     include::Union{Vector{String},Nothing} = nothing
     max_tool_calls::Union{Int64,Nothing} = nothing
-    service_tier::Union{String,Nothing} = nothing           # "auto","default","flex","priority","fast"
+    service_tier::Union{String,Nothing} = nothing           # "auto","default","flex","scale","priority","fast","ultrafast"
     top_logprobs::Union{Int64,Nothing} = nothing            # 0–20
-    prompt::Union{AbstractDict,Nothing} = nothing
+    prompt::Union{AbstractDict,Nothing} = nothing           # v1/prompts shuts down on November 30, 2026
     prompt_cache_key::Union{String,Nothing} = nothing
     prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory","24h" (older models)
     safety_identifier::Union{String,Nothing} = nothing
@@ -404,6 +408,7 @@ result = fetch(task)  # LLMSuccess when complete
     context_management::Union{Vector,Nothing} = nothing
     stream_options::Union{AbstractDict,Nothing} = nothing
     prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing
+    moderation::Union{ModerationConfig,Nothing} = nothing
 end
 ```
 
@@ -425,9 +430,12 @@ InputMessage(role="user", content="Hello")
 InputMessage(role="user", content=[input_text("Describe:"), input_image("https://...")])
 
 # Content part constructors
-input_text(text::String)                                              # → Dict(:type=>"input_text", :text=>...)
+input_text(text::String; cache_breakpoint=false)                      # → Dict(:type=>"input_text", :text=>...); cache_breakpoint=true adds prompt_cache_breakpoint={"mode":"explicit"}
 input_image(url=nothing; detail=nothing, file_id=nothing)             # → Dict(:type=>"input_image", ...); pass url OR file_id, detail: "auto","low","high"
 input_file(; url=nothing, id=nothing, file_data=nothing, filename=nothing)  # → Dict(:type=>"input_file", ...); pass one of url / id / file_data (base64)
+
+# Input item: change reasoning effort mid-conversation (GPT-6) without rewriting the cached prefix
+configuration_update(; effort)   # → Dict(:type=>"configuration_update", :reasoning=>Dict(:effort=>...)); effort: "none","minimal","low","medium","high","xhigh","max"
 ```
 
 `input_image` and `input_file` throw `ArgumentError` when none of their
@@ -443,6 +451,10 @@ abstract type ResponseTool end
     description::Union{String,Nothing} = nothing
     parameters::Union{AbstractDict,Nothing} = nothing
     strict::Union{Bool,Nothing} = nothing
+    async::Union{Bool,Nothing} = nothing                    # GPT-6 async tool calling
+    allowed_callers::Union{Vector{String},Nothing} = nothing  # "direct", "programmatic"
+    defer_loading::Union{Bool,Nothing} = nothing            # loaded via tool search
+    output_schema::Union{Dict{String,Any},Nothing} = nothing  # JSON Schema of the string output
 end
 
 @kwdef struct WebSearchTool <: ResponseTool
@@ -482,12 +494,19 @@ end
     environment::Union{String, Nothing} = nothing
 end
 
+# Enumerated fields are validated at construction (ArgumentError).
 @kwdef struct ImageGenerationTool <: ResponseTool
     background::Union{String, Nothing} = nothing
     output_format::Union{String, Nothing} = nothing
     output_compression::Union{Int, Nothing} = nothing
-    quality::Union{String, Nothing} = nothing
+    quality::Union{String, Nothing} = nothing               # "low","medium","high","auto"; 2.5 models add "xhigh","max"
     size::Union{String, Nothing} = nothing
+    model::Union{String, Nothing} = nothing                 # e.g. "gpt-image-2.5-flare"
+    action::Union{String, Nothing} = nothing                # "generate","edit","auto"
+    moderation::Union{String, Nothing} = nothing            # "auto","low"
+    partial_images::Union{Int, Nothing} = nothing           # 0–3
+    input_fidelity::Union{String, Nothing} = nothing        # "high","low"
+    input_image_mask::Union{Dict{String,Any}, Nothing} = nothing  # "file_id" or "image_url"
 end
 
 @kwdef struct CodeInterpreterTool <: ResponseTool
@@ -540,7 +559,7 @@ json_object_format()                                         # unstructured JSON
 
 ```julia
 @kwdef struct Reasoning
-    effort::Union{String,Nothing} = nothing                 # "none","low","medium","high"
+    effort::Union{String,Nothing} = nothing                 # "none","minimal","low","medium","high","xhigh","max" (per-model subset)
     generate_summary::Union{String,Nothing} = nothing       # deprecated alias, serialized as summary
     summary::Union{String,Nothing} = nothing                # "auto","concise","detailed"
     context::Union{String,Nothing} = nothing                # "auto","current_turn","all_turns"
@@ -549,15 +568,17 @@ end
 ```
 
 ```julia
-Respond(input="Hard math problem", model="o3", reasoning=Reasoning(effort="high"))
+Respond(input="Hard math problem", model="gpt-5.4-mini", reasoning=Reasoning(effort="high"))
 ```
 
-GPT-5.6 and later use typed prompt-cache options in Responses:
+GPT-5.6 and later use typed prompt-cache options on `Respond` and `Chat`:
 
 ```julia
 @kwdef struct PromptCacheOptions
-    mode::Union{String,Nothing} = nothing  # "implicit" or "explicit"
-    ttl::Union{String,Nothing} = nothing   # "30m"
+    mode::Union{String,Nothing} = nothing                    # "implicit" or "explicit"
+    ttl::Union{String,Nothing} = nothing                     # "30m"
+    prewarm::Union{Bool,Nothing} = nothing                   # Responses only: prepare the cache, no output
+    comparison_response_id::Union{String,Nothing} = nothing  # Responses only: request cache diagnostics
 end
 Respond(input="Hello", model="gpt-5.6-luna",
         reasoning=Reasoning(effort="low", context="current_turn", mode="standard"),
@@ -566,7 +587,30 @@ Respond(input="Hello", model="gpt-5.6-luna",
 
 Use `prompt_cache_options` in place of legacy `prompt_cache_retention` for these
 models. Explicit mode requires cache breakpoints in input content to create cache
-writes. [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
+writes — mark them with `input_text(text; cache_breakpoint=true)`. Chat Completions
+takes only `mode` and `ttl`. Diagnostics requested with `comparison_response_id` come
+back in `r.response.raw["prompt_cache_diagnostics"]`. Unset fields are omitted.
+[OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
+
+### Moderation
+
+```julia
+@kwdef struct ModerationConfig
+    model::Union{String,Nothing} = nothing        # e.g. "omni-moderation-latest"
+    input_mode::Union{String,Nothing} = nothing   # "score" or "block"
+    output_mode::Union{String,Nothing} = nothing  # "score" or "block"
+end
+Respond(input="Hello", moderation=ModerationConfig(model="omni-moderation-latest"))
+Chat(moderation=ModerationConfig(model="omni-moderation-latest", input_mode="block"))
+```
+
+The `moderation` field on `Respond` and `Chat` runs a moderation model over the
+request input and the generated output. `ModerationConfig()` with every field unset
+throws `ArgumentError`, as does a mode other than `"score"`/`"block"`. It serializes
+as `{"model": …, "policy": {"input": {"mode": …}, "output": {"mode": …}}}` with
+unset parts omitted. A `respond` result carries the outcome in
+`r.response.raw["moderation"]` (`"input"` and `"output"` moderation results);
+`LLMSuccess` keeps no raw body, so Chat results do not expose it.
 
 ### respond
 
@@ -692,8 +736,8 @@ respond("Tell me a story") do chunk, close_ref
     end
 end
 
-# Reasoning (O-series)
-result = respond("Prove that √2 is irrational", model="o3",
+# Reasoning
+result = respond("Prove that √2 is irrational", model="gpt-5.4-mini",
     reasoning=Reasoning(effort="high", summary="concise"))
 
 # Multimodal input
@@ -721,16 +765,18 @@ println(tokens["input_tokens"])
     model::String = ""                                      # sentinel — see below
     prompt::String
     n::Union{Int,Nothing} = nothing                         # 1–10
-    size::Union{String,Nothing} = nothing                   # "1024x1024","1536x1024","1024x1536","auto"
-    quality::Union{String,Nothing} = nothing                # "low","medium","high","auto"
+    size::Union{String,Nothing} = nothing                   # "1024x1024","1536x1024","1024x1536","auto"; gpt-image-2+: any WIDTHxHEIGHT, multiples of 16, up to 3840x2160
+    quality::Union{String,Nothing} = nothing                # "low","medium","high","auto"; gpt-image-2.5-flare/-sunburst add "xhigh","max"
     background::Union{String,Nothing} = nothing             # "transparent","opaque","auto"
     output_format::Union{String,Nothing} = nothing          # "png","webp","jpeg"
     output_compression::Union{Int,Nothing} = nothing        # 0–100 (webp/jpeg only)
     user::Union{String,Nothing} = nothing
-    input_fidelity::Union{String,Nothing} = nothing         # how closely to follow an input image
-    moderation::Union{String,Nothing} = nothing             # content-moderation strictness
+    moderation::Union{String,Nothing} = nothing             # "auto","low"
 end
 ```
+
+`input_fidelity` is an edit-only parameter: it lives on `ImageEdit`, and
+`ImageGeneration(...; input_fidelity=...)` is a `MethodError`.
 
 Unlike `Chat` and `Respond`, `ImageGeneration` does **not** resolve its model at
 construction: the field stays `""` and resolves at serialization time, to
@@ -1760,8 +1806,8 @@ Every exported symbol (`names(UniLM)`), grouped by area:
 **Chat Completions**: `Chat`, `Message`, `ProviderContent`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `Tool`, `ToolCall`, `FunctionSignature`, `FunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
 - *Legacy aliases* (pre-rename names, exported and non-breaking, retained until 1.0): `GPTTool` → `Tool`, `GPTToolCall` → `ToolCall`, `GPTFunctionSignature` → `FunctionSignature`, `GPTFunctionCallResult` → `FunctionCallResult`
 
-**Responses API & Agentic**: `Respond`, `InputMessage`, `ResponseObject`, `ResponseSuccess`, `ResponseFailure`, `ResponseCallError`, `Reasoning`, `PromptCacheOptions`, `TextConfig`, `TextFormatSpec`, `respond`, `get_response`, `delete_response`, `cancel_response`, `list_input_items`, `compact_response`, `count_input_tokens`, `text_format`, `json_schema_format`, `json_object_format`
-- *Input builders*: `input_text`, `input_image`, `input_file`
+**Responses API & Agentic**: `Respond`, `InputMessage`, `ResponseObject`, `ResponseSuccess`, `ResponseFailure`, `ResponseCallError`, `Reasoning`, `PromptCacheOptions`, `ModerationConfig`, `TextConfig`, `TextFormatSpec`, `respond`, `get_response`, `delete_response`, `cancel_response`, `list_input_items`, `compact_response`, `count_input_tokens`, `text_format`, `json_schema_format`, `json_object_format`
+- *Input builders*: `input_text`, `input_image`, `input_file`, `configuration_update`
 - *Tool types*: `ResponseTool`, `FunctionTool`, `WebSearchTool`, `FileSearchTool`, `MCPTool`, `ComputerUseTool`, `ComputerTool`, `ImageGenerationTool`, `CodeInterpreterTool`, `LocalShellTool`, `ShellTool`, `ApplyPatchTool`, `CustomTool`
 - *Tool constructors*: `function_tool`, `web_search`, `file_search`, `mcp_tool`, `computer_use`, `computer_tool`, `image_generation_tool`, `code_interpreter`, `local_shell`, `shell`, `apply_patch_tool`, `custom_tool`, `tool_result`, `mcp_approval_response`
 - *Hosted Gemini tools*: `gemini_google_search`, `gemini_code_execution`, `gemini_url_context`

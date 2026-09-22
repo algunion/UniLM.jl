@@ -566,12 +566,97 @@ end
 _chat_tools(tools) = tools
 
 """
+    PromptCacheOptions(; mode=nothing, ttl=nothing, prewarm=nothing, comparison_response_id=nothing)
+
+OpenAI prompt-cache controls for GPT-5.6 and later. `mode` is `"implicit"` or
+`"explicit"`; the supported `ttl` is `"30m"`. Explicit mode caches only prefixes
+marked with `prompt_cache_breakpoint` in input content blocks (see
+[`input_text`](@ref) with `cache_breakpoint=true`).
+
+Responses API only:
+- `prewarm=true` prepares the prompt cache without generating output; send the
+  real request afterwards with the same prefix and `prewarm` unset.
+- `comparison_response_id` requests prompt-cache diagnostics against an earlier
+  response; they come back in `r.response.raw["prompt_cache_diagnostics"]`.
+
+Chat Completions accepts only `mode` and `ttl`. Unset fields are omitted from the
+request. See [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
+"""
+@kwdef struct PromptCacheOptions
+    mode::Union{String,Nothing} = nothing
+    ttl::Union{String,Nothing} = nothing
+    prewarm::Union{Bool,Nothing} = nothing
+    comparison_response_id::Union{String,Nothing} = nothing
+    function PromptCacheOptions(mode, ttl, prewarm=nothing, comparison_response_id=nothing)
+        isnothing(mode) || mode in ("implicit", "explicit") ||
+            throw(ArgumentError("prompt cache mode must be implicit or explicit"))
+        isnothing(ttl) || ttl == "30m" || throw(ArgumentError("prompt cache ttl must be 30m"))
+        new(mode, ttl, prewarm, comparison_response_id)
+    end
+end
+
+function JSON.lower(options::PromptCacheOptions)
+    d = Dict{Symbol,Any}()
+    for f in (:mode, :ttl, :prewarm, :comparison_response_id)
+        v = getfield(options, f)
+        isnothing(v) || (d[f] = v)
+    end
+    d
+end
+
+"""
+    ModerationConfig(; model=nothing, input_mode=nothing, output_mode=nothing)
+
+OpenAI moderated completions for [`Chat`](@ref) and [`Respond`](@ref): a moderation
+`model` (e.g. `"omni-moderation-latest"`) checks the request input and the generated
+output. `input_mode` / `output_mode` set the policy per side: `"score"` or `"block"`.
+At least one field must be set. Serialized as
+`{"model": …, "policy": {"input": {"mode": …}, "output": {"mode": …}}}` with unset
+parts omitted. A [`respond`](@ref) result carries the outcome in
+`r.response.raw["moderation"]` (`"input"` and `"output"` moderation results);
+[`LLMSuccess`](@ref) keeps no raw body, so Chat results do not expose it. See the
+`moderation` parameter of
+[Create a model response](https://developers.openai.com/api/reference/resources/responses/methods/create).
+"""
+@kwdef struct ModerationConfig
+    model::Union{String,Nothing} = nothing
+    input_mode::Union{String,Nothing} = nothing
+    output_mode::Union{String,Nothing} = nothing
+    function ModerationConfig(model, input_mode, output_mode)
+        isnothing(input_mode) || input_mode in ("score", "block") ||
+            throw(ArgumentError("moderation input_mode must be score or block"))
+        isnothing(output_mode) || output_mode in ("score", "block") ||
+            throw(ArgumentError("moderation output_mode must be score or block"))
+        isnothing(model) && isnothing(input_mode) && isnothing(output_mode) &&
+            throw(ArgumentError("ModerationConfig needs a model or a policy mode"))
+        new(model, input_mode, output_mode)
+    end
+end
+
+function JSON.lower(m::ModerationConfig)
+    d = Dict{Symbol,Any}()
+    isnothing(m.model) || (d[:model] = m.model)
+    policy = Dict{Symbol,Any}()
+    isnothing(m.input_mode) || (policy[:input] = Dict(:mode => m.input_mode))
+    isnothing(m.output_mode) || (policy[:output] = Dict(:mode => m.output_mode))
+    isempty(policy) || (d[:policy] = policy)
+    d
+end
+
+"""
     chat = Chat()
 
 Creates a new `Chat` object with default settings:
 - `model` is set to `gpt-5.6-sol`
 - `messages` is set to an empty `Vector{Message}`
 - `history` is set to `true`
+
+OpenAI options, omitted from the request when unset:
+- `prompt_cache_options::Union{PromptCacheOptions,Nothing}`: prompt-cache `mode` and
+  `ttl` ([`PromptCacheOptions`](@ref)); supported for gpt-5.6 and later; the provider
+  rejects it on older models.
+- `moderation::Union{ModerationConfig,Nothing}`: moderated completions
+  ([`ModerationConfig`](@ref)).
 """
 @kwdef struct Chat
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
@@ -609,6 +694,8 @@ Creates a new `Chat` object with default settings:
     prompt_cache_key::Union{String,Nothing} = nothing
     safety_identifier::Union{String,Nothing} = nothing     # replaces deprecated `user`
     _cumulative_cost::Ref{Float64} = Ref(0.0)
+    prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing  # gpt-5.6 and later
+    moderation::Union{ModerationConfig,Nothing} = nothing
     function Chat(
         service,
         model,
@@ -644,7 +731,9 @@ Creates a new `Chat` object with default settings:
         web_search_options,
         prompt_cache_key,
         safety_identifier,
-        _cumulative_cost
+        _cumulative_cost,
+        prompt_cache_options=nothing,
+        moderation=nothing
     )
         model = _resolve_model(service, model)
         tools = _chat_tools(tools)  # accept a CallableTool vector, stored as Tools
@@ -691,7 +780,9 @@ Creates a new `Chat` object with default settings:
             web_search_options,
             prompt_cache_key,
             safety_identifier,
-            _cumulative_cost
+            _cumulative_cost,
+            prompt_cache_options,
+            moderation
         )
     end
 end
@@ -703,7 +794,7 @@ function JSON.lower(chat::Chat)
         :frequency_penalty, :logit_bias, :user, :seed,
         :reasoning_effort, :stream_options, :verbosity, :store, :metadata, :service_tier,
         :logprobs, :top_logprobs, :prediction, :modalities, :audio, :web_search_options,
-        :prompt_cache_key, :safety_identifier)
+        :prompt_cache_key, :safety_identifier, :prompt_cache_options, :moderation)
         v = getfield(chat, f)
         !isnothing(v) && (d[f] = v)
     end

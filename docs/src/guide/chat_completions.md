@@ -165,13 +165,15 @@ UniLM.jl works with any model name string. Common choices:
 
 | Model            | Usage                  |
 | :--------------- | :--------------------- |
-| `"gpt-5.6-sol"`      | Default; Chat tools require no reasoning |
+| `"gpt-5.6-sol"`  | Default; Chat tools require no reasoning; promotional price guaranteed through November 21, 2026 |
+| `"gpt-6-sol"`    | Current flagship, \$2/\$10 per M tokens |
+| `"gpt-6-luna"`   | Fast and cheap, \$0.10/\$0.50 |
 | `"gpt-5.6-luna"` | Fast and cheap         |
+| `"gpt-5.4-mini"` | Mini model; reasoning effort `"none"` by default |
 | `"gpt-4.1-mini"` | Balanced performance   |
-| `"o3"`           | Extended reasoning     |
 | `"o4-mini"`      | Fast reasoning         |
 
-All five are keys in [`DEFAULT_PRICING`](@ref), so cost accounting works out of
+All seven are keys in [`DEFAULT_PRICING`](@ref), so cost accounting works out of
 the box. Any other model name is accepted — it is just a string on the wire — but
 an unpriced one silently estimates at `0.0` — see
 [Unpriced models return \$0 silently](@ref unpriced-zero) before relying on

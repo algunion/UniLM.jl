@@ -32,6 +32,8 @@ UniLM speaks each provider's own wire API, not just the OpenAI-compatible protoc
 - **Files, Vector Stores & Conversations** — upload files, build vector stores for `file_search`, and manage server-side conversation state
 - **Audio, Batch & Moderations** — TTS/transcription, async 50%-off bulk jobs, and free safety classification
 - **Realtime, Fine-tuning, Webhooks, Containers, Uploads & Videos** — WebSocket realtime, custom models, signed-webhook verification, and more. See provider availability limits for [fine-tuning](docs/src/api/fine_tuning.md) and [videos](docs/src/api/videos.md).
+- **Not wrapped in this release: OpenAI Agents API** — public beta since September 10, 2026; UniLM has no wrapper for it yet.
+- **Not wrapped in this release: GPT-Live sessions** — `v1/live/sessions` (GPT-Live 1); the Realtime wrappers do not cover it.
 - **Streaming** — real-time token streaming with `do`-block syntax
 - **Structured Output** — JSON Schema–constrained generation
 - **Multi-Backend** — OpenAI, Azure, Gemini, Anthropic, DeepSeek, Ollama, Mistral, vLLM, LM Studio, and any OpenAI-compatible provider

@@ -174,6 +174,7 @@ export
     TextFormatSpec,
     Reasoning,
     PromptCacheOptions,
+    ModerationConfig,
     ResponseObject,
     # Result types
     ResponseSuccess,
@@ -207,6 +208,7 @@ export
     input_text,
     input_image,
     input_file,
+    configuration_update,
     # Tool constructors
     function_tool,
     tool_result,

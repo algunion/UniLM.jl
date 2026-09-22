@@ -13,6 +13,45 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "OPENAI_API_KEY")
         @test result isa LLMSuccess
         @test only(result.message.tool_calls).func.name == "ping"
     end
+
+    @testset "OpenAI GPT-6 Luna Chat tools, moderation, prewarm, and deferred tools" begin
+        ping = Tool(func=FunctionSignature(name="ping", parameters=Dict("type" => "object", "properties" => Dict())))
+        result = chatrequest!(Chat(model="gpt-6-luna", reasoning_effort="none", max_completion_tokens=64,
+            tools=[ping], tool_choice="required", messages=[Message(role=UniLM.RoleUser, content="Call ping.")]))
+        @test result isa LLMSuccess
+        if result isa LLMSuccess
+            calls = something(result.message.tool_calls, ToolCall[])
+            @test length(calls) == 1 && calls[1].func.name == "ping"
+        end
+
+        # First run (2026-09-22): the moderation result came back in r.response.raw["moderation"],
+        # an object with "input" and "output" entries of type "moderation_result".
+        result = respond("Reply with exactly: hello"; model="gpt-5.4-mini", max_output_tokens=64,
+            moderation=ModerationConfig(model="omni-moderation-latest"))
+        @test result isa ResponseSuccess
+        if result isa ResponseSuccess
+            moderation = result.response.raw["moderation"]
+            @test moderation["input"]["type"] == moderation["output"]["type"] == "moderation_result"
+            @test moderation["input"]["model"] == "omni-moderation-latest"
+        end
+
+        # First run (2026-09-22): prewarm returned HTTP 200 decoded as ResponseSuccess with
+        # status "completed", an empty output array, and 0 output tokens.
+        result = respond("Reply with exactly: hello"; model="gpt-5.6-luna", max_output_tokens=64,
+            prompt_cache_options=PromptCacheOptions(mode="explicit", ttl="30m", prewarm=true))
+        @test result isa ResponseSuccess
+        if result isa ResponseSuccess
+            @test result.response.status == "completed"
+            @test isempty(result.response.output)
+        end
+
+        # First run (2026-09-22): a deferred function tool without a tool_search tool is
+        # rejected with HTTP 400 "Deferred tools require tools.tool_search."
+        result = respond("Say hi"; model="gpt-5.4-mini", max_output_tokens=64,
+            tools=[FunctionTool(name="noop", description="does nothing",
+                parameters=Dict("type" => "object", "properties" => Dict()), defer_loading=true)])
+        @test result isa ResponseFailure && result.status == 400 && occursin("tool_search", result.response)
+    end
 end
 
 if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "GEMINI_API_KEY")

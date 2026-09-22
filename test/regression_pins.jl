@@ -216,6 +216,8 @@ end
             :audio => Dict("voice" => "alloy"),
             :web_search_options => Dict("search_context_size" => "low"),
             :prompt_cache_key => "pck", :safety_identifier => "sid",
+            :prompt_cache_options => PromptCacheOptions(mode="explicit", ttl="30m"),
+            :moderation => ModerationConfig(model="omni-moderation-latest", input_mode="block"),
         )
         chat = Chat(; kwargs...)
         forked = fork(chat)

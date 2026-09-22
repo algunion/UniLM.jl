@@ -129,6 +129,24 @@ end
     @testset "failure returns 0" begin
         @test estimated_cost(LLMFailure(response="err", status=500, self=chat)) == 0.0
     end
+
+    @testset "versioned Jev id without a row is priced at jev-latest" begin
+        # TypeSafe publishes one input price for Jev ($42 per Btok; output free), and
+        # responses report the versioned id that answered, e.g. a release newer than the table.
+        ju = TokenUsage(prompt_tokens=1_000_000, completion_tokens=500, total_tokens=1_000_500)
+        s1(model) = SystemOneSuccess(UniLM.SystemOneResponse(model, Dict{String,UniLM.SystemOneAnswer}(),
+            ju, nothing, Dict{String,Any}()))
+        @test !haskey(DEFAULT_PRICING, "jev-1.14.0")
+        @test estimated_cost(s1("jev-1.14.0")) ≈ 0.042
+        @test estimated_cost(s1("jev-1.14.0")) == estimated_cost(s1("jev-latest")) == estimated_cost(s1("jev-1.13.0"))
+        @test estimated_cost(s1("jev-latest"); model="jev-2.0.10") ≈ 0.042
+        @test estimated_cost(LLMSuccess(message=m, self=Chat(model="jev-2.0.10"), usage=ju)) ≈ 0.042
+        for other in ("jev-9", "jev-1.14", "jev-1.14.0-rc1", "xjev-1.14.0")
+            @test estimated_cost(s1(other)) == 0.0
+        end
+        # A caller-supplied table without a jev-latest row has no family rate to fall back to.
+        @test estimated_cost(s1("jev-1.14.0"); pricing=Dict("gpt-5.4" => DEFAULT_PRICING["gpt-5.4"])) == 0.0
+    end
 end
 
 @testset "cumulative_cost" begin
@@ -199,6 +217,17 @@ end
     @test p.input ≈ 1.75 / 1_000_000
     @test p.cached_input ≈ 0.175 / 1_000_000
     @test p.output ≈ 14.0 / 1_000_000
+
+    # OpenAI pricing page, 2026-09-22 (USD per 1M tokens): 1M fresh input + 1M output,
+    # then 1M input served entirely from the cache.
+    m = Message(role=UniLM.RoleAssistant, content="hi")
+    fresh = TokenUsage(prompt_tokens=1_000_000, completion_tokens=1_000_000, total_tokens=2_000_000)
+    cached = TokenUsage(prompt_tokens=1_000_000, cached_tokens=1_000_000, total_tokens=1_000_000)
+    for (model, input_and_output, cached_input) in (("gpt-6-sol", 2.0 + 10.0, 0.20),
+            ("gpt-6-luna", 0.10 + 0.50, 0.01), ("gpt-5.4-nano", 0.20 + 1.25, 0.02))
+        @test estimated_cost(LLMSuccess(message=m, self=Chat(; model), usage=fresh)) ≈ input_and_output
+        @test estimated_cost(LLMSuccess(message=m, self=Chat(; model), usage=cached)) ≈ cached_input
+    end
 end
 
 @testset "estimated_cost — cached input + new rows" begin

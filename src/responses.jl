@@ -39,11 +39,21 @@ end
 JSON.lower(m::InputMessage) = Dict{Symbol,Any}(:role => m.role, :content => m.content)
 
 """
-    input_text(text::String)
+    input_text(text::String; cache_breakpoint=false)
 
 Create an `input_text` content part for multimodal input messages.
+
+`cache_breakpoint=true` marks the end of this block as an explicit prompt-cache
+breakpoint (GPT-5.6 and later) by adding `prompt_cache_breakpoint: {"mode": "explicit"}`.
+OpenAI's prompt-caching guide: "mark each desired breakpoint by adding
+`prompt_cache_breakpoint: { "mode": "explicit" }` to a supported content block inside
+an input message." Pair it with [`PromptCacheOptions`](@ref)`(mode="explicit")` to
+cache only the prefixes you mark.
 """
-input_text(text::String) = Dict{Symbol,Any}(:type => "input_text", :text => text)
+input_text(text::String; cache_breakpoint::Bool=false) = cache_breakpoint ?
+    Dict{Symbol,Any}(:type => "input_text", :text => text,
+                     :prompt_cache_breakpoint => Dict{Symbol,Any}(:mode => "explicit")) :
+    Dict{Symbol,Any}(:type => "input_text", :text => text)
 
 """
     input_image(url=nothing; detail=nothing, file_id=nothing)
@@ -79,6 +89,27 @@ function input_file(; url::Union{String,Nothing}=nothing, id::Union{String,Nothi
     return d
 end
 
+# Reasoning effort values the OpenAI API accepts; each model supports a subset.
+const _OPENAI_REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+
+"""
+    configuration_update(; effort::String)
+
+Build a `configuration_update` input item,
+`{"type": "configuration_update", "reasoning": {"effort": effort}}`, that changes the
+reasoning effort of this and later responses without rewriting the request-level
+`reasoning.effort`, so the cached prompt prefix stays reusable. Place it in `input`
+before the next user message. Supported by the GPT-6 model family in standard,
+single-agent requests; the API rejects two adjacent updates. `effort` must be one of
+`"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`.
+See [Change reasoning mid-conversation](https://developers.openai.com/api/docs/guides/reasoning#change-reasoning-mid-conversation).
+"""
+function configuration_update(; effort::String)
+    effort in _OPENAI_REASONING_EFFORTS || throw(ArgumentError(
+        "configuration_update effort must be one of $(join(_OPENAI_REASONING_EFFORTS, ", ")) (got $(repr(effort)))"))
+    Dict{Symbol,Any}(:type => "configuration_update", :reasoning => Dict{Symbol,Any}(:effort => effort))
+end
+
 
 # ─── Tool Types ───────────────────────────────────────────────────────────────
 
@@ -93,9 +124,18 @@ Abstract supertype for Responses API tools. Subtypes:
 abstract type ResponseTool end
 
 """
-    FunctionTool(; name, description=nothing, parameters=nothing, strict=nothing)
+    FunctionTool(; name, description=nothing, parameters=nothing, strict=nothing,
+                 async=nothing, allowed_callers=nothing, defer_loading=nothing, output_schema=nothing)
 
 A function tool for the Responses API.
+
+- `async`: `true` lets the model keep working while your application runs the tool;
+  return its result later with the original `call_id` (GPT-6 models).
+- `allowed_callers`: invocation contexts, `"direct"` and/or `"programmatic"`.
+- `defer_loading`: `true` defers the definition until the model loads it via tool search.
+- `output_schema`: JSON Schema of the JSON value encoded in the tool's string output.
+
+Unset fields are omitted from the request.
 
 # Examples
 ```julia
@@ -117,13 +157,22 @@ FunctionTool(
     description::Union{String,Nothing} = nothing
     parameters::Union{AbstractDict,Nothing} = nothing
     strict::Union{Bool,Nothing} = nothing
+    async::Union{Bool,Nothing} = nothing
+    allowed_callers::Union{Vector{String},Nothing} = nothing
+    defer_loading::Union{Bool,Nothing} = nothing
+    output_schema::Union{Dict{String,Any},Nothing} = nothing
 end
 
+# Four-field positional arity (@kwdef defaults apply only to the keyword constructor).
+FunctionTool(name, description, parameters, strict) =
+    FunctionTool(name, description, parameters, strict, nothing, nothing, nothing, nothing)
+
 function JSON.lower(t::FunctionTool)
-    d = Dict{Symbol,Any}(:type => "function", :name => t.name)
-    !isnothing(t.description) && (d[:description] = t.description)
-    !isnothing(t.parameters) && (d[:parameters] = t.parameters)
-    !isnothing(t.strict) && (d[:strict] = t.strict)
+    d = Dict{Symbol,Any}(:type => "function")
+    for f in fieldnames(FunctionTool)
+        v = getfield(t, f)
+        isnothing(v) || (d[f] = v)
+    end
     return d
 end
 
@@ -228,10 +277,25 @@ function JSON.lower(t::ComputerUseTool)
 end
 
 """
-    ImageGenerationTool(; background=nothing, output_format=nothing, output_compression=nothing, quality=nothing, size=nothing)
+    ImageGenerationTool(; background=nothing, output_format=nothing, output_compression=nothing,
+                        quality=nothing, size=nothing, model=nothing, action=nothing,
+                        moderation=nothing, partial_images=nothing, input_fidelity=nothing,
+                        input_image_mask=nothing)
 
 An image generation tool for the Responses API. Allows the model to generate
 images inline during a response.
+
+- `model`: image model, e.g. `"gpt-image-2"`, `"gpt-image-2.5-flare"`, `"gpt-image-2.5-sunburst"`
+- `action`: `"generate"`, `"edit"`, or `"auto"`
+- `moderation`: `"auto"` or `"low"`
+- `partial_images`: partial images to stream before the final image, `0`–`3`
+- `input_fidelity`: `"high"` or `"low"` — how closely edits preserve input images
+  (omit it for `gpt-image-2`, which always uses high fidelity)
+- `input_image_mask`: inpainting mask, `Dict("file_id" => …)` or `Dict("image_url" => …)`
+- `quality`: `"low"`, `"medium"`, `"high"`, `"auto"`; the 2.5 models add `"xhigh"` and `"max"`
+
+The enumerated fields are validated at construction (`ArgumentError`); unset fields
+are omitted from the request.
 """
 @kwdef struct ImageGenerationTool <: ResponseTool
     background::Union{String, Nothing} = nothing
@@ -239,15 +303,34 @@ images inline during a response.
     output_compression::Union{Int, Nothing} = nothing
     quality::Union{String, Nothing} = nothing
     size::Union{String, Nothing} = nothing
+    model::Union{String, Nothing} = nothing
+    action::Union{String, Nothing} = nothing
+    moderation::Union{String, Nothing} = nothing
+    partial_images::Union{Int, Nothing} = nothing
+    input_fidelity::Union{String, Nothing} = nothing
+    input_image_mask::Union{Dict{String,Any}, Nothing} = nothing
+    function ImageGenerationTool(background, output_format, output_compression, quality, size,
+            model=nothing, action=nothing, moderation=nothing, partial_images=nothing,
+            input_fidelity=nothing, input_image_mask=nothing)
+        isnothing(action) || action in ("generate", "edit", "auto") ||
+            throw(ArgumentError("image_generation action must be generate, edit, or auto"))
+        isnothing(moderation) || moderation in ("auto", "low") ||
+            throw(ArgumentError("image_generation moderation must be auto or low"))
+        isnothing(partial_images) || 0 <= partial_images <= 3 ||
+            throw(ArgumentError("image_generation partial_images must be in [0, 3]"))
+        isnothing(input_fidelity) || input_fidelity in ("high", "low") ||
+            throw(ArgumentError("image_generation input_fidelity must be high or low"))
+        new(background, output_format, output_compression, quality, size,
+            model, action, moderation, partial_images, input_fidelity, input_image_mask)
+    end
 end
 
 function JSON.lower(t::ImageGenerationTool)
     d = Dict{Symbol,Any}(:type => "image_generation")
-    !isnothing(t.background) && (d[:background] = t.background)
-    !isnothing(t.output_format) && (d[:output_format] = t.output_format)
-    !isnothing(t.output_compression) && (d[:output_compression] = t.output_compression)
-    !isnothing(t.quality) && (d[:quality] = t.quality)
-    !isnothing(t.size) && (d[:size] = t.size)
+    for f in fieldnames(ImageGenerationTool)
+        v = getfield(t, f)
+        isnothing(v) || (d[f] = v)
+    end
     return d
 end
 
@@ -609,8 +692,10 @@ json_object_format() = TextConfig(format=TextFormatSpec(type="json_object"))
 
 Reasoning configuration for OpenAI and Gemini Interactions models.
 
-- `effort`: model-dependent; OpenAI also supports `"max"` and `"ultra"` on selected
-  models. Gemini 3.8 supports `"low"`, `"medium"`, and `"high"`.
+- `effort`: OpenAI accepts `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`,
+  `"xhigh"`, and `"max"`; each model supports a subset (GPT-6 Astra has no `"none"`
+  or `"minimal"`; gpt-5.4-mini and gpt-5.4-nano stop at `"xhigh"`). Gemini 3.8
+  supports `"low"`, `"medium"`, and `"high"`.
 - `summary`: `"auto"`, `"concise"`, or `"detailed"` — request a reasoning summary in the output.
 - `generate_summary`: deprecated alias serialized as `summary`; prefer `summary`.
   Gemini Interactions accepts `summary="auto"` for thought summaries.
@@ -653,31 +738,6 @@ end
 # ─── Main Request Type ────────────────────────────────────────────────────────
 
 """
-    PromptCacheOptions(; mode=nothing, ttl=nothing)
-
-OpenAI prompt-cache controls for GPT-5.6 and later. `mode` is `"implicit"` or
-`"explicit"`; the supported `ttl` is `"30m"`. Explicit mode caches only prefixes
-marked with `prompt_cache_breakpoint` in input content blocks.
-"""
-@kwdef struct PromptCacheOptions
-    mode::Union{String,Nothing} = nothing
-    ttl::Union{String,Nothing} = nothing
-    function PromptCacheOptions(mode, ttl)
-        isnothing(mode) || mode in ("implicit", "explicit") ||
-            throw(ArgumentError("prompt cache mode must be implicit or explicit"))
-        isnothing(ttl) || ttl == "30m" || throw(ArgumentError("prompt cache ttl must be 30m"))
-        new(mode, ttl)
-    end
-end
-
-function JSON.lower(options::PromptCacheOptions)
-    d = Dict{Symbol,Any}()
-    isnothing(options.mode) || (d[:mode] = options.mode)
-    isnothing(options.ttl) || (d[:ttl] = options.ttl)
-    d
-end
-
-"""
     Respond(; model="gpt-5.6-sol", input, kwargs...)
 
 Configuration struct for an OpenAI Responses API request.
@@ -698,6 +758,9 @@ Configuration struct for an OpenAI Responses API request.
 - `store::Bool`: Whether to store the response for later retrieval
 - `metadata::AbstractDict`: Arbitrary metadata to attach
 - `user::String`: End-user identifier
+- `prompt::AbstractDict`: Reusable prompt template reference; the reusable prompts API
+  (`v1/prompts`) shuts down on November 30, 2026
+- `moderation::ModerationConfig`: Moderated completions — see [`ModerationConfig`](@ref)
 
 # Examples
 ```julia
@@ -716,8 +779,8 @@ Respond(
     tools=ResponseTool[function_tool("get_weather", "Get weather", parameters=Dict("type"=>"object", "properties"=>Dict("location"=>Dict("type"=>"string"))))]
 )
 
-# Reasoning (O-series models)
-Respond(input="Solve this math problem...", model="o3", reasoning=Reasoning(effort="high"))
+# Reasoning
+Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reasoning(effort="high"))
 ```
 """
 @kwdef struct Respond
@@ -742,9 +805,9 @@ Respond(input="Solve this math problem...", model="o3", reasoning=Reasoning(effo
     background::Union{Bool,Nothing} = nothing
     include::Union{Vector{String},Nothing} = nothing
     max_tool_calls::Union{Int64,Nothing} = nothing
-    service_tier::Union{String,Nothing} = nothing      # "auto", "default", "flex", "priority", "fast"
+    service_tier::Union{String,Nothing} = nothing      # "auto", "default", "flex", "scale", "priority", "fast", "ultrafast"
     top_logprobs::Union{Int64,Nothing} = nothing       # 0-20
-    prompt::Union{AbstractDict,Nothing} = nothing
+    prompt::Union{AbstractDict,Nothing} = nothing      # v1/prompts shuts down on November 30, 2026
     prompt_cache_key::Union{String,Nothing} = nothing
     prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory", "24h" (older models)
     safety_identifier::Union{String,Nothing} = nothing
@@ -752,13 +815,14 @@ Respond(input="Solve this math problem...", model="o3", reasoning=Reasoning(effo
     context_management::Union{Vector,Nothing} = nothing
     stream_options::Union{AbstractDict,Nothing} = nothing
     prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing
+    moderation::Union{ModerationConfig,Nothing} = nothing
     function Respond(service, model, input, instructions, tools, tool_choice,
         parallel_tool_calls, temperature, top_p, max_output_tokens,
         stream, text, reasoning, truncation, store, metadata,
         previous_response_id, user, background, include, max_tool_calls,
         service_tier, top_logprobs, prompt, prompt_cache_key,
         prompt_cache_retention, safety_identifier, conversation,
-        context_management, stream_options, prompt_cache_options=nothing)
+        context_management, stream_options, prompt_cache_options=nothing, moderation=nothing)
         model = _resolve_model(service, model)
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
@@ -773,7 +837,7 @@ Respond(input="Solve this math problem...", model="o3", reasoning=Reasoning(effo
             previous_response_id, user, background, include, max_tool_calls,
             service_tier, top_logprobs, prompt, prompt_cache_key,
             prompt_cache_retention, safety_identifier, conversation,
-            context_management, stream_options, prompt_cache_options)
+            context_management, stream_options, prompt_cache_options, moderation)
     end
 end
 
@@ -784,7 +848,8 @@ function JSON.lower(r::Respond)
         :reasoning, :truncation, :store, :metadata, :previous_response_id,
         :user, :background, :include, :max_tool_calls, :service_tier,
         :top_logprobs, :prompt, :prompt_cache_key, :prompt_cache_retention,
-        :safety_identifier, :conversation, :context_management, :stream_options, :prompt_cache_options)
+        :safety_identifier, :conversation, :context_management, :stream_options, :prompt_cache_options,
+        :moderation)
         v = getfield(r, f)
         !isnothing(v) && (d[f] = v)
     end

@@ -597,6 +597,15 @@ A TypeSafe call that reached the service and came back non-2xx.
   string and validation-list shapes.
 - `message::String`: the human-readable message extracted from whichever of the
   three `detail` shapes the service used.
+- `retry_after::Union{Nothing,Float64}`: how long the service asked the caller to
+  wait, in seconds, read off the **final** response — the one being returned,
+  once the retry seam has spent `max_attempts`. `retry-after-ms` wins over
+  `retry-after` when both arrive, and an HTTP-date becomes a delay from now
+  floored at `0.0`. The seam's own backoff between attempts reads `Retry-After`
+  alone, so on a response that sends only the millisecond header this field is the
+  finer figure of the two. `nothing` when no usable hint was sent, which is every
+  status that is not rate-limiting and, as the service documents the header as
+  optional, some that are.
 """
 @kwdef struct SystemOneFailure <: LLMRequestResponse
     response::String
@@ -604,6 +613,7 @@ A TypeSafe call that reached the service and came back non-2xx.
     request_id::Union{Nothing,String} = nothing
     error_type::Union{Nothing,String} = nothing
     message::String = ""
+    retry_after::Union{Nothing,Float64} = nothing
 end
 
 """
@@ -626,8 +636,9 @@ a [`SystemOneFailure`](@ref) or [`SystemOneCallError`](@ref).
 
 A failed call has no answers, and returning an empty map instead would let
 `r["is_unsafe"].noul > 0.9` read as "safe" on a call that never happened. Check
-`issuccess` first, or handle the throw. `showerror` prints the status and the
-extracted message — never the request or the API key.
+`issuccess` first, or handle the throw. `showerror` prints the status, the
+extracted message and the `retry_after` hint when the service sent one — never
+the request or the API key.
 """
 struct SystemOneError <: Exception
     result::Union{SystemOneFailure,SystemOneCallError}
@@ -638,6 +649,8 @@ function Base.showerror(io::IO, e::SystemOneError)
     if r isa SystemOneFailure
         print(io, "SystemOneError: the System One call failed with HTTP ", r.status)
         isempty(r.message) || print(io, " — ", r.message)
+        isnothing(r.retry_after) ||
+            print(io, " (the service asked to retry after ", r.retry_after, "s)")
     else
         print(io, "SystemOneError: the System One call did not complete (", r.error, ")")
     end
@@ -845,10 +858,36 @@ end
 _typesafe_request_id(resp::HTTP.Response)::Union{Nothing,String} =
     (v = HTTP.header(resp, "x-typesafe-request-id", ""); isempty(v) ? nothing : String(v))
 
+"""
+    _typesafe_retry_after(resp) -> Union{Nothing,Float64}
+
+The wait a rate-limited or overloaded response asked for, in seconds.
+
+`retry-after-ms` is read first and `retry-after` second: a server that sends both
+means the millisecond form, and reading only the coarse one rounds a sub-second
+hint up to a whole second of idle client. `retry-after` itself takes either
+delta-seconds or an HTTP-date, both left to `_retry_after_seconds` — the seam's
+own reader, so the two forms are not parsed twice by two rules that could drift
+apart. `nothing` when neither header arrived or neither parsed: a value
+that is absent, malformed or not a finite number must leave the client's own
+backoff in charge, never make it throw or sleep forever.
+"""
+function _typesafe_retry_after(resp::HTTP.Response)::Union{Nothing,Float64}
+    ms = strip(HTTP.header(resp, "retry-after-ms", ""))
+    if !isempty(ms)
+        v = tryparse(Float64, ms)
+        if !isnothing(v) && isfinite(v)
+            return max(0.0, v / 1000)
+        end
+    end
+    return _retry_after_seconds(resp)
+end
+
 _typesafe_failure(resp::HTTP.Response)::SystemOneFailure = begin
     body = String(resp.body)
     SystemOneFailure(response=body, status=resp.status, request_id=_typesafe_request_id(resp),
-                     error_type=_typesafe_error_type(body), message=_typesafe_error_message(body))
+                     error_type=_typesafe_error_type(body), message=_typesafe_error_message(body),
+                     retry_after=_typesafe_retry_after(resp))
 end
 
 _typesafe_call_error(e)::SystemOneCallError =

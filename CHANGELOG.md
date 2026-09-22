@@ -17,6 +17,13 @@
   `TYPESAFE_BASE_URL`, `TYPESAFE_DEFAULT_MODEL`), which declares only
   `:system_one` and `:models`, so the chat, agentic and embedding verbs reject it
   up front.
+- `SystemOneFailure.retry_after`: the wait a rate-limited or overloaded response
+  asked for, in seconds, read off the final response from `retry-after-ms` (which
+  wins, and keeps sub-second precision) or `Retry-After` (delta-seconds or an
+  HTTP-date), and `nothing` when neither arrived or neither parsed. The retry seam
+  already waits out `Retry-After` between attempts; the field is what a caller
+  needs to schedule its own next attempt once `max_attempts` is spent, and
+  `showerror` on a `SystemOneError` reports it.
 - Natural-language control flow on top of that client. `@branch` is a `switch`
   whose cases are written in plain language: the option names become the criteria
   of one Choice question, only the selected body is evaluated, and a `_` line

@@ -20,13 +20,12 @@ _ts_json(name::AbstractString) = JSON.parse(_ts_fixture(name))
 const _TS_MOCK_CFG = UniLM.RequestConfig(max_attempts=1, total_deadline=30.0)
 
 """
-Run `f()` against a local HTTP server that answers every request with the given
-status/body/headers, and return `(result_of_f, recorded_requests)`. The key and
-base URL are supplied through the environment, so the call under test goes
-through the real `TYPESAFEServiceEndpoint` auth and base-URL resolution.
+Run `f()` against a local HTTP server whose n-th response is `responder(n)`, and
+return `(result_of_f, recorded_requests)`. The key and base URL are supplied
+through the environment, so the call under test goes through the real
+`TYPESAFEServiceEndpoint` auth and base-URL resolution.
 """
-function _ts_mock(f::Function; status::Int=200, body::AbstractString="{}",
-                  headers::Vector{Pair{String,String}}=["Content-Type" => "application/json"])
+function _ts_serve(f::Function, responder::Function)
     recorded = Dict{String,Any}[]
     # HTTP.jl 1.x hands the handler a byte vector; 2.x hands it a body object and
     # uses a distinct sentinel for a request with no body at all, which supports
@@ -39,7 +38,7 @@ function _ts_mock(f::Function; status::Int=200, body::AbstractString="{}",
             "body" => bodytext(req),
             "headers" => Dict{String,String}(
                 lowercase(String(k)) => String(v) for (k, v) in req.headers)))
-        HTTP.Response(status, headers, Vector{UInt8}(body))
+        responder(length(recorded))
     end
     # Probe an ephemeral port, then serve on it; the close-then-rebind window can race.
     for _ in 1:5
@@ -64,6 +63,23 @@ function _ts_mock(f::Function; status::Int=200, body::AbstractString="{}",
     end
     error("could not bind an ephemeral port for the TypeSafe mock server")
 end
+
+"One fixed answer to every request."
+_ts_mock(f::Function; status::Int=200, body::AbstractString="{}",
+         headers::Vector{Pair{String,String}}=["Content-Type" => "application/json"]) =
+    _ts_serve(f, _ -> HTTP.Response(status, headers, Vector{UInt8}(body)))
+
+"""
+A scripted sequence of `(status, headers, body)` answers: entry `i` answers
+request `i`, and the last entry repeats once the script runs out. Retries are
+only observable against a server whose answer CHANGES, so the retry seam needs
+this rather than the fixed responder above.
+"""
+_ts_mock_script(f::Function, script::AbstractVector) =
+    _ts_serve(f, n -> begin
+        status, headers, body = script[min(n, length(script))]
+        HTTP.Response(status, headers, Vector{UInt8}(body))
+    end)
 
 # The Julia spelling of live/02-basic-three-questions.request.json.
 _ts_request_02() = SystemOneRequest(
@@ -554,4 +570,123 @@ end
         list_models(; config=_TS_MOCK_CFG)
     end
     @test bad isa SystemOneCallError
+end
+
+@testset "TypeSafe — an overloaded response replays from its live capture" begin
+    # 38-err-overloaded-529 is a verbatim capture of a real 529 from the service,
+    # headers included: the object `detail` shape with an error_type this client
+    # had not seen before, and — the load-bearing part — NO retry hint on a
+    # response from the retryable band. The header set is the one the capture
+    # carried, minus the framing headers the transport owns (Date, Content-Length).
+    body = _ts_fixture("38-err-overloaded-529.response.json")
+    r, seen = _ts_mock(; status=529, body=body,
+        headers=["Content-Type" => "application/json",
+                 "Server" => "istio-envoy",
+                 "X-Typesafe-Request-Id" => "req_01a0c98ca30c711c8e5c6c7faa1a22ab",
+                 "X-Envoy-Upstream-Service-Time" => "1250"]) do
+        ask(_ts_request_02(); config=_TS_MOCK_CFG)
+    end
+    @test r isa SystemOneFailure
+    @test r.status == 529
+    @test r.error_type == "system_overloaded"
+    @test r.message == "We are currently experiencing high traffic and cannot process your request. Please try again later."
+    @test r.request_id == "req_01a0c98ca30c711c8e5c6c7faa1a22ab"
+    @test r.response == body
+    @test isnothing(r.retry_after)   # the captured response sent neither retry header
+    @test length(seen) == 1          # max_attempts=1: no second attempt to hide behind
+    @test contains(sprint(showerror, UniLM.SystemOneError(r)), "529")
+    @test !contains(sprint(showerror, UniLM.SystemOneError(r)), "retry after")
+end
+
+@testset "TypeSafe — a rate limit is retried, waited out, and reported with its hint" begin
+    # The service documents 429 for exceeding 250,000 tokens/second or 1,200
+    # requests/minute, and documents `retry-after` as sent only "when the response
+    # carries one". A sustained burst of 2,500 requests at ~87 requests/second did
+    # not draw one, so the 429 BODY here is synthetic and nothing is asserted about
+    # its shape; what these cases pin is the header handling, which is what the
+    # client reads and what a caller backs off on.
+    json = "Content-Type" => "application/json"
+    rl_body = """{"detail":{"error_type":"rate_limit_error","message":"Rate limit exceeded."}}"""
+    rl(extra...) = (429, Pair{String,String}[json, extra...], rl_body)
+    ok_body = _ts_fixture("02-basic-three-questions.response.json")
+
+    # Two rate limits asking for one second each, then the captured 200. With the
+    # budget for three attempts the seam must spend all three AND wait: the floor
+    # of 1.0 s is below the 2.0 s the two headers ask for together, so it holds
+    # even if the jitter on either attempt happens to win over the header.
+    script = [rl("retry-after" => "1"), rl("retry-after" => "1"), (200, [json], ok_body)]
+    waited = Ref(0.0)
+    retried, seen = _ts_mock_script(script) do
+        t = time()
+        out = ask(_ts_request_02(); config=UniLM.RequestConfig(max_attempts=3, total_deadline=60.0))
+        waited[] = time() - t
+        out
+    end
+    @test retried isa SystemOneSuccess
+    @test length(seen) == 3
+    @test waited[] >= 1.0
+
+    # The same server with no budget to retry: the 429 comes back as it arrived,
+    # carrying the hint the caller now needs to schedule its own next attempt.
+    once, seen1 = _ts_mock_script(script) do
+        ask(_ts_request_02(); config=_TS_MOCK_CFG)
+    end
+    @test once isa SystemOneFailure
+    @test once.status == 429
+    @test once.retry_after == 1.0
+    @test length(seen1) == 1
+    @test contains(sprint(showerror, UniLM.SystemOneError(once)), "retry after 1.0s")
+
+    # Header forms, one per case. Milliseconds are read first and keep sub-second
+    # precision — rounding 250 ms up to a whole second is a quarter of a second of
+    # throughput given away on every rate limit. These pin the REPORTED field; the
+    # seam's own backoff between attempts reads `Retry-After` alone, so a response
+    # sending only the millisecond header hands the caller the finer of the two.
+    function hint(hdrs::Vector{Pair{String,String}})
+        r, _ = _ts_mock(; status=429, body=rl_body, headers=hdrs) do
+            ask(_ts_request_02(); config=_TS_MOCK_CFG)
+        end
+        return r.retry_after
+    end
+    @test hint([json, "retry-after-ms" => "250"]) == 0.25
+    @test hint([json, "retry-after-ms" => "250", "retry-after" => "7"]) == 0.25
+    @test hint([json, "retry-after" => "7"]) == 7.0
+    @test hint([json, "retry-after-ms" => "soon", "retry-after" => "3"]) == 3.0
+    @test hint([json, "retry-after" => "soon"]) === nothing
+    @test hint([json]) === nothing
+
+    # The HTTP-date form, which RFC 7231 allows and CDNs do send: an absolute
+    # instant becomes a delay from now. Built here from civil-from-days so the
+    # expectation does not come from the same arithmetic the parser runs.
+    let months = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"),
+        weekdays = ("Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed")
+        function imf_fixdate(t::Real)::String
+            days, secs = fldmod(floor(Int, t), 86400)
+            z = days + 719468
+            era = fld(z, 146097)
+            doe = z - era * 146097
+            yoe = div(doe - div(doe, 1460) + div(doe, 36524) - div(doe, 146096), 365)
+            doy = doe - (365 * yoe + div(yoe, 4) - div(yoe, 100))
+            mp = div(5 * doy + 2, 153)
+            d = doy - div(153 * mp + 2, 5) + 1
+            m = mp < 10 ? mp + 3 : mp - 9
+            h, r = fldmod(secs, 3600)
+            mi, s = fldmod(r, 60)
+            return string(weekdays[mod(days, 7)+1], ", ", lpad(d, 2, '0'), " ", months[m], " ",
+                          yoe + era * 400 + (m <= 2), " ", lpad(h, 2, '0'), ":",
+                          lpad(mi, 2, '0'), ":", lpad(s, 2, '0'), " GMT")
+        end
+        @test imf_fixdate(784111777) == "Sun, 06 Nov 1994 08:49:37 GMT"
+
+        dated = hint([json, "retry-after" => imf_fixdate(time() + 2)])
+        @test dated isa Float64
+        @test 0.0 <= dated <= 2.5
+        # An instant already past is zero wait, never a negative one.
+        @test hint([json, "retry-after" => "Sun, 06 Nov 1994 08:49:37 GMT"]) == 0.0
+    end
+
+    # The hint belongs to the failure type, and "no hint" is its default.
+    @test :retry_after in fieldnames(SystemOneFailure)
+    @test SystemOneFailure(response="", status=429).retry_after === nothing
 end

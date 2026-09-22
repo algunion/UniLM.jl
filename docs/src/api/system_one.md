@@ -94,8 +94,8 @@ filled in only by the object shape.
 | 404 | Unknown path | `nothing`, message `"Not Found"` |
 | 405 | Wrong method for the path | `nothing`, message `"Method Not Allowed"` |
 | 422 | Schema validation failed | `nothing`; the message joins each validation entry as `"<field path>: <reason>"`, e.g. `questions.department.choice.criteria: Field required` |
-| 429 | Rate limit (tokens/second or requests/minute) | `nothing` unless the service sends the object shape; retried by the request seam |
-| 500, 502, 503, 504, 529 | Service-side failure, including the non-standard `529 Overloaded` | retried by the request seam |
+| 429 | Rate limit — 250,000 tokens/second or 1,200 requests/minute at the time of writing | retried by the seam up to `max_attempts` honouring `Retry-After`; the final failure carries `retry_after`, the wait the service asked for in seconds |
+| 500, 502, 503, 504, 529 | Service-side failure, including the non-standard `529 Overloaded` | retried by the request seam; a captured 529 used the object shape with `error_type = "system_overloaded"` and sent no retry header |
 
 [`ask`](@ref) and [`list_models`](@ref) ride the package's shared retry seam, so
 `RequestConfig.max_attempts` applies: 408, 429, 500, 502, 503, 504 and 529 are

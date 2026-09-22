@@ -547,13 +547,16 @@ throw an `ArgumentError` locally.
 | 401 | the key was present but invalid | `error_type = "authentication_error"` |
 | 403 | no `Authorization` header reached the service | `error_type = "authentication_error"` |
 | 422 | schema validation failed | `error_type = nothing`; `message` lists each field path as `"<path>: <reason>"`, e.g. `questions.department.choice.criteria: Field required` |
-| 429, 500, 502, 503, 504, 529 | rate limit or service-side failure (including the non-standard `529 Overloaded`) | retried by the request seam |
+| 429 | rate limit — 250,000 tokens/second or 1,200 requests/minute at the time of writing | retried by the seam up to `max_attempts` honouring `Retry-After`; the final failure carries `retry_after`, the wait the service asked for in seconds |
+| 500, 502, 503, 504, 529 | service-side failure (including the non-standard `529 Overloaded`) | retried by the request seam |
 
 A non-2xx response is a [`SystemOneFailure`](@ref) carrying `.status`,
 `.error_type`, `.message` (extracted from whichever of the service's three
 `detail` body shapes arrived), `.request_id` (the `x-typesafe-request-id`
-header, the id to quote in a support report) and `.response` (the verbatim
-body). The full table is on the [API reference page](@ref system_one_api).
+header, the id to quote in a support report), `.retry_after` (seconds, from
+`retry-after-ms` or `Retry-After`, `nothing` when the service sent neither) and
+`.response` (the verbatim body). The full table is on the
+[API reference page](@ref system_one_api).
 
 ### Timeouts and retries
 

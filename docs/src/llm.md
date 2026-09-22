@@ -1345,6 +1345,7 @@ struct SystemOneFailure <: LLMRequestResponse       # HTTP non-2xx
     request_id::Union{Nothing,String}
     error_type::Union{Nothing,String}               # "authentication_error", "api_usage_error"
     message::String
+    retry_after::Union{Nothing,Float64}             # seconds; retry-after-ms, else Retry-After
 end
 
 struct SystemOneCallError <: LLMRequestResponse     # no response at all
@@ -1397,7 +1398,8 @@ result[name]; haskey(result, name); keys(result)    # same, on Success or Respon
 `AbstractDict`), or bare questions auto-named `"q1"`, `"q2"`, … in order. Mixing
 the two, repeating a name, or passing none is an `ArgumentError`. Both verbs ride
 the shared retry seam, so `RequestConfig.max_attempts` applies to 408, 429, 500,
-502, 503, 504 and 529.
+502, 503, 504 and 529, and the final `SystemOneFailure` carries `retry_after` —
+the wait the service asked for in seconds, or `nothing` when it sent no hint.
 
 ### Example
 

@@ -159,6 +159,11 @@ function encode_request(::Type{OPENAIServiceEndpoint}, chat::Chat)::String
     if !isnothing(family) && !isnothing(chat.tools) && !isempty(chat.tools) && chat.reasoning_effort != "none"
         throw(ArgumentError("$(_NO_REASONING_CHAT_TOOLS[family].second) Chat tools require reasoning_effort=\"none\"; use Respond for reasoning with tools"))
     end
+    # The Chat Completions prompt_cache_options object has only mode and ttl.
+    pco = chat.prompt_cache_options
+    if !isnothing(pco) && (!isnothing(pco.prewarm) || !isnothing(pco.comparison_response_id))
+        throw(ArgumentError("Chat Completions prompt_cache_options accepts only mode and ttl; prewarm and comparison_response_id are Responses-only"))
+    end
     JSON.json(chat)
 end
 

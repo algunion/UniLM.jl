@@ -219,8 +219,9 @@ for persisted reasoning and pro mode.
 ## Moderation
 
 Set `moderation` to a [`ModerationConfig`](@ref) to have OpenAI run a moderation model
-over the request input and the generated output. `input_mode` and `output_mode` pick the
-policy for each side, `"score"` or `"block"`; unset parts are omitted from the request.
+over the request input and the generated output. The moderation `model` is required.
+The optional `input_mode` and `output_mode` pick the policy for each side, `"score"` or
+`"block"`; unset policy parts are omitted from the request.
 The result comes back in `result.response.raw["moderation"]`, with `"input"` and
 `"output"` moderation results. `Chat` takes the same field.
 

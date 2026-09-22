@@ -45,12 +45,14 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "OPENAI_API_KEY")
             @test isempty(result.response.output)
         end
 
-        # First run (2026-09-22): a deferred function tool without a tool_search tool is
-        # rejected with HTTP 400 "Deferred tools require tools.tool_search."
-        result = respond("Say hi"; model="gpt-5.4-mini", max_output_tokens=64,
+        # A deferred function tool is loaded through tool search, so it ships beside a
+        # tool_search tool (alone, the API answered HTTP 400 "Deferred tools require
+        # tools.tool_search." on 2026-09-22).
+        result = respond("Say hi"; model="gpt-5.4-mini", max_output_tokens=32,
             tools=[FunctionTool(name="noop", description="does nothing",
-                parameters=Dict("type" => "object", "properties" => Dict()), defer_loading=true)])
-        @test result isa ResponseFailure && result.status == 400 && occursin("tool_search", result.response)
+                parameters=Dict("type" => "object", "properties" => Dict()), defer_loading=true),
+                Dict("type" => "tool_search")])
+        @test result isa ResponseSuccess
     end
 end
 

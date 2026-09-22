@@ -579,8 +579,10 @@ Responses API only:
 - `comparison_response_id` requests prompt-cache diagnostics against an earlier
   response; they come back in `r.response.raw["prompt_cache_diagnostics"]`.
 
-Chat Completions accepts only `mode` and `ttl`. Unset fields are omitted from the
-request. See [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
+Chat Completions accepts only `mode` and `ttl`: a [`Chat`](@ref) for
+`OPENAIServiceEndpoint` with `prewarm` or `comparison_response_id` set throws
+`ArgumentError` when encoded. Unset fields are omitted from the request. See
+[OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
 """
 @kwdef struct PromptCacheOptions
     mode::Union{String,Nothing} = nothing
@@ -605,21 +607,21 @@ function JSON.lower(options::PromptCacheOptions)
 end
 
 """
-    ModerationConfig(; model=nothing, input_mode=nothing, output_mode=nothing)
+    ModerationConfig(; model, input_mode=nothing, output_mode=nothing)
 
-OpenAI moderated completions for [`Chat`](@ref) and [`Respond`](@ref): a moderation
-`model` (e.g. `"omni-moderation-latest"`) checks the request input and the generated
-output. `input_mode` / `output_mode` set the policy per side: `"score"` or `"block"`.
-At least one field must be set. Serialized as
+OpenAI moderated completions for [`Chat`](@ref) and [`Respond`](@ref): the required
+moderation `model` (e.g. `"omni-moderation-latest"`) checks the request input and the
+generated output. The optional `input_mode` / `output_mode` set the policy per side:
+`"score"` or `"block"`. Serialized as
 `{"model": …, "policy": {"input": {"mode": …}, "output": {"mode": …}}}` with unset
-parts omitted. A [`respond`](@ref) result carries the outcome in
+policy parts omitted. A [`respond`](@ref) result carries the outcome in
 `r.response.raw["moderation"]` (`"input"` and `"output"` moderation results);
 [`LLMSuccess`](@ref) keeps no raw body, so Chat results do not expose it. See the
 `moderation` parameter of
 [Create a model response](https://developers.openai.com/api/reference/resources/responses/methods/create).
 """
 @kwdef struct ModerationConfig
-    model::Union{String,Nothing} = nothing
+    model::String
     input_mode::Union{String,Nothing} = nothing
     output_mode::Union{String,Nothing} = nothing
     function ModerationConfig(model, input_mode, output_mode)
@@ -627,15 +629,12 @@ parts omitted. A [`respond`](@ref) result carries the outcome in
             throw(ArgumentError("moderation input_mode must be score or block"))
         isnothing(output_mode) || output_mode in ("score", "block") ||
             throw(ArgumentError("moderation output_mode must be score or block"))
-        isnothing(model) && isnothing(input_mode) && isnothing(output_mode) &&
-            throw(ArgumentError("ModerationConfig needs a model or a policy mode"))
         new(model, input_mode, output_mode)
     end
 end
 
 function JSON.lower(m::ModerationConfig)
-    d = Dict{Symbol,Any}()
-    isnothing(m.model) || (d[:model] = m.model)
+    d = Dict{Symbol,Any}(:model => m.model)
     policy = Dict{Symbol,Any}()
     isnothing(m.input_mode) || (policy[:input] = Dict(:mode => m.input_mode))
     isnothing(m.output_mode) || (policy[:output] = Dict(:mode => m.output_mode))

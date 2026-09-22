@@ -86,8 +86,15 @@ end
 
 # Interactions function tools use the flat OpenAI-Responses shape observed on the wire:
 # {type:"function", name, description?, parameters?}. No functionDeclarations wrapper.
+# The API reference's Function tool lists only those fields, so a set OpenAI-only
+# FunctionTool option is refused rather than dropped; `strict` is not sent.
+const _INTERACTIONS_UNSUPPORTED_TOOL_FIELDS = (:async, :allowed_callers, :defer_loading, :output_schema)
+
 function _interactions_tool(t)
     if t isa FunctionTool
+        set = Symbol[f for f in _INTERACTIONS_UNSUPPORTED_TOOL_FIELDS if !isnothing(getfield(t, f))]
+        isempty(set) || throw(ArgumentError(
+            "Gemini Interactions function tools do not support $(join(set, ", "))"))
         d = Dict{Symbol,Any}(:type => "function", :name => t.name)
         isnothing(t.description) || (d[:description] = t.description)
         isnothing(t.parameters)  || (d[:parameters] = t.parameters)

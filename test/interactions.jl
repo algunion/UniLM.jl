@@ -513,7 +513,8 @@ end
              :prompt_cache_retention => "24h", :safety_identifier => "s",
              :conversation => "conv_1", :context_management => [Dict("type" => "x")],
              :stream_options => Dict("include_usage" => true),
-             :prompt_cache_options => PromptCacheOptions(mode="explicit"))
+             :prompt_cache_options => PromptCacheOptions(mode="explicit"),
+             :moderation => ModerationConfig(model="omni-moderation-latest"))
     @test Set(first.(cases)) == Set(UniLM._INTERACTIONS_UNMAPPED_FIELDS)   # every unmapped field covered
     for (field, value) in cases
         rr = Respond(; service=GEMINIServiceEndpoint, input="x", (field => value,)...)
@@ -521,6 +522,23 @@ end
         @test err isa ArgumentError
         @test err isa ArgumentError && occursin(String(field), err.msg)
     end
+end
+
+@testset "Interactions encode — OpenAI-only FunctionTool options fail loud" begin
+    params = Dict("type" => "object", "properties" => Dict())
+    encode(tool) = UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input="x", tools=[tool]))
+    for (field, value) in (:async => true, :allowed_callers => ["direct"], :defer_loading => true,
+                           :output_schema => Dict{String,Any}("type" => "object"))
+        err = try encode(FunctionTool(; name="noop", parameters=params, (field => value,)...)); nothing catch e; e end
+        @test err isa ArgumentError && err.msg == "Gemini Interactions function tools do not support $field"
+    end
+    # false is still a value the request would lose; every set field is named.
+    err = try encode(FunctionTool(name="noop", async=false, defer_loading=false)); nothing catch e; e end
+    @test err isa ArgumentError && err.msg == "Gemini Interactions function tools do not support async, defer_loading"
+    # strict is not sent.
+    @test JSON.parse(encode(FunctionTool(name="noop", description="d", parameters=params, strict=true)))["tools"] ==
+          [Dict("type" => "function", "name" => "noop", "description" => "d", "parameters" => params)]
 end
 
 @testset "Interactions encode — text format → top-level response_format (wire golden)" begin

@@ -100,6 +100,9 @@ embeddingrequest!(emb)
     May 14, 2028. Its successor `gemini-embedding-2` is generally available and works
     through the same OpenAI-compatible endpoint:
     `Embeddings("test"; service=GEMINIOpenAIServiceEndpoint, model="gemini-embedding-2")`.
+    The OpenAI-compatible Gemini embeddings endpoint returns no `usage`, so
+    [`estimated_cost`](@ref) on its results is `0.0`; the `gemini-embedding-2` price row
+    applies only to results that carry usage.
 
 ## In-Place Design
 

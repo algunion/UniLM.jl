@@ -160,7 +160,7 @@ through that accessor, never directly.
 - `temperature` and `top_p` are mutually exclusive (constructor throws `ArgumentError`).
 - `parallel_tool_calls` is auto-set to `nothing` when `tools` is `nothing`.
 - **Parameter validation**: the constructor validates ranges at construction time — `temperature` ∈ [0.0, 2.0], `top_p` ∈ [0.0, 1.0], `n` ∈ [1, 10], `presence_penalty` ∈ [-2.0, 2.0], `frequency_penalty` ∈ [-2.0, 2.0]. Out-of-range values throw `ArgumentError`.
-- `prompt_cache_options` is supported for gpt-5.6 and later (the provider rejects it on older models); Chat Completions takes only its `mode` and `ttl`. `moderation` takes a [`ModerationConfig`](@ref).
+- `prompt_cache_options` is supported for gpt-5.6 and later (the provider rejects it on older models); Chat Completions takes only its `mode` and `ttl` — a native OpenAI `Chat` with `prewarm` or `comparison_response_id` set throws `ArgumentError` at encode time. `moderation` takes a [`ModerationConfig`](@ref).
 
 ### Message
 
@@ -417,10 +417,14 @@ end
     wire has no equivalent for throws `ArgumentError` at encode time rather than
     being silently dropped, so a request never goes out quietly ignoring what you
     asked for. That wire maps `model`, `input`, `instructions`, `tools`,
-    `tool_choice`, `temperature`, `top_p`, `max_output_tokens`, `stream`, `store`,
-    `previous_response_id`, `background`, and `reasoning` (effort and automatic
-    summaries only); leave every other field unset, or
-    send the request to an OpenAI Responses service.
+    `tool_choice`, `temperature`, `top_p`, `max_output_tokens`, `stream`, `text`
+    (its format becomes the top-level `response_format`; `verbosity` is
+    rejected), `store`, `previous_response_id`, `background`, and `reasoning`
+    (effort and automatic summaries only). Every other field — `moderation`,
+    `prompt_cache_options`, and the rest of the OpenAI-only options — is
+    rejected; leave it unset, or send the request to an OpenAI Responses service.
+    A `FunctionTool` with `async`, `allowed_callers`, `defer_loading`, or
+    `output_schema` set is rejected the same way.
 
 ### Input Helpers
 
@@ -452,7 +456,7 @@ abstract type ResponseTool end
     parameters::Union{AbstractDict,Nothing} = nothing
     strict::Union{Bool,Nothing} = nothing
     async::Union{Bool,Nothing} = nothing                    # GPT-6 async tool calling
-    allowed_callers::Union{Vector{String},Nothing} = nothing  # "direct", "programmatic"
+    allowed_callers::Union{Vector{String},Nothing} = nothing  # "direct" and/or "programmatic"; anything else throws
     defer_loading::Union{Bool,Nothing} = nothing            # loaded via tool search
     output_schema::Union{Dict{String,Any},Nothing} = nothing  # JSON Schema of the string output
 end
@@ -588,15 +592,17 @@ Respond(input="Hello", model="gpt-5.6-luna",
 Use `prompt_cache_options` in place of legacy `prompt_cache_retention` for these
 models. Explicit mode requires cache breakpoints in input content to create cache
 writes — mark them with `input_text(text; cache_breakpoint=true)`. Chat Completions
-takes only `mode` and `ttl`. Diagnostics requested with `comparison_response_id` come
-back in `r.response.raw["prompt_cache_diagnostics"]`. Unset fields are omitted.
+takes only `mode` and `ttl` (a native OpenAI `Chat` with `prewarm` or
+`comparison_response_id` set throws `ArgumentError`). Diagnostics requested with
+`comparison_response_id` come back in `r.response.raw["prompt_cache_diagnostics"]`.
+Unset fields are omitted.
 [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
 
 ### Moderation
 
 ```julia
 @kwdef struct ModerationConfig
-    model::Union{String,Nothing} = nothing        # e.g. "omni-moderation-latest"
+    model::String                                 # required, e.g. "omni-moderation-latest"
     input_mode::Union{String,Nothing} = nothing   # "score" or "block"
     output_mode::Union{String,Nothing} = nothing  # "score" or "block"
 end
@@ -605,10 +611,12 @@ Chat(moderation=ModerationConfig(model="omni-moderation-latest", input_mode="blo
 ```
 
 The `moderation` field on `Respond` and `Chat` runs a moderation model over the
-request input and the generated output. `ModerationConfig()` with every field unset
-throws `ArgumentError`, as does a mode other than `"score"`/`"block"`. It serializes
-as `{"model": …, "policy": {"input": {"mode": …}, "output": {"mode": …}}}` with
-unset parts omitted. A `respond` result carries the outcome in
+request input and the generated output. `model` is required, as in both the
+Responses and the Chat Completions API references: `ModerationConfig()` without it
+throws `UndefKeywordError`, and a mode other than `"score"`/`"block"` throws
+`ArgumentError`. It serializes as
+`{"model": …, "policy": {"input": {"mode": …}, "output": {"mode": …}}}` with unset
+policy parts omitted. A `respond` result carries the outcome in
 `r.response.raw["moderation"]` (`"input"` and `"output"` moderation results);
 `LLMSuccess` keeps no raw body, so Chat results do not expose it.
 
@@ -1534,7 +1542,7 @@ has_capability(service, cap::Symbol) -> Bool
 |---|---|
 | OpenAI | `:chat`, `:responses`, `:agentic`, `:embeddings`, `:images`, `:image_edits`, `:tools`, `:json_output`, `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`, `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:video`, `:realtime` |
 | Azure | `:chat`, `:tools` |
-| Gemini (native) | `:chat`, `:tools`, `:streaming`, `:agentic` |
+| Gemini (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:agentic` |
 | Gemini (OpenAI-compat) | `:chat`, `:embeddings`, `:tools`, `:json_output` |
 | Anthropic (native) | `:chat`, `:tools`, `:json_output`, `:streaming` |
 | TypeSafe (System One) | `:system_one`, `:models` |

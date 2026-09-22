@@ -25,8 +25,9 @@ using Test, HTTP, JSON, UniLM
     end
     @test_throws ArgumentError UniLM.encode_request(GEMINIServiceEndpoint,
         Chat(service=GEMINIServiceEndpoint, tool_choice="typo"))
+    # A response_format type with no generateContent counterpart still fails loud.
     @test_throws ArgumentError UniLM.encode_request(GEMINIServiceEndpoint,
-        Chat(service=GEMINIServiceEndpoint, response_format=UniLM.json_object()))
+        Chat(service=GEMINIServiceEndpoint, response_format=ResponseFormat(type="xml")))
     legacy = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash", temperature=0.5)
     @test JSON.parse(UniLM.encode_request(legacy.service, legacy))["generationConfig"]["temperature"] == 0.5
 end
@@ -228,6 +229,14 @@ end
     @test JSON.parse(UniLM.encode_request(chat.service, chat))["prompt_cache_options"] ==
           Dict("mode" => "explicit", "ttl" => "30m")
     @test !haskey(JSON.parse(JSON.json(Chat(model="gpt-5.6-luna"))), "prompt_cache_options")
+    # The Chat Completions object has only mode and ttl; a set Responses-only field fails loud.
+    for pco in (PromptCacheOptions(prewarm=true), PromptCacheOptions(prewarm=false),
+                PromptCacheOptions(mode="explicit", ttl="30m", comparison_response_id="resp_1"))
+        bad = Chat(model="gpt-5.6-luna", prompt_cache_options=pco)
+        err = try UniLM.encode_request(bad.service, bad); nothing catch e; e end
+        @test err isa ArgumentError && err.msg == "Chat Completions prompt_cache_options accepts only " *
+            "mode and ttl; prewarm and comparison_response_id are Responses-only"
+    end
     r = Respond(input="hi", model="gpt-5.6-luna",
                 prompt_cache_options=PromptCacheOptions(prewarm=true, comparison_response_id="resp_1"))
     @test JSON.parse(UniLM.encode_agentic(r.service, r))["prompt_cache_options"] ==
@@ -238,18 +247,20 @@ end
 end
 
 @testset "ModerationConfig validation and wire shape on Chat and Respond" begin
-    err = try ModerationConfig(); nothing catch e; e end
-    @test err isa ArgumentError && err.msg == "ModerationConfig needs a model or a policy mode"
+    # Both API references list moderation.model as required; the policy is optional.
+    @test_throws UndefKeywordError ModerationConfig()
+    @test_throws UndefKeywordError ModerationConfig(input_mode="block", output_mode="score")
+    @test_throws MethodError ModerationConfig(model=nothing, input_mode="block")
     @test_throws ArgumentError ModerationConfig(model="omni-moderation-latest", input_mode="flag")
-    @test_throws ArgumentError ModerationConfig(output_mode="typo")
+    @test_throws ArgumentError ModerationConfig(model="omni-moderation-latest", output_mode="typo")
     full = ModerationConfig(model="omni-moderation-latest", input_mode="block", output_mode="score")
     golden = Dict("model" => "omni-moderation-latest",
                   "policy" => Dict("input" => Dict("mode" => "block"), "output" => Dict("mode" => "score")))
     @test JSON.parse(JSON.json(full)) == golden
     @test JSON.parse(JSON.json(ModerationConfig(model="omni-moderation-latest"))) ==
           Dict("model" => "omni-moderation-latest")
-    @test JSON.parse(JSON.json(ModerationConfig(output_mode="block"))) ==
-          Dict("policy" => Dict("output" => Dict("mode" => "block")))
+    @test JSON.parse(JSON.json(ModerationConfig(model="omni-moderation-latest", output_mode="block"))) ==
+          Dict("model" => "omni-moderation-latest", "policy" => Dict("output" => Dict("mode" => "block")))
 
     chat = Chat(model="gpt-5.4-mini", moderation=full)
     @test JSON.parse(UniLM.encode_request(chat.service, chat))["moderation"] == golden
@@ -298,6 +309,14 @@ end
         "parameters" => Dict("type" => "object", "properties" => Dict()), "async" => true,
         "allowed_callers" => ["direct", "programmatic"], "defer_loading" => true, "output_schema" => schema)
     @test JSON.parse(JSON.json(FunctionTool(name="bare"))) == Dict("type" => "function", "name" => "bare")
+    # allowed_callers is an enum array on the Responses wire: direct and/or programmatic.
+    @test FunctionTool(name="f", allowed_callers=["programmatic"]).allowed_callers == ["programmatic"]
+    err = try FunctionTool(name="f", allowed_callers=["direct", "indirect"]); nothing catch e; e end
+    @test err isa ArgumentError &&
+          err.msg == "FunctionTool allowed_callers must be \"direct\" or \"programmatic\" (got \"indirect\")"
+    for callers in (["Direct"], [""], ["programmatic", "api", "tool"])
+        @test_throws ArgumentError FunctionTool(name="f", allowed_callers=callers)
+    end
     legacy = FunctionTool("get_weather", "Weather", Dict("type" => "object"), true)
     @test JSON.parse(JSON.json(legacy)) == Dict("type" => "function", "name" => "get_weather",
         "description" => "Weather", "parameters" => Dict("type" => "object"), "strict" => true)

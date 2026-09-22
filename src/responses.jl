@@ -131,7 +131,8 @@ A function tool for the Responses API.
 
 - `async`: `true` lets the model keep working while your application runs the tool;
   return its result later with the original `call_id` (GPT-6 models).
-- `allowed_callers`: invocation contexts, `"direct"` and/or `"programmatic"`.
+- `allowed_callers`: invocation contexts, `"direct"` and/or `"programmatic"`; any other
+  value throws `ArgumentError`.
 - `defer_loading`: `true` defers the definition until the model loads it via tool search.
 - `output_schema`: JSON Schema of the JSON value encoded in the tool's string output.
 
@@ -161,6 +162,12 @@ FunctionTool(
     allowed_callers::Union{Vector{String},Nothing} = nothing
     defer_loading::Union{Bool,Nothing} = nothing
     output_schema::Union{Dict{String,Any},Nothing} = nothing
+    function FunctionTool(name, description, parameters, strict, async, allowed_callers, defer_loading, output_schema)
+        bad = isnothing(allowed_callers) ? () : filter(∉(("direct", "programmatic")), allowed_callers)
+        isempty(bad) || throw(ArgumentError(
+            "FunctionTool allowed_callers must be \"direct\" or \"programmatic\" (got $(join(repr.(bad), ", ")))"))
+        new(name, description, parameters, strict, async, allowed_callers, defer_loading, output_schema)
+    end
 end
 
 # Four-field positional arity (@kwdef defaults apply only to the keyword constructor).

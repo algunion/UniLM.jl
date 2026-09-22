@@ -2,6 +2,103 @@
 
 ## Unreleased
 
+## 0.19.0
+
+### Breaking
+- `ImageGeneration` no longer has an `input_fidelity` field: it is an image-edit
+  parameter that `/images/generations` does not accept, so `generate_image` never
+  sent anything the provider could act on. Set it on `ImageEdit` instead. Passing
+  `input_fidelity=` to `ImageGeneration` or `generate_image` now throws
+  `MethodError`, and the positional `ImageGeneration` constructor takes 11
+  arguments instead of 12.
+
+### Added
+- GPT-6 Sol and Luna restrictions on the native OpenAI endpoint fail before a
+  request is sent: Chat tool calling requires `reasoning_effort="none"` (as for
+  GPT-5.6); unless reasoning effort is `"none"` (an omitted effort counts as the
+  provider default, `"medium"`), `temperature`, `top_p`, `top_logprobs`, Chat
+  `logprobs=true` and a Responses `include` of `"message.output_text.logprobs"`
+  are refused; `prompt_cache_retention` is refused for every `gpt-6*` model.
+  `encode_request` / `encode_agentic` throw `ArgumentError`; `chatrequest!` /
+  `respond` return it as `LLMCallError` / `ResponseCallError`.
+- `ModerationConfig` and a `moderation` field on `Chat` and `Respond` for OpenAI
+  moderated completions: a required moderation `model` (for example
+  `"omni-moderation-latest"`) plus an optional `"score"` / `"block"` policy mode
+  for the input and output sides. A `respond` result carries the outcome in
+  `r.response.raw["moderation"]`.
+- `PromptCacheOptions` (now defined alongside `Chat`) gains two Responses-only
+  options: `prewarm` prepares the prompt cache without generating output, and
+  `comparison_response_id` requests prompt-cache diagnostics, returned in
+  `r.response.raw["prompt_cache_diagnostics"]`. `Chat.prompt_cache_options`
+  carries `mode` and `ttl` to Chat Completions for gpt-5.6 and later (older
+  models answer 400: `gpt-5.4-mini` did on 2026-09-22); setting a Responses-only
+  option on a native OpenAI `Chat` throws `ArgumentError`, and `mode="explicit"`
+  on a `Chat` means no prompt caching because Chat messages cannot carry cache
+  breakpoints.
+- `input_text(text; cache_breakpoint=true)` marks an explicit prompt-cache
+  breakpoint, and `configuration_update(; effort)` builds the GPT-6
+  `configuration_update` input item that changes reasoning effort mid-conversation
+  without rewriting the cached prefix.
+- `FunctionTool` gains `async`, `allowed_callers` (validated: `"direct"` /
+  `"programmatic"`), `defer_loading` and `output_schema`, and `function_tool`
+  (dict and keyword forms) carries them. `ImageGenerationTool` gains `model`,
+  `action`, `moderation`, `partial_images`, `input_fidelity` and
+  `input_image_mask`; `action`, `moderation`, `partial_images` and
+  `input_fidelity` are validated at construction. `output_schema` and
+  `input_image_mask` accept any `AbstractDict`. Existing positional constructors
+  keep working.
+- Native Gemini structured output: `Chat(service=GEMINIServiceEndpoint,
+  response_format=…)` sends JSON-object and JSON-Schema formats as
+  `generationConfig.responseFormat`, and `respond(…; service=GEMINIServiceEndpoint,
+  text=json_schema_format(…))` (or `json_object_format()`) sends the Interactions
+  `response_format`. `GEMINIServiceEndpoint` now declares `:json_output`. Other
+  shapes, including a set text `verbosity`, raise `ArgumentError`; the schema
+  `name`, `description` and `strict` have no Gemini counterpart and are not sent.
+- Native Gemini `Chat` sends `safety_identifier` as the request label
+  `safety_identifier`, checked locally against Google's label rule (at most 63
+  characters of lowercase letters, digits, `_` and `-`), so a 64-character hex
+  digest throws `ArgumentError` before any request.
+- Price rows for `gpt-6-sol`, `gpt-6-luna`, `gpt-5.4-nano`, `gemini-3.6-flash`,
+  `gemini-3.5-flash-lite` and `gemini-embedding-2` (text input).
+
+### Changed
+- Gemini thinking levels are validated per model family against Google's
+  thinking table, matching the longest family name: for example
+  `gemini-3-pro-preview` accepts only `low`/`high` and
+  `gemini-3.1-flash-lite-image` only `minimal`/`high`. Models outside the table
+  keep the previous check.
+- Gemini Interactions rejects a `FunctionTool` whose `async`, `allowed_callers`,
+  `defer_loading` or `output_schema` is set, and native Anthropic rejects a `Chat`
+  whose `moderation` or `prompt_cache_options` is set, instead of dropping the
+  field silently.
+- GPT-6 Astra accepts `logprobs=false` (only `logprobs=true` and `top_logprobs`
+  are refused), matching the observed provider behaviour.
+- The System One guide, API page and cost-tracking guide now execute their
+  single-shot `ask` and `list_models` examples during the documentation build,
+  like the OpenAI examples; a live documentation build renders real answers.
+- Documentation: the `Reasoning` effort set is `none`, `minimal`, `low`,
+  `medium`, `high`, `xhigh`, `max`; Responses `service_tier` lists `scale` and
+  `ultrafast`; reusable prompts (`v1/prompts`) shut down on November 30, 2026;
+  the Videos API and `sora-2` models shut down on September 24, 2026 (the
+  wrappers stay and return provider errors from that date); image `quality`
+  accepts `xhigh` and `max` on the 2.5 models and `gpt-image-2` and later accept
+  arbitrary `WIDTHxHEIGHT` sizes; the model table adds GPT-6 Sol/Luna and
+  `gpt-5.4-mini` and drops `o3`; the Agentic Workflows examples use
+  `gemini-3.8-flash` (`gemini-3.1-flash-lite` shuts down May 7, 2027);
+  `gemini-embedding-001` shuts down May 14, 2028 and `gemini-embedding-2` works
+  through `GEMINIOpenAIServiceEndpoint`; the README notes that the Agents API and
+  GPT-Live sessions are not wrapped.
+
+### Fixed
+- `estimated_cost` prices a versioned Jev id that has no row of its own (for
+  example `jev-1.14.0`, including on `SystemOneSuccess` results) at the
+  `jev-latest` rate instead of `0.0`; TypeSafe lists one price (Jev 1.13), and a
+  later version is assumed to keep it until the pricing page says otherwise.
+- Five documentation examples rendered misleading output (an empty block for the
+  FIM failure accessors, a leaked Azure deployment entry across pages, a validity
+  comment that contradicted its output, a struct dump after `push!`, and a
+  compaction example on the flagship model); each now renders what its prose says.
+
 ## 0.18.0
 
 ### Added

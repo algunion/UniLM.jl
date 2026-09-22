@@ -48,6 +48,49 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "GEMINI_API_KEY")
         result = embeddingrequest!(Embeddings("hello"; service=GEMINIOpenAIServiceEndpoint))
         @test result isa EmbeddingSuccess
     end
+
+    capital_schema = Dict("type" => "object",
+        "properties" => Dict("city" => Dict("type" => "string"), "country" => Dict("type" => "string")),
+        "required" => ["city", "country"], "additionalProperties" => false)
+
+    @testset "Gemini native structured output (response_format)" begin
+        result = chatrequest!(Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash",
+            reasoning_effort="low", max_tokens=1024,
+            response_format=UniLM.json_schema("capital", "A capital city and its country", capital_schema),
+            messages=[Message(role=UniLM.RoleUser, content="Give the capital of Norway as JSON.")]))
+        @test result isa LLMSuccess
+        if result isa LLMSuccess
+            parsed = JSON.parse(something(result.message.content, ""))
+            @info "Gemini native structured output" json = JSON.json(parsed)
+            @test haskey(parsed, "city") && haskey(parsed, "country")
+        end
+    end
+
+    @testset "Gemini Interactions structured output (text → response_format)" begin
+        result = respond("Give the capital of Norway as JSON."; service=GEMINIServiceEndpoint,
+            model="gemini-3.8-flash", max_output_tokens=256,
+            text=json_schema_format("capital", "A capital city and its country", capital_schema))
+        @test result isa ResponseSuccess
+        if result isa ResponseSuccess
+            parsed = JSON.parse(output_text(result))
+            @info "Gemini Interactions structured output" json = JSON.json(parsed)
+            @test haskey(parsed, "city") && haskey(parsed, "country")
+        end
+    end
+
+    @testset "Gemini native safety_identifier (request labels)" begin
+        result = chatrequest!(Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash",
+            reasoning_effort="low", max_tokens=1024, safety_identifier="unilm-live-witness",
+            messages=[Message(role=UniLM.RoleUser, content="Reply with exactly: hello")]))
+        @test result isa LLMSuccess
+    end
+
+    @testset "Gemini embedding-2 through the OpenAI-compatible endpoint" begin
+        result = embeddingrequest!(Embeddings("hello"; service=GEMINIOpenAIServiceEndpoint,
+            model="gemini-embedding-2"))
+        @info "gemini-embedding-2 via GEMINIOpenAIServiceEndpoint" result_type = typeof(result)
+        @test result isa EmbeddingSuccess
+    end
 else
     @info "Skipping current Gemini wire integration tests (set UNILM_LIVE=1 and GEMINI_API_KEY)"
 end

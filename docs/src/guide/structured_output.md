@@ -144,6 +144,48 @@ tc = text_format()
 println("Default format type: ", tc.format.type)
 ```
 
+## Gemini
+
+Native Gemini takes the same options: a `Chat`'s `response_format` becomes
+`generationConfig.responseFormat` on `generateContent`, and the `text` format of a
+[`respond`](@ref) call becomes the Interactions `response_format`. Only the schema
+is sent — Gemini has no counterpart for the schema `name`, `description`, or `strict`.
+
+```@example structured
+capital = ResponseFormat(UniLM.JsonSchemaAPI(
+    name="capital",
+    description="A capital city and its country",
+    schema=Dict(
+        "type" => "object",
+        "properties" => Dict(
+            "city" => Dict("type" => "string"),
+            "country" => Dict("type" => "string")
+        ),
+        "required" => ["city", "country"],
+        "additionalProperties" => false
+    )
+))
+
+chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash",
+            reasoning_effort="low", max_tokens=1024, response_format=capital)
+push!(chat, Message(Val(:system), "You output JSON."))
+push!(chat, Message(Val(:user), "Give the capital of Norway as JSON."))
+result = chatrequest!(chat)
+if result isa LLMSuccess
+    println(sort(collect(keys(JSON.parse(result.message.content)))))
+else
+    println("Request failed — ", result)
+end
+```
+
+The Interactions form passes the same schema through `text`:
+
+```julia
+fmt = json_schema_format("capital", "A capital city and its country", capital.json_schema.schema)
+result = respond("Give the capital of Norway as JSON."; service=GEMINIServiceEndpoint,
+                 model="gemini-3.8-flash", text=fmt, max_output_tokens=256)
+```
+
 ## Convenience Constructors
 
 | Constructor                              | Format                  |

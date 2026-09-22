@@ -22,7 +22,7 @@
     end
 
     @testset "Gemini get_url" begin
-        chat = Chat(service=UniLM.GEMINIOpenAIServiceEndpoint, model="gemini-2.0-flash")
+        chat = Chat(service=UniLM.GEMINIOpenAIServiceEndpoint, model="gemini-3.8-flash")
         @test UniLM.get_url(UniLM.GEMINIOpenAIServiceEndpoint, chat) == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
     end
 

@@ -977,7 +977,7 @@ end
     end
 
     @testset "Gemini endpoint" begin
-        chat = Chat(service=UniLM.GEMINIOpenAIServiceEndpoint, model="gemini-2.0-flash")
+        chat = Chat(service=UniLM.GEMINIOpenAIServiceEndpoint, model="gemini-3.8-flash")
         @test chat.service == UniLM.GEMINIOpenAIServiceEndpoint
     end
 end

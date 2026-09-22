@@ -41,12 +41,36 @@ function _gemini_validate_sampling(model::String, temperature, top_p)
     nothing
 end
 
+# Thinking levels per model family, transcribed from the "Controlling thinking" table
+# (https://ai.google.dev/gemini-api/docs/thinking, 2026-09-22).
+const _GEMINI_THINKING_LEVELS = (
+    ("gemini-3.8-flash",            ("low", "medium", "high")),
+    ("gemini-3.7-flash",            ("low", "medium", "high")),
+    ("gemini-3.6-flash",            ("minimal", "low", "medium", "high")),
+    ("gemini-3.5-flash-lite",       ("minimal", "low", "medium", "high")),
+    ("gemini-3.1-pro-preview",      ("low", "medium", "high")),
+    ("gemini-3.1-flash-lite-image", ("minimal", "high")),
+    ("gemini-3-flash-preview",      ("minimal", "low", "medium", "high")),
+    ("gemini-3-pro-preview",        ("low", "high")),
+    ("gemini-3.5-flash",            ("minimal", "low", "medium", "high")),
+    ("gemini-2.5-pro",              ("low", "medium", "high")),
+    ("gemini-2.5-flash",            ("low", "medium", "high")),
+    ("gemini-2.5-flash-lite",       ("low", "medium", "high")),
+)
+
+# A model resolves to its LONGEST matching family (gemini-3.5-flash-lite is also in
+# the gemini-3.5-flash family); `nothing` for an unlisted family.
+function _gemini_thinking_levels(model::AbstractString, table=_GEMINI_THINKING_LEVELS)
+    rows = filter(row -> _model_family(model, first(row)), table)
+    isempty(rows) ? nothing : last(argmax(row -> length(first(row)), rows))
+end
+
 function _gemini_thinking_level(model::String, effort::String; native::Bool=false)::String
     effort in ("minimal", "low", "medium", "high") || throw(ArgumentError(
         "Gemini thinking effort must be minimal, low, medium, or high (got $(repr(effort)))"))
-    if effort == "minimal" && any(f -> _model_family(model, f), ("gemini-3.7-flash", "gemini-3.8-flash"))
-        throw(ArgumentError("$model supports low, medium, or high thinking effort"))
-    end
+    levels = _gemini_thinking_levels(model)
+    isnothing(levels) || effort in levels || throw(ArgumentError(
+        "$model supports $(join(levels, ", ", length(levels) == 2 ? " or " : ", or ")) thinking effort"))
     native && startswith(model, "gemini-2.5-") && throw(ArgumentError(
         "Gemini 2.5 generateContent uses thinkingBudget; use Respond with Reasoning for thinking levels"))
     effort
@@ -56,7 +80,8 @@ end
 # default predates the native backend; Gemini determines parallelism itself.
 const _GEMINI_CHAT_MAPPED_FIELDS = (:service, :model, :messages, :history, :tools,
     :tool_choice, :parallel_tool_calls, :temperature, :top_p, :n, :stream, :stop,
-    :max_tokens, :max_completion_tokens, :reasoning_effort, :_cumulative_cost)
+    :max_tokens, :max_completion_tokens, :response_format, :reasoning_effort,
+    :safety_identifier, :_cumulative_cost)
 const _GEMINI_CHAT_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Chat), _GEMINI_CHAT_MAPPED_FIELDS))
 
 function _gemini_validate_chat(chat::Chat)
@@ -92,9 +117,31 @@ function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
     if (effort = chat.reasoning_effort) !== nothing
         gen[:thinkingConfig] = Dict(:thinkingLevel => uppercase(_gemini_thinking_level(chat.model, effort; native=true)))
     end
+    (fmt = _gemini_response_format(chat.response_format)) === nothing || (gen[:responseFormat] = fmt)
     isempty(gen) || (body[:generationConfig] = gen)
+    # Request labels carry an aggregator's end-user id under Google's documented key.
+    isnothing(chat.safety_identifier) || (body[:labels] = Dict(:safety_identifier => chat.safety_identifier))
     # NB: `stream` is expressed in the URL method (get_url), never in the body.
     JSON.json(body)
+end
+
+# Neutral response_format → generationConfig.responseFormat = {text: TextResponseFormat}.
+# TextResponseFormat.mimeType is an enum on this wire: the API answers 400 to
+# "application/json" and accepts APPLICATION_JSON (observed 2026-09-22). The OpenAI
+# schema name, description, and strict flag have no generateContent counterpart.
+_gemini_response_format(::Nothing) = nothing
+function _gemini_response_format(rf::ResponseFormat)
+    js = rf.json_schema
+    rf.type == "text" && isnothing(js) && return nothing
+    rf.type == "json_object" && isnothing(js) && return Dict(:text => Dict(:mimeType => "APPLICATION_JSON"))
+    rf.type == "json_schema" || throw(ArgumentError(
+        "Native Gemini Chat supports response_format text, json_object, or json_schema " *
+        "(got $(repr(rf.type))$(isnothing(js) ? "" : " with a json_schema"))"))
+    schema = js isa JsonSchemaAPI ? js.schema :
+             js isa AbstractDict ? get(js, "schema", get(js, :schema, nothing)) : nothing
+    schema isa AbstractDict || throw(ArgumentError(
+        "Native Gemini Chat json_schema response_format needs a schema object"))
+    Dict(:text => Dict(:mimeType => "APPLICATION_JSON", :schema => schema))
 end
 
 # Split neutral messages into (systemInstruction::Union{String,Nothing}, contents).

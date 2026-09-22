@@ -31,14 +31,18 @@ const DEFAULT_PRICING = Dict{String, PriceRow}(
     "claude-sonnet-5"  => _price(3.0, 0.30, 15.0),
     "claude-haiku-4-5" => _price(1.0, 0.10, 5.0),
     # Google Gemini (native + OpenAI-compat shim; live-verified 2026-07-07)
-    # Gemini 3.8/3.7 Flash: introductory rates through 2026-12-31, doubled
-    # on 2027-01-01 (Google pricing page, 2026-09-07); output includes thinking.
+    # Gemini 3.8/3.7/3.6 Flash: introductory rates through 2026-12-31, doubled
+    # on 2027-01-01 (Google pricing page, 2026-09-07; the 3.6 Flash, 3.5 Flash-Lite
+    # and Embedding 2 rows 2026-09-22); output includes thinking.
     "gemini-3.8-flash"      => _price(0.75, 0.075, 3.75),
     "gemini-3.7-flash"      => _price(0.75, 0.075, 3.75),
+    "gemini-3.6-flash"      => _price(0.75, 0.075, 3.75),
     "gemini-3.5-flash"      => _price(1.5,  0.15,  9.0),
+    "gemini-3.5-flash-lite" => _price(0.30, 0.03,  2.50),
     "gemini-3.1-flash-lite" => _price(0.25, 0.025, 1.5),
     "gemini-2.5-flash"      => _price(0.3,  0.03,  2.5),
     "gemini-2.5-flash-lite" => _price(0.1,  0.01,  0.4),
+    "gemini-embedding-2"    => _price(0.20, 0.20,  0.0),   # text input only
     # TypeSafe System One / Jev (docs.typesafe.ai models page, 2026-09-22):
     # $42 per Btok of input, and output tokens are currently free. The aliases
     # resolve to the versioned id, which is what the response reports back.

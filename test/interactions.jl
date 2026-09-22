@@ -495,8 +495,9 @@ end
 end
 
 @testset "Interactions encode — an unsupported Respond field fails loud" begin
-    # Every field the Interactions body maps, set at once: the encoding is
-    # byte-for-byte the one this wire produced before the guard existed.
+    # Every field the Interactions body maps except `text` (its response_format has
+    # its own golden), set at once: the encoding is byte-for-byte the one this wire
+    # produced before the guard existed.
     r = Respond(service=GEMINIServiceEndpoint, model="gemini-3.1-flash-lite", input="Say hi",
                 instructions="Be terse", tools=[function_tool("get_weather", "Get weather")],
                 tool_choice="auto", temperature=0.2, max_output_tokens=64,
@@ -505,8 +506,7 @@ end
         """{"background":false,"generation_config":{"max_output_tokens":64,"temperature":0.2,"tool_choice":{"allowed_tools":{"mode":"auto"}}},"input":"Say hi","model":"gemini-3.1-flash-lite","previous_interaction_id":"v1_prev","store":true,"stream":true,"system_instruction":"Be terse","tools":[{"description":"Get weather","name":"get_weather","type":"function"}]}"""
 
     # A field this wire has no mapping for must not vanish from the request.
-    cases = (:text => UniLM.TextConfig(),
-             :metadata => Dict("k" => "v"), :truncation => "auto",
+    cases = (:metadata => Dict("k" => "v"), :truncation => "auto",
              :parallel_tool_calls => true, :user => "u1", :include => ["a"],
              :max_tool_calls => 2, :service_tier => "flex", :top_logprobs => 3,
              :prompt => Dict("id" => "p"), :prompt_cache_key => "k",
@@ -520,6 +520,32 @@ end
         err = try UniLM.encode_agentic(GEMINIServiceEndpoint, rr); nothing catch e; e end
         @test err isa ArgumentError
         @test err isa ArgumentError && occursin(String(field), err.msg)
+    end
+end
+
+@testset "Interactions encode — text format → top-level response_format (wire golden)" begin
+    schema = Dict("type" => "object",
+                  "properties" => Dict("city" => Dict("type" => "string"), "country" => Dict("type" => "string")),
+                  "required" => ["city", "country"], "additionalProperties" => false)
+    r = Respond(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", input="Give the capital of Norway as JSON.",
+                text=json_schema_format("capital", "A capital city", schema; strict=true), max_output_tokens=256)
+    @test JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint, r)) == Dict(
+        "model" => "gemini-3.8-flash", "input" => "Give the capital of Norway as JSON.",
+        "generation_config" => Dict("max_output_tokens" => 256),
+        "response_format" => Dict("type" => "text", "mime_type" => "application/json", "schema" => schema))
+
+    fmt(text) = get(JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input="x", text=text))), "response_format", nothing)
+    @test fmt(json_schema_format(Dict("name" => "capital", "schema" => schema))) ==
+          Dict("type" => "text", "mime_type" => "application/json", "schema" => schema)
+    @test fmt(json_object_format()) == Dict("type" => "text", "mime_type" => "application/json")
+    @test isnothing(fmt(text_format()))                          # plain text: nothing to send
+    @test :text ∉ UniLM._INTERACTIONS_UNMAPPED_FIELDS
+    # shapes with no Interactions counterpart fail loud instead of vanishing
+    for text in (text_format(type="xml"), text_format(type="json_schema"),
+                 text_format(type="json_object", schema=schema), text_format(verbosity="low"))
+        @test_throws ArgumentError UniLM.encode_agentic(GEMINIServiceEndpoint,
+            Respond(service=GEMINIServiceEndpoint, input="x", text=text))
     end
 end
 

@@ -21,11 +21,12 @@ _agentic_url(::Type{GEMINIServiceEndpoint})::String = GEMINI_NATIVE_BASE * INTER
 # `fieldnames(Respond)`, so a field added to the neutral request is unsupported
 # here until it is deliberately mapped — new surfaces fail loud by default.
 const _INTERACTIONS_MAPPED_FIELDS = (:service, :model, :input, :instructions, :tools, :tool_choice,
-    :temperature, :top_p, :max_output_tokens, :stream, :store, :previous_response_id, :background, :reasoning)
+    :temperature, :top_p, :max_output_tokens, :stream, :text, :store, :previous_response_id,
+    :background, :reasoning)
 const _INTERACTIONS_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Respond), _INTERACTIONS_MAPPED_FIELDS))
 
 # A set field the body never carries would vanish between the caller's request and
-# the wire (structured output via `text`, `metadata`, …). Refuse instead.
+# the wire (`metadata`, `truncation`, …). Refuse instead.
 function _interactions_reject_unmapped(r::Respond)
     set = Symbol[f for f in _INTERACTIONS_UNMAPPED_FIELDS if !isnothing(getfield(r, f))]
     isempty(set) || throw(ArgumentError(
@@ -39,7 +40,11 @@ function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
     body = Dict{Symbol,Any}(:model => r.model, :input => _interactions_input(r.input))
     isnothing(r.instructions) || (body[:system_instruction] = r.instructions)
     isnothing(r.tools) || (body[:tools] = [_interactions_tool(t) for t in r.tools])
+    (fmt = _interactions_response_format(r.text)) === nothing || (body[:response_format] = fmt)
     gen = Dict{Symbol,Any}()
+    # The API reference's generation_config listing omits temperature/top_p, yet the
+    # live API accepted both on gemini-3.7-flash on 2026-09-22 while answering 400
+    # "Unknown parameter" to an unknown generation_config key — so they stay mapped.
     isnothing(r.temperature)       || (gen[:temperature] = r.temperature)
     isnothing(r.top_p)             || (gen[:top_p] = r.top_p)
     isnothing(r.max_output_tokens)  || (gen[:max_output_tokens] = r.max_output_tokens)
@@ -61,6 +66,22 @@ function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
     isnothing(r.background) || (body[:background] = r.background)
     isnothing(r.stream)     || (body[:stream] = r.stream)
     JSON.json(body)
+end
+
+# Neutral text.format → top-level response_format (TextResponseFormat: type "text",
+# mime_type, optional schema). Plain text needs no format. Verbosity has no
+# counterpart; the OpenAI schema name, description, and strict flag are not sent.
+_interactions_response_format(::Nothing) = nothing
+function _interactions_response_format(t::TextConfig)
+    isnothing(t.verbosity) || throw(ArgumentError("Gemini Interactions does not support text verbosity"))
+    f = t.format
+    f.type == "text" && isnothing(f.schema) && return nothing
+    f.type == "json_object" && isnothing(f.schema) &&
+        return Dict{Symbol,Any}(:type => "text", :mime_type => "application/json")
+    f.type == "json_schema" && !isnothing(f.schema) &&
+        return Dict{Symbol,Any}(:type => "text", :mime_type => "application/json", :schema => f.schema)
+    throw(ArgumentError("Gemini Interactions supports text formats text, json_object, or json_schema " *
+        "with a schema (got $(repr(f.type))$(isnothing(f.schema) ? " without" : " with") a schema)"))
 end
 
 # Interactions function tools use the flat OpenAI-Responses shape observed on the wire:

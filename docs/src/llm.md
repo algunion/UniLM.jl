@@ -1410,6 +1410,60 @@ r = ask("Help! My payouts have been failing for 3 days.",
 issuccess(r) && println(r["department"].choice, " ", r["urgency"].score, " ", r["is_frustrated"].noul)
 ```
 
+### Natural-language control flow
+
+A Choice answer is already a branch decision, so two constructs compile ordinary
+control flow into ONE System One request. `@branch` is a natural-language switch
+that evaluates only the selected body; `nl_dispatch` sends one Choice per
+`Meaning` slot and then hands the resolved meanings to Julia's own dispatch, so
+the remaining arguments still dispatch on their types.
+
+```julia
+struct Meaning{S} end                     # S::Symbol IS the description
+Meaning(text::AbstractString)             # the instance; nl"..." is the TYPE
+
+struct LowConfidenceError <: Exception    # raised when confidence < min_confidence
+    question::String
+    answer::ChoiceAnswer                  # the full distribution, for diagnostics
+    min_confidence::Float64
+end
+
+@branch state [key = value ...] begin
+    "option name"                  => expression   # the name is what the model reads
+    ("option name", "description") => expression   # the only way to add a description
+    _                              => expression   # requires min_confidence
+end
+# keys: model, min_confidence, instructions, service, config
+# -> the selected body's value; LowConfidenceError or SystemOneError otherwise
+
+nl_dispatch(f, args...; model=nothing, service=TYPESAFEServiceEndpoint, config=nothing,
+            min_confidence=0.0, fallback=nothing, instructions=nothing, state=nothing)
+    # -> f(resolved meanings spliced into their positions, args...)
+meanings(f) -> Dict{Int,Vector{String}}   # slot position => options, in send order
+```
+
+Methods without a concrete `Meaning` argument (including wildcard `::Meaning`
+ones) are ordinary methods and are not part of the natural-language interface.
+Every natural-language method of `f` must agree on arity and on which positions
+are slots. Without `state`, the state is a `Dict{String,Any}` keyed by the
+ordinary argument names of the first such method. A resolved combination no
+method covers raises Julia's own `MethodError`.
+
+```julia
+ticket = "My package arrived crushed and the screen is cracked. I want my money back."
+
+action = @branch ticket min_confidence=0.6 begin
+    "the customer wants a refund"           => :refund
+    "the customer reports a bug in the app" => :bug
+    _                                       => :escalate
+end                                         # => :refund
+
+route(::nl"the customer wants a refund", t)           = (:refund, t)
+route(::nl"the customer reports a bug in the app", t) = (:bug, t)
+nl_dispatch(route, ticket)                            # => (:refund, ticket)
+route(nl"the customer wants a refund"(), ticket)      # direct call, no request
+```
+
 ---
 
 ## Provider Capabilities
@@ -1738,6 +1792,7 @@ Every exported symbol (`names(UniLM)`), grouped by area:
 **Moderations**: `ModerationResponse`, `ModerationResult`, `ModerationSuccess`, `ModerationFailure`, `ModerationCallError`, `moderate`, `is_flagged`
 
 **TypeSafe System One (Jev)**: `TYPESAFEServiceEndpoint`, `SystemOneQuestion`, `ChoiceQuestion`, `ScoreQuestion`, `NoulQuestion`, `NoulCriteria`, `choice`, `score`, `noul`, `SystemOneRequest`, `ask`, `SystemOneAnswer`, `ChoiceAnswer`, `ScoreAnswer`, `NoulAnswer`, `UnknownAnswer`, `SystemOneResponse`, `SystemOneSuccess`, `SystemOneFailure`, `SystemOneCallError`, `SystemOneError`, `answers`, `answer`, `TypeSafeModelCard`, `TypeSafeModelsSuccess`, `list_models`
+- *Natural-language control flow*: `Meaning`, `@nl_str`, `@branch`, `nl_dispatch`, `meanings`, `LowConfidenceError`
 
 **Audio**: `SpeechRequest`, `TranscriptionRequest`, `SpeechSuccess`, `TranscriptionSuccess`, `AudioFailure`, `AudioCallError`, `speak`, `save_audio`, `transcribe`, `translate`, `transcript_text`
 

@@ -125,6 +125,10 @@ end
         include("typesafe.jl")
     end
 
+    @testset "semantic" begin
+        include("semantic.jl")
+    end
+
     @testset "anthropic" begin
         include("anthropic.jl")
     end
@@ -217,6 +221,10 @@ end
 
     @testset "integration — typesafe" begin
         include("integration_typesafe.jl")
+    end
+
+    @testset "integration — semantic" begin
+        include("integration_semantic.jl")
     end
 
     @testset "integration — live MCP" begin

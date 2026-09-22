@@ -14,6 +14,8 @@ UniLM.jl provides:
 - **Embeddings** via [`Embeddings`](@ref) and [`embeddingrequest!`](@ref).
 - **TypeSafe System One** via [`ask`](@ref) with [`choice`](@ref)/[`score`](@ref)/[`noul`](@ref) — the
   Jev model family returns typed judgments and probabilities instead of text.
+- **Natural-language control flow** via [`@branch`](@ref) and [`nl_dispatch`](@ref) — a
+  natural-language switch and multiple dispatch on `nl"..."` meanings, one System One request each.
 - **MCP** via [`MCPSession`](@ref) and [`MCPServer`](@ref) — Model Context Protocol client and server.
 - **Cost accounting** via [`estimated_cost`](@ref) and [`cumulative_cost`](@ref) — token-usage and USD cost estimation.
 - **Multi-provider support**: native OpenAI, Anthropic, and Gemini backends, plus Azure, DeepSeek, Mistral, Ollama, vLLM, and any OpenAI-compatible provider via [`GenericOpenAIEndpoint`](@ref).
@@ -64,6 +66,7 @@ include("interactions.jl")
 include("completions.jl")
 include("accounting.jl")
 include("typesafe.jl")
+include("semantic.jl")
 include("files.jl")
 include("vector_stores.jl")
 include("conversations.jl")
@@ -372,6 +375,15 @@ export
     TypeSafeModelCard,
     TypeSafeModelsSuccess,
     list_models
+
+# ─── Natural-language control flow (System One) ───
+export
+    Meaning,
+    @nl_str,
+    @branch,
+    nl_dispatch,
+    meanings,
+    LowConfidenceError
 
 # ─── Audio API ────────────────────────────────────────────────────────────────
 export

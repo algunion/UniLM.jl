@@ -147,3 +147,61 @@ issuccess(models) && println([m.name for m in models.models])
 All questions in one call share one ingestion of the `state`, so batching many
 small questions into a single [`ask`](@ref) costs far less than one call per
 question — and speculative questions you may not use are cheap to include.
+
+## Natural-Language Control Flow
+
+[`@branch`](@ref) is a `switch` whose cases are written in plain language. The
+option names become the criteria of one [`choice`](@ref) question about the
+state; the winning option selects which expression is evaluated and the other
+bodies never run. However many options a branch lists, it costs a single
+request.
+
+[`nl_dispatch`](@ref) lifts the same idea into the method table. `nl"..."` is a
+[`Meaning`](@ref) type, so a meaning is writable in an ordinary signature;
+`nl_dispatch` sends one Choice question per `Meaning` position — again in a
+single request — turns each answer back into a `Meaning` instance and calls the
+function, so Julia's own dispatch selects the method and the remaining arguments
+still dispatch on their types. Both constructs gate on the answer's
+`confidence`: below the threshold `@branch` takes its `_` line and `nl_dispatch`
+calls `fallback`, and with neither they raise
+[`LowConfidenceError`](@ref) rather than act on a near-tie.
+[`meanings`](@ref) previews the options exactly as they will be sent.
+
+```@docs
+Meaning
+@nl_str
+@branch
+nl_dispatch
+meanings
+LowConfidenceError
+```
+
+### Usage
+
+```julia
+using UniLM
+
+ticket = "My package arrived crushed and the screen is cracked. I want my money back."
+
+action = @branch ticket min_confidence=0.6 begin
+    "the customer wants a refund"                                => :refund
+    ("the customer reports a bug", "A defect in the software")   => :bug
+    "the customer asks a pricing question"                       => :pricing
+    _                                                            => :escalate
+end                                                              # => :refund
+
+# The same decision as multiple dispatch: `nl"..."` is a type, so the meanings
+# live in the signatures and Julia selects the method once they are resolved.
+route(::nl"the customer wants a refund", t)           = (:refund, t)
+route(::nl"the customer reports a bug in the app", t) = (:bug, t)
+route(::nl"the customer asks a pricing question", t)  = (:pricing, t)
+
+meanings(route)                     # Dict(1 => [...the three descriptions...])
+nl_dispatch(route, ticket)          # one request, then route(nl"..."(), ticket)
+route(nl"the customer wants a refund"(), ticket)   # direct call, no request at all
+```
+
+A non-success call raises [`SystemOneError`](@ref) instead of resolving to a
+branch, and a combination of meanings that no method covers raises Julia's own
+`MethodError` — a gap in the method table is not a service failure and is not
+swallowed.

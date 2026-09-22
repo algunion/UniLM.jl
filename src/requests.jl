@@ -128,7 +128,16 @@ const _AUTH_HEADER_PATTERN =
 _mask_auth_headers(s::AbstractString)::String =
     replace(s, _AUTH_HEADER_PATTERN => function (hit)
         m = match(_AUTH_HEADER_PATTERN, hit)
-        string(m[1], m[2], _redact_api_key(m[3]))
+        # `hit` is a substring the same pattern just matched, so this re-match
+        # always succeeds; `match` is still typed `Union{Nothing,RegexMatch}`, and
+        # a `nothing` here would crash the one renderer every *CallError goes
+        # through. Hand the text back unchanged instead of indexing `nothing`.
+        m === nothing && return hit
+        # Every capture group is statically `Union{Nothing,SubString}` because any
+        # group may go unmatched. Group 3 is a `*` group, so it always
+        # participates at runtime — and an absent value would be an empty one,
+        # with nothing to redact.
+        string(m[1], m[2], _redact_api_key(something(m[3], "")))
     end)
 
 """

@@ -1,0 +1,7 @@
+{
+  "state": ["Hi", "My customer number is TS1337.", "My card was charged twice."],
+  "model": "jev-latest",
+  "questions": {
+    "topic": {"type": "choice", "instructions": "What is this conversation about?", "criteria": {"billing": null, "shipping": null, "other": null}}
+  }
+}

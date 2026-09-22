@@ -39,6 +39,12 @@ const DEFAULT_PRICING = Dict{String, PriceRow}(
     "gemini-3.1-flash-lite" => _price(0.25, 0.025, 1.5),
     "gemini-2.5-flash"      => _price(0.3,  0.03,  2.5),
     "gemini-2.5-flash-lite" => _price(0.1,  0.01,  0.4),
+    # TypeSafe System One / Jev (docs.typesafe.ai models page, 2026-09-22):
+    # $42 per Btok of input, and output tokens are currently free. The aliases
+    # resolve to the versioned id, which is what the response reports back.
+    "jev-1.13.0"    => _price(0.042, 0.042, 0.0),
+    "jev-latest"    => _price(0.042, 0.042, 0.0),
+    "jev-preview"   => _price(0.042, 0.042, 0.0),
     # Embeddings (billed on input tokens only)
     "text-embedding-3-small" => _price(0.02, 0.02, 0.0),
     "text-embedding-3-large" => _price(0.13, 0.13, 0.0),

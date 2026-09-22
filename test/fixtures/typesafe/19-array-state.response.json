@@ -1,0 +1,1 @@
+{"model":"jev-1.13.0","answers":{"topic":{"type":"choice","choice":"billing","confidence":1.0,"probabilities":{"other":0.0,"billing":1.0,"shipping":0.0}}},"usage":{"input_tokens":319,"output_tokens":38}}

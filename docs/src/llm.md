@@ -25,6 +25,9 @@ using UniLM
 | `ANTHROPIC_API_KEY`                | `ANTHROPICServiceEndpoint`        | Anthropic (Claude) API key                      |
 | `DEEPSEEK_API_KEY`                 | `DeepSeekEndpoint`                | DeepSeek API key                                |
 | `MISTRAL_API_KEY`                  | `MistralEndpoint`                 | Mistral AI API key                              |
+| `TYPESAFE_API_KEY`                 | `TYPESAFEServiceEndpoint`         | TypeSafe System One (Jev) API key               |
+| `TYPESAFE_BASE_URL`                | `TYPESAFEServiceEndpoint`         | Optional API root override (default `https://api.typesafe.ai`) |
+| `TYPESAFE_DEFAULT_MODEL`           | `TYPESAFEServiceEndpoint`         | Model used when a call names none (default `jev-latest`) |
 
 ## Four APIs
 
@@ -53,6 +56,7 @@ struct AZUREServiceEndpoint  <: OpenAIWireEndpoint end   # uses AZURE_OPENAI_* e
 struct GEMINIServiceEndpoint <: ServiceEndpoint end       # native generateContent — GEMINI_API_KEY
 struct GEMINIOpenAIServiceEndpoint <: OpenAIWireEndpoint end # Gemini via OpenAI-compat shim — GEMINI_API_KEY
 struct ANTHROPICServiceEndpoint <: ServiceEndpoint end    # native Messages API — ANTHROPIC_API_KEY
+struct TYPESAFEServiceEndpoint <: ServiceEndpoint end     # TypeSafe System One (Jev) — TYPESAFE_API_KEY
 struct GenericOpenAIEndpoint <: OpenAIWireEndpoint    # any OpenAI-compatible provider
     base_url::String
     api_key::String
@@ -1253,6 +1257,161 @@ result = prefix_complete(chat)
 
 ---
 
+## TypeSafe System One API (Jev)
+
+A System One model answers enumerated questions about a piece of `state` with a
+probability distribution over the outcomes you named — no generated text, no
+parsing. `TYPESAFE_API_KEY` is required; the default model is `jev-latest` and
+pinning `"jev-1.13.0"` keeps tuned confidence thresholds meaningful.
+
+```julia
+# What a piece of guidance may be on the wire: string | object | array
+const SystemOneEntry = Union{AbstractString, AbstractDict, AbstractVector, NamedTuple}
+# What `state` may be. No `nothing`: the server reports a null state as missing.
+const SystemOneState = Union{AbstractString, AbstractDict, AbstractVector, Tuple, NamedTuple}
+
+abstract type SystemOneQuestion end
+
+struct ChoiceQuestion <: SystemOneQuestion          # 1..255 options, insertion order kept
+    instructions::Union{Nothing,SystemOneEntry}
+    criteria::JSON.Object{String,Any}               # option name => description (or nothing)
+end
+
+struct ScoreQuestion <: SystemOneQuestion           # 1..10 levels, criteria[1] is level 0
+    instructions::Union{Nothing,SystemOneEntry}
+    criteria::Vector{Any}
+end
+
+struct NoulCriteria                                 # wire keys "true" / "false"
+    yes::Union{Nothing,SystemOneEntry}
+    no::Union{Nothing,SystemOneEntry}
+end
+
+struct NoulQuestion <: SystemOneQuestion            # needs instructions or one criterion
+    instructions::Union{Nothing,SystemOneEntry}
+    criteria::Union{Nothing,NoulCriteria}
+end
+
+struct SystemOneRequest
+    state::SystemOneState
+    questions::Vector{Pair{String,SystemOneQuestion}}   # ordered, unique non-empty names
+    model::String
+end
+
+abstract type SystemOneAnswer end
+
+struct NoulAnswer <: SystemOneAnswer                # no confidence: the value is the belief
+    noul::Float64
+    raw::Dict{String,Any}
+end
+
+struct ChoiceAnswer <: SystemOneAnswer
+    choice::String
+    confidence::Float64
+    probabilities::Dict{String,Float64}             # keyed by option name, unordered
+    raw::Dict{String,Any}
+end
+
+struct ScoreAnswer <: SystemOneAnswer
+    score::Float64                                  # expectation; may fall between levels
+    confidence::Float64
+    legend::Dict{Int,Any}                           # 0-based level number => description
+    probabilities::Dict{Int,Float64}                # same keys as legend
+    raw::Dict{String,Any}
+end
+
+struct UnknownAnswer <: SystemOneAnswer             # forward-compatible, never dropped
+    type::String
+    raw::Dict{String,Any}
+end
+
+struct SystemOneResponse
+    model::String                                   # the versioned id that answered
+    answers::Dict{String,SystemOneAnswer}           # keyed by question name
+    usage::TokenUsage                               # prompt = input, completion = output
+    request_id::Union{Nothing,String}               # x-typesafe-request-id header
+    raw::Dict{String,Any}
+end
+
+struct SystemOneSuccess <: LLMRequestResponse
+    response::SystemOneResponse
+end
+
+struct SystemOneFailure <: LLMRequestResponse       # HTTP non-2xx
+    response::String
+    status::Int
+    request_id::Union{Nothing,String}
+    error_type::Union{Nothing,String}               # "authentication_error", "api_usage_error"
+    message::String
+end
+
+struct SystemOneCallError <: LLMRequestResponse     # no response at all
+    error::String
+    status::Union{Int,Nothing}
+end
+
+struct SystemOneError <: Exception                  # thrown by accessors on a non-success
+    result::Union{SystemOneFailure,SystemOneCallError}
+end
+
+struct TypeSafeModelCard
+    name::String
+    description::String
+    release_date::String                            # opaque string (live returns RFC 3339)
+    raw::Dict{String,Any}
+end
+
+struct TypeSafeModelsSuccess <: LLMRequestResponse
+    models::Vector{TypeSafeModelCard}
+    raw::Dict{String,Any}
+end
+```
+
+### Constructors, verbs and accessors
+
+```julia
+choice(instructions, criteria) -> ChoiceQuestion    # criteria: NamedTuple | Dict |
+choice(criteria) -> ChoiceQuestion                  #   Vector{Pair} | Vector{String}
+score(instructions, levels::AbstractVector) -> ScoreQuestion
+score(levels::AbstractVector) -> ScoreQuestion
+noul(instructions; yes=nothing, no=nothing) -> NoulQuestion
+noul(; yes=nothing, no=nothing) -> NoulQuestion
+
+SystemOneRequest(state, questions; model=default_typesafe_model())
+
+ask(request::SystemOneRequest; service=TYPESAFEServiceEndpoint, config=nothing)
+ask(state, questions...; model=default_typesafe_model(), service=TYPESAFEServiceEndpoint, config=nothing)
+    # -> SystemOneSuccess | SystemOneFailure | SystemOneCallError
+
+list_models(; service=TYPESAFEServiceEndpoint, config=nothing)
+    # -> TypeSafeModelsSuccess | SystemOneFailure | SystemOneCallError
+
+answers(result) -> Dict{String,SystemOneAnswer}     # throws SystemOneError on a non-success
+answer(result, name)                                # name::Union{AbstractString,Symbol}
+result[name]; haskey(result, name); keys(result)    # same, on Success or Response
+```
+
+`questions` accepts `name => question` pairs (vector, tuple, `NamedTuple`, or
+`AbstractDict`), or bare questions auto-named `"q1"`, `"q2"`, … in order. Mixing
+the two, repeating a name, or passing none is an `ArgumentError`. Both verbs ride
+the shared retry seam, so `RequestConfig.max_attempts` applies to 408/429/5xx.
+
+### Example
+
+```julia
+r = ask("Help! My payouts have been failing for 3 days.",
+        "department" => choice("Which team should handle this ticket?",
+            (billing="Payments, invoicing, payouts, refunds",
+             technical="Bugs, outages, integrations",
+             sales="Pricing, upgrades, new accounts")),
+        "urgency" => score("How urgent is this ticket?",
+            ["Can wait", "Needs attention this week", "Needs attention today"]),
+        "is_frustrated" => noul("Is the customer frustrated?"; yes="Frustrated", no="Neutral"))
+issuccess(r) && println(r["department"].choice, " ", r["urgency"].score, " ", r["is_frustrated"].noul)
+```
+
+---
+
 ## Provider Capabilities
 
 Each endpoint declares supported features. Request functions validate before
@@ -1273,6 +1432,7 @@ has_capability(service, cap::Symbol) -> Bool
 | Gemini (native) | `:chat`, `:tools`, `:streaming`, `:agentic` |
 | Gemini (OpenAI-compat) | `:chat`, `:embeddings`, `:tools`, `:json_output` |
 | Anthropic (native) | `:chat`, `:tools`, `:json_output`, `:streaming` |
+| TypeSafe (System One) | `:system_one`, `:models` |
 | DeepSeek | `:chat`, `:tools`, `:fim`, `:prefix_completion`, `:json_output` |
 | Generic | `:chat`, `:embeddings`, `:fim`, `:tools`, `:responses` |
 
@@ -1576,6 +1736,8 @@ Every exported symbol (`names(UniLM)`), grouped by area:
 **Conversations**: `ConversationObject`, `ConversationItem`, `ConversationItemList`, `ConversationSuccess`, `ConversationItemSuccess`, `ConversationItemListSuccess`, `ConversationDeleteSuccess`, `ConversationFailure`, `ConversationCallError`, `create_conversation`, `retrieve_conversation`, `update_conversation`, `delete_conversation`, `add_conversation_items`, `list_conversation_items`, `delete_conversation_item`, `conversation_id`
 
 **Moderations**: `ModerationResponse`, `ModerationResult`, `ModerationSuccess`, `ModerationFailure`, `ModerationCallError`, `moderate`, `is_flagged`
+
+**TypeSafe System One (Jev)**: `TYPESAFEServiceEndpoint`, `SystemOneQuestion`, `ChoiceQuestion`, `ScoreQuestion`, `NoulQuestion`, `NoulCriteria`, `choice`, `score`, `noul`, `SystemOneRequest`, `ask`, `SystemOneAnswer`, `ChoiceAnswer`, `ScoreAnswer`, `NoulAnswer`, `UnknownAnswer`, `SystemOneResponse`, `SystemOneSuccess`, `SystemOneFailure`, `SystemOneCallError`, `SystemOneError`, `answers`, `answer`, `TypeSafeModelCard`, `TypeSafeModelsSuccess`, `list_models`
 
 **Audio**: `SpeechRequest`, `TranscriptionRequest`, `SpeechSuccess`, `TranscriptionSuccess`, `AudioFailure`, `AudioCallError`, `speak`, `save_audio`, `transcribe`, `translate`, `transcript_text`
 

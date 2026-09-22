@@ -12,6 +12,8 @@ UniLM.jl provides:
 - **Image Generation** via [`ImageGeneration`](@ref) and [`generate_image`](@ref) — create
   images from text prompts using `gpt-image-2`.
 - **Embeddings** via [`Embeddings`](@ref) and [`embeddingrequest!`](@ref).
+- **TypeSafe System One** via [`ask`](@ref) with [`choice`](@ref)/[`score`](@ref)/[`noul`](@ref) — the
+  Jev model family returns typed judgments and probabilities instead of text.
 - **MCP** via [`MCPSession`](@ref) and [`MCPServer`](@ref) — Model Context Protocol client and server.
 - **Cost accounting** via [`estimated_cost`](@ref) and [`cumulative_cost`](@ref) — token-usage and USD cost estimation.
 - **Multi-provider support**: native OpenAI, Anthropic, and Gemini backends, plus Azure, DeepSeek, Mistral, Ollama, vLLM, and any OpenAI-compatible provider via [`GenericOpenAIEndpoint`](@ref).
@@ -61,6 +63,7 @@ include("gemini.jl")
 include("interactions.jl")
 include("completions.jl")
 include("accounting.jl")
+include("typesafe.jl")
 include("files.jl")
 include("vector_stores.jl")
 include("conversations.jl")
@@ -340,6 +343,35 @@ export
     ModerationCallError,
     moderate,
     is_flagged
+
+# ─── TypeSafe System One API (Jev) ───
+export
+    TYPESAFEServiceEndpoint,
+    SystemOneQuestion,
+    ChoiceQuestion,
+    ScoreQuestion,
+    NoulQuestion,
+    NoulCriteria,
+    choice,
+    score,
+    noul,
+    SystemOneRequest,
+    ask,
+    SystemOneAnswer,
+    ChoiceAnswer,
+    ScoreAnswer,
+    NoulAnswer,
+    UnknownAnswer,
+    SystemOneResponse,
+    SystemOneSuccess,
+    SystemOneFailure,
+    SystemOneCallError,
+    SystemOneError,
+    answers,
+    answer,
+    TypeSafeModelCard,
+    TypeSafeModelsSuccess,
+    list_models
 
 # ─── Audio API ────────────────────────────────────────────────────────────────
 export

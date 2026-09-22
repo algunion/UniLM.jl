@@ -121,6 +121,10 @@ end
         include("capabilities.jl")
     end
 
+    @testset "typesafe" begin
+        include("typesafe.jl")
+    end
+
     @testset "anthropic" begin
         include("anthropic.jl")
     end
@@ -209,6 +213,10 @@ end
 
     @testset "integration — tool loop" begin
         include("integration_tool_loop.jl")
+    end
+
+    @testset "integration — typesafe" begin
+        include("integration_typesafe.jl")
     end
 
     @testset "integration — live MCP" begin

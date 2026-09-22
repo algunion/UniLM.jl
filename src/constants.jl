@@ -213,3 +213,26 @@ caller leaves it unset. Not the model ceiling — a ceiling-sized cap invites
 runaway output; unused headroom is not billed. Raise `max_tokens` explicitly for
 long generations."""
 const _ANTHROPIC_DEFAULT_MAX_TOKENS::Int = 4096
+# ─── TypeSafe System One API (Jev) ───────────────────────────────────────────
+
+"""TypeSafe API base URL."""
+const TYPESAFE_BASE_URL::String = "https://api.typesafe.ai"
+
+"""TypeSafe API key env var name."""
+const TYPESAFE_API_KEY::String = "TYPESAFE_API_KEY"
+
+"""Env var name for an optional TypeSafe API root override (trailing slashes stripped)."""
+const TYPESAFE_BASE_URL_ENV::String = "TYPESAFE_BASE_URL"
+
+"""Env var name for the TypeSafe model used when a call names none."""
+const TYPESAFE_DEFAULT_MODEL_ENV::String = "TYPESAFE_DEFAULT_MODEL"
+
+"""TypeSafe default model alias. Aliases move between versions; pin `jev-1.13.0`
+to keep tuned confidence thresholds meaningful."""
+const TYPESAFE_DEFAULT_MODEL::String = "jev-latest"
+
+"""TypeSafe System One evaluation path (the only POST surface; no streaming or batch exists)."""
+const SYSTEMONE_PATH::String = "/v1/systemone"
+
+"""TypeSafe models listing path."""
+const TYPESAFE_MODELS_PATH::String = "/v1/models"

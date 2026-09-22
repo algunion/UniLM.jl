@@ -51,6 +51,7 @@ makedocs(;
             "MCP Client & Server" => "api/mcp.md",
             "FIM Types" => "api/completions.md",
             "Provider Capabilities" => "api/capabilities.md",
+            "TypeSafe System One" => "api/system_one.md",
             "Files" => "api/files.md",
             "Vector Stores" => "api/vector_stores.md",
             "Conversations" => "api/conversations.md",

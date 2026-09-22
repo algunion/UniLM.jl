@@ -15,6 +15,7 @@ Standard capability symbols include:
 - Completions: `:fim`, `:prefix_completion`
 - Platform APIs: `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`,
   `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:video`, `:realtime`
+- TypeSafe System One: `:system_one`, `:models`
 """
 provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :batch, :image_edits, :fine_tuning, :containers, :uploads, :video, :realtime])
 provider_capabilities(::Type{AZUREServiceEndpoint})   = Set([:chat, :tools])

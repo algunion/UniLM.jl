@@ -17,7 +17,13 @@ UniLM.AZUREServiceEndpoint
 UniLM.GEMINIServiceEndpoint
 UniLM.GEMINIOpenAIServiceEndpoint
 UniLM.ANTHROPICServiceEndpoint
+UniLM.TYPESAFEServiceEndpoint
 ```
+
+`TYPESAFEServiceEndpoint` is not a chat backend: it serves the
+[TypeSafe System One API (Jev)](@ref system_one_api) and declares only
+`:system_one` and `:models`, so the chat, Responses and embedding verbs reject
+it up front.
 
 ## Generic Endpoint
 
@@ -62,6 +68,14 @@ Both `GEMINIServiceEndpoint` (native `generateContent`) and `GEMINIOpenAIService
 | Variable            | Description            |
 | :------------------ | :--------------------- |
 | `ANTHROPIC_API_KEY` | Your Anthropic API key |
+
+### TypeSafe (System One / Jev)
+
+| Variable                 | Description                                      |
+| :----------------------- | :----------------------------------------------- |
+| `TYPESAFE_API_KEY`       | Your TypeSafe API key                            |
+| `TYPESAFE_BASE_URL`      | API root override (default `https://api.typesafe.ai`) |
+| `TYPESAFE_DEFAULT_MODEL` | Model used when a call names none (default `jev-latest`) |
 
 ## Azure Deployment Mapping
 

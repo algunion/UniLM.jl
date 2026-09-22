@@ -1,0 +1,28 @@
+{
+  "state": "Help! My payouts have been failing for 3 days and nobody has replied to my emails.",
+  "model": "jev-latest",
+  "questions": {
+    "department": {
+      "type": "choice",
+      "instructions": "Which team should handle this ticket?",
+      "criteria": {
+        "billing": "Payments, invoicing, payouts, refunds",
+        "technical": "Bugs, outages, integrations",
+        "sales": "Pricing, upgrades, new accounts"
+      }
+    },
+    "urgency": {
+      "type": "score",
+      "instructions": "How urgent is this ticket?",
+      "criteria": ["Can wait", "Needs attention this week", "Needs attention today"]
+    },
+    "is_frustrated": {
+      "type": "noul",
+      "instructions": "Is the customer frustrated?",
+      "criteria": {
+        "true": "The customer expresses frustration or impatience",
+        "false": "The customer is neutral or satisfied"
+      }
+    }
+  }
+}

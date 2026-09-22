@@ -1,0 +1,76 @@
+{
+  "state": {
+    "ticket": {
+      "subject": "Duplicate charge on order A-104",
+      "messages": [
+        {"from": "customer", "text": "I was charged twice for order A-104. Please refund the duplicate today."},
+        {"from": "support", "text": "We are checking the charges."}
+      ]
+    },
+    "order": {
+      "id": "A-104",
+      "charges": [
+        {"amount_usd": 49, "status": "captured"},
+        {"amount_usd": 49, "status": "captured"}
+      ]
+    },
+    "refund_policy": "Duplicate charges are eligible for a refund."
+  },
+  "model": "jev-latest",
+  "questions": {
+    "department": {
+      "type": "choice",
+      "instructions": {
+        "question": "Which team should handle the `ticket`?",
+        "focus": "Classify the customer's primary request, not every topic mentioned."
+      },
+      "criteria": {
+        "billing": {
+          "what": "Charges, invoices, refunds, or subscriptions",
+          "not_for": "Order tracking or account access",
+          "examples": ["I was charged twice", "Where is my refund?"]
+        },
+        "orders": {
+          "what": "Order status, delivery, cancellation, or returns",
+          "not_for": "Charges or account access",
+          "examples": ["Where is my package?", "Cancel my order"]
+        },
+        "account": {
+          "what": "Login, password, profile, or security",
+          "not_for": "Charges or delivery",
+          "examples": ["I can't log in", "Change my email"]
+        }
+      }
+    },
+    "refund_size": {
+      "type": "score",
+      "instructions": {
+        "field": {"name": "refund_amount", "type": "number", "unit": "USD", "description": "The duplicate amount to refund."},
+        "question": "How large is the duplicate charge in `order`?"
+      },
+      "criteria": [
+        {"summary": "Under $25", "signals": ["A small charge", "Below the manual review threshold"]},
+        {"summary": "$25 to $100", "signals": ["A typical single-item order"]},
+        {"summary": "Over $100", "signals": ["A large order", "Needs supervisor approval"]}
+      ]
+    },
+    "policy_allows_refund": {
+      "type": "noul",
+      "instructions": {
+        "question": "Does `refund_policy` allow refunding the duplicate charge in `order`?",
+        "inspect": "refund_policy",
+        "focus": "Only consider the written policy, not goodwill exceptions."
+      },
+      "criteria": {
+        "true": {
+          "what": "The written policy covers this charge",
+          "examples": ["Duplicate charges are refundable"]
+        },
+        "false": {
+          "what": "The written policy does not cover this charge",
+          "examples": ["Final sale, no refunds"]
+        }
+      }
+    }
+  }
+}

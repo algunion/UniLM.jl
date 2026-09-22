@@ -74,7 +74,7 @@ Capabilities](@ref capabilities_api).
 One call carries the state once and every question you want answered about it.
 Answers come back keyed by the names you chose:
 
-```@example systemone
+```julia
 using UniLM
 
 r = ask(
@@ -92,12 +92,35 @@ r = ask(
 if r isa SystemOneSuccess
     d = r["department"]
     println("department:    ", d.choice, "  (confidence ", d.confidence, ")")
+    # => department:    billing  (confidence 1.0)
     println("urgency:       ", r["urgency"].score, " of ", length(r["urgency"].legend) - 1)
+    # => urgency:       1.98 of 2
     println("is_frustrated: ", r["is_frustrated"].noul)
+    # => is_frustrated: 0.98
     println("answered by:   ", r.response.model)
+    # => answered by:   jev-1.13.0
 else
-    println(r)   # this build has no TYPESAFE_API_KEY, so the call never left the process
+    println(r)   # a SystemOneFailure or a SystemOneCallError — `ask` never throws
 end
+```
+
+The `# =>` lines are the output of that exact request against a live service,
+and every number the service reports is rounded to two decimals. The rest of
+what came back with it:
+
+```julia
+r["department"].probabilities["billing"]     # => 1.0
+r["department"].probabilities["technical"]   # => 0.0
+r["department"].probabilities["sales"]       # => 0.0
+
+r["urgency"].confidence                      # => 0.96
+r["urgency"].probabilities[2]                # => 0.98  (level 2 = "Needs attention today")
+r["urgency"].probabilities[1]                # => 0.02
+r["urgency"].probabilities[0]                # => 0.0
+
+u = token_usage(r)
+u.prompt_tokens                              # => 445   (the billable half)
+u.completion_tokens                          # => 72
 ```
 
 The question names (`"department"`, `"urgency"`, `"is_frustrated"`) are yours

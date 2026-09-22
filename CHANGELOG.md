@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.18.0
+
 ### Added
 - TypeSafe System One (Jev) client on `POST /v1/systemone`: `ask` evaluates every
   question against one ingestion of the state in a single request, with the three

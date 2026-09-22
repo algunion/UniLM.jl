@@ -1,6 +1,6 @@
 name = "UniLM"
 uuid = "2a65a866-de6b-4bc8-8daf-c130204fdf93"
-version = "0.17.0"
+version = "0.18.0"
 authors = ["Marius Fersigan <marius.fersigan@gmail.com> and contributors"]
 
 [deps]
@@ -13,5 +13,5 @@ SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 Base64 = "1.11.0"
 HTTP = "1.9, 2"
 JSON = "1"
-SHA = "0.7"
+SHA = "0.7, 1"
 julia = "1.12"

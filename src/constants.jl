@@ -165,7 +165,7 @@ function _azure_deployment_path(model::String)::String
     prefix * _uripart(name)
 end
 
-_azure_deploy_env_var(model::AbstractString)::String =
+_azure_deploy_env_var(model::String)::String =
     "AZURE_OPENAI_DEPLOY_NAME_" * uppercase(replace(model, r"[^A-Za-z0-9]" => "_"))
 
 """

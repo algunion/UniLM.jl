@@ -367,7 +367,7 @@ function decode_response(::Type{ANTHROPICServiceEndpoint}, resp::HTTP.Response)
     data isa AbstractDict && get(data, "content", nothing) isa AbstractVector &&
         get(data, "stop_reason", nothing) isa AbstractString ||
         error("Anthropic response is not a message with a content array and a stop_reason (got ",
-              data isa AbstractDict ? "keys " * join(sort!(collect(keys(data))), ", ") : typeof(data), ")")
+              data isa AbstractDict ? "keys $(join(sort!(collect(keys(data))), ", "))" : "a $(typeof(data))", ")")
     blocks = data["content"]
     finish = _anthropic_finish_reason(data["stop_reason"])
     usage = _anthropic_usage(get(data, "usage", nothing))

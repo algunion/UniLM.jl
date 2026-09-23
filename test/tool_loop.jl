@@ -194,11 +194,9 @@ end
                       (name, args) -> "ok")
 
     # Exists, and `max_turns` is routed to the LOOP (not the Respond ctor, not
-    # swallowed): max_turns=0 makes the loop return before any HTTP call, so this
-    # stays offline. On code without the String method this line is a MethodError.
-    res = tool_loop("hi"; tools=[ct], max_turns=0)
-    @test res isa ToolLoopResult
-    @test res.turns_used == 0 && !res.completed
+    # swallowed): the loop rejects max_turns=0 before any HTTP call, so this stays
+    # offline. On code without the String method this line is a MethodError.
+    @test_throws ArgumentError "max_turns" tool_loop("hi"; tools=[ct], max_turns=0)
 
     # `tools` is a required keyword.
     @test_throws UndefKeywordError tool_loop("hi")
@@ -296,5 +294,33 @@ end
         @test ran[] == 0
         @test !res.completed && res.turns_used == 1 && length(seen) == 1
         @test occursin("status=incomplete", res.llm_error) && occursin(reason, res.llm_error)
+    end
+end
+
+@testset "max_turns exhaustion keeps the last real response" begin
+    chat = _tl_chat(_TLFixture([_tl_calls(UniLM.TOOL_CALLS, "call_$i" => "noop") for i in 1:2]))
+    res, seen = _tl_scripted() do
+        tool_loop!(chat, (name, args) -> "ok"; max_turns=2)
+    end
+    @test !res.completed && res.turns_used == 2 && length(res.tool_calls) == 2 && length(seen) == 2
+    @test res.llm_error == "max turns (2) exhausted"
+    @test res.response isa LLMSuccess && only(res.response.message.tool_calls).id == "call_2"
+    @test last(chat).role == UniLM.RoleTool && last(chat).tool_call_id == "call_2"
+
+    body(n) = _tl_resp("resp_$n", [_tl_fcall("call_$n", "noop")])
+    res, seen = _with_scripted((n, _) -> _json(200, body(n))) do
+        tool_loop(_tl_respond(), (name, args) -> "ok"; max_turns=2)
+    end
+    @test !res.completed && res.turns_used == 2 && length(res.tool_calls) == 2 && length(seen) == 2
+    @test res.llm_error == "max turns (2) exhausted"
+    @test res.response isa ResponseSuccess && res.response.response.id == "resp_2"
+end
+
+@testset "max_turns below 1 is rejected before any request" begin
+    dead = GenericOpenAIEndpoint("http://127.0.0.1:1", "")
+    for n in (0, -1)
+        @test_throws ArgumentError "max_turns" tool_loop!(_tl_chat(dead), (a, b) -> "x"; max_turns=n)
+        @test_throws ArgumentError "max_turns" tool_loop(
+            Respond(service=dead, model="mock", input="x"), (a, b) -> "x"; max_turns=n)
     end
 end

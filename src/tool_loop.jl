@@ -83,12 +83,16 @@ end
 Result of a tool dispatch loop.
 
 # Fields
-- `response::LLMRequestResponse`: The final API response.
+- `response::LLMRequestResponse`: The last response the loop received: the final
+  text turn, the failure that ended the loop, the turn it stopped on, or — when
+  `max_turns` ran out — the last tool-call turn (whose calls were dispatched).
 - `tool_calls::Vector{ToolCallOutcome}`: History of all tool dispatches.
 - `turns_used::Int`: Number of API round-trips.
 - `completed::Bool`: Whether the loop terminated normally (text response).
-  Truncated output or a pending server action leaves this `false`.
-- `llm_error::Union{String,Nothing}`: Error message if not completed.
+  Truncated output, a turn stopped before its calls ran, a pending server action,
+  or `max_turns` exhaustion leaves this `false`.
+- `llm_error::Union{String,Nothing}`: Why the loop stopped when not completed
+  (e.g. `"max turns (3) exhausted"`).
 """
 struct ToolLoopResult
     response::LLMRequestResponse
@@ -126,6 +130,9 @@ function _dispatch_tool(name::String, args::Dict{String,Any}, dispatcher::Functi
     end
 end
 
+_check_max_turns(n::Int) =
+    ispositive(n) || throw(ArgumentError("max_turns must be >= 1 (got $n)"))
+
 # ─── Chat Completions Loop ──────────────────────────────────────────────────
 
 """
@@ -147,7 +154,9 @@ requested them.
 
 # Arguments
 - `dispatcher`: `(name::String, args::Dict{String,Any}) -> String`
-- `max_turns`: Maximum API round-trips (default 10).
+- `max_turns`: Maximum API round-trips (default 10; `< 1` throws `ArgumentError`).
+  When they run out, the result keeps the last response, with `completed=false` and
+  `llm_error = "max turns (N) exhausted"`.
 - `config`: Per-request [`RequestConfig`](@ref) passed to [`chatrequest!`](@ref) — each turn gets its own attempt/deadline budget.
 - `callback`: Streaming callback passed to `chatrequest!`.
 - `on_tool_call`: Tool call notification callback passed to `chatrequest!`.
@@ -163,10 +172,12 @@ result = tool_loop!(chat, (name, args) -> string(args["a"] + args["b"]))
 function tool_loop!(chat::Chat, dispatcher::Function;
                     max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing,
                     callback=nothing, on_tool_call=nothing)::ToolLoopResult
+    _check_max_turns(max_turns)
     chat.history || throw(ArgumentError("tool_loop! needs a Chat with history=true: " *
         "each follow-up request must carry the assistant turn its tool results answer"))
     all_outcomes = ToolCallOutcome[]
     turns = 0
+    local latest::LLMSuccess
 
     while turns < max_turns
         turns += 1
@@ -180,6 +191,7 @@ function tool_loop!(chat::Chat, dispatcher::Function;
             return ToolLoopResult(result, all_outcomes, turns, false, result.error)
         end
 
+        latest = result
         msg = result.message
         calls = something(msg.tool_calls, ToolCall[])
 
@@ -204,10 +216,7 @@ function tool_loop!(chat::Chat, dispatcher::Function;
         end
     end
 
-    ToolLoopResult(
-        LLMCallError(error="max turns ($max_turns) exhausted", self=chat),
-        all_outcomes, turns, false, "max turns ($max_turns) exhausted"
-    )
+    ToolLoopResult(latest, all_outcomes, turns, false, "max turns ($max_turns) exhausted")
 end
 
 """
@@ -251,14 +260,20 @@ Function calls run only on a `completed` or `requires_action` turn. Any other st
 (e.g. `incomplete`, whose calls may be partial) stops the loop with `completed=false`
 and an `llm_error` naming the status and the `incomplete_details` reason.
 
+`max_turns` (default 10; `< 1` throws `ArgumentError`) bounds the round-trips; when
+they run out, the result keeps the last response, with `completed=false` and
+`llm_error = "max turns (N) exhausted"`.
+
 Per-call `config::RequestConfig` overrides timeouts/retry budget.
 """
 function tool_loop(r::Respond, dispatcher::Function;
                    max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing)::ToolLoopResult
+    _check_max_turns(max_turns)
     all_outcomes = ToolCallOutcome[]
     turns = 0
     input = r.input
     prev_id = r.previous_response_id
+    local latest::ResponseSuccess
 
     while turns < max_turns
         turns += 1
@@ -272,6 +287,7 @@ function tool_loop(r::Respond, dispatcher::Function;
             return ToolLoopResult(result, all_outcomes, turns, false, result.error)
         end
 
+        latest = result
         status = result.response.status
         if status ∉ ("completed", "requires_action")
             details = incomplete_details(result)
@@ -307,10 +323,7 @@ function tool_loop(r::Respond, dispatcher::Function;
         prev_id = result.response.id
     end
 
-    ToolLoopResult(
-        ResponseCallError(error="max turns ($max_turns) exhausted"),
-        all_outcomes, turns, false, "max turns ($max_turns) exhausted"
-    )
+    ToolLoopResult(latest, all_outcomes, turns, false, "max turns ($max_turns) exhausted")
 end
 
 """

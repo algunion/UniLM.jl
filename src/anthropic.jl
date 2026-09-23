@@ -385,6 +385,29 @@ end
 # Content blocks are additionally snapshotted verbatim and re-assembled into
 # state.raw_blocks so streamed turns round-trip with provider-native fidelity
 # (thinking signatures intact).
+
+# In-flight block fields accumulate in IOBuffers held by the pending block and
+# become Strings once, when the block stops: `*` on a growing String copies the
+# whole prefix per delta, which is quadratic in the number of deltas.
+function _anthropic_buf!(blk::Dict{String,Any}, key::String)::IOBuffer
+    v = get(blk, key, "")
+    v isa IOBuffer && return v
+    buf = IOBuffer()
+    v isa AbstractString && print(buf, v)   # a start snapshot's text; a tool's input object is replaced
+    blk[key] = buf
+end
+
+# The driver reads a streamed tool call's arguments once a later tool block starts or
+# the message ends, even if its own stop line never arrived (a dropped line): publish
+# the partial JSON accumulated so far without finalizing the block.
+function _anthropic_publish_tool_args!(state::StreamState)
+    for (idx, blk) in state.raw_pending
+        buf = get(blk, "input", nothing)
+        buf isa IOBuffer && haskey(state.tool_calls, idx) &&
+            (state.tool_calls[idx]["function"]["arguments"] = takestring!(copy(buf)))
+    end
+end
+
 function handle_sse_event!(::Type{ANTHROPICServiceEndpoint}, event::AbstractString,
                            payload::AbstractString, state::StreamState)::Symbol
     ev = JSON.parse(payload; dicttype=Dict{String,Any})
@@ -409,6 +432,7 @@ function handle_sse_event!(::Type{ANTHROPICServiceEndpoint}, event::AbstractStri
             state.raw_provider = :anthropic
         end
         if cb isa AbstractDict && get(cb, "type", "") == "tool_use"
+            _anthropic_publish_tool_args!(state)
             state.tool_calls[ev["index"]] = Dict{String,Any}(
                 "id" => get(cb, "id", ""), "type" => "function",
                 "function" => Dict{String,Any}("name" => get(cb, "name", ""), "arguments" => ""))
@@ -422,30 +446,36 @@ function handle_sse_event!(::Type{ANTHROPICServiceEndpoint}, event::AbstractStri
             txt = get(d, "text", "")
             print(state.content, txt)
             print(state.pending_delta, txt)
-            isnothing(blk) || (blk["text"] = get(blk, "text", "") * txt)
+            isnothing(blk) || print(_anthropic_buf!(blk, "text"), txt::AbstractString)
         elseif dt == "input_json_delta"
-            pj = get(d, "partial_json", "")
-            haskey(state.tool_calls, idx) &&
-                (state.tool_calls[idx]["function"]["arguments"] *= pj)
-            isnothing(blk) || (state.raw_json[idx] = get(state.raw_json, idx, "") * pj)
+            # One partial-JSON buffer per block feeds both the raw block's input and
+            # the neutral tool-call arguments (published at stop).
+            isnothing(blk) || print(_anthropic_buf!(blk, "input"), get(d, "partial_json", "")::AbstractString)
         elseif dt == "thinking_delta"
-            isnothing(blk) || (blk["thinking"] = get(blk, "thinking", "") * get(d, "thinking", ""))
+            isnothing(blk) || print(_anthropic_buf!(blk, "thinking"), get(d, "thinking", "")::AbstractString)
         elseif dt == "signature_delta"
-            isnothing(blk) || (blk["signature"] = get(blk, "signature", "") * get(d, "signature", ""))
+            isnothing(blk) || print(_anthropic_buf!(blk, "signature"), get(d, "signature", "")::AbstractString)
         end
     elseif t == "content_block_stop"
         idx = get(ev, "index", nothing)
         idx isa Integer && haskey(state.tool_calls, idx) && (state.tool_calls[idx]["complete"] = true)
         if idx isa Integer && haskey(state.raw_pending, idx)
             blk = state.raw_pending[idx]
-            # Streamed tool input arrives as partial JSON: finalize to a parsed
-            # object so the block matches the non-streaming wire shape.
-            haskey(state.raw_json, idx) &&
-                (blk["input"] = _parse_tool_arguments(pop!(state.raw_json, idx)))
+            for key in findall(v -> v isa IOBuffer, blk)
+                blk[key] = s = takestring!(blk[key])
+                key == "input" || continue
+                # Streamed tool input arrives as partial JSON: finalize to a parsed
+                # object so the block matches the non-streaming wire shape. The
+                # arguments are published first, so an undecodable input still
+                # reaches the tool call (whose own parse reports it).
+                haskey(state.tool_calls, idx) && (state.tool_calls[idx]["function"]["arguments"] = s)
+                blk[key] = _parse_tool_arguments(s)
+            end
             push!(state.raw_blocks, blk)
             delete!(state.raw_pending, idx)
         end
     elseif t == "message_delta"
+        _anthropic_publish_tool_args!(state)
         sr = get(get(ev, "delta", Dict{String,Any}()), "stop_reason", nothing)
         isnothing(sr) || (state.finish_reason = _anthropic_finish_reason(sr))
         u = get(ev, "usage", nothing)
@@ -457,6 +487,7 @@ function handle_sse_event!(::Type{ANTHROPICServiceEndpoint}, event::AbstractStri
                 cached_tokens=prev.cached_tokens, reasoning_tokens=0)
         end
     elseif t == "message_stop"
+        _anthropic_publish_tool_args!(state)
         return :done
     end
     :continue

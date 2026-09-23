@@ -601,3 +601,62 @@ end
         @test b(model; messages=prefill)["messages"][end] == Dict("role" => "assistant", "content" => "Sure:")
     end
 end
+
+@testset "stream — long blocks accumulate in linear space, byte-identical" begin
+    # 8000 deltas of 40 bytes per block. Re-concatenating the growing String per delta
+    # allocated ~3.7 GiB for this stream; buffered accumulation allocates ~37 MiB
+    # (mostly per-event JSON parsing). The bound leaves a 5x margin over the linear cost.
+    ev(d) = "data: " * JSON.json(d) * "\n"
+    function stream(n, piece)
+        io = IOBuffer()
+        print(io, ev(Dict("type" => "content_block_start", "index" => 0,
+                          "content_block" => Dict("type" => "text", "text" => ""))))
+        for _ in 1:n
+            print(io, ev(Dict("type" => "content_block_delta", "index" => 0,
+                              "delta" => Dict("type" => "text_delta", "text" => piece))))
+        end
+        print(io, ev(Dict("type" => "content_block_stop", "index" => 0)))
+        print(io, ev(Dict("type" => "content_block_start", "index" => 1, "content_block" =>
+                          Dict("type" => "tool_use", "id" => "t1", "name" => "f", "input" => Dict()))))
+        for pj in ("{\"s\":\"", ntuple(_ -> piece, n)..., "\"}")
+            print(io, ev(Dict("type" => "content_block_delta", "index" => 1,
+                              "delta" => Dict("type" => "input_json_delta", "partial_json" => pj))))
+        end
+        print(io, ev(Dict("type" => "content_block_stop", "index" => 1)))
+        print(io, ev(Dict("type" => "message_delta", "delta" => Dict("stop_reason" => "tool_use"))))
+        print(io, ev(Dict("type" => "message_stop")))
+        String(take!(io))
+    end
+    dispatch(payload) = (st = StreamState();
+        a = @allocated UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), payload, st); (a, st))
+    piece = "0123456789012345678901234567890123456789"
+    dispatch(stream(10, piece))                        # compile outside the measurement
+    n = 8000
+    allocated, st = dispatch(stream(n, piece))
+    @test allocated < 200 * 2^20
+    @test st.raw_blocks[1] == Dict{String,Any}("type" => "text", "text" => piece^n)
+    @test st.raw_blocks[2]["input"] == Dict{String,Any}("s" => piece^n)
+    @test st.tool_calls[1]["function"]["arguments"] == "{\"s\":\"" * piece^n * "\"}"
+    msg = _build_stream_message(st)
+    @test msg.content == piece^n && msg.tool_calls[1].func.arguments == Dict{String,Any}("s" => piece^n)
+end
+
+@testset "stream — a tool call whose stop line was dropped still carries its arguments" begin
+    lines = [
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"a\",\"name\":\"f\",\"input\":{}}}",
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"x\\\":1}\"}}",
+        # no content_block_stop for index 0
+        "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"b\",\"name\":\"g\",\"input\":{}}}",
+    ]
+    st = StreamState()
+    UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), join(lines, "\n") * "\n", st)
+    # index 0 is no longer the newest call, so the driver may fire it now
+    @test st.tool_calls[0]["function"]["arguments"] == "{\"x\":1}"
+    UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""),
+        "data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"y\\\":2}\"}}\n" *
+        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"}}\n", st)
+    @test st.tool_calls[1]["function"]["arguments"] == "{\"y\":2}"
+    msg = _build_stream_message(st)
+    @test [tc.func.arguments for tc in msg.tool_calls] == [Dict{String,Any}("x" => 1), Dict{String,Any}("y" => 2)]
+    @test isnothing(msg.provider_content)              # blocks still pending: capture incomplete
+end

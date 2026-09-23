@@ -79,6 +79,86 @@ UniLM.provider_capabilities(::Type{RTLiveEndpoint}) = Set([:realtime])
     end
 end
 
+# An upgrade that completes only after the caller's connect budget ran out. The
+# seam holds the open task between the 101 and handler admission until the test
+# releases it — after the caller has already received its timeout.
+struct RTLateEndpoint <: UniLM.ServiceEndpoint end
+const _rt_late_url = Ref("")
+const _rt_late_release = Ref(Base.Event())
+UniLM._realtime_ws_url(::Type{RTLateEndpoint}) = _rt_late_url[]
+UniLM.auth_header(::Type{RTLateEndpoint}) = UniLM.auth_header(RTMuteEndpoint)
+UniLM.provider_capabilities(::Type{RTLateEndpoint}) = Set([:realtime])
+UniLM._realtime_upgraded(::Type{RTLateEndpoint}) = wait(_rt_late_release[])
+
+@testset "realtime_connect: an upgrade landing after the connect timeout never runs the handler" begin
+    # The caller got UniLMTimeout(:connect); a handler starting afterwards would run
+    # a session nobody is waiting for. The late socket must be closed unused.
+    client_closed = Threads.Atomic{Bool}(false)
+    srv = HTTP.WebSockets.listen!("127.0.0.1", 0) do ws
+        try
+            for _ in ws      # ends when the client closes
+            end
+        catch e
+            e isa InterruptException && rethrow()
+        end
+        client_closed[] = true
+    end
+    _rt_late_url[] = "ws://" * HTTP.WebSockets.server_addr(srv)
+    _rt_late_release[] = Base.Event()
+    handler_ran = Threads.Atomic{Bool}(false)
+    try
+        t = Threads.@spawn try
+            realtime_connect(_ -> (handler_ran[] = true); service=RTLateEndpoint,
+                             config=RequestConfig(connect_timeout=1.0, total_deadline=Inf))
+        catch e
+            e
+        end
+        @test timedwait(() -> istaskdone(t), 25.0) === :ok
+        e = fetch(t)
+        @test e isa UniLM.UniLMTimeout && e.phase === :connect
+        notify(_rt_late_release[])                 # the upgrade now reaches admission
+        @test timedwait(() -> client_closed[], 25.0) === :ok
+        @test !handler_ran[]                       # closed unused, never handed over
+    finally
+        notify(_rt_late_release[])
+        close(srv)
+    end
+end
+
+# A client-secret endpoint whose 200 body the test chooses.
+struct RTSecretEndpoint <: UniLM.ServiceEndpoint end
+const _rt_secret_base = Ref("")
+UniLM._api_base_url(::Type{RTSecretEndpoint}) = _rt_secret_base[]
+UniLM.auth_header(::Type{RTSecretEndpoint}) = UniLM.auth_header(RTMuteEndpoint)
+UniLM.provider_capabilities(::Type{RTSecretEndpoint}) = Set([:realtime])
+
+@testset "mint_realtime_secret: a 200 without a secret string is a call error" begin
+    body = Ref("{}")
+    srv = HTTP.serve!(_ -> HTTP.Response(200, ["Content-Type" => "application/json"], body[]),
+                      "127.0.0.1", 0; verbose=false)
+    _rt_secret_base[] = "http://127.0.0.1:$(HTTP.port(srv))"
+    try
+        for b in ("{}", """{"value":""}""", """{"value":null}""",
+                  """{"client_secret":{"value":""}}""", """{"client_secret":{"value":42}}""")
+            body[] = b
+            @test mint_realtime_secret(service=RTSecretEndpoint) isa RealtimeCallError
+        end
+        body[] = """{"client_secret":{"value":"ek_nested"}}"""
+        @test mint_realtime_secret(service=RTSecretEndpoint).value == "ek_nested"
+        body[] = """{"value":"ek_top"}"""
+        @test mint_realtime_secret(service=RTSecretEndpoint).value == "ek_top"
+    finally
+        close(srv)
+    end
+end
+
+@testset "realtime_connect: an endpoint other than OpenAI is rejected before any I/O" begin
+    # The Realtime socket lives on api.openai.com; opening it for another endpoint
+    # would send that endpoint's credentials there.
+    @test_throws ArgumentError UniLM._realtime_url(SeamProbe, "gpt-realtime-2")
+    @test_throws ArgumentError realtime_connect(_ -> error("must never run"); service=SeamProbe)
+end
+
 @testset "realtime_receive: a silent peer breaches the idle bound, typed" begin
     # A connected-but-silent server is the other unbounded wait: receive blocked
     # with no byte-gap bound at all.
@@ -119,9 +199,7 @@ end
     #
     # Budget: a loopback upgrade costs tens of milliseconds, but an instrumented
     # shared runner adds scheduler/delivery stalls of ~2 s before the handshake is
-    # observed, so the connect bound is 3.0 s. A WHOLE second: the 1.x major's
-    # native connect bound is integer seconds (rounded up), so a fractional budget
-    # would arm the two majors at different effective limits. The handler then
+    # observed, so the connect bound is 3.0 s. The handler then
     # stays quiet for 8.0 s — a timer that outlived the upgrade fires by
     # 3.0 s + that same ~2 s stall = 5.0 s, well inside the quiet window, so the
     # gap between "still alive" and "would have been killed" stays wide.
@@ -173,9 +251,7 @@ end
 end
 
 @testset "realtime WS URL — the model is a query value, not a URL shaper" begin
-    # Asserted on the built string rather than through a listener: the two HTTP
-    # majors name the server-side WebSocket's request field differently, so there
-    # is no portable way to read the target back off a live upgrade.
+    # Asserted on the built string: no live upgrade is needed to pin the target.
     _rt_live_url[] = "ws://127.0.0.1:1/v1/realtime"
     @test UniLM._realtime_url(RTLiveEndpoint, "gpt-realtime-2") ==
           "ws://127.0.0.1:1/v1/realtime?model=gpt-realtime-2"   # golden: byte-identical

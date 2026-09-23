@@ -3,8 +3,9 @@
 # in-loop check, so polling cannot bound them. The primitive here is CLOSE:
 # closing the guarded resource unblocks the read with an IOError (and killing
 # a process delivers EOF). A guard resolves EXACTLY ONCE — :armed → :done |
-# :fired via a single atomic CAS — so the winner between completion and breach
-# is always well-defined and the close side effect never doubles.
+# :fired (| :cancelled in task mode) via a single atomic CAS — so the winner
+# between completion and breach is always well-defined and the close side effect
+# never doubles.
 
 """
     UniLMTimeout <: Exception
@@ -74,9 +75,10 @@ _remaining_s(cfg::RequestConfig, t0::UInt64)::Float64 =
 
 # Walk an exception's wrapping chain looking for the first exception matching
 # `pred`. An exception delivered into a task mid-request can surface
-# arbitrarily nested (TaskFailedException, CompositeException, and the HTTP
-# majors' cause-carrying wrappers expose .error/.cause); matching on the chain
-# keeps classification independent of which layer caught first.
+# arbitrarily nested (TaskFailedException, CompositeException, and wrappers that
+# carry their cause as .error or .cause — HTTP.jl's ConnectError, DNSError and
+# TLS errors use .cause); matching on the chain keeps classification independent
+# of which layer caught first.
 function _find_exception(pred::Function, e)
     e isa Exception && pred(e) && return e
     if e isa TaskFailedException
@@ -111,7 +113,7 @@ function _unwrap_task_failure(e)
     return e
 end
 
-# Connection-level transport failure shapes on both HTTP majors. Excluded:
+# Connection-level transport failure shapes. Excluded:
 # status-carrying errors (a response is an outcome, not a transport failure)
 # and native timeout errors (those ride the UniLMTimeout channel via the
 # seam's mapping, which carries phase attribution).
@@ -129,19 +131,25 @@ function _transport_shaped(x)::Bool
     return true
 end
 
+# A cancellation — ours, or HTTP.jl's rendering of a cancelled request context —
+# is user intent, never a connection failure worth another attempt.
+_cancel_shaped(x)::Bool = x isa UniLMCancelled || x isa HTTP.CanceledError
+
 """
     _is_transport_error(e) -> Bool
 
 True when `e` is a connection-level IO failure worth another attempt
 (IOError/SystemError/EOFError/DNS/connect-shaped), unwrapped across `TaskFailedException`,
-`CompositeException`, and both HTTP majors' cause-carrying wrappers. Always
+`CompositeException`, and cause-carrying wrappers. Always
 false for `InterruptException` (user intent wins, even when nested beside a
-transport error), `_DeadlineBreach` and `UniLMTimeout` (timeouts are policy,
+transport error), `UniLMCancelled` and `HTTP.CanceledError` (a cancellation is
+user intent too), `_DeadlineBreach` and `UniLMTimeout` (timeouts are policy,
 classified by phase — never blanket-retried here), and status-carrying errors
 (a response is an outcome, not a transport failure).
 """
 function _is_transport_error(e)::Bool
     _find_exception(x -> x isa InterruptException, e) !== nothing && return false
+    _find_exception(_cancel_shaped, e) !== nothing && return false
     _find_exception(x -> x isa _DeadlineBreach, e) !== nothing && return false
     _find_exception(x -> x isa UniLMTimeout, e) !== nothing && return false
     return _find_exception(_transport_shaped, e) !== nothing
@@ -149,9 +157,9 @@ end
 
 # The guard's entire shared state is one atomic Symbol. Timer, clock origin,
 # and phase stay locals in the wrapper, so the CAS is the only cross-task
-# communication and the :done/:fired winner is decided exactly once.
+# communication and the winner is decided exactly once.
 mutable struct _DeadlineGuard
-    @atomic state::Symbol   # :armed → :done | :fired
+    @atomic state::Symbol   # :armed → :done | :fired | :cancelled
 end
 
 """
@@ -171,7 +179,8 @@ long-lived state so closed must remain closed. If `f` throws:
 `InterruptException` always rethrows first; with the guard `:fired` the error
 is the echo of our own close and `UniLMTimeout(phase, …)` is thrown instead;
 otherwise the original error rethrows. A throwing `close!` is debug-logged,
-never propagated. The timer is always closed on exit.
+never propagated. The timer is always closed on exit, off the caller's path
+(see [`_with_deadline_task`](@ref)); a tick landing after that loses the CAS.
 """
 # Delegates to _with_deadline_reported and drops the fired bit: ONE watchdog body,
 # so the exactly-once CAS lives in exactly one place. Inf composes — the reported
@@ -185,7 +194,7 @@ _with_deadline(f::Function, close!::Function, limit::Float64, phase::Symbol) =
 Additive twin of [`_with_deadline`](@ref) that reports one extra bit: whether the
 guard fired. Identical semantics — same exactly-once CAS, same `close!`-on-breach,
 same `InterruptException`-first / post-breach-echo → `UniLMTimeout` conversion on an
-`f` throw, same `finally close(timer)`. The ONLY difference is the success path:
+`f` throw, same timer close on exit. The ONLY difference is the success path:
 when `f` returns a real value it also reports `fired`, decided by GUARD STATE (the
 `:armed → :fired` CAS, set atomically BEFORE `close!` begins) — never by a side
 effect of `close!`. `(result, false)` on a clean win; `(result, true)` on a lost
@@ -201,7 +210,7 @@ function _with_deadline_reported(f::Function, close!::Function, limit::Float64, 
     limit == Inf && return (f(), false)
     t0 = time_ns()
     guard = _DeadlineGuard(:armed)
-    timer = Timer(limit) do _
+    timer = Timer(limit; spawn=true) do _
         (@atomicreplace guard.state :armed => :fired).success || return
         try
             close!()
@@ -224,23 +233,32 @@ function _with_deadline_reported(f::Function, close!::Function, limit::Float64, 
             throw(UniLMTimeout(phase, _elapsed_s(t0), limit))
         end
     finally
-        close(timer)
+        errormonitor(Threads.@spawn :default close(timer))   # off-path: see _with_deadline_task
     end
 end
 
 """
-    _with_deadline_task(f, limit, phase)
+    _with_deadline_task(f, limit, phase; cancel=nothing, on_cancel=Returns(nothing))
 
 Run `f` under a hard deadline with TASK-mode enforcement, for opaque calls
 that expose no closeable handle. `f` runs in its own task and the wrapper
-waits for its completion for at most `limit` seconds (a monotonic bounded
-poll). On completion the worker's value is returned, or its exception
+waits — event-driven, never polled — until the worker completes, a one-shot
+`Timer(limit)` fires, or `cancel` is cancelled; each notifies one `Base.Event`,
+and ONE atomic CAS on the guard (`:armed → :done | :fired | :cancelled`) decides
+which happened. On completion the worker's value is returned, or its exception
 rethrown — `InterruptException` first (bare or nested), otherwise the worker's
 own exception with any `TaskFailedException` layer stripped.
 
+A cancel runs `on_cancel()` (the caller's abort, e.g. cancelling the request's
+context) and, when it wins the CAS, throws `UniLMCancelled(:token, …)` from the
+wrapper, abandoning the worker exactly like a breach. The cancel hook is
+registered only while the wrapper waits and is removed on every exit. With
+`limit == Inf` there is no worker task: `f()` runs directly and a cancel only
+runs `on_cancel()`.
+
 On breach the wrapper throws `UniLMTimeout(phase, …)` and ABANDONS the worker:
 no exception is injected into it and it is not killed. This is safe because
-every task-mode call also carries the native per-major timeout at the SAME
+every task-mode call also carries HTTP.jl's native timeout at the SAME
 bound (`_http` always passes native timeout kwargs; `limit == Inf` bypasses
 task mode entirely), so an abandoned worker self-terminates via its own native
 timeout almost immediately; its eventual result or exception is never fetched
@@ -250,30 +268,57 @@ not an executioner — abandonment replaces cross-task exception injection
 (`schedule(task, exc; error=true)`), which can race the worker's natural
 wakeup and corrupt scheduler state under load.
 
-Breach latency is `[limit, limit + pollint]` with `pollint = 0.1` s (the
-completion poll interval), comparable to a one-shot `Timer(limit)`. The SUCCESS
-path also pays up to one `pollint` of detection latency (completion is observed
-by polling, not event-driven fetch) — negligible against network round-trips,
-and streaming is handle-mode, unaffected.
-`limit == Inf` calls `f()` directly. `_DeadlineBreach` is retained for
-exception-classification stability but is no longer produced or consumed here.
+Breach latency is `[limit, limit + a few ms]` (the one-shot timer's callback);
+the success path has no detection latency — the worker's completion wakes the
+waiter directly. The timer is closed OFF the caller's path: `close(::Timer)`
+waits for the event loop's close handshake, and on Julia 1.12+ the loop shares
+thread 1 with the main task, so a busy main task would otherwise stall every
+caller on other threads; a tick landing after completion loses the CAS and does
+nothing. `_DeadlineBreach` is retained for exception-classification stability
+but is no longer produced or consumed here.
 
 Known limit: a worker inside an uninterruptible foreign call ends on the OS's
 schedule — the wait is bounded, the foreign call's own duration is not.
 """
-function _with_deadline_task(f::Function, limit::Float64, phase::Symbol)
-    limit == Inf && return f()
-    t0 = time_ns()
-    task = Threads.@spawn f()
-    # Bounded wait: poll completion up to `limit` on a monotonic clock. Pin a
-    # tight 0.1 s pollint (not timedwait's default) so breach latency lands in
-    # [limit, limit + pollint], comparable to the old one-shot Timer.
-    if timedwait(() -> istaskdone(task), limit; pollint=0.1) !== :ok
-        # Breach: abandon the worker — no injection, no kill. It self-terminates
-        # via its native per-major timeout at the same bound; its later
-        # result/exception is never fetched and Julia discards it silently.
-        throw(UniLMTimeout(phase, _elapsed_s(t0), limit))
+function _with_deadline_task(f::Function, limit::Float64, phase::Symbol;
+                             cancel::Union{Nothing,CancelToken}=nothing,
+                             on_cancel::Function=Returns(nothing))
+    if limit == Inf
+        handle = _on_cancel(on_cancel, cancel)
+        try
+            return f()
+        finally
+            _off_cancel(cancel, handle)
+        end
     end
+    t0 = time_ns()
+    guard = _DeadlineGuard(:armed)
+    ready = Base.Event()
+    task = Threads.@spawn :default try
+        f()
+    finally
+        (@atomicreplace guard.state :armed => :done).success && notify(ready)
+    end
+    timer = Timer(limit; spawn=true) do _
+        (@atomicreplace guard.state :armed => :fired).success && notify(ready)
+    end
+    handle = _on_cancel(cancel) do
+        (@atomicreplace guard.state :armed => :cancelled).success && notify(ready)
+        on_cancel()
+    end
+    try
+        wait(ready)
+    finally
+        _off_cancel(cancel, handle)
+        errormonitor(Threads.@spawn :default close(timer))
+    end
+    # Breach or cancel: abandon the worker — no injection, no kill. It
+    # self-terminates via its native timeout at the same bound (or the abort
+    # `on_cancel` delivered); its later result/exception is never fetched and
+    # Julia discards it silently.
+    state = @atomic guard.state
+    state === :fired && throw(UniLMTimeout(phase, _elapsed_s(t0), limit))
+    state === :cancelled && throw(UniLMCancelled(:token, _elapsed_s(t0)))
     # Completion within the bound: fetch and rethrow with the same discipline as
     # handle mode — InterruptException first (bare or nested), else the worker's
     # own exception with the TaskFailedException layer stripped.
@@ -297,8 +342,11 @@ mutable struct _IdleGuard
     @atomic state::Symbol       # :armed → :fired | :disarmed
     @atomic last_byte::UInt64   # time_ns() of the most recent raw chunk
     @atomic fired_gap::Float64  # the byte gap recorded at breach time (s)
+    @atomic in_user::Bool       # a user callback is running: not wire idle time
     const limit::Float64
     timer::Union{Timer,Nothing}
+    _IdleGuard(state::Symbol, last_byte::Integer, fired_gap::Real, limit::Real,
+               timer::Union{Timer,Nothing}) = new(state, last_byte, fired_gap, false, limit, timer)
 end
 
 """
@@ -310,13 +358,16 @@ turns true, with the breaching gap frozen for `_idle_gap_s(guard)` (an idle
 timeout is ABOUT the gap, so the gap — not whole-call time — is what error
 reporting surfaces as elapsed). Returns `nothing` when `limit == Inf` (all
 guard operations no-op on `nothing`). Call `_touch!(guard)` after every raw
-chunk and `_disarm!(guard)` on every exit path.
+chunk, bracket every user callback with [`_enter_user!`](@ref) /
+[`_exit_user!`](@ref) (time spent in user code is not a byte gap), and call
+`_disarm!(guard)` on every exit path.
 """
 function _idle_guard(close!::Function, limit::Float64)
     limit == Inf && return nothing
     guard = _IdleGuard(:armed, time_ns(), 0.0, limit, nothing)
     period = min(limit / 4, 5.0)
-    guard.timer = Timer(period; interval=period) do timer
+    guard.timer = Timer(period; interval=period, spawn=true) do timer
+        (@atomic guard.in_user) && return   # user code running: not wire idle time
         # Load the stamp BEFORE sampling the clock (see `_gap_s`): the other
         # order lets a concurrent `_touch!` land between the two reads and turn
         # the difference negative — i.e. wrapping.
@@ -349,6 +400,25 @@ _gap_s(last_byte::UInt64, now::UInt64)::Float64 =
 _touch!(::Nothing) = nothing
 _touch!(guard::_IdleGuard)::Nothing = (@atomic guard.last_byte = time_ns(); nothing)
 
+"""
+    _enter_user!(guard) / _exit_user!(guard)
+
+Bracket a user callback: while inside, the periodic check skips (the callback's
+duration is not wire idle time); on exit the byte-gap clock restarts from the
+exit instant. `_exit_user!` stamps `last_byte` BEFORE clearing the flag, so a
+check that observes the cleared flag also observes the fresh stamp. Both no-op on
+`nothing`.
+"""
+_enter_user!(::Nothing) = nothing
+_enter_user!(guard::_IdleGuard)::Nothing = (@atomic guard.in_user = true; nothing)
+
+_exit_user!(::Nothing) = nothing
+function _exit_user!(guard::_IdleGuard)::Nothing
+    @atomic guard.last_byte = time_ns()
+    @atomic guard.in_user = false
+    return nothing
+end
+
 _idle_fired(::Nothing) = false
 _idle_fired(guard::_IdleGuard)::Bool = (@atomic guard.state) === :fired
 
@@ -362,9 +432,10 @@ end
 _disarm!(::Nothing) = nothing
 function _disarm!(guard::_IdleGuard)::Nothing
     # Losing this CAS to :fired is fine — the resolution stands; disarming is
-    # only a promise that the guard will never fire in the FUTURE.
+    # only a promise that the guard will never fire in the FUTURE (a late tick
+    # finds the state resolved and does nothing).
     @atomicreplace guard.state :armed => :disarmed
     timer = guard.timer
-    timer === nothing || close(timer)
+    timer === nothing || errormonitor(Threads.@spawn :default close(timer))   # off-path: see _with_deadline_task
     return nothing
 end

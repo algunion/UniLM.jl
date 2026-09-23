@@ -3,6 +3,10 @@ on:
   schedule:
     - cron: 0 0 * * *
   workflow_dispatch:
+# CompatHelper pushes a branch and opens a pull request with the job token.
+permissions:
+  contents: write
+  pull-requests: write
 jobs:
   CompatHelper:
     runs-on: ubuntu-latest

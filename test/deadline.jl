@@ -42,7 +42,7 @@ end
     comp = CompositeException([ArgumentError("x"), tfe])
     @test UniLM._find_exception(x -> x isa UniLM._DeadlineBreach, comp) === b
     @test UniLM._find_exception(x -> x isa UniLM._DeadlineBreach, ArgumentError("x")) === nothing
-    # cause-carrying wrappers (.error on the 1.x major, .cause on the 2.x) are traversed
+    # cause-carrying wrappers (HTTP.ConnectError carries .cause) are traversed
     wrapped = HTTP.ConnectError("http://127.0.0.1:9", ErrorException("inner"))
     @test UniLM._find_exception(x -> x isa ErrorException, wrapped) isa ErrorException
     @test UniLM._unwrap_task_failure(tfe) === b
@@ -50,7 +50,6 @@ end
 end
 
 @testset "transport-error classifier: IO shapes true, control-flow always false" begin
-    major2 = pkgversion(HTTP) >= v"2"
     # connection-level shapes are transport errors
     @test UniLM._is_transport_error(Base.IOError("connection reset", 0))
     @test UniLM._is_transport_error(EOFError())
@@ -83,15 +82,9 @@ end
     # an interrupt buried NEXT TO a transport error still wins: never retried
     @test !UniLM._is_transport_error(CompositeException([Base.IOError("x", 0), InterruptException()]))
     # status-carrying errors are responses, not transport failures
-    status_err = major2 ?
-        HTTP.StatusError(500, HTTP.Response(500, [], UInt8[])) :
-        HTTP.StatusError(500, "GET", "/x", HTTP.Response(500, [], UInt8[]))
-    @test !UniLM._is_transport_error(status_err)
+    @test !UniLM._is_transport_error(HTTP.StatusError(500, HTTP.Response(500, [], UInt8[])))
     # native timeout errors ride the UniLMTimeout channel via the seam's mapping
-    timeout_err = major2 ?
-        HTTP.TimeoutError("request", Int64(1_000_000_000), Int64(0)) :
-        HTTP.TimeoutError(1)
-    @test !UniLM._is_transport_error(timeout_err)
+    @test !UniLM._is_transport_error(HTTP.TimeoutError("request", Int64(1_000_000_000), Int64(0)))
     @test !UniLM._is_transport_error(ArgumentError("not transport"))
 end
 
@@ -222,15 +215,14 @@ end
 @testset "task mode: a breach throws a typed timeout and abandons the worker" begin
     # NEW contract: on breach the wrapper throws UniLMTimeout and ABANDONS the
     # worker — no exception is injected into it and it is not killed. The worker
-    # keeps running and completes on its own (in production its native per-major
+    # keeps running and completes on its own (in production its native
     # timeout at the same bound is the real executioner). The breach lands within
-    # [limit, limit + pollint], pollint = 0.1 s.
+    # [limit, limit + timer latency] — a one-shot timer, no poll quantization.
     #
     # Shared-runner budget: scheduler stalls of ~1.9 s have been measured between a
     # task becoming runnable and being observed. The worker therefore runs 4.0 s —
-    # far past the worst-case breach observation (0.3 s + stall) — so it is still
-    # unfinished at breach time, and the elapsed window carries the same stall on
-    # top of the poll quantization.
+    # far past the worst-case breach observation (0.2 s + stall) — so it is still
+    # unfinished at breach time, and the elapsed window carries the same stall.
     ran_to_end = Threads.Atomic{Int}(0)
     limit = 0.2
     err = try
@@ -245,7 +237,7 @@ end
     @test err isa UniLM.UniLMTimeout
     @test err.phase === :request
     @test err.limit == limit
-    @test limit <= err.elapsed < limit + 3.0      # [limit, limit + pollint + runner stall]
+    @test limit <= err.elapsed < limit + 3.0      # [limit, limit + timer latency + runner stall]
     @test ran_to_end[] == 0                        # worker not yet finished at breach time
     # the abandoned worker was NOT terminated — it runs on to its own completion
     @test timedwait(() -> ran_to_end[] == 1, 15.0) === :ok
@@ -296,6 +288,51 @@ end
         ex
     end
     @test e isa ArgumentError && e.msg == "boom"   # TaskFailedException unwrapped
+end
+
+@testset "task mode: completion is event-driven — no success-path latency floor" begin
+    # A polled completion check makes every non-streaming call pay up to one poll
+    # interval; an instant local server exposes that floor directly.
+    srv = HTTP.serve!(_ -> HTTP.Response(200, "ok"), "127.0.0.1", 0; verbose=false)
+    url = "http://127.0.0.1:$(HTTP.port(srv))/"
+    try
+        cfg = RequestConfig(max_attempts=1)
+        UniLM._http("GET", url; cfg)   # compile outside the measurement
+        ms = map(1:20) do _
+            t = time_ns()
+            UniLM._http("GET", url; cfg)
+            (time_ns() - t) / 1e6
+        end
+        @test sort(ms)[10] < 20.0   # median; a 0.1 s poll floor puts it near 100 ms
+    finally
+        close(srv)
+    end
+end
+
+@testset "task mode: a busy event-loop thread never stalls the success path" begin
+    # The main task shares its thread with the libuv event loop. `close(::Timer)`
+    # and timer-based polling both wait on that loop, so a call on another thread
+    # stalled for as long as the main task kept the thread busy. The main task
+    # spins WITHOUT yielding for 3 s (GC safepoints only); the call is timed from
+    # the spawn instant, so a worker that never started also reads as a stall.
+    srv = HTTP.serve!(_ -> HTTP.Response(200, "ok"), "127.0.0.1", 0; verbose=false)
+    url = "http://127.0.0.1:$(HTTP.port(srv))/"
+    try
+        cfg = RequestConfig(max_attempts=1)
+        UniLM._http("GET", url; cfg)   # compile outside the measurement
+        finished = Threads.Atomic{UInt64}(0)
+        spawned = time_ns()
+        t = Threads.@spawn :default (UniLM._http("GET", url; cfg); finished[] = time_ns())
+        spin_until = spawned + 3_000_000_000
+        while time_ns() < spin_until
+            GC.safepoint()
+        end
+        @test timedwait(() -> istaskdone(t), 25.0) === :ok
+        fetch(t)
+        @test (finished[] - spawned) / 1e9 < 1.5
+    finally
+        close(srv)
+    end
 end
 
 @testset "interrupts rethrow first, never laundered into timeouts" begin
@@ -383,6 +420,39 @@ end
     @test timedwait(() -> UniLM._idle_fired(g), 10.0) === :ok   # stop touching → fires
     @test closed[] == 1
     UniLM._disarm!(g)
+end
+
+@testset "idle guard: user callback time is not wire idle time" begin
+    # Drivers bracket every user callback with _enter_user!/_exit_user!. Time
+    # spent in user code must not count as a byte gap, and the gap restarts when
+    # the callback returns: a guard that skipped the re-stamp would fire at the
+    # first tick after exit (gap ≈ the whole callback), below the lower bound.
+    # Upper bound: the [limit, limit + period] detection window with a 5x margin
+    # on the period for timer-callback scheduling.
+    limit = 0.5
+    period = min(limit / 4, 5.0)
+    closed = Threads.Atomic{Int}(0)
+    fired_at = Threads.Atomic{UInt64}(0)
+    g = UniLM._idle_guard(limit) do
+        fired_at[] = time_ns()
+        Threads.atomic_add!(closed, 1)
+    end
+    try
+        UniLM._enter_user!(g)
+        sleep(2.0)                               # 4x the limit inside user code
+        @test !UniLM._idle_fired(g)
+        @test closed[] == 0
+        exited = time_ns()
+        UniLM._exit_user!(g)                     # no _touch! after this
+        @test timedwait(() -> UniLM._idle_fired(g), 25.0) === :ok
+        @test closed[] == 1
+        after_exit = (fired_at[] - exited) / 1e9
+        @test limit <= after_exit <= limit + 5 * period
+    finally
+        UniLM._disarm!(g)
+    end
+    @test UniLM._enter_user!(nothing) === nothing
+    @test UniLM._exit_user!(nothing) === nothing
 end
 
 @testset "disarm is idempotent and prevents firing" begin

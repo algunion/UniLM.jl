@@ -1,11 +1,10 @@
 # ─── Bounded HTTP seam ───────────────────────────────────────────────────────
 # Every provider HTTP exchange routes through _http (one attempt),
 # _http_with_retries (the one retry loop) or _http_open (streaming). The seam
-# translates RequestConfig bounds into the resolved HTTP.jl major's native
-# timeout kwargs — they fire earlier, with better phase attribution — AND arms
-# an outer watchdog at the same bound as the guarantee of last resort. Native
-# timeout exceptions map to UniLMTimeout; all other transport exceptions
-# propagate unchanged.
+# translates RequestConfig bounds into HTTP.jl's native timeout kwargs — they
+# fire earlier, with better phase attribution — AND arms an outer watchdog at
+# the same bound as the guarantee of last resort. Native timeout exceptions map
+# to UniLMTimeout; all other transport exceptions propagate unchanged.
 
 const _RETRY_BASE = 1.0
 const _RETRY_FACTOR = 2.0
@@ -65,11 +64,16 @@ function _retry_after_seconds(resp::HTTP.Response)::Union{Nothing,Float64}
     return max(0.0, due - time())
 end
 
-function _retry_delay(retry::Integer, resp::HTTP.Response)::Float64
+# Full-jitter backoff; a Retry-After header is a FLOOR under it, not a
+# replacement: clients that all receive the same header would otherwise wake at
+# the same instant and retry in lockstep. The spread above the floor is capped at
+# the budget left after it, so jitter never pushes a floor that fits past
+# `remaining`.
+function _retry_delay(retry::Integer, resp::HTTP.Response, remaining::Float64=Inf)::Float64
     computed = min(_RETRY_BASE * _RETRY_FACTOR^retry, _RETRY_MAX_DELAY)
-    delay = rand() * computed  # full jitter
     ra = _retry_after_seconds(resp)
-    return isnothing(ra) ? delay : max(ra, delay)
+    isnothing(ra) && return rand() * computed
+    return ra + rand() * min(computed, max(remaining - ra, 0.0))
 end
 
 """
@@ -77,25 +81,27 @@ end
 
 Shared retry-budget arithmetic — the single implementation used by the non-stream
 retry loop and the stream driver. Computes the full-jitter backoff for `attempt`
-(1-based), honoring `Retry-After` when a response is available. Returns
-`(:sleep, delay)` when the pause fits the remaining total deadline, else
-`(:budget, delay)`: fail NOW with the last real outcome — sleeping less and attempting
-with ~zero budget is a guaranteed mid-flight breach, and sleeping past the deadline
-breaks the bound.
+(1-based); a `Retry-After` header, when a response carries one, is the floor the
+jitter spreads above. Returns `(:sleep, delay)` when the pause fits the remaining
+total deadline, else `(:budget, delay)` — which, with a header, happens only when
+the header's own wait does not fit: fail NOW with the last real outcome — sleeping
+less and attempting with ~zero budget is a guaranteed mid-flight breach, and
+sleeping past the deadline breaks the bound.
 """
 function _retry_pause(cfg::RequestConfig, t0::UInt64, attempt::Int,
                       resp::Union{HTTP.Response,Nothing})::Tuple{Symbol,Float64}
-    delay = _retry_delay(attempt - 1, isnothing(resp) ? HTTP.Response(0) : resp)
-    delay > _remaining_s(cfg, t0) ? (:budget, delay) : (:sleep, delay)
+    remaining = _remaining_s(cfg, t0)
+    delay = _retry_delay(attempt - 1, isnothing(resp) ? HTTP.Response(0) : resp, remaining)
+    delay > remaining ? (:budget, delay) : (:sleep, delay)
 end
 
 """
     _unwrap_exception(e)
 
 Peel task/transport wrappers to the root cause so timeout and interrupt classification
-works regardless of the HTTP.jl major's wrapping: `TaskFailedException` (internal
-request tasks), `CompositeException`, and wrapper exceptions exposing an
-`error::Exception` field (the HTTP.jl RequestError/ConnectError shape).
+works regardless of how the failure was wrapped: `TaskFailedException` (internal
+request tasks), `CompositeException`, and wrapper exceptions exposing their cause as
+an `error::Exception` field.
 """
 function _unwrap_exception(e)
     while true
@@ -146,16 +152,18 @@ _mask_auth_headers(s::AbstractString)::String =
 The one renderer for the user-visible `error::String` of every `*CallError` result.
 
 Prefers the root cause's `showerror` text over `string(e)`: the wrapper layers add
-no diagnostic value, and on HTTP.jl 1.x the wrapper's own rendering is a full
-request dump — headers and body included. Then masks auth-shaped header values as
-defense in depth, so a credential cannot reach a result value (or a log line, or a
-bug report) no matter which library layer produced the text.
+no diagnostic value, and `string` renders a wrapper's raw fields rather than a
+message. Then masks auth-shaped header values as defense in depth, so a credential
+cannot reach a result value (or a log line, or a bug report) no matter which
+library layer produced the text.
 """
 function _error_text(e)::String
     u = _unwrap_exception(e)
     txt = try
         u isa Exception ? sprint(showerror, u) : string(u)
-    catch
+    catch e
+        # A user interrupt that lands while rendering is still the user's intent.
+        e isa InterruptException && rethrow()
         # A showerror that itself throws must not replace a typed failure with a
         # crash: name the type and move on.
         string(typeof(u))
@@ -163,38 +171,22 @@ function _error_text(e)::String
     _mask_auth_headers(txt)
 end
 
-# Resolved-at-load HTTP.jl major: the majors expose different native timeout
-# kwargs with different declared types, so translation branches on this.
-const _HTTP_MAJOR2 = pkgversion(HTTP) >= v"2"
-
-# The 1.x major declares its timeout kwargs as ::Int seconds. Round UP so the
-# native fast-path is never tighter than the configured Float64 bound (the
-# watchdog enforces the exact bound); 0 disables. Translating Inf FIRST
-# matters: round(Int, Inf) is an InexactError.
-_native_seconds_int(x::Float64)::Int = x == Inf ? 0 : max(1, ceil(Int, x))
-
-# The 2.x major accepts ::Real seconds but requires them finite: Inf must be
-# translated to the documented "off" value 0 BEFORE the call.
+# HTTP.jl's timeout kwargs take ::Real seconds but require them finite: Inf
+# must be translated to the documented "off" value 0 BEFORE the call.
 _native_seconds_real(x::Float64)::Float64 = x == Inf ? 0.0 : x
 
 # Native kwargs for a non-streaming attempt. connect_timeout is passed
-# EXPLICITLY on the 2.x major: omitting it selects a 30 s library default,
-# not "off".
-function _native_timeout_kwargs(cfg::RequestConfig, bound::Float64; major2::Bool=_HTTP_MAJOR2)
-    return major2 ?
-        (connect_timeout = _native_seconds_real(cfg.connect_timeout),
-         request_timeout = _native_seconds_real(bound)) :
-        (connect_timeout = _native_seconds_int(cfg.connect_timeout),
-         readtimeout     = _native_seconds_int(bound))
-end
+# EXPLICITLY: omitting it selects a 30 s library default, not "off".
+_native_timeout_kwargs(cfg::RequestConfig, bound::Float64) =
+    (connect_timeout = _native_seconds_real(cfg.connect_timeout),
+     request_timeout = _native_seconds_real(bound))
 
-# Native kwargs for a streaming attempt: bound connect on both majors. The
-# 2.x read_idle_timeout resets per read, matching byte-gap idle semantics, so
-# it rides along as a fast path. The 1.x readtimeout bounds the WHOLE
-# exchange — it would kill long healthy streams — so streams never set it and
-# the idle guard is the sole idle enforcement there.
-# INVARIANT: connect and (2.x, finite idle bound) read-idle are the ONLY
-# native timers armed here WHILE THE IDLE BOUND IS FINITE.
+# Native kwargs for a streaming attempt: the connect bound, plus
+# read_idle_timeout, which resets on every read — byte-gap idle semantics — so
+# it rides along as a fast path. No whole-exchange bound is armed: it would kill
+# long healthy streams.
+# INVARIANT: connect and (finite idle bound) read-idle are the ONLY native
+# timers armed here WHILE THE IDLE BOUND IS FINITE.
 # `_classify_stream_timeout` attributes every non-connect native timeout on a
 # streaming attempt to the read-idle timer BY ELIMINATION, because HTTP.jl
 # surfaces a read-idle breach with the literal operation="request" —
@@ -203,48 +195,50 @@ end
 # so the elimination stays sound (that classifier requires
 # `stream_idle_timeout < Inf`); adding any other streaming timer requires
 # revisiting the classifier first.
-function _native_stream_kwargs(cfg::RequestConfig, bound::Float64=Inf; major2::Bool=_HTTP_MAJOR2)
-    major2 || return (connect_timeout = _native_seconds_int(cfg.connect_timeout),)
+function _native_stream_kwargs(cfg::RequestConfig, bound::Float64=Inf)
     kw = (connect_timeout   = _native_seconds_real(cfg.connect_timeout),
           read_idle_timeout = _native_seconds_real(cfg.stream_idle_timeout))
     # Idle bound disabled: nothing above bounds the response-header wait, and the
-    # driver's request-phase watchdog cannot help either — its `close(io)` is
-    # swallowed before response headers exist on this major — so a mute peer
-    # would stall forever. Cap the header wait natively at the same request
+    # driver's request-phase watchdog cannot help either — closing the client
+    # stream cannot reach the connection until `startread` returns (HTTP.jl hands
+    # the stream its connection together with the response headers) — so a mute
+    # peer would stall forever. Cap the header wait natively at the same request
     # bound. ONLY in this branch: with a finite idle bound read_idle_timeout
-    # already bounds that wait (2.x waits min(response_header_timeout,
+    # already bounds that wait (HTTP.jl waits min(response_header_timeout,
     # read_idle_timeout)), and a second native non-connect timer would break the
     # by-elimination attribution in `_classify_stream_timeout`.
     return (cfg.stream_idle_timeout == Inf && bound < Inf) ?
         (kw..., response_header_timeout = bound) : kw
 end
 
-# Phase attribution for a 2.x native TimeoutError operation label.
-_timeout_phase_2x(operation::AbstractString)::Symbol =
-    operation == "connect" || operation == "tls_handshake" ? :connect : :request
+# The kwargs the seam imposes on HTTP.jl, after any caller kwargs so they win.
+# Every call is ONE attempt (the retry budget lives in _http_with_retries; the
+# library's own retry layer would multiply wire attempts behind its back), and
+# callers branch on the status instead of catching StatusError.
+_request_kwargs(cfg::RequestConfig, bound::Float64) =
+    (status_exception = false, retry = false, _native_timeout_kwargs(cfg, bound)...)
 
-# The 1.x major signals a connect timeout with a dedicated sentinel wrapped
-# inside HTTP.ConnectError. Resolve the type once; Union{} on majors that
-# lack it so `isa` never matches.
-const _CONNECT_TIMEOUT_1X =
-    isdefined(HTTP, :Connections) && isdefined(HTTP.Connections, :ConnectTimeout) ?
-        HTTP.Connections.ConnectTimeout : Union{}
+# Streams also pin HTTP/1.1. HTTP.jl negotiates HTTP/2 for https and then
+# multiplexes every concurrent call to a host over ONE connection with shared
+# flow-control windows, so a stream whose consumer applies backpressure starves
+# every other stream on that connection. One connection per stream isolates them
+# (the official OpenAI and Anthropic SDKs also stream over HTTP/1.1 by default).
+# Non-streaming requests keep protocol negotiation (:auto).
+_open_kwargs(cfg::RequestConfig, bound::Float64) =
+    (status_exception = false, retry = false, protocol = :h1, _native_stream_kwargs(cfg, bound)...)
+
+# Phase attribution for a native TimeoutError operation label.
+_timeout_phase(operation::AbstractString)::Symbol =
+    operation == "connect" || operation == "tls_handshake" ? :connect : :request
 
 # Map a native HTTP.jl timeout exception (possibly nested in wrapper layers)
 # to UniLMTimeout; return nothing when `e` is not a timeout — the caller then
 # rethrows the original, so non-timeout transport errors propagate unchanged.
 function _map_native_timeout(e, cfg::RequestConfig, bound::Float64, t0::UInt64)::Union{Nothing,UniLMTimeout}
     native = _find_exception(x -> x isa HTTP.TimeoutError, e)
-    if native !== nothing
-        phase = _HTTP_MAJOR2 ? _timeout_phase_2x(native.operation) : :request
-        limit = phase === :connect ? cfg.connect_timeout : bound
-        return UniLMTimeout(phase, _elapsed_s(t0), limit)
-    end
-    if _CONNECT_TIMEOUT_1X !== Union{} &&
-       _find_exception(x -> x isa _CONNECT_TIMEOUT_1X, e) !== nothing
-        return UniLMTimeout(:connect, _elapsed_s(t0), cfg.connect_timeout)
-    end
-    return nothing
+    native === nothing && return nothing
+    phase = _timeout_phase(native.operation)
+    return UniLMTimeout(phase, _elapsed_s(t0), phase === :connect ? cfg.connect_timeout : bound)
 end
 
 """
@@ -260,11 +254,11 @@ the in-driver idle guard happened to be armed yet:
 1. `_idle_fired(idle)`: our own guard closed the socket — the caught error is
    the echo of that close.
 2. A native `HTTP.TimeoutError` whose operation is NOT connect/TLS, while the
-   2.x read-idle fast path is armed (`cfg.stream_idle_timeout < Inf`). The
+   read-idle fast path is armed (`cfg.stream_idle_timeout < Inf`). The
    streaming seam arms no other native non-connect timer (see
    `_native_stream_kwargs`), so such a timeout IS the read-idle timer by
    elimination — regardless of where in the exchange it fired. In particular,
-   HTTP 2.x bounds the response-header wait by
+   HTTP.jl bounds the response-header wait by
    `min(response_header_timeout, read_idle_timeout)`, so the byte-gap bound
    can breach BEFORE the first byte arrives — before the idle guard exists.
    Deciding from the armed-timer set keeps the phase deterministic across
@@ -273,14 +267,12 @@ the in-driver idle guard happened to be armed yet:
 
 `elapsed` reports the measured byte gap where the guard measured one; for a
 pre-first-byte breach the attempt's own elapsed time is the honest "no bytes
-for this long" bound. On the 1.x major fact 2 is structurally impossible
-(streams arm no native read timer there), leaving fact 1 — exactly the 1.x
-enforcement path.
+for this long" bound.
 """
 function _classify_stream_timeout(e, idle, cfg::RequestConfig, t0::UInt64)::Union{Nothing,UniLMTimeout}
     native = _find_exception(x -> x isa HTTP.TimeoutError, e)
-    native_idle = native !== nothing && _HTTP_MAJOR2 && cfg.stream_idle_timeout < Inf &&
-                  _timeout_phase_2x(native.operation) !== :connect
+    native_idle = native !== nothing && cfg.stream_idle_timeout < Inf &&
+                  _timeout_phase(native.operation) !== :connect
     (_idle_fired(idle) || native_idle) || return nothing
     gap = idle === nothing ? _elapsed_s(t0) : _idle_gap_s(idle)
     return UniLMTimeout(:stream_idle, gap, cfg.stream_idle_timeout)
@@ -335,15 +327,12 @@ exception unwinds any further: on a breach (or any `UniLMTimeout` escaping
 `f`), `slot[]` is set to that timeout and the exception rethrows unchanged.
 
 Why recording matters: the streaming drivers run the deadline block INSIDE
-`HTTP.open`'s handler. When the bound fires, `close!` tears down the socket and
-the typed `UniLMTimeout` starts unwinding through the library's request
-machinery — which, on the 1.x major, still tries to finish the exchange on that
-socket (terminating chunk, connection cleanup) and can raise its own transport
-error (EPIPE/ECONNRESET) that REPLACES the in-flight typed exception. What then
-escapes `HTTP.open` is teardown noise with no `UniLMTimeout` in its chain. The
-recorded value lets the driver's catch restore the typed cause; transport
-errors with NO recorded bound are untouched and classify as today.
-`InterruptException` rethrows unrecorded.
+`HTTP.open`'s handler, and what escapes `HTTP.open` is not always what the
+handler raised — once the attempt's request context is cancelled, HTTP.jl
+rethrows any handler exception as its own `HTTP.CanceledError`. The recorded
+value lets the driver's catch restore the typed cause; transport errors with NO
+recorded bound are untouched and classify as today. `InterruptException`
+rethrows unrecorded.
 
 The completion race is recorded and raised the same way: when `f` returns a real
 value but the timer already won the resolution CAS, the guarded socket has been
@@ -371,10 +360,12 @@ end
 # with budget left is worth another try) or a pure transport failure per
 # _is_transport_error. :deadline (budget spent), :stream_idle, interrupts,
 # and status-carrying errors all fall through to false via the classifier's
-# always-false set — ONE classifier, composed here, never duplicated.
+# always-false set — ONE classifier, composed here, never duplicated. A
+# cancellation anywhere in the chain is never retried.
 _retryable_exception(e)::Bool =
-    (e isa UniLMTimeout && (e.phase === :connect || e.phase === :request)) ||
-    _is_transport_error(e)
+    _find_exception(_cancel_shaped, e) === nothing &&
+    ((e isa UniLMTimeout && (e.phase === :connect || e.phase === :request)) ||
+     _is_transport_error(e))
 
 """
     _BodyFactory(build)
@@ -395,15 +386,21 @@ _attempt_body(body) = body
 _attempt_body(f::_BodyFactory) = f.build()
 
 """
-    _http(method, url, headers=[], body=UInt8[]; cfg, remaining=Inf, kwargs...) -> HTTP.Response
+    _http(method, url, headers=[], body=UInt8[]; cfg, remaining=Inf, cancel, kwargs...) -> HTTP.Response
 
-One bounded HTTP attempt. The per-attempt bound is
+One bounded, cancellable HTTP attempt. The per-attempt bound is
 `min(cfg.request_timeout, remaining)`; `remaining <= 0` throws
-`UniLMTimeout(:deadline, …)` without touching the network. Native per-major
+`UniLMTimeout(:deadline, …)` without touching the network. HTTP.jl's native
 timeout kwargs are the fast path; a task-mode watchdog at the same bound is
 the guarantee of last resort. Native timeout exceptions map to
 [`UniLMTimeout`](@ref) (`:connect` where attributable, else `:request`);
 other transport exceptions propagate unchanged.
+
+`cancel` (default: the ambient token of [`with_cancel`](@ref)) already cancelled
+at entry throws [`UniLMCancelled`](@ref) with no network I/O. Each attempt runs
+under its own `HTTP.RequestContext`, and a cancel during the attempt cancels that
+context (aborting the exchange) and releases the watchdog's waiter; any failure
+surfacing while the token is cancelled is reported as `UniLMCancelled(:token, …)`.
 
 Always imposes `status_exception=false` (callers branch on `resp.status`)
 and `retry=false`: this is ONE attempt — the retry budget lives in
@@ -417,19 +414,26 @@ through to `HTTP.request` (e.g. `decompress=false`).
 function _http(method::AbstractString, url::AbstractString,
                headers=Pair{String,String}[], body=UInt8[];
                cfg::RequestConfig=current_config(), remaining::Float64=Inf,
+               cancel::Union{Nothing,CancelToken}=_current_cancel(),
                kwargs...)::HTTP.Response
-    remaining <= 0 &&
+    t0 = time_ns()
+    iscancelled(cancel) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
+    ispositive(remaining) ||
         throw(UniLMTimeout(:deadline, max(cfg.total_deadline - remaining, 0.0), cfg.total_deadline))
     bound = min(cfg.request_timeout, remaining)
-    t0 = time_ns()
-    native = _native_timeout_kwargs(cfg, bound)
+    ctx = HTTP.RequestContext()
     try
-        return _with_deadline_task(bound, :request) do
+        return _with_deadline_task(bound, :request; cancel,
+                                   on_cancel=() -> HTTP.cancel!(ctx; message="cancelled")) do
             HTTP.request(method, url, headers, _attempt_body(body);
-                         kwargs..., status_exception=false, retry=false, native...)
+                         kwargs..., _request_kwargs(cfg, bound)..., context=ctx)
         end
     catch e
         e isa InterruptException && rethrow()
+        e isa UniLMCancelled && rethrow()
+        # Cancelled mid-attempt: whatever surfaced (HTTP.CanceledError from the
+        # aborted exchange, or a racing timeout) is the cancellation's echo.
+        iscancelled(cancel) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
         e isa UniLMTimeout && rethrow()
         mapped = _map_native_timeout(e, cfg, bound, t0)
         mapped === nothing ? rethrow() : throw(mapped)
@@ -437,7 +441,7 @@ function _http(method::AbstractString, url::AbstractString,
 end
 
 """
-    _http_with_retries(cfg, t0, method, url, headers=[], body=UInt8[]; kwargs...) -> HTTP.Response
+    _http_with_retries(cfg, t0, method, url, headers=[], body=UInt8[]; cancel, kwargs...) -> HTTP.Response
 
 The one retry loop. `t0` is the verb-entry monotonic origin (`time_ns()`).
 Runs at most `cfg.max_attempts` attempts inside `cfg.total_deadline`
@@ -451,30 +455,37 @@ remaining budget, fail NOW with the last real outcome: sleeping less and
 attempting with ~zero budget is a guaranteed mid-flight breach, and a
 budget-exhausted 429 is a 429, not a fabricated timeout. Intermediate
 retries log at debug; the final failure warns once.
+
+`cancel` (default: the ambient token) is checked before every attempt, backoff
+sleeps wake at once on a cancel, and a cancelled call is never retried: each
+surfaces as [`UniLMCancelled`](@ref) with `elapsed` measured from `t0`.
 """
 function _http_with_retries(cfg::RequestConfig, t0::UInt64,
                             method::AbstractString, url::AbstractString,
                             headers=Pair{String,String}[], body=UInt8[];
+                            cancel::Union{Nothing,CancelToken}=_current_cancel(),
                             kwargs...)::HTTP.Response
+    cancelled() = UniLMCancelled(:token, _elapsed_s(t0))
     for attempt in 1:cfg.max_attempts
+        iscancelled(cancel) && throw(cancelled())
         remaining = _remaining_s(cfg, t0)
-        remaining <= 0 && throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
+        ispositive(remaining) || throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
         final = attempt == cfg.max_attempts
         resp = try
-            _http(method, url, headers, body; cfg, remaining, kwargs...)
+            _http(method, url, headers, body; cfg, remaining, cancel, kwargs...)
         catch e
             e isa InterruptException && rethrow()
+            e isa UniLMCancelled && throw(cancelled())   # never retried
             (_retryable_exception(e) && !final) || rethrow()
             action, delay = _retry_pause(cfg, t0, attempt, nothing)
             if action === :budget
                 @warn "transport failure is retryable but the backoff exceeds the remaining total_deadline budget; giving up" attempt delay
                 rethrow()
             end
-            # Log the ROOT CAUSE, never the wrapper: on HTTP.jl 1.x the wrapper
-            # renders as a full request dump (headers included), which would put
-            # the credential in the debug log. Twin of the stream driver below.
+            # Log the ROOT CAUSE, never the wrapper chain: the wrapper layers add
+            # no diagnostic value. Twin of the stream driver below.
             @debug "retrying after transport failure" attempt delay exception = (_unwrap_exception(e), catch_backtrace())
-            sleep(delay)
+            _cancel_sleep(cancel, delay) && throw(cancelled())
             continue
         end
         if _is_retryable(resp.status) && !final
@@ -484,7 +495,7 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
                 return resp
             end
             @debug "retrying after retryable status" status = resp.status attempt delay
-            sleep(delay)
+            _cancel_sleep(cancel, delay) && throw(cancelled())
             continue
         end
         _is_retryable(resp.status) &&
@@ -496,26 +507,45 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
 end
 
 """
-    _http_open(f, method, url, headers; cfg, t0, kwargs...) -> HTTP.Response
+    _http_open(f, method, url, headers; cfg, t0, cancel, kwargs...) -> HTTP.Response
 
 Streaming attempt seam: wraps `HTTP.open` with `status_exception=false`,
-`retry=false`, and the per-major native stream kwargs (connect bound on both
-majors; a byte-gap idle fast path only where the native read timeout has
-per-read reset semantics — a whole-exchange native bound would kill long
-healthy streams — plus, where the idle bound is disabled, a native cap on the
-response-header wait at `min(request_timeout, remaining)`). `f(io)` receives
-the raw stream untouched: the first-byte
-deadline and the idle guard are the calling driver's job, because only the
-driver knows when the request body is written and the response headers
+`retry=false`, `protocol=:h1` (one connection per stream: HTTP/2 multiplexing
+would let one backpressured stream starve its siblings), and the native stream
+kwargs (the connect bound and the per-read `read_idle_timeout` byte-gap fast
+path — a whole-exchange native bound would kill long healthy streams — plus,
+where the idle bound is disabled, a native cap on the response-header wait at
+`min(request_timeout, remaining)`). `f(io)` receives the raw stream untouched:
+the first-byte deadline and the idle guard are the calling driver's job, because
+only the driver knows when the request body is written and the response headers
 arrive. `t0` is the driver's monotonic origin, accepted here so drivers
 thread one origin through the seam.
+
+`cancel` (default: the ambient token) already cancelled at entry throws
+[`UniLMCancelled`](@ref) with no network I/O. The attempt runs under its own
+`HTTP.RequestContext`, cancelled by a cancel for the attempt's whole duration:
+HTTP.jl checks it before acquiring a connection and aborts the connection once
+acquired, which unblocks the response-header wait and body reads parked inside
+`f` (a TCP/TLS connect already in progress finishes, or hits its connect bound,
+first). Whatever then escapes `HTTP.open` (HTTP.jl reports a cancelled context as
+`HTTP.CanceledError`) propagates unchanged — mapping it to a typed result is the
+driver's job.
 """
 function _http_open(f::Function, method::AbstractString, url::AbstractString, headers;
-                    cfg::RequestConfig, t0::UInt64, kwargs...)::HTTP.Response
-    native = _native_stream_kwargs(cfg, min(cfg.request_timeout, _remaining_s(cfg, t0)))
-    return HTTP.open(method, url, headers;
-                     kwargs..., status_exception=false, retry=false, native...) do io
-        f(io)
+                    cfg::RequestConfig, t0::UInt64,
+                    cancel::Union{Nothing,CancelToken}=_current_cancel(),
+                    kwargs...)::HTTP.Response
+    iscancelled(cancel) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
+    ctx = HTTP.RequestContext()
+    handle = _on_cancel(() -> HTTP.cancel!(ctx; message="cancelled"), cancel)
+    try
+        return HTTP.open(method, url, headers;
+                         kwargs..., _open_kwargs(cfg, min(cfg.request_timeout, _remaining_s(cfg, t0)))...,
+                         context=ctx) do io
+            f(io)
+        end
+    finally
+        _off_cancel(cancel, handle)
     end
 end
 

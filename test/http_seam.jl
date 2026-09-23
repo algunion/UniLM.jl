@@ -53,55 +53,69 @@ end
 
 stop!(m::MuteServer) = (close(m.server); wait(m.task); nothing)
 
-@testset "translation: Inf becomes native-off per phase per major" begin
-    # 2.x branch: Real seconds; 0 disables; Inf must never reach the library
-    # (it rejects non-finite), and connect must be explicit (nothing => 30 s default).
-    k2 = UniLM._native_timeout_kwargs(RequestConfig(connect_timeout=Inf, request_timeout=Inf), Inf; major2=true)
-    @test k2.connect_timeout === 0.0
-    @test k2.request_timeout === 0.0
-    k2b = UniLM._native_timeout_kwargs(RequestConfig(connect_timeout=2.5), 0.4; major2=true)
-    @test k2b.connect_timeout === 2.5
-    @test k2b.request_timeout === 0.4
-    s2 = UniLM._native_stream_kwargs(RequestConfig(stream_idle_timeout=Inf); major2=true)
-    @test s2.read_idle_timeout === 0.0
-    s2b = UniLM._native_stream_kwargs(RequestConfig(stream_idle_timeout=7.0); major2=true)
-    @test s2b.connect_timeout === 10.0
-    @test s2b.read_idle_timeout === 7.0
-    # 1.x branch: Int seconds; 0 disables; fractional bounds round UP (the
-    # native path may be looser than the watchdog, never tighter).
-    k1 = UniLM._native_timeout_kwargs(RequestConfig(connect_timeout=Inf, request_timeout=Inf), Inf; major2=false)
-    @test k1.connect_timeout === 0
-    @test k1.readtimeout === 0
-    k1b = UniLM._native_timeout_kwargs(RequestConfig(connect_timeout=2.5), 0.4; major2=false)
-    @test k1b.connect_timeout === 3
-    @test k1b.readtimeout === 1
-    s1 = UniLM._native_stream_kwargs(RequestConfig(); major2=false)
-    @test !haskey(s1, :readtimeout)   # streams never get the 1.x whole-exchange bound
-    @test s1.connect_timeout === 10
+# Exceptions whose own rendering fails: a user interrupt landing inside
+# showerror, and an ordinary rendering bug.
+struct _InterruptingShow <: Exception end
+Base.showerror(::IO, ::_InterruptingShow) = throw(InterruptException())
+struct _BrokenShow <: Exception end
+Base.showerror(::IO, ::_BrokenShow) = error("broken showerror")
+
+@testset "_error_text: an interrupt inside showerror propagates; other failures degrade" begin
+    @test_throws InterruptException UniLM._error_text(_InterruptingShow())
+    @test UniLM._error_text(_BrokenShow()) == string(_BrokenShow)   # names the type
+end
+
+@testset "translation: Inf becomes native-off per phase" begin
+    # Real seconds; 0 disables; Inf must never reach the library (it rejects
+    # non-finite), and connect must be explicit (nothing => 30 s default).
+    k = UniLM._native_timeout_kwargs(RequestConfig(connect_timeout=Inf, request_timeout=Inf), Inf)
+    @test k.connect_timeout === 0.0
+    @test k.request_timeout === 0.0
+    kb = UniLM._native_timeout_kwargs(RequestConfig(connect_timeout=2.5), 0.4)
+    @test kb.connect_timeout === 2.5
+    @test kb.request_timeout === 0.4
+    s = UniLM._native_stream_kwargs(RequestConfig(stream_idle_timeout=Inf))
+    @test s.read_idle_timeout === 0.0
+    sb = UniLM._native_stream_kwargs(RequestConfig(stream_idle_timeout=7.0))
+    @test sb.connect_timeout === 10.0
+    @test sb.read_idle_timeout === 7.0
+    @test !haskey(sb, :request_timeout)   # no whole-exchange bound on a stream
 end
 
 @testset "streaming translation: a disabled idle bound still caps the header wait" begin
-    # With the byte-gap bound off, the 2.x major arms NO native non-connect timer,
-    # and the request-phase watchdog's `close(io)` is swallowed before response
-    # headers exist — a mute peer would stall forever. Cap the header wait
-    # natively at the same request bound instead. ONLY in that branch: with a
-    # finite idle bound, read_idle_timeout already bounds the header wait
-    # (HTTP 2.x waits min(response_header_timeout, read_idle_timeout)), and a
+    # With the byte-gap bound off, the seam arms NO native non-connect timer, and
+    # the request-phase watchdog's `close(io)` cannot reach the connection before
+    # response headers exist — a mute peer would stall forever. Cap the header
+    # wait natively at the same request bound instead. ONLY in that branch: with
+    # a finite idle bound, read_idle_timeout already bounds the header wait
+    # (HTTP.jl waits min(response_header_timeout, read_idle_timeout)), and a
     # second native non-connect timer would break the by-elimination phase
     # attribution `_classify_stream_timeout` relies on.
-    off = UniLM._native_stream_kwargs(RequestConfig(stream_idle_timeout=Inf), 3.0; major2=true)
+    off = UniLM._native_stream_kwargs(RequestConfig(stream_idle_timeout=Inf), 3.0)
     @test off.read_idle_timeout === 0.0
     @test off.response_header_timeout === 3.0
-    on = UniLM._native_stream_kwargs(RequestConfig(stream_idle_timeout=7.0), 3.0; major2=true)
+    on = UniLM._native_stream_kwargs(RequestConfig(stream_idle_timeout=7.0), 3.0)
     @test on.read_idle_timeout === 7.0
     @test !haskey(on, :response_header_timeout)
     # No finite request bound to cap with: nothing to arm.
-    @test !haskey(UniLM._native_stream_kwargs(RequestConfig(stream_idle_timeout=Inf), Inf; major2=true),
+    @test !haskey(UniLM._native_stream_kwargs(RequestConfig(stream_idle_timeout=Inf), Inf),
                   :response_header_timeout)
-    # The 1.x major has no such kwarg — and needs none: its `close(io)` really
-    # does break the socket, so the watchdog already bounds the header wait.
-    @test !haskey(UniLM._native_stream_kwargs(RequestConfig(stream_idle_timeout=Inf), 3.0; major2=false),
-                  :response_header_timeout)
+end
+
+@testset "streams pin HTTP/1.1; non-streaming requests keep protocol negotiation" begin
+    # HTTP/2 multiplexes every concurrent call to a host over one connection with
+    # shared flow-control windows, so one stream whose consumer applies
+    # backpressure would starve the others. The kwargs the seam hands HTTP.open
+    # pin :h1; HTTP.request gets no protocol override (:auto).
+    cfg = RequestConfig()
+    open_kw = UniLM._open_kwargs(cfg, 5.0)
+    @test open_kw.protocol === :h1
+    @test open_kw.status_exception === false && open_kw.retry === false
+    @test open_kw.read_idle_timeout === cfg.stream_idle_timeout   # native stream bounds ride along
+    request_kw = UniLM._request_kwargs(cfg, 5.0)
+    @test !haskey(request_kw, :protocol)
+    @test request_kw.status_exception === false && request_kw.retry === false
+    @test request_kw.request_timeout === 5.0
 end
 
 @testset "streaming with the idle bound disabled still fails typed at the request bound" begin
@@ -110,60 +124,48 @@ end
     # UniLMTimeout(:request) at the configured bound, with the byte-gap guard
     # switched off. The bounded observation below is the falsifier — an unbounded
     # wait fails the test instead of hanging the suite.
-    if UniLM._HTTP_MAJOR2
-        m = mute_server()
-        cfg = RequestConfig(connect_timeout=Inf, request_timeout=1.0, total_deadline=Inf,
-                            stream_idle_timeout=Inf, max_attempts=1)
-        try
-            chat = Chat(model="mock", stream=true,
-                        service=GenericOpenAIEndpoint("http://127.0.0.1:$(m.port)", ""),
-                        messages=[Message(role=UniLM.RoleSystem, content="s"),
-                                  Message(role=UniLM.RoleUser, content="u")])
-            task = chatrequest!(chat; config=cfg)
-            # Bounded observation FIRST, and every assertion that reads the task
-            # is gated on it: an unbounded wait must fail this test, never hang it.
-            bounded = timedwait(() -> istaskdone(task), 15.0) === :ok
-            @test bounded
-            if bounded
-                res = fetch(task)
-                @test res isa LLMCallError
-                @test res.cause isa UniLM.UniLMTimeout
-                @test res.cause.phase === :request
-                @test m.accepted[] == 1    # one wire attempt; the bound is not a retry storm
-            end
-        finally
-            stop!(m)
+    m = mute_server()
+    cfg = RequestConfig(connect_timeout=Inf, request_timeout=1.0, total_deadline=Inf,
+                        stream_idle_timeout=Inf, max_attempts=1)
+    try
+        chat = Chat(model="mock", stream=true,
+                    service=GenericOpenAIEndpoint("http://127.0.0.1:$(m.port)", ""),
+                    messages=[Message(role=UniLM.RoleSystem, content="s"),
+                              Message(role=UniLM.RoleUser, content="u")])
+        task = chatrequest!(chat; config=cfg)
+        # Bounded observation FIRST, and every assertion that reads the task
+        # is gated on it: an unbounded wait must fail this test, never hang it.
+        bounded = timedwait(() -> istaskdone(task), 15.0) === :ok
+        @test bounded
+        if bounded
+            res = fetch(task)
+            @test res isa LLMCallError
+            @test res.cause isa UniLM.UniLMTimeout
+            @test res.cause.phase === :request
+            @test m.accepted[] == 1    # one wire attempt; the bound is not a retry storm
         end
-    else
-        # 1.x arms no native stream read timer at all — the watchdog is the whole
-        # enforcement there, and the streaming kwargs stay connect-only.
-        s1 = UniLM._native_stream_kwargs(RequestConfig(stream_idle_timeout=Inf), 1.0; major2=false)
-        @test collect(keys(s1)) == [:connect_timeout]
+    finally
+        stop!(m)
     end
 end
 
 @testset "native timeout exceptions map to UniLMTimeout with phase attribution" begin
     cfg = RequestConfig(connect_timeout=1.0)
     t0 = time_ns()
-    if UniLM._HTTP_MAJOR2
-        e_conn = HTTP.TimeoutError("connect", Int64(1_000_000_000), Int64(0))
-        e_tls  = HTTP.TimeoutError("tls_handshake", Int64(1_000_000_000), Int64(0))
-        e_req  = HTTP.TimeoutError("request", Int64(1_000_000_000), Int64(0))
-        e_idle = HTTP.TimeoutError("read_idle", Int64(1_000_000_000), Int64(0))
-        @test UniLM._map_native_timeout(e_conn, cfg, 5.0, t0).phase === :connect
-        @test UniLM._map_native_timeout(e_tls, cfg, 5.0, t0).phase === :connect
-        @test UniLM._map_native_timeout(e_req, cfg, 5.0, t0).phase === :request
-        @test UniLM._map_native_timeout(e_idle, cfg, 5.0, t0).phase === :request
-        # nested inside a cause-carrying wrapper
-        wrapped = HTTP.ConnectError("127.0.0.1:9", e_conn)
-        @test UniLM._map_native_timeout(wrapped, cfg, 5.0, t0).phase === :connect
-    else
-        e_read = HTTP.TimeoutError(5)
-        @test UniLM._map_native_timeout(e_read, cfg, 5.0, t0).phase === :request
-        e_conn = HTTP.ConnectError("http://127.0.0.1:9",
-                                   HTTP.Connections.ConnectTimeout("127.0.0.1", 9))
-        @test UniLM._map_native_timeout(e_conn, cfg, 5.0, t0).phase === :connect
-    end
+    e_conn = HTTP.TimeoutError("connect", Int64(1_000_000_000), Int64(0))
+    e_tls  = HTTP.TimeoutError("tls_handshake", Int64(1_000_000_000), Int64(0))
+    e_req  = HTTP.TimeoutError("request", Int64(1_000_000_000), Int64(0))
+    e_idle = HTTP.TimeoutError("read_idle", Int64(1_000_000_000), Int64(0))
+    @test UniLM._map_native_timeout(e_conn, cfg, 5.0, t0).phase === :connect
+    @test UniLM._map_native_timeout(e_tls, cfg, 5.0, t0).phase === :connect
+    @test UniLM._map_native_timeout(e_req, cfg, 5.0, t0).phase === :request
+    @test UniLM._map_native_timeout(e_idle, cfg, 5.0, t0).phase === :request
+    # the limit follows the phase: connect-phase bound vs the attempt's bound
+    @test UniLM._map_native_timeout(e_conn, cfg, 5.0, t0).limit == 1.0
+    @test UniLM._map_native_timeout(e_req, cfg, 5.0, t0).limit == 5.0
+    # nested inside a cause-carrying wrapper
+    wrapped = HTTP.ConnectError("127.0.0.1:9", e_conn)
+    @test UniLM._map_native_timeout(wrapped, cfg, 5.0, t0).phase === :connect
     # non-timeout transport errors are NOT mapped (they propagate unchanged)
     @test UniLM._map_native_timeout(Base.IOError("boom", 0), cfg, 5.0, t0) === nothing
     @test UniLM._map_native_timeout(ArgumentError("x"), cfg, 5.0, t0) === nothing
@@ -240,6 +242,30 @@ end
         @test hits[] == before
     finally
         close(server)
+    end
+end
+
+@testset "_http: 50 concurrent calls complete independently and overlap" begin
+    # The only in-suite check with more than one seam call in flight. Each request
+    # carries its own marker, echoed after 50–200 ms of server latency; run one
+    # after another the batch would take ~6 s, so a sub-1.5 s wall time shows the
+    # calls overlap, and the marker check shows no response crossed over.
+    srv = HTTP.serve!(req -> (sleep(0.05 + 0.15rand());
+                              HTTP.Response(200, HTTP.header(req, "X-Marker", ""))),
+                      "127.0.0.1", 0; verbose=false)
+    url = "http://127.0.0.1:$(HTTP.port(srv))/"
+    try
+        cfg = RequestConfig(max_attempts=1)
+        UniLM._http("GET", url, ["X-Marker" => "warm"]; cfg)   # compile outside the timing
+        started = time_ns()
+        tasks = [Threads.@spawn (String(UniLM._http("GET", url, ["X-Marker" => "m$i"]; cfg).body),
+                                 time_ns()) for i in 1:50]
+        @test timedwait(() -> all(istaskdone, tasks), 25.0) === :ok
+        results = fetch.(tasks)
+        @test first.(results) == ["m$i" for i in 1:50]
+        @test (maximum(last.(results)) - started) / 1e9 < 1.5
+    finally
+        close(srv)
     end
 end
 
@@ -325,6 +351,25 @@ end
     finally
         close(server)
     end
+end
+
+@testset "retry budget: Retry-After is a floor under the jitter, not a replacement for it" begin
+    # When the header alone decides the wait, every client that got the same
+    # Retry-After sleeps exactly that long and a fanned-out batch retries in
+    # lockstep. The header is the earliest retry instant; jitter spreads above it.
+    ra1 = HTTP.Response(429, ["Retry-After" => "1"])
+    t0 = time_ns()
+    draws = [UniLM._retry_pause(RequestConfig(total_deadline=Inf), t0, 1, ra1) for _ in 1:50]
+    @test all(d -> first(d) === :sleep, draws)
+    @test all(d -> last(d) >= 1.0, draws)
+    @test length(unique(last.(draws))) >= 10
+    # The spread never pushes a retry whose floor fits past the remaining budget.
+    tight = [UniLM._retry_pause(RequestConfig(total_deadline=1.5), time_ns(), 1, ra1) for _ in 1:50]
+    @test all(d -> first(d) === :sleep && 1.0 <= last(d) <= 1.5, tight)
+    # The floor itself must fit: a Retry-After beyond the remaining budget is :budget.
+    action, delay = UniLM._retry_pause(RequestConfig(total_deadline=5.0), time_ns(), 1,
+                                       HTTP.Response(429, ["Retry-After" => "20"]))
+    @test action === :budget && delay >= 20.0
 end
 
 @testset "retry budget: an exhausted total_deadline throws :deadline before any attempt" begin

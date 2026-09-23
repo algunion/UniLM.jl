@@ -221,12 +221,16 @@ end
         )
         chat = Chat(; kwargs...)
         forked = fork(chat)
-        # messages is deepcopied (identity differs by design); the cost Ref is fresh.
+        # Every field but `service` is deep-copied (identity differs by design) and the
+        # cost Ref is fresh, so equality is by value: `repr` compares mutable members
+        # such as a Tool's FunctionSignature structurally, where `isequal` would
+        # compare them by identity.
         skip = (:messages, :_cumulative_cost)
-        # FIXED contract: every remaining field survives a fork verbatim.
+        # FIXED contract: every remaining field survives a fork by value.
         # Extend this fixture with a non-default value whenever Chat gains a field — a field left at its default is invisible to this gate.
-        @test all(name -> isequal(getfield(forked, name), getfield(chat, name)),
+        @test all(name -> repr(getfield(forked, name)) == repr(getfield(chat, name)),
                   setdiff(fieldnames(Chat), skip))
+        @test forked.service === chat.service
     end
 
     @testset "chat SSE unit contracts (handle_sse_event! seam)" begin

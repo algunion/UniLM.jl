@@ -23,13 +23,39 @@
         @test length(chat) == 2  # original unchanged
     end
 
-    @testset "fork shares tools (shallow copy)" begin
-        sig = FunctionSignature(name="fn")
-        tools = [Tool(func=sig)]
-        chat = Chat(tools=tools)
+    @testset "fork copies tools (no shared vector or signature)" begin
+        chat = Chat(tools=[Tool(func=FunctionSignature(name="fn"))])
         forked = fork(chat)
 
-        @test forked.tools === chat.tools  # same reference
+        @test forked.tools !== chat.tools
+        @test forked.tools[1].func !== chat.tools[1].func   # FunctionSignature is mutable
+        @test forked.tools[1].func.name == "fn"
+    end
+
+    @testset "mutating a fork never reaches its parent; the service is shared" begin
+        chat = Chat(service=GenericOpenAIEndpoint("http://127.0.0.1:1", ""), model="m",
+                    tools=[Tool(func=FunctionSignature(name="fn", parameters=Dict("type" => "object")))],
+                    stop=["END"], logit_bias=Dict("100" => 1.0), metadata=Dict("k" => "v"),
+                    stream_options=Dict("include_usage" => true), modalities=["text"])
+        f = fork(chat)
+        push!(f.tools, Tool(func=FunctionSignature(name="extra")))
+        f.tools[1].func.description = "changed"
+        f.tools[1].func.parameters["type"] = "array"
+        f.metadata["k"] = "changed"
+        push!(f.stop, "HALT")
+        f.logit_bias["100"] = -5.0
+        f.stream_options["include_usage"] = false
+        push!(f.modalities, "audio")
+
+        @test length(chat.tools) == 1
+        @test chat.tools[1].func.description === nothing
+        @test chat.tools[1].func.parameters == Dict("type" => "object")
+        @test chat.metadata == Dict("k" => "v")
+        @test chat.stop == ["END"]
+        @test chat.logit_bias == Dict("100" => 1.0)
+        @test chat.stream_options == Dict("include_usage" => true)
+        @test chat.modalities == ["text"]
+        @test f.service === chat.service
     end
 
     @testset "fork has independent cumulative cost" begin

@@ -262,16 +262,20 @@ end
 # positionally when ids are absent — echoing a fabricated id would be wrong).
 _is_synthetic_call_id(id::AbstractString) = startswith(id, "unilm_call_")
 
-# Gemini finishReason → neutral finish_reason. OPEN ENUM: Google adds values
-# unannounced, so unknown → STOP (never throw). Tool-call detection is by
-# functionCall presence in the decoder, NOT by this reason (Gemini says STOP).
-function _gemini_finish_reason(fr)
-    fr == "STOP"       ? STOP :
-    fr == "MAX_TOKENS" ? "length" :
-    fr in ("SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY") ? CONTENT_FILTER :
-    isnothing(fr)      ? STOP :
-    STOP
-end
+# Gemini finishReason (the FinishReason enum, https://ai.google.dev/api/generate-content)
+# → neutral finish_reason; the decoder and the stream handler share this one rule.
+# STOP is the only normal completion, and a STOP turn that carries function calls is a
+# tool-call turn (Gemini reports STOP for those). MAX_TOKENS → "length"; the content
+# filters → "content_filter". Every other value of this open enum (MALFORMED_FUNCTION_CALL,
+# UNEXPECTED_TOOL_CALL, values added later) passes through lowercased, never as "stop",
+# and calls under any non-STOP reason keep that reason: a failed or filtered turn reads
+# neither as a completed turn nor as calls to dispatch.
+const _GEMINI_FILTER_REASONS = ("SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY")
+
+_gemini_finish_reason(fr::AbstractString, has_calls::Bool)::String =
+    fr == "STOP"                 ? (has_calls ? TOOL_CALLS : STOP) :
+    fr == "MAX_TOKENS"           ? "length" :
+    fr in _GEMINI_FILTER_REASONS ? CONTENT_FILTER : lowercase(fr)
 
 # Gemini usageMetadata → neutral TokenUsage. Assumptions (verify vs live docs):
 # promptTokenCount INCLUDES cachedContentTokenCount (cached is a subset), so we
@@ -321,7 +325,8 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
                 thought_signature=get(p, "thoughtSignature", nothing)))
         end
     end
-    finish = isempty(tool_calls) ? _gemini_finish_reason(fr_raw) : TOOL_CALLS
+    # A candidate without a finishReason reports none, so none is invented for it.
+    finish = fr_raw isa AbstractString ? _gemini_finish_reason(fr_raw, !isempty(tool_calls)) : nothing
     usage = _gemini_usage(get(data, "usageMetadata", nothing))
     txt = String(take!(text))
     msg = if !isempty(tool_calls)
@@ -394,8 +399,8 @@ function handle_sse_event!(::Type{GEMINIServiceEndpoint}, event::AbstractString,
                 end
             end
             fr = get(cand, "finishReason", nothing)
-            isnothing(fr) ||
-                (state.finish_reason = isempty(state.tool_calls) ? _gemini_finish_reason(fr) : TOOL_CALLS)
+            fr isa AbstractString &&
+                (state.finish_reason = _gemini_finish_reason(fr, !isempty(state.tool_calls)))
             if state.finish_reason == CONTENT_FILTER && position(state.content) == 0
                 print(state.refusal, "Model response blocked by safety filter.")
             end

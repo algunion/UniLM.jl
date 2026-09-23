@@ -252,15 +252,54 @@ end
     @test !isnothing(r.message.refusal_message)
 end
 
-@testset "decode — UNKNOWN finishReason does not crash (open enum)" begin
+@testset "decode — an unlisted finishReason passes through lowercased, never as stop" begin
     body = JSON.json(Dict("candidates" => [Dict(
         "content" => Dict("role" => "model", "parts" => [Dict("text" => "partial")]),
-        "finishReason" => "TOO_MANY_TOOL_CALLS")],       # never-seen value
+        "finishReason" => "A_REASON_ADDED_LATER")],      # open enum: a value this code never saw
         "usageMetadata" => Dict("promptTokenCount" => 5, "candidatesTokenCount" => 2,
                                 "totalTokenCount" => 7)))
     r = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(body)))
-    @test r.message.finish_reason == STOP                  # unknown → safe default
+    @test r.message.finish_reason == "a_reason_added_later"
     @test r.message.content == "partial"
+end
+
+@testset "decode — a candidate without a finishReason reports none (not stop, not tool_calls)" begin
+    call = Dict("functionCall" => Dict("id" => "fc_1", "name" => "ping", "args" => Dict()))
+    for parts in (Any[Dict("text" => "partial")], Any[call])
+        body = JSON.json(Dict("candidates" => [Dict("content" => Dict("role" => "model", "parts" => parts))]))
+        msg = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(body))).message
+        @test isnothing(msg.finish_reason)
+    end
+end
+
+@testset "finishReason — one mapping on both paths; failures never read as stop" begin
+    # Values from the FinishReason enum (ai.google.dev/api/generate-content). STOP is the
+    # only normal completion, and only a STOP turn with function calls is a tool-call
+    # turn: calls under any other reason keep that reason, so they are never dispatched.
+    filters = ("SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY")
+    cases = [("STOP", false, STOP), ("STOP", true, TOOL_CALLS),
+             ("MAX_TOKENS", false, "length"), ("MAX_TOKENS", true, "length"),
+             [(wire, calls, CONTENT_FILTER) for wire in filters for calls in (false, true)]...,
+             ("MALFORMED_FUNCTION_CALL", false, "malformed_function_call"),
+             ("UNEXPECTED_TOOL_CALL", false, "unexpected_tool_call"),
+             ("TOO_MANY_TOOL_CALLS", true, "too_many_tool_calls"),
+             ("MISSING_THOUGHT_SIGNATURE", true, "missing_thought_signature"),
+             ("OTHER", false, "other"), ("FINISH_REASON_UNSPECIFIED", false, "finish_reason_unspecified")]
+    call = Dict("functionCall" => Dict("id" => "fc_1", "name" => "ping", "args" => Dict()))
+    chunk(candidate) = JSON.json(Dict("candidates" => [candidate]))
+    @testset "$wire$(calls ? " + functionCall" : "")" for (wire, calls, want) in cases
+        parts = calls ? Any[call] : Any[]
+        body = chunk(Dict("content" => Dict("role" => "model", "parts" => parts), "finishReason" => wire))
+        msg = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(body))).message
+        @test msg.finish_reason == want
+        @test isnothing(msg.tool_calls) == !calls          # the calls are still reported
+        # Streamed: the parts arrive first, the finishReason on a later chunk.
+        state = StreamState()
+        calls && UniLM.handle_sse_event!(GEMINIServiceEndpoint, "",
+            chunk(Dict("content" => Dict("role" => "model", "parts" => parts))), state)
+        UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", chunk(Dict("finishReason" => wire)), state)
+        @test state.finish_reason == want
+    end
 end
 
 @testset "decode — usage: cached is a subset of prompt; thoughts bill as output" begin

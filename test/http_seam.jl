@@ -90,6 +90,22 @@ end
                   :response_header_timeout)
 end
 
+@testset "streams pin HTTP/1.1; non-streaming requests keep protocol negotiation" begin
+    # HTTP/2 multiplexes every concurrent call to a host over one connection with
+    # shared flow-control windows, so one stream whose consumer applies
+    # backpressure would starve the others. The kwargs the seam hands HTTP.open
+    # pin :h1; HTTP.request gets no protocol override (:auto).
+    cfg = RequestConfig()
+    open_kw = UniLM._open_kwargs(cfg, 5.0)
+    @test open_kw.protocol === :h1
+    @test open_kw.status_exception === false && open_kw.retry === false
+    @test open_kw.read_idle_timeout === cfg.stream_idle_timeout   # native stream bounds ride along
+    request_kw = UniLM._request_kwargs(cfg, 5.0)
+    @test !haskey(request_kw, :protocol)
+    @test request_kw.status_exception === false && request_kw.retry === false
+    @test request_kw.request_timeout === 5.0
+end
+
 @testset "streaming with the idle bound disabled still fails typed at the request bound" begin
     # End-to-end guarantee behind the translation above: a peer that accepts the
     # connection and never sends response headers must fail as a typed

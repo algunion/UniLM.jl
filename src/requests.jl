@@ -209,6 +209,22 @@ function _native_stream_kwargs(cfg::RequestConfig, bound::Float64=Inf)
         (kw..., response_header_timeout = bound) : kw
 end
 
+# The kwargs the seam imposes on HTTP.jl, after any caller kwargs so they win.
+# Every call is ONE attempt (the retry budget lives in _http_with_retries; the
+# library's own retry layer would multiply wire attempts behind its back), and
+# callers branch on the status instead of catching StatusError.
+_request_kwargs(cfg::RequestConfig, bound::Float64) =
+    (status_exception = false, retry = false, _native_timeout_kwargs(cfg, bound)...)
+
+# Streams also pin HTTP/1.1. HTTP.jl negotiates HTTP/2 for https and then
+# multiplexes every concurrent call to a host over ONE connection with shared
+# flow-control windows, so a stream whose consumer applies backpressure starves
+# every other stream on that connection. One connection per stream isolates them
+# (the official OpenAI and Anthropic SDKs also stream over HTTP/1.1 by default).
+# Non-streaming requests keep protocol negotiation (:auto).
+_open_kwargs(cfg::RequestConfig, bound::Float64) =
+    (status_exception = false, retry = false, protocol = :h1, _native_stream_kwargs(cfg, bound)...)
+
 # Phase attribution for a native TimeoutError operation label.
 _timeout_phase(operation::AbstractString)::Symbol =
     operation == "connect" || operation == "tls_handshake" ? :connect : :request
@@ -393,11 +409,10 @@ function _http(method::AbstractString, url::AbstractString,
         throw(UniLMTimeout(:deadline, max(cfg.total_deadline - remaining, 0.0), cfg.total_deadline))
     bound = min(cfg.request_timeout, remaining)
     t0 = time_ns()
-    native = _native_timeout_kwargs(cfg, bound)
     try
         return _with_deadline_task(bound, :request) do
             HTTP.request(method, url, headers, _attempt_body(body);
-                         kwargs..., status_exception=false, retry=false, native...)
+                         kwargs..., _request_kwargs(cfg, bound)...)
         end
     catch e
         e isa InterruptException && rethrow()
@@ -469,21 +484,21 @@ end
     _http_open(f, method, url, headers; cfg, t0, kwargs...) -> HTTP.Response
 
 Streaming attempt seam: wraps `HTTP.open` with `status_exception=false`,
-`retry=false`, and the native stream kwargs (the connect bound and the per-read
-`read_idle_timeout` byte-gap fast path — a whole-exchange native bound would kill
-long healthy streams — plus, where the idle bound is disabled, a native cap on the
-response-header wait at `min(request_timeout, remaining)`). `f(io)` receives
-the raw stream untouched: the first-byte
-deadline and the idle guard are the calling driver's job, because only the
-driver knows when the request body is written and the response headers
+`retry=false`, `protocol=:h1` (one connection per stream: HTTP/2 multiplexing
+would let one backpressured stream starve its siblings), and the native stream
+kwargs (the connect bound and the per-read `read_idle_timeout` byte-gap fast
+path — a whole-exchange native bound would kill long healthy streams — plus,
+where the idle bound is disabled, a native cap on the response-header wait at
+`min(request_timeout, remaining)`). `f(io)` receives the raw stream untouched:
+the first-byte deadline and the idle guard are the calling driver's job, because
+only the driver knows when the request body is written and the response headers
 arrive. `t0` is the driver's monotonic origin, accepted here so drivers
 thread one origin through the seam.
 """
 function _http_open(f::Function, method::AbstractString, url::AbstractString, headers;
                     cfg::RequestConfig, t0::UInt64, kwargs...)::HTTP.Response
-    native = _native_stream_kwargs(cfg, min(cfg.request_timeout, _remaining_s(cfg, t0)))
     return HTTP.open(method, url, headers;
-                     kwargs..., status_exception=false, retry=false, native...) do io
+                     kwargs..., _open_kwargs(cfg, min(cfg.request_timeout, _remaining_s(cfg, t0)))...) do io
         f(io)
     end
 end

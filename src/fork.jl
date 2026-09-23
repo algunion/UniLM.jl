@@ -10,13 +10,10 @@ automatically. `fork` itself applies no normalization or rewrite — a fork is
 configuration-identical to its source.
 """
 function fork(chat::Chat)::Chat
-    kwargs = Dict{Symbol,Any}()
-    for field in fieldnames(Chat)
-        field in (:service, :_cumulative_cost) && continue
-        kwargs[field] = getfield(chat, field)
-    end
+    fields = Dict(f => getfield(chat, f) for f in fieldnames(Chat)
+                  if f ∉ (:service, :_cumulative_cost))
     Chat(; service=chat.service, _cumulative_cost=Ref(chat._cumulative_cost[]),
-           deepcopy(kwargs)...)
+           deepcopy(fields)...)
 end
 
 """

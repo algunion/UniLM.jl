@@ -133,6 +133,13 @@ function _dispatch_tool(name::String, args::Dict{String,Any}, dispatcher::Functi
     end
 end
 
+# A dispatcher routing each call to the `CallableTool` of that name among `tools`;
+# a name with no tool is a tool error the model sees ("Unknown tool: …").
+function _callable_dispatcher(tools)::Function
+    table = Dict{String,Function}(_tool_name(t) => t.callable for t in tools if t isa CallableTool)
+    (name, args) -> haskey(table, name) ? table[name](name, args) : error("Unknown tool: $name")
+end
+
 _check_max_turns(n::Int) =
     ispositive(n) || throw(ArgumentError("max_turns must be >= 1 (got $n)"))
 _check_concurrency(n::Int) =
@@ -314,13 +321,8 @@ function tool_loop!(chat::Chat; tools::Vector{<:CallableTool},
                     callback=nothing, on_tool_call=nothing,
                     cancel::Union{Nothing,CancelToken}=nothing,
                     tool_concurrency::Int=1)::ToolLoopResult
-    tool_map = Dict{String,Function}(_tool_name(ct) => ct.callable for ct in tools)
-    dispatcher = (name, args) -> begin
-        fn = get(tool_map, name, nothing)
-        isnothing(fn) && error("Unknown tool: $name")
-        fn(name, args)
-    end
-    tool_loop!(chat, dispatcher; max_turns, config, callback, on_tool_call, cancel, tool_concurrency)
+    tool_loop!(chat, _callable_dispatcher(tools);
+               max_turns, config, callback, on_tool_call, cancel, tool_concurrency)
 end
 
 # ─── Responses API Loop ─────────────────────────────────────────────────────
@@ -349,12 +351,9 @@ end
 """Reconstruct a [`Respond`](@ref) with new `input` and `previous_response_id`, copying all other fields.
 Streaming is always disabled in the tool loop."""
 function _next_respond(r::Respond; input, previous_response_id=nothing)
-    kwargs = Dict{Symbol,Any}()
-    for field in fieldnames(Respond)
-        field in (:input, :previous_response_id, :stream) && continue
-        kwargs[field] = getfield(r, field)
-    end
-    Respond(; input, previous_response_id, stream=nothing, kwargs...)
+    kept = (f => getfield(r, f) for f in fieldnames(Respond)
+            if f ∉ (:input, :previous_response_id, :stream))
+    Respond(; input, previous_response_id, stream=nothing, kept...)
 end
 
 """
@@ -472,19 +471,9 @@ Per-call `config::RequestConfig` overrides timeouts/retry budget.
 function tool_loop(r::Respond; max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing,
                    cancel::Union{Nothing,CancelToken}=nothing,
                    tool_concurrency::Int=1)::ToolLoopResult
-    callables = Dict{String,Function}()
-    if !isnothing(r.tools)
-        for t in r.tools
-            t isa CallableTool && (callables[_tool_name(t)] = t.callable)
-        end
-    end
-    isempty(callables) && throw(ArgumentError("No CallableTool entries found in tools"))
-    dispatcher = (name, args) -> begin
-        fn = get(callables, name, nothing)
-        isnothing(fn) && error("Unknown tool: $name")
-        fn(name, args)
-    end
-    tool_loop(r, dispatcher; max_turns, config, cancel, tool_concurrency)
+    tools = something(r.tools, [])
+    any(t -> t isa CallableTool, tools) || throw(ArgumentError("No CallableTool entries found in tools"))
+    tool_loop(r, _callable_dispatcher(tools); max_turns, config, cancel, tool_concurrency)
 end
 
 """
@@ -493,16 +482,14 @@ end
 Convenience form: creates a [`Respond`](@ref) and runs the tool loop.
 
 Per-call `config::RequestConfig` overrides timeouts/retry budget; `max_turns`, `cancel`
-and `tool_concurrency` drive the loop as in [`tool_loop(::Respond, ::Function)`](@ref).
+and `tool_concurrency` drive the loop as in [`tool_loop(::Respond, ::Function)`](@ref);
+every other keyword goes to the [`Respond`](@ref) constructor.
 """
-function tool_loop(input, dispatcher::Function; kwargs...)
-    kws = Dict{Symbol,Any}(kwargs)
-    config = pop!(kws, :config, nothing)
-    max_turns = pop!(kws, :max_turns, 10)
-    cancel = pop!(kws, :cancel, nothing)
-    tool_concurrency = pop!(kws, :tool_concurrency, 1)
-    r = Respond(; input, kws...)
-    tool_loop(r, dispatcher; max_turns, config, cancel, tool_concurrency)
+function tool_loop(input, dispatcher::Function; max_turns::Int=10,
+                   config::Union{Nothing,RequestConfig}=nothing,
+                   cancel::Union{Nothing,CancelToken}=nothing, tool_concurrency::Int=1,
+                   kwargs...)::ToolLoopResult
+    tool_loop(Respond(; input, kwargs...), dispatcher; max_turns, config, cancel, tool_concurrency)
 end
 
 """

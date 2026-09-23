@@ -595,3 +595,22 @@ end
     @test !res.completed && res.response isa LLMCallError && res.response.cause isa UniLMCancelled
     @test length(chat) == 2 && length(seen) == 1
 end
+
+# ─── CallableTool dispatch ───────────────────────────────────────────────────
+
+@testset "CallableTool dispatch routes by name; unknown names are tool errors" begin
+    tools = [CallableTool(FunctionTool(name="add"), (n, a) -> a["x"] + 1), FunctionTool(name="plain")]
+    d = UniLM._callable_dispatcher(tools)
+    @test d("add", Dict{String,Any}("x" => 1)) == 2
+    @test_throws ErrorException "Unknown tool: plain" d("plain", Dict{String,Any}())
+    @test_throws ArgumentError "No CallableTool" tool_loop(Respond(input="x", model="mock"))
+    @test_throws ArgumentError "No CallableTool" tool_loop(
+        Respond(input="x", model="mock", tools=[FunctionTool(name="plain")]))
+
+    turn(n) = n == 1 ? _tl_resp("resp_1", [_tl_fcall("c1", "add", "{\"x\": 41}")]) :
+                       _tl_resp("resp_2", [_tl_text("42")])
+    res, _ = _with_scripted((n, _) -> _json(200, turn(n))) do
+        tool_loop(_tl_respond(; tools=tools))
+    end
+    @test res.completed && only(res.tool_calls).result.result == "42"
+end

@@ -42,7 +42,7 @@ the same validation.
 See also [`with_request_config`](@ref), [`set_default_config!`](@ref),
 [`current_config`](@ref).
 """
-Base.@kwdef struct RequestConfig
+@kwdef struct RequestConfig
     connect_timeout::Float64     = 10.0
     request_timeout::Float64     = 600.0
     stream_idle_timeout::Float64 = 120.0
@@ -82,8 +82,9 @@ end
 
 const _REQUEST_CONFIG = ScopedValue{Union{Nothing,RequestConfig}}(nothing)
 
-# Process-default holder: an @atomic field gives lock-free, torn-write-free
-# swaps visible to all tasks (a plain global assignment has no such guarantee).
+# Process-default holder. Plain global stores are already atomic on Julia 1.12+
+# (no torn writes); the @atomic field exists for the compare-and-swap that
+# `set_default_config!`'s read-modify-write retries on.
 mutable struct _ConfigHolder
     @atomic cfg::RequestConfig
 end
@@ -97,7 +98,7 @@ The ambient [`RequestConfig`](@ref): the innermost active
 by [`set_default_config!`](@ref) (initially the field defaults).
 """
 current_config()::RequestConfig =
-    something(_REQUEST_CONFIG[], @atomic(_PROCESS_DEFAULT_CONFIG.cfg))
+    @something(_REQUEST_CONFIG[], @atomic(_PROCESS_DEFAULT_CONFIG.cfg))
 
 """
     with_request_config(f; kwargs...)

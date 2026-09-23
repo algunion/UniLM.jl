@@ -245,6 +245,30 @@ end
     end
 end
 
+@testset "_http: 50 concurrent calls complete independently and overlap" begin
+    # The only in-suite check with more than one seam call in flight. Each request
+    # carries its own marker, echoed after 50–200 ms of server latency; run one
+    # after another the batch would take ~6 s, so a sub-1.5 s wall time shows the
+    # calls overlap, and the marker check shows no response crossed over.
+    srv = HTTP.serve!(req -> (sleep(0.05 + 0.15rand());
+                              HTTP.Response(200, HTTP.header(req, "X-Marker", ""))),
+                      "127.0.0.1", 0; verbose=false)
+    url = "http://127.0.0.1:$(HTTP.port(srv))/"
+    try
+        cfg = RequestConfig(max_attempts=1)
+        UniLM._http("GET", url, ["X-Marker" => "warm"]; cfg)   # compile outside the timing
+        started = time_ns()
+        tasks = [Threads.@spawn (String(UniLM._http("GET", url, ["X-Marker" => "m$i"]; cfg).body),
+                                 time_ns()) for i in 1:50]
+        @test timedwait(() -> all(istaskdone, tasks), 25.0) === :ok
+        results = fetch.(tasks)
+        @test first.(results) == ["m$i" for i in 1:50]
+        @test (maximum(last.(results)) - started) / 1e9 < 1.5
+    finally
+        close(srv)
+    end
+end
+
 @testset "_http: mute server yields a typed per-attempt timeout at the bound" begin
     m = mute_server()
     try

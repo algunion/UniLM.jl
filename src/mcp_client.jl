@@ -267,13 +267,16 @@ struct _TransportClosed <: Exception
 end
 
 """
-    StdioTransport <: MCPTransport
+    StdioTransport(command::Cmd; stderr=nothing) <: MCPTransport
 
 Stdio transport: launches a subprocess and communicates via stdin/stdout.
-Messages are newline-delimited JSON-RPC 2.0.
+Messages are newline-delimited JSON-RPC 2.0. `stderr` is where the server's own
+stderr goes — an `IO` (e.g. `devnull`) or a file path, appended to; `nothing` inherits
+this process's stderr.
 """
 mutable struct StdioTransport <: MCPTransport
     command::Cmd
+    const stderr::Union{Nothing,IO,AbstractString}
     process::Union{Base.Process,Nothing}
     input::Union{IO,Nothing}
     output::Union{IO,Nothing}
@@ -284,7 +287,8 @@ mutable struct StdioTransport <: MCPTransport
     # the teardown ladder's final rung or by the leader watcher, whichever runs first
     # (see _track_live!) — under the live-transport lock.
     pgid::Union{Int32,Nothing}
-    StdioTransport(command::Cmd) = new(command, nothing, nothing, nothing, nothing)
+    StdioTransport(command::Cmd; stderr::Union{Nothing,IO,AbstractString}=nothing) =
+        new(command, stderr, nothing, nothing, nothing, nothing)
 end
 
 # Live stdio transports, torn down at process exit: servers run detached (their own
@@ -342,7 +346,10 @@ function _transport_connect!(t::StdioTransport)
     # final rung can group-SIGKILL grandchildren a wrapper forks (e.g. the node
     # process `npx` launches) that would otherwise survive holding our stdio pipe.
     # Teardown ladder: _kill_transport!.
-    proc = open(Cmd(t.command; detach=true), read=true, write=true)
+    # A stderr file is appended to, so a respawn keeps the log of the server it replaces.
+    cmd = Cmd(t.command; detach=true)
+    isnothing(t.stderr) || (cmd = pipeline(cmd; stderr=t.stderr, append=t.stderr isa AbstractString))
+    proc = open(cmd, read=true, write=true)
     t.process = proc
     t.pgid = getpid(proc)   # == the child's pgid under detach; capture while alive
     t.input = proc.in
@@ -1133,10 +1140,13 @@ end
 # ─── Lifecycle ───────────────────────────────────────────────────────────────
 
 """
-    mcp_connect(command::Cmd; client_name="UniLM.jl", protocol_version="2025-11-25",
-                config=nothing, auto_respawn=false) -> MCPSession
+    mcp_connect(command::Cmd; stderr=nothing, client_name="UniLM.jl",
+                protocol_version="2025-11-25", config=nothing, auto_respawn=false) -> MCPSession
 
-Connect to an MCP server via stdio transport (subprocess).
+Connect to an MCP server via stdio transport (subprocess). `stderr` is where the
+server's stderr goes — an `IO` such as `devnull`, or a file path (appended to);
+`nothing` (the default) inherits this process's stderr. A respawned server keeps the
+same setting.
 
 `config::Union{Nothing,RequestConfig}` is resolved (`config` if given, else the
 ambient/process default) and captured on the session: `config.mcp_connect_timeout`
@@ -1160,8 +1170,9 @@ tools = mcp_tools(session)
 mcp_disconnect!(session)
 ```
 """
-function mcp_connect(command::Cmd; kwargs...)::MCPSession
-    mcp_connect(StdioTransport(command); kwargs...)
+function mcp_connect(command::Cmd; stderr::Union{Nothing,IO,AbstractString}=nothing,
+                     kwargs...)::MCPSession
+    mcp_connect(StdioTransport(command; stderr); kwargs...)
 end
 
 """
@@ -1352,7 +1363,7 @@ function _respawn!(session::MCPSession)
     reason = recorded === :crash ? "a server crash" : "a request timeout"
     @warn "MCP stdio session was closed by $reason; respawning the server. \
            In-memory server state is lost and tools are refetched." command=old.command
-    session.transport = StdioTransport(old.command)
+    session.transport = StdioTransport(old.command; stderr=old.stderr)
     session._id_counter = 0
     session.tools_stale = false
     session._close_cause = :none

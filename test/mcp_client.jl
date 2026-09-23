@@ -3409,6 +3409,51 @@ end
     end
 end
 
+"""A dependency-free stdio server (it matches the request id with a regex) that writes a
+marker line to stderr on start, then answers every request with an empty result."""
+function _stderr_child_src(marker::String)
+    ver = UniLM._MCP_PROTOCOL_VERSION
+    """
+    println(stderr, "SERVER-STDERR $marker")
+    flush(stderr)
+    init = "{\\"protocolVersion\\":\\"$ver\\",\\"capabilities\\":{},\\"serverInfo\\":{\\"name\\":\\"stderr-probe\\",\\"version\\":\\"1.0\\"}}"
+    while !eof(stdin)
+        line = readline(stdin)
+        m = match(r"\\"id\\":(\\d+)", line)
+        m === nothing && continue
+        body = occursin("\\"method\\":\\"initialize\\"", line) ? init : "{}"
+        println(stdout, "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":" * m.captures[1] * ",\\"result\\":" * body * "}")
+        flush(stdout)
+    end
+    """
+end
+
+@testset "mcp_connect(cmd; stderr) redirects the server's stderr, respawn included" begin
+    # A stdio server may log to stderr at will; where that goes is the caller's choice
+    # (a file, devnull), which a Cmd alone cannot express. A respawned server keeps it.
+    marker = "UNILMSTDERR" * string(rand(UInt64); base=16)
+    childfile, io = mktemp(); write(io, _stderr_child_src(marker)); close(io)
+    cmd = `$(Base.julia_cmd()) --startup-file=no $childfile`
+    errfile = tempname()
+    session = nothing
+    try
+        session = mcp_connect(cmd; stderr=errfile, auto_respawn=true)
+        @test session.status === :ready
+        UniLM._kill_transport!(session.transport; grace_term=2.0, grace_kill=1.0)
+        session.status, session._close_cause = :closed, :timeout
+        @test_logs (:warn, r"respawning the server") match_mode=:any ping(session)
+        mcp_disconnect!(session)
+        @test count("SERVER-STDERR $marker", read(errfile, String)) == 2   # both generations
+        quiet = mcp_connect(cmd; stderr=devnull)
+        @test quiet.status === :ready
+        mcp_disconnect!(quiet)
+    finally
+        session === nothing || (try; UniLM._kill_transport!(session.transport; grace_term=1.0, grace_kill=1.0); catch; end)
+        try; run(pipeline(`pkill -f $childfile`; stderr=devnull)); catch; end
+        rm(childfile; force=true); rm(errfile; force=true)
+    end
+end
+
 # ─── MCP → LLM bridge: provider-safe tool names ───────────────────────────────
 
 @testset "bridged MCP tools get provider-safe names that map back to the MCP name" begin

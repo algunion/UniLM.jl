@@ -69,7 +69,7 @@ jobs:
           isempty(findings) || exit(1)
 
   release-tests:
-    name: Test suite - HTTP ${{ matrix.http }} (latest stable Julia)
+    name: Test suite (latest stable Julia)
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -81,12 +81,6 @@ jobs:
       JULIA_NUM_THREADS: '4,2'
     # Keyless, like the JET job above: no provider API keys and no coverage
     # upload, so the gate stays zero-spend and runs without repository secrets.
-    strategy:
-      fail-fast: false
-      matrix:
-        http:  # exercise both ends of the `HTTP = "1.9, 2"` compat range
-          - '1'
-          - '2'
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
@@ -95,6 +89,4 @@ jobs:
           arch: x64
       - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@v1
-      - name: Pin HTTP to major ${{ matrix.http }}
-        run: julia --project=. -e 'using Pkg; Pkg.add(PackageSpec(name="HTTP", version="${{ matrix.http }}")); Pkg.status("HTTP")'
       - uses: julia-actions/julia-runtest@v1

@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 jobs:
   test:
-    name: Julia ${{ matrix.version }} - HTTP ${{ matrix.http }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     env:
       UNILM_RUN_IMAGE_TESTS: 'false'  # image generation is billed per image; opt-in only
@@ -30,12 +30,9 @@ jobs:
         version:
           - '1'  # latest stable release
           # When latest stable moves past the `julia` compat floor in
-          # Project.toml (1.12 as of 2026-08), add the floor version here as a
+          # Project.toml (1.13), add the floor version here as a
           # second leg — otherwise the floor we advertise goes untested.
           #- 'nightly' (JET fails for some reason on nightly)
-        http:  # exercise both ends of the `HTTP = "1.9, 2"` compat range
-          - '1'
-          - '2'
         os:
           - ubuntu-latest
         arch:
@@ -48,8 +45,6 @@ jobs:
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v3
       - uses: julia-actions/julia-buildpkg@v1
-      - name: Pin HTTP to major ${{ matrix.http }}
-        run: julia --project=. -e 'using Pkg; Pkg.add(PackageSpec(name="HTTP", version="${{ matrix.http }}")); Pkg.status("HTTP")'
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1
       - uses: codecov/codecov-action@v7

@@ -236,10 +236,20 @@ function _interaction_response_dict(data::AbstractDict)::Dict{String,Any}
     d
 end
 
+# `id` and `status` are required on every Interaction (API reference): a 200 body
+# without them, such as `{}`, is not one, and decoding it as one would report a
+# success carrying an empty id.
+function _interaction_required(data::AbstractDict, key::String)::String
+    v = get(data, key, nothing)
+    v isa String && !isempty(v) && return v
+    error("Gemini Interactions response carries no \"$key\" (got $(repr(v))); keys: [",
+          join(sort!(collect(keys(data))), ", "), "]")
+end
+
 function _interaction_response_object(data::AbstractDict)::ResponseObject
     ResponseObject(
-        id = get(data, "id", ""),
-        status = get(data, "status", ""),
+        id = _interaction_required(data, "id"),
+        status = _interaction_required(data, "status"),
         model = get(data, "model", ""),
         output = _interaction_output(get(data, "steps", Any[])),
         usage = _interaction_usage(get(data, "usage", nothing)),

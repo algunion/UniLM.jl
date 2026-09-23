@@ -397,6 +397,18 @@ end
     @test st.data["response"]["output"][2]["content"][1]["text"] == "ok"
 end
 
+@testset "Interactions decode — a body without an id or a status is not an interaction" begin
+    # Both are required on every Interaction; decoding `{}` as one reports an empty success.
+    make(b) = HTTP.Response(200, [], Vector{UInt8}(JSON.json(b)))
+    for body in (Dict(), Dict("status" => "completed"), Dict("id" => "v1_x"),
+                 Dict("id" => "", "status" => "completed"), Dict("id" => "v1_x", "status" => nothing),
+                 Dict("id" => 7, "status" => "completed"))
+        @test_throws ErrorException UniLM.decode_agentic(GEMINIServiceEndpoint, make(body))
+    end
+    err = try UniLM.decode_agentic(GEMINIServiceEndpoint, make(Dict("status" => "completed"))); nothing catch e; e end
+    @test err isa ErrorException && occursin("\"id\"", err.msg)
+end
+
 @testset "Interactions stream — a one-read stream still delivers its text deltas" begin
     sse = "event: step.delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"Hello \"}}\n\n" *
           "event: step.delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"world\"}}\n\n" *
@@ -612,7 +624,8 @@ UniLM.default_model(::Type{_IxNonStreamMock}) = "mock-model"
             "steps" => [])),
         "requires_action" => JSON.json(Dict(
             "id" => "int_ra", "status" => "requires_action", "model" => "gemini-3.1-flash-lite",
-            "steps" => [])))
+            "steps" => [])),
+        "not_an_interaction" => "{}")
     which = Ref("failed")
     tcp = Sockets.listen(Sockets.localhost, 0)
     port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
@@ -637,6 +650,12 @@ UniLM.default_model(::Type{_IxNonStreamMock}) = "mock-model"
             @test r2 isa ResponseSuccess
             @test r2.response.status == st
         end
+
+        # A 200 body with no id and no status is a call error, never a success.
+        which[] = "not_an_interaction"
+        r3 = respond(Respond(service=_IxNonStreamMock, input="hi"))
+        @test r3 isa ResponseCallError
+        @test r3 isa ResponseCallError && occursin("\"id\"", r3.error)
     finally
         close(srv)
     end

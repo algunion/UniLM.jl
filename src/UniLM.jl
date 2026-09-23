@@ -77,7 +77,6 @@ include("fine_tuning.jl")
 include("webhooks.jl")
 include("containers.jl")
 include("uploads.jl")
-include("videos.jl")
 include("realtime.jl")
 include("tool_loop.jl")
 include("mcp_schema.jl")
@@ -464,20 +463,6 @@ export
     add_upload_part,
     complete_upload,
     cancel_upload
-
-# ─── Videos API ───────────────────────────────────────────────────────────────
-export
-    VideoObject,
-    VideoList,
-    VideoSuccess,
-    VideoListSuccess,
-    VideoContentSuccess,
-    VideoFailure,
-    VideoCallError,
-    create_video,
-    retrieve_video,
-    list_videos,
-    video_content
 
 # ─── Realtime API ─────────────────────────────────────────────────────────────
 export

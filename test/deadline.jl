@@ -217,13 +217,12 @@ end
     # worker — no exception is injected into it and it is not killed. The worker
     # keeps running and completes on its own (in production its native
     # timeout at the same bound is the real executioner). The breach lands within
-    # [limit, limit + pollint], pollint = 0.1 s.
+    # [limit, limit + timer latency] — a one-shot timer, no poll quantization.
     #
     # Shared-runner budget: scheduler stalls of ~1.9 s have been measured between a
     # task becoming runnable and being observed. The worker therefore runs 4.0 s —
-    # far past the worst-case breach observation (0.3 s + stall) — so it is still
-    # unfinished at breach time, and the elapsed window carries the same stall on
-    # top of the poll quantization.
+    # far past the worst-case breach observation (0.2 s + stall) — so it is still
+    # unfinished at breach time, and the elapsed window carries the same stall.
     ran_to_end = Threads.Atomic{Int}(0)
     limit = 0.2
     err = try
@@ -238,7 +237,7 @@ end
     @test err isa UniLM.UniLMTimeout
     @test err.phase === :request
     @test err.limit == limit
-    @test limit <= err.elapsed < limit + 3.0      # [limit, limit + pollint + runner stall]
+    @test limit <= err.elapsed < limit + 3.0      # [limit, limit + timer latency + runner stall]
     @test ran_to_end[] == 0                        # worker not yet finished at breach time
     # the abandoned worker was NOT terminated — it runs on to its own completion
     @test timedwait(() -> ran_to_end[] == 1, 15.0) === :ok
@@ -289,6 +288,51 @@ end
         ex
     end
     @test e isa ArgumentError && e.msg == "boom"   # TaskFailedException unwrapped
+end
+
+@testset "task mode: completion is event-driven — no success-path latency floor" begin
+    # A polled completion check makes every non-streaming call pay up to one poll
+    # interval; an instant local server exposes that floor directly.
+    srv = HTTP.serve!(_ -> HTTP.Response(200, "ok"), "127.0.0.1", 0; verbose=false)
+    url = "http://127.0.0.1:$(HTTP.port(srv))/"
+    try
+        cfg = RequestConfig(max_attempts=1)
+        UniLM._http("GET", url; cfg)   # compile outside the measurement
+        ms = map(1:20) do _
+            t = time_ns()
+            UniLM._http("GET", url; cfg)
+            (time_ns() - t) / 1e6
+        end
+        @test sort(ms)[10] < 20.0   # median; a 0.1 s poll floor puts it near 100 ms
+    finally
+        close(srv)
+    end
+end
+
+@testset "task mode: a busy event-loop thread never stalls the success path" begin
+    # The main task shares its thread with the libuv event loop. `close(::Timer)`
+    # and timer-based polling both wait on that loop, so a call on another thread
+    # stalled for as long as the main task kept the thread busy. The main task
+    # spins WITHOUT yielding for 3 s (GC safepoints only); the call is timed from
+    # the spawn instant, so a worker that never started also reads as a stall.
+    srv = HTTP.serve!(_ -> HTTP.Response(200, "ok"), "127.0.0.1", 0; verbose=false)
+    url = "http://127.0.0.1:$(HTTP.port(srv))/"
+    try
+        cfg = RequestConfig(max_attempts=1)
+        UniLM._http("GET", url; cfg)   # compile outside the measurement
+        finished = Threads.Atomic{UInt64}(0)
+        spawned = time_ns()
+        t = Threads.@spawn :default (UniLM._http("GET", url; cfg); finished[] = time_ns())
+        spin_until = spawned + 3_000_000_000
+        while time_ns() < spin_until
+            GC.safepoint()
+        end
+        @test timedwait(() -> istaskdone(t), 25.0) === :ok
+        fetch(t)
+        @test (finished[] - spawned) / 1e9 < 1.5
+    finally
+        close(srv)
+    end
 end
 
 @testset "interrupts rethrow first, never laundered into timeouts" begin

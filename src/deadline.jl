@@ -172,7 +172,8 @@ long-lived state so closed must remain closed. If `f` throws:
 `InterruptException` always rethrows first; with the guard `:fired` the error
 is the echo of our own close and `UniLMTimeout(phase, …)` is thrown instead;
 otherwise the original error rethrows. A throwing `close!` is debug-logged,
-never propagated. The timer is always closed on exit.
+never propagated. The timer is always closed on exit, off the caller's path
+(see [`_with_deadline_task`](@ref)); a tick landing after that loses the CAS.
 """
 # Delegates to _with_deadline_reported and drops the fired bit: ONE watchdog body,
 # so the exactly-once CAS lives in exactly one place. Inf composes — the reported
@@ -186,7 +187,7 @@ _with_deadline(f::Function, close!::Function, limit::Float64, phase::Symbol) =
 Additive twin of [`_with_deadline`](@ref) that reports one extra bit: whether the
 guard fired. Identical semantics — same exactly-once CAS, same `close!`-on-breach,
 same `InterruptException`-first / post-breach-echo → `UniLMTimeout` conversion on an
-`f` throw, same `finally close(timer)`. The ONLY difference is the success path:
+`f` throw, same timer close on exit. The ONLY difference is the success path:
 when `f` returns a real value it also reports `fired`, decided by GUARD STATE (the
 `:armed → :fired` CAS, set atomically BEFORE `close!` begins) — never by a side
 effect of `close!`. `(result, false)` on a clean win; `(result, true)` on a lost
@@ -202,7 +203,7 @@ function _with_deadline_reported(f::Function, close!::Function, limit::Float64, 
     limit == Inf && return (f(), false)
     t0 = time_ns()
     guard = _DeadlineGuard(:armed)
-    timer = Timer(limit) do _
+    timer = Timer(limit; spawn=true) do _
         (@atomicreplace guard.state :armed => :fired).success || return
         try
             close!()
@@ -225,7 +226,7 @@ function _with_deadline_reported(f::Function, close!::Function, limit::Float64, 
             throw(UniLMTimeout(phase, _elapsed_s(t0), limit))
         end
     finally
-        close(timer)
+        errormonitor(Threads.@spawn close(timer))   # off-path: see _with_deadline_task
     end
 end
 
@@ -234,10 +235,12 @@ end
 
 Run `f` under a hard deadline with TASK-mode enforcement, for opaque calls
 that expose no closeable handle. `f` runs in its own task and the wrapper
-waits for its completion for at most `limit` seconds (a monotonic bounded
-poll). On completion the worker's value is returned, or its exception
-rethrown — `InterruptException` first (bare or nested), otherwise the worker's
-own exception with any `TaskFailedException` layer stripped.
+waits — event-driven, never polled — until the worker completes or a one-shot
+`Timer(limit)` fires; both notify one `Base.Event`, and ONE atomic CAS on the
+guard (`:armed → :done | :fired`) decides which happened. On completion the
+worker's value is returned, or its exception rethrown — `InterruptException`
+first (bare or nested), otherwise the worker's own exception with any
+`TaskFailedException` layer stripped.
 
 On breach the wrapper throws `UniLMTimeout(phase, …)` and ABANDONS the worker:
 no exception is injected into it and it is not killed. This is safe because
@@ -251,12 +254,13 @@ not an executioner — abandonment replaces cross-task exception injection
 (`schedule(task, exc; error=true)`), which can race the worker's natural
 wakeup and corrupt scheduler state under load.
 
-Breach latency is `[limit, limit + pollint]` with `pollint = 0.1` s (the
-completion poll interval), comparable to a one-shot `Timer(limit)`. The SUCCESS
-path also pays up to one `pollint` of detection latency (completion is observed
-by polling, not event-driven fetch) — negligible against network round-trips,
-and streaming is handle-mode, unaffected.
-`limit == Inf` calls `f()` directly. `_DeadlineBreach` is retained for
+Breach latency is `[limit, limit + a few ms]` (the one-shot timer's callback);
+the success path has no detection latency — the worker's completion wakes the
+waiter directly. The timer is closed OFF the caller's path: `close(::Timer)`
+waits for the event loop's close handshake, and on Julia 1.12+ the loop shares
+thread 1 with the main task, so a busy main task would otherwise stall every
+caller on other threads; a tick landing after completion loses the CAS and does
+nothing. `limit == Inf` calls `f()` directly. `_DeadlineBreach` is retained for
 exception-classification stability but is no longer produced or consumed here.
 
 Known limit: a worker inside an uninterruptible foreign call ends on the OS's
@@ -265,16 +269,25 @@ schedule — the wait is bounded, the foreign call's own duration is not.
 function _with_deadline_task(f::Function, limit::Float64, phase::Symbol)
     limit == Inf && return f()
     t0 = time_ns()
-    task = Threads.@spawn f()
-    # Bounded wait: poll completion up to `limit` on a monotonic clock. Pin a
-    # tight 0.1 s pollint (not timedwait's default) so breach latency lands in
-    # [limit, limit + pollint], comparable to the old one-shot Timer.
-    if timedwait(() -> istaskdone(task), limit; pollint=0.1) !== :ok
-        # Breach: abandon the worker — no injection, no kill. It self-terminates
-        # via its native timeout at the same bound; its later
-        # result/exception is never fetched and Julia discards it silently.
-        throw(UniLMTimeout(phase, _elapsed_s(t0), limit))
+    guard = _DeadlineGuard(:armed)
+    ready = Base.Event()
+    task = Threads.@spawn try
+        f()
+    finally
+        (@atomicreplace guard.state :armed => :done).success && notify(ready)
     end
+    timer = Timer(limit; spawn=true) do _
+        (@atomicreplace guard.state :armed => :fired).success && notify(ready)
+    end
+    try
+        wait(ready)
+    finally
+        errormonitor(Threads.@spawn close(timer))
+    end
+    # Breach: abandon the worker — no injection, no kill. It self-terminates via
+    # its native timeout at the same bound; its later result/exception is never
+    # fetched and Julia discards it silently.
+    (@atomic guard.state) === :fired && throw(UniLMTimeout(phase, _elapsed_s(t0), limit))
     # Completion within the bound: fetch and rethrow with the same discipline as
     # handle mode — InterruptException first (bare or nested), else the worker's
     # own exception with the TaskFailedException layer stripped.
@@ -317,7 +330,7 @@ function _idle_guard(close!::Function, limit::Float64)
     limit == Inf && return nothing
     guard = _IdleGuard(:armed, time_ns(), 0.0, limit, nothing)
     period = min(limit / 4, 5.0)
-    guard.timer = Timer(period; interval=period) do timer
+    guard.timer = Timer(period; interval=period, spawn=true) do timer
         # Load the stamp BEFORE sampling the clock (see `_gap_s`): the other
         # order lets a concurrent `_touch!` land between the two reads and turn
         # the difference negative — i.e. wrapping.
@@ -363,9 +376,10 @@ end
 _disarm!(::Nothing) = nothing
 function _disarm!(guard::_IdleGuard)::Nothing
     # Losing this CAS to :fired is fine — the resolution stands; disarming is
-    # only a promise that the guard will never fire in the FUTURE.
+    # only a promise that the guard will never fire in the FUTURE (a late tick
+    # finds the state resolved and does nothing).
     @atomicreplace guard.state :armed => :disarmed
     timer = guard.timer
-    timer === nothing || close(timer)
+    timer === nothing || errormonitor(Threads.@spawn close(timer))   # off-path: see _with_deadline_task
     return nothing
 end

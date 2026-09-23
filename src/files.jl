@@ -127,24 +127,21 @@ end
 
 Upload a file (multipart/form-data). Returns `FileSuccess`, `FileFailure`, or `FileCallError`.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout and retry budget for
-this call. Unlike the other Files verbs this one DOES retry: the multipart form is
-rebuilt for every attempt, so a transient 429/503 is retried rather than resent as an
-already-consumed form.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call
+(a single bounded attempt; `max_attempts` does not apply). Like every other create, an
+upload is never retried: a POST that timed out, or drew a gateway 5xx after the backend
+stored the file, may still have created it, and a second attempt would store it twice.
+A `FileFailure`/`FileCallError` therefore does not prove that no file was created.
 """
 function upload_file(u::FileUpload; config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(u.service, :files, "Files API")
     cfg = _resolve_config(config)
     t0 = time_ns()
     try
-        # A Form is consumed by the attempt that sends it, so the retry loop gets a
-        # factory: every attempt re-reads the file into its own multipart body.
-        form = _BodyFactory(() -> HTTP.Form([
-            "purpose" => u.purpose,
-            "file" => HTTP.Multipart(basename(u.file), IOBuffer(read(u.file)), _mime_for(u.file)),
-        ]))
-        url = _api_base_url(u.service) * FILES_PATH
-        resp = _http_with_retries(cfg, t0, "POST", url, auth_header_multipart(u.service), form)
+        form = HTTP.Form(["purpose" => u.purpose,
+            "file" => HTTP.Multipart(basename(u.file), IOBuffer(read(u.file)), _mime_for(u.file))])
+        resp = _http("POST", _api_base_url(u.service) * FILES_PATH, auth_header_multipart(u.service), form;
+                     cfg, remaining=_remaining_s(cfg, t0))
         return resp.status == 200 ?
                FileSuccess(response=_parse_file_object(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
                _failure(FileFailure, resp)

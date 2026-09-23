@@ -71,68 +71,43 @@ end
     @test isnothing(_answered(() -> delete_file("f"; service=URLProbe), 404).request_id)
 end
 
-using Sockets
-
-# Local upload target whose base URL is chosen after the listener binds.
-struct FilesRetryProbe <: UniLM.ServiceEndpoint end
-const _files_probe_base = Ref("")
-UniLM._resolve_base_url(::Type{FilesRetryProbe}) = _files_probe_base[]
-UniLM.auth_header(::Type{FilesRetryProbe}) =
-    ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{FilesRetryProbe}) = Set([:files])
-
-# Probe an ephemeral port, then serve on it; the close-then-rebind window can race.
-function _files_retry_server(handler)
-    for _ in 1:5
-        tcp = Sockets.listen(Sockets.localhost, 0)
-        port = Int(Sockets.getsockname(tcp)[2])
-        close(tcp)
-        try
-            return HTTP.serve!(handler, "127.0.0.1", port; verbose=false), "http://127.0.0.1:$port"
-        catch e
-            e isa Base.IOError || rethrow()
-        end
-    end
-    error("could not bind an ephemeral port for the upload retry fixture")
-end
-
-@testset "upload_file: a retried attempt sends a complete multipart body" begin
-    # The seam disables HTTP.jl's own retry layer, so its mark/reset body rewind
-    # never runs. One Form handed to the retry loop is left consumed by attempt 1;
-    # attempt 2 would then put a zero-length body on the wire and a transient 503
-    # would turn into a hard 400. Every attempt must build a fresh Form.
-    payload = "multipart-retry-payload-" * repeat("x", 512)
+@testset "upload_file: a create is sent once, never retried" begin
+    # A create is not idempotent. A POST the client stopped waiting for, or a gateway
+    # 5xx sent after the backend stored the file, may already have created the file,
+    # so a second attempt can store it twice — while max_attempts here would allow three.
+    payload = "single-create-payload-" * repeat("x", 256)
     fpath = tempname() * ".txt"
     write(fpath, payload)
-    seen = Vector{Int}()          # body length per attempt, in order
-    complete = Ref(false)
-    server, base = _files_retry_server(req -> begin
-        body = String(copy(req.body))
-        push!(seen, sizeof(body))
-        if length(seen) == 1
-            return HTTP.Response(503, ["Retry-After" => "0"], Vector{UInt8}("{}"))
-        end
-        complete[] = occursin(payload, body) && occursin("user_data", body)
-        return HTTP.Response(200, ["Content-Type" => "application/json"],
-                             Vector{UInt8}(JSON.json(Dict(
-                                 "id" => "file-1", "bytes" => sizeof(payload), "created_at" => 1,
-                                 "filename" => basename(fpath), "purpose" => "user_data",
-                                 "status" => "processed"))))
-    end)
-    _files_probe_base[] = base
+    ok = JSON.json(Dict("id" => "file-1", "bytes" => sizeof(payload), "created_at" => 1,
+                        "filename" => basename(fpath), "purpose" => "user_data"))
+    cfg = UniLM.RequestConfig(request_timeout=1.0, total_deadline=30.0, max_attempts=3)
     try
-        cfg = UniLM.RequestConfig(max_attempts=2, total_deadline=Inf)
-        r = upload_file(fpath, "user_data"; service=FilesRetryProbe, config=cfg)
-        @test length(seen) == 2                 # the 503 was actually retried
-        # Attempt totals are not comparable: each rebuild draws a fresh random
-        # boundary, whose hex width varies on HTTP.jl 1.x. A truncated or empty
-        # replay still cannot reach the size of the payload it must carry.
-        @test seen[2] >= sizeof(payload)
-        @test complete[]                        # ...and carries the whole file + fields
-        @test r isa FileSuccess
-        @test r.response.id == "file-1"
+        # The one attempt carries the whole file and the purpose field.
+        done, sent = _with_scripted((_, _) -> _json(200, ok)) do
+            upload_file(fpath, "user_data"; service=URLProbe, config=cfg)
+        end
+        @test done isa FileSuccess && done.response.id == "file-1"
+        @test occursin(payload, only(sent).body) && occursin("user_data", only(sent).body)
+
+        busy, seen503 = _with_scripted((_, _) -> _json(503, "{}")) do
+            upload_file(fpath, "user_data"; service=URLProbe, config=cfg)
+        end
+        @test busy isa FileFailure && busy.status == 503   # returned as it came
+        @test length(seen503) == 1
+
+        # The first reply is held until the call has returned, so the attempt can only
+        # end in its request_timeout; any second POST would be a retry.
+        release = Base.Event()
+        slow, seen = _with_scripted((n, _) -> (n == 1 && wait(release); _json(200, ok))) do
+            try
+                upload_file(fpath, "user_data"; service=URLProbe, config=cfg)
+            finally
+                notify(release)
+            end
+        end
+        @test count(q -> q.method == "POST", seen) == 1
+        @test slow isa FileCallError && slow.cause isa UniLMTimeout
     finally
-        close(server)
         rm(fpath; force=true)
     end
 end

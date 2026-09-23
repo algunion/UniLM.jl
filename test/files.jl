@@ -71,6 +71,28 @@ end
     @test isnothing(_answered(() -> delete_file("f"; service=URLProbe), 404).request_id)
 end
 
+@testset "save_file_content replaces the destination atomically" begin
+    mktempdir() do dir
+        path = joinpath(dir, "out.bin")
+        write(path, "previous contents")
+        before = stat(path).inode
+        @test save_file_content(FileContentSuccess(content=Vector{UInt8}("new bytes")), path) == path
+        @test read(path, String) == "new bytes"
+        @test stat(path).inode != before   # renamed into place, never truncated and rewritten
+        @test readdir(dir) == ["out.bin"]   # no temporary file left behind
+        # A symlink is written through, as opening it for writing would be.
+        link = joinpath(dir, "link.bin")
+        symlink(path, link)
+        save_file_content(FileContentSuccess(content=Vector{UInt8}("via link")), link)
+        @test islink(link) && read(path, String) == "via link"
+        # A directory is refused, never replaced.
+        sub = mkdir(joinpath(dir, "sub"))
+        write(joinpath(sub, "keep.txt"), "x")
+        @test_throws ArgumentError save_file_content(FileContentSuccess(content=UInt8[1]), sub)
+        @test isfile(joinpath(sub, "keep.txt"))
+    end
+end
+
 @testset "delete_file reports success only when the service confirms the delete" begin
     del(body) = _answered(() -> delete_file("file-1"; service=URLProbe), 200; body)
     @test del("""{"id": "file-1", "object": "file", "deleted": true}""") ==

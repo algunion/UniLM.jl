@@ -12,6 +12,24 @@
     end
 end
 
+@testset "add_container_file decodes the container-file object it gets back" begin
+    path, io = mktemp()
+    write(io, "x")
+    close(io)
+    try
+        body = """{"id": "cfile_1", "object": "container.file", "created_at": 1747848842, "bytes": 880,
+                   "container_id": "cntr_1", "path": "/mnt/data/a.txt", "source": "user"}"""
+        r = _answered(() -> add_container_file("cntr_1", path; service=URLProbe), 200; body)
+        @test r isa ContainerSuccess
+        f = r.response
+        @test f isa UniLM.ContainerFileObject
+        @test (f.id, f.container_id, f.path, f.bytes, f.source, f.created_at) ==
+              ("cfile_1", "cntr_1", "/mnt/data/a.txt", 880, "user", 1747848842)
+    finally
+        rm(path; force=true)
+    end
+end
+
 @testset "delete_container reports success only when the service confirms the delete" begin
     del(body) = _answered(() -> delete_container("cntr_1"; service=URLProbe), 200; body)
     @test del("""{"id": "cntr_1", "deleted": true}""") == UniLM.ContainerDeleteSuccess(id="cntr_1", deleted=true)

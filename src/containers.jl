@@ -17,6 +17,24 @@ unparsed JSON response.
 end
 
 """
+    ContainerFileObject
+
+A file inside a container, as [`add_container_file`](@ref) returns it: `id`,
+`container_id`, `path` (where the code interpreter sees the file), `bytes`,
+`source` (e.g. `"user"`, `"assistant"`) and `created_at`; `raw` holds the unparsed
+JSON response.
+"""
+@kwdef struct ContainerFileObject
+    id::String
+    container_id::String
+    path::String
+    bytes::Union{Int,Nothing} = nothing
+    source::Union{String,Nothing} = nothing
+    created_at::Union{Int,Nothing} = nothing
+    raw::Dict{String,Any} = Dict{String,Any}()
+end
+
+"""
     ContainerList
 
 A page of container records (raw JSON dicts) from [`list_containers`](@ref);
@@ -28,8 +46,8 @@ A page of container records (raw JSON dicts) from [`list_containers`](@ref);
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
-"Successful create/retrieve/add-file result wrapping a [`ContainerObject`](@ref)."
-@kwdef struct ContainerSuccess <: LLMRequestResponse; response::ContainerObject; end
+"Successful Containers API result: a [`ContainerObject`](@ref) from create/retrieve, or the [`ContainerFileObject`](@ref) that [`add_container_file`](@ref) created."
+@kwdef struct ContainerSuccess <: LLMRequestResponse; response::Union{ContainerObject,ContainerFileObject}; end
 "Successful [`list_containers`](@ref) result wrapping a [`ContainerList`](@ref)."
 @kwdef struct ContainerListSuccess <: LLMRequestResponse; response::ContainerList; end
 "Successful [`delete_container`](@ref) result: the service confirmed (`deleted` is always `true`) the removal of `id`."
@@ -40,6 +58,8 @@ end
 @kwdef struct ContainerCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
 
 _parse_container(d::AbstractDict) = ContainerObject(id=d["id"], status=get(d, "status", nothing), name=get(d, "name", nothing), raw=Dict{String,Any}(d))
+_parse_container_file(d::AbstractDict) = ContainerFileObject(id=d["id"], container_id=d["container_id"], path=d["path"],
+    bytes=get(d, "bytes", nothing), source=get(d, "source", nothing), created_at=get(d, "created_at", nothing), raw=Dict{String,Any}(d))
 _cont_resp(resp) = resp.status == 200 ?
     ContainerSuccess(response=_parse_container(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
     _failure(ContainerFailure, resp)
@@ -130,6 +150,9 @@ end
 """
     add_container_file(container_id, path; service=OPENAIServiceEndpoint)  (multipart upload)
 
+Upload the file at `path` into the container. A success is a `ContainerSuccess` whose
+`response` is the created [`ContainerFileObject`](@ref).
+
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function add_container_file(container_id::String, path::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
@@ -141,7 +164,7 @@ function add_container_file(container_id::String, path::String; service::Service
         url = _api_base_url(service) * CONTAINERS_PATH * "/" * _uripart(container_id) * "/files"
         resp = _http("POST", url, auth_header_multipart(service), form; cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 || return _failure(ContainerFailure, resp)
-        ContainerSuccess(response=_parse_container(JSON.parse(resp.body; dicttype=Dict{String,Any})))
+        ContainerSuccess(response=_parse_container_file(JSON.parse(resp.body; dicttype=Dict{String,Any})))
     catch e
         e isa InterruptException && rethrow()
         _callerr(ContainerCallError, e)

@@ -93,6 +93,24 @@ function _confirm_deleted(d::AbstractDict)::Bool
     return true
 end
 
+# Replace `path` with `bytes` atomically: write a temporary file beside the destination
+# (same filesystem, so the final rename cannot degrade into a copy) and rename it over
+# the destination. A write that fails part-way leaves the old contents, not a truncated
+# file. A symlink is written through, as opening it for writing would be; a directory
+# is refused, because `mv(...; force=true)` would delete it recursively.
+function _atomic_write(path::String, bytes::AbstractVector{UInt8})::String
+    dest = ispath(path) ? realpath(path) : path
+    isdir(dest) && throw(ArgumentError("cannot save over a directory: $path"))
+    tmp = tempname(dirname(abspath(dest)); cleanup=false)
+    try
+        write(tmp, bytes)
+        mv(tmp, dest; force=true)
+    finally
+        rm(tmp; force=true)   # already gone after a successful rename
+    end
+    return path
+end
+
 _poll_timeout_text(verb::String, id::String, to::UniLMTimeout, seen)::String =
     "$verb timeout: $id reached no terminal status within $(to.limit) s (last observed status: " *
     "$(isnothing(seen) ? "none" : something(seen.response.status, "none")))"
@@ -316,9 +334,8 @@ end
 """
     save_file_content(r::FileContentSuccess, path) -> path
 
-Write downloaded file bytes to `path`.
+Write downloaded file bytes to `path`, atomically: the bytes go to a temporary file in
+the same directory, which is then renamed over `path`, so a failed write leaves any
+existing file intact. A symlink is written through; a directory throws `ArgumentError`.
 """
-function save_file_content(r::FileContentSuccess, path::String)
-    open(io -> write(io, r.content), path, "w")
-    path
-end
+save_file_content(r::FileContentSuccess, path::String) = _atomic_write(path, r.content)

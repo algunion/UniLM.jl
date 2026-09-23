@@ -68,11 +68,12 @@ speak(input::String; voice::String="alloy", model::String="gpt-4o-mini-tts",
 
 """
     save_audio(r::SpeechSuccess, path) -> path
+
+Write the synthesized audio bytes to `path`, atomically: the bytes go to a temporary
+file in the same directory, which is then renamed over `path`, so a failed write leaves
+any existing file intact. A symlink is written through; a directory throws `ArgumentError`.
 """
-function save_audio(r::SpeechSuccess, path::String)
-    open(io -> write(io, r.audio), path, "w")
-    path
-end
+save_audio(r::SpeechSuccess, path::String) = _atomic_write(path, r.audio)
 
 # ─── Transcription / translation (multipart upload → text or JSON) ───────────
 

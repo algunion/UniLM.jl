@@ -943,7 +943,7 @@ end
         tools=[Tool(func=sig)],
         tool_choice="auto",
         parallel_tool_calls=true,
-        n=2,
+        n=1,
         stream=true,
         stop=["END"],
         max_tokens=100,
@@ -959,7 +959,7 @@ end
     @test lowered[:tools] isa Vector
     @test lowered[:tool_choice] == "auto"
     @test lowered[:parallel_tool_calls] == true
-    @test lowered[:n] == 2
+    @test lowered[:n] == 1
     @test lowered[:stream] == true
     @test lowered[:stop] == ["END"]
     @test lowered[:max_tokens] == 100
@@ -1065,10 +1065,12 @@ end
         @test_throws ArgumentError Chat(n=11)
     end
 
-    @testset "n boundary values accepted" begin
+    @testset "n is 1: a result carries one choice" begin
+        # Extra choices were dropped (non-stream) or merged into garbled text (stream).
         @test Chat(n=1).n == 1
-        @test Chat(n=10).n == 10
-        @test Chat(n=5).n == 5
+        @test_throws ArgumentError Chat(n=2)
+        @test_throws ArgumentError Chat(n=5)
+        @test_throws ArgumentError Chat(n=10)
     end
 
     @testset "presence_penalty out of range" begin

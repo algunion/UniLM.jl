@@ -1259,6 +1259,16 @@ function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestCon
     end
 end
 
+# With history on, the reply is appended to the conversation; one that ends with an
+# assistant message could not take it (`push!` refuses consecutive assistant turns).
+# Refuse that before the billed call rather than after it.
+function _validate_reply_slot(chat::Chat)::Nothing
+    chat.history && !isempty(chat) && last(chat).role == RoleAssistant && throw(InvalidConversationError(
+        "the conversation ends with an assistant message, so the reply could not be appended; " *
+        "add a user message first, or set history=false to send it as a prefill"))
+    nothing
+end
+
 """
     _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing,
                        cfg=_resolve_config(nothing), t0=time_ns(), cancel=_current_cancel()) -> Task
@@ -1319,38 +1329,39 @@ sends nothing. A TCP connect or TLS handshake already in progress cannot be inte
 (HTTP.jl 2.7.1), so a cancel during one takes effect when it completes or reaches
 `connect_timeout`.
 
-Throws `ArgumentError` before any network I/O when `chat.service` is an endpoint
-type that declares its capabilities and does not list `:chat`. A custom endpoint
-declares none and is dispatched unvalidated.
+Local validation throws before any network I/O, streaming or not: `ArgumentError`
+when `chat.service` is an endpoint type that declares its capabilities and does not
+list `:chat` (a custom endpoint declares none and is dispatched unvalidated), or when
+the provider's encoder rejects the request (e.g. an option the provider or model does
+not support); `InvalidConversationError` when `chat.history` is on and the
+conversation ends with an assistant message, so the reply could not be appended.
 """
 function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
                       callback=nothing, on_tool_call=nothing,
                       cancel::Union{Nothing,CancelToken}=nothing)
     _validate_declared_capability(chat.service, :chat, "Chat Completions API")
+    _validate_reply_slot(chat)
+    body = encode_request(chat.service, chat)
     cfg = _resolve_config(config)
     tok = _resolve_cancel(cancel)
     t0 = time_ns()
+    chat.stream === true && return _chatrequeststream(chat, body, callback; on_tool_call, cfg, t0, cancel=tok)
     local resp
     try
-        body = encode_request(chat.service, chat)
-        if chat.stream !== true
-            resp = _http_with_retries(cfg, t0, "POST", get_url(chat),
-                                      auth_header(chat.service), body; cancel=tok)
-            if resp.status == 200
-                extracted = decode_response(chat.service, resp)
-                update!(chat, extracted.message)
-                result = LLMSuccess(message=extracted.message, self=chat, usage=extracted.usage)
-                _accumulate_cost!(chat, result)
-                return result
-            else
-                # Retry/backoff already happened inside the shared loop; the last
-                # real response is the truthful outcome (a budget-exhausted 429 is
-                # a 429, not a fabricated timeout).
-                return LLMFailure(status=resp.status, response=String(resp.body),
-                                  self=chat, request_id=_get_request_id(resp))
-            end
+        resp = _http_with_retries(cfg, t0, "POST", get_url(chat),
+                                  auth_header(chat.service), body; cancel=tok)
+        if resp.status == 200
+            extracted = decode_response(chat.service, resp)
+            update!(chat, extracted.message)
+            result = LLMSuccess(message=extracted.message, self=chat, usage=extracted.usage)
+            _accumulate_cost!(chat, result)
+            return result
         else
-            return _chatrequeststream(chat, body, callback; on_tool_call, cfg, t0, cancel=tok)
+            # Retry/backoff already happened inside the shared loop; the last
+            # real response is the truthful outcome (a budget-exhausted 429 is
+            # a 429, not a fabricated timeout).
+            return LLMFailure(status=resp.status, response=String(resp.body),
+                              self=chat, request_id=_get_request_id(resp))
         end
     catch e
         e isa InterruptException && rethrow()
@@ -1364,24 +1375,29 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
 end
 
 """
-# Flexible keyword arguments usage
-chatrequest!(; kwargs...)
-Send a request to the OpenAI API to generate a response to the messages in `conv`.
+    chatrequest!(; messages, config=nothing, cancel=nothing, kwargs...)
+    chatrequest!(; systemprompt, userprompt, config=nothing, cancel=nothing, kwargs...)
 
-# Keyword Arguments
+Build a [`Chat`](@ref) from keyword arguments, send it with
+`chatrequest!(chat; config, cancel)`, and return that result (the reply is appended
+to `result.self`).
+
+The conversation is EITHER `messages` — copied, so the caller's vector is never
+mutated — OR `systemprompt` and `userprompt`, each a `String` or a [`Message`](@ref).
+Passing neither, only one prompt, or `messages` together with a prompt throws
+`ArgumentError` before any network I/O. Every other keyword is a [`Chat`](@ref)
+field, for example:
+
 - `service::ServiceEndpointSpec = OPENAIServiceEndpoint`: The provider endpoint type or instance.
-- `model::String = "gpt-5.6-sol"`: The model to use for the chat completion.
-- `systemprompt::Union{Message,String}`: The system prompt message.
-- `userprompt::Union{Message,String}`: The user prompt message.
-- `messages::Conversation = Message[]`: The conversation history or the system/prompt messages.
-- `history::Bool = true`: Whether to include the conversation history in the request.
+- `model::String`: The model; the service's default when omitted.
+- `history::Bool = true`: Whether the reply is appended to the conversation. It does not change what is sent.
 - `tools::Union{Vector{Tool},Nothing} = nothing`: A list of tools the model may call.
 - `tool_choice::Union{String,GPTToolChoice,Nothing} = nothing`: Controls which (if any) function is called by the model. e.g. "auto", "none", `GPTToolChoice`.
 - `parallel_tool_calls::Union{Bool,Nothing} = false`: Whether to enable parallel function calling.
 - `temperature::Union{Float64,Nothing} = nothing`: Sampling temperature (0.0-2.0). Higher values make output more random. Mutually exclusive with `top_p`.
 - `top_p::Union{Float64,Nothing} = nothing`: Nucleus sampling parameter (0.0-1.0). Mutually exclusive with `temperature`.
-- `n::Union{Int64,Nothing} = nothing`: How many chat completion choices to generate for each input message (1-10).
-- `stream::Union{Bool,Nothing} = nothing`: If set, partial message deltas will be sent, like in ChatGPT.
+- `n::Union{Int64,Nothing} = nothing`: Number of choices; must be 1 — a result carries a single choice.
+- `stream::Union{Bool,Nothing} = nothing`: If `true`, the call returns a `Task` and streams deltas to `callback` (see `chatrequest!(chat)`).
 - `stop::Union{Vector{String},String,Nothing} = nothing`: Up to 4 sequences where the API will stop generating further tokens.
 - `max_tokens::Union{Int64,Nothing} = nothing`: The maximum number of tokens to generate in the chat completion.
 - `presence_penalty::Union{Float64,Nothing} = nothing`: Number between -2.0 and 2.0. Positive values penalize new tokens based on whether they appear in the text so far.
@@ -1391,28 +1407,23 @@ Send a request to the OpenAI API to generate a response to the messages in `conv
 - `user::Union{String,Nothing} = nothing`: A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse.
 - `seed::Union{Int64,Nothing} = nothing`: This feature is in Beta. If specified, the system will make a best effort to sample deterministically.
 - `config::Union{Nothing,RequestConfig} = nothing`: Per-call timeout/retry budget; `nothing` resolves the ambient configuration (scoped, else process default).
+- `cancel::Union{Nothing,CancelToken} = nothing`: Cancellation token; `nothing` resolves the ambient token (see `chatrequest!(chat)`).
 """
 function chatrequest!(; kws...)
-    filteredkws = filter(x -> x[1] ∉ (:messages, :userprompt, :systemprompt, :config, :cancel), kws)
-    config = get(kws, :config, nothing)
-    cancel = get(kws, :cancel, nothing)
-    !haskey(kws, :messages) && (!haskey(kws, :userprompt) || !haskey(kws, :systemprompt)) && return LLMFailure(response="No messages and/or systemprompt/userprompt provided.", status=499, self=Chat(; filteredkws...))
-    messages = get(kws, :messages, Message[])
-    if haskey(kws, :userprompt) && haskey(kws, :systemprompt)
-        empty!(messages)
-        if kws[:systemprompt] isa AbstractString
-            push!(messages, Message(role=RoleSystem, content=kws[:systemprompt]))
-        else
-            push!(messages, kws[:systemprompt])
-        end
-        if kws[:userprompt] isa AbstractString
-            push!(messages, Message(role=RoleUser, content=kws[:userprompt]))
-        else
-            push!(messages, kws[:userprompt])
-        end
-    end
-    chatrequest!(Chat(; messages=messages, filteredkws...); config, cancel)
+    has_messages = haskey(kws, :messages)
+    has_messages && (haskey(kws, :systemprompt) || haskey(kws, :userprompt)) && throw(ArgumentError(
+        "chatrequest!: pass either `messages` or `systemprompt` and `userprompt`, not both"))
+    has_messages || (haskey(kws, :systemprompt) && haskey(kws, :userprompt)) || throw(ArgumentError(
+        "chatrequest!: pass `messages`, or both `systemprompt` and `userprompt`"))
+    messages = has_messages ? Vector{Message}(kws[:messages]) :
+        [_prompt_message(RoleSystem, kws[:systemprompt]), _prompt_message(RoleUser, kws[:userprompt])]
+    chatkws = filter(x -> x[1] ∉ (:messages, :userprompt, :systemprompt, :config, :cancel), kws)
+    chatrequest!(Chat(; messages, chatkws...); config=get(kws, :config, nothing),
+                 cancel=get(kws, :cancel, nothing))
 end
+
+_prompt_message(role::String, prompt::AbstractString)::Message = Message(; role, content=String(prompt))
+_prompt_message(::String, prompt::Message)::Message = prompt
 
 
 """

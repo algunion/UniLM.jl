@@ -204,7 +204,7 @@ end
             :model => "gpt-5.5", :history => false,
             :tools => [Tool(func=FunctionSignature(name="f"))],
             :tool_choice => "auto", :parallel_tool_calls => true,
-            :temperature => 0.5, :n => 2, :stream => false, :stop => ["x"],
+            :temperature => 0.5, :n => 1, :stream => false, :stop => ["x"],
             :max_tokens => 10, :max_completion_tokens => 20,
             :presence_penalty => 0.1, :response_format => ResponseFormat(),
             :frequency_penalty => 0.2, :logit_bias => Dict("50256" => -100.0),

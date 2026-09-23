@@ -663,6 +663,9 @@ OpenAI options, omitted from the request when unset:
   the request does not use prompt caching.
 - `moderation::Union{ModerationConfig,Nothing}`: moderated completions
   ([`ModerationConfig`](@ref)).
+
+The constructor validates ranges and throws `ArgumentError` on a violation; among
+them, `n` must be `1` when set — a result carries a single choice.
 """
 @kwdef struct Chat
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
@@ -674,7 +677,7 @@ OpenAI options, omitted from the request when unset:
     parallel_tool_calls::Union{Bool,Nothing} = false
     temperature::Union{Float64,Nothing} = nothing # 0.0 - 2.0 - mutual exclusive with top_p
     top_p::Union{Float64,Nothing} = nothing # 0.0 - 1.0 - mutual exclusive with temperature
-    n::Union{Int64,Nothing} = nothing # 1 - 10
+    n::Union{Int64,Nothing} = nothing # must be 1: results carry a single choice
     stream::Union{Bool,Nothing} = nothing
     stop::Union{Vector{String},String,Nothing} = nothing # max 4 sequences
     max_tokens::Union{Int64,Nothing} = nothing
@@ -746,7 +749,9 @@ OpenAI options, omitted from the request when unset:
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
         !isnothing(top_p) && !(0.0 <= top_p <= 1.0) && throw(ArgumentError("top_p must be in [0.0, 1.0]"))
-        !isnothing(n) && !(1 <= n <= 10) && throw(ArgumentError("n must be in [1, 10]"))
+        # A result carries one choice: extra choices were dropped (non-streaming) or
+        # merged into one garbled text (streaming).
+        !isnothing(n) && n != 1 && throw(ArgumentError("n must be 1 (got $n): results carry a single choice"))
         !isnothing(max_tokens) && max_tokens < 1 && throw(ArgumentError("max_tokens must be >= 1"))
         !isnothing(max_completion_tokens) && max_completion_tokens < 1 && throw(ArgumentError("max_completion_tokens must be >= 1"))
         !isnothing(presence_penalty) && !(-2.0 <= presence_penalty <= 2.0) && throw(ArgumentError("presence_penalty must be in [-2.0, 2.0]"))

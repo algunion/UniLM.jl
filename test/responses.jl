@@ -2815,6 +2815,46 @@ function _ag_stop_after(call, stop; ready::Function, after::Real=1.0)
     (; finished, result=r, latency=done_at - stopped_at)
 end
 
+# An OpenAI-wire agentic endpoint whose encoder refuses every request.
+struct _RefusingAgentic <: UniLM.OpenAIWireEndpoint
+    url::String
+end
+UniLM._api_base_url(s::_RefusingAgentic) = s.url
+UniLM.auth_header(::_RefusingAgentic) = ["Content-Type" => "application/json"]
+UniLM.default_model(::_RefusingAgentic) = "m"
+UniLM.encode_agentic(::_RefusingAgentic, ::Respond) = throw(ArgumentError("option not supported here"))
+
+@testset "respond: local validation throws before any network I/O" begin
+    srv = _ag_server([_completed_event("x", 2)])
+    try
+        for stream in (false, true)
+            @test_throws ArgumentError respond(Respond(service=_RefusingAgentic(srv.url), input="hi", stream=stream))
+            # A documented restriction, raised by the real encoder: no log probabilities on GPT-6 Astra.
+            @test_throws ArgumentError respond(Respond(model="gpt-6-astra", input="hi", top_logprobs=2, stream=stream))
+        end
+        @test srv.hits[] == 0
+    finally
+        HTTP.forceclose(srv.server)
+    end
+end
+
+@testset "every non-streaming Responses failure carries its exception in cause" begin
+    # A 200 whose body is not JSON: each verb's decode throws after the exchange.
+    srv = _ag_server(["{not json"])
+    try
+        ep = GenericOpenAIEndpoint(srv.url, "")
+        results = (respond(Respond(service=ep, model="m", input="hi")),
+                   get_response("r"; service=ep), delete_response("r"; service=ep),
+                   list_input_items("r"; service=ep), cancel_response("r"; service=ep),
+                   compact_response(; model="m", input="hi", service=ep),
+                   count_input_tokens(; model="m", input="hi", service=ep))
+        @test all(r -> r isa ResponseCallError && r.cause isa Exception, results)
+        @test srv.hits[] == 7
+    finally
+        HTTP.forceclose(srv.server)
+    end
+end
+
 @testset "respond (non-streaming): cancellable, never retried, nothing sent when pre-cancelled" begin
     srv = _ag_server(; mute=true, hold=10.0)
     try

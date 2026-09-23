@@ -1579,9 +1579,11 @@ never retried; a pre-cancelled token sends nothing. A TCP connect or TLS handsha
 already in progress cannot be interrupted (HTTP.jl 2.7.1), so a cancel during one takes
 effect when it completes or reaches `connect_timeout`.
 
-Throws `ArgumentError` before any network I/O when `r.service` is an endpoint type
-that declares its capabilities and lists neither `:responses` (OpenAI wire) nor
-`:agentic` (Gemini Interactions).
+Local validation throws `ArgumentError` before any network I/O, streaming or not:
+when `r.service` is an endpoint type that declares its capabilities and lists neither
+`:responses` (OpenAI wire) nor `:agentic` (Gemini Interactions), or when the
+provider's encoder rejects the request (e.g. an option the provider or model does not
+support).
 
 # Examples
 ```julia
@@ -1595,18 +1597,14 @@ end
 function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callback=nothing,
                  cancel::Union{Nothing,CancelToken}=nothing)
     _validate_agentic_capability(r.service)
+    body = encode_agentic(r.service, r)
     cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
+    # Streaming path. cfg/t0 are resolved above so both paths share one budget
+    # origin: the stream driver bounds the first byte, guards the byte gap, and
+    # retries pre-first-callback on the same budget.
+    r.stream === true && return _respond_stream(r, body, callback, cfg, t0, tok)
     local resp
     try
-        body = encode_agentic(r.service, r)
-
-        # Streaming path. cfg/t0 are resolved above so both paths share one
-        # budget origin: the stream driver bounds the first byte, guards the
-        # byte gap, and retries pre-first-callback on the same budget.
-        if !isnothing(r.stream) && r.stream
-            return _respond_stream(r, body, callback, cfg, t0, tok)
-        end
-
         url = get_url(r.service, r)
         resp = _http_with_retries(cfg, t0, "POST", url, auth_header(r.service), body; cancel=tok)
         if resp.status == 200
@@ -1627,12 +1625,19 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
         end
     catch e
         e isa InterruptException && rethrow()
-        e isa Union{UniLMTimeout,UniLMCancelled} &&
-            return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
-        statuserror = hasproperty(e, :status) ? e.status : nothing
-        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
+        return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
+end
+
+# The result for an exception that ended a non-streaming Responses call (`respond`
+# and the lifecycle operations): `cause` always carries the exception; a timeout or
+# cancellation keeps its own rendering and never reports an HTTP status.
+function _response_call_error(e, resp::Union{Nothing,HTTP.Response})::ResponseCallError
+    e isa Union{UniLMTimeout,UniLMCancelled} &&
+        return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
+    ResponseCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing),
+                      request_id=(isnothing(resp) ? _get_request_id(e) : _get_request_id(resp)),
+                      cause=(e isa Exception ? e : nothing))
 end
 
 """
@@ -1719,10 +1724,7 @@ function get_response(response_id::String; service::ServiceEndpointSpec=OPENAISe
         end
     catch e
         e isa InterruptException && rethrow()
-        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
-        statuserror = hasproperty(e, :status) ? e.status : nothing
-        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
+        return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
 
@@ -1751,10 +1753,7 @@ function delete_response(response_id::String; service::ServiceEndpointSpec=OPENA
         end
     catch e
         e isa InterruptException && rethrow()
-        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
-        statuserror = hasproperty(e, :status) ? e.status : nothing
-        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
+        return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
 
@@ -1797,10 +1796,7 @@ function list_input_items(response_id::String;
         end
     catch e
         e isa InterruptException && rethrow()
-        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
-        statuserror = hasproperty(e, :status) ? e.status : nothing
-        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
+        return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
 
@@ -1834,10 +1830,7 @@ function cancel_response(response_id::String; service::ServiceEndpointSpec=OPENA
         end
     catch e
         e isa InterruptException && rethrow()
-        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
-        statuserror = hasproperty(e, :status) ? e.status : nothing
-        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
+        return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
 
@@ -1882,10 +1875,7 @@ function compact_response(; model::String="gpt-5.6-sol",
         end
     catch e
         e isa InterruptException && rethrow()
-        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
-        statuserror = hasproperty(e, :status) ? e.status : nothing
-        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
+        return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
 
@@ -1927,9 +1917,6 @@ function count_input_tokens(; model::String="gpt-5.6-sol",
         end
     catch e
         e isa InterruptException && rethrow()
-        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
-        statuserror = hasproperty(e, :status) ? e.status : nothing
-        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
+        return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end

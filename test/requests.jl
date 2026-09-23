@@ -529,24 +529,16 @@ end
 end
 
 @testset "chatrequest! kwargs" begin
-    @testset "missing messages and prompts returns LLMFailure" begin
-        result = UniLM.chatrequest!(model="gpt-4o")
-        @test result isa LLMFailure
-        @test result.status == 499
-        @test occursin("No messages", result.response)
-    end
-
-    @testset "missing userprompt returns LLMFailure" begin
-        result = UniLM.chatrequest!(systemprompt="sys")
-        @test result isa LLMFailure
-        @test result.status == 499
-    end
-
-    @testset "missing systemprompt returns LLMFailure" begin
-        result = UniLM.chatrequest!(userprompt="user")
-        @test result isa LLMFailure
-        @test result.status == 499
-    end
+    # The conversation is EITHER `messages` OR `systemprompt` + `userprompt`. Anything
+    # else is a local error raised before any request — it used to come back as a
+    # fabricated LLMFailure(status=499), or silently drop a prompt.
+    @test_throws ArgumentError UniLM.chatrequest!(model="gpt-4o")
+    @test_throws ArgumentError UniLM.chatrequest!(systemprompt="sys")
+    @test_throws ArgumentError UniLM.chatrequest!(userprompt="user")
+    msgs = [Message(role=UniLM.RoleSystem, content="s"), Message(role=UniLM.RoleUser, content="u")]
+    @test_throws ArgumentError UniLM.chatrequest!(messages=msgs, userprompt="was dropped")
+    @test_throws ArgumentError UniLM.chatrequest!(messages=msgs, systemprompt="s2", userprompt="u2")
+    @test length(msgs) == 2 && msgs[1].content == "s"      # the caller's vector was never emptied
 end
 
 @testset "Azure deploy name management" begin
@@ -699,20 +691,18 @@ end
         end
     end
 
-    @testset "prompts override messages" begin
-        withenv("OPENAI_API_KEY" => "test-key") do
-            msgs = [
-                Message(role=UniLM.RoleSystem, content="old sys"),
-                Message(role=UniLM.RoleUser, content="old usr")
-            ]
-            result = chatrequest!(
-                messages=msgs,
-                systemprompt="new sys",
-                userprompt="new usr",
-                model="gpt-4o"
-            )
-            @test result isa LLMCallError || result isa LLMFailure
-        end
+    @testset "prompts beside messages are refused, not silently preferred" begin
+        msgs = [
+            Message(role=UniLM.RoleSystem, content="old sys"),
+            Message(role=UniLM.RoleUser, content="old usr")
+        ]
+        @test_throws ArgumentError chatrequest!(
+            messages=msgs,
+            systemprompt="new sys",
+            userprompt="new usr",
+            model="gpt-4o"
+        )
+        @test [m.content for m in msgs] == ["old sys", "old usr"]
     end
 end
 
@@ -1285,6 +1275,76 @@ function _mute_request_server(; hold::Real=10.0)
         read(http); Threads.atomic_add!(hits, 1); sleep(hold)
     end
     (; server, url="http://127.0.0.1:$(HTTP.port(server))", hits)
+end
+
+# A server on an OS-assigned port that answers every request with `body` (JSON).
+function _json_reply_server(body::String)
+    hits = Threads.Atomic{Int}(0)
+    server = HTTP.listen!("127.0.0.1", 0; verbose=false) do http::HTTP.Stream
+        read(http); Threads.atomic_add!(hits, 1)
+        HTTP.setstatus(http, 200)
+        HTTP.setheader(http, "Content-Type" => "application/json")
+        HTTP.startwrite(http)
+        write(http, body)
+    end
+    (; server, url="http://127.0.0.1:$(HTTP.port(server))", hits)
+end
+
+const _REPLY = JSON.json(Dict("choices" => [Dict("index" => 0, "finish_reason" => "stop",
+    "message" => Dict("role" => "assistant", "content" => "hi"))]))
+
+# An OpenAI-wire endpoint whose encoder refuses every request.
+struct _RefusingEncoder <: UniLM.OpenAIWireEndpoint
+    url::String
+end
+UniLM.get_url(s::_RefusingEncoder, ::Chat) = s.url
+UniLM.auth_header(::_RefusingEncoder) = ["Content-Type" => "application/json"]
+UniLM.encode_request(::_RefusingEncoder, ::Chat) = throw(ArgumentError("option not supported here"))
+
+@testset "chatrequest!(; messages) never mutates the caller's vector" begin
+    srv = _json_reply_server(_REPLY)
+    try
+        msgs = [Message(Val(:system), "s"), Message(Val(:user), "u")]
+        r = chatrequest!(; messages=msgs, service=GenericOpenAIEndpoint(srv.url, ""), model="m")
+        @test r isa LLMSuccess && length(r.self.messages) == 3   # the reply went to the result's chat
+        @test length(msgs) == 2
+    finally
+        close(srv.server)
+    end
+end
+
+@testset "local validation throws before any network I/O" begin
+    srv = _json_reply_server(_REPLY)
+    try
+        sys_user() = [Message(Val(:system), "s"), Message(Val(:user), "u")]
+        for stream in (false, true)
+            # An encoder's ArgumentError is thrown, not returned as a result value.
+            @test_throws ArgumentError chatrequest!(Chat(service=_RefusingEncoder(srv.url), model="m",
+                                                         stream=stream, messages=sys_user()))
+            # A reply could not be appended after an assistant turn: refused before
+            # the billed call instead of by push! after it.
+            ended = Chat(service=GenericOpenAIEndpoint(srv.url, ""), model="m", stream=stream,
+                         messages=[sys_user(); Message(role=UniLM.RoleAssistant, content="a")])
+            @test_throws InvalidConversationError chatrequest!(ended)
+            @test length(ended.messages) == 3
+            # Documented provider restrictions, raised by the real encoders.
+            tool = Tool(func=FunctionSignature(name="f"))
+            for chat in (Chat(model="gpt-6-astra", tools=[tool], stream=stream, messages=sys_user()),
+                         Chat(service=ANTHROPICServiceEndpoint, stream=stream, messages=sys_user(),
+                              moderation=ModerationConfig(model="omni-moderation-latest")),
+                         Chat(service=GEMINIServiceEndpoint, seed=7, stream=stream, messages=sys_user()))
+                @test_throws ArgumentError chatrequest!(chat)
+            end
+        end
+        @test srv.hits[] == 0
+        # History off: nothing is appended, so a trailing assistant turn (a prefill) is sent.
+        prefill = Chat(service=GenericOpenAIEndpoint(srv.url, ""), model="m", history=false,
+                       messages=[sys_user(); Message(role=UniLM.RoleAssistant, content="a")])
+        @test chatrequest!(prefill) isa LLMSuccess
+        @test srv.hits[] == 1
+    finally
+        close(srv.server)
+    end
 end
 
 @testset "non-streaming chat and embeddings are cancellable" begin

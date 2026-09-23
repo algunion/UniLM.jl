@@ -51,6 +51,13 @@ function _ft_list_resp(resp)
     FineTuningListSuccess(response=FineTuningList(data=Vector{Dict{String,Any}}(get(data, "data", [])),
         has_more=get(data, "has_more", false), raw=data))
 end
+# The cursor query every fine-tuning list takes: `limit` page size, `after` the last id seen.
+function _ft_page(url::String, limit::Union{Int,Nothing}, after::Union{String,Nothing})::String
+    params = String[]
+    isnothing(limit) || push!(params, "limit=$(_uripart(limit))")
+    isnothing(after) || push!(params, "after=$(_uripart(after))")
+    isempty(params) ? url : url * "?" * join(params, "&")
+end
 
 """
     create_fine_tuning_job(; model, training_file, validation_file=nothing, method=nothing,
@@ -124,12 +131,8 @@ function list_fine_tuning_jobs(; limit::Union{Int,Nothing}=nothing, after::Union
     validate_capability(service, :fine_tuning, "Fine-tuning API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        url = _api_base_url(service) * FINE_TUNING_PATH
-        params = String[]
-        !isnothing(limit) && push!(params, "limit=$(_uripart(limit))")
-        !isnothing(after) && push!(params, "after=$(_uripart(after))")
-        !isempty(params) && (url *= "?" * join(params, "&"))
-        _ft_list_resp(_http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0)))
+        _ft_list_resp(_http("GET", _ft_page(_api_base_url(service) * FINE_TUNING_PATH, limit, after),
+            auth_header(service); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
         _callerr(FineTuningCallError, e)
@@ -137,16 +140,20 @@ function list_fine_tuning_jobs(; limit::Union{Int,Nothing}=nothing, after::Union
 end
 
 """
-    list_fine_tuning_events(id; service=OPENAIServiceEndpoint)
+    list_fine_tuning_events(id; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
+
+List a job's events, a page at a time: `limit` sets the page size and `after` the last
+event id of the previous page (see `has_more` on the result).
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
-function list_fine_tuning_events(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function list_fine_tuning_events(id::String; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing,
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        _ft_list_resp(_http("GET", _api_base_url(service) * FINE_TUNING_PATH * "/" * _uripart(id) * "/events", auth_header(service);
-            cfg, remaining=_remaining_s(cfg, t0)))
+        _ft_list_resp(_http("GET", _ft_page(_api_base_url(service) * FINE_TUNING_PATH * "/" * _uripart(id) * "/events", limit, after),
+            auth_header(service); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
         _callerr(FineTuningCallError, e)
@@ -154,16 +161,20 @@ function list_fine_tuning_events(id::String; service::ServiceEndpointSpec=OPENAI
 end
 
 """
-    list_fine_tuning_checkpoints(id; service=OPENAIServiceEndpoint)
+    list_fine_tuning_checkpoints(id; limit=nothing, after=nothing, service=OPENAIServiceEndpoint)
+
+List a job's checkpoints, a page at a time: `limit` sets the page size and `after` the
+last checkpoint id of the previous page (see `has_more` on the result).
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
-function list_fine_tuning_checkpoints(id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function list_fine_tuning_checkpoints(id::String; limit::Union{Int,Nothing}=nothing, after::Union{String,Nothing}=nothing,
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :fine_tuning, "Fine-tuning API")
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        _ft_list_resp(_http("GET", _api_base_url(service) * FINE_TUNING_PATH * "/" * _uripart(id) * "/checkpoints", auth_header(service);
-            cfg, remaining=_remaining_s(cfg, t0)))
+        _ft_list_resp(_http("GET", _ft_page(_api_base_url(service) * FINE_TUNING_PATH * "/" * _uripart(id) * "/checkpoints", limit, after),
+            auth_header(service); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
         _callerr(FineTuningCallError, e)

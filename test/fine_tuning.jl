@@ -7,6 +7,19 @@
     @test _seam_timeout(list_fine_tuning_checkpoints("ft_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.FineTuningCallError)
 end
 
+@testset "Fine-tuning API — events and checkpoints page with limit/after" begin
+    t = _recorded_targets() do
+        list_fine_tuning_events(_HOSTILE_ID; limit=2, after=_HOSTILE_ID, service=URLProbe)
+        list_fine_tuning_checkpoints(_HOSTILE_ID; limit=3, after=_HOSTILE_ID, service=URLProbe)
+        list_fine_tuning_events("ftjob-abc123"; after="ftevent-9", service=URLProbe)
+        list_fine_tuning_checkpoints("ftjob-abc123"; limit=5, service=URLProbe)
+    end
+    @test t == ["/v1/fine_tuning/jobs/$_HOSTILE_ENC/events?limit=2&after=$_HOSTILE_ENC",
+                "/v1/fine_tuning/jobs/$_HOSTILE_ENC/checkpoints?limit=3&after=$_HOSTILE_ENC",
+                "/v1/fine_tuning/jobs/ftjob-abc123/events?after=ftevent-9",
+                "/v1/fine_tuning/jobs/ftjob-abc123/checkpoints?limit=5"]
+end
+
 @testset "Fine-tuning API — a failure keeps the request id the service sent" begin
     r = _answered(() -> retrieve_fine_tuning_job("ft_x"; service=URLProbe), 404; headers=["x-request-id" => "req_ft"])
     @test r isa UniLM.FineTuningFailure && r.request_id == "req_ft"

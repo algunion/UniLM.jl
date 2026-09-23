@@ -504,6 +504,7 @@ export
     HTTPTransport,
     MCPError,
     MCPCrashError,
+    MCPSessionClosedError,
     mcp_connect,
     mcp_disconnect!,
     mcp_tools,

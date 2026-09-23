@@ -1294,13 +1294,13 @@ end
     end
 end
 
-# ─── The request bound covers the exchange, not the wait for it ──────────────
-# One lock serializes whole exchanges (stdio framing carries no id demux), so a
-# caller can wait behind the exchange in progress. The per-exchange watchdog must
-# therefore be armed only once the lock is HELD: a bound burning while queueing
-# expires during the HOLDER's healthy exchange and group-kills its server, which
-# reaches the holder as a crash it never caused. The queue wait stays bounded
-# transitively — the caller ahead runs under its own bound.
+# ─── The request bound covers the wait for the session, never the holder ─────
+# One lock serializes whole exchanges, so a caller can wait behind the exchange in
+# progress. The caller's bound covers that wait: a caller that cannot acquire the
+# session within its timeout raises MCPTimeoutError(:queue) without touching it. The
+# exchange watchdog, though, is armed only once the lock is HELD: a bound armed while
+# queueing would expire during the HOLDER's healthy exchange and group-kill its
+# server, which reaches the holder as a crash it never caused.
 
 """Stdio transport with no subprocess: in-memory streams stand in for the pipes and a
 task plays the server, answering each request `delay_for(id)` seconds after it arrives.
@@ -1337,10 +1337,9 @@ end
 
 @testset "a queued caller's request bound never kills the holder's healthy exchange" begin
     # The holder's exchange is slow but perfectly healthy; the waiter's bound is
-    # shorter than that occupancy. A bound armed before the lock is acquired burns
-    # while queueing and tears the transport down under the holder, which then reports
-    # a crash for someone else's queue wait; armed after acquisition it bounds only
-    # the waiter's own exchange, which starts when it takes the lock.
+    # shorter than that occupancy. The waiter's bound expires in the queue: it raises
+    # MCPTimeoutError(:queue) without touching the session, while the holder's exchange
+    # completes untouched — no teardown runs under it and the session stays :ready.
     session, t, received, to_server, server = _paced_stdio_session(id -> id == 1 ? 5.0 : 0.0)
     holder_result, waiter_result = Ref{Any}(nothing), Ref{Any}(nothing)
     holder_kept_transport = Ref(false)
@@ -1355,7 +1354,10 @@ end
         @test timedwait(() -> istaskdone(holder) && istaskdone(waiter), 60.0) === :ok
         @test holder_result[] == Dict{String,Any}("served" => 1)
         @test holder_kept_transport[]
-        @test waiter_result[] == Dict{String,Any}("served" => 2)
+        @test waiter_result[] isa MCPTimeoutError
+        @test waiter_result[] isa MCPTimeoutError && waiter_result[].phase === :queue &&
+              waiter_result[].limit == 2.0
+        @test received[] == 1                                   # the waiter never reached the server
         @test session.status === :ready
         @test session._close_cause === :none
     finally
@@ -1953,9 +1955,10 @@ end
 # deadline armed once at exchange start — request write, every interleaved
 # server→client frame, until the matching-id response. A pre-response
 # notification must NOT reset it (a per-read watchdog would, reintroducing an
-# unbounded exchange). On breach the ladder group-kills the server (unblocking
-# the in-flight readline); stdio framing has no id demux, so the timeout is
-# SESSION-FATAL (contrast the non-fatal HTTP path above). Two directions: the
+# unbounded exchange). On breach the watchdog releases the in-flight readline and
+# the ladder group-kills the server — killing it is the only way to unblock a read
+# stuck on an unresponsive server — so the timeout is SESSION-FATAL (contrast the
+# non-fatal HTTP path above). Two directions: the
 # deadline fires through a leading notification, and it does not false-fire when
 # a real response follows one.
 
@@ -2073,27 +2076,31 @@ end
     end
 end
 
-"""A stdio child that greets on stdout with a line that is not JSON-RPC — the shape of
-a server logging to stdout before it speaks the protocol. It keeps reading stdin, so
-only the teardown ladder (stdin EOF) ends it."""
-function _banner_child_src(marker::String)
+"""A stdio child that refuses `initialize` with a JSON-RPC error frame: alive and speaking
+the protocol, so connect fails with neither a timeout nor a crash. It keeps reading stdin
+(matching the request id with a regex, no package loads), so only the teardown ladder
+(stdin EOF) ends it."""
+function _init_error_child_src(marker::String)
     """
     # $marker
-    println(stdout, "listening on stdio (this line is not JSON-RPC)")
-    flush(stdout)
-    while !eof(stdin); readline(stdin); end
+    while !eof(stdin)
+        m = match(r"\\"id\\":(\\d+)", readline(stdin))
+        m === nothing && continue
+        println(stdout, "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":" * m.captures[1] *
+            ",\\"error\\":{\\"code\\":-32603,\\"message\\":\\"initialize refused\\"}}")
+        flush(stdout)
+    end
     """
 end
 
 @testset "connect failing outside the timeout and crash shapes still kills the server" begin
     # Once the server is spawned, every failure before the session is established owns
-    # a live child holding our pipes — a stdout banner that breaks JSON parsing, an
-    # `initialize` error frame, a rejected protocol version. Teardown must be
-    # unconditional, not a per-exception-shape branch that the next new failure mode
-    # escapes. Here the banner is neither a timeout nor a dead process, the two shapes
-    # that used to be the only ones torn down.
-    marker = "UNILMBANNER" * string(rand(UInt64); base=16)
-    childfile, io = mktemp(); write(io, _banner_child_src(marker)); close(io)
+    # a live child holding our pipes — an `initialize` error frame, a rejected protocol
+    # version. Teardown must be unconditional, not a per-exception-shape branch that the
+    # next new failure mode escapes. Here the refusal is neither a timeout nor a dead
+    # process, the two shapes that used to be the only ones torn down.
+    marker = "UNILMINITERR" * string(rand(UInt64); base=16)
+    childfile, io = mktemp(); write(io, _init_error_child_src(marker)); close(io)
     cmd = `$(Base.julia_cmd()) --startup-file=no $childfile`
     _alive() = success(pipeline(`pgrep -f $childfile`; stdout=devnull, stderr=devnull))
     t = UniLM.StdioTransport(cmd)   # held here, so the child's pipes cannot close by GC
@@ -2103,7 +2110,7 @@ end
             nothing
         catch e; e end
         @test err !== nothing
-        @test !(err isa MCPTimeoutError)   # the banner fails parsing long before the bound
+        @test err isa MCPError             # the refusal, long before the bound
         @test !(err isa MCPCrashError)     # nothing died: the server is alive and well
         @test isnothing(t.process)         # the teardown ladder ran (handles nulled)
         @test timedwait(() -> !_alive(), 15.0) === :ok   # ...and the server is gone
@@ -2115,7 +2122,7 @@ end
 end
 
 # ─── Opt-in auto-respawn + call-time resolution into bridged closures ─────
-# A stdio request timeout is session-fatal (no id demux). The NEXT call decides:
+# A stdio request timeout is session-fatal (the server is killed). The NEXT call decides:
 # with auto_respawn=true the server is transparently respawned (same command,
 # captured config, fresh handshake — in-memory state is LOST, tools refetched)
 # and the call retries ONCE; with auto_respawn=false (default) it errors, naming
@@ -2172,7 +2179,8 @@ end
         @test timedwait(() -> istaskdone(w), 12.0) === :ok
         @test session.status == :closed
         err = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
-        @test err isa ErrorException
+        @test err isa MCPSessionClosedError
+        @test err isa MCPSessionClosedError && err.cause === :timeout
         @test occursin("auto_respawn=true", err.msg)     # names the opt-in
         @test occursin("timeout", lowercase(err.msg))
     finally
@@ -2216,7 +2224,8 @@ end
                 e
             end
         end
-        @test err isa ErrorException
+        @test err isa MCPSessionClosedError
+        @test err isa MCPSessionClosedError && err.cause === :disconnected
         @test occursin("not connected", lowercase(err.msg))   # plain not-connected error
         @test !occursin("auto_respawn", err.msg)               # never the respawn-naming guidance
     finally
@@ -2312,12 +2321,12 @@ end
 end
 
 @testset "a respawn that fails to connect keeps the recorded close cause" begin
-    # The fresh server never reaches a handshake (a non-JSON banner), so the attempt
+    # The fresh server refuses the handshake (an `initialize` error frame), so the attempt
     # learned nothing about why the session closed: the recorded cause must survive —
     # the next call still reports the timeout that closed the session, not a fabricated
     # crash — and the half-established server must not outlive the attempt.
     marker = "UNILMRESPAWNFAIL" * string(rand(UInt64); base=16)
-    childfile, io = mktemp(); write(io, _banner_child_src(marker)); close(io)
+    childfile, io = mktemp(); write(io, _init_error_child_src(marker)); close(io)
     cmd = `$(Base.julia_cmd()) --startup-file=no $childfile`
     _alive() = success(pipeline(`pgrep -f $childfile`; stdout=devnull, stderr=devnull))
     session = UniLM.MCPSession(UniLM.StdioTransport(cmd), UniLM.MCPServerCapabilities(),
@@ -2329,7 +2338,7 @@ end
         err = @test_logs (:warn, r"respawning the server") match_mode=:any (
             try UniLM._ensure_live!(session); nothing catch e; e end)
         @test err !== nothing
-        @test !(err isa MCPCrashError)              # a banner is not a dead process
+        @test !(err isa MCPCrashError)              # a refusal is not a dead process
         @test session.status === :closed
         @test session._close_cause === :timeout     # the recorded cause survives the attempt
         @test isnothing(session.transport.process)  # the failed attempt's server was killed
@@ -2582,11 +2591,11 @@ function _slowreply_child_src(marker::String; reply_delay::Real)
 end
 
 @testset "stdio completion race is detected by guard state, not handle nulling" begin
-    # slowreply replies at bound + 0.3 s (watchdog fires first) then ignores stdin-EOF
-    # so the handles are still live when the real reply returns: a LOST completion
-    # race. New code (guard-state detection) closes the session; old handle-inspecting
-    # code read live handles, kept it :ready over a dying transport, and the next call
-    # raised a raw closed-stream IOError. Deterministic — 0.8 > 0.5 always.
+    # slowreply replies at bound + 0.3 s (watchdog fires first) then ignores stdin-EOF.
+    # Once the guard fired the call is over — its teardown releases the read at once —
+    # so the reply arriving later is never returned: the caller gets the timeout and
+    # the session is closed (a :ready session over a dying transport would make the
+    # next call raise a raw closed-stream IOError). Deterministic — 0.8 > 0.5 always.
     marker = "UNILMTOCTOU" * string(rand(UInt64); base=16)
     proj = dirname(dirname(pathof(UniLM)))
     childfile, io = mktemp(); write(io, _slowreply_child_src(marker; reply_delay=0.8)); close(io)
@@ -2603,17 +2612,15 @@ end
         worker = @async (box[] = try call_tool(session, "slowreply", Dict{String,Any}(); timeout = 0.5) catch e; e end)
         @test timedwait(() -> istaskdone(worker), 12.0) === :ok
         res = box[]
-        # The reply is real and returns (completion race, not a thrown timeout).
-        @test res isa MCPToolResult
-        @test res isa MCPToolResult && res.content == "slow-ok"
-        # ...but the watchdog fired: the session is closed (RED on old — stayed :ready).
+        # The guard fired, so the call is a timeout — never the late reply.
+        @test res isa MCPTimeoutError
+        @test res isa MCPTimeoutError && res.phase === :request && res.limit == 0.5
         @test session.status == :closed
         @test session._close_cause === :timeout
-        # The next call sees a closed-by-timeout session and errors naming the opt-in
-        # (RED on old — a raw closed-stream IOError escaped conversion here).
+        # The next call sees a closed-by-timeout session and errors naming the opt-in.
         err = try call_tool(session, "slowreply", Dict{String,Any}()); nothing catch e; e end
-        @test err isa ErrorException
-        @test err isa ErrorException && occursin("auto_respawn=true", err.msg)
+        @test err isa MCPSessionClosedError
+        @test err isa MCPSessionClosedError && err.cause === :timeout && occursin("auto_respawn=true", err.msg)
     finally
         session === nothing || (try; UniLM._kill_transport!(session.transport; grace_term=0.2, grace_kill=0.2); catch; end)
         try; run(pipeline(`pkill -f $childfile`; stderr=devnull)); catch; end
@@ -2642,10 +2649,11 @@ end
     @test err_w isa UniLM._TransportClosed
     @test err_w.cause isa Exception
     UniLM._kill_transport!(t)
-    # Not-connected paths unchanged: plain ErrorException, not the sentinel.
+    # Not-connected paths: the typed closed-session error, not the sentinel.
     t2 = UniLM.StdioTransport(child)
-    @test_throws ErrorException UniLM._transport_read!(t2)
-    @test_throws ErrorException UniLM._transport_notify!(t2, "x")
+    @test_throws MCPSessionClosedError UniLM._transport_read!(t2)
+    @test_throws MCPSessionClosedError UniLM._transport_notify!(t2, "x")
+    @test_throws MCPSessionClosedError UniLM._transport_send!(t2, "x")
 end
 
 # ─── MCPCrashError: server-death classification at the stdio boundaries ───────
@@ -2791,7 +2799,8 @@ end
         err1 = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
         @test err1 isa MCPCrashError
         err2 = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
-        @test err2 isa ErrorException
+        @test err2 isa MCPSessionClosedError
+        @test err2 isa MCPSessionClosedError && err2.cause === :crash
         @test occursin("closed by a server crash", err2.msg)
         @test occursin("auto_respawn", err2.msg)
     finally
@@ -2811,7 +2820,8 @@ end
         mcp_disconnect!(session)
         @test session._close_cause === :none
         err2 = try call_tool(session, "incr", Dict{String,Any}()); nothing catch e; e end
-        @test err2 isa ErrorException
+        @test err2 isa MCPSessionClosedError
+        @test err2 isa MCPSessionClosedError && err2.cause === :disconnected
         @test !occursin("auto_respawn", err2.msg)   # normal-close reuse error, not the crash guidance
     finally
         try; run(pipeline(`pkill -f $marker`; stderr=devnull)); catch; end
@@ -2888,4 +2898,585 @@ end
     finally
         close(httpserver)
     end
+end
+
+# ─── Shared fixtures for the contracts below ──────────────────────────────────
+
+using Logging
+
+"A JSON-RPC `result` frame for request `id`."
+_ok_frame(id, result=Dict{String,Any}()) =
+    JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id, "result" => result))
+
+"""In-memory MCP transport: `respond(method, id, params)` returns the frames the server
+sends for one request, in wire order (the response last). `log` records every request
+method and every client → server notification, in wire order."""
+mutable struct _ScriptedTransport <: UniLM.MCPTransport
+    respond::Function
+    log::Vector{String}
+    pending::Vector{String}
+    const lock::ReentrantLock
+    connected::Bool
+end
+_ScriptedTransport(respond::Function) =
+    _ScriptedTransport(respond, String[], String[], ReentrantLock(), false)
+function UniLM._transport_send!(t::_ScriptedTransport, msg::String;
+                                cfg::UniLM.RequestConfig=UniLM.current_config())
+    d = JSON.parse(msg; dicttype=Dict{String,Any})
+    @lock t.lock push!(t.log, d["method"])
+    frames = t.respond(d["method"], d["id"], get(d, "params", nothing))
+    t.pending = frames[2:end]
+    first(frames)
+end
+UniLM._transport_read!(t::_ScriptedTransport) = popfirst!(t.pending)
+function UniLM._transport_notify!(t::_ScriptedTransport, msg::String;
+                                  cfg::UniLM.RequestConfig=UniLM.current_config())
+    @lock t.lock push!(t.log, get(JSON.parse(msg), "method", "<reply>"))
+    nothing
+end
+UniLM._transport_connect!(t::_ScriptedTransport) = (t.connected = true; nothing)
+UniLM._transport_disconnect!(t::_ScriptedTransport; cfg=nothing) = (t.connected = false; nothing)
+UniLM._transport_isconnected(t::_ScriptedTransport) = t.connected
+_log(t::_ScriptedTransport) = @lock t.lock copy(t.log)
+
+_scripted_session(t::_ScriptedTransport) = UniLM.MCPSession(t, UniLM.MCPServerCapabilities(),
+    Dict{String,Any}(), UniLM.MCPToolInfo[], UniLM.MCPResourceInfo[], UniLM.MCPPromptInfo[],
+    UniLM._MCP_PROTOCOL_VERSION, 0, :ready)
+
+"""Serve `handler` on an OS-assigned ephemeral port, re-probing when the port is taken
+between the probe and the bind. Returns (server, url)."""
+function _mcp_http_fixture(handler::Function)
+    for attempt in 1:5
+        port = _free_port()
+        try
+            return HTTP.serve!(handler, "127.0.0.1", port; verbose=false), "http://127.0.0.1:$port"
+        catch e
+            e isa InterruptException && rethrow()
+            attempt == 5 && rethrow()
+        end
+    end
+end
+
+"An HTTP handler serving `server` through `_dispatch_mcp` with JSON bodies."
+_json_dispatch(server) = function (req)
+    req.method == "DELETE" && return HTTP.Response(200, "")
+    resp = UniLM._dispatch_mcp(server, JSON.parse(String(req.body); dicttype=Dict{String,Any}))
+    isnothing(resp) && return HTTP.Response(202, "")
+    HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(resp))
+end
+
+_pgrep(pattern) = success(pipeline(`pgrep -f $pattern`; stdout=devnull, stderr=devnull))
+
+# ─── Session lock: FIFO hand-off, bounded wait, cancellation-safe ─────────────
+
+@testset "session lock: a queued ping is served within two exchanges of a looping caller" begin
+    # A ReentrantLock barges: the task that just released the session takes it again
+    # before a woken waiter runs, so a caller looping on call_tool starved a queued ping
+    # for all 40 of its exchanges under the default single-worker thread layout. Release
+    # now hands the session to the longest waiter. Both tasks are sticky to one thread
+    # (@async), which is that layout's geometry whatever threads this process has.
+    t = _ScriptedTransport((m, id, _) -> (m == "tools/call" && sleep(0.05); [_ok_frame(id)]))
+    session = _scripted_session(t)
+    worker = @async for _ in 1:40
+        call_tool(session, "slow", Dict{String,Any}())
+    end
+    @test timedwait(() -> count(==("tools/call"), _log(t)) >= 3, 25.0) === :ok
+    issued_after = count(==("tools/call"), _log(t))
+    pinger = @async ping(session)
+    @test timedwait(() -> istaskdone(pinger) && istaskdone(worker), 25.0) === :ok
+    wire = _log(t)
+    at = something(findfirst(==("ping"), wire), length(wire))
+    served_after = count(==("tools/call"), wire[1:at])
+    served_after - issued_after <= 2 || @warn "queued ping waited" issued_after served_after
+    @test served_after - issued_after <= 2
+end
+
+@testset "session lock: an interrupted woken waiter passes the session on (no lost wakeup)" begin
+    # The holder releases to the queue head B, and B is interrupted before it runs. With a
+    # ReentrantLock the release's single wakeup died with B and C stayed parked on a free
+    # lock. B now passes on the ownership it was handed.
+    t = _ScriptedTransport((m, id, _) -> [_ok_frame(id)])
+    session = _scripted_session(t)
+    lock(session._lock)                                   # A holds the session
+    b = @async try ping(session); :served catch e; e end  # sticky: run only while A yields
+    c = @async try ping(session); :served catch e; e end
+    try
+        sleep(0.5)                                        # B, then C, queue behind A
+        @test !istaskdone(b) && !istaskdone(c)
+    finally
+        unlock(session._lock)                             # hands the session to B …
+    end
+    schedule(b, InterruptException(); error=true)         # … interrupted before it runs
+    @test timedwait(() -> istaskdone(c), 25.0) === :ok
+    @test istaskdone(c) && fetch(c) === :served
+    @test istaskdone(b) && fetch(b) isa InterruptException
+    @test !islocked(session._lock)
+    @test _log(t) == ["ping"]                             # only C reached the server
+end
+
+@testset "session lock: a caller that cannot acquire the session in time gets MCPTimeoutError(:queue)" begin
+    t = _ScriptedTransport((m, id, _) -> [_ok_frame(id)])
+    session = _scripted_session(t)
+    lock(session._lock)                                   # another call holds the session
+    waiter = Threads.@spawn try call_tool(session, "x", Dict{String,Any}(); timeout=0.3) catch e; e end
+    gave_up = try
+        timedwait(() -> istaskdone(waiter), 25.0)         # the waiter gives up on its own clock
+    finally
+        unlock(session._lock)
+    end
+    @test gave_up === :ok
+    err = fetch(waiter)
+    @test err isa MCPTimeoutError
+    @test err isa MCPTimeoutError && err.phase === :queue && err.limit == 0.3
+    @test err isa MCPTimeoutError && 0.3 <= err.elapsed < 1.5
+    @test err isa MCPTimeoutError && occursin("timeout", err.msg)
+    @test isempty(_log(t))                                # it never touched the session
+    @test session.status === :ready
+    @test !islocked(session._lock)
+    @test call_tool(session, "x", Dict{String,Any}()) isa MCPToolResult   # still usable
+end
+
+@testset "session lock: re-entrant for its holder (notify and exchange under a held lock)" begin
+    t = _ScriptedTransport((m, id, _) -> [_ok_frame(id)])
+    session = _scripted_session(t)
+    task = Threads.@spawn @lock session._lock begin
+        UniLM._mcp_notify!(session, "notifications/initialized")
+        UniLM._mcp_request!(session, "ping")
+        islocked(session._lock)
+    end
+    @test timedwait(() -> istaskdone(task), 25.0) === :ok
+    @test fetch(task) === true                            # still held inside the outer block
+    @test !islocked(session._lock)                        # fully released after it
+    @test _log(t) == ["notifications/initialized", "ping"]
+end
+
+@testset "list_tools! clears tools_stale under the session lock" begin
+    # The flag used to be cleared after the listing, outside the lock, so a list_changed
+    # that another caller recorded in that window was overwritten. The listing and the
+    # cache write now run in one acquisition: a caller queued behind the listing records
+    # its list_changed after the refresh, and the flag stays set. A large listing keeps
+    # the old unlocked window (building the tool cache) wide enough to be hit.
+    n = 100_000
+    tools_json = JSON.json([Dict{String,Any}("name" => "t$i") for i in 1:n])
+    session_box, other = Ref{Any}(nothing), Ref{Any}(nothing)
+    t = _ScriptedTransport() do m, id, _
+        if m == "tools/list"
+            other[] = Threads.@spawn ping(session_box[])   # queues behind the listing
+            sleep(0.3)                                      # … and parks on the lock
+            ["{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"tools\":$tools_json}}"]
+        else                                                # the other caller's exchange
+            ["{\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}", _ok_frame(id)]
+        end
+    end
+    session = _scripted_session(t)
+    session_box[] = session
+    @test length(list_tools!(session)) == n
+    @test timedwait(() -> istaskdone(other[]), 25.0) === :ok
+    @test _log(t) == ["tools/list", "ping"]
+    @test session.tools_stale == true                       # the later list_changed stands
+end
+
+# ─── Stdio: a late reply is never a success ───────────────────────────────────
+
+@testset "stdio: a reply arriving after the per-call timeout is not returned" begin
+    # When the watchdog fires the call is over. Its teardown closes our end of the
+    # server's stdout first, so the read blocked in the exchange is released at once:
+    # the timeout surfaces within a second of the bound instead of after the kill
+    # ladder's grace, and the reply the server sends later is never returned.
+    marker = "UNILMLATE" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _slowreply_child_src(marker; reply_delay=2.0)); close(io)
+    cmd = `$(Base.julia_cmd()) --startup-file=no --project=$proj $childfile`
+    session = nothing
+    try
+        session = mcp_connect(cmd; config=RequestConfig(current_config(); mcp_request_timeout=10.0))
+        box = Ref{Any}(nothing)
+        w = @async (box[] = try call_tool(session, "slowreply", Dict{String,Any}(); timeout=0.3) catch e; e end)
+        @test timedwait(() -> istaskdone(w), 25.0) === :ok
+        err = box[]
+        @test err isa MCPTimeoutError
+        @test err isa MCPTimeoutError && err.phase === :request && err.limit == 0.3
+        @test err isa MCPTimeoutError && 0.3 <= err.elapsed <= 1.3
+        @test session.status === :closed && session._close_cause === :timeout
+    finally
+        session === nothing ||
+            (try; UniLM._kill_transport!(session.transport; grace_term=0.2, grace_kill=0.2); catch; end)
+        try; run(pipeline(`pkill -f $childfile`; stderr=devnull)); catch; end
+        @test timedwait(() -> !_pgrep(childfile), 10.0) === :ok
+        rm(childfile; force=true)
+    end
+end
+
+# ─── Streamable HTTP conformance ──────────────────────────────────────────────
+
+@testset "SSE priming events (an id with empty data) are not frames" begin
+    # A Streamable HTTP server SHOULD open each SSE stream with an event carrying an id and
+    # empty data (a reconnection cursor). SSE dispatch skips an event whose data buffer is
+    # empty, so it never reaches JSON parsing.
+    @test UniLM._parse_sse_frames("id: prime-1\ndata:\n\nevent: message\ndata: {\"a\":1}\n\n") == ["{\"a\":1}"]
+    @test UniLM._parse_sse_frames("id: prime-2\ndata: \n\n") == String[]
+    server = _build_mcp_test_server(Ref{Any}(nothing))
+    httpserver, url = _mcp_http_fixture() do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        resp = UniLM._dispatch_mcp(server, JSON.parse(String(req.body); dicttype=Dict{String,Any}))
+        isnothing(resp) && return HTTP.Response(202, "")
+        HTTP.Response(200, ["Content-Type" => "text/event-stream"],
+            "id: prime\ndata:\n\nid: 1\nevent: message\ndata: " * JSON.json(resp) * "\n\n")
+    end
+    try
+        session = @test_logs min_level=Logging.Warn mcp_connect(url)   # nothing skipped or warned
+        try
+            @test call_tool(session, "concat", Dict{String,Any}("a" => "p", "b" => "q")).content == "p|q"
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "HTTP SSE body: frames AFTER the response are still processed" begin
+    # A server may keep sending on the stream after the response; a list_changed or a
+    # ping there must not be dropped with the rest of the body.
+    replies = Channel{Any}(4)
+    server = _build_mcp_test_server(Ref{Any}(nothing))
+    httpserver, url = _mcp_http_fixture() do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        haskey(parsed, "method") || (put!(replies, parsed); return HTTP.Response(202, ""))
+        resp = UniLM._dispatch_mcp(server, parsed)
+        isnothing(resp) && return HTTP.Response(202, "")
+        sse = "event: message\ndata: " * JSON.json(resp) * "\n\n"
+        parsed["method"] == "tools/call" && (sse *=
+            "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n" *
+            "data: {\"jsonrpc\":\"2.0\",\"id\":\"srv-ping-7\",\"method\":\"ping\"}\n\n")
+        HTTP.Response(200, ["Content-Type" => "text/event-stream"], sse)
+    end
+    try
+        session = mcp_connect(url)
+        try
+            @test session.tools_stale == false
+            @test call_tool(session, "concat", Dict{String,Any}("a" => "t", "b" => "r")).content == "t|r"
+            @test session.tools_stale == true                # the trailing list_changed counted
+            @test isready(replies)                           # the trailing ping was answered
+            isready(replies) && @test take!(replies) ==
+                Dict{String,Any}("jsonrpc" => "2.0", "id" => "srv-ping-7", "result" => Dict{String,Any}())
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "HTTP DELETE on disconnect carries the negotiated MCP-Protocol-Version" begin
+    delete_version = Ref("<no DELETE>")
+    server = _build_mcp_test_server(Ref{Any}(nothing))
+    httpserver, url = _mcp_http_fixture() do req
+        if req.method == "DELETE"
+            delete_version[] = HTTP.header(req, "MCP-Protocol-Version", "<absent>")
+            return HTTP.Response(200, "")
+        end
+        resp = UniLM._dispatch_mcp(server, JSON.parse(String(req.body); dicttype=Dict{String,Any}))
+        isnothing(resp) && return HTTP.Response(202, ["Mcp-Session-Id" => "sess-v"], "")
+        HTTP.Response(200, ["Content-Type" => "application/json", "Mcp-Session-Id" => "sess-v"], JSON.json(resp))
+    end
+    try
+        session = mcp_connect(url)
+        mcp_disconnect!(session)
+        @test delete_version[] == session.protocol_version
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "HTTP per-call timeout sends notifications/cancelled for that request" begin
+    # Lifecycle: a sender whose request timed out SHOULD cancel it so the server stops
+    # working on a request nobody waits for. Best effort: the call still raises its timeout.
+    cancelled, call_ids = Channel{Any}(4), Channel{Any}(4)
+    httpserver, url = _mcp_http_fixture() do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        method, id = get(parsed, "method", ""), get(parsed, "id", nothing)
+        method == "notifications/cancelled" && (put!(cancelled, parsed["params"]); return HTTP.Response(202, ""))
+        isnothing(id) && return HTTP.Response(202, "")
+        method == "tools/call" && (put!(call_ids, id); sleep(3.0))
+        result = method == "initialize" ?
+            Dict{String,Any}("protocolVersion" => UniLM._MCP_PROTOCOL_VERSION, "capabilities" => Dict{String,Any}(),
+                "serverInfo" => Dict{String,Any}("name" => "slow", "version" => "1.0")) : Dict{String,Any}()
+        HTTP.Response(200, ["Content-Type" => "application/json"], _ok_frame(id, result))
+    end
+    try
+        session = mcp_connect(url; config=RequestConfig(current_config(); mcp_request_timeout=10.0))
+        try
+            err = try call_tool(session, "slow", Dict{String,Any}(); timeout=0.5); nothing catch e; e end
+            @test err isa MCPTimeoutError && err.phase === :request
+            @test isready(cancelled)                         # sent before the timeout surfaced
+            if isready(cancelled)
+                p = take!(cancelled)
+                @test p["requestId"] == take!(call_ids)
+                @test p["reason"] isa String
+            end
+            @test session.status === :ready                  # an HTTP timeout is not fatal
+        finally
+            mcp_disconnect!(session)
+        end
+    finally
+        close(httpserver)
+    end
+end
+
+# ─── Stdio framing robustness ─────────────────────────────────────────────────
+
+@testset "stdio: blank and whitespace-only lines are skipped, not read as EOF" begin
+    session, _ = _iobuf_session("\n   \n\r\n" * """{"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n""")
+    @test UniLM._mcp_request!(session, "ping") == Dict{String,Any}("ok" => true)
+    @test session.status === :ready
+end
+
+@testset "stdio: a non-JSON line from the server is skipped with a warning" begin
+    # stdio servers MUST NOT write non-protocol output to stdout, but a stray log line
+    # must not fail the exchange it lands in.
+    session, _ = _iobuf_session("server log line, not JSON\n" * """{"jsonrpc":"2.0","id":1,"result":{"ok":1}}\n""")
+    res = @test_logs (:warn, r"non-JSON") UniLM._mcp_request!(session, "ping")
+    @test res == Dict{String,Any}("ok" => 1)
+    @test session.status === :ready
+end
+
+@testset "MCPError.data carries any JSON value" begin
+    for data in ("detail text", Any[1, 2], 42, true, Dict{String,Any}("k" => "v"))
+        @test MCPError(Dict{String,Any}("code" => -32000, "message" => "boom", "data" => data)).data == data
+    end
+    @test MCPError(Dict{String,Any}("code" => -32000, "message" => "boom")).data === nothing
+    session, _ = _iobuf_session("""{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"x","data":"why"}}\n""")
+    err = try UniLM._mcp_request!(session, "ping"); nothing catch e; e end
+    @test err isa MCPError && err.data == "why"
+    @test err isa MCPError && occursin("why", sprint(showerror, err))
+end
+
+# ─── Typed closed-session errors ──────────────────────────────────────────────
+
+@testset "a disconnected HTTP session raises MCPSessionClosedError without reaching the server" begin
+    posts = Threads.Atomic{Int}(0)
+    dispatch = _json_dispatch(_build_mcp_test_server(Ref{Any}(nothing)))
+    httpserver, url = _mcp_http_fixture() do req
+        req.method == "POST" && Threads.atomic_add!(posts, 1)
+        dispatch(req)
+    end
+    try
+        session = mcp_connect(url)
+        mcp_disconnect!(session)
+        before = posts[]
+        err = try call_tool(session, "concat", Dict{String,Any}("a" => "x", "b" => "y")); nothing catch e; e end
+        @test err isa MCPSessionClosedError
+        @test err isa MCPSessionClosedError && err.cause === :disconnected
+        @test err isa MCPSessionClosedError && startswith(sprint(showerror, err), "MCPSessionClosedError")
+        @test_throws MCPSessionClosedError ping(session)
+        @test_throws MCPSessionClosedError UniLM._transport_send!(session.transport, "{}")
+        @test_throws MCPSessionClosedError UniLM._transport_notify!(session.transport, "{}")
+        @test posts[] == before                              # nothing reached the server
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "callers queued behind a session-fatal stdio timeout get MCPSessionClosedError(:timeout)" begin
+    session, t, received, to_server, server = _paced_stdio_session(id -> id == 1 ? 30.0 : 0.0)
+    try
+        holder = Threads.@spawn try UniLM._mcp_request!(session, "hang"; timeout=0.5) catch e; e end
+        @test timedwait(() -> received[] >= 1, 25.0) === :ok
+        waiters = [Threads.@spawn(try UniLM._mcp_request!(session, "after"; timeout=20.0) catch e; e end)
+                   for _ in 1:3]
+        @test timedwait(() -> istaskdone(holder) && all(istaskdone, waiters), 25.0) === :ok
+        @test fetch(holder) isa MCPTimeoutError
+        @test all(w -> fetch(w) isa MCPSessionClosedError && fetch(w).cause === :timeout, waiters)
+        @test received[] == 1                                # none of them reached the server
+    finally
+        close(to_server)
+        UniLM._kill_transport!(t)
+        @test timedwait(() -> istaskdone(server), 10.0) === :ok
+    end
+end
+
+@testset "MCPSessionClosedError validates its cause" begin
+    for cause in (:disconnected, :timeout, :crash)
+        @test MCPSessionClosedError(cause, "m").cause === cause
+    end
+    @test_throws ArgumentError MCPSessionClosedError(:other, "m")
+end
+
+# ─── Handshake details and custom transports ──────────────────────────────────
+
+@testset "mcp_connect advertises the package version in clientInfo" begin
+    seen = Ref{Any}(nothing)
+    dispatch = _json_dispatch(_build_mcp_test_server(Ref{Any}(nothing)))
+    httpserver, url = _mcp_http_fixture() do req
+        if req.method == "POST"
+            parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+            get(parsed, "method", "") == "initialize" && (seen[] = parsed["params"]["clientInfo"])
+        end
+        dispatch(req)
+    end
+    try
+        mcp_disconnect!(mcp_connect(url))
+        @test seen[] == Dict{String,Any}("name" => "UniLM.jl", "version" => string(pkgversion(UniLM)))
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "a custom MCPTransport can connect (it bounds its own IO)" begin
+    init = Dict{String,Any}("protocolVersion" => UniLM._MCP_PROTOCOL_VERSION,
+        "capabilities" => Dict{String,Any}(), "serverInfo" => Dict{String,Any}("name" => "custom", "version" => "1"))
+    t = _ScriptedTransport((m, id, _) -> [m == "initialize" ? _ok_frame(id, init) : _ok_frame(id)])
+    session = mcp_connect(t)
+    try
+        @test session.status === :ready
+        @test session.server_info["name"] == "custom"
+        @test ping(session) === nothing
+        @test _log(t) == ["initialize", "notifications/initialized", "ping"]
+    finally
+        mcp_disconnect!(session)
+    end
+    @test !UniLM._transport_isconnected(t)
+end
+
+# ─── Process lifecycle ────────────────────────────────────────────────────────
+
+@testset "a busy stdio server does not outlive its client process" begin
+    # Servers are spawned detached (their own process group), so nothing reaps them when
+    # the client process exits, and a server busy in a handler never sees stdin EOF. The
+    # client tears live stdio transports down in an atexit hook.
+    proj = dirname(dirname(pathof(UniLM)))
+    busyfile, io = mktemp()
+    write(io, """
+    while !eof(stdin)
+        line = readline(stdin)
+        m = match(r"\\"id\\":(\\d+)", line)
+        m === nothing && continue
+        occursin("tools/call", line) && sleep(600)     # busy: stdin is never read again
+        println(stdout, "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":" * m.captures[1] * ",\\"result\\":{\\"protocolVersion\\":\\"$(UniLM._MCP_PROTOCOL_VERSION)\\",\\"capabilities\\":{},\\"serverInfo\\":{\\"name\\":\\"busy\\",\\"version\\":\\"1\\"}}}")
+        flush(stdout)
+    end
+    """)
+    close(io)
+    parentfile, pio = mktemp()
+    write(pio, """
+    using UniLM
+    s = mcp_connect(`\$(Base.julia_cmd()) --startup-file=no $busyfile`)
+    @async try call_tool(s, "busy", Dict{String,Any}()) catch end
+    sleep(1.0)        # the server is now busy in the handler
+    exit(0)           # no disconnect: only the atexit hook can reap the server
+    """)
+    close(pio)
+    try
+        p = run(pipeline(`$(Base.julia_cmd()) --startup-file=no --project=$proj $parentfile`;
+                         stdout=devnull, stderr=devnull); wait=false)
+        @test timedwait(() -> _pgrep(busyfile) || process_exited(p), 120.0) === :ok
+        @test timedwait(() -> process_exited(p), 120.0) === :ok
+        @test success(p)                                     # connected, went busy, exited cleanly
+        @test timedwait(() -> !_pgrep(busyfile), 25.0) === :ok
+    finally
+        try; run(pipeline(`pkill -f $busyfile`; stderr=devnull)); catch; end
+        try; run(pipeline(`pkill -f $parentfile`; stderr=devnull)); catch; end
+        rm(busyfile; force=true); rm(parentfile; force=true)
+    end
+end
+
+@testset "a server whose group leader dies while idle is reaped and its pgid dropped" begin
+    # A process-group id becomes reusable once the group is empty, so a pgid kept after the
+    # leader died could SIGKILL an unrelated group at teardown. A watcher reaps the group's
+    # leftovers the moment the leader exits and drops the pgid.
+    marker = "UNILMLEADER" * string(rand(UInt64); base=16)
+    gc_marker = "UNILMLEFTOVER" * string(rand(UInt64); base=16)
+    proj = dirname(dirname(pathof(UniLM)))
+    childfile, io = mktemp(); write(io, _ws4_wrapper_child_src(marker, gc_marker)); close(io)
+    cmd = `$(Base.julia_cmd()) --startup-file=no --project=$proj $childfile`
+    session = nothing
+    try
+        session = mcp_connect(cmd)
+        t = session.transport
+        @test t.pgid !== nothing
+        @test timedwait(() -> _pgrep(gc_marker), 10.0) === :ok      # the group member came up
+        ccall(:kill, Cint, (Cint, Cint), getpid(t.process), 9)        # the leader dies; session idle
+        @test timedwait(() -> t.pgid === nothing, 25.0) === :ok
+        @test timedwait(() -> !_pgrep(gc_marker), 25.0) === :ok
+    finally
+        session === nothing || (try; mcp_disconnect!(session); catch; end)
+        try; run(pipeline(`pkill -f $gc_marker`; stderr=devnull)); catch; end
+        try; run(pipeline(`pkill -f $childfile`; stderr=devnull)); catch; end
+        rm(childfile; force=true)
+    end
+end
+
+"""A dependency-free stdio server (it matches the request id with a regex) that writes a
+marker line to stderr on start, then answers every request with an empty result."""
+function _stderr_child_src(marker::String)
+    ver = UniLM._MCP_PROTOCOL_VERSION
+    """
+    println(stderr, "SERVER-STDERR $marker")
+    flush(stderr)
+    init = "{\\"protocolVersion\\":\\"$ver\\",\\"capabilities\\":{},\\"serverInfo\\":{\\"name\\":\\"stderr-probe\\",\\"version\\":\\"1.0\\"}}"
+    while !eof(stdin)
+        line = readline(stdin)
+        m = match(r"\\"id\\":(\\d+)", line)
+        m === nothing && continue
+        body = occursin("\\"method\\":\\"initialize\\"", line) ? init : "{}"
+        println(stdout, "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":" * m.captures[1] * ",\\"result\\":" * body * "}")
+        flush(stdout)
+    end
+    """
+end
+
+@testset "mcp_connect(cmd; stderr) redirects the server's stderr, respawn included" begin
+    # A stdio server may log to stderr at will; where that goes is the caller's choice
+    # (a file, devnull), which a Cmd alone cannot express. A respawned server keeps it.
+    marker = "UNILMSTDERR" * string(rand(UInt64); base=16)
+    childfile, io = mktemp(); write(io, _stderr_child_src(marker)); close(io)
+    cmd = `$(Base.julia_cmd()) --startup-file=no $childfile`
+    errfile = tempname()
+    session = nothing
+    try
+        session = mcp_connect(cmd; stderr=errfile, auto_respawn=true)
+        @test session.status === :ready
+        UniLM._kill_transport!(session.transport; grace_term=2.0, grace_kill=1.0)
+        session.status, session._close_cause = :closed, :timeout
+        @test_logs (:warn, r"respawning the server") match_mode=:any ping(session)
+        mcp_disconnect!(session)
+        @test count("SERVER-STDERR $marker", read(errfile, String)) == 2   # both generations
+        quiet = mcp_connect(cmd; stderr=devnull)
+        @test quiet.status === :ready
+        mcp_disconnect!(quiet)
+    finally
+        session === nothing || (try; UniLM._kill_transport!(session.transport; grace_term=1.0, grace_kill=1.0); catch; end)
+        try; run(pipeline(`pkill -f $childfile`; stderr=devnull)); catch; end
+        rm(childfile; force=true); rm(errfile; force=true)
+    end
+end
+
+# ─── MCP → LLM bridge: provider-safe tool names ───────────────────────────────
+
+@testset "bridged MCP tools get provider-safe names that map back to the MCP name" begin
+    # MCP tool names may contain dots (e.g. admin.tools.list); OpenAI and Anthropic function
+    # names must match ^[a-zA-Z0-9_-]{1,128}$. The bridge advertises a safe alias, and its
+    # callable still calls the tool by its MCP name.
+    seen = String[]
+    t = _ScriptedTransport((m, id, p) -> (m == "tools/call" && push!(seen, p["name"]);
+        [_ok_frame(id, Dict{String,Any}("content" => [Dict{String,Any}("type" => "text", "text" => "ok")]))]))
+    session = _scripted_session(t)
+    names = ["admin.tools.list", "plain_name", "has space", "x"^130]
+    session.tools = [MCPToolInfo(n, "d", Dict{String,Any}("type" => "object"), nothing) for n in names]
+    tools = mcp_tools(session)
+    aliases = [ct.tool.func.name for ct in tools]
+    @test aliases == ["admin_tools_list", "plain_name", "has_space", "x"^128]
+    @test all(a -> occursin(r"^[a-zA-Z0-9_-]{1,128}$", a), aliases)
+    @test tools[1].callable("admin_tools_list", Dict{String,Any}()) == "ok"
+    rtools = mcp_tools_respond(session)
+    @test [ct.tool.name for ct in rtools] == aliases
+    @test rtools[3].callable("has_space", Dict{String,Any}()) == "ok"
+    @test seen == ["admin.tools.list", "has space"]
+    # Two MCP names that sanitize to one alias cannot both be bridged.
+    session.tools = [MCPToolInfo("a.b", nothing, nothing, nothing), MCPToolInfo("a_b", nothing, nothing, nothing)]
+    @test_throws ArgumentError mcp_tools(session)
+    @test_throws ArgumentError mcp_tools_respond(session)
 end

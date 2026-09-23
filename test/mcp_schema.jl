@@ -102,3 +102,38 @@ end
     # y is Union{String,Nothing} — should not be required
     @test !("y" in schema2["required"])
 end
+
+@testset "_function_schema never throws on introspection" begin
+    # A `where` signature is a UnionAll: its type variable maps to the upper bound.
+    fint(x::T) where {T<:Integer} = x
+    s = UniLM._function_schema(fint)
+    @test s["properties"]["x"] == Dict{String,Any}("type" => "integer")
+    @test s["required"] == ["x"]
+    # A type variable nested in a container keeps the container's schema.
+    fvec(x::T, ys::Vector{T}) where {T<:AbstractFloat} = x
+    s = UniLM._function_schema(fvec)
+    @test s["properties"]["x"] == Dict{String,Any}("type" => "number")
+    @test s["properties"]["ys"]["type"] == "array"
+    # Unions of any arity: `Nothing` makes the parameter optional, the rest is anyOf.
+    fu(a::Union{Int,String,Nothing}, b::Union{Int,String}) = a
+    s = UniLM._function_schema(fu)
+    @test s["required"] == ["b"]
+    int_or_str = Set([Dict{String,Any}("type" => "integer"), Dict{String,Any}("type" => "string")])
+    @test Set(s["properties"]["a"]["anyOf"]) == int_or_str
+    @test Set(s["properties"]["b"]["anyOf"]) == int_or_str
+    @test UniLM._is_optional(Union{Int,String,Nothing}) == (true, Union{Int,String})
+    # Symbol travels as a string; a type with no JSON mapping accepts any value.
+    fs(k::Symbol, z::Complex{Float64}) = k
+    s = UniLM._function_schema(fs)
+    @test s["properties"]["k"] == Dict{String,Any}("type" => "string")
+    @test s["properties"]["z"] == Dict{String,Any}()
+    # Ignored parameters (`_`, an unnamed `::T`) are not advertised.
+    fign(_, ::Int, n::Int) = n
+    @test collect(keys(UniLM._function_schema(fign)["properties"])) == ["n"]
+    # The type mapping itself: unions, UnionAll containers, Symbol, unknown types.
+    @test UniLM._json_schema_type(Symbol) == Dict{String,Any}("type" => "string")
+    @test UniLM._json_schema_type(Vector{<:Real}) == Dict{String,Any}("type" => "array")
+    @test UniLM._json_schema_type(Complex{Float64}) == Dict{String,Any}()
+    @test Set(UniLM._json_schema_type(Union{Int,Nothing})["anyOf"]) ==
+          Set([Dict{String,Any}("type" => "integer"), Dict{String,Any}("type" => "null")])
+end

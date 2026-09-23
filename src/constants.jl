@@ -54,6 +54,12 @@ const IMAGES_GENERATIONS_PATH::String = "/v1/images/generations"
 """Legacy Completions API path (used for FIM by DeepSeek, Ollama, vLLM)."""
 const COMPLETIONS_PATH::String = "/v1/completions"
 
+"""Mistral API host (the base URL of [`MistralEndpoint`](@ref))."""
+const MISTRAL_API_HOST::String = "api.mistral.ai"
+
+"""Mistral FIM completions path (https://docs.mistral.ai/api/endpoint/fim)."""
+const MISTRAL_FIM_PATH::String = "/v1/fim/completions"
+
 """OpenAI Files API path."""
 const FILES_PATH::String = "/v1/files"
 

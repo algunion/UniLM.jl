@@ -48,10 +48,10 @@ end
     result = prefix_complete(chat)
     @test result isa LLMSuccess
     @test !isempty(result.message.content)
-    # Verify chat history: prefix replaced with completed response, not rejected
+    # The result is the continuation; the history keeps the whole turn, prefix first.
     @test length(chat) == 3
     @test last(chat).role == UniLM.RoleAssistant
-    @test last(chat).content == result.message.content
+    @test last(chat).content == "```python\n" * result.message.content
     @info "Prefix result: $(result.message.content)"
 end
 

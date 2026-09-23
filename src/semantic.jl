@@ -317,9 +317,13 @@ _nl_slots(params::Vector{Any})::Vector{Int} =
 """
     _nl_methods(f) -> (methods, slots, arity)
 
-The methods of `f` that carry natural-language arguments, sorted by definition
-site so the option order is deterministic, together with the shared slot
-positions and positional arity.
+The methods of `f` that carry natural-language arguments, in definition order,
+together with the shared slot positions and positional arity.
+
+Definition order is the world age each method was defined in (`primary_world`):
+source labels do not order REPL input (`"REPL[10]"` sorts before `"REPL[2]"`), and
+`methods` returns its own order. Methods that share a world — a package image
+activates its methods together — fall back to source position.
 
 Methods with no slot are ignored (they are ordinary methods, including wildcard
 `::Meaning` ones). Every slotted method must agree on arity and on which
@@ -334,7 +338,7 @@ function _nl_methods(f)
     end
     isempty(slotted) && throw(ArgumentError(
         "$(f) has no methods with natural-language (Meaning) arguments"))
-    sort!(slotted; by = m -> (string(m.file), m.line))
+    sort!(slotted; by = m -> (m.primary_world, string(m.file), m.line))
 
     reference = _nl_params(slotted[1])
     slots = _nl_slots(reference)
@@ -521,7 +525,10 @@ function nl_dispatch(f, args...;
             arg_i += 1
         end
     end
-    return f(callargs...)
+    # `methods(f)` lists methods of the newest world, including ones defined after this
+    # call began (an `@eval` at run time); the call must see the same method table as
+    # the options that were offered, or a billed choice ends in a MethodError.
+    return Base.invokelatest(f, callargs...)
 end
 
 # Values are passed through untouched: JSON.jl lowers what it knows, and

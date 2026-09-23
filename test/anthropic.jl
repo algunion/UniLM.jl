@@ -556,3 +556,48 @@ end
     x = e(service_tier="flex")
     @test x isa ArgumentError && occursin("service_tier", x.msg)
 end
+
+# Model restrictions from https://platform.claude.com/docs/en/build-with-claude/thinking.md
+# ("Limits and feature compatibility") and the Opus 5.5 / Sonnet 5 migration guides.
+@testset "encode — Claude model restrictions are validated locally" begin
+    tools = [Tool(func=FunctionSignature(name="f", parameters=Dict("type" => "object", "properties" => Dict())))]
+    b(model; kw...) = _anthropic_body(; model, kw...)
+    e(model; kw...) = _anthropic_err(; model, kw...)
+    # temperature is 0..1 on every Claude model (Chat itself allows up to 2).
+    for model in ("claude-haiku-4-5", "claude-opus-4-6", "claude-opus-9")
+        x = e(model; temperature=1.5)
+        @test x isa ArgumentError && occursin("temperature", x.msg)
+    end
+    @test b("claude-haiku-4-5"; temperature=0.3)["temperature"] == 0.3
+    # Models after Opus 4.6 reject non-default sampling on every request.
+    for model in ("claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-5", "claude-opus-5", "claude-opus-5-5",
+                  "claude-fable-5-1", "claude-mythos-5-1", "claude-fable-5", "claude-mythos-5")
+        x = e(model; temperature=0.5)
+        @test x isa ArgumentError && occursin(model, x.msg) && occursin("temperature", x.msg)
+        x = e(model; top_p=0.9)
+        @test x isa ArgumentError && occursin(model, x.msg) && occursin("top_p", x.msg)
+        @test b(model; temperature=1.0)["temperature"] == 1.0          # the default is accepted
+    end
+    @test b("claude-opus-4-6"; temperature=0.3)["temperature"] == 0.3
+    @test b("claude-sonnet-4-6"; top_p=0.9)["top_p"] == 0.9
+    # Opus 5.5, Fable 5.1 and Mythos 5.1 reject forced tool use on every request.
+    for model in ("claude-opus-5-5", "claude-fable-5-1", "claude-mythos-5-1"),
+        tc in ("required", UniLM.GPTToolChoice(func="f"))
+        x = e(model; tools, tool_choice=tc)
+        @test x isa ArgumentError && occursin(model, x.msg) && occursin("tool_choice", x.msg) &&
+              occursin("auto", x.msg) && occursin("strict", x.msg)
+    end
+    @test b("claude-opus-5-5"; tools, tool_choice="auto")["tool_choice"]["type"] == "auto"
+    @test b("claude-opus-5"; tools, tool_choice="required")["tool_choice"]["type"] == "any"
+    @test b("claude-fable-5"; tools, tool_choice=UniLM.GPTToolChoice(func="f"))["tool_choice"]["type"] == "tool"
+    # A trailing assistant turn (response prefill) is rejected from the 4.6 generation on.
+    prefill = [Message(Val(:user), "q"), Message(role=RoleAssistant, content="Sure:")]
+    for model in ("claude-opus-4-6", "claude-sonnet-4-6", "claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-5",
+                  "claude-opus-5", "claude-opus-5-5", "claude-fable-5-1", "claude-mythos-5-1", "claude-fable-5")
+        x = e(model; messages=prefill)
+        @test x isa ArgumentError && occursin(model, x.msg) && occursin("messages", x.msg)
+    end
+    for model in ("claude-haiku-4-5", "claude-opus-4-5", "claude-sonnet-4-5", "claude-opus-9")
+        @test b(model; messages=prefill)["messages"][end] == Dict("role" => "assistant", "content" => "Sure:")
+    end
+end

@@ -161,14 +161,36 @@ function _anthropic_user_id(chat::Chat)::Union{String,Nothing}
     isempty(ids) ? nothing : last(first(ids))
 end
 
+# Requests a Claude model answers with HTTP 400, rejected before the round trip (the
+# per-family limits are in the table above). The Messages API temperature range is 0..1.
+function _anthropic_validate_model(chat::Chat, fam::Union{_ClaudeFamily,Nothing})
+    m, t = chat.model, chat.temperature
+    isnothing(t) || 0.0 <= t <= 1.0 || throw(ArgumentError(
+        "Anthropic temperature must be in [0, 1] (got $t)"))
+    isnothing(fam) && return nothing
+    if !fam.sampling
+        isnothing(t) || t == 1.0 || throw(ArgumentError(
+            "$m accepts only the default temperature (1.0); remove temperature"))
+        isnothing(chat.top_p) || throw(ArgumentError("$m does not accept top_p; remove it"))
+    end
+    fam.forced || !(chat.tool_choice isa GPTToolChoice || chat.tool_choice == "required") ||
+        throw(ArgumentError("$m rejects forced tool_choice; use tool_choice=\"auto\" with strict " *
+                            "tools (FunctionSignature(strict=true)) or a json_schema response_format"))
+    nothing
+end
+
 function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
     _anthropic_validate_fields(chat)
     fam = _claude_family(chat.model)
+    _anthropic_validate_model(chat, fam)
     body = Dict{Symbol,Any}(:model => chat.model)
     # max_tokens is REQUIRED by Anthropic; fall back to the moderate default.
     body[:max_tokens] = something(chat.max_completion_tokens, chat.max_tokens,
                                   default_max_tokens(ANTHROPICServiceEndpoint, chat.model))
     system, msgs = _anthropic_messages(chat.messages)
+    isnothing(fam) || fam.prefill || isempty(msgs) || msgs[end][:role] != "assistant" ||
+        throw(ArgumentError("$(chat.model) rejects messages that end with an assistant turn " *
+                            "(response prefill); end with a user turn or use a json_schema response_format"))
     isnothing(system) || (body[:system] = system)
     body[:messages] = msgs
     isnothing(chat.tools)       || (body[:tools] = [_anthropic_tool(t) for t in chat.tools])
@@ -176,9 +198,6 @@ function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
     (!isnothing(chat.tool_choice) || disable_parallel) &&
         (body[:tool_choice] = _anthropic_tool_choice(something(chat.tool_choice, "auto"), disable_parallel))
     isnothing(chat.stop)        || (body[:stop_sequences] = chat.stop isa String ? [chat.stop] : chat.stop)
-    # NB: newest Claude models reject temperature/top_p (HTTP 400). Forward
-    # transparently when set — the provider's 400 is the loud signal, not a
-    # silent drop or mangle.
     isnothing(chat.temperature) || (body[:temperature] = chat.temperature)
     isnothing(chat.top_p)       || (body[:top_p] = chat.top_p)
     (uid = _anthropic_user_id(chat)) === nothing || (body[:metadata] = Dict(:user_id => uid))

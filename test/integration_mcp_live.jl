@@ -135,18 +135,19 @@ end
     end
 end
 
-# ─── 2. Killing the transport handle does NOT kill the server ────────────────
+# ─── 2. Killing the group leader reaps the whole server group ────────────────
 # `session.transport.process` is the `npm exec` WRAPPER, not the server: it forks
 # a `node` grandchild that inherits the stdio pipes and is the real MCP server.
-# Killing only the wrapper orphans the grandchild, which keeps serving — this is
-# exactly why teardown spawns detached and group-kills by the captured pgid.
-@testset "live MCP: killing the wrapper leaves the real server (node grandchild) serving" begin
+# When the wrapper (the group leader) dies, the leader watcher group-kills the
+# orphaned node server at once and drops the pgid — a group id is reusable once the
+# group is empty, so a retained one could later signal an unrelated group — and the
+# next call surfaces the dead transport as a typed crash.
+@testset "live MCP: killing the wrapper reaps the orphaned server group" begin
     scratch = mktempdir(; prefix = "mcplive_wrap_")
     marker = basename(scratch)
     session = nothing
     try
         session = mcp_connect(_fs_cmd(scratch); auto_respawn = false)
-        pgid = session.transport.pgid
         # Warm-up call succeeds against the freshly spawned server.
         warm = _live_bounded(bound = 12.0) do
             call_tool(session, "list_allowed_directories", Dict{String,Any}())
@@ -156,11 +157,9 @@ end
         before = _live_survivors(marker)
         @test before >= 2                       # wrapper + node child both carry the marker
         _live_signal(getpid(session.transport.process), _LIVE_SIGKILL)  # kill the wrapper only
-        sleep(0.6)
-        survived = _live_survivors(marker)
-        @test survived >= 1                      # the node grandchild is still alive
+        @test timedwait(() -> _live_survivors(marker) == 0, 8.0) === :ok  # the group went with it
+        @test timedwait(() -> session.transport.pgid === nothing, 8.0) === :ok
 
-        # The orphaned real server still answers over the inherited pipes.
         after = _live_bounded(bound = 12.0) do
             try
                 (:returned, call_tool(session, "list_allowed_directories", Dict{String,Any}()))
@@ -170,11 +169,11 @@ end
         end
         @test after[1] === :ok
         if after[1] === :ok
-            @test after[2][1] === :returned
-            after[2][1] === :returned && @test after[2][2].is_error === false
+            @test after[2][1] === :threw
+            after[2][1] === :threw && @test after[2][2] isa MCPCrashError
         end
-        println("  [live-mcp] wrapper killed; marker procs ", before, " -> ", survived,
-                "; orphaned node still served the next call")
+        println("  [live-mcp] wrapper killed; marker procs ", before, " -> ",
+                _live_survivors(marker), "; the orphaned node server was reaped with it")
     finally
         _live_reap(marker; pgid = session === nothing ? nothing : session.transport.pgid)
         rm(scratch; recursive = true, force = true)
@@ -305,9 +304,9 @@ end
 # A SIGSTOP'd server is frozen: it never answers and never reacts to stdin EOF or
 # SIGTERM. The whole-exchange watchdog must still terminate the call with a typed
 # MCPTimeoutError and the teardown ladder's UNCONDITIONAL final rung (group SIGKILL)
-# must reap the stopped process. The read only unblocks once that SIGKILL lands, so
-# the user-visible latency is timeout + grace_term(5 s) + grace_kill(2 s): bounded,
-# but materially larger than the timeout alone for a truly frozen server.
+# must reap the stopped process. The watchdog releases the read first, so the call
+# returns at ~the timeout; the ladder then runs on — grace_term(5 s) + grace_kill(2 s)
+# — before its SIGKILL reaps the frozen group.
 @testset "live MCP: SIGSTOP hang yields MCPTimeoutError and the stopped server is SIGKILL-reaped" begin
     scratch = mktempdir(; prefix = "mcplive_stop_")
     marker = basename(scratch)
@@ -343,18 +342,19 @@ end
                 @test err.phase === :request
                 @test err.limit == 2.0            # the call-time override was applied
             end
-            # Bounded: at least the timeout, at most timeout + the fixed ladder graces
-            # (5 s + 2 s) plus scheduler slack. Proves termination, not an infinite wait.
+            # Bounded: the read is released as the watchdog fires, so the call returns
+            # within a second of the timeout — not after the kill ladder's graces.
             @test wall >= 2.0
-            @test wall <= 13.0
+            @test wall <= 3.0
             println("  [live-mcp] SIGSTOP hang: MCPTimeoutError after ",
-                    round(wall; digits = 2), " s wall (limit 2.0 s + kill-ladder graces)")
+                    round(wall; digits = 2), " s wall (limit 2.0 s)")
         end
         @test session.status === :closed
         @test session._close_cause === :timeout
 
-        # The final unconditional SIGKILL rung reaps even a stopped process.
-        @test timedwait(() -> _live_survivors(marker) == 0, 8.0) === :ok
+        # The final unconditional SIGKILL rung reaps even a stopped process; the ladder
+        # runs on after the call returned (5 s + 2 s graces).
+        @test timedwait(() -> _live_survivors(marker) == 0, 15.0) === :ok
         @test _live_survivors(marker) == 0
 
         # A stdio timeout is session-fatal: the next call names auto_respawn (default off).

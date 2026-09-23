@@ -10,9 +10,9 @@
 
 const _JSONRPC_VERSION = "2.0"
 
-# Protocol revisions this client can negotiate over Streamable HTTP, preferred
+# Protocol revisions this package negotiates, as client and as server, preferred
 # (latest) first. 2024-11-05 is excluded: it predates Streamable HTTP and used
-# the separate HTTP+SSE dual-endpoint transport this client does not implement.
+# the separate HTTP+SSE dual-endpoint transport this package does not implement.
 const _MCP_SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
 
 # The version the client prefers and advertises: its latest supported revision.
@@ -57,12 +57,13 @@ end
     MCPError <: Exception
 
 Error from MCP protocol operations. Contains the JSON-RPC error code, message,
-and optional data from the server.
+and the optional `data` member from the server — any JSON value, `nothing` when
+absent.
 """
 struct MCPError <: Exception
     code::Int
     message::String
-    data::Union{Dict{String,Any},Nothing}
+    data::Any
 end
 
 MCPError(d::Dict{String,Any}) = MCPError(d["code"], d["message"], get(d, "data", nothing))
@@ -113,6 +114,38 @@ _crash_msg(context::String, exitcode::Union{Int,Nothing}, termsignal::Union{Int,
     "Reconnect explicitly, or pass auto_respawn=true to mcp_connect so the next " *
     "call transparently respawns the server (its in-memory state is lost and " *
     "tools are refetched)."
+
+"""
+    MCPSessionClosedError <: Exception
+
+The session is closed, or its transport is not connected, so the call never reached
+the server.
+
+# Fields
+- `cause::Symbol`: `:disconnected` (closed by [`mcp_disconnect!`](@ref) or a failed
+  connect, or a transport that is not connected), `:timeout` (a stdio request or
+  connect timeout closed it), or `:crash` (the stdio server process died).
+- `msg::String`: human-readable message with recovery guidance.
+
+A stdio session closed by `:timeout` or `:crash` respawns its server instead of
+raising this when it was connected with `auto_respawn=true`.
+"""
+struct MCPSessionClosedError <: Exception
+    cause::Symbol
+    msg::String
+    function MCPSessionClosedError(cause::Symbol, msg::String)
+        cause in (:disconnected, :timeout, :crash) ||
+            throw(ArgumentError("MCPSessionClosedError cause must be :disconnected, :timeout " *
+                                "or :crash (got :$cause)"))
+        new(cause, msg)
+    end
+end
+
+Base.showerror(io::IO, e::MCPSessionClosedError) =
+    print(io, "MCPSessionClosedError(:", e.cause, "): ", e.msg)
+
+_not_connected(transport::String) = MCPSessionClosedError(:disconnected,
+    "MCP $transport transport is not connected. Reconnect with mcp_connect.")
 
 """
     _MCPSessionExpired <: Exception
@@ -211,11 +244,16 @@ end
 
 Abstract type for MCP transport implementations. Subtypes must implement:
 - `_transport_connect!(t)` — establish connection
-- `_transport_send!(t, msg::String)::String` — send JSON-RPC message, return response
+- `_transport_send!(t, msg::String; cfg)::String` — send JSON-RPC message, return response
 - `_transport_read!(t)::String` — read the next incoming JSON-RPC frame
-- `_transport_notify!(t, msg::String)` — send notification (no response expected)
-- `_transport_disconnect!(t)` — close connection
+- `_transport_notify!(t, msg::String; cfg)` — send notification (no response expected)
+- `_transport_disconnect!(t; cfg)` — close connection
 - `_transport_isconnected(t)::Bool` — check if connected
+
+A custom transport must bound its own IO: the connect and per-call bounds are enforced
+by the stdio transport's watchdog and inside the HTTP transport's requests, and a
+custom transport's connect handshake and exchanges run without either — an unbounded
+read in one blocks its caller, and every caller queued behind it, indefinitely.
 """
 abstract type MCPTransport end
 
@@ -241,12 +279,62 @@ mutable struct StdioTransport <: MCPTransport
     output::Union{IO,Nothing}
     # Process-group id captured at spawn. Under detach=true the child is its own
     # group leader, so its pgid == its pid. Retained so teardown can group-SIGKILL
-    # even after the direct child is reaped (when getpid(process) would fail). POSIX
-    # reserves a pid while it still names a live group, so this cannot target a
-    # recycled pid.
+    # even after the direct child is reaped (when getpid(process) would fail). A
+    # group id stays reserved only while the group has members, so it is taken — by
+    # the teardown ladder's final rung or by the leader watcher, whichever runs first
+    # (see _track_live!) — under the live-transport lock.
     pgid::Union{Int32,Nothing}
-    lock::ReentrantLock
-    StdioTransport(command::Cmd) = new(command, nothing, nothing, nothing, nothing, ReentrantLock())
+    StdioTransport(command::Cmd) = new(command, nothing, nothing, nothing, nothing)
+end
+
+# Live stdio transports, torn down at process exit: servers run detached (their own
+# process group), so nothing else reaps them when this process exits, and a server busy
+# in a handler never sees stdin EOF. The same lock makes taking a transport's pgid
+# exactly-once between the teardown ladder and the leader watcher. An atexit hook (not
+# a finalizer: teardown does IO) is registered on first use.
+const _LIVE_STDIO = Base.Lockable(Base.IdSet{StdioTransport}())
+const _REAPER_ARMED = Threads.Atomic{Bool}(false)
+
+"""Register a freshly spawned transport: live registry, the atexit reaper, and a watcher
+that reaps the group the moment its leader exits. A dead leader can leave members behind,
+and once the group is empty its id can be reused — group-killing a stale id later could
+hit an unrelated process group."""
+function _track_live!(t::StdioTransport, proc::Base.Process)
+    @lock _LIVE_STDIO push!(_LIVE_STDIO[], t)
+    Threads.atomic_cas!(_REAPER_ARMED, false, true) || atexit(_reap_live_stdio!)
+    errormonitor(Threads.@spawn (wait(proc); _group_kill(_take_group!(t))))
+    nothing
+end
+
+"""Take `t`'s process-group id and drop `t` from the live registry — exactly once across
+the teardown ladder's final rung and the leader watcher, so only one of them signals it."""
+function _take_group!(t::StdioTransport)::Union{Int32,Nothing}
+    @lock _LIVE_STDIO begin
+        delete!(_LIVE_STDIO[], t)
+        pgid, t.pgid = t.pgid, nothing
+        pgid
+    end
+end
+
+# SIGKILL a whole process group. The `pgid > 0` guard is defense-in-depth: kill(-0, …)
+# would signal the CALLER's own group. ESRCH (the group is already empty) is expected.
+_group_kill(::Nothing) = nothing
+function _group_kill(pgid::Int32)
+    pgid > 0 || return nothing
+    if @ccall(kill((-pgid)::Cint, 9::Cint)::Cint) != 0
+        err = Libc.errno()
+        err == Libc.ESRCH || @debug "MCP group SIGKILL failed" errno = err
+    end
+    nothing
+end
+
+"""atexit hook: run every live stdio transport's teardown ladder, concurrently, so exit
+waits for one ladder rather than their sum."""
+function _reap_live_stdio!()
+    live = @lock _LIVE_STDIO collect(_LIVE_STDIO[])
+    @sync for t in live
+        Threads.@spawn _kill_transport!(t)
+    end
 end
 
 function _transport_connect!(t::StdioTransport)
@@ -259,47 +347,42 @@ function _transport_connect!(t::StdioTransport)
     t.pgid = getpid(proc)   # == the child's pgid under detach; capture while alive
     t.input = proc.in
     t.output = proc.out
-    nothing
+    _track_live!(t, proc)
 end
 
+# A request is one frame out, then frames in until its response; the whole exchange is
+# bounded by the watchdog in _mcp_request!.
 function _transport_send!(t::StdioTransport, msg::String;
                           cfg::RequestConfig=current_config())::String
-    inp = t.input
-    isnothing(inp) && error("StdioTransport not connected")
-    try
-        lock(t.lock) do
-            write(inp, msg, "\n")
-            flush(inp)
-        end
-    catch e
-        e isa InterruptException && rethrow()
-        throw(_TransportClosed(e))
-    end
-    _transport_read!(t)   # bounded by the whole-exchange watchdog in _mcp_request!
+    _transport_notify!(t, msg; cfg)
+    _transport_read!(t)
 end
 
+"""Read the next frame. Only a read at EOF comes back empty — a blank line keeps its
+newline — so EOF is told apart from blank and whitespace-only lines, which carry no
+frame and are skipped."""
 function _transport_read!(t::StdioTransport)::String
     out = t.output
-    isnothing(out) && error("StdioTransport not connected")
-    line = try
-        readline(out)
-    catch e
-        e isa InterruptException && rethrow()
-        throw(_TransportClosed(e))
+    isnothing(out) && throw(_not_connected("stdio"))
+    while true
+        line = try
+            readline(out; keep=true)
+        catch e
+            e isa InterruptException && rethrow()
+            throw(_TransportClosed(e))
+        end
+        isempty(line) && throw(_TransportClosed(nothing))
+        isempty(strip(line)) || return String(chomp(line))
     end
-    isempty(line) && throw(_TransportClosed(nothing))
-    line
 end
 
 function _transport_notify!(t::StdioTransport, msg::String;
                             cfg::RequestConfig=current_config())
     inp = t.input
-    isnothing(inp) && error("StdioTransport not connected")
+    isnothing(inp) && throw(_not_connected("stdio"))
     try
-        lock(t.lock) do
-            write(inp, msg, "\n")
-            flush(inp)
-        end
+        write(inp, msg, "\n")
+        flush(inp)
     catch e
         e isa InterruptException && rethrow()
         throw(_TransportClosed(e))
@@ -313,20 +396,18 @@ handles. MCP spec: a compliant server exits when its stdin reaches EOF, so we cl
 stdin first; if the process lingers we escalate SIGTERM. The FINAL rung is
 UNCONDITIONAL — a group-directed SIGKILL by the pgid captured at spawn (the child
 leads its own group, spawned detach=true) — so a grandchild the leader orphaned by
-exiting on stdin EOF cannot survive holding our pipe. POSIX reserves a pid while it
-still names a live process group, so the unconditional kill cannot hit a recycled
-pid even after the direct child was reaped; ESRCH (empty group) is the expected
-no-op. `grace_term`/`grace_kill` are exposed for suite-time control; production
-defaults are fixed. Best-effort and idempotent: safe from a disconnect and from the
-request/connect watchdog.
+exiting on stdin EOF cannot survive holding our pipe. The pgid is taken exactly once
+(see [`_take_group!`](@ref)): when the leader watcher already reaped the group, the
+rung has nothing left to signal; ESRCH (empty group) is the expected no-op.
+`grace_term`/`grace_kill` are exposed for suite-time control; production defaults are
+fixed. Best-effort and idempotent: safe from a disconnect, from the request/connect
+watchdog and from the atexit reaper.
 """
 function _kill_transport!(t::StdioTransport;
                           grace_term::Float64=5.0, grace_kill::Float64=2.0)::Nothing
     proc = t.process
-    pgid = t.pgid
     if !isnothing(proc)
-        inp = t.input
-        !isnothing(inp) && (try; close(inp); catch; end)   # stdin EOF: compliant servers exit
+        _close_quietly(t.input)                            # stdin EOF: compliant servers exit
         if process_running(proc)
             if timedwait(() -> !process_running(proc), grace_term) !== :ok
                 try; kill(proc); catch; end                  # SIGTERM
@@ -334,24 +415,34 @@ function _kill_transport!(t::StdioTransport;
             end
         end
     end
-    # Final rung, UNCONDITIONAL: SIGKILL the whole process group by the spawn-captured
-    # pgid (getpid on a reaped Process may fail, so use the stored value). Reaps a
-    # grandchild the leader orphaned by exiting on stdin EOF. The `pgid > 0` guard is
-    # defense-in-depth: `kill(-0, 9)` (POSIX) would signal the CALLER's own process
-    # group, so a zero pgid must never reach the group kill even though no reachable
-    # spawn path produces one.
-    if !isnothing(pgid) && pgid > 0
-        rc = ccall(:kill, Cint, (Cint, Cint), -pgid, 9)
-        if rc != 0
-            e = Base.Libc.errno()
-            e == Base.Libc.ESRCH || @debug "MCP group SIGKILL failed" errno=e
-        end
-    end
+    _group_kill(_take_group!(t))                           # final rung, unconditional
     t.process = nothing
     t.input = nothing
     t.output = nothing
-    t.pgid = nothing
     nothing
+end
+
+# Teardown closes streams that may already be closed or broken; it must still run to its
+# last rung.
+function _close_quietly(io::Union{IO,Nothing})
+    isnothing(io) && return nothing
+    try
+        close(io)
+    catch e
+        e isa InterruptException && rethrow()
+        @debug "MCP stdio close failed during teardown" exception = e
+    end
+    nothing
+end
+
+"""Request-watchdog teardown. Closing our end of the server's stdout FIRST releases the
+read blocked in the exchange at once; the kill ladder alone releases it only when the
+server exits, up to the ladder's whole grace later."""
+function _abort_exchange!(t::StdioTransport)
+    out = t.output
+    t.output = nothing
+    _close_quietly(out)
+    _kill_transport!(t)
 end
 
 # Graceful disconnect uses the same ladder. `cfg` is accepted for signature parity
@@ -359,9 +450,11 @@ end
 _transport_disconnect!(t::StdioTransport; cfg::Union{Nothing,RequestConfig}=nothing) =
     _kill_transport!(t)
 
+# Connected while the read end is open and the server runs: the request watchdog drops
+# the read end before its kill ladder finishes.
 function _transport_isconnected(t::StdioTransport)::Bool
     proc = t.process
-    !isnothing(proc) && process_running(proc)
+    !isnothing(t.output) && !isnothing(proc) && process_running(proc)
 end
 
 """
@@ -438,6 +531,7 @@ end
 
 function _transport_send!(t::HTTPTransport, msg::String;
                           cfg::RequestConfig=current_config())::String
+    t.connected || throw(_not_connected("HTTP"))
     resp = _http("POST", t.url, _mcp_post_headers(t), msg; cfg=cfg, remaining=Inf)
     # Capture session ID from response
     sid = HTTP.header(resp, "Mcp-Session-Id", "")
@@ -469,8 +563,14 @@ function _transport_read!(t::HTTPTransport)::String
     popfirst!(t.pending)
 end
 
+# Frames queued after the one that answered the request: the rest of an SSE body, still
+# server messages (a list_changed or a server request may follow the response).
+_transport_trailing!(::MCPTransport) = String[]
+_transport_trailing!(t::HTTPTransport) = splice!(t.pending, eachindex(t.pending))
+
 function _transport_notify!(t::HTTPTransport, msg::String;
                             cfg::RequestConfig=current_config())
+    t.connected || throw(_not_connected("HTTP"))
     resp = _http("POST", t.url, _mcp_post_headers(t), msg; cfg=cfg, remaining=Inf)
     # A notification carries no response frame to demux, but its STATUS is the server's
     # only channel for refusing it (202 Accepted is the usual acceptance). Dropping the
@@ -485,8 +585,9 @@ end
 
 function _transport_disconnect!(t::HTTPTransport; cfg::RequestConfig=current_config())
     if t.connected && !isnothing(t.session_id)
+        # Like every request after initialize, the DELETE carries the negotiated revision.
         hdrs = copy(t.headers)
-        push!(hdrs, "Mcp-Session-Id" => t.session_id)
+        push!(hdrs, "Mcp-Session-Id" => t.session_id, "Mcp-Protocol-Version" => t.protocol_version)
         try
             _http("DELETE", t.url, hdrs; cfg=cfg, remaining=Inf)
         catch e
@@ -514,7 +615,9 @@ the streaming machine's layers do not see: layer 1 drops blank lines because no
 supported provider needs the boundary), then each event's fields are framed by the
 shared [`_sse_events!`](@ref). That buys the spec's two rules the transport needs: the
 space after `data:` is OPTIONAL, and an event carrying several `data:` lines is ONE
-payload, its lines joined with `\\n`."""
+payload, its lines joined with `\\n`. An event whose data is empty is not dispatched
+(SSE): that is the priming event — an id with empty data — a Streamable HTTP server
+opens its streams with."""
 function _parse_sse_frames(body::String)::Vector{String}
     frames = String[]
     carry, event = IOBuffer(), Ref("")
@@ -522,10 +625,99 @@ function _parse_sse_frames(body::String)::Vector{String}
         # Layer 1 emits only lines it has seen terminated; the appended newline
         # completes an event whose last line ends at the delimiter (or at EOF).
         payloads = _sse_events!(carry, event, block * "\n")
-        isempty(payloads) && continue
-        push!(frames, join((payload for (_, payload) in payloads), "\n"))
+        frame = join((payload for (_, payload) in payloads), "\n")
+        isempty(frame) || push!(frames, frame)
     end
     frames
+end
+
+# ─── Session lock ────────────────────────────────────────────────────────────
+
+"""
+FIFO hand-off lock serializing a session's calls. Re-entrant for its owner (a
+notification sent inside an exchange re-enters it). Release hands ownership straight to
+the longest waiter BEFORE waking it, so a caller looping on the session cannot barge
+ahead of a queued one. A waiter that gives up — its bound passed, or it was interrupted —
+leaves the queue, and passes the lock on if it had already been handed to it, so no
+caller behind it is stranded on a free lock.
+"""
+mutable struct _SessionLock <: Base.AbstractLock
+    const guard::ReentrantLock                 # held only for the O(1) state changes below
+    owner::Union{Task,Nothing}
+    depth::Int
+    const queue::Vector{Pair{Task,Base.Event}}
+    _SessionLock() = new(ReentrantLock(), nothing, 0, Pair{Task,Base.Event}[])
+end
+
+Base.islocked(l::_SessionLock) = (@lock l.guard l.owner) !== nothing
+Base.lock(l::_SessionLock) = (_acquire!(l, Inf); nothing)
+
+function Base.unlock(l::_SessionLock)
+    @lock l.guard begin
+        l.owner === current_task() ||
+            error("unlock of an MCP session lock by a task that does not hold it")
+        (l.depth -= 1) == 0 && _hand_off!(l)
+    end
+    nothing
+end
+
+# Caller holds `l.guard`. Ownership moves before the wakeup, so the lock is never free
+# while a waiter is queued.
+function _hand_off!(l::_SessionLock)
+    if isempty(l.queue)
+        l.owner, l.depth = nothing, 0
+    else
+        task, ev = popfirst!(l.queue)
+        l.owner, l.depth = task, 1
+        notify(ev)
+    end
+    nothing
+end
+
+"""Acquire `l` within `limit` seconds (`Inf`: unbounded); `false` when the bound passed
+first — the caller then never held the lock."""
+function _acquire!(l::_SessionLock, limit::Float64)::Bool
+    me = current_task()
+    ev = @lock l.guard begin
+        if l.owner === me
+            l.depth += 1
+            return true
+        elseif l.owner === nothing
+            l.owner, l.depth = me, 1
+            return true
+        end
+        e = Base.Event()
+        push!(l.queue, me => e)
+        e
+    end
+    timer = isfinite(limit) ? Timer(_ -> notify(ev), limit) : nothing
+    try
+        wait(ev)
+    catch
+        _abandon!(l, me)
+        rethrow()
+    finally
+        isnothing(timer) || close(timer)
+    end
+    @lock l.guard begin
+        l.owner === me && return true
+        deleteat!(l.queue, findfirst(p -> first(p) === me, l.queue))   # timed out: leave
+        false
+    end
+end
+
+# A waiter interrupted while queued leaves the queue; one interrupted after the lock was
+# handed to it passes the lock on instead.
+function _abandon!(l::_SessionLock, me::Task)
+    @lock l.guard begin
+        if l.owner === me
+            _hand_off!(l)
+        else
+            i = findfirst(p -> first(p) === me, l.queue)
+            isnothing(i) || deleteat!(l.queue, i)
+        end
+    end
+    nothing
 end
 
 # ─── MCPSession ──────────────────────────────────────────────────────────────
@@ -539,15 +731,15 @@ tool/resource/prompt lists.
 Create via [`mcp_connect`](@ref). Disconnect via [`mcp_disconnect!`](@ref).
 
 Requests are serialized: each call (its liveness/respawn check, id allocation and
-request/response exchange) runs under an internal session lock, and interleaved
-server → client frames are handled in place (notifications skipped, server `ping`
-requests answered). A concurrent caller therefore waits for the call in progress,
-and `mcp_request_timeout` bounds its own exchange — measured from the moment it
-takes the lock, not from the moment it asked — so one call's wait behind another
-never counts against it, and never tears down a healthy exchange in progress. The
-wait itself stays bounded, transitively: the call ahead runs under that same
-per-exchange bound. After the server sends `notifications/tools/list_changed`,
-`tools_stale` is `true` until the next [`list_tools!`](@ref).
+request/response exchange) holds the session, and callers are served in arrival
+order. Interleaved server → client frames are handled in place (notifications
+skipped, server `ping` requests answered). A caller's per-call bound (`timeout`,
+default `mcp_request_timeout`) also covers its wait for the session: a caller that
+cannot acquire it in time raises [`MCPTimeoutError`](@ref) with phase `:queue`
+without touching it. Once acquired, the exchange gets its full bound, measured from
+that moment — a waiter's clock never tears down the exchange in progress. After the
+server sends `notifications/tools/list_changed`, `tools_stale` is `true` until the
+next [`list_tools!`](@ref).
 """
 mutable struct MCPSession
     transport::MCPTransport
@@ -559,7 +751,7 @@ mutable struct MCPSession
     protocol_version::String
     _id_counter::Int
     status::Symbol  # :disconnected, :initializing, :ready, :closed
-    _lock::ReentrantLock
+    _lock::_SessionLock
     tools_stale::Bool
     # The exact `initialize` params (protocolVersion, capabilities, clientInfo)
     # retained so an expired HTTP session can be re-initialized transparently.
@@ -589,7 +781,7 @@ function MCPSession(transport::MCPTransport, caps::MCPServerCapabilities,
                     config::RequestConfig=RequestConfig(),
                     auto_respawn::Bool=false)
     MCPSession(transport, caps, server_info, tools, resources, prompts,
-               protocol_version, id_counter, status, ReentrantLock(), false, init_params,
+               protocol_version, id_counter, status, _SessionLock(), false, init_params,
                config, auto_respawn, :none)
 end
 
@@ -670,70 +862,116 @@ function _mcp_exchange_bound(session::MCPSession, timeout::Union{Nothing,Float64
     requested
 end
 
+const _MCP_TIMEOUT_OVERRIDES =
+    "Raise it for one call with call_tool(session, name, args; timeout=<seconds>), for " *
+    "a dynamic scope with with_request_config(; mcp_request_timeout=<seconds>), or per " *
+    "session with mcp_connect(...; config=RequestConfig(current_config(); " *
+    "mcp_request_timeout=<seconds>))."
+
 _request_timeout_msg(limit::Float64)::String =
-    "MCP request exceeded the $(limit)s request timeout. Raise it for one call with " *
-    "call_tool(session, name, args; timeout=<seconds>), for a dynamic scope with " *
-    "with_request_config(; mcp_request_timeout=<seconds>), or per session with " *
-    "mcp_connect(...; config=RequestConfig(current_config(); mcp_request_timeout=<seconds>))."
+    "MCP request exceeded the $(limit)s request timeout. " * _MCP_TIMEOUT_OVERRIDES
+
+_queue_timeout_msg(limit::Float64)::String =
+    "MCP call waited $(limit)s (its request timeout) for the session without acquiring " *
+    "it: calls on one session run one at a time, and the calls ahead held it. " *
+    _MCP_TIMEOUT_OVERRIDES
+
+# Bound on the best-effort cancellation notice sent for a timed-out request: it must not
+# stretch the timeout it follows by more than this.
+const _MCP_CANCEL_BOUND = 2.0
+
+"""Tell the server to stop working on request `id`, which timed out on this side
+(lifecycle: the sender SHOULD cancel a request it no longer waits for). Best effort:
+bounded by [`_MCP_CANCEL_BOUND`](@ref), and a failure is logged at debug level — the
+timeout it follows stands either way."""
+function _send_cancelled!(session::MCPSession, id::Int, excfg::RequestConfig)
+    notice = _JSONRPCNotification("notifications/cancelled",
+        Dict{String,Any}("requestId" => id, "reason" => "the request timed out on the client"))
+    try
+        _transport_notify!(session.transport, _jsonrpc_serialize(notice);
+            cfg=RequestConfig(excfg; request_timeout=min(excfg.request_timeout, _MCP_CANCEL_BOUND)))
+    catch e
+        e isa InterruptException && rethrow()
+        @debug "MCP cancellation notice not delivered" request_id = id exception = e
+    end
+    nothing
+end
+
+"""Handle one incoming frame of an exchange; a response is returned for the caller to
+match, every other frame yields `nothing`. Server notifications are skipped —
+`notifications/tools/list_changed` marks the tool cache stale; a server `ping` request is
+answered with an empty result and any other server request with `-32601` (this client
+offers no server-callable capabilities). A line that is not JSON is skipped with a
+(bounded) warning: stdio servers must write only protocol messages to stdout, but a stray
+log line must not fail the exchange it lands in."""
+function _serve_frame!(session::MCPSession, raw::String,
+                       excfg::RequestConfig)::Union{_JSONRPCResponse,Nothing}
+    parsed = try
+        JSON.parse(raw; dicttype=Dict{String,Any})
+    catch e
+        e isa InterruptException && rethrow()
+        @warn "Skipping a non-JSON line from the MCP server" line = first(raw, 200) maxlog = 10
+        return nothing
+    end
+    parsed isa Dict{String,Any} || error("MCP server sent a non-object JSON-RPC frame: $raw")
+    haskey(parsed, "method") || return _JSONRPCResponse(parsed)
+    frame_id = get(parsed, "id", nothing)
+    if isnothing(frame_id)
+        parsed["method"] == "notifications/tools/list_changed" && (session.tools_stale = true)
+    else
+        reply = parsed["method"] == "ping" ? _jsonrpc_result(frame_id, Dict{String,Any}()) :
+            _jsonrpc_error(frame_id, -32601, "Method not found: $(parsed["method"])")
+        _transport_notify!(session.transport, JSON.json(reply); cfg=excfg)
+    end
+    nothing
+end
 
 """
 Send a JSON-RPC request and return the parsed response, throwing MCPError on failure.
 
 The whole exchange — id allocation, request write, and reading frames until
 the response with the matching id arrives — runs under `session._lock`, so
-concurrent callers are serialized and cannot interleave reads. Frames received
-before the matching response are handled in place:
+concurrent callers are serialized and cannot interleave reads. Frames are handled
+by [`_serve_frame!`](@ref): server notifications and requests before the response
+are served in place, and so are the frames that follow it in the same body (the
+rest of an HTTP SSE stream). Among responses:
 
-- Server notifications (no `id`) are skipped; `notifications/tools/list_changed`
-  additionally sets `session.tools_stale = true` (refresh via [`list_tools!`](@ref)).
-- Server-initiated requests (`id` + `method`): `ping` is answered with an empty
-  result; anything else with `-32601` (this client offers no server-callable
-  capabilities).
 - A response with a `null` id carrying an `error` aborts the exchange with
   [`MCPError`](@ref) (the server could not attribute the request).
 - Any other non-matching response frame is skipped with a warning.
+
+A request that times out in the transport (HTTP) is cancelled with a best-effort
+`notifications/cancelled` before the timeout propagates; `initialize` is never cancelled.
 """
 function _mcp_request_once!(session::MCPSession, method::String,
                             params::Union{Dict{String,Any},Nothing}=nothing;
                             excfg::RequestConfig=session.config)::Dict{String,Any}
-    lock(session._lock) do
+    @lock session._lock begin
+        t = session.transport
         id = _next_id!(session)
-        req = _JSONRPCRequest(id, method, params)
-        raw = _transport_send!(session.transport, _jsonrpc_serialize(req); cfg=excfg)
+        raw = try
+            _transport_send!(t, _jsonrpc_serialize(_JSONRPCRequest(id, method, params)); cfg=excfg)
+        catch e
+            e isa InterruptException && rethrow()
+            e isa UniLMTimeout && e.phase === :request && method != "initialize" &&
+                _send_cancelled!(session, id, excfg)
+            rethrow()
+        end
         while true
-            parsed = JSON.parse(raw; dicttype=Dict{String,Any})
-            parsed isa Dict{String,Any} ||
-                error("MCP server sent a non-object JSON-RPC frame: $raw")
-            if haskey(parsed, "method")
-                frame_id = get(parsed, "id", nothing)
-                if isnothing(frame_id)
-                    # Server → client notification: never "the response".
-                    parsed["method"] == "notifications/tools/list_changed" &&
-                        (session.tools_stale = true)
-                elseif parsed["method"] == "ping"
-                    # Server-initiated ping: answer with an empty result.
-                    _transport_notify!(session.transport,
-                        JSON.json(_jsonrpc_result(frame_id, Dict{String,Any}())); cfg=excfg)
-                else
-                    # Server-initiated request this client cannot serve.
-                    _transport_notify!(session.transport,
-                        JSON.json(_jsonrpc_error(frame_id, -32601,
-                            "Method not found: $(parsed["method"])")); cfg=excfg)
+            resp = _serve_frame!(session, raw, excfg)
+            if resp !== nothing && resp.id == id
+                for extra in _transport_trailing!(t)
+                    late = _serve_frame!(session, extra, excfg)
+                    late === nothing || @warn "Skipping response with unexpected id" expected=id got=late.id
                 end
-                raw = _transport_read!(session.transport)
-                continue
+                isnothing(resp.error) || throw(MCPError(resp.error))
+                return something(resp.result, Dict{String,Any}())
             end
-            resp = _JSONRPCResponse(parsed)
-            if resp.id != id
-                if isnothing(resp.id) && !isnothing(resp.error)
-                    throw(MCPError(resp.error))
-                end
+            if resp !== nothing
+                isnothing(resp.id) && !isnothing(resp.error) && throw(MCPError(resp.error))
                 @warn "Skipping response with unexpected id" expected=id got=resp.id
-                raw = _transport_read!(session.transport)
-                continue
             end
-            !isnothing(resp.error) && throw(MCPError(resp.error))
-            return something(resp.result, Dict{String,Any}())
+            raw = _transport_read!(t)
         end
     end
 end
@@ -768,19 +1006,36 @@ function _mcp_request_recover!(session::MCPSession, method::String,
     end
 end
 
+"""Run `f()` holding the session. The wait for it is bounded by the caller's per-call
+bound (`timeout`, else the ambient/session `mcp_request_timeout`): a caller that cannot
+acquire the session in time raises `MCPTimeoutError(:queue)` without touching it. The
+holder's exchange is never cut short by a waiter's clock. Re-entrant."""
+function _with_session(f::Function, session::MCPSession, timeout::Union{Nothing,Float64})
+    limit = _resolve_mcp_request_timeout(session, timeout)
+    t0 = time_ns()
+    _acquire!(session._lock, limit) ||
+        throw(MCPTimeoutError(:queue, _elapsed_s(t0), limit, _queue_timeout_msg(limit)))
+    try
+        f()
+    finally
+        unlock(session._lock)
+    end
+end
+
 """
 Guarded request entry point used by every discovery/operation verb. Holds the session
-lock for the whole call — liveness check, any auto-respawn it triggers, and the
-exchange — resolves the per-exchange bound (call-time), routes through the
-404-recovery wrapper, and maps a per-exchange timeout to a typed
-[`MCPTimeoutError`](@ref). The stdio branch arms the whole-exchange watchdog only
-once the lock is HELD, so `mcp_request_timeout` bounds the exchange itself and never
-the wait behind another caller (that wait is bounded transitively: the caller ahead
-is running under its own bound). A stdio timeout is session-fatal (no id demux) —
-EXCEPT during connect-phase discovery (status `:initializing`), which runs directly
-beneath the enclosing connect deadline in [`_establish!`](@ref) instead of arming a
-second, tighter watchdog. HTTP timeouts are NOT session-fatal (request/response
-correlation is per-POST).
+for the whole call — liveness check, any auto-respawn it triggers, and the exchange —
+acquired within the per-call bound (see [`_with_session`](@ref)); resolves the
+per-exchange bound (call-time), routes through the 404-recovery wrapper, and maps a
+per-exchange timeout to a typed [`MCPTimeoutError`](@ref). The stdio branch arms the
+whole-exchange watchdog only once the session is HELD, so the exchange gets its full
+bound and a waiter's clock never tears down the exchange in progress. A stdio timeout
+is session-fatal — killing the server is the only way to release a read blocked on
+it — and once the watchdog fired the call is a timeout, even if a reply raced the
+teardown. EXCEPT during connect-phase discovery (status `:initializing`), which runs
+directly beneath the enclosing connect deadline in [`_establish!`](@ref) instead of
+arming a second, tighter watchdog. HTTP timeouts are NOT session-fatal
+(request/response correlation is per-POST).
 """
 function _mcp_request!(session::MCPSession, method::String,
                        params::Union{Dict{String,Any},Nothing}=nothing;
@@ -790,10 +1045,9 @@ function _mcp_request!(session::MCPSession, method::String,
     # two callers on a closed session both respawn, the loser's overwritten transport
     # orphans its server process beyond every kill ladder, and the two handshakes
     # interleave on the shared id counter. The exchange below re-locks re-entrantly.
-    @lock session._lock begin
-        # A session closed by a stdio request timeout or a server crash cannot be reused:
-        # respawn (opt-in) or error before touching the transport. A no-op for live
-        # sessions and for sessions closed by a normal disconnect. Respawn's fresh
+    _with_session(session, timeout) do
+        # A closed session is never reused: respawn (opt-in, stdio timeout or crash) or
+        # raise MCPSessionClosedError before touching the transport. Respawn's fresh
         # handshake avoids this guard (it runs through _establish!), and its list_tools!
         # re-enters here while status is :initializing, so the guard no-ops — no
         # re-entrant respawn.
@@ -811,43 +1065,38 @@ function _mcp_request!(session::MCPSession, method::String,
             # and let the connect deadline bound it.
             session.status === :initializing &&
                 return _mcp_request_recover!(session, method, params; excfg=excfg)
-            result, fired = try
-                # ONE deadline for the whole exchange, armed once the lock is held: a
+            t0 = time_ns()
+            try
+                # ONE deadline for the whole exchange, armed once the session is held: a
                 # burst of pre-response notifications cannot reset it, and time spent
-                # waiting for the lock cannot consume it — a bound armed before the
+                # waiting for the session cannot consume it — a bound armed before the
                 # acquisition would expire during the HOLDER's healthy exchange and
                 # group-kill its server, surfacing to the holder as a crash. On breach
-                # the escalation ladder group-kills the server (unblocking the in-flight
-                # readline); stdio framing has no id demux, so a late reply could
-                # misdeliver — the timeout is therefore session-fatal.
-                _with_deadline_reported(() -> _mcp_request_recover!(session, method, params; excfg=excfg),
-                                        () -> _kill_transport!(t), bound, :request)
+                # the watchdog releases the in-flight readline, then its ladder
+                # group-kills the server — which ends the session.
+                result, fired = _with_deadline_reported(
+                    () -> _mcp_request_recover!(session, method, params; excfg=excfg),
+                    () -> _abort_exchange!(t), bound, :request)
+                fired || return result
+                # The watchdog won the completion race: decided by GUARD STATE (the
+                # :armed→:fired CAS, set before its teardown begins). The teardown is
+                # closing the transport, so a reply that made it through is late — the
+                # call timed out.
+                throw(UniLMTimeout(:request, _elapsed_s(t0), bound))
             catch e
+                e isa InterruptException && rethrow()
                 if e isa UniLMTimeout && e.phase === :request
                     session.status = :closed
                     session._close_cause = :timeout
                     throw(MCPTimeoutError(:request, e.elapsed, e.limit, _request_timeout_msg(e.limit)))
                 end
                 # Crash classification AFTER the timeout branch: when the watchdog fired,
-                # the surfaced error is the timeout even though the kill ladder also broke
+                # the surfaced error is the timeout even though its teardown also broke
                 # the pipe. _find_exception sees through task wrapping.
                 tc = _find_exception(x -> x isa _TransportClosed, e)
                 tc !== nothing && _crash_close!(session, t, tc, "an MCP exchange")
                 rethrow()
             end
-            # Exactly-once race: the exchange returned a real result while the timer fired
-            # at ~completion and ran (or is still running) the kill ladder. Detect this by
-            # GUARD STATE — `fired`, the :armed→:fired CAS set atomically before close!
-            # begins — NOT by nulled handles: _kill_transport! nulls them only at the END
-            # of its grace ladder (grace_term + grace_kill), a settling window in which
-            # this tail would read live handles and wrongly keep the session :ready over a
-            # dying transport (the next call then raises a raw closed-stream IOError). The
-            # transport is gone either way — reflect the close truthfully.
-            if fired
-                session.status = :closed
-                session._close_cause = :timeout
-            end
-            return result
         else
             # HTTP arms no exchange watchdog: `excfg` bounds each POST inside _http, so
             # the bound selected above IS the enforcement — including the connect-phase
@@ -857,6 +1106,7 @@ function _mcp_request!(session::MCPSession, method::String,
             try
                 return _mcp_request_recover!(session, method, params; excfg=excfg)
             catch e
+                e isa InterruptException && rethrow()
                 if e isa UniLMTimeout && e.phase in (:request, :connect)
                     session.status === :initializing && throw(MCPTimeoutError(
                         :connect, e.elapsed, e.limit, _connect_timeout_msg(e.limit)))
@@ -891,10 +1141,16 @@ Connect to an MCP server via stdio transport (subprocess).
 `config::Union{Nothing,RequestConfig}` is resolved (`config` if given, else the
 ambient/process default) and captured on the session: `config.mcp_connect_timeout`
 bounds the spawn→initialize handshake, `config.mcp_request_timeout` is the default
-per-exchange bound. A stdio request timeout is session-fatal (no id demux), as
-is a server crash; with `auto_respawn=true` the next call respawns the server
-(same command, fresh handshake — in-memory server state is lost), otherwise it
-errors.
+per-call bound (it covers the wait for the session and then the exchange). A stdio
+request timeout is session-fatal — killing the server is the only way to release a
+read blocked on an unresponsive one — as is a server crash; with `auto_respawn=true`
+the next call respawns the server (same command, fresh handshake — in-memory server
+state is lost), otherwise it raises [`MCPSessionClosedError`](@ref).
+
+The server runs in its own process group. Disconnecting (or a fatal timeout) tears it
+down: stdin EOF, then SIGTERM, then a SIGKILL of the whole group. If its group leader
+exits on its own, the rest of the group is killed at once; and servers still running
+when this process exits are torn down by an exit hook.
 
 # Example
 ```julia
@@ -916,8 +1172,9 @@ Connect to an MCP server via HTTP transport.
 
 `config::Union{Nothing,RequestConfig}` is resolved (`config` if given, else the
 ambient/process default) and captured on the session: `config.mcp_connect_timeout`
-bounds the connect step, `config.mcp_request_timeout` is the default per-exchange
-bound.
+bounds the connect step, `config.mcp_request_timeout` is the default per-call bound.
+A per-call timeout is not session-fatal over HTTP; the timed-out request is cancelled
+with a best-effort `notifications/cancelled`.
 
 # Example
 ```julia
@@ -983,11 +1240,12 @@ _connect_timeout_msg(limit::Float64)::String =
 
 # stdio: the whole spawn+handshake+discovery runs under one connect watchdog (kill on
 # breach). Returns whether the watchdog fired on a lost completion race (f returned a
-# real result as the timer fired). http: no wrapper — each initialize/list POST is
-# bounded per-POST inside _http — so the connect guard never fires.
+# real result as the timer fired). Every other transport runs unguarded and bounds its
+# own IO — HTTP bounds each initialize/list POST inside _http; a custom transport must
+# do the same (see MCPTransport) — so its connect guard never fires.
 _connect_guard(f::Function, t::StdioTransport, bound::Float64)::Bool =
     last(_with_deadline_reported(f, () -> _kill_transport!(t), bound, :connect))
-_connect_guard(f::Function, ::HTTPTransport, ::Float64)::Bool = (f(); false)
+_connect_guard(f::Function, ::MCPTransport, ::Float64)::Bool = (f(); false)
 
 """Spawn (stdio) / mark connected (http), run the initialize handshake, and run
 tool/resource/prompt discovery — the whole spawn → ready sequence — under ONE
@@ -1047,11 +1305,11 @@ function _finalize_connect!(session::MCPSession, init_result::Dict{String,Any})
 end
 
 _closed_session_msg()::String =
-    "MCP stdio session was closed by a request timeout and cannot be reused: stdio " *
-    "framing carries no request id demux, so a late reply would misdeliver to the " *
-    "next caller. Reconnect explicitly, or pass auto_respawn=true to mcp_connect so " *
-    "the next call transparently respawns the server (its in-memory state is lost " *
-    "and tools are refetched)."
+    "MCP stdio session was closed by a request timeout and cannot be reused: killing " *
+    "the server is the only way to release a read blocked on an unresponsive one, and " *
+    "that ends the session. Reconnect explicitly, or pass auto_respawn=true to " *
+    "mcp_connect so the next call transparently respawns the server (its in-memory " *
+    "state is lost and tools are refetched)."
 
 _crashed_session_msg()::String =
     "MCP stdio session was closed by a server crash and cannot be reused. " *
@@ -1059,10 +1317,14 @@ _crashed_session_msg()::String =
     "call transparently respawns the server (its in-memory state is lost and " *
     "tools are refetched)."
 
+_disconnected_session_msg()::String =
+    "MCP session is not connected: it was closed (by mcp_disconnect!, or by a failed " *
+    "connect). Reconnect with mcp_connect."
+
 """Tear down a stdio transport whose connect sequence failed, then let the failure
 escape. UNCONDITIONAL by design: once the server is spawned, ANY failure before the
-session is established — a stdout banner that breaks JSON parsing, an `initialize`
-error frame, a rejected protocol version — leaves a live child holding our pipes, so
+session is established — an `initialize` error frame, a rejected protocol version, a
+non-object frame — leaves a live child holding our pipes, so
 teardown must not be a per-exception-shape branch that the next new failure mode
 escapes. Crash-shaped failures route through [`_crash_close!`](@ref), which captures
 exit diagnostics, tears down and throws the typed error; everything else is torn down
@@ -1115,38 +1377,41 @@ function _respawn!(session::MCPSession)
     nothing
 end
 
-"""Guard against reusing a session closed by a stdio request timeout or a server crash: respawn when
-opted in, otherwise error with recovery guidance. A no-op for live sessions and
-for sessions closed by a normal disconnect. Check and respawn run under
+"""Guard against reusing a closed session: a stdio session closed by a request timeout
+or a server crash respawns when opted in; every other closed session raises
+[`MCPSessionClosedError`](@ref) with its cause and recovery guidance (`:disconnected`
+for a normal close). A no-op for live sessions. Check and respawn run under
 `session._lock` so they cannot interleave: concurrent callers on one closed session
 respawn exactly ONE server, and the callers that lose the race find it already live.
 Re-entrant — [`_mcp_request!`](@ref) already holds the lock across the whole call."""
 function _ensure_live!(session::MCPSession)
     @lock session._lock begin
-        if session.status === :closed && session._close_cause !== :none
-            session.auto_respawn ||
-                error(session._close_cause === :crash ? _crashed_session_msg() : _closed_session_msg())
-            _respawn!(session)
-        end
+        session.status === :closed || return nothing
+        cause = session._close_cause
+        cause !== :none && session.auto_respawn && return _respawn!(session)
+        throw(MCPSessionClosedError(cause === :none ? :disconnected : cause,
+            cause === :crash ? _crashed_session_msg() :
+            cause === :timeout ? _closed_session_msg() : _disconnected_session_msg()))
     end
-    nothing
 end
 
 """
-    mcp_connect(transport::MCPTransport; client_name="UniLM.jl", protocol_version="2025-11-25",
+    mcp_connect(transport::MCPTransport; client_name="UniLM.jl",
+                client_version=string(pkgversion(UniLM)), protocol_version="2025-11-25",
                 config=nothing, auto_respawn=false) -> MCPSession
 
 Connect to an MCP server via the given transport. Performs initialization handshake
-and populates tool cache. `config` (a [`RequestConfig`](@ref), default: the ambient
-configuration) is resolved and captured on the session — its `mcp_connect_timeout`
-bounds this handshake and `mcp_request_timeout` bounds each later exchange.
-`auto_respawn=true` lets a stdio session closed by a request timeout or a server
-crash respawn its server (same command, captured config) and retry the next call
-once.
+and populates tool cache; `client_name`/`client_version` are sent as `clientInfo`.
+`config` (a [`RequestConfig`](@ref), default: the ambient configuration) is resolved
+and captured on the session — its `mcp_connect_timeout` bounds this handshake and
+`mcp_request_timeout` bounds each later call (the wait for the session, then the
+exchange). `auto_respawn=true` lets a stdio session closed by a request timeout or a
+server crash respawn its server (same command, captured config) and retry the next
+call once. A custom `MCPTransport` must bound its own IO (see [`MCPTransport`](@ref)).
 """
 function mcp_connect(transport::MCPTransport;
                      client_name::String="UniLM.jl",
-                     client_version::String="0.8.0",
+                     client_version::String=string(pkgversion(@__MODULE__)),
                      protocol_version::String=_MCP_PROTOCOL_VERSION,
                      config::Union{Nothing,RequestConfig}=nothing,
                      auto_respawn::Bool=false)::MCPSession
@@ -1215,7 +1480,8 @@ Gracefully disconnect from the MCP server.
 Takes the session lock, so a disconnect racing a call in flight WAITS for that
 exchange to finish instead of tearing the transport down under its reader — the same
 concurrency-1 semantics every other call obeys. The wait stays bounded transitively:
-the exchange ahead runs under its own `mcp_request_timeout`.
+the exchange ahead runs under its own `mcp_request_timeout`. Every later call on the
+session raises [`MCPSessionClosedError`](@ref) with cause `:disconnected`.
 """
 function mcp_disconnect!(session::MCPSession)
     @lock session._lock begin
@@ -1239,27 +1505,31 @@ end
 Fetch the tool list from the MCP server. Handles pagination via cursor.
 Stores result in `session.tools`.
 
-`timeout::Union{Nothing,Float64}` overrides the per-exchange bound for this call
+`timeout::Union{Nothing,Float64}` overrides the per-call bound for this call
 (kwarg > ambient [`with_request_config`](@ref) > session-captured config; Inf
-disables, NaN/≤0 rejected).
+disables, NaN/≤0 rejected). The whole listing — every page and the cache update —
+holds the session once, so a `list_changed` another caller receives meanwhile is
+recorded after the refresh and leaves `tools_stale` set.
 """
 function list_tools!(session::MCPSession; timeout::Union{Nothing,Float64}=nothing)::Vector{MCPToolInfo}
-    all_tools = MCPToolInfo[]
-    cursor = nothing
-    pages = 0
-    while true
-        (pages += 1) > 1000 && error("MCP pagination exceeded 1000 pages")
-        params = isnothing(cursor) ? Dict{String,Any}() : Dict{String,Any}("cursor" => cursor)
-        result = _mcp_request!(session, "tools/list", params; timeout=timeout)
-        for t in get(result, "tools", [])
-            push!(all_tools, MCPToolInfo(t))
+    _with_session(session, timeout) do
+        all_tools = MCPToolInfo[]
+        cursor = nothing
+        pages = 0
+        while true
+            (pages += 1) > 1000 && error("MCP pagination exceeded 1000 pages")
+            params = isnothing(cursor) ? Dict{String,Any}() : Dict{String,Any}("cursor" => cursor)
+            result = _mcp_request!(session, "tools/list", params; timeout=timeout)
+            for t in get(result, "tools", [])
+                push!(all_tools, MCPToolInfo(t))
+            end
+            cursor = get(result, "nextCursor", nothing)
+            isnothing(cursor) && break
         end
-        cursor = get(result, "nextCursor", nothing)
-        isnothing(cursor) && break
+        session.tools = all_tools
+        session.tools_stale = false
+        all_tools
     end
-    session.tools = all_tools
-    session.tools_stale = false
-    all_tools
 end
 
 """
@@ -1358,9 +1628,12 @@ content array. A tool-execution error (`isError: true`) is returned with
 `is_error == true` — it is **not** thrown. JSON-RPC protocol errors still throw
 [`MCPError`](@ref).
 
-`timeout::Union{Nothing,Float64}` overrides the per-exchange bound for this call
+`timeout::Union{Nothing,Float64}` overrides the per-call bound for this call
 (kwarg > ambient [`with_request_config`](@ref) > session-captured config; Inf
-disables, NaN/≤0 rejected).
+disables, NaN/≤0 rejected). It bounds the wait for the session — calls on one session
+run one at a time, in arrival order; a call that cannot acquire it in time raises
+[`MCPTimeoutError`](@ref) with phase `:queue` — and then, from acquisition, the exchange
+itself (phase `:request`).
 """
 function call_tool(session::MCPSession, name::String,
                    arguments::AbstractDict=Dict{String,Any}();

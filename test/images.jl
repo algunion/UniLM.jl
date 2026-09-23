@@ -343,9 +343,9 @@ end
         cfg = UniLM.RequestConfig(max_attempts=2, total_deadline=Inf)
         r = edit_image(imgpath, "a prompt"; model="probe-edit", service=ImagesRetryProbe, config=cfg)
         @test length(seen) == 2                 # the 503 was actually retried
-        # Attempt totals are not comparable: each rebuild draws a fresh random
-        # boundary, whose hex width varies on HTTP.jl 1.x. A truncated or empty
-        # replay still cannot reach the size of the payload it must carry.
+        # Attempt totals are not compared: each rebuild draws a fresh random
+        # boundary. A truncated or empty replay still cannot reach the size of
+        # the payload it must carry.
         @test seen[2] >= sizeof(marker)
         @test complete[]                        # ...and carries the whole image + prompt
         @test r isa ImageSuccess

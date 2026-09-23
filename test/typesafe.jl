@@ -27,9 +27,8 @@ through the environment, so the call under test goes through the real
 """
 function _ts_serve(f::Function, responder::Function)
     recorded = Dict{String,Any}[]
-    # HTTP.jl 1.x hands the handler a byte vector; 2.x hands it a body object and
-    # uses a distinct sentinel for a request with no body at all, which supports
-    # no byte access. "Can it be copied" separates the two without naming either.
+    # A request with no body at all arrives as a sentinel that supports no byte
+    # access; "can it be copied" tells it from a real body.
     bodytext(req) = applicable(copy, req.body) ? String(copy(req.body)) : ""
     handler = function (req)
         push!(recorded, Dict{String,Any}(

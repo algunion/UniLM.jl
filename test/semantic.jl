@@ -40,8 +40,7 @@ function _with_semantic_mock(f::Function; pick::AbstractDict=Dict{String,String}
                              confidence::Real=0.9, status::Int=200,
                              body::Union{Nothing,AbstractString}=nothing)
     recorded = Dict{String,Any}[]
-    # HTTP.jl 1.x hands the handler a byte vector; 2.x hands it a body object and
-    # uses a distinct sentinel for a request with no body at all.
+    # A request with no body at all arrives as a sentinel that supports no byte access.
     bodytext(req) = applicable(copy, req.body) ? String(copy(req.body)) : ""
     handler = function (req)
         raw = bodytext(req)

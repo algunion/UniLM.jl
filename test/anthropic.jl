@@ -3,7 +3,7 @@ using UniLM
 using UniLM: encode_request, decode_response, StreamState,
              _build_stream_message, ANTHROPICServiceEndpoint, GPTFunction,
              RoleSystem, RoleUser, RoleAssistant, RoleTool, TOOL_CALLS, STOP, CONTENT_FILTER
-using Test, HTTP, JSON
+using Test, HTTP, JSON, Sockets
 
 @testset "encode — system split + user turn" begin
     chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-opus-4-8")
@@ -659,4 +659,145 @@ end
     msg = _build_stream_message(st)
     @test [tc.func.arguments for tc in msg.tool_calls] == [Dict{String,Any}("x" => 1), Dict{String,Any}("y" => 2)]
     @test isnothing(msg.provider_content)              # blocks still pending: capture incomplete
+end
+
+# Stop reasons and refusals: https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons.md,
+# https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback.md (stop_details, discard
+# partial output), and .../test-and-evaluate/strengthen-guardrails/handle-streaming-refusals.md
+# (stop_details arrives on message_delta alongside stop_reason).
+_anthropic_decode(d) = decode_response(ANTHROPICServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(d))))
+
+@testset "decode — model_context_window_exceeded → length" begin
+    m = _anthropic_decode(Dict("stop_reason" => "model_context_window_exceeded",
+        "content" => [Dict("type" => "text", "text" => "cut")])).message
+    @test m.finish_reason == "length" && m.content == "cut"
+end
+
+@testset "refusal — streamed and non-streamed turns agree; partial output is discarded" begin
+    sd = Dict("type" => "refusal", "category" => "cyber",
+              "explanation" => "This request was declined because it could enable cyber harm.")
+    partial = [Dict("type" => "text", "text" => "Hello.."),
+               Dict("type" => "tool_use", "id" => "t1", "name" => "f", "input" => Dict())]
+    m = _anthropic_decode(Dict("content" => partial, "stop_reason" => "refusal", "stop_details" => sd,
+                               "usage" => Dict("input_tokens" => 7, "output_tokens" => 3))).message
+    @test isnothing(m.content) && isnothing(m.tool_calls) && isnothing(m.provider_content)
+    @test m.refusal_message == sd["explanation"] && m.finish_reason == CONTENT_FILTER
+    for details in (nothing, Dict("type" => "refusal", "category" => nothing, "explanation" => nothing))
+        d = Dict{String,Any}("content" => Any[], "stop_reason" => "refusal")
+        isnothing(details) || (d["stop_details"] = details)
+        @test _anthropic_decode(d).message.refusal_message == "Model refused to respond."
+    end
+    lines = [
+        "data: " * JSON.json(Dict("type" => "message_start", "message" => Dict("usage" => Dict("input_tokens" => 7, "output_tokens" => 1)))),
+        "data: " * JSON.json(Dict("type" => "content_block_start", "index" => 0, "content_block" => Dict("type" => "text", "text" => ""))),
+        "data: " * JSON.json(Dict("type" => "content_block_delta", "index" => 0, "delta" => Dict("type" => "text_delta", "text" => "Hello.."))),
+        "data: " * JSON.json(Dict("type" => "content_block_stop", "index" => 0)),
+        "data: " * JSON.json(Dict("type" => "content_block_start", "index" => 1, "content_block" => partial[2])),
+        "data: " * JSON.json(Dict("type" => "content_block_stop", "index" => 1)),
+        "data: " * JSON.json(Dict("type" => "message_delta", "delta" => Dict("stop_reason" => "refusal", "stop_details" => sd),
+                                  "usage" => Dict("output_tokens" => 3))),
+        "data: " * JSON.json(Dict("type" => "message_stop")),
+    ]
+    st = StreamState()
+    @test UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), join(lines, "\n") * "\n", st) === :done
+    @test String(take!(st.pending_delta)) == ""        # unsent partial text is withheld
+    ms = _build_stream_message(st)
+    for f in (:role, :content, :refusal_message, :finish_reason, :tool_calls, :provider_content)
+        @test getfield(ms, f) == getfield(m, f)
+    end
+end
+
+# A local endpoint speaking the Anthropic wire, so the verb's handling of a malformed
+# 200 is exercised end to end (the production endpoint's base URL is a constant).
+struct _AnthropicLocalEndpoint <: UniLM.ServiceEndpoint
+    url::String
+end
+UniLM.get_url(s::_AnthropicLocalEndpoint, ::Chat) = s.url
+UniLM.auth_header(::_AnthropicLocalEndpoint) = ["Content-Type" => "application/json"]
+UniLM.encode_request(::_AnthropicLocalEndpoint, chat::Chat) = encode_request(ANTHROPICServiceEndpoint, chat)
+UniLM.decode_response(::_AnthropicLocalEndpoint, resp::HTTP.Response) = decode_response(ANTHROPICServiceEndpoint, resp)
+
+@testset "decode — a 200 without a content array or stop_reason is an error, not an empty success" begin
+    for body in (Dict("type" => "message", "stop_reason" => "end_turn"),
+                 Dict("type" => "message", "content" => Any[]),
+                 Dict("type" => "message", "content" => "text", "stop_reason" => "end_turn"),
+                 Any[1, 2])
+        @test_throws ErrorException _anthropic_decode(body)
+    end
+    srv, port = nothing, 0
+    for attempt in 1:5                         # OS-assigned ephemeral port, bind retry
+        tcp = Sockets.listen(Sockets.localhost, 0)
+        port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+        try
+            srv = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+                HTTP.Response(200, ["Content-Type" => "application/json"], "{\"type\":\"message\"}")
+            end
+            break
+        catch
+            attempt == 5 && rethrow()
+        end
+    end
+    try
+        chat = Chat(service=_AnthropicLocalEndpoint("http://127.0.0.1:$port/v1/messages"), model="claude-opus-5-5",
+                    messages=[Message(Val(:user), "q")])
+        r = chatrequest!(chat; config=RequestConfig(max_attempts=1, total_deadline=10.0))
+        @test r isa LLMCallError && r.cause isa ErrorException && occursin("stop_reason", r.error)
+        @test length(chat) == 1                  # no empty turn committed to history
+    finally
+        close(srv)
+    end
+end
+
+@testset "usage — cache writes count as input, thinking tokens are reasoning (both paths)" begin
+    u = Dict("input_tokens" => 10, "cache_creation_input_tokens" => 20, "cache_read_input_tokens" => 30,
+             "output_tokens" => 50, "output_tokens_details" => Dict("thinking_tokens" => 40))
+    want = TokenUsage(prompt_tokens=60, completion_tokens=50, total_tokens=110, cached_tokens=30, reasoning_tokens=40)
+    @test _anthropic_decode(Dict("stop_reason" => "end_turn", "usage" => u,
+                                 "content" => [Dict("type" => "text", "text" => "x")])).usage == want
+    start = "data: " * JSON.json(Dict("type" => "message_start", "message" => Dict("usage" =>
+        Dict("input_tokens" => 10, "cache_creation_input_tokens" => 20, "cache_read_input_tokens" => 30, "output_tokens" => 1))))
+    # The thinking breakdown arrives only on the final message_delta, whose counts are cumulative.
+    delta = "data: " * JSON.json(Dict("type" => "message_delta", "delta" => Dict("stop_reason" => "end_turn"),
+        "usage" => Dict("output_tokens" => 50, "output_tokens_details" => Dict("thinking_tokens" => 40))))
+    st = StreamState()
+    UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), start * "\n" * delta * "\n", st)
+    @test st.usage == want
+    # A message_delta that repeats the cumulative input counts (server-tool loops) is authoritative.
+    delta2 = "data: " * JSON.json(Dict("type" => "message_delta", "delta" => Dict("stop_reason" => "end_turn"),
+        "usage" => Dict("input_tokens" => 15, "cache_creation_input_tokens" => 20, "cache_read_input_tokens" => 30,
+                        "output_tokens" => 60)))
+    st2 = StreamState()
+    UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), start * "\n" * delta2 * "\n", st2)
+    @test st2.usage == TokenUsage(prompt_tokens=65, completion_tokens=60, total_tokens=125, cached_tokens=30)
+end
+
+@testset "encode — assistant turns with no content and no tool calls are skipped" begin
+    msgs = [Message(Val(:user), "a"), Message(role=RoleAssistant, content=""), Message(Val(:user), "b"),
+            Message(role=RoleAssistant, refusal_message="Model refused to respond.", finish_reason=CONTENT_FILTER),
+            Message(Val(:user), "c"), Message(role=RoleAssistant, content="")]
+    body = _anthropic_body(model="claude-opus-5-5", messages=msgs)     # no trailing turn left to be a prefill
+    @test body["messages"] == [Dict("role" => "user", "content" => c) for c in ("a", "b", "c")]
+end
+
+# https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages.md
+@testset "encode — a later system message stays in place where the model accepts it" begin
+    tc = ToolCall(id="toolu_1", func=GPTFunction("f", Dict{String,Any}()))
+    msgs = [Message(Val(:system), "rules"), Message(Val(:system), "more rules"), Message(Val(:user), "q1"),
+            Message(role=RoleAssistant, tool_calls=[tc]), Message(role=RoleTool, tool_call_id="toolu_1", content="ok"),
+            Message(role=RoleSystem, content="new rule"), Message(role=RoleAssistant, content="a1"),
+            Message(Val(:user), "q2")]
+    for model in ("claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-fable-5-1", "claude-mythos-5-1",
+                  "claude-fable-5", "claude-mythos-5", "claude-opus-9")
+        body = _anthropic_body(; model, messages=msgs)
+        @test body["system"] == "rules\n\nmore rules"
+        @test [m["role"] for m in body["messages"]] == ["user", "assistant", "user", "system", "assistant", "user"]
+        @test body["messages"][3]["content"][1]["type"] == "tool_result"         # results flushed before it
+        @test body["messages"][4] == Dict("role" => "system", "content" => "new rule")
+    end
+    for model in ("claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-6", "claude-haiku-4-5")
+        e = _anthropic_err(; model, messages=msgs)
+        @test e isa ArgumentError && occursin(model, e.msg) && occursin("system", e.msg)
+    end
+    # Leading system messages alone are never mid-conversation.
+    @test _anthropic_body(model="claude-sonnet-5", messages=msgs[1:3])["system"] == "rules\n\nmore rules"
 end

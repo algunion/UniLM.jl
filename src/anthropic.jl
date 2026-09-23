@@ -187,7 +187,8 @@ function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
     # max_tokens is REQUIRED by Anthropic; fall back to the moderate default.
     body[:max_tokens] = something(chat.max_completion_tokens, chat.max_tokens,
                                   default_max_tokens(ANTHROPICServiceEndpoint, chat.model))
-    system, msgs = _anthropic_messages(chat.messages)
+    system, msgs = _anthropic_messages(chat.messages; model=chat.model,
+                                       mid_system=isnothing(fam) || fam.system)
     isnothing(fam) || fam.prefill || isempty(msgs) || msgs[end][:role] != "assistant" ||
         throw(ArgumentError("$(chat.model) rejects messages that end with an assistant turn " *
                             "(response prefill); end with a user turn or use a json_schema response_format"))
@@ -213,11 +214,16 @@ function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
 end
 
 # Split neutral messages into (system::Union{String,Nothing}, Anthropic messages).
-# - system messages → concatenated top-level `system`
+# - leading system messages → concatenated top-level `system`; a later one stays in
+#   place as role "system" where the model accepts mid-conversation system messages
+#   (`mid_system`) and raises elsewhere — hoisting it would edit the top-level prompt,
+#   which invalidates the thinking blocks of every later turn on the newest models
 # - consecutive `tool` messages → collapsed into ONE user message of tool_result blocks
 # - assistant tool_calls → tool_use blocks; a tool_result referencing an id no
-#   preceding assistant emitted → loud ArgumentError.
-function _anthropic_messages(messages)
+#   preceding assistant emitted → loud ArgumentError
+# - an assistant turn with neither text nor tool calls (a refusal, an empty reply) is
+#   skipped: the API rejects empty assistant content.
+function _anthropic_messages(messages; model::AbstractString="", mid_system::Bool=true)
     system = nothing
     out = Vector{Dict{Symbol,Any}}()
     seen_tool_use_ids = Set{String}()
@@ -225,8 +231,13 @@ function _anthropic_messages(messages)
     flush!() = (isempty(pending) ||
         (push!(out, Dict{Symbol,Any}(:role => "user", :content => copy(pending))); empty!(pending)))
     for m in messages
-        if m.role == RoleSystem
+        if m.role == RoleSystem && isempty(out) && isempty(pending)
             system = isnothing(system) ? m.content : string(system, "\n\n", something(m.content, ""))
+        elseif m.role == RoleSystem
+            mid_system || throw(ArgumentError("$model does not accept system messages after the " *
+                "conversation starts; put the instruction in the leading system message"))
+            flush!()
+            push!(out, Dict{Symbol,Any}(:role => "system", :content => something(m.content, "")))
         elseif m.role == RoleTool
             tcid = something(m.tool_call_id, "")
             tcid in seen_tool_use_ids || throw(ArgumentError(
@@ -235,6 +246,7 @@ function _anthropic_messages(messages)
                 :tool_use_id => tcid, :content => something(m.content, "")))
         elseif m.role == RoleAssistant
             flush!()
+            isempty(something(m.content, "")) && (isnothing(m.tool_calls) || isempty(m.tool_calls)) && continue
             isnothing(m.tool_calls) || foreach(tc -> push!(seen_tool_use_ids, tc.id), m.tool_calls)
             push!(out, Dict{Symbol,Any}(:role => "assistant", :content => _anthropic_assistant_content(m)))
         else  # RoleUser
@@ -306,43 +318,70 @@ end
 
 # ─── Response decoding (Anthropic Messages → neutral Message) ────────────────
 
-# Anthropic stop_reason → neutral finish_reason.
+# Anthropic stop_reason → neutral finish_reason (stop reasons:
+# https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons.md).
+# model_context_window_exceeded is a truncation, like max_tokens.
 function _anthropic_finish_reason(stop_reason)
-    stop_reason == "end_turn"      ? STOP :
-    stop_reason == "stop_sequence" ? STOP :
-    stop_reason == "tool_use"      ? TOOL_CALLS :
-    stop_reason == "max_tokens"    ? "length" :
-    stop_reason == "refusal"       ? CONTENT_FILTER :
+    stop_reason in ("end_turn", "stop_sequence")                  ? STOP :
+    stop_reason == "tool_use"                                     ? TOOL_CALLS :
+    stop_reason in ("max_tokens", "model_context_window_exceeded") ? "length" :
+    stop_reason == "refusal"                                      ? CONTENT_FILTER :
     something(stop_reason, STOP)
 end
 
-# Anthropic usage → neutral TokenUsage. NOTE: Anthropic `input_tokens` is the
-# UNCACHED remainder; `cache_read_input_tokens` is separate. The neutral model
-# treats `prompt_tokens` as TOTAL input with `cached_tokens` a subset, so add
-# them — then estimated_cost bills fresh = prompt - cached = input_tokens.
-# (cache_creation_input_tokens is billed at a write premium not modeled here.)
-function _anthropic_usage(u)::Union{TokenUsage,Nothing}
-    u isa AbstractDict || return nothing
-    _i(x) = x isa Integer ? Int(x) : 0
-    inp = _i(get(u, "input_tokens", 0))
-    out = _i(get(u, "output_tokens", 0))
-    cache_read = _i(get(u, "cache_read_input_tokens", 0))
-    TokenUsage(prompt_tokens = inp + cache_read, completion_tokens = out,
-        total_tokens = inp + cache_read + out, cached_tokens = cache_read, reasoning_tokens = 0)
+# A refusal's stop_details.explanation is human-readable text and may be null
+# (https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback.md).
+function _anthropic_refusal_text(stop_details)::String
+    x = stop_details isa AbstractDict ? get(stop_details, "explanation", nothing) : nothing
+    x isa AbstractString && !isempty(x) ? x : "Model refused to respond."
+end
+
+# Anthropic usage → neutral TokenUsage. `input_tokens` is the uncached remainder;
+# cache reads and cache writes are reported beside it. The neutral model counts all
+# input in `prompt_tokens` with `cached_tokens` the cache-read subset, so estimated_cost
+# bills reads at the cached rate and writes at the base input rate (the cache-write
+# premium is not modeled). `output_tokens_details.thinking_tokens` is the reasoning
+# share of `output_tokens`. `prev` is the running stream total: message_delta counts
+# are cumulative and carry the input side only on some streams, so a usage object
+# without `input_tokens` keeps the message_start input counts.
+function _anthropic_usage(u, prev::Union{TokenUsage,Nothing}=nothing)::Union{TokenUsage,Nothing}
+    u isa AbstractDict || return prev
+    has(k) = get(u, k, nothing) isa Integer
+    n(k) = has(k) ? Int(u[k]) : 0
+    base = something(prev, TokenUsage())
+    input, cached = has("input_tokens") || isnothing(prev) ?
+        (n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens"),
+         n("cache_read_input_tokens")) : (base.prompt_tokens, base.cached_tokens)
+    out = has("output_tokens") ? n("output_tokens") : base.completion_tokens
+    details = get(u, "output_tokens_details", nothing)
+    thinking = details isa AbstractDict && get(details, "thinking_tokens", nothing) isa Integer ?
+               Int(details["thinking_tokens"]) : base.reasoning_tokens
+    TokenUsage(prompt_tokens=input, completion_tokens=out, total_tokens=input + out,
+               cached_tokens=cached, reasoning_tokens=thinking)
 end
 
 function decode_response(::Type{ANTHROPICServiceEndpoint}, resp::HTTP.Response)
     data = JSON.parse(resp.body; dicttype=Dict{String,Any})
-    finish = _anthropic_finish_reason(get(data, "stop_reason", nothing))
-    blocks = get(data, "content", Any[])
+    # A 200 that is not a Message has no turn to report: fail loud, and the verb turns
+    # the throw into its typed call error instead of an empty success.
+    data isa AbstractDict && get(data, "content", nothing) isa AbstractVector &&
+        get(data, "stop_reason", nothing) isa AbstractString ||
+        error("Anthropic response is not a message with a content array and a stop_reason (got ",
+              data isa AbstractDict ? "keys " * join(sort!(collect(keys(data))), ", ") : typeof(data), ")")
+    blocks = data["content"]
+    finish = _anthropic_finish_reason(data["stop_reason"])
+    usage = _anthropic_usage(get(data, "usage", nothing))
+    # Output before a refusal is incomplete and is discarded (Anthropic's guidance), so
+    # the turn carries only the explanation — the same turn the stream handler builds.
+    finish == CONTENT_FILTER && return (; message=Message(role=RoleAssistant, finish_reason=finish,
+        refusal_message=_anthropic_refusal_text(get(data, "stop_details", nothing))), usage)
     # Verbatim capture for round-trip: thinking/redacted_thinking signatures
     # must be echoed unmodified on the next turn (thinking models reject
     # modified blocks). Empty arrays are not captured — echoing [] back is a 400.
-    pc = blocks isa AbstractVector && !isempty(blocks) ?
-         ProviderContent(:anthropic, blocks) : nothing
+    pc = isempty(blocks) ? nothing : ProviderContent(:anthropic, blocks)
     text = IOBuffer()
     tool_calls = ToolCall[]
-    for b in (blocks isa AbstractVector ? blocks : Any[])
+    for b in blocks
         bt = get(b, "type", "")
         if bt == "text"
             print(text, get(b, "text", ""))
@@ -354,14 +393,10 @@ function decode_response(::Type{ANTHROPICServiceEndpoint}, resp::HTTP.Response)
         # thinking / redacted_thinking blocks are not flattened into the neutral
         # fields; they ride along verbatim in provider_content.
     end
-    usage = _anthropic_usage(get(data, "usage", nothing))
-    txt = String(take!(text))
+    txt = takestring!(text)
     msg = if !isempty(tool_calls)
         Message(role=RoleAssistant, content=(isempty(txt) ? nothing : txt),
                 tool_calls=tool_calls, finish_reason=finish, provider_content=pc)
-    elseif finish == CONTENT_FILTER && isempty(txt)
-        Message(role=RoleAssistant, refusal_message="Model refused to respond.",
-                finish_reason=finish, provider_content=pc)
     else
         # A well-formed turn that produced no text is a real turn: thinking models
         # routinely spend the whole budget on thought blocks and stop at max_tokens
@@ -406,6 +441,16 @@ function _anthropic_publish_tool_args!(state::StreamState)
         buf isa IOBuffer && haskey(state.tool_calls, idx) &&
             (state.tool_calls[idx]["function"]["arguments"] = takestring!(copy(buf)))
     end
+end
+
+# A refusal can follow partial output, which Anthropic says to discard as incomplete:
+# drop the streamed text (including deltas not yet forwarded), tool calls and captured
+# blocks, so the assembled turn matches the non-streaming decode.
+function _anthropic_stream_refusal!(state::StreamState, stop_details)
+    take!(state.content); take!(state.pending_delta); take!(state.refusal)
+    empty!(state.tool_calls); empty!(state.raw_blocks); empty!(state.raw_pending)
+    print(state.refusal, _anthropic_refusal_text(stop_details))
+    nothing
 end
 
 function handle_sse_event!(::Type{ANTHROPICServiceEndpoint}, event::AbstractString,
@@ -476,16 +521,12 @@ function handle_sse_event!(::Type{ANTHROPICServiceEndpoint}, event::AbstractStri
         end
     elseif t == "message_delta"
         _anthropic_publish_tool_args!(state)
-        sr = get(get(ev, "delta", Dict{String,Any}()), "stop_reason", nothing)
+        d = get(ev, "delta", Dict{String,Any}())
+        sr = get(d, "stop_reason", nothing)
         isnothing(sr) || (state.finish_reason = _anthropic_finish_reason(sr))
-        u = get(ev, "usage", nothing)
-        out = u isa AbstractDict ? get(u, "output_tokens", nothing) : nothing
-        if out isa Integer && !isnothing(state.usage)
-            prev = state.usage
-            state.usage = TokenUsage(prompt_tokens=prev.prompt_tokens,
-                completion_tokens=Int(out), total_tokens=prev.prompt_tokens + Int(out),
-                cached_tokens=prev.cached_tokens, reasoning_tokens=0)
-        end
+        # stop_details arrives on message_delta alongside stop_reason.
+        sr == "refusal" && _anthropic_stream_refusal!(state, get(d, "stop_details", nothing))
+        state.usage = _anthropic_usage(get(ev, "usage", nothing), state.usage)
     elseif t == "message_stop"
         _anthropic_publish_tool_args!(state)
         return :done

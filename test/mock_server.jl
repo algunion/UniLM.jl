@@ -45,7 +45,7 @@ UniLM.get_url(::Type{MockServiceEndpoint}, ::Chat) = mock_base_url * UniLM.CHAT_
 UniLM.get_url(::Type{MockServiceEndpoint}, ::Embeddings) = mock_base_url * UniLM.EMBEDDINGS_PATH
 UniLM.get_url(::Type{MockServiceEndpoint}, ::FIMCompletion) = mock_base_url * UniLM.COMPLETIONS_PATH
 UniLM.auth_header(::Type{MockServiceEndpoint}) = ["Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{MockServiceEndpoint}) = Set([:chat, :responses, :embeddings, :images, :tools, :fim, :prefix_completion, :files, :vector_stores, :conversations, :moderation, :audio, :batch, :image_edits, :fine_tuning, :containers, :uploads, :video, :realtime])
+UniLM.provider_capabilities(::Type{MockServiceEndpoint}) = Set([:chat, :responses, :embeddings, :images, :tools, :fim, :prefix_completion, :files, :vector_stores, :conversations, :moderation, :audio, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime])
 UniLM.default_model(::Type{MockServiceEndpoint}) = "mock-model"
 UniLM.default_embedding_model(::Type{MockServiceEndpoint}) = "mock-embedding"
 UniLM.default_image_model(::Type{MockServiceEndpoint}) = "mock-image"
@@ -57,7 +57,7 @@ struct DeadEndpoint <: UniLM.ServiceEndpoint end
 UniLM._api_base_url(::Type{DeadEndpoint}) = "http://127.0.0.1:1"
 UniLM.auth_header(::Type{DeadEndpoint}) = ["Content-Type" => "application/json"]
 UniLM.provider_capabilities(::Type{DeadEndpoint}) = Set([:files, :vector_stores, :conversations,
-    :moderation, :audio, :batch, :image_edits, :fine_tuning, :containers, :uploads, :video, :realtime])
+    :moderation, :audio, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime])
 
 # Local-echo endpoint for exercising the Realtime WebSocket transport.
 struct WSMockEndpoint <: UniLM.ServiceEndpoint end
@@ -627,18 +627,6 @@ try
         set_error!(200, "")
     end
 
-    @testset "Videos API (mock)" begin
-        response_status[] = 200; response_headers[] = Pair{String,String}[]
-        response_body[] = JSON.json(Dict("id" => "video-1", "status" => "queued", "model" => "sora-2"))
-        @test create_video(prompt="a cat", service=MockServiceEndpoint) isa VideoSuccess
-        response_body[] = "VIDEOBYTES"
-        rc = video_content("video-1"; service=MockServiceEndpoint)
-        @test rc isa VideoContentSuccess && String(copy(rc.content)) == "VIDEOBYTES"
-        set_error!(404, "no")
-        @test retrieve_video("x"; service=MockServiceEndpoint) isa VideoFailure
-        set_error!(200, "")
-    end
-
     @testset "Realtime API (mock secret + event builders)" begin
         response_status[] = 200; response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict("value" => "ek_123", "expires_at" => 1))
@@ -706,7 +694,6 @@ try
         @test list_fine_tuning_jobs(service=MockServiceEndpoint) isa FineTuningListSuccess
         @test list_fine_tuning_checkpoints("ftjob-1"; service=MockServiceEndpoint) isa FineTuningListSuccess
         @test list_containers(service=MockServiceEndpoint) isa ContainerListSuccess
-        @test list_videos(service=MockServiceEndpoint) isa VideoListSuccess
         response_body[] = JSON.json(Dict("id" => "batch-1", "status" => "cancelling"))
         @test cancel_batch("batch-1"; service=MockServiceEndpoint) isa BatchSuccess
         response_body[] = JSON.json(Dict("id" => "ftjob-1", "status" => "cancelled"))
@@ -789,11 +776,7 @@ try
         @test add_upload_part("u", Vector{UInt8}("x"); service=DeadEndpoint) isa UploadCallError
         @test complete_upload("u", ["p"]; service=DeadEndpoint) isa UploadCallError
         @test cancel_upload("u"; service=DeadEndpoint) isa UploadCallError
-        # Videos / Realtime
-        @test create_video(prompt="p", service=DeadEndpoint) isa VideoCallError
-        @test retrieve_video("v"; service=DeadEndpoint) isa VideoCallError
-        @test list_videos(service=DeadEndpoint) isa VideoCallError
-        @test video_content("v"; service=DeadEndpoint) isa VideoCallError
+        # Realtime
         @test mint_realtime_secret(service=DeadEndpoint) isa RealtimeCallError
         rm(tf); rm(png)
     end
@@ -838,9 +821,6 @@ try
         @test add_upload_part("u", Vector{UInt8}("x"); service=MockServiceEndpoint) isa UploadFailure
         @test complete_upload("u", ["p"]; service=MockServiceEndpoint) isa UploadFailure
         @test cancel_upload("u"; service=MockServiceEndpoint) isa UploadFailure
-        @test create_video(prompt="p", service=MockServiceEndpoint) isa VideoFailure
-        @test list_videos(service=MockServiceEndpoint) isa VideoFailure
-        @test video_content("v"; service=MockServiceEndpoint) isa VideoFailure
         @test mint_realtime_secret(service=MockServiceEndpoint) isa RealtimeFailure
         rm(tf); rm(png)
         set_error!(200, "")

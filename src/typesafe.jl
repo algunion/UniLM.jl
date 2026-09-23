@@ -47,8 +47,8 @@ function _resolve_base_url(::Type{TYPESAFEServiceEndpoint})::String
     String(rstrip(isempty(override) ? TYPESAFE_BASE_URL : override, '/'))
 end
 
-"Client identity sent as both `User-Agent` and `X-TypeSafe-SDK`."
-_typesafe_agent()::String = string("UniLM.jl/", something(pkgversion(@__MODULE__), v"0.0.0"))
+"Client identity sent as both `User-Agent` and `X-TypeSafe-SDK`, fixed when the package loads."
+const _TYPESAFE_AGENT = string("UniLM.jl/", something(pkgversion(@__MODULE__), v"0.0.0"))
 
 function auth_header(::Type{TYPESAFEServiceEndpoint})::Vector{Pair{String,String}}
     key = strip(get(ENV, TYPESAFE_API_KEY, ""))
@@ -56,13 +56,12 @@ function auth_header(::Type{TYPESAFEServiceEndpoint})::Vector{Pair{String,String
     # the verbs catch it into a typed call error, so a missing key surfaces as a
     # result that says which variable to set.
     isempty(key) && throw(ArgumentError("$TYPESAFE_API_KEY is not set"))
-    agent = _typesafe_agent()
     [
         "Authorization" => "Bearer $key",
         "Content-Type" => "application/json",
         "Accept" => "application/json",
-        "User-Agent" => agent,
-        "X-TypeSafe-SDK" => agent,
+        "User-Agent" => _TYPESAFE_AGENT,
+        "X-TypeSafe-SDK" => _TYPESAFE_AGENT,
         "X-TypeSafe-Runtime" => "julia/$(VERSION) ($(Sys.KERNEL); $(Sys.ARCH))",
     ]
 end
@@ -128,10 +127,12 @@ struct ChoiceQuestion <: SystemOneQuestion
         n = length(criteria)
         1 <= n <= 255 || throw(ArgumentError(
             "a Choice question needs 1 to 255 options (the server rejects more than 255); got $n"))
-        # Checked here and not only in the normalizer: this constructor is public,
-        # and an option the model cannot name is not a describable outcome.
+        # Checked here and not only in the normalizer: this constructor is public, an
+        # option the model cannot name is not a describable outcome, and a description
+        # must be an entry exactly as `choice` requires.
         any(isempty, keys(criteria)) && throw(ArgumentError(
             "Choice option names must be non-empty"))
+        foreach(_entry, values(criteria))
         new(_entry(instructions), criteria)
     end
 end
@@ -622,10 +623,16 @@ end
 A TypeSafe call that never produced an HTTP response: a timeout, a transport
 failure, a missing `TYPESAFE_API_KEY`, or a 200 whose body could not be decoded
 into answers. `status` is filled in only when the underlying exception carried one.
+
+`cause` is that underlying exception — a [`UniLMTimeout`](@ref) for a timeout —
+and `request_id` is the `x-typesafe-request-id` header of the 200 that could not
+be decoded (`nothing` when no reply arrived).
 """
 @kwdef struct SystemOneCallError <: LLMRequestResponse
     error::String
     status::Union{Int,Nothing} = nothing
+    request_id::Union{Nothing,String} = nothing
+    cause::Union{Nothing,Exception} = nothing
 end
 
 """
@@ -731,8 +738,7 @@ end
 
 function _decode_answer(name::AbstractString, d::AbstractDict)::SystemOneAnswer
     raw = Dict{String,Any}(string(k) => v for (k, v) in d)
-    t = get(d, "type", nothing)
-    kind = t isa AbstractString ? String(t) : string(t)
+    kind = _answer_string(d, "type", name)
     if kind == "noul"
         NoulAnswer(_answer_number(d, "noul", name), raw)
     elseif kind == "choice"
@@ -791,8 +797,9 @@ _truncate_body(s::AbstractString)::String =
 function _typesafe_parse_body(body::AbstractString)
     try
         JSON.parse(body; dicttype=Dict{String,Any})
-    catch
-        nothing
+    catch e
+        e isa InterruptException && rethrow()
+        nothing   # not JSON: the caller falls back to the raw text
     end
 end
 
@@ -857,6 +864,7 @@ end
 
 _typesafe_request_id(resp::HTTP.Response)::Union{Nothing,String} =
     (v = HTTP.header(resp, "x-typesafe-request-id", ""); isempty(v) ? nothing : String(v))
+_typesafe_request_id(::Nothing) = nothing
 
 """
     _typesafe_retry_after(resp) -> Union{Nothing,Float64}
@@ -890,8 +898,8 @@ _typesafe_failure(resp::HTTP.Response)::SystemOneFailure = begin
                      retry_after=_typesafe_retry_after(resp))
 end
 
-_typesafe_call_error(e)::SystemOneCallError =
-    SystemOneCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
+_typesafe_call_error(e, resp::Union{Nothing,HTTP.Response})::SystemOneCallError =
+    _callerr(SystemOneCallError, e; request_id=_typesafe_request_id(resp))
 
 # ─── Verbs ───────────────────────────────────────────────────────────────────
 
@@ -930,6 +938,7 @@ function ask(request::SystemOneRequest; service::ServiceEndpointSpec=TYPESAFESer
              config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :system_one, "TypeSafe System One API")
     cfg = _resolve_config(config); t0 = time_ns()
+    local resp
     try
         body = JSON.json(request)
         resp = _http_with_retries(cfg, t0, "POST", _api_base_url(service) * SYSTEMONE_PATH,
@@ -939,7 +948,7 @@ function ask(request::SystemOneRequest; service::ServiceEndpointSpec=TYPESAFESer
             _typesafe_failure(resp)
     catch e
         e isa InterruptException && rethrow()
-        _typesafe_call_error(e)
+        _typesafe_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
 
@@ -1076,6 +1085,7 @@ function list_models(; service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
                      config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :models, "TypeSafe models listing")
     cfg = _resolve_config(config); t0 = time_ns()
+    local resp
     try
         resp = _http_with_retries(cfg, t0, "GET", _api_base_url(service) * TYPESAFE_MODELS_PATH,
                                   auth_header(service))
@@ -1094,6 +1104,6 @@ function list_models(; service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
         TypeSafeModelsSuccess(cards, raw)
     catch e
         e isa InterruptException && rethrow()
-        _typesafe_call_error(e)
+        _typesafe_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end

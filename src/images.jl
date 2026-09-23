@@ -7,8 +7,6 @@
 # transparency, and output format.
 # ============================================================================
 
-using Base64
-
 # ─── Request Type ─────────────────────────────────────────────────────────────
 
 """
@@ -92,10 +90,13 @@ A single generated image from the API response.
 # Fields
 - `b64_json::Union{String,Nothing}`: Base64-encoded image data
 - `revised_prompt::Union{String,Nothing}`: The prompt as revised by the model
+- `url::Union{String,Nothing}`: Where to download the image, when the service
+  delivered it by URL instead of inline
 """
 @kwdef struct ImageObject
     b64_json::Union{String,Nothing} = nothing
     revised_prompt::Union{String,Nothing} = nothing
+    url::Union{String,Nothing} = nothing
 end
 
 """
@@ -104,7 +105,7 @@ end
 Parsed response from the Image Generation API.
 
 # Accessors
-- `image_data(r)` — extract base64-encoded image data
+- `image_data(r)` — the image payloads: base64 data, or the URL of a URL-delivered image
 - `r.created`, `r.data`, `r.usage` — basic fields
 - `r.raw` — the complete raw JSON dict
 
@@ -145,21 +146,29 @@ end
 """
     ImageFailure <: LLMRequestResponse
 
-HTTP-level failure from the Image Generation API. Contains the response body and status code.
+HTTP-level failure from the Image Generation API: the raw `response` body, the
+`status` code, and the `request_id` the service sent (`x-request-id`/`request-id`
+header), if any.
 """
 @kwdef struct ImageFailure <: LLMRequestResponse
     response::String
     status::Int
+    request_id::Union{String,Nothing} = nothing
 end
 
 """
     ImageCallError <: LLMRequestResponse
 
-Exception-level error during an Image Generation API call (network, parsing, etc.).
+Exception-level error during an Image Generation API call (network, timeout, or a
+200 that could not be parsed). `cause` is the underlying exception — a
+[`UniLMTimeout`](@ref) for a timeout — and `request_id` is set when a reply
+arrived but could not be decoded.
 """
 @kwdef struct ImageCallError <: LLMRequestResponse
     error::String
     status::Union{Int,Nothing} = nothing
+    request_id::Union{String,Nothing} = nothing
+    cause::Union{Nothing,Exception} = nothing
 end
 
 
@@ -169,8 +178,13 @@ end
     image_data(r::ImageResponse)::Vector{String}
     image_data(r::ImageSuccess)::Vector{String}
 
-Extract base64-encoded image data from a response. Returns a vector of base64 strings,
-one per generated image.
+The image payloads of a response, one per generated image: the base64 data, or —
+for an image the service delivered by URL — its `url` (download it; only base64
+data can go to [`save_image`](@ref)). An entry carrying neither is skipped.
+
+On an [`ImageFailure`](@ref) or [`ImageCallError`](@ref) this throws an
+[`LLMResultError`](@ref), as [`text`](@ref) does: a call that did not succeed has no
+images, and an empty list would read as "zero images generated".
 
 # Examples
 ```julia
@@ -179,13 +193,16 @@ imgs = image_data(result)       # Vector{String}
 length(imgs)                     # number of images generated
 ```
 """
-function image_data(r::ImageResponse)::Vector{String}
-    return [img.b64_json for img in r.data if !isnothing(img.b64_json)]
-end
+image_data(r::ImageResponse)::Vector{String} =
+    String[something(img.b64_json, img.url) for img in r.data if !isnothing(img.b64_json) || !isnothing(img.url)]
 
 image_data(r::ImageSuccess) = image_data(r.response)
-image_data(::ImageFailure) = String[]
-image_data(::ImageCallError) = String[]
+image_data(r::Union{ImageFailure,ImageCallError}) = throw(LLMResultError(r))
+
+# What `showerror(::LLMResultError)` reports for an image result.
+_llm_result_status(r::Union{ImageFailure,ImageCallError}) = r.status
+_llm_result_body(r::ImageFailure) = r.response
+_llm_result_body(r::ImageCallError) = r.error
 
 """
     save_image(img_b64::String, filepath::String)
@@ -220,7 +237,8 @@ function parse_image_response(resp::HTTP.Response)::ImageResponse
     images = [
         ImageObject(
             b64_json=get(img, "b64_json", nothing),
-            revised_prompt=get(img, "revised_prompt", nothing)
+            revised_prompt=get(img, "revised_prompt", nothing),
+            url=get(img, "url", nothing)
         )
         for img in get(data, "data", Any[])
     ]
@@ -261,16 +279,17 @@ function generate_image(ig::ImageGeneration; config::Union{Nothing,RequestConfig
     _validate_declared_capability(ig.service, :images, "Image Generation API")
     cfg = _resolve_config(config)
     t0 = time_ns()
+    local resp
     try
         body = JSON.json(ig)
         url = _api_base_url(ig.service) * IMAGES_GENERATIONS_PATH
         resp = _http_with_retries(cfg, t0, "POST", url, auth_header(ig.service), body)
         return resp.status == 200 ?
                ImageSuccess(response=parse_image_response(resp)) :
-               ImageFailure(response=String(resp.body), status=resp.status)
+               _failure(ImageFailure, resp)
     catch e
         e isa InterruptException && rethrow()
-        return ImageCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        return _callerr(ImageCallError, e; request_id=_platform_request_id(@isdefined(resp) ? resp : nothing))
     end
 end
 
@@ -340,15 +359,15 @@ function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing)
     _validate_declared_capability(e.service, :image_edits, "Image Edits API")
     cfg = _resolve_config(config)
     t0 = time_ns()
+    local resp
     try
         model = isempty(e.model) ? something(default_image_model(e.service), "") : e.model
         isempty(model) && throw(ArgumentError("model must be specified for image edits with $(typeof(e.service))"))
         images = e.image isa String ? [e.image] : e.image
         # Validate up front: a missing file is the caller's error, reported before
         # any wire attempt rather than once per attempt from inside the retry loop.
-        for img in images
-            isfile(img) || throw(ArgumentError("image not found: $img"))
-        end
+        absent = findfirst(!isfile, images)
+        isnothing(absent) || throw(ArgumentError("image not found: $(images[absent])"))
         isnothing(e.mask) || isfile(e.mask) || throw(ArgumentError("mask not found: $(e.mask)"))
         # A Form is consumed by the attempt that sends it, so the retry loop gets a
         # factory: every attempt re-reads the images into its own multipart body.
@@ -374,10 +393,10 @@ function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing)
         resp = _http_with_retries(cfg, t0, "POST", url, auth_header_multipart(e.service), body)
         return resp.status == 200 ?
                ImageSuccess(response=parse_image_response(resp)) :
-               ImageFailure(response=String(resp.body), status=resp.status)
+               _failure(ImageFailure, resp)
     catch err
         err isa InterruptException && rethrow()
-        return ImageCallError(error=_error_text(err), status=(hasproperty(err, :status) ? err.status : nothing))
+        return _callerr(ImageCallError, err; request_id=_platform_request_id(@isdefined(resp) ? resp : nothing))
     end
 end
 edit_image(image, prompt::String; mask::Union{String,Nothing}=nothing,

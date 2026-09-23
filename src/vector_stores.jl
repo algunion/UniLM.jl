@@ -74,12 +74,15 @@ end
 @kwdef struct VectorStoreFileSuccess <: LLMRequestResponse; response::VectorStoreFileObject; end
 "Successful file-batch result wrapping a [`VectorStoreFileBatch`](@ref)."
 @kwdef struct VectorStoreBatchSuccess <: LLMRequestResponse; response::VectorStoreFileBatch; end
-"Successful [`delete_vector_store`](@ref) result; `deleted` confirms removal of `id`."
+"Successful [`delete_vector_store`](@ref) result: the service confirmed (`deleted` is always `true`) the removal of `id`."
 @kwdef struct VectorStoreDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
-"Vector Stores API error result: HTTP `status` and the raw `response` body."
-@kwdef struct VectorStoreFailure <: LLMRequestResponse; response::String; status::Int; end
-"Local/transport error from a Vector Stores API call (the request never completed)."
-@kwdef struct VectorStoreCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
+"Vector Stores API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
+@kwdef struct VectorStoreFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
+"Vector Stores API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout. `last_observed` is set only when [`poll_file_batch`](@ref) runs out of time: the last [`VectorStoreFileBatch`](@ref) it saw, if any."
+@kwdef struct VectorStoreCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; last_observed::Union{Nothing,VectorStoreFileBatch} = nothing; end
+
+_transient(r::VectorStoreFailure) = _is_retryable(r.status)
+_transient(r::VectorStoreCallError) = _per_attempt_timeout(r.cause)
 
 _parse_vector_store(d::AbstractDict) = VectorStoreObject(id=d["id"], name=get(d, "name", nothing),
     status=get(d, "status", nothing), file_counts=Dict{String,Any}(get(d, "file_counts", Dict{String,Any}())), raw=Dict{String,Any}(d))
@@ -119,10 +122,10 @@ function create_vector_store(; name::Union{String,Nothing}=nothing, file_ids::Un
         !isnothing(metadata) && (d[:metadata] = metadata)
         resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH, service, cfg, _remaining_s(cfg, t0); body=JSON.json(d))
         resp.status == 200 ? VectorStoreSuccess(response=_parse_vector_store(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
-            VectorStoreFailure(response=String(resp.body), status=resp.status)
+            _failure(VectorStoreFailure, resp)
     catch e
         e isa InterruptException && rethrow()
-        VectorStoreCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        _callerr(VectorStoreCallError, e)
     end
 end
 
@@ -137,10 +140,10 @@ function retrieve_vector_store(id::String; service::ServiceEndpointSpec=OPENAISe
     try
         resp = _vs_http("GET", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0))
         resp.status == 200 ? VectorStoreSuccess(response=_parse_vector_store(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
-            VectorStoreFailure(response=String(resp.body), status=resp.status)
+            _failure(VectorStoreFailure, resp)
     catch e
         e isa InterruptException && rethrow()
-        VectorStoreCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        _callerr(VectorStoreCallError, e)
     end
 end
 
@@ -165,11 +168,11 @@ function list_vector_stores(; limit::Union{Int,Nothing}=nothing, after::Union{St
             stores = VectorStoreObject[_parse_vector_store(s) for s in get(data, "data", [])]
             VectorStoreListSuccess(response=VectorStoreList(data=stores, has_more=get(data, "has_more", false), raw=data))
         else
-            VectorStoreFailure(response=String(resp.body), status=resp.status)
+            _failure(VectorStoreFailure, resp)
         end
     catch e
         e isa InterruptException && rethrow()
-        VectorStoreCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        _callerr(VectorStoreCallError, e)
     end
 end
 
@@ -185,13 +188,13 @@ function delete_vector_store(id::String; service::ServiceEndpointSpec=OPENAIServ
         resp = _vs_http("DELETE", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
-            VectorStoreDeleteSuccess(id=get(d, "id", id), deleted=get(d, "deleted", false))
+            VectorStoreDeleteSuccess(id=get(d, "id", id), deleted=_confirm_deleted(d))
         else
-            VectorStoreFailure(response=String(resp.body), status=resp.status)
+            _failure(VectorStoreFailure, resp)
         end
     catch e
         e isa InterruptException && rethrow()
-        VectorStoreCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        _callerr(VectorStoreCallError, e)
     end
 end
 
@@ -212,11 +215,11 @@ function add_vector_store_file(vs_id::String, file_id::String; chunking_strategy
             f = JSON.parse(resp.body; dicttype=Dict{String,Any})
             VectorStoreFileSuccess(response=VectorStoreFileObject(id=f["id"], status=get(f, "status", nothing), raw=Dict{String,Any}(f)))
         else
-            VectorStoreFailure(response=String(resp.body), status=resp.status)
+            _failure(VectorStoreFailure, resp)
         end
     catch e
         e isa InterruptException && rethrow()
-        VectorStoreCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        _callerr(VectorStoreCallError, e)
     end
 end
 
@@ -234,10 +237,10 @@ function create_file_batch(vs_id::String, file_ids::Vector{String}; chunking_str
         !isnothing(chunking_strategy) && (d[:chunking_strategy] = chunking_strategy)
         resp = _vs_http("POST", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(vs_id) * "/file_batches", service, cfg, _remaining_s(cfg, t0); body=JSON.json(d))
         resp.status == 200 ? VectorStoreBatchSuccess(response=_parse_vs_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
-            VectorStoreFailure(response=String(resp.body), status=resp.status)
+            _failure(VectorStoreFailure, resp)
     catch e
         e isa InterruptException && rethrow()
-        VectorStoreCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        _callerr(VectorStoreCallError, e)
     end
 end
 
@@ -252,29 +255,35 @@ function retrieve_file_batch(vs_id::String, batch_id::String; service::ServiceEn
     try
         resp = _vs_http("GET", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(vs_id) * "/file_batches/" * _uripart(batch_id), service, cfg, _remaining_s(cfg, t0))
         resp.status == 200 ? VectorStoreBatchSuccess(response=_parse_vs_batch(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
-            VectorStoreFailure(response=String(resp.body), status=resp.status)
+            _failure(VectorStoreFailure, resp)
     catch e
         e isa InterruptException && rethrow()
-        VectorStoreCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        _callerr(VectorStoreCallError, e)
     end
 end
 
 """
     poll_file_batch(vector_store_id, batch_id; interval=2.0, timeout=300.0, service=OPENAIServiceEndpoint)
 
-Poll a file batch until it reaches a terminal status (`completed`/`failed`/`cancelled`) or the
-timeout elapses. Returns the terminal `VectorStoreBatchSuccess`, or a `VectorStoreCallError` on timeout.
+Poll a file batch until it reaches a terminal status (`completed`/`failed`/`cancelled`) and
+return that `VectorStoreBatchSuccess`. `timeout` bounds the wall-clock time of the whole
+poll (`Inf` waits indefinitely); `interval` is the pause between GETs. Both must be
+positive, else `ArgumentError`.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+A transient failure — a status in the retryable set (408/429/500/502/503/504/529) or a
+GET that timed out — is polled through; any other failure is returned as it came. When
+the time runs out the result is a `VectorStoreCallError` with
+`cause = UniLMTimeout(:deadline, …)` and `last_observed` set to the last
+`VectorStoreFileBatch` seen (`nothing` if no GET succeeded).
+
+Pass `config::Union{Nothing,RequestConfig}` to bound each GET (a single attempt; its
+`total_deadline` is capped at the time left).
 """
 function poll_file_batch(vs_id::String, batch_id::String; interval::Real=2.0, timeout::Real=300.0,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
-    max_iters = max(1, ceil(Int, timeout / interval))
-    for _ in 1:max_iters
-        r = retrieve_file_batch(vs_id, batch_id; service=service, config=config)
-        r isa VectorStoreBatchSuccess || return r
-        r.response.status in ("completed", "failed", "cancelled") && return r
-        sleep(interval)
-    end
-    VectorStoreCallError(error="poll_file_batch timed out after $(timeout)s", status=nothing)
+    _poll(cfg -> retrieve_file_batch(vs_id, batch_id; service, config=cfg), VectorStoreBatchSuccess,
+          r -> r.response.status in ("completed", "failed", "cancelled"),
+          (seen, to) -> VectorStoreCallError(error=_poll_timeout_text("poll_file_batch", batch_id, to, seen),
+                                             cause=to, last_observed=isnothing(seen) ? nothing : seen.response);
+          interval, timeout, config)
 end

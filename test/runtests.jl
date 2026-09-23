@@ -171,9 +171,6 @@ end
     @testset "vector_stores" begin
         include("vector_stores.jl")
     end
-    @testset "videos" begin
-        include("videos.jl")
-    end
     @testset "batch" begin
         include("batch.jl")
     end

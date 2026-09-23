@@ -40,8 +40,7 @@ function _with_semantic_mock(f::Function; pick::AbstractDict=Dict{String,String}
                              confidence::Real=0.9, status::Int=200,
                              body::Union{Nothing,AbstractString}=nothing)
     recorded = Dict{String,Any}[]
-    # HTTP.jl 1.x hands the handler a byte vector; 2.x hands it a body object and
-    # uses a distinct sentinel for a request with no body at all.
+    # A request with no body at all arrives as a sentinel that supports no byte access.
     bodytext(req) = applicable(copy, req.body) ? String(copy(req.body)) : ""
     handler = function (req)
         raw = bodytext(req)
@@ -131,6 +130,19 @@ bad_arity(::nl"b", x, y) = 2
 no_meanings(x) = x
 
 va_route(::nl"a", rest...) = :va         # varargs cannot carry a meaning
+
+# Two REPL entries, defined as [2] and then [10]: definition order puts [2] first,
+# while the string order of their source labels puts "REPL[10]" first.
+include_string(@__MODULE__, "repl_route(::nl\"from the second prompt\", t) = 2", "REPL[2]")
+include_string(@__MODULE__, "repl_route(::nl\"from the tenth prompt\", t) = 10", "REPL[10]")
+
+# The binding exists up front; its natural-language method is defined while a call is
+# already running, so it lives in a newer world than the caller.
+late_route(x::Int) = x
+function _define_late_route_then_dispatch()
+    @eval late_route(::nl"defined at run time", t) = (:late, t)
+    nl_dispatch(late_route, "x"; service=SemanticMock, config=_SEM_CFG)
+end
 
 # ─── 1. Meaning types ────────────────────────────────────────────────────────
 
@@ -395,7 +407,31 @@ end
     @test gap isa MethodError
 end
 
-# ─── 9. No API in the direct path ────────────────────────────────────────────
+# ─── 9. Definition order and run-time methods ────────────────────────────────
+
+@testset "semantic — options follow definition order, not source-label order" begin
+    @test meanings(repl_route) == Dict(1 => ["from the second prompt", "from the tenth prompt"])
+    _, seen = _with_semantic_mock() do
+        nl_dispatch(repl_route, "x"; service=SemanticMock, config=_SEM_CFG)
+    end
+    @test collect(keys(seen[1]["body"]["questions"]["meaning_1"]["criteria"])) ==
+          ["from the second prompt", "from the tenth prompt"]
+end
+
+@testset "semantic — a method defined at run time is offered AND callable" begin
+    # `methods` sees the newest world, so the run-time method is sent (and billed) as an
+    # option; calling the chosen one must therefore also happen in the newest world.
+    out, _ = _with_semantic_mock() do
+        try
+            _define_late_route_then_dispatch()
+        catch e
+            e
+        end
+    end
+    @test out == (:late, "x")
+end
+
+# ─── 10. No API in the direct path ───────────────────────────────────────────
 
 @testset "semantic — a meaning method is callable directly, with no service" begin
     _semantic_base[] = "http://127.0.0.1:1"   # nothing is listening

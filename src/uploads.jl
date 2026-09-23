@@ -34,28 +34,32 @@ end
 @kwdef struct UploadSuccess <: LLMRequestResponse; response::UploadObject; end
 "Successful [`add_upload_part`](@ref) result wrapping an [`UploadPartObject`](@ref)."
 @kwdef struct UploadPartSuccess <: LLMRequestResponse; response::UploadPartObject; end
-"Uploads API error result: HTTP `status` and the raw `response` body."
-@kwdef struct UploadFailure <: LLMRequestResponse; response::String; status::Int; end
-"Local/transport error from an Uploads API call (the request never completed)."
-@kwdef struct UploadCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
+"Uploads API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
+@kwdef struct UploadFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
+"Uploads API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout."
+@kwdef struct UploadCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
 
 function _parse_upload(d::AbstractDict)
     f = get(d, "file", nothing)
     UploadObject(id=d["id"], status=get(d, "status", nothing), filename=get(d, "filename", nothing),
         bytes=get(d, "bytes", nothing), file=(f isa AbstractDict ? _parse_file_object(f) : nothing), raw=Dict{String,Any}(d))
 end
-_upl_err(e) = UploadCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
 _upl_resp(resp) = resp.status == 200 ?
     UploadSuccess(response=_parse_upload(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
-    UploadFailure(response=String(resp.body), status=resp.status)
+    _failure(UploadFailure, resp)
 
 """
     create_upload(; filename, purpose, bytes, mime_type, service=OPENAIServiceEndpoint)
+
+`purpose` takes the Files API purposes (`"assistants"`, `"batch"`, `"fine-tune"`,
+`"vision"`, `"user_data"`, `"evals"`); any other value throws `ArgumentError` before
+any request.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function create_upload(; filename::String, purpose::String, bytes::Int, mime_type::String, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :uploads, "Uploads API")
+    purpose in _FILE_PURPOSES || throw(ArgumentError("invalid purpose '$purpose'; expected one of $(_FILE_PURPOSES)"))
     cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:filename => filename, :purpose => purpose, :bytes => bytes, :mime_type => mime_type)
@@ -63,7 +67,7 @@ function create_upload(; filename::String, purpose::String, bytes::Int, mime_typ
             JSON.json(d); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
-        _upl_err(e)
+        _callerr(UploadCallError, e)
     end
 end
 
@@ -79,12 +83,12 @@ function add_upload_part(upload_id::String, data::Vector{UInt8}; service::Servic
         form = HTTP.Form(["data" => HTTP.Multipart("part", IOBuffer(data), "application/octet-stream")])
         url = _api_base_url(service) * UPLOADS_PATH * "/" * _uripart(upload_id) * "/parts"
         resp = _http("POST", url, auth_header_multipart(service), form; cfg, remaining=_remaining_s(cfg, t0))
-        resp.status == 200 || return UploadFailure(response=String(resp.body), status=resp.status)
+        resp.status == 200 || return _failure(UploadFailure, resp)
         d = JSON.parse(resp.body; dicttype=Dict{String,Any})
         UploadPartSuccess(response=UploadPartObject(id=d["id"], raw=Dict{String,Any}(d)))
     catch e
         e isa InterruptException && rethrow()
-        _upl_err(e)
+        _callerr(UploadCallError, e)
     end
 end
 
@@ -103,7 +107,7 @@ function complete_upload(upload_id::String, part_ids::Vector{String}; md5::Union
             auth_header(service), JSON.json(d); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
-        _upl_err(e)
+        _callerr(UploadCallError, e)
     end
 end
 
@@ -120,6 +124,6 @@ function cancel_upload(upload_id::String; service::ServiceEndpointSpec=OPENAISer
             auth_header(service); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
-        _upl_err(e)
+        _callerr(UploadCallError, e)
     end
 end

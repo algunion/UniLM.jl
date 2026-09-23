@@ -246,16 +246,16 @@ end
 
 @testset "images.jl — config seam wiring" begin
     ig = ImageGeneration(prompt="probe", model="seam-probe-image", service=SeamProbe)
-    @test _reached_seam(generate_image(ig; config=_TINY_DEADLINE), ImageCallError)
-    @test _reached_seam(generate_image("probe"; model="seam-probe-image", service=SeamProbe,
+    @test _seam_timeout(generate_image(ig; config=_TINY_DEADLINE), ImageCallError)
+    @test _seam_timeout(generate_image("probe"; model="seam-probe-image", service=SeamProbe,
                                        config=_TINY_DEADLINE), ImageCallError)
 
     imgpath = tempname() * ".png"
     write(imgpath, UInt8[0x89, 0x50, 0x4e, 0x47])   # PNG magic; content is irrelevant (never sent)
     try
         e = ImageEdit(image=imgpath, prompt="probe", model="seam-probe-image", service=SeamProbe)
-        @test _reached_seam(edit_image(e; config=_TINY_DEADLINE), ImageCallError)
-        @test _reached_seam(edit_image(imgpath, "probe"; model="seam-probe-image",
+        @test _seam_timeout(edit_image(e; config=_TINY_DEADLINE), ImageCallError)
+        @test _seam_timeout(edit_image(imgpath, "probe"; model="seam-probe-image",
                                        service=SeamProbe, config=_TINY_DEADLINE), ImageCallError)
     finally
         rm(imgpath; force=true)
@@ -264,6 +264,33 @@ end
     # retries kwarg is removed (hard cut, no shim)
     @test_throws MethodError generate_image(ig; retries=1)
     @test_throws MethodError edit_image(ImageEdit(image=imgpath, prompt="p", model="m", service=SeamProbe); retries=1)
+end
+
+@testset "images.jl — URL-delivered images are decoded; failures carry no image data" begin
+    body = Dict("created" => 1, "data" => [Dict("url" => "https://example.com/1.png", "revised_prompt" => "p"),
+                                           Dict("b64_json" => "aGVsbG8=")])
+    ir = UniLM.parse_image_response(HTTP.Response(200, [], Vector{UInt8}(JSON.json(body))))
+    @test ir.data[1].url == "https://example.com/1.png" && isnothing(ir.data[1].b64_json)
+    @test isnothing(ir.data[2].url) && isnothing(ImageObject().url)
+    @test image_data(ImageSuccess(response=ir)) == ["https://example.com/1.png", "aGVsbG8="]
+    # A call that did not succeed has no images: asking for them throws, as `text` does,
+    # instead of answering with an empty list that reads as "zero images generated".
+    @test_throws LLMResultError image_data(ImageFailure(response="{\"error\":{}}", status=400))
+    @test_throws LLMResultError image_data(ImageCallError(error="connect refused"))
+end
+
+@testset "images.jl — failures keep the request id and the underlying exception" begin
+    one = UniLM.RequestConfig(max_attempts=1, total_deadline=30.0)
+    probe = ImageGeneration(prompt="p", model="m", service=URLProbe)
+    f = _answered(() -> generate_image(probe; config=one), 400; headers=["x-request-id" => "req_img"])
+    @test f isa ImageFailure && f.request_id == "req_img"
+    # A 200 that is not an images envelope: the reply existed, so its id is kept too.
+    c = _answered(() -> generate_image(probe; config=one), 200; body="{}",
+                  headers=["x-request-id" => "req_img_200"])
+    @test c isa ImageCallError
+    @test c.request_id == "req_img_200"
+    @test c.cause isa KeyError
+    @test isnothing(ImageCallError(error="x").request_id) && isnothing(ImageCallError(error="x").cause)
 end
 
 using Sockets
@@ -316,9 +343,9 @@ end
         cfg = UniLM.RequestConfig(max_attempts=2, total_deadline=Inf)
         r = edit_image(imgpath, "a prompt"; model="probe-edit", service=ImagesRetryProbe, config=cfg)
         @test length(seen) == 2                 # the 503 was actually retried
-        # Attempt totals are not comparable: each rebuild draws a fresh random
-        # boundary, whose hex width varies on HTTP.jl 1.x. A truncated or empty
-        # replay still cannot reach the size of the payload it must carry.
+        # Attempt totals are not compared: each rebuild draws a fresh random
+        # boundary. A truncated or empty replay still cannot reach the size of
+        # the payload it must carry.
         @test seen[2] >= sizeof(marker)
         @test complete[]                        # ...and carries the whole image + prompt
         @test r isa ImageSuccess

@@ -1,13 +1,47 @@
 @testset "Vector Stores API — config seam wiring" begin
-    @test _reached_seam(create_vector_store(service=SeamProbe, config=_TINY_DEADLINE), UniLM.VectorStoreCallError)
-    @test _reached_seam(retrieve_vector_store("vs_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.VectorStoreCallError)
-    @test _reached_seam(list_vector_stores(service=SeamProbe, config=_TINY_DEADLINE), UniLM.VectorStoreCallError)
-    @test _reached_seam(delete_vector_store("vs_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.VectorStoreCallError)
-    @test _reached_seam(add_vector_store_file("vs_x", "file_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.VectorStoreCallError)
-    @test _reached_seam(create_file_batch("vs_x", ["file_x"]; service=SeamProbe, config=_TINY_DEADLINE), UniLM.VectorStoreCallError)
-    @test _reached_seam(retrieve_file_batch("vs_x", "batch_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.VectorStoreCallError)
+    @test _seam_timeout(create_vector_store(service=SeamProbe, config=_TINY_DEADLINE), UniLM.VectorStoreCallError)
+    @test _seam_timeout(retrieve_vector_store("vs_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.VectorStoreCallError)
+    @test _seam_timeout(list_vector_stores(service=SeamProbe, config=_TINY_DEADLINE), UniLM.VectorStoreCallError)
+    @test _seam_timeout(delete_vector_store("vs_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.VectorStoreCallError)
+    @test _seam_timeout(add_vector_store_file("vs_x", "file_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.VectorStoreCallError)
+    @test _seam_timeout(create_file_batch("vs_x", ["file_x"]; service=SeamProbe, config=_TINY_DEADLINE), UniLM.VectorStoreCallError)
+    @test _seam_timeout(retrieve_file_batch("vs_x", "batch_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.VectorStoreCallError)
     # poll_file_batch forwards config to retrieve_file_batch (one iteration reaches the seam)
-    @test _reached_seam(poll_file_batch("vs_x", "batch_x"; interval=0.01, timeout=0.05, service=SeamProbe, config=_TINY_DEADLINE), UniLM.VectorStoreCallError)
+    @test _seam_timeout(poll_file_batch("vs_x", "batch_x"; interval=0.01, timeout=0.05, service=SeamProbe, config=_TINY_DEADLINE), UniLM.VectorStoreCallError)
+end
+
+@testset "poll_file_batch: a wall-clock deadline that rides out transient failures" begin
+    fb(status) = JSON.json(Dict("id" => "vsfb_1", "status" => status, "file_counts" => Dict("total" => 1)))
+    @test_throws ArgumentError poll_file_batch("vs_1", "vsfb_1"; interval=0, service=SeamProbe)
+    @test_throws ArgumentError poll_file_batch("vs_1", "vsfb_1"; timeout=-1, service=SeamProbe)
+
+    script = n -> n == 2 ? _json(503, "{}") : _json(200, fb(n == 1 ? "in_progress" : "completed"))
+    r, seen = _with_scripted((n, _) -> script(n)) do
+        poll_file_batch("vs_1", "vsfb_1"; interval=0.01, timeout=30.0, service=URLProbe)
+    end
+    @test r isa UniLM.VectorStoreBatchSuccess && r.response.status == "completed"
+    @test length(seen) == 3
+
+    # Never terminal: the timeout reports the last batch it saw.
+    t, _ = _with_scripted((_, _) -> _json(200, fb("in_progress"))) do
+        poll_file_batch("vs_1", "vsfb_1"; interval=0.1, timeout=1.0, service=URLProbe)
+    end
+    @test t isa UniLM.VectorStoreCallError
+    @test t.cause isa UniLMTimeout && t.cause.phase === :deadline
+    @test t.last_observed isa UniLM.VectorStoreFileBatch && t.last_observed.status == "in_progress"
+end
+
+@testset "delete_vector_store reports success only when the service confirms the delete" begin
+    del(body) = _answered(() -> delete_vector_store("vs_1"; service=URLProbe), 200; body)
+    @test del("""{"id": "vs_1", "deleted": true}""") == UniLM.VectorStoreDeleteSuccess(id="vs_1", deleted=true)
+    @test del("""{"id": "vs_1"}""") isa UniLM.VectorStoreCallError
+    @test del("""{"id": "vs_1", "deleted": false}""") isa UniLM.VectorStoreCallError
+end
+
+@testset "Vector Stores API — a failure keeps the request id the service sent" begin
+    r = _answered(() -> retrieve_vector_store("vs_x"; service=URLProbe), 404;
+                  headers=["x-request-id" => "req_vs"])
+    @test r isa UniLM.VectorStoreFailure && r.request_id == "req_vs"
 end
 
 @testset "Vector Stores API — separator-bearing ids stay single path segments" begin

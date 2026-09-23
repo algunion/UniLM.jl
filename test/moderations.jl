@@ -1,5 +1,28 @@
 @testset "Moderations API — config seam wiring" begin
-    @test _reached_seam(moderate("hello"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.ModerationCallError)
+    @test _seam_timeout(moderate("hello"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.ModerationCallError)
+end
+
+@testset "moderate: a 200 without one verdict row per input is a call error, never clean" begin
+    replied(body; input="hello") = _answered(() -> moderate(input; service=URLProbe), 200; body)
+    missing_rows = replied("{}")
+    @test missing_rows isa UniLM.ModerationCallError
+    @test_throws ArgumentError is_flagged(missing_rows)   # no verdict, as for any failure
+    @test replied("""{"results": {"flagged": false}}""") isa UniLM.ModerationCallError
+    @test replied("""{"results": []}""") isa UniLM.ModerationCallError
+    two = """{"results": [{"flagged": false}, {"flagged": false}]}"""
+    @test replied(two) isa UniLM.ModerationCallError                     # two rows, one input
+    @test replied(two; input=["a", "b"]) isa ModerationSuccess            # two inputs
+    @test replied("""{"results": [{"flagged": false}]}"""; input=["a", "b"]) isa UniLM.ModerationCallError
+    # A multi-modal parts array is one input and gets one row.
+    parts = [Dict("type" => "text", "text" => "hi"),
+             Dict("type" => "image_url", "image_url" => Dict("url" => "https://example.com/a.png"))]
+    ok = replied("""{"results": [{"flagged": true}]}"""; input=parts)
+    @test ok isa ModerationSuccess && is_flagged(ok)
+end
+
+@testset "Moderations API — a failure keeps the request id the service sent" begin
+    r = _answered(() -> moderate("hello"; service=URLProbe), 400; headers=["x-request-id" => "req_mod"])
+    @test r isa UniLM.ModerationFailure && r.request_id == "req_mod"
 end
 
 @testset "is_flagged never reports a failed call as clean" begin

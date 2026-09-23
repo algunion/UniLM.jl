@@ -19,6 +19,102 @@ function _mime_for(path::AbstractString)
     ), ext, "application/octet-stream")
 end
 
+# ─── Shared by the platform API files ────────────────────────────────────────
+# Every platform result family has the same three shapes: `*Success`, `*Failure` (a
+# non-200 reply: body, status, request id) and `*CallError` (no usable reply: the
+# rendered error, any carried status, and the exception itself). One constructor path
+# per shape keeps those diagnostics identical across the families.
+
+# The id the provider assigned to one exchange, the handle a support report needs.
+# OpenAI sends `x-request-id`; other OpenAI-wire servers send `request-id`.
+function _platform_request_id(resp::HTTP.Response)::Union{Nothing,String}
+    for name in ("x-request-id", "request-id")
+        v = HTTP.header(resp, name, "")
+        isempty(v) || return String(v)
+    end
+    return nothing
+end
+_platform_request_id(::Nothing) = nothing
+
+_failure(::Type{T}, resp::HTTP.Response) where {T<:LLMRequestResponse} =
+    T(response=String(resp.body), status=resp.status, request_id=_platform_request_id(resp))
+
+# `cause` is the ROOT exception — the one `error` renders — so a caller can dispatch
+# on it (a `UniLMTimeout` carries phase, elapsed and limit); a transport wrapper
+# would add nothing but the request it was carrying.
+function _callerr(::Type{T}, e; kw...) where {T<:LLMRequestResponse}
+    root = _unwrap_exception(e)
+    T(; error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing),
+      cause=(root isa Exception ? root : nothing), kw...)
+end
+
+# Worth another poll rather than being the answer: a status in the seam's retryable
+# set, or a GET that ran out its own time. Each polled result family defines its
+# `_transient` methods beside its types.
+_per_attempt_timeout(e)::Bool = e isa UniLMTimeout && e.phase in (:connect, :request)
+
+"""
+    _poll(fetch, S, terminal, timed_out; interval, timeout, config)
+
+Call `fetch(cfg)` until a success (an `S`) satisfies `terminal`, a non-transient
+failure comes back (returned as is), or `timeout` seconds of wall-clock time pass —
+then `timed_out(last_success_or_nothing, UniLMTimeout(:deadline, …))` builds the
+result. Each GET's `total_deadline` and each pause are capped at the time left, so
+the poll ends within `timeout` rather than one GET or pause past it.
+"""
+function _poll(fetch::Function, ::Type{S}, terminal::Function, timed_out::Function;
+               interval::Real, timeout::Real, config::Union{Nothing,RequestConfig}) where {S<:LLMRequestResponse}
+    (isfinite(interval) && interval > 0) ||
+        throw(ArgumentError("interval must be a finite number of seconds > 0 (got $interval)"))
+    limit = _validated_timeout(:timeout, timeout)
+    cfg = _resolve_config(config); t0 = time_ns()
+    seen = nothing
+    while (left = limit - _elapsed_s(t0)) > 0
+        r = fetch(RequestConfig(cfg; total_deadline=min(cfg.total_deadline, left)))
+        if r isa S
+            terminal(r) && return r
+            seen = r
+        elseif !_transient(r)
+            return r
+        end
+        sleep(min(interval, max(limit - _elapsed_s(t0), 0.0)))
+    end
+    return timed_out(seen, UniLMTimeout(:deadline, _elapsed_s(t0), limit))
+end
+
+# A delete counts as done only when the reply says so: the documented body carries
+# `"deleted": true`, and one without it (or with `false`) leaves the object in place as
+# far as the caller can know. The throw becomes the verb's *CallError.
+function _confirm_deleted(d::AbstractDict)::Bool
+    haskey(d, "deleted") || throw(ArgumentError(
+        "the delete reply has no \"deleted\" field, so the removal is unconfirmed"))
+    d["deleted"] === true || throw(ArgumentError(
+        "the service did not confirm the delete (\"deleted\": $(repr(d["deleted"])))"))
+    return true
+end
+
+# Replace `path` with `bytes` atomically: write a temporary file beside the destination
+# (same filesystem, so the final rename cannot degrade into a copy) and rename it over
+# the destination. A write that fails part-way leaves the old contents, not a truncated
+# file. A symlink is written through, as opening it for writing would be; a directory
+# is refused, because `mv(...; force=true)` would delete it recursively.
+function _atomic_write(path::String, bytes::AbstractVector{UInt8})::String
+    dest = ispath(path) ? realpath(path) : path
+    isdir(dest) && throw(ArgumentError("cannot save over a directory: $path"))
+    tmp = tempname(dirname(abspath(dest)); cleanup=false)
+    try
+        write(tmp, bytes)
+        mv(tmp, dest; force=true)
+    finally
+        rm(tmp; force=true)   # already gone after a successful rename
+    end
+    return path
+end
+
+_poll_timeout_text(verb::String, id::String, to::UniLMTimeout, seen)::String =
+    "$verb timeout: $id reached no terminal status within $(to.limit) s (last observed status: " *
+    "$(isnothing(seen) ? "none" : something(seen.response.status, "none")))"
+
 # ─── Request type ─────────────────────────────────────────────────────────────
 
 """
@@ -83,14 +179,12 @@ end
 @kwdef struct FileListSuccess <: LLMRequestResponse; response::FileList; end
 "Successful [`file_content`](@ref) result; `content` holds the raw file bytes."
 @kwdef struct FileContentSuccess <: LLMRequestResponse; content::Vector{UInt8}; end
-"Successful [`delete_file`](@ref) result; `deleted` confirms removal of `id`."
+"Successful [`delete_file`](@ref) result: the service confirmed (`deleted` is always `true`) the removal of `id`."
 @kwdef struct FileDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
-"Files API error result: HTTP `status` and the raw `response` body."
-@kwdef struct FileFailure <: LLMRequestResponse; response::String; status::Int; end
-"Local/transport error from a Files API call (the request never completed)."
-@kwdef struct FileCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
-
-_callerr(::Type{FileCallError}, e) = FileCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
+"Files API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
+@kwdef struct FileFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
+"Files API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout."
+@kwdef struct FileCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
 
 # ─── Requests ─────────────────────────────────────────────────────────────────
 
@@ -100,27 +194,24 @@ _callerr(::Type{FileCallError}, e) = FileCallError(error=_error_text(e), status=
 
 Upload a file (multipart/form-data). Returns `FileSuccess`, `FileFailure`, or `FileCallError`.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout and retry budget for
-this call. Unlike the other Files verbs this one DOES retry: the multipart form is
-rebuilt for every attempt, so a transient 429/503 is retried rather than resent as an
-already-consumed form.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call
+(a single bounded attempt; `max_attempts` does not apply). Like every other create, an
+upload is never retried: a POST that timed out, or drew a gateway 5xx after the backend
+stored the file, may still have created it, and a second attempt would store it twice.
+A `FileFailure`/`FileCallError` therefore does not prove that no file was created.
 """
 function upload_file(u::FileUpload; config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(u.service, :files, "Files API")
     cfg = _resolve_config(config)
     t0 = time_ns()
     try
-        # A Form is consumed by the attempt that sends it, so the retry loop gets a
-        # factory: every attempt re-reads the file into its own multipart body.
-        form = _BodyFactory(() -> HTTP.Form([
-            "purpose" => u.purpose,
-            "file" => HTTP.Multipart(basename(u.file), IOBuffer(read(u.file)), _mime_for(u.file)),
-        ]))
-        url = _api_base_url(u.service) * FILES_PATH
-        resp = _http_with_retries(cfg, t0, "POST", url, auth_header_multipart(u.service), form)
+        form = HTTP.Form(["purpose" => u.purpose,
+            "file" => HTTP.Multipart(basename(u.file), IOBuffer(read(u.file)), _mime_for(u.file))])
+        resp = _http("POST", _api_base_url(u.service) * FILES_PATH, auth_header_multipart(u.service), form;
+                     cfg, remaining=_remaining_s(cfg, t0))
         return resp.status == 200 ?
                FileSuccess(response=_parse_file_object(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
-               FileFailure(response=String(resp.body), status=resp.status)
+               _failure(FileFailure, resp)
     catch e
         e isa InterruptException && rethrow()
         return _callerr(FileCallError, e)
@@ -156,7 +247,7 @@ function list_files(; purpose::Union{String,Nothing}=nothing, limit::Union{Int,N
             files = FileObject[_parse_file_object(f) for f in get(data, "data", [])]
             return FileListSuccess(response=FileList(data=files, has_more=get(data, "has_more", false), raw=data))
         else
-            return FileFailure(response=String(resp.body), status=resp.status)
+            return _failure(FileFailure, resp)
         end
     catch e
         e isa InterruptException && rethrow()
@@ -181,7 +272,7 @@ function retrieve_file(file_id::String; service::ServiceEndpointSpec=OPENAIServi
         resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 ?
             FileSuccess(response=_parse_file_object(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
-            FileFailure(response=String(resp.body), status=resp.status)
+            _failure(FileFailure, resp)
     catch e
         e isa InterruptException && rethrow()
         _callerr(FileCallError, e)
@@ -205,9 +296,9 @@ function delete_file(file_id::String; service::ServiceEndpointSpec=OPENAIService
         resp = _http("DELETE", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
-            return FileDeleteSuccess(id=get(d, "id", file_id), deleted=get(d, "deleted", false))
+            return FileDeleteSuccess(id=get(d, "id", file_id), deleted=_confirm_deleted(d))
         else
-            return FileFailure(response=String(resp.body), status=resp.status)
+            return _failure(FileFailure, resp)
         end
     catch e
         e isa InterruptException && rethrow()
@@ -233,7 +324,7 @@ function file_content(file_id::String; service::ServiceEndpointSpec=OPENAIServic
         resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 ?
             FileContentSuccess(content=Vector{UInt8}(resp.body)) :
-            FileFailure(response=String(resp.body), status=resp.status)
+            _failure(FileFailure, resp)
     catch e
         e isa InterruptException && rethrow()
         _callerr(FileCallError, e)
@@ -243,9 +334,8 @@ end
 """
     save_file_content(r::FileContentSuccess, path) -> path
 
-Write downloaded file bytes to `path`.
+Write downloaded file bytes to `path`, atomically: the bytes go to a temporary file in
+the same directory, which is then renamed over `path`, so a failed write leaves any
+existing file intact. A symlink is written through; a directory throws `ArgumentError`.
 """
-function save_file_content(r::FileContentSuccess, path::String)
-    open(io -> write(io, r.content), path, "w")
-    path
-end
+save_file_content(r::FileContentSuccess, path::String) = _atomic_write(path, r.content)

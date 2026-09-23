@@ -61,11 +61,30 @@ response, not a clean verdict, so it fails the call instead of defaulting to
 _moderation_verdict(row::AbstractDict)::Bool = haskey(row, "flagged") ? row["flagged"] :
     throw(ArgumentError("moderation result row has no \"flagged\" field"))
 
+# One verdict row per submitted input: an array of strings is that many inputs, while
+# a single string or an array of multi-modal parts (text + image) is one.
+_moderation_inputs(input)::Int =
+    input isa AbstractVector && all(x -> x isa AbstractString, input) ? length(input) : 1
+
+"""The verdict rows of a 200. Fewer or more rows than inputs — or none at all —
+cannot be matched to what was submitted, so it fails the call instead of letting a
+missing row read as `flagged == false`."""
+function _moderation_rows(d::AbstractDict, inputs::Int)::AbstractVector
+    rows = get(d, "results", nothing)
+    rows isa AbstractVector || throw(ArgumentError("moderation response has no \"results\" array"))
+    length(rows) == inputs || throw(ArgumentError(
+        "moderation response has $(length(rows)) result rows for $inputs input(s)"))
+    rows
+end
+
 """
     moderate(input; model="omni-moderation-latest", service=OPENAIServiceEndpoint)
 
-Classify `input` (a `String`, or a vector of content parts) for policy violations (free).
-Returns `ModerationSuccess`, `ModerationFailure`, or `ModerationCallError`.
+Classify `input` (a `String`, a vector of strings, or a vector of multi-modal content
+parts) for policy violations (free). Returns `ModerationSuccess`, `ModerationFailure`, or
+`ModerationCallError`. A 200 whose `results` array does not hold exactly one row per input
+(one row for a string or a parts vector, one per string of a string vector) is a
+`ModerationCallError`: a verdict that cannot be matched to its input is no verdict.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
@@ -83,7 +102,7 @@ function moderate(input; model::String="omni-moderation-latest", service::Servic
                     categories=Dict{String,Any}(get(r, "categories", Dict{String,Any}())),
                     category_scores=Dict{String,Any}(get(r, "category_scores", Dict{String,Any}())),
                     raw=Dict{String,Any}(r))
-                for r in get(d, "results", [])]
+                for r in _moderation_rows(d, _moderation_inputs(input))]
             ModerationSuccess(response=ModerationResponse(results=results, model=get(d, "model", model), raw=d))
         else
             _failure(ModerationFailure, resp)

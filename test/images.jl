@@ -266,6 +266,19 @@ end
     @test_throws MethodError edit_image(ImageEdit(image=imgpath, prompt="p", model="m", service=SeamProbe); retries=1)
 end
 
+@testset "images.jl — URL-delivered images are decoded; failures carry no image data" begin
+    body = Dict("created" => 1, "data" => [Dict("url" => "https://example.com/1.png", "revised_prompt" => "p"),
+                                           Dict("b64_json" => "aGVsbG8=")])
+    ir = UniLM.parse_image_response(HTTP.Response(200, [], Vector{UInt8}(JSON.json(body))))
+    @test ir.data[1].url == "https://example.com/1.png" && isnothing(ir.data[1].b64_json)
+    @test isnothing(ir.data[2].url) && isnothing(ImageObject().url)
+    @test image_data(ImageSuccess(response=ir)) == ["https://example.com/1.png", "aGVsbG8="]
+    # A call that did not succeed has no images: asking for them throws, as `text` does,
+    # instead of answering with an empty list that reads as "zero images generated".
+    @test_throws LLMResultError image_data(ImageFailure(response="{\"error\":{}}", status=400))
+    @test_throws LLMResultError image_data(ImageCallError(error="connect refused"))
+end
+
 @testset "images.jl — failures keep the request id and the underlying exception" begin
     one = UniLM.RequestConfig(max_attempts=1, total_deadline=30.0)
     probe = ImageGeneration(prompt="p", model="m", service=URLProbe)

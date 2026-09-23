@@ -7,8 +7,6 @@
 # transparency, and output format.
 # ============================================================================
 
-using Base64
-
 # ─── Request Type ─────────────────────────────────────────────────────────────
 
 """
@@ -92,10 +90,13 @@ A single generated image from the API response.
 # Fields
 - `b64_json::Union{String,Nothing}`: Base64-encoded image data
 - `revised_prompt::Union{String,Nothing}`: The prompt as revised by the model
+- `url::Union{String,Nothing}`: Where to download the image, when the service
+  delivered it by URL instead of inline
 """
 @kwdef struct ImageObject
     b64_json::Union{String,Nothing} = nothing
     revised_prompt::Union{String,Nothing} = nothing
+    url::Union{String,Nothing} = nothing
 end
 
 """
@@ -104,7 +105,7 @@ end
 Parsed response from the Image Generation API.
 
 # Accessors
-- `image_data(r)` — extract base64-encoded image data
+- `image_data(r)` — the image payloads: base64 data, or the URL of a URL-delivered image
 - `r.created`, `r.data`, `r.usage` — basic fields
 - `r.raw` — the complete raw JSON dict
 
@@ -177,8 +178,13 @@ end
     image_data(r::ImageResponse)::Vector{String}
     image_data(r::ImageSuccess)::Vector{String}
 
-Extract base64-encoded image data from a response. Returns a vector of base64 strings,
-one per generated image.
+The image payloads of a response, one per generated image: the base64 data, or —
+for an image the service delivered by URL — its `url` (download it; only base64
+data can go to [`save_image`](@ref)). An entry carrying neither is skipped.
+
+On an [`ImageFailure`](@ref) or [`ImageCallError`](@ref) this throws an
+[`LLMResultError`](@ref), as [`text`](@ref) does: a call that did not succeed has no
+images, and an empty list would read as "zero images generated".
 
 # Examples
 ```julia
@@ -187,13 +193,16 @@ imgs = image_data(result)       # Vector{String}
 length(imgs)                     # number of images generated
 ```
 """
-function image_data(r::ImageResponse)::Vector{String}
-    return [img.b64_json for img in r.data if !isnothing(img.b64_json)]
-end
+image_data(r::ImageResponse)::Vector{String} =
+    String[something(img.b64_json, img.url) for img in r.data if !isnothing(img.b64_json) || !isnothing(img.url)]
 
 image_data(r::ImageSuccess) = image_data(r.response)
-image_data(::ImageFailure) = String[]
-image_data(::ImageCallError) = String[]
+image_data(r::Union{ImageFailure,ImageCallError}) = throw(LLMResultError(r))
+
+# What `showerror(::LLMResultError)` reports for an image result.
+_llm_result_status(r::Union{ImageFailure,ImageCallError}) = r.status
+_llm_result_body(r::ImageFailure) = r.response
+_llm_result_body(r::ImageCallError) = r.error
 
 """
     save_image(img_b64::String, filepath::String)
@@ -228,7 +237,8 @@ function parse_image_response(resp::HTTP.Response)::ImageResponse
     images = [
         ImageObject(
             b64_json=get(img, "b64_json", nothing),
-            revised_prompt=get(img, "revised_prompt", nothing)
+            revised_prompt=get(img, "revised_prompt", nothing),
+            url=get(img, "url", nothing)
         )
         for img in get(data, "data", Any[])
     ]
@@ -356,9 +366,8 @@ function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing)
         images = e.image isa String ? [e.image] : e.image
         # Validate up front: a missing file is the caller's error, reported before
         # any wire attempt rather than once per attempt from inside the retry loop.
-        for img in images
-            isfile(img) || throw(ArgumentError("image not found: $img"))
-        end
+        absent = findfirst(!isfile, images)
+        isnothing(absent) || throw(ArgumentError("image not found: $(images[absent])"))
         isnothing(e.mask) || isfile(e.mask) || throw(ArgumentError("mask not found: $(e.mask)"))
         # A Form is consumed by the attempt that sends it, so the retry loop gets a
         # factory: every attempt re-reads the images into its own multipart body.

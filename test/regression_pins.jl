@@ -14,10 +14,8 @@ using Sockets
 # under failfast=true (test/runtests.jl). Before treating any unexpected pass
 # in a driver testset as a refutation, re-run with a larger inter-chunk gap;
 # only a pass that survives fragmentation is a refutation.)
-# Portability across the declared HTTP compat range ("1.9, 2"): `listen!`
-# handlers receive an HTTP.Stream on both majors, so no `stream=true` kwarg
-# (the 2.x major rejects it); the request body is drained with `read`
-# (readavailable is undefined for server-side streams on 2.x, and a throwing
+# `listen!` handlers receive an HTTP.Stream; the request body is drained with
+# `read` (readavailable is undefined for server-side streams, and a throwing
 # handler turns every response into a 500).
 function sse_mock_server(chunks::Vector{String}; hold::Float64=0.0)
     # Port TOCTOU: the ephemeral port is discovered by binding a probe socket
@@ -352,8 +350,8 @@ end
                     {"type":"tool_use","id":"toolu_1","name":"get_weather","input":{"city":"Oslo"}}],
          "stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":5}}
         """
-        # 3-arg ctor (cf. test/anthropic.jl): a String body becomes BytesBody in HTTP 2.x,
-        # which decode's JSON.parse can't consume; a Vector{UInt8} body works on HTTP 1.x + 2.x.
+        # 3-arg ctor (cf. test/anthropic.jl): a String body becomes a BytesBody, which
+        # decode's JSON.parse can't consume; a Vector{UInt8} body can.
         dec = UniLM.decode_response(ANTHROPICServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(resp_json)))
         msgs = [Message(role=UniLM.RoleUser, content="weather in Oslo?"),
                 dec.message,
@@ -648,8 +646,8 @@ end
           "finishReason":"STOP"}],
          "usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":2,"totalTokenCount":3}}
         """
-        # 3-arg ctor (cf. test/gemini.jl): a String body becomes BytesBody in HTTP 2.x,
-        # which decode's JSON.parse can't consume; a Vector{UInt8} body works on HTTP 1.x + 2.x.
+        # 3-arg ctor (cf. test/gemini.jl): a String body becomes a BytesBody, which
+        # decode's JSON.parse can't consume; a Vector{UInt8} body can.
         dec = UniLM.decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(resp_json)))
         tcs = dec.message.tool_calls
         ids_ok = !isnothing(tcs) && length(tcs) == 2 && allunique([tc.id for tc in tcs])

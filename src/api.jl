@@ -964,8 +964,8 @@ end
 
 # Every call-error result keeps the raw exception in `cause` — dispatching on it is
 # the point of the field. Julia's default `show` recurses into it, though, and a
-# transport wrapper renders as a full request dump on HTTP.jl 1.x, so printing the
-# result would undo the redaction its `error` string already went through. Name the
+# transport wrapper can render as a full request dump, headers included, so printing
+# the result would undo the redaction its `error` string already went through. Name the
 # cause by TYPE instead: the object stays untouched and still reachable, it just
 # stops printing its payload. Shared by the Chat/Embeddings/Responses/FIM results.
 function _show_call_error(io::IO, name::AbstractString, err::AbstractString,

@@ -973,8 +973,8 @@ end
     cfg = RequestConfig(stream_idle_timeout = 1.0)
     t0 = time_ns()
 
-    # A FIRED guard is a breach on both majors — the caught error is the echo of
-    # our own close — and elapsed reports the frozen byte GAP, not call time.
+    # A FIRED guard is a breach — the caught error is the echo of our own
+    # close — and elapsed reports the frozen byte GAP, not call time.
     fired = UniLM._IdleGuard(:fired, time_ns(), 1.23, 1.0, nothing)
     to = UniLM._classify_stream_timeout(Base.IOError("read: connection reset", 0), fired, cfg, t0)
     @test to isa UniLM.UniLMTimeout
@@ -986,7 +986,7 @@ end
     # With the read-idle fast path armed (finite idle bound), a native
     # non-connect TimeoutError IS the read-idle timer by elimination — the
     # streaming seam arms no other native non-connect timer. That holds even
-    # BEFORE the idle guard exists (guard === nothing): HTTP 2.x also bounds
+    # BEFORE the idle guard exists (guard === nothing): HTTP.jl also bounds
     # the response-header wait by read_idle_timeout, so the breach can land
     # pre-first-byte and the phase must not depend on guard arming order.
     e_req = HTTP.TimeoutError("request", Int64(1_000_000_000), Int64(0))
@@ -1023,10 +1023,10 @@ end
     # Constructed exceptions, limit=Inf (no timer): the recording contract is a
     # pure function of what escapes the deadline block, so it pins without
     # timing. The driver catches consume the slot with the precedence rule
-    # "recorded typed cause wins over teardown noise" — on the 1.x major,
-    # HTTP.jl's cleanup of a bound-closed socket can raise EPIPE/reset while
-    # the typed UniLMTimeout is unwinding, and the replacement is what escapes
-    # HTTP.open; the slot is what restores the typed cause.
+    # "recorded typed cause wins over teardown noise" — HTTP.jl's cleanup of a
+    # bound-closed socket can raise EPIPE/reset while the typed UniLMTimeout is
+    # unwinding, and the replacement is what escapes HTTP.open; the slot is
+    # what restores the typed cause.
     slotT() = Ref{Union{Nothing,UniLM.UniLMTimeout}}(nothing)
 
     # A UniLMTimeout escaping the block is recorded AND rethrown unchanged
@@ -1146,7 +1146,7 @@ end
     # The breach argument is why this takes the CLASSIFIED result and not the
     # guard handle. Whichever timer wins the byte-gap race must read as teardown:
     # our own guard's close echoes as an IOError (transport-shaped anyway), but
-    # the 2.x native read-idle timer surfaces as an HTTP.TimeoutError, which is
+    # HTTP.jl's native read-idle timer surfaces as an HTTP.TimeoutError, which is
     # deliberately NEITHER transport-shaped NOR a UniLMTimeout — only the
     # classifier recognises it, and missing it discards a completed turn.
     fired = UniLM._IdleGuard(:fired, time_ns(), 1.0, 1.0, nothing)
@@ -1184,19 +1184,18 @@ end
 
 using Sockets
 
-# Stand-in for the HTTP.jl 1.x transport error whose rendering IS a full request
-# dump. Declared at top level because a struct cannot be defined inside a testset.
+# Stand-in for a transport error whose rendering IS a full request dump.
+# Declared at top level because a struct cannot be defined inside a testset.
 struct _DumpingError <: Exception; dump::String; end
 Base.showerror(io::IO, e::_DumpingError) = print(io, e.dump)
 
 @testset "_error_text never lets a credential reach a result value" begin
-    # HTTP.jl 1.x renders a mid-exchange transport failure as a FULL request dump —
-    # every header and the body — and its masking covers only Authorization,
+    # A mid-exchange transport failure can render as a FULL request dump — every
+    # header and the body — and HTTP.jl's own masking covers only Authorization,
     # Proxy-Authorization and Cookie. Providers that authenticate with their own
     # header (Anthropic x-api-key, Gemini native x-goog-api-key, Azure api-key)
-    # therefore had the key in cleartext inside `.error`. The redaction layer is
-    # major-agnostic, so a stand-in exception whose showerror IS such a dump is the
-    # testable contract on either major.
+    # would have the key in cleartext inside `.error`. A stand-in exception whose
+    # showerror IS such a dump is the testable contract of the redaction layer.
     anth  = "sk-ant-api03-SECRETVALUE0123456789"
     goog  = "AIzaSyGOOGLENATIVESECRET123"
     az    = "azure-key-0011223344556677"

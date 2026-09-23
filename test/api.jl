@@ -1278,15 +1278,15 @@ end
         @test n_success >= 30    # ~34 success types across chat/embeddings/platform APIs
     end
 end
-# Stand-in for a transport wrapper whose default show dumps the request it carries
-# (the HTTP.jl 1.x RequestError shape). Top level: structs cannot live in a testset.
+# Stand-in for a transport wrapper whose default show dumps the request it carries.
+# Top level: structs cannot live in a testset.
 struct _CauseDumpError <: Exception; dump::String; end
 
 @testset "call-error shows name the cause instead of dumping it" begin
     # `cause` keeps the raw exception on purpose — callers dispatch on it. Julia's
     # default show recurses into it, though, so a transport wrapper that renders as
-    # a request dump (HTTP.jl 1.x) put the credential back into the printed result
-    # after `.error` had already been redacted.
+    # a request dump put the credential back into the printed result after `.error`
+    # had already been redacted.
     token = "sk-ant-SECRETVALUE0123456789"
     dumping = _CauseDumpError("HTTP.Request:\nPOST /v1/messages\r\nx-api-key: $token\r\n\r\n{}")
     chat = Chat(model="gpt-5.5", messages=[Message(Val(:system), "s"), Message(Val(:user), "u")])

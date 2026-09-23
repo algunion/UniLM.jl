@@ -2329,9 +2329,9 @@ end
 
 # Read one full HTTP/1.1 request message (headers + body) from a raw socket before
 # acting on the connection, so a respond-or-close never races the client's still
-# in-flight body write. HTTP.jl streams the request body as a chunked write that on
-# the 1.x major arrives as a SEPARATE segment AFTER the head over a keep-alive
-# socket; a server that acts on only the head races that write (broken pipe / EPIPE).
+# in-flight body write. HTTP.jl streams the request body as a chunked write that can
+# arrive as a SEPARATE segment AFTER the head over a keep-alive socket; a server
+# that acts on only the head races that write (broken pipe / EPIPE).
 # Framing-aware (chunked terminator / Content-Length), never read-until-eof — a
 # keep-alive client half-closes only after it has read the response, so waiting on
 # eof here would deadlock.
@@ -2433,7 +2433,7 @@ end
     #   * 8 deltas at 0.5 s put the client's LAST byte ~3.5 s into the call, and each
     #     delta is 4x under the 2.0 s idle limit, so a stall cannot fire the guard early;
     #   * detection window [0.95*2.0, 2*2.0+0.5] = [1.9, 4.5]: the package's own guard
-    #     fires within [limit, limit + limit/4] = [2.0, 2.5], while HTTP 2.x's native
+    #     fires within [limit, limit + limit/4] = [2.0, 2.5], while HTTP.jl's native
     #     read-idle timer checks periodically and so detects at up to ~2x the limit
     #     (the 0.95 floor covers the skew between its last read and our own stamp);
     #   * whole-call elapsed is therefore >= 3.5 + 2.0 = 5.5 s — a full second ABOVE
@@ -2740,9 +2740,9 @@ end
 
 # ─── Lifecycle URL construction ───────────────────────────────────────────────
 # A response id and a pagination cursor are caller data, not URL structure. The
-# recorder reads back `req.target`, the unparsed origin-form target on both
-# supported HTTP majors, so a value that leaks its own `/`, `?` or `#` shows up
-# as extra path segments / a query / a fragment instead of one encoded segment.
+# recorder reads back `req.target`, the unparsed origin-form target, so a value
+# that leaks its own `/`, `?` or `#` shows up as extra path segments / a query / a
+# fragment instead of one encoded segment.
 
 "Run `f(base_url)` against a local recorder; returns the raw request targets it saw, in order."
 function _recorded_lifecycle_targets(f::Function, body::String)

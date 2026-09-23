@@ -6,8 +6,8 @@ using UniLM
 using UniLM: StreamState, _build_stream_message, TOOL_CALLS, STOP
 using Test, HTTP, JSON, Sockets, Logging
 
-# Fragmenting SSE mock (portable across HTTP 1.9/2.x — same intersection APIs
-# as test/regression_p0.jl's: no listen!(stream=true), drain with read()).
+# Fragmenting SSE mock: a stream handler that drains the request with read() and
+# writes each chunk as its own flush, `gap` seconds apart.
 function fragmented_sse_server(chunks::Vector{String}; gap::Float64=0.4)
     tcp = Sockets.listen(Sockets.localhost, 0)
     port = Int(Sockets.getsockname(tcp)[2])

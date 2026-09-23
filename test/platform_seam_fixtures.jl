@@ -60,12 +60,16 @@ the next request), so recording is serialized.
 function _with_scripted(f::Function, respond::Function)
     seen = _SeenRequest[]
     guard = ReentrantLock()
+    # Held behind an abstractly typed Ref so every scripted server shares ONE handler
+    # type: capturing each `respond` closure directly would specialize the server
+    # stack anew per test, and that compile time would land inside the timed exchange.
+    script = Ref{Function}(respond)
     handler = function (req)
         n = @lock guard begin
             push!(seen, (method=String(req.method), target=String(req.target), body=_body_text(req)))
             length(seen)
         end
-        respond(n, req)
+        script[](n, req)
     end
     # Probe an ephemeral port, then serve on it; the close-then-rebind window can race.
     for _ in 1:5

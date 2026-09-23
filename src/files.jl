@@ -48,6 +48,44 @@ function _callerr(::Type{T}, e; kw...) where {T<:LLMRequestResponse}
       cause=(root isa Exception ? root : nothing), kw...)
 end
 
+# Worth another poll rather than being the answer: a status in the seam's retryable
+# set, or a GET that ran out its own time. Each polled result family defines its
+# `_transient` methods beside its types.
+_per_attempt_timeout(e)::Bool = e isa UniLMTimeout && e.phase in (:connect, :request)
+
+"""
+    _poll(fetch, S, terminal, timed_out; interval, timeout, config)
+
+Call `fetch(cfg)` until a success (an `S`) satisfies `terminal`, a non-transient
+failure comes back (returned as is), or `timeout` seconds of wall-clock time pass —
+then `timed_out(last_success_or_nothing, UniLMTimeout(:deadline, …))` builds the
+result. Each GET's `total_deadline` and each pause are capped at the time left, so
+the poll ends within `timeout` rather than one GET or pause past it.
+"""
+function _poll(fetch::Function, ::Type{S}, terminal::Function, timed_out::Function;
+               interval::Real, timeout::Real, config::Union{Nothing,RequestConfig}) where {S<:LLMRequestResponse}
+    (isfinite(interval) && interval > 0) ||
+        throw(ArgumentError("interval must be a finite number of seconds > 0 (got $interval)"))
+    limit = _validated_timeout(:timeout, timeout)
+    cfg = _resolve_config(config); t0 = time_ns()
+    seen = nothing
+    while (left = limit - _elapsed_s(t0)) > 0
+        r = fetch(RequestConfig(cfg; total_deadline=min(cfg.total_deadline, left)))
+        if r isa S
+            terminal(r) && return r
+            seen = r
+        elseif !_transient(r)
+            return r
+        end
+        sleep(min(interval, max(limit - _elapsed_s(t0), 0.0)))
+    end
+    return timed_out(seen, UniLMTimeout(:deadline, _elapsed_s(t0), limit))
+end
+
+_poll_timeout_text(verb::String, id::String, to::UniLMTimeout, seen)::String =
+    "$verb timeout: $id reached no terminal status within $(to.limit) s (last observed status: " *
+    "$(isnothing(seen) ? "none" : something(seen.response.status, "none")))"
+
 # ─── Request type ─────────────────────────────────────────────────────────────
 
 """

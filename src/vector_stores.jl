@@ -78,8 +78,11 @@ end
 @kwdef struct VectorStoreDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
 "Vector Stores API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
 @kwdef struct VectorStoreFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
-"Vector Stores API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout."
-@kwdef struct VectorStoreCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
+"Vector Stores API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout. `last_observed` is set only when [`poll_file_batch`](@ref) runs out of time: the last [`VectorStoreFileBatch`](@ref) it saw, if any."
+@kwdef struct VectorStoreCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; last_observed::Union{Nothing,VectorStoreFileBatch} = nothing; end
+
+_transient(r::VectorStoreFailure) = _is_retryable(r.status)
+_transient(r::VectorStoreCallError) = _per_attempt_timeout(r.cause)
 
 _parse_vector_store(d::AbstractDict) = VectorStoreObject(id=d["id"], name=get(d, "name", nothing),
     status=get(d, "status", nothing), file_counts=Dict{String,Any}(get(d, "file_counts", Dict{String,Any}())), raw=Dict{String,Any}(d))
@@ -262,19 +265,25 @@ end
 """
     poll_file_batch(vector_store_id, batch_id; interval=2.0, timeout=300.0, service=OPENAIServiceEndpoint)
 
-Poll a file batch until it reaches a terminal status (`completed`/`failed`/`cancelled`) or the
-timeout elapses. Returns the terminal `VectorStoreBatchSuccess`, or a `VectorStoreCallError` on timeout.
+Poll a file batch until it reaches a terminal status (`completed`/`failed`/`cancelled`) and
+return that `VectorStoreBatchSuccess`. `timeout` bounds the wall-clock time of the whole
+poll (`Inf` waits indefinitely); `interval` is the pause between GETs. Both must be
+positive, else `ArgumentError`.
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
+A transient failure — a status in the retryable set (408/429/500/502/503/504/529) or a
+GET that timed out — is polled through; any other failure is returned as it came. When
+the time runs out the result is a `VectorStoreCallError` with
+`cause = UniLMTimeout(:deadline, …)` and `last_observed` set to the last
+`VectorStoreFileBatch` seen (`nothing` if no GET succeeded).
+
+Pass `config::Union{Nothing,RequestConfig}` to bound each GET (a single attempt; its
+`total_deadline` is capped at the time left).
 """
 function poll_file_batch(vs_id::String, batch_id::String; interval::Real=2.0, timeout::Real=300.0,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
-    max_iters = max(1, ceil(Int, timeout / interval))
-    for _ in 1:max_iters
-        r = retrieve_file_batch(vs_id, batch_id; service=service, config=config)
-        r isa VectorStoreBatchSuccess || return r
-        r.response.status in ("completed", "failed", "cancelled") && return r
-        sleep(interval)
-    end
-    VectorStoreCallError(error="poll_file_batch timed out after $(timeout)s", status=nothing)
+    _poll(cfg -> retrieve_file_batch(vs_id, batch_id; service, config=cfg), VectorStoreBatchSuccess,
+          r -> r.response.status in ("completed", "failed", "cancelled"),
+          (seen, to) -> VectorStoreCallError(error=_poll_timeout_text("poll_file_batch", batch_id, to, seen),
+                                             cause=to, last_observed=isnothing(seen) ? nothing : seen.response);
+          interval, timeout, config)
 end

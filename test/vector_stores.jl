@@ -10,6 +10,27 @@
     @test _seam_timeout(poll_file_batch("vs_x", "batch_x"; interval=0.01, timeout=0.05, service=SeamProbe, config=_TINY_DEADLINE), UniLM.VectorStoreCallError)
 end
 
+@testset "poll_file_batch: a wall-clock deadline that rides out transient failures" begin
+    fb(status) = JSON.json(Dict("id" => "vsfb_1", "status" => status, "file_counts" => Dict("total" => 1)))
+    @test_throws ArgumentError poll_file_batch("vs_1", "vsfb_1"; interval=0, service=SeamProbe)
+    @test_throws ArgumentError poll_file_batch("vs_1", "vsfb_1"; timeout=-1, service=SeamProbe)
+
+    script = n -> n == 2 ? _json(503, "{}") : _json(200, fb(n == 1 ? "in_progress" : "completed"))
+    r, seen = _with_scripted((n, _) -> script(n)) do
+        poll_file_batch("vs_1", "vsfb_1"; interval=0.01, timeout=30.0, service=URLProbe)
+    end
+    @test r isa UniLM.VectorStoreBatchSuccess && r.response.status == "completed"
+    @test length(seen) == 3
+
+    # Never terminal: the timeout reports the last batch it saw.
+    t, _ = _with_scripted((_, _) -> _json(200, fb("in_progress"))) do
+        poll_file_batch("vs_1", "vsfb_1"; interval=0.1, timeout=1.0, service=URLProbe)
+    end
+    @test t isa UniLM.VectorStoreCallError
+    @test t.cause isa UniLMTimeout && t.cause.phase === :deadline
+    @test t.last_observed isa UniLM.VectorStoreFileBatch && t.last_observed.status == "in_progress"
+end
+
 @testset "Vector Stores API — a failure keeps the request id the service sent" begin
     r = _answered(() -> retrieve_vector_store("vs_x"; service=URLProbe), 404;
                   headers=["x-request-id" => "req_vs"])

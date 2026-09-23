@@ -82,6 +82,17 @@ function _poll(fetch::Function, ::Type{S}, terminal::Function, timed_out::Functi
     return timed_out(seen, UniLMTimeout(:deadline, _elapsed_s(t0), limit))
 end
 
+# A delete counts as done only when the reply says so: the documented body carries
+# `"deleted": true`, and one without it (or with `false`) leaves the object in place as
+# far as the caller can know. The throw becomes the verb's *CallError.
+function _confirm_deleted(d::AbstractDict)::Bool
+    haskey(d, "deleted") || throw(ArgumentError(
+        "the delete reply has no \"deleted\" field, so the removal is unconfirmed"))
+    d["deleted"] === true || throw(ArgumentError(
+        "the service did not confirm the delete (\"deleted\": $(repr(d["deleted"])))"))
+    return true
+end
+
 _poll_timeout_text(verb::String, id::String, to::UniLMTimeout, seen)::String =
     "$verb timeout: $id reached no terminal status within $(to.limit) s (last observed status: " *
     "$(isnothing(seen) ? "none" : something(seen.response.status, "none")))"
@@ -150,7 +161,7 @@ end
 @kwdef struct FileListSuccess <: LLMRequestResponse; response::FileList; end
 "Successful [`file_content`](@ref) result; `content` holds the raw file bytes."
 @kwdef struct FileContentSuccess <: LLMRequestResponse; content::Vector{UInt8}; end
-"Successful [`delete_file`](@ref) result; `deleted` confirms removal of `id`."
+"Successful [`delete_file`](@ref) result: the service confirmed (`deleted` is always `true`) the removal of `id`."
 @kwdef struct FileDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
 "Files API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
 @kwdef struct FileFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
@@ -267,7 +278,7 @@ function delete_file(file_id::String; service::ServiceEndpointSpec=OPENAIService
         resp = _http("DELETE", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
-            return FileDeleteSuccess(id=get(d, "id", file_id), deleted=get(d, "deleted", false))
+            return FileDeleteSuccess(id=get(d, "id", file_id), deleted=_confirm_deleted(d))
         else
             return _failure(FileFailure, resp)
         end

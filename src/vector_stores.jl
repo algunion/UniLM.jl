@@ -74,7 +74,7 @@ end
 @kwdef struct VectorStoreFileSuccess <: LLMRequestResponse; response::VectorStoreFileObject; end
 "Successful file-batch result wrapping a [`VectorStoreFileBatch`](@ref)."
 @kwdef struct VectorStoreBatchSuccess <: LLMRequestResponse; response::VectorStoreFileBatch; end
-"Successful [`delete_vector_store`](@ref) result; `deleted` confirms removal of `id`."
+"Successful [`delete_vector_store`](@ref) result: the service confirmed (`deleted` is always `true`) the removal of `id`."
 @kwdef struct VectorStoreDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
 "Vector Stores API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
 @kwdef struct VectorStoreFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
@@ -188,7 +188,7 @@ function delete_vector_store(id::String; service::ServiceEndpointSpec=OPENAIServ
         resp = _vs_http("DELETE", _api_base_url(service) * VECTOR_STORES_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
-            VectorStoreDeleteSuccess(id=get(d, "id", id), deleted=get(d, "deleted", false))
+            VectorStoreDeleteSuccess(id=get(d, "id", id), deleted=_confirm_deleted(d))
         else
             _failure(VectorStoreFailure, resp)
         end

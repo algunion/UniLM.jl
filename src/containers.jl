@@ -32,7 +32,7 @@ end
 @kwdef struct ContainerSuccess <: LLMRequestResponse; response::ContainerObject; end
 "Successful [`list_containers`](@ref) result wrapping a [`ContainerList`](@ref)."
 @kwdef struct ContainerListSuccess <: LLMRequestResponse; response::ContainerList; end
-"Successful [`delete_container`](@ref) result; `deleted` confirms removal of `id`."
+"Successful [`delete_container`](@ref) result: the service confirmed (`deleted` is always `true`) the removal of `id`."
 @kwdef struct ContainerDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
 "Containers API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
 @kwdef struct ContainerFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
@@ -120,7 +120,7 @@ function delete_container(id::String; service::ServiceEndpointSpec=OPENAIService
             cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 || return _failure(ContainerFailure, resp)
         d = JSON.parse(resp.body; dicttype=Dict{String,Any})
-        ContainerDeleteSuccess(id=get(d, "id", id), deleted=get(d, "deleted", false))
+        ContainerDeleteSuccess(id=get(d, "id", id), deleted=_confirm_deleted(d))
     catch e
         e isa InterruptException && rethrow()
         _callerr(ContainerCallError, e)

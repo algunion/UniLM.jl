@@ -54,13 +54,13 @@ end
 
 # ─── Result types ─────────────────────────────────────────────────────────────
 
-"Successful create/retrieve/update result wrapping a [`ConversationObject`](@ref)."
+"Successful create/retrieve/update result wrapping a [`ConversationObject`](@ref); also the result of [`delete_conversation_item`](@ref), which the service answers with the updated conversation."
 @kwdef struct ConversationSuccess <: LLMRequestResponse; response::ConversationObject; end
 "Successful [`list_conversation_items`](@ref) / [`add_conversation_items`](@ref) result wrapping a [`ConversationItemList`](@ref)."
 @kwdef struct ConversationItemListSuccess <: LLMRequestResponse; response::ConversationItemList; end
 "Successful result wrapping a single [`ConversationItem`](@ref)."
 @kwdef struct ConversationItemSuccess <: LLMRequestResponse; response::ConversationItem; end
-"Successful [`delete_conversation`](@ref) / [`delete_conversation_item`](@ref) result; `deleted` confirms removal of `id`."
+"Successful [`delete_conversation`](@ref) result: the service confirmed (`deleted` is always `true`) the removal of `id`."
 @kwdef struct ConversationDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
 "Conversations API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
 @kwdef struct ConversationFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
@@ -76,7 +76,6 @@ function _conv_http(method::String, url::String, service, cfg::RequestConfig, re
     isnothing(body) ? _http(method, url, headers; cfg, remaining) :
         _http(method, url, headers, body; cfg, remaining)
 end
-
 
 # ─── Requests ─────────────────────────────────────────────────────────────────
 
@@ -154,7 +153,7 @@ function delete_conversation(id::String; service::ServiceEndpointSpec=OPENAIServ
         resp = _conv_http("DELETE", _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0))
         if resp.status == 200
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
-            ConversationDeleteSuccess(id=get(d, "id", id), deleted=get(d, "deleted", false))
+            ConversationDeleteSuccess(id=get(d, "id", id), deleted=_confirm_deleted(d))
         else
             _failure(ConversationFailure, resp)
         end
@@ -226,6 +225,9 @@ end
 """
     delete_conversation_item(conversation_id, item_id; service=OPENAIServiceEndpoint)
 
+Delete one item. The service answers with the updated conversation, so a success is a
+`ConversationSuccess` wrapping that [`ConversationObject`](@ref).
+
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function delete_conversation_item(conv_id::String, item_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
@@ -233,12 +235,8 @@ function delete_conversation_item(conv_id::String, item_id::String; service::Ser
     cfg = _resolve_config(config); t0 = time_ns()
     try
         resp = _conv_http("DELETE", _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(conv_id) * "/items/" * _uripart(item_id), service, cfg, _remaining_s(cfg, t0))
-        if resp.status == 200
-            d = JSON.parse(resp.body; dicttype=Dict{String,Any})
-            ConversationDeleteSuccess(id=get(d, "id", item_id), deleted=get(d, "deleted", false))
-        else
+        resp.status == 200 ? ConversationSuccess(response=_parse_conversation(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
             _failure(ConversationFailure, resp)
-        end
     catch e
         e isa InterruptException && rethrow()
         _callerr(ConversationCallError, e)

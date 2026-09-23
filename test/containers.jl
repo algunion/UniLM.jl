@@ -12,6 +12,13 @@
     end
 end
 
+@testset "delete_container reports success only when the service confirms the delete" begin
+    del(body) = _answered(() -> delete_container("cntr_1"; service=URLProbe), 200; body)
+    @test del("""{"id": "cntr_1", "deleted": true}""") == UniLM.ContainerDeleteSuccess(id="cntr_1", deleted=true)
+    @test del("""{"id": "cntr_1"}""") isa UniLM.ContainerCallError
+    @test del("""{"id": "cntr_1", "deleted": false}""") isa UniLM.ContainerCallError
+end
+
 @testset "Containers API — a failure keeps the request id the service sent" begin
     r = _answered(() -> retrieve_container("cntr_x"; service=URLProbe), 404; headers=["x-request-id" => "req_cntr"])
     @test r isa UniLM.ContainerFailure && r.request_id == "req_cntr"

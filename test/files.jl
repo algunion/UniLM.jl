@@ -71,6 +71,15 @@ end
     @test isnothing(_answered(() -> delete_file("f"; service=URLProbe), 404).request_id)
 end
 
+@testset "delete_file reports success only when the service confirms the delete" begin
+    del(body) = _answered(() -> delete_file("file-1"; service=URLProbe), 200; body)
+    @test del("""{"id": "file-1", "object": "file", "deleted": true}""") ==
+          FileDeleteSuccess(id="file-1", deleted=true)
+    unconfirmed = del("""{"id": "file-1", "object": "file"}""")
+    @test unconfirmed isa FileCallError && occursin("deleted", unconfirmed.error)
+    @test del("""{"id": "file-1", "object": "file", "deleted": false}""") isa FileCallError
+end
+
 @testset "upload_file: a create is sent once, never retried" begin
     # A create is not idempotent. A POST the client stopped waiting for, or a gateway
     # 5xx sent after the backend stored the file, may already have created the file,

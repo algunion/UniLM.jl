@@ -31,6 +31,13 @@ end
     @test t.last_observed isa UniLM.VectorStoreFileBatch && t.last_observed.status == "in_progress"
 end
 
+@testset "delete_vector_store reports success only when the service confirms the delete" begin
+    del(body) = _answered(() -> delete_vector_store("vs_1"; service=URLProbe), 200; body)
+    @test del("""{"id": "vs_1", "deleted": true}""") == UniLM.VectorStoreDeleteSuccess(id="vs_1", deleted=true)
+    @test del("""{"id": "vs_1"}""") isa UniLM.VectorStoreCallError
+    @test del("""{"id": "vs_1", "deleted": false}""") isa UniLM.VectorStoreCallError
+end
+
 @testset "Vector Stores API — a failure keeps the request id the service sent" begin
     r = _answered(() -> retrieve_vector_store("vs_x"; service=URLProbe), 404;
                   headers=["x-request-id" => "req_vs"])

@@ -8,6 +8,26 @@
     @test _seam_timeout(delete_conversation_item("conv_x", "item_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.ConversationCallError)
 end
 
+@testset "delete_conversation reports success only when the service confirms the delete" begin
+    del(body) = _answered(() -> delete_conversation("conv_1"; service=URLProbe), 200; body)
+    @test del("""{"id": "conv_1", "object": "conversation.deleted", "deleted": true}""") ==
+          UniLM.ConversationDeleteSuccess(id="conv_1", deleted=true)
+    @test del("""{"id": "conv_1", "object": "conversation.deleted"}""") isa UniLM.ConversationCallError
+    @test del("""{"id": "conv_1", "object": "conversation.deleted", "deleted": false}""") isa UniLM.ConversationCallError
+end
+
+@testset "delete_conversation_item returns the updated conversation" begin
+    # The documented reply to deleting an item is the Conversation object, not a
+    # delete record — so there is no item id or `deleted` flag to report.
+    conv = """{"id": "conv_1", "object": "conversation", "created_at": 1741900000, "metadata": {"topic": "demo"}}"""
+    r = _answered(() -> delete_conversation_item("conv_1", "msg_1"; service=URLProbe), 200; body=conv)
+    @test r isa ConversationSuccess
+    @test conversation_id(r.response) == "conv_1"
+    @test r.response.created_at == 1741900000 && r.response.metadata == Dict("topic" => "demo")
+    @test _answered(() -> delete_conversation_item("conv_1", "msg_1"; service=URLProbe), 200;
+                    body="{}") isa UniLM.ConversationCallError
+end
+
 @testset "Conversations API — a failure keeps the request id the service sent" begin
     r = _answered(() -> retrieve_conversation("conv_x"; service=URLProbe), 404;
                   headers=["x-request-id" => "req_conv"])

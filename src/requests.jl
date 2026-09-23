@@ -161,7 +161,9 @@ function _error_text(e)::String
     u = _unwrap_exception(e)
     txt = try
         u isa Exception ? sprint(showerror, u) : string(u)
-    catch
+    catch e
+        # A user interrupt that lands while rendering is still the user's intent.
+        e isa InterruptException && rethrow()
         # A showerror that itself throws must not replace a typed failure with a
         # crash: name the type and move on.
         string(typeof(u))

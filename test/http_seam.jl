@@ -53,6 +53,18 @@ end
 
 stop!(m::MuteServer) = (close(m.server); wait(m.task); nothing)
 
+# Exceptions whose own rendering fails: a user interrupt landing inside
+# showerror, and an ordinary rendering bug.
+struct _InterruptingShow <: Exception end
+Base.showerror(::IO, ::_InterruptingShow) = throw(InterruptException())
+struct _BrokenShow <: Exception end
+Base.showerror(::IO, ::_BrokenShow) = error("broken showerror")
+
+@testset "_error_text: an interrupt inside showerror propagates; other failures degrade" begin
+    @test_throws InterruptException UniLM._error_text(_InterruptingShow())
+    @test UniLM._error_text(_BrokenShow()) == string(_BrokenShow)   # names the type
+end
+
 @testset "translation: Inf becomes native-off per phase" begin
     # Real seconds; 0 disables; Inf must never reach the library (it rejects
     # non-finite), and connect must be explicit (nothing => 30 s default).

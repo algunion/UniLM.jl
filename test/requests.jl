@@ -1277,6 +1277,49 @@ end
     @test UniLM._mask_auth_headers("api-key: $secret") == "api-key: secr…[redacted]"
 end
 
+# A server on an OS-assigned port that reads each request and answers nothing for
+# `hold` seconds; `hits` counts the requests that reached it.
+function _mute_request_server(; hold::Real=10.0)
+    hits = Threads.Atomic{Int}(0)
+    server = HTTP.listen!("127.0.0.1", 0; verbose=false) do http::HTTP.Stream
+        read(http); Threads.atomic_add!(hits, 1); sleep(hold)
+    end
+    (; server, url="http://127.0.0.1:$(HTTP.port(server))", hits)
+end
+
+@testset "non-streaming chat and embeddings are cancellable" begin
+    srv = _mute_request_server()
+    try
+        ep = GenericOpenAIEndpoint(srv.url, "")
+        cfg = RequestConfig(request_timeout=30.0, total_deadline=120.0, max_attempts=3)
+        typed(r, T) = r isa T && isnothing(r.status) && r.cause isa UniLMCancelled && r.cause.source === :token
+        calls = (() -> Chat(service=ep, model="m", messages=[Message(Val(:system), "s"), Message(Val(:user), "u")]),
+                 () -> UniLM.Embeddings("x"; service=ep, model="m"))
+        verbs = ((c, tok) -> chatrequest!(c; config=cfg, cancel=tok), (e, tok) -> embeddingrequest!(e; config=cfg, cancel=tok))
+        for (make, verb, T) in zip(calls, verbs, (LLMCallError, EmbeddingCallError))
+            hits0 = srv.hits[]
+            req = make(); tok = CancelToken()
+            t = Threads.@spawn (r = verb(req, tok); (r, time()))
+            @test timedwait(() -> srv.hits[] == hits0 + 1, 25.0) === :ok
+            sleep(0.3)
+            cancelled_at = time()
+            cancel!(tok)
+            @test timedwait(() -> istaskdone(t), 25.0) === :ok
+            r, done_at = fetch(t)
+            @test typed(r, T)
+            @test done_at - cancelled_at < 0.5
+            @test srv.hits[] == hits0 + 1                                   # never retried
+            @test typed(verb(make(), cancel!(CancelToken())), T)           # pre-cancelled...
+            @test srv.hits[] == hits0 + 1                                   # ...sends nothing
+        end
+        chat = calls[1]()
+        chatrequest!(chat; cancel=cancel!(CancelToken()))
+        @test length(chat.messages) == 2
+    finally
+        HTTP.forceclose(srv.server)
+    end
+end
+
 @testset "a transport failure mid-exchange cannot leak the configured key" begin
     # End-to-end absence contract on the live seam: a peer that accepts and
     # immediately closes drives the non-stream driver into its catch, and whatever

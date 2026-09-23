@@ -2472,15 +2472,15 @@ end
     end
 end
 
-@testset "respond stream: a byte-gap kill inside a user callback fails typed, never as a 200" begin
-    # The guard closes the socket to unblock a blocked read. When that close lands
-    # while the driver sits inside a user callback, the truncated read comes back
-    # as a CLEAN EOF: the loop exits with NO exception to classify, and the killed
-    # stream surfaced as ResponseFailure(status=200) carrying the partial bytes.
-    # Scaling: one delta arrives at once, the callback holds the driver for 5.0 s
-    # — past the 2.0 s idle limit plus its [limit, 2*limit] detection window even
-    # with a shared-runner stall — and the server holds the connection for 12.0 s
-    # so the peer never ends the stream first.
+@testset "respond stream: a peer mute after a slow callback fails typed, never as a 200" begin
+    # The guard closes the socket to unblock a blocked read; a close that lands as
+    # the driver enters a user callback truncates the read into a CLEAN EOF, and
+    # that killed stream once surfaced as ResponseFailure(status=200) carrying the
+    # partial bytes. Time inside the callback is not wire idle time, so the 5.0 s
+    # callback itself never trips the 2.0 s bound — the peer's silence after it
+    # does, and the outcome must be the typed byte-gap breach. Scaling: one delta
+    # arrives at once and the server holds the connection for 12.0 s, past
+    # callback + limit + detection window, so the peer never ends the stream first.
     chunks = ["event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"]
     server, url = _sse_gap_server(chunks; gap=0.1, idle_after=true, hold=12.0)
     _RESP_TIMEOUT_URL[] = url
@@ -2768,4 +2768,189 @@ end
     seg = "/v1/responses/resp_abc123"
     @test targets == [seg, seg, seg * "/cancel",
                       seg * "/input_items?limit=20&order=desc&after=resp_item_9"]
+end
+
+# ─── Agentic driver: cancellation, stops, time in user code, user-code failures ─
+
+# SSE/HTTP server on an OS-assigned port: answers `status` (with `headers`), streams
+# `chunks` `gap` seconds apart, then holds `hold` seconds; `mute=true` sends nothing at
+# all (not even headers) for `hold` seconds. `hits` counts requests that reached it.
+function _ag_server(chunks::Vector{String}=String[]; gap::Real=0.1, hold::Real=0.0, mute::Bool=false,
+                    status::Int=200, headers::Vector{Pair{String,String}}=Pair{String,String}[])
+    hits = Threads.Atomic{Int}(0)
+    server = HTTP.listen!("127.0.0.1", 0; verbose=false) do http::HTTP.Stream
+        read(http)
+        Threads.atomic_add!(hits, 1)
+        mute && return sleep(hold)
+        HTTP.setstatus(http, status)
+        HTTP.setheader(http, "Content-Type" => "text/event-stream")
+        foreach(h -> HTTP.setheader(http, h), headers)
+        HTTP.startwrite(http)
+        for c in chunks
+            write(http, c); flush(http); sleep(gap)
+        end
+        sleep(hold)
+    end
+    (; server, url="http://127.0.0.1:$(HTTP.port(server))", hits)
+end
+
+_ag_stream(url) = Respond(service=GenericOpenAIEndpoint(url, ""), model="m", input="hi", stream=true)
+const _AG_SLOW = RequestConfig(request_timeout=30.0, stream_idle_timeout=30.0,
+                               total_deadline=120.0, max_attempts=1)
+_ag_cancelled_by(r, source) = r isa ResponseCallError && isnothing(r.status) &&
+                              r.cause isa UniLMCancelled && r.cause.source === source
+
+# Run `call()` (returns a Task) and fire `stop()` `after` seconds after `ready()` holds
+# (the phase under test was reached); returns the result and the seconds from the stop
+# to the result.
+function _ag_stop_after(call, stop; ready::Function, after::Real=1.0)
+    t = Threads.@spawn (r = fetch(call()); (r, time()))
+    timedwait(ready, 25.0) === :ok || return (; finished=false, result=nothing, latency=Inf)
+    sleep(after)
+    stopped_at = time()
+    stop()
+    finished = timedwait(() -> istaskdone(t), 25.0) === :ok
+    finished || return (; finished, result=nothing, latency=Inf)
+    r, done_at = fetch(t)
+    (; finished, result=r, latency=done_at - stopped_at)
+end
+
+@testset "respond (non-streaming): cancellable, never retried, nothing sent when pre-cancelled" begin
+    srv = _ag_server(; mute=true, hold=10.0)
+    try
+        r = Respond(service=GenericOpenAIEndpoint(srv.url, ""), model="m", input="hi")
+        tok = CancelToken()
+        cfg = RequestConfig(request_timeout=30.0, total_deadline=120.0, max_attempts=3)
+        o = _ag_stop_after(() -> Threads.@spawn(respond(r; config=cfg, cancel=tok)), () -> cancel!(tok);
+                           ready=() -> srv.hits[] == 1)
+        @test o.finished && _ag_cancelled_by(o.result, :token)
+        @test o.latency < 0.5
+        @test srv.hits[] == 1
+        @test _ag_cancelled_by(respond(r; cancel=cancel!(CancelToken())), :token)
+        @test srv.hits[] == 1
+    finally
+        HTTP.forceclose(srv.server)
+    end
+end
+
+@testset "agentic stream: a cancel ends it promptly and typed" begin
+    @testset "mid-stream: events 5 s apart, cancelled 1 s in" begin
+        srv = _ag_server([_delta_event("a"), _delta_event("b"), _completed_event("ab", 2)]; gap=5.0)
+        try
+            tok = CancelToken(); seen = Any[]
+            o = _ag_stop_after(() -> respond(_ag_stream(srv.url); config=_AG_SLOW, cancel=tok,
+                                             callback=(c, _) -> push!(seen, c)),
+                               () -> cancel!(tok); ready=() -> !isempty(seen))
+            @test o.finished && _ag_cancelled_by(o.result, :token)
+            @test o.latency < 0.5
+            @test seen == ["a"]                     # no terminal callback
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+
+    @testset "during a mute header wait" begin
+        srv = _ag_server(; mute=true, hold=10.0)
+        try
+            tok = CancelToken()
+            o = _ag_stop_after(() -> respond(_ag_stream(srv.url); config=_AG_SLOW, cancel=tok),
+                               () -> cancel!(tok); ready=() -> srv.hits[] == 1)
+            @test o.finished && _ag_cancelled_by(o.result, :token)
+            @test o.latency < 0.5
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+
+    @testset "during a Retry-After backoff, never retried" begin
+        srv = _ag_server(["slow down"]; status=429, headers=["Retry-After" => "30"])
+        try
+            tok = CancelToken()
+            cfg = RequestConfig(request_timeout=30.0, stream_idle_timeout=30.0,
+                                total_deadline=120.0, max_attempts=3)
+            t = Threads.@spawn (r = fetch(respond(_ag_stream(srv.url); config=cfg, cancel=tok)); (r, time()))
+            @test timedwait(() -> srv.hits[] == 1, 25.0) === :ok
+            sleep(0.3)
+            cancelled_at = time()
+            cancel!(tok)
+            @test timedwait(() -> istaskdone(t), 25.0) === :ok
+            r, done_at = fetch(t)
+            @test _ag_cancelled_by(r, :token)
+            @test done_at - cancelled_at < 0.5
+            @test srv.hits[] == 1
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+
+    @testset "a pre-cancelled token sends nothing" begin
+        srv = _ag_server([_completed_event("x", 2)])
+        try
+            tok = cancel!(CancelToken())
+            @test _ag_cancelled_by(fetch(respond(_ag_stream(srv.url); cancel=tok)), :token)
+            @test _ag_cancelled_by(fetch(respond("hi"; service=GenericOpenAIEndpoint(srv.url, ""),
+                                                 model="m", stream=true, cancel=tok)), :token)
+            @test srv.hits[] == 0
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+end
+
+@testset "agentic stream: the close flag is the same typed stop" begin
+    @testset "set from another task: prompt, source :callback" begin
+        srv = _ag_server([_delta_event("a"), _delta_event("b"), _completed_event("ab", 2)]; gap=5.0)
+        try
+            handle = Ref{Any}(nothing)
+            o = _ag_stop_after(() -> respond(_ag_stream(srv.url); config=_AG_SLOW,
+                                             callback=(c, close) -> (handle[] = close)),
+                               () -> (handle[][] = true); ready=() -> handle[] !== nothing)
+            @test o.finished && _ag_cancelled_by(o.result, :callback)
+            @test o.latency < 0.5
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+
+    @testset "a stop on the terminal leaves the response standing" begin
+        srv = _ag_server([_delta_event("ok"), _completed_event("ok", 2)])
+        try
+            r = fetch(respond(_ag_stream(srv.url); callback=(c, close) -> c isa ResponseObject && (close[] = true)))
+            @test r isa ResponseSuccess && output_text(r) == "ok"
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+end
+
+@testset "agentic stream: time in user code is not wire idle time" begin
+    srv = _ag_server([_delta_event("a"), _delta_event("b"), _completed_event("ab", 2)]; gap=0.2)
+    try
+        deltas = String[]
+        cfg = RequestConfig(request_timeout=10.0, stream_idle_timeout=1.0, total_deadline=60.0, max_attempts=1)
+        t = respond(_ag_stream(srv.url); config=cfg,
+                    callback=(c, _) -> c isa String && (push!(deltas, c); sleep(3.0)))
+        @test timedwait(() -> istaskdone(t), 40.0) === :ok
+        r = fetch(t)
+        @test r isa ResponseSuccess && output_text(r) == "ab"
+        @test join(deltas) == "ab"
+    finally
+        HTTP.forceclose(srv.server)
+    end
+end
+
+@testset "agentic stream: an exception from the terminal callback is the outcome" begin
+    # The terminal was recorded, but the user's failure is not connection teardown.
+    srv = _ag_server([_delta_event("ok"), _completed_event("ok", 2)])
+    try
+        calls = String[]
+        cfg = RequestConfig(request_timeout=10.0, stream_idle_timeout=10.0, total_deadline=60.0, max_attempts=3)
+        r = fetch(respond(_ag_stream(srv.url); config=cfg, callback=(c, _) -> c isa String ?
+            push!(calls, "delta") : (push!(calls, "response"); throw(Base.IOError("user sink closed", 0)))))
+        @test r isa ResponseCallError && r.cause isa Base.IOError
+        @test calls == ["delta", "response"]
+        @test srv.hits[] == 1
+    finally
+        HTTP.forceclose(srv.server)
+    end
 end

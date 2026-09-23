@@ -25,9 +25,10 @@
 #            still reports success, delivers exactly one terminal callback, and —
 #            the billing-critical part — is never re-POSTed.
 #   bslow    slow consumer: a healthy stream whose user callback blocks longer
-#            than `stream_idle_timeout`. Checks the idle kill surfaces as a TYPED
-#            `UniLMTimeout(:stream_idle)` carried in the result, never as a
-#            truncated success or a status-200 failure holding partial bytes.
+#            than `stream_idle_timeout`. Time in user code is not wire idle time,
+#            so every call must succeed with its complete text — never a
+#            `UniLMTimeout(:stream_idle)` or a status-200 failure holding
+#            partial bytes.
 #
 # Exit codes
 #   0   every batch passed (the state a fixed client must reach)
@@ -731,16 +732,11 @@ function start_slow_host()
         HTTP.setstatus(http, 200)
         HTTP.setheader(http, "Content-Type" => "text/event-stream")
         HTTP.startwrite(http)
-        try
-            for k in 1:SLOW_CHUNKS
-                write(http, sse_delta("$marker#$k ", k == SLOW_CHUNKS ? "stop" : nothing))
-                flush(http); sleep(SLOW_GAP)
-            end
-            write(http, "data: [DONE]\n\n")
-        catch
-            # The consumer's idle bound closes the socket mid-stream; the
-            # resulting write failure is the expected server-side echo.
+        for k in 1:SLOW_CHUNKS
+            write(http, sse_delta("$marker#$k ", k == SLOW_CHUNKS ? "stop" : nothing))
+            flush(http); sleep(SLOW_GAP)
         end
+        write(http, "data: [DONE]\n\n")
     end
     (; server, base="http://127.0.0.1:$port")
 end
@@ -750,7 +746,8 @@ function batch_slow()
     host = start_slow_host()
     ep = GenericOpenAIEndpoint(host.base, "probe-key")
     shapes = String[]
-    typed = 0
+    complete = 0
+    idle_timeouts = 0
     # Serial: this batch is timing-sensitive and must not compete with itself.
     for i in 1:N_SLOW
         marker = marker_of(i)
@@ -766,11 +763,13 @@ function batch_slow()
         end
         s = res isa AbstractString ? res : shape(res)
         push!(shapes, s)
-        is_stream_idle_timeout(res) && (typed += 1)
+        expected = join("$marker#$k " for k in 1:SLOW_CHUNKS)
+        res isa LLMSuccess && res.message.content == expected && (complete += 1)
+        is_stream_idle_timeout(res) && (idle_timeouts += 1)
         println("bslow_call_$(i)= callbacks=$(n[]) result=$(s)")
         mark_done!(i)
     end
-    pass = typed == N_SLOW
+    pass = complete == N_SLOW
 
     println("SUMMARY_START")
     println("batch=bslow")
@@ -778,11 +777,11 @@ function batch_slow()
     println("stream_idle_timeout_s=", SLOW_IDLE)
     println("callback_block_s=", SLOW_BLOCK)
     println("server_chunk_gap_s=", SLOW_GAP, " chunks=", SLOW_CHUNKS)
-    println("typed_stream_idle_timeouts=", typed, "/", N_SLOW)
-    println("truncated_successes=", count(s -> startswith(s, "LLMSuccess"), shapes))
+    println("complete_successes=", complete, "/", N_SLOW)
+    println("stream_idle_timeouts=", idle_timeouts)
     println("status_200_failures=", count(s -> startswith(s, "LLMFailure(status=200"), shapes))
     println("result_shapes=", join(sort(unique(shapes)), " | "))
-    println("prediction=FAIL")
+    println("prediction=PASS")
     println("verdict=", pass ? "PASS" : "FAIL")
     println("SUMMARY_END")
 

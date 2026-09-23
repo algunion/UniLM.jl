@@ -481,7 +481,7 @@ end
         end
     end
 
-    @testset "user close via callback → no message, legacy LLMFailure preserved" begin
+    @testset "user close via callback → typed cancellation, no message, nothing committed" begin
         chunks = [
             "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a\"},\"finish_reason\":null}]}\n\n",
             "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"b\"},\"finish_reason\":null}]}\n\n",
@@ -491,8 +491,12 @@ end
         try
             chat = Chat(service=GenericOpenAIEndpoint(base, ""), model="mock", stream=true)
             push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
-            res = fetch(chatrequest!(chat; callback=(c, close_ref) -> (close_ref[] = true)))
-            @test res isa LLMFailure                          # user-close contract, unchanged
+            seen = Any[]
+            res = fetch(chatrequest!(chat; callback=(c, close_ref) -> (push!(seen, c); close_ref[] = true)))
+            @test res isa LLMCallError && isnothing(res.status)
+            @test res isa LLMCallError && res.cause isa UniLMCancelled && res.cause.source === :callback
+            @test seen == ["a"]                               # no terminal Message callback
+            @test length(chat.messages) == 2
         finally
             close(server)
         end
@@ -574,5 +578,261 @@ end
         @test st.sse_dropped == 0
         @test LLMSuccess(message=Message(role=UniLM.RoleAssistant, content="x"),
                          self=Chat(model="m")).sse_dropped == 0
+    end
+end
+
+# ─── Driver: cancellation, stops, time in user code, user-code failures ─────────
+
+# SSE server on an OS-assigned port. After reading the request it answers `status`
+# (with `headers`) and streams `chunks` `gap` seconds apart, then holds the connection
+# `hold` seconds. `hits` counts the requests that reached it.
+function paced_sse_server(chunks::Vector{String}; gap::Real=0.1, hold::Real=0.0,
+                          status::Int=200, headers::Vector{Pair{String,String}}=Pair{String,String}[])
+    hits = Threads.Atomic{Int}(0)
+    server = HTTP.listen!("127.0.0.1", 0; verbose=false) do http::HTTP.Stream
+        read(http)
+        Threads.atomic_add!(hits, 1)
+        HTTP.setstatus(http, status)
+        HTTP.setheader(http, "Content-Type" => "text/event-stream")
+        foreach(h -> HTTP.setheader(http, h), headers)
+        HTTP.startwrite(http)
+        for c in chunks
+            write(http, c); flush(http); sleep(gap)
+        end
+        sleep(hold)
+    end
+    (; server, url="http://127.0.0.1:$(HTTP.port(server))", hits)
+end
+
+# A server that reads the request and then sends nothing — not even the response
+# headers — for `hold` seconds.
+function mute_header_server(; hold::Real=10.0)
+    hits = Threads.Atomic{Int}(0)
+    server = HTTP.listen!("127.0.0.1", 0; verbose=false) do http::HTTP.Stream
+        read(http); Threads.atomic_add!(hits, 1); sleep(hold)
+    end
+    (; server, url="http://127.0.0.1:$(HTTP.port(server))", hits)
+end
+
+sse_text(s; finish=nothing) = "data: " * JSON.json(Dict("choices" => [Dict("index" => 0,
+    "delta" => Dict("content" => s), "finish_reason" => finish)])) * "\n\n"
+
+stream_chat(url) = Chat(service=GenericOpenAIEndpoint(url, ""), model="mock", stream=true,
+                        messages=[Message(Val(:system), "s"), Message(Val(:user), "u")])
+
+const _SLOW_CFG = RequestConfig(request_timeout=30.0, stream_idle_timeout=30.0,
+                                total_deadline=120.0, max_attempts=1)
+
+# Run `call()` (a streaming verb returning a Task) on a task that also records when
+# its result arrived; `stop()` fires `after` seconds after `ready()` holds (the phase
+# under test was reached). Returns the result and the seconds from the stop to it.
+function stop_after(call, stop; ready::Function, after::Real=1.0)
+    t = Threads.@spawn (r = fetch(call()); (r, time()))
+    timedwait(ready, 25.0) === :ok || return (; finished=false, result=nothing, latency=Inf)
+    sleep(after)
+    stopped_at = time()
+    stop()
+    finished = timedwait(() -> istaskdone(t), 25.0) === :ok
+    finished || return (; finished, result=nothing, latency=Inf)
+    r, done_at = fetch(t)
+    (; finished, result=r, latency=done_at - stopped_at)
+end
+
+cancelled_by(r, source) = r isa LLMCallError && isnothing(r.status) &&
+                          r.cause isa UniLMCancelled && r.cause.source === source
+
+@testset "driver — a cancel ends the stream promptly, typed, and commits nothing" begin
+    @testset "mid-stream: chunks 5 s apart, cancelled 1 s in" begin
+        srv = paced_sse_server([sse_text("a"), sse_text("b"), sse_text("c"; finish="stop"),
+                                "data: [DONE]\n\n"]; gap=5.0)
+        try
+            chat = stream_chat(srv.url); tok = CancelToken(); seen = Any[]
+            o = stop_after(() -> chatrequest!(chat; config=_SLOW_CFG, cancel=tok,
+                                              callback=(c, _) -> push!(seen, c)),
+                           () -> cancel!(tok); ready=() -> !isempty(seen))
+            @test o.finished && cancelled_by(o.result, :token)
+            @test o.latency < 0.5
+            @test seen == ["a"]                     # no terminal callback
+            @test length(chat.messages) == 2        # the partial turn is not committed
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+
+    @testset "during a mute header wait" begin
+        srv = mute_header_server(hold=10.0)
+        try
+            chat = stream_chat(srv.url); tok = CancelToken()
+            o = stop_after(() -> chatrequest!(chat; config=_SLOW_CFG, cancel=tok), () -> cancel!(tok);
+                           ready=() -> srv.hits[] == 1)
+            @test o.finished && cancelled_by(o.result, :token)
+            @test o.latency < 0.5
+            @test length(chat.messages) == 2
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+
+    @testset "during a Retry-After backoff, never retried" begin
+        srv = paced_sse_server(["slow down"]; status=429, headers=["Retry-After" => "30"])
+        try
+            chat = stream_chat(srv.url); tok = CancelToken()
+            cfg = RequestConfig(request_timeout=30.0, stream_idle_timeout=30.0,
+                                total_deadline=120.0, max_attempts=3)
+            t = Threads.@spawn (r = fetch(chatrequest!(chat; config=cfg, cancel=tok)); (r, time()))
+            @test timedwait(() -> srv.hits[] == 1, 25.0) === :ok   # the 429 is in: backing off
+            sleep(0.3)
+            cancelled_at = time()
+            cancel!(tok)
+            @test timedwait(() -> istaskdone(t), 25.0) === :ok
+            r, done_at = fetch(t)
+            @test cancelled_by(r, :token)
+            @test done_at - cancelled_at < 0.5
+            @test srv.hits[] == 1
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+
+    @testset "a pre-cancelled token sends nothing — explicit or ambient" begin
+        srv = paced_sse_server([sse_text("a"; finish="stop"), "data: [DONE]\n\n"])
+        try
+            tok = cancel!(CancelToken())
+            @test cancelled_by(fetch(chatrequest!(stream_chat(srv.url); cancel=tok)), :token)
+            @test cancelled_by(with_cancel(() -> fetch(chatrequest!(stream_chat(srv.url))), tok), :token)
+            @test srv.hits[] == 0
+            @test isempty(tok.hooks)
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+end
+
+@testset "driver — the callback's close flag is the same typed stop" begin
+    @testset "set from another task: prompt, source :callback" begin
+        srv = paced_sse_server([sse_text("a"), sse_text("b"), "data: [DONE]\n\n"]; gap=5.0)
+        try
+            chat = stream_chat(srv.url); handle = Ref{Any}(nothing); seen = Any[]
+            o = stop_after(() -> chatrequest!(chat; config=_SLOW_CFG,
+                                              callback=(c, close) -> (push!(seen, c); handle[] = close)),
+                           () -> (handle[][] = true); ready=() -> handle[] !== nothing)
+            @test o.finished && cancelled_by(o.result, :callback)
+            @test o.latency < 0.5
+            @test seen == ["a"]
+            @test length(chat.messages) == 2
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+
+    @testset "a stop after the terminal was recorded leaves the turn standing" begin
+        srv = paced_sse_server([sse_text("hi"), sse_text(""; finish="stop"), "data: [DONE]\n\n"])
+        srv2 = paced_sse_server([sse_text("yo"; finish="stop"), "data: [DONE]\n\n"])
+        try
+            chat = stream_chat(srv.url)
+            r = fetch(chatrequest!(chat; callback=(c, close) -> c isa Message && (close[] = true)))
+            @test r isa LLMSuccess && r.message.content == "hi"
+            @test length(chat.messages) == 3                        # committed
+            # ... and on the delta that carries the finish reason.
+            chat2 = stream_chat(srv2.url); seen = Any[]
+            r2 = fetch(chatrequest!(chat2; callback=(c, close) -> (push!(seen, c); close[] = true)))
+            @test r2 isa LLMSuccess && r2.message.content == "yo"
+            @test length(chat2.messages) == 3
+            @test count(x -> x isa Message, seen) == 1              # the terminal callback, once
+        finally
+            HTTP.forceclose(srv.server)
+            HTTP.forceclose(srv2.server)
+        end
+    end
+end
+
+@testset "driver — time in user code is not wire idle time" begin
+    @testset "a callback 3 s per delta under stream_idle_timeout=1 still succeeds" begin
+        srv = paced_sse_server([sse_text("a"), sse_text("b"), sse_text("c"; finish="stop"),
+                                "data: [DONE]\n\n"]; gap=0.2)
+        try
+            chat = stream_chat(srv.url); deltas = String[]
+            cfg = RequestConfig(request_timeout=10.0, stream_idle_timeout=1.0, total_deadline=60.0,
+                                max_attempts=1)
+            t = chatrequest!(chat; config=cfg,
+                             callback=(c, _) -> c isa String && (push!(deltas, c); sleep(3.0)))
+            @test timedwait(() -> istaskdone(t), 40.0) === :ok
+            r = fetch(t)
+            @test r isa LLMSuccess && r.message.content == "abc"
+            @test join(deltas) == "abc"
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+
+    @testset "a mute peer after the first chunk still fails :stream_idle on time" begin
+        limit = 2.0
+        period = min(limit / 4, 5.0)
+        srv = paced_sse_server([sse_text("a")]; hold=15.0)
+        try
+            chat = stream_chat(srv.url)
+            cfg = RequestConfig(request_timeout=10.0, stream_idle_timeout=limit, total_deadline=60.0,
+                                max_attempts=1)
+            t = chatrequest!(chat; config=cfg)
+            @test timedwait(() -> istaskdone(t), 25.0) === :ok
+            r = fetch(t)
+            @test r isa LLMCallError && r.cause isa UniLMTimeout && r.cause.phase === :stream_idle
+            # The native read-idle timer is armed when the read starts, just before our
+            # stamp, hence the 0.95 floor; the ceiling adds 0.5 s of timer scheduling.
+            @test r isa LLMCallError && 0.95limit <= r.cause.elapsed <= limit + period + 0.5
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+end
+
+@testset "driver — user-code failures are the outcome, never teardown noise" begin
+    @testset "an IOError from the callback on the finishing delta" begin
+        srv = paced_sse_server([sse_text("hi"; finish="stop") * "data: [DONE]\n\n"])
+        try
+            chat = stream_chat(srv.url); calls = String[]
+            cfg = RequestConfig(request_timeout=10.0, stream_idle_timeout=10.0, total_deadline=60.0,
+                                max_attempts=3)
+            r = fetch(chatrequest!(chat; config=cfg, callback=(c, _) -> c isa String ?
+                (push!(calls, "delta"); throw(Base.IOError("user sink closed", 0))) :
+                push!(calls, "message")))
+            @test r isa LLMCallError && r.cause isa Base.IOError
+            @test calls == ["delta"]                 # no callback after the one that threw
+            @test length(chat.messages) == 2
+            @test srv.hits[] == 1                    # never retried
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+
+    tool_sse = "data: " * JSON.json(Dict("choices" => [Dict("index" => 0, "delta" => Dict("tool_calls" =>
+        [Dict("index" => 0, "id" => "call_1", "type" => "function",
+              "function" => Dict("name" => "f", "arguments" => "{}"))]), "finish_reason" => "tool_calls")])) *
+        "\n\ndata: [DONE]\n\n"
+
+    @testset "an exception from on_tool_call" begin
+        srv = paced_sse_server([tool_sse])
+        try
+            chat = stream_chat(srv.url)
+            cfg = RequestConfig(request_timeout=10.0, stream_idle_timeout=10.0, total_deadline=60.0,
+                                max_attempts=3)
+            r = fetch(chatrequest!(chat; config=cfg, on_tool_call=_ -> error("tool sink failed")))
+            @test r isa LLMCallError && r.cause isa ErrorException && r.cause.msg == "tool sink failed"
+            @test length(chat.messages) == 2
+            @test srv.hits[] == 1
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+
+    @testset "an interrupt from on_tool_call propagates" begin
+        srv = paced_sse_server([tool_sse])
+        try
+            t = chatrequest!(stream_chat(srv.url); on_tool_call=_ -> throw(InterruptException()))
+            @test timedwait(() -> istaskdone(t), 25.0) === :ok
+            @test istaskfailed(t) && t.exception isa InterruptException
+        finally
+            HTTP.forceclose(srv.server)
+        end
     end
 end

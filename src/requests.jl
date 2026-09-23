@@ -64,11 +64,16 @@ function _retry_after_seconds(resp::HTTP.Response)::Union{Nothing,Float64}
     return max(0.0, due - time())
 end
 
-function _retry_delay(retry::Integer, resp::HTTP.Response)::Float64
+# Full-jitter backoff; a Retry-After header is a FLOOR under it, not a
+# replacement: clients that all receive the same header would otherwise wake at
+# the same instant and retry in lockstep. The spread above the floor is capped at
+# the budget left after it, so jitter never pushes a floor that fits past
+# `remaining`.
+function _retry_delay(retry::Integer, resp::HTTP.Response, remaining::Float64=Inf)::Float64
     computed = min(_RETRY_BASE * _RETRY_FACTOR^retry, _RETRY_MAX_DELAY)
-    delay = rand() * computed  # full jitter
     ra = _retry_after_seconds(resp)
-    return isnothing(ra) ? delay : max(ra, delay)
+    isnothing(ra) && return rand() * computed
+    return ra + rand() * min(computed, max(remaining - ra, 0.0))
 end
 
 """
@@ -76,16 +81,18 @@ end
 
 Shared retry-budget arithmetic — the single implementation used by the non-stream
 retry loop and the stream driver. Computes the full-jitter backoff for `attempt`
-(1-based), honoring `Retry-After` when a response is available. Returns
-`(:sleep, delay)` when the pause fits the remaining total deadline, else
-`(:budget, delay)`: fail NOW with the last real outcome — sleeping less and attempting
-with ~zero budget is a guaranteed mid-flight breach, and sleeping past the deadline
-breaks the bound.
+(1-based); a `Retry-After` header, when a response carries one, is the floor the
+jitter spreads above. Returns `(:sleep, delay)` when the pause fits the remaining
+total deadline, else `(:budget, delay)` — which, with a header, happens only when
+the header's own wait does not fit: fail NOW with the last real outcome — sleeping
+less and attempting with ~zero budget is a guaranteed mid-flight breach, and
+sleeping past the deadline breaks the bound.
 """
 function _retry_pause(cfg::RequestConfig, t0::UInt64, attempt::Int,
                       resp::Union{HTTP.Response,Nothing})::Tuple{Symbol,Float64}
-    delay = _retry_delay(attempt - 1, isnothing(resp) ? HTTP.Response(0) : resp)
-    delay > _remaining_s(cfg, t0) ? (:budget, delay) : (:sleep, delay)
+    remaining = _remaining_s(cfg, t0)
+    delay = _retry_delay(attempt - 1, isnothing(resp) ? HTTP.Response(0) : resp, remaining)
+    delay > remaining ? (:budget, delay) : (:sleep, delay)
 end
 
 """

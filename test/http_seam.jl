@@ -301,6 +301,25 @@ end
     end
 end
 
+@testset "retry budget: Retry-After is a floor under the jitter, not a replacement for it" begin
+    # When the header alone decides the wait, every client that got the same
+    # Retry-After sleeps exactly that long and a fanned-out batch retries in
+    # lockstep. The header is the earliest retry instant; jitter spreads above it.
+    ra1 = HTTP.Response(429, ["Retry-After" => "1"])
+    t0 = time_ns()
+    draws = [UniLM._retry_pause(RequestConfig(total_deadline=Inf), t0, 1, ra1) for _ in 1:50]
+    @test all(d -> first(d) === :sleep, draws)
+    @test all(d -> last(d) >= 1.0, draws)
+    @test length(unique(last.(draws))) >= 10
+    # The spread never pushes a retry whose floor fits past the remaining budget.
+    tight = [UniLM._retry_pause(RequestConfig(total_deadline=1.5), time_ns(), 1, ra1) for _ in 1:50]
+    @test all(d -> first(d) === :sleep && 1.0 <= last(d) <= 1.5, tight)
+    # The floor itself must fit: a Retry-After beyond the remaining budget is :budget.
+    action, delay = UniLM._retry_pause(RequestConfig(total_deadline=5.0), time_ns(), 1,
+                                       HTTP.Response(429, ["Retry-After" => "20"]))
+    @test action === :budget && delay >= 20.0
+end
+
 @testset "retry budget: an exhausted total_deadline throws :deadline before any attempt" begin
     hits = Threads.Atomic{Int}(0)
     server, base = _seam_server(req -> begin

@@ -33,6 +33,88 @@ field; OpenAI does not. Returns a moderate, overridable default (see
 """
 default_max_tokens(::Type{ANTHROPICServiceEndpoint}, ::AbstractString) = _ANTHROPIC_DEFAULT_MAX_TOKENS
 
+# ─── Claude model families ───────────────────────────────────────────────────
+# Request contract per family, transcribed on 2026-09-24 from
+#   thinking modes and rejected configs: https://platform.claude.com/docs/en/build-with-claude/thinking.md
+#   effort levels per model:             https://platform.claude.com/docs/en/build-with-claude/effort.md
+#   sampling, prefill, forced tools:     thinking.md "Limits and feature compatibility",
+#                                        https://platform.claude.com/docs/en/models/sonnet-5/migration-guide.md
+#   mid-conversation system messages:    https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages.md
+# `thinking`: :always = adaptive, cannot be disabled; :on = adaptive by default, can be
+# disabled; :off = adaptive on request; :manual = extended thinking (budget_tokens) only.
+# `efforts`: accepted output_config.effort levels (empty = no effort parameter).
+# `sampling`: non-default temperature/top_p accepted. `forced`: tool_choice any/tool
+# accepted. `prefill`: a trailing assistant turn accepted. `system`: role "system"
+# messages after the conversation starts accepted.
+const _CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
+const _CLAUDE_EFFORTS_NO_XHIGH = ["low", "medium", "high", "max"]
+
+@kwdef struct _ClaudeFamily
+    thinking::Symbol
+    efforts::Vector{String} = _CLAUDE_EFFORTS
+    sampling::Bool = false
+    forced::Bool = true
+    prefill::Bool = false
+    system::Bool = false
+end
+
+const _CLAUDE_LEGACY = _ClaudeFamily(thinking=:manual, efforts=String[], sampling=true, prefill=true)
+
+const _CLAUDE_FAMILIES = (
+    "claude-fable-5-1"         => _ClaudeFamily(thinking=:always, forced=false, system=true),
+    "claude-mythos-5-1"        => _ClaudeFamily(thinking=:always, forced=false, system=true),
+    "claude-fable-5"           => _ClaudeFamily(thinking=:always, system=true),
+    "claude-mythos-5"          => _ClaudeFamily(thinking=:always, system=true),
+    "claude-mythos-preview"    => _ClaudeFamily(thinking=:always, efforts=_CLAUDE_EFFORTS_NO_XHIGH),
+    "claude-opus-5-5"          => _ClaudeFamily(thinking=:always, forced=false, system=true),
+    "claude-opus-5"            => _ClaudeFamily(thinking=:on, system=true),
+    "claude-sonnet-5"          => _ClaudeFamily(thinking=:on),
+    "claude-opus-4-8"          => _ClaudeFamily(thinking=:off, system=true),
+    "claude-opus-4-7"          => _ClaudeFamily(thinking=:off),
+    "claude-opus-4-6"          => _ClaudeFamily(thinking=:off, efforts=_CLAUDE_EFFORTS_NO_XHIGH, sampling=true),
+    "claude-sonnet-4-6"        => _ClaudeFamily(thinking=:off, efforts=_CLAUDE_EFFORTS_NO_XHIGH, sampling=true),
+    "claude-opus-4-5"          => _ClaudeFamily(thinking=:manual, efforts=["low", "medium", "high"],
+                                                sampling=true, prefill=true),
+    "claude-sonnet-4-5"        => _CLAUDE_LEGACY,
+    "claude-haiku-4-5"         => _CLAUDE_LEGACY,
+    "claude-opus-4-1"          => _CLAUDE_LEGACY,
+    "claude-opus-4-0"          => _CLAUDE_LEGACY,
+    "claude-opus-4-20250514"   => _CLAUDE_LEGACY,
+    "claude-sonnet-4-0"        => _CLAUDE_LEGACY,
+    "claude-sonnet-4-20250514" => _CLAUDE_LEGACY,
+    "claude-3"                 => _CLAUDE_LEGACY,
+)
+
+# Longest matching family (claude-opus-5-5 is also in the claude-opus-5 family);
+# `nothing` for an id no row covers, e.g. a newer model, which the API validates alone.
+function _claude_family(model::AbstractString)::Union{_ClaudeFamily,Nothing}
+    rows = filter(row -> _model_family(model, first(row)), _CLAUDE_FAMILIES)
+    isempty(rows) ? nothing : last(argmax(row -> length(first(row)), rows))
+end
+
+# reasoning_effort → (thinking, output_config.effort). A level also turns adaptive
+# thinking on where the family has it, so an explicit request reasons on the models
+# that run without thinking by default; "none" disables thinking only where it is on
+# by default and can be turned off, and sends nothing where it is off by default.
+function _anthropic_reasoning(model::String, effort::Union{String,Nothing},
+                              fam::Union{_ClaudeFamily,Nothing})
+    isnothing(effort) && return (nothing, nothing)
+    effort == "minimal" && throw(ArgumentError(
+        "Claude models have no minimal reasoning_effort; use \"low\""))
+    effort == "none" || effort in _CLAUDE_EFFORTS || throw(ArgumentError(
+        "Anthropic reasoning_effort must be none, low, medium, high, xhigh or max (got $(repr(effort)))"))
+    if !isnothing(fam)
+        isempty(fam.efforts) && throw(ArgumentError("$model does not support reasoning_effort"))
+        effort == "none" && fam.thinking === :always && throw(ArgumentError(
+            "$model cannot disable thinking, so reasoning_effort \"none\" is unavailable; use \"low\""))
+        effort == "none" || effort in fam.efforts || throw(ArgumentError(
+            "$model supports reasoning_effort $(join(fam.efforts, ", ")) (got $(repr(effort)))"))
+    end
+    effort == "none" &&
+        return ((isnothing(fam) || fam.thinking === :on) ? Dict(:type => "disabled") : nothing, nothing)
+    ((isnothing(fam) || fam.thinking !== :manual) ? Dict(:type => "adaptive") : nothing, effort)
+end
+
 # ─── Request encoding (neutral Chat → Anthropic Messages body) ───────────────
 
 function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
@@ -42,6 +124,7 @@ function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
         isnothing(getfield(chat, f)) || throw(ArgumentError(
             "Anthropic Messages does not support $f; it is an OpenAI-only option"))
     end
+    fam = _claude_family(chat.model)
     body = Dict{Symbol,Any}(:model => chat.model)
     # max_tokens is REQUIRED by Anthropic; fall back to the moderate default.
     body[:max_tokens] = something(chat.max_completion_tokens, chat.max_tokens,
@@ -58,7 +141,10 @@ function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
     isnothing(chat.temperature) || (body[:temperature] = chat.temperature)
     isnothing(chat.top_p)       || (body[:top_p] = chat.top_p)
     isnothing(chat.metadata)    || (body[:metadata] = chat.metadata)
+    thinking, effort = _anthropic_reasoning(chat.model, chat.reasoning_effort, fam)
+    isnothing(thinking) || (body[:thinking] = thinking)
     output_config = Dict{Symbol,Any}()
+    isnothing(effort) || (output_config[:effort] = effort)
     (fmt = _anthropic_output_format(chat.response_format)) === nothing || (output_config[:format] = fmt)
     isempty(output_config) || (body[:output_config] = output_config)
     chat.stream === true        && (body[:stream] = true)

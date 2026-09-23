@@ -435,3 +435,71 @@ end
     @test !haskey(tools[2], "strict")
     @test _anthropic_body(tools=[Tool(func=FunctionSignature(name="off", strict=false))])["tools"][1]["strict"] === false
 end
+
+# Per-family thinking and effort contract, from
+# https://platform.claude.com/docs/en/build-with-claude/effort.md (levels per model) and
+# https://platform.claude.com/docs/en/build-with-claude/thinking.md (which families think by
+# default, which accept thinking.type "disabled", which are extended-thinking only).
+@testset "encode — reasoning_effort per Claude family" begin
+    enc(model, effort; kw...) = _anthropic_body(; model, reasoning_effort=effort, kw...)
+    err(model, effort) = _anthropic_err(; model, reasoning_effort=effort)
+    all5, no_xhigh = ("low", "medium", "high", "xhigh", "max"), ("low", "medium", "high", "max")
+    for (model, efforts) in (("claude-fable-5-1", all5), ("claude-mythos-5-1", all5), ("claude-fable-5", all5),
+                             ("claude-mythos-5", all5), ("claude-opus-5-5", all5), ("claude-opus-5", all5),
+                             ("claude-sonnet-5", all5), ("claude-opus-4-8", all5), ("claude-opus-4-7", all5),
+                             ("claude-opus-4-6", no_xhigh), ("claude-sonnet-4-6", no_xhigh),
+                             ("claude-mythos-preview", no_xhigh))
+        for effort in efforts
+            body = enc(model, effort)
+            # An explicit effort also turns adaptive thinking on where it is off by default (4.6–4.8).
+            @test body["output_config"] == Dict("effort" => effort) &&
+                  body["thinking"] == Dict("type" => "adaptive")
+        end
+    end
+    for model in ("claude-opus-4-6", "claude-sonnet-4-6", "claude-mythos-preview")
+        e = err(model, "xhigh")
+        @test e isa ArgumentError && occursin(model, e.msg) && occursin("reasoning_effort", e.msg)
+    end
+    # Opus 4.5 is extended-thinking only but takes effort (low, medium, high) without adaptive thinking.
+    for effort in ("low", "medium", "high")
+        body = enc("claude-opus-4-5-20251101", effort)
+        @test body["output_config"] == Dict("effort" => effort) && !haskey(body, "thinking")
+    end
+    @test err("claude-opus-4-5", "max") isa ArgumentError
+    # "none": disable where thinking is on by default and can be turned off, send nothing where it
+    # is off by default, refuse where thinking cannot be disabled.
+    for model in ("claude-opus-5", "claude-sonnet-5", "claude-sonnet-5-5")
+        body = enc(model, "none")
+        @test body["thinking"] == Dict("type" => "disabled") && !haskey(body, "output_config")
+    end
+    for model in ("claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "claude-opus-4-5")
+        body = enc(model, "none")
+        @test !haskey(body, "thinking") && !haskey(body, "output_config")
+    end
+    for model in ("claude-fable-5-1", "claude-mythos-5-1", "claude-fable-5", "claude-mythos-5",
+                  "claude-opus-5-5", "claude-mythos-preview")
+        e = err(model, "none")
+        @test e isa ArgumentError && occursin(model, e.msg) && occursin("reasoning_effort", e.msg)
+    end
+    # No Claude model has a minimal effort, and an unknown level is not an effort at all.
+    for model in ("claude-opus-5-5", "claude-sonnet-5", "claude-opus-4-8", "claude-opus-9")
+        e = err(model, "minimal")
+        @test e isa ArgumentError && occursin("minimal", e.msg) && occursin("low", e.msg)
+        @test err(model, "ultra") isa ArgumentError
+    end
+    # Haiku 4.5 and older models take no effort at all: any reasoning_effort names the model.
+    for model in ("claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250929",
+                  "claude-opus-4-1", "claude-opus-4-20250514", "claude-3-7-sonnet-20250219"), effort in ("low", "none")
+        e = err(model, effort)
+        @test e isa ArgumentError && occursin(model, e.msg) && occursin("reasoning_effort", e.msg)
+    end
+    # An unknown (future) Claude id maps effort and adaptive thinking without validation.
+    body = enc("claude-opus-9", "xhigh")
+    @test body["output_config"] == Dict("effort" => "xhigh") && body["thinking"] == Dict("type" => "adaptive")
+    @test enc("claude-opus-9", "none")["thinking"] == Dict("type" => "disabled")
+    # Unset effort sends neither field; effort and a structured format share output_config.
+    @test !haskey(enc("claude-opus-5-5", nothing), "thinking") && !haskey(enc("claude-opus-5-5", nothing), "output_config")
+    body = enc("claude-sonnet-5", "low"; response_format=UniLM.json_schema("c", "d", _ANTHROPIC_SCHEMA))
+    @test body["output_config"] == Dict("effort" => "low",
+        "format" => Dict("type" => "json_schema", "schema" => _ANTHROPIC_SCHEMA))
+end

@@ -163,6 +163,11 @@ end
     @test UniLM.get_url(chat) == "https://api.anthropic.com/v1/messages"
     @test haskey(UniLM.DEFAULT_PRICING, "claude-opus-4-8")
     @test UniLM.DEFAULT_PRICING["claude-haiku-4-5"].output ≈ 5.0 / 1_000_000
+    # Every default model is priced, so default-model spend is never a silent 0.0.
+    ds = DeepSeekEndpoint("k")
+    for model in (UniLM.default_model(ANTHROPICServiceEndpoint), UniLM.default_model(ds), UniLM.default_fim_model(ds))
+        @test haskey(UniLM.DEFAULT_PRICING, model)
+    end
 end
 
 # A user-defined endpoint — the documented way to reach an OpenAI-compatible

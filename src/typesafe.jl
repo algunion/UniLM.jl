@@ -1022,7 +1022,7 @@ priced at the `jev-latest` row (assuming a later Jev keeps the price TypeSafe li
 for Jev 1.13); any other unpriced name returns `0.0`.
 """
 function estimated_cost(result::SystemOneSuccess; model::Union{String,Nothing}=nothing,
-                        pricing::Dict{String,PriceRow}=DEFAULT_PRICING)::Float64
+                        pricing::AbstractDict{String,PriceRow}=DEFAULT_PRICING)::Float64
     u = token_usage(result)
     rates = _price_row(pricing, isnothing(model) ? result.response.model : model)
     isnothing(rates) && return 0.0

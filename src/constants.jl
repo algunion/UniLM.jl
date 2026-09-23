@@ -91,8 +91,6 @@ const CONTAINERS_PATH::String = "/v1/containers"
 """OpenAI Uploads API path (resumable large-file uploads)."""
 const UPLOADS_PATH::String = "/v1/uploads"
 
-"""OpenAI Videos API path (Sora)."""
-const VIDEOS_PATH::String = "/v1/videos"
 
 """OpenAI Realtime API paths."""
 const REALTIME_CLIENT_SECRETS_PATH::String = "/v1/realtime/client_secrets"

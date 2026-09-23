@@ -1476,7 +1476,7 @@ try
     # Success + message-construction loop (prefix flag), retry-then-recover (shared retry loop), failures, catch.
     # ═══════════════════════════════════════════════════════════════════════
 
-    @testset "prefix_complete success → LLMSuccess, prefix replaced, request carries prefix:true (220–244)" begin
+    @testset "prefix_complete success → LLMSuccess, history keeps prefix + continuation, request carries prefix:true" begin
         # Build a Chat whose LAST message is role=assistant (the prefix). Set messages= directly
         # because push! forbids assistant-after-user-then-assistant ordering construction.
         response_status[] = 200
@@ -1499,10 +1499,10 @@ try
         @test result.message.content == "print('hello')\n```"   # exact completed content
         @test result.message.role == UniLM.RoleAssistant
         @test result.usage.total_tokens == 13
-        # history=true (default): the completed assistant message REPLACED the prefix in the chat.
+        # history=true (default): the prefix message is replaced by the whole assistant turn —
+        # the prefix the model continued from followed by its continuation.
         @test length(chat) == 2
-        @test chat.messages[end].content == "print('hello')\n```"
-        @test chat.messages[end] === result.message
+        @test chat.messages[end].content == "```python\nprint('hello')\n```"
         # The message-construction loop must have flagged the LAST message with prefix:true.
         sent = JSON.parse(request_body[]; dicttype=Dict{String,Any})
         @test sent["messages"][end]["prefix"] == true

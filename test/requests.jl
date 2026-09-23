@@ -497,7 +497,7 @@ end
         try
             UniLM.add_azure_deploy_name!("snapshot-model", "snap-deploy")
             @test UniLM._azure_deployment_path("snapshot-model") == "/openai/deployments/snap-deploy"
-            @test_throws KeyError UniLM._azure_deployment_path("never-registered-model")
+            @test_throws ArgumentError UniLM._azure_deployment_path("never-registered-model")
 
             bad = Threads.Atomic{Int}(0)
             @sync begin

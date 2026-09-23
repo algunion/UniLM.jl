@@ -211,3 +211,90 @@ end
     # by) the Respond constructor.
     @test_throws MethodError tool_loop("hi"; tools=[ct], not_a_real_kwarg=1)
 end
+
+# ─── Scripted endpoints for the loop tests ───────────────────────────────────
+# Every request goes to the scripted local server of platform_seam_fixtures.jl
+# (`_with_scripted`, OS-assigned port; `_url_probe_base[]` is its origin).
+
+# OpenAI-wire endpoint whose decoder hands the loop the next scripted Message, so a
+# test controls the exact finish_reason / tool_calls pair the loop receives.
+struct _TLFixture <: UniLM.OpenAIWireEndpoint
+    replies::Vector{Message}
+end
+UniLM.get_url(::_TLFixture, ::Chat) = _url_probe_base[] * "/v1/chat/completions"
+UniLM.auth_header(::_TLFixture) = ["Content-Type" => "application/json"]
+UniLM.decode_response(s::_TLFixture, ::HTTP.Response) = (; message=popfirst!(s.replies), usage=nothing)
+
+# A sendable Chat on `service`: system + user.
+function _tl_chat(service; kw...)
+    chat = Chat(; service, model="mock", kw...)
+    push!(chat, Message(Val(:system), "s"))
+    push!(chat, Message(Val(:user), "u"))
+    chat
+end
+
+# An assistant turn requesting the zero-arg calls `id => name`, finished with `finish`.
+_tl_calls(finish, calls::Pair...) = Message(role=UniLM.RoleAssistant, finish_reason=finish,
+    tool_calls=[ToolCall(id=id, func=UniLM.GPTFunction(name, Dict{String,Any}())) for (id, name) in calls])
+_tl_reply(text) = Message(role=UniLM.RoleAssistant, content=text, finish_reason="stop")
+
+# `f()` against the scripted server answering `{}` to every request (the fixture
+# decoder ignores the body); returns `(f(), requests)`.
+_tl_scripted(f) = _with_scripted(f, (_, _) -> _json(200, "{}"))
+
+# Responses-wire pieces for the scripted server.
+function _tl_resp(id, output; status="completed", reason=nothing)
+    d = Dict{String,Any}("id" => id, "status" => status, "model" => "mock", "output" => output)
+    isnothing(reason) || (d["incomplete_details"] = Dict("reason" => reason))
+    JSON.json(d)
+end
+_tl_fcall(call_id, name, args="{}") = Dict("type" => "function_call", "id" => "fc_" * call_id,
+    "call_id" => call_id, "name" => name, "arguments" => args, "status" => "completed")
+_tl_text(s) = Dict("type" => "message", "role" => "assistant", "status" => "completed",
+    "content" => [Dict("type" => "output_text", "text" => s)])
+_tl_respond(; kw...) = Respond(; service=GenericOpenAIEndpoint(_url_probe_base[], ""),
+                               model="mock", input="go", kw...)
+_tl_body(req) = JSON.parse(req.body; dicttype=Dict{String,Any})
+
+# ─── Stop conditions ─────────────────────────────────────────────────────────
+
+@testset "tool calls run only on a tool_calls finish; any other reason stops the loop" begin
+    # A zero-arg destructive call on a turn the model did not finish as a tool
+    # request (truncated, filtered, provider-specific) must never execute.
+    for reason in ("length", "content_filter", "MALFORMED_FUNCTION_CALL")
+        ran = Ref(0)
+        chat = _tl_chat(_TLFixture([_tl_calls(reason, "call_1" => "wipe_disk")]))
+        res, seen = _tl_scripted() do
+            tool_loop!(chat, (name, args) -> (ran[] += 1; "wiped"))
+        end
+        @test ran[] == 0
+        @test !res.completed && res.turns_used == 1 && length(seen) == 1
+        @test isempty(res.tool_calls)
+        @test occursin(reason, res.llm_error)
+        @test res.response isa LLMSuccess && res.response.message.finish_reason == reason
+        # The Chat stays sendable: the unanswered assistant tool-call turn is gone.
+        @test length(chat) == 2 && last(chat).role == UniLM.RoleUser
+    end
+end
+
+@testset "tool_loop! refuses a Chat without history before any request" begin
+    # With history=false the assistant tool-call turn is never recorded, so the
+    # follow-up request would carry tool results that answer nothing.
+    chat = _tl_chat(GenericOpenAIEndpoint("http://127.0.0.1:1", ""); history=false)
+    cfg = RequestConfig(max_attempts=1)
+    @test_throws ArgumentError tool_loop!(chat, (name, args) -> "x"; config=cfg)
+    @test_throws ArgumentError tool_loop!(chat; tools=CallableTool[], config=cfg)
+end
+
+@testset "Responses: a non-completed turn stops the loop, names its reason, runs no call" begin
+    for reason in ("max_output_tokens", "content_filter")
+        ran = Ref(0)
+        body = _tl_resp("resp_1", [_tl_fcall("call_1", "wipe_disk")]; status="incomplete", reason)
+        res, seen = _with_scripted((_, _) -> _json(200, body)) do
+            tool_loop(_tl_respond(), (name, args) -> (ran[] += 1; "wiped"))
+        end
+        @test ran[] == 0
+        @test !res.completed && res.turns_used == 1 && length(seen) == 1
+        @test occursin("status=incomplete", res.llm_error) && occursin(reason, res.llm_error)
+    end
+end

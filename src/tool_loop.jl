@@ -135,6 +135,16 @@ Run a tool-calling loop on a [`Chat`](@ref). Repeatedly calls [`chatrequest!`](@
 dispatches tool calls via `dispatcher(name, args)`, pushes tool-role messages back,
 and repeats until a text response, API error, or `max_turns`.
 
+Tool calls run only on a turn whose `finish_reason` is `"tool_calls"`. A turn that
+carries tool calls but finished for any other reason (`"length"`, `"content_filter"`,
+a provider-specific value) may hold partial calls: none runs, the loop stops with
+`completed=false` and an `llm_error` naming the reason, and that unanswered assistant
+turn is removed from `chat`, so the conversation stays sendable.
+
+`chat.history` must be `true` (else `ArgumentError` before any request): each
+follow-up request carries the tool results together with the assistant turn that
+requested them.
+
 # Arguments
 - `dispatcher`: `(name::String, args::Dict{String,Any}) -> String`
 - `max_turns`: Maximum API round-trips (default 10).
@@ -153,11 +163,14 @@ result = tool_loop!(chat, (name, args) -> string(args["a"] + args["b"]))
 function tool_loop!(chat::Chat, dispatcher::Function;
                     max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing,
                     callback=nothing, on_tool_call=nothing)::ToolLoopResult
+    chat.history || throw(ArgumentError("tool_loop! needs a Chat with history=true: " *
+        "each follow-up request must carry the assistant turn its tool results answer"))
     all_outcomes = ToolCallOutcome[]
     turns = 0
 
     while turns < max_turns
         turns += 1
+        before = length(chat)
         raw = chatrequest!(chat; config, callback, on_tool_call)
         result = raw isa Task ? fetch(raw) : raw
 
@@ -168,16 +181,22 @@ function tool_loop!(chat::Chat, dispatcher::Function;
         end
 
         msg = result.message
+        calls = something(msg.tool_calls, ToolCall[])
 
-        if msg.finish_reason == "length"
-            return ToolLoopResult(result, all_outcomes, turns, false, "Model output was truncated by the token limit")
-        end
-
-        if msg.finish_reason != TOOL_CALLS || isnothing(msg.tool_calls)
+        if isempty(calls)
+            msg.finish_reason == "length" && return ToolLoopResult(result, all_outcomes, turns,
+                false, "Model output was truncated by the token limit")
             return ToolLoopResult(result, all_outcomes, turns, true, nothing)
         end
 
-        for tc in msg.tool_calls
+        if msg.finish_reason != TOOL_CALLS
+            resize!(chat.messages, before)   # no results will answer this turn
+            return ToolLoopResult(result, all_outcomes, turns, false,
+                "turn finished with finish_reason=$(repr(msg.finish_reason)); " *
+                "its $(length(calls)) tool call(s) were not executed")
+        end
+
+        for tc in calls
             outcome = _dispatch_tool(tc.func.name, tc.func.arguments, dispatcher)
             push!(all_outcomes, outcome)
             content = outcome.success ? string(outcome.result.result) : "Error: $(outcome.error)"
@@ -228,6 +247,10 @@ Run a tool-calling loop on a [`Respond`](@ref) request. Dispatches function call
 via `dispatcher(name, args)`, builds `function_call_output` input items, and chains
 via `previous_response_id`.
 
+Function calls run only on a `completed` or `requires_action` turn. Any other status
+(e.g. `incomplete`, whose calls may be partial) stops the loop with `completed=false`
+and an `llm_error` naming the status and the `incomplete_details` reason.
+
 Per-call `config::RequestConfig` overrides timeouts/retry budget.
 """
 function tool_loop(r::Respond, dispatcher::Function;
@@ -251,7 +274,10 @@ function tool_loop(r::Respond, dispatcher::Function;
 
         status = result.response.status
         if status ∉ ("completed", "requires_action")
-            return ToolLoopResult(result, all_outcomes, turns, false, "Response did not complete (status=$status)")
+            details = incomplete_details(result)
+            reason = details isa AbstractDict ? get(details, "reason", nothing) : nothing
+            return ToolLoopResult(result, all_outcomes, turns, false, "Response did not complete " *
+                "(status=$status" * (isnothing(reason) ? ")" : ", reason=$reason)"))
         end
 
         calls = function_calls(result)

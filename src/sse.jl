@@ -165,12 +165,21 @@ end
 # `[DONE]` is the ONLY end-of-stream — `finish_reason` is recorded but never
 # terminal (the stream_options.include_usage chunk trails it); `choices` may
 # be empty (usage-only chunks, Azure prompt-filter preambles) — iterate, never
-# index [1]; `usage` is captured from any chunk.
+# index [1]; `usage` is captured from any chunk. A `{"error": …}` payload is
+# terminal (`:error`): vLLM and OpenAI-compatible proxies report a mid-stream
+# failure that way on the HTTP-200 stream, usually followed by `[DONE]`, so the
+# partial text must not finalize. An error object is recorded as is — its numeric
+# `code`, where one is given, is the server's status for the failure.
 function handle_sse_event!(service::OpenAIWireEndpointSpec, event::AbstractString,
                            payload::AbstractString, state::StreamState)::Symbol
     payload == "[DONE]" && return :done
     parsed = JSON.parse(payload; dicttype=Dict{String,Any})
     parsed isa AbstractDict || return :continue
+    err = get(parsed, "error", nothing)
+    if !isnothing(err)
+        state.error = err isa Dict{String,Any} ? err : parsed
+        return :error
+    end
     u = get(parsed, "usage", nothing)
     u isa AbstractDict && (state.usage = _token_usage_from(u))
     choices = get(parsed, "choices", nothing)

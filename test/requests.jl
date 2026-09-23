@@ -221,7 +221,8 @@ end
     @testset "a tool-only turn keeps its calls whatever the finish_reason" begin
         # Some providers close a tool-only turn with "stop" rather than "tool_calls".
         # That used to land in the fallback branch, which fabricated text AND dropped
-        # the calls entirely.
+        # the calls entirely. A "stop" on a tool-call turn reads as "tool_calls", so a
+        # tool loop dispatches the calls.
         body = Dict(
             "choices" => [Dict(
                 "finish_reason" => "stop",
@@ -236,7 +237,51 @@ end
         @test m.tool_calls[1].id == "call_1"
         @test m.tool_calls[1].func.name == "get_weather"
         @test m.tool_calls[1].func.arguments["city"] == "Cluj"
+        @test m.finish_reason == UniLM.TOOL_CALLS
+    end
+
+    tool_call(args) = Dict("id" => "call_1", "type" => "function",
+                           "function" => Dict("name" => "get_weather", "arguments" => args))
+    reply(message; finish) = make_response(Dict("choices" => [Dict("finish_reason" => finish,
+                                                                     "message" => message)]))
+
+    @testset "text alongside tool calls is kept" begin
+        m = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => "Checking.",
+            "tool_calls" => [tool_call("{\"city\":\"Oslo\"}")]); finish="tool_calls")).message
+        @test m.content == "Checking."
+        @test length(m.tool_calls) == 1 && m.tool_calls[1].func.arguments == Dict("city" => "Oslo")
+        @test m.finish_reason == UniLM.TOOL_CALLS
+    end
+
+    @testset "empty content beside tool calls finished with stop keeps the calls" begin
+        m = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => "",
+            "tool_calls" => [tool_call("{}")]); finish="stop")).message
+        @test !isnothing(m.tool_calls) && length(m.tool_calls) == 1
+        @test m.finish_reason == UniLM.TOOL_CALLS
+    end
+
+    @testset "empty tool-call arguments decode as an empty object" begin
+        m = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => nothing,
+            "tool_calls" => [tool_call("")]); finish="tool_calls")).message
+        @test m.tool_calls[1].func.arguments == Dict{String,Any}()
+    end
+
+    @testset "array-shaped content joins its text parts" begin
+        m = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => [
+            Dict("type" => "text", "text" => "Hello, "), Dict("type" => "image_url", "image_url" => Dict()),
+            Dict("type" => "text", "text" => "world")]); finish="stop")).message
+        @test m.content == "Hello, world"
         @test m.finish_reason == "stop"
+    end
+
+    @testset "a tool-call turn cut at length keeps its wire reason" begin
+        # Relabelling it "tool_calls" would make a tool loop run truncated calls.
+        m2 = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => nothing,
+            "tool_calls" => [tool_call("{}")]); finish="length")).message
+        @test m2.finish_reason == "length"
+        m3 = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => nothing,
+            "tool_calls" => [tool_call("{}")]); finish="content_filter")).message
+        @test m3.finish_reason == "content_filter"
     end
 
     @testset "length finish_reason preserves partial content" begin
@@ -414,6 +459,28 @@ end
         @test msg.tool_calls[1].id == "call_1"
         @test msg.tool_calls[1].func.name == "get_weather"
         @test msg.tool_calls[1].func.arguments["location"] == "NYC"
+    end
+
+    tool_state(finish) = (st = UniLM.StreamState(); st.finish_reason = finish;
+        st.tool_calls[0] = Dict{String,Any}("id" => "call_1", "type" => "function",
+            "function" => Dict{String,Any}("name" => "ping", "arguments" => "{}")); st)
+
+    @testset "tool calls keep a length or filter reason; stop and none read as tool_calls" begin
+        # Relabelling a turn cut at "length" made a tool loop dispatch its partial calls.
+        @test UniLM._build_stream_message(tool_state("length")).finish_reason == "length"
+        @test UniLM._build_stream_message(tool_state("content_filter")).finish_reason == "content_filter"
+        @test UniLM._build_stream_message(tool_state("stop")).finish_reason == UniLM.TOOL_CALLS
+        @test UniLM._build_stream_message(tool_state(nothing)).finish_reason == UniLM.TOOL_CALLS
+    end
+
+    @testset "no finish reason arrived → none reported, never an invented stop" begin
+        st = UniLM.StreamState()
+        print(st.content, "partial")
+        @test isnothing(UniLM._build_stream_message(st).finish_reason)
+        st2 = UniLM.StreamState()
+        print(st2.refusal, "no")
+        m2 = UniLM._build_stream_message(st2)
+        @test m2.refusal_message == "no" && isnothing(m2.finish_reason)
     end
 end
 

@@ -384,14 +384,15 @@ end
         @test JSON.json(m_plain) == JSON.json(m_pc)
         @test !occursin("provider_content", JSON.json(m_pc))
 
-        # All of today's wire fields still serialize (omit-null preserved).
+        # Every request wire field still serializes (omit-null preserved); the
+        # response-only finish_reason is never sent.
         full = Message(role=UniLM.RoleTool, content="r", name="n",
                        finish_reason="stop", tool_call_id="c1")
         parsed = JSON.parse(JSON.json(full))
         @test parsed["role"] == "tool" && parsed["content"] == "r" &&
-              parsed["name"] == "n" && parsed["finish_reason"] == "stop" &&
-              parsed["tool_call_id"] == "c1"
-        @test !haskey(parsed, "tool_calls") && !haskey(parsed, "refusal_message")
+              parsed["name"] == "n" && parsed["tool_call_id"] == "c1"
+        @test !haskey(parsed, "tool_calls") && !haskey(parsed, "refusal") &&
+              !haskey(parsed, "finish_reason")
 
         # Chat-level: no leak through the full request body either.
         chat = Chat(model="gpt-5.5")
@@ -410,6 +411,30 @@ end
         # Validation still enforced with the new field present.
         @test_throws ArgumentError Message(role=UniLM.RoleAssistant, provider_content=pc)
     end
+
+    @testset "wire lowering: a refusal travels as `refusal`; finish_reason is never sent" begin
+        # An assistant message needs `content` unless it carries tool calls, so a
+        # refusal turn sends it as null beside `refusal` — the shape the API returns.
+        refused = Message(role=UniLM.RoleAssistant, refusal_message="I can't help with that.",
+                          finish_reason=UniLM.CONTENT_FILTER)
+        @test JSON.parse(JSON.json(refused)) ==
+              Dict("role" => "assistant", "content" => nothing, "refusal" => "I can't help with that.")
+        tc = [ToolCall(id="c1", func=UniLM.GPTFunction("f", Dict{String,Any}()))]
+        @test !haskey(JSON.parse(JSON.json(Message(role=UniLM.RoleAssistant, tool_calls=tc))), "content")
+
+        chat = Chat(model="gpt-5.5")
+        push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
+        push!(chat, Message(role=UniLM.RoleAssistant, content="hi", finish_reason="stop"))
+        push!(chat, Message(Val(:user), "again"))
+        @test all(m -> !haskey(m, "finish_reason"), JSON.parse(JSON.json(chat))["messages"])
+    end
+end
+
+@testset "request id: x-request-id, else Anthropic's request-id" begin
+    @test UniLM._get_request_id(HTTP.Response(200, ["x-request-id" => "req_x"])) == "req_x"
+    @test UniLM._get_request_id(HTTP.Response(200, ["request-id" => "req_ant"])) == "req_ant"
+    @test UniLM._get_request_id(HTTP.Response(200, ["request-id" => "b", "x-request-id" => "a"])) == "a"
+    @test UniLM._get_request_id(HTTP.Response(200)) === nothing
 end
 
 @testset "ResponseFormat" begin

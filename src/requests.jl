@@ -667,52 +667,58 @@ function _parse_usage(data::Dict{String,Any})::Union{TokenUsage, Nothing}
     _token_usage_from(u)
 end
 
+"""
+    extract_message(resp::HTTP.Response) -> (; message::Message, usage)
+
+Decode the first choice of an OpenAI-wire Chat Completions reply. No part of the
+choice is dropped for its shape: tool calls are decoded whenever present, with any
+text kept alongside; content given as an array of parts is joined from its text
+parts; a refusal is kept; `""` tool arguments decode as an empty object. A choice
+that carries nothing is the empty turn it is (`content = ""` — a reasoning model can
+spend the whole budget on thought tokens). The finish reason is the wire's, except
+that a tool-call turn finished with `"stop"` or none reads `"tool_calls"`.
+"""
 function extract_message(resp::HTTP.Response)
-    received_message = JSON.parse(resp.body; dicttype=Dict{String,Any})
-    choices = get(received_message, "choices", [])
-    isempty(choices) && error("API returned empty choices array")
-    finish_reason = choices[1]["finish_reason"]
-    message = choices[1]["message"]
-    usage = _parse_usage(received_message)
-    msg = if finish_reason == TOOL_CALLS && haskey(message, "tool_calls")
-        Message(role=RoleAssistant, tool_calls=_decode_tool_calls(message["tool_calls"]),
-                finish_reason=TOOL_CALLS)
-    elseif haskey(message, "content") && !isnothing(message["content"])
-        # Preserve content for ANY finish_reason (incl. "length"/truncated) — never discard partial output.
-        Message(role=RoleAssistant, content=message["content"], finish_reason=finish_reason)
-    elseif haskey(message, "refusal") && !isnothing(message["refusal"])
-        # A refusal may arrive with finish_reason "content_filter" OR "stop" — capture it regardless.
-        Message(role=RoleAssistant, refusal_message=message["refusal"], finish_reason=finish_reason)
+    received = JSON.parse(resp.body; dicttype=Dict{String,Any})
+    choices = get(received, "choices", nothing)
+    (choices isa AbstractVector && !isempty(choices)) || error("API returned empty choices array")
+    choice = first(choices)
+    message = choice["message"]
+    finish = get(choice, "finish_reason", nothing)
+    text = _content_text(get(message, "content", nothing))
+    refusal = get(message, "refusal", nothing)
+    refusal isa AbstractString || (refusal = nothing)
+    raw_calls = get(message, "tool_calls", nothing)
+    msg = if raw_calls isa AbstractVector && !isempty(raw_calls)
+        Message(role=RoleAssistant, content=(isnothing(text) || isempty(text) ? nothing : text),
+                tool_calls=_decode_tool_calls(raw_calls), refusal_message=refusal,
+                finish_reason=_tool_finish_reason(finish))
     else
-        # A well-formed choice that carries no text is a real turn, not a missing one:
-        # a reply that is only tool calls (some providers finish those with "stop"),
-        # or a reasoning model that spent the whole completion budget on thought
-        # tokens and finished with "length". Report what arrived. Substituting prose
-        # would inject text nobody generated into the reply AND into the next
-        # request's history, and — for the tool-only shape — silently drop the calls.
-        # A response with no choices at all is a different thing and already errors
-        # above, which the verb turns into its typed error result.
-        tcalls = get(message, "tool_calls", nothing)
-        isnothing(tcalls) || isempty(tcalls) ?
-            Message(role=RoleAssistant, content="", finish_reason=finish_reason) :
-            Message(role=RoleAssistant, tool_calls=_decode_tool_calls(tcalls),
-                    finish_reason=finish_reason)
+        Message(role=RoleAssistant, content=(isnothing(text) && !isnothing(refusal) ? nothing : something(text, "")),
+                refusal_message=refusal, finish_reason=finish)
     end
-    (; message=msg, usage)
+    (; message=msg, usage=_parse_usage(received))
 end
 
-# OpenAI-wire `tool_calls` array → the neutral ToolCall vector. Shared by the
-# finish_reason=="tool_calls" branch and the empty-content branch, which reaches the
-# same shape when a provider finishes a tool-only turn with some other reason.
-function _decode_tool_calls(raw)::Vector{ToolCall}
-    tcalls = ToolCall[]
-    for x in raw
-        fdict = x["function"]
-        args = JSON.parse(fdict["arguments"]; dicttype=Dict{String,Any})
-        push!(tcalls, ToolCall(id=x["id"], func=GPTFunction(fdict["name"], args)))
-    end
-    tcalls
-end
+# Message content as text: a string as is; an array of content parts (the form
+# requests use, which OpenAI-compatible servers may echo) joined from its text parts.
+_content_text(s::AbstractString)::String = String(s)
+_content_text(parts::AbstractVector)::String =
+    join(p["text"] for p in parts
+         if p isa AbstractDict && get(p, "type", "text") == "text" && get(p, "text", nothing) isa AbstractString)
+_content_text(::Nothing) = nothing
+
+# The finish reason of a turn that carries tool calls: the wire's own, with
+# "tool_calls" standing in for none or "stop" (providers close tool turns with
+# either). A turn cut at "length" or filtered keeps that reason, so no tool loop
+# dispatches its partial calls.
+_tool_finish_reason(reason::Union{Nothing,AbstractString})::String =
+    isnothing(reason) || reason == STOP ? TOOL_CALLS : String(reason)
+
+# OpenAI-wire `tool_calls` array → the neutral ToolCall vector.
+_decode_tool_calls(raw::AbstractVector)::Vector{ToolCall} =
+    [ToolCall(id=x["id"], func=GPTFunction(x["function"]["name"], _parse_tool_arguments(x["function"]["arguments"])))
+     for x in raw]
 
 """Mutable accumulator for streaming Chat Completions chunks."""
 @kwdef mutable struct StreamState
@@ -760,25 +766,26 @@ function _build_stream_message(state::StreamState)::Message
     pc = (isnothing(provider) || isempty(state.raw_blocks) ||
           !isempty(state.raw_pending)) ? nothing :
          ProviderContent(provider, state.raw_blocks)
+    # The finish reason is reported as it arrived: none when the provider sent none.
     if !isempty(state.tool_calls)
-        tcalls = ToolCall[]
-        for idx in sort!(collect(keys(state.tool_calls)))
+        tcalls = map(sort!(collect(keys(state.tool_calls)))) do idx
             tc_data = state.tool_calls[idx]
             fdict = tc_data["function"]
             args = _parse_tool_arguments(fdict["arguments"])   # "" → Dict{String,Any}() (zero-arg tool call)
-            push!(tcalls, ToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
-                thought_signature=get(tc_data, "thought_signature", nothing)))
+            ToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
+                     thought_signature=get(tc_data, "thought_signature", nothing))
         end
         # Keep accumulated text ALONGSIDE the tool calls: providers emit
         # both in one turn and the non-streaming decoders already preserve both.
         Message(role=RoleAssistant, content=(isempty(content) ? nothing : content),
-                tool_calls=tcalls, finish_reason=TOOL_CALLS, provider_content=pc)
+                tool_calls=tcalls, finish_reason=_tool_finish_reason(state.finish_reason),
+                provider_content=pc)
     elseif isempty(content) && !isempty(refusal)
         Message(role=RoleAssistant, refusal_message=refusal,
-                finish_reason=something(state.finish_reason, STOP), provider_content=pc)
+                finish_reason=state.finish_reason, provider_content=pc)
     else
         Message(role=RoleAssistant, content=content,
-                finish_reason=something(state.finish_reason, STOP), provider_content=pc)
+                finish_reason=state.finish_reason, provider_content=pc)
     end
 end
 
@@ -868,7 +875,8 @@ end
     _stream_error_result(chat, err::Dict{String,Any}, request_id, sse_dropped=0)
 
 Map an in-band SSE `error` payload (`state.error`) to a typed non-success
-result: a Gemini numeric error code preserves the reported status;
+result: a numeric error code (Gemini; OpenAI-compatible servers such as vLLM)
+preserves the reported status;
 `overloaded_error` is the documented
 529-equivalent → `LLMFailure(status=529)` (status-keyed policies see it);
 any other in-band error type → `LLMCallError` (no fabricated HTTP status, and

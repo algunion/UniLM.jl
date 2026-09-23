@@ -153,6 +153,20 @@ end
         @test String(take!(st.refusal)) == "no"
     end
 
+    @testset "an in-band error payload is terminal and recorded" begin
+        # vLLM and OpenAI-compatible proxies report a mid-stream failure as
+        # `data: {"error": …}` on the HTTP-200 stream, usually followed by [DONE].
+        st = StreamState()
+        @test UniLM.handle_sse_event!(S, "",
+            "{\"error\":{\"object\":\"error\",\"message\":\"backend died\",\"type\":\"InternalServerError\",\"code\":500}}",
+            st) === :error
+        @test st.error["message"] == "backend died" && st.error["code"] == 500
+        st2 = StreamState()
+        @test UniLM.handle_sse_event!(S, "", "{\"error\":\"boom\"}", st2) === :error
+        @test st2.error["error"] == "boom"
+        @test UniLM.handle_sse_event!(S, "", "{\"error\":null,\"choices\":[]}", StreamState()) === :continue
+    end
+
     @testset "tool-call deltas accumulate by index" begin
         st = StreamState()
         UniLM.handle_sse_event!(S, "",
@@ -353,6 +367,30 @@ end
             res = fetch(chatrequest!(chat))
             @test res isa LLMCallError
             @test occursin("invalid_request_error", res.error)
+        finally
+            close(server)
+        end
+    end
+
+    @testset "OpenAI-wire in-band error then [DONE] → typed failure, never the partial text" begin
+        # vLLM's mid-stream failure shape: partial text, an error payload, then [DONE].
+        # A numeric code is the server's own status for the failure (as for Gemini).
+        chunks = [
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"par\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"error\":{\"object\":\"error\",\"message\":\"backend died\",\"type\":\"InternalServerError\",\"code\":500}}\n\n" *
+            "data: [DONE]\n\n",
+        ]
+        server, base = fragmented_sse_server(chunks)
+        try
+            chat = Chat(service=GenericOpenAIEndpoint(base, ""), model="mock", stream=true)
+            push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
+            deltas = String[]
+            res = fetch(chatrequest!(chat; callback=(c, _) -> c isa String && push!(deltas, c)))
+            @test !(res isa LLMSuccess)
+            @test res isa LLMFailure && res.status == 500
+            @test res isa LLMFailure && occursin("backend died", res.response)
+            @test deltas == ["par"]
+            @test all(m -> m.role != UniLM.RoleAssistant, chat.messages)   # nothing committed
         finally
             close(server)
         end

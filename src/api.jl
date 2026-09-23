@@ -279,8 +279,8 @@ Represents a single message in a Chat Completions conversation.
 - `role::String`: One of [`RoleSystem`](@ref), [`RoleUser`](@ref), [`RoleAssistant`](@ref), or `RoleTool`.
 - `content::Union{String,Nothing}`: The text content of the message.
 - `name::Union{String,Nothing}`: Optional name for the participant.
-- `finish_reason::Union{String,Nothing}`: Why the model stopped generating (e.g. `"stop"`, `"tool_calls"`).
-- `refusal_message::Union{String,Nothing}`: Refusal text when content is filtered.
+- `finish_reason::Union{String,Nothing}`: Why the model stopped generating (e.g. `"stop"`, `"tool_calls"`); `nothing` when the provider reported none. Response-only: never sent in a request.
+- `refusal_message::Union{String,Nothing}`: Refusal text when content is filtered; sent on the wire as `refusal`.
 - `tool_calls::Union{Nothing,Vector{ToolCall}}`: Tool calls requested by the assistant.
 - `tool_call_id::Union{String,Nothing}`: Required when `role` is `"tool"` — the ID of the tool call being responded to.
 - `provider_content::Union{Nothing,ProviderContent}`: Provider-native content blocks captured for verbatim round-trip (see [`ProviderContent`](@ref)); set by the Anthropic/Gemini decoders, `nothing` otherwise. Never serialized on the OpenAI wire.
@@ -320,15 +320,17 @@ const Conversation = Vector{Message}
 
 JSON.omit_null(::Type{Message}) = true
 
-# provider_content is a decode-side round-trip cache for provider-native
-# blocks, not a wire field: exclude it from serialization (same precedent as
-# ToolCall.thought_signature). Conditional insertion mirrors omit-null.
+# The request wire form. provider_content is a decode-side round-trip cache for
+# provider-native blocks (same precedent as ToolCall.thought_signature) and
+# finish_reason is a response-only field: neither is sent. A refusal travels under
+# its wire name, `refusal`; an assistant message needs `content` unless it carries
+# tool calls, so a refusal turn sends it as null — the shape the API returns it in.
+# Conditional insertion mirrors omit-null.
 function JSON.lower(m::Message)
     d = Dict{Symbol,Any}(:role => m.role)
-    isnothing(m.content)         || (d[:content] = m.content)
+    (isnothing(m.content) && isnothing(m.refusal_message)) || (d[:content] = m.content)
     isnothing(m.name)            || (d[:name] = m.name)
-    isnothing(m.finish_reason)   || (d[:finish_reason] = m.finish_reason)
-    isnothing(m.refusal_message) || (d[:refusal_message] = m.refusal_message)
+    isnothing(m.refusal_message) || (d[:refusal] = m.refusal_message)
     isnothing(m.tool_calls)      || (d[:tool_calls] = m.tool_calls)
     isnothing(m.tool_call_id)    || (d[:tool_call_id] = m.tool_call_id)
     d
@@ -861,7 +863,15 @@ Successful Chat Completions API response.
     sse_dropped::Int = 0
 end
 
-_get_request_id(resp::HTTP.Response) = (val = HTTP.header(resp, "x-request-id", ""); isempty(val) ? nothing : val)
+# The provider's id for the request: `x-request-id` (OpenAI and most compatible
+# servers), else `request-id` (Anthropic).
+function _get_request_id(resp::HTTP.Response)::Union{Nothing,String}
+    for name in ("x-request-id", "request-id")
+        val = HTTP.header(resp, name, "")
+        isempty(val) || return String(val)
+    end
+    nothing
+end
 _get_request_id(::Nothing) = nothing
 function _get_request_id(e::Any)
     if hasproperty(e, :response) && e.response isa HTTP.Response

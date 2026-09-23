@@ -142,7 +142,7 @@ function realtime_connect(handler; model::String="gpt-realtime-2",
     t0 = time_ns()
     gate = _RealtimeGate(:pending)
     ready = Base.Event()   # the handler was admitted, the open task ended, or the bound fired
-    session = Threads.@spawn try
+    session = Threads.@spawn :default try
         # auth_header_multipart drops the JSON Content-Type, which is meaningless on a WS upgrade.
         HTTP.WebSockets.open(url; headers=auth_header_multipart(service),
                              _realtime_native_kwargs(cfg)...) do ws
@@ -164,7 +164,7 @@ function realtime_connect(handler; model::String="gpt-realtime-2",
         try
             wait(ready)
         finally
-            errormonitor(Threads.@spawn close(timer))   # off-path: see _with_deadline_task
+            errormonitor(Threads.@spawn :default close(timer))   # off-path: see _with_deadline_task
         end
         (@atomic gate.state) === :abandoned &&
             throw(UniLMTimeout(:connect, _elapsed_s(t0), cfg.connect_timeout))

@@ -3,8 +3,9 @@
 # in-loop check, so polling cannot bound them. The primitive here is CLOSE:
 # closing the guarded resource unblocks the read with an IOError (and killing
 # a process delivers EOF). A guard resolves EXACTLY ONCE — :armed → :done |
-# :fired via a single atomic CAS — so the winner between completion and breach
-# is always well-defined and the close side effect never doubles.
+# :fired (| :cancelled in task mode) via a single atomic CAS — so the winner
+# between completion and breach is always well-defined and the close side effect
+# never doubles.
 
 """
     UniLMTimeout <: Exception
@@ -232,7 +233,7 @@ function _with_deadline_reported(f::Function, close!::Function, limit::Float64, 
             throw(UniLMTimeout(phase, _elapsed_s(t0), limit))
         end
     finally
-        errormonitor(Threads.@spawn close(timer))   # off-path: see _with_deadline_task
+        errormonitor(Threads.@spawn :default close(timer))   # off-path: see _with_deadline_task
     end
 end
 
@@ -293,7 +294,7 @@ function _with_deadline_task(f::Function, limit::Float64, phase::Symbol;
     t0 = time_ns()
     guard = _DeadlineGuard(:armed)
     ready = Base.Event()
-    task = Threads.@spawn try
+    task = Threads.@spawn :default try
         f()
     finally
         (@atomicreplace guard.state :armed => :done).success && notify(ready)
@@ -309,7 +310,7 @@ function _with_deadline_task(f::Function, limit::Float64, phase::Symbol;
         wait(ready)
     finally
         _off_cancel(cancel, handle)
-        errormonitor(Threads.@spawn close(timer))
+        errormonitor(Threads.@spawn :default close(timer))
     end
     # Breach or cancel: abandon the worker — no injection, no kill. It
     # self-terminates via its native timeout at the same bound (or the abort
@@ -435,6 +436,6 @@ function _disarm!(guard::_IdleGuard)::Nothing
     # finds the state resolved and does nothing).
     @atomicreplace guard.state :armed => :disarmed
     timer = guard.timer
-    timer === nothing || errormonitor(Threads.@spawn close(timer))   # off-path: see _with_deadline_task
+    timer === nothing || errormonitor(Threads.@spawn :default close(timer))   # off-path: see _with_deadline_task
     return nothing
 end

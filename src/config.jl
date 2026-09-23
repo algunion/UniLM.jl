@@ -12,7 +12,7 @@ using Base.ScopedValues: ScopedValue, with
 function _validated_timeout(name::Symbol, v::Real)::Float64
     x = Float64(v)
     isnan(x) && throw(ArgumentError("$name must not be NaN"))
-    x <= 0 && throw(ArgumentError("$name must be > 0 seconds (got $x); use Inf to disable"))
+    ispositive(x) || throw(ArgumentError("$name must be > 0 seconds (got $x); use Inf to disable"))
     return x
 end
 
@@ -55,7 +55,7 @@ See also [`with_request_config`](@ref), [`set_default_config!`](@ref),
                            stream_idle_timeout::Real, total_deadline::Real,
                            max_attempts::Integer, mcp_connect_timeout::Real,
                            mcp_request_timeout::Real)
-        max_attempts >= 1 ||
+        ispositive(max_attempts) ||
             throw(ArgumentError("max_attempts must be >= 1 (got $max_attempts)"))
         new(_validated_timeout(:connect_timeout, connect_timeout),
             _validated_timeout(:request_timeout, request_timeout),

@@ -167,7 +167,7 @@ function _cancel_sleep(tok::CancelToken, seconds::Real)::Bool
         wait(wake)
     finally
         _off_cancel(tok, handle)
-        errormonitor(Threads.@spawn close(timer))
+        errormonitor(Threads.@spawn :default close(timer))
     end
     return iscancelled(tok)
 end

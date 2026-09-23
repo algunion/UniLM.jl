@@ -418,7 +418,7 @@ function _http(method::AbstractString, url::AbstractString,
                kwargs...)::HTTP.Response
     t0 = time_ns()
     iscancelled(cancel) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
-    remaining <= 0 &&
+    ispositive(remaining) ||
         throw(UniLMTimeout(:deadline, max(cfg.total_deadline - remaining, 0.0), cfg.total_deadline))
     bound = min(cfg.request_timeout, remaining)
     ctx = HTTP.RequestContext()
@@ -469,7 +469,7 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
     for attempt in 1:cfg.max_attempts
         iscancelled(cancel) && throw(cancelled())
         remaining = _remaining_s(cfg, t0)
-        remaining <= 0 && throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
+        ispositive(remaining) || throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
         final = attempt == cfg.max_attempts
         resp = try
             _http(method, url, headers, body; cfg, remaining, cancel, kwargs...)

@@ -47,8 +47,8 @@ function _resolve_base_url(::Type{TYPESAFEServiceEndpoint})::String
     String(rstrip(isempty(override) ? TYPESAFE_BASE_URL : override, '/'))
 end
 
-"Client identity sent as both `User-Agent` and `X-TypeSafe-SDK`."
-_typesafe_agent()::String = string("UniLM.jl/", something(pkgversion(@__MODULE__), v"0.0.0"))
+"Client identity sent as both `User-Agent` and `X-TypeSafe-SDK`, fixed when the package loads."
+const _TYPESAFE_AGENT = string("UniLM.jl/", something(pkgversion(@__MODULE__), v"0.0.0"))
 
 function auth_header(::Type{TYPESAFEServiceEndpoint})::Vector{Pair{String,String}}
     key = strip(get(ENV, TYPESAFE_API_KEY, ""))
@@ -56,13 +56,12 @@ function auth_header(::Type{TYPESAFEServiceEndpoint})::Vector{Pair{String,String
     # the verbs catch it into a typed call error, so a missing key surfaces as a
     # result that says which variable to set.
     isempty(key) && throw(ArgumentError("$TYPESAFE_API_KEY is not set"))
-    agent = _typesafe_agent()
     [
         "Authorization" => "Bearer $key",
         "Content-Type" => "application/json",
         "Accept" => "application/json",
-        "User-Agent" => agent,
-        "X-TypeSafe-SDK" => agent,
+        "User-Agent" => _TYPESAFE_AGENT,
+        "X-TypeSafe-SDK" => _TYPESAFE_AGENT,
         "X-TypeSafe-Runtime" => "julia/$(VERSION) ($(Sys.KERNEL); $(Sys.ARCH))",
     ]
 end
@@ -128,10 +127,12 @@ struct ChoiceQuestion <: SystemOneQuestion
         n = length(criteria)
         1 <= n <= 255 || throw(ArgumentError(
             "a Choice question needs 1 to 255 options (the server rejects more than 255); got $n"))
-        # Checked here and not only in the normalizer: this constructor is public,
-        # and an option the model cannot name is not a describable outcome.
+        # Checked here and not only in the normalizer: this constructor is public, an
+        # option the model cannot name is not a describable outcome, and a description
+        # must be an entry exactly as `choice` requires.
         any(isempty, keys(criteria)) && throw(ArgumentError(
             "Choice option names must be non-empty"))
+        foreach(_entry, values(criteria))
         new(_entry(instructions), criteria)
     end
 end
@@ -737,8 +738,7 @@ end
 
 function _decode_answer(name::AbstractString, d::AbstractDict)::SystemOneAnswer
     raw = Dict{String,Any}(string(k) => v for (k, v) in d)
-    t = get(d, "type", nothing)
-    kind = t isa AbstractString ? String(t) : string(t)
+    kind = _answer_string(d, "type", name)
     if kind == "noul"
         NoulAnswer(_answer_number(d, "noul", name), raw)
     elseif kind == "choice"
@@ -797,8 +797,9 @@ _truncate_body(s::AbstractString)::String =
 function _typesafe_parse_body(body::AbstractString)
     try
         JSON.parse(body; dicttype=Dict{String,Any})
-    catch
-        nothing
+    catch e
+        e isa InterruptException && rethrow()
+        nothing   # not JSON: the caller falls back to the raw text
     end
 end
 

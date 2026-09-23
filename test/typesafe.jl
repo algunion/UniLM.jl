@@ -451,6 +451,41 @@ end
                         UniLM.SystemOneCallError)
 end
 
+# An error body whose bytes cannot be read without an interrupt arriving: stands in
+# for a user's Ctrl-C landing while the error body is being parsed.
+struct _InterruptingBody <: AbstractString end
+Base.ncodeunits(::_InterruptingBody) = throw(InterruptException())
+Base.codeunit(::_InterruptingBody) = UInt8
+Base.codeunit(::_InterruptingBody, ::Int) = throw(InterruptException())
+Base.isvalid(::_InterruptingBody, ::Int) = true
+Base.iterate(::_InterruptingBody, ::Int=1) = throw(InterruptException())
+
+@testset "TypeSafe — the raw constructor, the decoder and the parser are as strict as the builders" begin
+    # `choice(["a" => 1])` rejects a number as a description; the public constructor must too.
+    @test_throws ArgumentError UniLM.ChoiceQuestion(nothing, JSON.Object{String,Any}("a" => 1))
+    @test_throws ArgumentError UniLM.ChoiceQuestion("pick", JSON.Object{String,Any}("a" => "A", "b" => true))
+    @test UniLM.ChoiceQuestion(nothing, JSON.Object{String,Any}("a" => "A", "b" => nothing)) isa ChoiceQuestion
+
+    # `type` is required: an answer without it is malformed, not an answer of type "nothing".
+    untyped = """{"model":"m","answers":{"q":{"noul":0.5}},"usage":{}}"""
+    @test_throws ArgumentError UniLM._decode_systemone(untyped, nothing)
+    err = try UniLM._decode_systemone(untyped, nothing) catch e; e end
+    @test contains(sprint(showerror, err), "\"type\"")
+    @test_throws ArgumentError UniLM._decode_systemone(
+        """{"model":"m","answers":{"q":{"type":7}},"usage":{}}""", nothing)
+
+    # The client identity is computed once, at load time.
+    @test UniLM._TYPESAFE_AGENT == "UniLM.jl/$(pkgversion(UniLM))"
+    withenv(UniLM.TYPESAFE_API_KEY => "ts-key") do
+        h = Dict(UniLM.auth_header(TYPESAFEServiceEndpoint))
+        @test h["User-Agent"] == h["X-TypeSafe-SDK"] == UniLM._TYPESAFE_AGENT
+    end
+
+    # An interrupt is the user's, never "this body was not JSON".
+    @test_throws InterruptException UniLM._typesafe_parse_body(_InterruptingBody())
+    @test isnothing(UniLM._typesafe_parse_body("<html>not json</html>"))
+end
+
 @testset "TypeSafe — a call error keeps the request id and the underlying exception" begin
     # A 200 that cannot be decoded still came from the service: its request id is the
     # handle a support report needs, and the decoding exception is kept as `cause`.

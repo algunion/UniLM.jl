@@ -351,55 +351,55 @@ end
     @test UniLM.Base64.base64decode(content["blob"]) == payload
 end
 
-@testset "resources/read — static handler throws (-32603)" begin
-    # src/mcp_server.jl:362 — static resource handler error → JSON-RPC -32603.
+# Resource and prompt handler failures follow `serve`'s robustness contract: the peer gets
+# a generic -32603 (exception text can carry paths and argument values) and the detail is
+# logged locally. Only tool-handler errors are relayed, as `isError` tool results.
+
+@testset "resources/read — static handler throws → generic -32603, detail logged" begin
     server = MCPServer("res-err", "1.0.0")
     register_resource!(server, "boom://static", "Boom", () -> error("static handler exploded"))
 
     req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 12, "method" => "resources/read",
         "params" => Dict{String,Any}("uri" => "boom://static"))
-    resp = UniLM._dispatch_mcp(server, req)
+    resp = @test_logs (:error,) match_mode=:any UniLM._dispatch_guarded(server, req)
 
     @test resp["id"] == 12
     @test !haskey(resp, "result")
     @test resp["error"]["code"] == -32603
-    @test contains(resp["error"]["message"], "Resource read error")
-    @test contains(resp["error"]["message"], "static handler exploded")
+    @test resp["error"]["message"] == "Internal error"
+    @test !contains(JSON.json(resp), "exploded")
 end
 
-@testset "resources/read — template handler throws (-32603)" begin
-    # src/mcp_server.jl:375 — TEMPLATE branch (distinct from static 362) handler error → -32603.
+@testset "resources/read — template handler throws → generic -32603, detail logged" begin
     server = MCPServer("tmpl-err", "1.0.0")
     register_resource_template!(server, "boom://{id}", "BoomTmpl",
         p -> error("template handler exploded for $(p["id"])"))
 
     req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 13, "method" => "resources/read",
         "params" => Dict{String,Any}("uri" => "boom://42"))
-    resp = UniLM._dispatch_mcp(server, req)
+    resp = @test_logs (:error,) match_mode=:any UniLM._dispatch_guarded(server, req)
 
     @test resp["id"] == 13
     @test !haskey(resp, "result")
     @test resp["error"]["code"] == -32603
-    @test contains(resp["error"]["message"], "Resource read error")
-    # Confirms the template branch ran (param interpolated into the thrown message).
-    @test contains(resp["error"]["message"], "template handler exploded for 42")
+    @test resp["error"]["message"] == "Internal error"
+    @test !contains(JSON.json(resp), "exploded")
 end
 
-@testset "prompts/get — handler throws (-32603)" begin
-    # src/mcp_server.jl:402 — prompt handler error → JSON-RPC -32603 "Prompt error".
+@testset "prompts/get — handler throws → generic -32603, detail logged" begin
     server = MCPServer("prompt-err", "1.0.0")
     register_prompt!(server, "explode", args -> error("prompt handler exploded");
         arguments=[Dict{String,Any}("name" => "x", "required" => false)])
 
     req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 14, "method" => "prompts/get",
         "params" => Dict{String,Any}("name" => "explode", "arguments" => Dict{String,Any}()))
-    resp = UniLM._dispatch_mcp(server, req)
+    resp = @test_logs (:error,) match_mode=:any UniLM._dispatch_guarded(server, req)
 
     @test resp["id"] == 14
     @test !haskey(resp, "result")
     @test resp["error"]["code"] == -32603
-    @test contains(resp["error"]["message"], "Prompt error")
-    @test contains(resp["error"]["message"], "prompt handler exploded")
+    @test resp["error"]["message"] == "Internal error"
+    @test !contains(JSON.json(resp), "exploded")
 end
 
 @testset "resources/templates/list dispatch" begin
@@ -633,13 +633,13 @@ end
     @test Set(sch["required"]) == Set(["s", "n", "f", "b", "xs"])
 
     # Feed values as they arrive from JSON: numbers may be Float (JSON has one number type).
-    # _mcp_convert(Int, 5.0) must round → Int(5); String conv on a number → "42"; Bool passes.
+    # An integral 5.0 binds an Int parameter as 5; an integer binds a Float64 as 2.0.
     out = server.tools["mixt"].handler(Dict{String,Any}(
-        "s" => 42,            # _mcp_convert(String, 42) → "42"  (line 564)
-        "n" => 5.0,           # _mcp_convert(Int, 5.0)   → 5     (line 565, AbstractFloat branch)
-        "f" => 2,             # _mcp_convert(Float64, 2) → 2.0   (line 566)
-        "b" => true,          # _mcp_convert(Bool, true) → true  (line 567)
-        "xs" => [3, 4]))      # _mcp_convert(Vector{Int}, …) passthrough (line 568)
+        "s" => "42",          # String parameter: a JSON string
+        "n" => 5.0,           # Int parameter: an integral number → 5
+        "f" => 2,             # Float64 parameter: any number → 2.0
+        "b" => true,          # Bool parameter: a JSON boolean
+        "xs" => [3, 4]))      # other declared types pass through unconverted
     @test out == "42|5|true|2.0|true|true|true|7|true"
 
     # Integer branch with an already-integer value exercises the non-float arm of line 565.
@@ -1320,5 +1320,328 @@ end
         @test JSON.parse(String(ok.body))["id"] == 4
     finally
         close(httpserver)
+    end
+end
+
+# ─── Concurrency: registries and HTTP handler scheduling ─────────────────────
+
+"Serve `server` over HTTP on an OS-assigned ephemeral port, re-probing when the port is
+taken between the probe and the bind. Returns (handle, port)."
+function _mcp_serve_ephemeral(server::MCPServer; kwargs...)
+    for attempt in 1:5
+        port = _mcp_free_port()
+        try
+            return serve(server; transport=:http, port=port, block=false, kwargs...), port
+        catch e
+            e isa InterruptException && rethrow()
+            attempt == 5 && rethrow()
+        end
+    end
+end
+
+_rpc(id, method, params=Dict{String,Any}()) = Dict{String,Any}("jsonrpc" => "2.0", "id" => id,
+    "method" => method, "params" => params)
+
+@testset "registration during dispatch is safe (data-race regression test)" begin
+    # Data-race regression test. The registries are a plain Dict/Vector, and `register_*!`
+    # while `serve` dispatched on other threads corrupted the heap (a Dict rehash under a
+    # concurrent iteration aborted the process). Each round, three dispatch loops race a
+    # fourth task registering 1000 tools (and resources, templates, prompts) on a fresh
+    # server, so every registry grows — and rehashes — while it is being read. Every
+    # response must be well formed and every registration must land.
+    list = _rpc(1, "tools/list")
+    others = [_rpc(2, "resources/list"), _rpc(3, "resources/templates/list"), _rpc(4, "prompts/list"),
+              _rpc(5, "resources/read", Dict{String,Any}("uri" => "race://seed")),
+              _rpc(6, "resources/read", Dict{String,Any}("uri" => "nomatch://x")),
+              _rpc(7, "initialize", Dict{String,Any}("protocolVersion" => UniLM._MCP_PROTOCOL_VERSION))]
+    reqs = collect(Iterators.flatten([list, list, list, o] for o in others))
+    well_formed(r) = haskey(r, "result") || r["error"]["code"] == -32002   # nomatch → not found
+    function race_round()
+        server = MCPServer("race", "1.0.0")
+        register_resource!(server, "race://seed", "seed", () -> "seed")
+        foreach(req -> UniLM._dispatch_mcp(server, req), reqs)   # compiled before the race starts
+        stop = Threads.Atomic{Bool}(false)
+        served, anomalies = Threads.Atomic{Int}(0), Threads.Atomic{Int}(0)
+        readers = [Threads.@spawn begin
+            while !stop[]
+                for req in reqs
+                    ok = try
+                        well_formed(UniLM._dispatch_mcp(server, req))
+                    catch e
+                        e isa InterruptException && rethrow()
+                        false
+                    end
+                    Threads.atomic_add!(ok ? served : anomalies, 1)
+                end
+            end
+        end for _ in 1:3]
+        writer = Threads.@spawn for i in 1:1000
+            register_tool!(server, "t$i", nothing, Dict{String,Any}("type" => "object"), _ -> "ok")
+            if i % 10 == 0
+                register_resource!(server, "race://r$i", "r$i", () -> "r")
+                register_resource_template!(server, "race$i://{x}", "tmpl$i", p -> "t")
+                register_prompt!(server, "p$i", _ -> Dict{String,Any}[])
+            end
+        end
+        finished = timedwait(() -> istaskdone(writer), 10.0)
+        stop[] = true
+        readers_done = timedwait(() -> all(istaskdone, readers), 25.0)
+        (; finished, readers_done, served = served[], anomalies = anomalies[],
+           sizes = (length(server.tools), length(server.resources),
+                    length(server.resource_templates), length(server.prompts)))
+    end
+    t0 = time()
+    rounds = [race_round()]
+    while length(rounds) < 8 && time() - t0 < 6.0
+        push!(rounds, race_round())
+    end
+    @test all(r -> r.finished === :ok && r.readers_done === :ok, rounds)
+    @test sum(r -> r.anomalies, rounds) == 0
+    @test all(r -> r.served > 0, rounds)
+    @test all(r -> r.sizes == (1000, 101, 100, 100), rounds)
+end
+
+"""POST `body` to 127.0.0.1:`port` over a fresh raw TCP connection; returns the raw
+response. Bypasses the HTTP.jl client, which writes a request body from a task on the
+default pool — a pool this test deliberately saturates."""
+function _raw_post(port::Int, body::String)::String
+    sock = Sockets.connect(Sockets.localhost, port)
+    try
+        write(sock, "POST / HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nContent-Type: application/json\r\n" *
+                    "Content-Length: $(sizeof(body))\r\nConnection: close\r\n\r\n", body)
+        read(sock, String)
+    finally
+        close(sock)
+    end
+end
+
+@testset "serve(:http) — handlers run on the default pool; ping stays prompt" begin
+    # HTTP.jl runs each request handler on the :interactive pool, whose first thread also
+    # drives the event loop. A CPU-bound tool handler there blocked every other request —
+    # and every Timer and IO completion in the process — until it finished. Handlers now
+    # run on the default pool, one task per request; protocol requests such as ping are
+    # answered inline and stay prompt while handlers keep the default pool busy.
+    if Threads.nthreads(:default) < 4 || Threads.nthreads(:interactive) < 1
+        @test_skip "needs --threads=4,1 or more"
+    else
+        server = MCPServer("spin", "1.0.0")
+        started = Threads.Atomic{Int}(0)
+        register_tool!(server, "spin", "CPU-bound for 1 s", Dict{String,Any}("type" => "object"),
+            function (_)
+                Threads.atomic_add!(started, 1)
+                t0 = time()
+                while time() - t0 < 1.0 end        # no yield point: holds its thread
+                "spun"
+            end)
+        register_tool!(server, "warm", nothing, Dict{String,Any}("type" => "object"), _ -> "ok")
+        httpserver, port = _mcp_serve_ephemeral(server)
+        post(body) = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+            JSON.json(body); status_exception=false)
+        try
+            # Compile the request paths first: the timings below are about scheduling.
+            post(_rpc(0, "tools/call", Dict{String,Any}("name" => "warm")))
+            _raw_post(port, JSON.json(_rpc(0, "ping")))
+            t0 = time()
+            calls = [Threads.@spawn :interactive (post(_rpc(i, "tools/call",
+                Dict{String,Any}("name" => "spin"))), time()) for i in 1:4]
+            @test timedwait(() -> started[] >= 2, 25.0) === :ok
+            tp = time()
+            pinger = Threads.@spawn :interactive (_raw_post(port, JSON.json(_rpc(99, "ping"))), time() - tp)
+            @test timedwait(() -> istaskdone(pinger) && all(istaskdone, calls), 25.0) === :ok
+            pong, ping_s = fetch(pinger)
+            total_s = maximum(last(fetch(c)) for c in calls) - t0
+            (ping_s < 0.5 && total_s < 2.5) || @warn "HTTP handler scheduling" ping_s total_s
+            @test startswith(pong, "HTTP/1.1 200") && occursin("\"id\":99", pong)
+            @test ping_s < 0.5                     # not queued behind a spinning handler
+            @test total_s < 2.5                    # the four 1 s handlers ran concurrently
+            @test all(c -> JSON.parse(String(first(fetch(c)).body))["result"]["content"][1]["text"] == "spun", calls)
+        finally
+            close(httpserver)
+        end
+    end
+end
+
+# ─── Inferred-schema registration binds arguments by name ─────────────────────
+
+@testset "inferred-schema register_tool! binds arguments by name" begin
+    server = MCPServer("infer", "1.0.0")
+    register_tool!(server, "add", "Add two integers", (a::Int, b::Int) -> a + b)
+    sch = server.tools["add"].input_schema
+    @test sch["properties"] == Dict{String,Any}("a" => Dict{String,Any}("type" => "integer"),
+                                               "b" => Dict{String,Any}("type" => "integer"))
+    @test Set(sch["required"]) == Set(["a", "b"])
+    call(name, args) = UniLM._dispatch_guarded(server, _rpc(1, "tools/call",
+        Dict{String,Any}("name" => name, "arguments" => args)))
+    # A schema-conforming call reaches the handler with its positional arguments.
+    r = call("add", Dict{String,Any}("a" => 2, "b" => 3))
+    @test r["result"]["isError"] == false
+    @test r["result"]["content"][1]["text"] == "5"
+    # A `Union{T,Nothing}` parameter is optional: omitted, it binds `nothing`.
+    register_tool!(server, "greet", nothing,
+        (name::String, title::Union{String,Nothing}) -> isnothing(title) ? "hi $name" : "hi $title $name")
+    @test server.tools["greet"].input_schema["required"] == ["name"]
+    @test call("greet", Dict{String,Any}("name" => "Ada"))["result"]["content"][1]["text"] == "hi Ada"
+    @test call("greet", Dict{String,Any}("name" => "Ada", "title" => "Dr"))["result"]["content"][1]["text"] == "hi Dr Ada"
+    # Calls that violate the advertised schema are invalid params, not handler errors.
+    @test call("add", Dict{String,Any}("a" => 2))["error"]["code"] == -32602
+    @test call("add", Dict{String,Any}("a" => 2, "b" => 2.5))["error"]["code"] == -32602
+    # A handler taking ONE dictionary is the explicit-schema calling convention: inferring a
+    # schema from it would advertise a single required `args` object. Rejected loudly.
+    err = try
+        register_tool!(server, "dict", "d", (args::Dict{String,Any}) -> args)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test err isa ArgumentError && occursin("input_schema", err.msg)
+    @test !haskey(server.tools, "dict")
+end
+
+# ─── Handler failure modes ────────────────────────────────────────────────────
+
+@testset "@mcp_tool binding never fabricates values: violations are -32602" begin
+    server = MCPServer("bind", "1.0.0")
+    @mcp_tool server function typed(s::String, n::Int, f::Float64, b::Bool)::String
+        string(s, n, f, b)
+    end
+    call(args) = UniLM._dispatch_guarded(server, _rpc(1, "tools/call",
+        Dict{String,Any}("name" => "typed", "arguments" => args)))
+    good = Dict{String,Any}("s" => "x", "n" => 1, "f" => 1.5, "b" => false)
+    @test call(good)["result"]["content"][1]["text"] == "x11.5false"
+    for (key, bad) in (("s", 42), ("n", 2.5), ("n", "3"), ("n", true), ("f", "1.0"), ("b", 1))
+        args = merge(good, Dict{String,Any}(key => bad))
+        resp = call(args)
+        @test get(get(resp, "error", Dict()), "code", nothing) == -32602
+        @test occursin(key, get(get(resp, "error", Dict()), "message", ""))
+    end
+    # A missing required argument is not the string "nothing".
+    missing_s = call(Dict{String,Any}("n" => 1, "f" => 1.5, "b" => false))
+    @test get(get(missing_s, "error", Dict()), "code", nothing) == -32602
+    @test occursin("s", get(get(missing_s, "error", Dict()), "message", ""))
+    # `arguments` must be an object (CallToolRequest schema).
+    for notobj in (Any[1, 2], "str", 5, nothing)
+        resp = call(notobj)
+        @test get(get(resp, "error", Dict()), "code", nothing) == -32602
+    end
+end
+
+@testset "InterruptException from any handler propagates" begin
+    # A user interrupt must abort dispatch, not be reported to the peer as a failure.
+    server = MCPServer("int", "1.0.0")
+    register_tool!(server, "t", nothing, Dict{String,Any}("type" => "object"), _ -> throw(InterruptException()))
+    register_resource!(server, "int://x", "x", () -> throw(InterruptException()))
+    register_resource_template!(server, "intt://{x}", "tx", _ -> throw(InterruptException()))
+    register_prompt!(server, "p", _ -> throw(InterruptException()))
+    for (m, p) in (("tools/call", Dict{String,Any}("name" => "t")),
+                   ("resources/read", Dict{String,Any}("uri" => "int://x")),
+                   ("resources/read", Dict{String,Any}("uri" => "intt://y")),
+                   ("prompts/get", Dict{String,Any}("name" => "p")))
+        @test_throws InterruptException UniLM._dispatch_guarded(server, _rpc(1, m, p))
+    end
+end
+
+@testset "a JSON-RPC response sent to the server is accepted without an answer" begin
+    # A response (id, no method) answers a server-initiated request; it is not a request.
+    server = _build_params_server()
+    @test isnothing(UniLM._dispatch_mcp(server, Dict{String,Any}("jsonrpc" => "2.0", "id" => 7,
+        "result" => Dict{String,Any}())))
+    @test isnothing(UniLM._dispatch_mcp(server, Dict{String,Any}("jsonrpc" => "2.0", "id" => 8,
+        "error" => Dict{String,Any}("code" => -32601, "message" => "Method not found"))))
+    input, output = IOBuffer(), IOBuffer()
+    write(input, """{"jsonrpc":"2.0","id":7,"result":{}}""", "\n", JSON.json(_rpc(9, "ping")), "\n")
+    seekstart(input)
+    UniLM._serve_stdio(server; input, output)
+    lines = filter(!isempty, split(String(take!(output)), "\n"))
+    @test length(lines) == 1 && JSON.parse(lines[1])["id"] == 9
+    httpserver, port = _mcp_serve_ephemeral(server)
+    try
+        r = HTTP.post("http://127.0.0.1:$port", ["Content-Type" => "application/json"],
+            """{"jsonrpc":"2.0","id":7,"result":{}}"""; status_exception=false)
+        @test r.status == 202
+        @test isempty(String(r.body))
+    finally
+        close(httpserver)
+    end
+end
+
+# ─── Protocol version negotiation (lifecycle) and the HTTP version header ────
+
+@testset "initialize answers the requested protocol version when supported" begin
+    # Lifecycle: a server supporting the requested version MUST answer with it; otherwise
+    # it answers another version it supports (the latest).
+    server = MCPServer("negotiate", "1.0.0")
+    negotiated(v) = UniLM._dispatch_mcp(server, _rpc(1, "initialize", Dict{String,Any}(
+        "protocolVersion" => v, "capabilities" => Dict{String,Any}(),
+        "clientInfo" => Dict{String,Any}("name" => "t", "version" => "1"))))["result"]["protocolVersion"]
+    for v in UniLM._MCP_SUPPORTED_PROTOCOL_VERSIONS
+        @test negotiated(v) == v
+    end
+    @test negotiated("1999-01-01") == UniLM._MCP_PROTOCOL_VERSION
+    @test negotiated(42) == UniLM._MCP_PROTOCOL_VERSION
+end
+
+@testset "HTTP transport — unsupported MCP-Protocol-Version header → 400" begin
+    server = _build_http_server()
+    httpserver, port = _mcp_serve_ephemeral(server)
+    post(body, hdrs...) = HTTP.post("http://127.0.0.1:$port",
+        ["Content-Type" => "application/json", hdrs...], JSON.json(body); status_exception=false)
+    try
+        @test post(_rpc(1, "ping"), "MCP-Protocol-Version" => "1999-01-01").status == 400
+        @test post(_rpc(2, "ping"), "MCP-Protocol-Version" => "2025-06-18").status == 200
+        @test post(_rpc(3, "ping")).status == 200          # absent: backwards-compatible default
+        # initialize negotiates in its body, so an unknown header value there is not refused.
+        init = post(_rpc(4, "initialize", Dict{String,Any}("protocolVersion" => "2099-01-01",
+            "capabilities" => Dict{String,Any}(), "clientInfo" => Dict{String,Any}("name" => "t", "version" => "1"))),
+            "MCP-Protocol-Version" => "2099-01-01")
+        @test init.status == 200
+        @test JSON.parse(String(init.body))["result"]["protocolVersion"] == UniLM._MCP_PROTOCOL_VERSION
+        del = HTTP.request("DELETE", "http://127.0.0.1:$port", ["MCP-Protocol-Version" => "1999-01-01"];
+            status_exception=false)
+        @test del.status == 400
+    finally
+        close(httpserver)
+    end
+end
+
+# ─── stdio: the protocol owns stdout ──────────────────────────────────────────
+
+@testset "serve(:stdio) keeps handler output off the protocol stream" begin
+    # stdio framing: the server MUST NOT write anything to stdout that is not an MCP
+    # message, but a handler that prints (println, @show, a progress bar) writes to the
+    # process stdout. `serve` keeps the protocol stream and points stdout at stderr while
+    # it serves, so the noise lands on stderr and every stdout line stays a frame.
+    proj = dirname(dirname(pathof(UniLM)))
+    src = """
+    using UniLM
+    server = MCPServer("noisy", "1.0.0")
+    register_tool!(server, "noisy", nothing, Dict{String,Any}("type" => "object"),
+        _ -> (println("HANDLER-NOISE"); ccall(:puts, Cint, (Cstring,), "C-LEVEL-NOISE");
+              Base.Libc.flush_cstdio(); "quiet-result"))
+    serve(server)
+    """
+    srcfile, sio = mktemp(); write(sio, src); close(sio)
+    infile, iio = mktemp()
+    write(iio, JSON.json(_rpc(1, "initialize", Dict{String,Any}("protocolVersion" => UniLM._MCP_PROTOCOL_VERSION,
+        "capabilities" => Dict{String,Any}(), "clientInfo" => Dict{String,Any}("name" => "t", "version" => "1")))), "\n",
+        JSON.json(_rpc(2, "tools/call", Dict{String,Any}("name" => "noisy"))), "\n")
+    close(iio)
+    outfile, oio = mktemp(); close(oio)
+    errfile, eio = mktemp(); close(eio)
+    try
+        p = run(pipeline(`$(Base.julia_cmd()) --startup-file=no --project=$proj $srcfile`;
+            stdin=infile, stdout=outfile, stderr=errfile); wait=false)
+        @test timedwait(() -> process_exited(p), 120.0) === :ok
+        lines = filter(!isempty, readlines(outfile))
+        @test length(lines) == 2
+        @test all(l -> startswith(l, "{"), lines)
+        @test !any(l -> occursin("NOISE", l), lines)
+        @test JSON.parse(lines[end])["result"]["content"][1]["text"] == "quiet-result"
+        errtext = read(errfile, String)
+        @test occursin("HANDLER-NOISE", errtext)
+        @test occursin("C-LEVEL-NOISE", errtext)
+    finally
+        try; run(pipeline(`pkill -f $srcfile`; stderr=devnull)); catch; end
+        foreach(f -> rm(f; force=true), (srcfile, infile, outfile, errfile))
     end
 end

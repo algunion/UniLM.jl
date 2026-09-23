@@ -345,3 +345,61 @@ end
     @test res.completed && length(seen) == 2
     @test only(_tl_body(seen[2])["input"])["output"] == "null"
 end
+
+# ─── Responses loop chaining and unrunnable calls ─────────────────────────────
+
+@testset "Responses: a conversation chains through conversation alone" begin
+    # The API rejects previous_response_id together with conversation; the
+    # conversation already holds the previous turn's items.
+    turn(n) = n == 1 ? _tl_resp("resp_1", [_tl_fcall("call_1", "noop")]) :
+                       _tl_resp("resp_2", [_tl_text("done")])
+    for conversation in ("conv_1", Dict("id" => "conv_1"))
+        res, seen = _with_scripted((n, _) -> _json(200, turn(n))) do
+            tool_loop(_tl_respond(; conversation), (name, args) -> "ok")
+        end
+        @test res.completed && length(seen) == 2
+        follow = _tl_body(seen[2])
+        @test follow["conversation"] == conversation
+        @test !haskey(follow, "previous_response_id")
+        @test only(follow["input"])["call_id"] == "call_1"
+    end
+    # Without a conversation the follow-up chains through previous_response_id.
+    res, seen = _with_scripted((n, _) -> _json(200, turn(n))) do
+        tool_loop(_tl_respond(), (name, args) -> "ok")
+    end
+    @test res.completed && _tl_body(seen[2])["previous_response_id"] == "resp_1"
+end
+
+@testset "Responses: malformed call arguments go back to the model as that call's output" begin
+    calls = [_tl_fcall("call_bad", "lookup", "{\"city\": "), _tl_fcall("call_arr", "lookup", "[1, 2]"),
+             _tl_fcall("call_ok", "lookup", "{\"city\": \"Oslo\"}")]
+    turn(n) = n == 1 ? _tl_resp("resp_1", calls) : _tl_resp("resp_2", [_tl_text("done")])
+    ran = String[]
+    res, seen = _with_scripted((n, _) -> _json(200, turn(n))) do
+        tool_loop(_tl_respond(), (name, args) -> (push!(ran, args["city"]); "sunny"))
+    end
+    @test res.completed && res.turns_used == 2
+    @test ran == ["Oslo"]                  # the malformed calls never reach the dispatcher
+    @test [o.success for o in res.tool_calls] == [false, false, true]
+    @test all(o -> occursin("invalid arguments", o.error), res.tool_calls[1:2])
+    outs = _tl_body(seen[2])["input"]
+    @test [o["call_id"] for o in outs] == ["call_bad", "call_arr", "call_ok"]
+    @test all(o -> startswith(o["output"], "Error: invalid arguments"), outs[1:2])
+    @test outs[3]["output"] == "sunny"
+end
+
+@testset "Responses: a pending client-side call the loop cannot run ends it incomplete" begin
+    for typ in ("custom_tool_call", "apply_patch_call", "local_shell_call", "computer_call")
+        ran = Ref(0)
+        item = Dict("type" => typ, "id" => "item_1", "call_id" => "call_1", "status" => "completed")
+        # Alone, and next to a function call whose output could not be sent without it.
+        for output in ([item], [_tl_fcall("call_2", "noop"), item])
+            res, seen = _with_scripted((_, _) -> _json(200, _tl_resp("resp_1", output))) do
+                tool_loop(_tl_respond(), (name, args) -> (ran[] += 1; "ok"))
+            end
+            @test !res.completed && res.turns_used == 1 && length(seen) == 1
+            @test occursin(typ, res.llm_error)
+        end
+        @test ran[] == 0
+    end
+end

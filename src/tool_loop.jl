@@ -242,6 +242,27 @@ end
 
 # ─── Responses API Loop ─────────────────────────────────────────────────────
 
+# Output items the client must execute and answer, which this loop cannot run: a turn
+# holding one cannot be continued with function-call outputs alone.
+const _CLIENT_CALL_TYPES = ("custom_tool_call", "apply_patch_call", "local_shell_call", "computer_call")
+
+# One Responses function call → its outcome. `arguments` that do not parse to a JSON
+# object are the model's error to correct, so they come back as a failed outcome (sent
+# to the model as that call's output) instead of escaping the loop.
+function _dispatch_call(call::AbstractDict, dispatcher::Function)::ToolCallOutcome
+    name = call["name"]
+    args = try
+        JSON.parse(call["arguments"]; dicttype=Dict{String,Any})
+    catch e
+        e isa InterruptException && rethrow()
+        return ToolCallOutcome(name, Dict{String,Any}(), nothing, false,
+                               "invalid arguments: " * sprint(showerror, e))
+    end
+    args isa Dict{String,Any} || return ToolCallOutcome(name, Dict{String,Any}(), nothing, false,
+        "invalid arguments: expected a JSON object, got $(repr(call["arguments"]))")
+    _dispatch_tool(name, args, dispatcher)
+end
+
 """Reconstruct a [`Respond`](@ref) with new `input` and `previous_response_id`, copying all other fields.
 Streaming is always disabled in the tool loop."""
 function _next_respond(r::Respond; input, previous_response_id=nothing)
@@ -258,11 +279,17 @@ end
 
 Run a tool-calling loop on a [`Respond`](@ref) request. Dispatches function calls
 via `dispatcher(name, args)` (a non-`String` return is sent JSON-encoded), builds
-`function_call_output` input items, and chains via `previous_response_id`.
+`function_call_output` input items, and chains via `previous_response_id` — or, when
+`r.conversation` is set, through the conversation alone (the API rejects the two
+together). A call whose `arguments` are not a JSON object is answered with an
+`"Error: invalid arguments: …"` output, like a dispatcher error, and the loop goes on.
 
 Function calls run only on a `completed` or `requires_action` turn. Any other status
 (e.g. `incomplete`, whose calls may be partial) stops the loop with `completed=false`
-and an `llm_error` naming the status and the `incomplete_details` reason.
+and an `llm_error` naming the status and the `incomplete_details` reason. A turn that
+requests a client-side call this loop cannot execute (`custom_tool_call`,
+`apply_patch_call`, `local_shell_call`, `computer_call`) stops it the same way, with
+the pending call type in `llm_error`; none of that turn's calls run.
 
 `max_turns` (default 10; `< 1` throws `ArgumentError`) bounds the round-trips; when
 they run out, the result keeps the last response, with `completed=false` and
@@ -300,6 +327,11 @@ function tool_loop(r::Respond, dispatcher::Function;
                 "(status=$status" * (isnothing(reason) ? ")" : ", reason=$reason)"))
         end
 
+        pending = unique!(String[item["type"] for item in result.response.output
+                                 if item isa AbstractDict && get(item, "type", "") in _CLIENT_CALL_TYPES])
+        isempty(pending) || return ToolLoopResult(result, all_outcomes, turns, false,
+            "Response requests $(join(pending, ", ")), which this tool loop cannot execute")
+
         calls = function_calls(result)
 
         if isempty(calls)
@@ -311,8 +343,7 @@ function tool_loop(r::Respond, dispatcher::Function;
         output_items = Any[]
         for call in calls
             name = call["name"]
-            args = JSON.parse(call["arguments"]; dicttype=Dict{String,Any})
-            outcome = _dispatch_tool(name, args, dispatcher)
+            outcome = _dispatch_call(call, dispatcher)
             push!(all_outcomes, outcome)
             content = outcome.success ? string(outcome.result.result) : "Error: $(outcome.error)"
             push!(output_items, Dict{String,Any}(
@@ -324,7 +355,7 @@ function tool_loop(r::Respond, dispatcher::Function;
         end
 
         input = output_items
-        prev_id = result.response.id
+        prev_id = isnothing(r.conversation) ? result.response.id : nothing
     end
 
     ToolLoopResult(latest, all_outcomes, turns, false, "max turns ($max_turns) exhausted")

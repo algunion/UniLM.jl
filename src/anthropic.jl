@@ -58,6 +58,9 @@ function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
     isnothing(chat.temperature) || (body[:temperature] = chat.temperature)
     isnothing(chat.top_p)       || (body[:top_p] = chat.top_p)
     isnothing(chat.metadata)    || (body[:metadata] = chat.metadata)
+    output_config = Dict{Symbol,Any}()
+    (fmt = _anthropic_output_format(chat.response_format)) === nothing || (output_config[:format] = fmt)
+    isempty(output_config) || (body[:output_config] = output_config)
     chat.stream === true        && (body[:stream] = true)
     JSON.json(body)
 end
@@ -119,7 +122,27 @@ function _anthropic_tool(t::Tool)
     d = Dict{Symbol,Any}(:name => f.name,
         :input_schema => something(f.parameters, Dict("type" => "object", "properties" => Dict())))
     isnothing(f.description) || (d[:description] = f.description)
+    isnothing(f.strict)      || (d[:strict] = f.strict)
     d
+end
+
+# Neutral response_format → output_config.format (structured outputs,
+# https://platform.claude.com/docs/en/build-with-claude/structured-outputs.md). The
+# format object is {type: "json_schema", schema}: the OpenAI schema name, description
+# and strict flag have no counterpart (the output is always constrained to the
+# schema), and there is no schema-less JSON mode.
+_anthropic_output_format(::Nothing) = nothing
+function _anthropic_output_format(rf::ResponseFormat)
+    js = rf.json_schema
+    rf.type == "text" && isnothing(js) && return nothing
+    rf.type == "json_object" && throw(ArgumentError(
+        "Anthropic has no schema-less JSON mode for response_format json_object; use a json_schema response_format"))
+    rf.type == "json_schema" || throw(ArgumentError(
+        "Anthropic supports response_format json_schema (got $(repr(rf.type)))"))
+    schema = js isa JsonSchemaAPI ? js.schema :
+             js isa AbstractDict ? get(js, "schema", get(js, :schema, nothing)) : nothing
+    schema isa AbstractDict || throw(ArgumentError("Anthropic json_schema response_format needs a schema object"))
+    Dict(:type => "json_schema", :schema => schema)
 end
 
 _anthropic_tool_choice(tc::String) =

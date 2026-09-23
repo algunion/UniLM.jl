@@ -402,3 +402,36 @@ end
                HTTP.Response(200, [], Vector{UInt8}(refusal_body))).message
     @test mref.refusal_message == "Model refused to respond."
 end
+
+# Wire goldens transcribed from https://platform.claude.com/docs/en/build-with-claude/structured-outputs.md:
+# JSON outputs are output_config.format = {type: "json_schema", schema}; strict tool use is a
+# top-level `strict` on the tool definition; there is no schema-less JSON mode.
+const _ANTHROPIC_SCHEMA = Dict("type" => "object", "properties" => Dict("city" => Dict("type" => "string")),
+                               "required" => ["city"], "additionalProperties" => false)
+_anthropic_body(; kw...) = JSON.parse(encode_request(ANTHROPICServiceEndpoint,
+    Chat(; service=ANTHROPICServiceEndpoint, model="claude-opus-5-5", messages=[Message(Val(:user), "q")], kw...)))
+_anthropic_err(; kw...) = try _anthropic_body(; kw...); nothing catch e; e end
+
+@testset "encode — response_format json_schema → output_config.format" begin
+    golden = Dict("format" => Dict("type" => "json_schema", "schema" => _ANTHROPIC_SCHEMA))
+    for rf in (UniLM.json_schema("city", "A city", _ANTHROPIC_SCHEMA; strict=true),
+               ResponseFormat(Dict("name" => "city", "schema" => _ANTHROPIC_SCHEMA, "strict" => true)),
+               ResponseFormat(Dict(:name => "city", :schema => _ANTHROPIC_SCHEMA)))
+        @test _anthropic_body(response_format=rf)["output_config"] == golden
+    end
+    @test !haskey(_anthropic_body(response_format=ResponseFormat(type="text")), "output_config")
+    @test !haskey(_anthropic_body(), "output_config")
+    err = _anthropic_err(response_format=UniLM.json_object())
+    @test err isa ArgumentError && occursin("json_object", err.msg) && occursin("json_schema", err.msg)
+    @test _anthropic_err(response_format=ResponseFormat(type="xml")) isa ArgumentError
+    @test _anthropic_err(response_format=ResponseFormat(Dict("name" => "no-schema"))) isa ArgumentError
+end
+
+@testset "encode — FunctionSignature strict → the tool's top-level strict" begin
+    strict = Tool(func=FunctionSignature(name="lookup", parameters=_ANTHROPIC_SCHEMA, strict=true))
+    loose = Tool(func=FunctionSignature(name="loose", parameters=_ANTHROPIC_SCHEMA))
+    tools = _anthropic_body(tools=[strict, loose], tool_choice="auto")["tools"]
+    @test tools[1] == Dict("name" => "lookup", "input_schema" => _ANTHROPIC_SCHEMA, "strict" => true)
+    @test !haskey(tools[2], "strict")
+    @test _anthropic_body(tools=[Tool(func=FunctionSignature(name="off", strict=false))])["tools"][1]["strict"] === false
+end

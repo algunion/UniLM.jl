@@ -358,10 +358,12 @@ end
 # with budget left is worth another try) or a pure transport failure per
 # _is_transport_error. :deadline (budget spent), :stream_idle, interrupts,
 # and status-carrying errors all fall through to false via the classifier's
-# always-false set — ONE classifier, composed here, never duplicated.
+# always-false set — ONE classifier, composed here, never duplicated. A
+# cancellation anywhere in the chain is never retried.
 _retryable_exception(e)::Bool =
-    (e isa UniLMTimeout && (e.phase === :connect || e.phase === :request)) ||
-    _is_transport_error(e)
+    _find_exception(_cancel_shaped, e) === nothing &&
+    ((e isa UniLMTimeout && (e.phase === :connect || e.phase === :request)) ||
+     _is_transport_error(e))
 
 """
     _BodyFactory(build)
@@ -382,15 +384,21 @@ _attempt_body(body) = body
 _attempt_body(f::_BodyFactory) = f.build()
 
 """
-    _http(method, url, headers=[], body=UInt8[]; cfg, remaining=Inf, kwargs...) -> HTTP.Response
+    _http(method, url, headers=[], body=UInt8[]; cfg, remaining=Inf, cancel, kwargs...) -> HTTP.Response
 
-One bounded HTTP attempt. The per-attempt bound is
+One bounded, cancellable HTTP attempt. The per-attempt bound is
 `min(cfg.request_timeout, remaining)`; `remaining <= 0` throws
 `UniLMTimeout(:deadline, …)` without touching the network. HTTP.jl's native
 timeout kwargs are the fast path; a task-mode watchdog at the same bound is
 the guarantee of last resort. Native timeout exceptions map to
 [`UniLMTimeout`](@ref) (`:connect` where attributable, else `:request`);
 other transport exceptions propagate unchanged.
+
+`cancel` (default: the ambient token of [`with_cancel`](@ref)) already cancelled
+at entry throws [`UniLMCancelled`](@ref) with no network I/O. Each attempt runs
+under its own `HTTP.RequestContext`, and a cancel during the attempt cancels that
+context (aborting the exchange) and releases the watchdog's waiter; any failure
+surfacing while the token is cancelled is reported as `UniLMCancelled(:token, …)`.
 
 Always imposes `status_exception=false` (callers branch on `resp.status`)
 and `retry=false`: this is ONE attempt — the retry budget lives in
@@ -404,18 +412,26 @@ through to `HTTP.request` (e.g. `decompress=false`).
 function _http(method::AbstractString, url::AbstractString,
                headers=Pair{String,String}[], body=UInt8[];
                cfg::RequestConfig=current_config(), remaining::Float64=Inf,
+               cancel::Union{Nothing,CancelToken}=_current_cancel(),
                kwargs...)::HTTP.Response
+    t0 = time_ns()
+    iscancelled(cancel) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
     remaining <= 0 &&
         throw(UniLMTimeout(:deadline, max(cfg.total_deadline - remaining, 0.0), cfg.total_deadline))
     bound = min(cfg.request_timeout, remaining)
-    t0 = time_ns()
+    ctx = HTTP.RequestContext()
     try
-        return _with_deadline_task(bound, :request) do
+        return _with_deadline_task(bound, :request; cancel,
+                                   on_cancel=() -> HTTP.cancel!(ctx; message="cancelled")) do
             HTTP.request(method, url, headers, _attempt_body(body);
-                         kwargs..., _request_kwargs(cfg, bound)...)
+                         kwargs..., _request_kwargs(cfg, bound)..., context=ctx)
         end
     catch e
         e isa InterruptException && rethrow()
+        e isa UniLMCancelled && rethrow()
+        # Cancelled mid-attempt: whatever surfaced (HTTP.CanceledError from the
+        # aborted exchange, or a racing timeout) is the cancellation's echo.
+        iscancelled(cancel) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
         e isa UniLMTimeout && rethrow()
         mapped = _map_native_timeout(e, cfg, bound, t0)
         mapped === nothing ? rethrow() : throw(mapped)
@@ -423,7 +439,7 @@ function _http(method::AbstractString, url::AbstractString,
 end
 
 """
-    _http_with_retries(cfg, t0, method, url, headers=[], body=UInt8[]; kwargs...) -> HTTP.Response
+    _http_with_retries(cfg, t0, method, url, headers=[], body=UInt8[]; cancel, kwargs...) -> HTTP.Response
 
 The one retry loop. `t0` is the verb-entry monotonic origin (`time_ns()`).
 Runs at most `cfg.max_attempts` attempts inside `cfg.total_deadline`
@@ -437,19 +453,27 @@ remaining budget, fail NOW with the last real outcome: sleeping less and
 attempting with ~zero budget is a guaranteed mid-flight breach, and a
 budget-exhausted 429 is a 429, not a fabricated timeout. Intermediate
 retries log at debug; the final failure warns once.
+
+`cancel` (default: the ambient token) is checked before every attempt, backoff
+sleeps wake at once on a cancel, and a cancelled call is never retried: each
+surfaces as [`UniLMCancelled`](@ref) with `elapsed` measured from `t0`.
 """
 function _http_with_retries(cfg::RequestConfig, t0::UInt64,
                             method::AbstractString, url::AbstractString,
                             headers=Pair{String,String}[], body=UInt8[];
+                            cancel::Union{Nothing,CancelToken}=_current_cancel(),
                             kwargs...)::HTTP.Response
+    cancelled() = UniLMCancelled(:token, _elapsed_s(t0))
     for attempt in 1:cfg.max_attempts
+        iscancelled(cancel) && throw(cancelled())
         remaining = _remaining_s(cfg, t0)
         remaining <= 0 && throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
         final = attempt == cfg.max_attempts
         resp = try
-            _http(method, url, headers, body; cfg, remaining, kwargs...)
+            _http(method, url, headers, body; cfg, remaining, cancel, kwargs...)
         catch e
             e isa InterruptException && rethrow()
+            e isa UniLMCancelled && throw(cancelled())   # never retried
             (_retryable_exception(e) && !final) || rethrow()
             action, delay = _retry_pause(cfg, t0, attempt, nothing)
             if action === :budget
@@ -459,7 +483,7 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
             # Log the ROOT CAUSE, never the wrapper chain: the wrapper layers add
             # no diagnostic value. Twin of the stream driver below.
             @debug "retrying after transport failure" attempt delay exception = (_unwrap_exception(e), catch_backtrace())
-            sleep(delay)
+            _cancel_sleep(cancel, delay) && throw(cancelled())
             continue
         end
         if _is_retryable(resp.status) && !final
@@ -469,7 +493,7 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
                 return resp
             end
             @debug "retrying after retryable status" status = resp.status attempt delay
-            sleep(delay)
+            _cancel_sleep(cancel, delay) && throw(cancelled())
             continue
         end
         _is_retryable(resp.status) &&
@@ -481,7 +505,7 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
 end
 
 """
-    _http_open(f, method, url, headers; cfg, t0, kwargs...) -> HTTP.Response
+    _http_open(f, method, url, headers; cfg, t0, cancel, kwargs...) -> HTTP.Response
 
 Streaming attempt seam: wraps `HTTP.open` with `status_exception=false`,
 `retry=false`, `protocol=:h1` (one connection per stream: HTTP/2 multiplexing
@@ -494,12 +518,32 @@ the first-byte deadline and the idle guard are the calling driver's job, because
 only the driver knows when the request body is written and the response headers
 arrive. `t0` is the driver's monotonic origin, accepted here so drivers
 thread one origin through the seam.
+
+`cancel` (default: the ambient token) already cancelled at entry throws
+[`UniLMCancelled`](@ref) with no network I/O. The attempt runs under its own
+`HTTP.RequestContext`, cancelled by a cancel for the attempt's whole duration:
+HTTP.jl checks it before acquiring a connection and aborts the connection once
+acquired, which unblocks the response-header wait and body reads parked inside
+`f` (a TCP/TLS connect already in progress finishes, or hits its connect bound,
+first). Whatever then escapes `HTTP.open` (HTTP.jl reports a cancelled context as
+`HTTP.CanceledError`) propagates unchanged — mapping it to a typed result is the
+driver's job.
 """
 function _http_open(f::Function, method::AbstractString, url::AbstractString, headers;
-                    cfg::RequestConfig, t0::UInt64, kwargs...)::HTTP.Response
-    return HTTP.open(method, url, headers;
-                     kwargs..., _open_kwargs(cfg, min(cfg.request_timeout, _remaining_s(cfg, t0)))...) do io
-        f(io)
+                    cfg::RequestConfig, t0::UInt64,
+                    cancel::Union{Nothing,CancelToken}=_current_cancel(),
+                    kwargs...)::HTTP.Response
+    iscancelled(cancel) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
+    ctx = HTTP.RequestContext()
+    handle = _on_cancel(() -> HTTP.cancel!(ctx; message="cancelled"), cancel)
+    try
+        return HTTP.open(method, url, headers;
+                         kwargs..., _open_kwargs(cfg, min(cfg.request_timeout, _remaining_s(cfg, t0)))...,
+                         context=ctx) do io
+            f(io)
+        end
+    finally
+        _off_cancel(cancel, handle)
     end
 end
 

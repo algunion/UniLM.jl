@@ -52,6 +52,7 @@ using SHA
 include("constants.jl")
 include("exceptions.jl")
 include("config.jl")
+include("cancel.jl")
 include("deadline.jl")
 include("api.jl")
 include("requests.jl")
@@ -107,7 +108,12 @@ export
     with_request_config,
     set_default_config!,
     UniLMTimeout,
-    MCPTimeoutError
+    MCPTimeoutError,
+    UniLMCancelled,
+    CancelToken,
+    cancel!,
+    iscancelled,
+    with_cancel
 
 # ─── Chat Completions API ─────────────────────────────────────────────────────
 export

@@ -55,6 +55,10 @@ end
         include("deadline.jl")
     end
 
+    @testset "cancel.jl" begin
+        include("cancel.jl")
+    end
+
     @testset "http seam (requests.jl)" begin
         include("http_seam.jl")
     end

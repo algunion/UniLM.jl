@@ -130,6 +130,10 @@ function _transport_shaped(x)::Bool
     return true
 end
 
+# A cancellation — ours, or HTTP.jl's rendering of a cancelled request context —
+# is user intent, never a connection failure worth another attempt.
+_cancel_shaped(x)::Bool = x isa UniLMCancelled || x isa HTTP.CanceledError
+
 """
     _is_transport_error(e) -> Bool
 
@@ -137,12 +141,14 @@ True when `e` is a connection-level IO failure worth another attempt
 (IOError/SystemError/EOFError/DNS/connect-shaped), unwrapped across `TaskFailedException`,
 `CompositeException`, and cause-carrying wrappers. Always
 false for `InterruptException` (user intent wins, even when nested beside a
-transport error), `_DeadlineBreach` and `UniLMTimeout` (timeouts are policy,
+transport error), `UniLMCancelled` and `HTTP.CanceledError` (a cancellation is
+user intent too), `_DeadlineBreach` and `UniLMTimeout` (timeouts are policy,
 classified by phase — never blanket-retried here), and status-carrying errors
 (a response is an outcome, not a transport failure).
 """
 function _is_transport_error(e)::Bool
     _find_exception(x -> x isa InterruptException, e) !== nothing && return false
+    _find_exception(_cancel_shaped, e) !== nothing && return false
     _find_exception(x -> x isa _DeadlineBreach, e) !== nothing && return false
     _find_exception(x -> x isa UniLMTimeout, e) !== nothing && return false
     return _find_exception(_transport_shaped, e) !== nothing
@@ -150,9 +156,9 @@ end
 
 # The guard's entire shared state is one atomic Symbol. Timer, clock origin,
 # and phase stay locals in the wrapper, so the CAS is the only cross-task
-# communication and the :done/:fired winner is decided exactly once.
+# communication and the winner is decided exactly once.
 mutable struct _DeadlineGuard
-    @atomic state::Symbol   # :armed → :done | :fired
+    @atomic state::Symbol   # :armed → :done | :fired | :cancelled
 end
 
 """
@@ -231,16 +237,23 @@ function _with_deadline_reported(f::Function, close!::Function, limit::Float64, 
 end
 
 """
-    _with_deadline_task(f, limit, phase)
+    _with_deadline_task(f, limit, phase; cancel=nothing, on_cancel=Returns(nothing))
 
 Run `f` under a hard deadline with TASK-mode enforcement, for opaque calls
 that expose no closeable handle. `f` runs in its own task and the wrapper
-waits — event-driven, never polled — until the worker completes or a one-shot
-`Timer(limit)` fires; both notify one `Base.Event`, and ONE atomic CAS on the
-guard (`:armed → :done | :fired`) decides which happened. On completion the
-worker's value is returned, or its exception rethrown — `InterruptException`
-first (bare or nested), otherwise the worker's own exception with any
-`TaskFailedException` layer stripped.
+waits — event-driven, never polled — until the worker completes, a one-shot
+`Timer(limit)` fires, or `cancel` is cancelled; each notifies one `Base.Event`,
+and ONE atomic CAS on the guard (`:armed → :done | :fired | :cancelled`) decides
+which happened. On completion the worker's value is returned, or its exception
+rethrown — `InterruptException` first (bare or nested), otherwise the worker's
+own exception with any `TaskFailedException` layer stripped.
+
+A cancel runs `on_cancel()` (the caller's abort, e.g. cancelling the request's
+context) and, when it wins the CAS, throws `UniLMCancelled(:token, …)` from the
+wrapper, abandoning the worker exactly like a breach. The cancel hook is
+registered only while the wrapper waits and is removed on every exit. With
+`limit == Inf` there is no worker task: `f()` runs directly and a cancel only
+runs `on_cancel()`.
 
 On breach the wrapper throws `UniLMTimeout(phase, …)` and ABANDONS the worker:
 no exception is injected into it and it is not killed. This is safe because
@@ -260,14 +273,23 @@ waiter directly. The timer is closed OFF the caller's path: `close(::Timer)`
 waits for the event loop's close handshake, and on Julia 1.12+ the loop shares
 thread 1 with the main task, so a busy main task would otherwise stall every
 caller on other threads; a tick landing after completion loses the CAS and does
-nothing. `limit == Inf` calls `f()` directly. `_DeadlineBreach` is retained for
-exception-classification stability but is no longer produced or consumed here.
+nothing. `_DeadlineBreach` is retained for exception-classification stability
+but is no longer produced or consumed here.
 
 Known limit: a worker inside an uninterruptible foreign call ends on the OS's
 schedule — the wait is bounded, the foreign call's own duration is not.
 """
-function _with_deadline_task(f::Function, limit::Float64, phase::Symbol)
-    limit == Inf && return f()
+function _with_deadline_task(f::Function, limit::Float64, phase::Symbol;
+                             cancel::Union{Nothing,CancelToken}=nothing,
+                             on_cancel::Function=Returns(nothing))
+    if limit == Inf
+        handle = _on_cancel(on_cancel, cancel)
+        try
+            return f()
+        finally
+            _off_cancel(cancel, handle)
+        end
+    end
     t0 = time_ns()
     guard = _DeadlineGuard(:armed)
     ready = Base.Event()
@@ -279,15 +301,23 @@ function _with_deadline_task(f::Function, limit::Float64, phase::Symbol)
     timer = Timer(limit; spawn=true) do _
         (@atomicreplace guard.state :armed => :fired).success && notify(ready)
     end
+    handle = _on_cancel(cancel) do
+        (@atomicreplace guard.state :armed => :cancelled).success && notify(ready)
+        on_cancel()
+    end
     try
         wait(ready)
     finally
+        _off_cancel(cancel, handle)
         errormonitor(Threads.@spawn close(timer))
     end
-    # Breach: abandon the worker — no injection, no kill. It self-terminates via
-    # its native timeout at the same bound; its later result/exception is never
-    # fetched and Julia discards it silently.
-    (@atomic guard.state) === :fired && throw(UniLMTimeout(phase, _elapsed_s(t0), limit))
+    # Breach or cancel: abandon the worker — no injection, no kill. It
+    # self-terminates via its native timeout at the same bound (or the abort
+    # `on_cancel` delivered); its later result/exception is never fetched and
+    # Julia discards it silently.
+    state = @atomic guard.state
+    state === :fired && throw(UniLMTimeout(phase, _elapsed_s(t0), limit))
+    state === :cancelled && throw(UniLMCancelled(:token, _elapsed_s(t0)))
     # Completion within the bound: fetch and rethrow with the same discipline as
     # handle mode — InterruptException first (bare or nested), else the worker's
     # own exception with the TaskFailedException layer stripped.

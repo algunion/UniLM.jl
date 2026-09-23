@@ -133,6 +133,10 @@ end
         include("anthropic.jl")
     end
 
+    @testset "deepseek" begin
+        include("deepseek.jl")
+    end
+
     @testset "gemini" begin
         include("gemini.jl")
     end

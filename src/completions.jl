@@ -52,7 +52,7 @@ function JSON.lower(fim::FIMCompletion)
     model = fim.model
     if isempty(model)
         dm = default_fim_model(fim.service)
-        isnothing(dm) && throw(ArgumentError("model must be specified for FIM with $(typeof(fim.service))"))
+        isnothing(dm) && throw(ArgumentError("model must be specified for FIM with $(_service_name(fim.service))"))
         model = dm
     end
     d = Dict{Symbol,Any}(:model => model, :prompt => fim.prompt)
@@ -156,7 +156,7 @@ end
 # endpoint is rejected up front by `validate_capability(:fim)`. These fail-loud fallbacks
 # give the router total coverage so `get_url(fim.service, fim)` types as `String` for any
 # `fim.service::ServiceEndpointSpec` instead of leaving the marker-type limb methodless.
-get_url(s::ServiceEndpoint, ::FIMCompletion) = throw(ArgumentError("FIM completion is not supported by $(typeof(s))"))
+get_url(s::ServiceEndpoint, ::FIMCompletion) = throw(ArgumentError("FIM completion is not supported by $(_service_name(s))"))
 get_url(::Type{<:ServiceEndpoint}, ::FIMCompletion) = throw(ArgumentError("FIM completion is not supported by this endpoint type"))
 
 # ─── FIM Response Parsing ─────────────────────────────────────────────────

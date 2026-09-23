@@ -103,7 +103,7 @@ end
 
 @testset "0.10 endpoint capabilities (consolidation)" begin
     new_caps = (:files, :vector_stores, :conversations, :moderation, :audio, :batch,
-        :image_edits, :fine_tuning, :containers, :uploads, :video, :realtime)
+        :image_edits, :fine_tuning, :containers, :uploads, :realtime)
     # OpenAI has them all
     for c in new_caps
         @test has_capability(OPENAIServiceEndpoint, c)
@@ -123,7 +123,6 @@ end
     @test_throws ArgumentError create_batch("f", "/v1/responses"; service=GEMINIOpenAIServiceEndpoint)
     @test_throws ArgumentError create_fine_tuning_job(model="m", training_file="f", service=GEMINIOpenAIServiceEndpoint)
     @test_throws ArgumentError create_container(name="c", service=DeepSeekEndpoint("k"))
-    @test_throws ArgumentError create_video(prompt="p", service=AZUREServiceEndpoint)
     @test_throws ArgumentError mint_realtime_secret(service=GenericOpenAIEndpoint("http://x", ""))
 end
 
@@ -261,4 +260,35 @@ end
     finally
         close(srv)
     end
+end
+
+@testset "capability flags: no Videos API; OpenAI-wire endpoints stream and emit JSON" begin
+    # The OpenAI Videos API shut down on 2026-09-24.
+    @test !has_capability(OPENAIServiceEndpoint, :video)
+    for svc in (OPENAIServiceEndpoint, AZUREServiceEndpoint, GEMINIOpenAIServiceEndpoint,
+                DeepSeekEndpoint("k"), GenericOpenAIEndpoint("http://x", ""))
+        @test has_capability(svc, :streaming) && has_capability(svc, :json_output)
+    end
+end
+
+# A marker-type endpoint that declares nothing and has no default model.
+struct _NoDefaultModelEndpoint <: UniLM.OpenAIWireEndpoint end
+
+@testset "capability and model errors name the endpoint, not DataType" begin
+    for (svc, name) in ((OPENAIServiceEndpoint, "OPENAIServiceEndpoint"), (DeepSeekEndpoint("k"), "DeepSeekEndpoint"))
+        err = try UniLM.validate_capability(svc, :system_one, "System One"); nothing catch e; e end
+        @test err isa ArgumentError && occursin("System One is not supported by $name.", err.msg)
+        @test !occursin("DataType", err.msg)
+    end
+    err = try UniLM._validate_agentic_capability(ANTHROPICServiceEndpoint); nothing catch e; e end
+    @test err isa ArgumentError && occursin("ANTHROPICServiceEndpoint", err.msg) && !occursin("DataType", err.msg)
+    # No default_model method: the documented ArgumentError, not a MethodError.
+    err = try Chat(service=_NoDefaultModelEndpoint); nothing catch e; e end
+    @test err isa ArgumentError && err.msg == "model must be specified when using _NoDefaultModelEndpoint"
+    @test UniLM.default_model(_NoDefaultModelEndpoint) === nothing
+    @test Chat(service=_NoDefaultModelEndpoint, model="m").model == "m"
+    err = try UniLM.get_url(ANTHROPICServiceEndpoint, FIMCompletion(service=ANTHROPICServiceEndpoint, model="m", prompt="x")); nothing catch e; e end
+    @test err isa ArgumentError && !occursin("DataType", err.msg)
+    err = try JSON.lower(FIMCompletion(service=OPENAIServiceEndpoint, prompt="x")); nothing catch e; e end
+    @test err isa ArgumentError && occursin("OPENAIServiceEndpoint", err.msg) && !occursin("DataType", err.msg)
 end

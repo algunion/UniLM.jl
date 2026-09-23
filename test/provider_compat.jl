@@ -119,6 +119,12 @@ end
         chat = Chat(model="gpt-6-astra"; kw...)
         @test_throws ArgumentError UniLM.encode_request(chat.service, chat)
     end
+    # The sampling / log-probability refusal names the fields that were set.
+    err = try UniLM.encode_request(OPENAIServiceEndpoint, Chat(model="gpt-6-astra", top_p=0.5, top_logprobs=2)); nothing catch e; e end
+    @test err isa ArgumentError &&
+          err.msg == "gpt-6-astra does not support sampling controls or log probabilities (top_p, top_logprobs)"
+    err = try UniLM.encode_agentic(OPENAIServiceEndpoint, Respond(model="gpt-6-astra", input="hi", temperature=0.5)); nothing catch e; e end
+    @test err isa ArgumentError && err.msg == "gpt-6-astra does not support sampling controls or log probabilities (temperature)"
     # logprobs=false requests no log probabilities: the same rule as GPT-6 Sol and Luna.
     astra = Chat(model="gpt-6-astra", logprobs=false)
     @test JSON.parse(UniLM.encode_request(astra.service, astra))["logprobs"] == false
@@ -180,7 +186,8 @@ end
                 err = try UniLM.encode_request(OPENAIServiceEndpoint,
                         Chat(; model, reasoning_effort=effort, kw...)); nothing catch e; e end
                 @test err isa ArgumentError && err.msg == "$model with reasoning effort $shown does not " *
-                    "support sampling controls or log probabilities; set reasoning_effort=\"none\" or remove them"
+                    "support sampling controls or log probabilities ($(only(keys(kw)))); " *
+                    "set reasoning_effort=\"none\" or remove them"
             end
             reasoning = isnothing(effort) ? nothing : Reasoning(; effort)
             for kw in ((temperature=0.2,), (top_p=0.5,), (top_logprobs=2,),
@@ -188,7 +195,8 @@ end
                 err = try UniLM.encode_agentic(OPENAIServiceEndpoint,
                         Respond(; model, input="hi", reasoning, kw...)); nothing catch e; e end
                 @test err isa ArgumentError && err.msg == "$model with reasoning effort $shown does not " *
-                    "support sampling controls or log probabilities; set reasoning=Reasoning(effort=\"none\") or remove them"
+                    "support sampling controls or log probabilities ($(only(keys(kw)))); " *
+                    "set reasoning=Reasoning(effort=\"none\") or remove them"
             end
         end
         chat = Chat(; model, reasoning_effort="none", temperature=0.2, logprobs=true, top_logprobs=2)

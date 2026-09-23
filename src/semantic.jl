@@ -114,7 +114,7 @@ end
 
 # ─── @branch ─────────────────────────────────────────────────────────────────
 
-const _BRANCH_KEYWORDS = (:model, :min_confidence, :instructions, :service, :config)
+const _BRANCH_KEYWORDS = (:model, :min_confidence, :instructions, :service, :config, :cancel)
 
 """
     _branch_select(state, names, descriptions; kwargs...) -> Int
@@ -133,6 +133,7 @@ function _branch_select(state, names::Vector{String}, descriptions::Vector{Any};
                         instructions=nothing,
                         service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
                         config::Union{Nothing,RequestConfig}=nothing,
+                        cancel::Union{Nothing,CancelToken}=nothing,
                         has_fallback::Bool=false)::Int
     isempty(names) && throw(ArgumentError("a branch needs at least one option"))
     any(isempty, names) && throw(ArgumentError("branch option names must be non-empty"))
@@ -140,8 +141,8 @@ function _branch_select(state, names::Vector{String}, descriptions::Vector{Any};
         "branch option names must be unique; the wire is a map, so a repeat would drop one: $(names)"))
     question = choice(isnothing(instructions) ? _NL_INSTRUCTIONS : instructions,
                       [names[i] => descriptions[i] for i in eachindex(names)])
-    result = isnothing(model) ? ask(state, "branch" => question; service, config) :
-                                ask(state, "branch" => question; model, service, config)
+    result = isnothing(model) ? ask(state, "branch" => question; service, config, cancel) :
+                                ask(state, "branch" => question; model, service, config, cancel)
     result isa SystemOneSuccess || throw(SystemOneError(result))
     a = answer(result, "branch")
     a isa ChoiceAnswer || throw(ArgumentError(
@@ -188,12 +189,15 @@ Keywords go between the state and the block, written `key = value`:
 | `instructions` | the question's instructions (default: `"Select the option that best describes the provided state."`) |
 | `service` | endpoint type (default `TYPESAFEServiceEndpoint`) |
 | `config` | `RequestConfig` for this call |
+| `cancel` | [`CancelToken`](@ref) for this call (default: the ambient [`with_cancel`](@ref) token) |
 
 An unknown keyword, a block that is not `begin ... end`, a line that is not
 `option => expression`, no options at all, two `_` lines, or a `_` that is not
 last is an `ArgumentError` raised while the macro expands, so it surfaces when
 the surrounding code is loaded rather than when the branch is first reached. A
-non-success call throws [`SystemOneError`](@ref); the branch is never guessed.
+non-success call throws [`SystemOneError`](@ref); the branch is never guessed. A
+cancelled call is one of those: its `result` is a `SystemOneCallError` whose `cause`
+is a [`UniLMCancelled`](@ref), and no body runs.
 
 ```julia
 ticket = "My package arrived crushed and the screen is cracked. I want my money back."
@@ -422,7 +426,8 @@ end
 
 """
     nl_dispatch(f, args...; model=nothing, service=TYPESAFEServiceEndpoint, config=nothing,
-                min_confidence=0.0, fallback=nothing, instructions=nothing, state=nothing)
+                cancel=nothing, min_confidence=0.0, fallback=nothing, instructions=nothing,
+                state=nothing)
 
 Resolve the natural-language arguments of `f` against a piece of state and call
 the method Julia's own dispatch selects.
@@ -446,7 +451,10 @@ default, a `String` for every slot, or a `Vector` with one entry per slot.
 
 `min_confidence` gates the result. Below it, `fallback` is called with the
 caller's `args` if given, and otherwise [`LowConfidenceError`](@ref) is thrown.
-A non-success call throws [`SystemOneError`](@ref). A resolved combination of
+A non-success call throws [`SystemOneError`](@ref) — including one cancelled
+through `cancel::Union{Nothing,CancelToken}` (default: the ambient
+[`with_cancel`](@ref) token), whose `result` is a `SystemOneCallError` with a
+[`UniLMCancelled`](@ref) `cause`; `f` is then never called. A resolved combination of
 meanings that no method covers raises Julia's own `MethodError` — it is a gap in
 the method table, not a service failure, and is not swallowed.
 
@@ -475,6 +483,7 @@ function nl_dispatch(f, args...;
                      model::Union{Nothing,AbstractString}=nothing,
                      service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
                      config::Union{Nothing,RequestConfig}=nothing,
+                     cancel::Union{Nothing,CancelToken}=nothing,
                      min_confidence::Real=0.0,
                      fallback=nothing,
                      instructions=nothing,
@@ -493,8 +502,8 @@ function nl_dispatch(f, args...;
     questions = [names[k] => choice(texts[k], [o => nothing for o in options[k]])
                  for k in eachindex(slots)]
 
-    result = isnothing(model) ? ask(payload, questions...; service, config) :
-                                ask(payload, questions...; model, service, config)
+    result = isnothing(model) ? ask(payload, questions...; service, config, cancel) :
+                                ask(payload, questions...; model, service, config, cancel)
     result isa SystemOneSuccess || throw(SystemOneError(result))
 
     picked = ChoiceAnswer[]

@@ -904,8 +904,8 @@ _typesafe_call_error(e, resp::Union{Nothing,HTTP.Response})::SystemOneCallError 
 # ─── Verbs ───────────────────────────────────────────────────────────────────
 
 """
-    ask(request::SystemOneRequest; service=TYPESAFEServiceEndpoint, config=nothing)
-    ask(state, questions...; model=default_typesafe_model(), service=TYPESAFEServiceEndpoint, config=nothing)
+    ask(request::SystemOneRequest; service=TYPESAFEServiceEndpoint, config=nothing, cancel=nothing)
+    ask(state, questions...; model=default_typesafe_model(), service=TYPESAFEServiceEndpoint, config=nothing, cancel=nothing)
 
 Evaluate every question against `state` in one `POST /v1/systemone` call and
 return exactly one of [`SystemOneSuccess`](@ref), [`SystemOneFailure`](@ref) (a
@@ -933,16 +933,22 @@ budget for this call. The request rides the package's shared retry seam, so
 or a transport failure is retried within `total_deadline`, honouring
 `Retry-After`. Other statuses — 400, 401, 403, 404, 422 — are returned as they
 came, because a second identical request cannot fix them.
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref)
+token) to make the call cancellable: once the token is cancelled it returns a
+`SystemOneCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending
+anything when the token was already cancelled, at once when mid-request (never retried).
 """
 function ask(request::SystemOneRequest; service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
-             config::Union{Nothing,RequestConfig}=nothing)
+             config::Union{Nothing,RequestConfig}=nothing,
+             cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :system_one, "TypeSafe System One API")
-    cfg = _resolve_config(config); t0 = time_ns()
+    cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
     local resp
     try
         body = JSON.json(request)
         resp = _http_with_retries(cfg, t0, "POST", _api_base_url(service) * SYSTEMONE_PATH,
-                                  auth_header(service), body)
+                                  auth_header(service), body; cancel=tok)
         resp.status == 200 ?
             SystemOneSuccess(_decode_systemone(String(resp.body), _typesafe_request_id(resp))) :
             _typesafe_failure(resp)
@@ -955,9 +961,10 @@ end
 function ask(state, question, questions...;
              model::AbstractString=default_typesafe_model(),
              service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
-             config::Union{Nothing,RequestConfig}=nothing)
+             config::Union{Nothing,RequestConfig}=nothing,
+             cancel::Union{Nothing,CancelToken}=nothing)
     ask(SystemOneRequest(state, _normalize_varargs((question, questions...)), model);
-        service, config)
+        service, config, cancel)
 end
 
 # ─── Accessors ───────────────────────────────────────────────────────────────
@@ -1070,7 +1077,7 @@ function _model_card(d::AbstractDict)::TypeSafeModelCard
 end
 
 """
-    list_models(; service=TYPESAFEServiceEndpoint, config=nothing)
+    list_models(; service=TYPESAFEServiceEndpoint, config=nothing, cancel=nothing)
 
 List the models and aliases the authenticated account may name in
 [`SystemOneRequest`](@ref)`.model` (`GET /v1/models`). Returns
@@ -1079,16 +1086,19 @@ List the models and aliases the authenticated account may name in
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout and retry
 budget; like [`ask`](@ref), this rides the shared retry seam, so `max_attempts`
-applies to the retryable statuses.
+applies to the retryable statuses. `cancel::Union{Nothing,CancelToken}` makes the
+call cancellable as for [`ask`](@ref): a cancelled call returns a
+`SystemOneCallError` whose `cause` is a [`UniLMCancelled`](@ref).
 """
 function list_models(; service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
-                     config::Union{Nothing,RequestConfig}=nothing)
+                     config::Union{Nothing,RequestConfig}=nothing,
+                     cancel::Union{Nothing,CancelToken}=nothing)
     validate_capability(service, :models, "TypeSafe models listing")
-    cfg = _resolve_config(config); t0 = time_ns()
+    cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
     local resp
     try
         resp = _http_with_retries(cfg, t0, "GET", _api_base_url(service) * TYPESAFE_MODELS_PATH,
-                                  auth_header(service))
+                                  auth_header(service); cancel=tok)
         resp.status == 200 || return _typesafe_failure(resp)
         parsed = JSON.parse(String(resp.body); dicttype=Dict{String,Any})
         parsed isa AbstractDict || throw(ArgumentError("models listing body is not a JSON object"))

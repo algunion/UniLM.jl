@@ -407,6 +407,24 @@ end
     @test gap isa MethodError
 end
 
+@testset "semantic — a cancelled token throws SystemOneError before any request" begin
+    tok = cancel!(CancelToken())
+    caught(f) = try f(); nothing catch e; e end
+    errs, seen = _with_semantic_mock() do
+        [caught(() -> nl_dispatch(route, "x"; service=SemanticMock, config=_SEM_CFG, cancel=tok)),
+         caught(() -> @branch "s" service=SemanticMock config=_SEM_CFG cancel=tok begin
+             "alpha" => :alpha
+             "beta"  => :beta
+         end),
+         caught(() -> with_cancel(tok) do   # ambient token
+             nl_dispatch(route, "x"; service=SemanticMock, config=_SEM_CFG)
+         end)]
+    end
+    @test all(e -> e isa SystemOneError && e.result isa SystemOneCallError &&
+                   e.result.cause isa UniLMCancelled, errs)
+    @test isempty(seen)
+end
+
 # ─── 9. Definition order and run-time methods ────────────────────────────────
 
 @testset "semantic — options follow definition order, not source-label order" begin

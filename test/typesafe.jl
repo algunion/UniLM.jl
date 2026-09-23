@@ -503,6 +503,41 @@ end
     @test isnothing(ask("x", noul("q?"); service=SeamProbe, config=_TINY_DEADLINE).request_id)
 end
 
+@testset "TypeSafe — cancel: a cancelled token sends nothing, a mid-request cancel returns at once" begin
+    cfg = UniLM.RequestConfig(max_attempts=3, total_deadline=60.0)
+    tok = cancel!(CancelToken())
+    results, seen = _ts_mock() do
+        [ask(_ts_request_02(); config=cfg, cancel=tok),
+         ask("x", noul("q?"); config=cfg, cancel=tok),
+         list_models(; config=cfg, cancel=tok),
+         with_cancel(() -> ask(_ts_request_02(); config=cfg), tok),   # ambient token
+         with_cancel(() -> list_models(; config=cfg), tok)]
+    end
+    @test all(r -> r isa SystemOneCallError && r.cause isa UniLMCancelled, results)
+    @test isempty(seen)
+
+    # The server would hold its reply for 10 s; the cancel lands 0.3 s into the exchange.
+    arrived, release = Threads.Atomic{Bool}(false), Threads.Atomic{Bool}(false)
+    ok_body = Vector{UInt8}(_ts_fixture("02-basic-three-questions.response.json"))
+    (r, after), seen2 = _ts_serve(_ -> (arrived[] = true; timedwait(() -> release[], 10.0);
+                                        HTTP.Response(200, ["Content-Type" => "application/json"], ok_body))) do
+        tok2 = CancelToken()
+        t = Threads.@spawn (ask(_ts_request_02(); config=cfg, cancel=tok2), time_ns())
+        timedwait(() -> arrived[], 25.0)
+        sleep(0.3)
+        cancelled_at = time_ns()
+        cancel!(tok2)
+        finished = timedwait(() -> istaskdone(t), 25.0) === :ok
+        release[] = true
+        finished || return (nothing, Inf)
+        res, done_at = fetch(t)
+        (res, (done_at - cancelled_at) / 1e9)
+    end
+    @test r isa SystemOneCallError && r.cause isa UniLMCancelled && r.cause.source === :token
+    @test after < 1.0
+    @test length(seen2) == 1   # the cancelled exchange is never retried
+end
+
 @testset "TypeSafe — capability routing refuses the wrong surface up front" begin
     @test UniLM.provider_capabilities(TYPESAFEServiceEndpoint) == Set([:system_one, :models])
     @test has_capability(TYPESAFEServiceEndpoint, :system_one)

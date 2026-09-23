@@ -293,6 +293,47 @@ end
     @test isnothing(ImageCallError(error="x").request_id) && isnothing(ImageCallError(error="x").cause)
 end
 
+@testset "images.jl — cancel: a cancelled token sends nothing, a mid-request cancel returns at once" begin
+    cfg = UniLM.RequestConfig(max_attempts=3, total_deadline=60.0)
+    probe = ImageGeneration(prompt="p", model="m", service=URLProbe)
+    imgpath = tempname() * ".png"
+    write(imgpath, UInt8[0x89, 0x50, 0x4e, 0x47])
+    try
+        tok = cancel!(CancelToken())
+        calls = (() -> generate_image(probe; config=cfg, cancel=tok),
+                 () -> generate_image("p"; model="m", service=URLProbe, config=cfg, cancel=tok),
+                 () -> edit_image(ImageEdit(image=imgpath, prompt="p", model="m", service=URLProbe);
+                                  config=cfg, cancel=tok),
+                 () -> edit_image(imgpath, "p"; model="m", service=URLProbe, config=cfg, cancel=tok),
+                 () -> with_cancel(() -> generate_image(probe; config=cfg), tok))   # ambient token
+        results, seen = _with_scripted(() -> map(f -> f(), calls), (_, _) -> _json(200, "{}"))
+        @test all(r -> r isa ImageCallError && r.cause isa UniLMCancelled, results)
+        @test isempty(seen)
+    finally
+        rm(imgpath; force=true)
+    end
+
+    # The server would hold its reply for 10 s; the cancel lands 0.3 s into the exchange.
+    arrived, release = Threads.Atomic{Bool}(false), Threads.Atomic{Bool}(false)
+    hold = (_, _) -> (arrived[] = true; timedwait(() -> release[], 10.0); _json(200, "{}"))
+    (r, after), seen = _with_scripted(hold) do
+        tok = CancelToken()
+        t = Threads.@spawn (generate_image(probe; config=cfg, cancel=tok), time_ns())
+        timedwait(() -> arrived[], 25.0)
+        sleep(0.3)
+        cancelled_at = time_ns()
+        cancel!(tok)
+        finished = timedwait(() -> istaskdone(t), 25.0) === :ok
+        release[] = true
+        finished || return (nothing, Inf)
+        res, done_at = fetch(t)
+        (res, (done_at - cancelled_at) / 1e9)
+    end
+    @test r isa ImageCallError && r.cause isa UniLMCancelled && r.cause.source === :token
+    @test after < 1.0
+    @test length(seen) == 1   # the cancelled exchange is never retried
+end
+
 using Sockets
 
 # Local image-edit target whose base URL is chosen after the listener binds.

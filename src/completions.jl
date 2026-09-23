@@ -191,7 +191,7 @@ end
 # ─── FIM Request ──────────────────────────────────────────────────────────
 
 """
-    fim_complete(fim::FIMCompletion; config=nothing) -> LLMRequestResponse
+    fim_complete(fim::FIMCompletion; config=nothing, cancel=nothing) -> LLMRequestResponse
 
 Execute a FIM (Fill-in-the-Middle) completion request. Returns [`FIMSuccess`](@ref),
 [`FIMFailure`](@ref), or [`FIMCallError`](@ref).
@@ -202,15 +202,21 @@ peer fails with a typed timeout inside the [`FIMCallError`](@ref) result
 throws an `ArgumentError` before any request; every later failure — transport, a
 200 body that is not a completions response — is a `FIMCallError` whose `cause`
 holds the exception.
+
+`cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token)
+makes the call cancellable: once the token is cancelled it returns a `FIMCallError`
+whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything when the token
+was already cancelled, at once when mid-request (never retried).
 """
-function fim_complete(fim::FIMCompletion; config::Union{Nothing,RequestConfig}=nothing)::LLMRequestResponse
+function fim_complete(fim::FIMCompletion; config::Union{Nothing,RequestConfig}=nothing,
+                      cancel::Union{Nothing,CancelToken}=nothing)::LLMRequestResponse
     validate_capability(fim.service, :fim, "FIM Completion")
     body = JSON.json(fim)
     url = get_url(fim.service, fim)::String
-    cfg = _resolve_config(config); t0 = time_ns()
+    cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
     local resp
     try
-        resp = _http_with_retries(cfg, t0, "POST", url, auth_header(fim.service), body)
+        resp = _http_with_retries(cfg, t0, "POST", url, auth_header(fim.service), body; cancel=tok)
         if resp.status == 200
             return FIMSuccess(response=_parse_fim_response(resp))
         else
@@ -232,12 +238,14 @@ end
 """
     fim_complete(prompt::String; suffix=nothing, kwargs...) -> LLMRequestResponse
 
-Convenience form: creates a [`FIMCompletion`](@ref) and executes it.
+Convenience form: creates a [`FIMCompletion`](@ref) and executes it. `config` and
+`cancel` go to the request; every other keyword to the constructor.
 """
 function fim_complete(prompt::String; suffix::Union{String,Nothing}=nothing, kwargs...)
     kws = Dict{Symbol,Any}(kwargs)
     config = pop!(kws, :config, nothing)
-    fim_complete(FIMCompletion(; prompt, suffix, kws...); config)
+    cancel = pop!(kws, :cancel, nothing)
+    fim_complete(FIMCompletion(; prompt, suffix, kws...); config, cancel)
 end
 
 # ─── Chat Prefix Completion ──────────────────────────────────────────────
@@ -247,7 +255,7 @@ _prefix_complete_url(s::GenericOpenAIEndpoint) = rstrip(s.base_url, '/') * CHAT_
 _prefix_complete_url(s) = get_url(s, Chat())  # fallback for other endpoints
 
 """
-    prefix_complete(chat::Chat; config=nothing) -> LLMRequestResponse
+    prefix_complete(chat::Chat; config=nothing, cancel=nothing) -> LLMRequestResponse
 
 Chat prefix completion: the model continues from a partial assistant message.
 The last message in `chat` must be `role=assistant` containing the text prefix
@@ -261,6 +269,9 @@ Per-call `config::RequestConfig` overrides timeouts and the retry budget; a sile
 peer fails with a typed timeout inside the [`LLMCallError`](@ref) result
 (`cause::UniLMTimeout`). Local validation throws an `ArgumentError` before any
 request; every later failure is an `LLMCallError` whose `cause` holds the exception.
+`cancel::Union{Nothing,CancelToken}` makes the call cancellable as for
+[`fim_complete`](@ref): a cancelled call returns an `LLMCallError` whose `cause` is a
+[`UniLMCancelled`](@ref), and `chat` is left untouched.
 
 # Example
 ```julia
@@ -271,7 +282,8 @@ push!(chat, Message(role=RoleAssistant, content="```python\\n"))
 result = prefix_complete(chat)
 ```
 """
-function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothing)::LLMRequestResponse
+function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
+                         cancel::Union{Nothing,CancelToken}=nothing)::LLMRequestResponse
     validate_capability(chat.service, :prefix_completion, "Chat Prefix Completion")
     isempty(chat) && throw(ArgumentError("Chat must not be empty for prefix completion"))
     last(chat).role != RoleAssistant && throw(ArgumentError("Last message must be role=assistant for prefix completion"))
@@ -289,10 +301,10 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
     body_dict[:messages] = msgs
     body = JSON.json(body_dict)
     url = _prefix_complete_url(chat.service)
-    cfg = _resolve_config(config); t0 = time_ns()
+    cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
     local resp
     try
-        resp = _http_with_retries(cfg, t0, "POST", url, auth_header(chat.service), body)
+        resp = _http_with_retries(cfg, t0, "POST", url, auth_header(chat.service), body; cancel=tok)
 
         if resp.status == 200
             extracted = extract_message(resp)

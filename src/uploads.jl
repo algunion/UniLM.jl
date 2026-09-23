@@ -51,10 +51,15 @@ _upl_resp(resp) = resp.status == 200 ?
 """
     create_upload(; filename, purpose, bytes, mime_type, service=OPENAIServiceEndpoint)
 
+`purpose` takes the Files API purposes (`"assistants"`, `"batch"`, `"fine-tune"`,
+`"vision"`, `"user_data"`, `"evals"`); any other value throws `ArgumentError` before
+any request.
+
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
 function create_upload(; filename::String, purpose::String, bytes::Int, mime_type::String, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :uploads, "Uploads API")
+    purpose in _FILE_PURPOSES || throw(ArgumentError("invalid purpose '$purpose'; expected one of $(_FILE_PURPOSES)"))
     cfg = _resolve_config(config); t0 = time_ns()
     try
         d = Dict{Symbol,Any}(:filename => filename, :purpose => purpose, :bytes => bytes, :mime_type => mime_type)

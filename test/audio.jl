@@ -14,6 +14,33 @@
     end
 end
 
+@testset "Audio API — request fields are checked against the documented values" begin
+    apath = tempname() * ".wav"
+    write(apath, UInt8[0x52, 0x49, 0x46, 0x46])
+    try
+        for fmt in ("json", "text", "srt", "verbose_json", "vtt", "diarized_json")
+            @test UniLM.TranscriptionRequest(file=apath, response_format=fmt).response_format == fmt
+        end
+        @test_throws ArgumentError UniLM.TranscriptionRequest(file=apath, response_format="mp3")
+        @test_throws ArgumentError UniLM.TranscriptionRequest(file=apath, temperature=1.5)
+        @test_throws ArgumentError UniLM.TranscriptionRequest(file=apath, temperature=-0.1)
+        @test UniLM.TranscriptionRequest(file=apath, temperature=0.0).temperature == 0.0
+        @test_throws ArgumentError UniLM.SpeechRequest(input="hi", speed=4.5)
+        @test_throws ArgumentError UniLM.SpeechRequest(input="hi", speed=0.2)
+        @test UniLM.SpeechRequest(input="hi", speed=0.25).speed == 0.25
+        @test isnothing(UniLM.SpeechRequest(input="hi").speed)
+        # Translations take no language hints and have no diarized output — refused before
+        # any request, while the same requests remain valid transcriptions.
+        for extra in ((languages=["en"],), (keywords=["Julia"],), (response_format="diarized_json",))
+            t = UniLM.TranscriptionRequest(; service=SeamProbe, file=apath, model="whisper-1", extra...)
+            @test_throws ArgumentError translate(t; config=_TINY_DEADLINE)
+            @test _seam_timeout(transcribe(t; config=_TINY_DEADLINE), UniLM.AudioCallError)
+        end
+    finally
+        rm(apath; force=true)
+    end
+end
+
 @testset "save_audio replaces the destination atomically" begin
     mktempdir() do dir
         path = joinpath(dir, "speech.mp3")

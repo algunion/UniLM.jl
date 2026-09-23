@@ -14,7 +14,8 @@
 
 A text-to-speech request. `input` is the text to synthesize; `voice` selects the
 speaker; optional `response_format` (`mp3`|`opus`|`aac`|`flac`|`wav`|`pcm`),
-`speed`, and `instructions` tune the output. Pass to [`speak`](@ref).
+`speed` (`0.25` to `4.0`; outside that range an `ArgumentError`), and `instructions`
+tune the output. Pass to [`speak`](@ref).
 """
 @kwdef struct SpeechRequest
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
@@ -24,6 +25,11 @@ speaker; optional `response_format` (`mp3`|`opus`|`aac`|`flac`|`wav`|`pcm`),
     response_format::Union{String,Nothing} = nothing   # mp3|opus|aac|flac|wav|pcm
     speed::Union{Float64,Nothing} = nothing
     instructions::Union{String,Nothing} = nothing
+    function SpeechRequest(service, model, input, voice, response_format, speed, instructions)
+        isnothing(speed) || 0.25 <= speed <= 4.0 ||
+            throw(ArgumentError("speed must be between 0.25 and 4.0; got $speed"))
+        new(service, model, input, voice, response_format, speed, instructions)
+    end
 end
 function JSON.lower(s::SpeechRequest)
     d = Dict{Symbol,Any}(:model => s.model, :input => s.input, :voice => s.voice)
@@ -77,6 +83,8 @@ save_audio(r::SpeechSuccess, path::String) = _atomic_write(path, r.audio)
 
 # ─── Transcription / translation (multipart upload → text or JSON) ───────────
 
+const _TRANSCRIPTION_FORMATS = ("json", "text", "srt", "verbose_json", "vtt", "diarized_json")
+
 """
     TranscriptionRequest(; file, model="gpt-transcribe", service=OPENAIServiceEndpoint)
 
@@ -84,6 +92,8 @@ An audio transcription/translation request. `file` is a path on disk; optional
 `languages`, `keywords`, `prompt`, `response_format`, and `temperature` refine decoding.
 For `gpt-transcribe`, a legacy singular `language` is translated to `languages`.
 Other models retain their singular `language` field. Never set both forms.
+`response_format` is one of `json`, `text`, `srt`, `verbose_json`, `vtt`,
+`diarized_json`, and `temperature` lies in `0 … 1`; anything else is an `ArgumentError`.
 Pass to [`transcribe`](@ref) or [`translate`](@ref).
 """
 @kwdef struct TranscriptionRequest
@@ -103,6 +113,10 @@ Pass to [`transcribe`](@ref) or [`translate`](@ref).
         if !isnothing(keywords) && any(k -> occursin(r"[<>\r\n]", k), keywords)
             throw(ArgumentError("Transcription keywords cannot contain <, >, or line breaks"))
         end
+        isnothing(response_format) || response_format in _TRANSCRIPTION_FORMATS || throw(ArgumentError(
+            "response_format must be one of $(_TRANSCRIPTION_FORMATS); got $(repr(response_format))"))
+        isnothing(temperature) || 0 <= temperature <= 1 ||
+            throw(ArgumentError("temperature must be between 0 and 1; got $temperature"))
         new(service, file, model, language, prompt, response_format, temperature, languages, keywords)
     end
 end
@@ -178,10 +192,18 @@ transcribe(path::String; model::String="gpt-transcribe", service::ServiceEndpoin
 """
     translate(t::TranscriptionRequest) / translate(path; model="whisper-1", kwargs...)
 
-Translate audio into English text.
+Translate audio into English text. The translations endpoint takes no `languages` or
+`keywords` hints and has no `diarized_json` output, so a request carrying any of them
+throws `ArgumentError` before any network I/O.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
-translate(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}=nothing) = _transcribe(t, AUDIO_TRANSLATIONS_PATH; config=config)
+function translate(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}=nothing)
+    isnothing(t.languages) && isnothing(t.keywords) ||
+        throw(ArgumentError("translations take no `languages` or `keywords`; the output is always English"))
+    t.response_format == "diarized_json" &&
+        throw(ArgumentError("translations do not offer response_format \"diarized_json\""))
+    _transcribe(t, AUDIO_TRANSLATIONS_PATH; config=config)
+end
 translate(path::String; model::String="whisper-1", service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing, kwargs...) =
     translate(TranscriptionRequest(; service=service, file=path, model=model, kwargs...); config=config)

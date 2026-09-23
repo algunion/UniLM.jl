@@ -146,7 +146,6 @@ mutable struct MCPServer
     resources::Dict{String,MCPServerResource}
     resource_templates::Vector{MCPServerResourceTemplate}
     prompts::Dict{String,MCPServerPrompt}
-    _initialized::Bool
     # Guards the four registries above: registration may run while requests are
     # dispatched on other threads (a Dict rehash under a concurrent read corrupts the
     # heap). Held only to read or write a registry, never across a handler call.
@@ -159,7 +158,6 @@ function MCPServer(name::String, version::String; description::Union{String,Noth
         Dict{String,MCPServerResource}(),
         MCPServerResourceTemplate[],
         Dict{String,MCPServerPrompt}(),
-        false,
         ReentrantLock())
 end
 
@@ -351,7 +349,6 @@ function _handle_initialize(server::MCPServer, id, params::Dict{String,Any})
         (isempty(server.resources) && isempty(server.resource_templates)) ||
             (caps["resources"] = Dict{String,Any}())
         isempty(server.prompts) || (caps["prompts"] = Dict{String,Any}())
-        server._initialized = true
     end
     server_info = Dict{String,Any}("name" => server.name, "version" => server.version)
     !isnothing(server.description) && (server_info["description"] = server.description)

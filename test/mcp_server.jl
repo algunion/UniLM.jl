@@ -8,7 +8,6 @@
     @test isempty(server.tools)
     @test isempty(server.resources)
     @test isempty(server.prompts)
-    @test !server._initialized
 
     server2 = MCPServer("s2", "2.0.0"; description="A test server")
     @test server2.description == "A test server"
@@ -138,7 +137,6 @@ end
         @test resp["result"]["protocolVersion"] == "2025-11-25"
         @test haskey(resp["result"]["capabilities"], "tools")
         @test resp["result"]["serverInfo"]["name"] == "test-server"
-        @test server._initialized
     end
 
     @testset "Tools list" begin

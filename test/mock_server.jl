@@ -601,7 +601,9 @@ try
         response_status[] = 200; response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict("id" => "cntr-1", "status" => "running", "name" => "box"))
         @test create_container(name="box", service=MockServiceEndpoint) isa ContainerSuccess
-        response_body[] = JSON.json(Dict("id" => "cfile-1", "status" => "ok"))
+        response_body[] = JSON.json(Dict("id" => "cfile-1", "object" => "container.file",
+            "container_id" => "cntr-1", "path" => "/mnt/data/x.txt", "bytes" => 1,
+            "source" => "user", "created_at" => 1))
         p = tempname() * ".txt"; write(p, "x")
         @test add_container_file("cntr-1", p; service=MockServiceEndpoint) isa ContainerSuccess
         rm(p)
@@ -702,8 +704,10 @@ try
         @test retrieve_file_batch("vs-1", "batch-1"; service=MockServiceEndpoint) isa VectorStoreBatchSuccess
         response_body[] = JSON.json(Dict("id" => "conv-1", "metadata" => Dict("k" => "v2")))
         @test update_conversation("conv-1", Dict("k" => "v2"); service=MockServiceEndpoint) isa ConversationSuccess
-        response_body[] = JSON.json(Dict("id" => "item-1", "deleted" => true))
-        @test delete_conversation_item("conv-1", "item-1"; service=MockServiceEndpoint) isa ConversationDeleteSuccess
+        # Deleting an item answers with the updated Conversation object.
+        response_body[] = JSON.json(Dict("id" => "conv-1", "object" => "conversation",
+            "created_at" => 1, "metadata" => Dict{String,Any}()))
+        @test delete_conversation_item("conv-1", "item-1"; service=MockServiceEndpoint) isa ConversationSuccess
         # save_file_content round-trip
         response_body[] = "filebytes"
         fc = file_content("file-1"; service=MockServiceEndpoint)
@@ -831,8 +835,8 @@ try
     # ═══════════════════════════════════════════════════════════════════════
 
     @testset "image_data on failure types" begin
-        @test image_data(ImageFailure(response="err", status=400)) == String[]
-        @test image_data(ImageCallError(error="err")) == String[]
+        @test_throws LLMResultError image_data(ImageFailure(response="err", status=400))
+        @test_throws LLMResultError image_data(ImageCallError(error="err"))
     end
 
     @testset "output_text on error types" begin
@@ -1901,23 +1905,17 @@ try
         set_error!(200, "")
     end
 
-    @testset "upload_file 503→200 retry recursion → FileSuccess (files.jl 97–98)" begin
-        response_queue[] = [(503, ""),
-            (200, JSON.json(Dict("id" => "file-retry", "bytes" => 5, "created_at" => 123,
-                "filename" => "r.txt", "purpose" => "user_data", "status" => "processed")))]
+    @testset "upload_file is one attempt: a 503 is the result, never a second create" begin
+        response_queue[] = [(503, "")]
 
         path = tempname() * ".txt"
         write(path, "hello")
         try
-            r = upload_file(path, "user_data"; service=MockServiceEndpoint)   # no config kwarg → default max_attempts=3
+            r = upload_file(path, "user_data"; service=MockServiceEndpoint)   # default config: max_attempts=3, ignored by creates
 
-            @test r isa FileSuccess
-            @test r.response.id == "file-retry"
-            @test r.response.bytes == 5
-            @test r.response.created_at == 123
-            @test r.response.filename == "r.txt"
-            @test r.response.status == "processed"
-            @test isempty(response_queue[])   # both responses consumed → it retried then recovered
+            @test r isa FileFailure
+            @test r.status == 503
+            @test isempty(response_queue[])   # exactly one request consumed the one scripted reply
         finally
             rm(path; force=true)
         end
@@ -2006,11 +2004,9 @@ try
     # NOT covered deterministically here: the incremental text-delta branches
     # (requests.jl `_flush_delta!`, responses.jl `_respond_stream`) which only fire when a content
     # chunk arrives in a read BEFORE the terminal chunk (≥2 separate network
-    # reads). A dedicated HTTP.listen! chunked-streaming mock covered them on
-    # HTTP.jl 2.x, but FAILED on the HTTP.jl 1.x CI leg (EOFError — listen!
-    # streaming semantics differ across the compat range), so it was dropped
-    # rather than ship a leg-specific test. Those two branches ARE exercised in
-    # CI by the live integration streaming tests (real multi-chunk responses).
+    # reads). Those branches are exercised by the chunked-streaming fixtures in
+    # test/requests.jl and test/responses.jl and by the live integration
+    # streaming tests (real multi-chunk responses).
     # ═══════════════════════════════════════════════════════════════════════
 
     # ── TARGET A: on_tool_call callback that THROWS is isolated (_fire_tool_calls!)
@@ -2257,10 +2253,11 @@ try
     end
 
     @testset "realtime default WS URL (pure-unit)" begin
-        # The generic _realtime_ws_url(service) fallback in realtime.jl returns REALTIME_WS_URL.
-        # This suite overrides it for WSMockEndpoint, so a non-overridden service (the OPENAI
-        # type) must still resolve to the package definition: the file/module pin falsifies a
-        # test-local override leaking into dispatch, the value falsifies a wrong default URL.
+        # realtime.jl defines the WebSocket URL for OPENAIServiceEndpoint only; any other
+        # service throws ArgumentError before I/O. This suite adds a method for
+        # WSMockEndpoint, so the OPENAI type must still resolve to the package definition:
+        # the file/module pin falsifies a test-local override leaking into dispatch, the
+        # value falsifies a wrong default URL.
         m = which(UniLM._realtime_ws_url, (Type{OPENAIServiceEndpoint},))
         @test basename(String(m.file)) == "realtime.jl"
         @test m.module === UniLM

@@ -117,13 +117,52 @@ end
 
 # ─── Request encoding (neutral Chat → Anthropic Messages body) ───────────────
 
-function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
-    # OpenAI request controls with no Messages counterpart: dropping a moderation
-    # policy or cache setting would send a request the caller did not ask for.
+# Fail closed when a neutral option has no Messages API counterpart: dropping it
+# would send a request the caller did not ask for.
+const _ANTHROPIC_CHAT_MAPPED_FIELDS = (:service, :model, :messages, :history, :tools,
+    :tool_choice, :parallel_tool_calls, :temperature, :top_p, :n, :stream, :stop,
+    :max_tokens, :max_completion_tokens, :response_format, :user, :reasoning_effort,
+    :metadata, :service_tier, :safety_identifier, :_cumulative_cost)
+const _ANTHROPIC_CHAT_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Chat), _ANTHROPIC_CHAT_MAPPED_FIELDS))
+
+function _anthropic_validate_fields(chat::Chat)
     for f in (:moderation, :prompt_cache_options)
         isnothing(getfield(chat, f)) || throw(ArgumentError(
             "Anthropic Messages does not support $f; it is an OpenAI-only option"))
     end
+    isnothing(chat.n) || chat.n == 1 || throw(ArgumentError(
+        "Anthropic Messages returns one completion; n must be 1"))
+    fields = Symbol[f for f in _ANTHROPIC_CHAT_UNMAPPED_FIELDS if !isnothing(getfield(chat, f))]
+    isempty(fields) || throw(ArgumentError(
+        "Anthropic Messages does not support field(s) $(join(fields, ", "))"))
+    # Messages API service_tier values: https://platform.claude.com/docs/en/api/messages.md
+    isnothing(chat.service_tier) || chat.service_tier in ("auto", "standard_only") || throw(ArgumentError(
+        "Anthropic service_tier must be \"auto\" or \"standard_only\" (got $(repr(chat.service_tier)))"))
+    nothing
+end
+
+# safety_identifier, user and metadata user_id all name the end user; the Messages
+# API has one slot for it, metadata.user_id, and no other metadata key.
+function _anthropic_user_id(chat::Chat)::Union{String,Nothing}
+    ids = Pair{Symbol,String}[]
+    if !isnothing(chat.metadata)
+        for (k, v) in chat.metadata
+            string(k) == "user_id" || throw(ArgumentError(
+                "Anthropic metadata accepts only user_id (got key $(repr(string(k))))"))
+            v isa Union{AbstractString,Nothing} || throw(ArgumentError(
+                "Anthropic metadata user_id must be a string (got $(typeof(v)))"))
+            isnothing(v) || push!(ids, :metadata => v)
+        end
+    end
+    isnothing(chat.safety_identifier) || push!(ids, :safety_identifier => chat.safety_identifier)
+    isnothing(chat.user) || push!(ids, :user => chat.user)
+    allequal(last.(ids)) || throw(ArgumentError(
+        "Anthropic sends $(join(first.(ids), ", ")) as metadata.user_id; set one, or set them equal"))
+    isempty(ids) ? nothing : last(first(ids))
+end
+
+function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
+    _anthropic_validate_fields(chat)
     fam = _claude_family(chat.model)
     body = Dict{Symbol,Any}(:model => chat.model)
     # max_tokens is REQUIRED by Anthropic; fall back to the moderate default.
@@ -133,14 +172,17 @@ function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
     isnothing(system) || (body[:system] = system)
     body[:messages] = msgs
     isnothing(chat.tools)       || (body[:tools] = [_anthropic_tool(t) for t in chat.tools])
-    isnothing(chat.tool_choice) || (body[:tool_choice] = _anthropic_tool_choice(chat.tool_choice))
+    disable_parallel = !isnothing(chat.tools) && !isempty(chat.tools) && chat.parallel_tool_calls === false
+    (!isnothing(chat.tool_choice) || disable_parallel) &&
+        (body[:tool_choice] = _anthropic_tool_choice(something(chat.tool_choice, "auto"), disable_parallel))
     isnothing(chat.stop)        || (body[:stop_sequences] = chat.stop isa String ? [chat.stop] : chat.stop)
     # NB: newest Claude models reject temperature/top_p (HTTP 400). Forward
     # transparently when set — the provider's 400 is the loud signal, not a
     # silent drop or mangle.
     isnothing(chat.temperature) || (body[:temperature] = chat.temperature)
     isnothing(chat.top_p)       || (body[:top_p] = chat.top_p)
-    isnothing(chat.metadata)    || (body[:metadata] = chat.metadata)
+    (uid = _anthropic_user_id(chat)) === nothing || (body[:metadata] = Dict(:user_id => uid))
+    isnothing(chat.service_tier) || (body[:service_tier] = chat.service_tier)
     thinking, effort = _anthropic_reasoning(chat.model, chat.reasoning_effort, fam)
     isnothing(thinking) || (body[:thinking] = thinking)
     output_config = Dict{Symbol,Any}()
@@ -231,12 +273,17 @@ function _anthropic_output_format(rf::ResponseFormat)
     Dict(:type => "json_schema", :schema => schema)
 end
 
-_anthropic_tool_choice(tc::String) =
-    tc == "auto"     ? Dict(:type => "auto") :
-    tc == "none"     ? Dict(:type => "none") :
-    tc == "required" ? Dict(:type => "any")  :
-    Dict(:type => "auto")
-_anthropic_tool_choice(tc::GPTToolChoice) = Dict(:type => "tool", :name => string(tc.func))
+# parallel_tool_calls=false rides on the tool_choice object as disable_parallel_tool_use
+# (every variant but "none" carries it).
+function _anthropic_tool_choice(tc::Union{String,GPTToolChoice}, disable_parallel::Bool)
+    d = tc isa GPTToolChoice ? Dict{Symbol,Any}(:type => "tool", :name => string(tc.func)) :
+        tc == "auto"         ? Dict{Symbol,Any}(:type => "auto") :
+        tc == "none"         ? Dict{Symbol,Any}(:type => "none") :
+        tc == "required"     ? Dict{Symbol,Any}(:type => "any") :
+        throw(ArgumentError("Unknown Anthropic tool_choice $(repr(tc)); use \"auto\", \"none\", \"required\" or a GPTToolChoice"))
+    disable_parallel && d[:type] != "none" && (d[:disable_parallel_tool_use] = true)
+    d
+end
 
 # ─── Response decoding (Anthropic Messages → neutral Message) ────────────────
 

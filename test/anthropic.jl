@@ -44,7 +44,8 @@ end
     @test body["tools"][1]["description"] == "Get weather"
     @test body["tools"][1]["input_schema"]["type"] == "object"
     @test !haskey(body["tools"][1], "parameters")        # renamed, not OpenAI's key
-    @test body["tool_choice"] == Dict("type" => "auto")
+    # Chat's parallel_tool_calls defaults to false, which Anthropic expresses on tool_choice.
+    @test body["tool_choice"] == Dict("type" => "auto", "disable_parallel_tool_use" => true)
 end
 
 @testset "encode — multi-turn tool_use → tool_result collapse" begin
@@ -502,4 +503,56 @@ end
     body = enc("claude-sonnet-5", "low"; response_format=UniLM.json_schema("c", "d", _ANTHROPIC_SCHEMA))
     @test body["output_config"] == Dict("effort" => "low",
         "format" => Dict("type" => "json_schema", "schema" => _ANTHROPIC_SCHEMA))
+end
+
+@testset "encode — Chat fields with no Anthropic mapping fail closed" begin
+    for (field, value) in ((:seed, 7), (:logprobs, true), (:logprobs, false), (:top_logprobs, 2),
+                           (:presence_penalty, 0.5), (:frequency_penalty, 0.5),
+                           (:logit_bias, Dict("50256" => -100.0)), (:verbosity, "low"), (:store, false),
+                           (:prompt_cache_key, "k"), (:stream_options, Dict("include_usage" => true)),
+                           (:prediction, Dict("type" => "content", "content" => "x")), (:modalities, ["text"]),
+                           (:audio, Dict("voice" => "alloy")), (:web_search_options, Dict{String,Any}()))
+        e = _anthropic_err(; field => value)
+        @test e isa ArgumentError && occursin(string(field), e.msg)
+    end
+    e = _anthropic_err(seed=1, store=true)
+    @test e isa ArgumentError && occursin("seed", e.msg) && occursin("store", e.msg)
+    e = _anthropic_err(n=2)
+    @test e isa ArgumentError && occursin("n must be 1", e.msg)
+    @test _anthropic_body(n=1)["model"] == "claude-opus-5-5"
+end
+
+@testset "encode — parallel_tool_calls, user ids, metadata, service_tier and tool_choice mappings" begin
+    tools = [Tool(func=FunctionSignature(name="f", parameters=Dict("type" => "object", "properties" => Dict())))]
+    b(; kw...) = _anthropic_body(; model="claude-sonnet-5", kw...)
+    e(; kw...) = _anthropic_err(; model="claude-sonnet-5", kw...)
+    # parallel_tool_calls=false (Chat's default when tools are set) rides on the tool_choice object.
+    @test b(tools=tools)["tool_choice"] == Dict("type" => "auto", "disable_parallel_tool_use" => true)
+    @test b(tools=tools, tool_choice="required")["tool_choice"] ==
+          Dict("type" => "any", "disable_parallel_tool_use" => true)
+    @test b(tools=tools, tool_choice=UniLM.GPTToolChoice(func="f"))["tool_choice"] ==
+          Dict("type" => "tool", "name" => "f", "disable_parallel_tool_use" => true)
+    @test b(tools=tools, tool_choice="none")["tool_choice"] == Dict("type" => "none")
+    @test !haskey(b(tools=tools, parallel_tool_calls=true), "tool_choice")
+    @test b(tools=tools, parallel_tool_calls=true, tool_choice="auto")["tool_choice"] == Dict("type" => "auto")
+    @test !haskey(b(), "tool_choice")
+    x = e(tools=tools, tool_choice="reqired")
+    @test x isa ArgumentError && occursin("tool_choice", x.msg) && occursin("reqired", x.msg)
+    # safety_identifier, user and metadata.user_id all land on metadata.user_id and must agree.
+    @test b(safety_identifier="u1")["metadata"] == Dict("user_id" => "u1")
+    @test b(user="u2")["metadata"] == Dict("user_id" => "u2")
+    @test b(user="u3", safety_identifier="u3")["metadata"] == Dict("user_id" => "u3")
+    @test b(metadata=Dict("user_id" => "u4"))["metadata"] == Dict("user_id" => "u4")
+    @test b(metadata=Dict(:user_id => "u5"), safety_identifier="u5")["metadata"] == Dict("user_id" => "u5")
+    @test !haskey(b(), "metadata")
+    x = e(user="a", safety_identifier="b")
+    @test x isa ArgumentError && occursin("user", x.msg) && occursin("safety_identifier", x.msg)
+    @test e(metadata=Dict("user_id" => "a"), safety_identifier="b") isa ArgumentError
+    x = e(metadata=Dict("user_id" => "a", "tier" => "gold"))
+    @test x isa ArgumentError && occursin("metadata", x.msg) && occursin("tier", x.msg)
+    # service_tier: Anthropic accepts auto and standard_only (Messages API reference).
+    @test b(service_tier="auto")["service_tier"] == "auto"
+    @test b(service_tier="standard_only")["service_tier"] == "standard_only"
+    x = e(service_tier="flex")
+    @test x isa ArgumentError && occursin("service_tier", x.msg)
 end

@@ -124,16 +124,16 @@ end
     # the buffered partial line reassembles with the next chunk
     UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
         "\ndata: {\"index\":0,\"delta\":{\"text\":\"hi\",\"type\":\"text\"}}\n\n", state)
-    @test String(take!(state.textbuff)) == "hi"
+    @test takestring!(state.textbuff) == "hi"
 
     # (b) a trailing fragment after the last newline is stashed for the next chunk
     state2 = UniLM.AgenticStreamState()
     UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
         "event: step.delta\ndata: {\"index\":0,\"delta\":{\"text\":\"a\",\"type\":\"text\"}}\n\n" *
         "event: step.delta\ndata: {\"index\":0,\"delta\":{\"text\":\"b\"", state2)
-    @test String(take!(state2.textbuff)) == "a"                       # first delta consumed
+    @test takestring!(state2.textbuff) == "a"                       # first delta consumed
     UniLM.decode_agentic_stream(GEMINIServiceEndpoint, ",\"type\":\"text\"}}\n\n", state2)
-    @test String(take!(state2.textbuff)) == "b"                       # stashed fragment completed
+    @test takestring!(state2.textbuff) == "b"                       # stashed fragment completed
 
     # (c) a malformed COMPLETE data line is dropped + counted (never re-queued
     # into the carry) — the shared machine's contract; no crash, stream continues.
@@ -490,7 +490,7 @@ end
     r = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, sse, st)
     @test r.terminal == :completed
     @test r.data["response"]["output"][1]["content"][1]["text"] == "Hello world"
-    @test String(take!(st.textbuff)) == "Hello world"
+    @test takestring!(st.textbuff) == "Hello world"
 
     # (b) end-to-end through the real driver: every delta reaches the callback.
     server, url = _ix_sse_server(sse)

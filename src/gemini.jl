@@ -333,7 +333,7 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
     # A candidate without a finishReason reports none, so none is invented for it.
     finish = fr_raw isa AbstractString ? _gemini_finish_reason(fr_raw, !isempty(tool_calls)) : nothing
     usage = _gemini_usage(get(data, "usageMetadata", nothing))
-    txt = String(take!(text))
+    txt = takestring!(text)
     msg = if !isempty(tool_calls)
         Message(role=RoleAssistant, content=(isempty(txt) ? nothing : txt),
                 tool_calls=tool_calls, finish_reason=finish, provider_content=pc)

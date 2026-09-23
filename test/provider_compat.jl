@@ -56,7 +56,7 @@ end
         UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", JSON.json(Dict("candidates" => [
             Dict("content" => Dict("role" => "model", "parts" => [part]))])), state)
     end
-    @test String(take!(state.pending_delta)) == "hello"
+    @test takestring!(state.pending_delta) == "hello"
     message = UniLM._build_stream_message(state)
     @test message.content == "hello"
     @test message.provider_content isa ProviderContent
@@ -102,8 +102,8 @@ end
     @test get(first(out), "type", "") == "message"
     @test get(first(out), "content", []) == [Dict("type" => "output_text", "text" => "Hello world")]
     @test get(last(out), "type", "") == "function_call"
-    @test String(take!(state.pending_delta)) == "Hello world"
-    @test String(take!(state.textbuff)) == "Hello world"
+    @test takestring!(state.pending_delta) == "Hello world"
+    @test takestring!(state.textbuff) == "Hello world"
     @test length(out) == 2
 end
 

@@ -177,12 +177,9 @@ function _interaction_output(steps)::Vector{Any}
         s isa AbstractDict || continue
         t = get(s, "type", "")
         if t == "model_output"
-            parts = Any[]
             # `content` is null on a model_output step that produced no parts.
-            for c in _as_iter(get(s, "content", ()))
-                _interaction_text_part(c) &&
-                    push!(parts, Dict{String,Any}("type" => "output_text", "text" => get(c, "text", "")))
-            end
+            parts = Any[Dict{String,Any}("type" => "output_text", "text" => get(c, "text", ""))
+                        for c in _as_iter(get(s, "content", ())) if _interaction_text_part(c)]
             push!(out, Dict{String,Any}("type" => "message", "role" => "assistant", "content" => parts))
         elseif t == "function_call"
             # Absent or null arguments: a call without arguments.

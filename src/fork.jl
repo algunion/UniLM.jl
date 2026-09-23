@@ -1,20 +1,22 @@
 """
     fork(chat::Chat) -> Chat
 
-Create an independent copy of a `Chat`: `messages` is deep-copied, the
-cumulative-cost `Ref` is fresh (copied by value), and EVERY other field is
-copied verbatim by construction (a `fieldnames` loop), so new `Chat` fields
-survive forking automatically. `fork` itself applies no normalization or
-rewrite — a fork is configuration-identical to its source.
+Create an independent copy of a `Chat`: every field except `service` is deep-copied
+in one pass, so mutating a fork's `messages`, `tools`, `metadata`, `stop` or any other
+field never reaches its source or its siblings; `service` is shared (the endpoint a
+chat talks to, not conversation state); the cumulative-cost `Ref` is fresh (copied by
+value). The copy runs over `fieldnames(Chat)`, so new `Chat` fields fork
+automatically. `fork` itself applies no normalization or rewrite — a fork is
+configuration-identical to its source.
 """
 function fork(chat::Chat)::Chat
     kwargs = Dict{Symbol,Any}()
     for field in fieldnames(Chat)
-        field in (:messages, :_cumulative_cost) && continue
+        field in (:service, :_cumulative_cost) && continue
         kwargs[field] = getfield(chat, field)
     end
-    Chat(; messages=deepcopy(chat.messages),
-           _cumulative_cost=Ref(chat._cumulative_cost[]), kwargs...)
+    Chat(; service=chat.service, _cumulative_cost=Ref(chat._cumulative_cost[]),
+           deepcopy(kwargs)...)
 end
 
 """

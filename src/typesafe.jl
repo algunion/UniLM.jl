@@ -622,10 +622,16 @@ end
 A TypeSafe call that never produced an HTTP response: a timeout, a transport
 failure, a missing `TYPESAFE_API_KEY`, or a 200 whose body could not be decoded
 into answers. `status` is filled in only when the underlying exception carried one.
+
+`cause` is that underlying exception — a [`UniLMTimeout`](@ref) for a timeout —
+and `request_id` is the `x-typesafe-request-id` header of the 200 that could not
+be decoded (`nothing` when no reply arrived).
 """
 @kwdef struct SystemOneCallError <: LLMRequestResponse
     error::String
     status::Union{Int,Nothing} = nothing
+    request_id::Union{Nothing,String} = nothing
+    cause::Union{Nothing,Exception} = nothing
 end
 
 """
@@ -857,6 +863,7 @@ end
 
 _typesafe_request_id(resp::HTTP.Response)::Union{Nothing,String} =
     (v = HTTP.header(resp, "x-typesafe-request-id", ""); isempty(v) ? nothing : String(v))
+_typesafe_request_id(::Nothing) = nothing
 
 """
     _typesafe_retry_after(resp) -> Union{Nothing,Float64}
@@ -890,8 +897,8 @@ _typesafe_failure(resp::HTTP.Response)::SystemOneFailure = begin
                      retry_after=_typesafe_retry_after(resp))
 end
 
-_typesafe_call_error(e)::SystemOneCallError =
-    SystemOneCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
+_typesafe_call_error(e, resp::Union{Nothing,HTTP.Response})::SystemOneCallError =
+    _callerr(SystemOneCallError, e; request_id=_typesafe_request_id(resp))
 
 # ─── Verbs ───────────────────────────────────────────────────────────────────
 
@@ -930,6 +937,7 @@ function ask(request::SystemOneRequest; service::ServiceEndpointSpec=TYPESAFESer
              config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :system_one, "TypeSafe System One API")
     cfg = _resolve_config(config); t0 = time_ns()
+    local resp
     try
         body = JSON.json(request)
         resp = _http_with_retries(cfg, t0, "POST", _api_base_url(service) * SYSTEMONE_PATH,
@@ -939,7 +947,7 @@ function ask(request::SystemOneRequest; service::ServiceEndpointSpec=TYPESAFESer
             _typesafe_failure(resp)
     catch e
         e isa InterruptException && rethrow()
-        _typesafe_call_error(e)
+        _typesafe_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
 
@@ -1076,6 +1084,7 @@ function list_models(; service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
                      config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :models, "TypeSafe models listing")
     cfg = _resolve_config(config); t0 = time_ns()
+    local resp
     try
         resp = _http_with_retries(cfg, t0, "GET", _api_base_url(service) * TYPESAFE_MODELS_PATH,
                                   auth_header(service))
@@ -1094,6 +1103,6 @@ function list_models(; service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
         TypeSafeModelsSuccess(cards, raw)
     catch e
         e isa InterruptException && rethrow()
-        _typesafe_call_error(e)
+        _typesafe_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end

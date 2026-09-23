@@ -62,10 +62,10 @@ end
 @kwdef struct ConversationItemSuccess <: LLMRequestResponse; response::ConversationItem; end
 "Successful [`delete_conversation`](@ref) / [`delete_conversation_item`](@ref) result; `deleted` confirms removal of `id`."
 @kwdef struct ConversationDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
-"Conversations API error result: HTTP `status` and the raw `response` body."
-@kwdef struct ConversationFailure <: LLMRequestResponse; response::String; status::Int; end
-"Local/transport error from a Conversations API call (the request never completed)."
-@kwdef struct ConversationCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
+"Conversations API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
+@kwdef struct ConversationFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
+"Conversations API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout."
+@kwdef struct ConversationCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
 
 _parse_conversation(d::AbstractDict) = ConversationObject(id=d["id"], created_at=get(d, "created_at", nothing),
     metadata=get(d, "metadata", nothing), raw=Dict{String,Any}(d))
@@ -77,7 +77,6 @@ function _conv_http(method::String, url::String, service, cfg::RequestConfig, re
         _http(method, url, headers, body; cfg, remaining)
 end
 
-_conv_err(e) = ConversationCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
 
 # ─── Requests ─────────────────────────────────────────────────────────────────
 
@@ -99,10 +98,10 @@ function create_conversation(; items::Union{Vector,Nothing}=nothing, metadata::U
         !isnothing(metadata) && (d[:metadata] = metadata)
         resp = _conv_http("POST", _api_base_url(service) * CONVERSATIONS_PATH, service, cfg, _remaining_s(cfg, t0); body=JSON.json(d))
         resp.status == 200 ? ConversationSuccess(response=_parse_conversation(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
-            ConversationFailure(response=String(resp.body), status=resp.status)
+            _failure(ConversationFailure, resp)
     catch e
         e isa InterruptException && rethrow()
-        _conv_err(e)
+        _callerr(ConversationCallError, e)
     end
 end
 
@@ -117,10 +116,10 @@ function retrieve_conversation(id::String; service::ServiceEndpointSpec=OPENAISe
     try
         resp = _conv_http("GET", _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0))
         resp.status == 200 ? ConversationSuccess(response=_parse_conversation(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
-            ConversationFailure(response=String(resp.body), status=resp.status)
+            _failure(ConversationFailure, resp)
     catch e
         e isa InterruptException && rethrow()
-        _conv_err(e)
+        _callerr(ConversationCallError, e)
     end
 end
 
@@ -136,10 +135,10 @@ function update_conversation(id::String, metadata::AbstractDict; service::Servic
         resp = _conv_http("POST", _api_base_url(service) * CONVERSATIONS_PATH * "/" * _uripart(id), service, cfg, _remaining_s(cfg, t0);
             body=JSON.json(Dict{Symbol,Any}(:metadata => metadata)))
         resp.status == 200 ? ConversationSuccess(response=_parse_conversation(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
-            ConversationFailure(response=String(resp.body), status=resp.status)
+            _failure(ConversationFailure, resp)
     catch e
         e isa InterruptException && rethrow()
-        _conv_err(e)
+        _callerr(ConversationCallError, e)
     end
 end
 
@@ -157,11 +156,11 @@ function delete_conversation(id::String; service::ServiceEndpointSpec=OPENAIServ
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
             ConversationDeleteSuccess(id=get(d, "id", id), deleted=get(d, "deleted", false))
         else
-            ConversationFailure(response=String(resp.body), status=resp.status)
+            _failure(ConversationFailure, resp)
         end
     catch e
         e isa InterruptException && rethrow()
-        _conv_err(e)
+        _callerr(ConversationCallError, e)
     end
 end
 
@@ -184,11 +183,11 @@ function add_conversation_items(conv_id::String, items::Vector; service::Service
             ConversationItemListSuccess(response=ConversationItemList(data=its, has_more=get(data, "has_more", false),
                 first_id=get(data, "first_id", nothing), last_id=get(data, "last_id", nothing), raw=data))
         else
-            ConversationFailure(response=String(resp.body), status=resp.status)
+            _failure(ConversationFailure, resp)
         end
     catch e
         e isa InterruptException && rethrow()
-        _conv_err(e)
+        _callerr(ConversationCallError, e)
     end
 end
 
@@ -216,11 +215,11 @@ function list_conversation_items(conv_id::String; limit::Union{Int,Nothing}=noth
             ConversationItemListSuccess(response=ConversationItemList(data=its, has_more=get(data, "has_more", false),
                 first_id=get(data, "first_id", nothing), last_id=get(data, "last_id", nothing), raw=data))
         else
-            ConversationFailure(response=String(resp.body), status=resp.status)
+            _failure(ConversationFailure, resp)
         end
     catch e
         e isa InterruptException && rethrow()
-        _conv_err(e)
+        _callerr(ConversationCallError, e)
     end
 end
 
@@ -238,10 +237,10 @@ function delete_conversation_item(conv_id::String, item_id::String; service::Ser
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
             ConversationDeleteSuccess(id=get(d, "id", item_id), deleted=get(d, "deleted", false))
         else
-            ConversationFailure(response=String(resp.body), status=resp.status)
+            _failure(ConversationFailure, resp)
         end
     catch e
         e isa InterruptException && rethrow()
-        _conv_err(e)
+        _callerr(ConversationCallError, e)
     end
 end

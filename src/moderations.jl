@@ -30,10 +30,10 @@ end
 
 "Successful [`moderate`](@ref) result wrapping a [`ModerationResponse`](@ref)."
 @kwdef struct ModerationSuccess <: LLMRequestResponse; response::ModerationResponse; end
-"Moderations API error result: HTTP `status` and the raw `response` body."
-@kwdef struct ModerationFailure <: LLMRequestResponse; response::String; status::Int; end
-"Local/transport error from a Moderations API call (the request never completed)."
-@kwdef struct ModerationCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
+"Moderations API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
+@kwdef struct ModerationFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
+"Moderations API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout."
+@kwdef struct ModerationCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
 
 """
     is_flagged(r) -> Bool
@@ -86,10 +86,10 @@ function moderate(input; model::String="omni-moderation-latest", service::Servic
                 for r in get(d, "results", [])]
             ModerationSuccess(response=ModerationResponse(results=results, model=get(d, "model", model), raw=d))
         else
-            ModerationFailure(response=String(resp.body), status=resp.status)
+            _failure(ModerationFailure, resp)
         end
     catch e
         e isa InterruptException && rethrow()
-        ModerationCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        _callerr(ModerationCallError, e)
     end
 end

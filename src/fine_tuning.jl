@@ -35,19 +35,18 @@ end
 @kwdef struct FineTuningSuccess <: LLMRequestResponse; response::FineTuningJob; end
 "Successful list result wrapping a [`FineTuningList`](@ref)."
 @kwdef struct FineTuningListSuccess <: LLMRequestResponse; response::FineTuningList; end
-"Fine-tuning API error result: HTTP `status` and the raw `response` body."
-@kwdef struct FineTuningFailure <: LLMRequestResponse; response::String; status::Int; end
-"Local/transport error from a Fine-tuning API call (the request never completed)."
-@kwdef struct FineTuningCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
+"Fine-tuning API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
+@kwdef struct FineTuningFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
+"Fine-tuning API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout."
+@kwdef struct FineTuningCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
 
 _parse_ft_job(d::AbstractDict) = FineTuningJob(id=d["id"], status=get(d, "status", nothing),
     model=get(d, "model", nothing), fine_tuned_model=get(d, "fine_tuned_model", nothing), raw=Dict{String,Any}(d))
-_ft_err(e) = FineTuningCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
 _ft_job_resp(resp) = resp.status == 200 ?
     FineTuningSuccess(response=_parse_ft_job(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
-    FineTuningFailure(response=String(resp.body), status=resp.status)
+    _failure(FineTuningFailure, resp)
 function _ft_list_resp(resp)
-    resp.status == 200 || return FineTuningFailure(response=String(resp.body), status=resp.status)
+    resp.status == 200 || return _failure(FineTuningFailure, resp)
     data = JSON.parse(resp.body; dicttype=Dict{String,Any})
     FineTuningListSuccess(response=FineTuningList(data=Vector{Dict{String,Any}}(get(data, "data", [])),
         has_more=get(data, "has_more", false), raw=data))
@@ -78,7 +77,7 @@ function create_fine_tuning_job(; model::String, training_file::String,
             JSON.json(d); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
-        _ft_err(e)
+        _callerr(FineTuningCallError, e)
     end
 end
 
@@ -95,7 +94,7 @@ function retrieve_fine_tuning_job(id::String; service::ServiceEndpointSpec=OPENA
             cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
-        _ft_err(e)
+        _callerr(FineTuningCallError, e)
     end
 end
 
@@ -112,7 +111,7 @@ function cancel_fine_tuning_job(id::String; service::ServiceEndpointSpec=OPENAIS
             cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
-        _ft_err(e)
+        _callerr(FineTuningCallError, e)
     end
 end
 
@@ -133,7 +132,7 @@ function list_fine_tuning_jobs(; limit::Union{Int,Nothing}=nothing, after::Union
         _ft_list_resp(_http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
-        _ft_err(e)
+        _callerr(FineTuningCallError, e)
     end
 end
 
@@ -150,7 +149,7 @@ function list_fine_tuning_events(id::String; service::ServiceEndpointSpec=OPENAI
             cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
-        _ft_err(e)
+        _callerr(FineTuningCallError, e)
     end
 end
 
@@ -167,6 +166,6 @@ function list_fine_tuning_checkpoints(id::String; service::ServiceEndpointSpec=O
             cfg, remaining=_remaining_s(cfg, t0)))
     catch e
         e isa InterruptException && rethrow()
-        _ft_err(e)
+        _callerr(FineTuningCallError, e)
     end
 end

@@ -1,5 +1,10 @@
 @testset "Moderations API — config seam wiring" begin
-    @test _reached_seam(moderate("hello"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.ModerationCallError)
+    @test _seam_timeout(moderate("hello"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.ModerationCallError)
+end
+
+@testset "Moderations API — a failure keeps the request id the service sent" begin
+    r = _answered(() -> moderate("hello"; service=URLProbe), 400; headers=["x-request-id" => "req_mod"])
+    @test r isa UniLM.ModerationFailure && r.request_id == "req_mod"
 end
 
 @testset "is_flagged never reports a failed call as clean" begin

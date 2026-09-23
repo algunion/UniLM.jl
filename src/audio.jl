@@ -2,11 +2,10 @@
 # OpenAI Audio API — text-to-speech (binary out) + transcription / translation.
 # ============================================================================
 
-"Audio API error result: HTTP `status` and the raw `response` body."
-@kwdef struct AudioFailure <: LLMRequestResponse; response::String; status::Int; end
-"Local/transport error from an Audio API call (the request never completed)."
-@kwdef struct AudioCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
-_audio_err(e) = AudioCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
+"Audio API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
+@kwdef struct AudioFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
+"Audio API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout."
+@kwdef struct AudioCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
 
 # ─── Text-to-speech (JSON request, binary response) ──────────────────────────
 
@@ -57,10 +56,10 @@ function speak(s::SpeechRequest; config::Union{Nothing,RequestConfig}=nothing)
             JSON.json(s); cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 ?
             SpeechSuccess(audio=Vector{UInt8}(resp.body), content_type=HTTP.header(resp, "Content-Type", "")) :
-            AudioFailure(response=String(resp.body), status=resp.status)
+            _failure(AudioFailure, resp)
     catch e
         e isa InterruptException && rethrow()
-        _audio_err(e)
+        _callerr(AudioCallError, e)
     end
 end
 speak(input::String; voice::String="alloy", model::String="gpt-4o-mini-tts",
@@ -155,11 +154,11 @@ function _transcribe(t::TranscriptionRequest, path::String; config::Union{Nothin
                 TranscriptionSuccess(text=String(resp.body))
             end
         else
-            AudioFailure(response=String(resp.body), status=resp.status)
+            _failure(AudioFailure, resp)
         end
     catch e
         e isa InterruptException && rethrow()
-        _audio_err(e)
+        _callerr(AudioCallError, e)
     end
 end
 

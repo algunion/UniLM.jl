@@ -19,6 +19,35 @@ function _mime_for(path::AbstractString)
     ), ext, "application/octet-stream")
 end
 
+# ─── Shared by the platform API files ────────────────────────────────────────
+# Every platform result family has the same three shapes: `*Success`, `*Failure` (a
+# non-200 reply: body, status, request id) and `*CallError` (no usable reply: the
+# rendered error, any carried status, and the exception itself). One constructor path
+# per shape keeps those diagnostics identical across the families.
+
+# The id the provider assigned to one exchange, the handle a support report needs.
+# OpenAI sends `x-request-id`; other OpenAI-wire servers send `request-id`.
+function _platform_request_id(resp::HTTP.Response)::Union{Nothing,String}
+    for name in ("x-request-id", "request-id")
+        v = HTTP.header(resp, name, "")
+        isempty(v) || return String(v)
+    end
+    return nothing
+end
+_platform_request_id(::Nothing) = nothing
+
+_failure(::Type{T}, resp::HTTP.Response) where {T<:LLMRequestResponse} =
+    T(response=String(resp.body), status=resp.status, request_id=_platform_request_id(resp))
+
+# `cause` is the ROOT exception — the one `error` renders — so a caller can dispatch
+# on it (a `UniLMTimeout` carries phase, elapsed and limit); a transport wrapper
+# would add nothing but the request it was carrying.
+function _callerr(::Type{T}, e; kw...) where {T<:LLMRequestResponse}
+    root = _unwrap_exception(e)
+    T(; error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing),
+      cause=(root isa Exception ? root : nothing), kw...)
+end
+
 # ─── Request type ─────────────────────────────────────────────────────────────
 
 """
@@ -85,12 +114,10 @@ end
 @kwdef struct FileContentSuccess <: LLMRequestResponse; content::Vector{UInt8}; end
 "Successful [`delete_file`](@ref) result; `deleted` confirms removal of `id`."
 @kwdef struct FileDeleteSuccess <: LLMRequestResponse; id::String; deleted::Bool; end
-"Files API error result: HTTP `status` and the raw `response` body."
-@kwdef struct FileFailure <: LLMRequestResponse; response::String; status::Int; end
-"Local/transport error from a Files API call (the request never completed)."
-@kwdef struct FileCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
-
-_callerr(::Type{FileCallError}, e) = FileCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
+"Files API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
+@kwdef struct FileFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
+"Files API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout."
+@kwdef struct FileCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
 
 # ─── Requests ─────────────────────────────────────────────────────────────────
 
@@ -120,7 +147,7 @@ function upload_file(u::FileUpload; config::Union{Nothing,RequestConfig}=nothing
         resp = _http_with_retries(cfg, t0, "POST", url, auth_header_multipart(u.service), form)
         return resp.status == 200 ?
                FileSuccess(response=_parse_file_object(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
-               FileFailure(response=String(resp.body), status=resp.status)
+               _failure(FileFailure, resp)
     catch e
         e isa InterruptException && rethrow()
         return _callerr(FileCallError, e)
@@ -156,7 +183,7 @@ function list_files(; purpose::Union{String,Nothing}=nothing, limit::Union{Int,N
             files = FileObject[_parse_file_object(f) for f in get(data, "data", [])]
             return FileListSuccess(response=FileList(data=files, has_more=get(data, "has_more", false), raw=data))
         else
-            return FileFailure(response=String(resp.body), status=resp.status)
+            return _failure(FileFailure, resp)
         end
     catch e
         e isa InterruptException && rethrow()
@@ -181,7 +208,7 @@ function retrieve_file(file_id::String; service::ServiceEndpointSpec=OPENAIServi
         resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 ?
             FileSuccess(response=_parse_file_object(JSON.parse(resp.body; dicttype=Dict{String,Any}))) :
-            FileFailure(response=String(resp.body), status=resp.status)
+            _failure(FileFailure, resp)
     catch e
         e isa InterruptException && rethrow()
         _callerr(FileCallError, e)
@@ -207,7 +234,7 @@ function delete_file(file_id::String; service::ServiceEndpointSpec=OPENAIService
             d = JSON.parse(resp.body; dicttype=Dict{String,Any})
             return FileDeleteSuccess(id=get(d, "id", file_id), deleted=get(d, "deleted", false))
         else
-            return FileFailure(response=String(resp.body), status=resp.status)
+            return _failure(FileFailure, resp)
         end
     catch e
         e isa InterruptException && rethrow()
@@ -233,7 +260,7 @@ function file_content(file_id::String; service::ServiceEndpointSpec=OPENAIServic
         resp = _http("GET", url, auth_header(service); cfg, remaining=_remaining_s(cfg, t0))
         resp.status == 200 ?
             FileContentSuccess(content=Vector{UInt8}(resp.body)) :
-            FileFailure(response=String(resp.body), status=resp.status)
+            _failure(FileFailure, resp)
     catch e
         e isa InterruptException && rethrow()
         _callerr(FileCallError, e)

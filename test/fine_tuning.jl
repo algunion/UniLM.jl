@@ -1,10 +1,15 @@
 @testset "Fine-tuning API — config seam wiring" begin
-    @test _reached_seam(create_fine_tuning_job(model="gpt-4o", training_file="file_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.FineTuningCallError)
-    @test _reached_seam(retrieve_fine_tuning_job("ft_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.FineTuningCallError)
-    @test _reached_seam(cancel_fine_tuning_job("ft_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.FineTuningCallError)
-    @test _reached_seam(list_fine_tuning_jobs(service=SeamProbe, config=_TINY_DEADLINE), UniLM.FineTuningCallError)
-    @test _reached_seam(list_fine_tuning_events("ft_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.FineTuningCallError)
-    @test _reached_seam(list_fine_tuning_checkpoints("ft_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.FineTuningCallError)
+    @test _seam_timeout(create_fine_tuning_job(model="gpt-4o", training_file="file_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.FineTuningCallError)
+    @test _seam_timeout(retrieve_fine_tuning_job("ft_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.FineTuningCallError)
+    @test _seam_timeout(cancel_fine_tuning_job("ft_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.FineTuningCallError)
+    @test _seam_timeout(list_fine_tuning_jobs(service=SeamProbe, config=_TINY_DEADLINE), UniLM.FineTuningCallError)
+    @test _seam_timeout(list_fine_tuning_events("ft_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.FineTuningCallError)
+    @test _seam_timeout(list_fine_tuning_checkpoints("ft_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.FineTuningCallError)
+end
+
+@testset "Fine-tuning API — a failure keeps the request id the service sent" begin
+    r = _answered(() -> retrieve_fine_tuning_job("ft_x"; service=URLProbe), 404; headers=["x-request-id" => "req_ft"])
+    @test r isa UniLM.FineTuningFailure && r.request_id == "req_ft"
 end
 
 @testset "Fine-tuning API — a separator-bearing job id stays one path segment" begin

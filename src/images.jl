@@ -145,21 +145,29 @@ end
 """
     ImageFailure <: LLMRequestResponse
 
-HTTP-level failure from the Image Generation API. Contains the response body and status code.
+HTTP-level failure from the Image Generation API: the raw `response` body, the
+`status` code, and the `request_id` the service sent (`x-request-id`/`request-id`
+header), if any.
 """
 @kwdef struct ImageFailure <: LLMRequestResponse
     response::String
     status::Int
+    request_id::Union{String,Nothing} = nothing
 end
 
 """
     ImageCallError <: LLMRequestResponse
 
-Exception-level error during an Image Generation API call (network, parsing, etc.).
+Exception-level error during an Image Generation API call (network, timeout, or a
+200 that could not be parsed). `cause` is the underlying exception — a
+[`UniLMTimeout`](@ref) for a timeout — and `request_id` is set when a reply
+arrived but could not be decoded.
 """
 @kwdef struct ImageCallError <: LLMRequestResponse
     error::String
     status::Union{Int,Nothing} = nothing
+    request_id::Union{String,Nothing} = nothing
+    cause::Union{Nothing,Exception} = nothing
 end
 
 
@@ -261,16 +269,17 @@ function generate_image(ig::ImageGeneration; config::Union{Nothing,RequestConfig
     _validate_declared_capability(ig.service, :images, "Image Generation API")
     cfg = _resolve_config(config)
     t0 = time_ns()
+    local resp
     try
         body = JSON.json(ig)
         url = _api_base_url(ig.service) * IMAGES_GENERATIONS_PATH
         resp = _http_with_retries(cfg, t0, "POST", url, auth_header(ig.service), body)
         return resp.status == 200 ?
                ImageSuccess(response=parse_image_response(resp)) :
-               ImageFailure(response=String(resp.body), status=resp.status)
+               _failure(ImageFailure, resp)
     catch e
         e isa InterruptException && rethrow()
-        return ImageCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        return _callerr(ImageCallError, e; request_id=_platform_request_id(@isdefined(resp) ? resp : nothing))
     end
 end
 
@@ -340,6 +349,7 @@ function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing)
     _validate_declared_capability(e.service, :image_edits, "Image Edits API")
     cfg = _resolve_config(config)
     t0 = time_ns()
+    local resp
     try
         model = isempty(e.model) ? something(default_image_model(e.service), "") : e.model
         isempty(model) && throw(ArgumentError("model must be specified for image edits with $(typeof(e.service))"))
@@ -374,10 +384,10 @@ function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing)
         resp = _http_with_retries(cfg, t0, "POST", url, auth_header_multipart(e.service), body)
         return resp.status == 200 ?
                ImageSuccess(response=parse_image_response(resp)) :
-               ImageFailure(response=String(resp.body), status=resp.status)
+               _failure(ImageFailure, resp)
     catch err
         err isa InterruptException && rethrow()
-        return ImageCallError(error=_error_text(err), status=(hasproperty(err, :status) ? err.status : nothing))
+        return _callerr(ImageCallError, err; request_id=_platform_request_id(@isdefined(resp) ? resp : nothing))
     end
 end
 edit_image(image, prompt::String; mask::Union{String,Nothing}=nothing,

@@ -445,10 +445,28 @@ end
 end
 
 @testset "TypeSafe — verbs honour the config/timeout seam" begin
-    @test _reached_seam(ask("x", noul("q?"); service=SeamProbe, config=_TINY_DEADLINE),
+    @test _seam_timeout(ask("x", noul("q?"); service=SeamProbe, config=_TINY_DEADLINE),
                         UniLM.SystemOneCallError)
-    @test _reached_seam(list_models(; service=SeamProbe, config=_TINY_DEADLINE),
+    @test _seam_timeout(list_models(; service=SeamProbe, config=_TINY_DEADLINE),
                         UniLM.SystemOneCallError)
+end
+
+@testset "TypeSafe — a call error keeps the request id and the underlying exception" begin
+    # A 200 that cannot be decoded still came from the service: its request id is the
+    # handle a support report needs, and the decoding exception is kept as `cause`.
+    hdrs = ["Content-Type" => "application/json", "x-typesafe-request-id" => "req_broken"]
+    r, _ = _ts_mock(; status=200, body="""{"model":"m"}""", headers=hdrs) do
+        ask(_ts_request_02(); config=_TS_MOCK_CFG)
+    end
+    @test r isa SystemOneCallError
+    @test r.request_id == "req_broken"
+    @test r.cause isa ArgumentError
+    m, _ = _ts_mock(; status=200, body="""{"data":[]}""", headers=hdrs) do
+        list_models(; config=_TS_MOCK_CFG)
+    end
+    @test m isa SystemOneCallError && m.request_id == "req_broken"
+    # No reply at all: nothing to quote.
+    @test isnothing(ask("x", noul("q?"); service=SeamProbe, config=_TINY_DEADLINE).request_id)
 end
 
 @testset "TypeSafe — capability routing refuses the wrong surface up front" begin

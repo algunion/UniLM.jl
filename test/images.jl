@@ -246,16 +246,16 @@ end
 
 @testset "images.jl — config seam wiring" begin
     ig = ImageGeneration(prompt="probe", model="seam-probe-image", service=SeamProbe)
-    @test _reached_seam(generate_image(ig; config=_TINY_DEADLINE), ImageCallError)
-    @test _reached_seam(generate_image("probe"; model="seam-probe-image", service=SeamProbe,
+    @test _seam_timeout(generate_image(ig; config=_TINY_DEADLINE), ImageCallError)
+    @test _seam_timeout(generate_image("probe"; model="seam-probe-image", service=SeamProbe,
                                        config=_TINY_DEADLINE), ImageCallError)
 
     imgpath = tempname() * ".png"
     write(imgpath, UInt8[0x89, 0x50, 0x4e, 0x47])   # PNG magic; content is irrelevant (never sent)
     try
         e = ImageEdit(image=imgpath, prompt="probe", model="seam-probe-image", service=SeamProbe)
-        @test _reached_seam(edit_image(e; config=_TINY_DEADLINE), ImageCallError)
-        @test _reached_seam(edit_image(imgpath, "probe"; model="seam-probe-image",
+        @test _seam_timeout(edit_image(e; config=_TINY_DEADLINE), ImageCallError)
+        @test _seam_timeout(edit_image(imgpath, "probe"; model="seam-probe-image",
                                        service=SeamProbe, config=_TINY_DEADLINE), ImageCallError)
     finally
         rm(imgpath; force=true)
@@ -264,6 +264,20 @@ end
     # retries kwarg is removed (hard cut, no shim)
     @test_throws MethodError generate_image(ig; retries=1)
     @test_throws MethodError edit_image(ImageEdit(image=imgpath, prompt="p", model="m", service=SeamProbe); retries=1)
+end
+
+@testset "images.jl — failures keep the request id and the underlying exception" begin
+    one = UniLM.RequestConfig(max_attempts=1, total_deadline=30.0)
+    probe = ImageGeneration(prompt="p", model="m", service=URLProbe)
+    f = _answered(() -> generate_image(probe; config=one), 400; headers=["x-request-id" => "req_img"])
+    @test f isa ImageFailure && f.request_id == "req_img"
+    # A 200 that is not an images envelope: the reply existed, so its id is kept too.
+    c = _answered(() -> generate_image(probe; config=one), 200; body="{}",
+                  headers=["x-request-id" => "req_img_200"])
+    @test c isa ImageCallError
+    @test c.request_id == "req_img_200"
+    @test c.cause isa KeyError
+    @test isnothing(ImageCallError(error="x").request_id) && isnothing(ImageCallError(error="x").cause)
 end
 
 using Sockets

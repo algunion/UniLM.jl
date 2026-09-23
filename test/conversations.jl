@@ -1,11 +1,17 @@
 @testset "Conversations API — config seam wiring" begin
-    @test _reached_seam(create_conversation(service=SeamProbe, config=_TINY_DEADLINE), UniLM.ConversationCallError)
-    @test _reached_seam(retrieve_conversation("conv_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.ConversationCallError)
-    @test _reached_seam(update_conversation("conv_x", Dict("k"=>"v"); service=SeamProbe, config=_TINY_DEADLINE), UniLM.ConversationCallError)
-    @test _reached_seam(delete_conversation("conv_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.ConversationCallError)
-    @test _reached_seam(add_conversation_items("conv_x", Any[]; service=SeamProbe, config=_TINY_DEADLINE), UniLM.ConversationCallError)
-    @test _reached_seam(list_conversation_items("conv_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.ConversationCallError)
-    @test _reached_seam(delete_conversation_item("conv_x", "item_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.ConversationCallError)
+    @test _seam_timeout(create_conversation(service=SeamProbe, config=_TINY_DEADLINE), UniLM.ConversationCallError)
+    @test _seam_timeout(retrieve_conversation("conv_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.ConversationCallError)
+    @test _seam_timeout(update_conversation("conv_x", Dict("k"=>"v"); service=SeamProbe, config=_TINY_DEADLINE), UniLM.ConversationCallError)
+    @test _seam_timeout(delete_conversation("conv_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.ConversationCallError)
+    @test _seam_timeout(add_conversation_items("conv_x", Any[]; service=SeamProbe, config=_TINY_DEADLINE), UniLM.ConversationCallError)
+    @test _seam_timeout(list_conversation_items("conv_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.ConversationCallError)
+    @test _seam_timeout(delete_conversation_item("conv_x", "item_x"; service=SeamProbe, config=_TINY_DEADLINE), UniLM.ConversationCallError)
+end
+
+@testset "Conversations API — a failure keeps the request id the service sent" begin
+    r = _answered(() -> retrieve_conversation("conv_x"; service=URLProbe), 404;
+                  headers=["x-request-id" => "req_conv"])
+    @test r isa UniLM.ConversationFailure && r.request_id == "req_conv"
 end
 
 @testset "Conversations API — separator-bearing ids stay single path segments" begin

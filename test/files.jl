@@ -46,17 +46,29 @@
         write(fpath, "probe")
         try
             u = UniLM.FileUpload(service=SeamProbe, file=fpath, purpose="user_data")
-            @test _reached_seam(upload_file(u; config=_TINY_DEADLINE), FileCallError)
-            @test _reached_seam(upload_file(fpath, "user_data"; service=SeamProbe, config=_TINY_DEADLINE), FileCallError)
-            @test _reached_seam(list_files(service=SeamProbe, config=_TINY_DEADLINE), FileCallError)
-            @test _reached_seam(retrieve_file("file-x"; service=SeamProbe, config=_TINY_DEADLINE), FileCallError)
-            @test _reached_seam(delete_file("file-x"; service=SeamProbe, config=_TINY_DEADLINE), FileCallError)
-            @test _reached_seam(file_content("file-x"; service=SeamProbe, config=_TINY_DEADLINE), FileCallError)
+            @test _seam_timeout(upload_file(u; config=_TINY_DEADLINE), FileCallError)
+            @test _seam_timeout(upload_file(fpath, "user_data"; service=SeamProbe, config=_TINY_DEADLINE), FileCallError)
+            @test _seam_timeout(list_files(service=SeamProbe, config=_TINY_DEADLINE), FileCallError)
+            @test _seam_timeout(retrieve_file("file-x"; service=SeamProbe, config=_TINY_DEADLINE), FileCallError)
+            @test _seam_timeout(delete_file("file-x"; service=SeamProbe, config=_TINY_DEADLINE), FileCallError)
+            @test _seam_timeout(file_content("file-x"; service=SeamProbe, config=_TINY_DEADLINE), FileCallError)
             @test_throws MethodError upload_file(u; retries=1)
         finally
             rm(fpath; force=true)
         end
     end
+end
+
+@testset "Files API — a failure keeps the request id the service sent" begin
+    r = _answered(404; headers=["x-request-id" => "req_files"]) do
+        retrieve_file("file-x"; service=URLProbe)
+    end
+    @test r isa FileFailure && r.status == 404
+    @test r.request_id == "req_files"
+    # OpenAI-wire servers other than OpenAI name the header `request-id`.
+    @test _answered(() -> list_files(; service=URLProbe), 500;
+                    headers=["request-id" => "req_plain"]).request_id == "req_plain"
+    @test isnothing(_answered(() -> delete_file("f"; service=URLProbe), 404).request_id)
 end
 
 using Sockets

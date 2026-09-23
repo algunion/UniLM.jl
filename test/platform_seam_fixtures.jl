@@ -23,12 +23,16 @@ const _TINY_DEADLINE = UniLM.RequestConfig(total_deadline = 1e-300)
 # non-CallError result (Success/Failure without `.error`) fails the @test without erroring.
 _reached_seam(r, ::Type{T}) where {T} = (r isa T) && occursin("timeout", lowercase(r.error))
 
-# ── Raw request-target recorder ──────────────────────────────────────────────
-# A live local endpoint whose base URL is chosen after the listener binds, used to
-# read back the exact request target UniLM put on the wire. `req.target` is the
-# unparsed origin-form target on both supported HTTP majors, so an id that leaks
-# its own `/`, `?` or `#` shows up here as extra path segments / a query / a
-# fragment rather than as one encoded segment.
+# ...and keeps the typed timeout itself, not only its rendering: `cause` is the
+# UniLMTimeout, so a caller can dispatch on phase/elapsed/limit.
+_seam_timeout(r, ::Type{T}) where {T} =
+    _reached_seam(r, T) && hasproperty(r, :cause) && r.cause isa UniLMTimeout
+
+# ── Scripted local endpoint ──────────────────────────────────────────────────
+# A live local endpoint whose base URL is chosen after the listener binds. The
+# recorded `target` is the raw origin-form request target, so an id that leaks its
+# own `/`, `?` or `#` shows up as extra path segments / a query / a fragment rather
+# than as one encoded segment.
 using Sockets
 
 struct URLProbe <: UniLM.ServiceEndpoint end
@@ -38,15 +42,32 @@ UniLM.auth_header(::Type{URLProbe}) =
     ["Authorization" => "Bearer t", "Content-Type" => "application/json"]
 UniLM.provider_capabilities(::Type{URLProbe}) = UniLM.provider_capabilities(SeamProbe)
 
-# Probe an ephemeral port, then serve on it; the close-then-rebind window can race.
-# An empty JSON object is enough: every platform verb funnels a parse failure into
-# its own typed *CallError, and these tests assert on the recorded target only.
-"Run `f()` against a local recorder; returns the raw request targets it saw, in order."
-function _recorded_targets(f::Function)
-    seen = String[]
-    handler = req -> (push!(seen, req.target);
-                      HTTP.Response(200, ["Content-Type" => "application/json"],
-                                    Vector{UInt8}("{}")))
+"A JSON reply, with any extra headers."
+_json(status::Int, body::AbstractString; headers::Vector{Pair{String,String}}=Pair{String,String}[]) =
+    HTTP.Response(status, ["Content-Type" => "application/json", headers...], Vector{UInt8}(body))
+
+# A request with no body arrives as a sentinel that supports no byte access.
+_body_text(req)::String = applicable(copy, req.body) ? String(copy(req.body)) : ""
+
+const _SeenRequest = @NamedTuple{method::String, target::String, body::String}
+
+"""
+Run `f()` against URLProbe, answering the n-th request with `respond(n, req)`, and
+return `(f(), requests)`: each request as `(method, target, body)`, in arrival order.
+Handlers can overlap (a client that gave up on a slow reply may already be sending
+the next request), so recording is serialized.
+"""
+function _with_scripted(f::Function, respond::Function)
+    seen = _SeenRequest[]
+    guard = ReentrantLock()
+    handler = function (req)
+        n = @lock guard begin
+            push!(seen, (method=String(req.method), target=String(req.target), body=_body_text(req)))
+            length(seen)
+        end
+        respond(n, req)
+    end
+    # Probe an ephemeral port, then serve on it; the close-then-rebind window can race.
     for _ in 1:5
         tcp = Sockets.listen(Sockets.localhost, 0)
         port = Int(Sockets.getsockname(tcp)[2])
@@ -59,14 +80,24 @@ function _recorded_targets(f::Function)
         end
         _url_probe_base[] = "http://127.0.0.1:$port"
         try
-            f()
+            return f(), seen
         finally
             close(server)
         end
-        return seen
     end
-    error("could not bind an ephemeral port for the request-target recorder")
+    error("could not bind an ephemeral port for the scripted endpoint")
 end
+
+# An empty JSON object is enough: every platform verb funnels a parse failure into
+# its own typed *CallError, and these tests assert on the recorded target only.
+"Run `f()` against a local recorder; returns the raw request targets it saw, in order."
+_recorded_targets(f::Function) =
+    String[r.target for r in last(_with_scripted(f, (_, _) -> _json(200, "{}")))]
+
+"The result of `call()` against an endpoint that answers every request with `status` and `headers`."
+_answered(call::Function, status::Int; body::AbstractString="{}",
+          headers::Vector{Pair{String,String}}=Pair{String,String}[]) =
+    first(_with_scripted(call, (_, _) -> _json(status, body; headers)))
 
 # One id that carries every separator a URL template is built from. Escaped it is a
 # single path segment / query value; unescaped it adds segments, a query and a fragment.

@@ -74,9 +74,10 @@ _remaining_s(cfg::RequestConfig, t0::UInt64)::Float64 =
 
 # Walk an exception's wrapping chain looking for the first exception matching
 # `pred`. An exception delivered into a task mid-request can surface
-# arbitrarily nested (TaskFailedException, CompositeException, and the HTTP
-# majors' cause-carrying wrappers expose .error/.cause); matching on the chain
-# keeps classification independent of which layer caught first.
+# arbitrarily nested (TaskFailedException, CompositeException, and wrappers that
+# carry their cause as .error or .cause — HTTP.jl's ConnectError, DNSError and
+# TLS errors use .cause); matching on the chain keeps classification independent
+# of which layer caught first.
 function _find_exception(pred::Function, e)
     e isa Exception && pred(e) && return e
     if e isa TaskFailedException
@@ -111,7 +112,7 @@ function _unwrap_task_failure(e)
     return e
 end
 
-# Connection-level transport failure shapes on both HTTP majors. Excluded:
+# Connection-level transport failure shapes. Excluded:
 # status-carrying errors (a response is an outcome, not a transport failure)
 # and native timeout errors (those ride the UniLMTimeout channel via the
 # seam's mapping, which carries phase attribution).
@@ -134,7 +135,7 @@ end
 
 True when `e` is a connection-level IO failure worth another attempt
 (IOError/SystemError/EOFError/DNS/connect-shaped), unwrapped across `TaskFailedException`,
-`CompositeException`, and both HTTP majors' cause-carrying wrappers. Always
+`CompositeException`, and cause-carrying wrappers. Always
 false for `InterruptException` (user intent wins, even when nested beside a
 transport error), `_DeadlineBreach` and `UniLMTimeout` (timeouts are policy,
 classified by phase — never blanket-retried here), and status-carrying errors
@@ -240,7 +241,7 @@ own exception with any `TaskFailedException` layer stripped.
 
 On breach the wrapper throws `UniLMTimeout(phase, …)` and ABANDONS the worker:
 no exception is injected into it and it is not killed. This is safe because
-every task-mode call also carries the native per-major timeout at the SAME
+every task-mode call also carries HTTP.jl's native timeout at the SAME
 bound (`_http` always passes native timeout kwargs; `limit == Inf` bypasses
 task mode entirely), so an abandoned worker self-terminates via its own native
 timeout almost immediately; its eventual result or exception is never fetched
@@ -270,7 +271,7 @@ function _with_deadline_task(f::Function, limit::Float64, phase::Symbol)
     # [limit, limit + pollint], comparable to the old one-shot Timer.
     if timedwait(() -> istaskdone(task), limit; pollint=0.1) !== :ok
         # Breach: abandon the worker — no injection, no kill. It self-terminates
-        # via its native per-major timeout at the same bound; its later
+        # via its native timeout at the same bound; its later
         # result/exception is never fetched and Julia discards it silently.
         throw(UniLMTimeout(phase, _elapsed_s(t0), limit))
     end

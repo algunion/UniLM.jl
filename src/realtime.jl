@@ -76,20 +76,17 @@ _realtime_ws_url(service) = REALTIME_WS_URL
 # session inherits the ambient one.
 RealtimeSession(ws, model::String) = RealtimeSession(ws, model, current_config())
 
-# Native handshake bounds per HTTP major. `connect_timeout` bounds TCP/TLS on
-# both; the 2.x major additionally caps the wait for the upgrade response
-# headers — a handshake-phase bound that cannot outlive the upgrade, so an
-# abandoned handshake releases its socket instead of holding it forever. No
-# native read-idle bound is armed: `realtime_receive` owns idle enforcement, so a
-# breach surfaces as UniLMTimeout identically on both majors.
-_realtime_native_kwargs(cfg::RequestConfig) = _HTTP_MAJOR2 ?
+# Native handshake bounds. `connect_timeout` bounds TCP/TLS, and the same value
+# caps the wait for the upgrade response headers — a handshake-phase bound that
+# cannot outlive the upgrade, so an abandoned handshake releases its socket
+# instead of holding it forever. No native read-idle bound is armed:
+# `realtime_receive` owns idle enforcement, so a breach surfaces as UniLMTimeout.
+_realtime_native_kwargs(cfg::RequestConfig) =
     (connect_timeout = _native_seconds_real(cfg.connect_timeout),
-     response_header_timeout = _native_seconds_real(cfg.connect_timeout)) :
-    (connect_timeout = _native_seconds_int(cfg.connect_timeout),)
+     response_header_timeout = _native_seconds_real(cfg.connect_timeout))
 
 # Split out of `realtime_connect` so the target the WebSocket opens is assertable
-# without a live upgrade: the two supported HTTP majors name the server-side
-# socket's request field differently, so a listener cannot read it back portably.
+# without a live upgrade.
 _realtime_url(service, model::String)::String =
     _realtime_ws_url(service) * "?model=" * _uripart(model)
 
@@ -136,10 +133,8 @@ function realtime_connect(handler; model::String="gpt-realtime-2",
     catch e
         e isa InterruptException && rethrow()
         err = _unwrap_task_failure(e)
-        # A typed timeout raised inside the handler can come back wrapped: on the
-        # 1.x major the WS handler runs inside the client request layers, which
-        # wrap an escaping exception in RequestError. The typed error is the
-        # contract — surface it over the transport wrapper.
+        # A typed timeout raised inside the handler is the contract: surface it
+        # over any wrapper layer that carries it (chain walk).
         typed = _find_exception(x -> x isa UniLMTimeout, err)
         typed !== nothing && throw(typed)
         # The native bounds above race the watchdog at the same limit, and only

@@ -119,9 +119,7 @@ end
     #
     # Budget: a loopback upgrade costs tens of milliseconds, but an instrumented
     # shared runner adds scheduler/delivery stalls of ~2 s before the handshake is
-    # observed, so the connect bound is 3.0 s. A WHOLE second: the 1.x major's
-    # native connect bound is integer seconds (rounded up), so a fractional budget
-    # would arm the two majors at different effective limits. The handler then
+    # observed, so the connect bound is 3.0 s. The handler then
     # stays quiet for 8.0 s — a timer that outlived the upgrade fires by
     # 3.0 s + that same ~2 s stall = 5.0 s, well inside the quiet window, so the
     # gap between "still alive" and "would have been killed" stays wide.
@@ -173,9 +171,7 @@ end
 end
 
 @testset "realtime WS URL — the model is a query value, not a URL shaper" begin
-    # Asserted on the built string rather than through a listener: the two HTTP
-    # majors name the server-side WebSocket's request field differently, so there
-    # is no portable way to read the target back off a live upgrade.
+    # Asserted on the built string: no live upgrade is needed to pin the target.
     _rt_live_url[] = "ws://127.0.0.1:1/v1/realtime"
     @test UniLM._realtime_url(RTLiveEndpoint, "gpt-realtime-2") ==
           "ws://127.0.0.1:1/v1/realtime?model=gpt-realtime-2"   # golden: byte-identical

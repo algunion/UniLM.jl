@@ -42,7 +42,7 @@ end
     comp = CompositeException([ArgumentError("x"), tfe])
     @test UniLM._find_exception(x -> x isa UniLM._DeadlineBreach, comp) === b
     @test UniLM._find_exception(x -> x isa UniLM._DeadlineBreach, ArgumentError("x")) === nothing
-    # cause-carrying wrappers (.error on the 1.x major, .cause on the 2.x) are traversed
+    # cause-carrying wrappers (HTTP.ConnectError carries .cause) are traversed
     wrapped = HTTP.ConnectError("http://127.0.0.1:9", ErrorException("inner"))
     @test UniLM._find_exception(x -> x isa ErrorException, wrapped) isa ErrorException
     @test UniLM._unwrap_task_failure(tfe) === b
@@ -50,7 +50,6 @@ end
 end
 
 @testset "transport-error classifier: IO shapes true, control-flow always false" begin
-    major2 = pkgversion(HTTP) >= v"2"
     # connection-level shapes are transport errors
     @test UniLM._is_transport_error(Base.IOError("connection reset", 0))
     @test UniLM._is_transport_error(EOFError())
@@ -83,15 +82,9 @@ end
     # an interrupt buried NEXT TO a transport error still wins: never retried
     @test !UniLM._is_transport_error(CompositeException([Base.IOError("x", 0), InterruptException()]))
     # status-carrying errors are responses, not transport failures
-    status_err = major2 ?
-        HTTP.StatusError(500, HTTP.Response(500, [], UInt8[])) :
-        HTTP.StatusError(500, "GET", "/x", HTTP.Response(500, [], UInt8[]))
-    @test !UniLM._is_transport_error(status_err)
+    @test !UniLM._is_transport_error(HTTP.StatusError(500, HTTP.Response(500, [], UInt8[])))
     # native timeout errors ride the UniLMTimeout channel via the seam's mapping
-    timeout_err = major2 ?
-        HTTP.TimeoutError("request", Int64(1_000_000_000), Int64(0)) :
-        HTTP.TimeoutError(1)
-    @test !UniLM._is_transport_error(timeout_err)
+    @test !UniLM._is_transport_error(HTTP.TimeoutError("request", Int64(1_000_000_000), Int64(0)))
     @test !UniLM._is_transport_error(ArgumentError("not transport"))
 end
 
@@ -222,7 +215,7 @@ end
 @testset "task mode: a breach throws a typed timeout and abandons the worker" begin
     # NEW contract: on breach the wrapper throws UniLMTimeout and ABANDONS the
     # worker — no exception is injected into it and it is not killed. The worker
-    # keeps running and completes on its own (in production its native per-major
+    # keeps running and completes on its own (in production its native
     # timeout at the same bound is the real executioner). The breach lands within
     # [limit, limit + pollint], pollint = 0.1 s.
     #

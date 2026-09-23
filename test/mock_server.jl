@@ -839,9 +839,9 @@ try
         @test_throws LLMResultError image_data(ImageCallError(error="err"))
     end
 
-    @testset "output_text on error types" begin
-        @test output_text(ResponseFailure(response="body", status=400)) == "Error (HTTP 400): body"
-        @test output_text(ResponseCallError(error="timeout")) == "Error: timeout"
+    @testset "output_text on error types throws LLMResultError" begin
+        @test_throws LLMResultError output_text(ResponseFailure(response="body", status=400))
+        @test_throws LLMResultError output_text(ResponseCallError(error="timeout"))
     end
 
     @testset "function_calls on error types" begin

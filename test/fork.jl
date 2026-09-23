@@ -94,7 +94,7 @@
             tool_choice="auto",
             parallel_tool_calls=true,
             temperature=0.5,
-            n=2,
+            n=1,
             stream=true,
             stop=["END"],
             max_tokens=100,
@@ -111,7 +111,7 @@
         @test forked.tool_choice == "auto"
         @test forked.parallel_tool_calls == true
         @test forked.temperature == 0.5
-        @test forked.n == 2
+        @test forked.n == 1
         @test forked.stream == true
         @test forked.stop == ["END"]
         @test forked.max_tokens == 100

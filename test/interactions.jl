@@ -124,16 +124,16 @@ end
     # the buffered partial line reassembles with the next chunk
     UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
         "\ndata: {\"index\":0,\"delta\":{\"text\":\"hi\",\"type\":\"text\"}}\n\n", state)
-    @test String(take!(state.textbuff)) == "hi"
+    @test takestring!(state.textbuff) == "hi"
 
     # (b) a trailing fragment after the last newline is stashed for the next chunk
     state2 = UniLM.AgenticStreamState()
     UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
         "event: step.delta\ndata: {\"index\":0,\"delta\":{\"text\":\"a\",\"type\":\"text\"}}\n\n" *
         "event: step.delta\ndata: {\"index\":0,\"delta\":{\"text\":\"b\"", state2)
-    @test String(take!(state2.textbuff)) == "a"                       # first delta consumed
+    @test takestring!(state2.textbuff) == "a"                       # first delta consumed
     UniLM.decode_agentic_stream(GEMINIServiceEndpoint, ",\"type\":\"text\"}}\n\n", state2)
-    @test String(take!(state2.textbuff)) == "b"                       # stashed fragment completed
+    @test takestring!(state2.textbuff) == "b"                       # stashed fragment completed
 
     # (c) a malformed COMPLETE data line is dropped + counted (never re-queued
     # into the carry) — the shared machine's contract; no crash, stream continues.
@@ -313,6 +313,66 @@ end
                                      error=nothing, metadata=nothing, raw=rd)) == "Hi there"
 end
 
+@testset "Interactions — the same interaction decoded both ways yields the same output" begin
+    thought = Dict("type" => "thought", "signature" => "sig==",
+                   "summary" => [Dict("type" => "text", "text" => "Plan the answer.")])
+    answer = Dict("type" => "model_output", "content" => [Dict("type" => "text", "text" => "Part one."),
+                                                          Dict("type" => "text", "text" => "Part two.")])
+    call = Dict("type" => "function_call", "id" => "fc_1", "name" => "lookup", "arguments" => Dict("q" => "julia"))
+    interaction = Dict("id" => "v1_p", "status" => "requires_action", "model" => "m")
+    ro = UniLM.decode_agentic(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(
+        JSON.json(merge(interaction, Dict("steps" => [thought, answer, call]))))))
+
+    # Streamed: the thought's summary and signature arrive as deltas, a text delta
+    # completes the answer's second part, the call's arguments arrive as partial JSON,
+    # and interaction.completed carries no steps.
+    ev(name, data) = "event: $name\ndata: $(JSON.json(data))\n\n"
+    delta(index, d) = ev("step.delta", Dict("index" => index, "delta" => d))
+    sse = ev("step.start", Dict("index" => 0, "step" => Dict("type" => "thought"))) *
+          delta(0, Dict("type" => "thought_summary", "content" => Dict("type" => "text", "text" => "Plan the answer."))) *
+          delta(0, Dict("type" => "thought_signature", "signature" => "sig==")) *
+          ev("step.stop", Dict("index" => 0)) *
+          ev("step.start", Dict("index" => 1, "step" => Dict("type" => "model_output", "content" => [
+              Dict("type" => "text", "text" => "Part one."), Dict("type" => "text", "text" => "Part ")]))) *
+          delta(1, Dict("type" => "text", "text" => "two.")) *
+          ev("step.stop", Dict("index" => 1)) *
+          ev("step.start", Dict("index" => 2, "step" => Dict("type" => "function_call", "id" => "fc_1",
+                                                             "name" => "lookup", "arguments" => Dict()))) *
+          delta(2, Dict("type" => "arguments_delta", "arguments" => "{\"q\":")) *
+          delta(2, Dict("type" => "arguments_delta", "arguments" => "\"julia\"}")) *
+          ev("step.stop", Dict("index" => 2)) *
+          ev("interaction.completed", Dict("interaction" => interaction))
+    rd = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, sse, UniLM.AgenticStreamState()).data["response"]
+    streamed = ResponseObject(id=rd["id"], status=rd["status"], model=rd["model"], output=rd["output"], raw=rd)
+    @test streamed.output == ro.output
+    @test output_text(streamed) == output_text(ro) == "Part one.\nPart two."
+    @test function_calls(streamed) == function_calls(ro)
+end
+
+@testset "Interactions stream — deltas accumulate without re-copying the step" begin
+    # 800 deltas of 1 kB: re-concatenating a String per delta copies ~320 MB, while
+    # appending to a buffer read once stays near the ~6 MB that decoding the events
+    # allocates on its own.
+    piece = repeat("x", 1_000)
+    function stream(kind, step, field)
+        st = UniLM.AgenticStreamState()
+        UniLM.decode_agentic_stream(GEMINIServiceEndpoint,
+            "event: step.start\ndata: $(JSON.json(Dict("index" => 0, "step" => step)))\n\n", st)
+        chunk = "event: step.delta\ndata: $(JSON.json(Dict("index" => 0, "delta" => Dict("type" => kind, field => piece))))\n\n"
+        for _ in 1:800
+            UniLM.decode_agentic_stream(GEMINIServiceEndpoint, chunk, st)
+        end
+        st
+    end
+    for (kind, step, field) in (("arguments_delta", Dict("type" => "function_call", "id" => "c", "name" => "f"), "arguments"),
+                                ("thought_signature", Dict("type" => "thought"), "signature"))
+        stream(kind, step, field)                                  # compile first
+        @test (@allocated stream(kind, step, field)) < 30_000_000
+        out = only(UniLM._assembled_interaction_output(stream(kind, step, field)))
+        @test out[field] == repeat(piece, 800)                     # every byte assembled
+    end
+end
+
 using Sockets
 
 # Localhost SSE endpoint riding the Interactions wire seam, so the real streaming
@@ -397,6 +457,28 @@ end
     @test st.data["response"]["output"][2]["content"][1]["text"] == "ok"
 end
 
+@testset "Interactions decode — a body without an id or a status is not an interaction" begin
+    # Both are required on every Interaction; decoding `{}` as one reports an empty success.
+    make(b) = HTTP.Response(200, [], Vector{UInt8}(JSON.json(b)))
+    for body in (Dict(), Dict("status" => "completed"), Dict("id" => "v1_x"),
+                 Dict("id" => "", "status" => "completed"), Dict("id" => "v1_x", "status" => nothing),
+                 Dict("id" => 7, "status" => "completed"))
+        @test_throws ErrorException UniLM.decode_agentic(GEMINIServiceEndpoint, make(body))
+    end
+    err = try UniLM.decode_agentic(GEMINIServiceEndpoint, make(Dict("status" => "completed"))); nothing catch e; e end
+    @test err isa ErrorException && occursin("\"id\"", err.msg)
+end
+
+@testset "Interactions stream decode — no method boxes a variable" begin
+    # A local that a closure captures and that is assigned more than once becomes a
+    # Core.Box: every access is a dynamic lookup, paid on each SSE event of a stream.
+    file = joinpath(pkgdir(UniLM), "src", "interactions.jl")
+    fns = [getfield(UniLM, n) for n in names(UniLM; all=true) if isdefined(UniLM, n) && getfield(UniLM, n) isa Function]
+    ms = unique([m for f in fns for m in methods(f) if String(m.file) == file])
+    @test !isempty(ms)
+    @test [m for m in ms if occursin("Core.Box", string(Base.uncompressed_ir(m)))] == Method[]
+end
+
 @testset "Interactions stream — a one-read stream still delivers its text deltas" begin
     sse = "event: step.delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"Hello \"}}\n\n" *
           "event: step.delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"world\"}}\n\n" *
@@ -408,7 +490,7 @@ end
     r = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, sse, st)
     @test r.terminal == :completed
     @test r.data["response"]["output"][1]["content"][1]["text"] == "Hello world"
-    @test String(take!(st.textbuff)) == "Hello world"
+    @test takestring!(st.textbuff) == "Hello world"
 
     # (b) end-to-end through the real driver: every delta reaches the callback.
     server, url = _ix_sse_server(sse)
@@ -612,7 +694,8 @@ UniLM.default_model(::Type{_IxNonStreamMock}) = "mock-model"
             "steps" => [])),
         "requires_action" => JSON.json(Dict(
             "id" => "int_ra", "status" => "requires_action", "model" => "gemini-3.1-flash-lite",
-            "steps" => [])))
+            "steps" => [])),
+        "not_an_interaction" => "{}")
     which = Ref("failed")
     tcp = Sockets.listen(Sockets.localhost, 0)
     port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
@@ -637,6 +720,12 @@ UniLM.default_model(::Type{_IxNonStreamMock}) = "mock-model"
             @test r2 isa ResponseSuccess
             @test r2.response.status == st
         end
+
+        # A 200 body with no id and no status is a call error, never a success.
+        which[] = "not_an_interaction"
+        r3 = respond(Respond(service=_IxNonStreamMock, input="hi"))
+        @test r3 isa ResponseCallError
+        @test r3 isa ResponseCallError && occursin("\"id\"", r3.error)
     finally
         close(srv)
     end

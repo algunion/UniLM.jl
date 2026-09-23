@@ -168,21 +168,22 @@ end
 # ─── Response decoding (Interactions steps[] → neutral ResponseObject) ────────
 # Normalize into OpenAI-Responses-shaped output[] so existing accessors work.
 
+# A text content part: each one becomes one output_text part of the step's message.
+_interaction_text_part(c) = c isa AbstractDict && get(c, "type", "") == "text"
+
 function _interaction_output(steps)::Vector{Any}
     out = Any[]
     for s in (steps isa AbstractVector ? steps : ())
         s isa AbstractDict || continue
         t = get(s, "type", "")
         if t == "model_output"
-            parts = Any[]
             # `content` is null on a model_output step that produced no parts.
-            for c in _as_iter(get(s, "content", ()))
-                c isa AbstractDict && get(c, "type", "") == "text" &&
-                    push!(parts, Dict{String,Any}("type" => "output_text", "text" => get(c, "text", "")))
-            end
+            parts = Any[Dict{String,Any}("type" => "output_text", "text" => get(c, "text", ""))
+                        for c in _as_iter(get(s, "content", ())) if _interaction_text_part(c)]
             push!(out, Dict{String,Any}("type" => "message", "role" => "assistant", "content" => parts))
         elseif t == "function_call"
-            args = get(s, "arguments", Dict{String,Any}())
+            # Absent or null arguments: a call without arguments.
+            args = something(get(s, "arguments", nothing), Dict{String,Any}())
             push!(out, Dict{String,Any}(
                 "type" => "function_call",
                 "call_id" => get(s, "id", ""),
@@ -201,10 +202,6 @@ function _interaction_output(steps)::Vector{Any}
     end
     out
 end
-
-# Build a single OpenAI-Responses-shaped assistant message from raw text.
-_text_message(txt::AbstractString) = Dict{String,Any}("type" => "message", "role" => "assistant",
-    "content" => Any[Dict{String,Any}("type" => "output_text", "text" => txt)])
 
 # Gemini Interactions usage → OpenAI-Responses-shaped usage so token_usage/estimated_cost
 # work unchanged. Gemini bills thought + tool-use at the output rate, so they fold into
@@ -236,10 +233,20 @@ function _interaction_response_dict(data::AbstractDict)::Dict{String,Any}
     d
 end
 
+# `id` and `status` are required on every Interaction (API reference): a 200 body
+# without them, such as `{}`, is not one, and decoding it as one would report a
+# success carrying an empty id.
+function _interaction_required(data::AbstractDict, key::String)::String
+    v = get(data, key, nothing)
+    v isa String && !isempty(v) && return v
+    error("Gemini Interactions response carries no \"$key\" (got $(repr(v))); keys: [",
+          join(sort!(collect(keys(data))), ", "), "]")
+end
+
 function _interaction_response_object(data::AbstractDict)::ResponseObject
     ResponseObject(
-        id = get(data, "id", ""),
-        status = get(data, "status", ""),
+        id = _interaction_required(data, "id"),
+        status = _interaction_required(data, "status"),
         model = get(data, "model", ""),
         output = _interaction_output(get(data, "steps", Any[])),
         usage = _interaction_usage(get(data, "usage", nothing)),
@@ -256,12 +263,15 @@ decode_agentic(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)::ResponseObje
 # (delta.type: text | arguments_delta | thought_summary | thought_signature),
 # step.stop, interaction.completed (final object + usage but NO steps; its
 # `status` may be "completed" or "requires_action" — there is no dedicated
-# requires_action event), then event:done / [DONE]. Function-call arguments
-# arrive as partial-JSON STRING deltas that must be accumulated per index.
-# The terminal output[] is rebuilt from the assembled steps: function_call
-# steps (arguments kept as the accumulated JSON string — the reused
-# function_calls accessor JSON.parses strings), thought steps surfaced raw
-# (signature assembled from deltas), and text messages in their original step order.
+# requires_action event), then event:done / [DONE].
+# The assembly keeps every step in the shape a non-streamed interaction carries, and
+# the terminal output[] is `_interaction_output` applied to the assembled steps in
+# first-seen order, so the streamed and the non-streamed decode of one interaction
+# yield the same output items. A step's streamed string grows in one buffer
+# (`state.text_by_step`) and is written into the step once, when the interaction
+# completes; by step type it is the function-call argument JSON (partial-JSON string
+# deltas), the answer text (extending the step's last text part), or the thought
+# signature. Each thought_summary delta adds one item to the thought's `summary`.
 function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
                                state::AgenticStreamState)
     for (ev, payload) in _sse_events!(state.carry, state.last_event, chunk)
@@ -269,59 +279,9 @@ function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
         try
             data = JSON.parse(payload; dicttype=Dict{String,Any})
             if ev == "step.start"
-                idx = get(data, "index", nothing)
-                step = get(data, "step", nothing)
-                if idx isa Integer && step isa Dict{String,Any}
-                    haskey(state.steps, idx) || push!(state.order, idx)
-                    state.steps[idx] = step
-                    delete!(state.args_json, idx)   # a re-sent start must not inherit stale argument bytes
-                    if get(step, "type", "") == "model_output"
-                        buffer = IOBuffer()
-                        state.text_by_step[idx] = buffer
-                        for c in _as_iter(get(step, "content", nothing))
-                            if c isa AbstractDict && get(c, "type", "") == "text"
-                                txt = get(c, "text", "")
-                                print(buffer, txt)
-                                print(state.textbuff, txt)
-                                print(state.pending_delta, txt)
-                            end
-                        end
-                    end
-                end
+                _interaction_step_start!(state, data)
             elseif ev == "step.delta"
-                idx = get(data, "index", nothing)
-                d = get(data, "delta", nothing)
-                if idx isa Integer && d isa AbstractDict
-                    dt = get(d, "type", "")
-                    if dt == "arguments_delta"
-                        a = get(d, "arguments", "")
-                        a isa AbstractString && (state.args_json[idx] = get(state.args_json, idx, "") * a)
-                    elseif dt == "thought_signature"
-                        s = get(d, "signature", "")
-                        if s isa AbstractString && haskey(state.steps, idx)
-                            blk = state.steps[idx]
-                            blk["signature"] = get(blk, "signature", "") * s
-                        end
-                    else
-                        # Answer-text deltas carry a top-level `text` key and
-                        # accumulate for output_text. thought_summary deltas
-                        # nest their prose under `content` and are deliberately
-                        # NOT accumulated: summaries are display material, not
-                        # the answer and not replay material (the signature is).
-                        t = get(d, "text", "")
-                        # `textbuff` is the full accumulation diagnostics can read;
-                        # `pending_delta` is what the driver forwards.
-                        if t isa AbstractString && !isempty(t)
-                            get!(state.steps, idx) do
-                                push!(state.order, idx)
-                                Dict{String,Any}("type" => "model_output", "content" => Any[])
-                            end
-                            print(get!(IOBuffer, state.text_by_step, idx), t)
-                            print(state.textbuff, t)
-                            print(state.pending_delta, t)
-                        end
-                    end
-                end
+                _interaction_step_delta!(state, data)
             elseif ev == "interaction.completed"
                 rdict = _interaction_response_dict(get(data, "interaction", data))
                 if isempty(rdict["output"])
@@ -336,9 +296,8 @@ function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
             elseif ev == "error"
                 return (; done=true, event=ev, data, terminal=:error)
             end
-            # step.stop needs no handling beyond what assembly already holds:
-            # arguments are complete once their deltas stop arriving, and the
-            # terminal rebuild reads the accumulated state.
+            # step.stop needs no handling: a step is complete once its deltas stop
+            # arriving, and the terminal rebuild reads the assembly.
         catch e
             Threads.atomic_add!(_SSE_DROPPED_LINES, 1)
             state.sse_dropped += 1
@@ -348,31 +307,93 @@ function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
     return (; done=false, event=state.last_event[], data=nothing, terminal=:none)
 end
 
-# Rebuild OpenAI-shaped output[] from the streamed step assembly (the terminal
-# interaction.completed event carries no steps), in first-seen step order.
-function _assembled_interaction_output(state::AgenticStreamState)::Vector{Any}
-    out = Any[]
-    for idx in state.order
-        step = state.steps[idx]
-        t = get(step, "type", "")
-        if t == "function_call"
-            args = get(state.args_json, idx, "")
-            isempty(args) && (a0 = get(step, "arguments", nothing); args = a0 isa AbstractString ? a0 : JSON.json(something(a0, Dict{String,Any}())))
-            push!(out, Dict{String,Any}(
-                "type" => "function_call",
-                "call_id" => get(step, "id", ""),
-                "name" => get(step, "name", ""),
-                "arguments" => args))
-        elseif t == "model_output"
-            buffer = get(state.text_by_step, idx, nothing)
-            if isnothing(buffer)
-                append!(out, _interaction_output([step]))
-            else
-                push!(out, _text_message(String(take!(copy(buffer)))))
-            end
-        elseif !isempty(t)
-            push!(out, Dict{String,Any}(step))   # thought + hosted-tool steps: raw, signature intact
-        end
+function _interaction_step_start!(state::AgenticStreamState, data::Dict{String,Any})
+    idx = get(data, "index", nothing)
+    step = get(data, "step", nothing)
+    (idx isa Integer && step isa Dict{String,Any}) || return nothing
+    haskey(state.steps, idx) || push!(state.order, idx)
+    state.steps[idx] = step
+    delete!(state.text_by_step, idx)   # a re-sent start must not inherit stale streamed bytes
+    get(step, "type", "") == "model_output" || return nothing
+    # A step that has produced no parts yet carries no `content` array.
+    content = get(step, "content", nothing)
+    content isa Vector{Any} || (step["content"] = content = Any[])
+    for c in content
+        t = _interaction_text_part(c) ? get(c, "text", "") : nothing
+        t isa AbstractString || continue
+        print(state.textbuff, t)
+        print(state.pending_delta, t)
     end
-    out
+    nothing
 end
+
+function _interaction_step_delta!(state::AgenticStreamState, data::Dict{String,Any})
+    idx = get(data, "index", nothing)
+    d = get(data, "delta", nothing)
+    (idx isa Integer && d isa AbstractDict) || return nothing
+    step = get(state.steps, idx, nothing)
+    kind = isnothing(step) ? "" : string(get(step, "type", ""))::String
+    dt = get(d, "type", "")
+    if dt == "arguments_delta"
+        a = get(d, "arguments", "")
+        a isa AbstractString && kind == "function_call" && print(get!(IOBuffer, state.text_by_step, idx), a)
+    elseif dt == "thought_signature"
+        # Kept on the steps surfaced verbatim (thoughts, hosted tools); the
+        # function_call and message rebuilds carry no signature.
+        s = get(d, "signature", "")
+        s isa AbstractString && !isnothing(step) && kind ∉ ("function_call", "model_output") &&
+            print(get!(IOBuffer, state.text_by_step, idx), s)
+    elseif dt == "thought_summary"
+        # Each delta carries one new summary item of the thought.
+        c = get(d, "content", nothing)
+        (c isa AbstractDict && !isnothing(step)) || return nothing
+        summary = get(step, "summary", nothing)
+        summary isa Vector{Any} || (step["summary"] = summary = Any[])
+        push!(summary, c)
+    else
+        # Answer text (a top-level `text`). `textbuff` is the full accumulation
+        # diagnostics can read; `pending_delta` is what the driver forwards.
+        t = get(d, "text", "")
+        (t isa AbstractString && !isempty(t)) || return nothing
+        if isnothing(step)
+            push!(state.order, idx)
+            state.steps[idx] = Dict{String,Any}("type" => "model_output", "content" => Any[])
+            kind = "model_output"
+        end
+        kind == "model_output" && print(get!(IOBuffer, state.text_by_step, idx), t)
+        print(state.textbuff, t)
+        print(state.pending_delta, t)
+    end
+    nothing
+end
+
+# Write step `idx`'s streamed string into the step, once: the argument JSON replaces
+# the start event's placeholder, the answer text extends the step's last text part
+# (or opens one), and a signature extends the one the start event carried.
+function _interaction_finalize_step!(state::AgenticStreamState, idx::Int)::Dict{String,Any}
+    step = state.steps[idx]
+    buffer = pop!(state.text_by_step, idx, nothing)
+    streamed = isnothing(buffer) ? "" : takestring!(buffer)
+    isempty(streamed) && return step
+    kind = get(step, "type", "")
+    if kind == "function_call"
+        step["arguments"] = streamed
+    elseif kind == "model_output"
+        content = step["content"]::Vector{Any}
+        part = isempty(content) ? nothing : last(content)
+        if _interaction_text_part(part) && get(part, "text", nothing) isa AbstractString
+            part["text"] = string(part["text"], streamed)
+        else
+            push!(content, Dict{String,Any}("type" => "text", "text" => streamed))
+        end
+    else
+        signature = get(step, "signature", "")
+        step["signature"] = string(signature isa AbstractString ? signature : "", streamed)
+    end
+    step
+end
+
+# The terminal interaction.completed event carries no steps: output[] is the
+# non-stream decode of the assembled steps, in first-seen step order.
+_assembled_interaction_output(state::AgenticStreamState)::Vector{Any} =
+    _interaction_output(Any[_interaction_finalize_step!(state, idx) for idx in state.order])

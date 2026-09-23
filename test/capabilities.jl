@@ -292,3 +292,26 @@ struct _NoDefaultModelEndpoint <: UniLM.OpenAIWireEndpoint end
     err = try JSON.lower(FIMCompletion(service=OPENAIServiceEndpoint, prompt="x")); nothing catch e; e end
     @test err isa ArgumentError && occursin("OPENAIServiceEndpoint", err.msg) && !occursin("DataType", err.msg)
 end
+
+@testset "Azure deployment: registry first, then AZURE_OPENAI_DEPLOY_NAME_<MODEL>" begin
+    # <MODEL> is the model id upper-cased with every non-alphanumeric mapped to `_`.
+    @test UniLM._azure_deploy_env_var("gpt-5.2") == "AZURE_OPENAI_DEPLOY_NAME_GPT_5_2"
+    @test UniLM._azure_deploy_env_var("gpt-4o-mini") == "AZURE_OPENAI_DEPLOY_NAME_GPT_4O_MINI"
+    withenv("AZURE_OPENAI_DEPLOY_NAME_GPT_4O_MINI" => "mini deploy", "AZURE_OPENAI_DEPLOY_NAME_GPT_5_2" => "d52") do
+        @test UniLM._azure_deployment_path("gpt-4o-mini") == "/openai/deployments/mini%20deploy"
+        @test UniLM._azure_deployment_path("gpt-5.2") == "/openai/deployments/d52"
+        try
+            add_azure_deploy_name!("gpt-4o-mini", "registered")
+            @test UniLM._azure_deployment_path("gpt-4o-mini") == "/openai/deployments/registered"   # registry wins
+        finally
+            delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "gpt-4o-mini")
+        end
+    end
+    for value in (nothing, "")                                  # unset, or set to nothing usable
+        withenv("AZURE_OPENAI_DEPLOY_NAME_NEVER_CONFIGURED" => value) do
+            err = try UniLM._azure_deployment_path("never-configured"); nothing catch e; e end
+            @test err isa ArgumentError && occursin("AZURE_OPENAI_DEPLOY_NAME_NEVER_CONFIGURED", err.msg) &&
+                  occursin("add_azure_deploy_name!", err.msg)
+        end
+    end
+end

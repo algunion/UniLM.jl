@@ -127,10 +127,12 @@ const _AZURE_DEPLOY_LOCK = ReentrantLock()
 
 Resolve the Azure deployment path (`/openai/deployments/<name>`) for `model`.
 An explicit registration via [`add_azure_deploy_name!`](@ref) takes precedence;
-otherwise the matching `AZURE_OPENAI_DEPLOY_NAME_*` environment variable is read
-**at call time**, so runtime configuration wins regardless of what the
-environment held when the package was loaded. Throws `KeyError(model)` when the
-model has neither a registration nor a configured deployment environment variable.
+otherwise the environment variable `AZURE_OPENAI_DEPLOY_NAME_<MODEL>` is read **at call
+time**, where `<MODEL>` is the model id upper-cased with every character other than
+`A-Z` and `0-9` mapped to `_` (`gpt-5.2` → `AZURE_OPENAI_DEPLOY_NAME_GPT_5_2`), so
+runtime configuration wins regardless of what the environment held when the package
+was loaded. Throws an `ArgumentError` naming that variable when the model has neither
+a registration nor a non-empty deployment variable.
 Throws `ArgumentError` naming the entry when a registered value does not carry the
 `/openai/deployments/` prefix every registration writes — such a value could only
 come from a write straight into the registry, and re-encoding it whole would
@@ -157,16 +159,22 @@ function _azure_deployment_path(model::String)::String
             "$(repr(registered)) does not start with $(repr(prefix))"))
         return prefix * _uripart(chopprefix(registered, prefix))
     end
-    if model == "gpt-5.2" && haskey(ENV, "AZURE_OPENAI_DEPLOY_NAME_GPT_5_2")
-        return prefix * _uripart(ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_5_2"])
-    end
-    throw(KeyError(model))
+    var = _azure_deploy_env_var(model)
+    name = get(ENV, var, "")
+    isempty(name) && throw(ArgumentError("no Azure OpenAI deployment for model $(repr(model)): " *
+        "register one with add_azure_deploy_name! or set $var"))
+    prefix * _uripart(name)
 end
+
+_azure_deploy_env_var(model::AbstractString)::String =
+    "AZURE_OPENAI_DEPLOY_NAME_" * uppercase(replace(model, r"[^A-Za-z0-9]" => "_"))
 
 """
     add_azure_deploy_name!(model::String, deploy_name::String)
 
-Register an Azure OpenAI deployment for a given model name.
+Register an Azure OpenAI deployment for a given model name. Without a registration the
+deployment is read from `AZURE_OPENAI_DEPLOY_NAME_<MODEL>` (model id upper-cased, other
+characters mapped to `_`) when a request is built.
 
 # Example
 ```julia

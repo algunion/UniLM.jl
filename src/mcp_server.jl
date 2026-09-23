@@ -113,7 +113,7 @@ function _compile_uri_template(template::String)
             write(buf, "(?P<$name>[^/]+)")
         end
     end
-    (Regex("^" * String(take!(buf)) * "\$"), param_names)
+    (Regex("^" * takestring!(buf) * "\$"), param_names)
 end
 
 # ─── MCPServer ───────────────────────────────────────────────────────────────
@@ -547,7 +547,7 @@ function _read_frame(input::IO, limit::Int)
             overflow = true
         end
     end
-    line = String(take!(buf))
+    line = takestring!(buf)
     endswith(line, '\r') && (line = line[1:end-1])
     (line, overflow)
 end

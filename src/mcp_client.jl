@@ -1510,6 +1510,22 @@ end
 
 # ─── Discovery ───────────────────────────────────────────────────────────────
 
+"""Every page of a paginated list request, following `nextCursor` (at most 1000 pages):
+the entries under `key`, each converted with `T`."""
+function _paginate(session::MCPSession, method::String, key::String, ::Type{T};
+                   timeout::Union{Nothing,Float64}=nothing)::Vector{T} where {T}
+    items = T[]
+    cursor = nothing
+    for _ in 1:1000
+        params = isnothing(cursor) ? Dict{String,Any}() : Dict{String,Any}("cursor" => cursor)
+        result = _mcp_request!(session, method, params; timeout)
+        append!(items, (T(d) for d in get(result, key, [])))
+        cursor = get(result, "nextCursor", nothing)
+        isnothing(cursor) && return items
+    end
+    error("MCP pagination exceeded 1000 pages")
+end
+
 """
     list_tools!(session::MCPSession) -> Vector{MCPToolInfo}
 
@@ -1524,22 +1540,9 @@ recorded after the refresh and leaves `tools_stale` set.
 """
 function list_tools!(session::MCPSession; timeout::Union{Nothing,Float64}=nothing)::Vector{MCPToolInfo}
     _with_session(session, timeout) do
-        all_tools = MCPToolInfo[]
-        cursor = nothing
-        pages = 0
-        while true
-            (pages += 1) > 1000 && error("MCP pagination exceeded 1000 pages")
-            params = isnothing(cursor) ? Dict{String,Any}() : Dict{String,Any}("cursor" => cursor)
-            result = _mcp_request!(session, "tools/list", params; timeout=timeout)
-            for t in get(result, "tools", [])
-                push!(all_tools, MCPToolInfo(t))
-            end
-            cursor = get(result, "nextCursor", nothing)
-            isnothing(cursor) && break
-        end
-        session.tools = all_tools
+        session.tools = _paginate(session, "tools/list", "tools", MCPToolInfo; timeout)
         session.tools_stale = false
-        all_tools
+        session.tools
     end
 end
 
@@ -1548,46 +1551,16 @@ end
 
 Fetch the resource list from the MCP server. Handles pagination.
 """
-function list_resources!(session::MCPSession)::Vector{MCPResourceInfo}
-    all_resources = MCPResourceInfo[]
-    cursor = nothing
-    pages = 0
-    while true
-        (pages += 1) > 1000 && error("MCP pagination exceeded 1000 pages")
-        params = isnothing(cursor) ? Dict{String,Any}() : Dict{String,Any}("cursor" => cursor)
-        result = _mcp_request!(session, "resources/list", params)
-        for r in get(result, "resources", [])
-            push!(all_resources, MCPResourceInfo(r))
-        end
-        cursor = get(result, "nextCursor", nothing)
-        isnothing(cursor) && break
-    end
-    session.resources = all_resources
-    all_resources
-end
+list_resources!(session::MCPSession)::Vector{MCPResourceInfo} =
+    session.resources = _paginate(session, "resources/list", "resources", MCPResourceInfo)
 
 """
     list_prompts!(session::MCPSession) -> Vector{MCPPromptInfo}
 
 Fetch the prompt list from the MCP server. Handles pagination.
 """
-function list_prompts!(session::MCPSession)::Vector{MCPPromptInfo}
-    all_prompts = MCPPromptInfo[]
-    cursor = nothing
-    pages = 0
-    while true
-        (pages += 1) > 1000 && error("MCP pagination exceeded 1000 pages")
-        params = isnothing(cursor) ? Dict{String,Any}() : Dict{String,Any}("cursor" => cursor)
-        result = _mcp_request!(session, "prompts/list", params)
-        for p in get(result, "prompts", [])
-            push!(all_prompts, MCPPromptInfo(p))
-        end
-        cursor = get(result, "nextCursor", nothing)
-        isnothing(cursor) && break
-    end
-    session.prompts = all_prompts
-    all_prompts
-end
+list_prompts!(session::MCPSession)::Vector{MCPPromptInfo} =
+    session.prompts = _paginate(session, "prompts/list", "prompts", MCPPromptInfo)
 
 # ─── Tool Operations ────────────────────────────────────────────────────────
 

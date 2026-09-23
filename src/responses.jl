@@ -1026,15 +1026,7 @@ for call in function_calls(result)
 end
 ```
 """
-function function_calls(r::ResponseObject)
-    calls = Dict{String,Any}[]
-    for item in r.output
-        if item isa Dict && get(item, "type", "") == "function_call"
-            push!(calls, item)
-        end
-    end
-    return calls
-end
+function_calls(r::ResponseObject) = _output_items(r, "function_call")
 
 function_calls(r::ResponseSuccess) = function_calls(r.response)
 function_calls(::ResponseFailure) = Dict{String,Any}[]

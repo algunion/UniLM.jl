@@ -774,8 +774,8 @@ function _tool_function!(state::StreamState, idx::Int)::Dict{String,Any}
 end
 
 function _build_stream_message(state::StreamState)::Message
-    content = String(take!(state.content))
-    refusal = String(take!(state.refusal))
+    content = takestring!(state.content)
+    refusal = takestring!(state.refusal)
     # Echo complete captures only: a block still pending (its stop line was
     # dropped as malformed) means the capture is incomplete — fall back to
     # neutral reconstruction rather than echo a partial turn.

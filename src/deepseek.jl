@@ -8,6 +8,7 @@
 # (https://api-docs.deepseek.com/guides/thinking_mode). The OpenAI-wire defaults
 # drop the field, so these more specific methods delegate to them and carry the
 # reasoning on the Message as ProviderContent(:deepseek, [{"reasoning_content"}]).
+# They also read DeepSeek's context-cache hit count into the usage.
 # ============================================================================
 
 # Copy of `m` with one field replaced; field-generic, so fields added to Message later
@@ -24,14 +25,29 @@ function _deepseek_reasoning(m::Message)::Union{String,Nothing}
     isempty(parts) ? nothing : join(parts)
 end
 
+# DeepSeek reports the prompt's context-cache hits as `usage.prompt_cache_hit_tokens`
+# (the rest of `prompt_tokens` as `prompt_cache_miss_tokens`,
+# https://api-docs.deepseek.com/guides/kv_cache). The OpenAI-wire builder reads only
+# `prompt_tokens_details.cached_tokens`; without this, a usage carrying just the
+# native count prices every cached token at the miss rate.
+function _deepseek_usage(u::AbstractDict)::TokenUsage
+    t = _token_usage_from(u)
+    hit = get(u, "prompt_cache_hit_tokens", nothing)
+    hit isa Integer || return t
+    TokenUsage(t.prompt_tokens, t.completion_tokens, t.total_tokens, Int(hit), t.reasoning_tokens)
+end
+
 function decode_response(service::DeepSeekEndpoint, resp::HTTP.Response)
     decoded = invoke(decode_response, Tuple{OpenAIWireEndpointSpec,HTTP.Response}, service, resp)
+    data = JSON.parse(resp.body; dicttype=Dict{String,Any})
+    u = get(data, "usage", nothing)
+    usage = u isa AbstractDict ? _deepseek_usage(u) : decoded.usage
     # The OpenAI decoder read choices[1] already, so it is there.
-    message = get(JSON.parse(resp.body; dicttype=Dict{String,Any})["choices"][1], "message", nothing)
+    message = get(data["choices"][1], "message", nothing)
     rc = message isa AbstractDict ? get(message, "reasoning_content", nothing) : nothing
-    rc isa AbstractString && !isempty(rc) || return decoded
+    rc isa AbstractString && !isempty(rc) || return (; decoded.message, usage)
     pc = ProviderContent(:deepseek, Any[Dict{String,Any}("reasoning_content" => rc)])
-    (; message=_message_with(decoded.message, :provider_content, pc), decoded.usage)
+    (; message=_message_with(decoded.message, :provider_content, pc), usage)
 end
 
 function encode_request(service::DeepSeekEndpoint, chat::Chat)::String
@@ -73,6 +89,8 @@ function handle_sse_event!(service::DeepSeekEndpoint, event::AbstractString,
                     service, event, payload, state)
     if status === :continue
         parsed = JSON.parse(payload; dicttype=Dict{String,Any})   # the default handler parsed it too
+        u = parsed isa AbstractDict ? get(parsed, "usage", nothing) : nothing
+        u isa AbstractDict && (state.usage = _deepseek_usage(u))
         choices = parsed isa AbstractDict ? get(parsed, "choices", nothing) : nothing
         for cho in (choices isa AbstractVector ? choices : Any[])
             cho isa AbstractDict || continue

@@ -116,3 +116,33 @@ const _DS_STREAM = [
     UniLM._sse_dispatch!(_DS, IOBuffer(), Ref(""), _ds_stream(_DS_STREAM[1:2]; done=false), st3)
     @test isnothing(_build_stream_message(st3).provider_content)
 end
+
+# https://api-docs.deepseek.com/guides/kv_cache: `usage` reports the prompt's context-cache hits as
+# `prompt_cache_hit_tokens` and the rest as `prompt_cache_miss_tokens` (prompt_tokens = hit + miss).
+const _DS_CACHE_USAGE = Dict("prompt_tokens" => 1000, "completion_tokens" => 50, "total_tokens" => 1050,
+                             "prompt_cache_hit_tokens" => 768, "prompt_cache_miss_tokens" => 232)
+
+@testset "usage — context-cache hits are cached input, streamed and not" begin
+    turn(u) = Dict("model" => "deepseek-flash", "choices" => [Dict("index" => 0, "finish_reason" => "stop",
+        "message" => Dict("role" => "assistant", "content" => "hi"))], "usage" => u)
+    u = decode_response(_DS, _ds_resp(turn(_DS_CACHE_USAGE))).usage
+    @test (u.prompt_tokens, u.cached_tokens, u.completion_tokens, u.total_tokens) == (1000, 768, 50, 1050)
+    # Billed at the cache-hit rate: 232 misses, 768 hits, 50 output tokens.
+    row = UniLM.DEFAULT_PRICING["deepseek-flash"]
+    ok = LLMSuccess(message=Message(role=RoleAssistant, content="hi"),
+                    self=Chat(service=_DS, model="deepseek-flash"), usage=u)
+    @test estimated_cost(ok) ≈ 232 * row.input + 768 * row.cached_input + 50 * row.output
+    # Beside the OpenAI-style detail the API reference also documents (the same count).
+    both = merge(_DS_CACHE_USAGE, Dict("prompt_tokens_details" => Dict("cached_tokens" => 768)))
+    @test decode_response(_DS, _ds_resp(turn(both))).usage.cached_tokens == 768
+    # No cache fields: nothing is cached.
+    plain = Dict("prompt_tokens" => 10, "completion_tokens" => 20, "total_tokens" => 30)
+    @test decode_response(_DS, _ds_resp(turn(plain))).usage.cached_tokens == 0
+    # Streamed, the usage arrives in the last chunk before [DONE] (stream_options.include_usage).
+    st = StreamState()
+    chunks = [Dict("choices" => [Dict("index" => 0, "delta" => Dict("role" => "assistant", "content" => "hi"),
+                                      "finish_reason" => "stop")]),
+              Dict("choices" => Any[], "usage" => _DS_CACHE_USAGE)]
+    @test UniLM._sse_dispatch!(_DS, IOBuffer(), Ref(""), _ds_stream(chunks), st) === :done
+    @test (st.usage.prompt_tokens, st.usage.cached_tokens) == (1000, 768)
+end

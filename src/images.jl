@@ -254,7 +254,7 @@ end
 # ─── Request Functions ───────────────────────────────────────────────────────
 
 """
-    generate_image(ig::ImageGeneration)
+    generate_image(ig::ImageGeneration; config=nothing, cancel=nothing)
 
 Send a request to the OpenAI Image Generation API.
 
@@ -274,16 +274,23 @@ end
 ```
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref)
+token) to make the call cancellable: once the token is cancelled it returns an
+`ImageCallError` whose `cause` is a [`UniLMCancelled`](@ref) — without sending anything
+when the token was already cancelled, at once when mid-request (never retried).
 """
-function generate_image(ig::ImageGeneration; config::Union{Nothing,RequestConfig}=nothing)
+function generate_image(ig::ImageGeneration; config::Union{Nothing,RequestConfig}=nothing,
+                        cancel::Union{Nothing,CancelToken}=nothing)
     _validate_declared_capability(ig.service, :images, "Image Generation API")
     cfg = _resolve_config(config)
+    tok = _resolve_cancel(cancel)
     t0 = time_ns()
     local resp
     try
         body = JSON.json(ig)
         url = _api_base_url(ig.service) * IMAGES_GENERATIONS_PATH
-        resp = _http_with_retries(cfg, t0, "POST", url, auth_header(ig.service), body)
+        resp = _http_with_retries(cfg, t0, "POST", url, auth_header(ig.service), body; cancel=tok)
         return resp.status == 200 ?
                ImageSuccess(response=parse_image_response(resp)) :
                _failure(ImageFailure, resp)
@@ -297,7 +304,7 @@ end
     generate_image(prompt::String; kwargs...)
 
 Convenience method: create an [`ImageGeneration`](@ref) from a prompt + keyword arguments
-and send it.
+and send it. `config` and `cancel` go to the request, as for `generate_image(ig)`.
 
 # Examples
 ```julia
@@ -318,8 +325,9 @@ if result isa ImageSuccess
 end
 ```
 """
-function generate_image(prompt::String; config::Union{Nothing,RequestConfig}=nothing, kwargs...)
-    generate_image(ImageGeneration(; prompt=prompt, kwargs...); config=config)
+function generate_image(prompt::String; config::Union{Nothing,RequestConfig}=nothing,
+                        cancel::Union{Nothing,CancelToken}=nothing, kwargs...)
+    generate_image(ImageGeneration(; prompt=prompt, kwargs...); config, cancel)
 end
 
 
@@ -347,17 +355,22 @@ Sent as multipart/form-data to `/v1/images/edits`.
 end
 
 """
-    edit_image(e::ImageEdit) -> LLMRequestResponse
-    edit_image(image, prompt; mask=nothing, service=OPENAIServiceEndpoint, kwargs...)
+    edit_image(e::ImageEdit; config=nothing, cancel=nothing) -> LLMRequestResponse
+    edit_image(image, prompt; mask=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing, kwargs...)
 
 Edit/extend image(s) under a text prompt. Returns the same `ImageSuccess`/`ImageFailure`/
 `ImageCallError` shapes as [`generate_image`](@ref).
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this call.
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this
+call, and `cancel::Union{Nothing,CancelToken}` to make it cancellable exactly as for
+[`generate_image`](@ref): a cancelled call returns an `ImageCallError` whose `cause` is a
+[`UniLMCancelled`](@ref).
 """
-function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing)
+function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing,
+                    cancel::Union{Nothing,CancelToken}=nothing)
     _validate_declared_capability(e.service, :image_edits, "Image Edits API")
     cfg = _resolve_config(config)
+    tok = _resolve_cancel(cancel)
     t0 = time_ns()
     local resp
     try
@@ -390,7 +403,7 @@ function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing)
             HTTP.Form(parts)
         end
         url = _api_base_url(e.service) * IMAGES_EDITS_PATH
-        resp = _http_with_retries(cfg, t0, "POST", url, auth_header_multipart(e.service), body)
+        resp = _http_with_retries(cfg, t0, "POST", url, auth_header_multipart(e.service), body; cancel=tok)
         return resp.status == 200 ?
                ImageSuccess(response=parse_image_response(resp)) :
                _failure(ImageFailure, resp)
@@ -400,5 +413,6 @@ function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing)
     end
 end
 edit_image(image, prompt::String; mask::Union{String,Nothing}=nothing,
-    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing, kwargs...) =
-    edit_image(ImageEdit(; service=service, image=image, prompt=prompt, mask=mask, kwargs...); config=config)
+    service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing,
+    cancel::Union{Nothing,CancelToken}=nothing, kwargs...) =
+    edit_image(ImageEdit(; service=service, image=image, prompt=prompt, mask=mask, kwargs...); config, cancel)

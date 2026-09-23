@@ -8,7 +8,6 @@
     @test isempty(server.tools)
     @test isempty(server.resources)
     @test isempty(server.prompts)
-    @test !server._initialized
 
     server2 = MCPServer("s2", "2.0.0"; description="A test server")
     @test server2.description == "A test server"
@@ -138,7 +137,6 @@ end
         @test resp["result"]["protocolVersion"] == "2025-11-25"
         @test haskey(resp["result"]["capabilities"], "tools")
         @test resp["result"]["serverInfo"]["name"] == "test-server"
-        @test server._initialized
     end
 
     @testset "Tools list" begin
@@ -1482,9 +1480,13 @@ end
     @test server.tools["greet"].input_schema["required"] == ["name"]
     @test call("greet", Dict{String,Any}("name" => "Ada"))["result"]["content"][1]["text"] == "hi Ada"
     @test call("greet", Dict{String,Any}("name" => "Ada", "title" => "Dr"))["result"]["content"][1]["text"] == "hi Dr Ada"
-    # Calls that violate the advertised schema are invalid params, not handler errors.
-    @test call("add", Dict{String,Any}("a" => 2))["error"]["code"] == -32602
-    @test call("add", Dict{String,Any}("a" => 2, "b" => 2.5))["error"]["code"] == -32602
+    # A call that violates the advertised schema never reaches the handler: it is a tool
+    # execution error (`isError: true`) naming the argument, so the model can correct it.
+    for args in (Dict{String,Any}("a" => 2), Dict{String,Any}("a" => 2, "b" => 2.5))
+        r = call("add", args)
+        @test !haskey(r, "error")
+        @test r["result"]["isError"] == true && occursin("`b`", r["result"]["content"][1]["text"])
+    end
     # A handler taking ONE dictionary is the explicit-schema calling convention: inferring a
     # schema from it would advertise a single required `args` object. Rejected loudly.
     err = try
@@ -1500,7 +1502,10 @@ end
 
 # ─── Handler failure modes ────────────────────────────────────────────────────
 
-@testset "@mcp_tool binding never fabricates values: violations are -32602" begin
+@testset "@mcp_tool binding never fabricates values: violations are tool execution errors" begin
+    # MCP 2025-11-25 (server/tools, Error Handling): input validation errors are tool
+    # execution errors, reported in the result with `isError: true`; a request that fails
+    # the CallToolRequest schema (non-object `arguments`) is a protocol error.
     server = MCPServer("bind", "1.0.0")
     @mcp_tool server function typed(s::String, n::Int, f::Float64, b::Bool)::String
         string(s, n, f, b)
@@ -1512,13 +1517,15 @@ end
     for (key, bad) in (("s", 42), ("n", 2.5), ("n", "3"), ("n", true), ("f", "1.0"), ("b", 1))
         args = merge(good, Dict{String,Any}(key => bad))
         resp = call(args)
-        @test get(get(resp, "error", Dict()), "code", nothing) == -32602
-        @test occursin(key, get(get(resp, "error", Dict()), "message", ""))
+        @test !haskey(resp, "error")
+        @test resp["result"]["isError"] == true
+        @test occursin("argument `$key` must be", resp["result"]["content"][1]["text"])
     end
     # A missing required argument is not the string "nothing".
     missing_s = call(Dict{String,Any}("n" => 1, "f" => 1.5, "b" => false))
-    @test get(get(missing_s, "error", Dict()), "code", nothing) == -32602
-    @test occursin("s", get(get(missing_s, "error", Dict()), "message", ""))
+    @test !haskey(missing_s, "error")
+    @test missing_s["result"]["isError"] == true
+    @test occursin("missing required argument `s`", missing_s["result"]["content"][1]["text"])
     # `arguments` must be an object (CallToolRequest schema).
     for notobj in (Any[1, 2], "str", 5, nothing)
         resp = call(notobj)

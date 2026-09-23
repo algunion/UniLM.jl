@@ -216,6 +216,20 @@ _free_port() = let s = Sockets.listen(Sockets.localhost, 0)
     p
 end
 
+"""Serve `handler` on an OS-assigned ephemeral port, re-probing when the port is taken
+between the probe and the bind. Returns (server, url)."""
+function _mcp_http_fixture(handler::Function)
+    for attempt in 1:5
+        port = _free_port()
+        try
+            return HTTP.serve!(handler, "127.0.0.1", port; verbose=false), "http://127.0.0.1:$port"
+        catch e
+            e isa InterruptException && rethrow()
+            attempt == 5 && rethrow()
+        end
+    end
+end
+
 """
 Build a real `MCPServer` populated with one tool, one static resource, one
 resource template, and one prompt — all with deterministic, assertable outputs.
@@ -2868,9 +2882,8 @@ end
 
     # A live round trip against the in-process server proves the conversion, not
     # just the signature: the server sees a JSON object with the caller's entries.
-    port = 8000 + rand(1000:8000)
     seen = Ref{Any}(nothing)
-    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+    httpserver, url = _mcp_http_fixture() do req
         body = JSON.parse(String(req.body); dicttype=Dict{String,Any})
         if body["method"] == "initialize"
             return HTTP.Response(200, ["Content-Type" => "application/json"],
@@ -2888,7 +2901,7 @@ end
             JSON.json(Dict("jsonrpc" => "2.0", "id" => get(body, "id", 0), "result" => Dict())))
     end
     try
-        session = mcp_connect("http://127.0.0.1:$port")
+        session = mcp_connect(url)
         res = call_tool(session, "read_file", Dict("path" => "/x"))   # Dict{String,String}
         @test res.content == "ok"
         @test seen[] == Dict{String,Any}("path" => "/x")
@@ -2942,20 +2955,6 @@ _log(t::_ScriptedTransport) = @lock t.lock copy(t.log)
 _scripted_session(t::_ScriptedTransport) = UniLM.MCPSession(t, UniLM.MCPServerCapabilities(),
     Dict{String,Any}(), UniLM.MCPToolInfo[], UniLM.MCPResourceInfo[], UniLM.MCPPromptInfo[],
     UniLM._MCP_PROTOCOL_VERSION, 0, :ready)
-
-"""Serve `handler` on an OS-assigned ephemeral port, re-probing when the port is taken
-between the probe and the bind. Returns (server, url)."""
-function _mcp_http_fixture(handler::Function)
-    for attempt in 1:5
-        port = _free_port()
-        try
-            return HTTP.serve!(handler, "127.0.0.1", port; verbose=false), "http://127.0.0.1:$port"
-        catch e
-            e isa InterruptException && rethrow()
-            attempt == 5 && rethrow()
-        end
-    end
-end
 
 "An HTTP handler serving `server` through `_dispatch_mcp` with JSON bodies."
 _json_dispatch(server) = function (req)

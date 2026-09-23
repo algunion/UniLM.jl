@@ -318,3 +318,23 @@ end
         close(server)
     end
 end
+
+@testset "fim_complete and prefix_complete: a cancelled token sends nothing" begin
+    tok = cancel!(CancelToken())
+    cfg = RequestConfig(max_attempts=3, total_deadline=60.0)
+    fim = FIMCompletion(service=_ComplTimeoutMock, model="mock-fim", prompt="x")
+    prefix_chat() = Chat(service=_ComplTimeoutMock, model="mock-fim",
+                         messages=[Message(Val(:system), "s"), Message(Val(:user), "u"),
+                                   Message(role=UniLM.RoleAssistant, content="```python\n")])
+    results, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+        _COMPL_URL[] = _url_probe_base[] * "/v1/completions"   # the recording server
+        [fim_complete(fim; config=cfg, cancel=tok),
+         fim_complete("x"; service=_ComplTimeoutMock, model="mock-fim", config=cfg, cancel=tok),
+         prefix_complete(prefix_chat(); config=cfg, cancel=tok),
+         with_cancel(() -> fim_complete(fim; config=cfg), tok),   # ambient token
+         with_cancel(() -> prefix_complete(prefix_chat(); config=cfg), tok)]
+    end
+    @test typeof.(results) == [FIMCallError, FIMCallError, LLMCallError, FIMCallError, LLMCallError]
+    @test all(r -> r.cause isa UniLMCancelled, results)
+    @test isempty(seen)
+end

@@ -751,6 +751,26 @@ _decode_tool_calls(raw::AbstractVector)::Vector{ToolCall} =
     # Rides the result as `sse_dropped`, so a turn built from a truncated wire is
     # distinguishable from a clean one.
     sse_dropped::Int = 0
+    # Streamed tool-call (name, arguments) fragments by index: appended in
+    # O(fragment) and joined onto `tool_calls` once, by `_tool_function!` —
+    # re-concatenating a String per fragment is quadratic in the argument length.
+    tool_fragments::Dict{Int,NTuple{2,IOBuffer}} = Dict{Int,NTuple{2,IOBuffer}}()
+end
+
+# The (name, arguments) fragment buffers of streamed tool call `idx`.
+_tool_fragments!(state::StreamState, idx::Int)::NTuple{2,IOBuffer} =
+    get!(() -> (IOBuffer(), IOBuffer()), state.tool_fragments, idx)
+
+# The function dict of streamed tool call `idx`, with its buffered fragments joined
+# on. The buffers are consumed, so reading a call again returns the same strings.
+function _tool_function!(state::StreamState, idx::Int)::Dict{String,Any}
+    fdict = state.tool_calls[idx]["function"]
+    frags = pop!(state.tool_fragments, idx, nothing)
+    if !isnothing(frags)
+        fdict["name"] = fdict["name"] * takestring!(frags[1])
+        fdict["arguments"] = fdict["arguments"] * takestring!(frags[2])
+    end
+    fdict
 end
 
 function _build_stream_message(state::StreamState)::Message
@@ -770,7 +790,7 @@ function _build_stream_message(state::StreamState)::Message
     if !isempty(state.tool_calls)
         tcalls = map(sort!(collect(keys(state.tool_calls)))) do idx
             tc_data = state.tool_calls[idx]
-            fdict = tc_data["function"]
+            fdict = _tool_function!(state, idx)
             args = _parse_tool_arguments(fdict["arguments"])   # "" → Dict{String,Any}() (zero-arg tool call)
             ToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
                      thought_signature=get(tc_data, "thought_signature", nothing))
@@ -851,10 +871,11 @@ function _fire_tool_calls!(on_tool_call, state::StreamState, stream_done::Bool):
         idx in state.fired_tool_calls && continue
         tc_data = state.tool_calls[idx]
         stream_done || idx < maxidx || get(tc_data, "complete", false) === true || continue
-        fdict = tc_data["function"]
+        fdict = _tool_function!(state, idx)
         args = try
             _parse_tool_arguments(fdict["arguments"])
         catch e
+            e isa InterruptException && rethrow()
             # A COMPLETE call's arguments cannot improve later: warn once, never retry.
             push!(state.fired_tool_calls, idx)
             @warn "on_tool_call: undecodable tool-call arguments; not firing" index = idx exception = e

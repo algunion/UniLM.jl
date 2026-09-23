@@ -1207,6 +1207,7 @@ function _parse_response_stream_chunk(chunk::String, state::AgenticStreamState)
             # content_part.*, refusal.*, function_call_arguments.*, reasoning*,
             # hosted-tool progress) degrades gracefully — as do unknown types.
         catch e
+            e isa InterruptException && rethrow()
             Threads.atomic_add!(_SSE_DROPPED_LINES, 1)
             state.sse_dropped += 1
             @debug "Responses SSE: dropped undecodable data payload" event = ev payload = String(payload) exception = e

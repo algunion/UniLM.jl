@@ -40,23 +40,27 @@ end
     _sse_complete_lines!(carry::IOBuffer, chunk::String) -> Vector{SubString{String}}
 
 Layer 1 of the SSE machine: line assembly across arbitrary read boundaries.
-Prepends the stashed carry, splits at the LAST `'\\n'`, and stashes the tail
-**verbatim** (never `strip` — stripping eats whitespace inside JSON strings
-split at a read boundary). Complete lines are split on `'\\n'`, a single
-trailing `'\\r'` is dropped per line (CRLF tolerance), and empty lines are
-dropped. A line is returned (and later parsed) exactly once.
+Only `chunk` is scanned for its LAST `'\\n'` — the carry never holds one — so a
+line spread over many reads costs O(line), not O(line²). A chunk without a
+newline is appended to the carry; otherwise the carry and the chunk's complete
+lines are joined once and the tail after the last `'\\n'` becomes the new carry.
+The tail is stashed **verbatim** (never `strip` — stripping eats whitespace
+inside JSON strings split at a read boundary). Complete lines are split on
+`'\\n'`, a single trailing `'\\r'` is dropped per line (CRLF tolerance), and
+empty lines are dropped. A line is returned (and later parsed) exactly once.
 """
 function _sse_complete_lines!(carry::IOBuffer, chunk::String)::Vector{SubString{String}}
-    data = string(String(take!(carry)), chunk)
     lines = SubString{String}[]
-    last_nl = findlast('\n', data)
+    last_nl = findlast('\n', chunk)
     if isnothing(last_nl)
-        print(carry, data)          # no complete line yet — stash verbatim
+        write(carry, chunk)         # no complete line yet — stash verbatim
         return lines
     end
+    head = SubString(chunk, 1, last_nl)
+    data = iszero(position(carry)) ? head : (write(carry, head); SubString(takestring!(carry)))
     # Partial line after the LAST '\n': stash verbatim for the next read.
-    last_nl < lastindex(data) && print(carry, SubString(data, nextind(data, last_nl)))
-    for line in eachsplit(SubString(data, 1, last_nl), '\n')
+    last_nl < ncodeunits(chunk) && write(carry, SubString(chunk, last_nl + 1))
+    for line in eachsplit(data, '\n')
         line = chopsuffix(line, "\r")
         isempty(line) || push!(lines, line)
     end
@@ -122,7 +126,8 @@ Layer-3 glue: frames `chunk` via [`_sse_events!`](@ref) and feeds each data
 payload to [`handle_sse_event!`](@ref). Returns the first non-`:continue`
 status, else `:continue`. A COMPLETE line whose handler throws is
 `@debug`-logged, counted in `_SSE_DROPPED_LINES` **and in `state.sse_dropped`**,
-and DROPPED — never re-queued.
+and DROPPED — never re-queued. An `InterruptException` is the user's, not the
+payload's: it propagates.
 """
 function _sse_dispatch!(service, carry::IOBuffer, current_event::Ref{String},
                         chunk::String, state::StreamState)::Symbol
@@ -130,6 +135,7 @@ function _sse_dispatch!(service, carry::IOBuffer, current_event::Ref{String},
         status = try
             handle_sse_event!(service, event, payload, state)
         catch e
+            e isa InterruptException && rethrow()
             Threads.atomic_add!(_SSE_DROPPED_LINES, 1)
             state.sse_dropped += 1
             @debug "SSE: dropped undecodable data payload" event payload = String(payload) exception = (e, catch_backtrace())
@@ -210,10 +216,11 @@ function handle_sse_event!(service::OpenAIWireEndpointSpec, event::AbstractStrin
             id isa AbstractString && !isempty(id) && (entry["id"] = id)
             fd = get(tc_delta, "function", nothing)
             if fd isa AbstractDict
+                name, args = _tool_fragments!(state, idx)
                 n = get(fd, "name", nothing)
-                n isa AbstractString && (entry["function"]["name"] *= n)
+                n isa AbstractString && print(name, n)
                 a = get(fd, "arguments", nothing)
-                a isa AbstractString && (entry["function"]["arguments"] *= a)
+                a isa AbstractString && print(args, a)
             end
         end
     end

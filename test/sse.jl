@@ -176,9 +176,56 @@ end
         UniLM.handle_sse_event!(S, "",
             "{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"NYC\\\"}\"}}]}}]}", st)
         @test st.tool_calls[0]["id"] == "call_abc"
-        @test st.tool_calls[0]["function"]["name"] == "get_weather"
-        @test st.tool_calls[0]["function"]["arguments"] == "{\"location\":\"NYC\"}"
+        # Fragments are buffered and joined once, when the call is read.
+        fn = UniLM._tool_function!(st, 0)
+        @test fn["name"] == "get_weather"
+        @test fn["arguments"] == "{\"location\":\"NYC\"}"
+        @test UniLM._tool_function!(st, 0) == fn            # joining is idempotent
     end
+end
+
+@testset "SSE machine cost is linear in what the wire carries" begin
+    # Minimum of three runs: @allocated counts every thread's allocations.
+    min_alloc(f) = minimum(_ -> (f(); @allocated f()), 1:3)
+
+    @testset "a 4 MiB line in 16 KiB reads allocates < 3x its size" begin
+        # The old carry re-joined and re-scanned the whole pending line on every read.
+        n = 4 * 1024 * 1024
+        value = repeat("x", n - 6)
+        chunks = let bytes = codeunits("data: " * value * "\n")
+            [String(bytes[i:min(i + 16383, end)]) for i in 1:16384:length(bytes)]
+        end
+        events = Ref{Any}(nothing)
+        feed() = (carry = IOBuffer(); ev = Ref("");
+                  events[] = reduce(vcat, [UniLM._sse_events!(carry, ev, c) for c in chunks]); nothing)
+        @test min_alloc(feed) < 3n
+        @test length(events[]) == 1 && events[][1][2] == value   # byte-identical payload
+    end
+
+    @testset "tool-call arguments in 2 KiB fragments accumulate linearly" begin
+        # `s = s * piece` per fragment was quadratic in the argument length.
+        frag = repeat("a", 2048)
+        payloads = [JSON.json(Dict("choices" => [Dict("index" => 0, "delta" => Dict("tool_calls" =>
+            [Dict("index" => 0, "function" => Dict("arguments" => frag))]))])) for _ in 1:1024]
+        st = Ref{Any}(nothing)
+        feed() = (s = StreamState();
+                  foreach(p -> UniLM.handle_sse_event!(OPENAIServiceEndpoint, "", p, s), payloads);
+                  st[] = s; nothing)
+        total = 1024 * 2048
+        @test min_alloc(feed) < 16total      # quadratic accumulation is ~1000x here
+        @test UniLM._tool_function!(st[], 0)["arguments"] == repeat(frag, 1024)
+    end
+end
+
+struct _InterruptingWire <: UniLM.OpenAIWireEndpoint end
+UniLM.handle_sse_event!(::_InterruptingWire, event::AbstractString, payload::AbstractString,
+                        state::UniLM.StreamState) = throw(InterruptException())
+
+@testset "an interrupt raised while parsing a payload is never swallowed" begin
+    st = StreamState()
+    @test_throws InterruptException UniLM._sse_dispatch!(_InterruptingWire(), IOBuffer(), Ref(""),
+                                                         "data: {}\n", st)
+    @test st.sse_dropped == 0          # not miscounted as an undecodable line
 end
 
 @testset "_sse_dispatch! (OpenAI wire) — drop policy + adversarial wire" begin

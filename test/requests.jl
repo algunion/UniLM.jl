@@ -414,10 +414,11 @@ end
         dispatch("data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_abc\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"\"}}]},\"finish_reason\":null}]}\n", state; carry)
         @test haskey(state.tool_calls, 0)
         @test state.tool_calls[0]["id"] == "call_abc"
-        @test state.tool_calls[0]["function"]["name"] == "get_weather"
         dispatch("data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"location\\\":\"}}]},\"finish_reason\":null}]}\n", state; carry)
         dispatch("data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"NYC\\\"}\"}}]},\"finish_reason\":null}]}\n", state; carry)
-        @test state.tool_calls[0]["function"]["arguments"] == "{\"location\":\"NYC\"}"
+        fn = UniLM._tool_function!(state, 0)                 # fragments joined once, when read
+        @test fn["name"] == "get_weather"
+        @test fn["arguments"] == "{\"location\":\"NYC\"}"
         dispatch("data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n", state; carry)
         @test state.finish_reason == "tool_calls"
     end

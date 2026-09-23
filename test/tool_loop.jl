@@ -403,3 +403,95 @@ end
         @test ran[] == 0
     end
 end
+
+# ─── Cancellation ────────────────────────────────────────────────────────────
+
+@testset "cancel: a cancel between tool dispatches stops the Chat loop before the next call" begin
+    tok = CancelToken()
+    ran, scopes = String[], Any[]
+    chat = _tl_chat(_TLFixture([_tl_calls(UniLM.TOOL_CALLS, "c1" => "first", "c2" => "second",
+                                          "c3" => "third")]))
+    res, seen = _tl_scripted() do
+        tool_loop!(chat, (name, args) -> (push!(ran, name); push!(scopes, UniLM._current_cancel());
+                                          cancel!(tok); "ok"); cancel=tok)
+    end
+    @test ran == ["first"]                          # no dispatch after the cancel
+    @test only(scopes) === tok                      # the turn runs inside the token's scope
+    @test !res.completed && res.turns_used == 1 && length(seen) == 1
+    @test res.response isa LLMCallError && res.response.cause isa UniLMCancelled
+    @test res.llm_error == res.response.error
+    @test only(res.tool_calls).tool_name == "first"
+    @test length(chat) == 2                         # the interrupted turn is rolled back
+end
+
+@testset "cancel: a cancel between tool dispatches stops the Responses loop" begin
+    tok = CancelToken()
+    ran, scopes = String[], Any[]
+    body = _tl_resp("resp_1", [_tl_fcall("c1", "first"), _tl_fcall("c2", "second")])
+    res, seen = _with_scripted((_, _) -> _json(200, body)) do
+        tool_loop(_tl_respond(), (name, args) -> (push!(ran, name); push!(scopes, UniLM._current_cancel());
+                                                  cancel!(tok); "ok"); cancel=tok)
+    end
+    @test ran == ["first"] && only(scopes) === tok
+    @test !res.completed && res.turns_used == 1 && length(seen) == 1
+    @test res.response isa ResponseCallError && res.response.cause isa UniLMCancelled
+    @test res.llm_error == res.response.error
+end
+
+@testset "cancel: the ambient with_cancel token is honoured (CallableTool variant)" begin
+    tok = CancelToken()
+    ran = String[]
+    tools = [CallableTool(Tool(func=FunctionSignature(name=n)),
+                          (name, args) -> (push!(ran, name); cancel!(tok); "ok")) for n in ("first", "second")]
+    chat = _tl_chat(_TLFixture([_tl_calls(UniLM.TOOL_CALLS, "c1" => "first", "c2" => "second")]))
+    res, _ = _tl_scripted() do
+        with_cancel(() -> tool_loop!(chat; tools), tok)
+    end
+    @test ran == ["first"]
+    @test !res.completed && res.response isa LLMCallError && res.response.cause isa UniLMCancelled
+end
+
+@testset "cancel: a cancel mid-request returns promptly with the typed cancellation result" begin
+    tok = CancelToken()
+    hits = Threads.Atomic{Int}(0)
+    release = Threads.Atomic{Bool}(false)
+    held = (n, _) -> begin
+        Threads.atomic_add!(hits, 1)
+        n >= 2 && timedwait(() -> release[], 30.0)   # the follow-up reply is held for 30 s
+        _json(200, "{}")
+    end
+    chat = _tl_chat(_TLFixture([_tl_calls(UniLM.TOOL_CALLS, "c1" => "noop"), _tl_reply("late")]))
+    ran = Ref(0)
+    (res, after_cancel), _ = _with_scripted(held) do
+        t = Threads.@spawn tool_loop!(chat, (name, args) -> (ran[] += 1; "ok"); cancel=tok)
+        in_flight = timedwait(() -> hits[] >= 2 || istaskdone(t), 25.0)
+        sleep(0.2)
+        cancelled_at = time_ns()
+        cancel!(tok)
+        done = timedwait(() -> istaskdone(t), 25.0)
+        after = (time_ns() - cancelled_at) / 1e9
+        release[] = true
+        @test in_flight === :ok && done === :ok
+        (fetch(t), after)
+    end
+    @test after_cancel < 2.0
+    @test !res.completed && res.turns_used == 2 && ran[] == 1
+    @test res.response isa LLMCallError && res.response.cause isa UniLMCancelled
+end
+
+@testset "cancel: every loop form forwards the token; a cancelled one sends nothing" begin
+    tok = cancel!(CancelToken())
+    ct = CallableTool(FunctionTool(name="noop"), (n, a) -> "ok")
+    chat_ct = CallableTool(Tool(func=FunctionSignature(name="noop")), (n, a) -> "ok")
+    results, seen = _tl_scripted() do
+        svc = GenericOpenAIEndpoint(_url_probe_base[], "")
+        [tool_loop!(_tl_chat(svc), (n, a) -> "ok"; cancel=tok),
+         tool_loop!(_tl_chat(svc); tools=[chat_ct], cancel=tok),
+         tool_loop(_tl_respond(), (n, a) -> "ok"; cancel=tok),
+         tool_loop(_tl_respond(; tools=[ct]); cancel=tok),
+         tool_loop("go", (n, a) -> "ok"; service=svc, model="mock", cancel=tok),
+         tool_loop("go"; tools=[ct], service=svc, model="mock", cancel=tok)]
+    end
+    @test isempty(seen)
+    @test all(r -> !r.completed && r.turns_used == 1 && occursin("cancelled", r.llm_error), results)
+end

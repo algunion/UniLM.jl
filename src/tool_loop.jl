@@ -136,10 +136,19 @@ end
 _check_max_turns(n::Int) =
     ispositive(n) || throw(ArgumentError("max_turns must be >= 1 (got $n)"))
 
+# Run `f` with `tok` as the ambient token: a turn's request and the tools it dispatches
+# (including tasks they spawn) observe it. No token: run `f` as is.
+_in_cancel_scope(f::Function, tok::CancelToken) = with_cancel(f, tok)
+_in_cancel_scope(f::Function, ::Nothing) = f()
+
+# The typed result of a loop cancelled between tool dispatches, shaped like the call
+# error a cancelled request returns; `t0` is the loop's start.
+_cancelled_since(t0::UInt64) = UniLMCancelled(:token, _elapsed_s(t0))
+
 # ─── Chat Completions Loop ──────────────────────────────────────────────────
 
 """
-    tool_loop!(chat::Chat, dispatcher::Function; max_turns=10, config=nothing, callback=nothing, on_tool_call=nothing) -> ToolLoopResult
+    tool_loop!(chat::Chat, dispatcher::Function; max_turns=10, config=nothing, callback=nothing, on_tool_call=nothing, cancel=nothing) -> ToolLoopResult
 
 Run a tool-calling loop on a [`Chat`](@ref). Repeatedly calls [`chatrequest!`](@ref),
 dispatches tool calls via `dispatcher(name, args)`, pushes tool-role messages back,
@@ -164,6 +173,14 @@ requested them.
 - `config`: Per-request [`RequestConfig`](@ref) passed to [`chatrequest!`](@ref) — each turn gets its own attempt/deadline budget.
 - `callback`: Streaming callback passed to `chatrequest!`.
 - `on_tool_call`: Tool call notification callback passed to `chatrequest!`.
+- `cancel`: A [`CancelToken`](@ref); `nothing` (default) uses the ambient token of
+  [`with_cancel`](@ref). Every turn — its request and its tool dispatches — runs inside
+  `with_cancel(cancel)`, and the token is checked before each dispatch. A cancelled loop
+  returns promptly with `completed=false` and dispatches nothing further; `response` is
+  the turn's typed cancellation result: the cancelled request's `LLMCallError`, or, when
+  the cancel lands between dispatches, an `LLMCallError` whose `cause` is
+  [`UniLMCancelled`](@ref). A turn cancelled between dispatches is removed from `chat`
+  (the calls it did run stay in `tool_calls`), so the conversation stays sendable.
 
 # Example
 ```julia
@@ -175,52 +192,63 @@ result = tool_loop!(chat, (name, args) -> string(args["a"] + args["b"]))
 """
 function tool_loop!(chat::Chat, dispatcher::Function;
                     max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing,
-                    callback=nothing, on_tool_call=nothing)::ToolLoopResult
+                    callback=nothing, on_tool_call=nothing,
+                    cancel::Union{Nothing,CancelToken}=nothing)::ToolLoopResult
     _check_max_turns(max_turns)
     chat.history || throw(ArgumentError("tool_loop! needs a Chat with history=true: " *
         "each follow-up request must carry the assistant turn its tool results answer"))
-    all_outcomes = ToolCallOutcome[]
-    turns = 0
-    local latest::LLMSuccess
+    tok = _resolve_cancel(cancel)
+    t0 = time_ns()
+    _in_cancel_scope(tok) do
+        all_outcomes = ToolCallOutcome[]
+        turns = 0
+        local latest::LLMSuccess
 
-    while turns < max_turns
-        turns += 1
-        before = length(chat)
-        raw = chatrequest!(chat; config, callback, on_tool_call)
-        result = raw isa Task ? fetch(raw) : raw
+        while turns < max_turns
+            turns += 1
+            before = length(chat)
+            raw = chatrequest!(chat; config, callback, on_tool_call)
+            result = raw isa Task ? fetch(raw) : raw
 
-        if result isa LLMFailure
-            return ToolLoopResult(result, all_outcomes, turns, false, result.response)
-        elseif result isa LLMCallError
-            return ToolLoopResult(result, all_outcomes, turns, false, result.error)
+            if result isa LLMFailure
+                return ToolLoopResult(result, all_outcomes, turns, false, result.response)
+            elseif result isa LLMCallError
+                return ToolLoopResult(result, all_outcomes, turns, false, result.error)
+            end
+
+            latest = result
+            msg = result.message
+            calls = something(msg.tool_calls, ToolCall[])
+
+            if isempty(calls)
+                msg.finish_reason == "length" && return ToolLoopResult(result, all_outcomes, turns,
+                    false, "Model output was truncated by the token limit")
+                return ToolLoopResult(result, all_outcomes, turns, true, nothing)
+            end
+
+            if msg.finish_reason != TOOL_CALLS
+                resize!(chat.messages, before)   # no results will answer this turn
+                return ToolLoopResult(result, all_outcomes, turns, false,
+                    "turn finished with finish_reason=$(repr(msg.finish_reason)); " *
+                    "its $(length(calls)) tool call(s) were not executed")
+            end
+
+            for tc in calls
+                if iscancelled(tok)
+                    resize!(chat.messages, before)   # its remaining calls will never be answered
+                    c = _cancelled_since(t0)
+                    err = LLMCallError(error=sprint(showerror, c), self=chat, cause=c)
+                    return ToolLoopResult(err, all_outcomes, turns, false, err.error)
+                end
+                outcome = _dispatch_tool(tc.func.name, tc.func.arguments, dispatcher)
+                push!(all_outcomes, outcome)
+                content = outcome.success ? string(outcome.result.result) : "Error: $(outcome.error)"
+                push!(chat, Message(role=RoleTool, content=content, tool_call_id=tc.id))
+            end
         end
 
-        latest = result
-        msg = result.message
-        calls = something(msg.tool_calls, ToolCall[])
-
-        if isempty(calls)
-            msg.finish_reason == "length" && return ToolLoopResult(result, all_outcomes, turns,
-                false, "Model output was truncated by the token limit")
-            return ToolLoopResult(result, all_outcomes, turns, true, nothing)
-        end
-
-        if msg.finish_reason != TOOL_CALLS
-            resize!(chat.messages, before)   # no results will answer this turn
-            return ToolLoopResult(result, all_outcomes, turns, false,
-                "turn finished with finish_reason=$(repr(msg.finish_reason)); " *
-                "its $(length(calls)) tool call(s) were not executed")
-        end
-
-        for tc in calls
-            outcome = _dispatch_tool(tc.func.name, tc.func.arguments, dispatcher)
-            push!(all_outcomes, outcome)
-            content = outcome.success ? string(outcome.result.result) : "Error: $(outcome.error)"
-            push!(chat, Message(role=RoleTool, content=content, tool_call_id=tc.id))
-        end
+        ToolLoopResult(latest, all_outcomes, turns, false, "max turns ($max_turns) exhausted")
     end
-
-    ToolLoopResult(latest, all_outcomes, turns, false, "max turns ($max_turns) exhausted")
 end
 
 """
@@ -230,14 +258,15 @@ No-dispatcher variant: builds a dispatcher from [`CallableTool`](@ref) entries.
 """
 function tool_loop!(chat::Chat; tools::Vector{<:CallableTool},
                     max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing,
-                    callback=nothing, on_tool_call=nothing)::ToolLoopResult
+                    callback=nothing, on_tool_call=nothing,
+                    cancel::Union{Nothing,CancelToken}=nothing)::ToolLoopResult
     tool_map = Dict{String,Function}(_tool_name(ct) => ct.callable for ct in tools)
     dispatcher = (name, args) -> begin
         fn = get(tool_map, name, nothing)
         isnothing(fn) && error("Unknown tool: $name")
         fn(name, args)
     end
-    tool_loop!(chat, dispatcher; max_turns, config, callback, on_tool_call)
+    tool_loop!(chat, dispatcher; max_turns, config, callback, on_tool_call, cancel)
 end
 
 # ─── Responses API Loop ─────────────────────────────────────────────────────
@@ -275,7 +304,7 @@ function _next_respond(r::Respond; input, previous_response_id=nothing)
 end
 
 """
-    tool_loop(r::Respond, dispatcher::Function; max_turns=10, config=nothing) -> ToolLoopResult
+    tool_loop(r::Respond, dispatcher::Function; max_turns=10, config=nothing, cancel=nothing) -> ToolLoopResult
 
 Run a tool-calling loop on a [`Respond`](@ref) request. Dispatches function calls
 via `dispatcher(name, args)` (a non-`String` return is sent JSON-encoded), builds
@@ -295,80 +324,97 @@ the pending call type in `llm_error`; none of that turn's calls run.
 they run out, the result keeps the last response, with `completed=false` and
 `llm_error = "max turns (N) exhausted"`.
 
+`cancel` works as in [`tool_loop!`](@ref): every turn runs inside `with_cancel(cancel)`
+(`nothing` uses the ambient token), the token is checked before each dispatch, and a
+cancelled loop returns promptly with `completed=false` and the turn's typed
+cancellation result — the cancelled request's `ResponseCallError`, or, between
+dispatches, a `ResponseCallError` whose `cause` is [`UniLMCancelled`](@ref).
+
 Per-call `config::RequestConfig` overrides timeouts/retry budget.
 """
 function tool_loop(r::Respond, dispatcher::Function;
-                   max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing)::ToolLoopResult
+                   max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing,
+                   cancel::Union{Nothing,CancelToken}=nothing)::ToolLoopResult
     _check_max_turns(max_turns)
-    all_outcomes = ToolCallOutcome[]
-    turns = 0
-    input = r.input
-    prev_id = r.previous_response_id
-    local latest::ResponseSuccess
+    tok = _resolve_cancel(cancel)
+    t0 = time_ns()
+    _in_cancel_scope(tok) do
+        all_outcomes = ToolCallOutcome[]
+        turns = 0
+        input = r.input
+        prev_id = r.previous_response_id
+        local latest::ResponseSuccess
 
-    while turns < max_turns
-        turns += 1
-        req = _next_respond(r; input, previous_response_id=prev_id)
-        raw = respond(req; config)
-        result = raw isa Task ? fetch(raw) : raw
+        while turns < max_turns
+            turns += 1
+            req = _next_respond(r; input, previous_response_id=prev_id)
+            raw = respond(req; config)
+            result = raw isa Task ? fetch(raw) : raw
 
-        if result isa ResponseFailure
-            return ToolLoopResult(result, all_outcomes, turns, false, result.response)
-        elseif result isa ResponseCallError
-            return ToolLoopResult(result, all_outcomes, turns, false, result.error)
+            if result isa ResponseFailure
+                return ToolLoopResult(result, all_outcomes, turns, false, result.response)
+            elseif result isa ResponseCallError
+                return ToolLoopResult(result, all_outcomes, turns, false, result.error)
+            end
+
+            latest = result
+            status = result.response.status
+            if status ∉ ("completed", "requires_action")
+                details = incomplete_details(result)
+                reason = details isa AbstractDict ? get(details, "reason", nothing) : nothing
+                return ToolLoopResult(result, all_outcomes, turns, false, "Response did not complete " *
+                    "(status=$status" * (isnothing(reason) ? ")" : ", reason=$reason)"))
+            end
+
+            pending = unique!(String[item["type"] for item in result.response.output
+                                     if item isa AbstractDict && get(item, "type", "") in _CLIENT_CALL_TYPES])
+            isempty(pending) || return ToolLoopResult(result, all_outcomes, turns, false,
+                "Response requests $(join(pending, ", ")), which this tool loop cannot execute")
+
+            calls = function_calls(result)
+
+            if isempty(calls)
+                completed = status == "completed"
+                return ToolLoopResult(result, all_outcomes, turns, completed,
+                    completed ? nothing : "Response requires an action this tool loop cannot perform")
+            end
+
+            output_items = Any[]
+            for call in calls
+                if iscancelled(tok)
+                    c = _cancelled_since(t0)
+                    err = ResponseCallError(error=sprint(showerror, c), cause=c)
+                    return ToolLoopResult(err, all_outcomes, turns, false, err.error)
+                end
+                name = call["name"]
+                outcome = _dispatch_call(call, dispatcher)
+                push!(all_outcomes, outcome)
+                content = outcome.success ? string(outcome.result.result) : "Error: $(outcome.error)"
+                push!(output_items, Dict{String,Any}(
+                    "type" => "function_call_output",
+                    "call_id" => call["call_id"],
+                    "name" => name,
+                    "output" => content
+                ))
+            end
+
+            input = output_items
+            prev_id = isnothing(r.conversation) ? result.response.id : nothing
         end
 
-        latest = result
-        status = result.response.status
-        if status ∉ ("completed", "requires_action")
-            details = incomplete_details(result)
-            reason = details isa AbstractDict ? get(details, "reason", nothing) : nothing
-            return ToolLoopResult(result, all_outcomes, turns, false, "Response did not complete " *
-                "(status=$status" * (isnothing(reason) ? ")" : ", reason=$reason)"))
-        end
-
-        pending = unique!(String[item["type"] for item in result.response.output
-                                 if item isa AbstractDict && get(item, "type", "") in _CLIENT_CALL_TYPES])
-        isempty(pending) || return ToolLoopResult(result, all_outcomes, turns, false,
-            "Response requests $(join(pending, ", ")), which this tool loop cannot execute")
-
-        calls = function_calls(result)
-
-        if isempty(calls)
-            completed = status == "completed"
-            return ToolLoopResult(result, all_outcomes, turns, completed,
-                completed ? nothing : "Response requires an action this tool loop cannot perform")
-        end
-
-        output_items = Any[]
-        for call in calls
-            name = call["name"]
-            outcome = _dispatch_call(call, dispatcher)
-            push!(all_outcomes, outcome)
-            content = outcome.success ? string(outcome.result.result) : "Error: $(outcome.error)"
-            push!(output_items, Dict{String,Any}(
-                "type" => "function_call_output",
-                "call_id" => call["call_id"],
-                "name" => name,
-                "output" => content
-            ))
-        end
-
-        input = output_items
-        prev_id = isnothing(r.conversation) ? result.response.id : nothing
+        ToolLoopResult(latest, all_outcomes, turns, false, "max turns ($max_turns) exhausted")
     end
-
-    ToolLoopResult(latest, all_outcomes, turns, false, "max turns ($max_turns) exhausted")
 end
 
 """
-    tool_loop(r::Respond; max_turns=10, config=nothing) -> ToolLoopResult
+    tool_loop(r::Respond; max_turns=10, config=nothing, cancel=nothing) -> ToolLoopResult
 
 No-dispatcher variant: extracts callables from [`CallableTool`](@ref) entries in `r.tools`.
 
 Per-call `config::RequestConfig` overrides timeouts/retry budget.
 """
-function tool_loop(r::Respond; max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing)::ToolLoopResult
+function tool_loop(r::Respond; max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing,
+                   cancel::Union{Nothing,CancelToken}=nothing)::ToolLoopResult
     callables = Dict{String,Function}()
     if !isnothing(r.tools)
         for t in r.tools
@@ -381,7 +427,7 @@ function tool_loop(r::Respond; max_turns::Int=10, config::Union{Nothing,RequestC
         isnothing(fn) && error("Unknown tool: $name")
         fn(name, args)
     end
-    tool_loop(r, dispatcher; max_turns, config)
+    tool_loop(r, dispatcher; max_turns, config, cancel)
 end
 
 """
@@ -389,26 +435,28 @@ end
 
 Convenience form: creates a [`Respond`](@ref) and runs the tool loop.
 
-Per-call `config::RequestConfig` overrides timeouts/retry budget.
+Per-call `config::RequestConfig` overrides timeouts/retry budget; `max_turns` and
+`cancel` drive the loop as in [`tool_loop(::Respond, ::Function)`](@ref).
 """
 function tool_loop(input, dispatcher::Function; kwargs...)
     kws = Dict{Symbol,Any}(kwargs)
     config = pop!(kws, :config, nothing)
     max_turns = pop!(kws, :max_turns, 10)
+    cancel = pop!(kws, :cancel, nothing)
     r = Respond(; input, kws...)
-    tool_loop(r, dispatcher; max_turns, config)
+    tool_loop(r, dispatcher; max_turns, config, cancel)
 end
 
 """
-    tool_loop(input::String; tools, max_turns=10, config=nothing, kwargs...) -> ToolLoopResult
+    tool_loop(input::String; tools, max_turns=10, config=nothing, cancel=nothing, kwargs...) -> ToolLoopResult
 
 No-dispatcher convenience form of the Responses-API tool loop for a plain-string prompt.
 Wraps `input` and `tools` in a [`Respond`](@ref) and delegates to
 [`tool_loop(::Respond)`](@ref), which dispatches each model-requested function call to the
 matching [`CallableTool`](@ref) callable.
 
-Keyword routing is explicit: `max_turns` and `config` drive the loop (`config::RequestConfig`
-overrides timeouts/retry budget), while every other
+Keyword routing is explicit: `max_turns`, `config` and `cancel` drive the loop
+(`config::RequestConfig` overrides timeouts/retry budget), while every other
 keyword is forwarded verbatim to the [`Respond`](@ref) constructor — an unknown keyword
 raises there rather than being silently dropped. `tools` is required and must hold
 [`CallableTool`](@ref) entries (e.g. from [`mcp_tools_respond`](@ref)).
@@ -420,7 +468,8 @@ tools = mcp_tools_respond(session)
 result = tool_loop("List files in /tmp"; tools=tools)
 ```
 """
-function tool_loop(input::String; tools, max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing, kwargs...)::ToolLoopResult
+function tool_loop(input::String; tools, max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing,
+                   cancel::Union{Nothing,CancelToken}=nothing, kwargs...)::ToolLoopResult
     r = Respond(; input, tools, kwargs...)
-    tool_loop(r; max_turns, config)
+    tool_loop(r; max_turns, config, cancel)
 end

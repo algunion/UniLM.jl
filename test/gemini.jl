@@ -122,6 +122,18 @@ end
     @test fr["response"] == Dict("temp_f" => 72)   # object-valued JSON string parsed through, NOT wrapped
 end
 
+# JSON.parse(::IO) reads the stream before parsing, so an interrupt raised by that read
+# stands in for a Ctrl-C landing while a tool result is being encoded.
+struct _InterruptOnRead <: IO end
+Base.read(::_InterruptOnRead) = throw(InterruptException())
+
+@testset "encode — an interrupt while encoding a tool result propagates" begin
+    # The parse-failure fallback wraps a non-JSON tool result; it must not swallow the
+    # user's interrupt as if it were one.
+    @test_throws InterruptException UniLM._gemini_tool_response(_InterruptOnRead())
+    @test UniLM._gemini_tool_response("72F") == Dict("result" => "72F")
+end
+
 @testset "encode — consecutive tool results collapse into one user turn" begin
     chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash")
     push!(chat, Message(Val(:system), "s"))

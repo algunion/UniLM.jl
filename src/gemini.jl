@@ -253,7 +253,8 @@ function _gemini_tool_response(content)
     try
         v = JSON.parse(s; dicttype=Dict{String,Any})
         v isa AbstractDict ? v : Dict{String,Any}("result" => s)
-    catch
+    catch e
+        e isa InterruptException && rethrow()
         Dict{String,Any}("result" => s)
     end
 end

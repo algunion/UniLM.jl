@@ -14,14 +14,14 @@ Standard capability symbols include:
 - Embeddings & images: `:embeddings`, `:images`, `:image_edits`
 - Completions: `:fim`, `:prefix_completion`
 - Platform APIs: `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`,
-  `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:video`, `:realtime`
+  `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`
 - TypeSafe System One: `:system_one`, `:models`
 """
-provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :batch, :image_edits, :fine_tuning, :containers, :uploads, :video, :realtime])
-provider_capabilities(::Type{AZUREServiceEndpoint})   = Set([:chat, :tools])
-provider_capabilities(::Type{GEMINIOpenAIServiceEndpoint})  = Set([:chat, :embeddings, :tools, :json_output])
-provider_capabilities(::DeepSeekEndpoint)              = Set([:chat, :tools, :fim, :prefix_completion, :json_output])
-provider_capabilities(::GenericOpenAIEndpoint)          = Set([:chat, :embeddings, :fim, :tools, :responses])  # permissive default
+provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :streaming, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime])
+provider_capabilities(::Type{AZUREServiceEndpoint})   = Set([:chat, :tools, :streaming, :json_output])
+provider_capabilities(::Type{GEMINIOpenAIServiceEndpoint})  = Set([:chat, :embeddings, :tools, :streaming, :json_output])
+provider_capabilities(::DeepSeekEndpoint)              = Set([:chat, :tools, :streaming, :fim, :prefix_completion, :json_output])
+provider_capabilities(::GenericOpenAIEndpoint)          = Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses])  # permissive default
 
 """
     has_capability(service, cap::Symbol) -> Bool
@@ -29,6 +29,11 @@ provider_capabilities(::GenericOpenAIEndpoint)          = Set([:chat, :embedding
 Check whether the service endpoint supports a given capability.
 """
 has_capability(service, cap::Symbol)::Bool = cap in provider_capabilities(service)
+
+# An endpoint's name in messages: marker types are passed as the type itself, whose
+# `typeof` is only `DataType`.
+_service_name(service::Type) = nameof(service)
+_service_name(service) = nameof(typeof(service))
 
 """
     validate_capability(service, cap::Symbol, feature_name::String)
@@ -39,7 +44,7 @@ Called at the top of request functions for early validation.
 function validate_capability(service, cap::Symbol, feature_name::String)
     has_capability(service, cap) && return
     caps = join(sort(collect(provider_capabilities(service))), ", ")
-    throw(ArgumentError("$feature_name is not supported by $(typeof(service)). Supported: $caps"))
+    throw(ArgumentError("$feature_name is not supported by $(_service_name(service)). Supported: $caps"))
 end
 
 """
@@ -79,7 +84,7 @@ function _validate_agentic_capability(service)
     _capability_declared(service) || return nothing
     (has_capability(service, :responses) || has_capability(service, :agentic)) && return nothing
     caps = join(sort(collect(provider_capabilities(service))), ", ")
-    throw(ArgumentError("Responses API is not supported by $(typeof(service)). Supported: $caps"))
+    throw(ArgumentError("Responses API is not supported by $(_service_name(service)). Supported: $caps"))
 end
 
 # ─── Default Model Resolution ──────────────────────────────────────────────
@@ -88,13 +93,15 @@ end
     default_model(service) -> Union{String, Nothing}
 
 Return the default chat/completions model for the given service endpoint.
-Returns `nothing` for generic endpoints (model must be specified explicitly).
+Returns `nothing` for generic and user-defined endpoints (model must be specified
+explicitly; `Chat` then throws an `ArgumentError` when it is not).
 """
 default_model(::Type{OPENAIServiceEndpoint})  = "gpt-5.6-sol"
 default_model(::Type{AZUREServiceEndpoint})   = "gpt-5.2"
 default_model(::Type{GEMINIOpenAIServiceEndpoint})  = "gemini-3.8-flash"
-default_model(::DeepSeekEndpoint)              = "deepseek-chat"
+default_model(::DeepSeekEndpoint)              = "deepseek-flash"
 default_model(::GenericOpenAIEndpoint)          = nothing
+default_model(_) = nothing
 
 """Default embedding model per provider."""
 default_embedding_model(::Type{OPENAIServiceEndpoint})  = "text-embedding-3-small"
@@ -107,8 +114,8 @@ default_embedding_model(_) = nothing
 default_image_model(::Type{OPENAIServiceEndpoint}) = "gpt-image-2"
 default_image_model(_) = nothing
 
-"""Default FIM model per provider."""
-default_fim_model(::DeepSeekEndpoint)      = "deepseek-chat"
+"""Default FIM model per provider. DeepSeek serves FIM (beta) on `deepseek-flash`."""
+default_fim_model(::DeepSeekEndpoint)      = "deepseek-flash"
 default_fim_model(::GenericOpenAIEndpoint)  = nothing
 default_fim_model(_) = nothing
 
@@ -116,7 +123,7 @@ default_fim_model(_) = nothing
 function _resolve_model(service, model::String)
     !isempty(model) && return model
     dm = default_model(service)
-    isnothing(dm) && throw(ArgumentError("model must be specified when using $(typeof(service))"))
+    isnothing(dm) && throw(ArgumentError("model must be specified when using $(_service_name(service))"))
     dm
 end
 
@@ -125,22 +132,26 @@ _model_family(model::AbstractString, family::AbstractString) =
 
 # Model-specific restrictions belong to the native endpoint. A compatible
 # server or Azure deployment may use the same name with a different contract.
-# `logprobs`: whether the request asks for log probabilities (`logprobs=false` does not).
-function _validate_astra(model::String, temperature, top_p, effort, logprobs::Bool)
+# `sampling`: the names of the sampling-control and log-probability fields a request
+# sets (`logprobs=false` requests none), so the error names them.
+_set_fields(fields::Pair{String,Bool}...) = String[name for (name, set) in fields if set]
+
+function _validate_astra(model::String, sampling::Vector{String}, effort)
     _model_family(model, "gpt-6-astra") || return nothing
-    isnothing(temperature) && isnothing(top_p) && !logprobs || throw(ArgumentError(
-        "$model does not support sampling controls or log probabilities"))
+    isempty(sampling) || throw(ArgumentError(
+        "$model does not support sampling controls or log probabilities ($(join(sampling, ", ")))"))
     effort in ("none", "minimal") && throw(ArgumentError("$model requires at least low reasoning effort"))
     nothing
 end
 
 # GPT-6 Sol and Luna accept sampling controls and log probabilities only at
 # reasoning effort "none". An omitted effort is the provider default, "medium".
-function _validate_gpt6_sampling(model::String, effort, sampling::Bool, fix::String)
-    sampling && effort != "none" && any(f -> _model_family(model, f), ("gpt-6-sol", "gpt-6-luna")) || return nothing
+function _validate_gpt6_sampling(model::String, effort, sampling::Vector{String}, fix::String)
+    !isempty(sampling) && effort != "none" && any(f -> _model_family(model, f), ("gpt-6-sol", "gpt-6-luna")) ||
+        return nothing
     shown = isnothing(effort) ? "\"medium (default)\"" : repr(effort)
     throw(ArgumentError("$model with reasoning effort $shown does not support sampling controls " *
-        "or log probabilities; set $fix or remove them"))
+        "or log probabilities ($(join(sampling, ", "))); set $fix or remove them"))
 end
 
 # GPT-6 Sol and Luna list reasoning efforts none, low, medium, high, xhigh and max;
@@ -155,13 +166,11 @@ end
 const _NO_REASONING_CHAT_TOOLS = ("gpt-5.6" => "GPT-5.6", "gpt-6-sol" => "GPT-6 Sol", "gpt-6-luna" => "GPT-6 Luna")
 
 function encode_request(::Type{OPENAIServiceEndpoint}, chat::Chat)::String
-    _validate_astra(chat.model, chat.temperature, chat.top_p, chat.reasoning_effort,
-                    chat.logprobs === true || !isnothing(chat.top_logprobs))
+    sampling = _set_fields("temperature" => !isnothing(chat.temperature), "top_p" => !isnothing(chat.top_p),
+                           "logprobs" => chat.logprobs === true, "top_logprobs" => !isnothing(chat.top_logprobs))
+    _validate_astra(chat.model, sampling, chat.reasoning_effort)
     _validate_gpt6_effort(chat.model, chat.reasoning_effort)
-    _validate_gpt6_sampling(chat.model, chat.reasoning_effort,
-        !isnothing(chat.temperature) || !isnothing(chat.top_p) || !isnothing(chat.top_logprobs) ||
-            chat.logprobs === true,
-        "reasoning_effort=\"none\"")
+    _validate_gpt6_sampling(chat.model, chat.reasoning_effort, sampling, "reasoning_effort=\"none\"")
     if _model_family(chat.model, "gpt-6-astra") && !isnothing(chat.tools) && !isempty(chat.tools)
         throw(ArgumentError("GPT-6 Astra tool calling requires Respond and the Responses API"))
     end
@@ -179,11 +188,12 @@ end
 
 function encode_agentic(::Type{OPENAIServiceEndpoint}, r::Respond)::String
     effort = isnothing(r.reasoning) ? nothing : r.reasoning.effort
-    _validate_astra(r.model, r.temperature, r.top_p, effort, !isnothing(r.top_logprobs))
+    logprobs_included = !isnothing(r.include) && "message.output_text.logprobs" in r.include
+    sampling = _set_fields("temperature" => !isnothing(r.temperature), "top_p" => !isnothing(r.top_p),
+                           "top_logprobs" => !isnothing(r.top_logprobs))
+    _validate_astra(r.model, sampling, effort)
     _validate_gpt6_effort(r.model, effort)
-    _validate_gpt6_sampling(r.model, effort,
-        !isnothing(r.temperature) || !isnothing(r.top_p) || !isnothing(r.top_logprobs) ||
-            (!isnothing(r.include) && "message.output_text.logprobs" in r.include),
+    _validate_gpt6_sampling(r.model, effort, [sampling; logprobs_included ? ["include"] : String[]],
         "reasoning=Reasoning(effort=\"none\")")
     if (_model_family(r.model, "gpt-5.6") || _model_family(r.model, "gpt-6")) && !isnothing(r.prompt_cache_retention)
         throw(ArgumentError("$(r.model) uses prompt_cache_options=PromptCacheOptions(ttl=\"30m\"), not prompt_cache_retention"))

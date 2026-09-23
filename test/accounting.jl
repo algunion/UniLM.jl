@@ -359,3 +359,116 @@ end
     result = UniLM.LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=chat, usage=usage)
     @test UniLM.estimated_cost(result) ≈ (1000 * 0.25 + 500 * 1.5) / 1_000_000
 end
+
+@testset "Anthropic and DeepSeek price rows" begin
+    # https://platform.claude.com/docs/en/about-claude/pricing.md (2026-09-24), USD per 1M tokens:
+    # input, cache hit, output. https://api-docs.deepseek.com/quick_start/pricing: peak rates.
+    for (model, i, c, o) in (("claude-fable-5-1", 10.0, 0.25, 50.0), ("claude-mythos-5-1", 10.0, 0.25, 50.0),
+                             ("claude-fable-5", 10.0, 1.0, 50.0), ("claude-mythos-5", 10.0, 1.0, 50.0),
+                             ("claude-opus-5-5", 4.0, 0.20, 20.0), ("claude-opus-5", 5.0, 0.50, 25.0),
+                             ("claude-opus-4-8", 5.0, 0.50, 25.0), ("claude-opus-4-7", 5.0, 0.50, 25.0),
+                             ("claude-opus-4-6", 5.0, 0.50, 25.0), ("claude-opus-4-5", 5.0, 0.50, 25.0),
+                             ("claude-sonnet-5", 2.0, 0.20, 10.0), ("claude-sonnet-4-6", 3.0, 0.30, 15.0),
+                             ("claude-sonnet-4-5", 3.0, 0.30, 15.0), ("claude-haiku-4-5", 1.0, 0.10, 5.0),
+                             ("deepseek-flash", 0.30, 0.006, 1.20), ("deepseek-v4-flash", 0.30, 0.006, 1.20),
+                             ("deepseek-v4-flash-vision-exp", 0.30, 0.006, 1.20), ("deepseek-v4-pro", 1.32, 0.044, 3.96))
+        @test DEFAULT_PRICING[model] == UniLM._price(i, c, o)
+    end
+    # Anthropic's dated snapshot ids (-YYYYMMDD) price at their alias row.
+    m = Message(role=UniLM.RoleAssistant, content="x")
+    u = TokenUsage(prompt_tokens=1_000_000, completion_tokens=1_000_000, total_tokens=2_000_000)
+    cost(model) = estimated_cost(LLMSuccess(message=m, self=Chat(service=ANTHROPICServiceEndpoint, model=model), usage=u))
+    @test cost("claude-haiku-4-5-20251001") == cost("claude-haiku-4-5") ≈ 6.0
+    @test cost("claude-opus-4-5-20251101") ≈ 30.0
+    @test cost("claude-sonnet-4-5-20250929") ≈ 18.0
+    @test cost("claude-haiku-4-5-2025100") == 0.0          # seven digits are not a date suffix
+end
+
+@testset "an unpriced model costs 0.0 and warns once per model id" begin
+    m = Message(role=UniLM.RoleAssistant, content="x")
+    r(model) = LLMSuccess(message=m, self=Chat(; model), usage=TokenUsage(prompt_tokens=10, completion_tokens=5))
+    logs, total = Test.collect_test_logs() do
+        estimated_cost(r("unpriced-a")) + estimated_cost(r("unpriced-a")) + estimated_cost(r("unpriced-b"))
+    end
+    @test total == 0.0
+    warned = [l for l in logs if l.level == Base.CoreLogging.Warn]
+    @test length(warned) == 2
+    @test sort([l.kwargs[:model] for l in warned]) == ["unpriced-a", "unpriced-b"]
+    logs, _ = Test.collect_test_logs(() -> estimated_cost(r("gpt-5.2")))
+    @test isempty(logs)                                      # priced models stay silent
+end
+
+@testset "DEFAULT_PRICING is a lock-guarded table that still behaves like a Dict" begin
+    @test DEFAULT_PRICING isa AbstractDict{String,UniLM.PriceRow}
+    row = UniLM._price(1.0, 0.1, 2.0)
+    try
+        DEFAULT_PRICING["probe-model"] = row
+        @test haskey(DEFAULT_PRICING, "probe-model") && DEFAULT_PRICING["probe-model"] == row
+        @test get(DEFAULT_PRICING, "probe-model", nothing) == row
+        @test get(DEFAULT_PRICING, "absent-model", nothing) === nothing
+        @test "probe-model" in keys(DEFAULT_PRICING)
+        @test length(DEFAULT_PRICING) == length(collect(DEFAULT_PRICING)) == length(keys(DEFAULT_PRICING))
+        @test ("probe-model" => row) in collect(DEFAULT_PRICING)
+        @test merge(DEFAULT_PRICING, Dict("x" => row))["x"] == row
+        # Iteration walks a snapshot, so writing during iteration is safe.
+        for (k, _) in DEFAULT_PRICING
+            k == "probe-model" && (DEFAULT_PRICING["probe-model-2"] = row)
+        end
+        @test pop!(DEFAULT_PRICING, "probe-model-2") == row
+        @test pop!(DEFAULT_PRICING, "probe-model-2", nothing) === nothing
+    finally
+        delete!(DEFAULT_PRICING, "probe-model")
+        delete!(DEFAULT_PRICING, "probe-model-2")
+    end
+    @test !haskey(DEFAULT_PRICING, "probe-model")
+    @test_throws KeyError DEFAULT_PRICING["absent-model"]
+
+    # Readers on other tasks (every Chat success prices itself) never see a torn table
+    # while rows are being added.
+    m = Message(role=UniLM.RoleAssistant, content="x")
+    r = LLMSuccess(message=m, self=Chat(model="gpt-5.2"),
+                   usage=TokenUsage(prompt_tokens=1_000_000, completion_tokens=1_000_000, total_tokens=2_000_000))
+    added = ["race-price-$i" for i in 1:20_000]
+    bad, reads, done = Threads.Atomic{Int}(0), Threads.Atomic{Int}(0), Threads.Atomic{Bool}(false)
+    try
+        @sync begin
+            for _ in 1:3
+                Threads.@spawn while !done[]
+                    ok = try
+                        estimated_cost(r) ≈ 15.75
+                    catch
+                        false                            # a torn read can throw
+                    end
+                    Threads.atomic_add!(reads, 1)
+                    ok || Threads.atomic_add!(bad, 1)
+                    yield()                              # lets the writer run on any thread count
+                end
+            end
+            Threads.@spawn begin
+                while reads[] == 0; yield(); end         # write only while readers run
+                foreach(k -> DEFAULT_PRICING[k] = row, added)   # forces repeated rehashes
+                done[] = true
+            end
+        end
+        @test bad[] == 0
+        @test reads[] > 0
+    finally
+        foreach(k -> delete!(DEFAULT_PRICING, k), added)
+    end
+end
+
+@testset "image and FIM results report the usage they carry" begin
+    usage = Dict{String,Any}("input_tokens" => 50, "output_tokens" => 200, "total_tokens" => 250,
+                             "input_tokens_details" => Dict{String,Any}("text_tokens" => 10, "image_tokens" => 40))
+    ir = UniLM.ImageResponse(created=1, data=UniLM.ImageObject[], usage=usage, raw=Dict{String,Any}())
+    @test token_usage(ImageSuccess(response=ir)) == TokenUsage(prompt_tokens=50, completion_tokens=200, total_tokens=250)
+    fim = FIMSuccess(response=FIMResponse(choices=[FIMChoice(text="x")], model="deepseek-flash",
+        usage=TokenUsage(prompt_tokens=1_000_000, completion_tokens=1_000_000, total_tokens=2_000_000)))
+    @test token_usage(fim).prompt_tokens == 1_000_000
+    @test estimated_cost(fim) ≈ 0.30 + 1.20
+    @test token_usage(FIMSuccess(response=FIMResponse(choices=FIMChoice[]))) == TokenUsage()
+    for failure in (FIMFailure(response="e", status=500), FIMCallError(error="e"))
+        @test token_usage(failure) == TokenUsage()
+        @test estimated_cost(failure) == 0.0
+    end
+end

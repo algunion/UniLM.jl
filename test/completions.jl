@@ -1,6 +1,6 @@
 @testset "FIMCompletion construction" begin
     fim = FIMCompletion(service=DeepSeekEndpoint("key"), prompt="def fib(a):")
-    @test fim.model == ""  # resolved to "deepseek-chat" during serialization
+    @test fim.model == ""  # resolved to "deepseek-flash" during serialization
     @test fim.prompt == "def fib(a):"
     @test isnothing(fim.suffix)
     @test fim.max_tokens == 128
@@ -14,7 +14,7 @@ end
     @test d[:suffix] == "world"
     @test d[:max_tokens] == 64
     @test d[:stop] == ["\n"]
-    @test d[:model] == "deepseek-chat"
+    @test d[:model] == "deepseek-flash"
     # service not serialized
     @test !haskey(d, :service)
     # nil fields excluded
@@ -35,6 +35,22 @@ end
     gen = GenericOpenAIEndpoint("http://localhost:8000/", "")
     fim3 = FIMCompletion(service=gen, prompt="test")
     @test UniLM.get_url(gen, fim3) == "http://localhost:8000/v1/completions"
+
+    # Mistral serves FIM at /v1/fim/completions (https://docs.mistral.ai/api/endpoint/fim).
+    fimurl(ep) = UniLM.get_url(ep, FIMCompletion(service=ep, model="codestral-latest", prompt="x"))
+    @test fimurl(MistralEndpoint(api_key="k")) == "https://api.mistral.ai/v1/fim/completions"
+    @test fimurl(GenericOpenAIEndpoint("https://api.mistral.ai/", "k")) == "https://api.mistral.ai/v1/fim/completions"
+    @test fimurl(GenericOpenAIEndpoint("https://API.Mistral.ai", "k")) == "https://API.Mistral.ai/v1/fim/completions"
+    notmistral = GenericOpenAIEndpoint("https://api.mistral.ai.example.com", "k")
+    @test UniLM.get_url(notmistral, FIMCompletion(service=notmistral, model="m", prompt="x")) ==
+          "https://api.mistral.ai.example.com/v1/completions"
+end
+
+@testset "FIMCompletion rejects stream=true at construction" begin
+    # fim_complete has no streaming path, so such a request could never succeed.
+    err = try FIMCompletion(service=DeepSeekEndpoint("k"), prompt="x", stream=true); nothing catch e; e end
+    @test err isa ArgumentError && occursin("stream", err.msg)
+    @test FIMCompletion(service=DeepSeekEndpoint("k"), prompt="x", stream=false).stream === false
 end
 
 @testset "_prefix_complete_url dispatch" begin
@@ -71,8 +87,12 @@ end
     choice = FIMChoice(text="hello", finish_reason="stop")
     resp = FIMResponse(choices=[choice], usage=nothing, model="m", raw=Dict{String,Any}())
     @test fim_text(FIMSuccess(response=resp)) == "hello"
-    @test fim_text(FIMFailure(response="err", status=400)) == ""
-    @test fim_text(FIMCallError(error="err")) == ""
+    # A failed call has no text; like `text` on a failed Chat result, fim_text throws the typed error.
+    for failed in (FIMFailure(response="err", status=400), FIMCallError(error="boom"))
+        e = try fim_text(failed); nothing catch x; x end
+        @test e isa LLMResultError && e.result === failed
+        @test occursin("did not succeed", sprint(showerror, e))
+    end
 
     # Empty choices
     empty_resp = FIMResponse(choices=FIMChoice[], model="m")
@@ -220,6 +240,80 @@ end
         result = fetch(t)
         @test result isa LLMCallError
         @test result.cause isa UniLM.UniLMTimeout   # the timeout is threaded into LLMCallError.cause
+    finally
+        close(server)
+    end
+end
+
+@testset "FIM and prefix completion: every failure after validation is a call error with a cause" begin
+    cfg = RequestConfig(request_timeout=5.0, total_deadline=10.0, max_attempts=1)
+    fim = FIMCompletion(service=_ComplTimeoutMock, model="mock-fim", prompt="x")
+    prefix_chat() = Chat(service=_ComplTimeoutMock, model="mock-fim",
+                         messages=[Message(Val(:system), "s"), Message(Val(:user), "u"),
+                                   Message(role=UniLM.RoleAssistant, content="```python\n")])
+    # (a) a transport failure keeps its exception
+    _COMPL_URL[] = "http://127.0.0.1:1/v1/completions"          # nothing listens on port 1
+    r = fim_complete(fim; config=cfg)
+    @test r isa FIMCallError && r.cause isa Exception
+    r = prefix_complete(prefix_chat(); config=cfg)
+    @test r isa LLMCallError && r.cause isa Exception
+    # (b)/(d) a 200 that is not JSON, not the completions shape, or a choice without text
+    for body in ("not json", "{}", "{\"choices\":\"x\"}", "{\"choices\":[]}", "{\"choices\":[{\"index\":0}]}")
+        server, url = _compl_canned_server(200, body, ["Content-Type" => "application/json"])
+        _COMPL_URL[] = url
+        try
+            r = fim_complete(fim; config=cfg)
+            @test r isa FIMCallError && r.cause isa Exception
+        finally
+            close(server)
+        end
+    end
+    for body in ("not json", "{\"choices\":[]}")
+        server, url = _compl_canned_server(200, body, ["Content-Type" => "application/json"])
+        _COMPL_URL[] = url
+        try
+            chat = prefix_chat()
+            r = prefix_complete(chat; config=cfg)
+            @test r isa LLMCallError && r.cause isa Exception
+            @test last(chat).content == "```python\n"           # history untouched
+        finally
+            close(server)
+        end
+    end
+    # Local validation still throws before any request: no FIM model to resolve.
+    @test_throws ArgumentError fim_complete(FIMCompletion(service=GenericOpenAIEndpoint("http://127.0.0.1:1", ""), prompt="x"))
+end
+
+@testset "FIM response shapes: completions text and Mistral's message content" begin
+    server, url = _compl_canned_server(200, JSON.json(Dict("model" => "codestral-2508",
+        "choices" => [Dict("index" => 0, "finish_reason" => "stop",
+                           "message" => Dict("role" => "assistant", "content" => "a + b"))],
+        "usage" => Dict("prompt_tokens" => 8, "completion_tokens" => 3, "total_tokens" => 11))),
+        ["Content-Type" => "application/json"])
+    _COMPL_URL[] = url
+    try
+        r = fim_complete(FIMCompletion(service=_ComplTimeoutMock, model="codestral-2508", prompt="def add(a, b): return "))
+        @test r isa FIMSuccess && fim_text(r) == "a + b" && r.response.usage.total_tokens == 11
+    finally
+        close(server)
+    end
+end
+
+@testset "prefix_complete keeps the prefix in history" begin
+    continuation = "print('hi')\n```"
+    server, url = _compl_canned_server(200, JSON.json(Dict("choices" => [Dict("index" => 0,
+        "finish_reason" => "stop", "message" => Dict("role" => "assistant", "content" => continuation))])),
+        ["Content-Type" => "application/json"])
+    _COMPL_URL[] = url
+    try
+        chat = Chat(service=_ComplTimeoutMock, model="mock-fim")
+        push!(chat, Message(Val(:system), "You write code."))
+        push!(chat, Message(Val(:user), "Python hello world"))
+        push!(chat, Message(role=UniLM.RoleAssistant, content="```python\n"))
+        r = prefix_complete(chat)
+        @test r isa LLMSuccess && r.message.content == continuation   # the result is the continuation …
+        @test length(chat) == 3 && last(chat).role == UniLM.RoleAssistant
+        @test last(chat).content == "```python\n" * continuation     # … the history the whole turn
     finally
         close(server)
     end

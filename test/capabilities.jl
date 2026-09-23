@@ -103,7 +103,7 @@ end
 
 @testset "0.10 endpoint capabilities (consolidation)" begin
     new_caps = (:files, :vector_stores, :conversations, :moderation, :audio, :batch,
-        :image_edits, :fine_tuning, :containers, :uploads, :video, :realtime)
+        :image_edits, :fine_tuning, :containers, :uploads, :realtime)
     # OpenAI has them all
     for c in new_caps
         @test has_capability(OPENAIServiceEndpoint, c)
@@ -123,7 +123,6 @@ end
     @test_throws ArgumentError create_batch("f", "/v1/responses"; service=GEMINIOpenAIServiceEndpoint)
     @test_throws ArgumentError create_fine_tuning_job(model="m", training_file="f", service=GEMINIOpenAIServiceEndpoint)
     @test_throws ArgumentError create_container(name="c", service=DeepSeekEndpoint("k"))
-    @test_throws ArgumentError create_video(prompt="p", service=AZUREServiceEndpoint)
     @test_throws ArgumentError mint_realtime_secret(service=GenericOpenAIEndpoint("http://x", ""))
 end
 
@@ -136,7 +135,7 @@ end
     @test UniLM.default_model(OPENAIServiceEndpoint) == "gpt-5.6-sol"
     @test UniLM.default_model(AZUREServiceEndpoint) == "gpt-5.2"
     @test UniLM.default_model(GEMINIOpenAIServiceEndpoint) == "gemini-3.8-flash"
-    @test UniLM.default_model(ds) == "deepseek-chat"
+    @test UniLM.default_model(ds) == "deepseek-flash"
 
     # default_embedding_model — Type dispatch for OPENAI/GEMINI (62/63), instance for DeepSeek (64→nothing)
     @test UniLM.default_embedding_model(OPENAIServiceEndpoint) == "text-embedding-3-small"
@@ -147,7 +146,7 @@ end
     @test UniLM.default_image_model(OPENAIServiceEndpoint) == "gpt-image-2"
 
     # default_fim_model — DeepSeek instance method (line 73)
-    @test UniLM.default_fim_model(ds) == "deepseek-chat"
+    @test UniLM.default_fim_model(ds) == "deepseek-flash"
 end
 
 @testset "Anthropic — capabilities & defaults" begin
@@ -155,14 +154,19 @@ end
     @test has_capability(ANTHROPICServiceEndpoint, :tools)
     @test has_capability(ANTHROPICServiceEndpoint, :streaming)
     @test !has_capability(ANTHROPICServiceEndpoint, :embeddings)
-    @test UniLM.default_model(ANTHROPICServiceEndpoint) == "claude-opus-4-8"
-    @test UniLM.default_max_tokens(ANTHROPICServiceEndpoint, "claude-opus-4-8") == 4096
+    @test UniLM.default_model(ANTHROPICServiceEndpoint) == "claude-opus-5-5"
+    @test UniLM.default_max_tokens(ANTHROPICServiceEndpoint, "claude-opus-5-5") == 16000
     # A Chat with no model resolves to the Anthropic default.
     chat = Chat(service=ANTHROPICServiceEndpoint)
-    @test chat.model == "claude-opus-4-8"
+    @test chat.model == "claude-opus-5-5"
     @test UniLM.get_url(chat) == "https://api.anthropic.com/v1/messages"
     @test haskey(UniLM.DEFAULT_PRICING, "claude-opus-4-8")
     @test UniLM.DEFAULT_PRICING["claude-haiku-4-5"].output ≈ 5.0 / 1_000_000
+    # Every default model is priced, so default-model spend is never a silent 0.0.
+    ds = DeepSeekEndpoint("k")
+    for model in (UniLM.default_model(ANTHROPICServiceEndpoint), UniLM.default_model(ds), UniLM.default_fim_model(ds))
+        @test haskey(UniLM.DEFAULT_PRICING, model)
+    end
 end
 
 # A user-defined endpoint — the documented way to reach an OpenAI-compatible
@@ -255,5 +259,59 @@ end
         @test hits[] == 1
     finally
         close(srv)
+    end
+end
+
+@testset "capability flags: no Videos API; OpenAI-wire endpoints stream and emit JSON" begin
+    # The OpenAI Videos API shut down on 2026-09-24.
+    @test !has_capability(OPENAIServiceEndpoint, :video)
+    for svc in (OPENAIServiceEndpoint, AZUREServiceEndpoint, GEMINIOpenAIServiceEndpoint,
+                DeepSeekEndpoint("k"), GenericOpenAIEndpoint("http://x", ""))
+        @test has_capability(svc, :streaming) && has_capability(svc, :json_output)
+    end
+end
+
+# A marker-type endpoint that declares nothing and has no default model.
+struct _NoDefaultModelEndpoint <: UniLM.OpenAIWireEndpoint end
+
+@testset "capability and model errors name the endpoint, not DataType" begin
+    for (svc, name) in ((OPENAIServiceEndpoint, "OPENAIServiceEndpoint"), (DeepSeekEndpoint("k"), "DeepSeekEndpoint"))
+        err = try UniLM.validate_capability(svc, :system_one, "System One"); nothing catch e; e end
+        @test err isa ArgumentError && occursin("System One is not supported by $name.", err.msg)
+        @test !occursin("DataType", err.msg)
+    end
+    err = try UniLM._validate_agentic_capability(ANTHROPICServiceEndpoint); nothing catch e; e end
+    @test err isa ArgumentError && occursin("ANTHROPICServiceEndpoint", err.msg) && !occursin("DataType", err.msg)
+    # No default_model method: the documented ArgumentError, not a MethodError.
+    err = try Chat(service=_NoDefaultModelEndpoint); nothing catch e; e end
+    @test err isa ArgumentError && err.msg == "model must be specified when using _NoDefaultModelEndpoint"
+    @test UniLM.default_model(_NoDefaultModelEndpoint) === nothing
+    @test Chat(service=_NoDefaultModelEndpoint, model="m").model == "m"
+    err = try UniLM.get_url(ANTHROPICServiceEndpoint, FIMCompletion(service=ANTHROPICServiceEndpoint, model="m", prompt="x")); nothing catch e; e end
+    @test err isa ArgumentError && !occursin("DataType", err.msg)
+    err = try JSON.lower(FIMCompletion(service=OPENAIServiceEndpoint, prompt="x")); nothing catch e; e end
+    @test err isa ArgumentError && occursin("OPENAIServiceEndpoint", err.msg) && !occursin("DataType", err.msg)
+end
+
+@testset "Azure deployment: registry first, then AZURE_OPENAI_DEPLOY_NAME_<MODEL>" begin
+    # <MODEL> is the model id upper-cased with every non-alphanumeric mapped to `_`.
+    @test UniLM._azure_deploy_env_var("gpt-5.2") == "AZURE_OPENAI_DEPLOY_NAME_GPT_5_2"
+    @test UniLM._azure_deploy_env_var("gpt-4o-mini") == "AZURE_OPENAI_DEPLOY_NAME_GPT_4O_MINI"
+    withenv("AZURE_OPENAI_DEPLOY_NAME_GPT_4O_MINI" => "mini deploy", "AZURE_OPENAI_DEPLOY_NAME_GPT_5_2" => "d52") do
+        @test UniLM._azure_deployment_path("gpt-4o-mini") == "/openai/deployments/mini%20deploy"
+        @test UniLM._azure_deployment_path("gpt-5.2") == "/openai/deployments/d52"
+        try
+            add_azure_deploy_name!("gpt-4o-mini", "registered")
+            @test UniLM._azure_deployment_path("gpt-4o-mini") == "/openai/deployments/registered"   # registry wins
+        finally
+            delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "gpt-4o-mini")
+        end
+    end
+    for value in (nothing, "")                                  # unset, or set to nothing usable
+        withenv("AZURE_OPENAI_DEPLOY_NAME_NEVER_CONFIGURED" => value) do
+            err = try UniLM._azure_deployment_path("never-configured"); nothing catch e; e end
+            @test err isa ArgumentError && occursin("AZURE_OPENAI_DEPLOY_NAME_NEVER_CONFIGURED", err.msg) &&
+                  occursin("add_azure_deploy_name!", err.msg)
+        end
     end
 end

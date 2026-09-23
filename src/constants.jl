@@ -16,9 +16,8 @@ so encoding them is a byte-for-byte no-op. The set is one character narrower
 than RFC 3986's unreserved set (`~` is encoded too); that is over-encoding, not
 a change in meaning, since a server decodes `%7E` back to `~`.
 
-`HTTP.escapeuri` is re-exported from `URIs` by both supported HTTP majors, which
-resolve it to the same `URIs` implementation, so no direct `URIs` dependency is
-needed.
+`HTTP.escapeuri` is `URIs.escapeuri` re-exported by HTTP.jl, so no direct `URIs`
+dependency is needed.
 """
 _uripart(s::AbstractString)::String = HTTP.escapeuri(s)
 
@@ -53,6 +52,12 @@ const IMAGES_GENERATIONS_PATH::String = "/v1/images/generations"
 
 """Legacy Completions API path (used for FIM by DeepSeek, Ollama, vLLM)."""
 const COMPLETIONS_PATH::String = "/v1/completions"
+
+"""Mistral API host (the base URL of [`MistralEndpoint`](@ref))."""
+const MISTRAL_API_HOST::String = "api.mistral.ai"
+
+"""Mistral FIM completions path (https://docs.mistral.ai/api/endpoint/fim)."""
+const MISTRAL_FIM_PATH::String = "/v1/fim/completions"
 
 """OpenAI Files API path."""
 const FILES_PATH::String = "/v1/files"
@@ -121,10 +126,12 @@ const _AZURE_DEPLOY_LOCK = ReentrantLock()
 
 Resolve the Azure deployment path (`/openai/deployments/<name>`) for `model`.
 An explicit registration via [`add_azure_deploy_name!`](@ref) takes precedence;
-otherwise the matching `AZURE_OPENAI_DEPLOY_NAME_*` environment variable is read
-**at call time**, so runtime configuration wins regardless of what the
-environment held when the package was loaded. Throws `KeyError(model)` when the
-model has neither a registration nor a configured deployment environment variable.
+otherwise the environment variable `AZURE_OPENAI_DEPLOY_NAME_<MODEL>` is read **at call
+time**, where `<MODEL>` is the model id upper-cased with every character other than
+`A-Z` and `0-9` mapped to `_` (`gpt-5.2` → `AZURE_OPENAI_DEPLOY_NAME_GPT_5_2`), so
+runtime configuration wins regardless of what the environment held when the package
+was loaded. Throws an `ArgumentError` naming that variable when the model has neither
+a registration nor a non-empty deployment variable.
 Throws `ArgumentError` naming the entry when a registered value does not carry the
 `/openai/deployments/` prefix every registration writes — such a value could only
 come from a write straight into the registry, and re-encoding it whole would
@@ -151,16 +158,22 @@ function _azure_deployment_path(model::String)::String
             "$(repr(registered)) does not start with $(repr(prefix))"))
         return prefix * _uripart(chopprefix(registered, prefix))
     end
-    if model == "gpt-5.2" && haskey(ENV, "AZURE_OPENAI_DEPLOY_NAME_GPT_5_2")
-        return prefix * _uripart(ENV["AZURE_OPENAI_DEPLOY_NAME_GPT_5_2"])
-    end
-    throw(KeyError(model))
+    var = _azure_deploy_env_var(model)
+    name = get(ENV, var, "")
+    isempty(name) && throw(ArgumentError("no Azure OpenAI deployment for model $(repr(model)): " *
+        "register one with add_azure_deploy_name! or set $var"))
+    prefix * _uripart(name)
 end
+
+_azure_deploy_env_var(model::String)::String =
+    "AZURE_OPENAI_DEPLOY_NAME_" * uppercase(replace(model, r"[^A-Za-z0-9]" => "_"))
 
 """
     add_azure_deploy_name!(model::String, deploy_name::String)
 
-Register an Azure OpenAI deployment for a given model name.
+Register an Azure OpenAI deployment for a given model name. Without a registration the
+deployment is read from `AZURE_OPENAI_DEPLOY_NAME_<MODEL>` (model id upper-cased, other
+characters mapped to `_`) when a request is built.
 
 # Example
 ```julia
@@ -208,11 +221,14 @@ const ANTHROPIC_MESSAGES_PATH::String = "/v1/messages"
 """Required `anthropic-version` request header value (stable since 2024)."""
 const ANTHROPIC_VERSION::String = "2023-06-01"
 
-"""Moderate, overridable default for Anthropic's REQUIRED `max_tokens` when the
-caller leaves it unset. Not the model ceiling — a ceiling-sized cap invites
-runaway output; unused headroom is not billed. Raise `max_tokens` explicitly for
-long generations."""
-const _ANTHROPIC_DEFAULT_MAX_TOKENS::Int = 4096
+"""Overridable default for Anthropic's REQUIRED `max_tokens` when the caller leaves
+it unset. `max_tokens` caps thinking plus response text, and current Claude models
+think by default (Claude Opus 5.5 always does), so a small cap ends turns at
+`"length"` before any answer; 16000 matches the adaptive-thinking examples in
+https://platform.claude.com/docs/en/build-with-claude/thinking. Not the model
+ceiling: unused headroom is not billed. Raise `max_tokens` explicitly for long
+generations or `xhigh`/`max` effort."""
+const _ANTHROPIC_DEFAULT_MAX_TOKENS::Int = 16000
 # ─── TypeSafe System One API (Jev) ───────────────────────────────────────────
 
 """TypeSafe API base URL."""

@@ -4,12 +4,45 @@ const PriceRow = @NamedTuple{input::Float64, cached_input::Float64, output::Floa
 """Build a [`PriceRow`](@ref) from per-1M-token USD figures (input, cached-input, output)."""
 _price(i, c, o) = (input = i / 1_000_000, cached_input = c / 1_000_000, output = o / 1_000_000)
 
-"""Default per-token pricing; current OpenAI, Gemini, and TypeSafe rows verified on 2026-09-22
-(prices drift — re-verify before relying on them). Cached input is billed at the discounted
-`cached_input` rate; reasoning tokens are already counted within output tokens.
-These are standard short-context text rates: cache writes, long-context surcharges,
-service-tier adjustments, multimodal rates, and hosted-tool fees are not included."""
-const DEFAULT_PRICING = Dict{String, PriceRow}(
+"""
+    _PricingTable <: AbstractDict{String,PriceRow}
+
+The table behind [`DEFAULT_PRICING`](@ref): a `Dict` guarded by a lock. Every Chat
+success prices itself — streaming ones on their own task — while callers may add or
+replace rows, and a `Dict` is not safe to read while another task writes it (an insert
+that rehashes moves the entries a reader is walking). Supports `t[k] = row`, `t[k]`, `get`, `haskey`, `delete!`, `pop!`, `empty!`,
+`length` and `keys`; iteration walks a snapshot taken under the lock.
+"""
+struct _PricingTable <: AbstractDict{String,PriceRow}
+    rows::Base.Lockable{Dict{String,PriceRow},ReentrantLock}
+end
+_PricingTable(rows::Dict{String,PriceRow}) = _PricingTable(Base.Lockable(rows))
+
+Base.getindex(t::_PricingTable, k) = @lock t.rows t.rows[][k]
+Base.get(t::_PricingTable, k, default) = @lock t.rows get(t.rows[], k, default)
+Base.haskey(t::_PricingTable, k) = @lock t.rows haskey(t.rows[], k)
+Base.setindex!(t::_PricingTable, v, k) = (@lock t.rows t.rows[][k] = v; t)
+Base.delete!(t::_PricingTable, k) = (@lock t.rows delete!(t.rows[], k); t)
+Base.pop!(t::_PricingTable, k) = @lock t.rows pop!(t.rows[], k)
+Base.pop!(t::_PricingTable, k, default) = @lock t.rows pop!(t.rows[], k, default)
+Base.empty!(t::_PricingTable) = (@lock t.rows empty!(t.rows[]); t)
+Base.length(t::_PricingTable) = @lock t.rows length(t.rows[])
+Base.iterate(t::_PricingTable, (snapshot, i)=(@lock(t.rows, collect(t.rows[])), 1)) =
+    i > length(snapshot) ? nothing : (snapshot[i], (snapshot, i + 1))
+# The snapshot may hold more or fewer rows than an earlier `length` call reported, so
+# `collect` must not preallocate from it.
+Base.IteratorSize(::Type{_PricingTable}) = Base.SizeUnknown()
+
+"""Default per-token pricing; current OpenAI, Gemini, and TypeSafe rows verified on 2026-09-22,
+Anthropic and DeepSeek rows on 2026-09-24 (prices drift — re-verify before relying on them).
+Cached input is billed at the discounted `cached_input` rate; reasoning tokens are already
+counted within output tokens. These are standard short-context text rates: cache-write
+premiums, long-context surcharges, service-tier and off-peak adjustments, multimodal rates,
+and hosted-tool fees are not included.
+
+A lock-guarded `AbstractDict{String,PriceRow}`: add or replace rows with
+`DEFAULT_PRICING[model] = row` from any task while requests are running."""
+const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "gpt-6-astra"   => _price(10.0, 1.0, 50.0),
     "gpt-6-sol"     => _price(2.0,  0.20, 10.0),
     "gpt-6-luna"    => _price(0.10, 0.01, 0.50),
@@ -29,10 +62,30 @@ const DEFAULT_PRICING = Dict{String, PriceRow}(
     # O-series
     "o3"            => _price(2.0,  0.50,  8.0),
     "o4-mini"       => _price(1.1,  0.275, 4.4),
-    # Anthropic Claude (Anthropic API pricing docs, 2026-07-06; cache-read input ≈ 0.1× input)
-    "claude-opus-4-8"  => _price(5.0, 0.50, 25.0),
-    "claude-sonnet-5"  => _price(3.0, 0.30, 15.0),
-    "claude-haiku-4-5" => _price(1.0, 0.10, 5.0),
+    # Anthropic Claude (https://platform.claude.com/docs/en/about-claude/pricing.md,
+    # 2026-09-24). Cache reads are 0.1x input, except 0.025x on Fable 5.1 and Mythos 5.1
+    # and 0.05x on Opus 5.5. Dated snapshot ids (-YYYYMMDD) resolve to these rows.
+    "claude-fable-5-1"  => _price(10.0, 0.25, 50.0),
+    "claude-mythos-5-1" => _price(10.0, 0.25, 50.0),
+    "claude-fable-5"    => _price(10.0, 1.0,  50.0),
+    "claude-mythos-5"   => _price(10.0, 1.0,  50.0),
+    "claude-opus-5-5"   => _price(4.0,  0.20, 20.0),
+    "claude-opus-5"     => _price(5.0,  0.50, 25.0),
+    "claude-opus-4-8"   => _price(5.0,  0.50, 25.0),
+    "claude-opus-4-7"   => _price(5.0,  0.50, 25.0),
+    "claude-opus-4-6"   => _price(5.0,  0.50, 25.0),
+    "claude-opus-4-5"   => _price(5.0,  0.50, 25.0),
+    "claude-sonnet-5"   => _price(2.0,  0.20, 10.0),
+    "claude-sonnet-4-6" => _price(3.0,  0.30, 15.0),
+    "claude-sonnet-4-5" => _price(3.0,  0.30, 15.0),
+    "claude-haiku-4-5"  => _price(1.0,  0.10, 5.0),
+    # DeepSeek (https://api-docs.deepseek.com/quick_start/pricing, 2026-09-24): peak rates
+    # (01:00-04:00 and 06:00-10:00 UTC, Monday-Friday); off-peak hours bill half. The
+    # legacy names deepseek-v4-flash(-vision-exp) are served and billed as deepseek-flash.
+    "deepseek-flash"               => _price(0.30, 0.006, 1.20),
+    "deepseek-v4-flash"            => _price(0.30, 0.006, 1.20),
+    "deepseek-v4-flash-vision-exp" => _price(0.30, 0.006, 1.20),
+    "deepseek-v4-pro"              => _price(1.32, 0.044, 3.96),
     # Google Gemini (native + OpenAI-compat shim; live-verified 2026-07-07)
     # Gemini 3.8/3.7/3.6 Flash: introductory rates through 2026-12-31, doubled
     # on 2027-01-01 (Google pricing page, 2026-09-07; the 3.6 Flash, 3.5 Flash-Lite
@@ -55,37 +108,39 @@ const DEFAULT_PRICING = Dict{String, PriceRow}(
     # Embeddings (billed on input tokens only)
     "text-embedding-3-small" => _price(0.02, 0.02, 0.0),
     "text-embedding-3-large" => _price(0.13, 0.13, 0.0),
-)
+))
 
 """
     token_usage(result::LLMRequestResponse) -> TokenUsage
 
-Extract token usage from a token-billed API result (chat, Responses, embeddings and
-their image counterparts); failures of those APIs report zero usage.
+Extract token usage from a token-billed API result (chat, Responses, embeddings, image
+generation and FIM completions); failures of those APIs report zero usage.
 
 Results from APIs that do not report token usage at all — audio, files, batches,
-moderations, vector stores, video, … — **throw** an `ArgumentError`. A zero would be
+moderations, vector stores, … — **throw** an `ArgumentError`. A zero would be
 indistinguishable from a genuinely free call and would quietly under-count spend.
 """
 token_usage(r::LLMRequestResponse)::TokenUsage = throw(ArgumentError(
     "$(typeof(r)) carries no token usage or pricing information"))
 token_usage(r::LLMSuccess)::TokenUsage = something(r.usage, TokenUsage())
-token_usage(r::ResponseSuccess)::TokenUsage = begin
-    u = r.response.usage
-    isnothing(u) && return TokenUsage()
-    _token_usage_from(u; prompt_key="input_tokens", completion_key="output_tokens",
-        prompt_details="input_tokens_details", completion_details="output_tokens_details")
-end
+# The Responses and Images APIs name usage input/output tokens.
+_input_output_usage(::Nothing)::TokenUsage = TokenUsage()
+_input_output_usage(u::AbstractDict)::TokenUsage = _token_usage_from(u; prompt_key="input_tokens",
+    completion_key="output_tokens", prompt_details="input_tokens_details", completion_details="output_tokens_details")
+token_usage(r::ResponseSuccess)::TokenUsage = _input_output_usage(r.response.usage)
 token_usage(::LLMFailure)::TokenUsage = TokenUsage()
 token_usage(::LLMCallError)::TokenUsage = TokenUsage()
 token_usage(::ResponseFailure)::TokenUsage = TokenUsage()
 token_usage(::ResponseCallError)::TokenUsage = TokenUsage()
-token_usage(::ImageSuccess)::TokenUsage = TokenUsage()
+token_usage(r::ImageSuccess)::TokenUsage = _input_output_usage(r.response.usage)
 token_usage(::ImageFailure)::TokenUsage = TokenUsage()
 token_usage(::ImageCallError)::TokenUsage = TokenUsage()
 token_usage(r::EmbeddingSuccess)::TokenUsage = something(r.usage, TokenUsage())
 token_usage(::EmbeddingFailure)::TokenUsage = TokenUsage()
 token_usage(::EmbeddingCallError)::TokenUsage = TokenUsage()
+token_usage(r::FIMSuccess)::TokenUsage = something(r.response.usage, TokenUsage())
+token_usage(::FIMFailure)::TokenUsage = TokenUsage()
+token_usage(::FIMCallError)::TokenUsage = TokenUsage()
 
 """
     estimated_cost(result::LLMRequestResponse; model=nothing, pricing=DEFAULT_PRICING) -> Float64
@@ -94,11 +149,13 @@ Estimate the cost in USD for a single API call result.
 If `model` is not provided, it is inferred from the result when possible.
 
 Returns `0.0` for results that carry no billable usage (failures) or an unpriced
-model. Throws `ArgumentError` for result types outside the token-billed APIs — see
-[`token_usage`](@ref); their price is not a zero this function can report.
+model; an unpriced model id also logs one warning per id. Throws `ArgumentError` for
+result types outside the token-billed APIs — see [`token_usage`](@ref); their price is
+not a zero this function can report. `pricing` is any `AbstractDict{String,PriceRow}`.
 
 Model lookup: the exact id first, then the id without a dated snapshot suffix
-(`gpt-5.4-mini-2026-03-17` → `gpt-5.4-mini`). A versioned Jev id with no row of its
+(`gpt-5.4-mini-2026-03-17` → `gpt-5.4-mini`, `claude-haiku-4-5-20251001` →
+`claude-haiku-4-5`). A versioned Jev id with no row of its
 own (`jev-X.Y.Z`, e.g. a release newer than this table) is priced at the `jev-latest`
 row. That is an assumption: TypeSafe lists one price, for Jev 1.13; a later version is
 assumed to keep it until the pricing page says otherwise. The same lookup prices
@@ -106,7 +163,7 @@ assumed to keep it until the pricing page says otherwise. The same lookup prices
 """
 function estimated_cost(result::LLMRequestResponse;
     model::Union{String,Nothing}=nothing,
-    pricing::Dict{String, PriceRow}=DEFAULT_PRICING)::Float64
+    pricing::AbstractDict{String, PriceRow}=DEFAULT_PRICING)::Float64
 
     u = token_usage(result)
     mdl = if !isnothing(model)
@@ -117,6 +174,8 @@ function estimated_cost(result::LLMRequestResponse;
         result.response.model
     elseif result isa EmbeddingSuccess
         result.embeddings.model
+    elseif result isa FIMSuccess
+        result.response.model
     else
         return 0.0
     end
@@ -127,15 +186,19 @@ function estimated_cost(result::LLMRequestResponse;
     fresh * rates.input + cached * rates.cached_input + u.completion_tokens * rates.output
 end
 
-# Exact id, then the dated-snapshot alias (OpenAI often answers an alias with a
-# dated snapshot; only the documented date suffix is stripped, so arbitrary custom
-# names stay unpriced), then the Jev family rate for a versioned Jev id.
-function _price_row(pricing::Dict{String,PriceRow}, model::String)::Union{PriceRow,Nothing}
-    rates = get(pricing, model, nothing)
-    isnothing(rates) || return rates
-    rates = get(pricing, replace(model, r"-\d{4}-\d{2}-\d{2}$" => ""), nothing)
-    isnothing(rates) || return rates
-    occursin(r"^jev-\d+\.\d+\.\d+$", model) ? get(pricing, "jev-latest", nothing) : nothing
+# Exact id, then the dated-snapshot alias (OpenAI answers an alias with a
+# -YYYY-MM-DD snapshot, Anthropic's pre-4.6 ids carry -YYYYMMDD; only those date
+# suffixes are stripped, so arbitrary custom names stay unpriced), then the Jev family
+# rate for a versioned Jev id. A miss logs once per model id: the 0.0 it becomes is
+# indistinguishable from a free call.
+function _price_row(pricing::AbstractDict{String,PriceRow}, model::String)::Union{PriceRow,Nothing}
+    rates = @something(get(pricing, model, nothing),
+                       get(pricing, replace(model, r"-(\d{4}-\d{2}-\d{2}|\d{8})$" => ""), nothing),
+                       occursin(r"^jev-\d+\.\d+\.\d+$", model) ? get(pricing, "jev-latest", nothing) : nothing,
+                       Some(nothing))
+    isnothing(rates) && @warn "no price row for this model; its estimated cost is 0.0" model _id = Symbol(
+        "unilm_unpriced_", model) maxlog = 1
+    rates
 end
 
 # Override the stub from requests.jl to accumulate cost automatically

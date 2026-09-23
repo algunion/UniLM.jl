@@ -1,6 +1,7 @@
 # ============================================================================
 # FIM Completion & Chat Prefix Completion
-# FIM uses /v1/completions with prompt + suffix (fill-in-the-middle).
+# FIM uses /v1/completions with prompt + suffix (fill-in-the-middle); Mistral
+# serves it at /v1/fim/completions.
 # Prefix Completion uses /v1/chat/completions with an assistant prefix message.
 # Both are beta features on DeepSeek; also supported by Ollama and vLLM.
 # ============================================================================
@@ -13,7 +14,8 @@
 A Fill-in-the-Middle completion request. The model generates text between `prompt`
 (prefix) and `suffix`.
 
-Supported by [`DeepSeekEndpoint`](@ref) (beta), Ollama, vLLM.
+Supported by [`DeepSeekEndpoint`](@ref) (beta), Mistral, Ollama, vLLM. `stream=true`
+throws an `ArgumentError`: [`fim_complete`](@ref) has no streaming path.
 
 # Example
 ```julia
@@ -37,13 +39,20 @@ println(fim_text(result))
     logprobs::Union{Int,Nothing} = nothing
     frequency_penalty::Union{Float64,Nothing} = nothing
     presence_penalty::Union{Float64,Nothing} = nothing
+    function FIMCompletion(service, model, prompt, suffix, max_tokens, temperature, top_p, stream,
+                           stop, echo, logprobs, frequency_penalty, presence_penalty)
+        stream === true && throw(ArgumentError(
+            "FIMCompletion does not support stream=true: fim_complete has no streaming path"))
+        new(service, model, prompt, suffix, max_tokens, temperature, top_p, stream, stop, echo,
+            logprobs, frequency_penalty, presence_penalty)
+    end
 end
 
 function JSON.lower(fim::FIMCompletion)
     model = fim.model
     if isempty(model)
         dm = default_fim_model(fim.service)
-        isnothing(dm) && throw(ArgumentError("model must be specified for FIM with $(typeof(fim.service))"))
+        isnothing(dm) && throw(ArgumentError("model must be specified for FIM with $(_service_name(fim.service))"))
         model = dm
     end
     d = Dict{Symbol,Any}(:model => model, :prompt => fim.prompt)
@@ -121,40 +130,62 @@ Base.show(io::IO, r::FIMCallError) =
 """
     fim_text(result) -> String
 
-Extract the generated text from a FIM completion result.
+Extract the generated text from a FIM completion result. On a [`FIMFailure`](@ref) or
+[`FIMCallError`](@ref) it throws an [`LLMResultError`](@ref), as [`text`](@ref) does on a
+failed Chat result: a failed call has no text, and `""` would read as an empty
+completion. Guard with [`issuccess`](@ref).
 """
 fim_text(r::FIMResponse)::String = isempty(r.choices) ? "" : r.choices[1].text
 fim_text(r::FIMSuccess)::String = fim_text(r.response)
-fim_text(::FIMFailure)::String = ""
-fim_text(::FIMCallError)::String = ""
+fim_text(r::Union{FIMFailure,FIMCallError}) = throw(LLMResultError(r))
+_llm_result_status(r::FIMFailure)   = r.status
+_llm_result_status(r::FIMCallError) = r.status
+_llm_result_body(r::FIMFailure)     = r.response
+_llm_result_body(r::FIMCallError)   = r.error
 
 # ─── FIM URL Routing ──────────────────────────────────────────────────────
 
 get_url(s::DeepSeekEndpoint, ::FIMCompletion)::String = DEEPSEEK_BETA_BASE_URL * COMPLETIONS_PATH
-get_url(s::GenericOpenAIEndpoint, ::FIMCompletion)::String = rstrip(s.base_url, '/') * COMPLETIONS_PATH
+# Mistral (MistralEndpoint is a GenericOpenAIEndpoint on its API host) serves FIM at its
+# own path; other OpenAI-compatible servers (Ollama, vLLM) use the completions path.
+function get_url(s::GenericOpenAIEndpoint, ::FIMCompletion)::String
+    base = rstrip(s.base_url, '/')
+    base * (lowercase(HTTP.URI(base).host) == MISTRAL_API_HOST ? MISTRAL_FIM_PATH : COMPLETIONS_PATH)
+end
 # FIM is an OpenAI-compatible-only verb (DeepSeek beta + GenericOpenAIEndpoint); any other
 # endpoint is rejected up front by `validate_capability(:fim)`. These fail-loud fallbacks
 # give the router total coverage so `get_url(fim.service, fim)` types as `String` for any
 # `fim.service::ServiceEndpointSpec` instead of leaving the marker-type limb methodless.
-get_url(s::ServiceEndpoint, ::FIMCompletion) = throw(ArgumentError("FIM completion is not supported by $(typeof(s))"))
+get_url(s::ServiceEndpoint, ::FIMCompletion) = throw(ArgumentError("FIM completion is not supported by $(_service_name(s))"))
 get_url(::Type{<:ServiceEndpoint}, ::FIMCompletion) = throw(ArgumentError("FIM completion is not supported by this endpoint type"))
 
 # ─── FIM Response Parsing ─────────────────────────────────────────────────
 
+# Throws on a body that is not a completions response; fim_complete reports that as a
+# FIMCallError, never as a success with invented empty text.
 function _parse_fim_response(resp::HTTP.Response)::FIMResponse
     data = JSON.parse(resp.body; dicttype=Dict{String,Any})
-    choices = [FIMChoice(
-        text=get(c, "text", ""),
-        index=get(c, "index", 0),
-        finish_reason=get(c, "finish_reason", nothing)
-    ) for c in get(data, "choices", Any[])]
-    usage_raw = get(data, "usage", nothing)
-    usage = isnothing(usage_raw) ? nothing : TokenUsage(
-        prompt_tokens=get(usage_raw, "prompt_tokens", 0),
-        completion_tokens=get(usage_raw, "completion_tokens", 0),
-        total_tokens=get(usage_raw, "total_tokens", 0)
-    )
-    FIMResponse(choices=choices, usage=usage, model=get(data, "model", ""), raw=data)
+    choices = data isa AbstractDict ? get(data, "choices", nothing) : nothing
+    choices isa AbstractVector && !isempty(choices) ||
+        throw(ArgumentError("FIM response carries no choices array"))
+    usage = get(data, "usage", nothing)
+    FIMResponse(
+        choices=[FIMChoice(text=_fim_choice_text(c), index=get(c, "index", 0),
+                           finish_reason=get(c, "finish_reason", nothing)) for c in choices],
+        usage=usage isa AbstractDict ? _token_usage_from(usage) : nothing,
+        model=something(get(data, "model", nothing), ""), raw=data)
+end
+
+# Completions choices carry `text`; Mistral's /v1/fim/completions answers in the chat
+# shape, `message.content` (https://docs.mistral.ai/api/endpoint/fim).
+function _fim_choice_text(c)::String
+    c isa AbstractDict || throw(ArgumentError("FIM choice is not an object"))
+    t = get(c, "text", nothing)
+    t isa AbstractString && return t
+    m = get(c, "message", nothing)
+    t = m isa AbstractDict ? get(m, "content", nothing) : nothing
+    t isa AbstractString || throw(ArgumentError("FIM choice carries no text"))
+    t
 end
 
 # ─── FIM Request ──────────────────────────────────────────────────────────
@@ -167,15 +198,18 @@ Execute a FIM (Fill-in-the-Middle) completion request. Returns [`FIMSuccess`](@r
 
 Per-call `config::RequestConfig` overrides timeouts and the retry budget; a silent
 peer fails with a typed timeout inside the [`FIMCallError`](@ref) result
-(`cause::UniLMTimeout`).
+(`cause::UniLMTimeout`). Local validation (capability, model resolution, routing)
+throws an `ArgumentError` before any request; every later failure — transport, a
+200 body that is not a completions response — is a `FIMCallError` whose `cause`
+holds the exception.
 """
 function fim_complete(fim::FIMCompletion; config::Union{Nothing,RequestConfig}=nothing)::LLMRequestResponse
     validate_capability(fim.service, :fim, "FIM Completion")
+    body = JSON.json(fim)
+    url = get_url(fim.service, fim)::String
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
-        body = JSON.json(fim)
-        url = get_url(fim.service, fim)::String
         resp = _http_with_retries(cfg, t0, "POST", url, auth_header(fim.service), body)
         if resp.status == 200
             return FIMSuccess(response=_parse_fim_response(resp))
@@ -186,12 +220,12 @@ function fim_complete(fim::FIMCompletion; config::Union{Nothing,RequestConfig}=n
             return FIMFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
-        e isa ArgumentError && rethrow()  # re-throw validation errors
         e isa InterruptException && rethrow()
         e isa UniLMTimeout && return FIMCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return FIMCallError(error=_error_text(e), status=statuserror, request_id=req_id)
+        return FIMCallError(error=_error_text(e), status=statuserror, request_id=req_id,
+                            cause=e isa Exception ? e : nothing)
     end
 end
 
@@ -217,17 +251,21 @@ _prefix_complete_url(s) = get_url(s, Chat())  # fallback for other endpoints
 
 Chat prefix completion: the model continues from a partial assistant message.
 The last message in `chat` must be `role=assistant` containing the text prefix
-to continue from.
+to continue from. The result's `message` is the continuation the API returns; with
+`chat.history` the conversation keeps the whole assistant turn, prefix followed by
+continuation.
 
 Supported by [`DeepSeekEndpoint`](@ref) (beta).
 
 Per-call `config::RequestConfig` overrides timeouts and the retry budget; a silent
 peer fails with a typed timeout inside the [`LLMCallError`](@ref) result
-(`cause::UniLMTimeout`).
+(`cause::UniLMTimeout`). Local validation throws an `ArgumentError` before any
+request; every later failure is an `LLMCallError` whose `cause` holds the exception.
 
 # Example
 ```julia
-chat = Chat(service=DeepSeekEndpoint(), model="deepseek-chat")
+chat = Chat(service=DeepSeekEndpoint(), model="deepseek-flash")
+push!(chat, Message(Val(:system), "You are a coding assistant."))
 push!(chat, Message(Val(:user), "Write a quicksort in Python"))
 push!(chat, Message(role=RoleAssistant, content="```python\\n"))
 result = prefix_complete(chat)
@@ -237,43 +275,43 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
     validate_capability(chat.service, :prefix_completion, "Chat Prefix Completion")
     isempty(chat) && throw(ArgumentError("Chat must not be empty for prefix completion"))
     last(chat).role != RoleAssistant && throw(ArgumentError("Last message must be role=assistant for prefix completion"))
+    body_dict = JSON.lower(chat)
+    # Convert messages to mutable dicts so we can inject the prefix flag
+    msgs = map(body_dict[:messages]) do m
+        d = Dict{Symbol,Any}(:role => m.role)
+        !isnothing(m.content) && (d[:content] = m.content)
+        !isnothing(m.name) && (d[:name] = m.name)
+        !isnothing(m.tool_calls) && (d[:tool_calls] = m.tool_calls)
+        !isnothing(m.tool_call_id) && (d[:tool_call_id] = m.tool_call_id)
+        d
+    end
+    msgs[end][:prefix] = true
+    body_dict[:messages] = msgs
+    body = JSON.json(body_dict)
+    url = _prefix_complete_url(chat.service)
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
-        body_dict = JSON.lower(chat)
-        # Convert messages to mutable dicts so we can inject the prefix flag
-        msgs = map(body_dict[:messages]) do m
-            d = Dict{Symbol,Any}(:role => m.role)
-            !isnothing(m.content) && (d[:content] = m.content)
-            !isnothing(m.name) && (d[:name] = m.name)
-            !isnothing(m.tool_calls) && (d[:tool_calls] = m.tool_calls)
-            !isnothing(m.tool_call_id) && (d[:tool_call_id] = m.tool_call_id)
-            d
-        end
-        msgs[end][:prefix] = true
-        body_dict[:messages] = msgs
-        body = JSON.json(body_dict)
-
-        url = _prefix_complete_url(chat.service)
         resp = _http_with_retries(cfg, t0, "POST", url, auth_header(chat.service), body)
 
         if resp.status == 200
             extracted = extract_message(resp)
-            # Replace the partial assistant prefix with the completed response
-            if chat.history && !isempty(chat)
-                chat.messages[end] = extracted.message
-            end
-            return LLMSuccess(message=extracted.message, self=chat, usage=extracted.usage)
+            continuation = extracted.message
+            # The API returns only the continuation: keep the whole turn in history.
+            chat.history && (chat.messages[end] = _message_with(continuation, :content,
+                something(last(chat).content, "") * something(continuation.content, "")))
+            return LLMSuccess(message=continuation, self=chat, usage=extracted.usage)
         else
             # Retry/backoff already ran inside the shared loop; the last real
             # response is the truthful outcome.
             return LLMFailure(status=resp.status, response=String(resp.body), self=chat, request_id=_get_request_id(resp))
         end
     catch e
-        e isa ArgumentError && rethrow()
         e isa InterruptException && rethrow()
         e isa UniLMTimeout && return LLMCallError(error=sprint(showerror, e), self=chat, status=nothing, cause=e)
+        statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return LLMCallError(error=_error_text(e), self=chat, request_id=req_id)
+        return LLMCallError(error=_error_text(e), self=chat, status=statuserror, request_id=req_id,
+                            cause=e isa Exception ? e : nothing)
     end
 end

@@ -39,8 +39,9 @@ An MCP operation exceeded its configured time bound. The MCP surface is
 throw-based, so this surfaces as an exception rather than a failure value.
 
 # Fields
-- `phase::Symbol`: `:connect` (spawn → `initialize` handshake) or `:request`
-  (one MCP exchange).
+- `phase::Symbol`: `:connect` (spawn → `initialize` handshake), `:queue` (the call
+  could not acquire its session within its per-call bound; the session was not
+  touched) or `:request` (one MCP exchange).
 - `elapsed::Float64`: seconds elapsed when the timeout fired (monotonic clock).
 - `limit::Float64`: the configured bound in seconds.
 - `msg::String`: human-readable message naming the applicable override

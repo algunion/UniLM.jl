@@ -203,7 +203,9 @@ generates: a parameter whose type admits `nothing` (`Union{T,Nothing}`) is optio
 and binds `nothing` when omitted, every other parameter is required, and a value must
 have its parameter's JSON type (a string for `String`, an integral number for an
 integer type, a number for a float type, a boolean for `Bool`). A call that violates
-this is answered with JSON-RPC `-32602` and never reaches the handler.
+this never reaches the handler: it is answered with a tool result carrying
+`isError: true` and a text naming the argument, the MCP report for an input
+validation error, so the model can correct its call.
 
 A handler taking one dictionary is the explicit-schema calling convention, and a
 variadic handler has no parameter names to bind: both are rejected with an
@@ -385,7 +387,9 @@ function _handle_tools_call(server::MCPServer, id, params::Dict{String,Any})
             "content" => _format_tool_result(result), "isError" => false))
     catch e
         e isa InterruptException && rethrow()
-        e isa _MCPInvalidParams && return _jsonrpc_error(id, -32602, sprint(showerror, e))
+        # A tool execution error — the handler's own, or an argument the by-name binding
+        # rejected (MCP 2025-11-25 server/tools classes input validation errors as tool
+        # execution errors) — is a result the model can read and correct its call from.
         _jsonrpc_result(id, Dict{String,Any}(
             "content" => [Dict{String,Any}("type" => "text", "text" => "Error: $(sprint(showerror, e))")],
             "isError" => true))
@@ -846,7 +850,8 @@ parameter is required; an untyped one is optional and binds `nothing` when omitt
 value must have its parameter's JSON type — a string for `String`, an integral number
 for an integer type (`5.0` binds `5`), a number for a float type, a boolean for `Bool`;
 other declared types pass through unconverted. A missing required argument or a value
-of the wrong type is answered with JSON-RPC `-32602` and never reaches the function.
+of the wrong type never reaches the function: it is answered with a tool result
+carrying `isError: true` whose text names the argument.
 
 # Example
 ```julia
@@ -894,12 +899,13 @@ macro mcp_tool(server, func_expr)
 end
 
 """A `tools/call` whose arguments violate the tool's by-name binding — a missing
-required argument or a value of the wrong JSON type. Answered with JSON-RPC `-32602`;
-never relayed as a tool result."""
-struct _MCPInvalidParams <: Exception
+required argument or a value of the wrong JSON type. An input validation error, which
+MCP reports as a tool execution error: a result with `isError: true` whose text
+names the argument."""
+struct _MCPInvalidArguments <: Exception
     msg::String
 end
-Base.showerror(io::IO, e::_MCPInvalidParams) = print(io, "Invalid params: ", e.msg)
+Base.showerror(io::IO, e::_MCPInvalidArguments) = print(io, "Invalid arguments: ", e.msg)
 
 """Bind a `tools/call` `arguments` object to positional parameters BY NAME, converting
 each value to its declared type. An absent argument binds `nothing` unless it is
@@ -910,7 +916,7 @@ function _mcp_bind(args::AbstractDict, names::Vector{String}, types::Tuple,
         name = names[i]
         startswith(name, '#') && return nothing
         haskey(args, name) || return required[i] ?
-            throw(_MCPInvalidParams("missing required argument `$name`")) : nothing
+            throw(_MCPInvalidArguments("missing required argument `$name`")) : nothing
         _mcp_convert(types[i], args[name], name)
     end
 end
@@ -926,7 +932,7 @@ function _by_name_handler(handler::Function, params::Vector{_HandlerParam})::Fun
 end
 
 _invalid_arg(name::String, expected::String, v) =
-    throw(_MCPInvalidParams("argument `$name` must be $expected, got $(_json_kind(v))"))
+    throw(_MCPInvalidArguments("argument `$name` must be $expected, got $(_json_kind(v))"))
 _json_kind(v) = v === nothing ? "null" : v isa Bool ? "a boolean" : v isa Number ? "a number" :
                 v isa AbstractString ? "a string" : v isa AbstractVector ? "an array" : "an object"
 

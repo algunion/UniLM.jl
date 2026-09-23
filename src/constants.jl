@@ -16,9 +16,8 @@ so encoding them is a byte-for-byte no-op. The set is one character narrower
 than RFC 3986's unreserved set (`~` is encoded too); that is over-encoding, not
 a change in meaning, since a server decodes `%7E` back to `~`.
 
-`HTTP.escapeuri` is re-exported from `URIs` by both supported HTTP majors, which
-resolve it to the same `URIs` implementation, so no direct `URIs` dependency is
-needed.
+`HTTP.escapeuri` is `URIs.escapeuri` re-exported by HTTP.jl, so no direct `URIs`
+dependency is needed.
 """
 _uripart(s::AbstractString)::String = HTTP.escapeuri(s)
 

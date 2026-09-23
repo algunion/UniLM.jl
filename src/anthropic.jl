@@ -2,7 +2,7 @@
 # Anthropic (Claude) native Messages API
 # Plugs into the wire-translation seam (encode_request / decode_response /
 # handle_sse_event! from sse.jl) so all chat orchestration is shared.
-# Wire shape verified against the Anthropic Messages API docs on 2026-07-06.
+# Wire shape and model contracts verified against the Anthropic docs on 2026-09-24.
 # ============================================================================
 
 # ─── Routing & auth ──────────────────────────────────────────────────────────
@@ -445,7 +445,8 @@ end
 
 # A refusal can follow partial output, which Anthropic says to discard as incomplete:
 # drop the streamed text (including deltas not yet forwarded), tool calls and captured
-# blocks, so the assembled turn matches the non-streaming decode.
+# blocks, so the assembled turn matches the non-streaming decode. Deltas and tool calls
+# already handed to the callbacks cannot be recalled.
 function _anthropic_stream_refusal!(state::StreamState, stop_details)
     take!(state.content); take!(state.pending_delta); take!(state.refusal)
     empty!(state.tool_calls); empty!(state.raw_blocks); empty!(state.raw_pending)

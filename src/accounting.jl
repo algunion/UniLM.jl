@@ -192,11 +192,10 @@ end
 # rate for a versioned Jev id. A miss logs once per model id: the 0.0 it becomes is
 # indistinguishable from a free call.
 function _price_row(pricing::AbstractDict{String,PriceRow}, model::String)::Union{PriceRow,Nothing}
-    rates = get(pricing, model, nothing)
-    isnothing(rates) || return rates
-    rates = get(pricing, replace(model, r"-(\d{4}-\d{2}-\d{2}|\d{8})$" => ""), nothing)
-    isnothing(rates) || return rates
-    rates = occursin(r"^jev-\d+\.\d+\.\d+$", model) ? get(pricing, "jev-latest", nothing) : nothing
+    rates = @something(get(pricing, model, nothing),
+                       get(pricing, replace(model, r"-(\d{4}-\d{2}-\d{2}|\d{8})$" => ""), nothing),
+                       occursin(r"^jev-\d+\.\d+\.\d+$", model) ? get(pricing, "jev-latest", nothing) : nothing,
+                       Some(nothing))
     isnothing(rates) && @warn "no price row for this model; its estimated cost is 0.0" model _id = Symbol(
         "unilm_unpriced_", model) maxlog = 1
     rates

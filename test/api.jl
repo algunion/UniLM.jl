@@ -1382,3 +1382,14 @@ end
     JSON.json(c)
     @test isnothing(c.stream_options)
 end
+
+@testset "accessors on a non-success result throw LLMResultError" begin
+    @test_throws LLMResultError embedding_vectors(EmbeddingFailure(response="bad", status=400))
+    @test_throws LLMResultError embedding_vectors(EmbeddingCallError(error="network down"))
+    err = try embedding_vectors(EmbeddingFailure(response="rate limited", status=429)) catch e; e end
+    shown = sprint(showerror, err)
+    @test occursin("429", shown) && occursin("rate limited", shown) && occursin("no result data", shown)
+    # Any non-success result can be carried and rendered.
+    @test LLMResultError(ImageFailure(response="x", status=500)).result isa ImageFailure
+    @test occursin("unknown", sprint(showerror, LLMResultError(ImageCallError(error="boom"))))
+end

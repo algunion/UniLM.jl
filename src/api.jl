@@ -1019,27 +1019,33 @@ text(r::LLMSuccess) = r.message.content
 """
     LLMResultError <: Exception
 
-Thrown by [`text`](@ref) when it is called on a non-success Chat result
-([`LLMFailure`](@ref) or [`LLMCallError`](@ref)). Carries the offending `result`.
-`showerror` prints only the status and a short (≤200-char) response excerpt —
-never the conversation, the service endpoint, or the API key.
+Thrown by the result accessors — [`text`](@ref), [`output_text`](@ref),
+[`embedding_vectors`](@ref), [`image_data`](@ref) and [`fim_text`](@ref) — when they
+are called on a non-success result. Carries the offending `result`. `showerror`
+prints only the status and a short (≤200-char) excerpt of the response body or error
+message — never the conversation, the service endpoint, or the API key.
 """
 struct LLMResultError <: Exception
-    result::Union{LLMFailure,LLMCallError}
+    result::LLMRequestResponse
 end
 
 text(r::Union{LLMFailure,LLMCallError}) = throw(LLMResultError(r))
 
-_llm_result_status(r::LLMFailure)   = r.status
-_llm_result_status(r::LLMCallError) = r.status
-_llm_result_body(r::LLMFailure)     = r.response
-_llm_result_body(r::LLMCallError)   = r.error
+# The status and the body/message text of a non-success result: every `*Failure`
+# carries the response body in `response`, every `*CallError` its message in `error`.
+_result_status(r::LLMRequestResponse) = hasproperty(r, :status) ? getproperty(r, :status) : nothing
+function _result_text(r::LLMRequestResponse)::String
+    for f in (:response, :error)
+        hasproperty(r, f) && (v = getproperty(r, f)) isa AbstractString && return String(v)
+    end
+    ""
+end
 
 function Base.showerror(io::IO, e::LLMResultError)
-    status = _llm_result_status(e.result)
-    print(io, "LLMResultError: no text — the request did not succeed (status ",
+    status = _result_status(e.result)
+    print(io, "LLMResultError: no result data — the request did not succeed (status ",
           isnothing(status) ? "unknown" : status, "). ")
-    body = _llm_result_body(e.result)
+    body = _result_text(e.result)
     print(io, "Response: ", length(body) > 200 ? string(first(body, 200), "…") : body)
 end
 
@@ -1316,5 +1322,8 @@ Base.show(io::IO, r::EmbeddingCallError) =
     embedding_vectors(r::EmbeddingSuccess)
 
 Return the embedding vector(s): `Vector{Float64}` (single input) or `Vector{Vector{Float64}}` (batch).
+On an [`EmbeddingFailure`](@ref) or [`EmbeddingCallError`](@ref) it throws an
+[`LLMResultError`](@ref); guard with [`issuccess`](@ref).
 """
 embedding_vectors(r::EmbeddingSuccess) = r.embeddings.embeddings
+embedding_vectors(r::Union{EmbeddingFailure,EmbeddingCallError}) = throw(LLMResultError(r))

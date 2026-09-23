@@ -981,7 +981,9 @@ Base.show(io::IO, r::ResponseCallError) =
     output_text(r::ResponseObject)::String
     output_text(r::ResponseSuccess)::String
 
-Extract the concatenated text output from a response.
+Extract the concatenated text output from a response. On a [`ResponseFailure`](@ref)
+or [`ResponseCallError`](@ref) it throws an [`LLMResultError`](@ref) — there is no
+model output to return; guard with [`issuccess`](@ref).
 
 # Examples
 ```julia
@@ -1004,8 +1006,7 @@ function output_text(r::ResponseObject)::String
 end
 
 output_text(r::ResponseSuccess) = output_text(r.response)
-output_text(r::ResponseFailure) = "Error (HTTP $(r.status)): $(r.response)"
-output_text(r::ResponseCallError) = "Error: $(r.error)"
+output_text(r::Union{ResponseFailure,ResponseCallError}) = throw(LLMResultError(r))
 
 """
     function_calls(r::ResponseObject)::Vector{Dict{String,Any}}
@@ -1052,12 +1053,16 @@ _output_items(r::ResponseObject, typ::String) =
 """
     reasoning_summaries(r) -> Vector{String}
 
-Reasoning-summary text from each `reasoning` output item.
+Reasoning-summary text from each `reasoning` output item (OpenAI Responses) and each
+`thought` step (Gemini Interactions).
 """
 function reasoning_summaries(r::ResponseObject)
     out = String[]
-    for item in _output_items(r, "reasoning"), s in _as_iter(get(item, "summary", ()))
-        s isa Dict && haskey(s, "text") && push!(out, s["text"])
+    for item in r.output
+        item isa Dict && get(item, "type", "") in ("reasoning", "thought") || continue
+        for s in _as_iter(get(item, "summary", ()))
+            s isa Dict && haskey(s, "text") && push!(out, s["text"])
+        end
     end
     return out
 end
@@ -1180,20 +1185,22 @@ Mutable per-stream assembly state for the agentic streaming seam
 output text (`textbuff`), the not-yet-forwarded text deltas (`pending_delta`),
 the per-stream drop count (`sse_dropped`), and — for providers whose terminal
 event omits the step list (Gemini Interactions) — a per-index registry of
-assembled steps: `steps` maps a step index to its (mutable) step dict,
-`args_json` accumulates partial function-call argument JSON per index, and
+assembled steps: `steps` maps a step index to its (mutable) step dict, and
 `order` records first-seen index order for deterministic output rebuilding.
-`text_by_step` holds a typed IOBuffer for each model-output step, including initial text.
+`text_by_step` holds each step's streamed string (answer text, function-call
+argument JSON, or thought signature, depending on the step type), read once when the
+interaction completes; `args_json` holds partial function-call argument JSON per
+index for a decoder that keeps arguments apart from `text_by_step`.
 """
-Base.@kwdef mutable struct AgenticStreamState
+@kwdef mutable struct AgenticStreamState
     textbuff::IOBuffer = IOBuffer()
     carry::IOBuffer = IOBuffer()
     last_event::Base.RefValue{String} = Ref("")
     steps::Dict{Int,Dict{String,Any}} = Dict{Int,Dict{String,Any}}()
     args_json::Dict{Int,String} = Dict{Int,String}()
     order::Vector{Int} = Int[]
-    # Separate buffers preserve Interactions step order without repeatedly
-    # copying an ever-growing text string on every streamed delta.
+    # One buffer per step keeps Interactions step order without re-copying an
+    # ever-growing string on every streamed delta; each is read once, at completion.
     text_by_step::Dict{Int,IOBuffer} = Dict{Int,IOBuffer}()
     # Text deltas collected by the decoder, not yet forwarded to the callback;
     # the driver drains THIS buffer per read (twin of `StreamState.pending_delta`).

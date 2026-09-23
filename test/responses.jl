@@ -1353,6 +1353,14 @@ end
     @test_throws ArgumentError Respond(input="hi", tools=[Tool(type="custom", func=FunctionSignature(name="x"))])
 end
 
+@testset "reasoning_summaries reads OpenAI reasoning items and Gemini thought steps" begin
+    ro = ResponseObject(id="r", status="completed", model="m", raw=Dict{String,Any}(), output=Any[
+        Dict{String,Any}("type" => "reasoning", "summary" => Any[Dict{String,Any}("type" => "summary_text", "text" => "r1")]),
+        Dict{String,Any}("type" => "thought", "summary" => Any[Dict{String,Any}("type" => "summary_text", "text" => "t")]),
+        Dict{String,Any}("type" => "message", "summary" => Any[Dict{String,Any}("text" => "not a summary")])])
+    @test reasoning_summaries(ro) == ["r1", "t"]
+end
+
 # ─── Expanded coverage: TextConfig ────────────────────────────────────────────
 
 @testset "TextConfig JSON serialization" begin
@@ -1575,14 +1583,16 @@ end
     @test function_calls(s)[1]["name"] == "fn_x"
 end
 
-@testset "ResponseFailure output_text" begin
+@testset "ResponseFailure output_text throws: an error body is not model output" begin
     f = ResponseFailure(response="bad request body", status=422)
-    @test output_text(f) == "Error (HTTP 422): bad request body"
+    err = try output_text(f) catch e; e end
+    @test err isa LLMResultError && err.result === f
+    @test occursin("422", sprint(showerror, err)) && occursin("bad request body", sprint(showerror, err))
 end
 
-@testset "ResponseCallError output_text" begin
+@testset "ResponseCallError output_text throws" begin
     e = ResponseCallError(error="connection refused", status=nothing)
-    @test output_text(e) == "Error: connection refused"
+    @test_throws LLMResultError output_text(e)
     @test isnothing(e.status)
 end
 

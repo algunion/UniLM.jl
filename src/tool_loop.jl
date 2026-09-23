@@ -85,7 +85,9 @@ Result of a tool dispatch loop.
 # Fields
 - `response::LLMRequestResponse`: The last response the loop received: the final
   text turn, the failure that ended the loop, the turn it stopped on, or — when
-  `max_turns` ran out — the last tool-call turn (whose calls were dispatched).
+  `max_turns` ran out — the last tool-call turn (whose calls were dispatched). A loop
+  cancelled between tool dispatches holds a call error whose `cause` is
+  [`UniLMCancelled`](@ref).
 - `tool_calls::Vector{ToolCallOutcome}`: History of all tool dispatches.
 - `turns_used::Int`: Number of API round-trips.
 - `completed::Bool`: Whether the loop terminated normally (text response).
@@ -166,15 +168,16 @@ function _run_calls(emit::Function, dispatch::Function, calls::AbstractVector,
     slots = Vector{Union{Nothing,ToolCallOutcome}}(nothing, length(calls))
     next = Threads.Atomic{Int}(1)
     halt = Threads.Atomic{Bool}(false)
+    # A worker leaves once no call is left to hand out, on a cancel, or on a failure;
+    # in each case no other worker should take a further call.
     worker() = try
         while !(halt[] || iscancelled(tok))
             i = Threads.atomic_add!(next, 1)
             i > length(calls) && break
             slots[i] = dispatch(calls[i])
         end
-    catch
-        halt[] = true   # hand out no further call; the failure is rethrown below
-        rethrow()
+    finally
+        halt[] = true
     end
     workers = [Threads.@spawn(worker()) for _ in 1:min(n, length(calls))]
     try
@@ -194,8 +197,8 @@ end
 _in_cancel_scope(f::Function, tok::CancelToken) = with_cancel(f, tok)
 _in_cancel_scope(f::Function, ::Nothing) = f()
 
-# The typed result of a loop cancelled between tool dispatches, shaped like the call
-# error a cancelled request returns; `t0` is the loop's start.
+# The cause for a loop cancelled between tool dispatches (`t0`: the loop's start); the
+# loop wraps it in the call-error type a cancelled request of that API returns.
 _cancelled_since(t0::UInt64) = UniLMCancelled(:token, _elapsed_s(t0))
 
 # ─── Chat Completions Loop ──────────────────────────────────────────────────

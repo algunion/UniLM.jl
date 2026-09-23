@@ -284,8 +284,8 @@ end
     # follow-up request would carry tool results that answer nothing.
     chat = _tl_chat(GenericOpenAIEndpoint("http://127.0.0.1:1", ""); history=false)
     cfg = RequestConfig(max_attempts=1)
-    @test_throws ArgumentError tool_loop!(chat, (name, args) -> "x"; config=cfg)
-    @test_throws ArgumentError tool_loop!(chat; tools=CallableTool[], config=cfg)
+    @test_throws ArgumentError "history=true" tool_loop!(chat, (name, args) -> "x"; config=cfg)
+    @test_throws ArgumentError "history=true" tool_loop!(chat; tools=CallableTool[], config=cfg)
 end
 
 @testset "Responses: a non-completed turn stops the loop, names its reason, runs no call" begin

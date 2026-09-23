@@ -1053,8 +1053,9 @@ end
 end
 
 @testset "mcp: stdio request timeout is session-fatal; respawn is opt-in" begin
-    # FIXED contract: stdio framing has no id-demux, so a request timeout is
-    # SESSION-FATAL — the session becomes :closed and MCPTimeoutError(:request)
+    # FIXED contract: a stdio request timeout is SESSION-FATAL. Replies are matched
+    # by id, but killing the server is the only way to release a read blocked on an
+    # unresponsive one, so the session becomes :closed and MCPTimeoutError(:request)
     # is thrown. With auto_respawn=false (the default), the NEXT call on the
     # closed session raises an error whose message names auto_respawn.
     cmd, marker = _hm_stdio_cmd(_HM_HANDSHAKE_THEN_MUTE)

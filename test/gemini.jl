@@ -372,6 +372,20 @@ end
     @test msg.tool_calls[1].thought_signature == "SIG7"
 end
 
+@testset "stream — a refusal is recorded once, however many chunks follow it" begin
+    blocked = """{"candidates":[{"content":{"role":"model","parts":[]},"finishReason":"SAFETY"}]}"""
+    state = StreamState()
+    # The filtered chunk, then a trailing candidate chunk carrying the usage totals.
+    for payload in (blocked, """{"candidates":[{"content":{"role":"model","parts":[]}}],
+                                 "usageMetadata":{"promptTokenCount":4,"totalTokenCount":4}}""")
+        UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", payload, state)
+    end
+    streamed = _build_stream_message(state)
+    decoded = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(blocked))).message
+    @test streamed.refusal_message == decoded.refusal_message == "Model response blocked by safety filter."
+    @test streamed.finish_reason == decoded.finish_reason == CONTENT_FILTER
+end
+
 @testset "decode+encode — parallel DIFFERENT-function tool calls correlate by id, not position" begin
     respbody = JSON.json(Dict("candidates" => [Dict(
         "content" => Dict("role" => "model", "parts" => [
@@ -454,6 +468,24 @@ end
                 provider_content=ProviderContent(:gemini, Any[]))
     rec = UniLM._gemini_model_parts(m, Dict{String,String}())
     @test rec isa Vector{Dict{Symbol,Any}} && rec == [Dict{Symbol,Any}(:text => "hi")]
+end
+
+@testset "encode — a model turn with nothing to send is left out of the next request" begin
+    # A refusal and a turn whose whole budget went to thinking carry no text and no
+    # function call. Sent as `{"role": "model", "parts": []}` they break the follow-up
+    # request, so continuing the conversation drops them.
+    decode(body) = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(body))).message
+    refused = decode("""{"candidates":[{"finishReason":"SAFETY"}]}""")
+    spent = decode("""{"candidates":[{"finishReason":"MAX_TOKENS"}]}""")
+    state = StreamState()
+    UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", """{"candidates":[{"finishReason":"SAFETY"}]}""", state)
+    streamed = _build_stream_message(state)
+    @test !isnothing(refused.refusal_message) && spent.content == "" && !isnothing(streamed.refusal_message)
+    chat = Chat(service=GEMINIServiceEndpoint, messages=[
+        Message(role=RoleUser, content="q1"), refused, Message(role=RoleUser, content="q2"), spent,
+        Message(role=RoleUser, content="q3"), streamed, Message(role=RoleUser, content="q4")])
+    contents = JSON.parse(encode_request(GEMINIServiceEndpoint, chat))["contents"]
+    @test contents == [Dict("role" => "user", "parts" => [Dict("text" => q)]) for q in ("q1", "q2", "q3", "q4")]
 end
 
 @testset "decode — malformed non-vector parts → no capture, no throw" begin

@@ -162,7 +162,9 @@ end
 # Split neutral messages into (systemInstruction::Union{String,Nothing}, contents).
 # - system → concatenated top-level systemInstruction text
 # - user   → {role:"user", parts:[{text}]}
-# - assistant → {role:"model", parts:[{text}?, {functionCall,thoughtSignature?}...]}
+# - assistant → {role:"model", parts:[{text}?, {functionCall,thoughtSignature?}...]};
+#   a turn with no part to send (a refusal, a turn spent on thinking) is left out,
+#   because an empty-parts model turn breaks the follow-up request
 # - consecutive tool results → ONE {role:"user"} of functionResponse parts
 # - a tool result with no preceding model functionCall of that id → loud ArgumentError.
 function _gemini_contents(messages)
@@ -187,8 +189,10 @@ function _gemini_contents(messages)
             _is_synthetic_call_id(tcid) || (fr[:id] = tcid)
             push!(pending, Dict{Symbol,Any}(:functionResponse => fr))
         elseif m.role == RoleAssistant
+            parts = _gemini_model_parts(m, tool_names)
+            isempty(parts) && continue
             flush!()
-            push!(out, Dict{Symbol,Any}(:role => "model", :parts => _gemini_model_parts(m, tool_names)))
+            push!(out, Dict{Symbol,Any}(:role => "model", :parts => parts))
         else  # RoleUser
             flush!()
             push!(out, Dict{Symbol,Any}(:role => "user",
@@ -401,7 +405,10 @@ function handle_sse_event!(::Type{GEMINIServiceEndpoint}, event::AbstractString,
             fr = get(cand, "finishReason", nothing)
             fr isa AbstractString &&
                 (state.finish_reason = _gemini_finish_reason(fr, !isempty(state.tool_calls)))
-            if state.finish_reason == CONTENT_FILTER && position(state.content) == 0
+            # A filter stop with no answer text is a refusal, recorded once: the chunks
+            # after the filtered one (trailing usage, a repeated candidate) add nothing.
+            if state.finish_reason == CONTENT_FILTER && position(state.content) == 0 &&
+               position(state.refusal) == 0
                 print(state.refusal, "Model response blocked by safety filter.")
             end
         end

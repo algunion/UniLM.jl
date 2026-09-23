@@ -104,11 +104,15 @@ end
         @test contains(outcome.error, "boom")
     end
 
-    @testset "result is stringified" begin
-        outcome = UniLM._dispatch_tool("num", Dict{String,Any}(),
-            (n, a) -> 42)
-        @test outcome.success
-        @test outcome.result.result == "42"
+    @testset "Strings pass through; any other result is JSON-encoded" begin
+        # The model reads the result as text: never a Julia repr such as
+        # `Dict{String, Any}("temp" => 21.5)` or `nothing`.
+        for (ret, sent) in (("plain text", "plain text"), (SubString("abcd", 1, 2), "ab"),
+                            (Dict("temp" => 21.5), "{\"temp\":21.5}"), (nothing, "null"),
+                            (42, "42"), ([1, 2], "[1,2]"), (true, "true"))
+            outcome = UniLM._dispatch_tool("t", Dict{String,Any}(), (n, a) -> ret)
+            @test outcome.success && outcome.result.result == sent
+        end
     end
 end
 
@@ -323,4 +327,21 @@ end
         @test_throws ArgumentError "max_turns" tool_loop(
             Respond(service=dead, model="mock", input="x"), (a, b) -> "x"; max_turns=n)
     end
+end
+
+@testset "a structured tool result reaches the model as JSON" begin
+    chat = _tl_chat(_TLFixture([_tl_calls(UniLM.TOOL_CALLS, "call_1" => "weather"), _tl_reply("done")]))
+    res, _ = _tl_scripted() do
+        tool_loop!(chat, (name, args) -> Dict("temp" => 21.5))
+    end
+    @test res.completed
+    @test only(filter(m -> m.role == UniLM.RoleTool, chat.messages)).content == "{\"temp\":21.5}"
+
+    turn(n) = n == 1 ? _tl_resp("resp_1", [_tl_fcall("call_1", "weather")]) :
+                       _tl_resp("resp_2", [_tl_text("done")])
+    res, seen = _with_scripted((n, _) -> _json(200, turn(n))) do
+        tool_loop(_tl_respond(), (name, args) -> nothing)
+    end
+    @test res.completed && length(seen) == 2
+    @test only(_tl_body(seen[2])["input"])["output"] == "null"
 end

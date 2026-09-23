@@ -109,10 +109,13 @@ end
 
 Call `dispatcher(name, args)`, wrap result in [`FunctionCallResult`](@ref),
 return a [`ToolCallOutcome`](@ref). Catches exceptions as error outcomes.
+The model reads the result as text: a `String` is passed through, any other value
+is JSON-encoded (`JSON.json`), never sent as its Julia `repr`.
 """
 function _dispatch_tool(name::String, args::Dict{String,Any}, dispatcher::Function)::ToolCallOutcome
     try
-        result_str = string(dispatcher(name, args))
+        out = dispatcher(name, args)
+        result_str = out isa AbstractString ? String(out) : JSON.json(out)
         gptfunc = GPTFunction(name, args)
         fcr = FunctionCallResult(name, gptfunc, result_str)
         ToolCallOutcome(name, args, fcr, true, nothing)
@@ -153,7 +156,8 @@ follow-up request carries the tool results together with the assistant turn that
 requested them.
 
 # Arguments
-- `dispatcher`: `(name::String, args::Dict{String,Any}) -> String`
+- `dispatcher`: `(name::String, args::Dict{String,Any}) -> String`; any other
+  return value is sent to the model JSON-encoded.
 - `max_turns`: Maximum API round-trips (default 10; `< 1` throws `ArgumentError`).
   When they run out, the result keeps the last response, with `completed=false` and
   `llm_error = "max turns (N) exhausted"`.
@@ -253,8 +257,8 @@ end
     tool_loop(r::Respond, dispatcher::Function; max_turns=10, config=nothing) -> ToolLoopResult
 
 Run a tool-calling loop on a [`Respond`](@ref) request. Dispatches function calls
-via `dispatcher(name, args)`, builds `function_call_output` input items, and chains
-via `previous_response_id`.
+via `dispatcher(name, args)` (a non-`String` return is sent JSON-encoded), builds
+`function_call_output` input items, and chains via `previous_response_id`.
 
 Function calls run only on a `completed` or `requires_action` turn. Any other status
 (e.g. `incomplete`, whose calls may be partial) stops the loop with `completed=false`

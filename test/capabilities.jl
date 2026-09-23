@@ -136,7 +136,7 @@ end
     @test UniLM.default_model(OPENAIServiceEndpoint) == "gpt-5.6-sol"
     @test UniLM.default_model(AZUREServiceEndpoint) == "gpt-5.2"
     @test UniLM.default_model(GEMINIOpenAIServiceEndpoint) == "gemini-3.8-flash"
-    @test UniLM.default_model(ds) == "deepseek-chat"
+    @test UniLM.default_model(ds) == "deepseek-flash"
 
     # default_embedding_model — Type dispatch for OPENAI/GEMINI (62/63), instance for DeepSeek (64→nothing)
     @test UniLM.default_embedding_model(OPENAIServiceEndpoint) == "text-embedding-3-small"
@@ -147,7 +147,7 @@ end
     @test UniLM.default_image_model(OPENAIServiceEndpoint) == "gpt-image-2"
 
     # default_fim_model — DeepSeek instance method (line 73)
-    @test UniLM.default_fim_model(ds) == "deepseek-chat"
+    @test UniLM.default_fim_model(ds) == "deepseek-flash"
 end
 
 @testset "Anthropic — capabilities & defaults" begin
@@ -155,11 +155,11 @@ end
     @test has_capability(ANTHROPICServiceEndpoint, :tools)
     @test has_capability(ANTHROPICServiceEndpoint, :streaming)
     @test !has_capability(ANTHROPICServiceEndpoint, :embeddings)
-    @test UniLM.default_model(ANTHROPICServiceEndpoint) == "claude-opus-4-8"
-    @test UniLM.default_max_tokens(ANTHROPICServiceEndpoint, "claude-opus-4-8") == 4096
+    @test UniLM.default_model(ANTHROPICServiceEndpoint) == "claude-opus-5-5"
+    @test UniLM.default_max_tokens(ANTHROPICServiceEndpoint, "claude-opus-5-5") == 16000
     # A Chat with no model resolves to the Anthropic default.
     chat = Chat(service=ANTHROPICServiceEndpoint)
-    @test chat.model == "claude-opus-4-8"
+    @test chat.model == "claude-opus-5-5"
     @test UniLM.get_url(chat) == "https://api.anthropic.com/v1/messages"
     @test haskey(UniLM.DEFAULT_PRICING, "claude-opus-4-8")
     @test UniLM.DEFAULT_PRICING["claude-haiku-4-5"].output ≈ 5.0 / 1_000_000

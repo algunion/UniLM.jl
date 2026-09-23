@@ -22,7 +22,7 @@ end
 provider_capabilities(::Type{ANTHROPICServiceEndpoint}) =
     Set([:chat, :tools, :json_output, :streaming])
 
-default_model(::Type{ANTHROPICServiceEndpoint}) = "claude-opus-4-8"
+default_model(::Type{ANTHROPICServiceEndpoint}) = "claude-opus-5-5"
 
 """
     default_max_tokens(service, model::AbstractString) -> Int

@@ -227,7 +227,7 @@ peer fails with a typed timeout inside the [`LLMCallError`](@ref) result
 
 # Example
 ```julia
-chat = Chat(service=DeepSeekEndpoint(), model="deepseek-chat")
+chat = Chat(service=DeepSeekEndpoint(), model="deepseek-flash")
 push!(chat, Message(Val(:user), "Write a quicksort in Python"))
 push!(chat, Message(role=RoleAssistant, content="```python\\n"))
 result = prefix_complete(chat)

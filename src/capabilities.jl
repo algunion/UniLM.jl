@@ -93,7 +93,7 @@ Returns `nothing` for generic endpoints (model must be specified explicitly).
 default_model(::Type{OPENAIServiceEndpoint})  = "gpt-5.6-sol"
 default_model(::Type{AZUREServiceEndpoint})   = "gpt-5.2"
 default_model(::Type{GEMINIOpenAIServiceEndpoint})  = "gemini-3.8-flash"
-default_model(::DeepSeekEndpoint)              = "deepseek-chat"
+default_model(::DeepSeekEndpoint)              = "deepseek-flash"
 default_model(::GenericOpenAIEndpoint)          = nothing
 
 """Default embedding model per provider."""
@@ -107,8 +107,8 @@ default_embedding_model(_) = nothing
 default_image_model(::Type{OPENAIServiceEndpoint}) = "gpt-image-2"
 default_image_model(_) = nothing
 
-"""Default FIM model per provider."""
-default_fim_model(::DeepSeekEndpoint)      = "deepseek-chat"
+"""Default FIM model per provider. DeepSeek serves FIM (beta) on `deepseek-flash`."""
+default_fim_model(::DeepSeekEndpoint)      = "deepseek-flash"
 default_fim_model(::GenericOpenAIEndpoint)  = nothing
 default_fim_model(_) = nothing
 

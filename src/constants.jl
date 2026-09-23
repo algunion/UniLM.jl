@@ -208,11 +208,14 @@ const ANTHROPIC_MESSAGES_PATH::String = "/v1/messages"
 """Required `anthropic-version` request header value (stable since 2024)."""
 const ANTHROPIC_VERSION::String = "2023-06-01"
 
-"""Moderate, overridable default for Anthropic's REQUIRED `max_tokens` when the
-caller leaves it unset. Not the model ceiling — a ceiling-sized cap invites
-runaway output; unused headroom is not billed. Raise `max_tokens` explicitly for
-long generations."""
-const _ANTHROPIC_DEFAULT_MAX_TOKENS::Int = 4096
+"""Overridable default for Anthropic's REQUIRED `max_tokens` when the caller leaves
+it unset. `max_tokens` caps thinking plus response text, and current Claude models
+think by default (Claude Opus 5.5 always does), so a small cap ends turns at
+`"length"` before any answer; 16000 matches the adaptive-thinking examples in
+https://platform.claude.com/docs/en/build-with-claude/thinking. Not the model
+ceiling: unused headroom is not billed. Raise `max_tokens` explicitly for long
+generations or `xhigh`/`max` effort."""
+const _ANTHROPIC_DEFAULT_MAX_TOKENS::Int = 16000
 # ─── TypeSafe System One API (Jev) ───────────────────────────────────────────
 
 """TypeSafe API base URL."""

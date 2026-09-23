@@ -6,7 +6,7 @@ if !haskey(ENV, "DEEPSEEK_API_KEY") || get(ENV, "UNILM_LIVE", "") != "1"
 else
 
 @testset "DeepSeek Chat — basic" begin
-    chat = Chat(service=DeepSeekEndpoint(), model="deepseek-chat")
+    chat = Chat(service=DeepSeekEndpoint(), model="deepseek-flash")
     push!(chat, Message(Val(:system), "You are a helpful assistant."))
     push!(chat, Message(Val(:user), "Reply with exactly: hello"))
     result = chatrequest!(chat)
@@ -17,7 +17,7 @@ end
 @testset "DeepSeek FIM — basic" begin
     fim = FIMCompletion(
         service=DeepSeekEndpoint(),
-        model="deepseek-chat",
+        model="deepseek-flash",
         prompt="def fib(a):",
         suffix="    return fib(a-1) + fib(a-2)",
         max_tokens=128,
@@ -40,7 +40,7 @@ end
 end
 
 @testset "DeepSeek Prefix Completion" begin
-    chat = Chat(service=DeepSeekEndpoint(), model="deepseek-chat")
+    chat = Chat(service=DeepSeekEndpoint(), model="deepseek-flash")
     push!(chat, Message(Val(:system), "You are a helpful coding assistant."))
     push!(chat, Message(Val(:user), "Write a Python hello world"))
     push!(chat, Message(role=RoleAssistant, content="```python\n"))
@@ -71,7 +71,7 @@ end
 
     chat = Chat(
         service=DeepSeekEndpoint(),
-        model="deepseek-chat",
+        model="deepseek-flash",
         tools=[Tool(func=gptfsig)],
         tool_choice="auto"
     )
@@ -95,7 +95,7 @@ end
 @testset "DeepSeek Chat — JSON output" begin
     chat = Chat(
         service=DeepSeekEndpoint(),
-        model="deepseek-chat",
+        model="deepseek-flash",
         response_format=UniLM.json_object()
     )
     push!(chat, Message(Val(:system), "Always respond in JSON format."))
@@ -110,7 +110,7 @@ end
 @testset "DeepSeek Chat — streaming" begin
     received_chunks = String[]
 
-    chat = Chat(service=DeepSeekEndpoint(), model="deepseek-chat", stream=true)
+    chat = Chat(service=DeepSeekEndpoint(), model="deepseek-flash", stream=true)
     push!(chat, Message(Val(:system), "You are helpful."))
     push!(chat, Message(Val(:user), "Reply with exactly: hello"))
 

@@ -1,6 +1,6 @@
 @testset "FIMCompletion construction" begin
     fim = FIMCompletion(service=DeepSeekEndpoint("key"), prompt="def fib(a):")
-    @test fim.model == ""  # resolved to "deepseek-chat" during serialization
+    @test fim.model == ""  # resolved to "deepseek-flash" during serialization
     @test fim.prompt == "def fib(a):"
     @test isnothing(fim.suffix)
     @test fim.max_tokens == 128
@@ -14,7 +14,7 @@ end
     @test d[:suffix] == "world"
     @test d[:max_tokens] == 64
     @test d[:stop] == ["\n"]
-    @test d[:model] == "deepseek-chat"
+    @test d[:model] == "deepseek-flash"
     # service not serialized
     @test !haskey(d, :service)
     # nil fields excluded

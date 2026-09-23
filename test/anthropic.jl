@@ -12,7 +12,7 @@ using Test, HTTP, JSON
     body = JSON.parse(encode_request(ANTHROPICServiceEndpoint, chat))
     @test body["model"] == "claude-opus-4-8"
     @test body["system"] == "You are helpful."
-    @test body["max_tokens"] == 4096                     # default supplied
+    @test body["max_tokens"] == 16000                    # default supplied
     @test length(body["messages"]) == 1
     @test body["messages"][1]["role"] == "user"
     @test body["messages"][1]["content"] == "Hi"

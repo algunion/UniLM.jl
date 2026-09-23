@@ -35,7 +35,11 @@ function mint_realtime_secret(; session::Union{AbstractDict,Nothing}=nothing, se
         resp.status == 200 || return RealtimeFailure(response=String(resp.body), status=resp.status)
         data = JSON.parse(resp.body; dicttype=Dict{String,Any})
         cs = get(data, "client_secret", nothing)
-        val = get(data, "value", cs isa AbstractDict ? get(cs, "value", "") : "")
+        val = get(data, "value", cs isa AbstractDict ? get(cs, "value", nothing) : nothing)
+        # A 200 that carries no usable secret is not a success: handing back an
+        # empty value would fail later, at connect time, far from the cause.
+        val isa AbstractString && !isempty(val) ||
+            return RealtimeCallError(error="client-secret response carried no secret value")
         RealtimeSecretSuccess(value=val, raw=data)
     catch e
         e isa InterruptException && rethrow()
@@ -69,8 +73,25 @@ mutable struct RealtimeSession
     config::RequestConfig   # connect-time budget; bounds realtime_receive
 end
 
-# WS base URL is a function so tests can point realtime_connect at a local echo server.
-_realtime_ws_url(service) = REALTIME_WS_URL
+# The Realtime WebSocket is served by api.openai.com, so only OPENAIServiceEndpoint
+# has a socket URL: opening it for any other endpoint would send that endpoint's
+# credentials to OpenAI (mint_realtime_secret, by contrast, honours the endpoint).
+# A function so tests can route their own endpoint types to a local server.
+_realtime_ws_url(::Type{OPENAIServiceEndpoint}) = REALTIME_WS_URL
+_realtime_ws_url(service) = throw(ArgumentError(
+    "realtime_connect supports only OPENAIServiceEndpoint (got " *
+    "$(service isa Type ? service : typeof(service))): the Realtime WebSocket is " *
+    "served by api.openai.com, and another endpoint's credentials must not be sent there"))
+
+# Test seam: runs as the upgrade completes, before the handler is admitted.
+_realtime_upgraded(service) = nothing
+
+# Open-phase resolution, exactly once: :pending → :open (the handler runs) |
+# :abandoned (the caller already got UniLMTimeout(:connect); a late upgrade is
+# closed unused).
+mutable struct _RealtimeGate
+    @atomic state::Symbol
+end
 
 # Source-compatible with the pre-config shape: without an explicit budget a
 # session inherits the ambient one.
@@ -104,7 +125,13 @@ the TCP connection but never completes the upgrade throws
 the session's lifetime is the caller's to decide, so no bound applies to it. The
 resolved config travels on the session, so [`realtime_receive`](@ref) inherits
 `stream_idle_timeout`. `handler` runs on an internal task (that is what makes the
-open phase separable); dynamically scoped values propagate into it.
+open phase separable); dynamically scoped values propagate into it. An upgrade
+that completes only after the caller received the timeout is closed without
+calling `handler`.
+
+Throws `ArgumentError` before any I/O for a `service` other than
+`OPENAIServiceEndpoint`: the Realtime WebSocket is served by api.openai.com, and
+another endpoint's credentials must not be sent there.
 """
 function realtime_connect(handler; model::String="gpt-realtime-2",
                           service::ServiceEndpointSpec=OPENAIServiceEndpoint,
@@ -113,20 +140,34 @@ function realtime_connect(handler; model::String="gpt-realtime-2",
     cfg = _resolve_config(config)
     url = _realtime_url(service, model)
     t0 = time_ns()
-    open_done = Threads.Atomic{Bool}(false)
-    # auth_header_multipart drops the JSON Content-Type, which is meaningless on a WS upgrade.
-    session = Threads.@spawn HTTP.WebSockets.open(url; headers=auth_header_multipart(service),
-                                                  _realtime_native_kwargs(cfg)...) do ws
-        open_done[] = true
-        handler(RealtimeSession(ws, model, cfg))
+    gate = _RealtimeGate(:pending)
+    ready = Base.Event()   # the handler was admitted, the open task ended, or the bound fired
+    session = Threads.@spawn try
+        # auth_header_multipart drops the JSON Content-Type, which is meaningless on a WS upgrade.
+        HTTP.WebSockets.open(url; headers=auth_header_multipart(service),
+                             _realtime_native_kwargs(cfg)...) do ws
+            _realtime_upgraded(service)
+            (@atomicreplace gate.state :pending => :open).success || return close(ws)
+            notify(ready)
+            handler(RealtimeSession(ws, model, cfg))
+        end
+    finally
+        notify(ready)
     end
-    # Wait for the handshake only: the flag flips as the handler is entered, and a
-    # failed open completes the task. On breach the worker is abandoned rather than
+    # Wait for the handshake only. On breach the worker is abandoned rather than
     # killed — the same policy as the HTTP seam's task-mode watchdog, and safe for
     # the same reason: the native bounds above end it on its own.
-    if cfg.connect_timeout < Inf &&
-       timedwait(() -> open_done[] || istaskdone(session), cfg.connect_timeout; pollint=0.05) !== :ok
-        throw(UniLMTimeout(:connect, _elapsed_s(t0), cfg.connect_timeout))
+    if cfg.connect_timeout < Inf
+        timer = Timer(cfg.connect_timeout; spawn=true) do _
+            (@atomicreplace gate.state :pending => :abandoned).success && notify(ready)
+        end
+        try
+            wait(ready)
+        finally
+            errormonitor(Threads.@spawn close(timer))   # off-path: see _with_deadline_task
+        end
+        (@atomic gate.state) === :abandoned &&
+            throw(UniLMTimeout(:connect, _elapsed_s(t0), cfg.connect_timeout))
     end
     try
         return fetch(session)
@@ -140,7 +181,7 @@ function realtime_connect(handler; model::String="gpt-realtime-2",
         # The native bounds above race the watchdog at the same limit, and only
         # handshake timers are armed, so a native timeout raised before the handler
         # was entered IS the open phase breaching: report it as the same typed error.
-        !open_done[] && _find_exception(x -> x isa HTTP.TimeoutError, err) !== nothing &&
+        (@atomic gate.state) !== :open && _find_exception(x -> x isa HTTP.TimeoutError, err) !== nothing &&
             throw(UniLMTimeout(:connect, _elapsed_s(t0), cfg.connect_timeout))
         throw(err)
     end

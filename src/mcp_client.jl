@@ -1626,20 +1626,8 @@ function call_tool(session::MCPSession, name::String,
         "name" => name, "arguments" => _mcp_arguments(arguments)); timeout=timeout)
     content = get(result, "content", Any[])
     is_error = get(result, "isError", false) === true
-    rendered = String[]
-    for part in content
-        if part isa Dict
-            ptype = get(part, "type", "")
-            if ptype == "text"
-                push!(rendered, part["text"])
-            else
-                push!(rendered, JSON.json(part))
-            end
-        else
-            push!(rendered, string(part))
-        end
-    end
-    text = join(rendered, "\n")
+    text = join((part isa Dict ? (get(part, "type", "") == "text" ? part["text"] : JSON.json(part)) :
+                 string(part) for part in content), "\n")
     sc = get(result, "structuredContent", nothing)
     structured = sc isa Dict{String,Any} ? sc : nothing
     MCPToolResult(text, structured, is_error, content)
@@ -1652,16 +1640,8 @@ Read a resource from the MCP server.
 """
 function read_resource(session::MCPSession, uri::String)::String
     result = _mcp_request!(session, "resources/read", Dict{String,Any}("uri" => uri))
-    contents = get(result, "contents", [])
-    parts = String[]
-    for c in contents
-        if haskey(c, "text")
-            push!(parts, c["text"])
-        elseif haskey(c, "blob")
-            push!(parts, c["blob"])
-        end
-    end
-    join(parts, "\n")
+    join((haskey(c, "text") ? c["text"] : c["blob"]
+          for c in get(result, "contents", []) if haskey(c, "text") || haskey(c, "blob")), "\n")
 end
 
 """

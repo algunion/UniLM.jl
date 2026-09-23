@@ -315,7 +315,7 @@ function _interaction_step_start!(state::AgenticStreamState, data::Dict{String,A
     state.steps[idx] = step
     delete!(state.text_by_step, idx)   # a re-sent start must not inherit stale streamed bytes
     get(step, "type", "") == "model_output" || return nothing
-    # `content` is null on a step that has produced no parts yet.
+    # A step that has produced no parts yet carries no `content` array.
     content = get(step, "content", nothing)
     content isa Vector{Any} || (step["content"] = content = Any[])
     for c in content
@@ -332,13 +332,14 @@ function _interaction_step_delta!(state::AgenticStreamState, data::Dict{String,A
     d = get(data, "delta", nothing)
     (idx isa Integer && d isa AbstractDict) || return nothing
     step = get(state.steps, idx, nothing)
-    kind = isnothing(step) ? "" : get(step, "type", "")
+    kind = isnothing(step) ? "" : string(get(step, "type", ""))::String
     dt = get(d, "type", "")
     if dt == "arguments_delta"
         a = get(d, "arguments", "")
         a isa AbstractString && kind == "function_call" && print(get!(IOBuffer, state.text_by_step, idx), a)
     elseif dt == "thought_signature"
-        # The call and answer steps carry no signature of their own through this delta.
+        # Kept on the steps surfaced verbatim (thoughts, hosted tools); the
+        # function_call and message rebuilds carry no signature.
         s = get(d, "signature", "")
         s isa AbstractString && !isnothing(step) && kind ∉ ("function_call", "model_output") &&
             print(get!(IOBuffer, state.text_by_step, idx), s)

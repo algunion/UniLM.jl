@@ -384,14 +384,15 @@ end
         @test JSON.json(m_plain) == JSON.json(m_pc)
         @test !occursin("provider_content", JSON.json(m_pc))
 
-        # All of today's wire fields still serialize (omit-null preserved).
+        # Every request wire field still serializes (omit-null preserved); the
+        # response-only finish_reason is never sent.
         full = Message(role=UniLM.RoleTool, content="r", name="n",
                        finish_reason="stop", tool_call_id="c1")
         parsed = JSON.parse(JSON.json(full))
         @test parsed["role"] == "tool" && parsed["content"] == "r" &&
-              parsed["name"] == "n" && parsed["finish_reason"] == "stop" &&
-              parsed["tool_call_id"] == "c1"
-        @test !haskey(parsed, "tool_calls") && !haskey(parsed, "refusal_message")
+              parsed["name"] == "n" && parsed["tool_call_id"] == "c1"
+        @test !haskey(parsed, "tool_calls") && !haskey(parsed, "refusal") &&
+              !haskey(parsed, "finish_reason")
 
         # Chat-level: no leak through the full request body either.
         chat = Chat(model="gpt-5.5")
@@ -410,6 +411,30 @@ end
         # Validation still enforced with the new field present.
         @test_throws ArgumentError Message(role=UniLM.RoleAssistant, provider_content=pc)
     end
+
+    @testset "wire lowering: a refusal travels as `refusal`; finish_reason is never sent" begin
+        # An assistant message needs `content` unless it carries tool calls, so a
+        # refusal turn sends it as null beside `refusal` — the shape the API returns.
+        refused = Message(role=UniLM.RoleAssistant, refusal_message="I can't help with that.",
+                          finish_reason=UniLM.CONTENT_FILTER)
+        @test JSON.parse(JSON.json(refused)) ==
+              Dict("role" => "assistant", "content" => nothing, "refusal" => "I can't help with that.")
+        tc = [ToolCall(id="c1", func=UniLM.GPTFunction("f", Dict{String,Any}()))]
+        @test !haskey(JSON.parse(JSON.json(Message(role=UniLM.RoleAssistant, tool_calls=tc))), "content")
+
+        chat = Chat(model="gpt-5.5")
+        push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
+        push!(chat, Message(role=UniLM.RoleAssistant, content="hi", finish_reason="stop"))
+        push!(chat, Message(Val(:user), "again"))
+        @test all(m -> !haskey(m, "finish_reason"), JSON.parse(JSON.json(chat))["messages"])
+    end
+end
+
+@testset "request id: x-request-id, else Anthropic's request-id" begin
+    @test UniLM._get_request_id(HTTP.Response(200, ["x-request-id" => "req_x"])) == "req_x"
+    @test UniLM._get_request_id(HTTP.Response(200, ["request-id" => "req_ant"])) == "req_ant"
+    @test UniLM._get_request_id(HTTP.Response(200, ["request-id" => "b", "x-request-id" => "a"])) == "a"
+    @test UniLM._get_request_id(HTTP.Response(200)) === nothing
 end
 
 @testset "ResponseFormat" begin
@@ -918,7 +943,7 @@ end
         tools=[Tool(func=sig)],
         tool_choice="auto",
         parallel_tool_calls=true,
-        n=2,
+        n=1,
         stream=true,
         stop=["END"],
         max_tokens=100,
@@ -934,7 +959,7 @@ end
     @test lowered[:tools] isa Vector
     @test lowered[:tool_choice] == "auto"
     @test lowered[:parallel_tool_calls] == true
-    @test lowered[:n] == 2
+    @test lowered[:n] == 1
     @test lowered[:stream] == true
     @test lowered[:stop] == ["END"]
     @test lowered[:max_tokens] == 100
@@ -1040,10 +1065,12 @@ end
         @test_throws ArgumentError Chat(n=11)
     end
 
-    @testset "n boundary values accepted" begin
+    @testset "n is 1: a result carries one choice" begin
+        # Extra choices were dropped (non-stream) or merged into garbled text (stream).
         @test Chat(n=1).n == 1
-        @test Chat(n=10).n == 10
-        @test Chat(n=5).n == 5
+        @test_throws ArgumentError Chat(n=2)
+        @test_throws ArgumentError Chat(n=5)
+        @test_throws ArgumentError Chat(n=10)
     end
 
     @testset "presence_penalty out of range" begin
@@ -1251,15 +1278,15 @@ end
         @test n_success >= 30    # ~34 success types across chat/embeddings/platform APIs
     end
 end
-# Stand-in for a transport wrapper whose default show dumps the request it carries
-# (the HTTP.jl 1.x RequestError shape). Top level: structs cannot live in a testset.
+# Stand-in for a transport wrapper whose default show dumps the request it carries.
+# Top level: structs cannot live in a testset.
 struct _CauseDumpError <: Exception; dump::String; end
 
 @testset "call-error shows name the cause instead of dumping it" begin
     # `cause` keeps the raw exception on purpose — callers dispatch on it. Julia's
     # default show recurses into it, though, so a transport wrapper that renders as
-    # a request dump (HTTP.jl 1.x) put the credential back into the printed result
-    # after `.error` had already been redacted.
+    # a request dump put the credential back into the printed result after `.error`
+    # had already been redacted.
     token = "sk-ant-SECRETVALUE0123456789"
     dumping = _CauseDumpError("HTTP.Request:\nPOST /v1/messages\r\nx-api-key: $token\r\n\r\n{}")
     chat = Chat(model="gpt-5.5", messages=[Message(Val(:system), "s"), Message(Val(:user), "u")])
@@ -1278,4 +1305,91 @@ struct _CauseDumpError <: Exception; dump::String; end
     @test occursin("request_id=\"req_9\"", sprint(show, results[3]))
     # No cause: the field renders as nothing, not as an empty type name.
     @test occursin("cause=nothing", sprint(show, LLMCallError(error="x", self=chat)))
+end
+
+struct _NoEmbeddingDefault <: UniLM.ServiceEndpoint end
+
+@testset "construction-time validation of Chat, Message and Embeddings" begin
+    @testset "reasoning_effort within the documented set" begin
+        for effort in ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+            @test Chat(reasoning_effort=effort).reasoning_effort == effort
+        end
+        @test_throws ArgumentError Chat(reasoning_effort="extreme")
+        @test_throws ArgumentError Chat(reasoning_effort="High")
+    end
+
+    @testset "top_logprobs in [0, 20]" begin
+        @test Chat(top_logprobs=0).top_logprobs == 0
+        @test Chat(top_logprobs=20).top_logprobs == 20
+        @test_throws ArgumentError Chat(top_logprobs=-1)
+        @test_throws ArgumentError Chat(top_logprobs=21)
+    end
+
+    @testset "an empty tool list is no tool list" begin
+        chat = Chat(tools=Tool[], parallel_tool_calls=true)
+        @test isnothing(chat.tools) && isnothing(chat.parallel_tool_calls)
+        @test !haskey(JSON.lower(chat), :tools)
+    end
+
+    @testset "logit_bias: any real bias in [-100, 100]" begin
+        @test Chat(logit_bias=Dict("50256" => -100)).logit_bias == Dict("50256" => -100)
+        @test JSON.parse(JSON.json(Chat(logit_bias=Dict("1" => 5, "2" => -2.5))))["logit_bias"] ==
+              Dict("1" => 5, "2" => -2.5)
+        @test_throws ArgumentError Chat(logit_bias=Dict("1" => 100.5))
+        @test_throws ArgumentError Chat(logit_bias=Dict("1" => -101))
+    end
+
+    @testset "Message roles are the four the wire knows" begin
+        for role in (UniLM.RoleSystem, UniLM.RoleUser, UniLM.RoleAssistant)
+            @test Message(role=role, content="x").role == role
+        end
+        @test Message(role=UniLM.RoleTool, content="r", tool_call_id="c").role == UniLM.RoleTool
+        @test_throws ArgumentError Message(role="bot", content="x")
+        @test_throws ArgumentError Message(role="System", content="x")
+    end
+
+    @testset "Embeddings store floats: encoding_format is float or unset" begin
+        @test UniLM.Embeddings("x"; encoding_format="float").encoding_format == "float"
+        @test_throws ArgumentError UniLM.Embeddings("x"; encoding_format="base64")
+        @test_throws ArgumentError UniLM.Embeddings(["x", "y"]; encoding_format="base64")
+    end
+
+    @testset "a missing embeddings model names the service" begin
+        err = try UniLM.Embeddings("x"; service=DeepSeekEndpoint(api_key="k")) catch e; e end
+        @test err isa ArgumentError && occursin("DeepSeekEndpoint", err.msg)
+        err2 = try UniLM.Embeddings("x"; service=_NoEmbeddingDefault) catch e; e end
+        @test err2 isa ArgumentError && occursin("_NoEmbeddingDefault", err2.msg) &&
+              !occursin("DataType", err2.msg)
+    end
+end
+
+@testset "streamed usage is requested from OpenAI and DeepSeek" begin
+    # Both stream token usage only when asked (`stream_options.include_usage`), so an
+    # unasked stream was costed at zero.
+    sys_user = [Message(Val(:system), "s"), Message(Val(:user), "u")]
+    auto = Dict(:include_usage => true)
+    @test JSON.lower(Chat(stream=true, messages=sys_user))[:stream_options] == auto
+    @test JSON.lower(Chat(service=DeepSeekEndpoint(api_key="k"), stream=true,
+                          messages=sys_user))[:stream_options] == auto
+    # The caller's own choice stands; nothing is asked of a non-stream or an unknown server.
+    own = Dict("include_usage" => false)
+    @test JSON.lower(Chat(stream=true, stream_options=own))[:stream_options] === own
+    @test !haskey(JSON.lower(Chat(messages=sys_user)), :stream_options)
+    @test !haskey(JSON.lower(Chat(service=GenericOpenAIEndpoint("http://h", ""), model="m",
+                                  stream=true)), :stream_options)
+    # The Chat itself is not mutated.
+    c = Chat(stream=true)
+    JSON.json(c)
+    @test isnothing(c.stream_options)
+end
+
+@testset "accessors on a non-success result throw LLMResultError" begin
+    @test_throws LLMResultError embedding_vectors(EmbeddingFailure(response="bad", status=400))
+    @test_throws LLMResultError embedding_vectors(EmbeddingCallError(error="network down"))
+    err = try embedding_vectors(EmbeddingFailure(response="rate limited", status=429)) catch e; e end
+    shown = sprint(showerror, err)
+    @test occursin("429", shown) && occursin("rate limited", shown) && occursin("no result data", shown)
+    # Any non-success result can be carried and rendered.
+    @test LLMResultError(ImageFailure(response="x", status=500)).result isa ImageFailure
+    @test occursin("unknown", sprint(showerror, LLMResultError(ImageCallError(error="boom"))))
 end

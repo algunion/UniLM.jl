@@ -667,52 +667,58 @@ function _parse_usage(data::Dict{String,Any})::Union{TokenUsage, Nothing}
     _token_usage_from(u)
 end
 
+"""
+    extract_message(resp::HTTP.Response) -> (; message::Message, usage)
+
+Decode the first choice of an OpenAI-wire Chat Completions reply. No part of the
+choice is dropped for its shape: tool calls are decoded whenever present, with any
+text kept alongside; content given as an array of parts is joined from its text
+parts; a refusal is kept; `""` tool arguments decode as an empty object. A choice
+that carries nothing is the empty turn it is (`content = ""` — a reasoning model can
+spend the whole budget on thought tokens). The finish reason is the wire's, except
+that a tool-call turn finished with `"stop"` or none reads `"tool_calls"`.
+"""
 function extract_message(resp::HTTP.Response)
-    received_message = JSON.parse(resp.body; dicttype=Dict{String,Any})
-    choices = get(received_message, "choices", [])
-    isempty(choices) && error("API returned empty choices array")
-    finish_reason = choices[1]["finish_reason"]
-    message = choices[1]["message"]
-    usage = _parse_usage(received_message)
-    msg = if finish_reason == TOOL_CALLS && haskey(message, "tool_calls")
-        Message(role=RoleAssistant, tool_calls=_decode_tool_calls(message["tool_calls"]),
-                finish_reason=TOOL_CALLS)
-    elseif haskey(message, "content") && !isnothing(message["content"])
-        # Preserve content for ANY finish_reason (incl. "length"/truncated) — never discard partial output.
-        Message(role=RoleAssistant, content=message["content"], finish_reason=finish_reason)
-    elseif haskey(message, "refusal") && !isnothing(message["refusal"])
-        # A refusal may arrive with finish_reason "content_filter" OR "stop" — capture it regardless.
-        Message(role=RoleAssistant, refusal_message=message["refusal"], finish_reason=finish_reason)
+    received = JSON.parse(resp.body; dicttype=Dict{String,Any})
+    choices = get(received, "choices", nothing)
+    (choices isa AbstractVector && !isempty(choices)) || error("API returned empty choices array")
+    choice = first(choices)
+    message = choice["message"]
+    finish = get(choice, "finish_reason", nothing)
+    text = _content_text(get(message, "content", nothing))
+    refusal = get(message, "refusal", nothing)
+    refusal isa AbstractString || (refusal = nothing)
+    raw_calls = get(message, "tool_calls", nothing)
+    msg = if raw_calls isa AbstractVector && !isempty(raw_calls)
+        Message(role=RoleAssistant, content=(isnothing(text) || isempty(text) ? nothing : text),
+                tool_calls=_decode_tool_calls(raw_calls), refusal_message=refusal,
+                finish_reason=_tool_finish_reason(finish))
     else
-        # A well-formed choice that carries no text is a real turn, not a missing one:
-        # a reply that is only tool calls (some providers finish those with "stop"),
-        # or a reasoning model that spent the whole completion budget on thought
-        # tokens and finished with "length". Report what arrived. Substituting prose
-        # would inject text nobody generated into the reply AND into the next
-        # request's history, and — for the tool-only shape — silently drop the calls.
-        # A response with no choices at all is a different thing and already errors
-        # above, which the verb turns into its typed error result.
-        tcalls = get(message, "tool_calls", nothing)
-        isnothing(tcalls) || isempty(tcalls) ?
-            Message(role=RoleAssistant, content="", finish_reason=finish_reason) :
-            Message(role=RoleAssistant, tool_calls=_decode_tool_calls(tcalls),
-                    finish_reason=finish_reason)
+        Message(role=RoleAssistant, content=(isnothing(text) && !isnothing(refusal) ? nothing : something(text, "")),
+                refusal_message=refusal, finish_reason=finish)
     end
-    (; message=msg, usage)
+    (; message=msg, usage=_parse_usage(received))
 end
 
-# OpenAI-wire `tool_calls` array → the neutral ToolCall vector. Shared by the
-# finish_reason=="tool_calls" branch and the empty-content branch, which reaches the
-# same shape when a provider finishes a tool-only turn with some other reason.
-function _decode_tool_calls(raw)::Vector{ToolCall}
-    tcalls = ToolCall[]
-    for x in raw
-        fdict = x["function"]
-        args = JSON.parse(fdict["arguments"]; dicttype=Dict{String,Any})
-        push!(tcalls, ToolCall(id=x["id"], func=GPTFunction(fdict["name"], args)))
-    end
-    tcalls
-end
+# Message content as text: a string as is; an array of content parts (the form
+# requests use, which OpenAI-compatible servers may echo) joined from its text parts.
+_content_text(s::AbstractString)::String = String(s)
+_content_text(parts::AbstractVector)::String =
+    join(p["text"] for p in parts
+         if p isa AbstractDict && get(p, "type", "text") == "text" && get(p, "text", nothing) isa AbstractString)
+_content_text(::Nothing) = nothing
+
+# The finish reason of a turn that carries tool calls: the wire's own, with
+# "tool_calls" standing in for none or "stop" (providers close tool turns with
+# either). A turn cut at "length" or filtered keeps that reason, so no tool loop
+# dispatches its partial calls.
+_tool_finish_reason(reason::Union{Nothing,AbstractString})::String =
+    isnothing(reason) || reason == STOP ? TOOL_CALLS : String(reason)
+
+# OpenAI-wire `tool_calls` array → the neutral ToolCall vector.
+_decode_tool_calls(raw::AbstractVector)::Vector{ToolCall} =
+    [ToolCall(id=x["id"], func=GPTFunction(x["function"]["name"], _parse_tool_arguments(x["function"]["arguments"])))
+     for x in raw]
 
 """Mutable accumulator for streaming Chat Completions chunks."""
 @kwdef mutable struct StreamState
@@ -745,11 +751,31 @@ end
     # Rides the result as `sse_dropped`, so a turn built from a truncated wire is
     # distinguishable from a clean one.
     sse_dropped::Int = 0
+    # Streamed tool-call (name, arguments) fragments by index: appended in
+    # O(fragment) and joined onto `tool_calls` once, by `_tool_function!` —
+    # re-concatenating a String per fragment is quadratic in the argument length.
+    tool_fragments::Dict{Int,NTuple{2,IOBuffer}} = Dict{Int,NTuple{2,IOBuffer}}()
+end
+
+# The (name, arguments) fragment buffers of streamed tool call `idx`.
+_tool_fragments!(state::StreamState, idx::Int)::NTuple{2,IOBuffer} =
+    get!(() -> (IOBuffer(), IOBuffer()), state.tool_fragments, idx)
+
+# The function dict of streamed tool call `idx`, with its buffered fragments joined
+# on. The buffers are consumed, so reading a call again returns the same strings.
+function _tool_function!(state::StreamState, idx::Int)::Dict{String,Any}
+    fdict = state.tool_calls[idx]["function"]
+    frags = pop!(state.tool_fragments, idx, nothing)
+    if !isnothing(frags)
+        fdict["name"] = fdict["name"] * takestring!(frags[1])
+        fdict["arguments"] = fdict["arguments"] * takestring!(frags[2])
+    end
+    fdict
 end
 
 function _build_stream_message(state::StreamState)::Message
-    content = String(take!(state.content))
-    refusal = String(take!(state.refusal))
+    content = takestring!(state.content)
+    refusal = takestring!(state.refusal)
     # Echo complete captures only: a block still pending (its stop line was
     # dropped as malformed) means the capture is incomplete — fall back to
     # neutral reconstruction rather than echo a partial turn.
@@ -760,25 +786,26 @@ function _build_stream_message(state::StreamState)::Message
     pc = (isnothing(provider) || isempty(state.raw_blocks) ||
           !isempty(state.raw_pending)) ? nothing :
          ProviderContent(provider, state.raw_blocks)
+    # The finish reason is reported as it arrived: none when the provider sent none.
     if !isempty(state.tool_calls)
-        tcalls = ToolCall[]
-        for idx in sort!(collect(keys(state.tool_calls)))
+        tcalls = map(sort!(collect(keys(state.tool_calls)))) do idx
             tc_data = state.tool_calls[idx]
-            fdict = tc_data["function"]
+            fdict = _tool_function!(state, idx)
             args = _parse_tool_arguments(fdict["arguments"])   # "" → Dict{String,Any}() (zero-arg tool call)
-            push!(tcalls, ToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
-                thought_signature=get(tc_data, "thought_signature", nothing)))
+            ToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
+                     thought_signature=get(tc_data, "thought_signature", nothing))
         end
         # Keep accumulated text ALONGSIDE the tool calls: providers emit
         # both in one turn and the non-streaming decoders already preserve both.
         Message(role=RoleAssistant, content=(isempty(content) ? nothing : content),
-                tool_calls=tcalls, finish_reason=TOOL_CALLS, provider_content=pc)
+                tool_calls=tcalls, finish_reason=_tool_finish_reason(state.finish_reason),
+                provider_content=pc)
     elseif isempty(content) && !isempty(refusal)
         Message(role=RoleAssistant, refusal_message=refusal,
-                finish_reason=something(state.finish_reason, STOP), provider_content=pc)
+                finish_reason=state.finish_reason, provider_content=pc)
     else
         Message(role=RoleAssistant, content=content,
-                finish_reason=something(state.finish_reason, STOP), provider_content=pc)
+                finish_reason=state.finish_reason, provider_content=pc)
     end
 end
 
@@ -813,6 +840,78 @@ decode_response(service::OpenAIWireEndpointSpec, resp::HTTP.Response) = extract_
 # ─── Streaming driver helpers ────────────────────────────────────────────────
 
 """
+    _CloseRef(stop::CancelToken) <: Ref{Bool}
+
+The `close` flag handed to streaming callbacks. Setting it `true` — from the
+callback or from any other task — also cancels `stop`, the token the call's
+request context is aborted on, so a stop takes effect at once rather than at the
+next chunk. The flag is atomic, so a write from another task is well-defined.
+"""
+mutable struct _CloseRef <: Ref{Bool}
+    @atomic flag::Bool
+    const stop::CancelToken
+    _CloseRef(stop::CancelToken) = new(false, stop)
+end
+Base.getindex(r::_CloseRef)::Bool = @atomic r.flag
+function Base.setindex!(r::_CloseRef, v)
+    flag = convert(Bool, v)
+    @atomic r.flag = flag
+    flag && cancel!(r.stop)
+    return r
+end
+
+# An exception raised by user code (a streaming callback or `on_tool_call`). The
+# field is named neither `error` nor `cause`: the transport and teardown classifiers
+# walk those, and a failing callback is never connection noise.
+struct _UserCallbackError <: Exception
+    thrown::Any
+end
+
+# Per-call streaming control, shared by every attempt of one call: the caller's
+# token (a stop from it reports source `:token`); the stop token every attempt's
+# request context is aborted on — cancelled by the caller's token and by the
+# callback's close flag (source `:callback`); whether user code has run (a retry
+# after that would replay output); and the first exception user code raised,
+# recorded before HTTP.jl can replace it with its rendering of the aborted exchange.
+mutable struct _StreamCtl
+    const token::Union{Nothing,CancelToken}
+    const stop::CancelToken
+    const close::_CloseRef
+    fired::Bool
+    failure::Union{Nothing,_UserCallbackError}
+end
+function _StreamCtl(token::Union{Nothing,CancelToken})
+    stop = CancelToken()
+    _StreamCtl(token, stop, _CloseRef(stop), false, nothing)
+end
+
+# The typed stop a stopped call reports; the caller's token wins over the close flag.
+function _stop_cause(ctl::_StreamCtl, t0::UInt64)::UniLMCancelled
+    c = UniLMCancelled(iscancelled(ctl.token) ? :token : :callback, _elapsed_s(t0))
+    @debug "stream stopped" source = c.source elapsed = c.elapsed
+    c
+end
+
+# Run user code from a stream driver. It is user-visible output from its first
+# instruction (no retry after it), its duration is not wire idle time, and what it
+# throws is recorded and raised as `_UserCallbackError` — except an interrupt, which
+# is the user's intent and propagates unchanged.
+function _user_call(f, ctl::_StreamCtl, idle, args...)
+    ctl.fired = true
+    _enter_user!(idle)
+    try
+        f(args...)
+    catch e
+        e isa InterruptException && rethrow()
+        err = _UserCallbackError(e)
+        isnothing(ctl.failure) && (ctl.failure = err)
+        throw(err)
+    finally
+        _exit_user!(idle)
+    end
+end
+
+"""
     _flush_delta!(callback, state::StreamState, close_ref) -> Nothing
 
 Forward collected-but-unsent text deltas to the streaming callback verbatim.
@@ -821,7 +920,7 @@ directly — no `take!`/re-print churn, no byte-offset diffing (which broke on
 multibyte boundaries and was O(n²)).
 """
 function _flush_delta!(callback, state::StreamState, close_ref)::Nothing
-    delta = String(take!(state.pending_delta))
+    delta = takestring!(state.pending_delta)
     isnothing(callback) || isempty(delta) || callback(delta, close_ref)
     nothing
 end
@@ -834,8 +933,10 @@ tool call at index `i` is complete when (a) `i` is no longer the max index (a
 later call started), OR (b) its entry carries `"complete" => true` (Anthropic
 `content_block_stop` / Gemini whole-part functionCall), OR (c) the stream is
 done (`stream_done` — the final sweep). Fires at most once per index
-(`state.fired_tool_calls`). Empty accumulated arguments parse as
-`Dict{String,Any}()` via `_parse_tool_arguments`.
+(`state.fired_tool_calls`), marked before the callback runs, so what
+`on_tool_call` throws propagates without a re-fire (the drivers pass it wrapped
+in `_user_call`). Empty accumulated arguments parse as `Dict{String,Any}()` via
+`_parse_tool_arguments`.
 """
 function _fire_tool_calls!(on_tool_call, state::StreamState, stream_done::Bool)::Nothing
     (isnothing(on_tool_call) || isempty(state.tool_calls)) && return nothing
@@ -844,22 +945,19 @@ function _fire_tool_calls!(on_tool_call, state::StreamState, stream_done::Bool):
         idx in state.fired_tool_calls && continue
         tc_data = state.tool_calls[idx]
         stream_done || idx < maxidx || get(tc_data, "complete", false) === true || continue
-        fdict = tc_data["function"]
+        fdict = _tool_function!(state, idx)
         args = try
             _parse_tool_arguments(fdict["arguments"])
         catch e
+            e isa InterruptException && rethrow()
             # A COMPLETE call's arguments cannot improve later: warn once, never retry.
             push!(state.fired_tool_calls, idx)
             @warn "on_tool_call: undecodable tool-call arguments; not firing" index = idx exception = e
             continue
         end
         push!(state.fired_tool_calls, idx)   # before the user callback: a throwing callback must not re-fire
-        try
-            on_tool_call(ToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
-                thought_signature=get(tc_data, "thought_signature", nothing)))
-        catch e
-            @warn "on_tool_call callback error" exception = e
-        end
+        on_tool_call(ToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
+                              thought_signature=get(tc_data, "thought_signature", nothing)))
     end
     nothing
 end
@@ -868,7 +966,8 @@ end
     _stream_error_result(chat, err::Dict{String,Any}, request_id, sse_dropped=0)
 
 Map an in-band SSE `error` payload (`state.error`) to a typed non-success
-result: a Gemini numeric error code preserves the reported status;
+result: a numeric error code (Gemini; OpenAI-compatible servers such as vLLM)
+preserves the reported status;
 `overloaded_error` is the documented
 529-equivalent → `LLMFailure(status=529)` (status-keyed policies see it);
 any other in-band error type → `LLMCallError` (no fabricated HTTP status, and
@@ -917,48 +1016,47 @@ function _stream_success(chat::Chat, msg::Message, usage::Union{TokenUsage,Nothi
 end
 
 """
-    _stream_attempt(chat, body, callback, on_tool_call, cfg, t0, io_ref) -> (; result, resp)
+    _stream_attempt(chat, body, callback, on_tool_call, cfg, t0, io_ref, ctl) -> (; result, resp)
 
-ONE streaming connection attempt with fresh accumulation state. `callback`/`on_tool_call`
-arrive pre-wrapped by `_stream_drive` (they flip its callback-fired flag). Returns the
-typed result plus the `HTTP.Response` (`nothing` when the turn was recovered from
-teardown noise) so the caller can honor `Retry-After`; throws on connect/first-byte
-timeout and transport failures — retry classification is the caller's job. A breach of the byte-gap idle
-bound throws `UniLMTimeout(:stream_idle, …)` wherever in the attempt it fires (on the
-2.x major the native read-idle timer also bounds the response-header wait, so it can
+ONE streaming connection attempt with fresh accumulation state. User code
+(`callback`, `on_tool_call`) runs through [`_user_call`](@ref). Returns the typed result
+plus the `HTTP.Response` (`nothing` when the turn was recovered from teardown noise or a
+late stop) so the caller can honor `Retry-After`; throws on connect/first-byte timeout
+and transport failures — retry classification is the caller's job — on a stop
+(`UniLMCancelled`) and on a user-code failure (`_UserCallbackError`). A breach of the
+byte-gap idle bound throws `UniLMTimeout(:stream_idle, …)` wherever in the attempt it
+fires (the native read-idle timer also bounds the response-header wait, so it can
 undercut the request-phase bound; see `_classify_stream_timeout`). `StreamState`, the
 SSE line carry, and the raw byte log are all locals: a retried attempt cannot inherit
 partial SSE state.
 """
 function _stream_attempt(chat::Chat, body, callback, on_tool_call,
-                         cfg::RequestConfig, t0::UInt64, io_ref)
+                         cfg::RequestConfig, t0::UInt64, io_ref, ctl::_StreamCtl)
     state = StreamState()
     m = Ref{Union{Message,Nothing}}(nothing)
-    stream_usage = Ref{Union{TokenUsage,Nothing}}(nothing)
-    stream_error = Ref{Union{Dict{String,Any},Nothing}}(nothing)
-    raw_buffer = IOBuffer()  # wire bytes for non-200/truncation reporting (streamed resp.body is empty under HTTP 2.x)
-    # Idle-guard handle is owned by deadline.jl (opaque here; `nothing` until armed and
-    # whenever the idle timeout is disabled) — hence the untyped Ref.
-    idle = Ref{Any}(nothing)
+    raw_buffer = IOBuffer()  # wire bytes for non-200/truncation reporting (a streamed resp.body is empty)
+    idle = Ref{Union{Nothing,_IdleGuard}}(nothing)   # armed at the first byte; stays nothing when disabled
     # Request-phase bound, recorded before it unwinds through HTTP.jl (see
     # `_with_recorded_deadline`): the catch restores it as the surfaced cause
     # when the library's teardown of the bound-closed socket replaces it.
     bound = Ref{Union{Nothing,UniLMTimeout}}(nothing)
-    # SSE must reach the parser uncompressed. Some providers (e.g. Anthropic) gzip even
-    # streamed responses, and HTTP.jl's streaming read loop does NOT auto-decompress on the
-    # 1.x major — raw gzip bytes hit the SSE parser, every chunk fails to decode, and no
-    # message is built (→ LLMFailure). Request identity encoding + disable decompression so
-    # `data:` lines arrive verbatim on both HTTP majors.
+    cb = isnothing(callback) ? nothing : (x, c) -> _user_call(callback, ctl, idle[], x, c)
+    otc = isnothing(on_tool_call) ? nothing : tc -> _user_call(on_tool_call, ctl, idle[], tc)
+    # SSE must reach the parser uncompressed: some providers (e.g. Anthropic) gzip even
+    # streamed responses, and raw gzip bytes fail every line's decode, so no message is
+    # built (→ LLMFailure). Request identity encoding and disable decompression so
+    # `data:` lines arrive verbatim.
     stream_headers = push!(copy(auth_header(chat.service)), "Accept-Encoding" => "identity")
     try
-        # Seam-routed: _http_open applies the per-major native timeout kwargs plus
+        # Seam-routed: _http_open applies the native stream timeout kwargs plus
         # status_exception=false and retry=false (HTTP.jl's internal retries would
-        # silently multiply the attempt budget); decompress=false passes through.
-        resp = _http_open("POST", get_url(chat), stream_headers; cfg, t0, decompress=false) do io
+        # silently multiply the attempt budget) and aborts the exchange on `ctl.stop`;
+        # decompress=false passes through.
+        resp = _http_open("POST", get_url(chat), stream_headers; cfg, t0, cancel=ctl.stop,
+                          decompress=false) do io
             io_ref[] = io
             carry = IOBuffer()                 # layer-1 partial-line carry
             current_event = Ref("")            # layer-2 sticky event name
-            close_ref = Ref(false)
             status = :continue
             # First byte = response headers received. The request-phase deadline guards
             # the whole send/first-byte exchange; the total deadline governs a stream
@@ -971,26 +1069,30 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
                 end, () -> close(io),
                 min(_remaining_s(cfg, t0), cfg.request_timeout), :request, bound)
             idle[] = _idle_guard(() -> close(io), cfg.stream_idle_timeout)
-            while !eof(io) && !close_ref[] && status === :continue
+            # `eof` first: after `[DONE]` it consumes the body's end, which keeps the
+            # connection reusable. A stop aborts the connection, so it never blocks here.
+            while !eof(io) && !iscancelled(ctl.stop) && status === :continue
                 raw = String(readavailable(io))
-                idle[] === nothing || _touch!(idle[])
+                _touch!(idle[])
                 write(raw_buffer, raw)
                 status = _sse_dispatch!(chat.service, carry, current_event, raw, state)
-                _fire_tool_calls!(on_tool_call, state, false)
-                _flush_delta!(callback, state, close_ref)
+                _fire_tool_calls!(otc, state, false)
+                _flush_delta!(cb, state, ctl.close)
             end
-            if status === :continue && !close_ref[]
+            if status === :continue && !iscancelled(ctl.stop)
                 # EOF flush: a final line the server never '\n'-terminated
                 # (e.g. `data: [DONE]` as the very last bytes) is still one
                 # complete line — dispatch it before finalizing.
-                tail = String(take!(carry))
+                tail = takestring!(carry)
                 if !isempty(tail)
                     status = _sse_dispatch!(chat.service, carry, current_event, tail * "\n", state)
-                    _fire_tool_calls!(on_tool_call, state, false)
-                    _flush_delta!(callback, state, close_ref)
+                    _fire_tool_calls!(otc, state, false)
+                    _flush_delta!(cb, state, ctl.close)
                 end
             end
-            stream_error[] = state.error
+            # A stop ends the attempt here, before finalization and without draining
+            # the body; the catch decides whether a completed turn still stands.
+            iscancelled(ctl.stop) && throw(_stop_cause(ctl, t0))
             # Terminal contract: `:done` is the sentinel EOS
             # ([DONE] / message_stop). Gemini has NO sentinel — its handler
             # never returns :done; its stream ends at EOF with finishReason
@@ -998,60 +1100,69 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
             # (or a non-200 error body) → no message → LLMFailure below.
             finished = status === :done ||
                        (status === :continue && !isnothing(state.finish_reason))
-            if isnothing(state.error) && !close_ref[]
+            if isnothing(state.error)
                 if finished
-                    stream_usage[] =
-                        _finalize_stream_message!(state, callback, on_tool_call, close_ref, m).usage
+                    _finalize_stream_message!(state, cb, otc, ctl.close, m)
                 else
-                    # No terminal, no exception: a guard's close landing while the
-                    # driver was inside a user callback truncates the read into a
-                    # clean EOF, so the loop just ends. Raise what the throwing
-                    # path would have raised, or the kill reads as a 200 with
-                    # partial bytes (or, worse, as a truncated success).
+                    # No terminal, no exception: a guard's close landing as the driver
+                    # entered a user callback truncates the read into a clean EOF, so
+                    # the loop just ends. Raise what the throwing path would have
+                    # raised, or the kill reads as a 200 with partial bytes (or, worse,
+                    # as a truncated success).
                     breach = _exit_breach(idle[], bound, cfg)
                     breach === nothing || throw(breach)
                 end
             end
-            close_ref[] && @info "stream closed by user"
-            HTTP.closeread(io)
+            # A stop from the terminal callback leaves the recorded turn standing; the
+            # aborted body is not drained.
+            iscancelled(ctl.stop) || HTTP.closeread(io)
         end
-        serr = stream_error[]
+        serr = state.error
         if !isnothing(serr)
             # In-band `error` event on an HTTP-200 stream: never LLMSuccess.
             return (; result=_stream_error_result(chat, serr, _get_request_id(resp),
                                                   state.sse_dropped), resp)
         elseif resp.status == 200 && !isnothing(m[])
-            return (; result=_stream_success(chat, m[]::Message, stream_usage[],
+            return (; result=_stream_success(chat, m[]::Message, state.usage,
                                              state.sse_dropped), resp)
         else
-            return (; result=LLMFailure(status=resp.status, response=String(take!(raw_buffer)),
+            return (; result=LLMFailure(status=resp.status, response=takestring!(raw_buffer),
                                         self=chat, request_id=_get_request_id(resp),
                                         sse_dropped=state.sse_dropped), resp)
         end
     catch e
         # Chain-walk: an interrupt nested inside a wrapper must still surface first.
         _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
+        # User code failed: its exception is the outcome — never teardown noise and
+        # never retried, whatever HTTP.jl surfaced while the exchange unwound.
+        failure = ctl.failure
+        isnothing(failure) || throw(failure)
         # Byte-gap idle breach: classified by `_classify_stream_timeout` from the
-        # seam's armed-timer set (our guard's close echo, or the 2.x native
-        # read-idle timer — which can fire before the first byte too, while the
+        # seam's armed-timer set (our guard's close echo, or the native read-idle
+        # timer — which can fire before the first byte too, while the
         # response-header wait is still in progress). Never a retryable
         # transport failure, regardless of when in the attempt it fired.
         breach = _classify_stream_timeout(e, idle[], cfg, t0)
+        stopped = iscancelled(ctl.stop)
         # Teardown of an exchange that already produced its answer. The turn is
         # complete when EITHER the terminal message is recorded (`m[]`) or the
         # provider's own completion marker is (`state.finish_reason` — the only
         # signal an EOF-less provider gives, and all that survives when the
         # connection dies on the read that would have carried the sentinel). The
         # generation is billed and its deltas are already delivered, so teardown
-        # noise must neither discard it nor re-POST it (the caller's retry limbs
-        # would bill a second generation). Failures that are NOT teardown-shaped
-        # — a throwing user callback, a decoding bug — still surface below.
-        # Finalization is at-most-once, so this never doubles the terminal callback.
+        # noise — or a stop arriving after the terminal — must neither discard it
+        # nor re-POST it (the caller's retry limbs would bill a second generation).
+        # Failures that are NOT teardown-shaped — a decoding bug — still surface
+        # below. Finalization is at-most-once, so this never doubles the terminal
+        # callback.
         if isnothing(state.error) && (!isnothing(m[]) || !isnothing(state.finish_reason)) &&
-           _stream_teardown_noise(e, breach)
-            fin = _finalize_stream_message!(state, callback, on_tool_call, Ref(false), m)
+           (stopped || _stream_teardown_noise(e, breach))
+            fin = _finalize_stream_message!(state, cb, otc, ctl.close, m)
             return (; result=_stream_success(chat, fin.msg, fin.usage, state.sse_dropped), resp=nothing)
         end
+        # Stopped before the turn completed: whatever surfaced (HTTP.jl's rendering
+        # of the aborted exchange, a racing bound) is the stop's echo.
+        stopped && throw(_stop_cause(ctl, t0))
         breach === nothing || throw(breach)
         # Recorded request-phase bound: the typed cause that initiated the
         # teardown takes precedence over whatever the library surfaced while
@@ -1061,15 +1172,14 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
         # bound fired.
         bt = bound[]
         bt === nothing || throw(bt)
-        # Remaining native timeouts are connect-phase (2.x connect/TLS labels,
-        # 1.x connect sentinel); map them to the same phase-attributed
-        # UniLMTimeout the non-stream seam produces so a raw HTTP.TimeoutError
-        # never leaks as the failure cause.
+        # Remaining native timeouts are connect-phase (connect/TLS labels); map them
+        # to the same phase-attributed UniLMTimeout the non-stream seam produces so a
+        # raw HTTP.TimeoutError never leaks as the failure cause.
         mapped = _map_native_timeout(e, cfg, min(_remaining_s(cfg, t0), cfg.request_timeout), t0)
         mapped === nothing || throw(mapped)
         rethrow()
     finally
-        idle[] === nothing || _disarm!(idle[])
+        _disarm!(idle[])
         # One statement per attempt, on every exit — a retried attempt starts from a
         # fresh StreamState, so each connection reports only what IT dropped.
         _warn_sse_drops(state.sse_dropped, chat.model, "chat stream")
@@ -1077,27 +1187,24 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
 end
 
 """
-    _stream_drive(chat, body, callback, on_tool_call, cfg, t0) -> LLMRequestResponse
+    _stream_drive(chat, body, callback, on_tool_call, cfg, t0, token) -> LLMRequestResponse
 
-Streaming request loop. Retry is legal only while NO user callback has fired — a
-retried attempt after user-visible output would replay or reorder it. Retryable
-pre-first-callback outcomes: retryable HTTP status, the in-band `overloaded_error`
-(documented 529 equivalent — `_stream_error_result` maps it to `LLMFailure(status=529)`,
-so the status rule covers both twins), a connect/request-phase `UniLMTimeout`, and
-transport IO failures. Backoff/budget arithmetic is `_retry_pause` — identical to the
-non-stream loop. `InterruptException` always rethrows; every other failure becomes a
-typed result value.
+Streaming request loop. Retry is legal only while NO user code has run — a retried
+attempt after user-visible output would replay or reorder it. Retryable pre-callback
+outcomes: retryable HTTP status, the in-band `overloaded_error` (documented 529
+equivalent — `_stream_error_result` maps it to `LLMFailure(status=529)`, so the status
+rule covers both twins), a connect/request-phase `UniLMTimeout`, and transport IO
+failures. Backoff/budget arithmetic is `_retry_pause` — identical to the non-stream
+loop — and a backoff wakes at once on a stop. A stop (`token`, or the callback's close
+flag) ends the call with `UniLMCancelled` in `cause`, never retried; an exception from
+user code ends it with that exception in `cause`. `InterruptException` always
+rethrows; every other failure becomes a typed result value.
 """
-function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestConfig, t0::UInt64)
+function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestConfig, t0::UInt64,
+                       token::Union{Nothing,CancelToken})
     io_ref = Ref{Union{HTTP.Stream,Nothing}}(nothing)
-    callback_fired = Ref(false)
-    # Flip the flag immediately BEFORE user code runs (a throwing callback still
-    # counts as fired). Wrapping here keeps _flush_delta!/_fire_tool_calls!
-    # signatures untouched.
-    cb = isnothing(callback) ? nothing :
-         (chunk, close_ref) -> (callback_fired[] = true; callback(chunk, close_ref))
-    otc = isnothing(on_tool_call) ? nothing :
-          tc -> (callback_fired[] = true; on_tool_call(tc))
+    ctl = _StreamCtl(token)
+    link = _on_cancel(() -> cancel!(ctl.stop), token)   # the caller's token stops the call
     attempt = 0
     try
         while true
@@ -1105,29 +1212,27 @@ function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestCon
             _remaining_s(cfg, t0) <= 0.0 &&
                 throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
             outcome = try
-                _stream_attempt(chat, body, cb, otc, cfg, t0, io_ref)
+                _stream_attempt(chat, body, callback, on_tool_call, cfg, t0, io_ref, ctl)
             catch e
                 _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
                 u = _unwrap_exception(e)
-                retryable = (u isa UniLMTimeout && (u.phase === :connect || u.phase === :request)) ||
-                            _is_transport_error(u)
-                (retryable && !callback_fired[] && attempt < cfg.max_attempts) || rethrow()
+                (_retryable_exception(u) && !ctl.fired && attempt < cfg.max_attempts) || rethrow()
                 action, delay = _retry_pause(cfg, t0, attempt, nothing)
                 if action !== :sleep
                     @warn "stream retry abandoned: backoff exceeds the remaining deadline" attempt delay
                     rethrow()
                 end
                 @debug "stream attempt failed; retrying" attempt exception = u
-                sleep(delay)
+                _cancel_sleep(ctl.stop, delay) && throw(_stop_cause(ctl, t0))
                 continue
             end
             result = outcome.result
             if result isa LLMFailure && _is_retryable(result.status) &&
-               !callback_fired[] && attempt < cfg.max_attempts
+               !ctl.fired && attempt < cfg.max_attempts
                 action, delay = _retry_pause(cfg, t0, attempt, outcome.resp)
                 if action === :sleep
                     @debug "retryable streamed status; retrying" attempt status = result.status
-                    sleep(delay)
+                    _cancel_sleep(ctl.stop, delay) && throw(_stop_cause(ctl, t0))
                     continue
                 end
                 # Budget cut: the last REAL outcome is the truthful answer — never a
@@ -1140,22 +1245,37 @@ function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestCon
         _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
         u = _unwrap_exception(e)
         req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : _get_request_id(e)
+        u isa _UserCallbackError &&
+            return LLMCallError(error=_error_text(u.thrown), self=chat, status=nothing,
+                                request_id=req_id, cause=u.thrown isa Exception ? u.thrown : nothing)
         u isa UniLMTimeout &&
             return LLMCallError(error=sprint(showerror, u), self=chat, status=nothing,
                                 request_id=req_id, cause=u)
         statuserror = hasproperty(u, :status) ? u.status : nothing
         return LLMCallError(error=_error_text(e), self=chat, status=statuserror,
                             request_id=req_id, cause=u isa Exception ? u : nothing)
+    finally
+        _off_cancel(token, link)
     end
+end
+
+# With history on, the reply is appended to the conversation; one that ends with an
+# assistant message could not take it (`push!` refuses consecutive assistant turns).
+# Refuse that before the billed call rather than after it.
+function _validate_reply_slot(chat::Chat)::Nothing
+    chat.history && !isempty(chat) && last(chat).role == RoleAssistant && throw(InvalidConversationError(
+        "the conversation ends with an assistant message, so the reply could not be appended; " *
+        "add a user message first, or set history=false to send it as a prefill"))
+    nothing
 end
 
 """
     _chatrequeststream(chat, body, callback=nothing; on_tool_call=nothing,
-                       cfg=_resolve_config(nothing), t0=time_ns()) -> Task
+                       cfg=_resolve_config(nothing), t0=time_ns(), cancel=_current_cancel()) -> Task
 
-Spawn the streaming request task. `cfg` and `t0` are resolved/stamped at call entry —
-BEFORE the spawn — and the task closes over the resolved struct, so a running stream is
-immune to later changes of the process-default configuration.
+Spawn the streaming request task. `cfg`, `t0` and the cancellation token are
+resolved/stamped at call entry — BEFORE the spawn — and the task closes over them, so
+a running stream is immune to later changes of the process-default configuration.
 
 The returned task throws only for a user `InterruptException` (every other failure is a
 typed result value), so `fetch` then raises a `TaskFailedException` whose
@@ -1164,13 +1284,14 @@ typed result value), so `fetch` then raises a `TaskFailedException` whose
 """
 function _chatrequeststream(chat::Chat, body, callback=nothing; on_tool_call=nothing,
                             cfg::RequestConfig=_resolve_config(nothing),
-                            t0::UInt64=time_ns())
-    Threads.@spawn _stream_drive(chat, body, callback, on_tool_call, cfg, t0)
+                            t0::UInt64=time_ns(),
+                            cancel::Union{Nothing,CancelToken}=_current_cancel())
+    Threads.@spawn _stream_drive(chat, body, callback, on_tool_call, cfg, t0, cancel)
 end
 
 
 """
-    chatrequest!(chat::Chat; config=nothing, callback=nothing, on_tool_call=nothing)
+    chatrequest!(chat::Chat; config=nothing, callback=nothing, on_tool_call=nothing, cancel=nothing)
 
 Send `chat` to its provider and return a typed result.
 
@@ -1183,44 +1304,64 @@ backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`,
 Streaming (`chat.stream === true`): returns a `Task` whose `fetch` yields the same
 typed results. `callback(chunk::Union{String,Message}, close::Ref{Bool})` receives
 text deltas then the final assembled `Message`; `on_tool_call(tc::ToolCall)` fires
-once per completed streamed tool call. A user `InterruptException` is never converted
-into a result value: it propagates, so `fetch` on the streaming task throws a
-`TaskFailedException` whose `task.exception` is the `InterruptException`.
+once per completed streamed tool call. Setting `close[] = true` — in the callback or
+from any other task — stops the stream at once: the call ends with
+`LLMCallError(status=nothing, cause=UniLMCancelled(:callback, …))`, unless the
+provider's terminal event was already recorded, in which case the turn stands (a
+success, committed). An exception thrown by `callback` or `on_tool_call` ends the
+call with that exception in `cause`: never retried, nothing committed, and no
+callback runs after it. Time spent in these callbacks does not count toward
+`stream_idle_timeout`, which bounds only the gap between bytes off the socket. A
+user `InterruptException` is never converted into a result value: it propagates, so
+`fetch` on the streaming task throws a `TaskFailedException` whose `task.exception`
+is the `InterruptException`.
 
 `config::Union{Nothing,RequestConfig}`: per-call timeout/retry budget; `nothing`
 resolves the ambient configuration (`with_request_config` scope, else the process
 default set via `set_default_config!`).
 
-Throws `ArgumentError` before any network I/O when `chat.service` is an endpoint
-type that declares its capabilities and does not list `:chat`. A custom endpoint
-declares none and is dispatched unvalidated.
+`cancel::Union{Nothing,CancelToken}`: a [`CancelToken`](@ref); `nothing` resolves the
+ambient token of [`with_cancel`](@ref), at call entry. A cancel at any point — before
+connecting, during the response-header wait, mid-stream, or during a retry backoff —
+ends the call with `LLMCallError(status=nothing, cause=UniLMCancelled(:token, …))`:
+never retried, nothing committed to `chat`, no terminal callback. A pre-cancelled token
+sends nothing. A TCP connect or TLS handshake already in progress cannot be interrupted
+(HTTP.jl 2.7.1), so a cancel during one takes effect when it completes or reaches
+`connect_timeout`.
+
+Local validation throws before any network I/O, streaming or not: `ArgumentError`
+when `chat.service` is an endpoint type that declares its capabilities and does not
+list `:chat` (a custom endpoint declares none and is dispatched unvalidated), or when
+the provider's encoder rejects the request (e.g. an option the provider or model does
+not support); `InvalidConversationError` when `chat.history` is on and the
+conversation ends with an assistant message, so the reply could not be appended.
 """
 function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
-                      callback=nothing, on_tool_call=nothing)
+                      callback=nothing, on_tool_call=nothing,
+                      cancel::Union{Nothing,CancelToken}=nothing)
     _validate_declared_capability(chat.service, :chat, "Chat Completions API")
+    _validate_reply_slot(chat)
+    body = encode_request(chat.service, chat)
     cfg = _resolve_config(config)
+    tok = _resolve_cancel(cancel)
     t0 = time_ns()
+    chat.stream === true && return _chatrequeststream(chat, body, callback; on_tool_call, cfg, t0, cancel=tok)
     local resp
     try
-        body = encode_request(chat.service, chat)
-        if chat.stream !== true
-            resp = _http_with_retries(cfg, t0, "POST", get_url(chat),
-                                      auth_header(chat.service), body)
-            if resp.status == 200
-                extracted = decode_response(chat.service, resp)
-                update!(chat, extracted.message)
-                result = LLMSuccess(message=extracted.message, self=chat, usage=extracted.usage)
-                _accumulate_cost!(chat, result)
-                return result
-            else
-                # Retry/backoff already happened inside the shared loop; the last
-                # real response is the truthful outcome (a budget-exhausted 429 is
-                # a 429, not a fabricated timeout).
-                return LLMFailure(status=resp.status, response=String(resp.body),
-                                  self=chat, request_id=_get_request_id(resp))
-            end
+        resp = _http_with_retries(cfg, t0, "POST", get_url(chat),
+                                  auth_header(chat.service), body; cancel=tok)
+        if resp.status == 200
+            extracted = decode_response(chat.service, resp)
+            update!(chat, extracted.message)
+            result = LLMSuccess(message=extracted.message, self=chat, usage=extracted.usage)
+            _accumulate_cost!(chat, result)
+            return result
         else
-            return _chatrequeststream(chat, body, callback; on_tool_call, cfg, t0)
+            # Retry/backoff already happened inside the shared loop; the last
+            # real response is the truthful outcome (a budget-exhausted 429 is
+            # a 429, not a fabricated timeout).
+            return LLMFailure(status=resp.status, response=String(resp.body),
+                              self=chat, request_id=_get_request_id(resp))
         end
     catch e
         e isa InterruptException && rethrow()
@@ -1234,24 +1375,29 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
 end
 
 """
-# Flexible keyword arguments usage
-chatrequest!(; kwargs...)
-Send a request to the OpenAI API to generate a response to the messages in `conv`.
+    chatrequest!(; messages, config=nothing, cancel=nothing, kwargs...)
+    chatrequest!(; systemprompt, userprompt, config=nothing, cancel=nothing, kwargs...)
 
-# Keyword Arguments
+Build a [`Chat`](@ref) from keyword arguments, send it with
+`chatrequest!(chat; config, cancel)`, and return that result (the reply is appended
+to `result.self`).
+
+The conversation is EITHER `messages` — copied, so the caller's vector is never
+mutated — OR `systemprompt` and `userprompt`, each a `String` or a [`Message`](@ref).
+Passing neither, only one prompt, or `messages` together with a prompt throws
+`ArgumentError` before any network I/O. Every other keyword is a [`Chat`](@ref)
+field, for example:
+
 - `service::ServiceEndpointSpec = OPENAIServiceEndpoint`: The provider endpoint type or instance.
-- `model::String = "gpt-5.6-sol"`: The model to use for the chat completion.
-- `systemprompt::Union{Message,String}`: The system prompt message.
-- `userprompt::Union{Message,String}`: The user prompt message.
-- `messages::Conversation = Message[]`: The conversation history or the system/prompt messages.
-- `history::Bool = true`: Whether to include the conversation history in the request.
+- `model::String`: The model; the service's default when omitted.
+- `history::Bool = true`: Whether the reply is appended to the conversation. It does not change what is sent.
 - `tools::Union{Vector{Tool},Nothing} = nothing`: A list of tools the model may call.
 - `tool_choice::Union{String,GPTToolChoice,Nothing} = nothing`: Controls which (if any) function is called by the model. e.g. "auto", "none", `GPTToolChoice`.
 - `parallel_tool_calls::Union{Bool,Nothing} = false`: Whether to enable parallel function calling.
 - `temperature::Union{Float64,Nothing} = nothing`: Sampling temperature (0.0-2.0). Higher values make output more random. Mutually exclusive with `top_p`.
 - `top_p::Union{Float64,Nothing} = nothing`: Nucleus sampling parameter (0.0-1.0). Mutually exclusive with `temperature`.
-- `n::Union{Int64,Nothing} = nothing`: How many chat completion choices to generate for each input message (1-10).
-- `stream::Union{Bool,Nothing} = nothing`: If set, partial message deltas will be sent, like in ChatGPT.
+- `n::Union{Int64,Nothing} = nothing`: Number of choices; must be 1 — a result carries a single choice.
+- `stream::Union{Bool,Nothing} = nothing`: If `true`, the call returns a `Task` and streams deltas to `callback` (see `chatrequest!(chat)`).
 - `stop::Union{Vector{String},String,Nothing} = nothing`: Up to 4 sequences where the API will stop generating further tokens.
 - `max_tokens::Union{Int64,Nothing} = nothing`: The maximum number of tokens to generate in the chat completion.
 - `presence_penalty::Union{Float64,Nothing} = nothing`: Number between -2.0 and 2.0. Positive values penalize new tokens based on whether they appear in the text so far.
@@ -1261,31 +1407,27 @@ Send a request to the OpenAI API to generate a response to the messages in `conv
 - `user::Union{String,Nothing} = nothing`: A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse.
 - `seed::Union{Int64,Nothing} = nothing`: This feature is in Beta. If specified, the system will make a best effort to sample deterministically.
 - `config::Union{Nothing,RequestConfig} = nothing`: Per-call timeout/retry budget; `nothing` resolves the ambient configuration (scoped, else process default).
+- `cancel::Union{Nothing,CancelToken} = nothing`: Cancellation token; `nothing` resolves the ambient token (see `chatrequest!(chat)`).
 """
 function chatrequest!(; kws...)
-    filteredkws = filter(x -> x[1] ∉ (:messages, :userprompt, :systemprompt, :config), kws)
-    config = get(kws, :config, nothing)
-    !haskey(kws, :messages) && (!haskey(kws, :userprompt) || !haskey(kws, :systemprompt)) && return LLMFailure(response="No messages and/or systemprompt/userprompt provided.", status=499, self=Chat(; filteredkws...))
-    messages = get(kws, :messages, Message[])
-    if haskey(kws, :userprompt) && haskey(kws, :systemprompt)
-        empty!(messages)
-        if kws[:systemprompt] isa AbstractString
-            push!(messages, Message(role=RoleSystem, content=kws[:systemprompt]))
-        else
-            push!(messages, kws[:systemprompt])
-        end
-        if kws[:userprompt] isa AbstractString
-            push!(messages, Message(role=RoleUser, content=kws[:userprompt]))
-        else
-            push!(messages, kws[:userprompt])
-        end
-    end
-    chatrequest!(Chat(; messages=messages, filteredkws...); config)
+    has_messages = haskey(kws, :messages)
+    has_messages && (haskey(kws, :systemprompt) || haskey(kws, :userprompt)) && throw(ArgumentError(
+        "chatrequest!: pass either `messages` or `systemprompt` and `userprompt`, not both"))
+    has_messages || (haskey(kws, :systemprompt) && haskey(kws, :userprompt)) || throw(ArgumentError(
+        "chatrequest!: pass `messages`, or both `systemprompt` and `userprompt`"))
+    messages = has_messages ? Vector{Message}(kws[:messages]) :
+        [_prompt_message(RoleSystem, kws[:systemprompt]), _prompt_message(RoleUser, kws[:userprompt])]
+    chatkws = filter(x -> x[1] ∉ (:messages, :userprompt, :systemprompt, :config, :cancel), kws)
+    chatrequest!(Chat(; messages, chatkws...); config=get(kws, :config, nothing),
+                 cancel=get(kws, :cancel, nothing))
 end
+
+_prompt_message(role::String, prompt::AbstractString)::Message = Message(; role, content=String(prompt))
+_prompt_message(::String, prompt::Message)::Message = prompt
 
 
 """
-    embeddingrequest!(emb::Embeddings; config=nothing) -> LLMRequestResponse
+    embeddingrequest!(emb::Embeddings; config=nothing, cancel=nothing) -> LLMRequestResponse
 
 Send an Embeddings API request for the `input` in `emb`. Returns `EmbeddingSuccess`,
 `EmbeddingFailure` (non-2xx), or `EmbeddingCallError` (network/parse/timeout). The
@@ -1297,17 +1439,25 @@ under the resolved [`RequestConfig`](@ref) (`config === nothing` resolves the am
 configuration). Timeouts surface as `EmbeddingCallError` with `status = nothing` and
 the `UniLMTimeout` in `cause`.
 
+`cancel::Union{Nothing,CancelToken}` (`nothing`: the ambient token of
+[`with_cancel`](@ref)): a cancel ends the call with `EmbeddingCallError(status=nothing,
+cause=UniLMCancelled(:token, …))`, never retried; a pre-cancelled token sends nothing.
+A TCP connect or TLS handshake already in progress finishes (or reaches
+`connect_timeout`) before the cancel takes effect.
+
 Throws `ArgumentError` before any network I/O when `emb.service` is an endpoint type
 that declares its capabilities and does not list `:embeddings`.
 """
-function embeddingrequest!(emb::Embeddings; config::Union{Nothing,RequestConfig}=nothing)
+function embeddingrequest!(emb::Embeddings; config::Union{Nothing,RequestConfig}=nothing,
+                           cancel::Union{Nothing,CancelToken}=nothing)
     _validate_declared_capability(emb.service, :embeddings, "Embeddings API")
     cfg = _resolve_config(config)
+    tok = _resolve_cancel(cancel)
     t0 = time_ns()
     try
         body = JSON.json(emb)
         resp = _http_with_retries(cfg, t0, "POST", get_url(emb),
-                                  auth_header(emb.service), body)
+                                  auth_header(emb.service), body; cancel=tok)
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
             update!(emb, data["data"])

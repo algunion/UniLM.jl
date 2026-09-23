@@ -1280,10 +1280,11 @@ end
         prompt_cache_key="cache_1",
         prompt_cache_retention="24h",
         safety_identifier="safe_1",
-        conversation="conv_1",
         context_management=[Dict("type" => "truncation")],
         stream_options=Dict("include_usage" => true)
     )
+    # `conversation` is omitted: it cannot be combined with previous_response_id
+    # (see "Respond construction-time validation").
     lowered = JSON.lower(r)
     @test lowered[:model] == "gpt-5.2"
     @test lowered[:instructions] == "Be helpful"
@@ -1308,7 +1309,7 @@ end
     @test lowered[:prompt_cache_key] == "cache_1"
     @test lowered[:prompt_cache_retention] == "24h"
     @test lowered[:safety_identifier] == "safe_1"
-    @test lowered[:conversation] == "conv_1"
+    @test !haskey(lowered, :conversation)
     @test lowered[:context_management] == [Dict("type" => "truncation")]
     @test lowered[:stream_options] == Dict("include_usage" => true)
 
@@ -1323,6 +1324,41 @@ end
     @test parsed["safety_identifier"] == "safe_1"
     @test parsed["prompt_cache_retention"] == "24h"
     @test parsed["reasoning"]["summary"] == "concise"
+end
+
+@testset "Respond construction-time validation" begin
+    @test_throws ArgumentError Respond(input="hi", conversation="conv_1", previous_response_id="resp_1")
+    @test Respond(input="hi", conversation="conv_1").conversation == "conv_1"
+    @test_throws ArgumentError Respond(input="hi", background=true, store=false)
+    @test Respond(input="hi", background=true, store=true).background == true
+    @test isnothing(Respond(input="hi", background=true).store)
+    @test Respond(input="hi", background=false, store=false).store == false
+    for effort in ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+        @test Reasoning(effort=effort).effort == effort
+    end
+    @test_throws ArgumentError Reasoning(effort="extreme")
+end
+
+@testset "Respond converts a Chat Tool to the Responses FunctionTool" begin
+    params = Dict("type" => "object", "properties" => Dict("city" => Dict("type" => "string")))
+    chat_tool = Tool(func=FunctionSignature(name="weather", description="Get weather",
+                                            parameters=params, strict=true))
+    r = Respond(input="hi", tools=[chat_tool, web_search()])
+    @test r.tools[1] isa FunctionTool
+    @test (r.tools[1].name, r.tools[1].description, r.tools[1].parameters, r.tools[1].strict) ==
+          ("weather", "Get weather", params, true)
+    @test r.tools[2] isa WebSearchTool
+    wire = JSON.parse(JSON.json(r))["tools"][1]
+    @test wire["type"] == "function" && wire["name"] == "weather" && !haskey(wire, "function")
+    @test_throws ArgumentError Respond(input="hi", tools=[Tool(type="custom", func=FunctionSignature(name="x"))])
+end
+
+@testset "reasoning_summaries reads OpenAI reasoning items and Gemini thought steps" begin
+    ro = ResponseObject(id="r", status="completed", model="m", raw=Dict{String,Any}(), output=Any[
+        Dict{String,Any}("type" => "reasoning", "summary" => Any[Dict{String,Any}("type" => "summary_text", "text" => "r1")]),
+        Dict{String,Any}("type" => "thought", "summary" => Any[Dict{String,Any}("type" => "summary_text", "text" => "t")]),
+        Dict{String,Any}("type" => "message", "summary" => Any[Dict{String,Any}("text" => "not a summary")])])
+    @test reasoning_summaries(ro) == ["r1", "t"]
 end
 
 # ─── Expanded coverage: TextConfig ────────────────────────────────────────────
@@ -1547,14 +1583,16 @@ end
     @test function_calls(s)[1]["name"] == "fn_x"
 end
 
-@testset "ResponseFailure output_text" begin
+@testset "ResponseFailure output_text throws: an error body is not model output" begin
     f = ResponseFailure(response="bad request body", status=422)
-    @test output_text(f) == "Error (HTTP 422): bad request body"
+    err = try output_text(f) catch e; e end
+    @test err isa LLMResultError && err.result === f
+    @test occursin("422", sprint(showerror, err)) && occursin("bad request body", sprint(showerror, err))
 end
 
-@testset "ResponseCallError output_text" begin
+@testset "ResponseCallError output_text throws" begin
     e = ResponseCallError(error="connection refused", status=nothing)
-    @test output_text(e) == "Error: connection refused"
+    @test_throws LLMResultError output_text(e)
     @test isnothing(e.status)
 end
 
@@ -2291,9 +2329,9 @@ end
 
 # Read one full HTTP/1.1 request message (headers + body) from a raw socket before
 # acting on the connection, so a respond-or-close never races the client's still
-# in-flight body write. HTTP.jl streams the request body as a chunked write that on
-# the 1.x major arrives as a SEPARATE segment AFTER the head over a keep-alive
-# socket; a server that acts on only the head races that write (broken pipe / EPIPE).
+# in-flight body write. HTTP.jl streams the request body as a chunked write that can
+# arrive as a SEPARATE segment AFTER the head over a keep-alive socket; a server
+# that acts on only the head races that write (broken pipe / EPIPE).
 # Framing-aware (chunked terminator / Content-Length), never read-until-eof — a
 # keep-alive client half-closes only after it has read the response, so waiting on
 # eof here would deadlock.
@@ -2395,7 +2433,7 @@ end
     #   * 8 deltas at 0.5 s put the client's LAST byte ~3.5 s into the call, and each
     #     delta is 4x under the 2.0 s idle limit, so a stall cannot fire the guard early;
     #   * detection window [0.95*2.0, 2*2.0+0.5] = [1.9, 4.5]: the package's own guard
-    #     fires within [limit, limit + limit/4] = [2.0, 2.5], while HTTP 2.x's native
+    #     fires within [limit, limit + limit/4] = [2.0, 2.5], while HTTP.jl's native
     #     read-idle timer checks periodically and so detects at up to ~2x the limit
     #     (the 0.95 floor covers the skew between its last read and our own stamp);
     #   * whole-call elapsed is therefore >= 3.5 + 2.0 = 5.5 s — a full second ABOVE
@@ -2472,15 +2510,15 @@ end
     end
 end
 
-@testset "respond stream: a byte-gap kill inside a user callback fails typed, never as a 200" begin
-    # The guard closes the socket to unblock a blocked read. When that close lands
-    # while the driver sits inside a user callback, the truncated read comes back
-    # as a CLEAN EOF: the loop exits with NO exception to classify, and the killed
-    # stream surfaced as ResponseFailure(status=200) carrying the partial bytes.
-    # Scaling: one delta arrives at once, the callback holds the driver for 5.0 s
-    # — past the 2.0 s idle limit plus its [limit, 2*limit] detection window even
-    # with a shared-runner stall — and the server holds the connection for 12.0 s
-    # so the peer never ends the stream first.
+@testset "respond stream: a peer mute after a slow callback fails typed, never as a 200" begin
+    # The guard closes the socket to unblock a blocked read; a close that lands as
+    # the driver enters a user callback truncates the read into a CLEAN EOF, and
+    # that killed stream once surfaced as ResponseFailure(status=200) carrying the
+    # partial bytes. Time inside the callback is not wire idle time, so the 5.0 s
+    # callback itself never trips the 2.0 s bound — the peer's silence after it
+    # does, and the outcome must be the typed byte-gap breach. Scaling: one delta
+    # arrives at once and the server holds the connection for 12.0 s, past
+    # callback + limit + detection window, so the peer never ends the stream first.
     chunks = ["event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"]
     server, url = _sse_gap_server(chunks; gap=0.1, idle_after=true, hold=12.0)
     _RESP_TIMEOUT_URL[] = url
@@ -2702,9 +2740,9 @@ end
 
 # ─── Lifecycle URL construction ───────────────────────────────────────────────
 # A response id and a pagination cursor are caller data, not URL structure. The
-# recorder reads back `req.target`, the unparsed origin-form target on both
-# supported HTTP majors, so a value that leaks its own `/`, `?` or `#` shows up
-# as extra path segments / a query / a fragment instead of one encoded segment.
+# recorder reads back `req.target`, the unparsed origin-form target, so a value
+# that leaks its own `/`, `?` or `#` shows up as extra path segments / a query / a
+# fragment instead of one encoded segment.
 
 "Run `f(base_url)` against a local recorder; returns the raw request targets it saw, in order."
 function _recorded_lifecycle_targets(f::Function, body::String)
@@ -2768,4 +2806,229 @@ end
     seg = "/v1/responses/resp_abc123"
     @test targets == [seg, seg, seg * "/cancel",
                       seg * "/input_items?limit=20&order=desc&after=resp_item_9"]
+end
+
+# ─── Agentic driver: cancellation, stops, time in user code, user-code failures ─
+
+# SSE/HTTP server on an OS-assigned port: answers `status` (with `headers`), streams
+# `chunks` `gap` seconds apart, then holds `hold` seconds; `mute=true` sends nothing at
+# all (not even headers) for `hold` seconds. `hits` counts requests that reached it.
+function _ag_server(chunks::Vector{String}=String[]; gap::Real=0.1, hold::Real=0.0, mute::Bool=false,
+                    status::Int=200, headers::Vector{Pair{String,String}}=Pair{String,String}[])
+    hits = Threads.Atomic{Int}(0)
+    server = HTTP.listen!("127.0.0.1", 0; verbose=false) do http::HTTP.Stream
+        read(http)
+        Threads.atomic_add!(hits, 1)
+        mute && return sleep(hold)
+        HTTP.setstatus(http, status)
+        HTTP.setheader(http, "Content-Type" => "text/event-stream")
+        foreach(h -> HTTP.setheader(http, h), headers)
+        HTTP.startwrite(http)
+        for c in chunks
+            write(http, c); flush(http); sleep(gap)
+        end
+        sleep(hold)
+    end
+    (; server, url="http://127.0.0.1:$(HTTP.port(server))", hits)
+end
+
+_ag_stream(url) = Respond(service=GenericOpenAIEndpoint(url, ""), model="m", input="hi", stream=true)
+const _AG_SLOW = RequestConfig(request_timeout=30.0, stream_idle_timeout=30.0,
+                               total_deadline=120.0, max_attempts=1)
+_ag_cancelled_by(r, source) = r isa ResponseCallError && isnothing(r.status) &&
+                              r.cause isa UniLMCancelled && r.cause.source === source
+
+# Run `call()` (returns a Task) and fire `stop()` `after` seconds after `ready()` holds
+# (the phase under test was reached); returns the result and the seconds from the stop
+# to the result.
+function _ag_stop_after(call, stop; ready::Function, after::Real=1.0)
+    t = Threads.@spawn (r = fetch(call()); (r, time()))
+    timedwait(ready, 25.0) === :ok || return (; finished=false, result=nothing, latency=Inf)
+    sleep(after)
+    stopped_at = time()
+    stop()
+    finished = timedwait(() -> istaskdone(t), 25.0) === :ok
+    finished || return (; finished, result=nothing, latency=Inf)
+    r, done_at = fetch(t)
+    (; finished, result=r, latency=done_at - stopped_at)
+end
+
+# An OpenAI-wire agentic endpoint whose encoder refuses every request.
+struct _RefusingAgentic <: UniLM.OpenAIWireEndpoint
+    url::String
+end
+UniLM._api_base_url(s::_RefusingAgentic) = s.url
+UniLM.auth_header(::_RefusingAgentic) = ["Content-Type" => "application/json"]
+UniLM.default_model(::_RefusingAgentic) = "m"
+UniLM.encode_agentic(::_RefusingAgentic, ::Respond) = throw(ArgumentError("option not supported here"))
+
+@testset "respond: local validation throws before any network I/O" begin
+    srv = _ag_server([_completed_event("x", 2)])
+    try
+        for stream in (false, true)
+            @test_throws ArgumentError respond(Respond(service=_RefusingAgentic(srv.url), input="hi", stream=stream))
+            # A documented restriction, raised by the real encoder: no log probabilities on GPT-6 Astra.
+            @test_throws ArgumentError respond(Respond(model="gpt-6-astra", input="hi", top_logprobs=2, stream=stream))
+        end
+        @test srv.hits[] == 0
+    finally
+        HTTP.forceclose(srv.server)
+    end
+end
+
+@testset "every non-streaming Responses failure carries its exception in cause" begin
+    # A 200 whose body is not JSON: each verb's decode throws after the exchange.
+    srv = _ag_server(["{not json"])
+    try
+        ep = GenericOpenAIEndpoint(srv.url, "")
+        results = (respond(Respond(service=ep, model="m", input="hi")),
+                   get_response("r"; service=ep), delete_response("r"; service=ep),
+                   list_input_items("r"; service=ep), cancel_response("r"; service=ep),
+                   compact_response(; model="m", input="hi", service=ep),
+                   count_input_tokens(; model="m", input="hi", service=ep))
+        @test all(r -> r isa ResponseCallError && r.cause isa Exception, results)
+        @test srv.hits[] == 7
+    finally
+        HTTP.forceclose(srv.server)
+    end
+end
+
+@testset "respond (non-streaming): cancellable, never retried, nothing sent when pre-cancelled" begin
+    srv = _ag_server(; mute=true, hold=10.0)
+    try
+        r = Respond(service=GenericOpenAIEndpoint(srv.url, ""), model="m", input="hi")
+        tok = CancelToken()
+        cfg = RequestConfig(request_timeout=30.0, total_deadline=120.0, max_attempts=3)
+        o = _ag_stop_after(() -> Threads.@spawn(respond(r; config=cfg, cancel=tok)), () -> cancel!(tok);
+                           ready=() -> srv.hits[] == 1)
+        @test o.finished && _ag_cancelled_by(o.result, :token)
+        @test o.latency < 0.5
+        @test srv.hits[] == 1
+        @test _ag_cancelled_by(respond(r; cancel=cancel!(CancelToken())), :token)
+        @test srv.hits[] == 1
+    finally
+        HTTP.forceclose(srv.server)
+    end
+end
+
+@testset "agentic stream: a cancel ends it promptly and typed" begin
+    @testset "mid-stream: events 5 s apart, cancelled 1 s in" begin
+        srv = _ag_server([_delta_event("a"), _delta_event("b"), _completed_event("ab", 2)]; gap=5.0)
+        try
+            tok = CancelToken(); seen = Any[]
+            o = _ag_stop_after(() -> respond(_ag_stream(srv.url); config=_AG_SLOW, cancel=tok,
+                                             callback=(c, _) -> push!(seen, c)),
+                               () -> cancel!(tok); ready=() -> !isempty(seen))
+            @test o.finished && _ag_cancelled_by(o.result, :token)
+            @test o.latency < 0.5
+            @test seen == ["a"]                     # no terminal callback
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+
+    @testset "during a mute header wait" begin
+        srv = _ag_server(; mute=true, hold=10.0)
+        try
+            tok = CancelToken()
+            o = _ag_stop_after(() -> respond(_ag_stream(srv.url); config=_AG_SLOW, cancel=tok),
+                               () -> cancel!(tok); ready=() -> srv.hits[] == 1)
+            @test o.finished && _ag_cancelled_by(o.result, :token)
+            @test o.latency < 0.5
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+
+    @testset "during a Retry-After backoff, never retried" begin
+        srv = _ag_server(["slow down"]; status=429, headers=["Retry-After" => "30"])
+        try
+            tok = CancelToken()
+            cfg = RequestConfig(request_timeout=30.0, stream_idle_timeout=30.0,
+                                total_deadline=120.0, max_attempts=3)
+            t = Threads.@spawn (r = fetch(respond(_ag_stream(srv.url); config=cfg, cancel=tok)); (r, time()))
+            @test timedwait(() -> srv.hits[] == 1, 25.0) === :ok
+            sleep(0.3)
+            cancelled_at = time()
+            cancel!(tok)
+            @test timedwait(() -> istaskdone(t), 25.0) === :ok
+            r, done_at = fetch(t)
+            @test _ag_cancelled_by(r, :token)
+            @test done_at - cancelled_at < 0.5
+            @test srv.hits[] == 1
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+
+    @testset "a pre-cancelled token sends nothing" begin
+        srv = _ag_server([_completed_event("x", 2)])
+        try
+            tok = cancel!(CancelToken())
+            @test _ag_cancelled_by(fetch(respond(_ag_stream(srv.url); cancel=tok)), :token)
+            @test _ag_cancelled_by(fetch(respond("hi"; service=GenericOpenAIEndpoint(srv.url, ""),
+                                                 model="m", stream=true, cancel=tok)), :token)
+            @test srv.hits[] == 0
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+end
+
+@testset "agentic stream: the close flag is the same typed stop" begin
+    @testset "set from another task: prompt, source :callback" begin
+        srv = _ag_server([_delta_event("a"), _delta_event("b"), _completed_event("ab", 2)]; gap=5.0)
+        try
+            handle = Ref{Any}(nothing)
+            o = _ag_stop_after(() -> respond(_ag_stream(srv.url); config=_AG_SLOW,
+                                             callback=(c, close) -> (handle[] = close)),
+                               () -> (handle[][] = true); ready=() -> handle[] !== nothing)
+            @test o.finished && _ag_cancelled_by(o.result, :callback)
+            @test o.latency < 0.5
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+
+    @testset "a stop on the terminal leaves the response standing" begin
+        srv = _ag_server([_delta_event("ok"), _completed_event("ok", 2)])
+        try
+            r = fetch(respond(_ag_stream(srv.url); callback=(c, close) -> c isa ResponseObject && (close[] = true)))
+            @test r isa ResponseSuccess && output_text(r) == "ok"
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+end
+
+@testset "agentic stream: time in user code is not wire idle time" begin
+    srv = _ag_server([_delta_event("a"), _delta_event("b"), _completed_event("ab", 2)]; gap=0.2)
+    try
+        deltas = String[]
+        cfg = RequestConfig(request_timeout=10.0, stream_idle_timeout=1.0, total_deadline=60.0, max_attempts=1)
+        t = respond(_ag_stream(srv.url); config=cfg,
+                    callback=(c, _) -> c isa String && (push!(deltas, c); sleep(3.0)))
+        @test timedwait(() -> istaskdone(t), 40.0) === :ok
+        r = fetch(t)
+        @test r isa ResponseSuccess && output_text(r) == "ab"
+        @test join(deltas) == "ab"
+    finally
+        HTTP.forceclose(srv.server)
+    end
+end
+
+@testset "agentic stream: an exception from the terminal callback is the outcome" begin
+    # The terminal was recorded, but the user's failure is not connection teardown.
+    srv = _ag_server([_delta_event("ok"), _completed_event("ok", 2)])
+    try
+        calls = String[]
+        cfg = RequestConfig(request_timeout=10.0, stream_idle_timeout=10.0, total_deadline=60.0, max_attempts=3)
+        r = fetch(respond(_ag_stream(srv.url); config=cfg, callback=(c, _) -> c isa String ?
+            push!(calls, "delta") : (push!(calls, "response"); throw(Base.IOError("user sink closed", 0)))))
+        @test r isa ResponseCallError && r.cause isa Base.IOError
+        @test calls == ["delta", "response"]
+        @test srv.hits[] == 1
+    finally
+        HTTP.forceclose(srv.server)
+    end
 end

@@ -221,7 +221,8 @@ end
     @testset "a tool-only turn keeps its calls whatever the finish_reason" begin
         # Some providers close a tool-only turn with "stop" rather than "tool_calls".
         # That used to land in the fallback branch, which fabricated text AND dropped
-        # the calls entirely.
+        # the calls entirely. A "stop" on a tool-call turn reads as "tool_calls", so a
+        # tool loop dispatches the calls.
         body = Dict(
             "choices" => [Dict(
                 "finish_reason" => "stop",
@@ -236,7 +237,51 @@ end
         @test m.tool_calls[1].id == "call_1"
         @test m.tool_calls[1].func.name == "get_weather"
         @test m.tool_calls[1].func.arguments["city"] == "Cluj"
+        @test m.finish_reason == UniLM.TOOL_CALLS
+    end
+
+    tool_call(args) = Dict("id" => "call_1", "type" => "function",
+                           "function" => Dict("name" => "get_weather", "arguments" => args))
+    reply(message; finish) = make_response(Dict("choices" => [Dict("finish_reason" => finish,
+                                                                     "message" => message)]))
+
+    @testset "text alongside tool calls is kept" begin
+        m = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => "Checking.",
+            "tool_calls" => [tool_call("{\"city\":\"Oslo\"}")]); finish="tool_calls")).message
+        @test m.content == "Checking."
+        @test length(m.tool_calls) == 1 && m.tool_calls[1].func.arguments == Dict("city" => "Oslo")
+        @test m.finish_reason == UniLM.TOOL_CALLS
+    end
+
+    @testset "empty content beside tool calls finished with stop keeps the calls" begin
+        m = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => "",
+            "tool_calls" => [tool_call("{}")]); finish="stop")).message
+        @test !isnothing(m.tool_calls) && length(m.tool_calls) == 1
+        @test m.finish_reason == UniLM.TOOL_CALLS
+    end
+
+    @testset "empty tool-call arguments decode as an empty object" begin
+        m = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => nothing,
+            "tool_calls" => [tool_call("")]); finish="tool_calls")).message
+        @test m.tool_calls[1].func.arguments == Dict{String,Any}()
+    end
+
+    @testset "array-shaped content joins its text parts" begin
+        m = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => [
+            Dict("type" => "text", "text" => "Hello, "), Dict("type" => "image_url", "image_url" => Dict()),
+            Dict("type" => "text", "text" => "world")]); finish="stop")).message
+        @test m.content == "Hello, world"
         @test m.finish_reason == "stop"
+    end
+
+    @testset "a tool-call turn cut at length keeps its wire reason" begin
+        # Relabelling it "tool_calls" would make a tool loop run truncated calls.
+        m2 = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => nothing,
+            "tool_calls" => [tool_call("{}")]); finish="length")).message
+        @test m2.finish_reason == "length"
+        m3 = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => nothing,
+            "tool_calls" => [tool_call("{}")]); finish="content_filter")).message
+        @test m3.finish_reason == "content_filter"
     end
 
     @testset "length finish_reason preserves partial content" begin
@@ -369,10 +414,11 @@ end
         dispatch("data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_abc\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"\"}}]},\"finish_reason\":null}]}\n", state; carry)
         @test haskey(state.tool_calls, 0)
         @test state.tool_calls[0]["id"] == "call_abc"
-        @test state.tool_calls[0]["function"]["name"] == "get_weather"
         dispatch("data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"location\\\":\"}}]},\"finish_reason\":null}]}\n", state; carry)
         dispatch("data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"NYC\\\"}\"}}]},\"finish_reason\":null}]}\n", state; carry)
-        @test state.tool_calls[0]["function"]["arguments"] == "{\"location\":\"NYC\"}"
+        fn = UniLM._tool_function!(state, 0)                 # fragments joined once, when read
+        @test fn["name"] == "get_weather"
+        @test fn["arguments"] == "{\"location\":\"NYC\"}"
         dispatch("data: {\"id\":\"chatcmpl-1\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n", state; carry)
         @test state.finish_reason == "tool_calls"
     end
@@ -414,6 +460,28 @@ end
         @test msg.tool_calls[1].id == "call_1"
         @test msg.tool_calls[1].func.name == "get_weather"
         @test msg.tool_calls[1].func.arguments["location"] == "NYC"
+    end
+
+    tool_state(finish) = (st = UniLM.StreamState(); st.finish_reason = finish;
+        st.tool_calls[0] = Dict{String,Any}("id" => "call_1", "type" => "function",
+            "function" => Dict{String,Any}("name" => "ping", "arguments" => "{}")); st)
+
+    @testset "tool calls keep a length or filter reason; stop and none read as tool_calls" begin
+        # Relabelling a turn cut at "length" made a tool loop dispatch its partial calls.
+        @test UniLM._build_stream_message(tool_state("length")).finish_reason == "length"
+        @test UniLM._build_stream_message(tool_state("content_filter")).finish_reason == "content_filter"
+        @test UniLM._build_stream_message(tool_state("stop")).finish_reason == UniLM.TOOL_CALLS
+        @test UniLM._build_stream_message(tool_state(nothing)).finish_reason == UniLM.TOOL_CALLS
+    end
+
+    @testset "no finish reason arrived → none reported, never an invented stop" begin
+        st = UniLM.StreamState()
+        print(st.content, "partial")
+        @test isnothing(UniLM._build_stream_message(st).finish_reason)
+        st2 = UniLM.StreamState()
+        print(st2.refusal, "no")
+        m2 = UniLM._build_stream_message(st2)
+        @test m2.refusal_message == "no" && isnothing(m2.finish_reason)
     end
 end
 
@@ -461,24 +529,16 @@ end
 end
 
 @testset "chatrequest! kwargs" begin
-    @testset "missing messages and prompts returns LLMFailure" begin
-        result = UniLM.chatrequest!(model="gpt-4o")
-        @test result isa LLMFailure
-        @test result.status == 499
-        @test occursin("No messages", result.response)
-    end
-
-    @testset "missing userprompt returns LLMFailure" begin
-        result = UniLM.chatrequest!(systemprompt="sys")
-        @test result isa LLMFailure
-        @test result.status == 499
-    end
-
-    @testset "missing systemprompt returns LLMFailure" begin
-        result = UniLM.chatrequest!(userprompt="user")
-        @test result isa LLMFailure
-        @test result.status == 499
-    end
+    # The conversation is EITHER `messages` OR `systemprompt` + `userprompt`. Anything
+    # else is a local error raised before any request — it used to come back as a
+    # fabricated LLMFailure(status=499), or silently drop a prompt.
+    @test_throws ArgumentError UniLM.chatrequest!(model="gpt-4o")
+    @test_throws ArgumentError UniLM.chatrequest!(systemprompt="sys")
+    @test_throws ArgumentError UniLM.chatrequest!(userprompt="user")
+    msgs = [Message(role=UniLM.RoleSystem, content="s"), Message(role=UniLM.RoleUser, content="u")]
+    @test_throws ArgumentError UniLM.chatrequest!(messages=msgs, userprompt="was dropped")
+    @test_throws ArgumentError UniLM.chatrequest!(messages=msgs, systemprompt="s2", userprompt="u2")
+    @test length(msgs) == 2 && msgs[1].content == "s"      # the caller's vector was never emptied
 end
 
 @testset "Azure deploy name management" begin
@@ -631,20 +691,18 @@ end
         end
     end
 
-    @testset "prompts override messages" begin
-        withenv("OPENAI_API_KEY" => "test-key") do
-            msgs = [
-                Message(role=UniLM.RoleSystem, content="old sys"),
-                Message(role=UniLM.RoleUser, content="old usr")
-            ]
-            result = chatrequest!(
-                messages=msgs,
-                systemprompt="new sys",
-                userprompt="new usr",
-                model="gpt-4o"
-            )
-            @test result isa LLMCallError || result isa LLMFailure
-        end
+    @testset "prompts beside messages are refused, not silently preferred" begin
+        msgs = [
+            Message(role=UniLM.RoleSystem, content="old sys"),
+            Message(role=UniLM.RoleUser, content="old usr")
+        ]
+        @test_throws ArgumentError chatrequest!(
+            messages=msgs,
+            systemprompt="new sys",
+            userprompt="new usr",
+            model="gpt-4o"
+        )
+        @test [m.content for m in msgs] == ["old sys", "old usr"]
     end
 end
 
@@ -915,8 +973,8 @@ end
     cfg = RequestConfig(stream_idle_timeout = 1.0)
     t0 = time_ns()
 
-    # A FIRED guard is a breach on both majors — the caught error is the echo of
-    # our own close — and elapsed reports the frozen byte GAP, not call time.
+    # A FIRED guard is a breach — the caught error is the echo of our own
+    # close — and elapsed reports the frozen byte GAP, not call time.
     fired = UniLM._IdleGuard(:fired, time_ns(), 1.23, 1.0, nothing)
     to = UniLM._classify_stream_timeout(Base.IOError("read: connection reset", 0), fired, cfg, t0)
     @test to isa UniLM.UniLMTimeout
@@ -928,7 +986,7 @@ end
     # With the read-idle fast path armed (finite idle bound), a native
     # non-connect TimeoutError IS the read-idle timer by elimination — the
     # streaming seam arms no other native non-connect timer. That holds even
-    # BEFORE the idle guard exists (guard === nothing): HTTP 2.x also bounds
+    # BEFORE the idle guard exists (guard === nothing): HTTP.jl also bounds
     # the response-header wait by read_idle_timeout, so the breach can land
     # pre-first-byte and the phase must not depend on guard arming order.
     e_req = HTTP.TimeoutError("request", Int64(1_000_000_000), Int64(0))
@@ -965,10 +1023,10 @@ end
     # Constructed exceptions, limit=Inf (no timer): the recording contract is a
     # pure function of what escapes the deadline block, so it pins without
     # timing. The driver catches consume the slot with the precedence rule
-    # "recorded typed cause wins over teardown noise" — on the 1.x major,
-    # HTTP.jl's cleanup of a bound-closed socket can raise EPIPE/reset while
-    # the typed UniLMTimeout is unwinding, and the replacement is what escapes
-    # HTTP.open; the slot is what restores the typed cause.
+    # "recorded typed cause wins over teardown noise" — HTTP.jl's cleanup of a
+    # bound-closed socket can raise EPIPE/reset while the typed UniLMTimeout is
+    # unwinding, and the replacement is what escapes HTTP.open; the slot is
+    # what restores the typed cause.
     slotT() = Ref{Union{Nothing,UniLM.UniLMTimeout}}(nothing)
 
     # A UniLMTimeout escaping the block is recorded AND rethrown unchanged
@@ -1088,7 +1146,7 @@ end
     # The breach argument is why this takes the CLASSIFIED result and not the
     # guard handle. Whichever timer wins the byte-gap race must read as teardown:
     # our own guard's close echoes as an IOError (transport-shaped anyway), but
-    # the 2.x native read-idle timer surfaces as an HTTP.TimeoutError, which is
+    # HTTP.jl's native read-idle timer surfaces as an HTTP.TimeoutError, which is
     # deliberately NEITHER transport-shaped NOR a UniLMTimeout — only the
     # classifier recognises it, and missing it discards a completed turn.
     fired = UniLM._IdleGuard(:fired, time_ns(), 1.0, 1.0, nothing)
@@ -1126,19 +1184,18 @@ end
 
 using Sockets
 
-# Stand-in for the HTTP.jl 1.x transport error whose rendering IS a full request
-# dump. Declared at top level because a struct cannot be defined inside a testset.
+# Stand-in for a transport error whose rendering IS a full request dump.
+# Declared at top level because a struct cannot be defined inside a testset.
 struct _DumpingError <: Exception; dump::String; end
 Base.showerror(io::IO, e::_DumpingError) = print(io, e.dump)
 
 @testset "_error_text never lets a credential reach a result value" begin
-    # HTTP.jl 1.x renders a mid-exchange transport failure as a FULL request dump —
-    # every header and the body — and its masking covers only Authorization,
+    # A mid-exchange transport failure can render as a FULL request dump — every
+    # header and the body — and HTTP.jl's own masking covers only Authorization,
     # Proxy-Authorization and Cookie. Providers that authenticate with their own
     # header (Anthropic x-api-key, Gemini native x-goog-api-key, Azure api-key)
-    # therefore had the key in cleartext inside `.error`. The redaction layer is
-    # major-agnostic, so a stand-in exception whose showerror IS such a dump is the
-    # testable contract on either major.
+    # would have the key in cleartext inside `.error`. A stand-in exception whose
+    # showerror IS such a dump is the testable contract of the redaction layer.
     anth  = "sk-ant-api03-SECRETVALUE0123456789"
     goog  = "AIzaSyGOOGLENATIVESECRET123"
     az    = "azure-key-0011223344556677"
@@ -1207,6 +1264,119 @@ end
     # `api-key` must still match where a non-word character precedes it.
     @test UniLM._mask_auth_headers("x-api-key: $secret") == "x-api-key: secr…[redacted]"
     @test UniLM._mask_auth_headers("api-key: $secret") == "api-key: secr…[redacted]"
+end
+
+# A server on an OS-assigned port that reads each request and answers nothing for
+# `hold` seconds; `hits` counts the requests that reached it.
+function _mute_request_server(; hold::Real=10.0)
+    hits = Threads.Atomic{Int}(0)
+    server = HTTP.listen!("127.0.0.1", 0; verbose=false) do http::HTTP.Stream
+        read(http); Threads.atomic_add!(hits, 1); sleep(hold)
+    end
+    (; server, url="http://127.0.0.1:$(HTTP.port(server))", hits)
+end
+
+# A server on an OS-assigned port that answers every request with `body` (JSON).
+function _json_reply_server(body::String)
+    hits = Threads.Atomic{Int}(0)
+    server = HTTP.listen!("127.0.0.1", 0; verbose=false) do http::HTTP.Stream
+        read(http); Threads.atomic_add!(hits, 1)
+        HTTP.setstatus(http, 200)
+        HTTP.setheader(http, "Content-Type" => "application/json")
+        HTTP.startwrite(http)
+        write(http, body)
+    end
+    (; server, url="http://127.0.0.1:$(HTTP.port(server))", hits)
+end
+
+const _REPLY = JSON.json(Dict("choices" => [Dict("index" => 0, "finish_reason" => "stop",
+    "message" => Dict("role" => "assistant", "content" => "hi"))]))
+
+# An OpenAI-wire endpoint whose encoder refuses every request.
+struct _RefusingEncoder <: UniLM.OpenAIWireEndpoint
+    url::String
+end
+UniLM.get_url(s::_RefusingEncoder, ::Chat) = s.url
+UniLM.auth_header(::_RefusingEncoder) = ["Content-Type" => "application/json"]
+UniLM.encode_request(::_RefusingEncoder, ::Chat) = throw(ArgumentError("option not supported here"))
+
+@testset "chatrequest!(; messages) never mutates the caller's vector" begin
+    srv = _json_reply_server(_REPLY)
+    try
+        msgs = [Message(Val(:system), "s"), Message(Val(:user), "u")]
+        r = chatrequest!(; messages=msgs, service=GenericOpenAIEndpoint(srv.url, ""), model="m")
+        @test r isa LLMSuccess && length(r.self.messages) == 3   # the reply went to the result's chat
+        @test length(msgs) == 2
+    finally
+        close(srv.server)
+    end
+end
+
+@testset "local validation throws before any network I/O" begin
+    srv = _json_reply_server(_REPLY)
+    try
+        sys_user() = [Message(Val(:system), "s"), Message(Val(:user), "u")]
+        for stream in (false, true)
+            # An encoder's ArgumentError is thrown, not returned as a result value.
+            @test_throws ArgumentError chatrequest!(Chat(service=_RefusingEncoder(srv.url), model="m",
+                                                         stream=stream, messages=sys_user()))
+            # A reply could not be appended after an assistant turn: refused before
+            # the billed call instead of by push! after it.
+            ended = Chat(service=GenericOpenAIEndpoint(srv.url, ""), model="m", stream=stream,
+                         messages=[sys_user(); Message(role=UniLM.RoleAssistant, content="a")])
+            @test_throws InvalidConversationError chatrequest!(ended)
+            @test length(ended.messages) == 3
+            # Documented provider restrictions, raised by the real encoders.
+            tool = Tool(func=FunctionSignature(name="f"))
+            for chat in (Chat(model="gpt-6-astra", tools=[tool], stream=stream, messages=sys_user()),
+                         Chat(service=ANTHROPICServiceEndpoint, stream=stream, messages=sys_user(),
+                              moderation=ModerationConfig(model="omni-moderation-latest")),
+                         Chat(service=GEMINIServiceEndpoint, seed=7, stream=stream, messages=sys_user()))
+                @test_throws ArgumentError chatrequest!(chat)
+            end
+        end
+        @test srv.hits[] == 0
+        # History off: nothing is appended, so a trailing assistant turn (a prefill) is sent.
+        prefill = Chat(service=GenericOpenAIEndpoint(srv.url, ""), model="m", history=false,
+                       messages=[sys_user(); Message(role=UniLM.RoleAssistant, content="a")])
+        @test chatrequest!(prefill) isa LLMSuccess
+        @test srv.hits[] == 1
+    finally
+        close(srv.server)
+    end
+end
+
+@testset "non-streaming chat and embeddings are cancellable" begin
+    srv = _mute_request_server()
+    try
+        ep = GenericOpenAIEndpoint(srv.url, "")
+        cfg = RequestConfig(request_timeout=30.0, total_deadline=120.0, max_attempts=3)
+        typed(r, T) = r isa T && isnothing(r.status) && r.cause isa UniLMCancelled && r.cause.source === :token
+        calls = (() -> Chat(service=ep, model="m", messages=[Message(Val(:system), "s"), Message(Val(:user), "u")]),
+                 () -> UniLM.Embeddings("x"; service=ep, model="m"))
+        verbs = ((c, tok) -> chatrequest!(c; config=cfg, cancel=tok), (e, tok) -> embeddingrequest!(e; config=cfg, cancel=tok))
+        for (make, verb, T) in zip(calls, verbs, (LLMCallError, EmbeddingCallError))
+            hits0 = srv.hits[]
+            req = make(); tok = CancelToken()
+            t = Threads.@spawn (r = verb(req, tok); (r, time()))
+            @test timedwait(() -> srv.hits[] == hits0 + 1, 25.0) === :ok
+            sleep(0.3)
+            cancelled_at = time()
+            cancel!(tok)
+            @test timedwait(() -> istaskdone(t), 25.0) === :ok
+            r, done_at = fetch(t)
+            @test typed(r, T)
+            @test done_at - cancelled_at < 0.5
+            @test srv.hits[] == hits0 + 1                                   # never retried
+            @test typed(verb(make(), cancel!(CancelToken())), T)           # pre-cancelled...
+            @test srv.hits[] == hits0 + 1                                   # ...sends nothing
+        end
+        chat = calls[1]()
+        chatrequest!(chat; cancel=cancel!(CancelToken()))
+        @test length(chat.messages) == 2
+    finally
+        HTTP.forceclose(srv.server)
+    end
 end
 
 @testset "a transport failure mid-exchange cannot leak the configured key" begin

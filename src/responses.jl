@@ -89,9 +89,6 @@ function input_file(; url::Union{String,Nothing}=nothing, id::Union{String,Nothi
     return d
 end
 
-# Reasoning effort values the OpenAI API accepts; each model supports a subset.
-const _OPENAI_REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
-
 """
     configuration_update(; effort::String)
 
@@ -714,7 +711,8 @@ json_object_format() = TextConfig(format=TextFormatSpec(type="json_object"))
 Reasoning configuration for OpenAI and Gemini Interactions models.
 
 - `effort`: OpenAI accepts `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`,
-  `"xhigh"`, and `"max"`; each model supports a subset (GPT-6 Astra has no `"none"`
+  `"xhigh"`, and `"max"` — any other value throws `ArgumentError` at construction;
+  each model supports a subset (GPT-6 Astra has no `"none"`
   or `"minimal"`; gpt-5.4-mini and gpt-5.4-nano stop at `"xhigh"`). GPT-6 Sol and
   Luna refuse `"minimal"` on the native OpenAI endpoint; use `"low"`. Gemini 3.8
   supports `"low"`, `"medium"`, and `"high"`.
@@ -731,6 +729,8 @@ Reasoning configuration for OpenAI and Gemini Interactions models.
     context::Union{String,Nothing} = nothing
     mode::Union{String,Nothing} = nothing
     function Reasoning(effort, generate_summary, summary, context=nothing, mode=nothing)
+        isnothing(effort) || effort in _OPENAI_REASONING_EFFORTS || throw(ArgumentError(
+            "reasoning effort must be one of $(join(_OPENAI_REASONING_EFFORTS, ", ")) (got $(repr(effort)))"))
         isnothing(context) || context in ("auto", "current_turn", "all_turns") ||
             throw(ArgumentError("reasoning context must be auto, current_turn, or all_turns"))
         isnothing(mode) || mode in ("standard", "pro") ||
@@ -756,6 +756,20 @@ function JSON.lower(r::Reasoning)
     return d
 end
 
+# A Chat `Tool` given to `Respond` becomes the equivalent `FunctionTool`: the same
+# function, lowered in the Responses shape (name at the top level) rather than the
+# Chat one (nested under `function`), which the Responses API rejects. Every other
+# entry passes through unchanged.
+_respond_tools(tools) = tools
+_respond_tools(tools::AbstractVector) = any(t -> t isa Tool, tools) ? map(_respond_tool, tools) : tools
+_respond_tool(t) = t
+function _respond_tool(t::Tool)::FunctionTool
+    t.type == "function" || throw(ArgumentError(
+        "a Chat Tool of type $(repr(t.type)) has no Responses equivalent; pass a ResponseTool"))
+    f = t.func
+    FunctionTool(f.name, f.description, f.parameters, f.strict)
+end
+
 
 # ─── Main Request Type ────────────────────────────────────────────────────────
 
@@ -768,8 +782,12 @@ Configuration struct for an OpenAI Responses API request.
 - `model::String`: Model to use (default: `"gpt-5.6-sol"`)
 - `input::Any`: A `String` or `Vector{InputMessage}` — the prompt input
 - `instructions::String`: System-level instructions
-- `tools::Vector`: Available tools (`FunctionTool`, `WebSearchTool`, `FileSearchTool`)
-- `previous_response_id::String`: Chain to a previous response for multi-turn
+- `tools::Vector`: Available tools (`FunctionTool`, `WebSearchTool`, `FileSearchTool`, …);
+  a Chat [`Tool`](@ref) is converted to the equivalent `FunctionTool`
+- `previous_response_id::String`: Chain to a previous response for multi-turn; cannot
+  be combined with `conversation`
+- `background::Bool`: Run in the background; requires a stored response (`store=false`
+  throws `ArgumentError`)
 - `reasoning::Reasoning`: Reasoning config for O-series models
 - `text::TextConfig`: Output format (text, json, json_schema)
 - `temperature::Float64`: Sampling temperature (0.0–2.0), mutually exclusive with `top_p`
@@ -846,6 +864,7 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
         prompt_cache_retention, safety_identifier, conversation,
         context_management, stream_options, prompt_cache_options=nothing, moderation=nothing)
         model = _resolve_model(service, model)
+        tools = _respond_tools(tools)
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
         !isnothing(top_p) && !(0.0 <= top_p <= 1.0) && throw(ArgumentError("top_p must be in [0.0, 1.0]"))
@@ -853,6 +872,10 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
         !isnothing(top_logprobs) && !(0 <= top_logprobs <= 20) && throw(ArgumentError("top_logprobs must be in [0, 20]"))
         isnothing(prompt_cache_retention) || isnothing(prompt_cache_options) || throw(ArgumentError(
             "prompt_cache_retention and prompt_cache_options cannot be combined"))
+        isnothing(conversation) || isnothing(previous_response_id) || throw(ArgumentError(
+            "conversation and previous_response_id cannot be combined: each already supplies the prior turns"))
+        background === true && store === false && throw(ArgumentError(
+            "background=true requires a stored response: omit store or set store=true"))
         new(service, model, input, instructions, tools, tool_choice,
             parallel_tool_calls, temperature, top_p, max_output_tokens,
             stream, text, reasoning, truncation, store, metadata,
@@ -958,7 +981,9 @@ Base.show(io::IO, r::ResponseCallError) =
     output_text(r::ResponseObject)::String
     output_text(r::ResponseSuccess)::String
 
-Extract the concatenated text output from a response.
+Extract the concatenated text output from a response. On a [`ResponseFailure`](@ref)
+or [`ResponseCallError`](@ref) it throws an [`LLMResultError`](@ref) — there is no
+model output to return; guard with [`issuccess`](@ref).
 
 # Examples
 ```julia
@@ -981,8 +1006,7 @@ function output_text(r::ResponseObject)::String
 end
 
 output_text(r::ResponseSuccess) = output_text(r.response)
-output_text(r::ResponseFailure) = "Error (HTTP $(r.status)): $(r.response)"
-output_text(r::ResponseCallError) = "Error: $(r.error)"
+output_text(r::Union{ResponseFailure,ResponseCallError}) = throw(LLMResultError(r))
 
 """
     function_calls(r::ResponseObject)::Vector{Dict{String,Any}}
@@ -1002,15 +1026,7 @@ for call in function_calls(result)
 end
 ```
 """
-function function_calls(r::ResponseObject)
-    calls = Dict{String,Any}[]
-    for item in r.output
-        if item isa Dict && get(item, "type", "") == "function_call"
-            push!(calls, item)
-        end
-    end
-    return calls
-end
+function_calls(r::ResponseObject) = _output_items(r, "function_call")
 
 function_calls(r::ResponseSuccess) = function_calls(r.response)
 function_calls(::ResponseFailure) = Dict{String,Any}[]
@@ -1029,12 +1045,16 @@ _output_items(r::ResponseObject, typ::String) =
 """
     reasoning_summaries(r) -> Vector{String}
 
-Reasoning-summary text from each `reasoning` output item.
+Reasoning-summary text from each `reasoning` output item (OpenAI Responses) and each
+`thought` step (Gemini Interactions).
 """
 function reasoning_summaries(r::ResponseObject)
     out = String[]
-    for item in _output_items(r, "reasoning"), s in _as_iter(get(item, "summary", ()))
-        s isa Dict && haskey(s, "text") && push!(out, s["text"])
+    for item in r.output
+        item isa Dict && get(item, "type", "") in ("reasoning", "thought") || continue
+        for s in _as_iter(get(item, "summary", ()))
+            s isa Dict && haskey(s, "text") && push!(out, s["text"])
+        end
     end
     return out
 end
@@ -1157,20 +1177,22 @@ Mutable per-stream assembly state for the agentic streaming seam
 output text (`textbuff`), the not-yet-forwarded text deltas (`pending_delta`),
 the per-stream drop count (`sse_dropped`), and — for providers whose terminal
 event omits the step list (Gemini Interactions) — a per-index registry of
-assembled steps: `steps` maps a step index to its (mutable) step dict,
-`args_json` accumulates partial function-call argument JSON per index, and
+assembled steps: `steps` maps a step index to its (mutable) step dict, and
 `order` records first-seen index order for deterministic output rebuilding.
-`text_by_step` holds a typed IOBuffer for each model-output step, including initial text.
+`text_by_step` holds each step's streamed string (answer text, function-call
+argument JSON, or thought signature, depending on the step type), read once when the
+interaction completes; `args_json` holds partial function-call argument JSON per
+index for a decoder that keeps arguments apart from `text_by_step`.
 """
-Base.@kwdef mutable struct AgenticStreamState
+@kwdef mutable struct AgenticStreamState
     textbuff::IOBuffer = IOBuffer()
     carry::IOBuffer = IOBuffer()
     last_event::Base.RefValue{String} = Ref("")
     steps::Dict{Int,Dict{String,Any}} = Dict{Int,Dict{String,Any}}()
     args_json::Dict{Int,String} = Dict{Int,String}()
     order::Vector{Int} = Int[]
-    # Separate buffers preserve Interactions step order without repeatedly
-    # copying an ever-growing text string on every streamed delta.
+    # One buffer per step keeps Interactions step order without re-copying an
+    # ever-growing string on every streamed delta; each is read once, at completion.
     text_by_step::Dict{Int,IOBuffer} = Dict{Int,IOBuffer}()
     # Text deltas collected by the decoder, not yet forwarded to the callback;
     # the driver drains THIS buffer per read (twin of `StreamState.pending_delta`).
@@ -1207,6 +1229,7 @@ function _parse_response_stream_chunk(chunk::String, state::AgenticStreamState)
             # content_part.*, refusal.*, function_call_arguments.*, reasoning*,
             # hosted-tool progress) degrades gracefully — as do unknown types.
         catch e
+            e isa InterruptException && rethrow()
             Threads.atomic_add!(_SSE_DROPPED_LINES, 1)
             state.sse_dropped += 1
             @debug "Responses SSE: dropped undecodable data payload" event = ev payload = String(payload) exception = e
@@ -1216,30 +1239,24 @@ function _parse_response_stream_chunk(chunk::String, state::AgenticStreamState)
 end
 
 """
-    _flush_agentic_delta!(callback, state, close_ref, fired::Ref{Bool}) -> Nothing
+    _flush_agentic_delta!(callback, state, close_ref) -> Nothing
 
-Forward collected-but-unsent agentic text deltas verbatim, and record that user
-code ran. The decoder collects on `state.pending_delta`; draining that one small
-buffer per read is what keeps a long stream linear — the emitted-length diff it
-replaces re-copied the whole accumulated text (and its mirror) on every read.
-Twin of the chat driver's `_flush_delta!` (src/requests.jl).
+Forward collected-but-unsent agentic text deltas verbatim. The decoder collects on
+`state.pending_delta`; draining that one small buffer per read is what keeps a long
+stream linear — the emitted-length diff it replaces re-copied the whole accumulated
+text (and its mirror) on every read. Twin of the chat driver's `_flush_delta!`
+(src/requests.jl).
 """
-function _flush_agentic_delta!(callback, state::AgenticStreamState, close_ref,
-                               fired::Ref{Bool})::Nothing
-    delta = String(take!(state.pending_delta))
-    (isnothing(callback) || isempty(delta)) && return nothing
-    fired[] = true            # before user code runs: a throwing callback still counts as fired
-    callback(delta, close_ref)
+function _flush_agentic_delta!(callback, state::AgenticStreamState, close_ref)::Nothing
+    delta = takestring!(state.pending_delta)
+    isnothing(callback) || isempty(delta) || callback(delta, close_ref)
     nothing
 end
 
 # Map a recorded structured terminal-failure payload to a typed result. `status`
 # is the HTTP status when a response object completed normally, or `nothing` when
 # an idle close ate the transport EOF after the terminal was already recorded.
-# `status` is the HTTP status integer, whose concrete type differs across HTTP.jl
-# majors (`Int16` on 1.x, `Int64` on 2.x), so accept any `Integer`; `io` stays
-# untyped — it carries the request stream (whose concrete type also varies by
-# major) purely to read the x-request-id header.
+# `io` is the request stream, read only for its request-id header.
 function _agentic_terminal_result(te::Dict{String,Any}, status::Union{Integer,Nothing}, io,
                                   sse_dropped::Int=0)
     req_id = !isnothing(io) ? _get_request_id(io) : nothing
@@ -1252,232 +1269,265 @@ function _agentic_terminal_result(te::Dict{String,Any}, status::Union{Integer,No
     end
 end
 
-# The agentic streaming driver. Retries only BEFORE the first callback fires (the
-# spawned task is the return value). A silent peer fails typed: a missing first
-# byte within min(remaining, request_timeout) is a :request timeout; a byte-gap
-# beyond stream_idle_timeout is a :stream_idle timeout. Once the terminal event is
-# recorded the response stands: a connection failure or bound breach raised while
-# the socket is torn down finalizes the recorded outcome rather than discarding or
-# re-POSTing a billed generation. InterruptException always rethrows first
-# (surfaces as a TaskFailedException at fetch).
-function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig, t0::UInt64)
+# The agentic streaming driver. Retries only BEFORE user code runs (the spawned task
+# is the return value). A silent peer fails typed: a missing first byte within
+# min(remaining, request_timeout) is a :request timeout; a byte-gap beyond
+# stream_idle_timeout is a :stream_idle timeout — time spent in the callback is not a
+# byte gap. Once the terminal event is recorded the response stands: a connection
+# failure, bound breach or stop raised while the socket is torn down finalizes the
+# recorded outcome rather than discarding or re-POSTing a billed generation. A stop
+# before that — `token`, or the callback's close flag — ends the call with
+# `UniLMCancelled` in `cause`, never retried; an exception from the callback ends it
+# with that exception in `cause`. InterruptException always rethrows first (surfaces
+# as a TaskFailedException at fetch).
+function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig, t0::UInt64,
+                         token::Union{Nothing,CancelToken})
     Threads.@spawn begin
-        io_ref = Ref{Union{HTTP.Stream,Nothing}}(nothing)
-        callback_fired = Ref(false)   # any user-visible output disables retry
-        attempt = 1
-        while true
-            io_ref[] = nothing
-            result = Ref{Union{ResponseObject,Nothing}}(nothing)
-            terminal_error = Ref{Union{Dict{String,Any},Nothing}}(nothing)  # structured failed/error payload
-            # Fresh per attempt (a retried attempt must not inherit partial SSE state)
-            # and owned OUT here so the `finally` can report what this connection dropped.
-            state = AgenticStreamState()
-            raw_buffer = IOBuffer()  # wire bytes for non-200 reporting (streamed resp.body is empty under HTTP 2.x)
-            guard = nothing          # idle-guard handle (owned by deadline.jl); nothing until armed
-            # Request-phase bound, recorded before it unwinds through HTTP.jl (see
-            # `_with_recorded_deadline`): the catch restores it as the surfaced cause
-            # when the library's teardown of the bound-closed socket replaces it.
-            bound = Ref{Union{Nothing,UniLMTimeout}}(nothing)
-            try
-                url = get_url(r.service, r)
-                remaining = _remaining_s(cfg, t0)
-                remaining <= 0 && throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
-                # SSE must reach the parser uncompressed: some providers (Gemini Interactions)
-                # gzip even streamed responses, and HTTP.jl's 1.x streaming read does NOT
-                # auto-decompress the body — raw gzip bytes hit the SSE parser, every line fails
-                # to decode, and no text/output is built. Request identity encoding + disable
-                # decompression so `data:` lines arrive verbatim (mirrors _stream_attempt).
-                stream_headers = push!(copy(auth_header(r.service)), "Accept-Encoding" => "identity")
-                # Seam-routed: _http_open applies the per-major native stream kwargs plus
-                # status_exception=false and retry=false; decompress=false passes through.
-                resp = _http_open("POST", url, stream_headers; cfg=cfg, t0=t0, decompress=false) do io
-                    io_ref[] = io
-                    done = Ref(false)
-                    close_ref = Ref(false)
-                    # First byte = response headers received. The request-phase deadline guards
-                    # the whole send/first-byte exchange; the total deadline governs a stream
-                    # only up to this point — after it, only the idle guard runs (a long
-                    # healthy stream is not a failure).
-                    _with_recorded_deadline(() -> begin
-                            write(io, body)
-                            HTTP.closewrite(io)
-                            HTTP.startread(io)
-                        end, () -> close(io),
-                        min(_remaining_s(cfg, t0), cfg.request_timeout), :request, bound)
-                    # Byte-gap guard: reset on every raw read (SSE comments and provider
-                    # keep-alives reset the clock by construction).
-                    guard = _idle_guard(() -> close(io), cfg.stream_idle_timeout)
-                    at_eof = false
-                    while !close_ref[] && !done[]
-                        if eof(io)
-                            # EOF flush (mirrors the chat driver): a peer can end
-                            # its last line WITHOUT the trailing newline — a
-                            # terminal event as the very last bytes is still ONE
-                            # COMPLETE line. Feed the newline that terminates it,
-                            # then stop. With an empty carry this decodes nothing.
-                            chunk = "\n"
-                            at_eof = true
-                        else
-                            chunk = String(readavailable(io))
-                            _touch!(guard)
-                            write(raw_buffer, chunk)
-                        end
-                        status = decode_agentic_stream(r.service, chunk, state)
-                        if status.terminal in (:completed, :incomplete) &&
-                           status.data isa AbstractDict && haskey(status.data, "response")
-                            # BOTH terminals carry a real response object, so both finalize
-                            # the same way: `incomplete` reports its truncation in `status` /
-                            # `incomplete_details` and still holds usable partial output.
-                            # Discarding it would make the result type depend on `stream` —
-                            # the non-streamed decode of this same object is a success, and
-                            # only `status == "failed"` is a failure on either path.
-                            _flush_agentic_delta!(callback, state, close_ref, callback_fired)
-                            rdata = status.data["response"]
-                            result[] = ResponseObject(
-                                id=rdata["id"],
-                                status=rdata["status"],
-                                model=rdata["model"],
-                                output=get(rdata, "output", Any[]),
-                                usage=get(rdata, "usage", nothing),
-                                error=get(rdata, "error", nothing),
-                                metadata=get(rdata, "metadata", nothing),
-                                raw=rdata
-                            )
-                            done[] = true
-                            if !isnothing(callback)
-                                callback_fired[] = true
-                                callback(result[], close_ref)
-                            end
-                        elseif status.terminal in (:failed, :incomplete, :error) && !isnothing(status.data)
-                            # Structured terminal failure mid-stream (HTTP itself may be 200): keep the
-                            # response's own error details instead of dropping them. `:incomplete`
-                            # reaches here only when the terminal carries NO response object — a
-                            # malformed terminal, which has no result to hand back.
-                            terminal_error[] = status.data
-                            done[] = true
-                        else
-                            # Forward this read's deltas. The decoder ALSO accumulates them in
-                            # `state.textbuff`, which a provider whose TERMINAL event omits the
-                            # output — Gemini's `interaction.completed` carries no steps — rebuilds
-                            # from. OpenAI ignores it (its completed event has output).
-                            _flush_agentic_delta!(callback, state, close_ref, callback_fired)
-                        end
-                        at_eof && break
+        ctl = _StreamCtl(token)
+        link = _on_cancel(() -> cancel!(ctl.stop), token)   # the caller's token stops the call
+        try
+            _respond_drive(r, body, callback, cfg, t0, ctl)
+        finally
+            _off_cancel(token, link)
+        end
+    end
+end
+
+# The typed result of a stopped agentic call.
+_cancelled_response(ctl::_StreamCtl, t0::UInt64)::ResponseCallError =
+    (c = _stop_cause(ctl, t0); ResponseCallError(error=sprint(showerror, c), status=nothing, cause=c))
+
+function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, t0::UInt64,
+                        ctl::_StreamCtl)
+    io_ref = Ref{Union{HTTP.Stream,Nothing}}(nothing)
+    attempt = 1
+    while true
+        io_ref[] = nothing
+        result = Ref{Union{ResponseObject,Nothing}}(nothing)
+        terminal_error = Ref{Union{Dict{String,Any},Nothing}}(nothing)  # structured failed/error payload
+        # Fresh per attempt (a retried attempt must not inherit partial SSE state)
+        # and owned OUT here so the `finally` can report what this connection dropped.
+        state = AgenticStreamState()
+        raw_buffer = IOBuffer()  # wire bytes for non-200 reporting (a streamed resp.body is empty)
+        guard = Ref{Union{Nothing,_IdleGuard}}(nothing)   # armed at the first byte; stays nothing when disabled
+        # Request-phase bound, recorded before it unwinds through HTTP.jl (see
+        # `_with_recorded_deadline`): the catch restores it as the surfaced cause
+        # when the library's teardown of the bound-closed socket replaces it.
+        bound = Ref{Union{Nothing,UniLMTimeout}}(nothing)
+        cb = isnothing(callback) ? nothing : (x, c) -> _user_call(callback, ctl, guard[], x, c)
+        try
+            url = get_url(r.service, r)
+            remaining = _remaining_s(cfg, t0)
+            remaining <= 0 && throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
+            # SSE must reach the parser uncompressed: some providers (Gemini Interactions)
+            # gzip even streamed responses, and raw gzip bytes fail every line's decode,
+            # so no text/output is built. Request identity encoding and disable
+            # decompression so `data:` lines arrive verbatim (mirrors _stream_attempt).
+            stream_headers = push!(copy(auth_header(r.service)), "Accept-Encoding" => "identity")
+            # Seam-routed: _http_open applies the native stream kwargs plus
+            # status_exception=false and retry=false and aborts the exchange on
+            # `ctl.stop`; decompress=false passes through.
+            resp = _http_open("POST", url, stream_headers; cfg=cfg, t0=t0, cancel=ctl.stop,
+                              decompress=false) do io
+                io_ref[] = io
+                done = Ref(false)
+                # First byte = response headers received. The request-phase deadline guards
+                # the whole send/first-byte exchange; the total deadline governs a stream
+                # only up to this point — after it, only the idle guard runs (a long
+                # healthy stream is not a failure).
+                _with_recorded_deadline(() -> begin
+                        write(io, body)
+                        HTTP.closewrite(io)
+                        HTTP.startread(io)
+                    end, () -> close(io),
+                    min(_remaining_s(cfg, t0), cfg.request_timeout), :request, bound)
+                # Byte-gap guard: reset on every raw read (SSE comments and provider
+                # keep-alives reset the clock by construction).
+                guard[] = _idle_guard(() -> close(io), cfg.stream_idle_timeout)
+                at_eof = false
+                while !done[] && !iscancelled(ctl.stop)
+                    if eof(io)
+                        # EOF flush (mirrors the chat driver): a peer can end
+                        # its last line WITHOUT the trailing newline — a
+                        # terminal event as the very last bytes is still ONE
+                        # COMPLETE line. Feed the newline that terminates it,
+                        # then stop. With an empty carry this decodes nothing.
+                        chunk = "\n"
+                        at_eof = true
+                    else
+                        chunk = String(readavailable(io))
+                        _touch!(guard[])
+                        write(raw_buffer, chunk)
                     end
-                    if !done[] && !close_ref[]
-                        # No terminal, no exception: a guard's close landing while
-                        # the driver was inside a user callback truncates the read
-                        # into a clean EOF, so the loop just ends. Raise what the
-                        # throwing path would have raised, or the kill reads as a
-                        # 200 carrying partial bytes (mirror: _stream_attempt).
-                        breach = _exit_breach(guard, bound, cfg)
+                    status = decode_agentic_stream(r.service, chunk, state)
+                    if status.terminal in (:completed, :incomplete) &&
+                       status.data isa AbstractDict && haskey(status.data, "response")
+                        # BOTH terminals carry a real response object, so both finalize
+                        # the same way: `incomplete` reports its truncation in `status` /
+                        # `incomplete_details` and still holds usable partial output.
+                        # Discarding it would make the result type depend on `stream` —
+                        # the non-streamed decode of this same object is a success, and
+                        # only `status == "failed"` is a failure on either path.
+                        _flush_agentic_delta!(cb, state, ctl.close)
+                        rdata = status.data["response"]
+                        result[] = ResponseObject(
+                            id=rdata["id"],
+                            status=rdata["status"],
+                            model=rdata["model"],
+                            output=get(rdata, "output", Any[]),
+                            usage=get(rdata, "usage", nothing),
+                            error=get(rdata, "error", nothing),
+                            metadata=get(rdata, "metadata", nothing),
+                            raw=rdata
+                        )
+                        done[] = true
+                        isnothing(cb) || cb(result[], ctl.close)
+                    elseif status.terminal in (:failed, :incomplete, :error) && !isnothing(status.data)
+                        # Structured terminal failure mid-stream (HTTP itself may be 200): keep the
+                        # response's own error details instead of dropping them. `:incomplete`
+                        # reaches here only when the terminal carries NO response object — a
+                        # malformed terminal, which has no result to hand back.
+                        terminal_error[] = status.data
+                        done[] = true
+                    else
+                        # Forward this read's deltas. The decoder ALSO accumulates them in
+                        # `state.textbuff`, which a provider whose TERMINAL event omits the
+                        # output — Gemini's `interaction.completed` carries no steps — rebuilds
+                        # from. OpenAI ignores it (its completed event has output).
+                        _flush_agentic_delta!(cb, state, ctl.close)
+                    end
+                    at_eof && break
+                end
+                if iscancelled(ctl.stop)
+                    # A stop before the terminal ends the attempt; after it, the recorded
+                    # outcome stands (see the catch). The aborted body is not drained.
+                    done[] || throw(_stop_cause(ctl, t0))
+                else
+                    if !done[]
+                        # No terminal, no exception: a guard's close landing as the driver
+                        # entered a user callback truncates the read into a clean EOF, so
+                        # the loop just ends. Raise what the throwing path would have
+                        # raised, or the kill reads as a 200 carrying partial bytes
+                        # (mirror: _stream_attempt).
+                        breach = _exit_breach(guard[], bound, cfg)
                         breach === nothing || throw(breach)
                     end
-                    close_ref[] && @info "Response stream closed by user"
                     HTTP.closeread(io)
                 end
-                if resp.status == 200 && !isnothing(result[])
-                    return ResponseSuccess(response=result[]::ResponseObject, sse_dropped=state.sse_dropped)
-                elseif (te = terminal_error[]) !== nothing
-                    return _agentic_terminal_result(te, resp.status, io_ref[], state.sse_dropped)
-                elseif _is_retryable(resp.status) && !callback_fired[] && attempt < cfg.max_attempts
-                    action, delay = _retry_pause(cfg, t0, attempt, resp)
-                    if action === :budget
-                        # Never sleep past the deadline; return the last real response.
-                        @warn "Response stream: retry backoff exceeds the remaining total_deadline; returning the last response" status = resp.status
-                        return ResponseFailure(response=String(take!(raw_buffer)), status=resp.status,
-                                               request_id=_get_request_id(resp), sse_dropped=state.sse_dropped)
-                    end
-                    @debug "Response stream retryable status; retrying" status = resp.status attempt
-                    sleep(delay); attempt += 1; continue
-                else
-                    return ResponseFailure(response=String(take!(raw_buffer)), status=resp.status,
+            end
+            if resp.status == 200 && !isnothing(result[])
+                return ResponseSuccess(response=result[]::ResponseObject, sse_dropped=state.sse_dropped)
+            elseif (te = terminal_error[]) !== nothing
+                return _agentic_terminal_result(te, resp.status, io_ref[], state.sse_dropped)
+            elseif _is_retryable(resp.status) && !ctl.fired && attempt < cfg.max_attempts
+                action, delay = _retry_pause(cfg, t0, attempt, resp)
+                if action === :budget
+                    # Never sleep past the deadline; return the last real response.
+                    @warn "Response stream: retry backoff exceeds the remaining total_deadline; returning the last response" status = resp.status
+                    return ResponseFailure(response=takestring!(raw_buffer), status=resp.status,
                                            request_id=_get_request_id(resp), sse_dropped=state.sse_dropped)
                 end
-            catch e
-                # Interrupt-first, chain-walked: a user interrupt nested inside a task or
-                # transport wrapper must still surface before any timeout/transport mapping.
-                _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
-                # Byte-gap idle breach: classified by `_classify_stream_timeout` from the
-                # seam's armed-timer set (our guard's close echo, or the 2.x native
-                # read-idle timer — which can fire before the first byte too, while the
-                # response-header wait is still in progress). Never a retryable transport
-                # failure, regardless of when in the attempt it fired.
-                breach = _classify_stream_timeout(e, guard, cfg, t0)
-                # Teardown of an exchange that already produced its answer: the
-                # RECORDED terminal is the outcome, and a connection failure or a
-                # bound breach raised while the socket is torn down must neither
-                # discard a billed generation nor re-POST it (the retry limbs
-                # below would bill a second one for a single caller request).
-                # Failures that are not teardown-shaped still surface. Twin of the
-                # chat driver's rule in `_stream_attempt`.
-                if _stream_teardown_noise(e, breach)
-                    !isnothing(result[]) &&
-                        return ResponseSuccess(response=result[]::ResponseObject, sse_dropped=state.sse_dropped)
-                    te = terminal_error[]
-                    !isnothing(te) && return _agentic_terminal_result(te, nothing, io_ref[], state.sse_dropped)
-                end
-                breach === nothing ||
-                    return ResponseCallError(error=sprint(showerror, breach), status=nothing, cause=breach)
-                # Unwrap to the root cause before classifying: HTTP.open's 1.x request
-                # machinery (ExceptionRequest) wraps an exception thrown from the streaming
-                # handler, so the first-byte/deadline `_with_deadline` UniLMTimeout arrives
-                # WRAPPED, not bare — the same `_unwrap_exception` the chat driver uses in
-                # `_stream_drive`. (Native read-idle timeouts were consumed above; what
-                # `_map_native_timeout` still sees here is the connect phase — 2.x
-                # connect/TLS labels, 1.x connect sentinel — found by chain walk. The 1.x
-                # major arms no native stream timer, so there the deadline guard is the
-                # only first-byte source and it must be unwrapped.)
-                u = _unwrap_exception(e)
-                # A recorded request-phase bound takes precedence over whatever the
-                # library surfaced while unwinding it (e.g. EPIPE from writing to the
-                # socket the bound closed); with no displacement it equals the timeout
-                # the attempt already threw, and it never masks an error that arrived
-                # with no bound fired.
-                bt = bound[]
-                mapped = bt !== nothing ? bt :
-                         u isa UniLMTimeout ? u :
-                         _map_native_timeout(e, cfg, min(_remaining_s(cfg, t0), cfg.request_timeout), t0)
-                if mapped isa UniLMTimeout
-                    if !callback_fired[] && attempt < cfg.max_attempts &&
-                       (mapped.phase === :connect || mapped.phase === :request)
-                        # No `resp` for a per-attempt timeout — backoff/budget arithmetic is
-                        # `_retry_pause` with no Response, identical to the seam retry loop.
-                        action, delay = _retry_pause(cfg, t0, attempt, nothing)
-                        if action === :budget
-                            @warn "Response stream: retry backoff exceeds the remaining total_deadline; failing now" phase = mapped.phase
-                        else
-                            @debug "Response stream attempt timeout; retrying" phase = mapped.phase attempt
-                            sleep(delay); attempt += 1; continue
-                        end
-                    end
-                    return ResponseCallError(error=sprint(showerror, mapped), status=nothing, cause=mapped)
-                end
-                # Connection-level transport failure before any bytes reached the user: retry on
-                # the shared classifier (never true for interrupts/timeouts), with the same
-                # no-Response backoff + budget check as above.
-                if _is_transport_error(e) && !callback_fired[] && attempt < cfg.max_attempts
+                @debug "Response stream retryable status; retrying" status = resp.status attempt
+                _cancel_sleep(ctl.stop, delay) && return _cancelled_response(ctl, t0)
+                attempt += 1; continue
+            else
+                return ResponseFailure(response=takestring!(raw_buffer), status=resp.status,
+                                       request_id=_get_request_id(resp), sse_dropped=state.sse_dropped)
+            end
+        catch e
+            # Interrupt-first, chain-walked: a user interrupt nested inside a task or
+            # transport wrapper must still surface before any timeout/transport mapping.
+            _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
+            # The callback failed: its exception is the outcome — never teardown noise and
+            # never retried, whatever HTTP.jl surfaced while the exchange unwound.
+            failure = ctl.failure
+            if !isnothing(failure)
+                req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : nothing
+                thrown = failure.thrown
+                return ResponseCallError(error=_error_text(thrown), status=nothing, request_id=req_id,
+                                         cause=thrown isa Exception ? thrown : nothing)
+            end
+            # Byte-gap idle breach: classified by `_classify_stream_timeout` from the
+            # seam's armed-timer set (our guard's close echo, or the native read-idle
+            # timer — which can fire before the first byte too, while the
+            # response-header wait is still in progress). Never a retryable transport
+            # failure, regardless of when in the attempt it fired.
+            breach = _classify_stream_timeout(e, guard[], cfg, t0)
+            stopped = iscancelled(ctl.stop)
+            # Teardown of an exchange that already produced its answer: the
+            # RECORDED terminal is the outcome, and a connection failure, a bound
+            # breach or a stop raised while the socket is torn down must neither
+            # discard a billed generation nor re-POST it (the retry limbs below
+            # would bill a second one for a single caller request). Failures that
+            # are not teardown-shaped still surface. Twin of the chat driver's rule
+            # in `_stream_attempt`.
+            if stopped || _stream_teardown_noise(e, breach)
+                !isnothing(result[]) &&
+                    return ResponseSuccess(response=result[]::ResponseObject, sse_dropped=state.sse_dropped)
+                te = terminal_error[]
+                !isnothing(te) && return _agentic_terminal_result(te, nothing, io_ref[], state.sse_dropped)
+            end
+            # Stopped before the terminal: whatever surfaced (HTTP.jl's rendering of
+            # the aborted exchange, a racing bound) is the stop's echo.
+            stopped && return _cancelled_response(ctl, t0)
+            breach === nothing ||
+                return ResponseCallError(error=sprint(showerror, breach), status=nothing, cause=breach)
+            # Unwrap to the root cause before classifying (the same `_unwrap_exception`
+            # the chat driver uses in `_stream_drive`): a first-byte/deadline
+            # UniLMTimeout can arrive wrapped. Native read-idle timeouts were consumed
+            # above; what `_map_native_timeout` still sees here is the connect phase
+            # (connect/TLS labels), found by chain walk.
+            u = _unwrap_exception(e)
+            # A recorded request-phase bound takes precedence over whatever the
+            # library surfaced while unwinding it (e.g. EPIPE from writing to the
+            # socket the bound closed); with no displacement it equals the timeout
+            # the attempt already threw, and it never masks an error that arrived
+            # with no bound fired.
+            bt = bound[]
+            mapped = bt !== nothing ? bt :
+                     u isa UniLMTimeout ? u :
+                     _map_native_timeout(e, cfg, min(_remaining_s(cfg, t0), cfg.request_timeout), t0)
+            if mapped isa UniLMTimeout
+                if !ctl.fired && attempt < cfg.max_attempts &&
+                   (mapped.phase === :connect || mapped.phase === :request)
+                    # No `resp` for a per-attempt timeout — backoff/budget arithmetic is
+                    # `_retry_pause` with no Response, identical to the seam retry loop.
                     action, delay = _retry_pause(cfg, t0, attempt, nothing)
                     if action === :budget
-                        @warn "Response stream: retry backoff exceeds the remaining total_deadline; failing now" error = _error_text(e)
+                        @warn "Response stream: retry backoff exceeds the remaining total_deadline; failing now" phase = mapped.phase
                     else
-                        @debug "Response stream transport error; retrying" attempt
-                        sleep(delay); attempt += 1; continue
+                        @debug "Response stream attempt timeout; retrying" phase = mapped.phase attempt
+                        _cancel_sleep(ctl.stop, delay) && return _cancelled_response(ctl, t0)
+                        attempt += 1; continue
                     end
                 end
-                statuserror = hasproperty(u, :status) ? u.status : nothing
-                req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : _get_request_id(e)
-                return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id, cause=u isa Exception ? u : nothing)
-            finally
-                # Disarm on EVERY attempt exit — every return, every continue, and the
-                # interrupt rethrow (which is neither) — so the periodic idle timer never
-                # outlives the attempt. `_disarm!` is idempotent and a no-op on `nothing`
-                # (mirror: _stream_attempt's finally in src/requests.jl).
-                guard !== nothing && _disarm!(guard)
-                # One statement per attempt, on every exit; a retried attempt starts from a
-                # fresh state, so each connection reports only what IT dropped.
-                _warn_sse_drops(state.sse_dropped, r.model, "agentic stream")
+                return ResponseCallError(error=sprint(showerror, mapped), status=nothing, cause=mapped)
             end
+            # Connection-level transport failure before any bytes reached the user: retry on
+            # the shared classifier (never true for interrupts/timeouts), with the same
+            # no-Response backoff + budget check as above.
+            if _is_transport_error(e) && !ctl.fired && attempt < cfg.max_attempts
+                action, delay = _retry_pause(cfg, t0, attempt, nothing)
+                if action === :budget
+                    @warn "Response stream: retry backoff exceeds the remaining total_deadline; failing now" error = _error_text(e)
+                else
+                    @debug "Response stream transport error; retrying" attempt
+                    _cancel_sleep(ctl.stop, delay) && return _cancelled_response(ctl, t0)
+                    attempt += 1; continue
+                end
+            end
+            statuserror = hasproperty(u, :status) ? u.status : nothing
+            req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : _get_request_id(e)
+            return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id, cause=u isa Exception ? u : nothing)
+        finally
+            # Disarm on EVERY attempt exit — every return, every continue, and the
+            # interrupt rethrow (which is neither) — so the periodic idle timer never
+            # outlives the attempt. `_disarm!` is idempotent and a no-op on `nothing`
+            # (mirror: _stream_attempt's finally in src/requests.jl).
+            _disarm!(guard[])
+            # One statement per attempt, on every exit; a retried attempt starts from a
+            # fresh state, so each connection reports only what IT dropped.
+            _warn_sse_drops(state.sse_dropped, r.model, "agentic stream")
         end
     end
 end
@@ -1522,7 +1572,7 @@ decode_agentic_stream(service::OpenAIWireEndpointSpec, chunk::String, state::Age
     _parse_response_stream_chunk(chunk, state)
 
 """
-    respond(r::Respond; config=nothing, callback=nothing)
+    respond(r::Respond; config=nothing, callback=nothing, cancel=nothing)
 
 Send a request to the OpenAI Responses API.
 
@@ -1535,12 +1585,27 @@ For streaming, set `stream=true` and pass a `callback`:
 ```julia
 callback(chunk::Union{String, ResponseObject}, close::Ref{Bool})
 ```
-A user `InterruptException` during a stream is not swallowed — it rethrows
-inside the task and surfaces as a `TaskFailedException` at `fetch`.
+Setting `close[] = true` — in the callback or from any other task — stops the stream at
+once with `ResponseCallError(status=nothing, cause=UniLMCancelled(:callback, …))`,
+unless the terminal event was already recorded, in which case the response stands. An
+exception thrown by the callback ends the call with that exception in `cause`, never
+retried. Time spent in the callback does not count toward `stream_idle_timeout`. A
+user `InterruptException` during a stream is not swallowed — it rethrows inside the
+task and surfaces as a `TaskFailedException` at `fetch`.
 
-Throws `ArgumentError` before any network I/O when `r.service` is an endpoint type
-that declares its capabilities and lists neither `:responses` (OpenAI wire) nor
-`:agentic` (Gemini Interactions).
+`cancel::Union{Nothing,CancelToken}`: a [`CancelToken`](@ref); `nothing` resolves the
+ambient token of [`with_cancel`](@ref), at call entry. A cancel at any point — before
+connecting, during the response-header wait, mid-stream, or during a retry backoff —
+ends the call with `ResponseCallError(status=nothing, cause=UniLMCancelled(:token, …))`,
+never retried; a pre-cancelled token sends nothing. A TCP connect or TLS handshake
+already in progress cannot be interrupted (HTTP.jl 2.7.1), so a cancel during one takes
+effect when it completes or reaches `connect_timeout`.
+
+Local validation throws `ArgumentError` before any network I/O, streaming or not:
+when `r.service` is an endpoint type that declares its capabilities and lists neither
+`:responses` (OpenAI wire) nor `:agentic` (Gemini Interactions), or when the
+provider's encoder rejects the request (e.g. an option the provider or model does not
+support).
 
 # Examples
 ```julia
@@ -1551,22 +1616,19 @@ if result isa ResponseSuccess
 end
 ```
 """
-function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callback=nothing)
+function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callback=nothing,
+                 cancel::Union{Nothing,CancelToken}=nothing)
     _validate_agentic_capability(r.service)
-    cfg = _resolve_config(config); t0 = time_ns()
+    body = encode_agentic(r.service, r)
+    cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
+    # Streaming path. cfg/t0 are resolved above so both paths share one budget
+    # origin: the stream driver bounds the first byte, guards the byte gap, and
+    # retries pre-first-callback on the same budget.
+    r.stream === true && return _respond_stream(r, body, callback, cfg, t0, tok)
     local resp
     try
-        body = encode_agentic(r.service, r)
-
-        # Streaming path. cfg/t0 are resolved above so both paths share one
-        # budget origin: the stream driver bounds the first byte, guards the
-        # byte gap, and retries pre-first-callback on the same budget.
-        if !isnothing(r.stream) && r.stream
-            return _respond_stream(r, body, callback, cfg, t0)
-        end
-
         url = get_url(r.service, r)
-        resp = _http_with_retries(cfg, t0, "POST", url, auth_header(r.service), body)
+        resp = _http_with_retries(cfg, t0, "POST", url, auth_header(r.service), body; cancel=tok)
         if resp.status == 200
             decoded = decode_agentic(r.service, resp)
             # A generation that came back `failed` is a failure, whichever way it was
@@ -1585,11 +1647,19 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
         end
     catch e
         e isa InterruptException && rethrow()
-        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
-        statuserror = hasproperty(e, :status) ? e.status : nothing
-        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
+        return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
+end
+
+# The result for an exception that ended a non-streaming Responses call (`respond`
+# and the lifecycle operations): `cause` always carries the exception; a timeout or
+# cancellation keeps its own rendering and never reports an HTTP status.
+function _response_call_error(e, resp::Union{Nothing,HTTP.Response})::ResponseCallError
+    e isa Union{UniLMTimeout,UniLMCancelled} &&
+        return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
+    ResponseCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing),
+                      request_id=(isnothing(resp) ? _get_request_id(e) : _get_request_id(resp)),
+                      cause=(e isa Exception ? e : nothing))
 end
 
 """
@@ -1624,7 +1694,8 @@ function respond(input; kwargs...)
     kws = Dict{Symbol,Any}(kwargs)
     callback = pop!(kws, :callback, nothing)
     config = pop!(kws, :config, nothing)
-    respond(Respond(; input=input, kws...); config=config, callback=callback)
+    cancel = pop!(kws, :cancel, nothing)
+    respond(Respond(; input=input, kws...); config, callback, cancel)
 end
 
 """
@@ -1675,10 +1746,7 @@ function get_response(response_id::String; service::ServiceEndpointSpec=OPENAISe
         end
     catch e
         e isa InterruptException && rethrow()
-        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
-        statuserror = hasproperty(e, :status) ? e.status : nothing
-        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
+        return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
 
@@ -1707,10 +1775,7 @@ function delete_response(response_id::String; service::ServiceEndpointSpec=OPENA
         end
     catch e
         e isa InterruptException && rethrow()
-        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
-        statuserror = hasproperty(e, :status) ? e.status : nothing
-        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
+        return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
 
@@ -1753,10 +1818,7 @@ function list_input_items(response_id::String;
         end
     catch e
         e isa InterruptException && rethrow()
-        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
-        statuserror = hasproperty(e, :status) ? e.status : nothing
-        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
+        return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
 
@@ -1790,10 +1852,7 @@ function cancel_response(response_id::String; service::ServiceEndpointSpec=OPENA
         end
     catch e
         e isa InterruptException && rethrow()
-        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
-        statuserror = hasproperty(e, :status) ? e.status : nothing
-        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
+        return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
 
@@ -1838,10 +1897,7 @@ function compact_response(; model::String="gpt-5.6-sol",
         end
     catch e
         e isa InterruptException && rethrow()
-        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
-        statuserror = hasproperty(e, :status) ? e.status : nothing
-        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
+        return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
 
@@ -1883,9 +1939,6 @@ function count_input_tokens(; model::String="gpt-5.6-sol",
         end
     catch e
         e isa InterruptException && rethrow()
-        e isa UniLMTimeout && return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
-        statuserror = hasproperty(e, :status) ? e.status : nothing
-        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id)
+        return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end

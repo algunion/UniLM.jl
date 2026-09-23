@@ -227,6 +227,12 @@ const RoleAssistant = "assistant"
 """Role constant `"tool"` — used for tool/function call result messages."""
 const RoleTool = "tool"
 
+# The message roles of the chat wire.
+const _MESSAGE_ROLES = (RoleSystem, RoleUser, RoleAssistant, RoleTool)
+
+# Reasoning effort values the OpenAI API accepts; each model supports a subset.
+const _OPENAI_REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+
 """
     Model(name::String)
 
@@ -256,9 +262,11 @@ The neutral [`Message`](@ref) carries `content::String` + `tool_calls`, but some
 providers attach blocks that must round-trip byte-faithfully for multi-turn
 flows to work: Anthropic `thinking`/`redacted_thinking` blocks (their
 `signature` must be echoed unmodified or tool round-trips on thinking models
-are rejected with HTTP 400), and Gemini text-part `thoughtSignature`s.
-`provider` tags the wire dialect (`:anthropic` or `:gemini`); `blocks` is the
-provider's content/parts array exactly as decoded (String-keyed JSON).
+are rejected with HTTP 400), Gemini text-part `thoughtSignature`s, and DeepSeek
+`reasoning_content`. `provider` tags the wire dialect (`:anthropic`, `:gemini` or
+`:deepseek`); `blocks` is the provider's content/parts array exactly as decoded
+(String-keyed JSON) — for `:deepseek`, `[Dict("reasoning_content" => text)]`, echoed
+only on requests that carry tools.
 
 Encoders ignore a `ProviderContent` tagged for a different provider — a
 conversation moved across providers falls back to the neutral reconstruction
@@ -279,13 +287,14 @@ Represents a single message in a Chat Completions conversation.
 - `role::String`: One of [`RoleSystem`](@ref), [`RoleUser`](@ref), [`RoleAssistant`](@ref), or `RoleTool`.
 - `content::Union{String,Nothing}`: The text content of the message.
 - `name::Union{String,Nothing}`: Optional name for the participant.
-- `finish_reason::Union{String,Nothing}`: Why the model stopped generating (e.g. `"stop"`, `"tool_calls"`).
-- `refusal_message::Union{String,Nothing}`: Refusal text when content is filtered.
+- `finish_reason::Union{String,Nothing}`: Why the model stopped generating (e.g. `"stop"`, `"tool_calls"`); `nothing` when the provider reported none. Response-only: never sent in a request.
+- `refusal_message::Union{String,Nothing}`: Refusal text when content is filtered; sent on the wire as `refusal`.
 - `tool_calls::Union{Nothing,Vector{ToolCall}}`: Tool calls requested by the assistant.
 - `tool_call_id::Union{String,Nothing}`: Required when `role` is `"tool"` — the ID of the tool call being responded to.
-- `provider_content::Union{Nothing,ProviderContent}`: Provider-native content blocks captured for verbatim round-trip (see [`ProviderContent`](@ref)); set by the Anthropic/Gemini decoders, `nothing` otherwise. Never serialized on the OpenAI wire.
+- `provider_content::Union{Nothing,ProviderContent}`: Provider-native content blocks captured for verbatim round-trip (see [`ProviderContent`](@ref)); set by the Anthropic, Gemini and DeepSeek decoders (tags `:anthropic`, `:gemini`, `:deepseek`), `nothing` otherwise. Never serialized on the OpenAI wire.
 
 # Validation
+- `role` must be one of `"system"`, `"user"`, `"assistant"`, `"tool"`.
 - At least one of `content`, `tool_calls`, or `refusal_message` must be non-`nothing`.
 - `tool_call_id` is required when `role == "tool"`.
 
@@ -306,6 +315,8 @@ Message(Val(:user), "Hello!")
     provider_content::Union{Nothing,ProviderContent} = nothing
     function Message(role, content, name, finish_reason, refusal_message, tool_calls,
                      tool_call_id, provider_content=nothing)
+        role in _MESSAGE_ROLES || throw(ArgumentError(
+            "message role must be one of $(join(_MESSAGE_ROLES, ", ")) (got $(repr(role)))"))
         isnothing(content) && isnothing(tool_calls) && isnothing(refusal_message) && throw(ArgumentError("`content`, `tool_calls`, and `refusal_message` cannot all be nothing"))
         role == RoleTool && isnothing(tool_call_id) && throw(ArgumentError("`tool_call_id` cannot be empty when role is `tool`"))
         return new(role, content, name, finish_reason, refusal_message, tool_calls,
@@ -320,15 +331,17 @@ const Conversation = Vector{Message}
 
 JSON.omit_null(::Type{Message}) = true
 
-# provider_content is a decode-side round-trip cache for provider-native
-# blocks, not a wire field: exclude it from serialization (same precedent as
-# ToolCall.thought_signature). Conditional insertion mirrors omit-null.
+# The request wire form. provider_content is a decode-side round-trip cache for
+# provider-native blocks (same precedent as ToolCall.thought_signature) and
+# finish_reason is a response-only field: neither is sent. A refusal travels under
+# its wire name, `refusal`; an assistant message needs `content` unless it carries
+# tool calls, so a refusal turn sends it as null — the shape the API returns it in.
+# Conditional insertion mirrors omit-null.
 function JSON.lower(m::Message)
     d = Dict{Symbol,Any}(:role => m.role)
-    isnothing(m.content)         || (d[:content] = m.content)
+    (isnothing(m.content) && isnothing(m.refusal_message)) || (d[:content] = m.content)
     isnothing(m.name)            || (d[:name] = m.name)
-    isnothing(m.finish_reason)   || (d[:finish_reason] = m.finish_reason)
-    isnothing(m.refusal_message) || (d[:refusal_message] = m.refusal_message)
+    isnothing(m.refusal_message) || (d[:refusal] = m.refusal_message)
     isnothing(m.tool_calls)      || (d[:tool_calls] = m.tool_calls)
     isnothing(m.tool_call_id)    || (d[:tool_call_id] = m.tool_call_id)
     d
@@ -661,6 +674,15 @@ OpenAI options, omitted from the request when unset:
   the request does not use prompt caching.
 - `moderation::Union{ModerationConfig,Nothing}`: moderated completions
   ([`ModerationConfig`](@ref)).
+- `stream_options::Union{AbstractDict,Nothing}`: streaming options; when unset, an
+  `OPENAIServiceEndpoint` or `DeepSeekEndpoint` stream requests
+  `{"include_usage": true}`, so the streamed result carries token usage.
+
+The constructor validates ranges and throws `ArgumentError` on a violation; among
+them, `n` must be `1` when set — a result carries a single choice — `top_logprobs`
+must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
+`reasoning_effort` one of `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`,
+`"xhigh"`, `"max"`. An empty `tools` vector is stored as `nothing`.
 """
 @kwdef struct Chat
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
@@ -672,7 +694,7 @@ OpenAI options, omitted from the request when unset:
     parallel_tool_calls::Union{Bool,Nothing} = false
     temperature::Union{Float64,Nothing} = nothing # 0.0 - 2.0 - mutual exclusive with top_p
     top_p::Union{Float64,Nothing} = nothing # 0.0 - 1.0 - mutual exclusive with temperature
-    n::Union{Int64,Nothing} = nothing # 1 - 10
+    n::Union{Int64,Nothing} = nothing # must be 1: results carry a single choice
     stream::Union{Bool,Nothing} = nothing
     stop::Union{Vector{String},String,Nothing} = nothing # max 4 sequences
     max_tokens::Union{Int64,Nothing} = nothing
@@ -680,11 +702,11 @@ OpenAI options, omitted from the request when unset:
     presence_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
     response_format::Union{ResponseFormat,Nothing} = nothing
     frequency_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
-    logit_bias::Union{AbstractDict{String,Float64},Nothing} = nothing
+    logit_bias::Union{AbstractDict{String,<:Real},Nothing} = nothing # token id → bias in [-100, 100]
     user::Union{String,Nothing} = nothing
     seed::Union{Int64,Nothing} = nothing
     reasoning_effort::Union{String,Nothing} = nothing      # model-dependent reasoning effort
-    stream_options::Union{AbstractDict,Nothing} = nothing  # e.g. {"include_usage": true}
+    stream_options::Union{AbstractDict,Nothing} = nothing  # e.g. {"include_usage": true}; see JSON.lower
     verbosity::Union{String,Nothing} = nothing             # low|medium|high
     store::Union{Bool,Nothing} = nothing
     metadata::Union{AbstractDict,Nothing} = nothing
@@ -741,14 +763,22 @@ OpenAI options, omitted from the request when unset:
     )
         model = _resolve_model(service, model)
         tools = _chat_tools(tools)  # accept a CallableTool vector, stored as Tools
+        isnothing(tools) || !isempty(tools) || (tools = nothing)   # no tools is no tool list
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
         !isnothing(top_p) && !(0.0 <= top_p <= 1.0) && throw(ArgumentError("top_p must be in [0.0, 1.0]"))
-        !isnothing(n) && !(1 <= n <= 10) && throw(ArgumentError("n must be in [1, 10]"))
+        # A result carries one choice: extra choices were dropped (non-streaming) or
+        # merged into one garbled text (streaming).
+        !isnothing(n) && n != 1 && throw(ArgumentError("n must be 1 (got $n): results carry a single choice"))
         !isnothing(max_tokens) && max_tokens < 1 && throw(ArgumentError("max_tokens must be >= 1"))
         !isnothing(max_completion_tokens) && max_completion_tokens < 1 && throw(ArgumentError("max_completion_tokens must be >= 1"))
         !isnothing(presence_penalty) && !(-2.0 <= presence_penalty <= 2.0) && throw(ArgumentError("presence_penalty must be in [-2.0, 2.0]"))
         !isnothing(frequency_penalty) && !(-2.0 <= frequency_penalty <= 2.0) && throw(ArgumentError("frequency_penalty must be in [-2.0, 2.0]"))
+        !isnothing(top_logprobs) && !(0 <= top_logprobs <= 20) && throw(ArgumentError("top_logprobs must be in [0, 20]"))
+        isnothing(logit_bias) || all(v -> -100 <= v <= 100, values(logit_bias)) ||
+            throw(ArgumentError("logit_bias values must be in [-100, 100]"))
+        isnothing(reasoning_effort) || reasoning_effort in _OPENAI_REASONING_EFFORTS || throw(ArgumentError(
+            "reasoning_effort must be one of $(join(_OPENAI_REASONING_EFFORTS, ", ")) (got $(repr(reasoning_effort)))"))
         return new(
             service,
             model,
@@ -802,8 +832,18 @@ function JSON.lower(chat::Chat)
         v = getfield(chat, f)
         !isnothing(v) && (d[f] = v)
     end
+    # OpenAI and DeepSeek report a stream's token usage when asked through
+    # `stream_options.include_usage` (both document it); ask for the caller who set
+    # no stream_options, so a streamed turn is costed like a non-streamed one. Not
+    # for other OpenAI-compatible servers, which may reject the field.
+    chat.stream === true && isnothing(chat.stream_options) && _asks_stream_usage(chat.service) &&
+        (d[:stream_options] = Dict(:include_usage => true))
     return d
 end
+
+_asks_stream_usage(::Type{OPENAIServiceEndpoint}) = true
+_asks_stream_usage(::DeepSeekEndpoint) = true
+_asks_stream_usage(_) = false
 
 Base.length(chat::Chat) = length(chat.messages)
 Base.isempty(chat::Chat) = isempty(chat.messages)
@@ -861,7 +901,15 @@ Successful Chat Completions API response.
     sse_dropped::Int = 0
 end
 
-_get_request_id(resp::HTTP.Response) = (val = HTTP.header(resp, "x-request-id", ""); isempty(val) ? nothing : val)
+# The provider's id for the request: `x-request-id` (OpenAI and most compatible
+# servers), else `request-id` (Anthropic).
+function _get_request_id(resp::HTTP.Response)::Union{Nothing,String}
+    for name in ("x-request-id", "request-id")
+        val = HTTP.header(resp, name, "")
+        isempty(val) || return String(val)
+    end
+    nothing
+end
 _get_request_id(::Nothing) = nothing
 function _get_request_id(e::Any)
     if hasproperty(e, :response) && e.response isa HTTP.Response
@@ -916,8 +964,8 @@ end
 
 # Every call-error result keeps the raw exception in `cause` — dispatching on it is
 # the point of the field. Julia's default `show` recurses into it, though, and a
-# transport wrapper renders as a full request dump on HTTP.jl 1.x, so printing the
-# result would undo the redaction its `error` string already went through. Name the
+# transport wrapper can render as a full request dump, headers included, so printing
+# the result would undo the redaction its `error` string already went through. Name the
 # cause by TYPE instead: the object stays untouched and still reachable, it just
 # stops printing its payload. Shared by the Chat/Embeddings/Responses/FIM results.
 function _show_call_error(io::IO, name::AbstractString, err::AbstractString,
@@ -971,27 +1019,33 @@ text(r::LLMSuccess) = r.message.content
 """
     LLMResultError <: Exception
 
-Thrown by [`text`](@ref) when it is called on a non-success Chat result
-([`LLMFailure`](@ref) or [`LLMCallError`](@ref)). Carries the offending `result`.
-`showerror` prints only the status and a short (≤200-char) response excerpt —
-never the conversation, the service endpoint, or the API key.
+Thrown by the result accessors — [`text`](@ref), [`output_text`](@ref),
+[`embedding_vectors`](@ref), [`image_data`](@ref) and [`fim_text`](@ref) — when they
+are called on a non-success result. Carries the offending `result`. `showerror`
+prints only the status and a short (≤200-char) excerpt of the response body or error
+message — never the conversation, the service endpoint, or the API key.
 """
 struct LLMResultError <: Exception
-    result::Union{LLMFailure,LLMCallError}
+    result::LLMRequestResponse
 end
 
 text(r::Union{LLMFailure,LLMCallError}) = throw(LLMResultError(r))
 
-_llm_result_status(r::LLMFailure)   = r.status
-_llm_result_status(r::LLMCallError) = r.status
-_llm_result_body(r::LLMFailure)     = r.response
-_llm_result_body(r::LLMCallError)   = r.error
+# The status and the body/message text of a non-success result: every `*Failure`
+# carries the response body in `response`, every `*CallError` its message in `error`.
+_result_status(r::LLMRequestResponse) = hasproperty(r, :status) ? getproperty(r, :status) : nothing
+function _result_text(r::LLMRequestResponse)::String
+    for f in (:response, :error)
+        hasproperty(r, f) && (v = getproperty(r, f)) isa AbstractString && return String(v)
+    end
+    ""
+end
 
 function Base.showerror(io::IO, e::LLMResultError)
-    status = _llm_result_status(e.result)
-    print(io, "LLMResultError: no text — the request did not succeed (status ",
+    status = _result_status(e.result)
+    print(io, "LLMResultError: no result data — the request did not succeed (status ",
           isnothing(status) ? "unknown" : status, "). ")
-    body = _llm_result_body(e.result)
+    body = _result_text(e.result)
     print(io, "Response: ", length(body) > 200 ? string(first(body, 200), "…") : body)
 end
 
@@ -1121,6 +1175,9 @@ The `embeddings` field is **pre-allocated** and filled in-place by [`embeddingre
 - `input::Union{String,Vector{String}}`: Text(s) to embed.
 - `embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}`: Pre-allocated embedding vector(s).
 - `user::Union{String,Nothing}`: Optional end-user identifier.
+- `dimensions::Union{Int,Nothing}`: Requested vector size, where the model supports it.
+- `encoding_format::Union{String,Nothing}`: `"float"` or unset; any other format
+  (e.g. `"base64"`) throws `ArgumentError`, since the result stores `Float64` vectors.
 
 # Example
 ```julia
@@ -1143,25 +1200,32 @@ struct Embeddings
     function Embeddings(input::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, model::String="",
         dimensions::Union{Int,Nothing}=nothing, encoding_format::Union{String,Nothing}=nothing,
         user::Union{String,Nothing}=nothing)
-        if isempty(model)
-            dm = default_embedding_model(service)
-            isnothing(dm) && throw(ArgumentError("model must be specified for embeddings with $(typeof(service))"))
-            model = dm
-        end
-        return new(service, model, input, zeros(Float64, something(dimensions, 1536)), user, dimensions, encoding_format)
+        return new(service, _embedding_model(service, model), input, zeros(Float64, something(dimensions, 1536)),
+                   user, dimensions, _float_encoding(encoding_format))
     end
     function Embeddings(input::Vector{String}; service::ServiceEndpointSpec=OPENAIServiceEndpoint, model::String="",
         dimensions::Union{Int,Nothing}=nothing, encoding_format::Union{String,Nothing}=nothing,
         user::Union{String,Nothing}=nothing)
         isempty(input) && throw(ArgumentError("input must not be empty"))
-        if isempty(model)
-            dm = default_embedding_model(service)
-            isnothing(dm) && throw(ArgumentError("model must be specified for embeddings with $(typeof(service))"))
-            model = dm
-        end
-        return new(service, model, input, [zeros(Float64, something(dimensions, 1536)) for _ in 1:length(input)], user, dimensions, encoding_format)
+        return new(service, _embedding_model(service, model), input,
+                   [zeros(Float64, something(dimensions, 1536)) for _ in 1:length(input)], user, dimensions,
+                   _float_encoding(encoding_format))
     end
 end
+
+# The embedding model: the given one, else the service's default.
+function _embedding_model(service::ServiceEndpointSpec, model::String)::String
+    isempty(model) || return model
+    dm = default_embedding_model(service)
+    isnothing(dm) && throw(ArgumentError(
+        "model must be specified for embeddings with $(service isa Type ? nameof(service) : nameof(typeof(service)))"))
+    dm
+end
+
+# The result stores Float64 vectors, so only the float encoding can be decoded.
+_float_encoding(format::Union{String,Nothing}) =
+    isnothing(format) || format == "float" ? format : throw(ArgumentError(
+        "encoding_format must be \"float\" (got $(repr(format))): embeddings are stored as Float64 vectors"))
 
 function JSON.lower(emb::Embeddings)
     d = Dict{Symbol,Any}(:model => emb.model, :input => emb.input)
@@ -1258,5 +1322,8 @@ Base.show(io::IO, r::EmbeddingCallError) =
     embedding_vectors(r::EmbeddingSuccess)
 
 Return the embedding vector(s): `Vector{Float64}` (single input) or `Vector{Vector{Float64}}` (batch).
+On an [`EmbeddingFailure`](@ref) or [`EmbeddingCallError`](@ref) it throws an
+[`LLMResultError`](@ref); guard with [`issuccess`](@ref).
 """
 embedding_vectors(r::EmbeddingSuccess) = r.embeddings.embeddings
+embedding_vectors(r::Union{EmbeddingFailure,EmbeddingCallError}) = throw(LLMResultError(r))

@@ -14,10 +14,8 @@ using Sockets
 # under failfast=true (test/runtests.jl). Before treating any unexpected pass
 # in a driver testset as a refutation, re-run with a larger inter-chunk gap;
 # only a pass that survives fragmentation is a refutation.)
-# Portability across the declared HTTP compat range ("1.9, 2"): `listen!`
-# handlers receive an HTTP.Stream on both majors, so no `stream=true` kwarg
-# (the 2.x major rejects it); the request body is drained with `read`
-# (readavailable is undefined for server-side streams on 2.x, and a throwing
+# `listen!` handlers receive an HTTP.Stream; the request body is drained with
+# `read` (readavailable is undefined for server-side streams, and a throwing
 # handler turns every response into a 500).
 function sse_mock_server(chunks::Vector{String}; hold::Float64=0.0)
     # Port TOCTOU: the ephemeral port is discovered by binding a probe socket
@@ -204,7 +202,7 @@ end
             :model => "gpt-5.5", :history => false,
             :tools => [Tool(func=FunctionSignature(name="f"))],
             :tool_choice => "auto", :parallel_tool_calls => true,
-            :temperature => 0.5, :n => 2, :stream => false, :stop => ["x"],
+            :temperature => 0.5, :n => 1, :stream => false, :stop => ["x"],
             :max_tokens => 10, :max_completion_tokens => 20,
             :presence_penalty => 0.1, :response_format => ResponseFormat(),
             :frequency_penalty => 0.2, :logit_bias => Dict("50256" => -100.0),
@@ -356,8 +354,8 @@ end
                     {"type":"tool_use","id":"toolu_1","name":"get_weather","input":{"city":"Oslo"}}],
          "stop_reason":"tool_use","usage":{"input_tokens":10,"output_tokens":5}}
         """
-        # 3-arg ctor (cf. test/anthropic.jl): a String body becomes BytesBody in HTTP 2.x,
-        # which decode's JSON.parse can't consume; a Vector{UInt8} body works on HTTP 1.x + 2.x.
+        # 3-arg ctor (cf. test/anthropic.jl): a String body becomes a BytesBody, which
+        # decode's JSON.parse can't consume; a Vector{UInt8} body can.
         dec = UniLM.decode_response(ANTHROPICServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(resp_json)))
         msgs = [Message(role=UniLM.RoleUser, content="weather in Oslo?"),
                 dec.message,
@@ -578,16 +576,16 @@ end
         end
     end
 
-    @testset "a byte-gap kill inside a user callback fails typed, never as a 200" begin
-        # The guard closes the socket to unblock a blocked read. When that close
-        # lands while the driver sits inside a user callback, the truncated read
-        # comes back as a CLEAN EOF: the loop exits with NO exception to
-        # classify, and the killed stream surfaced as LLMFailure(status=200)
-        # carrying the partial bytes. Scaling: one non-terminal delta arrives at
-        # once, the callback holds the driver 5.0 s — past the 2.0 s idle limit
-        # plus its [limit, 2*limit] detection window even under a shared-runner
-        # stall — and the server holds the connection open 12.0 s, so the peer
-        # never ends the stream first.
+    @testset "a peer mute after a slow callback fails typed, never as a 200" begin
+        # The guard closes the socket to unblock a blocked read; a close that lands
+        # as the driver enters a user callback truncates the read into a CLEAN EOF,
+        # and that killed stream once surfaced as LLMFailure(status=200) carrying
+        # the partial bytes. Time inside the callback is not wire idle time, so the
+        # 5.0 s callback itself never trips the 2.0 s bound — the peer's silence
+        # after it does, and the outcome must be the typed byte-gap breach. Scaling:
+        # one non-terminal delta arrives at once and the server holds the
+        # connection open 12.0 s, past callback + limit + detection window, so the
+        # peer never ends the stream first.
         chunks = ["data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n"]
         server, base = sse_mock_server(chunks; hold=12.0)
         try
@@ -652,8 +650,8 @@ end
           "finishReason":"STOP"}],
          "usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":2,"totalTokenCount":3}}
         """
-        # 3-arg ctor (cf. test/gemini.jl): a String body becomes BytesBody in HTTP 2.x,
-        # which decode's JSON.parse can't consume; a Vector{UInt8} body works on HTTP 1.x + 2.x.
+        # 3-arg ctor (cf. test/gemini.jl): a String body becomes a BytesBody, which
+        # decode's JSON.parse can't consume; a Vector{UInt8} body can.
         dec = UniLM.decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(resp_json)))
         tcs = dec.message.tool_calls
         ids_ok = !isnothing(tcs) && length(tcs) == 2 && allunique([tc.id for tc in tcs])

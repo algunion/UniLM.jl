@@ -1280,10 +1280,11 @@ end
         prompt_cache_key="cache_1",
         prompt_cache_retention="24h",
         safety_identifier="safe_1",
-        conversation="conv_1",
         context_management=[Dict("type" => "truncation")],
         stream_options=Dict("include_usage" => true)
     )
+    # `conversation` is omitted: it cannot be combined with previous_response_id
+    # (see "Respond construction-time validation").
     lowered = JSON.lower(r)
     @test lowered[:model] == "gpt-5.2"
     @test lowered[:instructions] == "Be helpful"
@@ -1308,7 +1309,7 @@ end
     @test lowered[:prompt_cache_key] == "cache_1"
     @test lowered[:prompt_cache_retention] == "24h"
     @test lowered[:safety_identifier] == "safe_1"
-    @test lowered[:conversation] == "conv_1"
+    @test !haskey(lowered, :conversation)
     @test lowered[:context_management] == [Dict("type" => "truncation")]
     @test lowered[:stream_options] == Dict("include_usage" => true)
 
@@ -1323,6 +1324,33 @@ end
     @test parsed["safety_identifier"] == "safe_1"
     @test parsed["prompt_cache_retention"] == "24h"
     @test parsed["reasoning"]["summary"] == "concise"
+end
+
+@testset "Respond construction-time validation" begin
+    @test_throws ArgumentError Respond(input="hi", conversation="conv_1", previous_response_id="resp_1")
+    @test Respond(input="hi", conversation="conv_1").conversation == "conv_1"
+    @test_throws ArgumentError Respond(input="hi", background=true, store=false)
+    @test Respond(input="hi", background=true, store=true).background == true
+    @test isnothing(Respond(input="hi", background=true).store)
+    @test Respond(input="hi", background=false, store=false).store == false
+    for effort in ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+        @test Reasoning(effort=effort).effort == effort
+    end
+    @test_throws ArgumentError Reasoning(effort="extreme")
+end
+
+@testset "Respond converts a Chat Tool to the Responses FunctionTool" begin
+    params = Dict("type" => "object", "properties" => Dict("city" => Dict("type" => "string")))
+    chat_tool = Tool(func=FunctionSignature(name="weather", description="Get weather",
+                                            parameters=params, strict=true))
+    r = Respond(input="hi", tools=[chat_tool, web_search()])
+    @test r.tools[1] isa FunctionTool
+    @test (r.tools[1].name, r.tools[1].description, r.tools[1].parameters, r.tools[1].strict) ==
+          ("weather", "Get weather", params, true)
+    @test r.tools[2] isa WebSearchTool
+    wire = JSON.parse(JSON.json(r))["tools"][1]
+    @test wire["type"] == "function" && wire["name"] == "weather" && !haskey(wire, "function")
+    @test_throws ArgumentError Respond(input="hi", tools=[Tool(type="custom", func=FunctionSignature(name="x"))])
 end
 
 # ─── Expanded coverage: TextConfig ────────────────────────────────────────────

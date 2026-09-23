@@ -1306,3 +1306,79 @@ struct _CauseDumpError <: Exception; dump::String; end
     # No cause: the field renders as nothing, not as an empty type name.
     @test occursin("cause=nothing", sprint(show, LLMCallError(error="x", self=chat)))
 end
+
+struct _NoEmbeddingDefault <: UniLM.ServiceEndpoint end
+
+@testset "construction-time validation of Chat, Message and Embeddings" begin
+    @testset "reasoning_effort within the documented set" begin
+        for effort in ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+            @test Chat(reasoning_effort=effort).reasoning_effort == effort
+        end
+        @test_throws ArgumentError Chat(reasoning_effort="extreme")
+        @test_throws ArgumentError Chat(reasoning_effort="High")
+    end
+
+    @testset "top_logprobs in [0, 20]" begin
+        @test Chat(top_logprobs=0).top_logprobs == 0
+        @test Chat(top_logprobs=20).top_logprobs == 20
+        @test_throws ArgumentError Chat(top_logprobs=-1)
+        @test_throws ArgumentError Chat(top_logprobs=21)
+    end
+
+    @testset "an empty tool list is no tool list" begin
+        chat = Chat(tools=Tool[], parallel_tool_calls=true)
+        @test isnothing(chat.tools) && isnothing(chat.parallel_tool_calls)
+        @test !haskey(JSON.lower(chat), :tools)
+    end
+
+    @testset "logit_bias: any real bias in [-100, 100]" begin
+        @test Chat(logit_bias=Dict("50256" => -100)).logit_bias == Dict("50256" => -100)
+        @test JSON.parse(JSON.json(Chat(logit_bias=Dict("1" => 5, "2" => -2.5))))["logit_bias"] ==
+              Dict("1" => 5, "2" => -2.5)
+        @test_throws ArgumentError Chat(logit_bias=Dict("1" => 100.5))
+        @test_throws ArgumentError Chat(logit_bias=Dict("1" => -101))
+    end
+
+    @testset "Message roles are the four the wire knows" begin
+        for role in (UniLM.RoleSystem, UniLM.RoleUser, UniLM.RoleAssistant)
+            @test Message(role=role, content="x").role == role
+        end
+        @test Message(role=UniLM.RoleTool, content="r", tool_call_id="c").role == UniLM.RoleTool
+        @test_throws ArgumentError Message(role="bot", content="x")
+        @test_throws ArgumentError Message(role="System", content="x")
+    end
+
+    @testset "Embeddings store floats: encoding_format is float or unset" begin
+        @test UniLM.Embeddings("x"; encoding_format="float").encoding_format == "float"
+        @test_throws ArgumentError UniLM.Embeddings("x"; encoding_format="base64")
+        @test_throws ArgumentError UniLM.Embeddings(["x", "y"]; encoding_format="base64")
+    end
+
+    @testset "a missing embeddings model names the service" begin
+        err = try UniLM.Embeddings("x"; service=DeepSeekEndpoint(api_key="k")) catch e; e end
+        @test err isa ArgumentError && occursin("DeepSeekEndpoint", err.msg)
+        err2 = try UniLM.Embeddings("x"; service=_NoEmbeddingDefault) catch e; e end
+        @test err2 isa ArgumentError && occursin("_NoEmbeddingDefault", err2.msg) &&
+              !occursin("DataType", err2.msg)
+    end
+end
+
+@testset "streamed usage is requested from OpenAI and DeepSeek" begin
+    # Both stream token usage only when asked (`stream_options.include_usage`), so an
+    # unasked stream was costed at zero.
+    sys_user = [Message(Val(:system), "s"), Message(Val(:user), "u")]
+    auto = Dict(:include_usage => true)
+    @test JSON.lower(Chat(stream=true, messages=sys_user))[:stream_options] == auto
+    @test JSON.lower(Chat(service=DeepSeekEndpoint(api_key="k"), stream=true,
+                          messages=sys_user))[:stream_options] == auto
+    # The caller's own choice stands; nothing is asked of a non-stream or an unknown server.
+    own = Dict("include_usage" => false)
+    @test JSON.lower(Chat(stream=true, stream_options=own))[:stream_options] === own
+    @test !haskey(JSON.lower(Chat(messages=sys_user)), :stream_options)
+    @test !haskey(JSON.lower(Chat(service=GenericOpenAIEndpoint("http://h", ""), model="m",
+                                  stream=true)), :stream_options)
+    # The Chat itself is not mutated.
+    c = Chat(stream=true)
+    JSON.json(c)
+    @test isnothing(c.stream_options)
+end

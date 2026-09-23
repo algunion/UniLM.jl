@@ -89,9 +89,6 @@ function input_file(; url::Union{String,Nothing}=nothing, id::Union{String,Nothi
     return d
 end
 
-# Reasoning effort values the OpenAI API accepts; each model supports a subset.
-const _OPENAI_REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
-
 """
     configuration_update(; effort::String)
 
@@ -714,7 +711,8 @@ json_object_format() = TextConfig(format=TextFormatSpec(type="json_object"))
 Reasoning configuration for OpenAI and Gemini Interactions models.
 
 - `effort`: OpenAI accepts `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`,
-  `"xhigh"`, and `"max"`; each model supports a subset (GPT-6 Astra has no `"none"`
+  `"xhigh"`, and `"max"` — any other value throws `ArgumentError` at construction;
+  each model supports a subset (GPT-6 Astra has no `"none"`
   or `"minimal"`; gpt-5.4-mini and gpt-5.4-nano stop at `"xhigh"`). GPT-6 Sol and
   Luna refuse `"minimal"` on the native OpenAI endpoint; use `"low"`. Gemini 3.8
   supports `"low"`, `"medium"`, and `"high"`.
@@ -731,6 +729,8 @@ Reasoning configuration for OpenAI and Gemini Interactions models.
     context::Union{String,Nothing} = nothing
     mode::Union{String,Nothing} = nothing
     function Reasoning(effort, generate_summary, summary, context=nothing, mode=nothing)
+        isnothing(effort) || effort in _OPENAI_REASONING_EFFORTS || throw(ArgumentError(
+            "reasoning effort must be one of $(join(_OPENAI_REASONING_EFFORTS, ", ")) (got $(repr(effort)))"))
         isnothing(context) || context in ("auto", "current_turn", "all_turns") ||
             throw(ArgumentError("reasoning context must be auto, current_turn, or all_turns"))
         isnothing(mode) || mode in ("standard", "pro") ||
@@ -756,6 +756,20 @@ function JSON.lower(r::Reasoning)
     return d
 end
 
+# A Chat `Tool` given to `Respond` becomes the equivalent `FunctionTool`: the same
+# function, lowered in the Responses shape (name at the top level) rather than the
+# Chat one (nested under `function`), which the Responses API rejects. Every other
+# entry passes through unchanged.
+_respond_tools(tools) = tools
+_respond_tools(tools::AbstractVector) = any(t -> t isa Tool, tools) ? map(_respond_tool, tools) : tools
+_respond_tool(t) = t
+function _respond_tool(t::Tool)::FunctionTool
+    t.type == "function" || throw(ArgumentError(
+        "a Chat Tool of type $(repr(t.type)) has no Responses equivalent; pass a ResponseTool"))
+    f = t.func
+    FunctionTool(f.name, f.description, f.parameters, f.strict)
+end
+
 
 # ─── Main Request Type ────────────────────────────────────────────────────────
 
@@ -768,8 +782,12 @@ Configuration struct for an OpenAI Responses API request.
 - `model::String`: Model to use (default: `"gpt-5.6-sol"`)
 - `input::Any`: A `String` or `Vector{InputMessage}` — the prompt input
 - `instructions::String`: System-level instructions
-- `tools::Vector`: Available tools (`FunctionTool`, `WebSearchTool`, `FileSearchTool`)
-- `previous_response_id::String`: Chain to a previous response for multi-turn
+- `tools::Vector`: Available tools (`FunctionTool`, `WebSearchTool`, `FileSearchTool`, …);
+  a Chat [`Tool`](@ref) is converted to the equivalent `FunctionTool`
+- `previous_response_id::String`: Chain to a previous response for multi-turn; cannot
+  be combined with `conversation`
+- `background::Bool`: Run in the background; requires a stored response (`store=false`
+  throws `ArgumentError`)
 - `reasoning::Reasoning`: Reasoning config for O-series models
 - `text::TextConfig`: Output format (text, json, json_schema)
 - `temperature::Float64`: Sampling temperature (0.0–2.0), mutually exclusive with `top_p`
@@ -846,6 +864,7 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
         prompt_cache_retention, safety_identifier, conversation,
         context_management, stream_options, prompt_cache_options=nothing, moderation=nothing)
         model = _resolve_model(service, model)
+        tools = _respond_tools(tools)
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
         !isnothing(temperature) && !(0.0 <= temperature <= 2.0) && throw(ArgumentError("temperature must be in [0.0, 2.0]"))
         !isnothing(top_p) && !(0.0 <= top_p <= 1.0) && throw(ArgumentError("top_p must be in [0.0, 1.0]"))
@@ -853,6 +872,10 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
         !isnothing(top_logprobs) && !(0 <= top_logprobs <= 20) && throw(ArgumentError("top_logprobs must be in [0, 20]"))
         isnothing(prompt_cache_retention) || isnothing(prompt_cache_options) || throw(ArgumentError(
             "prompt_cache_retention and prompt_cache_options cannot be combined"))
+        isnothing(conversation) || isnothing(previous_response_id) || throw(ArgumentError(
+            "conversation and previous_response_id cannot be combined: each already supplies the prior turns"))
+        background === true && store === false && throw(ArgumentError(
+            "background=true requires a stored response: omit store or set store=true"))
         new(service, model, input, instructions, tools, tool_choice,
             parallel_tool_calls, temperature, top_p, max_output_tokens,
             stream, text, reasoning, truncation, store, metadata,

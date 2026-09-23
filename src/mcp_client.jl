@@ -1713,13 +1713,41 @@ function _mcp_tool_dispatch(r::MCPToolResult)::String
     (isempty(r.content) && !isnothing(r.structured)) ? JSON.json(r.structured) : r.content
 end
 
+# Function names OpenAI and Anthropic accept. MCP tool names may also contain dots
+# (e.g. `admin.tools.list`) — or, from servers predating the naming guidance, anything.
+const _PROVIDER_TOOL_NAME = r"^[a-zA-Z0-9_-]{1,128}$"
+
+"""Provider-safe aliases for MCP tool names, position for position: a conforming name is
+kept; any other has each non-conforming character replaced with `_` and is cut to 128
+characters. Two tools that map to one alias raise an `ArgumentError` naming both — a
+bridged tool set cannot tell them apart."""
+function _provider_tool_aliases(names::Vector{String})::Vector{String}
+    aliases = [occursin(_PROVIDER_TOOL_NAME, n) ? n :
+               first(replace(isempty(n) ? "_" : n, r"[^a-zA-Z0-9_-]" => "_"), 128) for n in names]
+    owner = Dict{String,String}()
+    for (n, a) in zip(names, aliases)
+        prev = get!(owner, a, n)
+        prev == n || throw(ArgumentError("MCP tools \"$prev\" and \"$n\" both map to the " *
+            "provider-safe tool name \"$a\"; a bridged tool set needs distinct names."))
+    end
+    aliases
+end
+
+# The tool loop dispatches by the advertised alias; the call goes out under the MCP name.
+_mcp_bridge_callable(session::MCPSession, name::String) =
+    (_::String, args::Dict{String,Any}) -> _mcp_tool_dispatch(call_tool(session, name, args))
+
 """
     mcp_tools(session::MCPSession) -> Vector{CallableTool{Tool}}
 
 Convert all tools from an MCP session into `CallableTool{Tool}` instances
 that work directly with [`tool_loop!`](@ref) (Chat Completions API).
 
-Each tool's callable invokes `call_tool(session, name, args)` under the hood.
+Each tool's callable invokes `call_tool(session, name, args)` under the hood. Tool
+names are advertised provider-safe: OpenAI and Anthropic accept only
+`^[a-zA-Z0-9_-]{1,128}\$`, so any other character of an MCP name (e.g. the dots in
+`admin.tools.list`) becomes `_` — the callable still calls the tool by its MCP name.
+Two tools whose names map to the same alias raise an `ArgumentError`.
 
 # Example
 ```julia
@@ -1731,25 +1759,19 @@ result = tool_loop!(chat; tools)
 ```
 """
 function mcp_tools(session::MCPSession)::Vector{CallableTool{Tool}}
-    map(session.tools) do info
-        schema = Tool(func=FunctionSignature(
-            name=info.name,
-            description=info.description,
-            parameters=info.input_schema
-        ))
-        # Capture session and info.name in closure
-        sref = session
-        tname = info.name
-        callable = (_::String, args::Dict{String,Any}) -> _mcp_tool_dispatch(call_tool(sref, tname, args))
-        CallableTool(schema, callable)
-    end
+    infos = session.tools
+    [CallableTool(Tool(func=FunctionSignature(name=alias, description=info.description,
+                                              parameters=info.input_schema)),
+                  _mcp_bridge_callable(session, info.name))
+     for (info, alias) in zip(infos, _provider_tool_aliases([i.name for i in infos]))]
 end
 
 """
     mcp_tools_respond(session::MCPSession) -> Vector{CallableTool{FunctionTool}}
 
 Convert all tools from an MCP session into `CallableTool{FunctionTool}` instances
-that work directly with [`tool_loop`](@ref) (Responses API).
+that work directly with [`tool_loop`](@ref) (Responses API). Tool names are
+advertised provider-safe, as in [`mcp_tools`](@ref).
 
 # Example
 ```julia
@@ -1759,17 +1781,11 @@ result = tool_loop("Do something"; tools=tools)
 ```
 """
 function mcp_tools_respond(session::MCPSession)::Vector{CallableTool{FunctionTool}}
-    map(session.tools) do info
-        schema = FunctionTool(
-            name=info.name,
-            description=info.description,
-            parameters=info.input_schema
-        )
-        sref = session
-        tname = info.name
-        callable = (_::String, args::Dict{String,Any}) -> _mcp_tool_dispatch(call_tool(sref, tname, args))
-        CallableTool(schema, callable)
-    end
+    infos = session.tools
+    [CallableTool(FunctionTool(name=alias, description=info.description,
+                               parameters=info.input_schema),
+                  _mcp_bridge_callable(session, info.name))
+     for (info, alias) in zip(infos, _provider_tool_aliases([i.name for i in infos]))]
 end
 
 # Extend to_tool protocol

@@ -3408,3 +3408,30 @@ end
         rm(childfile; force=true)
     end
 end
+
+# ─── MCP → LLM bridge: provider-safe tool names ───────────────────────────────
+
+@testset "bridged MCP tools get provider-safe names that map back to the MCP name" begin
+    # MCP tool names may contain dots (e.g. admin.tools.list); OpenAI and Anthropic function
+    # names must match ^[a-zA-Z0-9_-]{1,128}$. The bridge advertises a safe alias, and its
+    # callable still calls the tool by its MCP name.
+    seen = String[]
+    t = _ScriptedTransport((m, id, p) -> (m == "tools/call" && push!(seen, p["name"]);
+        [_ok_frame(id, Dict{String,Any}("content" => [Dict{String,Any}("type" => "text", "text" => "ok")]))]))
+    session = _scripted_session(t)
+    names = ["admin.tools.list", "plain_name", "has space", "x"^130]
+    session.tools = [MCPToolInfo(n, "d", Dict{String,Any}("type" => "object"), nothing) for n in names]
+    tools = mcp_tools(session)
+    aliases = [ct.tool.func.name for ct in tools]
+    @test aliases == ["admin_tools_list", "plain_name", "has_space", "x"^128]
+    @test all(a -> occursin(r"^[a-zA-Z0-9_-]{1,128}$", a), aliases)
+    @test tools[1].callable("admin_tools_list", Dict{String,Any}()) == "ok"
+    rtools = mcp_tools_respond(session)
+    @test [ct.tool.name for ct in rtools] == aliases
+    @test rtools[3].callable("has_space", Dict{String,Any}()) == "ok"
+    @test seen == ["admin.tools.list", "has space"]
+    # Two MCP names that sanitize to one alias cannot both be bridged.
+    session.tools = [MCPToolInfo("a.b", nothing, nothing, nothing), MCPToolInfo("a_b", nothing, nothing, nothing)]
+    @test_throws ArgumentError mcp_tools(session)
+    @test_throws ArgumentError mcp_tools_respond(session)
+end

@@ -311,8 +311,11 @@ mutable struct _IdleGuard
     @atomic state::Symbol       # :armed → :fired | :disarmed
     @atomic last_byte::UInt64   # time_ns() of the most recent raw chunk
     @atomic fired_gap::Float64  # the byte gap recorded at breach time (s)
+    @atomic in_user::Bool       # a user callback is running: not wire idle time
     const limit::Float64
     timer::Union{Timer,Nothing}
+    _IdleGuard(state::Symbol, last_byte::Integer, fired_gap::Real, limit::Real,
+               timer::Union{Timer,Nothing}) = new(state, last_byte, fired_gap, false, limit, timer)
 end
 
 """
@@ -324,13 +327,16 @@ turns true, with the breaching gap frozen for `_idle_gap_s(guard)` (an idle
 timeout is ABOUT the gap, so the gap — not whole-call time — is what error
 reporting surfaces as elapsed). Returns `nothing` when `limit == Inf` (all
 guard operations no-op on `nothing`). Call `_touch!(guard)` after every raw
-chunk and `_disarm!(guard)` on every exit path.
+chunk, bracket every user callback with [`_enter_user!`](@ref) /
+[`_exit_user!`](@ref) (time spent in user code is not a byte gap), and call
+`_disarm!(guard)` on every exit path.
 """
 function _idle_guard(close!::Function, limit::Float64)
     limit == Inf && return nothing
     guard = _IdleGuard(:armed, time_ns(), 0.0, limit, nothing)
     period = min(limit / 4, 5.0)
     guard.timer = Timer(period; interval=period, spawn=true) do timer
+        (@atomic guard.in_user) && return   # user code running: not wire idle time
         # Load the stamp BEFORE sampling the clock (see `_gap_s`): the other
         # order lets a concurrent `_touch!` land between the two reads and turn
         # the difference negative — i.e. wrapping.
@@ -362,6 +368,25 @@ _gap_s(last_byte::UInt64, now::UInt64)::Float64 =
 
 _touch!(::Nothing) = nothing
 _touch!(guard::_IdleGuard)::Nothing = (@atomic guard.last_byte = time_ns(); nothing)
+
+"""
+    _enter_user!(guard) / _exit_user!(guard)
+
+Bracket a user callback: while inside, the periodic check skips (the callback's
+duration is not wire idle time); on exit the byte-gap clock restarts from the
+exit instant. `_exit_user!` stamps `last_byte` BEFORE clearing the flag, so a
+check that observes the cleared flag also observes the fresh stamp. Both no-op on
+`nothing`.
+"""
+_enter_user!(::Nothing) = nothing
+_enter_user!(guard::_IdleGuard)::Nothing = (@atomic guard.in_user = true; nothing)
+
+_exit_user!(::Nothing) = nothing
+function _exit_user!(guard::_IdleGuard)::Nothing
+    @atomic guard.last_byte = time_ns()
+    @atomic guard.in_user = false
+    return nothing
+end
 
 _idle_fired(::Nothing) = false
 _idle_fired(guard::_IdleGuard)::Bool = (@atomic guard.state) === :fired

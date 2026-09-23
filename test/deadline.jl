@@ -422,6 +422,39 @@ end
     UniLM._disarm!(g)
 end
 
+@testset "idle guard: user callback time is not wire idle time" begin
+    # Drivers bracket every user callback with _enter_user!/_exit_user!. Time
+    # spent in user code must not count as a byte gap, and the gap restarts when
+    # the callback returns: a guard that skipped the re-stamp would fire at the
+    # first tick after exit (gap ≈ the whole callback), below the lower bound.
+    # Upper bound: the [limit, limit + period] detection window with a 5x margin
+    # on the period for timer-callback scheduling.
+    limit = 0.5
+    period = min(limit / 4, 5.0)
+    closed = Threads.Atomic{Int}(0)
+    fired_at = Threads.Atomic{UInt64}(0)
+    g = UniLM._idle_guard(limit) do
+        fired_at[] = time_ns()
+        Threads.atomic_add!(closed, 1)
+    end
+    try
+        UniLM._enter_user!(g)
+        sleep(2.0)                               # 4x the limit inside user code
+        @test !UniLM._idle_fired(g)
+        @test closed[] == 0
+        exited = time_ns()
+        UniLM._exit_user!(g)                     # no _touch! after this
+        @test timedwait(() -> UniLM._idle_fired(g), 25.0) === :ok
+        @test closed[] == 1
+        after_exit = (fired_at[] - exited) / 1e9
+        @test limit <= after_exit <= limit + 5 * period
+    finally
+        UniLM._disarm!(g)
+    end
+    @test UniLM._enter_user!(nothing) === nothing
+    @test UniLM._exit_user!(nothing) === nothing
+end
+
 @testset "disarm is idempotent and prevents firing" begin
     closed = Threads.Atomic{Int}(0)
     g = UniLM._idle_guard(() -> Threads.atomic_add!(closed, 1), 0.4)

@@ -495,3 +495,103 @@ end
     @test isempty(seen)
     @test all(r -> !r.completed && r.turns_used == 1 && occursin("cancelled", r.llm_error), results)
 end
+
+# ─── Concurrent dispatch ─────────────────────────────────────────────────────
+# Call i sleeps (1.3 - 0.1i) s: ≥ 1 s each, finishing in reverse call order. The
+# tools record their own start/end, so the asserted span covers the dispatch alone.
+
+function _tl_timed_dispatcher()
+    spans, tasks, lk = Tuple{UInt64,UInt64}[], Task[], ReentrantLock()
+    dispatcher = (name, args) -> begin
+        t = time_ns()
+        sleep(1.3 - 0.1 * parse(Int, name[2:end]))
+        @lock lk (push!(spans, (t, time_ns())); push!(tasks, current_task()))
+        "result of $name"
+    end
+    span() = (maximum(last, spans) - minimum(first, spans)) / 1e9
+    (; dispatcher, span, tasks)
+end
+
+@testset "tool_concurrency runs a turn's calls at once and keeps call order" begin
+    runs = map((1, 3)) do n
+        timed = _tl_timed_dispatcher()
+        chat = _tl_chat(_TLFixture([_tl_calls(UniLM.TOOL_CALLS, ("c$i" => "t$i" for i in 1:3)...),
+                                    _tl_reply("done")]))
+        (res, caller), seen = _tl_scripted() do
+            r = n == 1 ? tool_loop!(chat, timed.dispatcher) :
+                         tool_loop!(chat, timed.dispatcher; tool_concurrency=n)
+            (r, current_task())
+        end
+        (; res, chat, seen, span=timed.span(), on_caller=all(t -> t === caller, timed.tasks))
+    end
+    sequential, concurrent = runs
+    @test sequential.span >= 3.0 && sequential.on_caller    # default: one at a time, in this task
+    @test concurrent.span < 2.0 && !concurrent.on_caller
+    for r in runs
+        @test r.res.completed && r.res.turns_used == 2
+        @test [o.tool_name for o in r.res.tool_calls] == ["t1", "t2", "t3"]
+        tool_msgs = filter(m -> m.role == UniLM.RoleTool, r.chat.messages)
+        @test [m.tool_call_id for m in tool_msgs] == ["c1", "c2", "c3"]
+        @test [m.content for m in tool_msgs] == ["result of t$i" for i in 1:3]
+    end
+    @test sequential.seen[2].body == concurrent.seen[2].body   # the next request is deterministic
+end
+
+@testset "tool_concurrency on the Responses loop keeps call order" begin
+    timed = _tl_timed_dispatcher()
+    turn(n) = n == 1 ? _tl_resp("resp_1", [_tl_fcall("c$i", "t$i") for i in 1:3]) :
+                       _tl_resp("resp_2", [_tl_text("done")])
+    res, seen = _with_scripted((n, _) -> _json(200, turn(n))) do
+        tool_loop(_tl_respond(), timed.dispatcher; tool_concurrency=3)
+    end
+    @test timed.span() < 2.0
+    @test res.completed && [o.tool_name for o in res.tool_calls] == ["t1", "t2", "t3"]
+    outs = _tl_body(seen[2])["input"]
+    @test [o["call_id"] for o in outs] == ["c1", "c2", "c3"]
+    @test [o["output"] for o in outs] == ["result of t$i" for i in 1:3]
+end
+
+@testset "tool_concurrency: an InterruptException from any dispatch propagates" begin
+    chat = _tl_chat(_TLFixture([_tl_calls(UniLM.TOOL_CALLS, "c1" => "fine", "c2" => "boom",
+                                          "c3" => "fine")]))
+    interrupting = (name, args) -> name == "boom" ? throw(InterruptException()) : "ok"
+    _tl_scripted() do
+        @test_throws InterruptException tool_loop!(chat, interrupting; tool_concurrency=3)
+    end
+    body = _tl_resp("resp_1", [_tl_fcall("c1", "fine"), _tl_fcall("c2", "boom")])
+    _with_scripted((_, _) -> _json(200, body)) do
+        @test_throws InterruptException tool_loop(_tl_respond(), interrupting; tool_concurrency=2)
+    end
+end
+
+@testset "tool_concurrency below 1 is rejected before any request" begin
+    dead = GenericOpenAIEndpoint("http://127.0.0.1:1", "")
+    @test_throws ArgumentError "tool_concurrency" tool_loop!(_tl_chat(dead), (a, b) -> "x"; tool_concurrency=0)
+    @test_throws ArgumentError "tool_concurrency" tool_loop(
+        Respond(service=dead, model="mock", input="x"), (a, b) -> "x"; tool_concurrency=0)
+end
+
+@testset "tool_concurrency: a cancel stops the hand-out of further calls" begin
+    tok = CancelToken()
+    ran, lk = String[], ReentrantLock()
+    t2_started = Threads.Atomic{Bool}(false)
+    dispatcher = (name, args) -> begin
+        @lock lk push!(ran, name)
+        if name == "t1"                        # cancel once t2 is in flight too
+            timedwait(() -> t2_started[], 25.0)
+            cancel!(tok)
+        else
+            t2_started[] = true
+            sleep(0.2)
+        end
+        "ok"
+    end
+    chat = _tl_chat(_TLFixture([_tl_calls(UniLM.TOOL_CALLS, ("c$i" => "t$i" for i in 1:4)...)]))
+    res, seen = _tl_scripted() do
+        tool_loop!(chat, dispatcher; cancel=tok, tool_concurrency=2)
+    end
+    @test sort(ran) == ["t1", "t2"]            # t3 and t4 are never handed out
+    @test [o.tool_name for o in res.tool_calls] == ["t1", "t2"]
+    @test !res.completed && res.response isa LLMCallError && res.response.cause isa UniLMCancelled
+    @test length(chat) == 2 && length(seen) == 1
+end

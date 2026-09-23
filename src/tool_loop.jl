@@ -135,6 +135,52 @@ end
 
 _check_max_turns(n::Int) =
     ispositive(n) || throw(ArgumentError("max_turns must be >= 1 (got $n)"))
+_check_concurrency(n::Int) =
+    ispositive(n) || throw(ArgumentError("tool_concurrency must be >= 1 (got $n)"))
+
+# The text a tool-call outcome sends back to the model.
+_tool_output(o::ToolCallOutcome)::String = o.success ? string(o.result.result) : "Error: $(o.error)"
+
+# Dispatch `calls` and hand each `(call, outcome)` to `emit` in call order; `false` when
+# a cancelled `tok` stopped the hand-out of calls first. `n == 1` runs them one at a time
+# in this task. `n > 1` runs up to `n` at once on spawned tasks and emits after all have
+# finished, so the next request does not depend on completion order. An exception
+# escaping a dispatch (`_dispatch_tool` lets only an InterruptException through)
+# propagates once the in-flight dispatches are done.
+function _run_calls(emit::Function, dispatch::Function, calls::AbstractVector,
+                    tok::Union{Nothing,CancelToken}, n::Int)::Bool
+    if n == 1
+        for c in calls
+            iscancelled(tok) && return false
+            emit(c, dispatch(c))
+        end
+        return true
+    end
+    slots = Vector{Union{Nothing,ToolCallOutcome}}(nothing, length(calls))
+    next = Threads.Atomic{Int}(1)
+    halt = Threads.Atomic{Bool}(false)
+    worker() = try
+        while !(halt[] || iscancelled(tok))
+            i = Threads.atomic_add!(next, 1)
+            i > length(calls) && break
+            slots[i] = dispatch(calls[i])
+        end
+    catch
+        halt[] = true   # hand out no further call; the failure is rethrown below
+        rethrow()
+    end
+    workers = [Threads.@spawn(worker()) for _ in 1:min(n, length(calls))]
+    try
+        waitall(workers; failfast=false, throw=false)
+    finally
+        halt[] = true   # an interrupt delivered to this task stops the hand-out as well
+    end
+    failed = findfirst(istaskfailed, workers)
+    isnothing(failed) || throw(workers[failed].exception)
+    ran = something(findfirst(isnothing, slots), length(slots) + 1) - 1   # a prefix ran
+    foreach(i -> emit(calls[i], slots[i]::ToolCallOutcome), 1:ran)
+    return ran == length(calls)
+end
 
 # Run `f` with `tok` as the ambient token: a turn's request and the tools it dispatches
 # (including tasks they spawn) observe it. No token: run `f` as is.
@@ -148,7 +194,7 @@ _cancelled_since(t0::UInt64) = UniLMCancelled(:token, _elapsed_s(t0))
 # ─── Chat Completions Loop ──────────────────────────────────────────────────
 
 """
-    tool_loop!(chat::Chat, dispatcher::Function; max_turns=10, config=nothing, callback=nothing, on_tool_call=nothing, cancel=nothing) -> ToolLoopResult
+    tool_loop!(chat::Chat, dispatcher::Function; max_turns=10, config=nothing, callback=nothing, on_tool_call=nothing, cancel=nothing, tool_concurrency=1) -> ToolLoopResult
 
 Run a tool-calling loop on a [`Chat`](@ref). Repeatedly calls [`chatrequest!`](@ref),
 dispatches tool calls via `dispatcher(name, args)`, pushes tool-role messages back,
@@ -181,6 +227,12 @@ requested them.
   the cancel lands between dispatches, an `LLMCallError` whose `cause` is
   [`UniLMCancelled`](@ref). A turn cancelled between dispatches is removed from `chat`
   (the calls it did run stay in `tool_calls`), so the conversation stays sendable.
+- `tool_concurrency`: How many of one turn's tool calls may run at once (default 1:
+  one at a time, in the calling task; `< 1` throws `ArgumentError`). Above 1, up to that
+  many run concurrently on spawned tasks (`Threads.@spawn`), so `dispatcher` must be
+  thread-safe; their results are appended in call order once all have finished, so the
+  next request does not depend on completion order. An `InterruptException` from any
+  dispatch propagates.
 
 # Example
 ```julia
@@ -193,8 +245,10 @@ result = tool_loop!(chat, (name, args) -> string(args["a"] + args["b"]))
 function tool_loop!(chat::Chat, dispatcher::Function;
                     max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing,
                     callback=nothing, on_tool_call=nothing,
-                    cancel::Union{Nothing,CancelToken}=nothing)::ToolLoopResult
+                    cancel::Union{Nothing,CancelToken}=nothing,
+                    tool_concurrency::Int=1)::ToolLoopResult
     _check_max_turns(max_turns)
+    _check_concurrency(tool_concurrency)
     chat.history || throw(ArgumentError("tool_loop! needs a Chat with history=true: " *
         "each follow-up request must carry the assistant turn its tool results answer"))
     tok = _resolve_cancel(cancel)
@@ -233,17 +287,16 @@ function tool_loop!(chat::Chat, dispatcher::Function;
                     "its $(length(calls)) tool call(s) were not executed")
             end
 
-            for tc in calls
-                if iscancelled(tok)
-                    resize!(chat.messages, before)   # its remaining calls will never be answered
-                    c = _cancelled_since(t0)
-                    err = LLMCallError(error=sprint(showerror, c), self=chat, cause=c)
-                    return ToolLoopResult(err, all_outcomes, turns, false, err.error)
-                end
-                outcome = _dispatch_tool(tc.func.name, tc.func.arguments, dispatcher)
+            ran = _run_calls(tc -> _dispatch_tool(tc.func.name, tc.func.arguments, dispatcher),
+                             calls, tok, tool_concurrency) do tc, outcome
                 push!(all_outcomes, outcome)
-                content = outcome.success ? string(outcome.result.result) : "Error: $(outcome.error)"
-                push!(chat, Message(role=RoleTool, content=content, tool_call_id=tc.id))
+                push!(chat, Message(role=RoleTool, content=_tool_output(outcome), tool_call_id=tc.id))
+            end
+            if !ran
+                resize!(chat.messages, before)   # its remaining calls will never be answered
+                c = _cancelled_since(t0)
+                err = LLMCallError(error=sprint(showerror, c), self=chat, cause=c)
+                return ToolLoopResult(err, all_outcomes, turns, false, err.error)
             end
         end
 
@@ -259,14 +312,15 @@ No-dispatcher variant: builds a dispatcher from [`CallableTool`](@ref) entries.
 function tool_loop!(chat::Chat; tools::Vector{<:CallableTool},
                     max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing,
                     callback=nothing, on_tool_call=nothing,
-                    cancel::Union{Nothing,CancelToken}=nothing)::ToolLoopResult
+                    cancel::Union{Nothing,CancelToken}=nothing,
+                    tool_concurrency::Int=1)::ToolLoopResult
     tool_map = Dict{String,Function}(_tool_name(ct) => ct.callable for ct in tools)
     dispatcher = (name, args) -> begin
         fn = get(tool_map, name, nothing)
         isnothing(fn) && error("Unknown tool: $name")
         fn(name, args)
     end
-    tool_loop!(chat, dispatcher; max_turns, config, callback, on_tool_call, cancel)
+    tool_loop!(chat, dispatcher; max_turns, config, callback, on_tool_call, cancel, tool_concurrency)
 end
 
 # ─── Responses API Loop ─────────────────────────────────────────────────────
@@ -304,7 +358,7 @@ function _next_respond(r::Respond; input, previous_response_id=nothing)
 end
 
 """
-    tool_loop(r::Respond, dispatcher::Function; max_turns=10, config=nothing, cancel=nothing) -> ToolLoopResult
+    tool_loop(r::Respond, dispatcher::Function; max_turns=10, config=nothing, cancel=nothing, tool_concurrency=1) -> ToolLoopResult
 
 Run a tool-calling loop on a [`Respond`](@ref) request. Dispatches function calls
 via `dispatcher(name, args)` (a non-`String` return is sent JSON-encoded), builds
@@ -329,13 +383,17 @@ they run out, the result keeps the last response, with `completed=false` and
 cancelled loop returns promptly with `completed=false` and the turn's typed
 cancellation result — the cancelled request's `ResponseCallError`, or, between
 dispatches, a `ResponseCallError` whose `cause` is [`UniLMCancelled`](@ref).
+`tool_concurrency` (default 1) works as in [`tool_loop!`](@ref): above 1, up to that
+many of a turn's calls run at once and their outputs are sent in call order.
 
 Per-call `config::RequestConfig` overrides timeouts/retry budget.
 """
 function tool_loop(r::Respond, dispatcher::Function;
                    max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing,
-                   cancel::Union{Nothing,CancelToken}=nothing)::ToolLoopResult
+                   cancel::Union{Nothing,CancelToken}=nothing,
+                   tool_concurrency::Int=1)::ToolLoopResult
     _check_max_turns(max_turns)
+    _check_concurrency(tool_concurrency)
     tok = _resolve_cancel(cancel)
     t0 = time_ns()
     _in_cancel_scope(tok) do
@@ -380,22 +438,20 @@ function tool_loop(r::Respond, dispatcher::Function;
             end
 
             output_items = Any[]
-            for call in calls
-                if iscancelled(tok)
-                    c = _cancelled_since(t0)
-                    err = ResponseCallError(error=sprint(showerror, c), cause=c)
-                    return ToolLoopResult(err, all_outcomes, turns, false, err.error)
-                end
-                name = call["name"]
-                outcome = _dispatch_call(call, dispatcher)
+            ran = _run_calls(call -> _dispatch_call(call, dispatcher), calls, tok,
+                             tool_concurrency) do call, outcome
                 push!(all_outcomes, outcome)
-                content = outcome.success ? string(outcome.result.result) : "Error: $(outcome.error)"
                 push!(output_items, Dict{String,Any}(
                     "type" => "function_call_output",
                     "call_id" => call["call_id"],
-                    "name" => name,
-                    "output" => content
+                    "name" => call["name"],
+                    "output" => _tool_output(outcome)
                 ))
+            end
+            if !ran
+                c = _cancelled_since(t0)
+                err = ResponseCallError(error=sprint(showerror, c), cause=c)
+                return ToolLoopResult(err, all_outcomes, turns, false, err.error)
             end
 
             input = output_items
@@ -407,14 +463,15 @@ function tool_loop(r::Respond, dispatcher::Function;
 end
 
 """
-    tool_loop(r::Respond; max_turns=10, config=nothing, cancel=nothing) -> ToolLoopResult
+    tool_loop(r::Respond; max_turns=10, config=nothing, cancel=nothing, tool_concurrency=1) -> ToolLoopResult
 
 No-dispatcher variant: extracts callables from [`CallableTool`](@ref) entries in `r.tools`.
 
 Per-call `config::RequestConfig` overrides timeouts/retry budget.
 """
 function tool_loop(r::Respond; max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing,
-                   cancel::Union{Nothing,CancelToken}=nothing)::ToolLoopResult
+                   cancel::Union{Nothing,CancelToken}=nothing,
+                   tool_concurrency::Int=1)::ToolLoopResult
     callables = Dict{String,Function}()
     if !isnothing(r.tools)
         for t in r.tools
@@ -427,7 +484,7 @@ function tool_loop(r::Respond; max_turns::Int=10, config::Union{Nothing,RequestC
         isnothing(fn) && error("Unknown tool: $name")
         fn(name, args)
     end
-    tool_loop(r, dispatcher; max_turns, config, cancel)
+    tool_loop(r, dispatcher; max_turns, config, cancel, tool_concurrency)
 end
 
 """
@@ -435,28 +492,29 @@ end
 
 Convenience form: creates a [`Respond`](@ref) and runs the tool loop.
 
-Per-call `config::RequestConfig` overrides timeouts/retry budget; `max_turns` and
-`cancel` drive the loop as in [`tool_loop(::Respond, ::Function)`](@ref).
+Per-call `config::RequestConfig` overrides timeouts/retry budget; `max_turns`, `cancel`
+and `tool_concurrency` drive the loop as in [`tool_loop(::Respond, ::Function)`](@ref).
 """
 function tool_loop(input, dispatcher::Function; kwargs...)
     kws = Dict{Symbol,Any}(kwargs)
     config = pop!(kws, :config, nothing)
     max_turns = pop!(kws, :max_turns, 10)
     cancel = pop!(kws, :cancel, nothing)
+    tool_concurrency = pop!(kws, :tool_concurrency, 1)
     r = Respond(; input, kws...)
-    tool_loop(r, dispatcher; max_turns, config, cancel)
+    tool_loop(r, dispatcher; max_turns, config, cancel, tool_concurrency)
 end
 
 """
-    tool_loop(input::String; tools, max_turns=10, config=nothing, cancel=nothing, kwargs...) -> ToolLoopResult
+    tool_loop(input::String; tools, max_turns=10, config=nothing, cancel=nothing, tool_concurrency=1, kwargs...) -> ToolLoopResult
 
 No-dispatcher convenience form of the Responses-API tool loop for a plain-string prompt.
 Wraps `input` and `tools` in a [`Respond`](@ref) and delegates to
 [`tool_loop(::Respond)`](@ref), which dispatches each model-requested function call to the
 matching [`CallableTool`](@ref) callable.
 
-Keyword routing is explicit: `max_turns`, `config` and `cancel` drive the loop
-(`config::RequestConfig` overrides timeouts/retry budget), while every other
+Keyword routing is explicit: `max_turns`, `config`, `cancel` and `tool_concurrency`
+drive the loop (`config::RequestConfig` overrides timeouts/retry budget), while every other
 keyword is forwarded verbatim to the [`Respond`](@ref) constructor — an unknown keyword
 raises there rather than being silently dropped. `tools` is required and must hold
 [`CallableTool`](@ref) entries (e.g. from [`mcp_tools_respond`](@ref)).
@@ -469,7 +527,8 @@ result = tool_loop("List files in /tmp"; tools=tools)
 ```
 """
 function tool_loop(input::String; tools, max_turns::Int=10, config::Union{Nothing,RequestConfig}=nothing,
-                   cancel::Union{Nothing,CancelToken}=nothing, kwargs...)::ToolLoopResult
+                   cancel::Union{Nothing,CancelToken}=nothing, tool_concurrency::Int=1,
+                   kwargs...)::ToolLoopResult
     r = Respond(; input, tools, kwargs...)
-    tool_loop(r; max_turns, config, cancel)
+    tool_loop(r; max_turns, config, cancel, tool_concurrency)
 end

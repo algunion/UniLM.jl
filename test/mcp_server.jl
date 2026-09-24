@@ -1418,19 +1418,26 @@ end
     # drives the event loop. A CPU-bound tool handler there blocked every other request —
     # and every Timer and IO completion in the process — until it finished. Handlers now
     # run on the default pool, one task per request; protocol requests such as ping are
-    # answered inline and stay prompt while handlers keep the default pool busy.
+    # answered inline and stay prompt while handlers keep the default pool busy. Each
+    # handler records the pool it runs on, and spins until the ping is answered (10 s at
+    # most), so a ping queued behind the handlers would take the whole 10 s.
     if Threads.nthreads(:default) < 4 || Threads.nthreads(:interactive) < 1
         @test_skip "needs --threads=4,1 or more"
     else
         server = MCPServer("spin", "1.0.0")
-        started = Threads.Atomic{Int}(0)
-        register_tool!(server, "spin", "CPU-bound for 1 s", Dict{String,Any}("type" => "object"),
+        started, finished = Threads.Atomic{Int}(0), Threads.Atomic{Int}(0)
+        answered = Threads.Atomic{Bool}(false)
+        pools, lk = Symbol[], ReentrantLock()
+        register_tool!(server, "spin", "CPU-bound until the ping is answered",
+            Dict{String,Any}("type" => "object"),
             function (_)
+                @lock lk push!(pools, Threads.threadpool())
                 Threads.atomic_add!(started, 1)
                 t0 = time()
-                while time() - t0 < 1.0            # no yield point: holds its thread,
-                    GC.safepoint()                 # but lets a collection proceed
+                while !answered[] && time() - t0 < 10.0   # no yield point: holds its thread,
+                    GC.safepoint()                        # but lets a collection proceed
                 end
+                Threads.atomic_add!(finished, 1)
                 "spun"
             end)
         register_tool!(server, "warm", nothing, Dict{String,Any}("type" => "object"), _ -> "ok")
@@ -1441,21 +1448,24 @@ end
             # Compile the request paths first: the timings below are about scheduling.
             post(_rpc(0, "tools/call", Dict{String,Any}("name" => "warm")))
             _raw_post(port, JSON.json(_rpc(0, "ping")))
-            t0 = time()
-            calls = [Threads.@spawn :interactive (post(_rpc(i, "tools/call",
-                Dict{String,Any}("name" => "spin"))), time()) for i in 1:4]
+            calls = [Threads.@spawn :interactive post(_rpc(i, "tools/call",
+                Dict{String,Any}("name" => "spin"))) for i in 1:4]
             @test timedwait(() -> started[] >= 2, 25.0) === :ok
+            @test finished[] == 0                  # two handlers in flight at once
             tp = time()
-            pinger = Threads.@spawn :interactive (_raw_post(port, JSON.json(_rpc(99, "ping"))), time() - tp)
+            pinger = Threads.@spawn :interactive begin
+                pong = _raw_post(port, JSON.json(_rpc(99, "ping")))
+                answered[] = true
+                (pong, time() - tp)
+            end
             @test timedwait(() -> istaskdone(pinger) && all(istaskdone, calls), 25.0) === :ok
             pong, ping_s = fetch(pinger)
-            total_s = maximum(last(fetch(c)) for c in calls) - t0
-            (ping_s < 0.5 && total_s < 2.5) || @warn "HTTP handler scheduling" ping_s total_s
+            @test pools == fill(:default, 4)       # never on the pool that drives the event loop
             @test startswith(pong, "HTTP/1.1 200") && occursin("\"id\":99", pong)
-            @test ping_s < 0.5                     # not queued behind a spinning handler
-            @test total_s < 2.5                    # the four 1 s handlers ran concurrently
-            @test all(c -> JSON.parse(String(first(fetch(c)).body))["result"]["content"][1]["text"] == "spun", calls)
+            @test ping_s < 3.0                     # queued behind the spinning handlers: 10 s
+            @test all(c -> JSON.parse(String(fetch(c).body))["result"]["content"][1]["text"] == "spun", calls)
         finally
+            answered[] = true
             close(httpserver)
         end
     end

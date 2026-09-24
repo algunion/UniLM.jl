@@ -279,6 +279,32 @@ _tl_body(req) = JSON.parse(req.body; dicttype=Dict{String,Any})
     end
 end
 
+@testset "a text turn completes the Chat loop only when it finished with stop (or none)" begin
+    # A filtered, paused or otherwise unfinished text turn is not a completed answer.
+    for reason in ("content_filter", "pause_turn", "malformed_function_call")
+        chat = _tl_chat(_TLFixture([Message(role=UniLM.RoleAssistant, content="partial",
+                                            finish_reason=reason)]))
+        res, seen = _tl_scripted() do
+            tool_loop!(chat, (name, args) -> "x")
+        end
+        @test !res.completed && res.turns_used == 1 && length(seen) == 1
+        @test occursin(reason, res.llm_error)
+        @test res.response isa LLMSuccess && res.response.message.content == "partial"
+    end
+    # "stop", none, and a "tool_calls" finish that carries no calls complete; "length" is
+    # reported as the truncation it is.
+    for (reason, completed, err) in (("stop", true, nothing), (nothing, true, nothing),
+                                     (UniLM.TOOL_CALLS, true, nothing),
+                                     ("length", false, "Model output was truncated by the token limit"))
+        chat = _tl_chat(_TLFixture([Message(role=UniLM.RoleAssistant, content="done",
+                                            finish_reason=reason)]))
+        res, _ = _tl_scripted() do
+            tool_loop!(chat, (name, args) -> "x")
+        end
+        @test res.completed == completed && res.llm_error == err
+    end
+end
+
 @testset "tool_loop! refuses a Chat without history before any request" begin
     # With history=false the assistant tool-call turn is never recorded, so the
     # follow-up request would carry tool results that answer nothing.
@@ -592,11 +618,17 @@ end
 end
 
 @testset "tool_concurrency: an InterruptException from any dispatch propagates" begin
-    chat = _tl_chat(_TLFixture([_tl_calls(UniLM.TOOL_CALLS, "c1" => "fine", "c2" => "boom",
-                                          "c3" => "fine")]))
     interrupting = (name, args) -> name == "boom" ? throw(InterruptException()) : "ok"
-    _tl_scripted() do
-        @test_throws InterruptException tool_loop!(chat, interrupting; tool_concurrency=3)
+    for n in (1, 3)
+        chat = _tl_chat(_TLFixture([_tl_calls(UniLM.TOOL_CALLS, "c1" => "fine", "c2" => "boom",
+                                              "c3" => "fine")]))
+        _tl_scripted() do
+            @test_throws InterruptException tool_loop!(chat, interrupting; tool_concurrency=n)
+        end
+        # The interrupted turn is rolled back with the results that did arrive: tool calls
+        # left unanswered would make the next request a provider 400.
+        @test [m.role for m in chat.messages] == [UniLM.RoleSystem, UniLM.RoleUser]
+        @test issendvalid(chat)
     end
     body = _tl_resp("resp_1", [_tl_fcall("c1", "fine"), _tl_fcall("c2", "boom")])
     _with_scripted((_, _) -> _json(200, body)) do

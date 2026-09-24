@@ -98,9 +98,9 @@ Result of a tool dispatch loop.
   [`UniLMCancelled`](@ref).
 - `tool_calls::Vector{ToolCallOutcome}`: History of all tool dispatches.
 - `turns_used::Int`: Number of API round-trips.
-- `completed::Bool`: Whether the loop terminated normally (text response).
-  Truncated output, a turn stopped before its calls ran, a pending server action,
-  or `max_turns` exhaustion leaves this `false`.
+- `completed::Bool`: Whether the loop terminated normally (a text response that
+  finished normally). Truncated or filtered output, a turn stopped before its calls
+  ran, a pending server action, or `max_turns` exhaustion leaves this `false`.
 - `llm_error::Union{String,Nothing}`: Why the loop stopped when not completed
   (e.g. `"max turns (3) exhausted"`).
 """
@@ -222,7 +222,12 @@ Tool calls run only on a turn whose `finish_reason` is `"tool_calls"`. A turn th
 carries tool calls but finished for any other reason (`"length"`, `"content_filter"`,
 a provider-specific value) may hold partial calls: none runs, the loop stops with
 `completed=false` and an `llm_error` naming the reason, and that unanswered assistant
-turn is removed from `chat`, so the conversation stays sendable.
+turn is removed from `chat`, so the conversation stays sendable. A text turn completes
+the loop only when it finished with `"stop"` or reported no reason (or finished with
+`"tool_calls"` but carried no calls); `"length"` stops it with `completed=false` and
+`llm_error = "Model output was truncated by the token limit"`, and any other reason
+(`"content_filter"`, a provider-specific value) with an `llm_error` naming it — the
+turn stays in `chat`.
 
 `chat.history` must be `true` (else `ArgumentError` before any request): each
 follow-up request carries the tool results together with the assistant turn that
@@ -250,7 +255,8 @@ requested them.
   many run concurrently on spawned tasks (`Threads.@spawn`), so `dispatcher` must be
   thread-safe; their results are appended in call order once all have finished, so the
   next request does not depend on completion order. An `InterruptException` from any
-  dispatch propagates.
+  dispatch propagates, after the interrupted turn is removed from `chat` (with any
+  results already appended), so the conversation stays sendable.
 
 # Example
 ```julia
@@ -293,8 +299,15 @@ function tool_loop!(chat::Chat, dispatcher::Function;
             calls = something(msg.tool_calls, ToolCall[])
 
             if isempty(calls)
-                msg.finish_reason == "length" && return ToolLoopResult(result, all_outcomes, turns,
+                reason = msg.finish_reason
+                reason == "length" && return ToolLoopResult(result, all_outcomes, turns,
                     false, "Model output was truncated by the token limit")
+                # A text turn answers only when it finished normally: "stop", no reason, or
+                # a "tool_calls" finish that carried no calls. A filtered, paused or
+                # otherwise cut-off turn is not a completed answer.
+                isnothing(reason) || reason in (STOP, TOOL_CALLS) ||
+                    return ToolLoopResult(result, all_outcomes, turns, false,
+                        "turn finished with finish_reason=$(repr(reason))")
                 return ToolLoopResult(result, all_outcomes, turns, true, nothing)
             end
 
@@ -305,10 +318,17 @@ function tool_loop!(chat::Chat, dispatcher::Function;
                     "its $(length(calls)) tool call(s) were not executed")
             end
 
-            ran = _run_calls(tc -> _dispatch_tool(tc.func.name, tc.func.arguments, dispatcher),
-                             calls, tok, tool_concurrency) do tc, outcome
-                push!(all_outcomes, outcome)
-                push!(chat, Message(role=RoleTool, content=_tool_output(outcome), tool_call_id=tc.id))
+            ran = try
+                _run_calls(tc -> _dispatch_tool(tc.func.name, tc.func.arguments, dispatcher),
+                           calls, tok, tool_concurrency) do tc, outcome
+                    push!(all_outcomes, outcome)
+                    push!(chat, Message(role=RoleTool, content=_tool_output(outcome), tool_call_id=tc.id))
+                end
+            catch
+                # An interrupted dispatch leaves the turn's calls unanswered, which the next
+                # request would carry as a protocol error: roll the turn back first.
+                resize!(chat.messages, before)
+                rethrow()
             end
             if !ran
                 resize!(chat.messages, before)   # its remaining calls will never be answered

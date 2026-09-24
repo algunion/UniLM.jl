@@ -596,8 +596,11 @@ function _transport_disconnect!(t::HTTPTransport; cfg::RequestConfig=current_con
         hdrs = copy(t.headers)
         push!(hdrs, "Mcp-Session-Id" => t.session_id, "Mcp-Protocol-Version" => t.protocol_version)
         try
-            _http("DELETE", t.url, hdrs; cfg=cfg, remaining=Inf)
+            # Teardown often runs right after a cancel (a `finally` around the cancelled
+            # work): the DELETE must not obey the cancelled ambient token.
+            _http("DELETE", t.url, hdrs; cfg=cfg, remaining=Inf, cancel=nothing)
         catch e
+            e isa InterruptException && rethrow()
             @debug "MCP HTTP disconnect failed" exception=e
         end
     end
@@ -749,6 +752,13 @@ without touching it. Once acquired, the exchange gets its full bound, measured f
 that moment — a waiter's clock never tears down the exchange in progress. After the
 server sends `notifications/tools/list_changed`, `tools_stale` is `true` until the
 next [`list_tools!`](@ref).
+
+Cancellation depends on the transport. Over HTTP every request observes the ambient
+[`with_cancel`](@ref) token: a cancel ends the call promptly with
+[`UniLMCancelled`](@ref) — after a best-effort `notifications/cancelled` for its request,
+bounded to 2 s — and the session stays usable. A stdio exchange is not interruptible: it
+ignores the token and is bounded by `mcp_request_timeout`. [`mcp_disconnect!`](@ref)
+tears down under a cancelled token too.
 """
 mutable struct MCPSession
     transport::MCPTransport
@@ -877,20 +887,24 @@ _queue_timeout_msg(limit::Float64)::String =
     "it: calls on one session run one at a time, and the calls ahead held it. " *
     _MCP_TIMEOUT_OVERRIDES
 
-# Bound on the best-effort cancellation notice sent for a timed-out request: it must not
-# stretch the timeout it follows by more than this.
+# Bound on the best-effort cancellation notice sent for an abandoned request: it must not
+# stretch the timeout or cancel it follows by more than this.
 const _MCP_CANCEL_BOUND = 2.0
 
-"""Tell the server to stop working on request `id`, which timed out on this side
-(lifecycle: the sender SHOULD cancel a request it no longer waits for). Best effort:
-bounded by [`_MCP_CANCEL_BOUND`](@ref), and a failure is logged at debug level — the
-timeout it follows stands either way."""
-function _send_cancelled!(session::MCPSession, id::Int, excfg::RequestConfig)
+"""Tell the server to stop working on request `id`, which timed out or was cancelled on
+this side (lifecycle: the sender SHOULD cancel a request it no longer waits for). Best
+effort: bounded by [`_MCP_CANCEL_BOUND`](@ref), and a failure is logged at debug level —
+the timeout or cancel it follows stands either way. The notice runs outside the ambient
+cancel scope — the same shield as `cancel=nothing` on one request, for any transport —
+or the cancel it reports would stop it before it is sent."""
+function _send_cancelled!(session::MCPSession, id::Int, excfg::RequestConfig, reason::String)
     notice = _JSONRPCNotification("notifications/cancelled",
-        Dict{String,Any}("requestId" => id, "reason" => "the request timed out on the client"))
+        Dict{String,Any}("requestId" => id, "reason" => reason))
     try
-        _transport_notify!(session.transport, _jsonrpc_serialize(notice);
-            cfg=RequestConfig(excfg; request_timeout=min(excfg.request_timeout, _MCP_CANCEL_BOUND)))
+        with(_CANCEL_TOKEN => nothing) do
+            _transport_notify!(session.transport, _jsonrpc_serialize(notice);
+                cfg=RequestConfig(excfg; request_timeout=min(excfg.request_timeout, _MCP_CANCEL_BOUND)))
+        end
     catch e
         e isa InterruptException && rethrow()
         @debug "MCP cancellation notice not delivered" request_id = id exception = e
@@ -941,8 +955,10 @@ rest of an HTTP SSE stream). Among responses:
   [`MCPError`](@ref) (the server could not attribute the request).
 - Any other non-matching response frame is skipped with a warning.
 
-A request that times out in the transport (HTTP) is cancelled with a best-effort
-`notifications/cancelled` before the timeout propagates; `initialize` is never cancelled.
+A request that times out or is cancelled in the transport (HTTP) is cancelled on the
+server with a best-effort `notifications/cancelled` before the error propagates;
+`initialize` never is, nor a request whose token was already cancelled, which never
+left.
 """
 function _mcp_request_once!(session::MCPSession, method::String,
                             params::Union{Dict{String,Any},Nothing}=nothing;
@@ -950,12 +966,15 @@ function _mcp_request_once!(session::MCPSession, method::String,
     @lock session._lock begin
         t = session.transport
         id = _next_id!(session)
+        precancelled = iscancelled(_current_cancel())
         raw = try
             _transport_send!(t, _jsonrpc_serialize(_JSONRPCRequest(id, method, params)); cfg=excfg)
         catch e
             e isa InterruptException && rethrow()
-            e isa UniLMTimeout && e.phase === :request && method != "initialize" &&
-                _send_cancelled!(session, id, excfg)
+            reason = e isa UniLMTimeout && e.phase === :request ? "the request timed out on the client" :
+                     e isa UniLMCancelled && !precancelled ? "the request was cancelled on the client" :
+                     nothing
+            isnothing(reason) || method == "initialize" || _send_cancelled!(session, id, excfg, reason)
             rethrow()
         end
         while true
@@ -1149,7 +1168,9 @@ per-call bound (it covers the wait for the session and then the exchange). A std
 request timeout is session-fatal — killing the server is the only way to release a
 read blocked on an unresponsive one — as is a server crash; with `auto_respawn=true`
 the next call respawns the server (same command, fresh handshake — in-memory server
-state is lost), otherwise it raises [`MCPSessionClosedError`](@ref).
+state is lost), otherwise it raises [`MCPSessionClosedError`](@ref). A stdio exchange
+is not interruptible: it ignores a [`with_cancel`](@ref) token, and
+`mcp_request_timeout` is what bounds it.
 
 The server runs in its own process group. Disconnecting (or a fatal timeout) tears it
 down: stdin EOF, then SIGTERM, then a SIGKILL of the whole group. If its group leader
@@ -1179,7 +1200,9 @@ Connect to an MCP server via HTTP transport.
 ambient/process default) and captured on the session: `config.mcp_connect_timeout`
 bounds the connect step, `config.mcp_request_timeout` is the default per-call bound.
 A per-call timeout is not session-fatal over HTTP; the timed-out request is cancelled
-with a best-effort `notifications/cancelled`.
+with a best-effort `notifications/cancelled`. Every request observes the ambient
+[`with_cancel`](@ref) token: a cancelled call raises [`UniLMCancelled`](@ref) promptly,
+its request is cancelled the same way, and the session stays usable.
 
 # Example
 ```julia
@@ -1612,6 +1635,12 @@ disables; NaN, ≤ 0 and finite values above 1e9 s are rejected). It bounds the 
 for the session — calls on one session run one at a time, in arrival order; a call that
 cannot acquire it in time raises [`MCPTimeoutError`](@ref) with phase `:queue` — and
 then, from acquisition, the exchange itself (phase `:request`).
+
+Over HTTP the call observes the ambient [`with_cancel`](@ref) token: a cancel raises
+[`UniLMCancelled`](@ref) promptly (a token cancelled before the call sends nothing) and
+tells the server with a best-effort `notifications/cancelled`, bounded to 2 s; the
+session stays usable. Over stdio the exchange is not interruptible — it ignores the
+token and `timeout` bounds it.
 """
 function call_tool(session::MCPSession, name::String,
                    arguments::AbstractDict=Dict{String,Any}();

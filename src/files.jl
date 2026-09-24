@@ -96,19 +96,32 @@ end
 # Replace `path` with `bytes` atomically: write a temporary file beside the destination
 # (same filesystem, so the final rename cannot degrade into a copy) and rename it over
 # the destination. A write that fails part-way leaves the old contents, not a truncated
-# file. A symlink is written through, as opening it for writing would be; a directory
-# is refused, because `mv(...; force=true)` would delete it recursively.
+# file. As opening `path` for writing would, the save keeps an existing file's
+# permission bits (a file made private stays private) and writes through a symlink, to
+# a target a dangling link creates. A directory is refused, because
+# `mv(...; force=true)` would delete it recursively.
 function _atomic_write(path::String, bytes::AbstractVector{UInt8})::String
-    dest = ispath(path) ? realpath(path) : path
+    dest = _write_target(path)
     isdir(dest) && throw(ArgumentError("cannot save over a directory: $path"))
     tmp = tempname(dirname(abspath(dest)); cleanup=false)
     try
         write(tmp, bytes)
+        isfile(dest) && chmod(tmp, filemode(dest) & 0o7777)
         mv(tmp, dest; force=true)
     finally
         rm(tmp; force=true)   # already gone after a successful rename
     end
     return path
+end
+
+# The file a write to `path` lands in: `path`, or the end of its symlink chain, which
+# need not exist yet. A loop, or a chain past the system's limit, makes `ispath` throw
+# (ELOOP) before this recursion could.
+function _write_target(path::String)::String
+    ispath(path) && return realpath(path)
+    islink(path) || return path
+    target = readlink(path)
+    _write_target(isabspath(target) ? target : joinpath(dirname(path), target))
 end
 
 _poll_timeout_text(verb::String, id::String, to::UniLMTimeout, seen)::String =
@@ -336,6 +349,7 @@ end
 
 Write downloaded file bytes to `path`, atomically: the bytes go to a temporary file in
 the same directory, which is then renamed over `path`, so a failed write leaves any
-existing file intact. A symlink is written through; a directory throws `ArgumentError`.
+existing file intact. An existing file keeps its permission bits. A symlink is written
+through — a dangling one creates its target; a directory throws `ArgumentError`.
 """
 save_file_content(r::FileContentSuccess, path::String) = _atomic_write(path, r.content)

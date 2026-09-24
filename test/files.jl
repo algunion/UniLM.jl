@@ -93,6 +93,42 @@ end
     end
 end
 
+@testset "save_file_content keeps the destination's mode and writes through a dangling symlink" begin
+    save(bytes, path) = save_file_content(FileContentSuccess(content=Vector{UInt8}(bytes)), path)
+    mktempdir() do dir
+        # The renamed-in file takes the destination's permission bits, not the umask
+        # default: a file the caller made private stays private.
+        path = joinpath(dir, "secret.jsonl")
+        write(path, "old")
+        for mode in (0o600, 0o640)
+            chmod(path, mode)
+            save("new", path)
+            @test read(path, String) == "new"
+            @test filemode(path) & 0o7777 == mode
+        end
+        # A link whose target does not exist yet is written through, as opening it for
+        # writing would be: the target is created and the link survives.
+        target, link = joinpath(dir, "target.bin"), joinpath(dir, "link.bin")
+        symlink(target, link)
+        save("x", link)
+        @test islink(link) && readlink(link) == target
+        @test read(target, String) == "x"
+        # ...a relative target resolves against the link's directory, through a chain.
+        symlink("hop.bin", joinpath(dir, "rel.bin"))
+        symlink("final.bin", joinpath(dir, "hop.bin"))
+        save("y", joinpath(dir, "rel.bin"))
+        @test islink(joinpath(dir, "rel.bin")) && islink(joinpath(dir, "hop.bin"))
+        @test read(joinpath(dir, "final.bin"), String) == "y"
+        # A symlink loop has no target to write: refused (ELOOP), nothing replaced.
+        symlink("loop_b", joinpath(dir, "loop_a"))
+        symlink("loop_a", joinpath(dir, "loop_b"))
+        @test_throws Base.IOError save("z", joinpath(dir, "loop_a"))
+        @test islink(joinpath(dir, "loop_a")) && islink(joinpath(dir, "loop_b"))
+        @test sort(readdir(dir)) == sort(["secret.jsonl", "target.bin", "link.bin", "rel.bin",
+                                          "hop.bin", "final.bin", "loop_a", "loop_b"])
+    end
+end
+
 @testset "delete_file reports success only when the service confirms the delete" begin
     del(body) = _answered(() -> delete_file("file-1"; service=URLProbe), 200; body)
     @test del("""{"id": "file-1", "object": "file", "deleted": true}""") ==

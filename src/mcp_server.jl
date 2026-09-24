@@ -199,8 +199,10 @@ Register a tool whose input schema is inferred from `handler`'s positional param
 `arguments` object to those parameters BY NAME — the binding [`@mcp_tool`](@ref)
 generates: a parameter whose type admits `nothing` (`Union{T,Nothing}`) is optional
 and binds `nothing` when omitted, every other parameter is required, and a value must
-have its parameter's JSON type (a string for `String`, an integral number for an
-integer type, a number for a float type, a boolean for `Bool`). A call that violates
+have its parameter's JSON type (a string for `String` or `Symbol`, an integral number
+for an integer type, a number for a float type, a boolean for `Bool`, an array for a
+`Vector{T}` and an object for a `Dict{String,T}`, whose elements convert to `T` the
+same way). A call that violates
 this never reaches the handler: it is answered with a tool result carrying
 `isError: true` and a text naming the argument, the MCP report for an input
 validation error, so the model can correct its call.
@@ -949,6 +951,20 @@ end
 _mcp_convert(::Type{T}, v, name::String) where {T<:AbstractFloat} =
     v isa Real && !(v isa Bool) ? convert(T, v) : _invalid_arg(name, "a number", v)
 _mcp_convert(::Type{Bool}, v, name::String) = v isa Bool ? v : _invalid_arg(name, "a boolean", v)
+_mcp_convert(::Type{Symbol}, v, name::String) =
+    v isa AbstractString ? Symbol(v) : _invalid_arg(name, "a string", v)
+# A JSON array arrives as a Vector{Any} and an object as a Dict{String,Any}: a typed
+# container converts element by element, and an element that does not names its place.
+function _mcp_convert(::Type{V}, v, name::String) where {T,V<:AbstractVector{T}}
+    v isa V && return v
+    v isa AbstractVector || _invalid_arg(name, "an array", v)
+    T[_mcp_convert(T, x, "$name[$i]") for (i, x) in pairs(v)]
+end
+function _mcp_convert(::Type{D}, v, name::String) where {T,D<:AbstractDict{String,T}}
+    v isa D && return v
+    v isa AbstractDict || _invalid_arg(name, "an object", v)
+    Dict{String,T}(string(k) => _mcp_convert(T, x, "$name[$(repr(string(k)))]") for (k, x) in v)
+end
 # Any other declared type: a value of that type binds as is, `nothing` binds an optional
 # parameter, and anything else passes through for the function's own method to accept.
 function _mcp_convert(@nospecialize(T), v, name::String)

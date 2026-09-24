@@ -73,9 +73,9 @@ println("Cosine similarity (Julia vs Fortran): ", round(sim, digits=4))
 | `text-embedding-3-large` | 3072       | Higher quality, more dimensions |
 
 !!! note
-    The default `Embeddings` constructor pre-allocates for 1536 dimensions
-    (`text-embedding-3-small`). To use `text-embedding-3-large`, you would need
-    to adjust the embedding vector size accordingly.
+    The buffers start at `something(dimensions, 1536)` zeros per input and are resized to
+    whatever length the model returns, so `text-embedding-3-large` (3072 dimensions)
+    needs no adjustment.
 
 ## Using Other Providers
 
@@ -92,8 +92,9 @@ embeddingrequest!(emb)
 ```
 
 !!! note
-    Different providers return different embedding dimensions. The default pre-allocation
-    assumes 1536 dimensions (OpenAI's `text-embedding-3-small`).
+    Different providers return different embedding dimensions. The buffers are
+    pre-allocated for 1536 (OpenAI's `text-embedding-3-small`) and resized to the length
+    the provider returns.
 
 !!! note "Gemini embedding models"
     `gemini-embedding-001`, the default for `GEMINIOpenAIServiceEndpoint`, shuts down on
@@ -107,8 +108,11 @@ embeddingrequest!(emb)
 ## In-Place Design
 
 The `Embeddings` struct pre-allocates the embedding vectors at construction time.
-`embeddingrequest!` fills them **in-place** — no allocation on the hot path. This is
-idiomatic Julia for performance-sensitive workloads.
+`embeddingrequest!` fills them **in-place** — no allocation on the hot path when the
+model returns the pre-allocated length. This is idiomatic Julia for performance-sensitive
+workloads. The result aliases the request (`result.embeddings === emb`), so a second call
+on the same `Embeddings` overwrites the first one's vectors: use one `Embeddings` per
+concurrent call, and `copy` vectors you keep before reusing a request.
 
 ```@example emb
 emb = Embeddings("test")
@@ -118,7 +122,7 @@ println("All zeros before API call: ", all(x -> x == 0.0, emb.embeddings))
 
 ## Retry Behaviour
 
-`embeddingrequest!` returns an `EmbeddingSuccess`/`EmbeddingFailure`/`EmbeddingCallError` and fills `emb.embeddings` in place (use `embedding_vectors(result)` for the vectors). It automatically retries transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) with exponential backoff and jitter, honoring `Retry-After`, bounded by the resolved [`RequestConfig`](@ref) (`max_attempts`, default 3; `total_deadline`, default 900 s). Pass `config=RequestConfig(max_attempts=1)` to disable retries; timeouts surface as `EmbeddingCallError` with the `UniLMTimeout` in `.cause`.
+`embeddingrequest!` returns an `EmbeddingSuccess`/`EmbeddingFailure`/`EmbeddingCallError` and fills `emb.embeddings` in place (use `embedding_vectors(result)` for the vectors). It automatically retries transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) with exponential backoff and jitter — a `Retry-After` header is a floor under the jittered wait — bounded by the resolved [`RequestConfig`](@ref) (`max_attempts`, default 3; `total_deadline`, default 900 s). Pass `config=RequestConfig(max_attempts=1)` to disable retries; timeouts surface as `EmbeddingCallError` with the `UniLMTimeout` in `.cause`, and a cancelled call (`cancel=`, or an ambient `with_cancel` token) with a `UniLMCancelled` there. `embedding_vectors` throws `LLMResultError` on a failure result. `encoding_format` accepts only `"float"` (the vectors are stored as `Float64`); anything else throws `ArgumentError` at construction.
 
 ## API Reference
 

@@ -467,7 +467,7 @@ const HAZARDS = ("leaks_secrets", "gives_dosage", "enables_harm")
 
 function guarded_reply(question::AbstractString)
     draft = respond(question; model = "gpt-5.6-luna")
-    draft isa ResponseSuccess || return (:error, output_text(draft))
+    draft isa ResponseSuccess || return (:error, draft)   # the failed result
     text = output_text(draft)
 
     g = ask((user_question = question, draft = text), SAFETY)
@@ -608,7 +608,12 @@ end
 ```
 
 A timeout or a transport failure surfaces as [`SystemOneCallError`](@ref), never
-as a partial success. See [Timeouts & Retries](@ref timeouts_guide).
+as a partial success, with the exception in `cause` and the service's request id in
+`request_id` when it sent one. `ask` and `list_models` also take `cancel=` (default:
+the ambient [`with_cancel`](@ref) token): a cancelled call returns a
+`SystemOneCallError` whose `cause` is a [`UniLMCancelled`](@ref), and sends nothing
+when the token was already cancelled. See [Timeouts & Retries](@ref timeouts_guide) and
+[Concurrency, Tasks and Cancellation](@ref concurrency_guide).
 
 ### Cost
 

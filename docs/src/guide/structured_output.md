@@ -93,7 +93,7 @@ result = respond("List 3 colors as a JSON object", text=json_object_format(), mo
 if result isa ResponseSuccess
     println(output_text(result))
 else
-    println("Request failed — ", output_text(result))
+    println("Request failed — ", result)
 end
 ```
 
@@ -133,7 +133,7 @@ result = respond("List red, green, and blue with their hex codes", text=fmt, mod
 if result isa ResponseSuccess
     println(JSON.json(JSON.parse(output_text(result)), 2))
 else
-    println("Request failed — ", output_text(result))
+    println("Request failed — ", result)
 end
 ```
 
@@ -184,6 +184,22 @@ The Interactions form passes the same schema through `text`:
 fmt = json_schema_format("capital", "A capital city and its country", capital.json_schema.schema)
 result = respond("Give the capital of Norway as JSON."; service=GEMINIServiceEndpoint,
                  model="gemini-3.8-flash", text=fmt, max_output_tokens=256)
+```
+
+## Anthropic
+
+Native Anthropic maps a JSON Schema `response_format` onto Claude's structured outputs:
+it becomes `output_config.format = {type: "json_schema", schema}`, and only the schema
+is sent (the `name`, `description` and `strict` have no counterpart — the output is
+always constrained to the schema). Claude has no schema-less JSON mode, so
+`ResponseFormat()` (`json_object`) throws `ArgumentError` before any request.
+`FunctionSignature(strict=true)` becomes the tool's own `strict` flag.
+
+```julia
+chat = Chat(service=ANTHROPICServiceEndpoint, response_format=capital)   # default: claude-opus-5-5
+push!(chat, Message(Val(:system), "You output JSON."))
+push!(chat, Message(Val(:user), "Give the capital of Norway as JSON."))
+result = chatrequest!(chat)
 ```
 
 ## Convenience Constructors

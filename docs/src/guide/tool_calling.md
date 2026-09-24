@@ -98,9 +98,14 @@ else
 end
 ```
 
+The finish reason is the provider's own: a turn that carries tool calls reads
+`"tool_calls"` when the provider finished it with `"stop"` or reported none, and keeps
+any other reason (`"length"`, `"content_filter"`, a provider-specific value) — such a
+turn may hold partial calls, so do not run them.
+
 !!! tip "Streaming tool calls"
     When streaming (`stream=true`), pass `on_tool_call` to [`chatrequest!`](@ref) to be
-    notified as each tool call completes — exactly once per call — instead of waiting for
+    notified as each tool call completes — at most once per call — instead of waiting for
     the final message. See the [Streaming guide](@ref streaming_guide).
 
 !!! note "Gemini calls without wire ids"
@@ -161,12 +166,12 @@ weather_fn = function_tool(
     )
 )
 result = respond("What's the weather in Tokyo? Use celsius.", tools=[weather_fn], model="gpt-5.4-mini")
-calls = function_calls(result)
+calls = function_calls(result)   # empty for a failed call
 if !isempty(calls)
     println("Function: ", calls[1]["name"])
     println("Arguments: ", JSON.json(JSON.parse(calls[1]["arguments"]), 2))
 else
-    println("No function calls — ", output_text(result))
+    println("No function calls — ", result isa ResponseSuccess ? output_text(result) : result)
 end
 ```
 
@@ -189,7 +194,7 @@ result = respond(
 if result isa ResponseSuccess
     println(output_text(result))
 else
-    println("Request failed — ", output_text(result))
+    println("Request failed — ", result)
 end
 ```
 
@@ -259,7 +264,25 @@ automatically on the next turn.
 ## Automated Tool Loop
 
 Instead of manually handling tool calls, use [`tool_loop!`](@ref) (Chat Completions) or
-[`tool_loop`](@ref) (Responses API) for automatic dispatch:
+[`tool_loop`](@ref) (Responses API) for automatic dispatch. Both send a request, run the
+calls the model asked for through your dispatcher (or the `CallableTool` callables), send
+the results back, and repeat until the model answers in text, a request fails, or
+`max_turns` (default 10) round-trips are used.
+
+- **What reaches the model.** A dispatcher's `String` result is sent as is; any other value
+  is sent JSON-encoded (a `Dict` becomes a JSON object, `nothing` becomes `null`). A
+  dispatcher that throws sends `"Error: <message>"` as that call's output and records a
+  failed [`ToolCallOutcome`](@ref), so the model can react; an `InterruptException`
+  propagates instead.
+- **Concurrency and cancellation.** `tool_concurrency = n` runs up to `n` of a turn's calls
+  at once on spawned tasks (the dispatcher must then be thread-safe; results go back in
+  call order). `cancel = tok` — or an ambient `with_cancel` scope — makes the loop
+  cancellable: every turn, its request and its dispatches observe the token, and a
+  cancelled loop returns `completed=false` with a call error whose `cause` is
+  [`UniLMCancelled`](@ref). See [Concurrency, Tasks and Cancellation](@ref concurrency_guide).
+- **`max_turns`** below 1 throws `ArgumentError`; when the turns run out, `response` is the
+  last response the model sent (a tool-call turn whose calls ran), with `completed=false`
+  and `llm_error = "max turns (N) exhausted"`.
 
 ### Chat Completions
 
@@ -276,6 +299,14 @@ result = tool_loop!(chat; tools=[ct])
 # result.completed == true when the model gives a text response
 ```
 
+`tool_loop!` needs `chat.history == true` — each follow-up request carries the assistant
+turn its tool results answer — and throws `ArgumentError` before any request otherwise.
+It runs a turn's calls only when the turn finished with `"tool_calls"`. A turn that carries
+calls but finished for another reason (`"length"`, `"content_filter"`, …) may hold partial
+calls: none runs, the loop stops with `completed=false` and an `llm_error` naming the
+reason, and that unanswered assistant turn is removed from `chat`, so the conversation
+stays sendable. A turn cancelled between dispatches is removed the same way.
+
 ### Responses API
 
 ```julia
@@ -284,6 +315,17 @@ ct = CallableTool(
     (name, args) -> "22C, sunny")
 result = tool_loop("What's the weather?"; tools=[ct])
 ```
+
+The Responses loop chains turns through `previous_response_id` — or, when the `Respond`
+sets `conversation`, through the conversation alone (the API rejects the two together).
+It runs function calls only on a `completed` or `requires_action` turn; any other status
+(for example `incomplete`, whose calls may be partial) stops it with `completed=false` and
+an `llm_error` naming the status and the `incomplete_details` reason. A call whose
+`arguments` are not a JSON object is answered with an `"Error: invalid arguments: …"`
+output, like a dispatcher error, and the loop goes on. A turn that requests a client-side
+action the loop cannot execute — `custom_tool_call`, `apply_patch_call`,
+`local_shell_call`, `shell_call`, `computer_call` or an `mcp_approval_request` — stops it
+with `completed=false`, naming the pending type, and none of that turn's calls run.
 
 ## MCP Tool Integration
 
@@ -307,9 +349,9 @@ result = tool_loop("Do something"; tools=tools)
 
 ## Inspecting the Result
 
-`tool_loop` / `tool_loop!` return a [`ToolLoopResult`](@ref): the final `response`, the list
-of `tool_calls` that ran (each a [`ToolCallOutcome`](@ref)), `turns_used`, whether it
-`completed`, and any `llm_error`.
+`tool_loop` / `tool_loop!` return a [`ToolLoopResult`](@ref): the last `response` the loop
+received, the list of `tool_calls` that ran (each a [`ToolCallOutcome`](@ref)),
+`turns_used`, whether it `completed`, and — when it did not — the `llm_error` saying why.
 
 ```julia
 result = tool_loop("What's the weather in Paris and Tokyo?"; tools=[ct])
@@ -317,7 +359,8 @@ result = tool_loop("What's the weather in Paris and Tokyo?"; tools=[ct])
 if result.completed
     println(output_text(result.response))
 else
-    # completed=false means it hit max_turns or an llm_error before a final text answer
+    # completed=false: a failed or cancelled request, max_turns, truncated or filtered
+    # output, or a pending action the loop cannot run — llm_error says which
     println("Stopped after $(result.turns_used) turns: ", result.llm_error)
 end
 

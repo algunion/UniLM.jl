@@ -105,7 +105,7 @@ result = respond(
     tools=[file_search([vs_id]; max_results=5)],
     include=["file_search_call.results"],
 )
-result isa ResponseSuccess || error("query failed: ", output_text(result))
+result isa ResponseSuccess || error("query failed: ", result)
 ```
 
 The tool serialises to a small JSON object. Its wire shape is self-contained (no network),

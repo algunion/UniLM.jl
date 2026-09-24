@@ -61,7 +61,7 @@ println(JSON.json(ig))
 | `background`         | `"transparent"`, `"opaque"`, `"auto"`                 | API default       |
 | `output_format`      | `"png"`, `"webp"`, `"jpeg"`                           | API default       |
 | `output_compression` | `0`–`100` (for webp/jpeg)                             | API default       |
-| `n`                  | `1`–`10`                                              | `1`               |
+| `n`                  | `1`–`10`                                              | API default (1)   |
 | `moderation`         | `"auto"`, `"low"`                                     | API default       |
 
 `input_fidelity` is an image-edit parameter and belongs on [`ImageEdit`](@ref);
@@ -126,12 +126,13 @@ if result isa ImageSuccess
 
     r.created                 # Unix timestamp
     r.data                    # Vector{ImageObject}
-    r.data[1].b64_json        # base64-encoded image data
+    r.data[1].b64_json        # base64-encoded image data (nothing when delivered by URL)
+    r.data[1].url             # the image URL, when the API delivered it that way
     r.data[1].revised_prompt  # revised prompt (may be nothing)
-    r.usage                   # token usage Dict
+    r.usage                   # token usage Dict (token_usage(result) reads it)
 
     # Convenience accessors
-    image_data(result)        # Vector{String} of base64 data
+    image_data(result)        # Vector{String}: each image's base64 data, else its URL
     save_image(image_data(result)[1], "sunset.png")
 end
 ```
@@ -150,6 +151,9 @@ rm(tmpfile)
 ```
 
 ## Error Handling
+
+`image_data` throws [`LLMResultError`](@ref) on an `ImageFailure` or `ImageCallError` — a
+failed call has no images — so branch on the result type first:
 
 ```julia
 result = generate_image("A sunset over mountains")
@@ -181,12 +185,12 @@ end
 ```
 
 For full control, build an [`ImageEdit`](@ref) and call `edit_image(e)`. The model defaults to
-`gpt-image-2`; image editing needs the `:image_edits` capability (OpenAI), and other providers
-reject it at request time.
+`gpt-image-2`; image editing needs the `:image_edits` capability (OpenAI): an endpoint that
+declares its capabilities without it throws `ArgumentError` before any request.
 
 ## Retry Behaviour
 
-`generate_image` retries transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) within the request budget configured by `RequestConfig` (`max_attempts`, default 3), with exponential backoff and jitter; on 429 the `Retry-After` header is respected. Override per call with `config=RequestConfig(...)`.
+`generate_image` and `edit_image` retry transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) within the request budget configured by `RequestConfig` (`max_attempts`, default 3), with exponential backoff and jitter; a `Retry-After` header is a floor under the jittered wait. Override per call with `config=RequestConfig(...)`. Both take `cancel=` (default: the ambient `with_cancel` token); a cancelled call returns an `ImageCallError` whose `cause` is a [`UniLMCancelled`](@ref). Every `ImageFailure` and `ImageCallError` carries the provider's `request_id` when one was sent, and a call error its exception in `cause`.
 
 ## See Also
 

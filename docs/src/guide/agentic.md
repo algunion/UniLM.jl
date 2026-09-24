@@ -16,7 +16,7 @@ result = respond("Explain multiple dispatch in one sentence.", model="gpt-5.4-mi
 if result isa ResponseSuccess
     println(output_text(result))
 else
-    println("Request failed — ", output_text(result))
+    println("Request failed — ", result)
 end
 ```
 
@@ -27,7 +27,7 @@ result = respond("Explain multiple dispatch in one sentence."; service=GEMINISer
 if result isa ResponseSuccess
     println(output_text(result))
 else
-    println("Request failed — ", output_text(result))
+    println("Request failed — ", result)
 end
 ```
 
@@ -58,7 +58,7 @@ result = respond("What are the latest stable Julia releases?";
 if result isa ResponseSuccess
     println(output_text(result))
 else
-    println("Request failed — ", output_text(result))
+    println("Request failed — ", result)
 end
 ```
 
@@ -67,8 +67,8 @@ end
 Force a specific function with [`tool_choice_function`](@ref) (works on both
 providers). The other builders — [`tool_choice_hosted`](@ref),
 [`tool_choice_mcp`](@ref), [`tool_choice_custom`](@ref),
-[`tool_choice_allowed`](@ref) — are OpenAI-Responses selectors and raise an
-error on Gemini.
+[`tool_choice_allowed`](@ref) — are OpenAI-Responses selectors: on Gemini,
+`respond` throws `ArgumentError` for them before any request.
 
 ```julia
 respond("What's the weather in Paris?";
@@ -90,6 +90,9 @@ ct = CallableTool(function_tool("get_weather", "Get weather",
 result = tool_loop("What's the weather in Paris?"; service=GEMINIServiceEndpoint, tools=[ct])
 # result.completed == true when the model returns a final text answer
 ```
+
+The loop takes the same `cancel` and `tool_concurrency` keywords on both providers; see
+[Tool Calling](@ref tools_guide) for its stop rules.
 
 ## Feeding tool output back manually
 
@@ -131,20 +134,26 @@ if r isa ResponseSuccess
     println("usage: ", token_usage(r))
     println("est. cost: \$", round(estimated_cost(r); digits=6))
 else
-    println("Request failed — ", output_text(r))
+    println("Request failed — ", r)
 end
 ```
 
 ## Streaming
 
-Streamed Gemini Interactions assemble function calls from the wire's incremental
-step events: a streamed `respond(...; tools=…, stream=true)` finishes with status
-`requires_action` and its [`function_calls`](@ref) populated, exactly like the
-non-streamed form. Thought steps stream their signature and surface verbatim in
-`output`.
-Initial text in `step.start` and subsequent deltas are both included, in step
-order. Thought summaries stay separate from answer text, while signatures remain
-available in the provider's raw steps.
+Streamed Gemini Interactions assemble each step from the wire's incremental events
+and rebuild the output exactly as the non-streamed decode does: a streamed
+`respond(...; tools=…, stream=true)` finishes with status `requires_action` and its
+[`function_calls`](@ref) populated, like the non-streamed form. Thought steps carry
+their signature and their `summary` (from the streamed thought summaries), the text
+parts of one step stay separate parts (so `output_text` joins them with a newline), and
+a function call whose `arguments` are `null` reads as `"{}"`. Initial text in
+`step.start` and subsequent deltas are both included, in step order. Thought summaries
+stay separate from answer text ([`reasoning_summaries`](@ref) reads them), while
+signatures remain available in the provider's raw steps.
+
+An interaction body — streamed or not — without a non-empty `id` or `status` is not an
+interaction: `respond`, `get_response` and `cancel_response` return a
+`ResponseCallError` for it instead of an empty success.
 
 ## See Also
 

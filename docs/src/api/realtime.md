@@ -12,7 +12,11 @@ resolves it the usual four ways, and captures it on the session's `config` field
 
 - **The open phase** is bounded by `connect_timeout` — a peer that accepts the
   TCP connection but never completes the upgrade throws
-  `UniLMTimeout(:connect, …)` rather than blocking.
+  `UniLMTimeout(:connect, …)` rather than blocking. An open that fails for another
+  reason throws that error, and an upgrade that completes only after the timeout is
+  closed without running the handler. Only `OPENAIServiceEndpoint` has a Realtime
+  WebSocket: any other `service` throws `ArgumentError` before any I/O, so another
+  endpoint's credentials are never sent to `api.openai.com`.
 - **[`realtime_receive`](@ref)** is bounded by the session's
   `stream_idle_timeout` and throws `UniLMTimeout(:stream_idle, …)` on a breach.
   Unblocking a parked read means closing the socket, and HTTP.jl's WebSocket
@@ -23,9 +27,13 @@ resolves it the usual four ways, and captures it on the session's `config` field
   sit idle waiting for input.
 
 Realtime throws rather than returning a typed result value, and `realtime_connect`
-makes a single attempt; `max_attempts` does not apply. A minted client secret is a
-live credential, so [`RealtimeSecretSuccess`](@ref) redacts it when displayed —
-read `.value` programmatically. See [Timeouts & Retries](@ref timeout_realtime).
+makes a single attempt; `max_attempts` does not apply. Neither the WebSocket open nor
+`realtime_receive` observes a [`CancelToken`](@ref). [`mint_realtime_secret`](@ref) is
+an ordinary HTTP verb that returns typed results: a `200` without a non-empty secret is
+a `RealtimeCallError`, and a `RealtimeCallError` carries its exception in `cause` and
+the provider's `request_id` when one was sent. A minted client secret is a live
+credential, so [`RealtimeSecretSuccess`](@ref) redacts it when displayed — read
+`.value` programmatically. See [Timeouts & Retries](@ref timeout_realtime).
 
 ## Session and Result Types
 

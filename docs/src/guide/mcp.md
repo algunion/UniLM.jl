@@ -4,7 +4,13 @@ UniLM.jl provides native MCP support — both as a **client** (connect to MCP se
 **server** (build your own). MCP tools integrate seamlessly with [`tool_loop!`](@ref) and
 [`tool_loop`](@ref) via the [`CallableTool`](@ref) bridge.
 
-Protocol: JSON-RPC 2.0 over stdio or Streamable HTTP (MCP spec 2025-11-25). Zero external dependencies.
+Protocol: JSON-RPC 2.0 over stdio or Streamable HTTP. The client and the server
+negotiate MCP revisions 2025-11-25 (preferred), 2025-06-18 and 2025-03-26. The
+stateless 2026-07-28 revision is not supported yet, so a peer that speaks only
+2026-07-28 cannot interoperate: `mcp_connect` fails naming the revision such a server
+returned, `serve` answers such a client's `initialize` with 2025-11-25, and over HTTP
+a request whose `MCP-Protocol-Version` header names an unsupported revision gets
+`400`. Zero external dependencies.
 
 ```@setup mcp
 using UniLM
@@ -37,7 +43,7 @@ println("HTTP transport for: ", t2.url)
 Use [`mcp_connect`](@ref) with a `Cmd` (stdio), URL string (HTTP), or transport object:
 
 ```julia
-# Stdio — launches subprocess
+# Stdio — launches subprocess (stderr=devnull or a log-file path silences its stderr)
 session = mcp_connect(`npx -y @modelcontextprotocol/server-filesystem /tmp`)
 
 # HTTP
@@ -57,18 +63,23 @@ mcp_connect(`npx server`) do session
 end  # session is disconnected here
 ```
 
-!!! note "A session is concurrency-1"
+!!! note "A session runs one call at a time, first come first served"
     Every call on an [`MCPSession`](@ref) — its liveness check, id allocation and
-    request/response exchange — runs under one session lock, so a concurrent
-    caller waits for the exchange in progress. The queued caller's
-    `mcp_request_timeout` is measured **from the moment it takes the lock**, not
-    from when it asked, so waiting behind another call never counts against its
-    own bound; the wait stays bounded transitively, because the call ahead runs
-    under that same per-exchange bound. [`mcp_disconnect!`](@ref) takes the lock
-    too, so a disconnect racing a call in flight waits for that exchange to finish
-    instead of tearing the transport down under its reader. For real parallelism,
-    open one session per concurrent worker — see
-    [Concurrency](@ref timeout_concurrency).
+    request/response exchange — holds the session, and waiting callers are served
+    in arrival order. A call's per-call bound (`timeout`, default
+    `mcp_request_timeout`) also covers its wait: a call that cannot acquire the
+    session in time throws [`MCPTimeoutError`](@ref) with phase `:queue` without
+    touching it. Once a call holds the session, its exchange gets the full bound,
+    measured from that moment, so a waiter's clock never tears down the exchange in
+    progress. [`mcp_disconnect!`](@ref) waits its turn too, so a disconnect racing a
+    call in flight waits for that exchange to finish instead of tearing the
+    transport down under its reader. For real parallelism, open one session per
+    concurrent worker — see [Concurrency, Tasks and Cancellation](@ref concurrency_guide).
+
+A call on a session that is closed — by [`mcp_disconnect!`](@ref), by a stdio
+timeout or crash, or because its transport is not connected — throws the typed
+[`MCPSessionClosedError`](@ref), whose `cause` is `:disconnected`, `:timeout` or
+`:crash` (see [Timeouts](@ref mcp_timeouts) for `auto_respawn`).
 
 ### Discovering Tools, Resources, and Prompts
 
@@ -82,11 +93,16 @@ prompts  = list_prompts!(session)   # -> Vector{MCPPromptInfo}
 ```
 
 !!! note "Server notifications"
-    MCP servers may send notifications at any time, interleaved with
-    responses; the client skips them transparently and answers server `ping`
-    requests. After a `notifications/tools/list_changed`, the session's cached
-    tool list is marked stale — check `session.tools_stale` and call
-    `list_tools!` to refresh.
+    MCP servers may send notifications interleaved with responses; the client
+    skips them transparently, answers server `ping` requests, and answers any
+    other server request with `-32601`. It reads the server's frames only during an
+    exchange — a stdio notification sent between calls is read with the next call,
+    and over HTTP there is no standing listener, so only notifications carried in a
+    response body (before or after the response itself) are seen. When a
+    `notifications/tools/list_changed` is read, the session's cached tool list is
+    marked stale — check `session.tools_stale` and call `list_tools!` to refresh.
+    A stdio line that is not JSON (a stray log line on the server's stdout) is
+    skipped with a warning.
 
 ```@example mcp
 # MCPToolInfo fields
@@ -115,7 +131,7 @@ messages = get_prompt(session, "review", Dict{String,Any}("code" => "x + 1"))
 ping(session)
 ```
 
-### Timeouts
+### [Timeouts](@id mcp_timeouts)
 
 Every `mcp_connect` handshake and every `call_tool` / `list_tools!` exchange runs
 under a bound — set per session at connect time, or overridden for one call:
@@ -128,33 +144,39 @@ session = mcp_connect(`npx server`;
 call_tool(session, "read_file", Dict{String,Any}("path" => "/tmp/data.txt"); timeout=5.0)
 ```
 
-A stdio request timeout closes the session — stdio framing carries no request-id
-demux, so a late reply could misdeliver to the next caller. With `auto_respawn=true`
-the next call transparently respawns the server (same command, fresh handshake;
-in-memory server state is lost and tools are refetched); without it, the next call
-raises an error naming the opt-in. An HTTP request timeout does not close the
-session — each exchange is an independent POST. Both surface as the typed
-[`MCPTimeoutError`](@ref).
+A stdio request timeout closes the session: a read blocked on an unresponsive
+server can be released only by killing the server. The watchdog closes the pipe, so
+the typed [`MCPTimeoutError`](@ref) surfaces at about the bound, and then tears the
+server's process group down (stdin EOF, SIGTERM, then SIGKILL); a reply that raced
+the teardown is discarded. With `auto_respawn=true` the next call transparently
+respawns the server (same command, fresh handshake; in-memory server state is lost
+and tools are refetched); without it, the next call raises
+[`MCPSessionClosedError`](@ref) naming the opt-in. An HTTP request timeout does not
+close the session — each exchange is an independent POST — and the timed-out request
+is cancelled on the server with a best-effort `notifications/cancelled`.
 
-Two boundaries of that contract, observed against real servers:
+`auto_respawn` covers **hangs and crashes** alike: a server that dies abruptly —
+killed, crashed, or its stdio pipe broken — closes the session too, surfacing the
+typed [`MCPCrashError`](@ref) (carrying the exit code or signal when known) on the
+call in flight, and the next call respawns it when `auto_respawn=true`. Stdio
+servers still running when Julia exits are torn down by an exit hook, and when a
+server's process-group leader exits (an `npx` wrapper, say) the rest of its group is
+killed at once.
 
-- `auto_respawn` covers **hangs and crashes**. A request-watchdog timeout closes
-  the session with the typed [`MCPTimeoutError`](@ref); a server that dies
-  abruptly — killed, crashed, or its stdio pipe broken — closes it too, surfacing
-  the typed [`MCPCrashError`](@ref) (carrying the exit code or signal when known)
-  on the call in flight. Either way the next call respawns the server when
-  `auto_respawn=true` and errors naming the opt-in otherwise. HTTP sessions are
-  unaffected: each exchange is an independent POST.
-- When a wedged server also ignores polite shutdown (frozen rather than merely
-  slow), the timed-out call returns only after the escalation ladder completes:
-  the configured timeout plus up to ~7 seconds of stdin-EOF and SIGTERM grace
-  before the final process-group SIGKILL unblocks the read. The error is still
-  the typed `MCPTimeoutError`; its `elapsed` reflects that full wall time.
+A [`CancelToken`](@ref) reaches MCP calls over HTTP: a cancel ends the call at once
+with `UniLMCancelled`, sends a best-effort `notifications/cancelled`, and leaves the
+session open. A stdio exchange does not observe the token; it is bounded by
+`mcp_request_timeout` alone. Teardown — `mcp_disconnect!`'s `DELETE`, a
+cancellation notice — is sent even inside a cancelled `with_cancel` scope.
 
 ### Bridging to tool_loop! (Chat Completions)
 
 [`mcp_tools`](@ref) converts MCP tools into `Vector{CallableTool{Tool}}` for use with
-[`tool_loop!`](@ref):
+[`tool_loop!`](@ref). Tool names are advertised provider-safe: OpenAI and Anthropic
+accept only `^[a-zA-Z0-9_-]{1,128}$`, so any other character of an MCP tool name
+(the dots in `admin.tools.list`, say) becomes `_`, cut to 128 characters — the
+bridged callable still calls the tool by its MCP name. Two tools that map to the same
+name raise an `ArgumentError`.
 
 ```julia
 session = mcp_connect(`npx server`)
@@ -211,12 +233,23 @@ register_tool!(server, "add", "Add two numbers",
 println("Registered tools: ", collect(keys(server.tools)))
 ```
 
+With the inferred form, the handler's positional parameters *are* the schema: each
+`tools/call` binds the `arguments` object to them **by name**. A parameter whose type
+admits `nothing` (`Union{T,Nothing}`) is optional; every other one is required, and
+a value must have its parameter's JSON type (a string for `String`, an integral
+number for an integer, a number for a float, a boolean for `Bool`; a `Symbol` binds
+from a string, and a typed `Vector` or `Dict` element-wise). A call that violates
+this never reaches the handler: the client gets a tool result with `isError: true`
+naming the argument, so the model can correct its call. A handler that takes one
+`Dict` (the explicit-schema convention) or varargs has no names to bind and is
+rejected with an `ArgumentError`.
+
 ```@example mcp
-# Auto-inferred schema from function signature
-register_tool!(server, "greet", "Greet someone",
-    (args::Dict{String,Any}) -> "Hello, $(args["name"])!")
+# Auto-inferred schema from function signature: `name` is a required string
+register_tool!(server, "greet", "Greet someone", (name::String) -> "Hello, $name!")
 
 println("Tools now: ", collect(keys(server.tools)))
+println("greet schema: ", JSON.json(server.tools["greet"].input_schema))
 ```
 
 You can also register existing [`CallableTool`](@ref) instances:
@@ -273,8 +306,11 @@ directly to prove the wiring works.
 #### `@mcp_tool` — typed args become JSON Schema
 
 A named typed function becomes a tool whose `inputSchema` is inferred from the argument
-types (typed args are `required`). The generated handler unpacks the incoming
-`Dict{String,Any}` and forwards it to your function.
+types (typed args are `required`, untyped ones optional). The generated handler binds
+the incoming `arguments` object to your function's parameters by name, with the same
+type checks as the inferred-schema `register_tool!`; a missing or wrong-typed
+argument is answered with an `isError: true` tool result naming it. The tool is
+registered without a description.
 
 !!! note "Contract"
     `@mcp_tool` requires a **named** function (`function name(args…)`). An anonymous
@@ -367,6 +403,27 @@ serve(server; transport=:http, port=3000,
       allowed_origins=["https://app.example.com"])
 ```
 
+**Handler concurrency.** Over HTTP, `tools/call`, `resources/read` and `prompts/get`
+handlers run concurrently — one task per request, on the default thread pool — so
+handlers must be thread-safe (protocol requests such as `initialize`, the lists and
+`ping` are answered inline and stay prompt while handlers are busy). Over stdio,
+handlers run one at a time, and while serving on the process `stdout` it is pointed
+at `stderr`, so a handler that prints cannot corrupt the protocol stream.
+Registration is synchronized: tools, resources and prompts may be registered while
+the server is serving.
+
+**What reaches the client.** A tool handler's exception is a tool result, not a
+protocol error: the client receives `isError: true` with the text
+`Error: <showerror text>`, which lets a model correct itself — raise with a message you
+are willing to show it. An exception from a resource or prompt handler, or from
+dispatch itself, is answered with a generic JSON-RPC `-32603` `"Internal error"` and
+logged on the server, so no exception text (file paths, argument values) reaches the
+peer. An `InterruptException` is never converted: it propagates. Frames (stdio) and
+request bodies (HTTP) are capped at 16 MiB: stdio answers an oversized frame with
+`-32600`, HTTP with `413 Payload Too Large`. `initialize` answers the revision the
+client requested when it is supported, otherwise 2025-11-25; a JSON-RPC response sent
+to the server is accepted without an answer (HTTP `202`).
+
 ---
 
 ## MCP Tool in Responses API
@@ -394,5 +451,6 @@ OpenAI's servers, while `mcp_connect` runs tools locally.
 
 - [Tool Calling Guide](@ref tools_guide) — function tools and automated tool loop
 - [MCP API Reference](@ref mcp_api) — full type and function reference
-- [Timeouts & Retries](@ref timeouts_guide) — MCP bounds and the concurrency-1 contract
+- [Timeouts & Retries](@ref timeouts_guide) — MCP bounds, the `:queue` phase and `auto_respawn`
+- [Concurrency, Tasks and Cancellation](@ref concurrency_guide) — sessions under fan-out, server handler concurrency
 - [`CallableTool`](@ref), [`tool_loop!`](@ref), [`tool_loop`](@ref) — tool loop integration

@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Julia 1.12+** (as specified in `Project.toml`)
+- **Julia 1.13+** (as specified in `Project.toml`)
 - An **API key** for your chosen provider (OpenAI, DeepSeek, Gemini, Mistral, etc.) — or none at all for local providers like Ollama
 
 ## Installation
@@ -48,9 +48,14 @@ export OPENAI_API_KEY="sk-..."
 ```bash
 export AZURE_OPENAI_BASE_URL="https://your-resource.openai.azure.com"
 export AZURE_OPENAI_API_KEY="your-key"
-export AZURE_OPENAI_API_VERSION="2024-02-01"
+export AZURE_OPENAI_API_VERSION="2024-10-21"
 export AZURE_OPENAI_DEPLOY_NAME_GPT_5_2="your-gpt52-deployment"
 ```
+
+Each model needs its deployment: `AZURE_OPENAI_DEPLOY_NAME_<MODEL>`, the model id
+upper-cased with every other character mapped to `_` (`gpt-5.2` →
+`AZURE_OPENAI_DEPLOY_NAME_GPT_5_2`), read when a request is built — or register one with
+[`add_azure_deploy_name!`](@ref).
 
 ### Google Gemini
 
@@ -62,13 +67,15 @@ export GEMINI_API_KEY="your-gemini-key"
 
 ### Anthropic (Claude)
 
-Native Messages API (default model `claude-opus-4-8`):
+Native Messages API (default model `claude-opus-5-5`, default `max_tokens` 16000):
 
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
 ### DeepSeek
+
+Default model `deepseek-flash` (chat and FIM):
 
 ```bash
 export DEEPSEEK_API_KEY="sk-..."
@@ -112,7 +119,7 @@ result = respond("Explain Julia's type system in 3 bullet points", model="gpt-5.
 if result isa ResponseSuccess
     println(output_text(result))
 else
-    println("Request failed — ", output_text(result))
+    println("Request failed — ", result)
 end
 ```
 
@@ -230,4 +237,5 @@ end
 | Use any provider               | [Multi-Backend Guide](@ref backend_guide)        |
 | Track token usage & cost       | [Cost Tracking Guide](@ref cost_guide)           |
 | Ground answers in your files   | [Retrieval & File Search](@ref retrieval_guide)  |
-| Bound timeouts, retries, fan-out | [Timeouts & Retries](@ref timeouts_guide)      |
+| Bound timeouts and retries     | [Timeouts & Retries](@ref timeouts_guide)        |
+| Fan out, stream to tasks, cancel | [Concurrency, Tasks and Cancellation](@ref concurrency_guide) |

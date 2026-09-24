@@ -292,18 +292,21 @@ end
 
 @testset "task mode: completion is event-driven — no success-path latency floor" begin
     # A polled completion check makes every non-streaming call pay up to one poll
-    # interval; an instant local server exposes that floor directly.
+    # interval; an instant local server exposes that floor directly. Each seam call is
+    # paired with a direct HTTP.request carrying the same options, so the check reads
+    # the wrapper's own cost, whatever the machine (or coverage) adds to the request.
     srv = HTTP.serve!(_ -> HTTP.Response(200, "ok"), "127.0.0.1", 0; verbose=false)
     url = "http://127.0.0.1:$(HTTP.port(srv))/"
     try
         cfg = RequestConfig(max_attempts=1)
-        UniLM._http("GET", url; cfg)   # compile outside the measurement
-        ms = map(1:20) do _
-            t = time_ns()
-            UniLM._http("GET", url; cfg)
-            (time_ns() - t) / 1e6
-        end
-        @test sort(ms)[10] < 20.0   # median; a 0.1 s poll floor puts it near 100 ms
+        seam() = UniLM._http("GET", url; cfg)
+        direct() = HTTP.request("GET", url; UniLM._request_kwargs(cfg, cfg.request_timeout)...)
+        ms(f) = (t = time_ns(); f(); (time_ns() - t) / 1e6)
+        seam(); direct()               # compile outside the measurement
+        pairs = [(ms(seam), ms(direct)) for _ in 1:20]
+        median(xs) = sort(xs)[10]
+        # A 0.1 s poll adds ~100 ms to the seam's median; 30 ms is under a third of that.
+        @test median(first.(pairs)) - median(last.(pairs)) < 30.0
     finally
         close(srv)
     end
@@ -313,8 +316,9 @@ end
     # The main task shares its thread with the libuv event loop. `close(::Timer)`
     # and timer-based polling both wait on that loop, so a call on another thread
     # stalled for as long as the main task kept the thread busy. The main task
-    # spins WITHOUT yielding for 3 s (GC safepoints only); the call is timed from
-    # the spawn instant, so a worker that never started also reads as a stall.
+    # spins WITHOUT yielding (GC safepoints only) until the call has finished, 10 s
+    # at most; the call is timed from the spawn instant, so a worker that never
+    # started also reads as a stall.
     srv = HTTP.serve!(_ -> HTTP.Response(200, "ok"), "127.0.0.1", 0; verbose=false)
     url = "http://127.0.0.1:$(HTTP.port(srv))/"
     try
@@ -323,13 +327,13 @@ end
         finished = Threads.Atomic{UInt64}(0)
         spawned = time_ns()
         t = Threads.@spawn :default (UniLM._http("GET", url; cfg); finished[] = time_ns())
-        spin_until = spawned + 3_000_000_000
-        while time_ns() < spin_until
+        spin_until = spawned + 10_000_000_000
+        while finished[] == 0 && time_ns() < spin_until
             GC.safepoint()
         end
         @test timedwait(() -> istaskdone(t), 25.0) === :ok
         fetch(t)
-        @test (finished[] - spawned) / 1e9 < 1.5
+        @test (finished[] - spawned) / 1e9 < 3.0   # stalled, it finishes only when the spin ends (10 s)
     finally
         close(srv)
     end

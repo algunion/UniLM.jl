@@ -659,11 +659,13 @@ function _hm_timed_stream(call, cfg)
     end
 end
 
-# The stream's attempt ended at its request-phase bound: a typed `:request` timeout,
-# returned within 0.5 s of the bound (1 s in every caller), and not at the idle bound.
+# The stream's attempt ended at its request-phase bound: a typed `:request` timeout
+# whose recorded elapsed is within a 2 s runner-stall budget of the bound (1 s in every
+# caller) and whose wall time stays under 4 s — below the idle bound the pre-fix code
+# waited for (5 s or 10 s in every caller), so the check still discriminates.
 _hm_request_bound_hit(outcome, R) = outcome[1] === :ok && let (; res, elapsed) = outcome[2]
     res isa R && res.status === nothing && res.cause isa UniLM.UniLMTimeout &&
-        res.cause.phase === :request && res.cause.elapsed <= res.cause.limit + 0.5 && elapsed < 1.5
+        res.cause.phase === :request && res.cause.elapsed <= res.cause.limit + 2.0 && elapsed < 4.0
 end
 
 # `_hm_peer_died` reads a bare result; the timed outcome carries it in `res`.

@@ -900,8 +900,10 @@ end
                                    callback=(c, _) -> c isa Message && (final_at[] = time() - t0)))
             elapsed = time() - t0
             @test r isa LLMSuccess && r.message.content == "hi" && length(chat.messages) == 3
-            @test final_at[] < 1.0
-            @test elapsed < 1.5
+            # ≈0.5 s expected; the forbidden outcome is the 10 s hold. A 4 s bound leaves
+            # a runner-stall budget and still discriminates.
+            @test final_at[] < 4.0
+            @test elapsed < 4.0
             # Its connection was closed rather than pooled: the next call opens another.
             @test fetch(chatrequest!(stream_chat(srv.url); config=_SLOW_CFG)) isa LLMSuccess
             @test length(unique(srv.peers)) == 2

@@ -1403,6 +1403,12 @@ end
                 @test_throws ArgumentError chatrequest!(chat)
             end
         end
+        # `callback` and `on_tool_call` run only on a stream: without stream=true they
+        # would be silently ignored.
+        for kw in ((; callback=(c, _) -> nothing), (; on_tool_call=tc -> nothing))
+            @test_throws ArgumentError "stream=true" chatrequest!(
+                Chat(service=GenericOpenAIEndpoint(srv.url, ""), model="m", messages=sys_user()); kw...)
+        end
         @test srv.hits[] == 0
         # History off: nothing is appended, so a trailing assistant turn (a prefill) is sent.
         prefill = Chat(service=GenericOpenAIEndpoint(srv.url, ""), model="m", history=false,

@@ -2870,6 +2870,11 @@ UniLM.encode_agentic(::_RefusingAgentic, ::Respond) = throw(ArgumentError("optio
             # A documented restriction, raised by the real encoder: no log probabilities on GPT-6 Astra.
             @test_throws ArgumentError respond(Respond(model="gpt-6-astra", input="hi", top_logprobs=2, stream=stream))
         end
+        # A callback runs only on a stream: without stream=true it would be silently ignored.
+        ep = GenericOpenAIEndpoint(srv.url, "")
+        @test_throws ArgumentError "stream=true" respond(Respond(service=ep, model="m", input="hi");
+                                                        callback=(c, _) -> nothing)
+        @test_throws ArgumentError "stream=true" respond("hi"; service=ep, model="m", callback=(c, _) -> nothing)
         @test srv.hits[] == 0
     finally
         HTTP.forceclose(srv.server)

@@ -1635,10 +1635,11 @@ already in progress cannot be interrupted (HTTP.jl 2.7.1), so a cancel during on
 effect when it completes or reaches `connect_timeout`.
 
 Local validation throws `ArgumentError` before any network I/O, streaming or not:
-when `r.service` is an endpoint type that declares its capabilities and lists neither
-`:responses` (OpenAI wire) nor `:agentic` (Gemini Interactions), or when the
-provider's encoder rejects the request (e.g. an option the provider or model does not
-support).
+when `callback` is passed without `r.stream === true` (it runs only on a stream, so it
+would be ignored), when `r.service` is an endpoint type that declares its capabilities
+and lists neither `:responses` (OpenAI wire) nor `:agentic` (Gemini Interactions), or
+when the provider's encoder rejects the request (e.g. an option the provider or model
+does not support).
 
 # Examples
 ```julia
@@ -1651,6 +1652,8 @@ end
 """
 function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callback=nothing,
                  cancel::Union{Nothing,CancelToken}=nothing)
+    r.stream === true || isnothing(callback) ||
+        throw(ArgumentError("callback requires stream=true"))
     _validate_agentic_capability(r.service)
     body = encode_agentic(r.service, r)
     cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()

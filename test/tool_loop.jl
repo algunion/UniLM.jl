@@ -305,6 +305,16 @@ end
     end
 end
 
+@testset "tool_loop! hands callback and on_tool_call to chatrequest!, which refuses them unstreamed" begin
+    for kw in ((; callback=(c, _) -> nothing), (; on_tool_call=tc -> nothing))
+        chat = _tl_chat(_TLFixture([_tl_reply("x")]))
+        _, seen = _tl_scripted() do
+            @test_throws ArgumentError "stream=true" tool_loop!(chat, (name, args) -> "x"; kw...)
+        end
+        @test isempty(seen) && length(chat) == 2
+    end
+end
+
 @testset "tool_loop! refuses a Chat without history before any request" begin
     # With history=false the assistant tool-call turn is never recorded, so the
     # follow-up request would carry tool results that answer nothing.

@@ -241,7 +241,9 @@ requested them.
   `llm_error = "max turns (N) exhausted"`.
 - `config`: Per-request [`RequestConfig`](@ref) passed to [`chatrequest!`](@ref) — each turn gets its own attempt/deadline budget.
 - `callback`: Streaming callback passed to `chatrequest!`.
-- `on_tool_call`: Tool call notification callback passed to `chatrequest!`.
+- `on_tool_call`: Tool call notification callback passed to `chatrequest!`. Both are
+  passed through unchanged and need `chat.stream == true`: otherwise the first request
+  throws `ArgumentError` before any network I/O.
 - `cancel`: A [`CancelToken`](@ref); `nothing` (default) uses the ambient token of
   [`with_cancel`](@ref). Every turn — its request and its tool dispatches — runs inside
   `with_cancel(cancel)`, and the token is checked before each dispatch. A cancelled loop

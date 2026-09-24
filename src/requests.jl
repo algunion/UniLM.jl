@@ -1460,15 +1460,19 @@ sends nothing. A TCP connect or TLS handshake already in progress cannot be inte
 `connect_timeout`.
 
 Local validation throws before any network I/O, streaming or not: `ArgumentError`
-when `chat.service` is an endpoint type that declares its capabilities and does not
-list `:chat` (a custom endpoint declares none and is dispatched unvalidated), or when
-the provider's encoder rejects the request (e.g. an option the provider or model does
-not support); `InvalidConversationError` when `chat.history` is on and the
-conversation ends with an assistant message, so the reply could not be appended.
+when `callback` or `on_tool_call` is passed without `chat.stream === true` (they run
+only on a stream, so they would be ignored), when `chat.service` is an endpoint type
+that declares its capabilities and does not list `:chat` (a custom endpoint declares
+none and is dispatched unvalidated), or when the provider's encoder rejects the
+request (e.g. an option the provider or model does not support);
+`InvalidConversationError` when `chat.history` is on and the conversation ends with an
+assistant message, so the reply could not be appended.
 """
 function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
                       callback=nothing, on_tool_call=nothing,
                       cancel::Union{Nothing,CancelToken}=nothing)
+    chat.stream === true || (isnothing(callback) && isnothing(on_tool_call)) ||
+        throw(ArgumentError("callback and on_tool_call require stream=true"))
     _validate_declared_capability(chat.service, :chat, "Chat Completions API")
     _validate_reply_slot(chat)
     body = encode_request(chat.service, chat)

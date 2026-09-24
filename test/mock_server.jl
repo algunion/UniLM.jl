@@ -1997,20 +1997,20 @@ try
     end
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Streaming edge path (SAFETY): on_tool_call callback error isolation.
-    # A user callback that THROWS must be swallowed (logged), not crash the
-    # spawned stream task — single-read, so the shared canned-response mock works.
+    # Streaming edge path: an on_tool_call callback that THROWS ends the call with
+    # that exception as the typed outcome — never swallowed, never retried, and the
+    # turn is not committed — single-read, so the shared canned-response mock works.
     #
     # NOT covered deterministically here: the incremental text-delta branches
     # (requests.jl `_flush_delta!`, responses.jl `_respond_stream`) which only fire when a content
     # chunk arrives in a read BEFORE the terminal chunk (≥2 separate network
-    # reads). Those branches are exercised by the chunked-streaming fixtures in
-    # test/requests.jl and test/responses.jl and by the live integration
-    # streaming tests (real multi-chunk responses).
+    # reads). Those branches are exercised by the multi-read streaming fixtures in
+    # test/sse.jl, test/regression_pins.jl and test/concurrency.jl and by the live
+    # integration streaming tests (real multi-chunk responses).
     # ═══════════════════════════════════════════════════════════════════════
 
-    # ── TARGET A: on_tool_call callback that THROWS is isolated (_fire_tool_calls!)
-    @testset "stream on_tool_call callback error is swallowed, stream still succeeds" begin
+    # ── TARGET A: on_tool_call callback that THROWS is the call's outcome (_fire_tool_calls!)
+    @testset "stream on_tool_call callback error is the typed outcome, never swallowed" begin
         # Same single streamed tool call as the on_tool_call success test, but the
         # user callback raises. _fire_tool_calls! wraps on_tool_call in try/catch;
         # the throw must hit the catch (the @warn) and be SWALLOWED — the spawned task
@@ -2038,13 +2038,10 @@ try
 
         result = fetch(chatrequest!(chat; on_tool_call=on_tc))
 
-        @test fired[] == 1                                   # the callback was actually entered (then threw)
-        @test result isa LLMSuccess                          # the throw was swallowed, NOT propagated
-        @test result.message.finish_reason == UniLM.TOOL_CALLS
-        @test length(result.message.tool_calls) == 1         # tool call still assembled post-throw
-        @test result.message.tool_calls[1].id == "call_boom"
-        @test result.message.tool_calls[1].func.name == "get_weather"
-        @test result.message.tool_calls[1].func.arguments["location"] == "NYC"
+        @test fired[] == 1                                   # entered once, never re-fired after it threw
+        @test result isa LLMCallError                        # the user's exception is the outcome
+        @test result.cause isa ErrorException && occursin("callback boom", result.error)
+        @test length(chat.messages) == 2                     # the failed turn is not committed
         set_error!(200, "")
     end
 

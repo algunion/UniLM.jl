@@ -550,7 +550,7 @@ end
         @test in_flight === :ok && done === :ok
         (fetch(t), after)
     end
-    @test after_cancel < 2.0
+    @test after_cancel < 5.0                        # not aborted, it waits out the 30 s hold
     @test !res.completed && res.turns_used == 2 && ran[] == 1
     @test res.response isa LLMCallError && res.response.cause isa UniLMCancelled
 end
@@ -575,22 +575,28 @@ end
 # ─── Concurrent dispatch ─────────────────────────────────────────────────────
 # Call i sleeps (1.3 - 0.1i) s: ≥ 1 s each, finishing in reverse call order. The
 # tools record their own start/end, so the asserted span covers the dispatch alone.
+# With `overlap = k`, each call first waits (25 s at most) until k calls have
+# started; `overlapped()` holds only if every call saw k of them in flight at once.
 
-function _tl_timed_dispatcher()
+function _tl_timed_dispatcher(; overlap::Int=1)
     spans, tasks, lk = Tuple{UInt64,UInt64}[], Task[], ReentrantLock()
+    entered, met = Threads.Atomic{Int}(0), Threads.Atomic{Int}(0)
     dispatcher = (name, args) -> begin
         t = time_ns()
+        Threads.atomic_add!(entered, 1)
+        timedwait(() -> entered[] >= overlap, 25.0) === :ok && Threads.atomic_add!(met, 1)
         sleep(1.3 - 0.1 * parse(Int, name[2:end]))
         @lock lk (push!(spans, (t, time_ns())); push!(tasks, current_task()))
         "result of $name"
     end
     span() = (maximum(last, spans) - minimum(first, spans)) / 1e9
-    (; dispatcher, span, tasks)
+    overlapped() = met[] == length(spans)
+    (; dispatcher, span, tasks, overlapped)
 end
 
 @testset "tool_concurrency runs a turn's calls at once and keeps call order" begin
     runs = map((1, 3)) do n
-        timed = _tl_timed_dispatcher()
+        timed = _tl_timed_dispatcher(overlap=n)
         chat = _tl_chat(_TLFixture([_tl_calls(UniLM.TOOL_CALLS, ("c$i" => "t$i" for i in 1:3)...),
                                     _tl_reply("done")]))
         (res, caller), seen = _tl_scripted() do
@@ -598,11 +604,12 @@ end
                          tool_loop!(chat, timed.dispatcher; tool_concurrency=n)
             (r, current_task())
         end
-        (; res, chat, seen, span=timed.span(), on_caller=all(t -> t === caller, timed.tasks))
+        (; res, chat, seen, span=timed.span(), overlapped=timed.overlapped(),
+           on_caller=all(t -> t === caller, timed.tasks))
     end
     sequential, concurrent = runs
     @test sequential.span >= 3.0 && sequential.on_caller    # default: one at a time, in this task
-    @test concurrent.span < 2.0 && !concurrent.on_caller
+    @test concurrent.overlapped && !concurrent.on_caller    # all three in flight at once
     for r in runs
         @test r.res.completed && r.res.turns_used == 2
         @test [o.tool_name for o in r.res.tool_calls] == ["t1", "t2", "t3"]
@@ -614,13 +621,13 @@ end
 end
 
 @testset "tool_concurrency on the Responses loop keeps call order" begin
-    timed = _tl_timed_dispatcher()
+    timed = _tl_timed_dispatcher(overlap=3)
     turn(n) = n == 1 ? _tl_resp("resp_1", [_tl_fcall("c$i", "t$i") for i in 1:3]) :
                        _tl_resp("resp_2", [_tl_text("done")])
     res, seen = _with_scripted((n, _) -> _json(200, turn(n))) do
         tool_loop(_tl_respond(), timed.dispatcher; tool_concurrency=3)
     end
-    @test timed.span() < 2.0
+    @test timed.overlapped()                                # all three in flight at once
     @test res.completed && [o.tool_name for o in res.tool_calls] == ["t1", "t2", "t3"]
     outs = _tl_body(seen[2])["input"]
     @test [o["call_id"] for o in outs] == ["c1", "c2", "c3"]

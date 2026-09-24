@@ -706,11 +706,8 @@ function _acquire!(l::_SessionLock, limit::Float64)::Bool
     try
         isfinite(limit) && (timer = Timer(_ -> notify(ev), limit; spawn=true))
         wait(ev)
-        @lock l.guard begin
-            l.owner === me && return true
-            _dequeue!(l, me)   # the bound passed first: leave
-        end
-        return false
+        # Handed the lock, or the bound passed first: then leave the queue.
+        @lock l.guard (l.owner === me || (_dequeue!(l, me); false))
     catch
         _abandon!(l, me)
         rethrow()

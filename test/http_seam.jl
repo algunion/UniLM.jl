@@ -247,9 +247,11 @@ end
 
 @testset "_http: 50 concurrent calls complete independently and overlap" begin
     # The only in-suite check with more than one seam call in flight. Each request
-    # carries its own marker, echoed after 50–200 ms of server latency; run one
-    # after another the batch would take ~6 s, so a sub-1.5 s wall time shows the
-    # calls overlap, and the marker check shows no response crossed over.
+    # carries its own marker, echoed after 50–200 ms of server latency. Run one after
+    # another the batch would take 50 × 0.125 s (the mean latency) ≈ 6.25 s — over
+    # 5.3 s even three standard deviations short (σ ≈ 0.31 s) — so a wall time under
+    # 3.0 s, below half of that, shows the calls overlap with room for a slow runner,
+    # and the marker check shows no response crossed over.
     srv = HTTP.serve!(req -> (sleep(0.05 + 0.15rand());
                               HTTP.Response(200, HTTP.header(req, "X-Marker", ""))),
                       "127.0.0.1", 0; verbose=false)
@@ -263,7 +265,7 @@ end
         @test timedwait(() -> all(istaskdone, tasks), 25.0) === :ok
         results = fetch.(tasks)
         @test first.(results) == ["m$i" for i in 1:50]
-        @test (maximum(last.(results)) - started) / 1e9 < 1.5
+        @test (maximum(last.(results)) - started) / 1e9 < 3.0
     finally
         close(srv)
     end

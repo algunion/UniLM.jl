@@ -1428,7 +1428,9 @@ end
             function (_)
                 Threads.atomic_add!(started, 1)
                 t0 = time()
-                while time() - t0 < 1.0 end        # no yield point: holds its thread
+                while time() - t0 < 1.0            # no yield point: holds its thread,
+                    GC.safepoint()                 # but lets a collection proceed
+                end
                 "spun"
             end)
         register_tool!(server, "warm", nothing, Dict{String,Any}("type" => "object"), _ -> "ok")

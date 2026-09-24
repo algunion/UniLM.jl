@@ -661,8 +661,8 @@ end
 
 # The stream's attempt ended at its request-phase bound: a typed `:request` timeout
 # whose recorded elapsed is within a 2 s runner-stall budget of the bound (1 s in every
-# caller) and whose wall time stays under 4 s — below the idle bound the pre-fix code
-# waited for (5 s or 10 s in every caller), so the check still discriminates.
+# caller) and whose wall time stays under 4 s — under a third of the idle bound the
+# pre-fix code waited for (15 s in every caller), so the check still discriminates.
 _hm_request_bound_hit(outcome, R) = outcome[1] === :ok && let (; res, elapsed) = outcome[2]
     res isa R && res.status === nothing && res.cause isa UniLM.UniLMTimeout &&
         res.cause.phase === :request && res.cause.elapsed <= res.cause.limit + 2.0 && elapsed < 4.0
@@ -679,10 +679,10 @@ _hm_timed_peer_died(outcome) =
     # with status === nothing and cause UniLMTimeout(:request). Closing the stream
     # alone cannot reach a connection still waiting for its response headers, so the
     # watchdog also cancels the attempt's request context; without that, the header
-    # wait ran until HTTP.jl's read-idle timer fired at the 5 s idle bound.
+    # wait ran until HTTP.jl's read-idle timer fired at the 15 s idle bound.
     ok, outcome = false, (:unrun, nothing)
     cfg = UniLM.RequestConfig(request_timeout = 1.0, total_deadline = 2.0,
-        max_attempts = 1, stream_idle_timeout = 5.0)
+        max_attempts = 1, stream_idle_timeout = 15.0)
     for _ in 1:3   # whole-scenario re-runs, gated by `_hm_peer_died` — see its constraint
         srv, url, _ = _hm_mute_server()
         try
@@ -707,12 +707,12 @@ end
 @testset "stream: the request-phase bound ends a header wait the idle bound would outlast" begin
     # Both stream drivers, against a peer that reads the request and never answers,
     # and against one that never reads a 32 MiB request body (the upload itself
-    # blocks). Request 1 s, total 2 s, idle 10 s: the attempt must end at the 1 s
+    # blocks). Request 1 s, total 2 s, idle 15 s: the attempt must end at the 1 s
     # request bound, typed `:request`, where it used to run until the native
-    # read-idle timer fired at 10 s.
+    # read-idle timer fired at 15 s.
     big = repeat("x", 32 * 1024 * 1024)
     cfg = UniLM.RequestConfig(request_timeout = 1.0, total_deadline = 2.0,
-                              max_attempts = 1, stream_idle_timeout = 10.0)
+                              max_attempts = 1, stream_idle_timeout = 15.0)
     chat_call(url, input) = c -> chatrequest!(
         Chat(service = GenericOpenAIEndpoint(url, ""), model = "mock", stream = true,
              messages = [Message(Val(:system), "s"), Message(Val(:user), input)]); config = c)

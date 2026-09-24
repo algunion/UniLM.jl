@@ -247,12 +247,12 @@ end
 
 @testset "_http: 50 concurrent calls complete independently and overlap" begin
     # The only in-suite check with more than one seam call in flight. Each request
-    # carries its own marker, echoed after 50–200 ms of server latency. Run one after
-    # another the batch would take 50 × 0.125 s (the mean latency) ≈ 6.25 s — over
-    # 5.3 s even three standard deviations short (σ ≈ 0.31 s) — so a wall time under
-    # 3.0 s, below half of that, shows the calls overlap with room for a slow runner,
+    # carries its own marker, echoed after 150–300 ms of server latency. Run one after
+    # another the batch would take 50 × 0.225 s (the mean latency) ≈ 11.25 s — over
+    # 10.3 s even three standard deviations short (σ ≈ 0.31 s) — so a wall time under
+    # 3.0 s, below a third of that, shows the calls overlap with room for a slow runner,
     # and the marker check shows no response crossed over.
-    srv = HTTP.serve!(req -> (sleep(0.05 + 0.15rand());
+    srv = HTTP.serve!(req -> (sleep(0.15 + 0.15rand());
                               HTTP.Response(200, HTTP.header(req, "X-Marker", ""))),
                       "127.0.0.1", 0; verbose=false)
     url = "http://127.0.0.1:$(HTTP.port(srv))/"

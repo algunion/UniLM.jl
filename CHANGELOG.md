@@ -2,6 +2,352 @@
 
 ## Unreleased
 
+### Breaking
+- **Requirements:** Julia 1.13 or later, HTTP.jl 2.7.1 or later within the 2.x major,
+  and JSON.jl 1.8.1 or later. HTTP.jl 1.x is no longer supported, and with it go the
+  1.x-only caveats (the `connect_timeout = Inf` restriction and the process-global
+  connection-pool cap). HTTP.jl 2.7.1 fixes an HTTP/2 flow-control leak in which every
+  response body closed unread shrank the connection's receive window until later
+  requests on that connection hung.
+- **The Videos API is removed.** OpenAI shut the Videos API and the `sora-2` models
+  down on September 24, 2026. `VideoObject`, `VideoList`, `VideoSuccess`,
+  `VideoListSuccess`, `VideoContentSuccess`, `VideoFailure`, `VideoCallError`,
+  `create_video`, `retrieve_video`, `list_videos`, `video_content` and the `:video`
+  capability are gone.
+- **Changed defaults.** Native Anthropic defaults to `claude-opus-5-5` (was
+  `claude-opus-4-8`) with a default `max_tokens` of 16000 (was 4096): `max_tokens` caps
+  thinking plus text, and current Claude models think by default, so 4096 ended turns
+  at `"length"` before an answer. DeepSeek defaults to `deepseek-flash` for chat and
+  FIM (was `deepseek-chat`, which DeepSeek discontinued on July 24, 2026).
+- **Local validation throws before any network I/O**, streaming or not.
+  `chatrequest!` and `respond` now let an encoder's `ArgumentError` propagate — an
+  option the provider or model cannot express (the GPT-6 and GPT-5.6 rules, the
+  Anthropic and Gemini field mappings, the Interactions field set) — where 0.19.0
+  returned it inside an `LLMCallError` / `ResponseCallError`. With `history=true`,
+  `chatrequest!` throws `InvalidConversationError` for a conversation that ends with an
+  assistant message, instead of billing a call whose reply could not be appended.
+  `chatrequest!(; kwargs...)` takes either `messages` or both `systemprompt` and
+  `userprompt` and throws `ArgumentError` otherwise (it returned a fabricated
+  `LLMFailure(status=499)`); it copies `messages` instead of emptying the caller's
+  vector.
+- **Stricter construction.** `Chat(n=…)` must be 1: a result carries one choice, and
+  extra choices were silently dropped (or, streamed, merged into one garbled text).
+  `Chat` and `Reasoning` reject a reasoning effort outside `none`, `minimal`, `low`,
+  `medium`, `high`, `xhigh`, `max`; `Chat` rejects `top_logprobs` outside [0, 20] and
+  `logit_bias` values outside [-100, 100] (the field now takes any
+  `AbstractDict{String,<:Real}`); `Message` rejects roles other than system, user,
+  assistant and tool; `Embeddings` rejects an `encoding_format` other than `"float"`;
+  `Respond` rejects `conversation` together with `previous_response_id`, and
+  `background=true` with `store=false`; `FIMCompletion(stream=true)` throws, since
+  `fim_complete` has no streaming path. Audio and upload requests are checked against
+  the documented values: `TranscriptionRequest.response_format` (json, text, srt,
+  verbose_json, vtt, diarized_json) and `temperature` (0–1), `SpeechRequest.speed`
+  (0.25–4), `translate` (no `languages`, `keywords` or `diarized_json`) and
+  `create_upload`'s `purpose`. `RequestConfig` and the MCP per-call `timeout` reject a
+  finite value above 1e9 s (use `Inf` to disable a bound).
+- **Stopping a stream is a typed cancellation.** Setting the callback's
+  `close[] = true` — now honoured from any task, and at once — ends the call with
+  `LLMCallError` / `ResponseCallError` (`status = nothing`, `cause =
+  UniLMCancelled(:callback, …)`), where it returned `LLMFailure` / `ResponseFailure`
+  with `status == 200` and the raw partial wire. A stop that arrives after the
+  provider's terminal event keeps the completed turn. An exception thrown by a
+  streaming `callback` or `on_tool_call` now ends the call with that exception in
+  `cause` — never retried, nothing appended; `on_tool_call` exceptions used to be
+  logged and ignored.
+- **Result accessors throw on failures.** `output_text` (which returned the error text
+  as if it were model output), `embedding_vectors` (a `MethodError`), `image_data` (an
+  empty list) and `fim_text` (`""`) throw `LLMResultError` on a non-success result, as
+  `text` already did. `LLMResultError.result` now holds any `LLMRequestResponse`.
+- **`fork` deep-copies every field except `service`.** It copied only `messages`, so a
+  fork's `push!(fork.tools, t)`, a `metadata` edit or a `stop` change also changed its
+  parent and siblings.
+- **Tool loops.**
+  - `tool_loop!` runs tool calls only on a turn whose `finish_reason` is
+    `"tool_calls"`. A turn with calls that finished otherwise (`"length"`,
+    `"content_filter"`, a provider-specific value) may hold partial calls: none runs, the
+    loop returns `completed=false` with an `llm_error` naming the reason, and the
+    unanswered assistant turn is removed from the chat so it stays sendable.
+  - `tool_loop!` on a `Chat` with `history=false` throws `ArgumentError`, and both
+    loops throw `ArgumentError` for `max_turns < 1`.
+  - On `max_turns` exhaustion, `response` is the last response the model sent, with
+    `completed=false` and `llm_error = "max turns (N) exhausted"`; it was a fabricated
+    call error.
+  - A dispatcher result that is not a `String` is sent to the model JSON-encoded, not as
+    its Julia `string` (`Dict("temp" => 21.5)` arrives as `{"temp":21.5}`, `nothing` as
+    `null`).
+  - The Responses loop chains a `Respond` that sets `conversation` through the
+    conversation alone (the API rejects it together with `previous_response_id`);
+    answers call arguments that are not a JSON object with an
+    `"Error: invalid arguments: …"` output instead of throwing; and stops with
+    `completed=false`, running none of the turn's calls, when a turn requests a
+    client-side action it cannot execute (`custom_tool_call`, `apply_patch_call`,
+    `local_shell_call`, `shell_call`, `computer_call`, `mcp_approval_request`) — such a
+    turn used to end the loop as completed.
+- **Platform verbs.**
+  - `upload_file` makes a single attempt; `max_attempts` no longer applies. A POST that
+    timed out, or drew a gateway 5xx after the backend stored the file, was retried and
+    stored the file twice. A `FileFailure` / `FileCallError` therefore does not prove
+    that no file was created.
+  - `delete_file`, `delete_vector_store`, `delete_container` and
+    `delete_conversation` report success only when the reply carries
+    `"deleted": true`; anything else is the family's `*CallError`.
+    `delete_conversation_item` returns a `ConversationSuccess` holding the updated
+    conversation the service sends back.
+  - `poll_batch` and `poll_file_batch` bound the poll by wall-clock time (`timeout`),
+    capping each GET and pause at the time left; they poll through retryable statuses
+    and per-attempt timeouts, require `interval` and `timeout` > 0 (`ArgumentError`),
+    and on timeout return the family's call error with `cause =
+    UniLMTimeout(:deadline, …)` and the last object seen in the new `last_observed`
+    field.
+  - `moderate` returns a `ModerationCallError` (on which `is_flagged` throws) for a
+    `200` that does not carry exactly one result row per input: such a reply decoded as
+    a success that was not flagged, so unmoderated content passed a moderation gate.
+  - `add_container_file` returns a `ContainerSuccess` whose `response` is a new
+    `ContainerFileObject`; `ContainerSuccess.response` is
+    `Union{ContainerObject,ContainerFileObject}`.
+  - `ChoiceQuestion`'s constructor validates descriptions the way `choice` does, and a
+    System One answer without a string `type` fails to decode.
+- **Result types gained fields**, so their positional constructors changed (keyword
+  construction is unchanged): the `*Failure` types of the Files, Vector Stores,
+  Conversations, Moderations, Audio, Batch, Fine-tuning, Containers and Uploads APIs,
+  `ImageFailure`, `ImageCallError`, `SystemOneCallError` and `RealtimeCallError` carry
+  `request_id`; the `*CallError` types of those APIs, `ImageCallError`,
+  `SystemOneCallError` and `RealtimeCallError` carry `cause`; `BatchCallError` and `VectorStoreCallError` carry
+  `last_observed`; `ImageObject` carries `url`. `MCPServer` dropped its internal
+  `_initialized` field and gained a registry `lock`.
+- **`DEFAULT_PRICING` is a lock-guarded `AbstractDict{String,PriceRow}`**, not a
+  `Dict`: every Chat success reads it, streaming ones on their own task, while callers
+  may add rows, and a `Dict` is not safe to read during a write. It keeps
+  `DEFAULT_PRICING[model] = row`, `get`, `haskey`, `delete!`, `pop!`, `empty!`, `keys`,
+  `length` and snapshot iteration; `copy`, `merge` and `filter` return a plain `Dict`,
+  and `DEFAULT_PRICING isa Dict` is false. `estimated_cost(…; pricing)` accepts any
+  `AbstractDict{String,PriceRow}`.
+- **Native Anthropic fails closed.** A `Chat` field the Messages API cannot express —
+  `seed`, `logprobs`, `top_logprobs`, `presence_penalty`, `frequency_penalty`,
+  `logit_bias`, `verbosity`, `store`, `prompt_cache_key`, `stream_options`,
+  `prediction`, `modalities`, `audio`, `web_search_options` — throws `ArgumentError`
+  naming the fields instead of being dropped, `n` must be 1, a `json_object`
+  `response_format` throws (there is no schema-less JSON mode), an unknown
+  `tool_choice` string throws (it became `auto`), and `metadata` may carry only
+  `user_id`. Requests Claude answers with HTTP 400 are refused locally: `temperature`
+  outside [0, 1]; any `top_p`, or a temperature other than 1.0, on Opus 4.7 and later;
+  a forced `tool_choice` on Opus 5.5, Fable 5.1, Mythos 5.1 and Mythos Preview; a
+  trailing assistant turn (prefill) from the 4.6 generation on; and a
+  `reasoning_effort` the model does not take. Because `parallel_tool_calls` defaults to
+  `false` whenever `tools` is set, every Anthropic tool request now sends
+  `tool_choice.disable_parallel_tool_use = true` (at most one tool call per turn); set
+  `parallel_tool_calls = true` for the previous wire.
+- **MCP.**
+  - A call on a closed or not-connected session throws the new
+    `MCPSessionClosedError` (cause `:disconnected`, `:timeout` or `:crash`) instead of
+    an `ErrorException`, on both transports; an HTTP session no longer keeps working
+    after `mcp_disconnect!`.
+  - The inferred-schema `register_tool!(server, name, description, handler)` binds the
+    `arguments` object to the handler's positional parameters by name, as `@mcp_tool`
+    does, and rejects a handler that takes one `Dict` or varargs with `ArgumentError`
+    (register those with an explicit schema). Both bindings validate instead of
+    coercing: a missing required argument or a value of the wrong JSON type is answered
+    with an `isError: true` tool result naming the argument.
+  - An exception from a resource or prompt handler is answered with a generic JSON-RPC
+    `-32603` `"Internal error"` and logged on the server, instead of relaying its text
+    (file paths, argument values) to the peer.
+  - `mcp_tools` / `mcp_tools_respond` advertise provider-safe tool names: any character
+    outside `[A-Za-z0-9_-]` becomes `_` and names are cut to 128 characters (the call
+    still goes out under the MCP name); two tools that map to one name raise
+    `ArgumentError`.
+- **Realtime.** `realtime_connect` throws `ArgumentError` before any I/O for a service
+  other than `OPENAIServiceEndpoint` — it always dialled OpenAI, so another endpoint's
+  credentials would have been sent to `api.openai.com` — and `mint_realtime_secret`
+  returns `RealtimeCallError` for a `200` without a non-empty secret.
+
+### Added
+- **Cooperative cancellation:** `CancelToken`, `cancel!`, `iscancelled`, `with_cancel`
+  and the `UniLMCancelled` exception. A `cancel` keyword (default: the ambient
+  `with_cancel` token) on `chatrequest!`, `respond`, `embeddingrequest!`,
+  `generate_image`, `edit_image`, `fim_complete`, `prefix_complete`, `ask`,
+  `list_models`, `poll_batch`, `poll_file_batch`, `tool_loop!` / `tool_loop`,
+  `nl_dispatch` and `@branch`; every other HTTP verb observes the ambient token, which
+  propagates into spawned tasks. A cancel — before connecting, during the header wait,
+  mid-stream, during a retry backoff or a poll pause — ends the call with its call-error
+  result (`status = nothing`, `cause = UniLMCancelled(:token, …)`), never retried and
+  never committed; a pre-cancelled token sends nothing. Tokens are level-triggered and
+  `cancel!` runs every registered hook, even when one of them raises an interrupt. A
+  TCP connect or TLS handshake in progress is not interrupted (it completes or reaches
+  `connect_timeout`), and the Realtime WebSocket and MCP stdio exchanges do not observe
+  the token; a cancelled MCP call over HTTP throws `UniLMCancelled` and sends the
+  server a best-effort `notifications/cancelled`.
+- `tool_concurrency` on `tool_loop!` and `tool_loop`: up to that many of one turn's tool
+  calls run at once on spawned tasks, with their results sent back in call order.
+- **MCP:** the `:queue` phase of `MCPTimeoutError` (a call's `timeout` also bounds its
+  wait for the session); a `stderr` keyword on `mcp_connect(::Cmd)` and
+  `StdioTransport` (an `IO` or a file path, appended to); an exit hook that tears down
+  stdio servers still running when Julia exits, and a watcher that kills a server's
+  whole process group when its leader exits (so killing an `npx` wrapper also stops the
+  server it launched); a best-effort `notifications/cancelled` for an HTTP request that
+  timed out; `client_version` defaults to the package version; custom `MCPTransport`
+  subtypes can connect (they bound their own IO).
+- **Anthropic:** structured outputs (a JSON Schema `response_format` becomes
+  `output_config.format`), `FunctionSignature.strict` as the tool's `strict`,
+  `reasoning_effort` mapped to `output_config.effort` plus adaptive thinking per model
+  family (`"none"` disables thinking where it can be disabled), `service_tier`
+  (`"auto"`, `"standard_only"`), and `safety_identifier` / `user` sent as
+  `metadata.user_id`.
+- **DeepSeek:** `reasoning_content` is kept on the assistant `Message` as
+  `ProviderContent(:deepseek, …)` and sent back on requests that carry tools, as
+  thinking-mode tool use requires; context-cache hits (`prompt_cache_hit_tokens`) fill
+  `TokenUsage.cached_tokens` and are priced at the cached rate.
+- Price rows for the current Claude models (Fable 5.1, Mythos 5.1, Fable 5, Mythos 5,
+  Opus 5.5, Opus 5, Sonnet 5 at \$2/\$10, and the 4.x family) and for `deepseek-flash`,
+  `deepseek-v4-pro` and the legacy Flash names (DeepSeek peak rates; off-peak bills
+  half). Anthropic's dated `-YYYYMMDD` ids resolve to their alias row, and an unpriced
+  model id logs one warning. `token_usage` reads the usage an `ImageSuccess` carries,
+  and FIM results report usage and cost.
+- OpenAI and DeepSeek streams request `stream_options.include_usage` when it is unset,
+  so a streamed turn carries usage and accrues cost like a non-streamed one.
+- `ImageObject.url`: `image_data` returns each image's base64 data or, when it was
+  delivered by URL, its URL. `limit` and `after` on `list_fine_tuning_events` and
+  `list_fine_tuning_checkpoints`.
+- The provider extension API — `get_url`, `auth_header`, `default_model`,
+  `encode_request`, `decode_response`, `handle_sse_event!`, `StreamState`,
+  `encode_agentic`, `decode_agentic`, `decode_agentic_stream`, `AgenticStreamState` —
+  is declared `public` (not exported) and documented in the new Extension API reference.
+- Documentation: a "Concurrency, Tasks and Cancellation" guide (what a concurrent call
+  may share, fan-out patterns, streaming into a `Channel`, cancellation, the thread
+  layout, HTTP, tool loops and MCP under load).
+
+### Changed
+- `Retry-After` is a floor under the jittered backoff instead of a replacement for it:
+  clients that received the same header slept exactly the header's wait and retried in
+  lockstep. The spread above the floor is at most the exponential backoff and at most
+  half of the budget left after the floor, so the next attempt keeps at least half of
+  what remains; a header whose own wait does not fit `total_deadline` still returns the
+  last real response at once.
+- Streams use HTTP/1.1, one connection per stream; non-streaming requests keep protocol
+  negotiation (HTTP/2 over TLS).
+- `stream_idle_timeout` measures wire idleness only: time spent inside a streaming
+  callback or `on_tool_call` is not counted, and the clock restarts when it returns.
+- Chat decoding keeps the provider's finish reason on a tool-call turn (`"tool_calls"`
+  stands in only for `"stop"` or none), and a stream without a finish reason reports
+  `nothing`. Native Gemini maps `STOP` to `"stop"`, `MAX_TOKENS` to `"length"` and the
+  safety filters, the image-safety reasons included, to `"content_filter"`; any other
+  `finishReason` is reported as its lowercased wire value (`"malformed_function_call"`)
+  instead of `"stop"`, and a candidate without one as `nothing`. `reasoning_summaries` also reads
+  Gemini Interactions `thought` steps.
+- A native Anthropic system message after the start of a conversation stays in place as
+  a mid-conversation system message on models that accept one, where its placement is
+  valid; anywhere else it is hoisted into the top-level `system` prompt as before.
+- Requests send a refusal as `{"content": null, "refusal": …}` and never send the
+  response-only `finish_reason`. `Respond(tools=…)` converts a Chat `Tool` to the
+  equivalent `FunctionTool`, and `Chat(tools=Tool[])` stores `nothing`.
+- MCP: stdio lines that are not JSON are skipped with a warning; `MCPError.data` holds
+  any JSON value; the disconnect `DELETE` carries `MCP-Protocol-Version`; the server negotiates
+  the protocol revision the client requests when it supports it, answers `400` over HTTP
+  to a request whose `MCP-Protocol-Version` names an unsupported revision, runs
+  `serve(:http)` handlers concurrently on the default thread pool (handlers must be
+  thread-safe; protocol requests stay inline), runs stdio handlers one at a time with
+  the process `stdout` pointed at `stderr`, and accepts a JSON-RPC response sent to it
+  without answering (HTTP `202`).
+- Capability errors name the endpoint (they printed `DataType` for marker types); a
+  custom endpoint without a `default_model` method gets the documented `ArgumentError`
+  instead of a `MethodError`; the OpenAI-wire endpoints (OpenAI, Azure, the Gemini
+  compat shim, DeepSeek, generic) declare `:streaming` and `:json_output`.
+- `nl_dispatch` and `meanings` offer options in definition order (REPL input sorted
+  `REPL[10]` before `REPL[2]`), and a method defined after the call began is callable.
+- CI runs a single latest-stable Julia leg; CompatHelper has the write permissions it
+  needs to open its pull requests.
+
+### Fixed
+- Every non-streaming call paid a ~100 ms latency floor: the request watchdog polled
+  for completion every 0.1 s. Completion now wakes the caller directly, and a timeout
+  lands within a few milliseconds of its bound.
+- A busy main task stalled calls running on other threads: closing a watchdog timer
+  waits for the event loop, which shares thread 1 with the main task. Timers are now
+  closed off the caller's path.
+- Over HTTP/2, concurrent streams to one host shared a connection and its flow-control
+  windows, so a stream whose consumer applied backpressure starved its siblings, and a
+  stream closed early could leave the connection stalled. Streams now each own an
+  HTTP/1.1 connection.
+- A slow stream consumer lost a healthy, fully delivered stream to `:stream_idle`,
+  because the time spent in its callback counted as a byte gap.
+- A cancelled HTTP request (`HTTP.CanceledError`) was classified as a retryable
+  transport failure.
+- Streaming parsed each SSE line and accumulated each tool call's arguments in
+  quadratic time: a 4 MiB line read in 16 KiB chunks allocated about 1 GB. Native
+  Anthropic stream blocks (16,000 deltas allocated 3.9 GB) and Gemini Interactions
+  steps accumulated the same way. All three are linear now.
+- An `InterruptException` raised while parsing a streamed payload, inside
+  `on_tool_call`, while rendering an error, while parsing a TypeSafe error body, while
+  encoding a Gemini tool result, or inside an MCP server handler was swallowed or
+  converted; it propagates.
+- Chat decoding dropped text sent alongside tool calls, failed on array-shaped message
+  content and on empty tool-call arguments (`""` is `{}`), relabelled a tool-call turn
+  cut at `"length"` or filtered as `"tool_calls"` (so a tool loop could run partial
+  calls), invented `"stop"` for a stream that sent no finish reason, and did not treat
+  an in-band OpenAI-wire `{"error": …}` payload as terminal. `request_id` also falls
+  back to the `request-id` header, which Anthropic sends.
+- `ResponseCallError.cause` is set for every exception from `respond` and the lifecycle
+  operations, not only for timeouts.
+- FIM: a `200` whose body was not JSON escaped `fim_complete` as an `ArgumentError`, a
+  body without choices decoded as an empty completion, call errors lost their `cause`,
+  Mistral FIM was sent to `/v1/completions` (now `/v1/fim/completions`, with its
+  `message.content` choices read), and `prefix_complete` replaced the prefix in history
+  with the bare continuation.
+- Native Anthropic advertised `:json_output` yet dropped `response_format`,
+  `reasoning_effort` and `strict`; it now maps them. `model_context_window_exceeded`
+  maps to `"length"`; a refusal carries no partial content, tool calls or captured
+  blocks, and its `refusal_message` is the explanation Anthropic sends; a `200` without
+  a content array or a `stop_reason` is an `LLMCallError`, not an empty success;
+  `prompt_tokens` counts cache writes and `reasoning_tokens` comes from
+  `thinking_tokens`; an assistant turn with neither text nor tool calls, which the API
+  rejects, is left out of the next request.
+- DeepSeek multi-turn tool loops failed with HTTP 400, because the earlier turns'
+  `reasoning_content` was not sent back; the old default `deepseek-chat` had no price
+  row, so its cost read `\$0`.
+- Native Gemini: function calls under `MAX_TOKENS` or a safety filter read as
+  `"tool_calls"`; a model turn with neither text nor function calls (a refusal, a turn
+  spent on thinking) broke the follow-up request; a streamed refusal repeated its text
+  once per trailing chunk. Gemini Interactions: a body without an `id` or `status` —
+  non-streamed or as a streamed terminal — decoded as an empty success; streamed thought
+  steps lacked their `summary`; streamed text parts were merged into one; `null`
+  function arguments read as `"null"` (now `"{}"`).
+- MCP client: a looping caller could starve a queued one (the session lock was not
+  fair), a woken waiter that was interrupted stranded the callers behind it, a waiter's
+  wait was unbounded, and an exception while a caller waited (a huge `timeout`, an
+  interrupt) could wedge the session so that even `mcp_disconnect!` hung; the lock is
+  now a FIFO hand-off. A stdio reply arriving after the request watchdog fired was
+  returned as a success, and the timeout surfaced up to ~7 s after its bound; blank
+  stdout lines read as EOF (a spurious `MCPCrashError`); a busy stdio server outlived
+  its client process; Streamable HTTP treated SSE priming events as frames and ignored
+  frames after the response; a concurrent `list_changed` could be lost to a refresh;
+  and `mcp_disconnect!`'s `DELETE` (like a cancellation notice) was skipped inside a
+  cancelled `with_cancel` scope.
+- MCP server: registering a tool, resource or prompt while `serve` dispatched could
+  corrupt the registry and crash the process; `serve(:http)` ran handlers on HTTP.jl's
+  interactive pool, where a busy handler stalled the event loop; schema inference threw
+  on `where` signatures and some unions; the by-name binding failed on `Symbol`,
+  `Vector` and `Dict` parameters it advertised; a handler that printed corrupted the
+  stdio protocol stream. The client reported version `0.8.0` in `clientInfo`.
+- Realtime: an upgrade that completed just after `realtime_connect` had thrown
+  `UniLMTimeout(:connect)` still ran the handler, and an open that failed just before
+  the bound was reported as that timeout instead of its own error.
+- `save_file_content` and `save_audio` truncated the destination before writing, so a
+  failed write left a corrupt file. They now write a temporary file and rename it into
+  place, keeping the destination's permission bits and writing through a symlink
+  (dangling included); a directory destination throws `ArgumentError`.
+- Platform: `image_data` returned `[]` for URL-delivered images; the poll helpers
+  counted iterations instead of time, ended on the first transient failure and threw
+  `InexactError` for `interval = 0`; `add_container_file` decoded the container-file
+  object as a container; the fine-tuning event and checkpoint lists could not page.
+- Azure read the deployment variable of `gpt-5.2` only; `AZURE_OPENAI_DEPLOY_NAME_<MODEL>`
+  is read for every model, and a model without a deployment fails naming the variable
+  instead of with a `KeyError`.
+- The `Embeddings` missing-model error named `DataType` instead of the service.
+- Documentation matches the code: examples that threw or no longer ran (the
+  `chatrequest!(chat) do … end` form, which does not exist; examples that printed
+  `output_text` of a failed result; the inferred-schema `register_tool!` example) are
+  corrected, as are the claims on timeouts, retries, cancellation, cost accounting, MCP
+  and the provider mappings.
+
 ## 0.19.0
 
 ### Breaking

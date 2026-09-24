@@ -3027,7 +3027,9 @@ end
     err = fetch(waiter)
     @test err isa MCPTimeoutError
     @test err isa MCPTimeoutError && err.phase === :queue && err.limit == 0.3
-    @test err isa MCPTimeoutError && 0.3 <= err.elapsed < 1.5
+    # A 2 s runner-stall budget over the 0.3 s bound; a wait bounded by the session's
+    # 120 s default instead would outlast the 25 s window above.
+    @test err isa MCPTimeoutError && 0.3 <= err.elapsed < 2.5
     @test err isa MCPTimeoutError && occursin("timeout", err.msg)
     @test isempty(_log(t))                                # it never touched the session
     @test session.status === :ready
@@ -3141,12 +3143,15 @@ end
 @testset "stdio: a reply arriving after the per-call timeout is not returned" begin
     # When the watchdog fires the call is over. Its teardown closes our end of the
     # server's stdout first, so the read blocked in the exchange is released at once:
-    # the timeout surfaces within a second of the bound instead of after the kill
-    # ladder's grace, and the reply the server sends later is never returned.
+    # the timeout surfaces at the bound instead of after the kill ladder's grace, and
+    # the reply the server sends later is never returned. The server replies after
+    # 10 s under a shell that ignores SIGTERM, so a ladder alone would release the read
+    # only at its last rung, the group kill 0.3 + 5 + 2 s in.
     marker = "UNILMLATE" * string(rand(UInt64); base=16)
     proj = dirname(dirname(pathof(UniLM)))
-    childfile, io = mktemp(); write(io, _slowreply_child_src(marker; reply_delay=2.0)); close(io)
-    cmd = `$(Base.julia_cmd()) --startup-file=no --project=$proj $childfile`
+    childfile, io = mktemp(); write(io, _slowreply_child_src(marker; reply_delay=10.0)); close(io)
+    jl = Base.shell_escape_posixly(`$(Base.julia_cmd()) --startup-file=no --project=$proj $childfile`)
+    cmd = `sh -c "trap '' TERM; $jl; exit"`
     session = nothing
     try
         session = mcp_connect(cmd; config=RequestConfig(current_config(); mcp_request_timeout=10.0))
@@ -3156,7 +3161,7 @@ end
         err = box[]
         @test err isa MCPTimeoutError
         @test err isa MCPTimeoutError && err.phase === :request && err.limit == 0.3
-        @test err isa MCPTimeoutError && 0.3 <= err.elapsed <= 1.3
+        @test err isa MCPTimeoutError && 0.3 <= err.elapsed < 2.4   # a 2 s stall budget; a third of 7.3 s
         @test session.status === :closed && session._close_cause === :timeout
     finally
         session === nothing ||

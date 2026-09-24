@@ -284,6 +284,28 @@ end
         @test m3.finish_reason == "content_filter"
     end
 
+    @testset "a call cut mid-arguments is dropped from a truncated turn; under tool_calls it fails loud" begin
+        # A max_tokens cap can end a turn inside a call's arguments. No tool loop runs the
+        # calls of a turn that did not finish with "tool_calls", so a call whose arguments
+        # are a JSON fragment is dropped and the turn — its text and reason — is kept.
+        cut = tool_call("{\"city\": \"Par")
+        m = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => "Checking.",
+            "tool_calls" => [tool_call("{\"city\":\"Oslo\"}"), cut]); finish="length")).message
+        @test m.finish_reason == "length" && m.content == "Checking."
+        @test [tc.func.arguments for tc in m.tool_calls] == [Dict{String,Any}("city" => "Oslo")]
+        for finish in ("length", "content_filter")
+            only_cut = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => nothing,
+                "tool_calls" => [cut, tool_call("[1]")]); finish)).message
+            @test isnothing(only_cut.tool_calls) && only_cut.content == "" && only_cut.finish_reason == finish
+        end
+        # A "tool_calls" finish (or "stop", or none) would dispatch the call: its arguments
+        # must parse, so a fragment stays a decoding error.
+        for finish in ("tool_calls", "stop", nothing)
+            @test_throws ArgumentError UniLM.extract_message(reply(Dict("role" => "assistant",
+                "content" => nothing, "tool_calls" => [cut]); finish))
+        end
+    end
+
     @testset "length finish_reason preserves partial content" begin
         body = Dict(
             "choices" => [Dict(
@@ -472,6 +494,24 @@ end
         @test UniLM._build_stream_message(tool_state("content_filter")).finish_reason == "content_filter"
         @test UniLM._build_stream_message(tool_state("stop")).finish_reason == UniLM.TOOL_CALLS
         @test UniLM._build_stream_message(tool_state(nothing)).finish_reason == UniLM.TOOL_CALLS
+    end
+
+    @testset "a streamed call cut mid-arguments is dropped from a truncated turn" begin
+        cut_state(finish) = (st = tool_state(finish); print(st.content, "Checking.");
+            st.tool_calls[1] = Dict{String,Any}("id" => "call_2", "type" => "function",
+                "function" => Dict{String,Any}("name" => "get_weather", "arguments" => "{\"city\": \"Par"));
+            st)
+        m = UniLM._build_stream_message(cut_state("length"))
+        @test m.finish_reason == "length" && m.content == "Checking."
+        @test [tc.id for tc in m.tool_calls] == ["call_1"]            # the complete call stays
+        st = UniLM.StreamState(); st.finish_reason = "length"
+        st.tool_calls[0] = Dict{String,Any}("id" => "call_1", "type" => "function",
+            "function" => Dict{String,Any}("name" => "f", "arguments" => "{\"a\": [1, 2"))
+        m2 = UniLM._build_stream_message(st)
+        @test isnothing(m2.tool_calls) && m2.content == "" && m2.finish_reason == "length"
+        # Under a tool-call finish the call would be dispatched: a fragment fails loud.
+        @test_throws ArgumentError UniLM._build_stream_message(cut_state("tool_calls"))
+        @test_throws ArgumentError UniLM._build_stream_message(cut_state(nothing))
     end
 
     @testset "no finish reason arrived → none reported, never an invented stop" begin
@@ -1307,6 +1347,34 @@ UniLM.encode_request(::_RefusingEncoder, ::Chat) = throw(ArgumentError("option n
         r = chatrequest!(; messages=msgs, service=GenericOpenAIEndpoint(srv.url, ""), model="m")
         @test r isa LLMSuccess && length(r.self.messages) == 3   # the reply went to the result's chat
         @test length(msgs) == 2
+    finally
+        close(srv.server)
+    end
+end
+
+@testset "a tool-call turn cut mid-arguments is a truncated success, and no loop runs it" begin
+    # The token limit ended the turn inside the call's arguments: the caller gets the
+    # truncated turn with its reason and billed usage, not an opaque JSON error.
+    body = JSON.json(Dict("choices" => [Dict("index" => 0, "finish_reason" => "length",
+        "message" => Dict("role" => "assistant", "content" => nothing,
+            "tool_calls" => [Dict("id" => "call_1", "type" => "function",
+                "function" => Dict("name" => "get_weather", "arguments" => "{\"city\": \"Par"))]))],
+        "usage" => Dict("prompt_tokens" => 10, "completion_tokens" => 50, "total_tokens" => 60)))
+    srv = _json_reply_server(body)
+    try
+        mk() = Chat(service=GenericOpenAIEndpoint(srv.url, ""), model="gpt-5.4-mini",
+                    messages=[Message(Val(:system), "s"), Message(Val(:user), "u")])
+        cfg = RequestConfig(max_attempts=1)
+        chat = mk()
+        r = chatrequest!(chat; config=cfg)
+        @test r isa LLMSuccess && r.message.finish_reason == "length"
+        @test isnothing(r.message.tool_calls)
+        @test r.usage.completion_tokens == 50
+        @test length(chat) == 3 && cumulative_cost(chat) == estimated_cost(r) > 0
+        ran = Ref(0)
+        res = tool_loop!(mk(), (name, args) -> (ran[] += 1; "sunny"); config=cfg)
+        @test !res.completed && ran[] == 0
+        @test res.llm_error == "Model output was truncated by the token limit"
     finally
         close(srv.server)
     end

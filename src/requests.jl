@@ -728,6 +728,11 @@ parts; a refusal is kept; `""` tool arguments decode as an empty object. A choic
 that carries nothing is the empty turn it is (`content = ""` — a reasoning model can
 spend the whole budget on thought tokens). The finish reason is the wire's, except
 that a tool-call turn finished with `"stop"` or none reads `"tool_calls"`.
+
+A call whose arguments are not a JSON object throws under a `"tool_calls"` finish,
+which would dispatch it. Under any other finish no tool loop runs the turn's calls,
+and a turn cut at `"length"` can end inside a call's arguments: such a call is
+dropped, so the turn itself — its text, finish reason and usage — is kept.
 """
 function extract_message(resp::HTTP.Response)
     received = JSON.parse(resp.body; dicttype=Dict{String,Any})
@@ -740,9 +745,11 @@ function extract_message(resp::HTTP.Response)
     refusal = get(message, "refusal", nothing)
     refusal isa AbstractString || (refusal = nothing)
     raw_calls = get(message, "tool_calls", nothing)
-    msg = if raw_calls isa AbstractVector && !isempty(raw_calls)
+    calls = raw_calls isa AbstractVector ?
+        _decode_tool_calls(raw_calls, _tool_finish_reason(finish)) : ToolCall[]
+    msg = if !isempty(calls)
         Message(role=RoleAssistant, content=(isnothing(text) || isempty(text) ? nothing : text),
-                tool_calls=_decode_tool_calls(raw_calls), refusal_message=refusal,
+                tool_calls=calls, refusal_message=refusal,
                 finish_reason=_tool_finish_reason(finish))
     else
         Message(role=RoleAssistant, content=(isnothing(text) && !isnothing(refusal) ? nothing : something(text, "")),
@@ -766,10 +773,29 @@ _content_text(::Nothing) = nothing
 _tool_finish_reason(reason::Union{Nothing,AbstractString})::String =
     isnothing(reason) || reason == STOP ? TOOL_CALLS : String(reason)
 
-# OpenAI-wire `tool_calls` array → the neutral ToolCall vector.
-_decode_tool_calls(raw::AbstractVector)::Vector{ToolCall} =
-    [ToolCall(id=x["id"], func=GPTFunction(x["function"]["name"], _parse_tool_arguments(x["function"]["arguments"])))
-     for x in raw]
+# Whether `args` is what `_parse_tool_arguments` accepts: blank, or a JSON object (a
+# valid JSON text that starts with `{`).
+_is_json_object(args::AbstractString)::Bool =
+    isempty(strip(args)) || (startswith(lstrip(args), '{') && JSON.isvalidjson(args))
+
+# The arguments of one decoded tool call on a turn whose tool-call finish reason is
+# `finish`, or `nothing` to drop the call. Under "tool_calls" the call will be
+# dispatched, so its arguments must parse (`_parse_tool_arguments` throws otherwise).
+# Under any other finish no tool loop runs the turn's calls; a turn cut at "length"
+# can end inside a call's arguments, and that call is dropped so the turn survives.
+_call_arguments(args::AbstractString, finish::String)::Union{Nothing,Dict{String,Any}} =
+    finish == TOOL_CALLS || _is_json_object(args) ? _parse_tool_arguments(args) : nothing
+
+# OpenAI-wire `tool_calls` array → the neutral ToolCall vector, less the calls
+# `_call_arguments` drops.
+function _decode_tool_calls(raw::AbstractVector, finish::String)::Vector{ToolCall}
+    calls = ToolCall[]
+    for x in raw
+        args = _call_arguments(x["function"]["arguments"], finish)
+        isnothing(args) || push!(calls, ToolCall(id=x["id"], func=GPTFunction(x["function"]["name"], args)))
+    end
+    calls
+end
 
 """
     StreamState()
@@ -854,19 +880,22 @@ function _build_stream_message(state::StreamState)::Message
           !isempty(state.raw_pending)) ? nothing :
          ProviderContent(provider, state.raw_blocks)
     # The finish reason is reported as it arrived: none when the provider sent none.
-    if !isempty(state.tool_calls)
-        tcalls = map(sort!(collect(keys(state.tool_calls)))) do idx
-            tc_data = state.tool_calls[idx]
-            fdict = _tool_function!(state, idx)
-            args = _parse_tool_arguments(fdict["arguments"])   # "" → Dict{String,Any}() (zero-arg tool call)
-            ToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
-                     thought_signature=get(tc_data, "thought_signature", nothing))
-        end
+    # A call cut mid-arguments on a turn that did not finish with a tool call is
+    # dropped, as in `extract_message` (see `_call_arguments`).
+    finish = _tool_finish_reason(state.finish_reason)
+    tcalls = ToolCall[]
+    for idx in sort!(collect(keys(state.tool_calls)))
+        tc_data = state.tool_calls[idx]
+        fdict = _tool_function!(state, idx)
+        args = _call_arguments(fdict["arguments"], finish)   # "" → Dict{String,Any}() (zero-arg tool call)
+        isnothing(args) || push!(tcalls, ToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
+                                                  thought_signature=get(tc_data, "thought_signature", nothing)))
+    end
+    if !isempty(tcalls)
         # Keep accumulated text ALONGSIDE the tool calls: providers emit
         # both in one turn and the non-streaming decoders already preserve both.
         Message(role=RoleAssistant, content=(isempty(content) ? nothing : content),
-                tool_calls=tcalls, finish_reason=_tool_finish_reason(state.finish_reason),
-                provider_content=pc)
+                tool_calls=tcalls, finish_reason=finish, provider_content=pc)
     elseif isempty(content) && !isempty(refusal)
         Message(role=RoleAssistant, refusal_message=refusal,
                 finish_reason=state.finish_reason, provider_content=pc)

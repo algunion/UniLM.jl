@@ -836,3 +836,28 @@ end
         end
     end
 end
+
+@testset "driver — a tool call cut mid-arguments leaves a truncated success" begin
+    # The token limit ends the turn inside the call's arguments; usage follows the
+    # finish chunk, then [DONE]. The turn stands with its reason and usage; the
+    # partial call is dropped, so neither on_tool_call nor a tool loop can run it.
+    tc(fields::Pair...) = "data: " * JSON.json(Dict("choices" => [Dict("index" => 0,
+        "delta" => Dict("tool_calls" => [Dict{String,Any}("index" => 0, fields...)]))])) * "\n\n"
+    usage = "data: " * JSON.json(Dict("choices" => [], "usage" => Dict("prompt_tokens" => 10,
+        "completion_tokens" => 50, "total_tokens" => 60))) * "\n\n"
+    srv = paced_sse_server([
+        tc("id" => "call_1", "type" => "function", "function" => Dict("name" => "get_weather", "arguments" => "")),
+        tc("function" => Dict("arguments" => "{\"city\": \"Par")),
+        sse_text(""; finish="length"), usage * "data: [DONE]\n\n"])
+    try
+        chat = stream_chat(srv.url); seen = Any[]; fired = ToolCall[]
+        r = fetch(chatrequest!(chat; config=_SLOW_CFG, callback=(c, _) -> push!(seen, c),
+                               on_tool_call=call -> push!(fired, call)))
+        @test r isa LLMSuccess && r.message.finish_reason == "length"
+        @test isnothing(r.message.tool_calls) && isempty(fired)
+        @test r.usage.completion_tokens == 50
+        @test count(x -> x isa Message, seen) == 1 && length(chat.messages) == 3
+    finally
+        HTTP.forceclose(srv.server)
+    end
+end

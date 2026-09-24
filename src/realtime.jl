@@ -88,9 +88,12 @@ _realtime_ws_url(service) = throw(ArgumentError(
 # Test seam: runs as the upgrade completes, before the handler is admitted.
 _realtime_upgraded(service) = nothing
 
-# Open-phase resolution, exactly once: :pending → :open (the handler runs) |
-# :abandoned (the caller already got UniLMTimeout(:connect); a late upgrade is
-# closed unused).
+# Open-phase resolution, exactly once: :pending → :open (the handler runs) | :failed
+# (the open task ended first: its error is the outcome) | :abandoned (the bound fired
+# first: the caller gets UniLMTimeout(:connect), and a late upgrade is closed unused).
+# The open task records its end BEFORE it wakes the caller, so the first event decides:
+# a bound that fires while the caller is still being scheduled cannot turn an earlier
+# failure into a timeout.
 mutable struct _RealtimeGate
     @atomic state::Symbol
 end
@@ -154,6 +157,7 @@ function realtime_connect(handler; model::String="gpt-realtime-2",
             handler(RealtimeSession(ws, model, cfg))
         end
     finally
+        @atomicreplace gate.state :pending => :failed
         notify(ready)
     end
     # Wait for the handshake only. On breach the worker is abandoned rather than

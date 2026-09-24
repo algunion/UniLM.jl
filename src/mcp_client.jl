@@ -1468,7 +1468,8 @@ Do-block form: automatically disconnects after the block executes.
 ```julia
 mcp_connect(`npx server`) do session
     tools = mcp_tools(session)
-    chat = Chat(tools=map(t -> t.tool, tools))
+    chat = Chat(model="gpt-5.4-mini", tools=tools)
+    push!(chat, Message(Val(:system), "You can use the server's tools."))
     push!(chat, Message(Val(:user), "List files"))
     tool_loop!(chat; tools)
 end
@@ -1717,7 +1718,8 @@ Two tools whose names map to the same alias raise an `ArgumentError`.
 ```julia
 session = mcp_connect(`npx server`)
 tools = mcp_tools(session)
-chat = Chat(model="gpt-5.5", tools=map(t -> t.tool, tools))
+chat = Chat(model="gpt-5.4-mini", tools=tools)
+push!(chat, Message(Val(:system), "You can use the server's tools."))
 push!(chat, Message(Val(:user), "Do something"))
 result = tool_loop!(chat; tools)
 ```

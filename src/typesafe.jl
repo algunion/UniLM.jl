@@ -21,8 +21,9 @@ declares only `:system_one` and `:models`, so [`ask`](@ref) and
 [`list_models`](@ref) accept it while the verbs — `chatrequest!`, `respond`,
 `embeddingrequest!`, `moderate` and the other OpenAI platform verbs — reject it
 up front with an `ArgumentError` rather than posting a request no server here
-would answer. Building a `Chat` or an `Embeddings` that names this endpoint is
-allowed; only sending one is refused.
+would answer. A `Chat` or an `Embeddings` that names this endpoint can be built
+only with an explicit `model=` (without one the constructor throws `ArgumentError`,
+since there is no default model to resolve); sending it is refused.
 """
 struct TYPESAFEServiceEndpoint <: ServiceEndpoint end
 

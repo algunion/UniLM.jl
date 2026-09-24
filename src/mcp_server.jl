@@ -750,9 +750,10 @@ otherwise the latest supported one.
 
 # Robustness contract
 Both transports cap an incoming frame (stdio) or request body (HTTP) at 16 MiB and
-answer an oversized one with JSON-RPC `-32600` rather than parsing it — parsing an
-attacker-sized payload allocates a multiple of it, which is an out-of-memory kill
-rather than a protocol error. Any unhandled error while dispatching a request —
+answer an oversized one — stdio with JSON-RPC `-32600`, HTTP with
+`413 Payload Too Large` — rather than parsing it: parsing an attacker-sized payload
+allocates a multiple of it, which is an out-of-memory kill rather than a protocol
+error. Any unhandled error while dispatching a request —
 including an exception from a resource or prompt handler — is answered with a
 generic `-32603` "Internal error" and logged locally, so one bad frame cannot take
 the transport down and no exception text (file paths, argument values) reaches the

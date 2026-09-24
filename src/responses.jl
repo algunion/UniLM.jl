@@ -113,10 +113,11 @@ end
 """
     ResponseTool
 
-Abstract supertype for Responses API tools. Subtypes:
-- [`FunctionTool`](@ref)
-- [`WebSearchTool`](@ref)
-- [`FileSearchTool`](@ref)
+Abstract supertype for Responses API tools. Subtypes: [`FunctionTool`](@ref),
+[`WebSearchTool`](@ref), [`FileSearchTool`](@ref), [`MCPTool`](@ref),
+[`ComputerUseTool`](@ref), [`ComputerTool`](@ref), [`ImageGenerationTool`](@ref),
+[`CodeInterpreterTool`](@ref), [`LocalShellTool`](@ref), [`ShellTool`](@ref),
+[`ApplyPatchTool`](@ref) and [`CustomTool`](@ref).
 """
 abstract type ResponseTool end
 
@@ -440,7 +441,8 @@ custom_tool(name::String; description::Union{String,Nothing}=nothing,
 # Convenience constructors
 
 """
-    mcp_tool(label, url; require_approval="never", allowed_tools=nothing, headers=nothing)
+    mcp_tool(label, url=nothing; require_approval="never", allowed_tools=nothing, headers=nothing,
+             connector_id=nothing, authorization=nothing, server_description=nothing, tunnel_id=nothing)
 
 Shorthand constructor for [`MCPTool`](@ref).
 """
@@ -550,7 +552,7 @@ tool_result(call_id::AbstractString, name::AbstractString, output::AbstractStrin
                      "name" => name, "output" => output)
 
 """
-    web_search(; context_size="medium", location=nothing)
+    web_search(; context_size="medium", location=nothing, type="web_search", filters=nothing)
 
 Shorthand constructor for [`WebSearchTool`](@ref).
 """
@@ -648,7 +650,7 @@ function JSON.lower(t::TextFormatSpec)
 end
 
 """
-    TextConfig(; format=TextFormatSpec())
+    TextConfig(; format=TextFormatSpec(), verbosity=nothing)
 
 Wrapper for the `text` field in the Responses API request body.
 """
@@ -774,12 +776,13 @@ end
 # ─── Main Request Type ────────────────────────────────────────────────────────
 
 """
-    Respond(; model="gpt-5.6-sol", input, kwargs...)
+    Respond(; model="", input, kwargs...)
 
 Configuration struct for an OpenAI Responses API request.
 
 # Key Fields
-- `model::String`: Model to use (default: `"gpt-5.6-sol"`)
+- `model::String`: Model to use; `""` (the default) resolves to the service's default
+  model at construction (`"gpt-5.6-sol"` for OpenAI)
 - `input::Any`: A `String` or `Vector{InputMessage}` — the prompt input
 - `instructions::String`: System-level instructions
 - `tools::Vector`: Available tools (`FunctionTool`, `WebSearchTool`, `FileSearchTool`, …);

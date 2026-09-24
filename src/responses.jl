@@ -761,7 +761,8 @@ end
 # Chat one (nested under `function`), which the Responses API rejects. Every other
 # entry passes through unchanged.
 _respond_tools(tools) = tools
-_respond_tools(tools::AbstractVector) = any(t -> t isa Tool, tools) ? map(_respond_tool, tools) : tools
+_respond_tools(tools::AbstractVector) =
+    any(t -> t isa Tool || t isa CallableTool{Tool}, tools) ? map(_respond_tool, tools) : tools
 _respond_tool(t) = t
 function _respond_tool(t::Tool)::FunctionTool
     t.type == "function" || throw(ArgumentError(

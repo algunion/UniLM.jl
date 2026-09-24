@@ -274,7 +274,7 @@ function tool_loop!(chat::Chat, dispatcher::Function;
     _in_cancel_scope(tok) do
         all_outcomes = ToolCallOutcome[]
         turns = 0
-        local latest::LLMSuccess
+        latest::Union{Nothing,LLMSuccess} = nothing   # set by every turn that does not return
 
         while turns < max_turns
             turns += 1
@@ -318,7 +318,7 @@ function tool_loop!(chat::Chat, dispatcher::Function;
             end
         end
 
-        ToolLoopResult(latest, all_outcomes, turns, false, "max turns ($max_turns) exhausted")
+        ToolLoopResult(something(latest), all_outcomes, turns, false, "max turns ($max_turns) exhausted")
     end
 end
 
@@ -424,7 +424,7 @@ function tool_loop(r::Respond, dispatcher::Function;
         turns = 0
         input = r.input
         prev_id = r.previous_response_id
-        local latest::ResponseSuccess
+        latest::Union{Nothing,ResponseSuccess} = nothing   # set by every turn that does not return
 
         while turns < max_turns
             turns += 1
@@ -480,7 +480,7 @@ function tool_loop(r::Respond, dispatcher::Function;
             prev_id = isnothing(r.conversation) ? result.response.id : nothing
         end
 
-        ToolLoopResult(latest, all_outcomes, turns, false, "max turns ($max_turns) exhausted")
+        ToolLoopResult(something(latest), all_outcomes, turns, false, "max turns ($max_turns) exhausted")
     end
 end
 

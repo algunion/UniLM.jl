@@ -188,18 +188,27 @@ end
     # Minimum of three runs: @allocated counts every thread's allocations.
     min_alloc(f) = minimum(_ -> (f(); @allocated f()), 1:3)
 
-    @testset "a 4 MiB line in 16 KiB reads allocates < 3x its size" begin
-        # The old carry re-joined and re-scanned the whole pending line on every read.
-        n = 4 * 1024 * 1024
-        value = repeat("x", n - 6)
-        chunks = let bytes = codeunits("data: " * value * "\n")
-            [String(bytes[i:min(i + 16383, end)]) for i in 1:16384:length(bytes)]
+    @testset "a long line in 16 KiB reads allocates linearly in its length" begin
+        # The old carry re-joined and re-scanned the whole pending line on every read:
+        # quadratic, so a 4 MiB line allocated about 1 GB. Quadrupling the line
+        # quadruples a linear cost and multiplies a quadratic one by 16, so the ratio is
+        # the test; the absolute bound only rules out a constant-factor blow-up, with
+        # room for IOBuffer's growth policy (a 4 MiB line measured ~2.6x its size).
+        function measure(n)
+            value = repeat("x", n - 6)
+            chunks = let bytes = codeunits("data: " * value * "\n")
+                [String(bytes[i:min(i + 16383, end)]) for i in 1:16384:length(bytes)]
+            end
+            events = Ref{Any}(nothing)
+            feed() = (carry = IOBuffer(); ev = Ref("");
+                      events[] = reduce(vcat, [UniLM._sse_events!(carry, ev, c) for c in chunks]); nothing)
+            (; bytes = min_alloc(feed), exact = length(events[]) == 1 && events[][1][2] == value)
         end
-        events = Ref{Any}(nothing)
-        feed() = (carry = IOBuffer(); ev = Ref("");
-                  events[] = reduce(vcat, [UniLM._sse_events!(carry, ev, c) for c in chunks]); nothing)
-        @test min_alloc(feed) < 3n
-        @test length(events[]) == 1 && events[][1][2] == value   # byte-identical payload
+        mib = 1024 * 1024
+        small, large = measure(mib), measure(4mib)
+        @test small.exact && large.exact                 # byte-identical payload
+        @test large.bytes / small.bytes < 6
+        @test large.bytes < 8 * 4mib
     end
 
     @testset "tool-call arguments in 2 KiB fragments accumulate linearly" begin

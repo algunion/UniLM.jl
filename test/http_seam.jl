@@ -372,6 +372,27 @@ end
     @test action === :budget && delay >= 20.0
 end
 
+@testset "retry budget: the jitter above a Retry-After floor leaves the next attempt half of what remains" begin
+    # 10 s left, a 9 s floor and attempt 4's 8 s backoff. Spread over the WHOLE 1 s
+    # left after the floor, a pause could end just short of the deadline, and the next
+    # attempt failed on a timeout the caller never set instead of returning the 429.
+    ra9 = HTTP.Response(429, ["Retry-After" => "9"])
+    delays = [UniLM._retry_delay(3, ra9, 10.0) for _ in 1:100_000]
+    @test all(d -> 9.0 <= d <= 9.0 + (10.0 - 9.0) / 2, delays)
+    @test length(unique(delays)) > 1000                     # still spread, not pinned
+    # The same geometry through the budget arithmetic: no draw leaves the next attempt
+    # less than half of what remained after the floor, unless it reports :budget. The
+    # clock advances between the reads, so each bound allows for that drift.
+    cfg, t0 = RequestConfig(total_deadline=10.0), time_ns()
+    kept_half = map(1:10_000) do _
+        before = UniLM._remaining_s(cfg, t0)
+        action, d = UniLM._retry_pause(cfg, t0, 4, ra9)
+        after = UniLM._remaining_s(cfg, t0)
+        action === :budget || after - d >= (before - 9.0) / 2 - (before - after)
+    end
+    @test all(kept_half)
+end
+
 @testset "retry budget: an exhausted total_deadline throws :deadline before any attempt" begin
     hits = Threads.Atomic{Int}(0)
     server, base = _seam_server(req -> begin

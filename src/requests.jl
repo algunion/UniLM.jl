@@ -66,14 +66,16 @@ end
 
 # Full-jitter backoff; a Retry-After header is a FLOOR under it, not a
 # replacement: clients that all receive the same header would otherwise wake at
-# the same instant and retry in lockstep. The spread above the floor is capped at
-# the budget left after it, so jitter never pushes a floor that fits past
-# `remaining`.
+# the same instant and retry in lockstep. The spread above the floor covers at
+# most HALF the budget left after it, so the attempt that follows keeps at least
+# the other half: a pause that ended just short of `remaining` would leave it a
+# near-zero bound, and it would fail on a timeout nobody configured instead of
+# returning the response that asked for the wait.
 function _retry_delay(retry::Integer, resp::HTTP.Response, remaining::Float64=Inf)::Float64
     computed = min(_RETRY_BASE * _RETRY_FACTOR^retry, _RETRY_MAX_DELAY)
     ra = _retry_after_seconds(resp)
     isnothing(ra) && return rand() * computed
-    return ra + rand() * min(computed, max(remaining - ra, 0.0))
+    return ra + rand() * min(computed, max(remaining - ra, 0.0) / 2)
 end
 
 """

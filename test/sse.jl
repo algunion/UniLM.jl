@@ -861,3 +861,54 @@ end
         HTTP.forceclose(srv.server)
     end
 end
+
+# SSE server that writes `chunks` at once, then holds the response open `hold` seconds.
+# It records each request's client address: HTTP/1.1 carries one exchange at a time
+# per connection, so requests from one address rode one reused connection.
+function peer_sse_server(chunks::Vector{String}; hold::Real=0.0)
+    peers, lk = String[], ReentrantLock()
+    server = HTTP.listen!("127.0.0.1", 0; verbose=false) do http::HTTP.Stream
+        read(http)
+        @lock lk push!(peers, string(HTTP.peeraddr(http)))
+        HTTP.setstatus(http, 200)
+        HTTP.setheader(http, "Content-Type" => "text/event-stream")
+        HTTP.startwrite(http)
+        foreach(c -> (write(http, c); flush(http)), chunks)
+        sleep(hold)
+    end
+    (; server, url="http://127.0.0.1:$(HTTP.port(server))", peers)
+end
+
+@testset "driver — a Chat stream ends at [DONE], not at the end of its HTTP body" begin
+    chunks = [sse_text("hi"), sse_text(""; finish="stop") * "data: [DONE]\n\n"]
+
+    @testset "a body held open after [DONE] holds neither the final callback nor the result" begin
+        srv = peer_sse_server(chunks; hold=10.0)
+        try
+            chat = stream_chat(srv.url); final_at = Ref(Inf)
+            t0 = time()
+            r = fetch(chatrequest!(chat; config=_SLOW_CFG,
+                                   callback=(c, _) -> c isa Message && (final_at[] = time() - t0)))
+            elapsed = time() - t0
+            @test r isa LLMSuccess && r.message.content == "hi" && length(chat.messages) == 3
+            @test final_at[] < 1.0
+            @test elapsed < 1.5
+            # Its connection was closed rather than pooled: the next call opens another.
+            @test fetch(chatrequest!(stream_chat(srv.url); config=_SLOW_CFG)) isa LLMSuccess
+            @test length(unique(srv.peers)) == 2
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+
+    @testset "a body that ends right after [DONE] leaves its connection reusable" begin
+        srv = peer_sse_server(chunks)
+        try
+            rs = [fetch(chatrequest!(stream_chat(srv.url); config=_SLOW_CFG)) for _ in 1:3]
+            @test all(r -> r isa LLMSuccess && r.message.content == "hi", rs)
+            @test length(srv.peers) == 3 && length(unique(srv.peers)) == 1
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+end

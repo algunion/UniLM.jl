@@ -1108,6 +1108,25 @@ function _finalize_stream_message!(state::StreamState, callback, on_tool_call,
     (; msg, usage=state.usage)
 end
 
+# How long a Chat stream that has its `[DONE]` waits for the end of its HTTP body.
+const _BODY_END_WAIT = 0.5
+
+# Read what is left of a finished stream's body, at most `_BODY_END_WAIT` seconds: its
+# end is what returns the connection to the pool for the next call. A body still open
+# then is abandoned — `close(io)` ends the read and the connection is closed rather than
+# reused — which costs the caller nothing: the turn is already final. Bytes after the
+# terminal are discarded. Any other failure of the read propagates as teardown noise.
+function _await_body_end(io::HTTP.Stream)::Nothing
+    try
+        _with_deadline(() -> while !eof(io); readavailable(io); end, () -> close(io),
+                       _BODY_END_WAIT, :stream_idle)
+    catch e
+        e isa UniLMTimeout || rethrow()
+        @debug "stream body still open after [DONE]; its connection is closed, not reused" wait = _BODY_END_WAIT
+    end
+    nothing
+end
+
 # Commit a completed streamed turn: history update, typed success, cost accrual.
 # Shared by the clean end-of-stream path and the teardown-recovery path, so a
 # turn recovered from teardown noise is committed exactly like a clean one.
@@ -1130,9 +1149,11 @@ and transport failures — retry classification is the caller's job — on a sto
 (`UniLMCancelled`) and on a user-code failure (`_UserCallbackError`). A breach of the
 byte-gap idle bound throws `UniLMTimeout(:stream_idle, …)` wherever in the attempt it
 fires (the native read-idle timer also bounds the response-header wait, so it can
-undercut the request-phase bound; see `_classify_stream_timeout`). `StreamState`, the
-SSE line carry, and the raw byte log are all locals: a retried attempt cannot inherit
-partial SSE state.
+undercut the request-phase bound; see `_classify_stream_timeout`). At the sentinel
+(`[DONE]`, `message_stop`) the turn is finalized at once, and the rest of the body is
+awaited only briefly (`_await_body_end`). `StreamState`, the SSE line carry,
+and the raw byte log are all locals: a retried attempt cannot inherit partial SSE
+state.
 """
 function _stream_attempt(chat::Chat, body, callback, on_tool_call,
                          cfg::RequestConfig, t0::UInt64, io_ref, ctl::_StreamCtl)
@@ -1174,9 +1195,10 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
                 end, () -> _abort_request_phase(io, ctx),
                 min(_remaining_s(cfg, t0), cfg.request_timeout), :request, bound)
             idle[] = _idle_guard(() -> close(io), cfg.stream_idle_timeout)
-            # `eof` first: after `[DONE]` it consumes the body's end, which keeps the
-            # connection reusable. A stop aborts the connection, so it never blocks here.
-            while !eof(io) && !iscancelled(ctl.stop) && status === :continue
+            # The terminal first: at `[DONE]` the turn is finalized at once, however long
+            # the server keeps the body open (its end is awaited below, briefly). A stop
+            # aborts the connection, so `eof` never blocks on one.
+            while status === :continue && !iscancelled(ctl.stop) && !eof(io)
                 raw = String(readavailable(io))
                 _touch!(idle[])
                 write(raw_buffer, raw)
@@ -1220,7 +1242,10 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
             end
             # A stop from the terminal callback leaves the recorded turn standing; the
             # aborted body is not drained.
-            iscancelled(ctl.stop) || HTTP.closeread(io)
+            if !iscancelled(ctl.stop)
+                status === :done && _await_body_end(io)
+                HTTP.closeread(io)
+            end
         end
         serr = state.error
         if !isnothing(serr)

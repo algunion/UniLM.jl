@@ -123,29 +123,37 @@ end
     # connection and never sends response headers must fail as a typed
     # UniLMTimeout(:request) at the configured bound, with the byte-gap guard
     # switched off. The bounded observation below is the falsifier — an unbounded
-    # wait fails the test instead of hanging the suite.
-    m = mute_server()
+    # wait fails the test instead of hanging the suite. The first streaming call in a
+    # process run with bounds checking compiles for seconds before it connects, so
+    # its 1 s bound can fire before the peer is ever reached: that run never got to
+    # the header wait under test, and only that lost precondition re-runs it, warm.
     cfg = RequestConfig(connect_timeout=Inf, request_timeout=1.0, total_deadline=Inf,
                         stream_idle_timeout=Inf, max_attempts=1)
-    try
-        chat = Chat(model="mock", stream=true,
-                    service=GenericOpenAIEndpoint("http://127.0.0.1:$(m.port)", ""),
-                    messages=[Message(role=UniLM.RoleSystem, content="s"),
-                              Message(role=UniLM.RoleUser, content="u")])
-        task = chatrequest!(chat; config=cfg)
-        # Bounded observation FIRST, and every assertion that reads the task
-        # is gated on it: an unbounded wait must fail this test, never hang it.
-        bounded = timedwait(() -> istaskdone(task), 15.0) === :ok
-        @test bounded
-        if bounded
-            res = fetch(task)
-            @test res isa LLMCallError
-            @test res.cause isa UniLM.UniLMTimeout
-            @test res.cause.phase === :request
-            @test m.accepted[] == 1    # one wire attempt; the bound is not a retry storm
+    for run in 1:3
+        m = mute_server()
+        try
+            chat = Chat(model="mock", stream=true,
+                        service=GenericOpenAIEndpoint("http://127.0.0.1:$(m.port)", ""),
+                        messages=[Message(role=UniLM.RoleSystem, content="s"),
+                                  Message(role=UniLM.RoleUser, content="u")])
+            task = chatrequest!(chat; config=cfg)
+            # Bounded observation FIRST, and every assertion that reads the task
+            # is gated on it: an unbounded wait must fail this test, never hang it.
+            bounded = timedwait(() -> istaskdone(task), 15.0) === :ok
+            reached = timedwait(() -> m.accepted[] >= 1, 2.0) === :ok
+            bounded && !reached && run < 3 && continue
+            @test bounded
+            if bounded
+                res = fetch(task)
+                @test res isa LLMCallError
+                @test res.cause isa UniLM.UniLMTimeout
+                @test res.cause.phase === :request
+                @test m.accepted[] == 1    # one wire attempt; the bound is not a retry storm
+            end
+        finally
+            stop!(m)
         end
-    finally
-        stop!(m)
+        break
     end
 end
 

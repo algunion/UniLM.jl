@@ -682,10 +682,14 @@ function _hand_off!(l::_SessionLock)
 end
 
 """Acquire `l` within `limit` seconds (`Inf`: unbounded); `false` when the bound passed
-first — the caller then never held the lock."""
+first — the caller then never held the lock. Once queued, the caller is in the queue or
+owns the lock until it returns, and every exit but `true` — the bound, an interrupt, any
+other exception — leaves the queue or passes the lock on: a finished task left behind
+would be handed the lock and strand every caller after it."""
 function _acquire!(l::_SessionLock, limit::Float64)::Bool
     me = current_task()
-    ev = @lock l.guard begin
+    ev = Base.Event()
+    @lock l.guard begin
         if l.owner === me
             l.depth += 1
             return true
@@ -693,39 +697,37 @@ function _acquire!(l::_SessionLock, limit::Float64)::Bool
             l.owner, l.depth = me, 1
             return true
         end
-        e = Base.Event()
-        push!(l.queue, me => e)
-        e
+        push!(l.queue, me => ev)
     end
-    timer = isfinite(limit) ? Timer(_ -> notify(ev), limit) : nothing
+    timer = nothing
     try
+        isfinite(limit) && (timer = Timer(_ -> notify(ev), limit; spawn=true))
         wait(ev)
+        @lock l.guard begin
+            l.owner === me && return true
+            _dequeue!(l, me)   # the bound passed first: leave
+        end
+        return false
     catch
         _abandon!(l, me)
         rethrow()
     finally
-        isnothing(timer) || close(timer)
-    end
-    @lock l.guard begin
-        l.owner === me && return true
-        deleteat!(l.queue, findfirst(p -> first(p) === me, l.queue))   # timed out: leave
-        false
+        # Off this task's path: `close(::Timer)` waits for the event loop's close handshake.
+        isnothing(timer) || errormonitor(Threads.@spawn :default close(timer))
     end
 end
 
-# A waiter interrupted while queued leaves the queue; one interrupted after the lock was
-# handed to it passes the lock on instead.
-function _abandon!(l::_SessionLock, me::Task)
-    @lock l.guard begin
-        if l.owner === me
-            _hand_off!(l)
-        else
-            i = findfirst(p -> first(p) === me, l.queue)
-            isnothing(i) || deleteat!(l.queue, i)
-        end
-    end
+# Caller holds `l.guard`.
+function _dequeue!(l::_SessionLock, me::Task)
+    i = findfirst(p -> first(p) === me, l.queue)
+    isnothing(i) || deleteat!(l.queue, i)
     nothing
 end
+
+# A waiter that gives up while queued leaves the queue; one that gives up after the lock
+# was handed to it passes the lock on instead.
+_abandon!(l::_SessionLock, me::Task) =
+    @lock l.guard (l.owner === me ? _hand_off!(l) : _dequeue!(l, me))
 
 # ─── MCPSession ──────────────────────────────────────────────────────────────
 
@@ -837,21 +839,13 @@ function _next_id!(session::MCPSession)::Int
     session._id_counter
 end
 
-"""Reject a per-call MCP timeout that would reintroduce an unbounded wait.
-NaN must be rejected explicitly (NaN ≤ 0 is false); Inf disables the bound."""
-function _validate_mcp_timeout(t::Float64)::Float64
-    (isnan(t) || t <= 0) &&
-        throw(ArgumentError("MCP timeout must be a positive number of seconds " *
-                            "(got $t); Inf disables the bound."))
-    t
-end
-
 """Resolve the per-exchange MCP request bound: explicit kwarg > ambient scoped
 config's `mcp_request_timeout` (when a scope is set) > the session-captured config.
 Bridged tool closures pass no kwarg, so an ambient `with_request_config` reaches
-them through the scope leg."""
+them through the scope leg. The kwarg is validated like every configured bound
+(NaN, ≤ 0 and finite values above 1e9 s are rejected; Inf disables it)."""
 function _resolve_mcp_request_timeout(session::MCPSession, timeout::Union{Nothing,Float64})::Float64
-    timeout !== nothing && return _validate_mcp_timeout(timeout)
+    timeout !== nothing && return _validated_timeout(:timeout, timeout)
     amb = _REQUEST_CONFIG[]
     amb !== nothing ? amb.mcp_request_timeout : session.config.mcp_request_timeout
 end
@@ -1534,9 +1528,9 @@ Stores result in `session.tools`.
 
 `timeout::Union{Nothing,Float64}` overrides the per-call bound for this call
 (kwarg > ambient [`with_request_config`](@ref) > session-captured config; Inf
-disables, NaN/≤0 rejected). The whole listing — every page and the cache update —
-holds the session once, so a `list_changed` another caller receives meanwhile is
-recorded after the refresh and leaves `tools_stale` set.
+disables; NaN, ≤ 0 and finite values above 1e9 s are rejected). The whole listing —
+every page and the cache update — holds the session once, so a `list_changed` another
+caller receives meanwhile is recorded after the refresh and leaves `tools_stale` set.
 """
 function list_tools!(session::MCPSession; timeout::Union{Nothing,Float64}=nothing)::Vector{MCPToolInfo}
     _with_session(session, timeout) do
@@ -1614,10 +1608,10 @@ content array. A tool-execution error (`isError: true`) is returned with
 
 `timeout::Union{Nothing,Float64}` overrides the per-call bound for this call
 (kwarg > ambient [`with_request_config`](@ref) > session-captured config; Inf
-disables, NaN/≤0 rejected). It bounds the wait for the session — calls on one session
-run one at a time, in arrival order; a call that cannot acquire it in time raises
-[`MCPTimeoutError`](@ref) with phase `:queue` — and then, from acquisition, the exchange
-itself (phase `:request`).
+disables; NaN, ≤ 0 and finite values above 1e9 s are rejected). It bounds the wait
+for the session — calls on one session run one at a time, in arrival order; a call that
+cannot acquire it in time raises [`MCPTimeoutError`](@ref) with phase `:queue` — and
+then, from acquisition, the exchange itself (phase `:request`).
 """
 function call_tool(session::MCPSession, name::String,
                    arguments::AbstractDict=Dict{String,Any}();

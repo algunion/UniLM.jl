@@ -3049,6 +3049,67 @@ end
     @test _log(t) == ["notifications/initialized", "ping"]
 end
 
+# A task holding `l` until `release` is notified; returns once it holds it.
+function _lock_holder(l)
+    held, release = Base.Event(), Base.Event()
+    holder = Threads.@spawn (UniLM._acquire!(l, Inf); notify(held); wait(release); unlock(l))
+    wait(held)
+    holder, release
+end
+_queued(l) = @lock l.guard length(l.queue)
+
+@testset "session lock: a waiter that fails after queuing leaves no dead owner behind" begin
+    # A bound too large to arm a Timer (InexactError) failed AFTER the waiter joined the
+    # queue: the next release handed the lock to that finished task, and every later
+    # caller — an unbounded one such as mcp_disconnect! included — waited forever.
+    l = UniLM._SessionLock()
+    holder, release = _lock_holder(l)
+    victim = Threads.@spawn try UniLM._acquire!(l, 1e17) catch e; e end
+    @test timedwait(() -> istaskdone(victim), 25.0) === :ok
+    @test fetch(victim) isa Exception
+    @test _queued(l) == 0
+    notify(release); wait(holder)
+    @test (@lock l.guard l.owner) === nothing
+    other = Threads.@spawn (ok = UniLM._acquire!(l, 5.0); ok && unlock(l); ok)
+    @test timedwait(() -> istaskdone(other), 25.0) === :ok && fetch(other) === true
+    unbounded = Threads.@spawn (UniLM._acquire!(l, Inf); unlock(l); :acquired)
+    @test timedwait(() -> istaskdone(unbounded), 25.0) === :ok && fetch(unbounded) === :acquired
+end
+
+@testset "session lock: a waiter interrupted while re-taking the guard leaves the queue" begin
+    # Its bound passed, so it woke and went back for the guard to leave the queue; an
+    # interrupt landing there escaped the cleanup and left it queued.
+    l = UniLM._SessionLock()
+    holder, release = _lock_holder(l)
+    waiter = Threads.@spawn try UniLM._acquire!(l, 0.3) catch e; e end
+    @test timedwait(() -> _queued(l) == 1, 25.0) === :ok
+    lock(l.guard)
+    try
+        sleep(2.0)                                        # the bound passes: it parks on the guard
+        schedule(waiter, InterruptException(); error=true)
+    finally
+        unlock(l.guard)
+    end
+    @test timedwait(() -> istaskdone(waiter), 25.0) === :ok
+    @test fetch(waiter) isa InterruptException
+    @test _queued(l) == 0
+    @test (@lock l.guard l.owner) === holder
+    notify(release); wait(holder)
+    @test (@lock l.guard l.owner) === nothing
+end
+
+@testset "a per-call MCP timeout too large for the timers is rejected before the call" begin
+    t = _ScriptedTransport((m, id, _) -> [_ok_frame(id)])
+    session = _scripted_session(t)
+    for big in (1.0e9 + 1, 1e17, floatmax(Float64))
+        @test_throws "use Inf" call_tool(session, "x", Dict{String,Any}(); timeout=big)
+    end
+    @test call_tool(session, "x", Dict{String,Any}(); timeout=1.0e9) isa MCPToolResult
+    @test call_tool(session, "x", Dict{String,Any}(); timeout=Inf) isa MCPToolResult
+    @test _log(t) == ["tools/call", "tools/call"]
+    @test !islocked(session._lock)
+end
+
 @testset "list_tools! clears tools_stale under the session lock" begin
     # The flag used to be cleared after the listing, outside the lock, so a list_changed
     # that another caller recorded in that window was overwritten. The listing and the

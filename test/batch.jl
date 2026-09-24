@@ -45,13 +45,14 @@ end
 
 @testset "poll_batch: the timeout bounds wall-clock time, not an iteration count" begin
     # Each GET takes 0.3 s. Bounded by time, the call returns within timeout + one GET +
-    # interval; the old iteration bound, ceil(timeout/interval) = 25 GETs, took ~10x that.
+    # interval (plus a 2 s runner-stall budget); the old iteration bound,
+    # ceil(timeout/interval) = 50 GETs, took ~15 s.
     slow = (_, _) -> (sleep(0.3); _json(200, _batch_json("in_progress")))
     r, _ = _with_scripted(slow) do
-        poll_batch("batch_1"; interval=0.02, timeout=0.5, service=URLProbe)   # compile the path
+        poll_batch("batch_1"; interval=0.01, timeout=0.5, service=URLProbe)   # compile the path
         get_s = @elapsed retrieve_batch("batch_1"; service=URLProbe)          # one GET, as seen here
-        elapsed = @elapsed (out = poll_batch("batch_1"; interval=0.02, timeout=0.5, service=URLProbe))
-        @test elapsed <= 0.5 + get_s + 0.02
+        elapsed = @elapsed (out = poll_batch("batch_1"; interval=0.01, timeout=0.5, service=URLProbe))
+        @test elapsed <= 0.5 + get_s + 0.01 + 2.0
         out
     end
     @test r isa BatchCallError

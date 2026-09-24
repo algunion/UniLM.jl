@@ -1174,6 +1174,8 @@ end
 """
     AgenticStreamState()
 
+Public extension API (not exported); see the Custom Backends guide.
+
 Mutable per-stream assembly state for the agentic streaming seam
 ([`decode_agentic_stream`](@ref)). Carries the layer-1/2 SSE machinery state
 (`carry` partial-line buffer, `last_event` sticky event name), the accumulated
@@ -1186,8 +1188,6 @@ assembled steps: `steps` maps a step index to its (mutable) step dict, and
 argument JSON, or thought signature, depending on the step type), read once when the
 interaction completes; `args_json` holds partial function-call argument JSON per
 index for a decoder that keeps arguments apart from `text_by_step`.
-
-Public extension API (not exported); see the Custom Backends guide.
 """
 @kwdef mutable struct AgenticStreamState
     textbuff::IOBuffer = IOBuffer()

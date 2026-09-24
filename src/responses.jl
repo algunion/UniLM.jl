@@ -1182,15 +1182,13 @@ assembled steps: `steps` maps a step index to its (mutable) step dict, and
 `order` records first-seen index order for deterministic output rebuilding.
 `text_by_step` holds each step's streamed string (answer text, function-call
 argument JSON, or thought signature, depending on the step type), read once when the
-interaction completes; `args_json` holds partial function-call argument JSON per
-index for a decoder that keeps arguments apart from `text_by_step`.
+interaction completes.
 """
 @kwdef mutable struct AgenticStreamState
     textbuff::IOBuffer = IOBuffer()
     carry::IOBuffer = IOBuffer()
     last_event::Base.RefValue{String} = Ref("")
     steps::Dict{Int,Dict{String,Any}} = Dict{Int,Dict{String,Any}}()
-    args_json::Dict{Int,String} = Dict{Int,String}()
     order::Vector{Int} = Int[]
     # One buffer per step keeps Interactions step order without re-copying an
     # ever-growing string on every streamed delta; each is read once, at completion.

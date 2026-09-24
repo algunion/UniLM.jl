@@ -188,18 +188,27 @@ end
     # Minimum of three runs: @allocated counts every thread's allocations.
     min_alloc(f) = minimum(_ -> (f(); @allocated f()), 1:3)
 
-    @testset "a 4 MiB line in 16 KiB reads allocates < 3x its size" begin
-        # The old carry re-joined and re-scanned the whole pending line on every read.
-        n = 4 * 1024 * 1024
-        value = repeat("x", n - 6)
-        chunks = let bytes = codeunits("data: " * value * "\n")
-            [String(bytes[i:min(i + 16383, end)]) for i in 1:16384:length(bytes)]
+    @testset "a long line in 16 KiB reads allocates linearly in its length" begin
+        # The old carry re-joined and re-scanned the whole pending line on every read:
+        # quadratic, so a 4 MiB line allocated about 1 GB. Quadrupling the line
+        # quadruples a linear cost and multiplies a quadratic one by 16, so the ratio is
+        # the test; the absolute bound only rules out a constant-factor blow-up, with
+        # room for IOBuffer's growth policy (a 4 MiB line measured ~2.6x its size).
+        function measure(n)
+            value = repeat("x", n - 6)
+            chunks = let bytes = codeunits("data: " * value * "\n")
+                [String(bytes[i:min(i + 16383, end)]) for i in 1:16384:length(bytes)]
+            end
+            events = Ref{Any}(nothing)
+            feed() = (carry = IOBuffer(); ev = Ref("");
+                      events[] = reduce(vcat, [UniLM._sse_events!(carry, ev, c) for c in chunks]); nothing)
+            (; bytes = min_alloc(feed), exact = length(events[]) == 1 && events[][1][2] == value)
         end
-        events = Ref{Any}(nothing)
-        feed() = (carry = IOBuffer(); ev = Ref("");
-                  events[] = reduce(vcat, [UniLM._sse_events!(carry, ev, c) for c in chunks]); nothing)
-        @test min_alloc(feed) < 3n
-        @test length(events[]) == 1 && events[][1][2] == value   # byte-identical payload
+        mib = 1024 * 1024
+        small, large = measure(mib), measure(4mib)
+        @test small.exact && large.exact                 # byte-identical payload
+        @test large.bytes / small.bytes < 6
+        @test large.bytes < 8 * 4mib
     end
 
     @testset "tool-call arguments in 2 KiB fragments accumulate linearly" begin
@@ -831,6 +840,82 @@ end
             t = chatrequest!(stream_chat(srv.url); on_tool_call=_ -> throw(InterruptException()))
             @test timedwait(() -> istaskdone(t), 25.0) === :ok
             @test istaskfailed(t) && t.exception isa InterruptException
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+end
+
+@testset "driver — a tool call cut mid-arguments leaves a truncated success" begin
+    # The token limit ends the turn inside the call's arguments; usage follows the
+    # finish chunk, then [DONE]. The turn stands with its reason and usage; the
+    # partial call is dropped, so neither on_tool_call nor a tool loop can run it.
+    tc(fields::Pair...) = "data: " * JSON.json(Dict("choices" => [Dict("index" => 0,
+        "delta" => Dict("tool_calls" => [Dict{String,Any}("index" => 0, fields...)]))])) * "\n\n"
+    usage = "data: " * JSON.json(Dict("choices" => [], "usage" => Dict("prompt_tokens" => 10,
+        "completion_tokens" => 50, "total_tokens" => 60))) * "\n\n"
+    srv = paced_sse_server([
+        tc("id" => "call_1", "type" => "function", "function" => Dict("name" => "get_weather", "arguments" => "")),
+        tc("function" => Dict("arguments" => "{\"city\": \"Par")),
+        sse_text(""; finish="length"), usage * "data: [DONE]\n\n"])
+    try
+        chat = stream_chat(srv.url); seen = Any[]; fired = ToolCall[]
+        r = fetch(chatrequest!(chat; config=_SLOW_CFG, callback=(c, _) -> push!(seen, c),
+                               on_tool_call=call -> push!(fired, call)))
+        @test r isa LLMSuccess && r.message.finish_reason == "length"
+        @test isnothing(r.message.tool_calls) && isempty(fired)
+        @test r.usage.completion_tokens == 50
+        @test count(x -> x isa Message, seen) == 1 && length(chat.messages) == 3
+    finally
+        HTTP.forceclose(srv.server)
+    end
+end
+
+# SSE server that writes `chunks` at once, then holds the response open `hold` seconds.
+# It records each request's client address: HTTP/1.1 carries one exchange at a time
+# per connection, so requests from one address rode one reused connection.
+function peer_sse_server(chunks::Vector{String}; hold::Real=0.0)
+    peers, lk = String[], ReentrantLock()
+    server = HTTP.listen!("127.0.0.1", 0; verbose=false) do http::HTTP.Stream
+        read(http)
+        @lock lk push!(peers, string(HTTP.peeraddr(http)))
+        HTTP.setstatus(http, 200)
+        HTTP.setheader(http, "Content-Type" => "text/event-stream")
+        HTTP.startwrite(http)
+        foreach(c -> (write(http, c); flush(http)), chunks)
+        sleep(hold)
+    end
+    (; server, url="http://127.0.0.1:$(HTTP.port(server))", peers)
+end
+
+@testset "driver — a Chat stream ends at [DONE], not at the end of its HTTP body" begin
+    chunks = [sse_text("hi"), sse_text(""; finish="stop") * "data: [DONE]\n\n"]
+
+    @testset "a body held open after [DONE] holds neither the final callback nor the result" begin
+        srv = peer_sse_server(chunks; hold=10.0)
+        try
+            chat = stream_chat(srv.url); final_at = Ref(Inf)
+            t0 = time()
+            r = fetch(chatrequest!(chat; config=_SLOW_CFG,
+                                   callback=(c, _) -> c isa Message && (final_at[] = time() - t0)))
+            elapsed = time() - t0
+            @test r isa LLMSuccess && r.message.content == "hi" && length(chat.messages) == 3
+            @test final_at[] < 1.0
+            @test elapsed < 1.5
+            # Its connection was closed rather than pooled: the next call opens another.
+            @test fetch(chatrequest!(stream_chat(srv.url); config=_SLOW_CFG)) isa LLMSuccess
+            @test length(unique(srv.peers)) == 2
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+
+    @testset "a body that ends right after [DONE] leaves its connection reusable" begin
+        srv = peer_sse_server(chunks)
+        try
+            rs = [fetch(chatrequest!(stream_chat(srv.url); config=_SLOW_CFG)) for _ in 1:3]
+            @test all(r -> r isa LLMSuccess && r.message.content == "hi", rs)
+            @test length(srv.peers) == 3 && length(unique(srv.peers)) == 1
         finally
             HTTP.forceclose(srv.server)
         end

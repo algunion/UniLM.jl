@@ -415,7 +415,8 @@ applies to the inference verbs (`chatrequest!`, `embeddingrequest!`, `respond`,
 bounded attempt. A `Retry-After` header is a floor under the jittered backoff, so a
 rate-limited batch does not retry in lockstep.
 
-Any call can be cancelled cooperatively from another task:
+Any HTTP call can be cancelled cooperatively from another task (the Realtime WebSocket
+and MCP stdio exchanges ignore the token):
 
 ```julia
 tok = CancelToken()

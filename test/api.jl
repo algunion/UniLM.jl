@@ -713,6 +713,10 @@ end
         asst = Message(role=UniLM.RoleAssistant, content="a")
         @test update!(chat, asst) === chat   # returns the chat; does NOT throw
         @test length(chat) == 2              # unchanged because history=false
+        # Every successful call on a history=false chat lands here: that is the
+        # documented behaviour, not a warning condition.
+        @test_logs min_level=Base.CoreLogging.Info update!(chat, asst)
+        @test_logs (:debug, r"history is disabled") min_level=Base.CoreLogging.Debug update!(chat, asst)
     end
 
     @testset "issendvalid" begin

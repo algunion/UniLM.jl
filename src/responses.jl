@@ -1329,11 +1329,12 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
             # so no text/output is built. Request identity encoding and disable
             # decompression so `data:` lines arrive verbatim (mirrors _stream_attempt).
             stream_headers = push!(copy(auth_header(r.service)), "Accept-Encoding" => "identity")
+            ctx = HTTP.RequestContext()   # the attempt's; its first-byte deadline aborts through it
             # Seam-routed: _http_open applies the native stream kwargs plus
             # status_exception=false and retry=false and aborts the exchange on
             # `ctl.stop`; decompress=false passes through.
             resp = _http_open("POST", url, stream_headers; cfg=cfg, t0=t0, cancel=ctl.stop,
-                              decompress=false) do io
+                              context=ctx, decompress=false) do io
                 io_ref[] = io
                 done = Ref(false)
                 # First byte = response headers received. The request-phase deadline guards
@@ -1344,7 +1345,7 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
                         write(io, body)
                         HTTP.closewrite(io)
                         HTTP.startread(io)
-                    end, () -> close(io),
+                    end, () -> _abort_request_phase(io, ctx),
                     min(_remaining_s(cfg, t0), cfg.request_timeout), :request, bound)
                 # Byte-gap guard: reset on every raw read (SSE comments and provider
                 # keep-alives reset the clock by construction).
@@ -1484,10 +1485,11 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
             # (connect/TLS labels), found by chain walk.
             u = _unwrap_exception(e)
             # A recorded request-phase bound takes precedence over whatever the
-            # library surfaced while unwinding it (e.g. EPIPE from writing to the
-            # socket the bound closed); with no displacement it equals the timeout
-            # the attempt already threw, and it never masks an error that arrived
-            # with no bound fired.
+            # library surfaced while unwinding it (the `HTTP.CanceledError` of the
+            # context the bound cancelled, or EPIPE from writing to the aborted
+            # connection); with no displacement it equals the timeout the attempt
+            # already threw, and it never masks an error that arrived with no bound
+            # fired.
             bt = bound[]
             mapped = bt !== nothing ? bt :
                      u isa UniLMTimeout ? u :
@@ -1618,25 +1620,29 @@ callback(chunk::Union{String, ResponseObject}, close::Ref{Bool})
 ```
 Setting `close[] = true` — in the callback or from any other task — stops the stream at
 once with `ResponseCallError(status=nothing, cause=UniLMCancelled(:callback, …))`,
-unless the terminal event was already recorded, in which case the response stands. An
-exception thrown by the callback ends the call with that exception in `cause`, never
-retried. Time spent in the callback does not count toward `stream_idle_timeout`. A
-user `InterruptException` during a stream is not swallowed — it rethrows inside the
-task and surfaces as a `TaskFailedException` at `fetch`.
+unless the provider's completion marker — the terminal event — already arrived: then
+the outcome it recorded stands (a response with its usage, whose final callback has
+already run; or the failure the event reported). An exception thrown by the callback
+ends the call with that exception in `cause`, never retried. Time spent in the callback
+does not count toward `stream_idle_timeout`. A user `InterruptException` during a stream
+is not swallowed — it rethrows inside the task and surfaces as a `TaskFailedException`
+at `fetch`.
 
 `cancel::Union{Nothing,CancelToken}`: a [`CancelToken`](@ref); `nothing` resolves the
 ambient token of [`with_cancel`](@ref), at call entry. A cancel at any point — before
 connecting, during the response-header wait, mid-stream, or during a retry backoff —
 ends the call with `ResponseCallError(status=nothing, cause=UniLMCancelled(:token, …))`,
-never retried; a pre-cancelled token sends nothing. A TCP connect or TLS handshake
-already in progress cannot be interrupted (HTTP.jl 2.7.1), so a cancel during one takes
-effect when it completes or reaches `connect_timeout`.
+never retried — unless the terminal event already arrived, as for `close[] = true`
+above. A pre-cancelled token sends nothing. A TCP connect or TLS handshake already in
+progress cannot be interrupted (HTTP.jl 2.7.1), so a cancel during one takes effect when
+it completes or reaches `connect_timeout`.
 
 Local validation throws `ArgumentError` before any network I/O, streaming or not:
-when `r.service` is an endpoint type that declares its capabilities and lists neither
-`:responses` (OpenAI wire) nor `:agentic` (Gemini Interactions), or when the
-provider's encoder rejects the request (e.g. an option the provider or model does not
-support).
+when `callback` is passed without `r.stream === true` (it runs only on a stream, so it
+would be ignored), when `r.service` is an endpoint type that declares its capabilities
+and lists neither `:responses` (OpenAI wire) nor `:agentic` (Gemini Interactions), or
+when the provider's encoder rejects the request (e.g. an option the provider or model
+does not support).
 
 # Examples
 ```julia
@@ -1649,6 +1655,8 @@ end
 """
 function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callback=nothing,
                  cancel::Union{Nothing,CancelToken}=nothing)
+    r.stream === true || isnothing(callback) ||
+        throw(ArgumentError("callback requires stream=true"))
     _validate_agentic_capability(r.service)
     body = encode_agentic(r.service, r)
     cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()

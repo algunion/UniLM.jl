@@ -525,9 +525,13 @@ function handle_sse_event!(::Type{ANTHROPICServiceEndpoint}, event::AbstractStri
                 key == "input" || continue
                 # Streamed tool input arrives as partial JSON: finalize to a parsed
                 # object so the block matches the non-streaming wire shape. The
-                # arguments are published first, so an undecodable input still
-                # reaches the tool call (whose own parse reports it).
+                # arguments are published first, so an input that is no JSON object
+                # still reaches the tool call, whose own decode decides: an error
+                # under a tool_use stop, a dropped call on a turn cut at max_tokens
+                # (which ends the input mid-JSON). Such a block stays pending: the
+                # capture is incomplete, so the turn is rebuilt from its neutral fields.
                 haskey(state.tool_calls, idx) && (state.tool_calls[idx]["function"]["arguments"] = s)
+                _is_json_object(s) || return :continue
                 blk[key] = _parse_tool_arguments(s)
             end
             push!(state.raw_blocks, blk)

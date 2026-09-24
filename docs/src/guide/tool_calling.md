@@ -101,7 +101,10 @@ end
 The finish reason is the provider's own: a turn that carries tool calls reads
 `"tool_calls"` when the provider finished it with `"stop"` or reported none, and keeps
 any other reason (`"length"`, `"content_filter"`, a provider-specific value) — such a
-turn may hold partial calls, so do not run them.
+turn may hold partial calls, so do not run them. Partial calls are dropped: a call
+cut off before its arguments formed a JSON object is removed from such a turn, which
+keeps its text, finish reason and usage. On a `"tool_calls"` turn, whose calls would
+run, arguments that do not parse are an `LLMCallError` instead.
 
 !!! tip "Streaming tool calls"
     When streaming (`stream=true`), pass `on_tool_call` to [`chatrequest!`](@ref) to be
@@ -273,7 +276,7 @@ the results back, and repeat until the model answers in text, a request fails, o
   is sent JSON-encoded (a `Dict` becomes a JSON object, `nothing` becomes `null`). A
   dispatcher that throws sends `"Error: <message>"` as that call's output and records a
   failed [`ToolCallOutcome`](@ref), so the model can react; an `InterruptException`
-  propagates instead.
+  propagates instead, after `tool_loop!` removes the interrupted turn from the chat.
 - **Concurrency and cancellation.** `tool_concurrency = n` runs up to `n` of a turn's calls
   at once on spawned tasks (the dispatcher must then be thread-safe; results go back in
   call order). `cancel = tok` — or an ambient `with_cancel` scope — makes the loop
@@ -305,7 +308,14 @@ It runs a turn's calls only when the turn finished with `"tool_calls"`. A turn t
 calls but finished for another reason (`"length"`, `"content_filter"`, …) may hold partial
 calls: none runs, the loop stops with `completed=false` and an `llm_error` naming the
 reason, and that unanswered assistant turn is removed from `chat`, so the conversation
-stays sendable. A turn cancelled between dispatches is removed the same way.
+stays sendable. A turn cancelled between dispatches, or interrupted by an
+`InterruptException` from a dispatch, is removed the same way. A text turn completes the
+loop only when it finished with `"stop"` or reported no reason (a `"tool_calls"` finish
+with no calls counts too); `"length"` ends it with `completed=false` and
+`llm_error = "Model output was truncated by the token limit"`, and any other reason
+(`"content_filter"`, a provider-specific value) with an `llm_error` naming the reason.
+`callback` and `on_tool_call` are passed to [`chatrequest!`](@ref) unchanged, so they need
+a `Chat` with `stream=true`.
 
 ### Responses API
 

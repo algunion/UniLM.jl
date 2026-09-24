@@ -1120,13 +1120,14 @@ end
 Base.last(chat::Chat) = last(chat.messages)
 
 """
-    update!(chat::Chat, msg::Message)
+    update!(chat::Chat, msg::Message) -> Chat
 
-    Update the chat with a new message. 
+Append `msg` to the conversation when `chat.history` is on; with `history=false` the
+chat is left unchanged, as documented for that setting (logged at debug level only).
 """
 function update!(chat::Chat, msg::Message)
     chat.history && push!(chat, msg)
-    !chat.history && @warn "Cannot update chat with your message: chat history is disabled."
+    !chat.history && @debug "Cannot update chat with your message: chat history is disabled."
     return chat
 end
 

@@ -2012,12 +2012,12 @@ try
     # ── TARGET A: on_tool_call callback that THROWS is the call's outcome (_fire_tool_calls!)
     @testset "stream on_tool_call callback error is the typed outcome, never swallowed" begin
         # Same single streamed tool call as the on_tool_call success test, but the
-        # user callback raises. _fire_tool_calls! wraps on_tool_call in try/catch;
-        # the throw must hit the catch (the @warn) and be SWALLOWED — the spawned task
-        # must NOT error. Falsifier: remove the try/catch around on_tool_call and the
-        # task throws → result becomes LLMCallError, not LLMSuccess, and tool_calls
-        # are never assembled. We also assert the assembled tool call survives, proving
-        # _build_stream_message still ran after the callback blew up.
+        # user callback raises. The driver runs on_tool_call through `_user_call`,
+        # which records the exception as the call's outcome: the spawned task does not
+        # error, `fetch` returns an LLMCallError whose `cause` is that exception, the
+        # callback is never fired again, and the failed turn is not committed.
+        # Falsifier: a driver that swallowed the exception (logging it and going on)
+        # would return an LLMSuccess and commit the turn.
         response_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] =

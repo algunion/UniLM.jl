@@ -200,15 +200,15 @@ _native_timeout_kwargs(cfg::RequestConfig, bound::Float64) =
 function _native_stream_kwargs(cfg::RequestConfig, bound::Float64=Inf)
     kw = (connect_timeout   = _native_seconds_real(cfg.connect_timeout),
           read_idle_timeout = _native_seconds_real(cfg.stream_idle_timeout))
-    # Idle bound disabled: nothing above bounds the response-header wait, and the
-    # driver's request-phase watchdog cannot help either — closing the client
-    # stream cannot reach the connection until `startread` returns (HTTP.jl hands
-    # the stream its connection together with the response headers) — so a mute
-    # peer would stall forever. Cap the header wait natively at the same request
-    # bound. ONLY in this branch: with a finite idle bound read_idle_timeout
-    # already bounds that wait (HTTP.jl waits min(response_header_timeout,
-    # read_idle_timeout)), and a second native non-connect timer would break the
-    # by-elimination attribution in `_classify_stream_timeout`.
+    # Idle bound disabled: no native timer above bounds the response-header wait.
+    # The driver's request-phase deadline still ends it — it aborts the attempt
+    # through its request context (`_abort_request_phase`) — and, as everywhere in
+    # this seam, a native timer at the same bound is the fast path under it, so the
+    # header wait is capped natively at the request bound. ONLY in this branch: with
+    # a finite idle bound read_idle_timeout already bounds that wait (HTTP.jl waits
+    # min(response_header_timeout, read_idle_timeout)), and a second native
+    # non-connect timer would break the by-elimination attribution in
+    # `_classify_stream_timeout`.
     return (cfg.stream_idle_timeout == Inf && bound < Inf) ?
         (kw..., response_header_timeout = bound) : kw
 end
@@ -265,7 +265,11 @@ the in-driver idle guard happened to be armed yet:
    can breach BEFORE the first byte arrives — before the idle guard exists.
    Deciding from the armed-timer set keeps the phase deterministic across
    that arming-order race (observed flipping with HTTP 2.6.x server-side
-   task-scheduling changes).
+   task-scheduling changes). The driver's request-phase deadline is not a
+   native timer: it aborts the attempt by cancelling its request context, so
+   what escapes is an `HTTP.CanceledError`, never a native timeout, and the
+   driver restores the deadline's recorded `UniLMTimeout(:request, …)` in its
+   place.
 
 `elapsed` reports the measured byte gap where the guard measured one; for a
 pre-first-byte breach the attempt's own elapsed time is the honest "no bytes
@@ -509,7 +513,7 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
 end
 
 """
-    _http_open(f, method, url, headers; cfg, t0, cancel, kwargs...) -> HTTP.Response
+    _http_open(f, method, url, headers; cfg, t0, cancel, context, kwargs...) -> HTTP.Response
 
 Streaming attempt seam: wraps `HTTP.open` with `status_exception=false`,
 `retry=false`, `protocol=:h1` (one connection per stream: HTTP/2 multiplexing
@@ -524,31 +528,52 @@ arrive. `t0` is the driver's monotonic origin, accepted here so drivers
 thread one origin through the seam.
 
 `cancel` (default: the ambient token) already cancelled at entry throws
-[`UniLMCancelled`](@ref) with no network I/O. The attempt runs under its own
-`HTTP.RequestContext`, cancelled by a cancel for the attempt's whole duration:
-HTTP.jl checks it before acquiring a connection and aborts the connection once
-acquired, which unblocks the response-header wait and body reads parked inside
-`f` (a TCP/TLS connect already in progress finishes, or hits its connect bound,
-first). Whatever then escapes `HTTP.open` (HTTP.jl reports a cancelled context as
+[`UniLMCancelled`](@ref) with no network I/O. The attempt runs under the
+`HTTP.RequestContext` `context` (default: a fresh one; a driver passes its own so its
+first-byte deadline can abort the attempt through [`_abort_request_phase`](@ref)),
+cancelled by a cancel for the attempt's whole duration: HTTP.jl checks it before
+acquiring a connection and aborts the connection once acquired, which unblocks the
+request upload, the response-header wait and body reads parked inside `f` (a TCP/TLS
+connect already in progress finishes, or hits its connect bound, first). Whatever
+then escapes `HTTP.open` (HTTP.jl reports a cancelled context as
 `HTTP.CanceledError`) propagates unchanged — mapping it to a typed result is the
 driver's job.
 """
 function _http_open(f::Function, method::AbstractString, url::AbstractString, headers;
                     cfg::RequestConfig, t0::UInt64,
                     cancel::Union{Nothing,CancelToken}=_current_cancel(),
+                    context::HTTP.RequestContext=HTTP.RequestContext(),
                     kwargs...)::HTTP.Response
     iscancelled(cancel) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
-    ctx = HTTP.RequestContext()
-    handle = _on_cancel(() -> HTTP.cancel!(ctx; message="cancelled"), cancel)
+    handle = _on_cancel(() -> HTTP.cancel!(context; message="cancelled"), cancel)
     try
         return HTTP.open(method, url, headers;
                          kwargs..., _open_kwargs(cfg, min(cfg.request_timeout, _remaining_s(cfg, t0)))...,
-                         context=ctx) do io
+                         context) do io
             f(io)
         end
     finally
         _off_cancel(cancel, handle)
     end
+end
+
+"""
+    _abort_request_phase(io, ctx) -> Nothing
+
+The close action of a stream driver's first-byte deadline. In HTTP.jl 2.x the request
+upload and the response-header wait both run inside `startread`, and the stream is
+handed its connection only together with the response headers, so `close(io)` alone
+does nothing until they arrive: a peer that never answers would hold the attempt
+until the read-idle timer fired, however much smaller the deadline. Cancelling the
+attempt's request context aborts the connection wherever the exchange is (see
+[`_http_open`](@ref)); `close(io)` then closes the stream itself. The driver's catch
+restores the deadline's recorded `UniLMTimeout(:request, …)` over the
+`HTTP.CanceledError` HTTP.jl raises for the aborted exchange.
+"""
+function _abort_request_phase(io::HTTP.Stream, ctx::HTTP.RequestContext)::Nothing
+    HTTP.cancel!(ctx; message="request-phase deadline exceeded")
+    close(io)
+    nothing
 end
 
 # ─── URL Dispatch ─────────────────────────────────────────────────────────────
@@ -703,6 +728,11 @@ parts; a refusal is kept; `""` tool arguments decode as an empty object. A choic
 that carries nothing is the empty turn it is (`content = ""` — a reasoning model can
 spend the whole budget on thought tokens). The finish reason is the wire's, except
 that a tool-call turn finished with `"stop"` or none reads `"tool_calls"`.
+
+A call whose arguments are not a JSON object throws under a `"tool_calls"` finish,
+which would dispatch it. Under any other finish no tool loop runs the turn's calls,
+and a turn cut at `"length"` can end inside a call's arguments: such a call is
+dropped, so the turn itself — its text, finish reason and usage — is kept.
 """
 function extract_message(resp::HTTP.Response)
     received = JSON.parse(resp.body; dicttype=Dict{String,Any})
@@ -715,9 +745,11 @@ function extract_message(resp::HTTP.Response)
     refusal = get(message, "refusal", nothing)
     refusal isa AbstractString || (refusal = nothing)
     raw_calls = get(message, "tool_calls", nothing)
-    msg = if raw_calls isa AbstractVector && !isempty(raw_calls)
+    calls = raw_calls isa AbstractVector ?
+        _decode_tool_calls(raw_calls, _tool_finish_reason(finish)) : ToolCall[]
+    msg = if !isempty(calls)
         Message(role=RoleAssistant, content=(isnothing(text) || isempty(text) ? nothing : text),
-                tool_calls=_decode_tool_calls(raw_calls), refusal_message=refusal,
+                tool_calls=calls, refusal_message=refusal,
                 finish_reason=_tool_finish_reason(finish))
     else
         Message(role=RoleAssistant, content=(isnothing(text) && !isnothing(refusal) ? nothing : something(text, "")),
@@ -741,10 +773,29 @@ _content_text(::Nothing) = nothing
 _tool_finish_reason(reason::Union{Nothing,AbstractString})::String =
     isnothing(reason) || reason == STOP ? TOOL_CALLS : String(reason)
 
-# OpenAI-wire `tool_calls` array → the neutral ToolCall vector.
-_decode_tool_calls(raw::AbstractVector)::Vector{ToolCall} =
-    [ToolCall(id=x["id"], func=GPTFunction(x["function"]["name"], _parse_tool_arguments(x["function"]["arguments"])))
-     for x in raw]
+# Whether `args` is what `_parse_tool_arguments` accepts: blank, or a JSON object (a
+# valid JSON text that starts with `{`).
+_is_json_object(args::AbstractString)::Bool =
+    isempty(strip(args)) || (startswith(lstrip(args), '{') && JSON.isvalidjson(args))
+
+# The arguments of one decoded tool call on a turn whose tool-call finish reason is
+# `finish`, or `nothing` to drop the call. Under "tool_calls" the call will be
+# dispatched, so its arguments must parse (`_parse_tool_arguments` throws otherwise).
+# Under any other finish no tool loop runs the turn's calls; a turn cut at "length"
+# can end inside a call's arguments, and that call is dropped so the turn survives.
+_call_arguments(args::AbstractString, finish::String)::Union{Nothing,Dict{String,Any}} =
+    finish == TOOL_CALLS || _is_json_object(args) ? _parse_tool_arguments(args) : nothing
+
+# OpenAI-wire `tool_calls` array → the neutral ToolCall vector, less the calls
+# `_call_arguments` drops.
+function _decode_tool_calls(raw::AbstractVector, finish::String)::Vector{ToolCall}
+    calls = ToolCall[]
+    for x in raw
+        args = _call_arguments(x["function"]["arguments"], finish)
+        isnothing(args) || push!(calls, ToolCall(id=x["id"], func=GPTFunction(x["function"]["name"], args)))
+    end
+    calls
+end
 
 """
     StreamState()
@@ -829,19 +880,22 @@ function _build_stream_message(state::StreamState)::Message
           !isempty(state.raw_pending)) ? nothing :
          ProviderContent(provider, state.raw_blocks)
     # The finish reason is reported as it arrived: none when the provider sent none.
-    if !isempty(state.tool_calls)
-        tcalls = map(sort!(collect(keys(state.tool_calls)))) do idx
-            tc_data = state.tool_calls[idx]
-            fdict = _tool_function!(state, idx)
-            args = _parse_tool_arguments(fdict["arguments"])   # "" → Dict{String,Any}() (zero-arg tool call)
-            ToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
-                     thought_signature=get(tc_data, "thought_signature", nothing))
-        end
+    # A call cut mid-arguments on a turn that did not finish with a tool call is
+    # dropped, as in `extract_message` (see `_call_arguments`).
+    finish = _tool_finish_reason(state.finish_reason)
+    tcalls = ToolCall[]
+    for idx in sort!(collect(keys(state.tool_calls)))
+        tc_data = state.tool_calls[idx]
+        fdict = _tool_function!(state, idx)
+        args = _call_arguments(fdict["arguments"], finish)   # "" → Dict{String,Any}() (zero-arg tool call)
+        isnothing(args) || push!(tcalls, ToolCall(id=tc_data["id"], func=GPTFunction(fdict["name"], args),
+                                                  thought_signature=get(tc_data, "thought_signature", nothing)))
+    end
+    if !isempty(tcalls)
         # Keep accumulated text ALONGSIDE the tool calls: providers emit
         # both in one turn and the non-streaming decoders already preserve both.
         Message(role=RoleAssistant, content=(isempty(content) ? nothing : content),
-                tool_calls=tcalls, finish_reason=_tool_finish_reason(state.finish_reason),
-                provider_content=pc)
+                tool_calls=tcalls, finish_reason=finish, provider_content=pc)
     elseif isempty(content) && !isempty(refusal)
         Message(role=RoleAssistant, refusal_message=refusal,
                 finish_reason=state.finish_reason, provider_content=pc)
@@ -1054,6 +1108,25 @@ function _finalize_stream_message!(state::StreamState, callback, on_tool_call,
     (; msg, usage=state.usage)
 end
 
+# How long a Chat stream that has its `[DONE]` waits for the end of its HTTP body.
+const _BODY_END_WAIT = 0.5
+
+# Read what is left of a finished stream's body, at most `_BODY_END_WAIT` seconds: its
+# end is what returns the connection to the pool for the next call. A body still open
+# then is abandoned — `close(io)` ends the read and the connection is closed rather than
+# reused — which costs the caller nothing: the turn is already final. Bytes after the
+# terminal are discarded. Any other failure of the read propagates as teardown noise.
+function _await_body_end(io::HTTP.Stream)::Nothing
+    try
+        _with_deadline(() -> while !eof(io); readavailable(io); end, () -> close(io),
+                       _BODY_END_WAIT, :stream_idle)
+    catch e
+        e isa UniLMTimeout || rethrow()
+        @debug "stream body still open after [DONE]; its connection is closed, not reused" wait = _BODY_END_WAIT
+    end
+    nothing
+end
+
 # Commit a completed streamed turn: history update, typed success, cost accrual.
 # Shared by the clean end-of-stream path and the teardown-recovery path, so a
 # turn recovered from teardown noise is committed exactly like a clean one.
@@ -1076,9 +1149,11 @@ and transport failures — retry classification is the caller's job — on a sto
 (`UniLMCancelled`) and on a user-code failure (`_UserCallbackError`). A breach of the
 byte-gap idle bound throws `UniLMTimeout(:stream_idle, …)` wherever in the attempt it
 fires (the native read-idle timer also bounds the response-header wait, so it can
-undercut the request-phase bound; see `_classify_stream_timeout`). `StreamState`, the
-SSE line carry, and the raw byte log are all locals: a retried attempt cannot inherit
-partial SSE state.
+undercut the request-phase bound; see `_classify_stream_timeout`). At the sentinel
+(`[DONE]`, `message_stop`) the turn is finalized at once, and the rest of the body is
+awaited only briefly (`_await_body_end`). `StreamState`, the SSE line carry,
+and the raw byte log are all locals: a retried attempt cannot inherit partial SSE
+state.
 """
 function _stream_attempt(chat::Chat, body, callback, on_tool_call,
                          cfg::RequestConfig, t0::UInt64, io_ref, ctl::_StreamCtl)
@@ -1097,13 +1172,14 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
     # built (→ LLMFailure). Request identity encoding and disable decompression so
     # `data:` lines arrive verbatim.
     stream_headers = push!(copy(auth_header(chat.service)), "Accept-Encoding" => "identity")
+    ctx = HTTP.RequestContext()   # the attempt's; its first-byte deadline aborts through it
     try
         # Seam-routed: _http_open applies the native stream timeout kwargs plus
         # status_exception=false and retry=false (HTTP.jl's internal retries would
         # silently multiply the attempt budget) and aborts the exchange on `ctl.stop`;
         # decompress=false passes through.
         resp = _http_open("POST", get_url(chat), stream_headers; cfg, t0, cancel=ctl.stop,
-                          decompress=false) do io
+                          context=ctx, decompress=false) do io
             io_ref[] = io
             carry = IOBuffer()                 # layer-1 partial-line carry
             current_event = Ref("")            # layer-2 sticky event name
@@ -1116,12 +1192,13 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
                     write(io, body)
                     HTTP.closewrite(io)
                     HTTP.startread(io)
-                end, () -> close(io),
+                end, () -> _abort_request_phase(io, ctx),
                 min(_remaining_s(cfg, t0), cfg.request_timeout), :request, bound)
             idle[] = _idle_guard(() -> close(io), cfg.stream_idle_timeout)
-            # `eof` first: after `[DONE]` it consumes the body's end, which keeps the
-            # connection reusable. A stop aborts the connection, so it never blocks here.
-            while !eof(io) && !iscancelled(ctl.stop) && status === :continue
+            # The terminal first: at `[DONE]` the turn is finalized at once, however long
+            # the server keeps the body open (its end is awaited below, briefly). A stop
+            # aborts the connection, so `eof` never blocks on one.
+            while status === :continue && !iscancelled(ctl.stop) && !eof(io)
                 raw = String(readavailable(io))
                 _touch!(idle[])
                 write(raw_buffer, raw)
@@ -1165,7 +1242,10 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
             end
             # A stop from the terminal callback leaves the recorded turn standing; the
             # aborted body is not drained.
-            iscancelled(ctl.stop) || HTTP.closeread(io)
+            if !iscancelled(ctl.stop)
+                status === :done && _await_body_end(io)
+                HTTP.closeread(io)
+            end
         end
         serr = state.error
         if !isnothing(serr)
@@ -1216,10 +1296,10 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
         breach === nothing || throw(breach)
         # Recorded request-phase bound: the typed cause that initiated the
         # teardown takes precedence over whatever the library surfaced while
-        # unwinding it (e.g. EPIPE from writing to the socket the bound
-        # closed). With no displacement this rethrows the same timeout the
-        # attempt already threw; it never masks an error that arrived with no
-        # bound fired.
+        # unwinding it (the `HTTP.CanceledError` of the context the bound
+        # cancelled, or EPIPE from writing to the aborted connection). With no
+        # displacement this rethrows the same timeout the attempt already threw;
+        # it never masks an error that arrived with no bound fired.
         bt = bound[]
         bt === nothing || throw(bt)
         # Remaining native timeouts are connect-phase (connect/TLS labels); map them
@@ -1357,9 +1437,14 @@ text deltas then the final assembled `Message`; `on_tool_call(tc::ToolCall)` fir
 once per completed streamed tool call. Setting `close[] = true` — in the callback or
 from any other task — stops the stream at once: the call ends with
 `LLMCallError(status=nothing, cause=UniLMCancelled(:callback, …))`, unless the
-provider's terminal event was already recorded, in which case the turn stands (a
-success, committed). An exception thrown by `callback` or `on_tool_call` ends the
-call with that exception in `cause`: never retried, nothing committed, and no
+provider's completion marker already arrived — then the turn is committed, the
+final-message callback runs, and usage may be missing. The marker is the chunk that
+carries the finish reason; on the OpenAI wire it precedes the usage chunk and
+`[DONE]`. The turn is final at the end-of-stream sentinel (`[DONE]`, Anthropic
+`message_stop`): the final-message callback runs then, and the result follows when
+the HTTP body ends, at most 0.5 s later (a body still open then has its connection
+closed rather than reused). An exception thrown by `callback` or `on_tool_call` ends
+the call with that exception in `cause`: never retried, nothing committed, and no
 callback runs after it. Time spent in these callbacks does not count toward
 `stream_idle_timeout`, which bounds only the gap between bytes off the socket. A
 user `InterruptException` is never converted into a result value: it propagates, so
@@ -1374,21 +1459,27 @@ default set via `set_default_config!`).
 ambient token of [`with_cancel`](@ref), at call entry. A cancel at any point — before
 connecting, during the response-header wait, mid-stream, or during a retry backoff —
 ends the call with `LLMCallError(status=nothing, cause=UniLMCancelled(:token, …))`:
-never retried, nothing committed to `chat`, no terminal callback. A pre-cancelled token
-sends nothing. A TCP connect or TLS handshake already in progress cannot be interrupted
-(HTTP.jl 2.7.1), so a cancel during one takes effect when it completes or reaches
-`connect_timeout`.
+never retried, nothing committed to `chat`, no terminal callback — unless the
+provider's completion marker already arrived (as for `close[] = true` above): then the
+turn is committed, the final-message callback runs, and usage may be missing. A
+pre-cancelled token sends nothing. A TCP connect or TLS handshake already in progress
+cannot be interrupted (HTTP.jl 2.7.1), so a cancel during one takes effect when it
+completes or reaches `connect_timeout`.
 
 Local validation throws before any network I/O, streaming or not: `ArgumentError`
-when `chat.service` is an endpoint type that declares its capabilities and does not
-list `:chat` (a custom endpoint declares none and is dispatched unvalidated), or when
-the provider's encoder rejects the request (e.g. an option the provider or model does
-not support); `InvalidConversationError` when `chat.history` is on and the
-conversation ends with an assistant message, so the reply could not be appended.
+when `callback` or `on_tool_call` is passed without `chat.stream === true` (they run
+only on a stream, so they would be ignored), when `chat.service` is an endpoint type
+that declares its capabilities and does not list `:chat` (a custom endpoint declares
+none and is dispatched unvalidated), or when the provider's encoder rejects the
+request (e.g. an option the provider or model does not support);
+`InvalidConversationError` when `chat.history` is on and the conversation ends with an
+assistant message, so the reply could not be appended.
 """
 function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
                       callback=nothing, on_tool_call=nothing,
                       cancel::Union{Nothing,CancelToken}=nothing)
+    chat.stream === true || (isnothing(callback) && isnothing(on_tool_call)) ||
+        throw(ArgumentError("callback and on_tool_call require stream=true"))
     _validate_declared_capability(chat.service, :chat, "Chat Completions API")
     _validate_reply_slot(chat)
     body = encode_request(chat.service, chat)

@@ -661,6 +661,35 @@ end
     @test isnothing(msg.provider_content)              # blocks still pending: capture incomplete
 end
 
+@testset "stream — a tool_use cut off by max_tokens keeps the turn and drops the partial call" begin
+    # max_tokens ends the turn inside the tool input: its block stops on a JSON fragment,
+    # which is a truncation, not an undecodable line. The turn keeps its text, "length"
+    # and usage; the partial call is dropped (no loop runs a "length" turn's calls), and
+    # the unfinished block leaves the capture incomplete, so nothing partial is echoed.
+    ev(d) = "data: " * JSON.json(d)
+    lines = [
+        ev(Dict("type" => "message_start", "message" => Dict("usage" => Dict("input_tokens" => 12, "output_tokens" => 1)))),
+        ev(Dict("type" => "content_block_start", "index" => 0, "content_block" => Dict("type" => "text", "text" => ""))),
+        ev(Dict("type" => "content_block_delta", "index" => 0, "delta" => Dict("type" => "text_delta", "text" => "Let me check."))),
+        ev(Dict("type" => "content_block_stop", "index" => 0)),
+        ev(Dict("type" => "content_block_start", "index" => 1, "content_block" => Dict("type" => "tool_use",
+            "id" => "toolu_9", "name" => "get_weather", "input" => Dict()))),
+        ev(Dict("type" => "content_block_delta", "index" => 1,
+            "delta" => Dict("type" => "input_json_delta", "partial_json" => "{\"city\": \"Par"))),
+        ev(Dict("type" => "content_block_stop", "index" => 1)),
+        ev(Dict("type" => "message_delta", "delta" => Dict("stop_reason" => "max_tokens"),
+                "usage" => Dict("output_tokens" => 50))),
+        ev(Dict("type" => "message_stop")),
+    ]
+    st = StreamState()
+    @test UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), join(lines, "\n") * "\n", st) === :done
+    @test st.sse_dropped == 0
+    @test st.usage.completion_tokens == 50
+    msg = _build_stream_message(st)
+    @test msg.finish_reason == "length" && msg.content == "Let me check."
+    @test isnothing(msg.tool_calls) && isnothing(msg.provider_content)
+end
+
 # Stop reasons and refusals: https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons.md,
 # https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback.md (stop_details, discard
 # partial output), and .../test-and-evaluate/strengthen-guardrails/handle-streaming-refusals.md

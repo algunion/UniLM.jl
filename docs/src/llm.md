@@ -180,7 +180,7 @@ end
 
 **Validation**: `role` must be one of the four roles; at least one of `content`, `tool_calls`, or `refusal_message` must be non-`nothing`; `tool_call_id` is required when `role == "tool"`.
 
-On the wire a message never sends `finish_reason` (response-only) or `provider_content`, and a refusal travels as `refusal` (with `content: null`). A tool-call turn reads `finish_reason == "tool_calls"` when the provider finished it with `"stop"` or reported none, and keeps any other reason (`"length"`, `"content_filter"`, …).
+On the wire a message never sends `finish_reason` (response-only) or `provider_content`, and a refusal travels as `refusal` (with `content: null`). A tool-call turn reads `finish_reason == "tool_calls"` when the provider finished it with `"stop"` or reported none, and keeps any other reason (`"length"`, `"content_filter"`, …). Partial calls are dropped: on a turn that kept another reason, a call whose arguments are not a JSON object (cut off by the token limit) is removed and the turn — text, reason, usage — kept; under `"tool_calls"` such arguments are an `LLMCallError`.
 
 `provider_content` carries provider-native blocks captured for verbatim round-trip — Anthropic thinking blocks (`:anthropic`), Gemini parts with thought signatures (`:gemini`), DeepSeek `reasoning_content` (`:deepseek`, echoed on requests that carry tools); it never serializes on the OpenAI wire.
 
@@ -208,11 +208,12 @@ chatrequest!(; systemprompt, userprompt, config=nothing, cancel=nothing, chat_kw
 - Non-streaming: returns `LLMSuccess`, `LLMFailure`, or `LLMCallError`.
 - Streaming (`stream=true`): returns a `Task` whose `fetch` yields the same typed results. Pass a `callback(chunk::Union{String,Message}, close::Ref{Bool})` — text deltas arrive as `String`s (verbatim, in order), then the assembled `Message` at end-of-stream.
 - Streaming tool calls: pass `on_tool_call(tc::ToolCall)` to be notified at most once per completed streamed tool call, as calls finish (a call whose arguments do not parse is skipped with a warning; see the [Streaming guide](@ref streaming_guide)).
-- Local validation throws before any network I/O, streaming or not: `ArgumentError` when the service declares capabilities without `:chat` or the provider's encoder rejects the request; `InvalidConversationError` when `history=true` and the conversation ends with an assistant message (the reply could not be appended).
+- Local validation throws before any network I/O, streaming or not: `ArgumentError` when `callback` or `on_tool_call` is passed without `stream=true` ("callback and on_tool_call require stream=true"), the service declares capabilities without `:chat`, or the provider's encoder rejects the request; `InvalidConversationError` when `history=true` and the conversation ends with an assistant message (the reply could not be appended).
 - The keyword form takes EITHER `messages` (copied, never mutated) OR both `systemprompt` and `userprompt` (a `String` or a `Message` each); anything else throws `ArgumentError`. Every other keyword is a `Chat` field; `history` controls whether the reply is appended, not what is sent.
 - Retries transient statuses (408/429/500/502/503/504/529) with exponential backoff and jitter under the resolved [`RequestConfig`](@ref) — `max_attempts` (default 3) and `total_deadline` bound the attempts. `Retry-After` is a floor under the jitter (at most half the budget left after the floor is spread above it), so a rate-limited fan-out does not retry in lockstep; a retry whose wait would exceed the remaining `total_deadline` is not attempted — the call returns the last real response rather than sleeping past the deadline. Timeouts surface as `LLMCallError` with `status=nothing` and the `UniLMTimeout` in `.cause`.
-- `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token): a cancel before connecting, during the header wait, mid-stream or during a backoff ends the call with `LLMCallError(status=nothing, cause=UniLMCancelled(:token, …))` — never retried, nothing appended, no terminal callback; a pre-cancelled token sends nothing. A TCP connect / TLS handshake in progress finishes (or reaches `connect_timeout`) first.
-- Streaming stop: `close[] = true` (in the callback or from any task) ends the stream at once with `LLMCallError(status=nothing, cause=UniLMCancelled(:callback, …))`, unless the terminal event was already recorded (the turn then stands). An exception thrown by `callback`/`on_tool_call` ends the call with that exception in `.cause` (never retried, nothing appended). Time inside callbacks is not counted by `stream_idle_timeout`.
+- `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token): a cancel before connecting, during the header wait, mid-stream or during a backoff ends the call with `LLMCallError(status=nothing, cause=UniLMCancelled(:token, …))` — never retried, nothing appended, no terminal callback — unless the provider's completion marker already arrived: then the turn is committed, the final-message callback runs, and usage may be missing (on the OpenAI wire the marker is the chunk carrying `finish_reason`, which precedes the usage chunk and `[DONE]`). A pre-cancelled token sends nothing. A TCP connect / TLS handshake in progress finishes (or reaches `connect_timeout`) first.
+- Streaming stop: `close[] = true` (in the callback or from any task) ends the stream at once with `LLMCallError(status=nothing, cause=UniLMCancelled(:callback, …))`, unless the provider's completion marker already arrived — then the turn is committed, the final-message callback runs, and usage may be missing. An exception thrown by `callback`/`on_tool_call` ends the call with that exception in `.cause` (never retried, nothing appended). Time inside callbacks is not counted by `stream_idle_timeout`.
+- A stream is final at its sentinel (`[DONE]`, Anthropic `message_stop`): the final `Message` callback runs at once, and the result follows when the HTTP body ends, at most 0.5 s later (a body held open longer has its connection closed, not reused).
 - Streaming retry boundary: transient failures (including the in-band `overloaded_error`, the documented 529 equivalent) are retried inside the task only until the first `callback`/`on_tool_call` invocation; afterwards failures surface typed. A user `InterruptException` propagates — `fetch` throws a `TaskFailedException` instead of returning a result value.
 - Streams use HTTP/1.1 (one connection per stream); OpenAI and DeepSeek streams request `include_usage` when `stream_options` is unset, so streamed turns are costed.
 
@@ -244,7 +245,7 @@ on a system message pushed once the conversation has started, and on consecutive
 same-role messages (except `tool`), so
 `chat = Chat(); push!(chat, Message(Val(:user), "…"))` raises rather than silently
 leaving the chat empty. `pop!` on an empty `Chat` likewise throws
-`InvalidConversationError` rather than returning `nothing`. Use `respond(input=…)`
+`InvalidConversationError` rather than returning `nothing`. Use `respond("…")`
 for a single turn without a system prompt.
 
 ### Tool Calling Types
@@ -648,8 +649,8 @@ respond(input; kwargs...) -> same
 respond(callback::Function, input; kwargs...) -> Task
 ```
 
-- Streaming callback signature: `callback(chunk::Union{String, ResponseObject}, close::Ref{Bool})`; `close[] = true` (or a `cancel!` on the call's token) stops the stream with `ResponseCallError(status=nothing, cause=UniLMCancelled(...))` unless the terminal event was already recorded. A callback exception ends the call with it in `.cause`.
-- Local validation throws `ArgumentError` before any network I/O: a service that declares capabilities with neither `:responses` nor `:agentic`, or an encoder rejection (a field the wire or model cannot express).
+- Streaming callback signature: `callback(chunk::Union{String, ResponseObject}, close::Ref{Bool})`; `close[] = true` (or a `cancel!` on the call's token) stops the stream with `ResponseCallError(status=nothing, cause=UniLMCancelled(...))`, unless the provider's completion marker — the terminal event — already arrived: then the outcome it recorded stands (a response with its usage, whose final callback has run; or the reported failure). A callback exception ends the call with it in `.cause`.
+- Local validation throws `ArgumentError` before any network I/O: a `callback` passed without `stream=true` ("callback requires stream=true"), a service that declares capabilities with neither `:responses` nor `:agentic`, or an encoder rejection (a field the wire or model cannot express).
 - Retries retryable statuses (408/429/500/502/503/504/529) up to `config.max_attempts` (default 3) with full-jitter backoff bounded by `config.total_deadline`; `Retry-After` is a floor under the jitter, and a retry whose wait would exceed the remaining deadline is not attempted — it returns the last real response instead of sleeping past it. Every attempt is time-bounded — a silent peer fails with a typed timeout inside `ResponseCallError` (`status = nothing`, `cause::UniLMTimeout`), never a hang. Every exception that ends a call (including a cancellation, `cause::UniLMCancelled`) is in `.cause`.
 - **Parameter validation**: `temperature` ∈ [0.0, 2.0], `top_p` ∈ [0.0, 1.0], `max_output_tokens` ≥ 1, `top_logprobs` ∈ [0, 20]; `conversation` cannot be combined with `previous_response_id`, `background=true` requires `store` not `false`, and `prompt_cache_retention` cannot be combined with `prompt_cache_options`; `Reasoning(effort=…)` must be one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Violations throw `ArgumentError`.
 
@@ -1072,7 +1073,7 @@ struct ToolLoopResult
     response::LLMRequestResponse        # the last response received (on max_turns: the last tool-call turn)
     tool_calls::Vector{ToolCallOutcome}
     turns_used::Int
-    completed::Bool                     # true only for a final text answer
+    completed::Bool                     # true only for a final text answer that finished normally
     llm_error::Union{String,Nothing}    # why it stopped, when not completed
 end
 ```
@@ -1086,16 +1087,21 @@ tool_loop!(chat; tools::Vector{<:CallableTool}, kwargs...) -> ToolLoopResult   #
 ```
 
 `callback` and `on_tool_call` are the streaming hooks from `chatrequest!`, applied
-to every turn of the loop. Rules:
+to every turn of the loop and passed through unchanged (so they need `stream=true`, else
+`ArgumentError` before any request). Rules:
 
 - `chat.history` must be `true` (else `ArgumentError` before any request); `max_turns < 1`
   and `tool_concurrency < 1` throw `ArgumentError`.
 - Calls run only on a turn whose `finish_reason == "tool_calls"`. A turn with calls that
   finished otherwise (`"length"`, `"content_filter"`, …) runs none: `completed=false`,
   `llm_error` names the reason, and the unanswered assistant turn is removed from `chat`.
+- A text turn completes the loop only when it finished with `"stop"` or no reason (or
+  `"tool_calls"` with no calls); `"length"` gives `completed=false` with
+  `llm_error = "Model output was truncated by the token limit"`, any other reason
+  `completed=false` with an `llm_error` naming it.
 - A dispatcher's `String` result is sent as is, any other value JSON-encoded; a throwing
   dispatcher sends `"Error: <message>"` and records a failed `ToolCallOutcome`; an
-  `InterruptException` propagates.
+  `InterruptException` propagates after the interrupted turn is removed from `chat`.
 - On `max_turns` exhaustion `response` is the last real response, `completed=false`,
   `llm_error = "max turns (N) exhausted"`.
 - `cancel` (default: the ambient token) scopes every turn and dispatch; a cancelled loop
@@ -1750,7 +1756,7 @@ Base.@kwdef struct RequestConfig
 end
 ```
 
-- `connect_timeout` — per-attempt connection establishment. `request_timeout` — per-attempt whole exchange (non-stream). `stream_idle_timeout` — byte-gap between raw stream chunks. `total_deadline` — across ALL attempts including backoff (streams: until first byte). `max_attempts` — wire attempts (`1` disables retries). `mcp_connect_timeout` / `mcp_request_timeout` — MCP handshake / per-exchange bounds.
+- `connect_timeout` — per-attempt connection establishment. `request_timeout` — per-attempt whole exchange (non-stream); a stream's exchange up to its first byte. `stream_idle_timeout` — byte-gap between raw stream chunks. `total_deadline` — across ALL attempts including backoff (streams: until first byte). `max_attempts` — wire attempts (`1` disables retries). `mcp_connect_timeout` / `mcp_request_timeout` — MCP handshake / per-exchange bounds.
 - **Validation**: every `Float64` field rejects `NaN`, values `≤ 0` and finite values above `1e9` s with `ArgumentError` (`Inf` = disabled); `max_attempts ≥ 1`.
 - **Copy-with-overrides**: `RequestConfig(base::RequestConfig; kwargs...)`.
 - **Four channels, struct-wise precedence** (a channel supplies a complete struct):
@@ -1798,17 +1804,25 @@ loops, `nl_dispatch`, `@branch`); `nothing` resolves the ambient token, and ever
 HTTP verb observes the ambient token. A cancelled call returns its call-error result
 with `status = nothing` and `cause = UniLMCancelled(source, elapsed)` (`source` is
 `:token`, or `:callback` for a stream stopped with `close[] = true`), is never retried,
-commits nothing; a pre-cancelled token sends nothing. Limits: a TCP connect / TLS
+commits nothing — unless the provider's completion marker already arrived on a stream:
+then the turn is committed, the final-message callback runs, and usage may be missing
+(a Chat stream's marker is the chunk carrying the finish reason, before the usage chunk
+and `[DONE]` on the OpenAI wire; a Responses stream's is its terminal event, whose
+response carries its usage). A pre-cancelled token sends nothing. Limits: a TCP connect / TLS
 handshake in progress is not interrupted (it completes or hits `connect_timeout`), a
 running callback finishes first, and the Realtime WebSocket and MCP stdio exchanges do
 not observe the token. See the Concurrency, Tasks and Cancellation guide.
 
 ### Sharp edges
 
-- **Streams, pre-first-byte,** are additionally bounded by `stream_idle_timeout`
-  (HTTP.jl caps the response-header wait with the read-idle timer), so the effective
-  bound is `min(total_deadline, request_timeout, stream_idle_timeout)` and a breach
-  reports phase `:stream_idle` even though no byte arrived.
+- **Streams, pre-first-byte,** are bounded by `min(request_timeout, remaining
+  total_deadline)` per attempt (a peer that never answers, or never reads the request,
+  ends the attempt with `UniLMTimeout(:request, …)`) and additionally by
+  `stream_idle_timeout` (HTTP.jl caps the response-header wait with the read-idle
+  timer), so the effective bound is `min(request_timeout, remaining total_deadline,
+  stream_idle_timeout)`; when the idle bound is the smallest, a breach reports phase
+  `:stream_idle` even though no byte arrived. A TCP connect / TLS handshake in progress
+  completes, or reaches `connect_timeout`, first.
 - **The idle bound measures wire idleness only.** Time a stream spends inside the
   user's `callback` / `on_tool_call` is not counted, so a slow consumer never
   idle-kills a healthy stream — and no bound covers a callback that never returns.

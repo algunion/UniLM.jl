@@ -81,8 +81,9 @@
     `"Error: invalid arguments: …"` output instead of throwing; and stops with
     `completed=false`, running none of the turn's calls, when a turn requests a
     client-side action it cannot execute (`custom_tool_call`, `apply_patch_call`,
-    `local_shell_call`, `shell_call`, `computer_call`, `mcp_approval_request`) — such a
-    turn used to end the loop as completed.
+    `local_shell_call`, `computer_call`, a `shell_call` the platform did not answer with
+    a `shell_call_output` in the same output, `mcp_approval_request`) — such a turn used
+    to end the loop as completed.
 - **Platform verbs.**
   - `upload_file` makes a single attempt; `max_attempts` no longer applies. A POST that
     timed out, or drew a gateway 5xx after the backend stored the file, was retried and
@@ -131,7 +132,7 @@
   `tool_choice` string throws (it became `auto`), and `metadata` may carry only
   `user_id`. Requests Claude answers with HTTP 400 are refused locally: `temperature`
   outside [0, 1]; any `top_p`, or a temperature other than 1.0, on Opus 4.7 and later;
-  a forced `tool_choice` on Opus 5.5, Fable 5.1, Mythos 5.1 and Mythos Preview; a
+  a forced `tool_choice` on Opus 5.5, Fable 5.1 and Mythos 5.1; a
   trailing assistant turn (prefill) from the 4.6 generation on; and a
   `reasoning_effort` the model does not take. Because `parallel_tool_calls` defaults to
   `false` whenever `tools` is set, every Anthropic tool request now sends
@@ -229,7 +230,8 @@
 - Chat decoding keeps the provider's finish reason on a tool-call turn (`"tool_calls"`
   stands in only for `"stop"` or none), and a stream without a finish reason reports
   `nothing`. Native Gemini maps `STOP` to `"stop"`, `MAX_TOKENS` to `"length"` and the
-  safety filters, the image-safety reasons included, to `"content_filter"`; any other
+  content filters, the image ones included (`IMAGE_SAFETY`, `IMAGE_PROHIBITED_CONTENT`,
+  `IMAGE_RECITATION`), to `"content_filter"`; any other
   `finishReason` is reported as its lowercased wire value (`"malformed_function_call"`)
   instead of `"stop"`, and a candidate without one as `nothing`. `reasoning_summaries` also reads
   Gemini Interactions `thought` steps.
@@ -287,6 +289,10 @@
   back to the `request-id` header, which Anthropic sends.
 - `ResponseCallError.cause` is set for every exception from `respond` and the lifecycle
   operations, not only for timeouts.
+- A Chat `Tool` wrapped in a `CallableTool` — the form a Chat tool loop takes — went
+  out from `Respond` in the Chat shape (the function nested under `function`), which
+  the Responses API rejects. It now converts to the equivalent `FunctionTool` like a
+  bare `Tool`, keeping its callable, alone or in a mixed tool list.
 - FIM: a `200` whose body was not JSON escaped `fim_complete` as an `ArgumentError`, a
   body without choices decoded as an empty completion, call errors lost their `cause`,
   Mistral FIM was sent to `/v1/completions` (now `/v1/fim/completions`, with its

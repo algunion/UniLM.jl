@@ -144,9 +144,10 @@ See [Google's migration guide](https://ai.google.dev/gemini-api/docs/latest-mode
 Native Gemini reports `finishReason` truthfully on both the streamed and the
 non-streamed path: `STOP` is `"stop"` (`"tool_calls"` when the turn carries function
 calls), `MAX_TOKENS` is `"length"`, the safety filters — `SAFETY`, `RECITATION`,
-`BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII` and the image-safety reasons — are
-`"content_filter"`, and any other value passes through lowercased (for example
-`"malformed_function_call"`). A candidate without a `finishReason` reports `nothing`,
+`BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII` and the image filters `IMAGE_SAFETY`,
+`IMAGE_PROHIBITED_CONTENT` and `IMAGE_RECITATION` — are `"content_filter"`, and any
+other value passes through lowercased (for example `"malformed_function_call"` or
+`"no_image"`). A candidate without a `finishReason` reports `nothing`,
 and function calls under a reason other than `STOP` keep that reason, so a tool loop
 does not run them. A model turn with neither text nor function calls (a refusal, or a
 turn spent entirely on thinking) is left out of the next request.
@@ -208,9 +209,9 @@ How a neutral `Chat` maps onto the Messages API:
 with HTTP 400 are refused locally, before the round trip: `temperature` outside
 [0, 1] on every model; any `top_p`, or a `temperature` other than the default 1.0, on
 Opus 4.7 and later (Opus 4.8, Sonnet 5, Opus 5, Opus 5.5, Fable, Mythos); a forced
-`tool_choice` (`"required"` or a named function) on Opus 5.5, Fable 5.1, Mythos 5.1 and
-Mythos Preview; and a conversation that ends with an assistant turn (response
-prefill) from the 4.6 generation on.
+`tool_choice` (`"required"` or a named function) on Opus 5.5, Fable 5.1 and Mythos 5.1;
+and a conversation that ends with an assistant turn (response prefill) from the 4.6
+generation on.
 
 Decoding: `stop_reason` maps to `finish_reason` — `end_turn`/`stop_sequence` →
 `"stop"`, `tool_use` → `"tool_calls"`, `max_tokens` and

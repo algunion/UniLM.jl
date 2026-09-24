@@ -77,7 +77,8 @@ speak(input::String; voice::String="alloy", model::String="gpt-4o-mini-tts",
 
 Write the synthesized audio bytes to `path`, atomically: the bytes go to a temporary
 file in the same directory, which is then renamed over `path`, so a failed write leaves
-any existing file intact. A symlink is written through; a directory throws `ArgumentError`.
+any existing file intact. An existing file keeps its permission bits. A symlink is written
+through — a dangling one creates its target; a directory throws `ArgumentError`.
 """
 save_audio(r::SpeechSuccess, path::String) = _atomic_write(path, r.audio)
 

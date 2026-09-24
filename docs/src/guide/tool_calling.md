@@ -324,8 +324,10 @@ an `llm_error` naming the status and the `incomplete_details` reason. A call who
 `arguments` are not a JSON object is answered with an `"Error: invalid arguments: …"`
 output, like a dispatcher error, and the loop goes on. A turn that requests a client-side
 action the loop cannot execute — `custom_tool_call`, `apply_patch_call`,
-`local_shell_call`, `shell_call`, `computer_call` or an `mcp_approval_request` — stops it
-with `completed=false`, naming the pending type, and none of that turn's calls run.
+`local_shell_call`, `computer_call`, a `shell_call` the platform did not run itself (a
+hosted shell answers its own call with a `shell_call_output` in the same output) or an
+`mcp_approval_request` — stops it with `completed=false`, naming the pending type, and
+none of that turn's calls run.
 
 ## MCP Tool Integration
 

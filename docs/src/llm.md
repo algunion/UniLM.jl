@@ -1119,8 +1119,9 @@ another status stops the loop (`completed=false`, `llm_error` naming the status 
 `incomplete_details` reason). Call `arguments` that are not a JSON object are answered
 with `"Error: invalid arguments: …"` and the loop continues. A turn requesting a
 client-side action the loop cannot run (`custom_tool_call`, `apply_patch_call`,
-`local_shell_call`, `shell_call`, `computer_call`, `mcp_approval_request`) stops it with
-`completed=false`, naming the type, and runs none of the turn's calls. Result encoding,
+`local_shell_call`, `computer_call`, a `shell_call` without a `shell_call_output` in the
+same output, `mcp_approval_request`) stops it with `completed=false`, naming the type,
+and runs none of the turn's calls. Result encoding,
 `max_turns`, `cancel` and `tool_concurrency` behave as in `tool_loop!` (a cancelled loop's
 `response` is a `ResponseCallError`).
 

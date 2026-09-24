@@ -187,8 +187,7 @@ function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
     # max_tokens is REQUIRED by Anthropic; fall back to the moderate default.
     body[:max_tokens] = something(chat.max_completion_tokens, chat.max_tokens,
                                   default_max_tokens(ANTHROPICServiceEndpoint, chat.model))
-    system, msgs = _anthropic_messages(chat.messages; model=chat.model,
-                                       mid_system=isnothing(fam) || fam.system)
+    system, msgs = _anthropic_messages(chat.messages; mid_system=isnothing(fam) || fam.system)
     isnothing(fam) || fam.prefill || isempty(msgs) || msgs[end][:role] != "assistant" ||
         throw(ArgumentError("$(chat.model) rejects messages that end with an assistant turn " *
                             "(response prefill); end with a user turn or use a json_schema response_format"))
@@ -214,30 +213,30 @@ function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
 end
 
 # Split neutral messages into (system::Union{String,Nothing}, Anthropic messages).
-# - leading system messages → concatenated top-level `system`; a later one stays in
-#   place as role "system" where the model accepts mid-conversation system messages
-#   (`mid_system`) and raises elsewhere — hoisting it would edit the top-level prompt,
-#   which invalidates the thinking blocks of every later turn on the newest models
+# - a system message stays in place as role "system" where the model accepts
+#   mid-conversation system messages (`mid_system`) and where the API accepts one
+#   (see `_mid_system_fits`); hoisting it edits the top-level prompt, which invalidates
+#   the thinking blocks of every later turn on the newest models. Every other one —
+#   leading ones included — is joined into the top-level `system`, which every model
+#   accepts
 # - consecutive `tool` messages → collapsed into ONE user message of tool_result blocks
 # - assistant tool_calls → tool_use blocks; a tool_result referencing an id no
 #   preceding assistant emitted → loud ArgumentError
 # - an assistant turn with neither text nor tool calls (a refusal, an empty reply) is
 #   skipped: the API rejects empty assistant content.
-function _anthropic_messages(messages; model::AbstractString="", mid_system::Bool=true)
+function _anthropic_messages(messages; mid_system::Bool=true)
     system = nothing
     out = Vector{Dict{Symbol,Any}}()
     seen_tool_use_ids = Set{String}()
     pending = Vector{Dict{Symbol,Any}}()
     flush!() = (isempty(pending) ||
         (push!(out, Dict{Symbol,Any}(:role => "user", :content => copy(pending))); empty!(pending)))
-    for m in messages
-        if m.role == RoleSystem && isempty(out) && isempty(pending)
-            system = isnothing(system) ? m.content : string(system, "\n\n", something(m.content, ""))
-        elseif m.role == RoleSystem
-            mid_system || throw(ArgumentError("$model does not accept system messages after the " *
-                "conversation starts; put the instruction in the leading system message"))
+    for (i, m) in pairs(messages)
+        if m.role == RoleSystem && mid_system && _mid_system_fits(messages, i, out, pending)
             flush!()
             push!(out, Dict{Symbol,Any}(:role => "system", :content => something(m.content, "")))
+        elseif m.role == RoleSystem
+            system = isnothing(system) ? m.content : string(system, "\n\n", something(m.content, ""))
         elseif m.role == RoleTool
             tcid = something(m.tool_call_id, "")
             tcid in seen_tool_use_ids || throw(ArgumentError(
@@ -246,7 +245,7 @@ function _anthropic_messages(messages; model::AbstractString="", mid_system::Boo
                 :tool_use_id => tcid, :content => something(m.content, "")))
         elseif m.role == RoleAssistant
             flush!()
-            isempty(something(m.content, "")) && (isnothing(m.tool_calls) || isempty(m.tool_calls)) && continue
+            _skipped_turn(m) && continue
             isnothing(m.tool_calls) || foreach(tc -> push!(seen_tool_use_ids, tc.id), m.tool_calls)
             push!(out, Dict{Symbol,Any}(:role => "assistant", :content => _anthropic_assistant_content(m)))
         else  # RoleUser
@@ -256,6 +255,20 @@ function _anthropic_messages(messages; model::AbstractString="", mid_system::Boo
     end
     flush!()
     (system, out)
+end
+
+_skipped_turn(m::Message)::Bool = m.role == RoleAssistant &&
+    isempty(something(m.content, "")) && (isnothing(m.tool_calls) || isempty(m.tool_calls))
+
+# Whether `messages[i]`, a system message, may stay in place: the API accepts a
+# mid-conversation system message right after a user turn (tool results are one) that is
+# either the last entry or right before an assistant turn, and a run of them as one
+# (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages.md).
+# `out` and `pending` are the turns built so far.
+function _mid_system_fits(messages, i::Int, out, pending)::Bool
+    isempty(pending) && (isempty(out) || out[end][:role] ∉ ("user", "system")) && return false
+    next = findnext(m -> m.role != RoleSystem && !_skipped_turn(m), messages, i + 1)
+    isnothing(next) || messages[next].role == RoleAssistant
 end
 
 # Assistant turn → Anthropic content: echo captured provider-native blocks

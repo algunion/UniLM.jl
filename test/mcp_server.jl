@@ -1428,7 +1428,9 @@ end
             function (_)
                 Threads.atomic_add!(started, 1)
                 t0 = time()
-                while time() - t0 < 1.0 end        # no yield point: holds its thread
+                while time() - t0 < 1.0            # no yield point: holds its thread,
+                    GC.safepoint()                 # but lets a collection proceed
+                end
                 "spun"
             end)
         register_tool!(server, "warm", nothing, Dict{String,Any}("type" => "object"), _ -> "ok")
@@ -1498,6 +1500,44 @@ end
     @test err isa ArgumentError
     @test err isa ArgumentError && occursin("input_schema", err.msg)
     @test !haskey(server.tools, "dict")
+end
+
+@testset "by-name binding converts the Symbol and container parameters it advertises" begin
+    # The schema says `string`, `array of integer`, `object of number`; a JSON call
+    # carries a String, a Vector{Any} and a Dict{String,Any}, which the handler's
+    # method did not accept: every schema-valid call failed with a MethodError.
+    server = MCPServer("conv", "1.0.0")
+    register_tool!(server, "sym", "d", (mode::Symbol) -> "mode=$(mode)")
+    register_tool!(server, "vec", "d", (xs::Vector{Int}) -> string(sum(xs)))
+    register_tool!(server, "nested", "d", (m::Vector{Vector{Int}}) -> string(sum(sum, m)))
+    register_tool!(server, "dict", "d", (unit::String, w::Dict{String,Float64}) -> string(sum(values(w)), unit))
+    register_tool!(server, "anyvec", "d", (xs::Vector{Any}) -> string(length(xs)))
+    @test server.tools["vec"].input_schema["properties"]["xs"] ==
+          Dict{String,Any}("type" => "array", "items" => Dict{String,Any}("type" => "integer"))
+    call(name, args) = UniLM._dispatch_guarded(server, _rpc(1, "tools/call",
+        Dict{String,Any}("name" => name, "arguments" => args)))["result"]
+    text(r) = r["content"][1]["text"]
+    for (name, args, want) in (("sym", Dict{String,Any}("mode" => "fast"), "mode=fast"),
+                               ("vec", Dict{String,Any}("xs" => Any[1, 2, 3]), "6"),
+                               ("vec", Dict{String,Any}("xs" => Any[]), "0"),
+                               ("nested", Dict{String,Any}("m" => Any[Any[1, 2], Any[3]]), "6"),
+                               ("dict", Dict{String,Any}("unit" => "kg", "w" => Dict{String,Any}("a" => 1, "b" => 2.5)), "3.5kg"),
+                               ("anyvec", Dict{String,Any}("xs" => Any[1, "a", nothing]), "3"))
+        r = call(name, args)
+        @test r["isError"] == false && text(r) == want
+    end
+    # A value that does not convert is the input-validation error naming the argument —
+    # an element names its position — and never reaches the handler.
+    for (name, args, arg) in (("sym", Dict{String,Any}("mode" => 1), "`mode`"),
+                              ("vec", Dict{String,Any}("xs" => "1,2"), "`xs`"),
+                              ("vec", Dict{String,Any}("xs" => Any[1, "2"]), "`xs[2]`"),
+                              ("vec", Dict{String,Any}("xs" => Any[1, 2.5]), "`xs[2]`"),
+                              ("nested", Dict{String,Any}("m" => Any[Any[1], Any[true]]), "`m[2][1]`"),
+                              ("dict", Dict{String,Any}("unit" => "kg", "w" => Any[1.0]), "`w`"),
+                              ("dict", Dict{String,Any}("unit" => "kg", "w" => Dict{String,Any}("a" => "x")), "`w[\"a\"]`"))
+        r = call(name, args)
+        @test r["isError"] == true && occursin("argument $arg must be", text(r))
+    end
 end
 
 # ─── Handler failure modes ────────────────────────────────────────────────────

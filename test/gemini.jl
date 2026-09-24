@@ -288,10 +288,13 @@ end
     # Values from the FinishReason enum (ai.google.dev/api/generate-content). STOP is the
     # only normal completion, and only a STOP turn with function calls is a tool-call
     # turn: calls under any other reason keep that reason, so they are never dispatched.
-    filters = ("SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY")
+    filters = ("SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY",
+               "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION")
     cases = [("STOP", false, STOP), ("STOP", true, TOOL_CALLS),
              ("MAX_TOKENS", false, "length"), ("MAX_TOKENS", true, "length"),
              [(wire, calls, CONTENT_FILTER) for wire in filters for calls in (false, true)]...,
+             # image outcomes the enum does not describe as a block
+             ("IMAGE_OTHER", false, "image_other"), ("NO_IMAGE", false, "no_image"),
              ("MALFORMED_FUNCTION_CALL", false, "malformed_function_call"),
              ("UNEXPECTED_TOOL_CALL", false, "unexpected_tool_call"),
              ("TOO_MANY_TOOL_CALLS", true, "too_many_tool_calls"),

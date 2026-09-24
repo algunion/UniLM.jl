@@ -780,24 +780,68 @@ end
 end
 
 # https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages.md
+const _MID_SYSTEM_MODELS = ("claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-fable-5-1",
+                            "claude-mythos-5-1", "claude-fable-5", "claude-mythos-5", "claude-opus-9")
+const _NO_MID_SYSTEM_MODELS = ("claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-6", "claude-haiku-4-5")
+_roles(body) = [m["role"] for m in body["messages"]]
+
 @testset "encode — a later system message stays in place where the model accepts it" begin
     tc = ToolCall(id="toolu_1", func=GPTFunction("f", Dict{String,Any}()))
     msgs = [Message(Val(:system), "rules"), Message(Val(:system), "more rules"), Message(Val(:user), "q1"),
             Message(role=RoleAssistant, tool_calls=[tc]), Message(role=RoleTool, tool_call_id="toolu_1", content="ok"),
             Message(role=RoleSystem, content="new rule"), Message(role=RoleAssistant, content="a1"),
             Message(Val(:user), "q2")]
-    for model in ("claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-fable-5-1", "claude-mythos-5-1",
-                  "claude-fable-5", "claude-mythos-5", "claude-opus-9")
+    for model in _MID_SYSTEM_MODELS
         body = _anthropic_body(; model, messages=msgs)
         @test body["system"] == "rules\n\nmore rules"
-        @test [m["role"] for m in body["messages"]] == ["user", "assistant", "user", "system", "assistant", "user"]
+        @test _roles(body) == ["user", "assistant", "user", "system", "assistant", "user"]
         @test body["messages"][3]["content"][1]["type"] == "tool_result"         # results flushed before it
         @test body["messages"][4] == Dict("role" => "system", "content" => "new rule")
     end
-    for model in ("claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-6", "claude-haiku-4-5")
-        e = _anthropic_err(; model, messages=msgs)
-        @test e isa ArgumentError && occursin(model, e.msg) && occursin("system", e.msg)
+    # Elsewhere it is hoisted into the top-level system prompt, which every model accepts.
+    for model in _NO_MID_SYSTEM_MODELS
+        body = _anthropic_body(; model, messages=msgs)
+        @test body["system"] == "rules\n\nmore rules\n\nnew rule"
+        @test _roles(body) == ["user", "assistant", "user", "assistant", "user"]
     end
     # Leading system messages alone are never mid-conversation.
     @test _anthropic_body(model="claude-sonnet-5", messages=msgs[1:3])["system"] == "rules\n\nmore rules"
+end
+
+@testset "encode — a mid-conversation system message the placement rule rejects is hoisted" begin
+    # The rule: right after a user turn (tool results are one), and last or right before
+    # an assistant turn; a run of system messages counts as one. Any other position is a
+    # 400, so it goes to the top-level system prompt, as it does on the other models.
+    sys, u, a = Message(Val(:system), "s0"), Message(Val(:user), "u"), Message(role=RoleAssistant, content="a")
+    s(x) = Message(Val(:system), x)
+    tc(id) = ToolCall(id=id, func=GPTFunction("f", Dict{String,Any}()))
+    tools = Message(role=RoleAssistant, tool_calls=[tc("t1"), tc("t2")])
+    result(id) = Message(role=RoleTool, tool_call_id=id, content="ok")
+    cases = [
+        # (messages, roles on the wire, top-level system)
+        ([sys, u, a, s("s1"), u], ["user", "assistant", "user"], "s0\n\ns1"),                   # after an assistant turn
+        ([sys, u, s("s1"), u], ["user", "user"], "s0\n\ns1"),                                   # before a user turn
+        ([sys, u, s("s1")], ["user", "system"], "s0"),                                          # last: kept
+        ([sys, u, s("s1"), s("s2"), a, u], ["user", "system", "system", "assistant", "user"], "s0"),   # a run, kept
+        ([sys, u, s("s1"), s("s2"), u], ["user", "user"], "s0\n\ns1\n\ns2"),                   # a run, hoisted
+        ([sys, u, s("s1"), Message(role=RoleAssistant, content=""), a, u],                    # past a skipped turn
+         ["user", "system", "assistant", "user"], "s0"),
+        ([sys, u, tools, s("s1"), result("t1"), result("t2"), a, u],                          # before its results
+         ["user", "assistant", "user", "assistant", "user"], "s0\n\ns1"),
+        ([sys, u, tools, result("t1"), s("s1"), result("t2"), a, u],                          # between them
+         ["user", "assistant", "user", "assistant", "user"], "s0\n\ns1"),
+        ([sys, u, tools, result("t1"), result("t2"), s("s1"), a, u],                          # after them: kept
+         ["user", "assistant", "user", "system", "assistant", "user"], "s0"),
+    ]
+    for (msgs, roles, system) in cases
+        body = _anthropic_body(; model="claude-opus-5-5", messages=msgs)
+        @test _roles(body) == roles
+        @test body["system"] == system
+    end
+    # Hoisted between two results, the results stay one user turn of two tool_result blocks.
+    body = _anthropic_body(; model="claude-opus-5-5", messages=cases[8][1])
+    @test [b["tool_use_id"] for b in body["messages"][3]["content"]] == ["t1", "t2"]
+    # The same messages on a model without mid-conversation system messages: all hoisted.
+    body = _anthropic_body(; model="claude-haiku-4-5", messages=cases[1][1])
+    @test _roles(body) == ["user", "assistant", "user"] && body["system"] == "s0\n\ns1"
 end

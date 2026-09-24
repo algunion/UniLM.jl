@@ -125,6 +125,53 @@ UniLM._realtime_upgraded(::Type{RTLateEndpoint}) = wait(_rt_late_release[])
     end
 end
 
+# An upgrade that fails after the 101, before the handler is admitted: the seam raises
+# `_rt_fail_after[]` seconds into the open phase.
+struct RTFailEndpoint <: UniLM.ServiceEndpoint end
+const _rt_fail_url = Ref("")
+const _rt_fail_after = Ref(0.0)
+UniLM._realtime_ws_url(::Type{RTFailEndpoint}) = _rt_fail_url[]
+UniLM.auth_header(::Type{RTFailEndpoint}) = UniLM.auth_header(RTMuteEndpoint)
+UniLM.provider_capabilities(::Type{RTFailEndpoint}) = Set([:realtime])
+UniLM._realtime_upgraded(::Type{RTFailEndpoint}) = (sleep(_rt_fail_after[]); error("upgrade refused by the test peer"))
+
+@testset "realtime_connect: the open phase's outcome is the one that happened first" begin
+    # The open task records its own end before it wakes the caller, so a failure inside
+    # the bound is the caller's error however late the caller runs, and a failure after
+    # the bound stays behind the timeout the caller already got.
+    srv = HTTP.WebSockets.listen!("127.0.0.1", 0) do ws
+        try
+            for _ in ws      # ends when the client closes
+            end
+        catch e
+            e isa InterruptException && rethrow()
+        end
+    end
+    _rt_fail_url[] = "ws://" * HTTP.WebSockets.server_addr(srv)
+    connect(bound) = Threads.@spawn try
+        realtime_connect(_ -> error("the handler must never run"); service=RTFailEndpoint,
+                         config=RequestConfig(connect_timeout=bound, total_deadline=Inf))
+    catch e
+        e
+    end
+    try
+        for after in (0.0, 0.5)                          # at once; a tenth into a 5 s bound
+            _rt_fail_after[] = after
+            t = connect(5.0)
+            @test timedwait(() -> istaskdone(t), 25.0) === :ok
+            e = fetch(t)
+            @test e isa ErrorException && occursin("upgrade refused", e.msg)
+        end
+        _rt_fail_after[] = 3.0                           # fails 2 s after a 1 s bound
+        t = connect(1.0)
+        @test timedwait(() -> istaskdone(t), 25.0) === :ok
+        e = fetch(t)
+        @test e isa UniLM.UniLMTimeout && e.phase === :connect
+    finally
+        close(srv)
+    end
+end
+
 # A client-secret endpoint whose 200 body the test chooses.
 struct RTSecretEndpoint <: UniLM.ServiceEndpoint end
 const _rt_secret_base = Ref("")
@@ -147,6 +194,26 @@ UniLM.provider_capabilities(::Type{RTSecretEndpoint}) = Set([:realtime])
         @test mint_realtime_secret(service=RTSecretEndpoint).value == "ek_nested"
         body[] = """{"value":"ek_top"}"""
         @test mint_realtime_secret(service=RTSecretEndpoint).value == "ek_top"
+    finally
+        close(srv)
+    end
+end
+
+@testset "mint_realtime_secret: a call error carries its cause and the unusable reply's request id" begin
+    srv = HTTP.serve!(_ -> HTTP.Response(200, ["Content-Type" => "application/json",
+                                              "x-request-id" => "req_rt"], "{}"),
+                      "127.0.0.1", 0; verbose=false)
+    _rt_secret_base[] = "http://127.0.0.1:$(HTTP.port(srv))"
+    try
+        # A 200 without a secret is a reply that could not be used: its id is the handle
+        # a support report needs.
+        r = mint_realtime_secret(service=RTSecretEndpoint)
+        @test r isa RealtimeCallError && r.request_id == "req_rt" && isnothing(r.cause)
+        # A cancelled token and a spent budget surface as the typed cause itself.
+        r2 = with_cancel(() -> mint_realtime_secret(service=RTSecretEndpoint), cancel!(CancelToken()))
+        @test r2 isa RealtimeCallError && r2.cause isa UniLMCancelled && isnothing(r2.request_id)
+        r3 = mint_realtime_secret(service=SeamProbe, config=_TINY_DEADLINE)
+        @test r3 isa RealtimeCallError && r3.cause isa UniLMTimeout && r3.cause.phase === :deadline
     finally
         close(srv)
     end

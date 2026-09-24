@@ -24,6 +24,20 @@
     @test d.mcp_request_timeout == 120.0
 end
 
+@testset "a finite bound too large for the timers is rejected; the ceiling itself is valid" begin
+    # A finite bound becomes a native timer deadline (HTTP.jl nanoseconds overflow
+    # above ~9.2e9 s, a Timer's milliseconds above ~1.8e16 s): a value past what the
+    # timers hold must fail at construction, not when a guard is armed mid-call.
+    float_fields = (:connect_timeout, :request_timeout, :stream_idle_timeout,
+                    :total_deadline, :mcp_connect_timeout, :mcp_request_timeout)
+    for f in float_fields, big in (1.0e9 + 1, 1e17, floatmax(Float64))
+        @test_throws "use Inf" RequestConfig(; (f => big,)...)
+    end
+    for f in float_fields
+        @test getfield(RequestConfig(; (f => 1.0e9,)...), f) == 1.0e9
+    end
+end
+
 @testset "copy-with-overrides revalidates and touches only named fields" begin
     base = RequestConfig()
     c = RequestConfig(base; request_timeout=5.0, max_attempts=7)

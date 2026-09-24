@@ -62,6 +62,22 @@ end
     @test later[]
 end
 
+@testset "cancel!: an interrupted hook does not skip the rest; the interrupt surfaces after them" begin
+    # The hooks leave the token before they run, so one skipped here never runs: its
+    # waiter would sleep out its own timer instead of waking on the cancel.
+    tok = CancelToken()
+    ran = Int[]
+    UniLM._on_cancel(() -> push!(ran, 1), tok)
+    UniLM._on_cancel(() -> throw(InterruptException()), tok)
+    UniLM._on_cancel(() -> push!(ran, 3), tok)
+    UniLM._on_cancel(() -> throw(InterruptException()), tok)
+    UniLM._on_cancel(() -> push!(ran, 5), tok)
+    @test_throws InterruptException cancel!(tok)
+    @test ran == [1, 3, 5]
+    @test iscancelled(tok) && isempty(tok.hooks)
+    @test cancel!(tok) === tok                     # resolved: later calls are no-ops
+end
+
 @testset "cancel token: deregistration is by identity and idempotent" begin
     tok = CancelToken()
     ran = Ref(0)

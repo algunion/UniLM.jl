@@ -469,6 +469,36 @@ end
     @test err isa ErrorException && occursin("\"id\"", err.msg)
 end
 
+@testset "Interactions stream — a terminal without an id or a status is a call error, as unstreamed" begin
+    # The streamed terminal took what it got: `{"interaction": {}}` was a success whose id is "".
+    for interaction in (Dict(), Dict("status" => "completed"), Dict("id" => "v1_x"),
+                        Dict("id" => "", "status" => "completed"), Dict("id" => "v1_x", "status" => nothing))
+        state = UniLM.AgenticStreamState()
+        st = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, "event: interaction.completed\ndata: " *
+            JSON.json(Dict("event_type" => "interaction.completed", "interaction" => interaction)) * "\n\n", state)
+        @test st.done && st.terminal === :error
+        @test occursin("carries no", st.data["message"])
+        @test state.sse_dropped == 0                              # an outcome, not a dropped line
+        res = UniLM._agentic_terminal_result(st.data, 200, nothing)
+        @test res isa ResponseCallError && occursin("carries no", res.error)
+    end
+    # ...and through the stream driver.
+    server, url = _ix_sse_server("event: interaction.completed\ndata: " *
+        JSON.json(Dict("event_type" => "interaction.completed", "interaction" => Dict())) * "\n\n" *
+        "event: done\ndata: [DONE]\n\n")
+    _IX_MOCK_URL[] = url
+    try
+        t = respond(Respond(service=_IxStreamMock, input="hi", stream=true);
+                    config=RequestConfig(request_timeout=5.0, total_deadline=20.0,
+                                         stream_idle_timeout=5.0, max_attempts=1))
+        @test timedwait(() -> istaskdone(t), 25.0) == :ok
+        res = fetch(t)
+        @test res isa ResponseCallError && occursin("carries no \"id\"", res.error)
+    finally
+        close(server)
+    end
+end
+
 @testset "Interactions stream decode — no method boxes a variable" begin
     # A local that a closure captures and that is assigned more than once becomes a
     # Core.Box: every access is a dynamic lookup, paid on each SSE event of a stream.

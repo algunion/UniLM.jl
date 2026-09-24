@@ -235,18 +235,24 @@ end
 
 # `id` and `status` are required on every Interaction (API reference): a 200 body
 # without them, such as `{}`, is not one, and decoding it as one would report a
-# success carrying an empty id.
-function _interaction_required(data::AbstractDict, key::String)::String
-    v = get(data, key, nothing)
-    v isa String && !isempty(v) && return v
-    error("Gemini Interactions response carries no \"$key\" (got $(repr(v))); keys: [",
-          join(sort!(collect(keys(data))), ", "), "]")
+# success carrying an empty id. The complaint about the first one missing, else nothing;
+# the streamed and the non-streamed decode share it.
+function _interaction_defect(data::AbstractDict)::Union{Nothing,String}
+    for key in ("id", "status")
+        v = get(data, key, nothing)
+        v isa String && !isempty(v) && continue
+        return "Gemini Interactions response carries no \"$key\" (got $(repr(v))); keys: [" *
+               join(sort!(collect(keys(data))), ", ") * "]"
+    end
+    nothing
 end
 
 function _interaction_response_object(data::AbstractDict)::ResponseObject
+    defect = _interaction_defect(data)
+    isnothing(defect) || error(defect)
     ResponseObject(
-        id = _interaction_required(data, "id"),
-        status = _interaction_required(data, "status"),
+        id = data["id"],
+        status = data["status"],
         model = get(data, "model", ""),
         output = _interaction_output(get(data, "steps", Any[])),
         usage = _interaction_usage(get(data, "usage", nothing)),
@@ -283,7 +289,13 @@ function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
             elseif ev == "step.delta"
                 _interaction_step_delta!(state, data)
             elseif ev == "interaction.completed"
-                rdict = _interaction_response_dict(get(data, "interaction", data))
+                interaction = get(data, "interaction", data)
+                # No id or status: not an interaction, and the non-streamed decode's
+                # error — the driver makes an error terminal a ResponseCallError.
+                defect = _interaction_defect(interaction)
+                isnothing(defect) || return (; done=true, event=ev,
+                    data=Dict{String,Any}("message" => defect), terminal=:error)
+                rdict = _interaction_response_dict(interaction)
                 if isempty(rdict["output"])
                     rdict["output"] = _assembled_interaction_output(state)
                 end
@@ -299,6 +311,7 @@ function decode_agentic_stream(::Type{GEMINIServiceEndpoint}, chunk::String,
             # step.stop needs no handling: a step is complete once its deltas stop
             # arriving, and the terminal rebuild reads the assembly.
         catch e
+            e isa InterruptException && rethrow()
             Threads.atomic_add!(_SSE_DROPPED_LINES, 1)
             state.sse_dropped += 1
             @debug "Interactions SSE: dropped undecodable data payload" event = ev payload = String(payload) exception = e

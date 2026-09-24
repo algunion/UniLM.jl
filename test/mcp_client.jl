@@ -3049,6 +3049,67 @@ end
     @test _log(t) == ["notifications/initialized", "ping"]
 end
 
+# A task holding `l` until `release` is notified; returns once it holds it.
+function _lock_holder(l)
+    held, release = Base.Event(), Base.Event()
+    holder = Threads.@spawn (UniLM._acquire!(l, Inf); notify(held); wait(release); unlock(l))
+    wait(held)
+    holder, release
+end
+_queued(l) = @lock l.guard length(l.queue)
+
+@testset "session lock: a waiter that fails after queuing leaves no dead owner behind" begin
+    # A bound too large to arm a Timer (InexactError) failed AFTER the waiter joined the
+    # queue: the next release handed the lock to that finished task, and every later
+    # caller — an unbounded one such as mcp_disconnect! included — waited forever.
+    l = UniLM._SessionLock()
+    holder, release = _lock_holder(l)
+    victim = Threads.@spawn try UniLM._acquire!(l, 1e17) catch e; e end
+    @test timedwait(() -> istaskdone(victim), 25.0) === :ok
+    @test fetch(victim) isa Exception
+    @test _queued(l) == 0
+    notify(release); wait(holder)
+    @test (@lock l.guard l.owner) === nothing
+    other = Threads.@spawn (ok = UniLM._acquire!(l, 5.0); ok && unlock(l); ok)
+    @test timedwait(() -> istaskdone(other), 25.0) === :ok && fetch(other) === true
+    unbounded = Threads.@spawn (UniLM._acquire!(l, Inf); unlock(l); :acquired)
+    @test timedwait(() -> istaskdone(unbounded), 25.0) === :ok && fetch(unbounded) === :acquired
+end
+
+@testset "session lock: a waiter interrupted while re-taking the guard leaves the queue" begin
+    # Its bound passed, so it woke and went back for the guard to leave the queue; an
+    # interrupt landing there escaped the cleanup and left it queued.
+    l = UniLM._SessionLock()
+    holder, release = _lock_holder(l)
+    waiter = Threads.@spawn try UniLM._acquire!(l, 0.3) catch e; e end
+    @test timedwait(() -> _queued(l) == 1, 25.0) === :ok
+    lock(l.guard)
+    try
+        sleep(2.0)                                        # the bound passes: it parks on the guard
+        schedule(waiter, InterruptException(); error=true)
+    finally
+        unlock(l.guard)
+    end
+    @test timedwait(() -> istaskdone(waiter), 25.0) === :ok
+    @test fetch(waiter) isa InterruptException
+    @test _queued(l) == 0
+    @test (@lock l.guard l.owner) === holder
+    notify(release); wait(holder)
+    @test (@lock l.guard l.owner) === nothing
+end
+
+@testset "a per-call MCP timeout too large for the timers is rejected before the call" begin
+    t = _ScriptedTransport((m, id, _) -> [_ok_frame(id)])
+    session = _scripted_session(t)
+    for big in (1.0e9 + 1, 1e17, floatmax(Float64))
+        @test_throws "use Inf" call_tool(session, "x", Dict{String,Any}(); timeout=big)
+    end
+    @test call_tool(session, "x", Dict{String,Any}(); timeout=1.0e9) isa MCPToolResult
+    @test call_tool(session, "x", Dict{String,Any}(); timeout=Inf) isa MCPToolResult
+    @test _log(t) == ["tools/call", "tools/call"]
+    @test !islocked(session._lock)
+end
+
 @testset "list_tools! clears tools_stale under the session lock" begin
     # The flag used to be cleared after the listing, outside the lock, so a list_changed
     # that another caller recorded in that window was overwritten. The listing and the
@@ -3220,6 +3281,79 @@ end
         finally
             mcp_disconnect!(session)
         end
+    finally
+        close(httpserver)
+    end
+end
+
+@testset "HTTP: a cancelled call raises UniLMCancelled promptly and cancels its request on the server" begin
+    cancelled, call_ids, released = Channel{Any}(4), Channel{Any}(4), Threads.Atomic{Bool}(false)
+    httpserver, url = _mcp_http_fixture() do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        method, id = get(parsed, "method", ""), get(parsed, "id", nothing)
+        method == "notifications/cancelled" && (put!(cancelled, parsed["params"]); return HTTP.Response(202, ""))
+        isnothing(id) && return HTTP.Response(202, "")
+        method == "tools/call" && (put!(call_ids, id); timedwait(() -> released[], 30.0))
+        result = method == "initialize" ?
+            Dict{String,Any}("protocolVersion" => UniLM._MCP_PROTOCOL_VERSION, "capabilities" => Dict{String,Any}(),
+                "serverInfo" => Dict{String,Any}("name" => "slow", "version" => "1.0")) : Dict{String,Any}()
+        HTTP.Response(200, ["Content-Type" => "application/json"], _ok_frame(id, result))
+    end
+    try
+        session = mcp_connect(url)
+        tok = CancelToken()
+        t = Threads.@spawn (try with_cancel(() -> call_tool(session, "slow"), tok) catch e; e end, time_ns())
+        @test timedwait(() -> isready(call_ids), 25.0) === :ok   # the request reached the server
+        cancelled_at = time_ns()
+        cancel!(tok)
+        @test timedwait(() -> istaskdone(t), 25.0) === :ok
+        err, done_at = fetch(t)
+        @test err isa UniLMCancelled && err.source === :token
+        @test (done_at - cancelled_at) / 1e9 < 5.0              # the tool's 30 s is not waited out
+        @test isready(cancelled)                                 # sent before the cancel surfaced
+        if isready(cancelled)
+            p = take!(cancelled)
+            @test p["requestId"] == take!(call_ids)
+            @test p["reason"] isa String
+        end
+        @test session.status === :ready && ping(session) === nothing   # still usable
+        # A token cancelled before the call sends nothing: no request, so no notice.
+        with_cancel(cancel!(CancelToken())) do
+            @test_throws UniLMCancelled ping(session)
+        end
+        @test !isready(cancelled) && !isready(call_ids)
+        mcp_disconnect!(session)
+    finally
+        released[] = true
+        close(httpserver)
+    end
+end
+
+@testset "HTTP disconnect inside a cancelled scope still sends its DELETE" begin
+    # The natural cleanup — `try … finally mcp_disconnect!(session) end` around work the
+    # user cancelled — ran the DELETE under the cancelled ambient token, which stopped
+    # it before anything was sent: the server kept the session.
+    deletes = Threads.Atomic{Int}(0)
+    server = _build_mcp_test_server(Ref{Any}(nothing))
+    httpserver, url = _mcp_http_fixture() do req
+        req.method == "DELETE" && (Threads.atomic_add!(deletes, 1); return HTTP.Response(200, ""))
+        resp = UniLM._dispatch_mcp(server, JSON.parse(String(req.body); dicttype=Dict{String,Any}))
+        isnothing(resp) && return HTTP.Response(202, ["Mcp-Session-Id" => "sess-x"], "")
+        HTTP.Response(200, ["Content-Type" => "application/json", "Mcp-Session-Id" => "sess-x"], JSON.json(resp))
+    end
+    try
+        session = mcp_connect(url)
+        tok = CancelToken()
+        with_cancel(tok) do
+            try
+                cancel!(tok)                                     # e.g. the user pressed stop
+            finally
+                mcp_disconnect!(session)
+            end
+        end
+        @test deletes[] == 1
+        @test session.status === :closed
     finally
         close(httpserver)
     end

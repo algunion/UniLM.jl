@@ -247,9 +247,11 @@ end
 
 @testset "_http: 50 concurrent calls complete independently and overlap" begin
     # The only in-suite check with more than one seam call in flight. Each request
-    # carries its own marker, echoed after 50–200 ms of server latency; run one
-    # after another the batch would take ~6 s, so a sub-1.5 s wall time shows the
-    # calls overlap, and the marker check shows no response crossed over.
+    # carries its own marker, echoed after 50–200 ms of server latency. Run one after
+    # another the batch would take 50 × 0.125 s (the mean latency) ≈ 6.25 s — over
+    # 5.3 s even three standard deviations short (σ ≈ 0.31 s) — so a wall time under
+    # 3.0 s, below half of that, shows the calls overlap with room for a slow runner,
+    # and the marker check shows no response crossed over.
     srv = HTTP.serve!(req -> (sleep(0.05 + 0.15rand());
                               HTTP.Response(200, HTTP.header(req, "X-Marker", ""))),
                       "127.0.0.1", 0; verbose=false)
@@ -263,7 +265,7 @@ end
         @test timedwait(() -> all(istaskdone, tasks), 25.0) === :ok
         results = fetch.(tasks)
         @test first.(results) == ["m$i" for i in 1:50]
-        @test (maximum(last.(results)) - started) / 1e9 < 1.5
+        @test (maximum(last.(results)) - started) / 1e9 < 3.0
     finally
         close(srv)
     end
@@ -370,6 +372,27 @@ end
     action, delay = UniLM._retry_pause(RequestConfig(total_deadline=5.0), time_ns(), 1,
                                        HTTP.Response(429, ["Retry-After" => "20"]))
     @test action === :budget && delay >= 20.0
+end
+
+@testset "retry budget: the jitter above a Retry-After floor leaves the next attempt half of what remains" begin
+    # 10 s left, a 9 s floor and attempt 4's 8 s backoff. Spread over the WHOLE 1 s
+    # left after the floor, a pause could end just short of the deadline, and the next
+    # attempt failed on a timeout the caller never set instead of returning the 429.
+    ra9 = HTTP.Response(429, ["Retry-After" => "9"])
+    delays = [UniLM._retry_delay(3, ra9, 10.0) for _ in 1:100_000]
+    @test all(d -> 9.0 <= d <= 9.0 + (10.0 - 9.0) / 2, delays)
+    @test length(unique(delays)) > 1000                     # still spread, not pinned
+    # The same geometry through the budget arithmetic: no draw leaves the next attempt
+    # less than half of what remained after the floor, unless it reports :budget. The
+    # clock advances between the reads, so each bound allows for that drift.
+    cfg, t0 = RequestConfig(total_deadline=10.0), time_ns()
+    kept_half = map(1:10_000) do _
+        before = UniLM._remaining_s(cfg, t0)
+        action, d = UniLM._retry_pause(cfg, t0, 4, ra9)
+        after = UniLM._remaining_s(cfg, t0)
+        action === :budget || after - d >= (before - 9.0) / 2 - (before - after)
+    end
+    @test all(kept_half)
 end
 
 @testset "retry budget: an exhausted total_deadline throws :deadline before any attempt" begin

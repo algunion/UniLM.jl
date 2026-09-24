@@ -34,6 +34,14 @@ JSON.lower(ct::CallableTool) = JSON.lower(ct.tool)
 # interactions.jl (loaded before tool_loop.jl), CallableTool is defined just above.
 _interactions_tool(ct::CallableTool) = _interactions_tool(ct.tool)
 
+# A Chat `Tool` given to `Respond` becomes the equivalent `FunctionTool` (see
+# `_respond_tool` in responses.jl); one wrapped in a CallableTool — the tools a Chat loop
+# takes — converts the same way and keeps its callable, so it goes out in the Responses
+# function shape rather than the Chat one the Responses API rejects.
+_respond_tool(ct::CallableTool{Tool}) = CallableTool(_respond_tool(ct.tool), ct.callable)
+_respond_tools(tools::AbstractVector{<:CallableTool}) =
+    any(t -> t isa CallableTool{Tool}, tools) ? map(_respond_tool, tools) : tools
+
 _tool_name(t::Tool) = t.func.name
 _tool_name(t::FunctionTool) = t.name
 _tool_name(ct::CallableTool) = _tool_name(ct.tool)
@@ -330,9 +338,21 @@ end
 
 # ─── Responses API Loop ─────────────────────────────────────────────────────
 
-# Output items the client must execute and answer, which this loop cannot run: a turn
-# holding one cannot be continued with function-call outputs alone.
-const _CLIENT_CALL_TYPES = ("custom_tool_call", "apply_patch_call", "local_shell_call", "computer_call")
+# Output items the client must execute or answer, which this loop cannot: a turn holding
+# one cannot be continued with function-call outputs alone. An `mcp_approval_request`
+# waits for an `mcp_approval_response`. A `shell_call` is the client's only when the
+# platform did not run it: a hosted shell (a container environment) answers its own
+# call with a `shell_call_output` in the same output, a local one does not.
+const _CLIENT_CALL_TYPES = ("custom_tool_call", "apply_patch_call", "local_shell_call", "computer_call",
+                            "shell_call", "mcp_approval_request")
+
+# The client-side call types a Responses turn leaves pending, each named once.
+function _pending_client_calls(output)::Vector{String}
+    items = [item for item in output if item isa AbstractDict]
+    answered = Set(get(item, "call_id", nothing) for item in items if get(item, "type", "") == "shell_call_output")
+    unique!(String[item["type"] for item in items if get(item, "type", "") in _CLIENT_CALL_TYPES &&
+                   !(item["type"] == "shell_call" && get(item, "call_id", nothing) in answered)])
+end
 
 # One Responses function call → its outcome. `arguments` that do not parse to a JSON
 # object are the model's error to correct, so they come back as a failed outcome (sent
@@ -373,8 +393,9 @@ Function calls run only on a `completed` or `requires_action` turn. Any other st
 (e.g. `incomplete`, whose calls may be partial) stops the loop with `completed=false`
 and an `llm_error` naming the status and the `incomplete_details` reason. A turn that
 requests a client-side call this loop cannot execute (`custom_tool_call`,
-`apply_patch_call`, `local_shell_call`, `computer_call`) stops it the same way, with
-the pending call type in `llm_error`; none of that turn's calls run.
+`apply_patch_call`, `local_shell_call`, `computer_call`, a `shell_call` the platform
+did not run itself, or an `mcp_approval_request`) stops it the same way, with the
+pending call type in `llm_error`; none of that turn's calls run.
 
 `max_turns` (default 10; `< 1` throws `ArgumentError`) bounds the round-trips; when
 they run out, the result keeps the last response, with `completed=false` and
@@ -426,8 +447,7 @@ function tool_loop(r::Respond, dispatcher::Function;
                     "(status=$status" * (isnothing(reason) ? ")" : ", reason=$reason)"))
             end
 
-            pending = unique!(String[item["type"] for item in result.response.output
-                                     if item isa AbstractDict && get(item, "type", "") in _CLIENT_CALL_TYPES])
+            pending = _pending_client_calls(result.response.output)
             isempty(pending) || return ToolLoopResult(result, all_outcomes, turns, false,
                 "Response requests $(join(pending, ", ")), which this tool loop cannot execute")
 

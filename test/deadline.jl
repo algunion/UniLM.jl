@@ -427,9 +427,9 @@ end
     # spent in user code must not count as a byte gap, and the gap restarts when
     # the callback returns: a guard that skipped the re-stamp would fire at the
     # first tick after exit (gap ≈ the whole callback), below the lower bound.
-    # Upper bound: the [limit, limit + period] detection window with a 5x margin
-    # on the period for timer-callback scheduling.
-    limit = 0.5
+    # Upper bound: the [limit, limit + period] detection window plus 2 s of slack
+    # for a shared-runner scheduler stall (~1.9 s measured), as the tests above.
+    limit = 3.0
     period = min(limit / 4, 5.0)
     closed = Threads.Atomic{Int}(0)
     fired_at = Threads.Atomic{UInt64}(0)
@@ -439,7 +439,7 @@ end
     end
     try
         UniLM._enter_user!(g)
-        sleep(2.0)                               # 4x the limit inside user code
+        sleep(2 * limit)                         # twice the limit inside user code
         @test !UniLM._idle_fired(g)
         @test closed[] == 0
         exited = time_ns()
@@ -447,7 +447,7 @@ end
         @test timedwait(() -> UniLM._idle_fired(g), 25.0) === :ok
         @test closed[] == 1
         after_exit = (fired_at[] - exited) / 1e9
-        @test limit <= after_exit <= limit + 5 * period
+        @test limit <= after_exit <= limit + period + 2.0
     finally
         UniLM._disarm!(g)
     end

@@ -31,6 +31,26 @@ end
     @test t.last_observed isa UniLM.VectorStoreFileBatch && t.last_observed.status == "in_progress"
 end
 
+@testset "poll_file_batch: a cancel ends the poll at once" begin
+    fb = JSON.json(Dict("id" => "vsfb_1", "status" => "in_progress", "file_counts" => Dict("total" => 1)))
+    hits = Threads.Atomic{Int}(0)
+    tok = CancelToken()
+    (r, after_cancel), _ = _with_scripted((_, _) -> (Threads.atomic_add!(hits, 1); _json(200, fb))) do
+        t = Threads.@spawn (poll_file_batch("vs_1", "vsfb_1"; interval=30.0, timeout=120.0,
+                                            service=URLProbe, cancel=tok), time_ns())
+        @test timedwait(() -> hits[] >= 1, 25.0) === :ok           # first GET answered: pausing
+        sleep(0.2)
+        cancelled_at = time_ns()
+        cancel!(tok)
+        @test timedwait(() -> istaskdone(t), 25.0) === :ok
+        res, done_at = fetch(t)
+        res, (done_at - cancelled_at) / 1e9
+    end
+    @test after_cancel < 5.0                                       # the 30 s pause is not slept out
+    @test r isa UniLM.VectorStoreCallError && r.cause isa UniLMCancelled
+    @test r.last_observed isa UniLM.VectorStoreFileBatch && r.last_observed.status == "in_progress"
+end
+
 @testset "delete_vector_store reports success only when the service confirms the delete" begin
     del(body) = _answered(() -> delete_vector_store("vs_1"; service=URLProbe), 200; body)
     @test del("""{"id": "vs_1", "deleted": true}""") == UniLM.VectorStoreDeleteSuccess(id="vs_1", deleted=true)

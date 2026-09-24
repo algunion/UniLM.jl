@@ -38,12 +38,18 @@ Base.showerror(io::IO, e::UniLMCancelled) =
 A cooperative cancellation token: make it ambient with [`with_cancel`](@ref) (or
 pass it where an operation takes a `cancel` keyword), then call [`cancel!`](@ref)
 from any task. Cancellation is level-triggered — a cancelled token stays
-cancelled, and every later operation that sees it stops before any network I/O —
+cancelled, and every later request that sees it stops before any network I/O —
 so use a fresh token per unit of work you may want to abandon.
 
-Julia 1.14 is adding task cancellation built on a scoped cancellation token with a
-`cancel` keyword on blocking operations; this API has the same shape so a later
-version can bridge to it.
+A token reaches what goes through the package's HTTP layer: every HTTP verb,
+streams included, and the pauses between retries and polls. The Realtime WebSocket
+([`realtime_connect`](@ref), [`realtime_receive`](@ref)) and MCP stdio exchanges do
+not observe it.
+
+The Julia 1.14 development branch adds task cancellation built on scoped cancellation
+tokens (`Base.CancellationTokenSource` / `Base.CANCEL_TOKEN`) with a `cancel` keyword
+on blocking operations; this API has the same shape so a later version can bridge
+to it.
 
 ```julia
 tok = CancelToken()
@@ -62,8 +68,9 @@ end
     cancel!(tok::CancelToken) -> CancelToken
 
 Cancel `tok`. The first call flips the flag and then runs every registered hook
-exactly once, outside the token's lock; a throwing hook is `@debug`-logged and
-never propagated. Later calls are no-ops.
+exactly once, outside the token's lock. A hook that throws is `@debug`-logged and the
+rest still run; an `InterruptException` from a hook is rethrown once every hook has
+run (the first one, if several). Later calls are no-ops.
 
 ```julia
 tok = CancelToken()
@@ -74,7 +81,18 @@ iscancelled(tok)             # true
 function cancel!(tok::CancelToken)::CancelToken
     (@atomicreplace tok.cancelled false => true).success || return tok
     hooks = @lock tok.lock splice!(tok.hooks, eachindex(tok.hooks))
-    foreach(h -> _run_cancel_hook(h[]), hooks)
+    # The hooks have left the token: one skipped here would never run, so an interrupt
+    # waits until they all have.
+    interrupt = nothing
+    for h in hooks
+        try
+            _run_cancel_hook(h[])
+        catch e
+            e isa InterruptException || rethrow()
+            interrupt = something(interrupt, e)
+        end
+    end
+    isnothing(interrupt) || throw(interrupt)
     return tok
 end
 
@@ -97,10 +115,14 @@ const _CANCEL_TOKEN = ScopedValue{Union{Nothing,CancelToken}}(nothing)
     with_cancel(f, tok::CancelToken)
 
 Run `f()` with `tok` as the ambient cancellation token and return `f()`'s value.
-Every UniLM request inside `f` observes `tok`, including requests made in tasks
-spawned inside `f` (scoped values propagate into `Threads.@spawn`); the innermost
-scope wins. The scoped-token shape matches the task cancellation Julia 1.14 is
-adding, so a later version can bridge to it.
+What `f` sends through the package's HTTP layer observes `tok` — every HTTP verb,
+streams included, and the pauses between retries and polls — including requests made
+in tasks spawned inside `f` (scoped values propagate into `Threads.@spawn`); the
+innermost scope wins. The Realtime WebSocket and MCP stdio exchanges do not observe
+it. The Julia 1.14 development branch adds task cancellation built on scoped
+cancellation tokens (`Base.CancellationTokenSource` / `Base.CANCEL_TOKEN`) with a
+`cancel` keyword on blocking operations; this API has the same shape so a later
+version can bridge to it.
 
 ```julia
 tok = CancelToken()

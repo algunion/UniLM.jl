@@ -6,13 +6,20 @@
 
 using Base.ScopedValues: ScopedValue, with
 
+# The largest finite bound: every finite bound becomes a timer deadline, and HTTP.jl's
+# nanosecond deadlines overflow above ~9.2e9 s (a Timer's milliseconds above ~1.8e16 s).
+const _MAX_FINITE_TIMEOUT = 1.0e9
+
 # Validate a timeout/deadline value. NaN is rejected EXPLICITLY: NaN compares
 # false against every bound, so a plain `x <= 0` range check would accept it
-# and the configured timeout would silently never fire — an unbounded wait.
+# and the configured timeout would silently never fire — an unbounded wait. A
+# finite value past what the timers hold fails here rather than mid-call.
 function _validated_timeout(name::Symbol, v::Real)::Float64
     x = Float64(v)
     isnan(x) && throw(ArgumentError("$name must not be NaN"))
     ispositive(x) || throw(ArgumentError("$name must be > 0 seconds (got $x); use Inf to disable"))
+    (isinf(x) || x <= _MAX_FINITE_TIMEOUT) || throw(ArgumentError(
+        "$name must be at most $(_MAX_FINITE_TIMEOUT) seconds (got $x); use Inf to disable"))
     return x
 end
 
@@ -34,7 +41,9 @@ are seconds (`Float64`); `Inf` disables that bound.
 
 The constructor throws `ArgumentError` for `NaN` or non-positive time values
 (`NaN` is rejected explicitly because it compares false against every bound
-and would silently disable the timeout), and for `max_attempts < 1`.
+and would silently disable the timeout), for finite time values above `1e9`
+seconds (too large for the timers that enforce them; use `Inf` instead), and for
+`max_attempts < 1`.
 
 The two-argument form copies `base` with the named fields overridden, under
 the same validation.

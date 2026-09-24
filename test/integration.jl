@@ -6,13 +6,8 @@ else
 # during an earlier testset (the offline error-path tests do contact the real
 # API host) can be silently dropped by NATs/load balancers during that idle
 # window; reusing it stalls the first request here until the kernel read
-# timeout (~15 min on Linux). Start from fresh connections (best-effort,
-# per HTTP.jl major).
-if isdefined(HTTP, :close_idle_connections!)
-    HTTP.close_idle_connections!()
-elseif isdefined(HTTP, :Connections) && isdefined(HTTP.Connections, :closeall)
-    HTTP.Connections.closeall()
-end
+# timeout (~15 min on Linux). Start from fresh connections.
+HTTP.close_idle_connections!()
 
 @testset "regular conversation" begin
     chat = Chat(model="gpt-5.6-luna")

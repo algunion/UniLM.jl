@@ -389,7 +389,10 @@ end
 end
 
 @testset "Responses: a pending client-side call the loop cannot run ends it incomplete" begin
-    for typ in ("custom_tool_call", "apply_patch_call", "local_shell_call", "computer_call")
+    # A local shell_call is the client's to run; an mcp_approval_request waits for an
+    # mcp_approval_response. Either one left pending makes the next request a 400.
+    for typ in ("custom_tool_call", "apply_patch_call", "local_shell_call", "computer_call",
+                "shell_call", "mcp_approval_request")
         ran = Ref(0)
         item = Dict("type" => typ, "id" => "item_1", "call_id" => "call_1", "status" => "completed")
         # Alone, and next to a function call whose output could not be sent without it.
@@ -402,6 +405,21 @@ end
         end
         @test ran[] == 0
     end
+end
+
+@testset "Responses: a hosted shell call the platform answered does not stop the loop" begin
+    # A shell tool in a container environment runs on the platform, which emits the
+    # call's shell_call_output in the same output: nothing is left for the client.
+    shell = Dict("type" => "shell_call", "id" => "sh_1", "call_id" => "call_sh", "status" => "completed",
+                 "environment" => Dict("type" => "container_reference", "container_id" => "cntr_1"))
+    answer = Dict("type" => "shell_call_output", "id" => "sho_1", "call_id" => "call_sh", "output" => Any[])
+    replies = [_tl_resp("resp_1", [shell, answer, _tl_fcall("call_2", "noop")]),
+               _tl_resp("resp_2", [_tl_text("done")])]
+    ran = Ref(0)
+    res, seen = _with_scripted((n, _) -> _json(200, replies[n])) do
+        tool_loop(_tl_respond(), (name, args) -> (ran[] += 1; "ok"))
+    end
+    @test res.completed && res.turns_used == 2 && length(seen) == 2 && ran[] == 1
 end
 
 # ─── Cancellation ────────────────────────────────────────────────────────────

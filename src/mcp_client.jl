@@ -1141,7 +1141,8 @@ end
 
 """
     mcp_connect(command::Cmd; stderr=nothing, client_name="UniLM.jl",
-                protocol_version="2025-11-25", config=nothing, auto_respawn=false) -> MCPSession
+                client_version=string(pkgversion(UniLM)), protocol_version="2025-11-25",
+                config=nothing, auto_respawn=false) -> MCPSession
 
 Connect to an MCP server via stdio transport (subprocess). `stderr` is where the
 server's stderr goes — an `IO` such as `devnull`, or a file path (appended to);
@@ -1176,7 +1177,8 @@ function mcp_connect(command::Cmd; stderr::Union{Nothing,IO,AbstractString}=noth
 end
 
 """
-    mcp_connect(url::String; headers=[], client_name="UniLM.jl", protocol_version="2025-11-25",
+    mcp_connect(url::String; headers=Pair{String,String}[], client_name="UniLM.jl",
+                client_version=string(pkgversion(UniLM)), protocol_version="2025-11-25",
                 config=nothing, auto_respawn=false) -> MCPSession
 
 Connect to an MCP server via HTTP transport.

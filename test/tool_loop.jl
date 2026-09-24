@@ -422,6 +422,32 @@ end
     @test res.completed && res.turns_used == 2 && length(seen) == 2 && ran[] == 1
 end
 
+@testset "Responses: a CallableTool wrapping a Chat Tool goes out in the Responses function shape" begin
+    # The Chat shape nests the function under `function`, which the Responses API
+    # rejects. Respond converts a bare Chat Tool; one wrapped in a CallableTool — the
+    # tools a Chat loop takes — converts the same way and keeps its callable.
+    if !hasmethod(UniLM._respond_tool, Tuple{Tool})
+        @test_broken false      # this build's Respond has no Chat-tool conversion to extend
+    else
+        params = Dict("type" => "object", "properties" => Dict("city" => Dict("type" => "string")))
+        ct = CallableTool(Tool(func=FunctionSignature(name="weather", description="Get weather",
+                                                      parameters=params)), (name, args) -> "sunny")
+        replies = [_tl_resp("resp_1", [_tl_fcall("call_1", "weather", "{\"city\":\"Oslo\"}")]),
+                   _tl_resp("resp_2", [_tl_text("done")])]
+        (r, res), seen = _with_scripted((n, _) -> _json(200, replies[n])) do
+            r = _tl_respond(; tools=[ct])
+            r, tool_loop(r)
+        end
+        @test r.tools[1] isa CallableTool{FunctionTool} && r.tools[1].callable === ct.callable
+        @test res.completed && only(res.tool_calls).success && only(res.tool_calls).result.result == "sunny"
+        for req in seen
+            wire = only(_tl_body(req)["tools"])
+            @test wire["type"] == "function" && wire["name"] == "weather" && !haskey(wire, "function")
+            @test wire["parameters"] == params
+        end
+    end
+end
+
 # ─── Cancellation ────────────────────────────────────────────────────────────
 
 @testset "cancel: a cancel between tool dispatches stops the Chat loop before the next call" begin

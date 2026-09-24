@@ -34,6 +34,14 @@ JSON.lower(ct::CallableTool) = JSON.lower(ct.tool)
 # interactions.jl (loaded before tool_loop.jl), CallableTool is defined just above.
 _interactions_tool(ct::CallableTool) = _interactions_tool(ct.tool)
 
+# A Chat `Tool` given to `Respond` becomes the equivalent `FunctionTool` (see
+# `_respond_tool` in responses.jl); one wrapped in a CallableTool — the tools a Chat loop
+# takes — converts the same way and keeps its callable, so it goes out in the Responses
+# function shape rather than the Chat one the Responses API rejects.
+_respond_tool(ct::CallableTool{Tool}) = CallableTool(_respond_tool(ct.tool), ct.callable)
+_respond_tools(tools::AbstractVector{<:CallableTool}) =
+    any(t -> t isa CallableTool{Tool}, tools) ? map(_respond_tool, tools) : tools
+
 _tool_name(t::Tool) = t.func.name
 _tool_name(t::FunctionTool) = t.name
 _tool_name(ct::CallableTool) = _tool_name(ct.tool)

@@ -1183,6 +1183,8 @@ assembled steps: `steps` maps a step index to its (mutable) step dict, and
 argument JSON, or thought signature, depending on the step type), read once when the
 interaction completes; `args_json` holds partial function-call argument JSON per
 index for a decoder that keeps arguments apart from `text_by_step`.
+
+Public extension API (not exported); see the Custom Backends guide.
 """
 @kwdef mutable struct AgenticStreamState
     textbuff::IOBuffer = IOBuffer()
@@ -1557,16 +1559,42 @@ _agentic_url(service::OpenAIWireEndpointSpec)::String = _api_base_url(service) *
 # fails loud one hop down, at `_agentic_url`.
 get_url(service, r::Respond)::String = _agentic_url(service)::String
 
+"""
+    encode_agentic(service, r::Respond) -> String
+
+Serialize `r` into the request body of `service`'s agentic surface. The
+`OpenAIWireEndpoint` default emits OpenAI Responses JSON; a backend with its own agentic
+wire overrides it (the Gemini Interactions backend is the in-repo reference). An
+`ArgumentError` thrown here — a field the wire cannot express — is local validation:
+[`respond`](@ref) calls the encoder before any network I/O and lets it propagate.
+
+Public extension API (not exported); see the Custom Backends guide.
+"""
 encode_agentic(service::OpenAIWireEndpointSpec, r::Respond)::String = JSON.json(r)
 
+"""
+    decode_agentic(service, resp::HTTP.Response) -> ResponseObject
+
+Parse `service`'s 200 response into the neutral [`ResponseObject`](@ref), whose
+`output` uses the OpenAI Responses item shapes the accessors read. A body that is not a
+valid response should throw: [`respond`](@ref) and the lifecycle operations report the
+exception as a `ResponseCallError` carrying it in `cause`.
+
+Public extension API (not exported); see the Custom Backends guide.
+"""
 decode_agentic(service::OpenAIWireEndpointSpec, resp::HTTP.Response)::ResponseObject = parse_response(resp)
 
 """
     decode_agentic_stream(service, chunk::String, state::AgenticStreamState)
 
 Streaming half of the agentic wire seam: consume one raw read's bytes,
-mutate `state`, and return `(; done, event, data, terminal)`. Default:
-OpenAI Responses SSE via `_parse_response_stream_chunk`.
+mutate `state` (an [`AgenticStreamState`](@ref); text deltas go to both `textbuff` and
+`pending_delta`), and return `(; done, event, data, terminal)`: `done` is `true` at a
+terminal event, `terminal` is `:completed`, `:failed`, `:incomplete` or `:error`, and
+`data` holds that event's decoded payload. Default: OpenAI Responses SSE via
+`_parse_response_stream_chunk`.
+
+Public extension API (not exported); see the Custom Backends guide.
 """
 decode_agentic_stream(service::OpenAIWireEndpointSpec, chunk::String, state::AgenticStreamState) =
     _parse_response_stream_chunk(chunk, state)

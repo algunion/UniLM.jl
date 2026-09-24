@@ -557,6 +557,18 @@ end
 # under coverage/`--check-bounds=yes` (which suppress the constant-folding that resolves it),
 # widening to `Union{Missing,…}`. The assertion is inference-independent and holds under any
 # Julia flags, keeping every `url` a concrete `String` at the HTTP seam.
+"""
+    get_url(request) -> String
+    get_url(service, request) -> String
+
+The URL a request is sent to. `get_url(chat)`, `get_url(emb)` and `get_url(r::Respond)`
+dispatch on the request's `service`, so a backend adds `get_url(::MyEndpoint, ::Chat)`
+(and, for the surfaces it serves, `::Embeddings` or `::Respond`): dispatch on the
+instance for an endpoint with fields, on `::Type{MyEndpoint}` for a singleton. The
+built-in methods return the provider's documented URLs.
+
+Public extension API (not exported); see the Custom Backends guide.
+"""
 get_url(chat::Chat)::String = get_url(chat.service, chat)::String
 get_url(emb::Embeddings)::String = get_url(emb.service, emb)::String
 
@@ -589,6 +601,18 @@ get_url(s::GenericOpenAIEndpoint, ::Chat)::String = rstrip(s.base_url, '/') * CH
 get_url(s::GenericOpenAIEndpoint, ::Embeddings)::String = rstrip(s.base_url, '/') * EMBEDDINGS_PATH
 _resolve_base_url(s::GenericOpenAIEndpoint) = String(rstrip(s.base_url, '/'))
 
+"""
+    auth_header(service) -> Vector{Pair{String,String}}
+
+The headers sent with every request to `service`: its credentials and the
+`Content-Type`. A backend adds `auth_header(::MyEndpoint)` (or
+`auth_header(::Type{MyEndpoint})` for a singleton endpoint). The built-in endpoints
+read their key from the environment when a request is built, so a missing key
+surfaces in the verb's call-error result; a `GenericOpenAIEndpoint` with an empty key
+sends no `Authorization` header.
+
+Public extension API (not exported); see the Custom Backends guide.
+"""
 function auth_header(s::GenericOpenAIEndpoint)::Vector{Pair{String,String}}
     hdrs = ["Content-Type" => "application/json"]
     !isempty(s.api_key) && pushfirst!(hdrs, "Authorization" => "Bearer $(s.api_key)")
@@ -720,7 +744,23 @@ _decode_tool_calls(raw::AbstractVector)::Vector{ToolCall} =
     [ToolCall(id=x["id"], func=GPTFunction(x["function"]["name"], _parse_tool_arguments(x["function"]["arguments"])))
      for x in raw]
 
-"""Mutable accumulator for streaming Chat Completions chunks."""
+"""
+    StreamState()
+
+Mutable accumulator for one streamed chat attempt, filled by
+[`handle_sse_event!`](@ref) and read by the stream driver. A handler appends text to
+both `content` and `pending_delta` (the driver forwards the latter to the streaming
+callback), refusal text to `refusal`, and records `finish_reason`, `usage`
+(a [`TokenUsage`](@ref)) and, for an in-band error, the decoded payload in `error`.
+Tool calls live in `tool_calls` by index as
+`Dict("id" => …, "type" => "function", "function" => Dict("name" => …, "arguments" => …))`;
+`"complete" => true` on an entry tells the driver the call has finished streaming.
+The `raw_*` fields capture provider-native content blocks for verbatim round-trip,
+and `sse_dropped` counts undecodable payloads. A retried attempt starts from a fresh
+state.
+
+Public extension API (not exported); see the Custom Backends guide.
+"""
 @kwdef mutable struct StreamState
     content::IOBuffer = IOBuffer()
     refusal::IOBuffer = IOBuffer()
@@ -825,7 +865,11 @@ end
     encode_request(service, chat::Chat) -> String
 
 Serialize `chat` into the provider's request body. The `OpenAIWireEndpoint`
-default emits OpenAI Chat Completions JSON.
+default emits OpenAI Chat Completions JSON. An `ArgumentError` thrown here — an option
+the provider or model cannot express — is local validation: [`chatrequest!`](@ref)
+calls the encoder before any network I/O and lets it propagate.
+
+Public extension API (not exported); see the Custom Backends guide.
 """
 encode_request(service::OpenAIWireEndpointSpec, chat::Chat) = JSON.json(chat)
 
@@ -833,7 +877,11 @@ encode_request(service::OpenAIWireEndpointSpec, chat::Chat) = JSON.json(chat)
     decode_response(service, resp::HTTP.Response)
 
 Parse a provider's 200 response into `(; message::Message, usage::Union{TokenUsage,Nothing})`.
-The `OpenAIWireEndpoint` default reads OpenAI Chat Completions (`extract_message`).
+The `OpenAIWireEndpoint` default reads OpenAI Chat Completions (`extract_message`). A
+body that is not a valid reply should throw: [`chatrequest!`](@ref) reports the
+exception as an `LLMCallError` carrying it in `cause`, never as an empty success.
+
+Public extension API (not exported); see the Custom Backends guide.
 """
 decode_response(service::OpenAIWireEndpointSpec, resp::HTTP.Response) = extract_message(resp)
 

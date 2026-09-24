@@ -1,9 +1,10 @@
-# Doc-coverage gate. Every EXPORTED UniLM symbol must appear in an `@docs`
-# block under docs/src, OR be listed in KNOWN_UNDOCUMENTED (docs/undocumented_allowlist.jl).
+# Doc-coverage gate. Every PUBLIC UniLM name (`names(UniLM)`: exported, or declared
+# `public`) must appear in an `@docs` block under docs/src, OR be listed in
+# KNOWN_UNDOCUMENTED (docs/undocumented_allowlist.jl).
 # Assumes explicit `@docs` listing; there are currently no `@autodocs` blocks
 # (if one is added that splices a whole module, extend this parser).
 
-"Exported names of `mod` as strings, excluding the module name itself."
+"Public names of `mod` (exported or declared `public`) as strings, excluding the module name itself."
 exported_names(mod::Module)::Set{String} =
     Set(string(n) for n in names(mod) if n != nameof(mod))
 
@@ -82,6 +83,9 @@ function assert_doc_coverage(mod::Module, docsrc::AbstractString, allow::Set{Str
     isempty(miss)     || push!(problems, "Undocumented exported symbols (add to an @docs block or KNOWN_UNDOCUMENTED):\n  " * join(miss, "\n  "))
     isempty(stale)    || push!(problems, "KNOWN_UNDOCUMENTED lists names no longer exported (remove them):\n  " * join(stale, "\n  "))
     isempty(resolved) || push!(problems, "KNOWN_UNDOCUMENTED lists names that are now documented (remove them):\n  " * join(resolved, "\n  "))
-    isempty(problems) && return nothing
+    if isempty(problems)
+        @info "Doc-coverage gate PASS: all $(length(exported)) public names of $(nameof(mod)) are in @docs blocks"
+        return nothing
+    end
     error("Doc-coverage gate failed.\n\n" * join(problems, "\n\n"))
 end

@@ -107,7 +107,7 @@ tool = Tool(func=FunctionSignature(
     description="Get the current weather",
     parameters=Dict("type" => "object", "properties" => Dict())
 ))
-chat = Chat(tools=[tool])
+chat = Chat(tools=[tool], reasoning_effort="none")   # GPT-5.6 Chat tools need effort "none"
 ```
 """
 @kwdef struct Tool
@@ -394,7 +394,7 @@ Specifies the output format for Chat Completions.
 fmt = ResponseFormat()
 
 # Structured JSON via schema
-fmt = ResponseFormat(JsonSchemaAPI(
+fmt = ResponseFormat(UniLM.JsonSchemaAPI(
     name="result",
     description="A structured result",
     schema=Dict("type" => "object", "properties" => Dict())
@@ -402,7 +402,9 @@ fmt = ResponseFormat(JsonSchemaAPI(
 ```
 
 !!! note
-    Use the convenience constructors `json_object()` and `json_schema()` for cleaner code.
+    `JsonSchemaAPI` and the convenience constructors `UniLM.json_object()` and
+    `UniLM.json_schema(name, description, schema; strict=nothing)` are not exported:
+    qualify them with `UniLM.`.
 """
 @kwdef struct ResponseFormat
     type::String = "json_object"
@@ -1052,17 +1054,18 @@ end
 """
     issendvalid(chat::Chat)::Bool
 
-    Check if the conversation is valid for sending to the API.
+Check if the conversation is valid for sending to the API.
 
-    Returns `true` only when the conversation has at least two messages, the first
-    is a system message, the LAST is a user message, and no two adjacent messages
-    share a role. Note the last two clauses are stricter than [`push!`](@ref),
-    which permits consecutive `tool` messages — this check has no such exemption,
-    and a conversation ending in a tool result is `false` here.
+Returns `true` only when the conversation has at least two messages, the first
+is a system message, the LAST is a user message, and no two adjacent messages
+share a role. Note the last two clauses are stricter than
+[`push!`](@ref Base.push!(::Chat, ::Message)), which permits consecutive `tool`
+messages — this check has no such exemption, and a conversation ending in a tool
+result is `false` here.
 
-    This is a heuristic, not a proof: it cannot catch every malformed shape (a
-    second system message in the middle passes the adjacency test). It never
-    throws — a `false` is a verdict, not an error.
+This is a heuristic, not a proof: it cannot catch every malformed shape (a
+second system message in the middle passes the adjacency test). It never
+throws — a `false` is a verdict, not an error.
 """
 function issendvalid(chat::Chat)::Bool
     length(chat) > 1 &&
@@ -1074,13 +1077,14 @@ end
 """
     push!(chat::Chat, msg::Message)
 
-    Add a message to the conversation. The goal here is to make invalid conversations unrepresentable.
+Add a message to the conversation, refusing any mutation that would make it invalid.
 
-    Throws [`InvalidConversationError`](@ref) when the mutation would produce an
-    invalid conversation: a non-system message pushed onto an empty conversation
-    (it must start with a system message), a system message pushed once the
-    conversation has already started, or a message whose role repeats the last
-    message's role (consecutive tool-result messages are the one exception).
+Throws [`InvalidConversationError`](@ref) when the mutation would produce an
+invalid conversation: a non-system message pushed onto an empty conversation
+(it must start with a system message), a system message pushed once the
+conversation has already started, or a message whose role repeats the last
+message's role (consecutive tool-result messages are the one exception).
+`chat[i] = msg` and direct edits to `chat.messages` are not validated.
 """
 function Base.push!(chat::Chat, msg::Message)
     if msg.role == RoleSystem
@@ -1098,9 +1102,9 @@ end
 """
     pop!(chat::Chat)
 
-    Remove the last message from the conversation.
+Remove the last message from the conversation.
 
-    Throws [`InvalidConversationError`](@ref) when the conversation is empty.
+Throws [`InvalidConversationError`](@ref) when the conversation is empty.
 """
 function Base.pop!(chat::Chat)
     isempty(chat) && throw(InvalidConversationError("cannot pop! from an empty conversation"))
@@ -1136,7 +1140,8 @@ Base.getindex(chat::Chat, i::Int) = chat.messages[i]
 """
     Base.setindex!(chat::Chat, msg::Message, i::Int)
 
-    Set the message at index `i` in the conversation.
+Set the message at index `i` in the conversation. Unlike `push!`, this is not
+validated: the caller keeps the conversation well-formed.
 """
 Base.setindex!(chat::Chat, msg::Message, i::Int) = (chat.messages[i] = msg)
 
@@ -1160,14 +1165,21 @@ Base.firstindex(chat::Chat) = firstindex(chat.messages)
 const GPTTextEmbedding3Small = Model("text-embedding-3-small")
 
 """
-    Embeddings(input::String; service=OPENAIServiceEndpoint, model="text-embedding-3-small")
-    Embeddings(input::Vector{String}; service=OPENAIServiceEndpoint, model="text-embedding-3-small")
+    Embeddings(input::String; service=OPENAIServiceEndpoint, model="", dimensions=nothing,
+               encoding_format=nothing, user=nothing)
+    Embeddings(input::Vector{String}; service=OPENAIServiceEndpoint, model="", dimensions=nothing,
+               encoding_format=nothing, user=nothing)
 
-Create an embedding request for one or more texts. Defaults to OpenAI's
-`text-embedding-3-small` (1536 dimensions), but works with any provider via
-the `service` parameter — Ollama, Gemini, Mistral, or any OpenAI-compatible server.
+Create an embedding request for one or more texts. `model=""` resolves to the service's
+default embedding model — OpenAI's `text-embedding-3-small` (1536 dimensions),
+`gemini-embedding-001` for `GEMINIOpenAIServiceEndpoint` — and a service without one
+(generic endpoints, DeepSeek) needs an explicit `model` (`ArgumentError` otherwise). Works
+with any provider via the `service` parameter — Ollama, Gemini, Mistral, or any
+OpenAI-compatible server.
 
-The `embeddings` field is **pre-allocated** and filled in-place by [`embeddingrequest!`](@ref).
+The `embeddings` field is **pre-allocated** (`something(dimensions, 1536)` zeros per input),
+filled in place by [`embeddingrequest!`](@ref), and resized to the length the model returns.
+The result aliases this struct, so use one `Embeddings` per concurrent call.
 
 # Fields
 - `service::ServiceEndpointSpec`: LLM provider (default: `OPENAIServiceEndpoint`).

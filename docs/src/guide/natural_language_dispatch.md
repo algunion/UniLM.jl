@@ -252,6 +252,7 @@ keywords:
 | `model` | pin a version, e.g. `"jev-1.13.0"`, instead of the `jev-latest` alias |
 | `service` | endpoint type; defaults to [`TYPESAFEServiceEndpoint`](@ref UniLM.TYPESAFEServiceEndpoint) |
 | `config` | a [`RequestConfig`](@ref) governing timeouts and the retry budget for this call |
+| `cancel` | a [`CancelToken`](@ref) that can cancel the call from another task; `nothing` (the default) uses the ambient [`with_cancel`](@ref) token. A cancelled call throws `SystemOneError` like any failed call |
 
 Pin the model before you tune a threshold. A threshold is a claim about one
 version, and `jev-latest` moves when a new one ships
@@ -295,8 +296,8 @@ Every line is `option => expression`:
   is rejected.
 
 Keywords go between the state and the block, written `key = value`: `model`,
-`min_confidence`, `instructions`, `service` and `config`, each meaning what it
-means for [`nl_dispatch`](@ref).
+`min_confidence`, `instructions`, `service`, `config` and `cancel`, each meaning what
+it means for [`nl_dispatch`](@ref).
 
 The whole block compiles to a **single** Choice request whose question is named
 `branch` and whose criteria are the option names, in source order. Only the

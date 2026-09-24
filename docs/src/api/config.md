@@ -21,6 +21,21 @@ UniLMTimeout
 MCPTimeoutError
 ```
 
+## Cancellation
+
+A cooperative, level-triggered token: cancel it from any task, and every operation
+that observes it — explicitly through a `cancel` keyword, or as the ambient token of a
+[`with_cancel`](@ref) scope — stops and reports [`UniLMCancelled`](@ref) in its
+call-error result. See [Concurrency, Tasks and Cancellation](@ref concurrency_guide).
+
+```@docs
+CancelToken
+cancel!
+iscancelled
+with_cancel
+UniLMCancelled
+```
+
 ## Resolution Precedence
 
 A request resolves its `RequestConfig` struct-wise (whichever channel wins

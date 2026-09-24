@@ -15,7 +15,7 @@ UniLM speaks each provider's own wire API, not just the OpenAI-compatible protoc
 
 - **Native Anthropic and Gemini backends** — each speaks the provider's own format (Anthropic Messages, Gemini `generateContent`) rather than an OpenAI-compat shim, and round-trips provider-verbatim content, so reasoning state such as Anthropic thinking signatures and Gemini thought signatures survives across turns.
 - **An MCP client _and_ an MCP server in one package** — connect to external MCP servers (`MCPSession`) with tool-loop integration, and expose your own Julia functions as tools over MCP (`MCPServer`).
-- **Typed results with fail-loud invariants** — every call resolves to a concrete `LLMSuccess` / `LLMFailure` / `LLMCallError` result (with matching `Response…` types for the Responses API), and genuine faults such as timeouts raise typed exceptions (`UniLMTimeout`) instead of returning silent defaults, and invalid conversation mutations raise a typed `InvalidConversationError` rather than corrupting the conversation.
+- **Typed results with fail-loud invariants** — every call resolves to a concrete `LLMSuccess` / `LLMFailure` / `LLMCallError` result (with matching `Response…` types for the Responses API); a timeout or a cancellation comes back as a typed call-error result carrying `UniLMTimeout` / `UniLMCancelled` in `cause`, never a silent default; local validation (an option the provider cannot express, a conversation the reply could not be appended to) throws before any request; and invalid conversation mutations raise a typed `InvalidConversationError` rather than corrupting the conversation.
 - **Built-in per-conversation cost accounting** — provider token counts are normalized to one shape, and each `Chat` accumulates a running USD estimate you read with `cumulative_cost`.
 - **Broad OpenAI platform-API coverage** — well beyond chat: Responses, Images, Embeddings, Files, Vector Stores, Conversations, Audio, Batch, Moderations, Fine-tuning, Webhooks, and Realtime.
 
@@ -31,7 +31,7 @@ UniLM speaks each provider's own wire API, not just the OpenAI-compatible protoc
 - **Embeddings** — text embedding generation with `text-embedding-3-small`
 - **Files, Vector Stores & Conversations** — upload files, build vector stores for `file_search`, and manage server-side conversation state
 - **Audio, Batch & Moderations** — TTS/transcription, async 50%-off bulk jobs, and free safety classification
-- **Realtime, Fine-tuning, Webhooks, Containers, Uploads & Videos** — WebSocket realtime, custom models, signed-webhook verification, and more. See provider availability limits for [fine-tuning](docs/src/api/fine_tuning.md) and [videos](docs/src/api/videos.md).
+- **Realtime, Fine-tuning, Webhooks, Containers & Uploads** — WebSocket realtime, custom models, signed-webhook verification, and more. See provider availability limits for [fine-tuning](docs/src/api/fine_tuning.md).
 - **Not wrapped in this release: OpenAI Agents API** — public beta since September 10, 2026; UniLM has no wrapper for it yet.
 - **Not wrapped in this release: GPT-Live sessions** — `v1/live/sessions` (GPT-Live 1); the Realtime wrappers do not cover it.
 - **Streaming** — real-time token streaming with `do`-block syntax
@@ -41,7 +41,7 @@ UniLM speaks each provider's own wire API, not just the OpenAI-compatible protoc
 
 ## Installation
 
-UniLM requires **Julia 1.12+** and is registered in Julia's General registry:
+UniLM requires **Julia 1.13+** and is registered in Julia's General registry:
 
 ```julia
 using Pkg
@@ -265,7 +265,7 @@ julia> output_text(r2)
 
 ## Multi-Backend Support
 
-UniLM.jl is built around **neutral verbs**: the same `Chat` + `chatrequest!` (tools, streaming, and cost accounting included) run unchanged across OpenAI, Anthropic, Gemini, DeepSeek, and any OpenAI-compatible provider — you only change `service`. The agentic `respond` verb is neutral the same way across OpenAI (Responses) and Gemini (Interactions). Native OpenAI/Anthropic/Gemini are first-class backends with their own wire formats (each exercised by live integration tests), not OpenAI-compatible shims. Switch via the `service` parameter:
+UniLM.jl is built around **neutral verbs**: the same `Chat` + `chatrequest!` (tools, streaming, and cost accounting included — cost needs a price row, so models outside the built-in table estimate at \$0 with a warning) run unchanged across OpenAI, Anthropic, Gemini, DeepSeek, and any OpenAI-compatible provider — you only change `service`. The agentic `respond` verb is neutral the same way across OpenAI (Responses) and Gemini (Interactions). Native OpenAI/Anthropic/Gemini are first-class backends with their own wire formats (each exercised by live integration tests), not OpenAI-compatible shims. Switch via the `service` parameter:
 
 | Backend          | Type                             | Env Variables                                                               |
 | :--------------- | :------------------------------- | :-------------------------------------------------------------------------- |
@@ -286,16 +286,16 @@ chat = Chat(service=AZUREServiceEndpoint, model="gpt-5.2")
 chat = Chat(service=GEMINIServiceEndpoint)          # default: gemini-3.8-flash
 
 # Anthropic (native Messages API)
-chat = Chat(service=ANTHROPICServiceEndpoint)       # default: claude-opus-4-8
+chat = Chat(service=ANTHROPICServiceEndpoint)       # default: claude-opus-5-5
 
 # DeepSeek
-chat = Chat(service=DeepSeekEndpoint(), model="deepseek-chat")
+chat = Chat(service=DeepSeekEndpoint())             # default: deepseek-flash
 
 # Ollama (local)
 chat = Chat(service=OllamaEndpoint(), model="llama3.1")
 ```
 
-TypeSafe's System One endpoint (`TYPESAFEServiceEndpoint`, `TYPESAFE_API_KEY`) is deliberately absent from that table: it answers enumerated questions rather than generating text, so `chatrequest!`, `respond`, `embeddingrequest!` and the other platform verbs reject it up front with an `ArgumentError` (naming it on a `Chat` or an `Embeddings` is allowed; sending the request is not). It has its own section below.
+TypeSafe's System One endpoint (`TYPESAFEServiceEndpoint`, `TYPESAFE_API_KEY`) is deliberately absent from that table: it answers enumerated questions rather than generating text, so `chatrequest!`, `respond`, `embeddingrequest!` and the other platform verbs reject it up front with an `ArgumentError` (naming it on a `Chat` or an `Embeddings` is allowed only with an explicit `model=` — omitting it throws `ArgumentError` — and sending the request is not). It has its own section below.
 
 ## System One: Typed Judgments and Dispatch on Natural Language
 
@@ -360,11 +360,11 @@ UniLM speaks each provider's own API (see [Multi-Backend Support](#multi-backend
 | Stateful conversations |       `Chat` + `push!`       |       `previous_response_id`        |
 | System prompt          | `Message(Val(:system), ...)` |        `instructions` kwarg         |
 | Tool calling           |  `Tool` / `ToolCall`   |  `FunctionTool` / `function_tool`   |
-| Web search             |              —               |           `WebSearchTool`           |
+| Web search             |    `web_search_options`      |           `WebSearchTool`           |
 | File search            |              —               |          `FileSearchTool`           |
 | Streaming              |   `stream=true` + callback   |          `do`-block syntax          |
 | Structured output      |       `ResponseFormat`       | `TextConfig` / `json_schema_format` |
-| Reasoning (O-series)   |              —               |             `Reasoning`             |
+| Reasoning              |     `reasoning_effort`       |             `Reasoning`             |
 | Automated tool loop    |       `tool_loop!`           |          `tool_loop`                |
 | MCP integration        |    `mcp_tools` bridge        |   `MCPTool` / `mcp_tool`            |
 
@@ -384,7 +384,8 @@ Full documentation with guides and API reference: **[https://algunion.github.io/
 - [MCP Guide](https://algunion.github.io/UniLM.jl/dev/guide/mcp/) — MCP client/server
 - [System One Guide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/) — typed judgments with Jev: `ask`, `choice` / `score` / `noul`, confidence gating
 - [Multiple Dispatch on Natural Language](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/) — `nl"..."` meanings in method signatures, `nl_dispatch`, `@branch`
-- [Timeouts & Retries Guide](https://algunion.github.io/UniLM.jl/dev/guide/timeouts/) — bounds, typed failures, retry and concurrency contracts
+- [Timeouts & Retries Guide](https://algunion.github.io/UniLM.jl/dev/guide/timeouts/) — bounds, typed failures, retry contracts
+- [Concurrency, Tasks and Cancellation](https://algunion.github.io/UniLM.jl/dev/guide/concurrency/) — sharing rules, fan-out, streaming into a `Channel`, `CancelToken`
 
 ## Timeouts & Concurrency
 
@@ -406,22 +407,37 @@ set_default_config!(stream_idle_timeout=300.0)   # process-wide, for notebooks
 ```
 
 A timeout surfaces as the call's usual error result with `status = nothing` and a
-`UniLMTimeout` (`phase`, `elapsed`, `limit`) on `.cause` — never a hang and never a
-fabricated HTTP status. `max_attempts` (default 3) applies to the inference verbs;
-platform and lifecycle verbs make a single bounded attempt.
+`UniLMTimeout` (`phase`, `elapsed`, `limit`) on `.cause` — every `*CallError` carries
+`cause` — never a hang and never a fabricated HTTP status. `max_attempts` (default 3)
+applies to the inference verbs (`chatrequest!`, `embeddingrequest!`, `respond`,
+`generate_image`, `edit_image`, `fim_complete`, `prefix_complete`, `ask`,
+`list_models`); platform and lifecycle verbs, `upload_file` included, make a single
+bounded attempt. A `Retry-After` header is a floor under the jittered backoff, so a
+rate-limited batch does not retry in lockstep.
+
+Any call can be cancelled cooperatively from another task:
+
+```julia
+tok = CancelToken()
+task = Threads.@spawn chatrequest!(chat; cancel=tok)   # or with_cancel(tok) do … end
+cancel!(tok)                                           # e.g. the user pressed "stop"
+fetch(task)          # still in flight when cancelled: an LLMCallError whose cause is UniLMCancelled
+```
 
 Two concurrency rules are worth knowing before you fan out:
 
 - **One `Chat` per in-flight call.** A `Chat` is unsynchronized mutable state, so
-  use `fork(chat)` / `fork(chat, n)` to fan out rather than sharing one. The
-  stateless verbs (`respond`, `embeddingrequest!`, `generate_image`) need no such
-  care, and an `MCPSession` is concurrency-1 — one session per worker.
-- **Prefer HTTP 2.x for high fan-out.** HTTP 1.x shares one process-global
-  connection pool across all hosts, capped at `max(16, 4 × nthreads())`, so a wide
-  fan-out silently queues there.
+  use `fork(chat)` / `fork(chat, n)` to fan out rather than sharing one. The same
+  holds for an `Embeddings`, which `embeddingrequest!` fills in place. `respond` and
+  `generate_image` do not mutate their request, so one may be shared.
+- **An `MCPSession` runs one call at a time**, first come first served, and a call's
+  `timeout` bounds its wait for the session — open one session per parallel worker.
 
-The [Timeouts & Retries guide](https://algunion.github.io/UniLM.jl/dev/guide/timeouts/)
-has the full contract, including the stream idle bound and the sharp edges.
+Each stream uses its own HTTP/1.1 connection, so a slow consumer on one stream cannot
+stall another. The [Timeouts & Retries guide](https://algunion.github.io/UniLM.jl/dev/guide/timeouts/)
+has the full bound contract and the
+[Concurrency, Tasks and Cancellation guide](https://algunion.github.io/UniLM.jl/dev/guide/concurrency/)
+the sharing, fan-out and cancellation rules.
 
 ## Versioning & Stability
 

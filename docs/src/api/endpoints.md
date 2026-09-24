@@ -1,6 +1,7 @@
-# Service Endpoints
+# [Service Endpoints](@id endpoints_api)
 
-Types for configuring **multi-backend** service endpoints.
+Types for configuring **multi-backend** service endpoints, and the extension API a new
+backend implements.
 
 ## Abstract Types
 
@@ -51,8 +52,14 @@ Each endpoint reads its configuration from environment variables:
 | :--------------------------------- | :-------------------------------------- |
 | `AZURE_OPENAI_BASE_URL`            | Azure endpoint base URL                 |
 | `AZURE_OPENAI_API_KEY`             | Azure API key                           |
-| `AZURE_OPENAI_API_VERSION`         | API version (e.g. `2024-12-01-preview`) |
-| `AZURE_OPENAI_DEPLOY_NAME_GPT_5_2` | Deployment name for gpt-5.2             |
+| `AZURE_OPENAI_API_VERSION`         | API version (e.g. `2024-10-21`, the latest dated GA version) |
+| `AZURE_OPENAI_DEPLOY_NAME_<MODEL>` | Deployment for a model, read at call time: the model id upper-cased, every character other than `A-Z`/`0-9` mapped to `_` (`AZURE_OPENAI_DEPLOY_NAME_GPT_5_2` for `gpt-5.2`) |
+
+A registration made with [`add_azure_deploy_name!`](@ref) wins over the variable; a
+model with neither fails the call with an `ArgumentError` (in the result's `cause`)
+naming the variable to set. Azure's newer v1 API (no `api-version`) is not wrapped by
+`AZUREServiceEndpoint`; see [Multi-Backend Support](@ref backend_guide) for reaching it
+through `GenericOpenAIEndpoint` (untested).
 
 ### Google Gemini
 
@@ -104,4 +111,42 @@ Pass the `service` keyword to any request constructor:
 chat = Chat(service=UniLM.AZUREServiceEndpoint, model="gpt-5.2")
 println("Service: ", chat.service)
 println("Model: ", chat.model)
+```
+
+## [Extension API](@id extension_api)
+
+The functions a new backend adds methods to, and the stream-state types its handlers
+mutate. They are declared `public` but not exported: qualify them (`UniLM.get_url`)
+when adding methods. [Custom Backends](@ref custom_backends_guide) walks through both
+cases — an OpenAI-compatible provider (routing and authentication only) and a provider
+with its own wire (the chat and agentic seams). Pre-1.0, this contract can still change
+in a minor release, under the CHANGELOG's **Breaking** heading.
+
+### Routing, authentication and defaults
+
+```@docs
+UniLM.get_url
+UniLM.auth_header
+UniLM.default_model
+```
+
+[`provider_capabilities`](@ref) (exported) is the capability hook: an endpoint that
+defines it opts into validation against that set.
+
+### Chat wire seam
+
+```@docs
+UniLM.encode_request
+UniLM.decode_response
+UniLM.handle_sse_event!
+UniLM.StreamState
+```
+
+### Agentic wire seam
+
+```@docs
+UniLM.encode_agentic
+UniLM.decode_agentic
+UniLM.decode_agentic_stream
+UniLM.AgenticStreamState
 ```

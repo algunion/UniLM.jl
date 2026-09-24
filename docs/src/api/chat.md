@@ -30,6 +30,8 @@ println("User content: ", usr.content)
 ## Conversation Management
 
 ```@docs
+Base.push!(::Chat, ::Message)
+Base.pop!(::Chat)
 issendvalid
 update!
 fork

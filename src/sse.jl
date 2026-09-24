@@ -103,7 +103,7 @@ end
                       state::StreamState) -> Symbol
 
 Per-provider chat-streaming event handler — the seam that replaces
-`decode_stream_chunk` (removed in 0.11.3). Called by [`_sse_dispatch!`](@ref)
+`decode_stream_chunk` (removed in 0.11.3). Called by the stream driver
 once per complete `data:` payload, with the current SSE event name. Mutates
 `state` and returns
 - `:continue` — keep reading;
@@ -113,8 +113,12 @@ once per complete `data:` payload, with the current SSE event name. Mutates
 Text deltas are appended to BOTH `state.content` and `state.pending_delta`
 (the driver forwards the latter to the streaming callback). Throwing on an
 undecodable payload is safe: the dispatcher logs, counts, and drops the line.
-Unexported but documented: provider packages/tests may add methods for their
-own service types (dispatch is on the first argument).
+The `OpenAIWireEndpoint` default reads OpenAI Chat Completions chunks and ends at
+`[DONE]`; a provider without a sentinel (native Gemini) never returns `:done`, and
+its stream ends at EOF with `state.finish_reason` recorded.
+
+Public extension API (not exported): a backend adds a method for its own service
+type (dispatch is on the first argument); see the Custom Backends guide.
 """
 function handle_sse_event! end
 

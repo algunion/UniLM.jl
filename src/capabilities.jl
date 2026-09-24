@@ -94,7 +94,10 @@ end
 
 Return the default chat/completions model for the given service endpoint.
 Returns `nothing` for generic and user-defined endpoints (model must be specified
-explicitly; `Chat` then throws an `ArgumentError` when it is not).
+explicitly; `Chat` then throws an `ArgumentError` when it is not). A backend adds
+`default_model(::MyEndpoint)` to make `model=` optional for it.
+
+Public extension API (not exported); see the Custom Backends guide.
 """
 default_model(::Type{OPENAIServiceEndpoint})  = "gpt-5.6-sol"
 default_model(::Type{AZUREServiceEndpoint})   = "gpt-5.2"

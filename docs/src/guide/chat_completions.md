@@ -25,7 +25,9 @@ All parameters are optional with sensible defaults. See [`Chat`](@ref) for the f
 
 ## Building Conversations
 
-Messages are added with `push!`. UniLM.jl enforces conversation structure at the type level — you cannot create invalid message sequences:
+Messages are added with `push!`, which enforces the conversation structure: a `push!` (or
+`pop!`) that would produce an invalid sequence throws instead. The checks live in `push!` and
+`pop!`; `chat[i] = msg` and direct edits to `chat.messages` bypass them.
 
 ```@example chat
 # System message must come first
@@ -54,6 +56,9 @@ println("chat2 length: ", length(chat2))
 - Messages must **alternate roles** (no two consecutive messages from the same role; consecutive `tool` results are the exception)
 - At least `content`, `tool_calls`, or `refusal_message` must be non-`nothing`
 - Attempting to violate these rules throws [`InvalidConversationError`](@ref) — the invalid message is never added
+- A `Message` role must be `"system"`, `"user"`, `"assistant"` or `"tool"` (anything else throws `ArgumentError`)
+- With `history=true`, sending a conversation that ends with an assistant message throws
+  `InvalidConversationError` before any request: the reply could not be appended to it
 
 ```@example chat
 # Demonstrate validation — an invalid mutation throws and leaves the chat unchanged
@@ -176,8 +181,8 @@ UniLM.jl works with any model name string. Common choices:
 
 All eight are keys in [`DEFAULT_PRICING`](@ref), so cost accounting works out of
 the box. Any other model name is accepted — it is just a string on the wire — but
-an unpriced one silently estimates at `0.0` — see
-[Unpriced models return \$0 silently](@ref unpriced-zero) before relying on
+an unpriced one estimates at `0.0` (with a one-time warning) — see
+[Unpriced models cost \$0](@ref unpriced-zero) before relying on
 `estimated_cost`.
 
 ## Using Other Providers
@@ -185,8 +190,8 @@ an unpriced one silently estimates at `0.0` — see
 Pass a `service` to target any supported backend:
 
 ```julia
-# DeepSeek
-chat = Chat(service=DeepSeekEndpoint(), model="deepseek-chat")
+# DeepSeek (default model: deepseek-flash)
+chat = Chat(service=DeepSeekEndpoint())
 
 # Ollama (local)
 chat = Chat(service=OllamaEndpoint(), model="llama3.1")
@@ -207,7 +212,11 @@ println(JSON.json(chat))
 
 ## Retry Behaviour
 
-`chatrequest!` automatically retries transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) with exponential backoff and jitter, honoring `Retry-After`. Attempts and total time are bounded by the resolved [`RequestConfig`](@ref) (`max_attempts`, default 3; `total_deadline`, default 900 s). Pass `config=RequestConfig(max_attempts=1)` to disable retries for a call, or set scoped/process-wide defaults with `with_request_config` / `set_default_config!`. Timeouts surface as `LLMCallError` with `status = nothing` and the `UniLMTimeout` (phase, elapsed, limit) in `.cause`.
+`chatrequest!` automatically retries transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) with exponential backoff and jitter; a `Retry-After` header is a floor under the jittered wait, so concurrent callers that received the same header do not retry in lockstep. Attempts and total time are bounded by the resolved [`RequestConfig`](@ref) (`max_attempts`, default 3; `total_deadline`, default 900 s). Pass `config=RequestConfig(max_attempts=1)` to disable retries for a call, or set scoped/process-wide defaults with `with_request_config` / `set_default_config!`. Timeouts surface as `LLMCallError` with `status = nothing` and the `UniLMTimeout` (phase, elapsed, limit) in `.cause`; a cancelled call (see [Concurrency, Tasks and Cancellation](@ref concurrency_guide)) carries a `UniLMCancelled` there instead.
+
+Local validation is not a result: an option the provider or model cannot express, a service
+that does not declare `:chat`, or a conversation the reply could not be appended to throws
+(`ArgumentError` / `InvalidConversationError`) before any request is sent.
 
 ## Parameter Validation
 
@@ -217,11 +226,18 @@ The `Chat` constructor validates parameter ranges at construction time:
 | :------------------ | :--------------- |
 | `temperature`       | 0.0–2.0          |
 | `top_p`             | 0.0–1.0          |
-| `n`                 | 1–10             |
+| `n`                 | 1 (a result carries a single choice) |
+| `max_tokens`, `max_completion_tokens` | ≥ 1 |
 | `presence_penalty`  | -2.0–2.0         |
 | `frequency_penalty` | -2.0–2.0         |
+| `top_logprobs`      | 0–20             |
+| `logit_bias` values | -100–100 (any `Real`) |
+| `reasoning_effort`  | `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` |
 
-Out-of-range values throw `ArgumentError`. Additionally, `temperature` and `top_p` are mutually exclusive.
+Out-of-range values throw `ArgumentError`. Additionally, `temperature` and `top_p` are mutually
+exclusive, and an empty `tools` vector is stored as `nothing`. Provider- and model-specific
+limits (for example GPT-5.6 Chat tools requiring `reasoning_effort="none"`, or Claude's
+temperature range) are checked when the request is encoded, before any network I/O.
 
 ## See Also
 

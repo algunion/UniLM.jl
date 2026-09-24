@@ -9,7 +9,11 @@ tool and expire after idle. OpenAI only.
 ```@docs
 ContainerObject
 ContainerList
+UniLM.ContainerFileObject
 ```
+
+`add_container_file` returns a `ContainerSuccess` whose `response` is the created
+`ContainerFileObject` (not exported); create and retrieve return a `ContainerObject`.
 
 ## Result Types
 

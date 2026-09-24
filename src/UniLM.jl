@@ -534,6 +534,23 @@ export
     @mcp_resource,
     @mcp_prompt
 
+# ─── Provider extension API (public, not exported) ───────────────────────────
+# The functions a new backend adds methods to, and the stream-state types its
+# handlers mutate: routing and authentication, the default-model hook, and the
+# chat and agentic wire seams (see the Custom Backends guide).
+public
+    get_url,
+    auth_header,
+    default_model,
+    encode_request,
+    decode_response,
+    handle_sse_event!,
+    StreamState,
+    encode_agentic,
+    decode_agentic,
+    decode_agentic_stream,
+    AgenticStreamState
+
 # Every concrete result type whose exported name ends in `Success` reports
 # success; the generic `issuccess(::LLMRequestResponse)` fallback (in api.jl)
 # reports false, so every `*Failure`/`*CallError` reports false without a

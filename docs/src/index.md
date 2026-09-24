@@ -39,17 +39,17 @@ For **OpenAI**, use either conversational API — **Chat Completions** (`Chat`; 
 | Stateful conversations |       `Chat` + `push!`       |       `previous_response_id`        |
 | System prompt          | `Message(Val(:system), ...)` |        `instructions` kwarg         |
 | Tool calling           |  `Tool` / `ToolCall`   |  `FunctionTool` / `function_tool`   |
-| Web search             |              —               |           `WebSearchTool`           |
+| Web search             |    `web_search_options`      |           `WebSearchTool`           |
 | File search            |              —               |          `FileSearchTool`           |
 | Streaming              |   `stream=true` + callback   |          `do`-block syntax          |
 | Structured output      |       `ResponseFormat`       | `TextConfig` / `json_schema_format` |
-| Reasoning (O-series)   |              —               |             `Reasoning`             |
+| Reasoning              |     `reasoning_effort`       |             `Reasoning`             |
 | Automated tool loop    |       `tool_loop!`           |          `tool_loop`                |
 | MCP integration        |    `mcp_tools` bridge        |   `MCPTool` / `mcp_tool`            |
 
 ## Installation
 
-UniLM requires **Julia 1.12+** and is registered in Julia's General registry:
+UniLM requires **Julia 1.13+** and is registered in Julia's General registry:
 
 ```julia
 using Pkg
@@ -108,7 +108,7 @@ result = respond("Explain Julia's multiple dispatch in 2-3 sentences.", model="g
 if result isa ResponseSuccess
     println(output_text(result))
 else
-    println("Request failed — ", output_text(result))
+    println("Request failed — ", result)
 end
 ```
 
@@ -149,14 +149,15 @@ end
 - [Responses API Guide](@ref responses_guide) — the newer Responses API
 - [Image Generation Guide](@ref images_guide) — create images from text prompts
 - [MCP Guide](@ref mcp_guide) — connect to MCP servers or build your own
-- [Timeouts & Retries](@ref timeouts_guide) — `RequestConfig`, typed timeout failures, retry and concurrency contracts
+- [Timeouts & Retries](@ref timeouts_guide) — `RequestConfig`, typed timeout failures, retry contracts
+- [Concurrency, Tasks and Cancellation](@ref concurrency_guide) — sharing, fan-out, streaming into a `Channel`, `CancelToken`
 - [API Reference](@ref chat_api) — full type and function reference
 
 ### Platform APIs
 
-Beyond chat and generation, UniLM wraps the full OpenAI platform surface (OpenAI-only) — each has an API-reference page:
+Beyond chat and generation, UniLM wraps most of the OpenAI platform surface (OpenAI-only) — each has an API-reference page:
 
 - **Storage & retrieval** — [Files](api/files.md), [Vector Stores](api/vector_stores.md), [Conversations](api/conversations.md), [Uploads](api/uploads.md), [Containers](api/containers.md)
-- **Generation & media** — [Audio](api/audio.md), [Videos](api/videos.md), [Images](api/images.md)
+- **Generation & media** — [Audio](api/audio.md), [Images](api/images.md)
 - **Jobs & ops** — [Batch](api/batch.md), [Fine-tuning](api/fine_tuning.md), [Moderations](api/moderations.md), [Webhooks](api/webhooks.md), [Realtime](api/realtime.md)
 - **Cross-cutting** — [Cost Tracking](@ref cost_guide), [Provider Capabilities](api/capabilities.md), [Retrieval & File Search](@ref retrieval_guide)

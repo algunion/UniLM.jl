@@ -1151,7 +1151,8 @@ end
 
 """
     mcp_connect(command::Cmd; stderr=nothing, client_name="UniLM.jl",
-                protocol_version="2025-11-25", config=nothing, auto_respawn=false) -> MCPSession
+                client_version=string(pkgversion(UniLM)), protocol_version="2025-11-25",
+                config=nothing, auto_respawn=false) -> MCPSession
 
 Connect to an MCP server via stdio transport (subprocess). `stderr` is where the
 server's stderr goes — an `IO` such as `devnull`, or a file path (appended to);
@@ -1188,7 +1189,8 @@ function mcp_connect(command::Cmd; stderr::Union{Nothing,IO,AbstractString}=noth
 end
 
 """
-    mcp_connect(url::String; headers=[], client_name="UniLM.jl", protocol_version="2025-11-25",
+    mcp_connect(url::String; headers=Pair{String,String}[], client_name="UniLM.jl",
+                client_version=string(pkgversion(UniLM)), protocol_version="2025-11-25",
                 config=nothing, auto_respawn=false) -> MCPSession
 
 Connect to an MCP server via HTTP transport.
@@ -1482,7 +1484,8 @@ Do-block form: automatically disconnects after the block executes.
 ```julia
 mcp_connect(`npx server`) do session
     tools = mcp_tools(session)
-    chat = Chat(tools=map(t -> t.tool, tools))
+    chat = Chat(model="gpt-5.4-mini", tools=tools)
+    push!(chat, Message(Val(:system), "You can use the server's tools."))
     push!(chat, Message(Val(:user), "List files"))
     tool_loop!(chat; tools)
 end
@@ -1737,7 +1740,8 @@ Two tools whose names map to the same alias raise an `ArgumentError`.
 ```julia
 session = mcp_connect(`npx server`)
 tools = mcp_tools(session)
-chat = Chat(model="gpt-5.5", tools=map(t -> t.tool, tools))
+chat = Chat(model="gpt-5.4-mini", tools=tools)
+push!(chat, Message(Val(:system), "You can use the server's tools."))
 push!(chat, Message(Val(:user), "Do something"))
 result = tool_loop!(chat; tools)
 ```

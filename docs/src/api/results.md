@@ -122,10 +122,12 @@ LLMRequestResponse   (abstract parent of every result type below)
 ├─ Fine-tuning        FineTuningSuccess · FineTuningListSuccess · FineTuningFailure · FineTuningCallError
 ├─ Containers         ContainerSuccess · ContainerListSuccess · ContainerDeleteSuccess · ContainerFailure · ContainerCallError
 ├─ Uploads            UploadSuccess · UploadPartSuccess · UploadFailure · UploadCallError
-├─ Videos             VideoSuccess · VideoListSuccess · VideoContentSuccess · VideoFailure · VideoCallError
-└─ Realtime           RealtimeSecretSuccess · RealtimeFailure · RealtimeCallError
+├─ Realtime           RealtimeSecretSuccess · RealtimeFailure · RealtimeCallError
+└─ System One         SystemOneSuccess · TypeSafeModelsSuccess · SystemOneFailure · SystemOneCallError
 ```
 
 Every `*Success` wraps a parsed response object; every `*Failure` carries the HTTP status and
-body; every `*CallError` wraps a transport/exception. Pattern-match on the family you called
-(see each API-reference page for the concrete fields).
+body; every `*CallError` carries the rendered `error` text and, in `cause`, the exception
+behind it when there is one — a [`UniLMTimeout`](@ref) for a timeout, a
+[`UniLMCancelled`](@ref) for a cancellation. Pattern-match on the family you called (see each API-reference page for the
+concrete fields).

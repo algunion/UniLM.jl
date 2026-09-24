@@ -14,8 +14,9 @@
 A Fill-in-the-Middle completion request. The model generates text between `prompt`
 (prefix) and `suffix`.
 
-Supported by [`DeepSeekEndpoint`](@ref) (beta), Mistral, Ollama, vLLM. `stream=true`
-throws an `ArgumentError`: [`fim_complete`](@ref) has no streaming path.
+Supported by [`DeepSeekEndpoint`](@ref) (beta), Mistral and Ollama (vLLM's completions
+endpoint does not accept `suffix`). `stream=true` throws an `ArgumentError`:
+[`fim_complete`](@ref) has no streaming path.
 
 # Example
 ```julia

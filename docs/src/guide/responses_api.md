@@ -22,7 +22,7 @@ result = respond("Explain Julia's multiple dispatch in 2-3 sentences.", model="g
 if result isa ResponseSuccess
     println(output_text(result))
 else
-    println("Request failed — ", output_text(result))
+    println("Request failed — ", result)
 end
 ```
 
@@ -67,7 +67,7 @@ result = respond(
 if result isa ResponseSuccess
     println(output_text(result))
 else
-    println("Request failed — ", output_text(result))
+    println("Request failed — ", result)
 end
 ```
 
@@ -106,7 +106,7 @@ r1 = respond("Tell me a one-liner programming joke.", instructions="Be concise."
 if r1 isa ResponseSuccess
     println(output_text(r1))
 else
-    println("Request failed — ", output_text(r1))
+    println("Request failed — ", r1)
 end
 ```
 
@@ -116,7 +116,7 @@ if r1 isa ResponseSuccess
     if r2 isa ResponseSuccess
         println(output_text(r2))
     else
-        println("Request failed — ", output_text(r2))
+        println("Request failed — ", r2)
     end
 else
     println("Skipped — first request failed")
@@ -136,7 +136,7 @@ result = respond(
 if result isa ResponseSuccess
     println(output_text(result))
 else
-    println("Request failed — ", output_text(result))
+    println("Request failed — ", result)
 end
 ```
 
@@ -174,7 +174,7 @@ if !isempty(calls)
     println("Function: ", calls[1]["name"])
     println("Arguments: ", JSON.json(JSON.parse(calls[1]["arguments"]), 2))
 else
-    println("No function calls — ", output_text(result))
+    println("No function calls — ", result isa ResponseSuccess ? output_text(result) : result)
 end
 ```
 
@@ -262,7 +262,7 @@ result = respond("List 5 popular colors", text=fmt, model="gpt-5.4-mini")
 if result isa ResponseSuccess
     println(JSON.json(JSON.parse(output_text(result)), 2))
 else
-    println("Request failed — ", output_text(result))
+    println("Request failed — ", result)
 end
 ```
 
@@ -274,8 +274,8 @@ result = respond("Hello!")
 if result isa ResponseSuccess
     r = result.response
 
-    output_text(result)      # full text output
-    function_calls(result)   # Vector of function call Dicts (empty if none)
+    output_text(result)      # full text output (throws LLMResultError on a failed result)
+    function_calls(result)   # Vector of function call Dicts (empty if none, or on a failure)
 
     r.id                     # "resp_00e791c8..."
     r.status                 # "completed"
@@ -314,7 +314,7 @@ if r isa ResponseSuccess
         println("Deleted: ", del["deleted"])
     end
 else
-    println("Request failed — ", output_text(r))
+    println("Request failed — ", r)
 end
 ```
 
@@ -331,7 +331,7 @@ result = respond(
 if result isa ResponseSuccess
     println(output_text(result))
 else
-    println("Request failed — ", output_text(result))
+    println("Request failed — ", result)
 end
 ```
 
@@ -344,7 +344,7 @@ result = respond("Say 'tier test' and nothing else.", service_tier="auto", model
 if result isa ResponseSuccess
     println(output_text(result))
 else
-    println("Request failed — ", output_text(result))
+    println("Request failed — ", result)
 end
 ```
 
@@ -460,7 +460,7 @@ end
 
 ## Retry Behaviour
 
-`respond` automatically retries transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) with full-jitter exponential backoff, honoring `Retry-After`. Attempts and total time are bounded by the resolved [`RequestConfig`](@ref) (`max_attempts`, default 3; `total_deadline`, default 900 s), and a retry whose backoff would exceed the remaining deadline is not attempted — the call fails immediately with the last real response rather than sleeping past it. Pass `config=RequestConfig(max_attempts=1)` to disable retries for a call, or set scoped/process-wide defaults with `with_request_config` / `set_default_config!`. Timeouts surface as `ResponseCallError` with `status = nothing` and the `UniLMTimeout` (phase, elapsed, limit) in `.cause`.
+`respond` automatically retries transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) with full-jitter exponential backoff; a `Retry-After` header is a floor under the jittered wait. Attempts and total time are bounded by the resolved [`RequestConfig`](@ref) (`max_attempts`, default 3; `total_deadline`, default 900 s), and a retry whose wait would exceed the remaining deadline is not attempted — the call fails immediately with the last real response rather than sleeping past it. Pass `config=RequestConfig(max_attempts=1)` to disable retries for a call, or set scoped/process-wide defaults with `with_request_config` / `set_default_config!`. Timeouts surface as `ResponseCallError` with `status = nothing` and the `UniLMTimeout` (phase, elapsed, limit) in `.cause`; every other exception that ends the call is in `.cause` too — a [`UniLMCancelled`](@ref) for a call cancelled through its `cancel` token (see [Concurrency, Tasks and Cancellation](@ref concurrency_guide)). Local validation — an option the provider or model cannot express, or a service that supports neither `:responses` nor `:agentic` — throws `ArgumentError` before any request.
 
 This applies to `respond` only. The Responses **lifecycle** operations — [`get_response`](@ref), [`delete_response`](@ref), [`cancel_response`](@ref), [`list_input_items`](@ref), [`compact_response`](@ref), [`count_input_tokens`](@ref) — make a single bounded attempt; `max_attempts` has no effect on them. See [Timeouts & Retries](@ref timeouts_guide).
 
@@ -474,8 +474,14 @@ The `Respond` constructor validates parameter ranges at construction time:
 | `top_p`            | 0.0–1.0     |
 | `max_output_tokens`| ≥ 1         |
 | `top_logprobs`     | 0–20        |
+| `reasoning` effort | `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` (checked by `Reasoning`) |
 
-Out-of-range values throw `ArgumentError`. Additionally, `temperature` and `top_p` are mutually exclusive.
+Out-of-range values throw `ArgumentError`. Additionally, `temperature` and `top_p` are
+mutually exclusive, `conversation` cannot be combined with `previous_response_id` (each
+already supplies the prior turns), `background=true` requires a stored response
+(`store=false` throws), and `prompt_cache_retention` cannot be combined with
+`prompt_cache_options`. A Chat [`Tool`](@ref) in `tools` is converted to the equivalent
+[`FunctionTool`](@ref).
 
 ## See Also
 

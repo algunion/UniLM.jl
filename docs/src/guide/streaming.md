@@ -38,7 +38,7 @@ may be coalesced into one callback), so multibyte characters are never split acr
 boundaries — and then exactly once at end-of-stream with the fully assembled
 [`Message`](@ref), whose `content` equals the concatenation of every forwarded `String`.
 
-### Stopping a Stream Early
+### [Stopping a Stream Early](@id streaming_stop)
 
 The callback receives a `Ref{Bool}` that you can set to `true` to stop streaming:
 
@@ -51,15 +51,50 @@ task = chatrequest!(chat, callback=function(chunk, close)
         end
     end
 end)
+result = fetch(task)   # LLMCallError whose cause is UniLMCancelled(:callback, …)
 ```
+
+A stop takes effect at once: the connection is aborted, and the call ends with
+`LLMCallError(status = nothing, cause = UniLMCancelled(:callback, elapsed))` (a
+`ResponseCallError` on the Responses path). It is never retried, no further callback
+runs, and the partial reply is not appended to the chat. The one exception is a stop
+that arrives after the provider's terminal event was recorded — for instance from
+the terminal callback itself: the completed turn then stands as the success it is.
+
+The flag can also be set from another task that holds it. To stop a stream from
+outside the callback, cancel a [`CancelToken`](@ref) instead: pass `cancel=tok` (or
+run the call inside `with_cancel(tok)`) and call `cancel!(tok)` from any task. The
+result has the same shape, with `cause.source == :token`:
+
+```julia
+tok = CancelToken()
+task = chatrequest!(chat; cancel=tok, callback=(chunk, close) -> chunk isa String && print(chunk))
+# … later, from any task:
+cancel!(tok)
+result = fetch(task)   # LLMCallError whose cause is UniLMCancelled(:token, …)
+```
+
+A stop requested while the stream task is inside your callback takes effect when
+the callback returns. See [Cancellation](@ref concurrency_cancellation) for the full
+contract.
+
+### Exceptions from callbacks
+
+An exception thrown by `callback` or `on_tool_call` ends the call: `fetch` returns an
+`LLMCallError` (or `ResponseCallError`) whose `cause` is that exception. The call is
+never retried, nothing is appended to the chat, and no callback runs after it. A user
+`InterruptException` is the exception to that rule: it propagates, so `fetch` throws
+a `TaskFailedException` wrapping it.
 
 ### Streamed Tool Calls
 
 When the model streams tool calls, pass `on_tool_call` to be notified as each call
-completes. It fires **exactly once per tool call**, in call order, receiving a fully
+completes. It fires **at most once per tool call**, in call order, receiving a fully
 assembled [`ToolCall`](@ref) whose arguments are already parsed (a zero-argument call
-arrives as an empty `Dict`). The text `callback` and `on_tool_call` are independent, so a
-single request can stream assistant text and surface tool calls as they finish:
+arrives as an empty `Dict`); a call whose arguments do not parse as JSON is skipped
+with a warning rather than delivered. The text `callback` and `on_tool_call` are
+independent, so a single request can stream assistant text and surface tool calls as
+they finish:
 
 ```julia
 # weather_tool defined as in the Tool Calling guide
@@ -96,7 +131,7 @@ result = fetch(task)
 if result isa ResponseSuccess
     println(output_text(result))
 else
-    println("Request failed — ", output_text(result))
+    println("Request failed — ", result)
 end
 ```
 
@@ -162,15 +197,37 @@ result as well as on a success.
 
 ## Notes
 
-- Streaming runs on a **separate Julia thread** via `Threads.@spawn`. Make sure Julia is started with multiple threads (`julia -t auto`).
-- The returned `Task` can be `fetch`ed to get the final result.
-- The `close` `Ref{Bool}` can be set to `true` from the callback to terminate the stream early.
+- A streaming call returns a `Task` (spawned with `Threads.@spawn`, on the default
+  thread pool); `fetch` it for the final typed result. It works on any thread
+  layout, a single thread included — but your callbacks run on that task, so keep
+  them short and hand heavy work to another task (see
+  [Concurrency, Tasks and Cancellation](@ref concurrency_guide)).
+- The returned `Task` throws only for a user `InterruptException`; every failure —
+  a timeout, a stop, a callback exception — is a typed result from `fetch`.
+- The `close` `Ref{Bool}` can be set to `true` from the callback (or from any task
+  holding it) to terminate the stream early; see
+  [Stopping a Stream Early](@ref streaming_stop).
 - On completion, the Chat Completions callback receives a `Message`; the Responses API callback receives a `ResponseObject`.
-- **Streamed usage**: set `stream_options=Dict("include_usage" => true)` to capture token usage — it lands on the result's `.usage` once the stream completes. Empty-`choices` chunks, `:` keep-alive comment lines, and provider preambles (e.g. Azure content-filter results) are all tolerated without affecting the stream.
+- **Each stream uses its own HTTP/1.1 connection**, so a consumer that applies
+  backpressure to one stream cannot stall its siblings; non-streaming requests may
+  share an HTTP/2 connection.
+- **Streamed usage**: `OPENAIServiceEndpoint` and `DeepSeekEndpoint` streams request
+  `stream_options = {"include_usage": true}` automatically when `stream_options` is
+  unset, so a streamed turn carries token usage (on `.usage`) and accrues cost like a
+  non-streamed one. Native Anthropic and Gemini streams report usage on their own.
+  Other OpenAI-compatible servers (Azure, the Gemini compat shim, generic endpoints)
+  are not sent the field, since some reject it: set
+  `stream_options=Dict("include_usage" => true)` where the server supports it, or the
+  streamed turn reports no usage and accrues \$0. Empty-`choices` chunks, `:`
+  keep-alive comment lines, and provider preambles (e.g. Azure content-filter
+  results) are all tolerated without affecting the stream.
 - A provider error mid-stream on an otherwise-`200` response (e.g. an Anthropic `overloaded_error`) surfaces as an `LLMFailure`/`LLMCallError`, never a truncated `LLMSuccess` — the `else` branch in the examples above catches it.
-- **One `Chat` per in-flight call.** A `Chat` is unsynchronized mutable state, so do not share one across concurrent streams, and do not `push!` to it while its stream task is still running. Use [`fork`](@ref) to fan out — see [Concurrency](@ref timeout_concurrency).
+- **One `Chat` per in-flight call.** A `Chat` is unsynchronized mutable state, so do not share one across concurrent streams, and do not `push!` to it while its stream task is still running. Use [`fork`](@ref) to fan out — see [Concurrency, Tasks and Cancellation](@ref concurrency_guide).
 
 ## See Also
 
-- [Timeouts & Retries](@ref timeouts_guide) — the stream idle bound, what a
-  completed-then-torn-down turn resolves to, and the concurrency contracts.
+- [Timeouts & Retries](@ref timeouts_guide) — the stream idle bound (wire idleness
+  only: time in your callbacks is not counted) and what a completed-then-torn-down
+  turn resolves to.
+- [Concurrency, Tasks and Cancellation](@ref concurrency_guide) — streaming into a
+  `Channel`, backpressure, and cancelling a stream from another task.

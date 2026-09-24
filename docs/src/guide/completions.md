@@ -3,8 +3,10 @@
 UniLM.jl supports **Fill-in-the-Middle (FIM)** completion and **Chat Prefix Completion** —
 features for code completion and controlled text generation.
 
-FIM is supported by [`DeepSeekEndpoint`](@ref) (beta), Ollama, and vLLM.
-Prefix completion is supported by [`DeepSeekEndpoint`](@ref) (beta).
+FIM is supported by [`DeepSeekEndpoint`](@ref) (beta), [`MistralEndpoint`](@ref) and
+Ollama; vLLM's `/v1/completions` does not accept `suffix`, so it cannot fill in the
+middle. Prefix completion is supported by [`DeepSeekEndpoint`](@ref) (beta). The default
+DeepSeek model for both is `deepseek-flash`.
 
 ```@setup completions
 using UniLM
@@ -23,7 +25,7 @@ standard pattern for code completion — the model fills in the gap.
 ```@example completions
 fim = FIMCompletion(
     service=DeepSeekEndpoint("demo-key"),
-    model="deepseek-chat",
+    model="deepseek-flash",
     prompt="def fib(a):",
     suffix="    return fib(a-1) + fib(a-2)",
     max_tokens=128,
@@ -55,12 +57,25 @@ result = fim_complete("def hello():",
 
 ### Result Types
 
-FIM returns [`FIMSuccess`](@ref), [`FIMFailure`](@ref), or [`FIMCallError`](@ref):
+FIM returns [`FIMSuccess`](@ref), [`FIMFailure`](@ref), or [`FIMCallError`](@ref). Local
+validation — the endpoint's `:fim` capability, model resolution, routing, and
+`stream=true` (FIM has no streaming path) — throws `ArgumentError` before any request;
+every later failure, including a `200` whose body is not a completions response, is a
+`FIMCallError` carrying the exception in `cause`. A `FIMSuccess` reports token usage and
+is priced by [`estimated_cost`](@ref).
+
+[`fim_text`](@ref) returns the generated text of a success. A failed call has no text,
+so on a `FIMFailure` or `FIMCallError` it throws [`LLMResultError`](@ref) instead of
+returning `""` — guard with [`issuccess`](@ref):
 
 ```@example completions
-# The accessor works on every result type; a failure has no text, so it returns ""
-println(repr(fim_text(FIMFailure(response="err", status=400))))
-println(repr(fim_text(FIMCallError(error="network"))))
+failed = FIMFailure(response="err", status=400)
+println("issuccess: ", issuccess(failed))
+try
+    fim_text(failed)
+catch e
+    println(sprint(showerror, e))
+end
 ```
 
 ### Provider Support
@@ -68,12 +83,13 @@ println(repr(fim_text(FIMCallError(error="network"))))
 | Provider | Endpoint | Notes |
 |---|---|---|
 | DeepSeek | `DeepSeekEndpoint()` | Beta — uses `api.deepseek.com/beta` internally |
+| Mistral | `MistralEndpoint()` | Via `/v1/fim/completions`; its `message.content` choices are read |
 | Ollama | `OllamaEndpoint()` | Via `/v1/completions` |
-| vLLM | `GenericOpenAIEndpoint(url, "")` | Via `/v1/completions` |
 
 ```@example completions
 # URL routing adapts per provider
 println("DeepSeek: ", UniLM.get_url(DeepSeekEndpoint("k"), fim))
+println("Mistral:  ", UniLM.get_url(MistralEndpoint(api_key="k"), fim))
 println("Ollama:   ", UniLM.get_url(OllamaEndpoint(), fim))
 ```
 
@@ -89,15 +105,20 @@ from. Useful for forcing specific output formats (e.g., starting with a code blo
 The last message in the chat must be `role=assistant` with the partial text:
 
 ```julia
-chat = Chat(service=DeepSeekEndpoint(), model="deepseek-chat")
+chat = Chat(service=DeepSeekEndpoint())   # deepseek-flash
 push!(chat, Message(Val(:system), "You are a coding assistant."))
 push!(chat, Message(Val(:user), "Write a Python quicksort"))
 push!(chat, Message(role=RoleAssistant, content="```python\n"))
 
 result = prefix_complete(chat)
 # The model continues from "```python\n"
-println(result.message.content)
+result isa LLMSuccess && println(result.message.content)
 ```
+
+The result's `message` is the continuation the API returns. With `chat.history` (the
+default) the conversation keeps the whole assistant turn — the prefix followed by the
+continuation. A failure or a cancellation (`cancel=`, or an ambient `with_cancel`
+token) leaves `chat` untouched.
 
 ### Validation
 

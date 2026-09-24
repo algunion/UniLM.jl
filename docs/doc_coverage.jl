@@ -1,32 +1,58 @@
-# Doc-coverage gate. Every EXPORTED UniLM symbol must appear in an `@docs`
-# block under docs/src, OR be listed in KNOWN_UNDOCUMENTED (docs/undocumented_allowlist.jl).
+# Doc-coverage gate. Every PUBLIC UniLM name (`names(UniLM)`: exported, or declared
+# `public`) must appear in an `@docs` block under docs/src, OR be listed in
+# KNOWN_UNDOCUMENTED (docs/undocumented_allowlist.jl).
 # Assumes explicit `@docs` listing; there are currently no `@autodocs` blocks
 # (if one is added that splices a whole module, extend this parser).
 
-"Exported names of `mod` as strings, excluding the module name itself."
+"Public names of `mod` (exported or declared `public`) as strings, excluding the module name itself."
 exported_names(mod::Module)::Set{String} =
     Set(string(n) for n in names(mod) if n != nameof(mod))
 
-"Symbol names referenced inside ```@docs``` fences under `docsrc` (recursive)."
+# A fence line: up to 3 spaces of indentation keep it at the top level of the page, a
+# run of 3+ backticks or tildes opens or closes it, and the rest is the info string.
+const _FENCE = r"^( *)(`{3,}|~{3,})(.*)$"
+
+"""
+Symbol names listed in the top-level `@docs` / `@autodocs` blocks of `text`.
+
+Only blocks Documenter expands count: a fence at the top level of the page (indented at
+most 3 spaces — Documenter does not expand `@docs` nested in an admonition, list or
+quote) whose info string starts with `@docs` or `@autodocs`, of any fence length. Text
+inside an HTML comment block or inside any other fenced block (a ````markdown
+example, a ~~~ block) is not parsed, so an `@docs` fence shown there is not counted.
+"""
+function _documented_in(text::AbstractString)::Set{String}
+    documented = Set{String}()
+    fence = nothing        # (fence char, run length, counts?) of the open fenced block
+    comment = false        # inside an HTML comment block
+    for line in eachline(IOBuffer(text))
+        s = strip(line)
+        if comment
+            occursin("-->", line) && (comment = false)
+        elseif fence !== nothing
+            m = match(_FENCE, s)
+            if m !== nothing && first(m[2]) == fence[1] && length(m[2]) >= fence[2] && isempty(strip(m[3]))
+                fence = nothing
+            elseif fence[3] && !isempty(s)
+                (occursin('=', s) || occursin('[', s)) && continue  # skip @autodocs config lines
+                push!(documented, replace(s, "UniLM." => ""))
+            end
+        elseif (m = match(_FENCE, line)) !== nothing
+            info = strip(m[3])
+            top = length(m[1]) <= 3
+            fence = (first(m[2]), length(m[2]), top && (startswith(info, "@docs") || startswith(info, "@autodocs")))
+        elseif startswith(s, "<!--") && length(line) - length(lstrip(line)) <= 3
+            comment = !occursin("-->", s[5:end])
+        end
+    end
+    return documented
+end
+
+"Symbol names referenced in the top-level `@docs` blocks of the Markdown under `docsrc` (recursive)."
 function parse_documented_symbols(docsrc::AbstractString)::Set{String}
     documented = Set{String}()
-    for (root, _, files) in walkdir(docsrc)
-        for f in files
-            endswith(f, ".md") || continue
-            indocs = false
-            for line in eachline(joinpath(root, f))
-                s = strip(line)
-                if startswith(s, "```@docs") || startswith(s, "```@autodocs")
-                    indocs = true; continue
-                elseif indocs && startswith(s, "```")
-                    indocs = false; continue
-                end
-                if indocs && !isempty(s)
-                    (occursin('=', s) || occursin('[', s)) && continue  # skip @autodocs config lines
-                    push!(documented, replace(s, "UniLM." => ""))
-                end
-            end
-        end
+    for (root, _, files) in walkdir(docsrc), f in files
+        endswith(f, ".md") && union!(documented, _documented_in(read(joinpath(root, f), String)))
     end
     return documented
 end
@@ -57,6 +83,9 @@ function assert_doc_coverage(mod::Module, docsrc::AbstractString, allow::Set{Str
     isempty(miss)     || push!(problems, "Undocumented exported symbols (add to an @docs block or KNOWN_UNDOCUMENTED):\n  " * join(miss, "\n  "))
     isempty(stale)    || push!(problems, "KNOWN_UNDOCUMENTED lists names no longer exported (remove them):\n  " * join(stale, "\n  "))
     isempty(resolved) || push!(problems, "KNOWN_UNDOCUMENTED lists names that are now documented (remove them):\n  " * join(resolved, "\n  "))
-    isempty(problems) && return nothing
+    if isempty(problems)
+        @info "Doc-coverage gate PASS: all $(length(exported)) public names of $(nameof(mod)) are in @docs blocks"
+        return nothing
+    end
     error("Doc-coverage gate failed.\n\n" * join(problems, "\n\n"))
 end

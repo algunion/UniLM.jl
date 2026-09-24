@@ -1,27 +1,30 @@
 # [Cost Tracking](@id cost_guide)
 
-Every UniLM.jl result carries the provider's token counts, and the package can turn those
-counts into a USD estimate. This works uniformly across Chat Completions, the Responses API,
-the agentic verb, and Embeddings — Gemini and Anthropic usage is normalized to the shared
-shape at decode time.
+Every result of a token-billed API carries the provider's token counts, and the package can
+turn those counts into a USD estimate. This works uniformly across Chat Completions, the
+Responses API, the agentic verb, Embeddings, FIM completions and System One — Gemini,
+Anthropic and DeepSeek usage is normalized to the shared shape at decode time.
 
 Two accessors do the work: [`token_usage`](@ref) (raw counts) and [`estimated_cost`](@ref)
 (dollars). [`Chat`](@ref) additionally keeps a running total via [`cumulative_cost`](@ref).
 
-!!! warning "The silent \$0 footgun"
-    [`estimated_cost`](@ref) returns `0.0` — with no error and no warning — for any model
-    that is not a key in [`DEFAULT_PRICING`](@ref) and has no fallback row (a dated snapshot
-    uses its base model's row; a versioned `jev-X.Y.Z` id uses the `jev-latest` row).
-    The tutorial model `gpt-4o-mini` is **not**
-    priced, so cost tracking on it reports `\$0.00` until you supply your own pricing. See
-    [Unpriced models return \$0 silently](@ref unpriced-zero) below.
+!!! warning "The \$0 footgun"
+    [`estimated_cost`](@ref) returns `0.0` — with no error, only a warning logged once per
+    model id — for any model that is not a key in [`DEFAULT_PRICING`](@ref) and has no
+    fallback row (a dated snapshot uses its base model's row; a versioned `jev-X.Y.Z` id
+    uses the `jev-latest` row). The tutorial model `gpt-4o-mini` is **not** priced, so
+    cost tracking on it reports `\$0.00` until you supply your own pricing. See
+    [Unpriced models cost \$0](@ref unpriced-zero) below.
 
 ## Reading usage and cost
 
-[`token_usage`](@ref) returns a [`TokenUsage`](@ref) for any result (zero-filled for failures);
-[`estimated_cost`](@ref) returns a `Float64` in USD. A real result comes back from
-`chatrequest!` / `respond` / `embeddingrequest!`, but the accessors are pure, so we build one
-here to keep the example deterministic and offline:
+[`token_usage`](@ref) returns a [`TokenUsage`](@ref) for every result of a token-billed API —
+chat, Responses, embeddings, image generation, FIM and System One — zero-filled for their
+failures and call errors; [`estimated_cost`](@ref) returns a `Float64` in USD. Both throw
+`ArgumentError` for results of APIs that report no token usage (files, batches, audio,
+moderations, vector stores, …), where a zero would be indistinguishable from a free call.
+A real result comes back from `chatrequest!` / `respond` / `embeddingrequest!`, but the
+accessors are pure, so we build one here to keep the example deterministic and offline:
 
 ```@example cost
 using UniLM
@@ -39,8 +42,8 @@ println("cost USD = ", round(estimated_cost(result), digits=6))
 ```
 
 By default the model is inferred from the result (`result.self.model` for Chat,
-`result.response.model` for Responses, `result.embeddings.model` for Embeddings). Override it
-explicitly when needed:
+`result.response.model` for Responses, FIM and System One, `result.embeddings.model` for
+Embeddings). Override it explicitly when needed:
 
 ```julia
 estimated_cost(result; model="gpt-5.4")   # price as if it were gpt-5.4
@@ -56,13 +59,31 @@ own rate:
 - completion tokens × `output`
 
 Reasoning tokens are already counted inside `completion_tokens`, so they carry no separate
-charge. Failures, call errors, and image results all report zero usage and `0.0` cost.
+charge. Failures and call errors report zero usage and `0.0` cost. Image results report the
+usage the Images API returned, but `estimated_cost` does not infer a model for them and the
+table carries no image-model rows, so an image result costs `0.0` unless you pass `model=`
+together with a `pricing=` row for it. A streamed Chat turn is costed like a non-streamed
+one when the stream reports usage: `OPENAIServiceEndpoint` and `DeepSeekEndpoint` streams
+request it automatically, native Anthropic and Gemini streams report it on their own, and other
+OpenAI-compatible servers need `stream_options=Dict("include_usage" => true)` (without it a
+streamed turn reports no usage and accrues `\$0`).
 
 ## The pricing table
 
-[`DEFAULT_PRICING`](@ref) is a `Dict{String, PriceRow}`, where a `PriceRow` is a `NamedTuple`
-of **per-token** USD rates: `(input, cached_input, output)`. (Provider list prices are usually
-quoted per 1M tokens; the stored rows are those figures divided by 1,000,000.)
+[`DEFAULT_PRICING`](@ref) is a lock-guarded `AbstractDict{String, PriceRow}` (not a `Dict`),
+where a `PriceRow` is a `NamedTuple` of **per-token** USD rates: `(input, cached_input,
+output)`. (Provider list prices are usually quoted per 1M tokens; the stored rows are those
+figures divided by 1,000,000.) Every Chat success prices itself against it — streaming ones
+on their own task — so it is safe to read and write from any task: add or replace a row with
+`DEFAULT_PRICING[model] = row`, and use `get`, `haskey`, `delete!`, `pop!`, `keys` and
+`length` as on a `Dict`. Iteration walks a snapshot, and `copy`, `merge` and `filter` return
+a plain `Dict`.
+
+A model id is looked up exactly first, then without a dated snapshot suffix
+(`gpt-5.4-mini-2026-03-17` → `gpt-5.4-mini`, `claude-haiku-4-5-20251001` →
+`claude-haiku-4-5`), and a versioned Jev id with no row of its own (`jev-X.Y.Z`) falls back
+to the `jev-latest` row. Only those date suffixes are stripped, so custom names stay
+unpriced rather than matching a row by accident.
 
 ```@example cost
 priced = sort(collect(keys(DEFAULT_PRICING)))
@@ -70,11 +91,12 @@ println(length(priced), " models priced")
 println("gpt-5.2 row: ", DEFAULT_PRICING["gpt-5.2"])
 ```
 
-## [Unpriced models return \$0 silently](@id unpriced-zero)
+## [Unpriced models cost \$0](@id unpriced-zero)
 
 If the model key is absent from the pricing table, `estimated_cost` returns `0.0` — it does
-**not** raise. (Two fallbacks apply first: a dated snapshot uses its base model's row, and a
-versioned `jev-X.Y.Z` id uses the `jev-latest` row.) This bites the tutorial model `gpt-4o-mini`:
+**not** raise; it logs one warning per model id. (Two fallbacks apply first: a dated snapshot
+uses its base model's row, and a versioned `jev-X.Y.Z` id uses the `jev-latest` row.) This
+bites the tutorial model `gpt-4o-mini`:
 
 ```@example cost
 println("gpt-4o-mini priced? ", haskey(DEFAULT_PRICING, "gpt-4o-mini"))
@@ -92,9 +114,9 @@ pricing table before trusting a cost number.
 
 ## Supplying custom pricing
 
-Pass a `pricing=` dict to fix an unpriced (or mispriced) model. Build a `PriceRow` NamedTuple
-of per-token rates and `merge` it into the defaults — `merge` returns a new dict and leaves
-[`DEFAULT_PRICING`](@ref) untouched:
+Pass a `pricing=` dict (any `AbstractDict{String, PriceRow}`) to fix an unpriced (or
+mispriced) model. Build a `PriceRow` NamedTuple of per-token rates and `merge` it into the
+defaults — `merge` returns a new `Dict` and leaves [`DEFAULT_PRICING`](@ref) untouched:
 
 ```@example cost
 # Fill in the provider's *current* list price (per 1M tokens); divide by 1_000_000.
@@ -112,7 +134,7 @@ println("cost USD = ", round(estimated_cost(unpriced; pricing), digits=6))
 
 [`cumulative_cost`](@ref) returns the running USD total that `chatrequest!` accrues on a
 [`Chat`](@ref). Accumulation happens **only** inside `chatrequest!` (both streaming and
-non-streaming paths) — nothing else adds to the total:
+non-streaming paths, and so every turn of a `tool_loop!`) — nothing else adds to the total:
 
 ```julia
 chat = Chat(model="gpt-5.2")
@@ -127,11 +149,12 @@ cumulative_cost(chat)                  # e.g. 0.00231  (USD, summed over both ca
 ```
 
 !!! warning "Auto-accumulation always uses `DEFAULT_PRICING`"
-    There is no way to inject a custom `pricing=` into the running total — `chatrequest!`
-    prices each call with the defaults. So a `Chat` on an **unpriced** model (e.g.
-    `gpt-4o-mini`) reports `cumulative_cost == 0.0` even after successful calls. On unpriced
-    models, ignore the running total and sum [`estimated_cost`](@ref)`(result; pricing=…)`
-    yourself.
+    `chatrequest!` prices each call with [`DEFAULT_PRICING`](@ref); there is no `pricing=`
+    for the running total. So a `Chat` on an **unpriced** model (e.g. `gpt-4o-mini`) reports
+    `cumulative_cost == 0.0` even after successful calls — unless you add its row to the
+    table (`DEFAULT_PRICING["gpt-4o-mini"] = row`, safe while requests run), after which
+    later calls accrue. Alternatively, ignore the running total and sum
+    [`estimated_cost`](@ref)`(result; pricing=…)` yourself.
 
 ## Totaling Responses, agentic, and Embeddings costs
 
@@ -156,7 +179,7 @@ embeddings_cost = estimated_cost(res)                       # USD for this batch
 ```
 
 Note that non-OpenAI embedding models (e.g. Ollama's `nomic-embed-text`,
-`gemini-embedding-001`) are not in the default table and hit the same silent-`\$0` behavior —
+`gemini-embedding-001`) are not in the default table and hit the same `\$0` behavior —
 supply `pricing=` for them too.
 
 ## System One (TypeSafe Jev) is input-only
@@ -176,7 +199,7 @@ named. A request sent as `jev-latest` therefore looks up the version behind the 
 at that moment (for example `jev-1.13.0`), so log
 `result.response.model` alongside the cost if you need to explain a bill later. A
 versioned `jev-X.Y.Z` id without its own row is priced at the `jev-latest` row; as
-everywhere else, any other unpriced name returns `0.0` silently:
+everywhere else, any other unpriced name returns `0.0` (with its one-time warning):
 
 ```@example cost
 ticket = "Help! My payouts have been failing for 3 days."
@@ -200,9 +223,11 @@ far fewer input tokens than N calls. See [Typed Judgments with Jev](@ref system_
 ## Prices drift
 
 [`DEFAULT_PRICING`](@ref) is a hardcoded snapshot (current OpenAI, Gemini, and TypeSafe rows
-verified 2026-09-22; Anthropic 2026-07-06). Provider list prices change; re-verify against the provider's
-current pricing before relying on any number, and pass your own `pricing=` dict when you need
-authoritative figures.
+verified 2026-09-22; Anthropic and DeepSeek rows 2026-09-24). The DeepSeek rows are its peak
+rates — off-peak hours bill half — and DeepSeek context-cache hits
+(`prompt_cache_hit_tokens`) are billed at the cached rate. Provider list prices change;
+re-verify against the provider's current pricing before relying on any number, and pass your
+own `pricing=` dict when you need authoritative figures.
 
 ## API Reference
 
@@ -210,7 +235,7 @@ See [Cost Tracking & Token Usage](@ref accounting_api) for full type and functio
 
 ## See Also
 
-- [`token_usage`](@ref) — raw [`TokenUsage`](@ref) counts from any result
+- [`token_usage`](@ref) — raw [`TokenUsage`](@ref) counts from any token-billed result
 - [`estimated_cost`](@ref) — per-result USD estimate, with optional `pricing=`
 - [`cumulative_cost`](@ref) — running USD total on a [`Chat`](@ref)
 - [`DEFAULT_PRICING`](@ref) — the built-in per-token pricing table

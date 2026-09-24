@@ -102,8 +102,9 @@ filled in only by the object shape.
 retried within `total_deadline`, honouring `Retry-After`. The rest — 400, 401,
 403, 404, 422 — come back as they are, because repeating an identical request
 cannot fix them. A call that never produced a response at all (a timeout, a
-transport failure, a missing key, or a 200 whose body was not a usable set of
-answers) is a [`SystemOneCallError`](@ref).
+transport failure, a missing key, a cancellation through `cancel=` or an ambient
+[`with_cancel`](@ref) token, or a 200 whose body was not a usable set of answers) is a
+[`SystemOneCallError`](@ref), carrying the exception in `cause`.
 
 Any call that reaches the service returns one of the three result types, and
 `issuccess` separates them; a wrong `service` or a malformed request (duplicate

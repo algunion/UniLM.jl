@@ -6,6 +6,13 @@ differs — translate its requests. The request driver, retries, cost accounting
 and streaming are not provider-specific; they call a small **wire seam** through multiple
 dispatch, so a new backend plugs in without touching that machinery.
 
+The functions you add methods to — `get_url`, `auth_header`, `default_model`, the chat
+seam `encode_request` / `decode_response` / `handle_sse_event!` and the agentic seam
+`encode_agentic` / `decode_agentic` / `decode_agentic_stream` — and the stream-state types
+`StreamState` / `AgenticStreamState` are UniLM's public extension API: declared `public`,
+not exported, so qualify them (`UniLM.get_url`). Each is documented in the
+[Extension API](@ref extension_api) reference.
+
 There are two cases, depending on whether your provider speaks the OpenAI wire.
 
 ## Case 1 — an OpenAI-compatible provider
@@ -36,21 +43,37 @@ push!(chat, Message(Val(:user), "Hi!"))
 result = chatrequest!(chat)   # encode_request / decode_response / SSE are all inherited
 ```
 
-If your provider also serves the Responses/agentic surface or embeddings from one host,
-define the `_api_base_url` pattern instead of a per-verb URL — it is the single base that
-the Responses URL (`_api_base_url(service) * "/v1/responses"`) and the embeddings URL are
-built from. `GenericOpenAIEndpoint` is the built-in reference for this shape:
+Embeddings route the same way, through `get_url(::MyEndpoint, ::Embeddings)`, and
+[`respond`](@ref) through `get_url(::MyEndpoint, ::Respond)`. The Responses lifecycle
+operations (`get_response`, `cancel_response`, `compact_response`, …) build their URLs
+from one base instead, the internal hook `UniLM._api_base_url(service)` (the Responses
+URL is that base plus `"/v1/responses"`). Defining it is the one step here outside the
+public extension API — an underscore name that may change without notice.
+`GenericOpenAIEndpoint` is the built-in reference for this shape:
 
 ```julia
-UniLM._api_base_url(s::MyEndpoint) = rstrip(s.base_url, '/')
+UniLM._api_base_url(s::MyEndpoint) = rstrip(s.base_url, '/')   # internal hook
 UniLM.get_url(s::MyEndpoint, ::Chat)       = UniLM._api_base_url(s) * "/v1/chat/completions"
 UniLM.get_url(s::MyEndpoint, ::Embeddings) = UniLM._api_base_url(s) * "/v1/embeddings"
 ```
 
 For a provider that is a plain OpenAI endpoint at a custom URL you need no new type at all —
 [`GenericOpenAIEndpoint`](@ref)`(base_url, api_key)` already does exactly this. Define a new
-`OpenAIWireEndpoint` subtype when you want a named type, provider-specific defaults
-(`default_model`, `provider_capabilities`), or custom routing/auth.
+`OpenAIWireEndpoint` subtype when you want a named type, provider-specific defaults, or
+custom routing/auth:
+
+- **`default_model`** — without a method for your endpoint, `model=` is required:
+  `Chat(service=AcmeEndpoint(key))` throws `ArgumentError: model must be specified when
+  using AcmeEndpoint` at construction. `UniLM.default_model(::AcmeEndpoint) = "acme-large"`
+  makes it optional.
+- **`provider_capabilities`** — an endpoint that defines no method is dispatched
+  unvalidated by the four primary verbs and rejected by the platform verbs (see
+  [Provider Capabilities](@ref capabilities_api)); declaring a set opts into validation
+  against it.
+- **Streamed usage** — the built-in OpenAI and DeepSeek endpoints ask a stream to report
+  token usage (`stream_options.include_usage`); other OpenAI-wire endpoints do not, since
+  some servers reject the field. Set `stream_options=Dict("include_usage" => true)` on a
+  streamed `Chat` when your server supports it, or streamed turns carry no usage.
 
 Singleton endpoints (no fields) dispatch on the type — `get_url(::Type{MyEndpoint}, ::Chat)`;
 field-bearing endpoints dispatch on the instance, as above.
@@ -80,9 +103,17 @@ it here. The native Gemini backend (`src/gemini.jl`) is a second example, with a
 end-of-stream rule (EOF, not a sentinel).
 
 To also serve the agentic [`respond`](@ref) verb on a native wire, override the agentic seam
-the same way — `encode_agentic` / `decode_agentic` / `decode_agentic_stream`, plus
-`_agentic_url` for routing; the Gemini Interactions backend (`src/interactions.jl`) is the
-reference.
+the same way — `encode_agentic` / `decode_agentic` / `decode_agentic_stream` (the stream
+handler mutates an `AgenticStreamState`) — and route it with the internal hook
+`UniLM._agentic_url(service)`, which `respond` and the lifecycle operations read (an
+underscore name outside the public extension API); the Gemini Interactions backend
+(`src/interactions.jl`) is the reference.
+
+Both seams split validation from failure the same way. An encoder runs before any network
+I/O and what it throws propagates from the verb, so throw `ArgumentError` for an option your
+wire cannot express. An exception thrown by a decoder becomes the verb's typed call-error
+result (`LLMCallError` / `ResponseCallError`) with the exception in `cause`, and one thrown
+by a stream handler drops that payload, counted in the result's `sse_dropped`.
 
 ## Fail-loud contract
 
@@ -102,5 +133,6 @@ println(ANTHROPICServiceEndpoint <: OpenAIWireEndpoint) # false — native wire,
 ## See Also
 
 - [`OpenAIWireEndpoint`](@ref), [`ServiceEndpoint`](@ref) — the two extension supertypes
+- [Extension API](@ref extension_api) — the public functions and types a backend implements
 - [Multi-Backend Support](@ref backend_guide) — using the built-in backends
 - [`GenericOpenAIEndpoint`](@ref) — the built-in configurable OpenAI-compatible endpoint

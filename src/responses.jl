@@ -113,10 +113,11 @@ end
 """
     ResponseTool
 
-Abstract supertype for Responses API tools. Subtypes:
-- [`FunctionTool`](@ref)
-- [`WebSearchTool`](@ref)
-- [`FileSearchTool`](@ref)
+Abstract supertype for Responses API tools. Subtypes: [`FunctionTool`](@ref),
+[`WebSearchTool`](@ref), [`FileSearchTool`](@ref), [`MCPTool`](@ref),
+[`ComputerUseTool`](@ref), [`ComputerTool`](@ref), [`ImageGenerationTool`](@ref),
+[`CodeInterpreterTool`](@ref), [`LocalShellTool`](@ref), [`ShellTool`](@ref),
+[`ApplyPatchTool`](@ref) and [`CustomTool`](@ref).
 """
 abstract type ResponseTool end
 
@@ -440,7 +441,8 @@ custom_tool(name::String; description::Union{String,Nothing}=nothing,
 # Convenience constructors
 
 """
-    mcp_tool(label, url; require_approval="never", allowed_tools=nothing, headers=nothing)
+    mcp_tool(label, url=nothing; require_approval="never", allowed_tools=nothing, headers=nothing,
+             connector_id=nothing, authorization=nothing, server_description=nothing, tunnel_id=nothing)
 
 Shorthand constructor for [`MCPTool`](@ref).
 """
@@ -550,7 +552,7 @@ tool_result(call_id::AbstractString, name::AbstractString, output::AbstractStrin
                      "name" => name, "output" => output)
 
 """
-    web_search(; context_size="medium", location=nothing)
+    web_search(; context_size="medium", location=nothing, type="web_search", filters=nothing)
 
 Shorthand constructor for [`WebSearchTool`](@ref).
 """
@@ -648,7 +650,7 @@ function JSON.lower(t::TextFormatSpec)
 end
 
 """
-    TextConfig(; format=TextFormatSpec())
+    TextConfig(; format=TextFormatSpec(), verbosity=nothing)
 
 Wrapper for the `text` field in the Responses API request body.
 """
@@ -775,12 +777,13 @@ end
 # ─── Main Request Type ────────────────────────────────────────────────────────
 
 """
-    Respond(; model="gpt-5.6-sol", input, kwargs...)
+    Respond(; model="", input, kwargs...)
 
 Configuration struct for an OpenAI Responses API request.
 
 # Key Fields
-- `model::String`: Model to use (default: `"gpt-5.6-sol"`)
+- `model::String`: Model to use; `""` (the default) resolves to the service's default
+  model at construction (`"gpt-5.6-sol"` for OpenAI)
 - `input::Any`: A `String` or `Vector{InputMessage}` — the prompt input
 - `instructions::String`: System-level instructions
 - `tools::Vector`: Available tools (`FunctionTool`, `WebSearchTool`, `FileSearchTool`, …);
@@ -1172,6 +1175,8 @@ end
 """
     AgenticStreamState()
 
+Public extension API (not exported); see the Custom Backends guide.
+
 Mutable per-stream assembly state for the agentic streaming seam
 ([`decode_agentic_stream`](@ref)). Carries the layer-1/2 SSE machinery state
 (`carry` partial-line buffer, `last_event` sticky event name), the accumulated
@@ -1556,16 +1561,42 @@ _agentic_url(service::OpenAIWireEndpointSpec)::String = _api_base_url(service) *
 # fails loud one hop down, at `_agentic_url`.
 get_url(service, r::Respond)::String = _agentic_url(service)::String
 
+"""
+    encode_agentic(service, r::Respond) -> String
+
+Serialize `r` into the request body of `service`'s agentic surface. The
+`OpenAIWireEndpoint` default emits OpenAI Responses JSON; a backend with its own agentic
+wire overrides it (the Gemini Interactions backend is the in-repo reference). An
+`ArgumentError` thrown here — a field the wire cannot express — is local validation:
+[`respond`](@ref) calls the encoder before any network I/O and lets it propagate.
+
+Public extension API (not exported); see the Custom Backends guide.
+"""
 encode_agentic(service::OpenAIWireEndpointSpec, r::Respond)::String = JSON.json(r)
 
+"""
+    decode_agentic(service, resp::HTTP.Response) -> ResponseObject
+
+Parse `service`'s 200 response into the neutral [`ResponseObject`](@ref), whose
+`output` uses the OpenAI Responses item shapes the accessors read. A body that is not a
+valid response should throw: [`respond`](@ref) and the lifecycle operations report the
+exception as a `ResponseCallError` carrying it in `cause`.
+
+Public extension API (not exported); see the Custom Backends guide.
+"""
 decode_agentic(service::OpenAIWireEndpointSpec, resp::HTTP.Response)::ResponseObject = parse_response(resp)
 
 """
     decode_agentic_stream(service, chunk::String, state::AgenticStreamState)
 
 Streaming half of the agentic wire seam: consume one raw read's bytes,
-mutate `state`, and return `(; done, event, data, terminal)`. Default:
-OpenAI Responses SSE via `_parse_response_stream_chunk`.
+mutate `state` (an [`AgenticStreamState`](@ref); text deltas go to both `textbuff` and
+`pending_delta`), and return `(; done, event, data, terminal)`: `done` is `true` at a
+terminal event, `terminal` is `:completed`, `:failed`, `:incomplete` or `:error`, and
+`data` holds that event's decoded payload. Default: OpenAI Responses SSE via
+`_parse_response_stream_chunk`.
+
+Public extension API (not exported); see the Custom Backends guide.
 """
 decode_agentic_stream(service::OpenAIWireEndpointSpec, chunk::String, state::AgenticStreamState) =
     _parse_response_stream_chunk(chunk, state)

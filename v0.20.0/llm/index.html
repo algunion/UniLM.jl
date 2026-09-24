@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>LLM Reference · UniLM.jl</title><meta name="title" content="LLM Reference · UniLM.jl"/><meta property="og:title" content="LLM Reference · UniLM.jl"/><meta property="twitter:title" content="LLM Reference · UniLM.jl"/><meta name="description" content="Documentation for UniLM.jl."/><meta property="og:description" content="Documentation for UniLM.jl."/><meta property="twitter:description" content="Documentation for UniLM.jl."/><meta property="og:url" content="https://algunion.github.io/UniLM.jl/llm/"/><meta property="twitter:url" content="https://algunion.github.io/UniLM.jl/llm/"/><link rel="canonical" href="https://algunion.github.io/UniLM.jl/llm/"/><script data-outdated-warner src="../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.63.2/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../assets/documenter.js"></script><script src="../search_index.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../">UniLM.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../">Home</a></li><li class="is-active"><a class="tocitem" href>LLM Reference</a><ul class="internal"><li><a class="tocitem" href="#Installation"><span>Installation</span></a></li><li><a class="tocitem" href="#Environment-Variables"><span>Environment Variables</span></a></li><li><a class="tocitem" href="#The-APIs"><span>The APIs</span></a></li><li><a class="tocitem" href="#Service-Endpoints"><span>Service Endpoints</span></a></li><li><a class="tocitem" href="#Chat-Completions-API"><span>Chat Completions API</span></a></li><li><a class="tocitem" href="#Responses-API"><span>Responses API</span></a></li><li><a class="tocitem" href="#Image-Generation-API"><span>Image Generation API</span></a></li><li><a class="tocitem" href="#Embeddings-API"><span>Embeddings API</span></a></li><li><a class="tocitem" href="#Cost-Tracking"><span>Cost Tracking</span></a></li><li><a class="tocitem" href="#Conversation-Forking"><span>Conversation Forking</span></a></li><li><a class="tocitem" href="#Tool-Loop"><span>Tool Loop</span></a></li><li><a class="tocitem" href="#MCP-Client"><span>MCP Client</span></a></li><li><a class="tocitem" href="#MCP-Server"><span>MCP Server</span></a></li><li><a class="tocitem" href="#FIM-Completion"><span>FIM Completion</span></a></li><li><a class="tocitem" href="#Chat-Prefix-Completion"><span>Chat Prefix Completion</span></a></li><li><a class="tocitem" href="#TypeSafe-System-One-API-(Jev)"><span>TypeSafe System One API (Jev)</span></a></li><li><a class="tocitem" href="#Provider-Capabilities"><span>Provider Capabilities</span></a></li><li><a class="tocitem" href="#Request-Configuration-and-Timeouts"><span>Request Configuration &amp; Timeouts</span></a></li><li><a class="tocitem" href="#Result-Type-Hierarchy"><span>Result Type Hierarchy</span></a></li><li><a class="tocitem" href="#API-Constants"><span>API Constants</span></a></li><li><a class="tocitem" href="#Exceptions"><span>Exceptions</span></a></li><li><a class="tocitem" href="#Public-Extension-API-(not-exported)"><span>Public Extension API (not exported)</span></a></li><li><a class="tocitem" href="#Complete-Exports-List"><span>Complete Exports List</span></a></li></ul></li><li><a class="tocitem" href="../getting_started/">Getting Started</a></li><li><a class="tocitem" href="../stability/">Versioning &amp; Stability</a></li><li><span class="tocitem">Guide</span><ul><li><a class="tocitem" href="../guide/chat_completions/">Chat Completions</a></li><li><a class="tocitem" href="../guide/responses_api/">Responses API</a></li><li><a class="tocitem" href="../guide/image_generation/">Image Generation</a></li><li><a class="tocitem" href="../guide/embeddings/">Embeddings</a></li><li><a class="tocitem" href="../guide/tool_calling/">Tool Calling</a></li><li><a class="tocitem" href="../guide/retrieval/">Retrieval &amp; File Search</a></li><li><a class="tocitem" href="../guide/agentic/">Agentic Workflows</a></li><li><a class="tocitem" href="../guide/streaming/">Streaming</a></li><li><a class="tocitem" href="../guide/timeouts/">Timeouts &amp; Retries</a></li><li><a class="tocitem" href="../guide/concurrency/">Concurrency, Tasks and Cancellation</a></li><li><a class="tocitem" href="../guide/structured_output/">Structured Output</a></li><li><a class="tocitem" href="../guide/cost_tracking/">Cost Tracking</a></li><li><a class="tocitem" href="../guide/multi_backend/">Multi-Backend</a></li><li><a class="tocitem" href="../guide/custom_backends/">Custom Backends</a></li><li><a class="tocitem" href="../guide/mcp/">MCP (Model Context Protocol)</a></li><li><a class="tocitem" href="../guide/completions/">FIM &amp; Prefix Completion</a></li></ul></li><li><span class="tocitem">System One (TypeSafe Jev)</span><ul><li><a class="tocitem" href="../guide/system_one/">Typed Judgments with Jev</a></li><li><a class="tocitem" href="../guide/natural_language_dispatch/">Multiple Dispatch on Natural Language</a></li></ul></li><li><span class="tocitem">API Reference</span><ul><li><a class="tocitem" href="../api/chat/">Chat Types</a></li><li><a class="tocitem" href="../api/responses/">Responses Types</a></li><li><a class="tocitem" href="../api/images/">Images</a></li><li><a class="tocitem" href="../api/embeddings/">Embeddings</a></li><li><a class="tocitem" href="../api/endpoints/">Service Endpoints</a></li><li><a class="tocitem" href="../api/config/">Request Config &amp; Timeouts</a></li><li><a class="tocitem" href="../api/results/">Result Types</a></li><li><a class="tocitem" href="../api/accounting/">Cost Tracking</a></li><li><a class="tocitem" href="../api/mcp/">MCP Client &amp; Server</a></li><li><a class="tocitem" href="../api/completions/">FIM Types</a></li><li><a class="tocitem" href="../api/capabilities/">Provider Capabilities</a></li><li><a class="tocitem" href="../api/system_one/">TypeSafe System One</a></li><li><a class="tocitem" href="../api/files/">Files</a></li><li><a class="tocitem" href="../api/vector_stores/">Vector Stores</a></li><li><a class="tocitem" href="../api/conversations/">Conversations</a></li><li><a class="tocitem" href="../api/batch/">Batch</a></li><li><a class="tocitem" href="../api/fine_tuning/">Fine-tuning</a></li><li><a class="tocitem" href="../api/moderations/">Moderations</a></li><li><a class="tocitem" href="../api/audio/">Audio</a></li><li><a class="tocitem" href="../api/containers/">Containers</a></li><li><a class="tocitem" href="../api/uploads/">Uploads</a></li><li><a class="tocitem" href="../api/webhooks/">Webhooks</a></li><li><a class="tocitem" href="../api/realtime/">Realtime</a></li></ul></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li class="is-active"><a href>LLM Reference</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>LLM Reference</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/algunion/UniLM.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/algunion/UniLM.jl/blob/main/docs/src/llm.md#" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="UniLM.jl-—-LLM-Reference"><a class="docs-heading-anchor" href="#UniLM.jl-—-LLM-Reference">UniLM.jl — LLM Reference</a><a id="UniLM.jl-—-LLM-Reference-1"></a><a class="docs-heading-anchor-permalink" href="#UniLM.jl-—-LLM-Reference" title="Permalink"></a></h1><blockquote><p><strong>Single-file reference for LLM code-generation systems.</strong> This is a <strong>Julia</strong> package. Julia ≥ 1.13 · Deps: <code>HTTP.jl</code> (≥ 2.7.1), <code>JSON.jl</code>, <code>Base64</code>, <code>SHA</code> Repo: <a href="https://github.com/algunion/UniLM.jl">https://github.com/algunion/UniLM.jl</a></p></blockquote><h2 id="Installation"><a class="docs-heading-anchor" href="#Installation">Installation</a><a id="Installation-1"></a><a class="docs-heading-anchor-permalink" href="#Installation" title="Permalink"></a></h2><pre><code class="language-julia hljs">using Pkg
+Pkg.add(&quot;UniLM&quot;)
+using UniLM</code></pre><h2 id="Environment-Variables"><a class="docs-heading-anchor" href="#Environment-Variables">Environment Variables</a><a id="Environment-Variables-1"></a><a class="docs-heading-anchor-permalink" href="#Environment-Variables" title="Permalink"></a></h2><table><tr><th style="text-align: right">Variable</th><th style="text-align: right">Required by</th><th style="text-align: right">Description</th></tr><tr><td style="text-align: right"><code>OPENAI_API_KEY</code></td><td style="text-align: right"><code>OPENAIServiceEndpoint</code> (default)</td><td style="text-align: right">OpenAI API key</td></tr><tr><td style="text-align: right"><code>AZURE_OPENAI_BASE_URL</code></td><td style="text-align: right"><code>AZUREServiceEndpoint</code></td><td style="text-align: right">Azure deployment base URL</td></tr><tr><td style="text-align: right"><code>AZURE_OPENAI_API_KEY</code></td><td style="text-align: right"><code>AZUREServiceEndpoint</code></td><td style="text-align: right">Azure API key</td></tr><tr><td style="text-align: right"><code>AZURE_OPENAI_API_VERSION</code></td><td style="text-align: right"><code>AZUREServiceEndpoint</code></td><td style="text-align: right">Azure API version string</td></tr><tr><td style="text-align: right"><code>AZURE_OPENAI_DEPLOY_NAME_&lt;MODEL&gt;</code></td><td style="text-align: right"><code>AZUREServiceEndpoint</code></td><td style="text-align: right">Deployment for a model, read at call time: model id upper-cased, other characters → <code>_</code> (<code>AZURE_OPENAI_DEPLOY_NAME_GPT_5_2</code>)</td></tr><tr><td style="text-align: right"><code>GEMINI_API_KEY</code></td><td style="text-align: right"><code>GEMINIServiceEndpoint</code></td><td style="text-align: right">Google Gemini API key</td></tr><tr><td style="text-align: right"><code>ANTHROPIC_API_KEY</code></td><td style="text-align: right"><code>ANTHROPICServiceEndpoint</code></td><td style="text-align: right">Anthropic (Claude) API key</td></tr><tr><td style="text-align: right"><code>DEEPSEEK_API_KEY</code></td><td style="text-align: right"><code>DeepSeekEndpoint</code></td><td style="text-align: right">DeepSeek API key</td></tr><tr><td style="text-align: right"><code>MISTRAL_API_KEY</code></td><td style="text-align: right"><code>MistralEndpoint</code></td><td style="text-align: right">Mistral AI API key</td></tr><tr><td style="text-align: right"><code>TYPESAFE_API_KEY</code></td><td style="text-align: right"><code>TYPESAFEServiceEndpoint</code></td><td style="text-align: right">TypeSafe System One (Jev) API key</td></tr><tr><td style="text-align: right"><code>TYPESAFE_BASE_URL</code></td><td style="text-align: right"><code>TYPESAFEServiceEndpoint</code></td><td style="text-align: right">Optional API root override (default <code>https://api.typesafe.ai</code>)</td></tr><tr><td style="text-align: right"><code>TYPESAFE_DEFAULT_MODEL</code></td><td style="text-align: right"><code>TYPESAFEServiceEndpoint</code></td><td style="text-align: right">Model used when a call names none (default <code>jev-latest</code>)</td></tr></table><h2 id="The-APIs"><a class="docs-heading-anchor" href="#The-APIs">The APIs</a><a id="The-APIs-1"></a><a class="docs-heading-anchor-permalink" href="#The-APIs" title="Permalink"></a></h2><p>UniLM.jl wraps these surfaces:</p><ol><li><strong>Chat Completions</strong> (<code>Chat</code> + <code>chatrequest!</code>) — stateful, message-based conversations with tool calling, streaming, structured output. Supports OpenAI, Azure, Gemini (native), Anthropic (native), DeepSeek, Ollama, Mistral, and any OpenAI-compatible provider.</li><li><strong>Responses API</strong> (<code>Respond</code> + <code>respond</code>) — newer, more flexible API with built-in tools (web search, file search), multi-turn chaining via <code>previous_response_id</code>, reasoning support for O-series models, structured output. OpenAI Responses by default; the unified <code>respond</code> verb also targets Google&#39;s Gemini Interactions via <code>service=GEMINIServiceEndpoint</code> (see the Agentic Workflows guide).</li><li><strong>Image Generation</strong> (<code>ImageGeneration</code> + <code>generate_image</code>) — text-to-image with <code>gpt-image-2</code>. OpenAI only.</li><li><strong>Embeddings</strong> (<code>Embeddings</code> + <code>embeddingrequest!</code>) — vector embeddings. Multi-provider via <code>service</code> parameter.</li><li><strong>FIM Completion</strong> (<code>FIMCompletion</code> + <code>fim_complete</code>) — code infilling. DeepSeek (beta), Mistral, Ollama.</li><li><strong>System One</strong> (<code>ask</code>, plus <code>nl_dispatch</code> and <code>@branch</code>) — TypeSafe&#39;s Jev: enumerated questions about a piece of <code>state</code>, answered with a typed value and a calibrated probability distribution instead of generated text. <code>service=TYPESAFEServiceEndpoint</code> only; not a chat backend.</li></ol><p><strong>Which API to use:</strong></p><ul><li><strong>Chat Completions</strong> — best for multi-turn conversations; broadest provider support. Use for chat, tool calling, or streaming across any supported backend.</li><li><strong>Responses API</strong> — simpler for single-shot or chained requests; built-in web search, file search, MCP, computer use tools. OpenAI Responses plus Google&#39;s Gemini Interactions via the unified <code>respond</code> verb (see the Agentic Workflows guide).</li><li><strong>FIM Completion</strong> — code infilling between prefix and suffix. DeepSeek (beta), Mistral and Ollama (vLLM&#39;s completions endpoint does not accept <code>suffix</code>).</li><li><strong>System One</strong> — classify, rank, screen or route unstructured input when the outcomes are a fixed set you can enumerate and you want a probability, not prose. <code>ask</code> returns typed results; <code>nl_dispatch</code> turns the answer into ordinary Julia multiple dispatch and <code>@branch</code> into an inline switch, both throwing rather than guessing a branch.</li></ul><hr/><h2 id="Service-Endpoints"><a class="docs-heading-anchor" href="#Service-Endpoints">Service Endpoints</a><a id="Service-Endpoints-1"></a><a class="docs-heading-anchor-permalink" href="#Service-Endpoints" title="Permalink"></a></h2><pre><code class="language-julia hljs">abstract type ServiceEndpoint end
+abstract type OpenAIWireEndpoint &lt;: ServiceEndpoint end   # OpenAI-wire backends inherit encode/decode/SSE
+struct OPENAIServiceEndpoint &lt;: OpenAIWireEndpoint end   # default — uses OPENAI_API_KEY
+struct AZUREServiceEndpoint  &lt;: OpenAIWireEndpoint end   # uses AZURE_OPENAI_* env vars
+struct GEMINIServiceEndpoint &lt;: ServiceEndpoint end       # native generateContent — GEMINI_API_KEY
+struct GEMINIOpenAIServiceEndpoint &lt;: OpenAIWireEndpoint end # Gemini via OpenAI-compat shim — GEMINI_API_KEY
+struct ANTHROPICServiceEndpoint &lt;: ServiceEndpoint end    # native Messages API — ANTHROPIC_API_KEY
+struct TYPESAFEServiceEndpoint &lt;: ServiceEndpoint end     # TypeSafe System One (Jev) — TYPESAFE_API_KEY
+struct GenericOpenAIEndpoint &lt;: OpenAIWireEndpoint    # any OpenAI-compatible provider
+    base_url::String
+    api_key::String
+end
+# DeepSeekEndpoint &lt;: OpenAIWireEndpoint  (constructor below)
+
+# Convenience constructors
+OllamaEndpoint(; base_url=&quot;http://localhost:11434&quot;)   # Ollama local
+MistralEndpoint(; api_key=ENV[&quot;MISTRAL_API_KEY&quot;])     # Mistral AI
+DeepSeekEndpoint(; api_key=ENV[&quot;DEEPSEEK_API_KEY&quot;])   # DeepSeek
+
+# Type alias for service fields — accepts both marker types and instances:
+const ServiceEndpointSpec = Union{Type{&lt;:ServiceEndpoint}, ServiceEndpoint}
+# Built-in types: Chat(service=OPENAIServiceEndpoint)      — passed as the type
+# Instance types: Chat(service=DeepSeekEndpoint())          — passed as a constructed value</code></pre><h3 id="Provider-Compatibility"><a class="docs-heading-anchor" href="#Provider-Compatibility">Provider Compatibility</a><a id="Provider-Compatibility-1"></a><a class="docs-heading-anchor-permalink" href="#Provider-Compatibility" title="Permalink"></a></h3><p>UniLM talks to <strong>native</strong> provider APIs where it implements them, and rides the <strong>OpenAI-compatible</strong> standard elsewhere:</p><table><tr><th style="text-align: right">Access path</th><th style="text-align: right">Providers</th></tr><tr><td style="text-align: right"><strong>Native backends</strong> (own wire format)</td><td style="text-align: right">OpenAI (Chat + Responses), Anthropic (Messages), Gemini (generateContent + agentic Interactions)</td></tr><tr><td style="text-align: right">Chat Completions (OpenAI-compat)</td><td style="text-align: right">OpenAI, Azure, DeepSeek, Mistral, Ollama, vLLM, LM Studio, Gemini (compat shim)</td></tr><tr><td style="text-align: right">Embeddings (OpenAI-compat)</td><td style="text-align: right">OpenAI, Gemini (compat shim), Mistral, Ollama, vLLM</td></tr><tr><td style="text-align: right">Responses API</td><td style="text-align: right">OpenAI, Ollama, vLLM, Amazon Bedrock (emerging Open Responses)</td></tr><tr><td style="text-align: right">Image Generation</td><td style="text-align: right">OpenAI</td></tr></table><p>Anthropic and native Gemini use their <strong>own</strong> APIs here (<code>ANTHROPICServiceEndpoint</code> / <code>GEMINIServiceEndpoint</code>) — not an OpenAI-compat shim — and that is the recommended path. The OpenAI-compat Gemini shim (<code>GEMINIOpenAIServiceEndpoint</code>) exists for embeddings and drop-in compatibility.</p><p>Register additional Azure deployments at runtime:</p><pre><code class="language-julia hljs">add_azure_deploy_name!(model::String, deploy_name::String)
+# e.g. add_azure_deploy_name!(&quot;gpt-5.2&quot;, &quot;my-deployment&quot;)</code></pre><p>Pass the backend via the <code>service</code> keyword on <code>Chat</code>, <code>Respond</code>, or <code>ImageGeneration</code>:</p><pre><code class="language-julia hljs">Chat(service=AZUREServiceEndpoint, model=&quot;gpt-5.2&quot;)
+Respond(service=OPENAIServiceEndpoint, input=&quot;Hello&quot;)</code></pre><hr/><h2 id="Chat-Completions-API"><a class="docs-heading-anchor" href="#Chat-Completions-API">Chat Completions API</a><a id="Chat-Completions-API-1"></a><a class="docs-heading-anchor-permalink" href="#Chat-Completions-API" title="Permalink"></a></h2><h3 id="Chat"><a class="docs-heading-anchor" href="#Chat">Chat</a><a id="Chat-1"></a><a class="docs-heading-anchor-permalink" href="#Chat" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct Chat
+    service::ServiceEndpointSpec = OPENAIServiceEndpoint
+    model::String = &quot;&quot;
+    messages::Vector{Message} = Message[]
+    history::Bool = true
+    tools::Union{Vector{Tool},Nothing} = nothing
+    tool_choice::Union{String,GPTToolChoice,Nothing} = nothing
+    parallel_tool_calls::Union{Bool,Nothing} = false
+    temperature::Union{Float64,Nothing} = nothing       # 0.0–2.0, mutually exclusive with top_p
+    top_p::Union{Float64,Nothing} = nothing              # 0.0–1.0, mutually exclusive with temperature
+    n::Union{Int64,Nothing} = nothing                    # must be 1: a result carries one choice
+    stream::Union{Bool,Nothing} = nothing
+    stop::Union{Vector{String},String,Nothing} = nothing # max 4 sequences
+    max_tokens::Union{Int64,Nothing} = nothing
+    max_completion_tokens::Union{Int64,Nothing} = nothing # preferred over max_tokens; reasoning models reject max_tokens
+    presence_penalty::Union{Float64,Nothing} = nothing   # -2.0 to 2.0
+    response_format::Union{ResponseFormat,Nothing} = nothing
+    frequency_penalty::Union{Float64,Nothing} = nothing  # -2.0 to 2.0
+    logit_bias::Union{AbstractDict{String,&lt;:Real},Nothing} = nothing  # values in [-100, 100]
+    user::Union{String,Nothing} = nothing
+    seed::Union{Int64,Nothing} = nothing
+    reasoning_effort::Union{String,Nothing} = nothing    # none|minimal|low|medium|high|xhigh|max (per-model subset)
+    stream_options::Union{AbstractDict,Nothing} = nothing # unset: OpenAI/DeepSeek streams send {&quot;include_usage&quot;: true}
+    verbosity::Union{String,Nothing} = nothing           # low|medium|high
+    store::Union{Bool,Nothing} = nothing
+    metadata::Union{AbstractDict,Nothing} = nothing
+    service_tier::Union{String,Nothing} = nothing        # auto|default|flex|scale|priority|fast
+    logprobs::Union{Bool,Nothing} = nothing
+    top_logprobs::Union{Int64,Nothing} = nothing
+    prediction::Union{AbstractDict,Nothing} = nothing
+    modalities::Union{Vector{String},Nothing} = nothing
+    audio::Union{AbstractDict,Nothing} = nothing
+    web_search_options::Union{AbstractDict,Nothing} = nothing
+    prompt_cache_key::Union{String,Nothing} = nothing
+    safety_identifier::Union{String,Nothing} = nothing   # replaces deprecated `user`
+    _cumulative_cost::Ref{Float64} = Ref(0.0)            # internal
+    prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing  # gpt-5.6 and later
+    moderation::Union{ModerationConfig,Nothing} = nothing
+end</code></pre><p><code>_cumulative_cost</code> is internal bookkeeping for <a href="../api/accounting/#UniLM.cumulative_cost"><code>cumulative_cost</code></a> — read it through that accessor, never directly.</p><ul><li><strong>Model defaults</strong>: the declared default is the sentinel <code>&quot;&quot;</code>; the constructor resolves it, so <code>Chat().model</code> reads back <code>&quot;gpt-5.6-sol&quot;</code>. Per provider: <code>&quot;gpt-5.6-sol&quot;</code> for OpenAI, <code>&quot;gpt-5.2&quot;</code> for Azure, <code>&quot;gemini-3.8-flash&quot;</code> for Gemini (native and OpenAI-compat), <code>&quot;claude-opus-5-5&quot;</code> for native Anthropic (whose <code>max_tokens</code> defaults to 16000), <code>&quot;deepseek-flash&quot;</code> for DeepSeek. For <code>GenericOpenAIEndpoint</code> / <code>OllamaEndpoint</code> / <code>MistralEndpoint</code> and user-defined endpoints without a <code>UniLM.default_model</code> method there is no default — an unset model throws <code>ArgumentError</code> at construction.</li><li><code>history=true</code>: responses are automatically appended to <code>messages</code>.</li><li><code>temperature</code> and <code>top_p</code> are mutually exclusive (constructor throws <code>ArgumentError</code>).</li><li><code>parallel_tool_calls</code> is auto-set to <code>nothing</code> when <code>tools</code> is <code>nothing</code>.</li><li><strong>Parameter validation</strong>: the constructor validates at construction time — <code>temperature</code> ∈ [0.0, 2.0], <code>top_p</code> ∈ [0.0, 1.0], <code>n</code> must be <code>1</code> (a result carries a single choice), <code>max_tokens</code> / <code>max_completion_tokens</code> ≥ 1, <code>presence_penalty</code> ∈ [-2.0, 2.0], <code>frequency_penalty</code> ∈ [-2.0, 2.0], <code>top_logprobs</code> ∈ [0, 20], every <code>logit_bias</code> value ∈ [-100, 100], <code>reasoning_effort</code> ∈ {<code>&quot;none&quot;</code>, <code>&quot;minimal&quot;</code>, <code>&quot;low&quot;</code>, <code>&quot;medium&quot;</code>, <code>&quot;high&quot;</code>, <code>&quot;xhigh&quot;</code>, <code>&quot;max&quot;</code>}. Violations throw <code>ArgumentError</code>. An empty <code>tools</code> vector is stored as <code>nothing</code>; a <code>Vector{&lt;:CallableTool}</code> is accepted and stored as its <code>Tool</code>s.</li><li><strong>Provider/model limits</strong> (GPT-5.6/GPT-6 tool and sampling rules, the Anthropic and native-Gemini field mappings) are checked by the provider&#39;s encoder: <code>chatrequest!</code> throws their <code>ArgumentError</code> before any network I/O.</li><li><code>prompt_cache_options</code> is supported for gpt-5.6 and later (gpt-5.4-mini answered HTTP 400 &quot;prompt<em>cache</em>options is not supported on this model&quot; on 2026-09-22); Chat Completions takes only its <code>mode</code> and <code>ttl</code> — <code>chatrequest!</code> on a native OpenAI <code>Chat</code> with <code>prewarm</code> or <code>comparison_response_id</code> set throws <code>ArgumentError</code> before any request. <code>Message</code> content is a plain string, so Chat messages cannot carry cache breakpoints, and the Chat Completions reference says an explicit-mode request without breakpoints &quot;does not use prompt caching&quot;: <code>mode=&quot;explicit&quot;</code> on a <code>Chat</code> turns prompt caching off. <code>moderation</code> takes a <a href="../api/responses/#UniLM.ModerationConfig"><code>ModerationConfig</code></a>.</li></ul><h3 id="Message"><a class="docs-heading-anchor" href="#Message">Message</a><a id="Message-1"></a><a class="docs-heading-anchor-permalink" href="#Message" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct Message
+    role::String                                          # &quot;system&quot;, &quot;user&quot;, &quot;assistant&quot; or &quot;tool&quot; (else ArgumentError)
+    content::Union{String,Nothing} = nothing
+    name::Union{String,Nothing} = nothing
+    finish_reason::Union{String,Nothing} = nothing        # response-only: &quot;stop&quot;, &quot;tool_calls&quot;, &quot;length&quot;, &quot;content_filter&quot;, …; nothing if none reported
+    refusal_message::Union{String,Nothing} = nothing
+    tool_calls::Union{Nothing,Vector{ToolCall}} = nothing
+    tool_call_id::Union{String,Nothing} = nothing         # required when role == &quot;tool&quot;
+    provider_content::Union{Nothing,ProviderContent} = nothing
+end</code></pre><p><strong>Validation</strong>: <code>role</code> must be one of the four roles; at least one of <code>content</code>, <code>tool_calls</code>, or <code>refusal_message</code> must be non-<code>nothing</code>; <code>tool_call_id</code> is required when <code>role == &quot;tool&quot;</code>.</p><p>On the wire a message never sends <code>finish_reason</code> (response-only) or <code>provider_content</code>, and a refusal travels as <code>refusal</code> (with <code>content: null</code>). A tool-call turn reads <code>finish_reason == &quot;tool_calls&quot;</code> when the provider finished it with <code>&quot;stop&quot;</code> or reported none, and keeps any other reason (<code>&quot;length&quot;</code>, <code>&quot;content_filter&quot;</code>, …). Partial calls are dropped: on a turn that kept another reason, a call whose arguments are not a JSON object (cut off by the token limit) is removed and the turn — text, reason, usage — kept; under <code>&quot;tool_calls&quot;</code> such arguments are an <code>LLMCallError</code>.</p><p><code>provider_content</code> carries provider-native blocks captured for verbatim round-trip — Anthropic thinking blocks (<code>:anthropic</code>), Gemini parts with thought signatures (<code>:gemini</code>), DeepSeek <code>reasoning_content</code> (<code>:deepseek</code>, echoed on requests that carry tools); it never serializes on the OpenAI wire.</p><p><strong>Convenience constructors</strong>:</p><pre><code class="language-julia hljs">Message(Val(:system), &quot;You are a helpful assistant&quot;)
+Message(Val(:user), &quot;Hello!&quot;)</code></pre><p><strong>Role constants</strong>: <code>RoleSystem = &quot;system&quot;</code>, <code>RoleUser = &quot;user&quot;</code>, <code>RoleAssistant = &quot;assistant&quot;</code>.</p><h3 id="chatrequest!"><a class="docs-heading-anchor" href="#chatrequest!">chatrequest!</a><a id="chatrequest!-1"></a><a class="docs-heading-anchor-permalink" href="#chatrequest!" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Mutating form — sends chat.messages, appends response when history=true
+chatrequest!(chat::Chat; config=nothing, callback=nothing, on_tool_call=nothing, cancel=nothing)
+    -&gt; LLMSuccess | LLMFailure | LLMCallError | Task
+
+# Keyword-argument convenience form — builds a Chat internally
+chatrequest!(; messages, config=nothing, cancel=nothing, chat_kwargs...) -&gt; same
+chatrequest!(; systemprompt, userprompt, config=nothing, cancel=nothing, chat_kwargs...) -&gt; same</code></pre><ul><li>Non-streaming: returns <code>LLMSuccess</code>, <code>LLMFailure</code>, or <code>LLMCallError</code>.</li><li>Streaming (<code>stream=true</code>): returns a <code>Task</code> whose <code>fetch</code> yields the same typed results. Pass a <code>callback(chunk::Union{String,Message}, close::Ref{Bool})</code> — text deltas arrive as <code>String</code>s (verbatim, in order), then the assembled <code>Message</code> at end-of-stream.</li><li>Streaming tool calls: pass <code>on_tool_call(tc::ToolCall)</code> to be notified at most once per completed streamed tool call, as calls finish (a call whose arguments do not parse is skipped with a warning; see the <a href="../guide/streaming/#streaming_guide">Streaming guide</a>).</li><li>Local validation throws before any network I/O, streaming or not: <code>ArgumentError</code> when <code>callback</code> or <code>on_tool_call</code> is passed without <code>stream=true</code> (&quot;callback and on<em>tool</em>call require stream=true&quot;), the service declares capabilities without <code>:chat</code>, or the provider&#39;s encoder rejects the request; <code>InvalidConversationError</code> when <code>history=true</code> and the conversation ends with an assistant message (the reply could not be appended).</li><li>The keyword form takes EITHER <code>messages</code> (copied, never mutated) OR both <code>systemprompt</code> and <code>userprompt</code> (a <code>String</code> or a <code>Message</code> each); anything else throws <code>ArgumentError</code>. Every other keyword is a <code>Chat</code> field; <code>history</code> controls whether the reply is appended, not what is sent.</li><li>Retries transient statuses (408/429/500/502/503/504/529) with exponential backoff and jitter under the resolved <a href="../api/config/#UniLM.RequestConfig"><code>RequestConfig</code></a> — <code>max_attempts</code> (default 3) and <code>total_deadline</code> bound the attempts. <code>Retry-After</code> is a floor under the jitter (at most half the budget left after the floor is spread above it), so a rate-limited fan-out does not retry in lockstep; a retry whose wait would exceed the remaining <code>total_deadline</code> is not attempted — the call returns the last real response rather than sleeping past the deadline. Timeouts surface as <code>LLMCallError</code> with <code>status=nothing</code> and the <code>UniLMTimeout</code> in <code>.cause</code>.</li><li><code>cancel::Union{Nothing,CancelToken}</code> (default: the ambient <a href="../api/config/#UniLM.with_cancel"><code>with_cancel</code></a> token): a cancel before connecting, during the header wait, mid-stream or during a backoff ends the call with <code>LLMCallError(status=nothing, cause=UniLMCancelled(:token, …))</code> — never retried, nothing appended, no terminal callback — unless the provider&#39;s completion marker already arrived: then the turn is committed, the final-message callback runs, and usage may be missing (on the OpenAI wire the marker is the chunk carrying <code>finish_reason</code>, which precedes the usage chunk and <code>[DONE]</code>). A pre-cancelled token sends nothing. A TCP connect / TLS handshake in progress finishes (or reaches <code>connect_timeout</code>) first.</li><li>Streaming stop: <code>close[] = true</code> (in the callback or from any task) ends the stream at once with <code>LLMCallError(status=nothing, cause=UniLMCancelled(:callback, …))</code>, unless the provider&#39;s completion marker already arrived — then the turn is committed, the final-message callback runs, and usage may be missing. An exception thrown by <code>callback</code>/<code>on_tool_call</code> ends the call with that exception in <code>.cause</code> (never retried, nothing appended). Time inside callbacks is not counted by <code>stream_idle_timeout</code>.</li><li>A stream is final at its sentinel (<code>[DONE]</code>, Anthropic <code>message_stop</code>): the final <code>Message</code> callback runs at once, and the result follows when the HTTP body ends, at most 0.5 s later (a body held open longer has its connection closed, not reused).</li><li>Streaming retry boundary: transient failures (including the in-band <code>overloaded_error</code>, the documented 529 equivalent) are retried inside the task only until the first <code>callback</code>/<code>on_tool_call</code> invocation; afterwards failures surface typed. A user <code>InterruptException</code> propagates — <code>fetch</code> throws a <code>TaskFailedException</code> instead of returning a result value.</li><li>Streams use HTTP/1.1 (one connection per stream); OpenAI and DeepSeek streams request <code>include_usage</code> when <code>stream_options</code> is unset, so streamed turns are costed.</li></ul><h3 id="Conversation-Management"><a class="docs-heading-anchor" href="#Conversation-Management">Conversation Management</a><a id="Conversation-Management-1"></a><a class="docs-heading-anchor-permalink" href="#Conversation-Management" title="Permalink"></a></h3><pre><code class="language-julia hljs">push!(chat, message)       # append a Message (the FIRST message must be a system Message)
+pop!(chat)                 # remove last message
+update!(chat, message)     # append if history=true
+issendvalid(chat) -&gt; Bool  # check conversation rules (see below)
+length(chat)               # number of messages
+isempty(chat)              # true if no messages
+chat[i]                    # index into messages
+chat[i] = msg              # replace a message — NOT validated (nor are direct edits to chat.messages)</code></pre><p><code>issendvalid</code> is <code>true</code> only when ALL of these hold — note it is stricter than <code>push!</code>, with no tool exemption:</p><ol><li>at least 2 messages;</li><li>the first message is a system message;</li><li>the <strong>last</strong> message is a user message;</li><li>no two adjacent messages share a role — including <code>tool</code>, which <code>push!</code> does permit consecutively.</li></ol><p><strong>Important:</strong> A <code>Chat</code> must begin with a system message. <code>push!</code> throws <a href="../api/chat/#UniLM.InvalidConversationError"><code>InvalidConversationError</code></a> on a non-system message pushed onto an empty <code>Chat</code>, on a system message pushed once the conversation has started, and on consecutive same-role messages (except <code>tool</code>), so <code>chat = Chat(); push!(chat, Message(Val(:user), &quot;…&quot;))</code> raises rather than silently leaving the chat empty. <code>pop!</code> on an empty <code>Chat</code> likewise throws <code>InvalidConversationError</code> rather than returning <code>nothing</code>. Use <code>respond(&quot;…&quot;)</code> for a single turn without a system prompt.</p><h3 id="Tool-Calling-Types"><a class="docs-heading-anchor" href="#Tool-Calling-Types">Tool Calling Types</a><a id="Tool-Calling-Types-1"></a><a class="docs-heading-anchor-permalink" href="#Tool-Calling-Types" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Define a function the model can call
+@kwdef mutable struct FunctionSignature
+    name::String
+    description::Union{String,Nothing} = nothing
+    parameters::Union{AbstractDict,Nothing} = nothing   # JSON Schema dict
+    strict::Union{Bool,Nothing} = nothing               # strict function calling; nothing = omit (API default)
+end
+
+# Wrap it for the tools parameter
+@kwdef struct Tool
+    type::String = &quot;function&quot;
+    func::FunctionSignature
+end
+Tool(d::AbstractDict)   # construct from dict with keys &quot;name&quot;, &quot;description&quot;, &quot;parameters&quot;, &quot;strict&quot;
+
+# Returned by model when it wants to call a function
+@kwdef struct ToolCall
+    id::String
+    type::String = &quot;function&quot;
+    func::GPTFunction       # has .name::String and .arguments::AbstractDict
+    # Gemini-3&#39;s opaque tool-call signature. Set only by the Gemini decoder
+    # (nothing on every other provider) and echoed verbatim on the next turn;
+    # deliberately excluded from JSON.lower, so OpenAI-wire bytes are unchanged.
+    thought_signature::Union{Nothing,String} = nothing
+end
+
+# Your result after executing the function
+struct FunctionCallResult{T}
+    name::Union{String,Symbol}
+    origincall::GPTFunction
+    result::T
+end</code></pre><p>The pre-rename names <code>GPTTool</code>, <code>GPTToolCall</code>, <code>GPTFunctionSignature</code>, and <code>GPTFunctionCallResult</code> remain exported as aliases of these types, so existing code keeps working unchanged.</p><h3 id="ResponseFormat-(Structured-Output)"><a class="docs-heading-anchor" href="#ResponseFormat-(Structured-Output)">ResponseFormat (Structured Output)</a><a id="ResponseFormat-(Structured-Output)-1"></a><a class="docs-heading-anchor-permalink" href="#ResponseFormat-(Structured-Output)" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct ResponseFormat
+    type::String = &quot;json_object&quot;                               # &quot;json_object&quot; or &quot;json_schema&quot;
+    json_schema::Union{JsonSchemaAPI,AbstractDict,Nothing} = nothing
+end
+ResponseFormat(json_schema)  # shorthand, sets type=&quot;json_schema&quot;
+
+@kwdef struct JsonSchemaAPI   # not exported — construct as UniLM.JsonSchemaAPI(...)
+    name::String
+    description::String
+    schema::AbstractDict
+    strict::Union{Bool,Nothing} = nothing   # strict schema adherence; nothing = omit (API default)
+end
+UniLM.json_schema(name, description, schema; strict=nothing)  # → ResponseFormat(JsonSchemaAPI(...)); not exported</code></pre><h3 id="Chat-Completions-Example"><a class="docs-heading-anchor" href="#Chat-Completions-Example">Chat Completions Example</a><a id="Chat-Completions-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Chat-Completions-Example" title="Permalink"></a></h3><pre><code class="language-julia hljs">using UniLM
+
+# Build conversation
+chat = Chat(model=&quot;gpt-5.2&quot;)
+push!(chat, Message(Val(:system), &quot;You are a helpful assistant.&quot;))
+push!(chat, Message(Val(:user), &quot;What is the capital of France?&quot;))
+
+result = chatrequest!(chat)
+if result isa LLMSuccess
+    println(result.message.content)     # &quot;Paris...&quot;
+    # chat.messages already has the response appended (history=true)
+end
+
+# One-shot via keywords
+result = chatrequest!(
+    systemprompt=&quot;You are a translator.&quot;,
+    userprompt=&quot;Translate &#39;hello&#39; to French.&quot;,
+    model=&quot;gpt-5.2&quot;
+)</code></pre><h3 id="Tool-Calling-Example-(Chat)"><a class="docs-heading-anchor" href="#Tool-Calling-Example-(Chat)">Tool Calling Example (Chat)</a><a id="Tool-Calling-Example-(Chat)-1"></a><a class="docs-heading-anchor-permalink" href="#Tool-Calling-Example-(Chat)" title="Permalink"></a></h3><pre><code class="language-julia hljs">weather_tool = Tool(func=FunctionSignature(
+    name=&quot;get_weather&quot;,
+    description=&quot;Get current weather&quot;,
+    parameters=Dict(
+        &quot;type&quot; =&gt; &quot;object&quot;,
+        &quot;properties&quot; =&gt; Dict(&quot;location&quot; =&gt; Dict(&quot;type&quot; =&gt; &quot;string&quot;)),
+        &quot;required&quot; =&gt; [&quot;location&quot;]
+    )
+))
+
+chat = Chat(model=&quot;gpt-5.2&quot;, tools=[weather_tool])
+push!(chat, Message(Val(:system), &quot;You help with weather.&quot;))
+push!(chat, Message(Val(:user), &quot;Weather in Paris?&quot;))
+
+result = chatrequest!(chat)
+if result isa LLMSuccess &amp;&amp; result.message.finish_reason == &quot;tool_calls&quot;
+    for tc in result.message.tool_calls
+        # tc.func.name == &quot;get_weather&quot;, tc.func.arguments == Dict(&quot;location&quot; =&gt; &quot;Paris&quot;)
+        answer = &quot;22°C, sunny&quot;  # your function result
+        push!(chat, Message(role=&quot;tool&quot;, content=answer, tool_call_id=tc.id))
+    end
+    result2 = chatrequest!(chat)
+    println(result2.message.content)
+end</code></pre><h3 id="Streaming-Example-(Chat)"><a class="docs-heading-anchor" href="#Streaming-Example-(Chat)">Streaming Example (Chat)</a><a id="Streaming-Example-(Chat)-1"></a><a class="docs-heading-anchor-permalink" href="#Streaming-Example-(Chat)" title="Permalink"></a></h3><pre><code class="language-julia hljs">chat = Chat(model=&quot;gpt-5.2&quot;, stream=true)
+push!(chat, Message(Val(:system), &quot;You are helpful.&quot;))
+push!(chat, Message(Val(:user), &quot;Tell me a story.&quot;))
+
+task = chatrequest!(chat; callback = function (chunk, close_ref)
+    if chunk isa String
+        print(chunk)            # partial text delta
+    elseif chunk isa Message
+        println(&quot;\n[Done]&quot;)     # final assembled message
+        # close_ref[] = true    # to stop early → LLMCallError, cause = UniLMCancelled(:callback, …)
+    end
+end)
+
+result = fetch(task)  # LLMSuccess when complete, else a typed failure</code></pre><hr/><h2 id="Responses-API"><a class="docs-heading-anchor" href="#Responses-API">Responses API</a><a id="Responses-API-1"></a><a class="docs-heading-anchor-permalink" href="#Responses-API" title="Permalink"></a></h2><h3 id="Respond"><a class="docs-heading-anchor" href="#Respond">Respond</a><a id="Respond-1"></a><a class="docs-heading-anchor-permalink" href="#Respond" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct Respond
+    service::ServiceEndpointSpec = OPENAIServiceEndpoint
+    model::String = &quot;&quot;                                # declared as &quot;&quot; and resolved by the constructor
+    input::Union{String, Vector}                             # String, Vector{InputMessage}, or Vector{Dict}
+    instructions::Union{String,Nothing} = nothing
+    tools::Union{Vector,Nothing} = nothing                  # untyped: ResponseTool, CallableTool, Dict; a Chat Tool becomes a FunctionTool
+    tool_choice::Union{String,AbstractDict,Nothing} = nothing  # &quot;auto&quot;/&quot;none&quot;/&quot;required&quot;, or a tool_choice_* Dict (see below)
+    parallel_tool_calls::Union{Bool,Nothing} = nothing
+    temperature::Union{Float64,Nothing} = nothing           # 0.0–2.0, mutually exclusive with top_p
+    top_p::Union{Float64,Nothing} = nothing                 # 0.0–1.0
+    max_output_tokens::Union{Int64,Nothing} = nothing
+    stream::Union{Bool,Nothing} = nothing
+    text::Union{TextConfig,Nothing} = nothing               # output format
+    reasoning::Union{Reasoning,Nothing} = nothing           # O-series models
+    truncation::Union{String,Nothing} = nothing             # &quot;auto&quot; or &quot;disabled&quot;
+    store::Union{Bool,Nothing} = nothing                    # store for later retrieval
+    metadata::Union{AbstractDict,Nothing} = nothing
+    previous_response_id::Union{String,Nothing} = nothing   # multi-turn chaining
+    user::Union{String,Nothing} = nothing
+    background::Union{Bool,Nothing} = nothing
+    include::Union{Vector{String},Nothing} = nothing
+    max_tool_calls::Union{Int64,Nothing} = nothing
+    service_tier::Union{String,Nothing} = nothing           # &quot;auto&quot;,&quot;default&quot;,&quot;flex&quot;,&quot;scale&quot;,&quot;priority&quot;,&quot;fast&quot;,&quot;ultrafast&quot;
+    top_logprobs::Union{Int64,Nothing} = nothing            # 0–20
+    prompt::Union{AbstractDict,Nothing} = nothing           # v1/prompts shuts down on November 30, 2026
+    prompt_cache_key::Union{String,Nothing} = nothing
+    prompt_cache_retention::Union{String,Nothing} = nothing  # &quot;in_memory&quot;,&quot;24h&quot; (older models)
+    safety_identifier::Union{String,Nothing} = nothing
+    conversation::Union{Any,Nothing} = nothing              # String or Dict (not with previous_response_id); the declared type collapses to Any
+    context_management::Union{Vector,Nothing} = nothing
+    stream_options::Union{AbstractDict,Nothing} = nothing
+    prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing
+    moderation::Union{ModerationConfig,Nothing} = nothing
+end</code></pre><div class="admonition is-warning" id="Gemini-Interactions-rejects-unmappable-fields-aa9bc6b82840573b"><header class="admonition-header">Gemini Interactions rejects unmappable fields<a class="admonition-anchor" href="#Gemini-Interactions-rejects-unmappable-fields-aa9bc6b82840573b" title="Permalink"></a></header><div class="admonition-body"><p>With <code>service=GEMINIServiceEndpoint</code>, a set <code>Respond</code> field the Interactions wire has no equivalent for makes <code>respond</code> throw <code>ArgumentError</code> before any request rather than being silently dropped, so a request never goes out quietly ignoring what you asked for. That wire maps <code>model</code>, <code>input</code>, <code>instructions</code>, <code>tools</code>, <code>tool_choice</code>, <code>temperature</code>, <code>top_p</code>, <code>max_output_tokens</code>, <code>stream</code>, <code>text</code> (its format becomes the top-level <code>response_format</code>; <code>verbosity</code> is rejected), <code>store</code>, <code>previous_response_id</code>, <code>background</code>, and <code>reasoning</code> (effort and automatic summaries only). Every other field — <code>moderation</code>, <code>prompt_cache_options</code>, and the rest of the OpenAI-only options — is rejected; leave it unset, or send the request to an OpenAI Responses service. A <code>FunctionTool</code> with <code>async</code>, <code>allowed_callers</code>, <code>defer_loading</code>, or <code>output_schema</code> set is rejected the same way.</p></div></div><h3 id="Input-Helpers"><a class="docs-heading-anchor" href="#Input-Helpers">Input Helpers</a><a id="Input-Helpers-1"></a><a class="docs-heading-anchor-permalink" href="#Input-Helpers" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Structured input messages
+InputMessage(role=&quot;user&quot;, content=&quot;Hello&quot;)
+InputMessage(role=&quot;user&quot;, content=[input_text(&quot;Describe:&quot;), input_image(&quot;https://...&quot;)])
+
+# Content part constructors
+input_text(text::String; cache_breakpoint=false)                      # → Dict(:type=&gt;&quot;input_text&quot;, :text=&gt;...); cache_breakpoint=true adds prompt_cache_breakpoint={&quot;mode&quot;:&quot;explicit&quot;}
+input_image(url=nothing; detail=nothing, file_id=nothing)             # → Dict(:type=&gt;&quot;input_image&quot;, ...); pass url OR file_id, detail: &quot;auto&quot;,&quot;low&quot;,&quot;high&quot;
+input_file(; url=nothing, id=nothing, file_data=nothing, filename=nothing)  # → Dict(:type=&gt;&quot;input_file&quot;, ...); pass one of url / id / file_data (base64)
+
+# Input item: change reasoning effort mid-conversation (GPT-6) without rewriting the cached prefix
+configuration_update(; effort)   # → Dict(:type=&gt;&quot;configuration_update&quot;, :reasoning=&gt;Dict(:effort=&gt;...)); effort: &quot;none&quot;,&quot;minimal&quot;,&quot;low&quot;,&quot;medium&quot;,&quot;high&quot;,&quot;xhigh&quot;,&quot;max&quot;</code></pre><p><code>input_image</code> and <code>input_file</code> throw <code>ArgumentError</code> when none of their source arguments is given.</p><h3 id="Tool-Types"><a class="docs-heading-anchor" href="#Tool-Types">Tool Types</a><a id="Tool-Types-1"></a><a class="docs-heading-anchor-permalink" href="#Tool-Types" title="Permalink"></a></h3><pre><code class="language-julia hljs">abstract type ResponseTool end
+
+@kwdef struct FunctionTool &lt;: ResponseTool
+    name::String
+    description::Union{String,Nothing} = nothing
+    parameters::Union{AbstractDict,Nothing} = nothing
+    strict::Union{Bool,Nothing} = nothing
+    async::Union{Bool,Nothing} = nothing                    # GPT-6 async tool calling
+    allowed_callers::Union{Vector{String},Nothing} = nothing  # &quot;direct&quot; and/or &quot;programmatic&quot;; anything else throws
+    defer_loading::Union{Bool,Nothing} = nothing            # loaded via tool search
+    output_schema::Union{AbstractDict,Nothing} = nothing    # JSON Schema of the string output
+end
+
+@kwdef struct WebSearchTool &lt;: ResponseTool
+    type::String = &quot;web_search&quot;                             # GA; legacy &quot;web_search_preview&quot;
+    search_context_size::String = &quot;medium&quot;                  # &quot;low&quot;,&quot;medium&quot;,&quot;high&quot;
+    user_location::Union{AbstractDict,Nothing} = nothing
+    filters::Union{AbstractDict,Nothing} = nothing          # &quot;allowed_domains&quot;/&quot;blocked_domains&quot; (GA only)
+end
+
+@kwdef struct FileSearchTool &lt;: ResponseTool
+    vector_store_ids::Vector{String}
+    max_num_results::Union{Int,Nothing} = nothing
+    ranking_options::Union{AbstractDict,Nothing} = nothing
+    filters::Union{AbstractDict,Nothing} = nothing
+end</code></pre><pre><code class="language-julia hljs"># Reach a remote MCP server (server_url), an OpenAI connector (connector_id, e.g.
+# &quot;connector_googledrive&quot;), or a Secure MCP Tunnel (tunnel_id) — hence no single
+# required target field beyond server_label.
+@kwdef struct MCPTool &lt;: ResponseTool
+    server_label::String
+    server_url::Union{String, Nothing} = nothing
+    connector_id::Union{String, Nothing} = nothing
+    authorization::Union{String, Nothing} = nothing         # OAuth access token
+    server_description::Union{String, Nothing} = nothing
+    require_approval::Union{String, AbstractDict, Nothing} = &quot;never&quot;
+    allowed_tools::Union{Vector{String}, AbstractDict, Nothing} = nothing
+    headers::Union{AbstractDict, Nothing} = nothing
+    tunnel_id::Union{String, Nothing} = nothing
+end
+
+@kwdef struct ComputerUseTool &lt;: ResponseTool
+    display_width::Int = 1024
+    display_height::Int = 768
+    environment::Union{String, Nothing} = nothing
+end
+
+# action, moderation, partial_images, and input_fidelity are validated at construction
+# (ArgumentError); quality, background, and output_format pass through unchecked
+# (the accepted quality values depend on the model).
+@kwdef struct ImageGenerationTool &lt;: ResponseTool
+    background::Union{String, Nothing} = nothing
+    output_format::Union{String, Nothing} = nothing
+    output_compression::Union{Int, Nothing} = nothing
+    quality::Union{String, Nothing} = nothing               # &quot;low&quot;,&quot;medium&quot;,&quot;high&quot;,&quot;auto&quot;; 2.5 models add &quot;xhigh&quot;,&quot;max&quot;
+    size::Union{String, Nothing} = nothing
+    model::Union{String, Nothing} = nothing                 # e.g. &quot;gpt-image-2.5-flare&quot;
+    action::Union{String, Nothing} = nothing                # &quot;generate&quot;,&quot;edit&quot;,&quot;auto&quot;
+    moderation::Union{String, Nothing} = nothing            # &quot;auto&quot;,&quot;low&quot;
+    partial_images::Union{Int, Nothing} = nothing           # 0–3
+    input_fidelity::Union{String, Nothing} = nothing        # &quot;high&quot;,&quot;low&quot;
+    input_image_mask::Union{AbstractDict, Nothing} = nothing  # &quot;file_id&quot; or &quot;image_url&quot;
+end
+
+@kwdef struct CodeInterpreterTool &lt;: ResponseTool
+    container::Union{AbstractDict, Nothing} = nothing
+    file_ids::Union{Vector{String}, Nothing} = nothing
+end</code></pre><p><strong>Convenience constructors</strong>:</p><pre><code class="language-julia hljs">function_tool(name, description=nothing; parameters=nothing, strict=nothing, async=nothing,
+              allowed_callers=nothing, defer_loading=nothing, output_schema=nothing)
+function_tool(d::AbstractDict)           # from a dict with &quot;name&quot; and optionally &quot;description&quot;, &quot;parameters&quot;, &quot;strict&quot;,
+                                         # &quot;async&quot;, &quot;allowed_callers&quot;, &quot;defer_loading&quot;, &quot;output_schema&quot;
+web_search(; context_size=&quot;medium&quot;, location=nothing, type=&quot;web_search&quot;, filters=nothing)
+file_search(store_ids; max_results=nothing, ranking=nothing, filters=nothing)
+mcp_tool(label, url=nothing; require_approval=&quot;never&quot;, allowed_tools=nothing, headers=nothing,
+         connector_id=nothing, authorization=nothing, server_description=nothing, tunnel_id=nothing)
+computer_use(; display_width=1024, display_height=768, environment=nothing)
+image_generation_tool(; kwargs...)
+code_interpreter(; container=nothing, file_ids=nothing)</code></pre><h3 id="Text-Format-/-Structured-Output"><a class="docs-heading-anchor" href="#Text-Format-/-Structured-Output">Text Format / Structured Output</a><a id="Text-Format-/-Structured-Output-1"></a><a class="docs-heading-anchor-permalink" href="#Text-Format-/-Structured-Output" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct TextFormatSpec
+    type::String = &quot;text&quot;                                   # &quot;text&quot;,&quot;json_object&quot;,&quot;json_schema&quot;
+    name::Union{String,Nothing} = nothing
+    description::Union{String,Nothing} = nothing
+    schema::Union{AbstractDict,Nothing} = nothing
+    strict::Union{Bool,Nothing} = nothing
+end
+
+@kwdef struct TextConfig
+    format::TextFormatSpec = TextFormatSpec()
+    verbosity::Union{String,Nothing} = nothing              # &quot;low&quot;,&quot;medium&quot;,&quot;high&quot; (gpt-5.x)
+end</code></pre><p><strong>Convenience constructors</strong>:</p><pre><code class="language-julia hljs">text_format(; verbosity=nothing, kwargs...)                  # kwargs go to TextFormatSpec; verbosity to TextConfig
+json_schema_format(name, description, schema; strict=nothing) # JSON Schema output
+json_schema_format(d::AbstractDict)                          # from dict with keys &quot;name&quot;, &quot;description&quot;, &quot;schema&quot;
+json_object_format()                                         # unstructured JSON</code></pre><h3 id="Reasoning-controls"><a class="docs-heading-anchor" href="#Reasoning-controls">Reasoning controls</a><a id="Reasoning-controls-1"></a><a class="docs-heading-anchor-permalink" href="#Reasoning-controls" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct Reasoning
+    effort::Union{String,Nothing} = nothing                 # &quot;none&quot;,&quot;minimal&quot;,&quot;low&quot;,&quot;medium&quot;,&quot;high&quot;,&quot;xhigh&quot;,&quot;max&quot; (per-model subset)
+    generate_summary::Union{String,Nothing} = nothing       # deprecated alias, serialized as summary
+    summary::Union{String,Nothing} = nothing                # &quot;auto&quot;,&quot;concise&quot;,&quot;detailed&quot;
+    context::Union{String,Nothing} = nothing                # &quot;auto&quot;,&quot;current_turn&quot;,&quot;all_turns&quot;
+    mode::Union{String,Nothing} = nothing                   # &quot;standard&quot;,&quot;pro&quot;
+end</code></pre><pre><code class="language-julia hljs">Respond(input=&quot;Hard math problem&quot;, model=&quot;gpt-5.4-mini&quot;, reasoning=Reasoning(effort=&quot;high&quot;))</code></pre><p>GPT-5.6 and later use typed prompt-cache options on <code>Respond</code> and <code>Chat</code>:</p><pre><code class="language-julia hljs">@kwdef struct PromptCacheOptions
+    mode::Union{String,Nothing} = nothing                    # &quot;implicit&quot; or &quot;explicit&quot;
+    ttl::Union{String,Nothing} = nothing                     # &quot;30m&quot;
+    prewarm::Union{Bool,Nothing} = nothing                   # Responses only: prepare the cache, no output
+    comparison_response_id::Union{String,Nothing} = nothing  # Responses only: request cache diagnostics
+end
+Respond(input=&quot;Hello&quot;, model=&quot;gpt-5.6-luna&quot;,
+        reasoning=Reasoning(effort=&quot;low&quot;, context=&quot;current_turn&quot;, mode=&quot;standard&quot;),
+        prompt_cache_options=PromptCacheOptions(mode=&quot;explicit&quot;, ttl=&quot;30m&quot;))</code></pre><p>Use <code>prompt_cache_options</code> in place of legacy <code>prompt_cache_retention</code> for these models. Explicit mode requires cache breakpoints in input content to create cache writes — mark them with <code>input_text(text; cache_breakpoint=true)</code>, a Responses input part; <code>Chat</code> messages cannot carry one, so explicit mode on a <code>Chat</code> means no prompt caching. Chat Completions takes only <code>mode</code> and <code>ttl</code> (a native OpenAI <code>Chat</code> with <code>prewarm</code> or <code>comparison_response_id</code> set throws <code>ArgumentError</code>). Diagnostics requested with <code>comparison_response_id</code> come back in <code>r.response.raw[&quot;prompt_cache_diagnostics&quot;]</code>. Unset fields are omitted. <a href="https://developers.openai.com/api/docs/guides/prompt-caching">OpenAI prompt caching</a>.</p><h3 id="Moderation"><a class="docs-heading-anchor" href="#Moderation">Moderation</a><a id="Moderation-1"></a><a class="docs-heading-anchor-permalink" href="#Moderation" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct ModerationConfig
+    model::String                                 # required, e.g. &quot;omni-moderation-latest&quot;
+    input_mode::Union{String,Nothing} = nothing   # &quot;score&quot; or &quot;block&quot;
+    output_mode::Union{String,Nothing} = nothing  # &quot;score&quot; or &quot;block&quot;
+end
+Respond(input=&quot;Hello&quot;, moderation=ModerationConfig(model=&quot;omni-moderation-latest&quot;))
+Chat(moderation=ModerationConfig(model=&quot;omni-moderation-latest&quot;, input_mode=&quot;block&quot;))</code></pre><p>The <code>moderation</code> field on <code>Respond</code> and <code>Chat</code> runs a moderation model over the request input and the generated output. <code>model</code> is required, as in both the Responses and the Chat Completions API references: <code>ModerationConfig()</code> without it throws <code>UndefKeywordError</code>, and a mode other than <code>&quot;score&quot;</code>/<code>&quot;block&quot;</code> throws <code>ArgumentError</code>. It serializes as <code>{&quot;model&quot;: …, &quot;policy&quot;: {&quot;input&quot;: {&quot;mode&quot;: …}, &quot;output&quot;: {&quot;mode&quot;: …}}}</code> with unset policy parts omitted. A <code>respond</code> result carries the outcome in <code>r.response.raw[&quot;moderation&quot;]</code> (<code>&quot;input&quot;</code> and <code>&quot;output&quot;</code> moderation results); <code>LLMSuccess</code> keeps no raw body, so Chat results do not expose it.</p><h3 id="respond"><a class="docs-heading-anchor" href="#respond">respond</a><a id="respond-1"></a><a class="docs-heading-anchor-permalink" href="#respond" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Struct form
+respond(r::Respond; config=nothing, callback=nothing, cancel=nothing)
+    -&gt; ResponseSuccess | ResponseFailure | ResponseCallError | Task
+
+# Convenience — builds Respond internally
+respond(input; kwargs...) -&gt; same
+
+# do-block streaming — auto-sets stream=true
+respond(callback::Function, input; kwargs...) -&gt; Task</code></pre><ul><li>Streaming callback signature: <code>callback(chunk::Union{String, ResponseObject}, close::Ref{Bool})</code>; <code>close[] = true</code> (or a <code>cancel!</code> on the call&#39;s token) stops the stream with <code>ResponseCallError(status=nothing, cause=UniLMCancelled(...))</code>, unless the provider&#39;s completion marker — the terminal event — already arrived: then the outcome it recorded stands (a response with its usage, whose final callback has run; or the reported failure). A callback exception ends the call with it in <code>.cause</code>.</li><li>Local validation throws <code>ArgumentError</code> before any network I/O: a <code>callback</code> passed without <code>stream=true</code> (&quot;callback requires stream=true&quot;), a service that declares capabilities with neither <code>:responses</code> nor <code>:agentic</code>, or an encoder rejection (a field the wire or model cannot express).</li><li>Retries retryable statuses (408/429/500/502/503/504/529) up to <code>config.max_attempts</code> (default 3) with full-jitter backoff bounded by <code>config.total_deadline</code>; <code>Retry-After</code> is a floor under the jitter, and a retry whose wait would exceed the remaining deadline is not attempted — it returns the last real response instead of sleeping past it. Every attempt is time-bounded — a silent peer fails with a typed timeout inside <code>ResponseCallError</code> (<code>status = nothing</code>, <code>cause::UniLMTimeout</code>), never a hang. Every exception that ends a call (including a cancellation, <code>cause::UniLMCancelled</code>) is in <code>.cause</code>.</li><li><strong>Parameter validation</strong>: <code>temperature</code> ∈ [0.0, 2.0], <code>top_p</code> ∈ [0.0, 1.0], <code>max_output_tokens</code> ≥ 1, <code>top_logprobs</code> ∈ [0, 20]; <code>conversation</code> cannot be combined with <code>previous_response_id</code>, <code>background=true</code> requires <code>store</code> not <code>false</code>, and <code>prompt_cache_retention</code> cannot be combined with <code>prompt_cache_options</code>; <code>Reasoning(effort=…)</code> must be one of <code>none</code>, <code>minimal</code>, <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code>, <code>max</code>. Violations throw <code>ArgumentError</code>.</li></ul><h3 id="Response-Accessors"><a class="docs-heading-anchor" href="#Response-Accessors">Response Accessors</a><a id="Response-Accessors-1"></a><a class="docs-heading-anchor-permalink" href="#Response-Accessors" title="Permalink"></a></h3><pre><code class="language-julia hljs">output_text(result::ResponseSuccess)::String                # concatenated text output (&quot;\n&quot; between parts)
+output_text(result::ResponseFailure)                        # throws LLMResultError
+output_text(result::ResponseCallError)                      # throws LLMResultError
+
+function_calls(result::ResponseSuccess)::Vector{Dict{String,Any}}   # empty on a failure result
+# Each dict has: &quot;id&quot;, &quot;call_id&quot;, &quot;name&quot;, &quot;arguments&quot; (JSON string), &quot;status&quot;</code></pre><h3 id="Response-Management-Functions"><a class="docs-heading-anchor" href="#Response-Management-Functions">Response Management Functions</a><a id="Response-Management-Functions-1"></a><a class="docs-heading-anchor-permalink" href="#Response-Management-Functions" title="Permalink"></a></h3><pre><code class="language-julia hljs">get_response(id::String; service=OPENAIServiceEndpoint, config=nothing)    -&gt; ResponseSuccess | ResponseFailure | ResponseCallError
+delete_response(id::String; service=OPENAIServiceEndpoint, config=nothing) -&gt; Dict | ResponseFailure | ResponseCallError
+list_input_items(id::String; limit=20, order=&quot;desc&quot;, after=nothing, service=OPENAIServiceEndpoint, config=nothing) -&gt; Dict | ...
+cancel_response(id::String; service=OPENAIServiceEndpoint, config=nothing) -&gt; ResponseSuccess | ...
+compact_response(; model=&quot;gpt-5.6-sol&quot;, input, service=OPENAIServiceEndpoint, config=nothing) -&gt; Dict | ...
+count_input_tokens(; model=&quot;gpt-5.6-sol&quot;, input, instructions=nothing, tools=nothing, service=OPENAIServiceEndpoint, config=nothing) -&gt; Dict | ...</code></pre><p>Each makes a single bounded attempt (no retries) and observes the ambient <a href="../api/config/#UniLM.with_cancel"><code>with_cancel</code></a> token; every call error carries its exception in <code>.cause</code>.</p><h3 id="ResponseObject"><a class="docs-heading-anchor" href="#ResponseObject">ResponseObject</a><a id="ResponseObject-1"></a><a class="docs-heading-anchor-permalink" href="#ResponseObject" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct ResponseObject
+    id::String
+    status::String
+    model::String
+    output::Vector{Any}
+    usage::Union{Dict{String,Any},Nothing} = nothing
+    error::Union{Dict{String,Any}, String, Nothing} = nothing   # provider error object, or a plain message
+    metadata::Union{Dict{String,Any},Nothing} = nothing
+    raw::Dict{String,Any}
+end</code></pre><p>A generation whose terminal status is <code>&quot;failed&quot;</code> is reported as a <code>ResponseFailure</code>, not a success — on both agentic wires, streamed and non-streamed alike. The failure carries the wire body verbatim, so the response&#39;s own <code>error</code> and <code>metadata</code> are preserved on <code>.response</code>. Only <code>&quot;failed&quot;</code> flips: <code>incomplete</code>, <code>cancelled</code>, <code>expired</code>, <code>in_progress</code>, <code>queued</code> and <code>requires_action</code> are legitimate terminals of the capped, background and tool-action flows and stay <code>ResponseSuccess</code>, inspectable via <a href="../api/responses/#UniLM.response_status"><code>response_status</code></a> and <a href="../api/responses/#UniLM.incomplete_details"><code>incomplete_details</code></a>. An <code>incomplete</code> generation — one cut short by a token or output cap — therefore arrives as a <code>ResponseSuccess</code> carrying its partial output, <code>.response.status == &quot;incomplete&quot;</code>, and the wire&#39;s <code>incomplete_details</code> verbatim. A terminal <code>response.incomplete</code> event decodes exactly as the non-streamed body does, so <code>issuccess</code> reflects what happened rather than how the call was made.</p><h3 id="Responses-API-Examples"><a class="docs-heading-anchor" href="#Responses-API-Examples">Responses API Examples</a><a id="Responses-API-Examples-1"></a><a class="docs-heading-anchor-permalink" href="#Responses-API-Examples" title="Permalink"></a></h3><pre><code class="language-julia hljs">using UniLM, JSON
+
+# Basic
+result = respond(&quot;Tell me a joke&quot;)
+if result isa ResponseSuccess
+    println(output_text(result))
+end
+
+# With instructions
+result = respond(&quot;Hello&quot;, instructions=&quot;You are a pirate. Respond in pirate speak.&quot;)
+
+# Multi-turn via chaining
+r1 = respond(&quot;Tell me a joke&quot;)
+r2 = respond(&quot;Tell me another&quot;, previous_response_id=r1.response.id)
+
+# Structured output
+schema = Dict(
+    &quot;type&quot; =&gt; &quot;object&quot;,
+    &quot;properties&quot; =&gt; Dict(
+        &quot;name&quot; =&gt; Dict(&quot;type&quot; =&gt; &quot;string&quot;),
+        &quot;age&quot; =&gt; Dict(&quot;type&quot; =&gt; &quot;integer&quot;)
+    ),
+    &quot;required&quot; =&gt; [&quot;name&quot;, &quot;age&quot;],
+    &quot;additionalProperties&quot; =&gt; false
+)
+result = respond(&quot;Extract: John is 30 years old&quot;,
+    text=json_schema_format(&quot;person&quot;, &quot;A person&quot;, schema, strict=true))
+parsed = JSON.parse(output_text(result))
+
+# Web search
+result = respond(&quot;Latest Julia language news&quot;, tools=[web_search()])
+
+# Function calling
+tool = function_tool(&quot;get_weather&quot;, &quot;Get weather&quot;,
+    parameters=Dict(
+        &quot;type&quot; =&gt; &quot;object&quot;,
+        &quot;properties&quot; =&gt; Dict(&quot;location&quot; =&gt; Dict(&quot;type&quot; =&gt; &quot;string&quot;)),
+        &quot;required&quot; =&gt; [&quot;location&quot;]
+    ))
+result = respond(&quot;Weather in NYC?&quot;, tools=ResponseTool[tool])
+for call in function_calls(result)
+    println(call[&quot;name&quot;], &quot;: &quot;, call[&quot;arguments&quot;])
+end
+
+# Streaming (do-block)
+respond(&quot;Tell me a story&quot;) do chunk, close_ref
+    if chunk isa String
+        print(chunk)
+    elseif chunk isa ResponseObject
+        println(&quot;\nDone: &quot;, chunk.status)
+    end
+end
+
+# Reasoning
+result = respond(&quot;Prove that √2 is irrational&quot;, model=&quot;gpt-5.4-mini&quot;,
+    reasoning=Reasoning(effort=&quot;high&quot;, summary=&quot;concise&quot;))
+
+# Multimodal input
+result = respond([
+    InputMessage(role=&quot;user&quot;, content=[
+        input_text(&quot;What&#39;s in this image?&quot;),
+        input_image(&quot;https://example.com/photo.jpg&quot;)
+    ])
+])
+
+# Count tokens without generating
+tokens = count_input_tokens(model=&quot;gpt-5.2&quot;, input=&quot;Hello world&quot;)
+println(tokens[&quot;input_tokens&quot;])</code></pre><hr/><h2 id="Image-Generation-API"><a class="docs-heading-anchor" href="#Image-Generation-API">Image Generation API</a><a id="Image-Generation-API-1"></a><a class="docs-heading-anchor-permalink" href="#Image-Generation-API" title="Permalink"></a></h2><h3 id="ImageGeneration"><a class="docs-heading-anchor" href="#ImageGeneration">ImageGeneration</a><a id="ImageGeneration-1"></a><a class="docs-heading-anchor-permalink" href="#ImageGeneration" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct ImageGeneration
+    service::ServiceEndpointSpec = OPENAIServiceEndpoint
+    model::String = &quot;&quot;                                      # sentinel — see below
+    prompt::String
+    n::Union{Int,Nothing} = nothing                         # 1–10
+    size::Union{String,Nothing} = nothing                   # &quot;1024x1024&quot;,&quot;1536x1024&quot;,&quot;1024x1536&quot;,&quot;auto&quot;; gpt-image-2+: any WIDTHxHEIGHT, multiples of 16, up to 3840x2160
+    quality::Union{String,Nothing} = nothing                # &quot;low&quot;,&quot;medium&quot;,&quot;high&quot;,&quot;auto&quot;; gpt-image-2.5-flare/-sunburst add &quot;xhigh&quot;,&quot;max&quot;
+    background::Union{String,Nothing} = nothing             # &quot;transparent&quot;,&quot;opaque&quot;,&quot;auto&quot;
+    output_format::Union{String,Nothing} = nothing          # &quot;png&quot;,&quot;webp&quot;,&quot;jpeg&quot;
+    output_compression::Union{Int,Nothing} = nothing        # 0–100 (webp/jpeg only)
+    user::Union{String,Nothing} = nothing
+    moderation::Union{String,Nothing} = nothing             # &quot;auto&quot;,&quot;low&quot;
+end</code></pre><p><code>input_fidelity</code> is an edit-only parameter: it lives on <code>ImageEdit</code>, and <code>ImageGeneration(...; input_fidelity=...)</code> is a <code>MethodError</code>.</p><p>Unlike <code>Chat</code> and <code>Respond</code>, <code>ImageGeneration</code> does <strong>not</strong> resolve its model at construction: the field stays <code>&quot;&quot;</code> and resolves at serialization time, to <code>&quot;gpt-image-2&quot;</code> for OpenAI. So <code>ImageGeneration(prompt=&quot;…&quot;).model</code> reads back as the empty string — pass <code>model=</code> explicitly if you need to read it, or inspect <code>JSON.json(ig)</code> to see what will go on the wire. A service with no default image model throws <code>ArgumentError</code> at serialization.</p><h3 id="generate_image"><a class="docs-heading-anchor" href="#generate_image">generate_image</a><a id="generate_image-1"></a><a class="docs-heading-anchor-permalink" href="#generate_image" title="Permalink"></a></h3><pre><code class="language-julia hljs">generate_image(ig::ImageGeneration; config=nothing, cancel=nothing) -&gt; ImageSuccess | ImageFailure | ImageCallError
+generate_image(prompt::String; config=nothing, cancel=nothing, kwargs...) -&gt; same   # convenience
+edit_image(e::ImageEdit; config=nothing, cancel=nothing)                 -&gt; same
+edit_image(image, prompt; mask=nothing, service=OPENAIServiceEndpoint, config=nothing, cancel=nothing, kwargs...)</code></pre><p>Retries transient statuses (408/429/500/502/503/504/529) inside the request budget (<code>RequestConfig.max_attempts</code>, default 3; <code>Retry-After</code> is a floor under the jitter) — a retry whose wait would exceed the remaining <code>total_deadline</code> is not attempted, so the call returns the last real response rather than sleeping past it. Bound per call with <code>config=RequestConfig(...)</code>; a cancelled call returns <code>ImageCallError</code> with <code>cause::UniLMCancelled</code>.</p><h3 id="Response-Types"><a class="docs-heading-anchor" href="#Response-Types">Response Types</a><a id="Response-Types-1"></a><a class="docs-heading-anchor-permalink" href="#Response-Types" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct ImageObject
+    b64_json::Union{String,Nothing} = nothing
+    revised_prompt::Union{String,Nothing} = nothing
+    url::Union{String,Nothing} = nothing          # set when the image was delivered by URL
+end
+
+@kwdef struct ImageResponse
+    created::Int64
+    data::Vector{ImageObject}
+    usage::Union{Dict{String,Any},Nothing} = nothing
+    raw::Dict{String,Any}
+end</code></pre><h3 id="Accessors"><a class="docs-heading-anchor" href="#Accessors">Accessors</a><a id="Accessors-1"></a><a class="docs-heading-anchor-permalink" href="#Accessors" title="Permalink"></a></h3><pre><code class="language-julia hljs">image_data(result::ImageSuccess)::Vector{String}       # per image: its base64 data, else its URL
+image_data(result::ImageFailure)                        # throws LLMResultError
+image_data(result::ImageCallError)                      # throws LLMResultError
+save_image(img_b64::String, filepath::String)           # decode + write to disk, returns filepath</code></pre><h3 id="Image-Generation-Example"><a class="docs-heading-anchor" href="#Image-Generation-Example">Image Generation Example</a><a id="Image-Generation-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Image-Generation-Example" title="Permalink"></a></h3><pre><code class="language-julia hljs">using UniLM
+
+result = generate_image(&quot;A watercolor painting of a Julia butterfly&quot;,
+    size=&quot;1024x1024&quot;, quality=&quot;high&quot;)
+
+if result isa ImageSuccess
+    imgs = image_data(result)
+    save_image(imgs[1], &quot;butterfly.png&quot;)
+    println(&quot;Saved! Revised prompt: &quot;, result.response.data[1].revised_prompt)
+end
+
+# Multiple images with transparent background
+result = generate_image(&quot;Minimalist logo&quot;,
+    n=3, background=&quot;transparent&quot;, output_format=&quot;png&quot;)</code></pre><hr/><h2 id="Embeddings-API"><a class="docs-heading-anchor" href="#Embeddings-API">Embeddings API</a><a id="Embeddings-API-1"></a><a class="docs-heading-anchor-permalink" href="#Embeddings-API" title="Permalink"></a></h2><h3 id="Embeddings"><a class="docs-heading-anchor" href="#Embeddings">Embeddings</a><a id="Embeddings-1"></a><a class="docs-heading-anchor-permalink" href="#Embeddings" title="Permalink"></a></h3><pre><code class="language-julia hljs">struct Embeddings
+    service::ServiceEndpointSpec     # default: OPENAIServiceEndpoint
+    model::String                    # default resolved per provider at construction
+    input::Union{String,Vector{String}}
+    embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}   # pre-allocated, filled in place
+    user::Union{String,Nothing}
+    dimensions::Union{Int,Nothing}          # requested output dimensionality
+    encoding_format::Union{String,Nothing}  # &quot;float&quot; or nothing; anything else throws ArgumentError
+end
+
+Embeddings(input::String; service=OPENAIServiceEndpoint, model=&quot;&quot;,
+           dimensions=nothing, encoding_format=nothing, user=nothing)
+Embeddings(input::Vector{String}; service=OPENAIServiceEndpoint, model=&quot;&quot;,
+           dimensions=nothing, encoding_format=nothing, user=nothing)</code></pre><p>Model defaults: <code>&quot;text-embedding-3-small&quot;</code> for OpenAI, <code>&quot;gemini-embedding-001&quot;</code> for Gemini (OpenAI-compat shim). For generic/DeepSeek endpoints, model must be specified explicitly or the constructor throws <code>ArgumentError</code> naming the service. An empty <code>Vector{String}</code> input also throws.</p><p>The <code>embeddings</code> buffer is pre-allocated to <code>something(dimensions, 1536)</code> zeros per input, filled in place, and resized to the length the model returns (a 3072-dimension model needs no adjustment). Because a pre-zeroed slot would be indistinguishable from a real vector, a response that does not cover every input exactly once — a missing or duplicated row index — is reported as an <code>EmbeddingCallError</code> rather than left as zeros. The result aliases the request (<code>result.embeddings === emb</code>), so use one <code>Embeddings</code> per concurrent call.</p><h3 id="embeddingrequest!"><a class="docs-heading-anchor" href="#embeddingrequest!">embeddingrequest!</a><a id="embeddingrequest!-1"></a><a class="docs-heading-anchor-permalink" href="#embeddingrequest!" title="Permalink"></a></h3><pre><code class="language-julia hljs">embeddingrequest!(emb::Embeddings; config=nothing, cancel=nothing) -&gt; EmbeddingSuccess | EmbeddingFailure | EmbeddingCallError</code></pre><p>Returns an <code>EmbeddingSuccess</code>/<code>EmbeddingFailure</code>/<code>EmbeddingCallError</code> (a <code>&lt;: LLMRequestResponse</code>). Fills <code>emb.embeddings</code> in-place; <code>embedding_vectors(result)</code> returns the vectors (and throws <code>LLMResultError</code> on a failure). Retries transient statuses (408/429/500/502/503/504/529) with backoff and jitter under the resolved <a href="../api/config/#UniLM.RequestConfig"><code>RequestConfig</code></a> (<code>max_attempts</code>, <code>total_deadline</code>; <code>Retry-After</code> is a floor under the jitter), but a retry whose wait would exceed the remaining deadline is not attempted — it returns the last real response rather than sleeping past it. Timeouts surface as <code>EmbeddingCallError</code> with <code>status=nothing</code> and the <code>UniLMTimeout</code> in <code>.cause</code>; a cancelled call carries <code>UniLMCancelled</code> there. A service that declares capabilities without <code>:embeddings</code> throws <code>ArgumentError</code> before any request.</p><h3 id="Embeddings-Example"><a class="docs-heading-anchor" href="#Embeddings-Example">Embeddings Example</a><a id="Embeddings-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Embeddings-Example" title="Permalink"></a></h3><pre><code class="language-julia hljs">using UniLM, LinearAlgebra
+
+emb = Embeddings(&quot;What is Julia?&quot;)
+embeddingrequest!(emb)
+println(emb.embeddings[1:5])  # first 5 dimensions
+
+# Batch + cosine similarity
+emb = Embeddings([&quot;cat&quot;, &quot;dog&quot;, &quot;airplane&quot;])
+embeddingrequest!(emb)
+similarity = dot(emb.embeddings[1], emb.embeddings[2]) /
+    (norm(emb.embeddings[1]) * norm(emb.embeddings[2]))</code></pre><hr/><h2 id="Cost-Tracking"><a class="docs-heading-anchor" href="#Cost-Tracking">Cost Tracking</a><a id="Cost-Tracking-1"></a><a class="docs-heading-anchor-permalink" href="#Cost-Tracking" title="Permalink"></a></h2><h3 id="TokenUsage"><a class="docs-heading-anchor" href="#TokenUsage">TokenUsage</a><a id="TokenUsage-1"></a><a class="docs-heading-anchor-permalink" href="#TokenUsage" title="Permalink"></a></h3><pre><code class="language-julia hljs">@kwdef struct TokenUsage
+    prompt_tokens::Int = 0
+    completion_tokens::Int = 0
+    total_tokens::Int = 0
+    cached_tokens::Int = 0      # subset of prompt_tokens served from the prompt cache
+    reasoning_tokens::Int = 0   # subset of completion_tokens spent on hidden reasoning
+end</code></pre><p><code>cached_tokens</code> and <code>reasoning_tokens</code> come from the providers&#39; <code>*_tokens_details</code> objects and default to <code>0</code> when the provider omits them. <code>cached_tokens</code> is load-bearing for cost: it is billed at the discounted cached-input rate.</p><h3 id="Functions"><a class="docs-heading-anchor" href="#Functions">Functions</a><a id="Functions-1"></a><a class="docs-heading-anchor-permalink" href="#Functions" title="Permalink"></a></h3><pre><code class="language-julia hljs">token_usage(result::LLMRequestResponse)::TokenUsage   # never Nothing — zero usage for a failure
+estimated_cost(result; model=nothing, pricing=DEFAULT_PRICING)   # per-call cost estimate (Float64)
+cumulative_cost(chat::Chat)::Float64                             # running total for a Chat instance
+
+DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict)
+                  # where PriceRow = @NamedTuple{input::Float64, cached_input::Float64, output::Float64}</code></pre><ul><li><strong><code>token_usage</code> returns a <code>TokenUsage</code>, never <code>nothing</code></strong>, for every result of a token-billed API — chat, Responses, embeddings, image generation, FIM and System One. Failures of those APIs report all-zero usage.</li><li><strong>Both functions throw <code>ArgumentError</code> for result types outside the token-billed APIs</strong> — audio, batch, container, conversation, file, fine-tuning, moderation, upload, vector-store, realtime. Those calls carry no token usage at all, and a <code>0.0</code> would be indistinguishable from a genuinely free call.</li><li>The model is inferred from the result (<code>self.model</code> for Chat, <code>response.model</code> for Responses, FIM and System One, <code>embeddings.model</code> for Embeddings). An image result reports its usage but <code>estimated_cost</code> returns <code>0.0</code> for it unless <code>model=</code> names a row in <code>pricing</code> (image models have no default rows).</li><li><strong><code>DEFAULT_PRICING</code> is safe to share across tasks</strong>: add or replace a row with <code>DEFAULT_PRICING[model] = row</code> while requests run; <code>get</code>, <code>haskey</code>, <code>delete!</code>, <code>pop!</code>, <code>empty!</code>, <code>keys</code> and <code>length</code> work as on a <code>Dict</code>, iteration walks a snapshot, and <code>copy</code> / <code>merge</code> / <code>filter</code> return a plain <code>Dict</code>. <code>pricing=</code> accepts any <code>AbstractDict{String, PriceRow}</code>.</li><li><strong><code>DEFAULT_PRICING</code> values are USD <em>per token</em>, not per 1M tokens</strong> — provider list prices divided by <code>1_000_000</code> (e.g. <code>&quot;gpt-5.6-sol&quot;</code> is <code>(input = 4.0e-6, cached_input = 4.0e-7, output = 2.0e-5)</code>). A <code>pricing=</code> dict you supply must use the same per-token convention, or your estimate is off by a factor of a million.</li><li>Lookup: the exact id, then the id without a dated snapshot suffix (OpenAI <code>-YYYY-MM-DD</code>, Anthropic <code>-YYYYMMDD</code>), and a versioned <code>jev-X.Y.Z</code> id without its own row is priced at the <code>jev-latest</code> row. Other unpriced models return <code>0.0</code> and log one warning per model id — pass <code>pricing=</code> (or add a row) to price custom models. The formula bills <code>min(cached_tokens, prompt_tokens)</code> at <code>cached_input</code>, the remaining prompt tokens at <code>input</code>, and <code>completion_tokens</code> at <code>output</code> (reasoning tokens are already counted within completion tokens).</li></ul><p>Current OpenAI, Gemini, and TypeSafe rows were verified September 22, 2026 (Anthropic and DeepSeek rows September 24, 2026; the DeepSeek rows are its peak rates, and off-peak hours bill half). These are estimates for standard short-context text requests, excluding cache-write premiums, long-context surcharges, nonstandard service tiers, multimodal rates, and hosted-tool fees. Anthropic <code>prompt_tokens</code> include cache reads and writes (<code>cached_tokens</code> is the read share), and DeepSeek cache hits (<code>prompt_cache_hit_tokens</code>) are billed at the cached rate. A streamed Chat turn accrues cost when its stream reports usage: OpenAI and DeepSeek streams request it automatically, native Anthropic and Gemini report it, and other OpenAI-compatible servers need <code>stream_options=Dict(&quot;include_usage&quot; =&gt; true)</code>. Gemini 3.8/3.7/3.6 Flash introductory rates expire December 31, 2026; refresh pricing before estimating later calls.</p><h3 id="Cost-Tracking-Example"><a class="docs-heading-anchor" href="#Cost-Tracking-Example">Cost Tracking Example</a><a id="Cost-Tracking-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Cost-Tracking-Example" title="Permalink"></a></h3><pre><code class="language-julia hljs">chat = Chat(model=&quot;gpt-5.2&quot;)
+push!(chat, Message(Val(:system), &quot;You are helpful.&quot;))
+push!(chat, Message(Val(:user), &quot;Hello!&quot;))
+
+result = chatrequest!(chat)
+if result isa LLMSuccess
+    usage = token_usage(result)
+    cost = estimated_cost(result)
+    println(&quot;Tokens: $(usage.total_tokens), Cost: \$$(round(cost; digits=6))&quot;)
+    println(&quot;Cumulative: \$$(round(cumulative_cost(chat); digits=6))&quot;)
+end</code></pre><hr/><h2 id="Conversation-Forking"><a class="docs-heading-anchor" href="#Conversation-Forking">Conversation Forking</a><a id="Conversation-Forking-1"></a><a class="docs-heading-anchor-permalink" href="#Conversation-Forking" title="Permalink"></a></h2><pre><code class="language-julia hljs">fork(chat::Chat)::Chat          # deep-copy every field but `service` (shared); cumulative cost copied by value (fresh Ref)
+fork(chat::Chat, n::Int)::Vector{Chat}  # create n independent forks</code></pre><h3 id="Fork-Example"><a class="docs-heading-anchor" href="#Fork-Example">Fork Example</a><a id="Fork-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Fork-Example" title="Permalink"></a></h3><pre><code class="language-julia hljs">chat = Chat(model=&quot;gpt-5.2&quot;)
+push!(chat, Message(Val(:system), &quot;You are a creative writer.&quot;))
+push!(chat, Message(Val(:user), &quot;Start a story about a robot.&quot;))
+chatrequest!(chat)
+
+# Fork into 3 independent continuations
+forks = fork(chat, 3)
+for (i, f) in enumerate(forks)
+    push!(f, Message(Val(:user), &quot;Continue the story with ending $i.&quot;))
+    chatrequest!(f)
+end</code></pre><hr/><h2 id="Tool-Loop"><a class="docs-heading-anchor" href="#Tool-Loop">Tool Loop</a><a id="Tool-Loop-1"></a><a class="docs-heading-anchor-permalink" href="#Tool-Loop" title="Permalink"></a></h2><p>Automated tool dispatch for both APIs. Wraps a tool schema with a callable function.</p><h3 id="CallableTool"><a class="docs-heading-anchor" href="#CallableTool">CallableTool</a><a id="CallableTool-1"></a><a class="docs-heading-anchor-permalink" href="#CallableTool" title="Permalink"></a></h3><pre><code class="language-julia hljs">struct CallableTool{T}
+    tool::T              # Tool or FunctionTool
+    callable::Function   # (name::String, args::Dict{String,Any}) -&gt; String (any other value is sent JSON-encoded)
+end</code></pre><h3 id="to_tool"><a class="docs-heading-anchor" href="#to_tool">to_tool</a><a id="to_tool-1"></a><a class="docs-heading-anchor-permalink" href="#to_tool" title="Permalink"></a></h3><pre><code class="language-julia hljs">to_tool(x)  # identity for Tool, FunctionTool, CallableTool; converts AbstractDict to Tool</code></pre><h3 id="ToolCallOutcome-/-ToolLoopResult"><a class="docs-heading-anchor" href="#ToolCallOutcome-/-ToolLoopResult">ToolCallOutcome / ToolLoopResult</a><a id="ToolCallOutcome-/-ToolLoopResult-1"></a><a class="docs-heading-anchor-permalink" href="#ToolCallOutcome-/-ToolLoopResult" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Per-call record
+struct ToolCallOutcome
+    tool_name::String
+    arguments::Dict{String,Any}
+    result::Union{FunctionCallResult,Nothing}
+    success::Bool
+    error::Union{String,Nothing}
+end
+
+# Loop result
+struct ToolLoopResult
+    response::LLMRequestResponse        # the last response received (on max_turns: the last tool-call turn)
+    tool_calls::Vector{ToolCallOutcome}
+    turns_used::Int
+    completed::Bool                     # true only for a final text answer that finished normally
+    llm_error::Union{String,Nothing}    # why it stopped, when not completed
+end</code></pre><h3 id="tool_loop!-(Chat-Completions)"><a class="docs-heading-anchor" href="#tool_loop!-(Chat-Completions)">tool_loop! (Chat Completions)</a><a id="tool_loop!-(Chat-Completions)-1"></a><a class="docs-heading-anchor-permalink" href="#tool_loop!-(Chat-Completions)" title="Permalink"></a></h3><pre><code class="language-julia hljs">tool_loop!(chat, dispatcher; max_turns=10, config=nothing, callback=nothing, on_tool_call=nothing,
+           cancel=nothing, tool_concurrency=1) -&gt; ToolLoopResult
+tool_loop!(chat; tools::Vector{&lt;:CallableTool}, kwargs...) -&gt; ToolLoopResult   # kwargs as above</code></pre><p><code>callback</code> and <code>on_tool_call</code> are the streaming hooks from <code>chatrequest!</code>, applied to every turn of the loop and passed through unchanged (so they need <code>stream=true</code>, else <code>ArgumentError</code> before any request). Rules:</p><ul><li><code>chat.history</code> must be <code>true</code> (else <code>ArgumentError</code> before any request); <code>max_turns &lt; 1</code> and <code>tool_concurrency &lt; 1</code> throw <code>ArgumentError</code>.</li><li>Calls run only on a turn whose <code>finish_reason == &quot;tool_calls&quot;</code>. A turn with calls that finished otherwise (<code>&quot;length&quot;</code>, <code>&quot;content_filter&quot;</code>, …) runs none: <code>completed=false</code>, <code>llm_error</code> names the reason, and the unanswered assistant turn is removed from <code>chat</code>.</li><li>A text turn completes the loop only when it finished with <code>&quot;stop&quot;</code> or no reason (or <code>&quot;tool_calls&quot;</code> with no calls); <code>&quot;length&quot;</code> gives <code>completed=false</code> with <code>llm_error = &quot;Model output was truncated by the token limit&quot;</code>, any other reason <code>completed=false</code> with an <code>llm_error</code> naming it.</li><li>A dispatcher&#39;s <code>String</code> result is sent as is, any other value JSON-encoded; a throwing dispatcher sends <code>&quot;Error: &lt;message&gt;&quot;</code> and records a failed <code>ToolCallOutcome</code>; an <code>InterruptException</code> propagates after the interrupted turn is removed from <code>chat</code>.</li><li>On <code>max_turns</code> exhaustion <code>response</code> is the last real response, <code>completed=false</code>, <code>llm_error = &quot;max turns (N) exhausted&quot;</code>.</li><li><code>cancel</code> (default: the ambient token) scopes every turn and dispatch; a cancelled loop returns <code>completed=false</code> with an <code>LLMCallError</code> whose <code>cause</code> is <code>UniLMCancelled</code> (a turn cancelled between dispatches is removed from <code>chat</code>).</li><li><code>tool_concurrency = n &gt; 1</code> runs up to <code>n</code> of a turn&#39;s calls at once on spawned tasks (thread-safe dispatcher required); results are sent in call order.</li></ul><h3 id="tool_loop-(Responses-API)"><a class="docs-heading-anchor" href="#tool_loop-(Responses-API)">tool_loop (Responses API)</a><a id="tool_loop-(Responses-API)-1"></a><a class="docs-heading-anchor-permalink" href="#tool_loop-(Responses-API)" title="Permalink"></a></h3><pre><code class="language-julia hljs">tool_loop(r::Respond, dispatcher; max_turns=10, config=nothing, cancel=nothing, tool_concurrency=1) -&gt; ToolLoopResult
+tool_loop(r::Respond; max_turns=10, config=nothing, cancel=nothing, tool_concurrency=1) -&gt; ToolLoopResult   # callables from r.tools
+tool_loop(input, dispatcher; max_turns=10, config=nothing, cancel=nothing, tool_concurrency=1, respond_kwargs...)
+tool_loop(input::String; tools, max_turns=10, config=nothing, cancel=nothing, tool_concurrency=1, respond_kwargs...)</code></pre><p>Turns chain through <code>previous_response_id</code>, or through <code>conversation</code> alone when the <code>Respond</code> sets it. Function calls run only on a <code>completed</code> or <code>requires_action</code> turn; another status stops the loop (<code>completed=false</code>, <code>llm_error</code> naming the status and the <code>incomplete_details</code> reason). Call <code>arguments</code> that are not a JSON object are answered with <code>&quot;Error: invalid arguments: …&quot;</code> and the loop continues. A turn requesting a client-side action the loop cannot run (<code>custom_tool_call</code>, <code>apply_patch_call</code>, <code>local_shell_call</code>, <code>computer_call</code>, a <code>shell_call</code> without a <code>shell_call_output</code> in the same output, <code>mcp_approval_request</code>) stops it with <code>completed=false</code>, naming the type, and runs none of the turn&#39;s calls. Result encoding, <code>max_turns</code>, <code>cancel</code> and <code>tool_concurrency</code> behave as in <code>tool_loop!</code> (a cancelled loop&#39;s <code>response</code> is a <code>ResponseCallError</code>).</p><hr/><h2 id="MCP-Client"><a class="docs-heading-anchor" href="#MCP-Client">MCP Client</a><a id="MCP-Client-1"></a><a class="docs-heading-anchor-permalink" href="#MCP-Client" title="Permalink"></a></h2><p>Native MCP client (JSON-RPC 2.0 over stdio or Streamable HTTP). Client and server negotiate revisions 2025-11-25 (preferred), 2025-06-18 and 2025-03-26; the stateless 2026-07-28 revision is not supported yet, so a 2026-07-28-only peer cannot connect.</p><h3 id="Types"><a class="docs-heading-anchor" href="#Types">Types</a><a id="Types-1"></a><a class="docs-heading-anchor-permalink" href="#Types" title="Permalink"></a></h3><pre><code class="language-julia hljs">MCPSession            # live connection — manages transport + cached tools/resources/prompts
+MCPToolInfo           # tool definition from tools/list
+MCPToolResult         # typed tools/call result: content, structured, is_error, parts
+MCPResourceInfo       # resource definition from resources/list
+MCPPromptInfo         # prompt definition from prompts/list
+MCPServerCapabilities # capabilities from initialize
+MCPTransport          # abstract (subtypes: StdioTransport, HTTPTransport)
+MCPError &lt;: Exception # JSON-RPC error (code, message, data — any JSON value)
+MCPCrashError &lt;: Exception # stdio server process exited / pipe broke (exitcode, termsignal, cause)
+MCPSessionClosedError &lt;: Exception # call on a closed / not-connected session (cause :disconnected|:timeout|:crash, msg)</code></pre><h3 id="Lifecycle"><a class="docs-heading-anchor" href="#Lifecycle">Lifecycle</a><a id="Lifecycle-1"></a><a class="docs-heading-anchor-permalink" href="#Lifecycle" title="Permalink"></a></h3><pre><code class="language-julia hljs">mcp_connect(command::Cmd; stderr=nothing, client_name=&quot;UniLM.jl&quot;, client_version=&lt;package version&gt;,
+            protocol_version=&quot;2025-11-25&quot;, config=nothing, auto_respawn=false) -&gt; MCPSession  # stdio subprocess
+mcp_connect(url::String; headers=Pair{String,String}[], kwargs...) -&gt; MCPSession            # Streamable HTTP
+mcp_connect(transport::MCPTransport; kwargs...) -&gt; MCPSession      # a custom transport must bound its own IO
+mcp_connect(f::Function, args...; kwargs...)                       # do-block, auto-disconnect
+mcp_disconnect!(session)</code></pre><p><code>stderr</code> is where a stdio server&#39;s stderr goes — an <code>IO</code> (e.g. <code>devnull</code>) or a file path (appended to); <code>nothing</code> inherits this process&#39;s. A stdio server runs in its own process group: disconnecting or a fatal timeout tears it down (stdin EOF, SIGTERM, then SIGKILL of the group), the group is killed when its leader exits, and servers still running at exit are torn down by an exit hook.</p><h3 id="Discovery"><a class="docs-heading-anchor" href="#Discovery">Discovery</a><a id="Discovery-1"></a><a class="docs-heading-anchor-permalink" href="#Discovery" title="Permalink"></a></h3><pre><code class="language-julia hljs">list_tools!(session; timeout=nothing) -&gt; Vector{MCPToolInfo}
+list_resources!(session) -&gt; Vector{MCPResourceInfo}
+list_prompts!(session) -&gt; Vector{MCPPromptInfo}</code></pre><p>When the client reads a <code>notifications/tools/list_changed</code>, <code>session.tools_stale</code> is set to <code>true</code> to flag the cached tool list as out of date; call <code>list_tools!(session)</code> to refresh it (which clears the flag). Server frames are read only during an exchange: a stdio notification sent between calls is seen on the next call, and over HTTP (no standing listener) only notifications inside a response body are seen.</p><h3 id="Operations"><a class="docs-heading-anchor" href="#Operations">Operations</a><a id="Operations-1"></a><a class="docs-heading-anchor-permalink" href="#Operations" title="Permalink"></a></h3><pre><code class="language-julia hljs">call_tool(session, name, arguments; timeout=nothing) -&gt; MCPToolResult
+read_resource(session, uri) -&gt; String
+get_prompt(session, name, arguments) -&gt; Vector{Dict}
+ping(session)</code></pre><p><code>call_tool</code> and <code>get_prompt</code> accept any <code>AbstractDict</code> for <code>arguments</code>, so the natural <code>Dict(&quot;path&quot; =&gt; &quot;/tmp/x&quot;)</code> form works without conversion.</p><p>Timeouts surface as the exported <code>MCPTimeoutError</code> (<code>phase</code> <code>:connect</code>, <code>:queue</code> or <code>:request</code>). A stdio request timeout closes the session — killing the server is the only way to release a read blocked on it; the error surfaces at about the bound and a reply that raced the teardown is discarded. An HTTP request timeout does not close the session, and the timed-out request gets a best-effort <code>notifications/cancelled</code>. A stdio server that exits or whose pipe breaks surfaces the exported <code>MCPCrashError</code> (the session closes with cause <code>:crash</code>). With <code>auto_respawn=true</code> the next call on a session closed by a timeout or a crash respawns the server; otherwise, and after <code>mcp_disconnect!</code>, every call throws <code>MCPSessionClosedError</code>.</p><p>A <code>CancelToken</code> (ambient <code>with_cancel</code>) reaches MCP calls over HTTP: a cancel throws <code>UniLMCancelled</code> at once, sends a best-effort <code>notifications/cancelled</code>, and leaves the session open. A stdio exchange does not observe the token (bounded by <code>mcp_request_timeout</code>). Teardown requests (the disconnect <code>DELETE</code>, a cancellation notice) are sent even inside a cancelled scope.</p><h3 id="Session-Concurrency"><a class="docs-heading-anchor" href="#Session-Concurrency">Session Concurrency</a><a id="Session-Concurrency-1"></a><a class="docs-heading-anchor-permalink" href="#Session-Concurrency" title="Permalink"></a></h3><p>An <code>MCPSession</code> runs one call at a time: each call&#39;s liveness check, id allocation and request/response exchange holds the session, and waiting callers are served in arrival order (FIFO).</p><ul><li>A call&#39;s per-call bound (<code>timeout</code>, default <code>mcp_request_timeout</code>) also bounds its <strong>wait</strong> for the session: a call that cannot acquire it in time throws <code>MCPTimeoutError(:queue, …)</code> without touching it. Once held, the exchange gets the full bound, measured from acquisition, so a waiter never cuts it short.</li><li><code>mcp_disconnect!</code> waits its turn too, so a disconnect racing a call in flight <strong>waits</strong> for that exchange to finish instead of tearing the transport down under its reader.</li><li>Interleaved server → client frames are handled in place: notifications are skipped, server <code>ping</code> requests answered, other server requests answered <code>-32601</code>, and a stdio line that is not JSON skipped with a warning.</li></ul><p>For genuine parallelism, open one session per concurrent worker.</p><h3 id="Tool-Result"><a class="docs-heading-anchor" href="#Tool-Result">Tool Result</a><a id="Tool-Result-1"></a><a class="docs-heading-anchor-permalink" href="#Tool-Result" title="Permalink"></a></h3><p><code>call_tool</code> returns a typed result — a tool-execution error (<code>isError: true</code>) is carried on <code>is_error</code>, <strong>not</strong> thrown; only JSON-RPC protocol errors throw (<code>MCPError</code>).</p><pre><code class="language-julia hljs">struct MCPToolResult
+    content::String                              # text parts joined by &quot;\n&quot;; non-text parts JSON-encoded
+    structured::Union{Nothing,Dict{String,Any}}  # server&#39;s structuredContent verbatim, or nothing
+    is_error::Bool                               # true when the tool reported an execution error (isError)
+    parts::Vector{Any}                           # raw content array verbatim
+end</code></pre><p>The <code>mcp_tools</code> / <code>mcp_tools_respond</code> bridges surface <code>content</code> to the model on success (falling back to <code>JSON.json(structured)</code> when <code>content</code> is empty), and raise <code>content</code> as an error when <code>is_error</code> is set.</p><h3 id="Tool-Bridge"><a class="docs-heading-anchor" href="#Tool-Bridge">Tool Bridge</a><a id="Tool-Bridge-1"></a><a class="docs-heading-anchor-permalink" href="#Tool-Bridge" title="Permalink"></a></h3><pre><code class="language-julia hljs">mcp_tools(session) -&gt; Vector{CallableTool{Tool}}         # for tool_loop!
+mcp_tools_respond(session) -&gt; Vector{CallableTool{FunctionTool}}  # for tool_loop</code></pre><p>Bridged tool names are provider-safe: any character outside <code>[A-Za-z0-9_-]</code> becomes <code>_</code> and names are cut to 128 characters (the callable still calls the MCP name); two tools mapping to one name raise <code>ArgumentError</code>.</p><h3 id="Client-Example"><a class="docs-heading-anchor" href="#Client-Example">Client Example</a><a id="Client-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Client-Example" title="Permalink"></a></h3><pre><code class="language-julia hljs">session = mcp_connect(`npx -y @modelcontextprotocol/server-filesystem /tmp`)
+tools = mcp_tools(session)
+chat = Chat(model=&quot;gpt-5.2&quot;, tools=map(t -&gt; t.tool, tools))
+push!(chat, Message(Val(:system), &quot;You are a helpful assistant with filesystem access.&quot;))
+push!(chat, Message(Val(:user), &quot;List files&quot;))
+result = tool_loop!(chat; tools)
+mcp_disconnect!(session)</code></pre><hr/><h2 id="MCP-Server"><a class="docs-heading-anchor" href="#MCP-Server">MCP Server</a><a id="MCP-Server-1"></a><a class="docs-heading-anchor-permalink" href="#MCP-Server" title="Permalink"></a></h2><p>Build MCP servers that expose tools, resources, and prompts.</p><h3 id="Types-2"><a class="docs-heading-anchor" href="#Types-2">Types</a><a class="docs-heading-anchor-permalink" href="#Types-2" title="Permalink"></a></h3><pre><code class="language-julia hljs">MCPServer(name, version; description=nothing)
+MCPServerPrimitive    # abstract (MCPServerTool, MCPServerResource, MCPServerResourceTemplate, MCPServerPrompt)</code></pre><h3 id="Registration"><a class="docs-heading-anchor" href="#Registration">Registration</a><a id="Registration-1"></a><a class="docs-heading-anchor-permalink" href="#Registration" title="Permalink"></a></h3><pre><code class="language-julia hljs">register_tool!(server, name, description, schema, handler)
+register_tool!(server, name, description, handler)           # auto-schema from signature
+register_tool!(server, ct::CallableTool{Tool})            # bridge from Chat API
+register_tool!(server, ct::CallableTool{FunctionTool})       # bridge from Responses API
+register_resource!(server, uri, name, handler; mime_type=&quot;text/plain&quot;, description=nothing)
+register_resource_template!(server, uri_template, name, handler; ...)
+register_prompt!(server, name, handler; description=nothing, arguments=Dict{String,Any}[])</code></pre><p>The inferred-schema <code>register_tool!(server, name, description, handler)</code> binds each <code>tools/call</code> <code>arguments</code> object to the handler&#39;s positional parameters <strong>by name</strong>, as <code>@mcp_tool</code> does: a parameter whose type admits <code>nothing</code> is optional, every other one required, and a value must have its parameter&#39;s JSON type (a <code>Symbol</code> binds from a string; typed <code>Vector</code>/<code>Dict</code> parameters convert element-wise). A violation is answered with an <code>isError: true</code> tool result naming the argument. A handler taking one <code>Dict</code> or varargs throws <code>ArgumentError</code> — pass an explicit schema for those. Registration is synchronized: it may run while <code>serve</code> is dispatching. <code>@mcp_tool</code> registers the tool without a description.</p><h3 id="Macros"><a class="docs-heading-anchor" href="#Macros">Macros</a><a id="Macros-1"></a><a class="docs-heading-anchor-permalink" href="#Macros" title="Permalink"></a></h3><pre><code class="language-julia hljs">@mcp_tool server function name(args...) body end
+@mcp_resource server uri function(args...) body end
+@mcp_prompt server name function(args...) body end</code></pre><h3 id="Serving"><a class="docs-heading-anchor" href="#Serving">Serving</a><a id="Serving-1"></a><a class="docs-heading-anchor-permalink" href="#Serving" title="Permalink"></a></h3><pre><code class="language-julia hljs">serve(server; transport=:stdio)                          # default — stdio
+serve(server; transport=:http, host=&quot;127.0.0.1&quot;, port=8080)  # HTTP — blocks until closed</code></pre><p>The HTTP transport blocks until the server is closed (like <code>HTTP.serve</code>); pass <code>block=false</code> to get the running server handle back and <code>close</code> it yourself. It also validates the <code>Origin</code> header (DNS-rebinding defense): requests with no <code>Origin</code> header and localhost origins pass, any other origin gets 403 unless listed in <code>allowed_origins</code>. A request other than <code>initialize</code> whose <code>MCP-Protocol-Version</code> header names an unsupported revision gets 400; <code>initialize</code> answers the requested revision when supported, otherwise 2025-11-25.</p><p><strong>Concurrency:</strong> over HTTP, <code>tools/call</code>, <code>resources/read</code> and <code>prompts/get</code> handlers run concurrently, one task per request on the default thread pool — handlers must be thread-safe; protocol requests (<code>initialize</code>, lists, <code>ping</code>) are answered inline. Over stdio handlers run one at a time, and the process <code>stdout</code> points at <code>stderr</code> while serving on it, so a printing handler cannot corrupt the frame stream.</p><pre><code class="language-julia hljs">handle = serve(server; transport=:http, port=8080, block=false,
+               allowed_origins=[&quot;https://app.example.com&quot;])
+close(handle)</code></pre><h3 id="Error-and-Limit-Contracts"><a class="docs-heading-anchor" href="#Error-and-Limit-Contracts">Error and Limit Contracts</a><a id="Error-and-Limit-Contracts-1"></a><a class="docs-heading-anchor-permalink" href="#Error-and-Limit-Contracts" title="Permalink"></a></h3><ul><li><strong>A throwing tool handler is a tool result, not a protocol error.</strong> The client receives <code>isError: true</code> with the text <code>Error: &lt;showerror text&gt;</code>, which is exactly what lets a model see and correct its own mistake. Write handlers accordingly: raise with a message you are willing to show the model <em>and</em> the client.</li><li><strong>Resource, prompt and dispatch-layer errors are generic.</strong> An exception from a resource or prompt handler, or any unhandled error below the handler, answers JSON-RPC <code>-32603</code> with the message <code>&quot;Internal error&quot;</code> — the exception and backtrace go to the server&#39;s own logs, not to the peer, because an exception string can carry file paths and argument values a remote client has no business reading. A single bad frame never takes the transport down. An <code>InterruptException</code> is never converted: it propagates.</li><li><strong>Frames and request bodies are capped at 16 MiB.</strong> stdio answers an oversized frame with <code>-32600</code>, HTTP an oversized body with <code>413 Payload Too Large</code>, rather than parsing it, since parsing an attacker-sized payload allocates a multiple of it — an out-of-memory kill rather than a protocol error.</li><li>The server tolerates spec-legal parameter shapes: <code>params: null</code> and positional <code>params</code> do not crash it, and a JSON-RPC response sent to it is accepted without an answer (HTTP <code>202</code>). Non-object <code>arguments</code>, a missing tool <code>name</code> and an unknown tool answer <code>-32602</code>.</li></ul><h3 id="Server-Example"><a class="docs-heading-anchor" href="#Server-Example">Server Example</a><a id="Server-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Server-Example" title="Permalink"></a></h3><pre><code class="language-julia hljs">server = MCPServer(&quot;calc&quot;, &quot;1.0.0&quot;)
+@mcp_tool server function add(a::Float64, b::Float64)::String
+    string(a + b)
+end
+serve(server)</code></pre><hr/><h2 id="FIM-Completion"><a class="docs-heading-anchor" href="#FIM-Completion">FIM Completion</a><a id="FIM-Completion-1"></a><a class="docs-heading-anchor-permalink" href="#FIM-Completion" title="Permalink"></a></h2><p>Fill-in-the-Middle: generate text between a <code>prompt</code> (prefix) and <code>suffix</code>. Supported by DeepSeek (beta), Mistral (routed to <code>/v1/fim/completions</code>), and Ollama; vLLM&#39;s completions endpoint rejects <code>suffix</code>.</p><pre><code class="language-julia hljs">@kwdef struct FIMCompletion
+    service::ServiceEndpointSpec
+    model::String = &quot;&quot;    # sentinel: resolves at serialization to &quot;deepseek-flash&quot; for DeepSeek
+    prompt::String
+    suffix::Union{String,Nothing} = nothing
+    max_tokens::Union{Int,Nothing} = 128
+    temperature::Union{Float64,Nothing} = nothing
+    top_p::Union{Float64,Nothing} = nothing
+    stream::Union{Bool,Nothing} = nothing          # stream=true throws ArgumentError (no streaming path)
+    stop::Union{Vector{String},String,Nothing} = nothing
+    echo::Union{Bool,Nothing} = nothing
+    logprobs::Union{Int,Nothing} = nothing
+    frequency_penalty::Union{Float64,Nothing} = nothing
+    presence_penalty::Union{Float64,Nothing} = nothing
+end
+
+@kwdef struct FIMChoice
+    text::String
+    index::Int = 0
+    finish_reason::Union{String,Nothing} = nothing
+end
+
+@kwdef struct FIMResponse
+    choices::Vector{FIMChoice}
+    usage::Union{TokenUsage,Nothing} = nothing
+    model::String = &quot;&quot;
+    raw::Dict{String,Any} = Dict{String,Any}()
+end
+
+@kwdef struct FIMSuccess &lt;: LLMRequestResponse
+    response::FIMResponse
+end
+
+@kwdef struct FIMFailure &lt;: LLMRequestResponse
+    response::String
+    status::Int
+    request_id::Union{String,Nothing} = nothing
+end
+
+@kwdef struct FIMCallError &lt;: LLMRequestResponse
+    error::String
+    status::Union{Int,Nothing} = nothing
+    request_id::Union{String,Nothing} = nothing
+    cause::Union{Nothing,Exception} = nothing
+end
+
+fim_complete(fim::FIMCompletion; config=nothing, cancel=nothing) -&gt; LLMRequestResponse
+fim_complete(prompt; suffix=nothing, config=nothing, cancel=nothing, kwargs...) -&gt; LLMRequestResponse  # convenience
+fim_text(result) -&gt; String  # generated text; throws LLMResultError on a FIMFailure/FIMCallError</code></pre><p>Unlike <code>Chat</code>, <code>FIMCompletion</code> does not resolve its model at construction — the field stays <code>&quot;&quot;</code> until serialization, where it becomes <code>&quot;deepseek-flash&quot;</code> for <code>DeepSeekEndpoint</code>. Endpoints without a default FIM model must set <code>model=</code> explicitly, or <code>fim_complete</code> throws <code>ArgumentError</code>. Local validation (capability — strict, so an endpoint that declares nothing throws <code>MethodError</code> — model resolution, routing) throws before any request; every later failure, including a 200 body that is not a completions response, is a <code>FIMCallError</code> whose <code>cause</code> holds the exception. Retries follow the shared policy; <code>FIMSuccess</code> results report usage and cost.</p><h3 id="FIM-Example"><a class="docs-heading-anchor" href="#FIM-Example">FIM Example</a><a id="FIM-Example-1"></a><a class="docs-heading-anchor-permalink" href="#FIM-Example" title="Permalink"></a></h3><pre><code class="language-julia hljs">result = fim_complete(&quot;def fib(a):&quot;,
+    service=DeepSeekEndpoint(), suffix=&quot;    return fib(a-1) + fib(a-2)&quot;,
+    max_tokens=128, stop=[&quot;\n\n&quot;])
+println(fim_text(result))</code></pre><hr/><h2 id="Chat-Prefix-Completion"><a class="docs-heading-anchor" href="#Chat-Prefix-Completion">Chat Prefix Completion</a><a id="Chat-Prefix-Completion-1"></a><a class="docs-heading-anchor-permalink" href="#Chat-Prefix-Completion" title="Permalink"></a></h2><p>Continue from a partial assistant message. The model generates text continuing from the assistant&#39;s prefix. DeepSeek beta feature.</p><pre><code class="language-julia hljs">prefix_complete(chat::Chat; config=nothing, cancel=nothing) -&gt; LLMRequestResponse
+# Last message must be role=assistant with the prefix text</code></pre><p>The result&#39;s <code>message</code> is the continuation the API returns; with <code>chat.history</code> the conversation keeps the whole assistant turn, prefix followed by continuation. A cancelled call returns <code>LLMCallError</code> (<code>cause::UniLMCancelled</code>) and leaves <code>chat</code> untouched.</p><h3 id="Prefix-Example"><a class="docs-heading-anchor" href="#Prefix-Example">Prefix Example</a><a id="Prefix-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Prefix-Example" title="Permalink"></a></h3><pre><code class="language-julia hljs">chat = Chat(service=DeepSeekEndpoint())   # deepseek-flash
+push!(chat, Message(Val(:system), &quot;You are a coding assistant.&quot;))
+push!(chat, Message(Val(:user), &quot;Write quicksort in Python&quot;))
+push!(chat, Message(role=RoleAssistant, content=&quot;```python\n&quot;))
+result = prefix_complete(chat)</code></pre><hr/><h2 id="TypeSafe-System-One-API-(Jev)"><a class="docs-heading-anchor" href="#TypeSafe-System-One-API-(Jev)">TypeSafe System One API (Jev)</a><a id="TypeSafe-System-One-API-(Jev)-1"></a><a class="docs-heading-anchor-permalink" href="#TypeSafe-System-One-API-(Jev)" title="Permalink"></a></h2><p>A System One model answers enumerated questions about a piece of <code>state</code> with a probability distribution over the outcomes you named — no generated text, no parsing. <code>TYPESAFE_API_KEY</code> is required; the default model is <code>jev-latest</code> and pinning <code>&quot;jev-1.13.0&quot;</code> keeps tuned confidence thresholds meaningful.</p><pre><code class="language-julia hljs"># What a piece of guidance may be on the wire: string | object | array
+const SystemOneEntry = Union{AbstractString, AbstractDict, AbstractVector, NamedTuple}
+# What `state` may be. No `nothing`: the server reports a null state as missing.
+const SystemOneState = Union{AbstractString, AbstractDict, AbstractVector, Tuple, NamedTuple}
+
+abstract type SystemOneQuestion end
+
+struct ChoiceQuestion &lt;: SystemOneQuestion          # 1..255 options, insertion order kept
+    instructions::Union{Nothing,SystemOneEntry}
+    criteria::JSON.Object{String,Any}               # option name =&gt; description (or nothing)
+end
+
+struct ScoreQuestion &lt;: SystemOneQuestion           # 1..10 levels, criteria[1] is level 0
+    instructions::Union{Nothing,SystemOneEntry}
+    criteria::Vector{Any}
+end
+
+struct NoulCriteria                                 # wire keys &quot;true&quot; / &quot;false&quot;
+    yes::Union{Nothing,SystemOneEntry}
+    no::Union{Nothing,SystemOneEntry}
+end
+
+struct NoulQuestion &lt;: SystemOneQuestion            # needs instructions or one criterion
+    instructions::Union{Nothing,SystemOneEntry}
+    criteria::Union{Nothing,NoulCriteria}
+end
+
+struct SystemOneRequest
+    state::SystemOneState
+    questions::Vector{Pair{String,SystemOneQuestion}}   # ordered, unique non-empty names
+    model::String
+end
+
+abstract type SystemOneAnswer end
+
+struct NoulAnswer &lt;: SystemOneAnswer                # no confidence: the value is the belief
+    noul::Float64
+    raw::Dict{String,Any}
+end
+
+struct ChoiceAnswer &lt;: SystemOneAnswer
+    choice::String
+    confidence::Float64
+    probabilities::Dict{String,Float64}             # keyed by option name, unordered
+    raw::Dict{String,Any}
+end
+
+struct ScoreAnswer &lt;: SystemOneAnswer
+    score::Float64                                  # expectation; may fall between levels
+    confidence::Float64
+    legend::Dict{Int,Any}                           # 0-based level number =&gt; description
+    probabilities::Dict{Int,Float64}                # same keys as legend
+    raw::Dict{String,Any}
+end
+
+struct UnknownAnswer &lt;: SystemOneAnswer             # forward-compatible, never dropped
+    type::String
+    raw::Dict{String,Any}
+end
+
+struct SystemOneResponse
+    model::String                                   # the versioned id that answered
+    answers::Dict{String,SystemOneAnswer}           # keyed by question name
+    usage::TokenUsage                               # prompt = input, completion = output
+    request_id::Union{Nothing,String}               # x-typesafe-request-id header
+    raw::Dict{String,Any}
+end
+
+struct SystemOneSuccess &lt;: LLMRequestResponse
+    response::SystemOneResponse
+end
+
+@kwdef struct SystemOneFailure &lt;: LLMRequestResponse   # HTTP non-2xx
+    response::String
+    status::Int
+    request_id::Union{Nothing,String} = nothing
+    error_type::Union{Nothing,String} = nothing     # &quot;authentication_error&quot;, &quot;api_usage_error&quot;
+    message::String = &quot;&quot;
+    retry_after::Union{Nothing,Float64} = nothing   # seconds; retry-after-ms, else Retry-After
+end
+
+@kwdef struct SystemOneCallError &lt;: LLMRequestResponse # no usable response
+    error::String
+    status::Union{Int,Nothing} = nothing
+    request_id::Union{Nothing,String} = nothing
+    cause::Union{Nothing,Exception} = nothing       # e.g. a UniLMTimeout or UniLMCancelled
+end
+
+struct SystemOneError &lt;: Exception                  # thrown by accessors on a non-success
+    result::Union{SystemOneFailure,SystemOneCallError}
+end
+
+struct TypeSafeModelCard
+    name::String
+    description::String
+    release_date::String                            # opaque string (live returns RFC 3339)
+    raw::Dict{String,Any}
+end
+
+struct TypeSafeModelsSuccess &lt;: LLMRequestResponse
+    models::Vector{TypeSafeModelCard}
+    raw::Dict{String,Any}
+end</code></pre><h3 id="Constructors,-verbs-and-accessors"><a class="docs-heading-anchor" href="#Constructors,-verbs-and-accessors">Constructors, verbs and accessors</a><a id="Constructors,-verbs-and-accessors-1"></a><a class="docs-heading-anchor-permalink" href="#Constructors,-verbs-and-accessors" title="Permalink"></a></h3><pre><code class="language-julia hljs">choice(instructions, criteria) -&gt; ChoiceQuestion    # criteria: NamedTuple | Dict |
+choice(criteria) -&gt; ChoiceQuestion                  #   Vector{Pair} | Vector{String}
+score(instructions, levels::AbstractVector) -&gt; ScoreQuestion
+score(levels::AbstractVector) -&gt; ScoreQuestion
+noul(instructions; yes=nothing, no=nothing) -&gt; NoulQuestion
+noul(; yes=nothing, no=nothing) -&gt; NoulQuestion
+
+SystemOneRequest(state, questions; model=UniLM.default_typesafe_model())
+
+ask(request::SystemOneRequest; service=TYPESAFEServiceEndpoint, config=nothing, cancel=nothing)
+ask(state, questions...; model=UniLM.default_typesafe_model(), service=TYPESAFEServiceEndpoint,
+    config=nothing, cancel=nothing)
+    # -&gt; SystemOneSuccess | SystemOneFailure | SystemOneCallError
+
+list_models(; service=TYPESAFEServiceEndpoint, config=nothing, cancel=nothing)
+    # -&gt; TypeSafeModelsSuccess | SystemOneFailure | SystemOneCallError
+
+answers(result) -&gt; Dict{String,SystemOneAnswer}     # throws SystemOneError on a non-success
+answer(result, name)                                # name::Union{AbstractString,Symbol}
+result[name]; haskey(result, name); keys(result)    # same, on Success or Response</code></pre><p><code>questions</code> accepts <code>name =&gt; question</code> pairs (vector, tuple, <code>NamedTuple</code>, or <code>AbstractDict</code>), or bare questions auto-named <code>&quot;q1&quot;</code>, <code>&quot;q2&quot;</code>, … in order. Mixing the two, repeating a name, or passing none is an <code>ArgumentError</code>. Both verbs ride the shared retry seam, so <code>RequestConfig.max_attempts</code> applies to 408, 429, 500, 502, 503, 504 and 529, and the final <code>SystemOneFailure</code> carries <code>retry_after</code> — the wait the service asked for in seconds, or <code>nothing</code> when it sent no hint.</p><h3 id="Example"><a class="docs-heading-anchor" href="#Example">Example</a><a id="Example-1"></a><a class="docs-heading-anchor-permalink" href="#Example" title="Permalink"></a></h3><pre><code class="language-julia hljs">r = ask(&quot;Help! My payouts have been failing for 3 days.&quot;,
+        &quot;department&quot; =&gt; choice(&quot;Which team should handle this ticket?&quot;,
+            (billing=&quot;Payments, invoicing, payouts, refunds&quot;,
+             technical=&quot;Bugs, outages, integrations&quot;,
+             sales=&quot;Pricing, upgrades, new accounts&quot;)),
+        &quot;urgency&quot; =&gt; score(&quot;How urgent is this ticket?&quot;,
+            [&quot;Can wait&quot;, &quot;Needs attention this week&quot;, &quot;Needs attention today&quot;]),
+        &quot;is_frustrated&quot; =&gt; noul(&quot;Is the customer frustrated?&quot;; yes=&quot;Frustrated&quot;, no=&quot;Neutral&quot;))
+issuccess(r) &amp;&amp; println(r[&quot;department&quot;].choice, &quot; &quot;, r[&quot;urgency&quot;].score, &quot; &quot;, r[&quot;is_frustrated&quot;].noul)</code></pre><h3 id="Natural-language-control-flow"><a class="docs-heading-anchor" href="#Natural-language-control-flow">Natural-language control flow</a><a id="Natural-language-control-flow-1"></a><a class="docs-heading-anchor-permalink" href="#Natural-language-control-flow" title="Permalink"></a></h3><p>A Choice answer is already a branch decision, so two constructs compile ordinary control flow into ONE System One request. <code>@branch</code> is a natural-language switch that evaluates only the selected body; <code>nl_dispatch</code> sends one Choice per <code>Meaning</code> slot and then hands the resolved meanings to Julia&#39;s own dispatch, so the remaining arguments still dispatch on their types.</p><pre><code class="language-julia hljs">struct Meaning{S} end                     # S::Symbol IS the description
+Meaning(text::AbstractString)             # the instance; nl&quot;...&quot; is the TYPE
+
+struct LowConfidenceError &lt;: Exception    # raised when confidence &lt; min_confidence
+    question::String
+    answer::ChoiceAnswer                  # the full distribution, for diagnostics
+    min_confidence::Float64
+end
+
+@branch state [key = value ...] begin
+    &quot;option name&quot;                  =&gt; expression   # the name is what the model reads
+    (&quot;option name&quot;, &quot;description&quot;) =&gt; expression   # the only way to add a description
+    _                              =&gt; expression   # requires min_confidence
+end
+# keys: model, min_confidence, instructions, service, config, cancel
+# -&gt; the selected body&#39;s value; LowConfidenceError or SystemOneError otherwise
+
+nl_dispatch(f, args...; model=nothing, service=TYPESAFEServiceEndpoint, config=nothing,
+            cancel=nothing, min_confidence=0.0, fallback=nothing, instructions=nothing, state=nothing)
+    # -&gt; f(resolved meanings spliced into their positions, args...)
+meanings(f) -&gt; Dict{Int,Vector{String}}   # slot position =&gt; options, in send order</code></pre><p>Methods without a concrete <code>Meaning</code> argument (including wildcard <code>::Meaning</code> ones) are ordinary methods and are not part of the natural-language interface. Every natural-language method of <code>f</code> must agree on arity and on which positions are slots. Without <code>state</code>, the state is a <code>Dict{String,Any}</code> keyed by the ordinary argument names of the first such method. A resolved combination no method covers raises Julia&#39;s own <code>MethodError</code>.</p><pre><code class="language-julia hljs">ticket = &quot;My package arrived crushed and the screen is cracked. I want my money back.&quot;
+
+action = @branch ticket min_confidence=0.6 begin
+    &quot;the customer wants a refund&quot;           =&gt; :refund
+    &quot;the customer reports a bug in the app&quot; =&gt; :bug
+    _                                       =&gt; :escalate
+end                                         # =&gt; :refund
+
+route(::nl&quot;the customer wants a refund&quot;, t)           = (:refund, t)
+route(::nl&quot;the customer reports a bug in the app&quot;, t) = (:bug, t)
+nl_dispatch(route, ticket)                            # =&gt; (:refund, ticket)
+route(nl&quot;the customer wants a refund&quot;(), ticket)      # direct call, no request</code></pre><hr/><h2 id="Provider-Capabilities"><a class="docs-heading-anchor" href="#Provider-Capabilities">Provider Capabilities</a><a id="Provider-Capabilities-1"></a><a class="docs-heading-anchor-permalink" href="#Provider-Capabilities" title="Permalink"></a></h2><p>Each endpoint declares supported features. Request functions validate before dispatch, so an unsupported feature is an <code>ArgumentError</code> naming the endpoint and what it does support, not an HTTP 404.</p><pre><code class="language-julia hljs">provider_capabilities(service) -&gt; Set{Symbol}
+has_capability(service, cap::Symbol) -&gt; Bool</code></pre><h3 id="Capabilities-by-Provider"><a class="docs-heading-anchor" href="#Capabilities-by-Provider">Capabilities by Provider</a><a id="Capabilities-by-Provider-1"></a><a class="docs-heading-anchor-permalink" href="#Capabilities-by-Provider" title="Permalink"></a></h3><table><tr><th style="text-align: right">Provider</th><th style="text-align: right">Capabilities</th></tr><tr><td style="text-align: right">OpenAI</td><td style="text-align: right"><code>:chat</code>, <code>:responses</code>, <code>:agentic</code>, <code>:embeddings</code>, <code>:images</code>, <code>:image_edits</code>, <code>:tools</code>, <code>:streaming</code>, <code>:json_output</code>, <code>:files</code>, <code>:vector_stores</code>, <code>:conversations</code>, <code>:moderation</code>, <code>:audio</code>, <code>:batch</code>, <code>:fine_tuning</code>, <code>:containers</code>, <code>:uploads</code>, <code>:realtime</code></td></tr><tr><td style="text-align: right">Azure</td><td style="text-align: right"><code>:chat</code>, <code>:tools</code>, <code>:streaming</code>, <code>:json_output</code></td></tr><tr><td style="text-align: right">Gemini (native)</td><td style="text-align: right"><code>:chat</code>, <code>:tools</code>, <code>:json_output</code>, <code>:streaming</code>, <code>:agentic</code></td></tr><tr><td style="text-align: right">Gemini (OpenAI-compat)</td><td style="text-align: right"><code>:chat</code>, <code>:embeddings</code>, <code>:tools</code>, <code>:streaming</code>, <code>:json_output</code></td></tr><tr><td style="text-align: right">Anthropic (native)</td><td style="text-align: right"><code>:chat</code>, <code>:tools</code>, <code>:json_output</code>, <code>:streaming</code></td></tr><tr><td style="text-align: right">TypeSafe (System One)</td><td style="text-align: right"><code>:system_one</code>, <code>:models</code></td></tr><tr><td style="text-align: right">DeepSeek</td><td style="text-align: right"><code>:chat</code>, <code>:tools</code>, <code>:streaming</code>, <code>:fim</code>, <code>:prefix_completion</code>, <code>:json_output</code></td></tr><tr><td style="text-align: right">Generic</td><td style="text-align: right"><code>:chat</code>, <code>:embeddings</code>, <code>:fim</code>, <code>:tools</code>, <code>:streaming</code>, <code>:json_output</code>, <code>:responses</code></td></tr></table><p>Validation comes in two strengths, and the difference matters if you write your own endpoint:</p><ul><li><strong>Platform and lifecycle verbs</strong> (files, vector stores, conversations, moderations, audio, batch, fine-tuning, containers, uploads, realtime, FIM, prefix completion, System One) validate <strong>strictly</strong>: an endpoint with no declaration at all is not dispatched — the call throws <code>MethodError</code> (no <code>provider_capabilities</code> method) — because those surfaces are provider-specific and an undeclared backend would just 404.</li><li><strong>The four primary verbs</strong> — <code>chatrequest!</code> (<code>:chat</code>), <code>embeddingrequest!</code> (<code>:embeddings</code>), <code>respond</code> (<code>:responses</code> <strong>or</strong> <code>:agentic</code>), and <code>generate_image</code> (<code>:images</code>) — plus <code>edit_image</code> (<code>:image_edits</code>) validate only endpoints that <strong>declare</strong> their capabilities. A custom endpoint that defines no <code>provider_capabilities</code> method passes through unvalidated: the package has no basis for claiming what someone else&#39;s OpenAI-compatible server cannot do, and refusing to dispatch it would be a false negative. Declaring capabilities is therefore opt-in strictness — once you declare, you are held to the declaration.</li></ul><p>Either way you never need to check capabilities manually before a request.</p><hr/><h2 id="Request-Configuration-and-Timeouts"><a class="docs-heading-anchor" href="#Request-Configuration-and-Timeouts">Request Configuration &amp; Timeouts</a><a id="Request-Configuration-and-Timeouts-1"></a><a class="docs-heading-anchor-permalink" href="#Request-Configuration-and-Timeouts" title="Permalink"></a></h2><p>Every network operation is bounded. One struct carries all knobs — all time fields are seconds, <code>Inf</code> disables that bound:</p><pre><code class="language-julia hljs">Base.@kwdef struct RequestConfig
+    connect_timeout::Float64     = 10.0
+    request_timeout::Float64     = 600.0
+    stream_idle_timeout::Float64 = 120.0
+    total_deadline::Float64      = 900.0
+    max_attempts::Int            = 3
+    mcp_connect_timeout::Float64 = 120.0
+    mcp_request_timeout::Float64 = 120.0
+end</code></pre><ul><li><code>connect_timeout</code> — per-attempt connection establishment. <code>request_timeout</code> — per-attempt whole exchange (non-stream); a stream&#39;s exchange up to its first byte. <code>stream_idle_timeout</code> — byte-gap between raw stream chunks. <code>total_deadline</code> — across ALL attempts including backoff (streams: until first byte). <code>max_attempts</code> — wire attempts (<code>1</code> disables retries). <code>mcp_connect_timeout</code> / <code>mcp_request_timeout</code> — MCP handshake / per-exchange bounds.</li><li><strong>Validation</strong>: every <code>Float64</code> field rejects <code>NaN</code>, values <code>≤ 0</code> and finite values above <code>1e9</code> s with <code>ArgumentError</code> (<code>Inf</code> = disabled); <code>max_attempts ≥ 1</code>.</li><li><strong>Copy-with-overrides</strong>: <code>RequestConfig(base::RequestConfig; kwargs...)</code>.</li><li><strong>Four channels, struct-wise precedence</strong> (a channel supplies a complete struct):<ol><li>per-call <code>config::Union{Nothing,RequestConfig}</code> keyword on request verbs;</li><li>dynamic scope: <code>with_request_config(f; kwargs...)</code> — merges kwargs over <code>current_config()</code> at entry; propagates into <code>Threads.@spawn</code>;</li><li>process default: <code>set_default_config!(cfg)</code> or <code>set_default_config!(; kwargs...)</code> (merges over the current default) — the channel for REPL/notebook sessions;</li><li>the built-in defaults above.</li></ol><code>current_config()</code> returns the ambient struct (active scope, else process default).</li></ul><pre><code class="language-julia hljs">with_request_config(request_timeout=30.0, max_attempts=1) do
+    chatrequest!(chat)          # bounded, no retries, inside this scope only
+end
+set_default_config!(total_deadline=120.0)   # process-wide default</code></pre><h3 id="Which-verbs-retry"><a class="docs-heading-anchor" href="#Which-verbs-retry">Which verbs retry</a><a id="Which-verbs-retry-1"></a><a class="docs-heading-anchor-permalink" href="#Which-verbs-retry" title="Permalink"></a></h3><p><code>max_attempts</code> applies to the inference verbs only: <code>chatrequest!</code>, <code>embeddingrequest!</code>, <code>respond</code>, <code>fim_complete</code>, <code>prefix_complete</code>, <code>generate_image</code>, <code>edit_image</code>, <code>ask</code>, <code>list_models</code>, and the <code>tool_loop</code> family (streams retry only before the first callback fires). Platform and lifecycle verbs — batch, container, conversation, file (<code>upload_file</code> included: a create is never retried), fine-tuning, moderation, upload, vector-store, audio, realtime, and the Responses lifecycle operations — make a <strong>single bounded attempt</strong>, and <code>max_attempts</code> has no effect on them. <code>poll_batch</code> / <code>poll_file_batch</code> poll through retryable statuses and per-attempt timeouts until their own wall-clock <code>timeout</code> (<code>interval</code> and <code>timeout</code> must be &gt; 0); a poll that times out returns the family&#39;s call error with <code>cause = UniLMTimeout(:deadline, …)</code> and the last object seen in <code>last_observed</code>. Both take <code>cancel</code>.</p><h3 id="Cancellation"><a class="docs-heading-anchor" href="#Cancellation">Cancellation</a><a id="Cancellation-1"></a><a class="docs-heading-anchor-permalink" href="#Cancellation" title="Permalink"></a></h3><pre><code class="language-julia hljs">tok = CancelToken()                 # level-triggered: once cancelled, stays cancelled
+cancel!(tok)                        # from any task; idempotent; runs every registered hook
+iscancelled(tok)::Bool              # iscancelled(nothing) == false
+with_cancel(f, tok)                 # tok is the ambient token inside f (and tasks spawned there)</code></pre><p>HTTP verbs take <code>cancel::Union{Nothing,CancelToken}=nothing</code> (<code>chatrequest!</code>, <code>respond</code>, <code>embeddingrequest!</code>, <code>generate_image</code>, <code>edit_image</code>, <code>fim_complete</code>, <code>prefix_complete</code>, <code>ask</code>, <code>list_models</code>, <code>poll_batch</code>, <code>poll_file_batch</code>, the tool loops, <code>nl_dispatch</code>, <code>@branch</code>); <code>nothing</code> resolves the ambient token, and every other HTTP verb observes the ambient token. A cancelled call returns its call-error result with <code>status = nothing</code> and <code>cause = UniLMCancelled(source, elapsed)</code> (<code>source</code> is <code>:token</code>, or <code>:callback</code> for a stream stopped with <code>close[] = true</code>), is never retried, commits nothing — unless the provider&#39;s completion marker already arrived on a stream: then the turn is committed, the final-message callback runs, and usage may be missing (a Chat stream&#39;s marker is the chunk carrying the finish reason, before the usage chunk and <code>[DONE]</code> on the OpenAI wire; a Responses stream&#39;s is its terminal event, whose response carries its usage). A pre-cancelled token sends nothing. Limits: a TCP connect / TLS handshake in progress is not interrupted (it completes or hits <code>connect_timeout</code>), a running callback finishes first, and the Realtime WebSocket and MCP stdio exchanges do not observe the token. See the Concurrency, Tasks and Cancellation guide.</p><h3 id="Sharp-edges"><a class="docs-heading-anchor" href="#Sharp-edges">Sharp edges</a><a id="Sharp-edges-1"></a><a class="docs-heading-anchor-permalink" href="#Sharp-edges" title="Permalink"></a></h3><ul><li><strong>Streams, pre-first-byte,</strong> are bounded by <code>min(request_timeout, remaining total_deadline)</code> per attempt (a peer that never answers, or never reads the request, ends the attempt with <code>UniLMTimeout(:request, …)</code>) and additionally by <code>stream_idle_timeout</code> (HTTP.jl caps the response-header wait with the read-idle timer), so the effective bound is <code>min(request_timeout, remaining total_deadline, stream_idle_timeout)</code>; when the idle bound is the smallest, a breach reports phase <code>:stream_idle</code> even though no byte arrived. A TCP connect / TLS handshake in progress completes, or reaches <code>connect_timeout</code>, first.</li><li><strong>The idle bound measures wire idleness only.</strong> Time a stream spends inside the user&#39;s <code>callback</code> / <code>on_tool_call</code> is not counted, so a slow consumer never idle-kills a healthy stream — and no bound covers a callback that never returns.</li><li><strong>Timeouts land on time.</strong> A non-streaming attempt&#39;s bound fires within a few ms of its limit, and a successful call has no detection latency.</li><li><strong>A completed turn is never discarded or re-sent.</strong> Once a stream records its terminal state, teardown noise — idle breach, transport reset, truncated read — finalizes it as a success rather than failing or retrying it, on every provider and both stream drivers. Re-POSTing would bill a second generation.</li><li><strong>Realtime</strong>: <code>realtime_connect</code> (OpenAI only: any other <code>service</code> throws <code>ArgumentError</code> before any I/O) bounds the open phase with <code>connect_timeout</code>, surfaces an open that failed for another reason as that error, and closes an upgrade that completes after the timeout without running the handler; <code>realtime_receive</code> bounds the read with <code>stream_idle_timeout</code> and surfaces a breach within <code>[limit, limit + ~5 s]</code> (the WebSocket close waits for the peer&#39;s acknowledgement). An open session&#39;s lifetime is deliberately unbounded. <code>mint_realtime_secret</code> returns <code>RealtimeCallError</code> for a 200 without a non-empty secret.</li></ul><h3 id="Concurrency"><a class="docs-heading-anchor" href="#Concurrency">Concurrency</a><a id="Concurrency-1"></a><a class="docs-heading-anchor-permalink" href="#Concurrency" title="Permalink"></a></h3><ul><li><strong>One <code>Chat</code> per in-flight call.</strong> <code>messages</code> and the cumulative-cost <code>Ref</code> are unsynchronized by design; use <code>fork(chat)</code> / <code>fork(chat, n)</code> to fan out. An <code>Embeddings</code> is filled in place (and aliased by its result): one per concurrent call. <code>Respond</code>, <code>ImageGeneration</code>, <code>FIMCompletion</code> and <code>SystemOneRequest</code> are not mutated by their verbs and may be shared.</li><li><strong>An <code>MCPSession</code> runs one call at a time</strong>, FIFO; a call&#39;s <code>timeout</code> bounds its wait for the session too (<code>MCPTimeoutError(:queue)</code>), and <code>mcp_disconnect!</code> waits for the in-flight exchange. One session per concurrent worker. <code>serve(:http)</code> runs handlers concurrently (thread-safe handlers required); stdio runs them one at a time.</li><li><strong>Streams use one HTTP/1.1 connection each</strong>; non-streaming calls may multiplex over HTTP/2. HTTP.jl sets no per-host connection cap by default. <code>Retry-After</code> is a floor under jitter, so a rate-limited batch does not retry in lockstep.</li><li><strong>Thread 1</strong> (the main task, and the libuv event loop) must not be blocked: a task that computes there without yielding delays every timer. Keep callbacks short. <code>tool_concurrency = n</code> runs a turn&#39;s tool calls on spawned tasks.</li></ul><hr/><h2 id="Result-Type-Hierarchy"><a class="docs-heading-anchor" href="#Result-Type-Hierarchy">Result Type Hierarchy</a><a id="Result-Type-Hierarchy-1"></a><a class="docs-heading-anchor-permalink" href="#Result-Type-Hierarchy" title="Permalink"></a></h2><p>All 65 API call result types inherit from <code>LLMRequestResponse</code>, in 16 per-API families:</p><pre><code class="nohighlight hljs">LLMRequestResponse   (abstract parent of every result type below)
+│
+├─ Chat Completions   LLMSuccess · LLMFailure · LLMCallError
+├─ Responses API      ResponseSuccess · ResponseFailure · ResponseCallError
+├─ Embeddings         EmbeddingSuccess · EmbeddingFailure · EmbeddingCallError
+├─ Image Generation   ImageSuccess · ImageFailure · ImageCallError
+├─ FIM Completion     FIMSuccess · FIMFailure · FIMCallError
+├─ Files              FileSuccess · FileListSuccess · FileContentSuccess · FileDeleteSuccess · FileFailure · FileCallError
+├─ Vector Stores      VectorStoreSuccess · VectorStoreListSuccess · VectorStoreFileSuccess · VectorStoreBatchSuccess · VectorStoreDeleteSuccess · VectorStoreFailure · VectorStoreCallError
+├─ Conversations      ConversationSuccess · ConversationItemSuccess · ConversationItemListSuccess · ConversationDeleteSuccess · ConversationFailure · ConversationCallError
+├─ Moderations        ModerationSuccess · ModerationFailure · ModerationCallError
+├─ Audio              SpeechSuccess · TranscriptionSuccess · AudioFailure · AudioCallError
+├─ Batch              BatchSuccess · BatchListSuccess · BatchFailure · BatchCallError
+├─ Fine-tuning        FineTuningSuccess · FineTuningListSuccess · FineTuningFailure · FineTuningCallError
+├─ Containers         ContainerSuccess · ContainerListSuccess · ContainerDeleteSuccess · ContainerFailure · ContainerCallError
+├─ Uploads            UploadSuccess · UploadPartSuccess · UploadFailure · UploadCallError
+├─ Realtime           RealtimeSecretSuccess · RealtimeFailure · RealtimeCallError
+└─ System One         SystemOneSuccess · TypeSafeModelsSuccess · SystemOneFailure · SystemOneCallError</code></pre><p>Every <code>*Success</code> wraps a parsed response object, every <code>*Failure</code> carries the HTTP status and body (every family but Embeddings and Realtime also the <code>request_id</code>), and every <code>*CallError</code> carries the rendered <code>error</code> and, in <code>cause</code>, the exception behind it when there is one (a <code>UniLMTimeout</code> for a timeout, a <code>UniLMCancelled</code> for a cancellation). Fields of the five primary families:</p><pre><code class="language-julia hljs">LLMSuccess        (.message::Message, .self::Chat, .usage::Union{TokenUsage,Nothing}, .sse_dropped::Int)
+LLMFailure        (.response::String, .status::Int, .self::Chat, .request_id::Union{String,Nothing}, .sse_dropped::Int)
+LLMCallError      (.error::String, .status::Union{Int,Nothing}, .self::Chat, .request_id::Union{String,Nothing}, .cause::Union{Nothing,Exception})
+ResponseSuccess   (.response::ResponseObject, .sse_dropped::Int)
+ResponseFailure   (.response::String, .status::Int, .request_id::Union{String,Nothing}, .sse_dropped::Int)
+ResponseCallError (.error::String, .status::Union{Int,Nothing}, .request_id::Union{String,Nothing}, .cause::Union{Nothing,Exception})
+EmbeddingSuccess  (.embeddings::Embeddings, .usage::Union{TokenUsage,Nothing}, .raw::Dict{String,Any})
+EmbeddingFailure  (.response::String, .status::Int)
+EmbeddingCallError(.error::String, .status::Union{Int,Nothing}, .cause::Union{Nothing,Exception})
+ImageSuccess      (.response::ImageResponse)
+ImageFailure      (.response::String, .status::Int, .request_id::Union{String,Nothing})
+ImageCallError    (.error::String, .status::Union{Int,Nothing}, .request_id::Union{String,Nothing}, .cause::Union{Nothing,Exception})
+FIMSuccess        (.response::FIMResponse)
+FIMFailure        (.response::String, .status::Int, .request_id::Union{String,Nothing})
+FIMCallError      (.error::String, .status::Union{Int,Nothing}, .request_id::Union{String,Nothing}, .cause::Union{Nothing,Exception})</code></pre><p><code>request_id</code> carries the provider&#39;s request id for support escalation — the <code>x-request-id</code> header, else <code>request-id</code> (Anthropic). It exists on the Chat / Responses / FIM / image failure and call-error types above, on the System One results and on every platform <code>*Failure</code> except <code>RealtimeFailure</code> (a <code>RealtimeCallError</code> carries one); the embedding limbs do not carry it.</p><p><code>sse_dropped</code> (default <code>0</code>) counts the undecodable SSE <code>data:</code> payloads dropped while assembling <strong>that</strong> streamed turn. It is <code>0</code> for a non-streamed call and for a clean stream; anything higher means the result was built from an incomplete wire — see <a href="../guide/streaming/#streaming_guide">Streaming</a>.</p><p><strong>Credentials never reach a result value.</strong> API keys and request bodies are redacted from the <code>error</code> strings these types carry, and a <code>*CallError</code>&#39;s <code>cause</code> is named by type rather than dumped when the result is displayed.</p><p><strong>Standard pattern-matching idiom</strong>:</p><pre><code class="language-julia hljs">result = chatrequest!(chat)
+if result isa LLMSuccess
+    println(result.message.content)
+elseif result isa LLMFailure
+    @error &quot;HTTP $(result.status): $(result.response)&quot;
+elseif result isa LLMCallError
+    @error &quot;Exception: $(result.error)&quot;
+end
+
+result = respond(&quot;Hello&quot;)
+if result isa ResponseSuccess
+    println(output_text(result))
+elseif result isa ResponseFailure
+    @error &quot;HTTP $(result.status)&quot;
+elseif result isa ResponseCallError
+    @error result.error
+end
+
+result = generate_image(&quot;A cat&quot;)
+if result isa ImageSuccess
+    save_image(image_data(result)[1], &quot;cat.png&quot;)
+elseif result isa ImageFailure
+    @error &quot;HTTP $(result.status)&quot;
+elseif result isa ImageCallError
+    @error result.error
+end</code></pre><hr/><h2 id="API-Constants"><a class="docs-heading-anchor" href="#API-Constants">API Constants</a><a id="API-Constants-1"></a><a class="docs-heading-anchor-permalink" href="#API-Constants" title="Permalink"></a></h2><pre><code class="language-julia hljs">const OPENAI_BASE_URL = &quot;https://api.openai.com&quot;
+const CHAT_COMPLETIONS_PATH = &quot;/v1/chat/completions&quot;
+const EMBEDDINGS_PATH = &quot;/v1/embeddings&quot;
+const RESPONSES_PATH = &quot;/v1/responses&quot;
+const IMAGES_GENERATIONS_PATH = &quot;/v1/images/generations&quot;
+const COMPLETIONS_PATH = &quot;/v1/completions&quot;                     # FIM endpoint
+const DEEPSEEK_BASE_URL = &quot;https://api.deepseek.com&quot;
+const DEEPSEEK_BETA_BASE_URL = &quot;https://api.deepseek.com/beta&quot;
+const GEMINI_CHAT_URL = &quot;https://generativelanguage.googleapis.com/v1beta/openai/chat/completions&quot;</code></pre><h2 id="Exceptions"><a class="docs-heading-anchor" href="#Exceptions">Exceptions</a><a id="Exceptions-1"></a><a class="docs-heading-anchor-permalink" href="#Exceptions" title="Permalink"></a></h2><pre><code class="language-julia hljs">struct InvalidConversationError &lt;: Exception
+    reason::String
+end</code></pre><p>Thrown by <code>push!</code> (a non-system message onto an empty <code>Chat</code>, a system message after the conversation started, or a same-role repeat other than <code>tool</code>), by <code>pop!</code> on an empty <code>Chat</code>, and by <code>chatrequest!</code> before any request when <code>history=true</code> and the conversation ends with an assistant message. <code>issendvalid</code> never throws — it returns a <code>Bool</code>.</p><pre><code class="language-julia hljs">struct LLMResultError &lt;: Exception
+    result::LLMRequestResponse
+end</code></pre><p>Thrown by the result accessors <code>text</code>, <code>output_text</code>, <code>embedding_vectors</code>, <code>image_data</code> and <code>fim_text</code> when the result is not a success. <code>showerror</code> prints only the status and a trimmed (≤200-char) excerpt of the response body or error message — never the conversation, endpoint, or API key.</p><pre><code class="language-julia hljs">struct UniLMTimeout &lt;: Exception
+    phase::Symbol        # :connect | :request | :stream_idle | :deadline
+    elapsed::Float64     # seconds, monotonic
+    limit::Float64
+end
+
+struct MCPTimeoutError &lt;: Exception
+    phase::Symbol        # :connect | :queue (never acquired its session) | :request
+    elapsed::Float64
+    limit::Float64
+    msg::String          # names the applicable timeout override
+end
+
+struct UniLMCancelled &lt;: Exception
+    source::Symbol       # :token (cancel! on a CancelToken) | :callback (stream close[] = true)
+    elapsed::Float64     # seconds since the operation started
+end
+
+struct MCPSessionClosedError &lt;: Exception
+    cause::Symbol        # :disconnected | :timeout | :crash
+    msg::String          # recovery guidance
+end
+
+struct MCPCrashError &lt;: Exception
+    msg::String                          # recovery guidance (embeds exit info)
+    exitcode::Union{Int,Nothing}         # exit code if the server exited and was reaped in time
+    termsignal::Union{Int,Nothing}       # signal number if the server was signal-killed
+    cause::Union{Exception,Nothing}      # underlying transport exception; nothing on clean read-EOF
+end</code></pre><p>Raised when a <code>RequestConfig</code> bound is exceeded. Value-returning surfaces (chat, embeddings, responses, images, FIM, System One, platform verbs) deliver <code>UniLMTimeout</code> — and a cancellation&#39;s <code>UniLMCancelled</code> — inside their call-error results; the MCP surface throws <code>MCPTimeoutError</code> (and <code>UniLMCancelled</code> for a cancelled HTTP call). A stdio MCP server that exits or whose pipe breaks throws <code>MCPCrashError</code> instead (the session closes with cause <code>:crash</code>), and a call on a closed session throws <code>MCPSessionClosedError</code>.</p><hr/><h2 id="Public-Extension-API-(not-exported)"><a class="docs-heading-anchor" href="#Public-Extension-API-(not-exported)">Public Extension API (not exported)</a><a id="Public-Extension-API-(not-exported)-1"></a><a class="docs-heading-anchor-permalink" href="#Public-Extension-API-(not-exported)" title="Permalink"></a></h2><p>Declared <code>public</code>, not exported — qualify them (<code>UniLM.get_url</code>). These are the functions a new backend adds methods to and the stream-state types its handlers mutate (see the Custom Backends guide): <code>get_url</code>, <code>auth_header</code>, <code>default_model</code>, <code>encode_request</code>, <code>decode_response</code>, <code>handle_sse_event!</code>, <code>StreamState</code>, <code>encode_agentic</code>, <code>decode_agentic</code>, <code>decode_agentic_stream</code>, <code>AgenticStreamState</code>.</p><hr/><h2 id="Complete-Exports-List"><a class="docs-heading-anchor" href="#Complete-Exports-List">Complete Exports List</a><a id="Complete-Exports-List-1"></a><a class="docs-heading-anchor-permalink" href="#Complete-Exports-List" title="Permalink"></a></h2><p>Every exported symbol, grouped by area:</p><p><strong>Chat Completions</strong>: <code>Chat</code>, <code>Message</code>, <code>ProviderContent</code>, <code>RoleSystem</code>, <code>RoleUser</code>, <code>RoleAssistant</code>, <code>Tool</code>, <code>ToolCall</code>, <code>FunctionSignature</code>, <code>FunctionCallResult</code>, <code>ResponseFormat</code>, <code>InvalidConversationError</code>, <code>issendvalid</code>, <code>chatrequest!</code>, <code>update!</code>, <code>fork</code></p><ul><li><em>Legacy aliases</em> (pre-rename names, exported and non-breaking, retained until 1.0): <code>GPTTool</code> → <code>Tool</code>, <code>GPTToolCall</code> → <code>ToolCall</code>, <code>GPTFunctionSignature</code> → <code>FunctionSignature</code>, <code>GPTFunctionCallResult</code> → <code>FunctionCallResult</code></li></ul><p><strong>Responses API &amp; Agentic</strong>: <code>Respond</code>, <code>InputMessage</code>, <code>ResponseObject</code>, <code>ResponseSuccess</code>, <code>ResponseFailure</code>, <code>ResponseCallError</code>, <code>Reasoning</code>, <code>PromptCacheOptions</code>, <code>ModerationConfig</code>, <code>TextConfig</code>, <code>TextFormatSpec</code>, <code>respond</code>, <code>get_response</code>, <code>delete_response</code>, <code>cancel_response</code>, <code>list_input_items</code>, <code>compact_response</code>, <code>count_input_tokens</code>, <code>text_format</code>, <code>json_schema_format</code>, <code>json_object_format</code></p><ul><li><em>Input builders</em>: <code>input_text</code>, <code>input_image</code>, <code>input_file</code>, <code>configuration_update</code></li><li><em>Tool types</em>: <code>ResponseTool</code>, <code>FunctionTool</code>, <code>WebSearchTool</code>, <code>FileSearchTool</code>, <code>MCPTool</code>, <code>ComputerUseTool</code>, <code>ComputerTool</code>, <code>ImageGenerationTool</code>, <code>CodeInterpreterTool</code>, <code>LocalShellTool</code>, <code>ShellTool</code>, <code>ApplyPatchTool</code>, <code>CustomTool</code></li><li><em>Tool constructors</em>: <code>function_tool</code>, <code>web_search</code>, <code>file_search</code>, <code>mcp_tool</code>, <code>computer_use</code>, <code>computer_tool</code>, <code>image_generation_tool</code>, <code>code_interpreter</code>, <code>local_shell</code>, <code>shell</code>, <code>apply_patch_tool</code>, <code>custom_tool</code>, <code>tool_result</code>, <code>mcp_approval_response</code></li><li><em>Hosted Gemini tools</em>: <code>gemini_google_search</code>, <code>gemini_code_execution</code>, <code>gemini_url_context</code></li><li><em>tool_choice builders</em>: <code>tool_choice_function</code>, <code>tool_choice_hosted</code>, <code>tool_choice_mcp</code>, <code>tool_choice_custom</code>, <code>tool_choice_allowed</code></li><li><em>Result accessors</em>: <code>output_text</code>, <code>function_calls</code>, <code>refusals</code>, <code>reasoning_summaries</code>, <code>reasoning_items</code>, <code>url_citations</code>, <code>web_search_results</code>, <code>file_search_results</code>, <code>image_generation_results</code>, <code>code_interpreter_outputs</code>, <code>mcp_call_outputs</code>, <code>mcp_approval_requests</code>, <code>response_status</code>, <code>incomplete_details</code>, <code>usage_details</code></li></ul><p><strong>Image Generation &amp; Edits</strong>: <code>ImageGeneration</code>, <code>ImageEdit</code>, <code>ImageObject</code>, <code>ImageResponse</code>, <code>ImageSuccess</code>, <code>ImageFailure</code>, <code>ImageCallError</code>, <code>generate_image</code>, <code>edit_image</code>, <code>image_data</code>, <code>save_image</code></p><p><strong>Embeddings</strong>: <code>Embeddings</code>, <code>embeddingrequest!</code>, <code>embedding_vectors</code>, <code>EmbeddingSuccess</code>, <code>EmbeddingFailure</code>, <code>EmbeddingCallError</code></p><p><strong>Cost Tracking</strong>: <code>TokenUsage</code>, <code>token_usage</code>, <code>estimated_cost</code>, <code>cumulative_cost</code>, <code>DEFAULT_PRICING</code></p><p><strong>Service Endpoints</strong>: <code>ServiceEndpoint</code>, <code>OpenAIWireEndpoint</code>, <code>ServiceEndpointSpec</code>, <code>OPENAIServiceEndpoint</code>, <code>AZUREServiceEndpoint</code>, <code>GEMINIServiceEndpoint</code>, <code>GEMINIOpenAIServiceEndpoint</code>, <code>ANTHROPICServiceEndpoint</code>, <code>GenericOpenAIEndpoint</code>, <code>OllamaEndpoint</code>, <code>MistralEndpoint</code>, <code>DeepSeekEndpoint</code>, <code>add_azure_deploy_name!</code></p><p><strong>Provider Capabilities</strong>: <code>provider_capabilities</code>, <code>has_capability</code></p><p><strong>Tool Loop</strong>: <code>CallableTool</code>, <code>ToolCallOutcome</code>, <code>ToolLoopResult</code>, <code>tool_loop!</code>, <code>tool_loop</code>, <code>to_tool</code></p><p><strong>Forking</strong>: <code>fork</code></p><p><strong>MCP Client</strong>: <code>MCPSession</code>, <code>MCPToolInfo</code>, <code>MCPToolResult</code>, <code>MCPResourceInfo</code>, <code>MCPPromptInfo</code>, <code>MCPServerCapabilities</code>, <code>MCPTransport</code>, <code>StdioTransport</code>, <code>HTTPTransport</code>, <code>MCPError</code>, <code>MCPCrashError</code>, <code>MCPSessionClosedError</code>, <code>mcp_connect</code>, <code>mcp_disconnect!</code>, <code>mcp_tools</code>, <code>mcp_tools_respond</code>, <code>list_tools!</code>, <code>list_resources!</code>, <code>list_prompts!</code>, <code>call_tool</code>, <code>read_resource</code>, <code>get_prompt</code>, <code>ping</code></p><p><strong>MCP Server</strong>: <code>MCPServer</code>, <code>MCPServerTool</code>, <code>MCPServerResource</code>, <code>MCPServerResourceTemplate</code>, <code>MCPServerPrompt</code>, <code>MCPServerPrimitive</code>, <code>register_tool!</code>, <code>register_resource!</code>, <code>register_resource_template!</code>, <code>register_prompt!</code>, <code>serve</code>, <code>@mcp_tool</code>, <code>@mcp_resource</code>, <code>@mcp_prompt</code></p><p><strong>FIM / Completions</strong>: <code>FIMCompletion</code>, <code>FIMChoice</code>, <code>FIMResponse</code>, <code>FIMSuccess</code>, <code>FIMFailure</code>, <code>FIMCallError</code>, <code>fim_complete</code>, <code>fim_text</code>, <code>prefix_complete</code></p><p><strong>Files</strong>: <code>FileUpload</code>, <code>FileObject</code>, <code>FileList</code>, <code>FileSuccess</code>, <code>FileListSuccess</code>, <code>FileContentSuccess</code>, <code>FileDeleteSuccess</code>, <code>FileFailure</code>, <code>FileCallError</code>, <code>upload_file</code>, <code>list_files</code>, <code>retrieve_file</code>, <code>delete_file</code>, <code>file_content</code>, <code>save_file_content</code></p><p><strong>Vector Stores</strong>: <code>VectorStoreObject</code>, <code>VectorStoreFileObject</code>, <code>VectorStoreFileBatch</code>, <code>VectorStoreList</code>, <code>VectorStoreSuccess</code>, <code>VectorStoreListSuccess</code>, <code>VectorStoreFileSuccess</code>, <code>VectorStoreBatchSuccess</code>, <code>VectorStoreDeleteSuccess</code>, <code>VectorStoreFailure</code>, <code>VectorStoreCallError</code>, <code>create_vector_store</code>, <code>retrieve_vector_store</code>, <code>list_vector_stores</code>, <code>delete_vector_store</code>, <code>add_vector_store_file</code>, <code>create_file_batch</code>, <code>retrieve_file_batch</code>, <code>poll_file_batch</code>, <code>vector_store_id</code></p><p><strong>Conversations</strong>: <code>ConversationObject</code>, <code>ConversationItem</code>, <code>ConversationItemList</code>, <code>ConversationSuccess</code>, <code>ConversationItemSuccess</code>, <code>ConversationItemListSuccess</code>, <code>ConversationDeleteSuccess</code>, <code>ConversationFailure</code>, <code>ConversationCallError</code>, <code>create_conversation</code>, <code>retrieve_conversation</code>, <code>update_conversation</code>, <code>delete_conversation</code>, <code>add_conversation_items</code>, <code>list_conversation_items</code>, <code>delete_conversation_item</code>, <code>conversation_id</code></p><p><strong>Moderations</strong>: <code>ModerationResponse</code>, <code>ModerationResult</code>, <code>ModerationSuccess</code>, <code>ModerationFailure</code>, <code>ModerationCallError</code>, <code>moderate</code>, <code>is_flagged</code></p><p><strong>TypeSafe System One (Jev)</strong>: <code>TYPESAFEServiceEndpoint</code>, <code>SystemOneQuestion</code>, <code>ChoiceQuestion</code>, <code>ScoreQuestion</code>, <code>NoulQuestion</code>, <code>NoulCriteria</code>, <code>choice</code>, <code>score</code>, <code>noul</code>, <code>SystemOneRequest</code>, <code>ask</code>, <code>SystemOneAnswer</code>, <code>ChoiceAnswer</code>, <code>ScoreAnswer</code>, <code>NoulAnswer</code>, <code>UnknownAnswer</code>, <code>SystemOneResponse</code>, <code>SystemOneSuccess</code>, <code>SystemOneFailure</code>, <code>SystemOneCallError</code>, <code>SystemOneError</code>, <code>answers</code>, <code>answer</code>, <code>TypeSafeModelCard</code>, <code>TypeSafeModelsSuccess</code>, <code>list_models</code></p><ul><li><em>Natural-language control flow</em>: <code>Meaning</code>, <code>@nl_str</code>, <code>@branch</code>, <code>nl_dispatch</code>, <code>meanings</code>, <code>LowConfidenceError</code></li></ul><p><strong>Audio</strong>: <code>SpeechRequest</code>, <code>TranscriptionRequest</code>, <code>SpeechSuccess</code>, <code>TranscriptionSuccess</code>, <code>AudioFailure</code>, <code>AudioCallError</code>, <code>speak</code>, <code>save_audio</code>, <code>transcribe</code>, <code>translate</code>, <code>transcript_text</code></p><p><strong>Batch</strong>: <code>BatchObject</code>, <code>BatchList</code>, <code>BatchSuccess</code>, <code>BatchListSuccess</code>, <code>BatchFailure</code>, <code>BatchCallError</code>, <code>create_batch</code>, <code>retrieve_batch</code>, <code>cancel_batch</code>, <code>list_batches</code>, <code>poll_batch</code></p><p><strong>Fine-tuning</strong>: <code>FineTuningJob</code>, <code>FineTuningList</code>, <code>FineTuningSuccess</code>, <code>FineTuningListSuccess</code>, <code>FineTuningFailure</code>, <code>FineTuningCallError</code>, <code>create_fine_tuning_job</code>, <code>retrieve_fine_tuning_job</code>, <code>cancel_fine_tuning_job</code>, <code>list_fine_tuning_jobs</code>, <code>list_fine_tuning_events</code>, <code>list_fine_tuning_checkpoints</code></p><p><strong>Containers</strong>: <code>ContainerObject</code>, <code>ContainerList</code>, <code>ContainerSuccess</code>, <code>ContainerListSuccess</code>, <code>ContainerDeleteSuccess</code>, <code>ContainerFailure</code>, <code>ContainerCallError</code>, <code>create_container</code>, <code>retrieve_container</code>, <code>list_containers</code>, <code>delete_container</code>, <code>add_container_file</code></p><p><strong>Uploads</strong>: <code>UploadObject</code>, <code>UploadPartObject</code>, <code>UploadSuccess</code>, <code>UploadPartSuccess</code>, <code>UploadFailure</code>, <code>UploadCallError</code>, <code>create_upload</code>, <code>add_upload_part</code>, <code>complete_upload</code>, <code>cancel_upload</code></p><p><strong>Webhooks</strong>: <code>WebhookEvent</code>, <code>WEBHOOK_EVENTS</code>, <code>verify_webhook</code>, <code>parse_webhook</code></p><p><strong>Realtime</strong>: <code>RealtimeSession</code>, <code>RealtimeSecretSuccess</code>, <code>RealtimeFailure</code>, <code>RealtimeCallError</code>, <code>mint_realtime_secret</code>, <code>realtime_connect</code>, <code>realtime_send</code>, <code>realtime_receive</code>, <code>realtime_event</code>, <code>session_update</code>, <code>input_audio_append</code>, <code>response_create</code></p><p><strong>Result Types (base)</strong>: <code>LLMRequestResponse</code>, <code>LLMSuccess</code>, <code>LLMFailure</code>, <code>LLMCallError</code>, <code>LLMResultError</code>, <code>issuccess</code>, <code>isfailure</code>, <code>text</code></p><p><strong>Request Config, Timeouts &amp; Cancellation</strong>: <code>RequestConfig</code>, <code>current_config</code>, <code>with_request_config</code>, <code>set_default_config!</code>, <code>UniLMTimeout</code>, <code>MCPTimeoutError</code>, <code>UniLMCancelled</code>, <code>CancelToken</code>, <code>cancel!</code>, <code>iscancelled</code>, <code>with_cancel</code></p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« Home</a><a class="docs-footer-nextpage" href="../getting_started/">Getting Started »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.19.0 on <span class="colophon-date" title="Thursday 24 September 2026 08:03">Thursday 24 September 2026</span>. Using Julia version 1.13.0.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

@@ -652,9 +652,9 @@ end
         if name == "t1"                        # cancel once t2 is in flight too
             timedwait(() -> t2_started[], 25.0)
             cancel!(tok)
-        else
+        else                                   # t2 ends only after the cancel, however late
             t2_started[] = true
-            sleep(0.2)
+            timedwait(() -> iscancelled(tok), 25.0)
         end
         "ok"
     end

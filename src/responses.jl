@@ -1620,19 +1620,22 @@ callback(chunk::Union{String, ResponseObject}, close::Ref{Bool})
 ```
 Setting `close[] = true` — in the callback or from any other task — stops the stream at
 once with `ResponseCallError(status=nothing, cause=UniLMCancelled(:callback, …))`,
-unless the terminal event was already recorded, in which case the response stands. An
-exception thrown by the callback ends the call with that exception in `cause`, never
-retried. Time spent in the callback does not count toward `stream_idle_timeout`. A
-user `InterruptException` during a stream is not swallowed — it rethrows inside the
-task and surfaces as a `TaskFailedException` at `fetch`.
+unless the provider's completion marker — the terminal event — already arrived: then
+the outcome it recorded stands (a response with its usage, whose final callback has
+already run; or the failure the event reported). An exception thrown by the callback
+ends the call with that exception in `cause`, never retried. Time spent in the callback
+does not count toward `stream_idle_timeout`. A user `InterruptException` during a stream
+is not swallowed — it rethrows inside the task and surfaces as a `TaskFailedException`
+at `fetch`.
 
 `cancel::Union{Nothing,CancelToken}`: a [`CancelToken`](@ref); `nothing` resolves the
 ambient token of [`with_cancel`](@ref), at call entry. A cancel at any point — before
 connecting, during the response-header wait, mid-stream, or during a retry backoff —
 ends the call with `ResponseCallError(status=nothing, cause=UniLMCancelled(:token, …))`,
-never retried; a pre-cancelled token sends nothing. A TCP connect or TLS handshake
-already in progress cannot be interrupted (HTTP.jl 2.7.1), so a cancel during one takes
-effect when it completes or reaches `connect_timeout`.
+never retried — unless the terminal event already arrived, as for `close[] = true`
+above. A pre-cancelled token sends nothing. A TCP connect or TLS handshake already in
+progress cannot be interrupted (HTTP.jl 2.7.1), so a cancel during one takes effect when
+it completes or reaches `connect_timeout`.
 
 Local validation throws `ArgumentError` before any network I/O, streaming or not:
 when `callback` is passed without `r.stream === true` (it runs only on a stream, so it

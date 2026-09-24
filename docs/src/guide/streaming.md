@@ -57,9 +57,13 @@ result = fetch(task)   # LLMCallError whose cause is UniLMCancelled(:callback, �
 A stop takes effect at once: the connection is aborted, and the call ends with
 `LLMCallError(status = nothing, cause = UniLMCancelled(:callback, elapsed))` (a
 `ResponseCallError` on the Responses path). It is never retried, no further callback
-runs, and the partial reply is not appended to the chat. The one exception is a stop
-that arrives after the provider's terminal event was recorded — for instance from
-the terminal callback itself: the completed turn then stands as the success it is.
+runs, and the partial reply is not appended to the chat — unless the provider's
+completion marker already arrived: then the turn is committed, the final-message
+callback runs, and usage may be missing. On a Chat stream the marker is the chunk
+that carries the finish reason, which on the OpenAI wire comes before the usage chunk
+and `[DONE]`, so a stop in that window — or from the final-message callback itself —
+returns the completed turn as the success it is. On the Responses path the marker is
+the terminal event: the response it carries stands, and its callback has already run.
 
 The flag can also be set from another task that holds it. To stop a stream from
 outside the callback, cancel a [`CancelToken`](@ref) instead: pass `cancel=tok` (or
@@ -113,7 +117,13 @@ result = fetch(task)
 (OpenAI-wire, native Anthropic, native Gemini); the Responses-API `respond` path does not
 surface it. It is a notification hook — the final assembled `Message` still carries every
 tool call (alongside any assistant text), so code that does not set `on_tool_call` loses
-nothing and can read `result.message.tool_calls` after `fetch`.
+nothing and can read `result.message.tool_calls` after `fetch`. The one call it omits is
+a partial one: on a turn that did not finish with `"tool_calls"` (cut at `"length"`, say),
+a call whose arguments were cut off before they formed a JSON object is dropped, while the
+turn keeps its text, finish reason and usage.
+
+`callback` and `on_tool_call` require `stream=true`: passed to a non-streaming call, they
+raise `ArgumentError` before any request is sent, rather than being ignored.
 
 ## Responses API Streaming
 
@@ -208,6 +218,10 @@ result as well as on a success.
   holding it) to terminate the stream early; see
   [Stopping a Stream Early](@ref streaming_stop).
 - On completion, the Chat Completions callback receives a `Message`; the Responses API callback receives a `ResponseObject`.
+- A Chat stream is final at its end-of-stream sentinel (`[DONE]`, Anthropic's
+  `message_stop`): the final `Message` callback runs at once, and the result follows
+  when the HTTP body ends — at most 0.5 s later. A server that keeps the body open
+  longer has that connection closed instead of reused.
 - **Each stream uses its own HTTP/1.1 connection**, so a consumer that applies
   backpressure to one stream cannot stall its siblings; non-streaming requests may
   share an HTTP/2 connection.

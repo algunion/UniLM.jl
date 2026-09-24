@@ -16,7 +16,7 @@ request verb (and captured at connect time by the MCP and Realtime sessions):
 | Field | Default | Bounds |
 |---|---|---|
 | `connect_timeout` | `10.0` s | Establishing the connection, per attempt. |
-| `request_timeout` | `600.0` s | The whole non-streaming exchange, per attempt. |
+| `request_timeout` | `600.0` s | The whole non-streaming exchange, per attempt; a stream's exchange up to its first byte. |
 | `stream_idle_timeout` | `120.0` s | Byte-gap between raw stream chunks (see [Streaming](@ref timeout_streams)). |
 | `total_deadline` | `900.0` s | Across **all** attempts including backoff; for streams, until the first byte. |
 | `max_attempts` | `3` | Total attempts (1 = no retry). |
@@ -135,13 +135,17 @@ Do nothing and you get the table above.
 
 Streams are governed differently from single-shot requests:
 
-- **Until the first byte**, a stream is bound by `min(total_deadline,
-  request_timeout)` — and additionally by `stream_idle_timeout`, because HTTP.jl
-  bounds the response-header wait by its read-idle timer. The effective
-  pre-first-byte bound is `min(total_deadline, request_timeout,
-  stream_idle_timeout)`, and a breach attributable to the idle timer reports phase
-  `:stream_idle` even though no byte ever arrived. A stream that never starts fails
-  typed like any other request.
+- **Until the first byte**, a stream attempt is bound by `min(request_timeout,
+  remaining total_deadline)`: a peer that has not sent the response headers by then
+  — still reading the request, or never answering — ends the attempt with
+  `UniLMTimeout(:request, …)`, which is retried like any per-attempt timeout.
+  `stream_idle_timeout` bounds that wait too, because HTTP.jl caps the
+  response-header wait with its read-idle timer, so the effective pre-first-byte
+  bound is `min(request_timeout, remaining total_deadline, stream_idle_timeout)`;
+  when the idle bound is the smallest, the breach reports phase `:stream_idle` even
+  though no byte arrived. A TCP connect or TLS handshake already in progress is not
+  cut short: it finishes, or reaches `connect_timeout`, first. A stream that never
+  starts fails typed like any other request.
 - **After the first byte**, only the **idle** bound runs: `stream_idle_timeout`
   is the maximum gap between raw byte chunks off the socket — NOT between parsed
   events. SSE comment lines and Anthropic `ping` events are real bytes, so they
@@ -158,13 +162,14 @@ Streams are governed differently from single-shot requests:
   alone, and the safe choice is to not kill a stream that is still delivering
   bytes.
 - **A completed turn is never discarded or re-sent.** Once a stream has recorded
-  its terminal state — the assembled message, or (for providers that send no
-  end-of-stream sentinel) the provider's own completion marker — anything that
-  goes wrong while the connection is torn down is *teardown noise*: an idle
-  breach, the native read-idle timer, a transport reset, a truncated read. The
-  generation is already billed and its deltas already delivered, so the result is
-  finalized as a **success** rather than failed or retried; re-POSTing it would
-  bill a second generation for one caller request. Trailing bytes past the
+  its terminal state — the assembled message, or the provider's own completion
+  marker — anything that goes wrong while the connection is torn down is
+  *teardown noise*: an idle breach, the native read-idle timer, a transport reset,
+  a truncated read. The generation is already billed and its deltas already
+  delivered, so the result is finalized as a **success** rather than failed or
+  retried; re-POSTing it would bill a second generation for one caller request. The
+  same holds for a stop or cancel that lands then: the turn is committed, the
+  final-message callback runs, and usage may be missing. Trailing bytes past the
   breach (a late usage frame) may be lost — accepted. This holds on every
   provider and on both the Chat and agentic stream drivers. Gemini is the
   clearest case, since its stream has no sentinel at all and simply ends at EOF.

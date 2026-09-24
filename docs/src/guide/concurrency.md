@@ -25,8 +25,7 @@ A `Chat` is a conversation, not a request: `chatrequest!` pushes the reply onto
 both without a lock. Two calls on one `Chat` interleave into a corrupted
 conversation or a lost cost update, and a `push!` while its streaming task runs does
 the same. [`fork`](@ref) is the fan-out: `fork(chat)` deep-copies every field except
-`service` (the endpoint is shared, the cost accumulator is fresh), so forks share
-nothing mutable:
+`service` (the endpoint is shared), so forks share nothing mutable:
 
 ```@example concurrency
 base = Chat(model="gpt-5.4-mini", stop=["END"])
@@ -36,6 +35,11 @@ push!(forks[1], Message(Val(:user), "first branch"))
 push!(forks[1].stop, "HALT")
 (length(base), length(forks[1]), length(forks[2]), base.stop)
 ```
+
+Each fork gets its own cost accumulator, but it starts at the parent's running total,
+not at zero: summing `cumulative_cost` over a parent and its forks counts the parent's
+spend once more per fork. To account per fork, subtract the parent's total at fork
+time from `cumulative_cost(fork)`, or sum `estimated_cost` over the fork's own results.
 
 `embeddingrequest!` fills its `Embeddings` in place and returns a result whose
 `embeddings` field is that same object, so a second call on it overwrites what the
@@ -153,8 +157,12 @@ r = chatrequest!(chat; cancel=tok)      # sends nothing: the token is already ca
   `:token` for a `cancel!` and `:callback` for a stream stopped with
   `close[] = true`; `cause.elapsed` is the time since the call started. The cancel
   takes effect wherever it lands — before connecting, during the response-header
-  wait, mid-stream, or during a retry backoff — except that a stream whose terminal
-  event was already recorded keeps its completed turn. `nl_dispatch` and `@branch`
+  wait, mid-stream, or during a retry backoff — unless the provider's completion
+  marker already arrived: then the turn is committed, the final-message callback
+  runs, and usage may be missing. On a Chat stream that marker is the chunk carrying
+  the finish reason, which on the OpenAI wire precedes the usage chunk and `[DONE]`;
+  on a Responses stream it is the terminal event, whose response (usage included)
+  is the result. `nl_dispatch` and `@branch`
   throw `SystemOneError` wrapping the `SystemOneCallError`, as for any failed call. A
   cancelled tool loop returns `completed=false` with the cancelled turn's call error
   as `response`.
@@ -234,8 +242,8 @@ default. `tool_concurrency = n` runs up to `n` of a turn's calls at once on
 spawned tasks: the dispatcher (or each `CallableTool` callable) must then be
 thread-safe. Results are sent back in call order once every call of the turn has
 finished, so the next request does not depend on completion order. An
-`InterruptException` from any dispatch propagates; a cancelled token stops the
-hand-out of further calls.
+`InterruptException` from any dispatch propagates once the interrupted turn is
+removed from the chat, and a cancelled token stops the hand-out of further calls.
 
 ```julia
 result = tool_loop!(chat; tools=my_callable_tools, tool_concurrency=4)

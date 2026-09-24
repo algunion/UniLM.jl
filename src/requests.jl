@@ -1437,9 +1437,14 @@ text deltas then the final assembled `Message`; `on_tool_call(tc::ToolCall)` fir
 once per completed streamed tool call. Setting `close[] = true` — in the callback or
 from any other task — stops the stream at once: the call ends with
 `LLMCallError(status=nothing, cause=UniLMCancelled(:callback, …))`, unless the
-provider's terminal event was already recorded, in which case the turn stands (a
-success, committed). An exception thrown by `callback` or `on_tool_call` ends the
-call with that exception in `cause`: never retried, nothing committed, and no
+provider's completion marker already arrived — then the turn is committed, the
+final-message callback runs, and usage may be missing. The marker is the chunk that
+carries the finish reason; on the OpenAI wire it precedes the usage chunk and
+`[DONE]`. The turn is final at the end-of-stream sentinel (`[DONE]`, Anthropic
+`message_stop`): the final-message callback runs then, and the result follows when
+the HTTP body ends, at most 0.5 s later (a body still open then has its connection
+closed rather than reused). An exception thrown by `callback` or `on_tool_call` ends
+the call with that exception in `cause`: never retried, nothing committed, and no
 callback runs after it. Time spent in these callbacks does not count toward
 `stream_idle_timeout`, which bounds only the gap between bytes off the socket. A
 user `InterruptException` is never converted into a result value: it propagates, so
@@ -1454,10 +1459,12 @@ default set via `set_default_config!`).
 ambient token of [`with_cancel`](@ref), at call entry. A cancel at any point — before
 connecting, during the response-header wait, mid-stream, or during a retry backoff —
 ends the call with `LLMCallError(status=nothing, cause=UniLMCancelled(:token, …))`:
-never retried, nothing committed to `chat`, no terminal callback. A pre-cancelled token
-sends nothing. A TCP connect or TLS handshake already in progress cannot be interrupted
-(HTTP.jl 2.7.1), so a cancel during one takes effect when it completes or reaches
-`connect_timeout`.
+never retried, nothing committed to `chat`, no terminal callback — unless the
+provider's completion marker already arrived (as for `close[] = true` above): then the
+turn is committed, the final-message callback runs, and usage may be missing. A
+pre-cancelled token sends nothing. A TCP connect or TLS handshake already in progress
+cannot be interrupted (HTTP.jl 2.7.1), so a cancel during one takes effect when it
+completes or reaches `connect_timeout`.
 
 Local validation throws before any network I/O, streaming or not: `ArgumentError`
 when `callback` or `on_tool_call` is passed without `chat.stream === true` (they run

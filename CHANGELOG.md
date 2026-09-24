@@ -26,6 +26,9 @@
   returned it inside an `LLMCallError` / `ResponseCallError`. With `history=true`,
   `chatrequest!` throws `InvalidConversationError` for a conversation that ends with an
   assistant message, instead of billing a call whose reply could not be appended.
+  `chatrequest!` throws `ArgumentError` for a `callback` or `on_tool_call`, and `respond`
+  for a `callback`, passed without `stream=true`: they run only on a stream, and were
+  silently ignored. `tool_loop!` passes them through, so it raises the same error.
   `chatrequest!(; kwargs...)` takes either `messages` or both `systemprompt` and
   `userprompt` and throws `ArgumentError` otherwise (it returned a fabricated
   `LLMFailure(status=499)`); it copies `messages` instead of emptying the caller's
@@ -50,10 +53,12 @@
   `LLMCallError` / `ResponseCallError` (`status = nothing`, `cause =
   UniLMCancelled(:callback, …)`), where it returned `LLMFailure` / `ResponseFailure`
   with `status == 200` and the raw partial wire. A stop that arrives after the
-  provider's terminal event keeps the completed turn. An exception thrown by a
-  streaming `callback` or `on_tool_call` now ends the call with that exception in
-  `cause` — never retried, nothing appended; `on_tool_call` exceptions used to be
-  logged and ignored.
+  provider's completion marker keeps the turn: it is committed, the final-message
+  callback runs, and usage may be missing (on the OpenAI wire the marker is the chunk
+  carrying `finish_reason`, which precedes the usage chunk and `[DONE]`). An exception
+  thrown by a streaming `callback` or `on_tool_call` now ends the call with that
+  exception in `cause` — never retried, nothing appended; `on_tool_call` exceptions used
+  to be logged and ignored.
 - **Result accessors throw on failures.** `output_text` (which returned the error text
   as if it were model output), `embedding_vectors` (a `MethodError`), `image_data` (an
   empty list) and `fim_text` (`""`) throw `LLMResultError` on a non-success result, as
@@ -66,7 +71,13 @@
     `"tool_calls"`. A turn with calls that finished otherwise (`"length"`,
     `"content_filter"`, a provider-specific value) may hold partial calls: none runs, the
     loop returns `completed=false` with an `llm_error` naming the reason, and the
-    unanswered assistant turn is removed from the chat so it stays sendable.
+    unanswered assistant turn is removed from the chat so it stays sendable. A call cut
+    off before its arguments formed a JSON object is dropped from such a turn by the
+    decoder; a turn left without calls ends the loop as a text turn with that reason.
+  - `tool_loop!` completes on a text turn only when it finished with `"stop"` or no
+    reason, or with `"tool_calls"` but no calls (which used to resend the conversation);
+    a content-filtered or otherwise cut-off text turn returns `completed=false` with an
+    `llm_error` naming the reason, where it counted as completed.
   - `tool_loop!` on a `Chat` with `history=false` throws `ArgumentError`, and both
     loops throw `ArgumentError` for `max_turns < 1`.
   - On `max_turns` exhaustion, `response` is the last response the model sent, with
@@ -83,7 +94,9 @@
     client-side action it cannot execute (`custom_tool_call`, `apply_patch_call`,
     `local_shell_call`, `computer_call`, a `shell_call` the platform did not answer with
     a `shell_call_output` in the same output, `mcp_approval_request`) — such a turn used
-    to end the loop as completed.
+    to end the loop as completed. The `llm_error` of a turn that did not complete names
+    the `incomplete_details` reason with its status
+    (`"Response did not complete (status=incomplete, reason=max_output_tokens)"`).
 - **Platform verbs.**
   - `upload_file` makes a single attempt; `max_attempts` no longer applies. A POST that
     timed out, or drew a gateway 5xx after the backend stored the file, was retried and
@@ -171,7 +184,9 @@
   propagates into spawned tasks. A cancel — before connecting, during the header wait,
   mid-stream, during a retry backoff or a poll pause — ends the call with its call-error
   result (`status = nothing`, `cause = UniLMCancelled(:token, …)`), never retried and
-  never committed; a pre-cancelled token sends nothing. Tokens are level-triggered and
+  never committed — unless the provider's completion marker already arrived on a
+  stream: then the turn is committed, the final-message callback runs, and usage may be
+  missing. A pre-cancelled token sends nothing. Tokens are level-triggered and
   `cancel!` runs every registered hook, even when one of them raises an interrupt. A
   TCP connect or TLS handshake in progress is not interrupted (it completes or reaches
   `connect_timeout`), and the Realtime WebSocket and MCP stdio exchanges do not observe
@@ -227,9 +242,19 @@
   negotiation (HTTP/2 over TLS).
 - `stream_idle_timeout` measures wire idleness only: time spent inside a streaming
   callback or `on_tool_call` is not counted, and the clock restarts when it returns.
+- An in-band stream error on the OpenAI wire that carries a numeric `code` from 400 to
+  599 is an `LLMFailure` with that `status` (other in-band errors stay an
+  `LLMCallError`), so a retryable one (`408`, `429`, `500`, `502`, `503`, `504`, `529`)
+  is retried with a new request while no callback has run yet, like its HTTP-status twin.
+- `update!` on a `Chat` with `history=false` logs at debug level instead of warning on
+  every successful call: leaving the chat unchanged is what `history=false` means.
 - Chat decoding keeps the provider's finish reason on a tool-call turn (`"tool_calls"`
   stands in only for `"stop"` or none), and a stream without a finish reason reports
-  `nothing`. Native Gemini maps `STOP` to `"stop"`, `MAX_TOKENS` to `"length"` and the
+  `nothing`. Partial calls are dropped: on a turn that keeps another reason, a call
+  whose arguments were cut off before they formed a JSON object is removed and the turn
+  kept with its text, reason and usage; under `"tool_calls"` such arguments are an
+  `LLMCallError`, since those calls would run. Native Gemini maps `STOP` to `"stop"`,
+  `MAX_TOKENS` to `"length"` and the
   content filters, the image ones included (`IMAGE_SAFETY`, `IMAGE_PROHIBITED_CONTENT`,
   `IMAGE_RECITATION`), to `"content_filter"`; any other
   `finishReason` is reported as its lowercased wire value (`"malformed_function_call"`)
@@ -284,9 +309,26 @@
 - Chat decoding dropped text sent alongside tool calls, failed on array-shaped message
   content and on empty tool-call arguments (`""` is `{}`), relabelled a tool-call turn
   cut at `"length"` or filtered as `"tool_calls"` (so a tool loop could run partial
-  calls), invented `"stop"` for a stream that sent no finish reason, and did not treat
-  an in-band OpenAI-wire `{"error": …}` payload as terminal. `request_id` also falls
-  back to the `request-id` header, which Anthropic sends.
+  calls), failed a turn cut off inside a call's arguments with an `LLMCallError` (a
+  JSON parse error, its billed usage never accrued), invented `"stop"` for a stream
+  that sent no finish reason, and did not treat an in-band OpenAI-wire `{"error": …}`
+  payload as terminal. `request_id` also falls back to the `request-id` header, which
+  Anthropic sends.
+- Before its first byte, a stream was bounded by `stream_idle_timeout`, not by
+  `min(request_timeout, remaining total_deadline)`: closing the stream does nothing in
+  HTTP.jl 2.x while the request is uploading or the response headers are awaited, so a
+  peer that never answered held each attempt until the read-idle timer fired (120 s by
+  default, however small `request_timeout` was). The first-byte deadline now also
+  cancels the attempt's request context and ends it typed `UniLMTimeout(:request, …)`.
+- A Chat stream waited for the end of its HTTP body after `[DONE]`: a server holding
+  the body open delayed the final-message callback and the result as long as it held
+  it, and a body that never ended cost `stream_idle_timeout`. The turn is final at the
+  sentinel; the body's end is awaited for at most 0.5 s (it returns the connection to
+  the pool), after which the connection is closed instead of reused.
+- An `InterruptException` from a `tool_loop!` dispatch left the assistant turn — and
+  any tool results already appended — in the chat, so the next request carried tool
+  calls without results. The interrupted turn is now removed first, with one tool at a
+  time or `tool_concurrency > 1`.
 - `ResponseCallError.cause` is set for every exception from `respond` and the lifecycle
   operations, not only for timeouts.
 - A Chat `Tool` wrapped in a `CallableTool` — the form a Chat tool loop takes — went

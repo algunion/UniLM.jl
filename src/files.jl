@@ -54,32 +54,39 @@ end
 _per_attempt_timeout(e)::Bool = e isa UniLMTimeout && e.phase in (:connect, :request)
 
 """
-    _poll(fetch, S, terminal, timed_out; interval, timeout, config)
+    _poll(fetch, S, terminal, ended; interval, timeout, config, cancel)
 
 Call `fetch(cfg)` until a success (an `S`) satisfies `terminal`, a non-transient
-failure comes back (returned as is), or `timeout` seconds of wall-clock time pass —
-then `timed_out(last_success_or_nothing, UniLMTimeout(:deadline, …))` builds the
-result. Each GET's `total_deadline` and each pause are capped at the time left, so
-the poll ends within `timeout` rather than one GET or pause past it.
+failure comes back (returned as is), `timeout` seconds of wall-clock time pass, or
+`cancel` (default: the ambient token) is cancelled — then
+`ended(last_success_or_nothing, cause)` builds the result, `cause` being a
+`UniLMTimeout(:deadline, …)` or a `UniLMCancelled`. Each GET's `total_deadline` and
+each pause are capped at the time left, so the poll ends within `timeout` rather than
+one GET or pause past it. The GETs run with the token ambient and a pause wakes at once
+on a cancel, so a cancel ends the poll mid-GET or mid-pause alike.
 """
-function _poll(fetch::Function, ::Type{S}, terminal::Function, timed_out::Function;
-               interval::Real, timeout::Real, config::Union{Nothing,RequestConfig}) where {S<:LLMRequestResponse}
+function _poll(fetch::Function, ::Type{S}, terminal::Function, ended::Function;
+               interval::Real, timeout::Real, config::Union{Nothing,RequestConfig},
+               cancel::Union{Nothing,CancelToken}) where {S<:LLMRequestResponse}
     (isfinite(interval) && interval > 0) ||
         throw(ArgumentError("interval must be a finite number of seconds > 0 (got $interval)"))
     limit = _validated_timeout(:timeout, timeout)
     cfg = _resolve_config(config); t0 = time_ns()
+    tok = _resolve_cancel(cancel)
     seen = nothing
     while (left = limit - _elapsed_s(t0)) > 0
-        r = fetch(RequestConfig(cfg; total_deadline=min(cfg.total_deadline, left)))
+        c = RequestConfig(cfg; total_deadline=min(cfg.total_deadline, left))
+        r = isnothing(tok) ? fetch(c) : with_cancel(() -> fetch(c), tok)
         if r isa S
             terminal(r) && return r
             seen = r
-        elseif !_transient(r)
+        elseif !_transient(r) && !iscancelled(tok)
             return r
         end
-        sleep(min(interval, max(limit - _elapsed_s(t0), 0.0)))
+        _cancel_sleep(tok, min(interval, max(limit - _elapsed_s(t0), 0.0))) &&
+            return ended(seen, UniLMCancelled(:token, _elapsed_s(t0)))
     end
-    return timed_out(seen, UniLMTimeout(:deadline, _elapsed_s(t0), limit))
+    return ended(seen, UniLMTimeout(:deadline, _elapsed_s(t0), limit))
 end
 
 # A delete counts as done only when the reply says so: the documented body carries
@@ -124,9 +131,13 @@ function _write_target(path::String)::String
     _write_target(isabspath(target) ? target : joinpath(dirname(path), target))
 end
 
-_poll_timeout_text(verb::String, id::String, to::UniLMTimeout, seen)::String =
-    "$verb timeout: $id reached no terminal status within $(to.limit) s (last observed status: " *
-    "$(isnothing(seen) ? "none" : something(seen.response.status, "none")))"
+# The error text of a poll that ran out of time or was cancelled.
+_poll_end_text(verb::String, id::String, to::UniLMTimeout, seen)::String =
+    "$verb timeout: $id reached no terminal status within $(to.limit) s" * _last_status(seen)
+_poll_end_text(verb::String, id::String, c::UniLMCancelled, seen)::String =
+    "$verb cancelled after $(round(c.elapsed; digits=3)) s: $id" * _last_status(seen)
+_last_status(seen)::String =
+    " (last observed status: $(isnothing(seen) ? "none" : something(seen.response.status, "none")))"
 
 # ─── Request type ─────────────────────────────────────────────────────────────
 

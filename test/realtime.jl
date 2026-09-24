@@ -152,6 +152,26 @@ UniLM.provider_capabilities(::Type{RTSecretEndpoint}) = Set([:realtime])
     end
 end
 
+@testset "mint_realtime_secret: a call error carries its cause and the unusable reply's request id" begin
+    srv = HTTP.serve!(_ -> HTTP.Response(200, ["Content-Type" => "application/json",
+                                              "x-request-id" => "req_rt"], "{}"),
+                      "127.0.0.1", 0; verbose=false)
+    _rt_secret_base[] = "http://127.0.0.1:$(HTTP.port(srv))"
+    try
+        # A 200 without a secret is a reply that could not be used: its id is the handle
+        # a support report needs.
+        r = mint_realtime_secret(service=RTSecretEndpoint)
+        @test r isa RealtimeCallError && r.request_id == "req_rt" && isnothing(r.cause)
+        # A cancelled token and a spent budget surface as the typed cause itself.
+        r2 = with_cancel(() -> mint_realtime_secret(service=RTSecretEndpoint), cancel!(CancelToken()))
+        @test r2 isa RealtimeCallError && r2.cause isa UniLMCancelled && isnothing(r2.request_id)
+        r3 = mint_realtime_secret(service=SeamProbe, config=_TINY_DEADLINE)
+        @test r3 isa RealtimeCallError && r3.cause isa UniLMTimeout && r3.cause.phase === :deadline
+    finally
+        close(srv)
+    end
+end
+
 @testset "realtime_connect: an endpoint other than OpenAI is rejected before any I/O" begin
     # The Realtime socket lives on api.openai.com; opening it for another endpoint
     # would send that endpoint's credentials there.

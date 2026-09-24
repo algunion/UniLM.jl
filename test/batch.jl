@@ -61,6 +61,40 @@ end
     @test occursin("in_progress", r.error)
 end
 
+@testset "poll_batch: a cancel ends the poll at once — mid-pause, and before any GET" begin
+    # A non-terminal batch keeps the poll pausing; without a wakeup on the cancel it
+    # would sleep out its 30 s interval.
+    hits = Threads.Atomic{Int}(0)
+    busy = (_, _) -> (Threads.atomic_add!(hits, 1); _json(200, _batch_json("in_progress")))
+    for via in (:keyword, :scope)
+        tok = CancelToken()
+        before = hits[]
+        (r, after_cancel), _ = _with_scripted(busy) do
+            poll() = poll_batch("batch_1"; interval=30.0, timeout=120.0, service=URLProbe,
+                                cancel=(via === :keyword ? tok : nothing))
+            t = Threads.@spawn ((via === :scope ? with_cancel(poll, tok) : poll()), time_ns())
+            @test timedwait(() -> hits[] > before, 25.0) === :ok   # first GET answered: pausing
+            sleep(0.2)
+            cancelled_at = time_ns()
+            cancel!(tok)
+            @test timedwait(() -> istaskdone(t), 25.0) === :ok
+            res, done_at = fetch(t)
+            res, (done_at - cancelled_at) / 1e9
+        end
+        @test after_cancel < 5.0                                   # the 30 s pause is not slept out
+        @test r isa BatchCallError && r.cause isa UniLMCancelled && r.cause.source === :token
+        @test isnothing(r.status)
+        @test r.last_observed isa BatchObject && r.last_observed.status == "in_progress"
+        @test occursin("cancelled", r.error) && occursin("in_progress", r.error)
+    end
+    # A token cancelled up front: the typed result, and no request sent.
+    r, seen = _with_scripted(busy) do
+        poll_batch("batch_1"; interval=30.0, timeout=120.0, service=URLProbe, cancel=cancel!(CancelToken()))
+    end
+    @test r isa BatchCallError && r.cause isa UniLMCancelled && isnothing(r.last_observed)
+    @test isempty(seen)
+end
+
 @testset "Batch API — a failure keeps the request id the service sent" begin
     r = _answered(() -> retrieve_batch("batch_x"; service=URLProbe), 404; headers=["x-request-id" => "req_batch"])
     @test r isa UniLM.BatchFailure && r.request_id == "req_batch"

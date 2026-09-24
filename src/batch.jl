@@ -40,7 +40,7 @@ end
 @kwdef struct BatchListSuccess <: LLMRequestResponse; response::BatchList; end
 "Batch API error result: HTTP `status`, the raw `response` body, and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
 @kwdef struct BatchFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
-"Batch API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout. `last_observed` is set only when [`poll_batch`](@ref) runs out of time: the last [`BatchObject`](@ref) it saw, if any."
+"Batch API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout. `last_observed` is set only when [`poll_batch`](@ref) runs out of time or is cancelled: the last [`BatchObject`](@ref) it saw, if any."
 @kwdef struct BatchCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; last_observed::Union{Nothing,BatchObject} = nothing; end
 
 _transient(r::BatchFailure) = _is_retryable(r.status)
@@ -143,7 +143,7 @@ function list_batches(; limit::Union{Int,Nothing}=nothing, after::Union{String,N
 end
 
 """
-    poll_batch(id; interval=10.0, timeout=86400.0, service=OPENAIServiceEndpoint)
+    poll_batch(id; interval=10.0, timeout=86400.0, service=OPENAIServiceEndpoint, cancel=nothing)
 
 Poll a batch until it reaches a terminal status (`completed`/`failed`/`cancelled`/`expired`).
 `timeout` bounds the wall-clock time of the whole poll (`Inf` waits indefinitely);
@@ -154,13 +154,21 @@ GET that timed out — is polled through; any other failure is returned as it ca
 the time runs out the result is a `BatchCallError` with `cause = UniLMTimeout(:deadline, …)`
 and `last_observed` set to the last `BatchObject` seen (`nothing` if no GET succeeded).
 
+Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref)
+token) to make the poll cancellable: a cancel ends it at once, mid-GET or mid-pause, with
+a `BatchCallError` whose `cause` is a [`UniLMCancelled`](@ref) and `last_observed` as
+above; a token cancelled before the poll sends nothing.
+
 Pass `config::Union{Nothing,RequestConfig}` to bound each GET (a single attempt; its
 `total_deadline` is capped at the time left).
 """
-function poll_batch(id::String; interval::Real=10.0, timeout::Real=86400.0, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
+function poll_batch(id::String; interval::Real=10.0, timeout::Real=86400.0,
+                    service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+                    config::Union{Nothing,RequestConfig}=nothing,
+                    cancel::Union{Nothing,CancelToken}=nothing)
     _poll(cfg -> retrieve_batch(id; service, config=cfg), BatchSuccess,
           r -> r.response.status in ("completed", "failed", "cancelled", "expired"),
-          (seen, to) -> BatchCallError(error=_poll_timeout_text("poll_batch", id, to, seen), cause=to,
-                                       last_observed=isnothing(seen) ? nothing : seen.response);
-          interval, timeout, config)
+          (seen, why) -> BatchCallError(error=_poll_end_text("poll_batch", id, why, seen), cause=why,
+                                        last_observed=isnothing(seen) ? nothing : seen.response);
+          interval, timeout, config, cancel)
 end

@@ -12,8 +12,8 @@
 end
 "Realtime API error result: HTTP `status` and the raw `response` body."
 @kwdef struct RealtimeFailure <: LLMRequestResponse; response::String; status::Int; end
-"Local/transport error from a Realtime API call (the request never completed)."
-@kwdef struct RealtimeCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; end
+"Realtime API call that produced no usable reply (transport failure, timeout, cancel, or a 200 without a secret); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout, a [`UniLMCancelled`](@ref) for a cancel — and `request_id` is the id the service sent with a reply that could not be used."
+@kwdef struct RealtimeCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; request_id::Union{String,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
 
 """
     mint_realtime_secret(; session=nothing, service=OPENAIServiceEndpoint)
@@ -27,6 +27,7 @@ Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for t
 function mint_realtime_secret(; session::Union{AbstractDict,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :realtime, "Realtime API")
     cfg = _resolve_config(config); t0 = time_ns()
+    local resp
     try
         d = Dict{Symbol,Any}()
         !isnothing(session) && (d[:session] = session)
@@ -39,11 +40,12 @@ function mint_realtime_secret(; session::Union{AbstractDict,Nothing}=nothing, se
         # A 200 that carries no usable secret is not a success: handing back an
         # empty value would fail later, at connect time, far from the cause.
         val isa AbstractString && !isempty(val) ||
-            return RealtimeCallError(error="client-secret response carried no secret value")
+            return RealtimeCallError(error="client-secret response carried no secret value",
+                                     request_id=_platform_request_id(resp))
         RealtimeSecretSuccess(value=val, raw=data)
     catch e
         e isa InterruptException && rethrow()
-        RealtimeCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing))
+        _callerr(RealtimeCallError, e; request_id=_platform_request_id(@isdefined(resp) ? resp : nothing))
     end
 end
 

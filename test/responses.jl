@@ -2899,7 +2899,7 @@ end
 end
 
 @testset "respond (non-streaming): cancellable, never retried, nothing sent when pre-cancelled" begin
-    srv = _ag_server(; mute=true, hold=10.0)
+    srv = _ag_server(; mute=true, hold=20.0)
     try
         r = Respond(service=GenericOpenAIEndpoint(srv.url, ""), model="m", input="hi")
         tok = CancelToken()
@@ -2907,7 +2907,7 @@ end
         o = _ag_stop_after(() -> Threads.@spawn(respond(r; config=cfg, cancel=tok)), () -> cancel!(tok);
                            ready=() -> srv.hits[] == 1)
         @test o.finished && _ag_cancelled_by(o.result, :token)
-        @test o.latency < 0.5
+        @test o.latency < 5.0                   # not aborted, it waits out the 20 s hold
         @test srv.hits[] == 1
         @test _ag_cancelled_by(respond(r; cancel=cancel!(CancelToken())), :token)
         @test srv.hits[] == 1
@@ -2917,15 +2917,15 @@ end
 end
 
 @testset "agentic stream: a cancel ends it promptly and typed" begin
-    @testset "mid-stream: events 5 s apart, cancelled 1 s in" begin
-        srv = _ag_server([_delta_event("a"), _delta_event("b"), _completed_event("ab", 2)]; gap=5.0)
+    @testset "mid-stream: events 20 s apart, cancelled 1 s in" begin
+        srv = _ag_server([_delta_event("a"), _delta_event("b"), _completed_event("ab", 2)]; gap=20.0)
         try
             tok = CancelToken(); seen = Any[]
             o = _ag_stop_after(() -> respond(_ag_stream(srv.url); config=_AG_SLOW, cancel=tok,
                                              callback=(c, _) -> push!(seen, c)),
                                () -> cancel!(tok); ready=() -> !isempty(seen))
             @test o.finished && _ag_cancelled_by(o.result, :token)
-            @test o.latency < 0.5
+            @test o.latency < 5.0               # seen only at the next event, 19 s later
             @test seen == ["a"]                     # no terminal callback
         finally
             HTTP.forceclose(srv.server)
@@ -2933,13 +2933,13 @@ end
     end
 
     @testset "during a mute header wait" begin
-        srv = _ag_server(; mute=true, hold=10.0)
+        srv = _ag_server(; mute=true, hold=20.0)
         try
             tok = CancelToken()
             o = _ag_stop_after(() -> respond(_ag_stream(srv.url); config=_AG_SLOW, cancel=tok),
                                () -> cancel!(tok); ready=() -> srv.hits[] == 1)
             @test o.finished && _ag_cancelled_by(o.result, :token)
-            @test o.latency < 0.5
+            @test o.latency < 5.0               # not aborted, it waits out the 20 s hold
         finally
             HTTP.forceclose(srv.server)
         end
@@ -2959,7 +2959,7 @@ end
             @test timedwait(() -> istaskdone(t), 25.0) === :ok
             r, done_at = fetch(t)
             @test _ag_cancelled_by(r, :token)
-            @test done_at - cancelled_at < 0.5
+            @test done_at - cancelled_at < 5.0  # not woken, it sleeps out the 30 s backoff
             @test srv.hits[] == 1
         finally
             HTTP.forceclose(srv.server)
@@ -2982,14 +2982,14 @@ end
 
 @testset "agentic stream: the close flag is the same typed stop" begin
     @testset "set from another task: prompt, source :callback" begin
-        srv = _ag_server([_delta_event("a"), _delta_event("b"), _completed_event("ab", 2)]; gap=5.0)
+        srv = _ag_server([_delta_event("a"), _delta_event("b"), _completed_event("ab", 2)]; gap=20.0)
         try
             handle = Ref{Any}(nothing)
             o = _ag_stop_after(() -> respond(_ag_stream(srv.url); config=_AG_SLOW,
                                              callback=(c, close) -> (handle[] = close)),
                                () -> (handle[][] = true); ready=() -> handle[] !== nothing)
             @test o.finished && _ag_cancelled_by(o.result, :callback)
-            @test o.latency < 0.5
+            @test o.latency < 5.0               # seen only at the next event, 19 s later
         finally
             HTTP.forceclose(srv.server)
         end

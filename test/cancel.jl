@@ -135,7 +135,7 @@ end
     @test timedwait(() -> istaskdone(t), 25.0) === :ok
     woke, woke_at = fetch(t)
     @test woke === true
-    @test (woke_at - cancelled_at) / 1e9 < 0.2
+    @test (woke_at - cancelled_at) / 1e9 < 5.0                # not woken, it sleeps out 30 s
     @test isempty(tok.hooks)
     @test UniLM._cancel_sleep(tok, 30.0) === true             # already cancelled: no wait
     started = time_ns()
@@ -204,21 +204,22 @@ end
     for cfg in (RequestConfig(max_attempts=3, total_deadline=Inf),
                 RequestConfig(max_attempts=3, total_deadline=Inf, request_timeout=Inf))
         hits = Threads.Atomic{Int}(0)
-        srv = _cx_serve(_ -> (Threads.atomic_add!(hits, 1); sleep(10); HTTP.Response(200, "late")))
+        srv = _cx_serve(_ -> (Threads.atomic_add!(hits, 1); sleep(20); HTTP.Response(200, "late")))
         try
             tok = CancelToken()
-            started = time_ns()
             t = Threads.@spawn (try
-                UniLM._http_with_retries(cfg, started, "GET", srv.url; cancel=tok)
+                UniLM._http_with_retries(cfg, time_ns(), "GET", srv.url; cancel=tok)
             catch e
                 e
             end, time_ns())
-            sleep(0.3)
+            @test timedwait(() -> hits[] == 1, 25.0) === :ok   # the request is in: mid-exchange
+            sleep(0.2)
+            cancelled_at = time_ns()
             cancel!(tok)
             @test timedwait(() -> istaskdone(t), 25.0) === :ok
             e, done_at = fetch(t)
             @test e isa UniLMCancelled && e.source === :token
-            @test (done_at - started) / 1e9 < 1.0
+            @test (done_at - cancelled_at) / 1e9 < 5.0   # not aborted, it waits out the 20 s reply
             @test hits[] == 1                       # never retried
             @test isempty(tok.hooks)
         finally
@@ -234,19 +235,19 @@ end
     try
         tok = CancelToken()
         cfg = RequestConfig(max_attempts=3, total_deadline=Inf)
-        started = time_ns()
         t = Threads.@spawn (try
-            UniLM._http_with_retries(cfg, started, "GET", srv.url; cancel=tok)
+            UniLM._http_with_retries(cfg, time_ns(), "GET", srv.url; cancel=tok)
         catch e
             e
         end, time_ns())
         @test timedwait(() -> hits[] == 1, 25.0) === :ok   # the first 429 is in: backing off
         sleep(0.2)
+        cancelled_at = time_ns()
         cancel!(tok)
         @test timedwait(() -> istaskdone(t), 25.0) === :ok
         e, done_at = fetch(t)
         @test e isa UniLMCancelled && e.source === :token
-        @test (done_at - started) / 1e9 < 1.0
+        @test (done_at - cancelled_at) / 1e9 < 5.0   # not woken, it sleeps out the 30 s backoff
         @test hits[] == 1
         @test isempty(tok.hooks)
     finally

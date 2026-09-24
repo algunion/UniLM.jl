@@ -1421,7 +1421,7 @@ end
 end
 
 @testset "non-streaming chat and embeddings are cancellable" begin
-    srv = _mute_request_server()
+    srv = _mute_request_server(; hold=20.0)
     try
         ep = GenericOpenAIEndpoint(srv.url, "")
         cfg = RequestConfig(request_timeout=30.0, total_deadline=120.0, max_attempts=3)
@@ -1440,7 +1440,7 @@ end
             @test timedwait(() -> istaskdone(t), 25.0) === :ok
             r, done_at = fetch(t)
             @test typed(r, T)
-            @test done_at - cancelled_at < 0.5
+            @test done_at - cancelled_at < 5.0                # not aborted, it waits out the 20 s hold
             @test srv.hits[] == hits0 + 1                                   # never retried
             @test typed(verb(make(), cancel!(CancelToken())), T)           # pre-cancelled...
             @test srv.hits[] == hits0 + 1                                   # ...sends nothing

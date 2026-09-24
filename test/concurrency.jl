@@ -146,7 +146,10 @@ end
             n = 10
             toks = [CancelToken() for _ in 1:n]
             first_delta = [Threads.Atomic{Bool}(false) for _ in 1:n]
-            chats = [_cc_chat(srv.url, "stream $(_cc_marker(i)) 12 0.25"; stream=true) for i in 1:n]
+            # The odd streams, cancelled ~1 s in, would run on for ~19 s (80 deltas); the
+            # even ones complete in 3 s (12 deltas).
+            chats = [_cc_chat(srv.url, "stream $(_cc_marker(i)) $(isodd(i) ? 80 : 12) 0.25";
+                              stream=true) for i in 1:n]
             tasks = [Threads.@spawn begin
                          r = fetch(chatrequest!(chats[i]; config=_CC_CFG, cancel=toks[i],
                                                 callback=(c, _) -> (first_delta[i][] = true)))
@@ -161,7 +164,7 @@ end
                 r, done_at = fetch(tasks[i])
                 if isodd(i)
                     @test r isa LLMCallError && r.cause isa UniLMCancelled && r.cause.source === :token
-                    @test done_at - cancelled_at < 0.5
+                    @test done_at - cancelled_at < 5.0              # not aborted, it runs ~19 s on
                     @test length(chats[i].messages) == 2            # nothing committed
                 else
                     @test r isa LLMSuccess && r.message.content == _cc_text(_cc_marker(i), 12)

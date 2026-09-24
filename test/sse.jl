@@ -651,16 +651,16 @@ cancelled_by(r, source) = r isa LLMCallError && isnothing(r.status) &&
                           r.cause isa UniLMCancelled && r.cause.source === source
 
 @testset "driver — a cancel ends the stream promptly, typed, and commits nothing" begin
-    @testset "mid-stream: chunks 5 s apart, cancelled 1 s in" begin
+    @testset "mid-stream: chunks 20 s apart, cancelled 1 s in" begin
         srv = paced_sse_server([sse_text("a"), sse_text("b"), sse_text("c"; finish="stop"),
-                                "data: [DONE]\n\n"]; gap=5.0)
+                                "data: [DONE]\n\n"]; gap=20.0)
         try
             chat = stream_chat(srv.url); tok = CancelToken(); seen = Any[]
             o = stop_after(() -> chatrequest!(chat; config=_SLOW_CFG, cancel=tok,
                                               callback=(c, _) -> push!(seen, c)),
                            () -> cancel!(tok); ready=() -> !isempty(seen))
             @test o.finished && cancelled_by(o.result, :token)
-            @test o.latency < 0.5
+            @test o.latency < 5.0                   # seen only at the next chunk, 19 s later
             @test seen == ["a"]                     # no terminal callback
             @test length(chat.messages) == 2        # the partial turn is not committed
         finally
@@ -669,13 +669,13 @@ cancelled_by(r, source) = r isa LLMCallError && isnothing(r.status) &&
     end
 
     @testset "during a mute header wait" begin
-        srv = mute_header_server(hold=10.0)
+        srv = mute_header_server(hold=20.0)
         try
             chat = stream_chat(srv.url); tok = CancelToken()
             o = stop_after(() -> chatrequest!(chat; config=_SLOW_CFG, cancel=tok), () -> cancel!(tok);
                            ready=() -> srv.hits[] == 1)
             @test o.finished && cancelled_by(o.result, :token)
-            @test o.latency < 0.5
+            @test o.latency < 5.0                   # not aborted, it waits out the 20 s hold
             @test length(chat.messages) == 2
         finally
             HTTP.forceclose(srv.server)
@@ -696,7 +696,7 @@ cancelled_by(r, source) = r isa LLMCallError && isnothing(r.status) &&
             @test timedwait(() -> istaskdone(t), 25.0) === :ok
             r, done_at = fetch(t)
             @test cancelled_by(r, :token)
-            @test done_at - cancelled_at < 0.5
+            @test done_at - cancelled_at < 5.0      # not woken, it sleeps out the 30 s backoff
             @test srv.hits[] == 1
         finally
             HTTP.forceclose(srv.server)
@@ -719,14 +719,14 @@ end
 
 @testset "driver — the callback's close flag is the same typed stop" begin
     @testset "set from another task: prompt, source :callback" begin
-        srv = paced_sse_server([sse_text("a"), sse_text("b"), "data: [DONE]\n\n"]; gap=5.0)
+        srv = paced_sse_server([sse_text("a"), sse_text("b"), "data: [DONE]\n\n"]; gap=20.0)
         try
             chat = stream_chat(srv.url); handle = Ref{Any}(nothing); seen = Any[]
             o = stop_after(() -> chatrequest!(chat; config=_SLOW_CFG,
                                               callback=(c, close) -> (push!(seen, c); handle[] = close)),
                            () -> (handle[][] = true); ready=() -> handle[] !== nothing)
             @test o.finished && cancelled_by(o.result, :callback)
-            @test o.latency < 0.5
+            @test o.latency < 5.0                   # seen only at the next chunk, 19 s later
             @test seen == ["a"]
             @test length(chat.messages) == 2
         finally
@@ -892,7 +892,7 @@ end
     chunks = [sse_text("hi"), sse_text(""; finish="stop") * "data: [DONE]\n\n"]
 
     @testset "a body held open after [DONE] holds neither the final callback nor the result" begin
-        srv = peer_sse_server(chunks; hold=10.0)
+        srv = peer_sse_server(chunks; hold=20.0)
         try
             chat = stream_chat(srv.url); final_at = Ref(Inf)
             t0 = time()
@@ -900,7 +900,7 @@ end
                                    callback=(c, _) -> c isa Message && (final_at[] = time() - t0)))
             elapsed = time() - t0
             @test r isa LLMSuccess && r.message.content == "hi" && length(chat.messages) == 3
-            # ≈0.5 s expected; the forbidden outcome is the 10 s hold. A 4 s bound leaves
+            # ≈0.5 s expected; the forbidden outcome is the 20 s hold. A 4 s bound leaves
             # a runner-stall budget and still discriminates.
             @test final_at[] < 4.0
             @test elapsed < 4.0

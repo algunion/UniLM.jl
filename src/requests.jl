@@ -200,15 +200,15 @@ _native_timeout_kwargs(cfg::RequestConfig, bound::Float64) =
 function _native_stream_kwargs(cfg::RequestConfig, bound::Float64=Inf)
     kw = (connect_timeout   = _native_seconds_real(cfg.connect_timeout),
           read_idle_timeout = _native_seconds_real(cfg.stream_idle_timeout))
-    # Idle bound disabled: nothing above bounds the response-header wait, and the
-    # driver's request-phase watchdog cannot help either — closing the client
-    # stream cannot reach the connection until `startread` returns (HTTP.jl hands
-    # the stream its connection together with the response headers) — so a mute
-    # peer would stall forever. Cap the header wait natively at the same request
-    # bound. ONLY in this branch: with a finite idle bound read_idle_timeout
-    # already bounds that wait (HTTP.jl waits min(response_header_timeout,
-    # read_idle_timeout)), and a second native non-connect timer would break the
-    # by-elimination attribution in `_classify_stream_timeout`.
+    # Idle bound disabled: no native timer above bounds the response-header wait.
+    # The driver's request-phase deadline still ends it — it aborts the attempt
+    # through its request context (`_abort_request_phase`) — and, as everywhere in
+    # this seam, a native timer at the same bound is the fast path under it, so the
+    # header wait is capped natively at the request bound. ONLY in this branch: with
+    # a finite idle bound read_idle_timeout already bounds that wait (HTTP.jl waits
+    # min(response_header_timeout, read_idle_timeout)), and a second native
+    # non-connect timer would break the by-elimination attribution in
+    # `_classify_stream_timeout`.
     return (cfg.stream_idle_timeout == Inf && bound < Inf) ?
         (kw..., response_header_timeout = bound) : kw
 end
@@ -265,7 +265,11 @@ the in-driver idle guard happened to be armed yet:
    can breach BEFORE the first byte arrives — before the idle guard exists.
    Deciding from the armed-timer set keeps the phase deterministic across
    that arming-order race (observed flipping with HTTP 2.6.x server-side
-   task-scheduling changes).
+   task-scheduling changes). The driver's request-phase deadline is not a
+   native timer: it aborts the attempt by cancelling its request context, so
+   what escapes is an `HTTP.CanceledError`, never a native timeout, and the
+   driver restores the deadline's recorded `UniLMTimeout(:request, …)` in its
+   place.
 
 `elapsed` reports the measured byte gap where the guard measured one; for a
 pre-first-byte breach the attempt's own elapsed time is the honest "no bytes
@@ -509,7 +513,7 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
 end
 
 """
-    _http_open(f, method, url, headers; cfg, t0, cancel, kwargs...) -> HTTP.Response
+    _http_open(f, method, url, headers; cfg, t0, cancel, context, kwargs...) -> HTTP.Response
 
 Streaming attempt seam: wraps `HTTP.open` with `status_exception=false`,
 `retry=false`, `protocol=:h1` (one connection per stream: HTTP/2 multiplexing
@@ -524,31 +528,52 @@ arrive. `t0` is the driver's monotonic origin, accepted here so drivers
 thread one origin through the seam.
 
 `cancel` (default: the ambient token) already cancelled at entry throws
-[`UniLMCancelled`](@ref) with no network I/O. The attempt runs under its own
-`HTTP.RequestContext`, cancelled by a cancel for the attempt's whole duration:
-HTTP.jl checks it before acquiring a connection and aborts the connection once
-acquired, which unblocks the response-header wait and body reads parked inside
-`f` (a TCP/TLS connect already in progress finishes, or hits its connect bound,
-first). Whatever then escapes `HTTP.open` (HTTP.jl reports a cancelled context as
+[`UniLMCancelled`](@ref) with no network I/O. The attempt runs under the
+`HTTP.RequestContext` `context` (default: a fresh one; a driver passes its own so its
+first-byte deadline can abort the attempt through [`_abort_request_phase`](@ref)),
+cancelled by a cancel for the attempt's whole duration: HTTP.jl checks it before
+acquiring a connection and aborts the connection once acquired, which unblocks the
+request upload, the response-header wait and body reads parked inside `f` (a TCP/TLS
+connect already in progress finishes, or hits its connect bound, first). Whatever
+then escapes `HTTP.open` (HTTP.jl reports a cancelled context as
 `HTTP.CanceledError`) propagates unchanged — mapping it to a typed result is the
 driver's job.
 """
 function _http_open(f::Function, method::AbstractString, url::AbstractString, headers;
                     cfg::RequestConfig, t0::UInt64,
                     cancel::Union{Nothing,CancelToken}=_current_cancel(),
+                    context::HTTP.RequestContext=HTTP.RequestContext(),
                     kwargs...)::HTTP.Response
     iscancelled(cancel) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
-    ctx = HTTP.RequestContext()
-    handle = _on_cancel(() -> HTTP.cancel!(ctx; message="cancelled"), cancel)
+    handle = _on_cancel(() -> HTTP.cancel!(context; message="cancelled"), cancel)
     try
         return HTTP.open(method, url, headers;
                          kwargs..., _open_kwargs(cfg, min(cfg.request_timeout, _remaining_s(cfg, t0)))...,
-                         context=ctx) do io
+                         context) do io
             f(io)
         end
     finally
         _off_cancel(cancel, handle)
     end
+end
+
+"""
+    _abort_request_phase(io, ctx) -> Nothing
+
+The close action of a stream driver's first-byte deadline. In HTTP.jl 2.x the request
+upload and the response-header wait both run inside `startread`, and the stream is
+handed its connection only together with the response headers, so `close(io)` alone
+does nothing until they arrive: a peer that never answers would hold the attempt
+until the read-idle timer fired, however much smaller the deadline. Cancelling the
+attempt's request context aborts the connection wherever the exchange is (see
+[`_http_open`](@ref)); `close(io)` then closes the stream itself. The driver's catch
+restores the deadline's recorded `UniLMTimeout(:request, …)` over the
+`HTTP.CanceledError` HTTP.jl raises for the aborted exchange.
+"""
+function _abort_request_phase(io::HTTP.Stream, ctx::HTTP.RequestContext)::Nothing
+    HTTP.cancel!(ctx; message="request-phase deadline exceeded")
+    close(io)
+    nothing
 end
 
 # ─── URL Dispatch ─────────────────────────────────────────────────────────────
@@ -1097,13 +1122,14 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
     # built (→ LLMFailure). Request identity encoding and disable decompression so
     # `data:` lines arrive verbatim.
     stream_headers = push!(copy(auth_header(chat.service)), "Accept-Encoding" => "identity")
+    ctx = HTTP.RequestContext()   # the attempt's; its first-byte deadline aborts through it
     try
         # Seam-routed: _http_open applies the native stream timeout kwargs plus
         # status_exception=false and retry=false (HTTP.jl's internal retries would
         # silently multiply the attempt budget) and aborts the exchange on `ctl.stop`;
         # decompress=false passes through.
         resp = _http_open("POST", get_url(chat), stream_headers; cfg, t0, cancel=ctl.stop,
-                          decompress=false) do io
+                          context=ctx, decompress=false) do io
             io_ref[] = io
             carry = IOBuffer()                 # layer-1 partial-line carry
             current_event = Ref("")            # layer-2 sticky event name
@@ -1116,7 +1142,7 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
                     write(io, body)
                     HTTP.closewrite(io)
                     HTTP.startread(io)
-                end, () -> close(io),
+                end, () -> _abort_request_phase(io, ctx),
                 min(_remaining_s(cfg, t0), cfg.request_timeout), :request, bound)
             idle[] = _idle_guard(() -> close(io), cfg.stream_idle_timeout)
             # `eof` first: after `[DONE]` it consumes the body's end, which keeps the
@@ -1216,10 +1242,10 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
         breach === nothing || throw(breach)
         # Recorded request-phase bound: the typed cause that initiated the
         # teardown takes precedence over whatever the library surfaced while
-        # unwinding it (e.g. EPIPE from writing to the socket the bound
-        # closed). With no displacement this rethrows the same timeout the
-        # attempt already threw; it never masks an error that arrived with no
-        # bound fired.
+        # unwinding it (the `HTTP.CanceledError` of the context the bound
+        # cancelled, or EPIPE from writing to the aborted connection). With no
+        # displacement this rethrows the same timeout the attempt already threw;
+        # it never masks an error that arrived with no bound fired.
         bt = bound[]
         bt === nothing || throw(bt)
         # Remaining native timeouts are connect-phase (connect/TLS labels); map them

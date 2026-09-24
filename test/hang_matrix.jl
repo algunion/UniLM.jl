@@ -645,26 +645,122 @@ UniLM.handle_sse_event!(::_HMAnthropicWireMock, event::AbstractString, payload::
 
 # ─── Streaming timeout contracts ─────────────────────────────────────────────
 
+# Run the streaming verb `call(cfg)` (it returns its Task) against a peer that never
+# answers, twice: first unmeasured under a 0.2 s request bound, which compiles the
+# timeout path, then under `cfg`, timing the call alone — the wall time must measure
+# the bound, not the first-call JIT. Returns the `_hm_bounded` outcome of the timed
+# call, whose value is `(; res, elapsed)`.
+function _hm_timed_stream(call, cfg)
+    _hm_bounded(() -> fetch(call(UniLM.RequestConfig(cfg; request_timeout = 0.2))))
+    _hm_bounded() do
+        t0 = time_ns()
+        res = fetch(call(cfg))
+        (; res, elapsed = (time_ns() - t0) / 1e9)
+    end
+end
+
+# The stream's attempt ended at its request-phase bound: a typed `:request` timeout,
+# returned within 0.5 s of the bound (1 s in every caller), and not at the idle bound.
+_hm_request_bound_hit(outcome, R) = outcome[1] === :ok && let (; res, elapsed) = outcome[2]
+    res isa R && res.status === nothing && res.cause isa UniLM.UniLMTimeout &&
+        res.cause.phase === :request && res.cause.elapsed <= res.cause.limit + 0.5 && elapsed < 1.5
+end
+
+# `_hm_peer_died` reads a bare result; the timed outcome carries it in `res`.
+_hm_timed_peer_died(outcome) =
+    _hm_peer_died(outcome[1] === :ok ? (:ok, outcome[2].res) : outcome)
+
 @testset "stream: mute pre-first-byte yields typed timeout" begin
     # FIXED contract: a mute peer that never sends response headers must not hang
     # the stream — the first-byte deadline (min(remaining total, request_timeout))
-    # closes the connection and the stream task's result is LLMCallError with
-    # status === nothing and cause::UniLMTimeout.
+    # ends the attempt at that bound, and the stream task's result is LLMCallError
+    # with status === nothing and cause UniLMTimeout(:request). Closing the stream
+    # alone cannot reach a connection still waiting for its response headers, so the
+    # watchdog also cancels the attempt's request context; without that, the header
+    # wait ran until HTTP.jl's read-idle timer fired at the 5 s idle bound.
     ok, outcome = false, (:unrun, nothing)
+    cfg = UniLM.RequestConfig(request_timeout = 1.0, total_deadline = 2.0,
+        max_attempts = 1, stream_idle_timeout = 5.0)
     for _ in 1:3   # whole-scenario re-runs, gated by `_hm_peer_died` — see its constraint
         srv, url, _ = _hm_mute_server()
+        try
+            call = c -> chatrequest!(Chat(service = GenericOpenAIEndpoint(url, ""), model = "mock",
+                stream = true, messages = [Message(Val(:system), "s"), Message(Val(:user), "u")]);
+                config = c)
+            outcome = _hm_timed_stream(call, cfg)
+            ok = try
+                _hm_request_bound_hit(outcome, LLMCallError)
+            catch
+                false
+            end
+        finally
+            close(srv)
+        end
+        (ok || !_hm_timed_peer_died(outcome)) && break   # only a lost precondition retries
+    end
+    ok || @warn "hang-matrix composite check failed" outcome
+    @test ok
+end
+
+@testset "stream: the request-phase bound ends a header wait the idle bound would outlast" begin
+    # Both stream drivers, against a peer that reads the request and never answers,
+    # and against one that never reads a 32 MiB request body (the upload itself
+    # blocks). Request 1 s, total 2 s, idle 10 s: the attempt must end at the 1 s
+    # request bound, typed `:request`, where it used to run until the native
+    # read-idle timer fired at 10 s.
+    big = repeat("x", 32 * 1024 * 1024)
+    cfg = UniLM.RequestConfig(request_timeout = 1.0, total_deadline = 2.0,
+                              max_attempts = 1, stream_idle_timeout = 10.0)
+    chat_call(url, input) = c -> chatrequest!(
+        Chat(service = GenericOpenAIEndpoint(url, ""), model = "mock", stream = true,
+             messages = [Message(Val(:system), "s"), Message(Val(:user), input)]); config = c)
+    respond_call(url, input) = c -> respond(
+        Respond(service = GenericOpenAIEndpoint(url, ""), model = "mock", input = input,
+                stream = true); config = c, callback = (_, _) -> nothing)
+    for (label, drain, input) in (("request read, headers never sent", true, "u"),
+                                  ("32 MiB body never read", false, big)),
+        (verb, call, R) in (("chat", chat_call, LLMCallError), ("respond", respond_call, ResponseCallError))
+        ok, outcome = false, (:unrun, nothing)
+        for _ in 1:3   # whole-scenario re-runs, gated by `_hm_peer_died` — see its constraint
+            srv, url, _ = _hm_mute_server(; drain)
+            try
+                outcome = _hm_timed_stream(call(url, input), cfg)
+                ok = try
+                    _hm_request_bound_hit(outcome, R)
+                catch
+                    false
+                end
+            finally
+                close(srv)
+            end
+            (ok || !_hm_timed_peer_died(outcome)) && break
+        end
+        ok || @warn "request-phase bound not honoured" verb label outcome
+        @test ok
+    end
+end
+
+@testset "stream: an idle bound below the request bound still ends a mute header wait as :stream_idle" begin
+    # The default geometry (idle 120 s < request 600 s), scaled down: HTTP.jl's
+    # read-idle timer also bounds the response-header wait, so with the idle bound the
+    # smaller one it fires first and the breach is `:stream_idle`, carrying the idle
+    # limit — the request-phase watchdog, 3.5 s later, never gets to act.
+    ok, outcome = false, (:unrun, nothing)
+    for _ in 1:3   # whole-scenario re-runs, gated by `_hm_peer_died` — see its constraint
+        srv, url, _ = _hm_mute_server(drain = true)
         try
             chat = Chat(service = GenericOpenAIEndpoint(url, ""), model = "mock", stream = true)
             push!(chat, Message(Val(:system), "s"))
             push!(chat, Message(Val(:user), "u"))
             outcome = _hm_bounded() do
-                cfg = UniLM.RequestConfig(request_timeout = 1.0, total_deadline = 2.0,
-                    max_attempts = 1, stream_idle_timeout = 5.0)
+                cfg = UniLM.RequestConfig(request_timeout = 4.0, total_deadline = 10.0,
+                    max_attempts = 1, stream_idle_timeout = 0.5)
                 fetch(chatrequest!(chat; config = cfg))
             end
             ok = try
                 outcome[1] === :ok && let res = outcome[2]
-                    res isa LLMCallError && res.status === nothing && res.cause isa UniLM.UniLMTimeout
+                    res isa LLMCallError && res.cause isa UniLM.UniLMTimeout &&
+                        res.cause.phase === :stream_idle && res.cause.limit == 0.5
                 end
             catch
                 false

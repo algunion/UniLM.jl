@@ -1329,11 +1329,12 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
             # so no text/output is built. Request identity encoding and disable
             # decompression so `data:` lines arrive verbatim (mirrors _stream_attempt).
             stream_headers = push!(copy(auth_header(r.service)), "Accept-Encoding" => "identity")
+            ctx = HTTP.RequestContext()   # the attempt's; its first-byte deadline aborts through it
             # Seam-routed: _http_open applies the native stream kwargs plus
             # status_exception=false and retry=false and aborts the exchange on
             # `ctl.stop`; decompress=false passes through.
             resp = _http_open("POST", url, stream_headers; cfg=cfg, t0=t0, cancel=ctl.stop,
-                              decompress=false) do io
+                              context=ctx, decompress=false) do io
                 io_ref[] = io
                 done = Ref(false)
                 # First byte = response headers received. The request-phase deadline guards
@@ -1344,7 +1345,7 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
                         write(io, body)
                         HTTP.closewrite(io)
                         HTTP.startread(io)
-                    end, () -> close(io),
+                    end, () -> _abort_request_phase(io, ctx),
                     min(_remaining_s(cfg, t0), cfg.request_timeout), :request, bound)
                 # Byte-gap guard: reset on every raw read (SSE comments and provider
                 # keep-alives reset the clock by construction).
@@ -1484,10 +1485,11 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
             # (connect/TLS labels), found by chain walk.
             u = _unwrap_exception(e)
             # A recorded request-phase bound takes precedence over whatever the
-            # library surfaced while unwinding it (e.g. EPIPE from writing to the
-            # socket the bound closed); with no displacement it equals the timeout
-            # the attempt already threw, and it never masks an error that arrived
-            # with no bound fired.
+            # library surfaced while unwinding it (the `HTTP.CanceledError` of the
+            # context the bound cancelled, or EPIPE from writing to the aborted
+            # connection); with no displacement it equals the timeout the attempt
+            # already threw, and it never masks an error that arrived with no bound
+            # fired.
             bt = bound[]
             mapped = bt !== nothing ? bt :
                      u isa UniLMTimeout ? u :

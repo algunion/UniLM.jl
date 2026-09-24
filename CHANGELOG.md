@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.20.0
+
 ### Breaking
 - **Requirements:** Julia 1.13 or later, HTTP.jl 2.7.1 or later within the 2.x major,
   and JSON.jl 1.8.1 or later. HTTP.jl 1.x is no longer supported, and with it go the

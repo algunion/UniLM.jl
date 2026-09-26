@@ -11,11 +11,12 @@ Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 UniLM = "2a65a866-de6b-4bc8-8daf-c130204fdf93"
 
-[sources]
-UniLM = {path = ".."}
+[sources.UniLM]
+path = ".."
 
 [compat]
 Aqua = "0.8"
 HTTP = "2.7.1"
 JET = "0.12"
 JSON = "1.8.1"
+UniLM = "0.20"

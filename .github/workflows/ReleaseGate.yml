@@ -8,6 +8,8 @@ on:
     branches:
       - 'release/**'
   workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   release-gate:
     name: JET whole-package gate (latest stable Julia)
@@ -28,13 +30,13 @@ jobs:
     # only add JET's load and analysis cost to the timing-sensitive streaming
     # and deadline tests.
     steps:
-      - uses: actions/checkout@v7
-      - uses: julia-actions/setup-julia@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3.0.2
         with:
           version: '1'
           arch: x64
-      - uses: julia-actions/cache@v3
-      - uses: julia-actions/julia-buildpkg@v1
+      - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3.1.0
+      - uses: julia-actions/julia-buildpkg@e3eb439fad4f9aba7da2667e7510e4a46ebc46e1 # v1.7.0
       # The oracle for this gate. It runs in its own process, before the test
       # suite, and analyses the package exactly as `using UniLM` leaves it: no
       # coverage instrumentation, and none of the mock endpoints or test-only
@@ -82,11 +84,11 @@ jobs:
     # Keyless, like the JET job above: no provider API keys and no coverage
     # upload, so the gate stays zero-spend and runs without repository secrets.
     steps:
-      - uses: actions/checkout@v7
-      - uses: julia-actions/setup-julia@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3.0.2
         with:
           version: '1'
           arch: x64
-      - uses: julia-actions/cache@v3
-      - uses: julia-actions/julia-buildpkg@v1
-      - uses: julia-actions/julia-runtest@v1
+      - uses: julia-actions/cache@a45e8fa8be21c18a06b7177052533149e61e9b38 # v3.1.0
+      - uses: julia-actions/julia-buildpkg@e3eb439fad4f9aba7da2667e7510e4a46ebc46e1 # v1.7.0
+      - uses: julia-actions/julia-runtest@6e050c8013b833b1195105ff2fce9cd802f53271 # v1.12.0

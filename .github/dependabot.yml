@@ -1,0 +1,32 @@
+# Weekly update pull requests for the package, its test and docs environments,
+# and the workflow actions (pinned to commit SHAs with the version as a comment).
+version: 2
+updates:
+  - package-ecosystem: "julia"
+    directories:
+      - "/"
+      - "/test"
+      - "/docs"
+    schedule:
+      interval: "weekly"
+    # Propose a release only once it has been public for a week, so a
+    # compromised version has time to be caught and yanked upstream first.
+    cooldown:
+      default-days: 7
+    # The test and docs environments always load the package from this
+    # checkout, so a compat bound on UniLM there would only stop them from
+    # resolving at the next version bump.
+    ignore:
+      - dependency-name: "UniLM"
+    groups:
+      julia:
+        patterns: ["*"]
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

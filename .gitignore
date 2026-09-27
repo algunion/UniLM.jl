@@ -10,4 +10,5 @@ grounding/
 docs/superpowers/
 .superpowers/
 /.claude/
+.DS_Store
 

@@ -78,6 +78,5 @@ assert_doc_coverage(UniLM, joinpath(@__DIR__, "src"), KNOWN_UNDOCUMENTED)
 deploydocs(;
     repo="github.com/algunion/UniLM.jl",
     devbranch="main",
-    push_preview=true,
     versions=["stable" => "v^", "v#.#.#", "dev" => "dev"],
 )

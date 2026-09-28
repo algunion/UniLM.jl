@@ -12,8 +12,13 @@
   now on, with every page at its URL and every section and docstring at its anchor.
   Documenter still runs every example, expands the docstrings, resolves the
   cross-references and checks that every export is documented; the site is built from its
-  output and published with Documenter's versioned deployment, so `stable` and the version
-  list behave as before, and the pages of earlier releases stay as they were.
+  output and published with Documenter's versioned deployment. As before, `/stable/` points
+  at the newest release, the root redirects to `/stable/`, and each release is added to the
+  version list (`versions.js`) that the version menu of earlier releases' pages reads; those
+  pages stay as they were, their menu included. The new site has no version menu: its
+  header shows which version it documents. Documenter's `objects.inv` inventory, which
+  other manuals resolve cross-references against, is not published for `dev`, for the
+  releases from now on or for a redeployed release; earlier releases keep theirs.
 - A manual run of the Documentation workflow on `main` with `redeploy_version` (such as
   `v0.22.0`) publishes the current manual as that release's docs, in its folder, without a
   new release. It is refused before anything is built unless it runs on `main`, the

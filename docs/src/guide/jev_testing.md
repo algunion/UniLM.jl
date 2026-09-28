@@ -137,7 +137,9 @@ files sends a different option order from the image than with
 
 [`with_recorded_answers`](@ref)`(f, dir; mode)` runs `f()` with every System One
 exchange inside it — [`ask`](@ref), and so `nl_dispatch` and [`@branch`](@ref),
-and [`list_models`](@ref) — passing through a directory of recordings:
+and [`list_models`](@ref) — and every non-streaming LLM request — `chatrequest!`,
+`respond`, `embeddingrequest!`, and so the tool loops — passing through a
+directory of recordings:
 
 | `mode` | Behaviour |
 | :--- | :--- |
@@ -147,9 +149,9 @@ and [`list_models`](@ref) — passing through a directory of recordings:
 
 - **One file per request.** A recording is `<dir>/<key>.json`, where `key` is the
   SHA-256 of the request line and the exact request body. The file holds the
-  request, the response body with its request id, and the time of recording,
-  pretty-printed so a diff is readable. The API key and the headers are never
-  written.
+  request, the response body with its request id and the name of the header
+  that carried it, and the time of recording, pretty-printed so a diff is
+  readable. The API key and every other header are never written.
 - **The key is the exact request.** It is never a canonical form, because the
   order of a Choice's options and of the state's keys moves the answer: a
   reordered request is a different request, with a recording of its own. So is a

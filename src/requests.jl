@@ -1430,6 +1430,11 @@ Non-streaming (`chat.stream !== true`): returns `LLMSuccess`, `LLMFailure`, or
 backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`,
 `total_deadline`; `Retry-After` honored). Timeouts surface as `LLMCallError` with
 `status = nothing` and the `UniLMTimeout` in `cause` — no fabricated HTTP statuses.
+Inside a [`with_recorded_answers`](@ref) scope the request passes through the
+recordings, and one the scope cannot replay — no recording in `:replay` mode, or a
+recording file that cannot be read — throws [`ReplayMissError`](@ref) instead of
+returning: a gap in the recordings is not a service failure. A streamed call is
+never recorded.
 
 Streaming (`chat.stream === true`): returns a `Task` whose `fetch` yields the same
 typed results. `callback(chunk::Union{String,Message}, close::Ref{Bool})` receives
@@ -1489,8 +1494,10 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
     chat.stream === true && return _chatrequeststream(chat, body, callback; on_tool_call, cfg, t0, cancel=tok)
     local resp
     try
-        resp = _http_with_retries(cfg, t0, "POST", get_url(chat),
-                                  auth_header(chat.service), body; cancel=tok)
+        url = get_url(chat)
+        resp = _recorded_exchange("POST", url, body, t0, tok) do
+            _http_with_retries(cfg, t0, "POST", url, auth_header(chat.service), body; cancel=tok)
+        end
         if resp.status == 200
             extracted = decode_response(chat.service, resp)
             update!(chat, extracted.message)
@@ -1505,7 +1512,10 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
                               self=chat, request_id=_get_request_id(resp))
         end
     catch e
-        e isa InterruptException && rethrow()
+        # A missing recording is not a service failure, nor is a paid reply whose
+        # recording could not be written: both reach the caller, as from `ask`.
+        e isa Union{InterruptException,ReplayMissError} && rethrow()
+        e isa _UnwrittenRecording && throw(e.cause)
         e isa UniLMTimeout && return LLMCallError(error=sprint(showerror, e), self=chat,
                                                   status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
@@ -1578,7 +1588,9 @@ resulting vectors are filled into `emb.embeddings` in place and are also reachab
 Transient statuses (408/429/500/502/503/504/529) are retried with backoff and jitter
 under the resolved [`RequestConfig`](@ref) (`config === nothing` resolves the ambient
 configuration). Timeouts surface as `EmbeddingCallError` with `status = nothing` and
-the `UniLMTimeout` in `cause`.
+the `UniLMTimeout` in `cause`. Inside a [`with_recorded_answers`](@ref) scope the
+request passes through the recordings, and one the scope cannot replay throws
+[`ReplayMissError`](@ref) instead of returning an `EmbeddingCallError`.
 
 `cancel::Union{Nothing,CancelToken}` (`nothing`: the ambient token of
 [`with_cancel`](@ref)): a cancel ends the call with `EmbeddingCallError(status=nothing,
@@ -1597,8 +1609,10 @@ function embeddingrequest!(emb::Embeddings; config::Union{Nothing,RequestConfig}
     t0 = time_ns()
     try
         body = JSON.json(emb)
-        resp = _http_with_retries(cfg, t0, "POST", get_url(emb),
-                                  auth_header(emb.service), body; cancel=tok)
+        url = get_url(emb)
+        resp = _recorded_exchange("POST", url, body, t0, tok) do
+            _http_with_retries(cfg, t0, "POST", url, auth_header(emb.service), body; cancel=tok)
+        end
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
             update!(emb, data["data"])
@@ -1607,7 +1621,8 @@ function embeddingrequest!(emb::Embeddings; config::Union{Nothing,RequestConfig}
             return EmbeddingFailure(response=String(resp.body), status=resp.status)
         end
     catch e
-        e isa InterruptException && rethrow()
+        e isa Union{InterruptException,ReplayMissError} && rethrow()
+        e isa _UnwrittenRecording && throw(e.cause)
         e isa UniLMTimeout && return EmbeddingCallError(error=sprint(showerror, e),
                                                         status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing

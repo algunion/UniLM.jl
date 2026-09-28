@@ -1641,8 +1641,11 @@ issuccess(r) && println(r["department"].choice, " ", r["urgency"].score, " ", r[
 
 Identical requests are not answered identically, so tests and docs builds
 replay recorded answers. Inside the scope, every `ask` (hence `nl_dispatch` and
-`@branch`) and `list_models` exchanges through `dir`; scopes cover spawned tasks
-and nest (an inner scope's service is the enclosing scope).
+`@branch`) and `list_models`, and every non-streaming `chatrequest!`, `respond` and
+`embeddingrequest!` (hence `tool_loop!` and `tool_loop`), exchanges through `dir`;
+everything else, including streaming, reaches the network as usual (images, audio,
+files, MCP, the Responses lifecycle operations). Scopes cover spawned tasks and
+nest (an inner scope's service is the enclosing scope).
 
 ```julia
 with_recorded_answers(f, dir::AbstractString; mode::Symbol=:replay)   # -> f()
@@ -1652,15 +1655,20 @@ with_recorded_answers(f, dir::AbstractString; mode::Symbol=:replay)   # -> f()
     # :record_missing replay what dir holds; call and record the rest; an unreadable
     #                 file throws ReplayMissError (never overwritten)
     # both recording modes create dir and prove it writable before f runs (else ArgumentError);
-    #   a recording that cannot be written after a paid answer throws its I/O error out of ask
-    # file: <dir>/<key>.json, key = lowercase hex sha256("<METHOD> <path>\n" * exact body)
-    # {"request": {method, path, body}, "response": {status, request_id, body}, "recorded_at"}
+    #   a recording that cannot be written after a paid answer throws its I/O error out of the verb
+    # file: <dir>/<key>.json, key = lowercase hex sha256("<METHOD> <path>\n" * exact body),
+    #   <path> = the request URL's path alone (no host, no query)
+    # {"request": {method, path, body},
+    #  "response": {status, request_id, request_id_header, body}, "recorded_at"}
+    #   request_id_header: "x-typesafe-request-id" | "x-request-id" | "request-id", the one header
+    #   kept; absent when the reply carried no id, and in recordings made before it existed,
+    #   which replay their id as "x-typesafe-request-id"
 
-struct ReplayMissError <: Exception       # thrown out of ask/list_models, never a SystemOneCallError
+struct ReplayMissError <: Exception       # thrown out of the recorded verbs, never a *CallError
     dir::String
     key::String
     method::String                        # "POST" | "GET"
-    path::String                          # "/v1/systemone" | "/v1/models"
+    path::String                          # "/v1/systemone" | "/v1/models" | "/v1/chat/completions" | …
     body::String                          # the exact request body ("" for GET)
     reason::String                        # "no recording" | "unreadable recording: <what is wrong>"
 end

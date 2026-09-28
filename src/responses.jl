@@ -1609,7 +1609,10 @@ decode_agentic_stream(service::OpenAIWireEndpointSpec, chunk::String, state::Age
 
 Send a request to the OpenAI Responses API.
 
-Returns `ResponseSuccess`, `ResponseFailure`, or `ResponseCallError`.
+Returns `ResponseSuccess`, `ResponseFailure`, or `ResponseCallError`. Inside a
+[`with_recorded_answers`](@ref) scope a non-streaming request passes through the
+recordings, and one the scope cannot replay throws [`ReplayMissError`](@ref)
+instead of returning a `ResponseCallError`; a streamed call is never recorded.
 
 Per-call `config::RequestConfig` overrides timeouts and the retry budget
 (`max_attempts`); the process/scoped defaults apply otherwise.
@@ -1667,7 +1670,9 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
     local resp
     try
         url = get_url(r.service, r)
-        resp = _http_with_retries(cfg, t0, "POST", url, auth_header(r.service), body; cancel=tok)
+        resp = _recorded_exchange("POST", url, body, t0, tok) do
+            _http_with_retries(cfg, t0, "POST", url, auth_header(r.service), body; cancel=tok)
+        end
         if resp.status == 200
             decoded = decode_agentic(r.service, resp)
             # A generation that came back `failed` is a failure, whichever way it was
@@ -1685,7 +1690,10 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
-        e isa InterruptException && rethrow()
+        # As in `ask`: a missing recording, or the I/O error of a paid reply's lost
+        # recording, reaches the caller instead of reading as a service failure.
+        e isa Union{InterruptException,ReplayMissError} && rethrow()
+        e isa _UnwrittenRecording && throw(e.cause)
         return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end

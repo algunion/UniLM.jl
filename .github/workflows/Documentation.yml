@@ -6,13 +6,18 @@ on:
   pull_request:
     branches: [main]
   # Allow manual (re)builds for any ref — e.g. to (re)deploy versioned docs for a
-  # release tag whose TagBot push did not trigger this workflow.
+  # release tag whose TagBot push did not trigger this workflow, or to redeploy a
+  # released version's docs, built from the dispatched ref, into its folder.
   workflow_dispatch:
     inputs:
       live_examples:
         description: Run billed examples using configured provider API keys
         type: boolean
         default: false
+      redeploy_version:
+        description: Redeploy this release's docs (e.g. v0.22.0) from the dispatched ref; refused unless its tag exists and src/ and Project.toml equal the tag's
+        type: string
+        default: ''
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
@@ -22,8 +27,18 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      REDEPLOY_VERSION: ${{ inputs.redeploy_version }}
     steps:
+      - name: Refuse to redeploy a live build
+        if: inputs.live_examples && inputs.redeploy_version
+        run: |
+          echo "::error::redeploy_version needs live_examples off: a live build is never deployed"
+          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # a redeploy compares the checkout with the release's tag
+          fetch-tags: ${{ inputs.redeploy_version != '' }}
       - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3.0.2
         with:
           version: '1'
@@ -34,17 +49,20 @@ jobs:
             using Pkg
             Pkg.develop(PackageSpec(path=pwd()))
             Pkg.instantiate()'
+      # The gh-pages folder the site is built for: the release being redeployed (refused
+      # here, before anything is built, unless its tag exists and src/ and Project.toml
+      # equal the tag's), the version tag being built, else dev.
+      - name: Choose the site's folder
+        id: site
+        run: julia --project=docs/ docs/deploy.jl plan >> "$GITHUB_OUTPUT"
       # Automatic builds and releases replay the recorded answers without provider keys.
       # A live build incurs API spend, requires an explicit manual opt-in, and only
       # checks that the examples still run: its outputs differ from the recorded ones
       # the prose quotes, so it is never deployed.
-      - name: Build and deploy (offline examples)
+      - name: Build the manual (offline examples)
         if: github.event_name != 'workflow_dispatch' || !inputs.live_examples
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
         run: julia --project=docs/ docs/make.jl
-      - name: Build with live examples (not deployed)
+      - name: Build the manual with live examples (not deployed)
         if: github.event_name == 'workflow_dispatch' && inputs.live_examples
         env:
           UNILM_DOCS_LIVE: '1'
@@ -54,3 +72,24 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
         run: julia --project=docs/ docs/make.jl
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Install the site's dependencies
+        working-directory: site
+        run: npm ci
+      - name: Build the site
+        working-directory: site
+        env:
+          DOCS_BASE_PATH: ${{ steps.site.outputs.base_path }}
+          NEXT_PUBLIC_DOCS_VERSION: ${{ steps.site.outputs.version }}
+        run: npm run build
+      # Pull requests and live builds are built only.
+      - name: Deploy the site
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.live_examples)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
+        run: julia --project=docs/ docs/deploy.jl

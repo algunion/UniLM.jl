@@ -10,7 +10,7 @@
 # version, never stable, so its pages keep working after stable moves on.
 #
 #   julia --project=docs docs/deploy.jl plan     the folder to build for, printed as
-#                                                `version=…` and `base_path=…` lines
+#                                                `folder=…`, `base_path=…` and `version=…` lines
 #   julia --project=docs docs/deploy.jl dry-run  Documenter's decision; deploys nothing
 #   julia --project=docs docs/deploy.jl          deploys (the Documentation workflow)
 #
@@ -98,7 +98,7 @@ deploy(cfg::Documenter.DeployConfig; kwargs...) =
 
 if ARGS == ["plan"]
     f = folder(REDEPLOY, get(ENV, "GITHUB_REF", ""))
-    println("version=$f\nbase_path=$SITE_PATH/$f")
+    println("folder=$f\nbase_path=$SITE_PATH/$f\nversion=$f")
 elseif ARGS == ["dry-run"]
     # the question deploydocs asks, with its defaults for devurl and push_preview
     d = Documenter.deploy_folder(config(); repo = REPO, devbranch = DEVBRANCH, devurl = "dev", push_preview = false)

@@ -13,7 +13,7 @@ include(joinpath(@__DIR__, "undocumented_allowlist.jl"))
 # After a recording run, commit the new files in docs/recorded_answers.
 const HAS_TYPESAFE_KEY = !isempty(strip(get(ENV, "TYPESAFE_API_KEY", "")))
 const RECORD_FLAG = get(ENV, "UNILM_DOCS_RECORD", "")
-RECORD_FLAG in ("", "0", "1") || error("UNILM_DOCS_RECORD must be 1 or unset; got $(repr(RECORD_FLAG))")
+RECORD_FLAG in ("", "0", "1") || error("UNILM_DOCS_RECORD must be 1, 0 or unset; got $(repr(RECORD_FLAG))")
 RECORD_FLAG == "1" && !HAS_TYPESAFE_KEY &&
     error("UNILM_DOCS_RECORD=1 records answers from the live service and needs TYPESAFE_API_KEY")
 const ANSWERS_MODE = RECORD_FLAG == "1" ? :record_missing : HAS_TYPESAFE_KEY ? nothing : :replay

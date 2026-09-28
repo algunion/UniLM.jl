@@ -143,6 +143,12 @@ end
 The late-parcel draft tells the customer about the ParcelNow strike, which only
 the internal note says, and is blocked. The damaged-phone draft passes.
 
+!!! details "Evidence"
+    This example was chosen, not typical: we drafted the late-parcel reply with
+    three different internal notes, and one of the three drafts repeated its note
+    to the customer. That is the draft shown here — a check is there for the
+    draft that slips, not for the average one.
+
 **Tune it**
 
 - **Show the check what the drafting LLM saw.** Jev judges only its state: it

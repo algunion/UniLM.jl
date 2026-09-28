@@ -36,26 +36,43 @@ const FIXTURE_PAGES = ["Home" => "index.md",
                        "Guide" => ["Everything" => "guide.md", "Escaping" => "escaping.md"],
                        "Reference" => ["API" => "api.md"]]
 
-build(root::String, site::String; pages = []) =
+build(root::String, site::String; pages = [], modules = [WriterFixture]) =
     makedocs(; root, source = "src", build = mktempdir(), sitename = "Fixture", format = SiteMarkdoc(site),
-             remotes = nothing, doctest = false, checkdocs = :none, modules = [WriterFixture], pages,
+             remotes = nothing, doctest = false, checkdocs = :none, modules, pages,
              warnonly = [:missing_docs, :cross_references])
 
 "The error a manual of `files` (path under `src/` => Markdown) stops with (`nothing` if it builds)."
-function build_error(files::Dict{String,String})
+function build_error(files::Dict{String,String}; modules = [WriterFixture])
     root = mktempdir()
     for (path, markdown) in files
         mkpath(dirname(joinpath(root, "src", path)))
         write(joinpath(root, "src", path), markdown)
     end
     try
-        build(root, joinpath(root, "site"))
+        build(root, joinpath(root, "site"); modules)
         nothing
     catch err
         err
     end
 end
-build_error(markdown::String) = build_error(Dict("index.md" => markdown))
+build_error(markdown::String; modules = [WriterFixture]) = build_error(Dict("index.md" => markdown); modules)
+
+"Loads the package `name` with the file `src/<name>.jl` holding `source`: its docstrings then have a package source."
+function load_package(name::String, source::String)
+    root = mktempdir()
+    mkpath(joinpath(root, name, "src"))
+    write(joinpath(root, name, "Project.toml"), "name = \"$name\"\nuuid = \"8d6c5b8e-3b7a-4f7e-9c1d-2a4b6c8d0e1f\"\n")
+    write(joinpath(root, name, "src", "$name.jl"), source)
+    pushfirst!(LOAD_PATH, root)
+    pushfirst!(DEPOT_PATH, mktempdir())  # its precompile cache goes to a scratch depot
+    try
+        Core.eval(Main, :(import $(Symbol(name))))
+    finally
+        popfirst!(LOAD_PATH)
+        popfirst!(DEPOT_PATH)
+    end
+    Core.eval(Main, Symbol(name))  # in the world the import made
+end
 
 paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
 
@@ -182,6 +199,7 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
             "```@index\n```" => "Documenter.IndexNode",
             "```@contents\n```" => "Documenter.ContentsNode",
             "```math\nx^2\n```" => "MarkdownAST.DisplayMath",
+            "The value \$1 + 1\$ holds." => "MarkdownAST.InlineMath, \"1 + 1\"",
             "A remark[^1].\n\n[^1]: The remark." => "MarkdownAST.FootnoteLink",
             "!!! danger\n    Careful." => "`!!! danger`",
             "```@example\nMain.WriterFixture.Picture()\n```" => "image/png",
@@ -193,15 +211,33 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
             err = build_error("# Page\n\n" * markdown * "\n")
             @test err isa WriterError && err.page == "index.md" && occursin(named, err.what)
         end
-        # A double-backtick span is a code span, not mathematics: it builds, and shows as code.
+        err = build_error("Text before the title.\n\n# Page\n")
+        @test err isa WriterError && occursin("does not open with its title", err.what)
+        err = build_error(Dict("index.md" => "# Home\n", "a.md" => "# A\n", "a/index.md" => "# A index\n"))
+        @test err isa WriterError && err.page == "a/index.md" && occursin("route /a/ is also the route of a.md", err.what)
+    end
+
+    @testset "inline mathematics is code only where its source writes a double-backtick span" begin
         root = mktempdir()
         mkpath(joinpath(root, "src"))
         write(joinpath(root, "src", "index.md"), "# Page\n\nAsk ``\"Does `a` cover `b`?\"`` first.\n")
         build(root, joinpath(root, "site"))
         @test occursin("``\"Does `a` cover `b`?\"``", read(joinpath(root, "site", "src", "app", "page.md"), String))
-        err = build_error("Text before the title.\n\n# Page\n")
-        @test err isa WriterError && occursin("does not open with its title", err.what)
-        err = build_error(Dict("index.md" => "# Home\n", "a.md" => "# A\n", "a/index.md" => "# A index\n"))
-        @test err isa WriterError && err.page == "a/index.md" && occursin("route /a/ is also the route of a.md", err.what)
+
+        # A docstring's source is its package's src/**/*.jl, not the page that shows it.
+        mathdocs = load_package("MathDocs", raw"""
+            module MathDocs
+            "Squares: ``x^2``."
+            square(x) = x^2
+            "Adds: \$1 + 1\$."
+            two() = 2
+            end
+            """)
+        write(joinpath(root, "src", "index.md"), "# Page\n\n```@docs\nMathDocs.square\n```\n")
+        build(root, joinpath(root, "site"); modules = [mathdocs])
+        @test occursin(raw"Squares\: `x^2`\.", read(joinpath(root, "site", "src", "app", "page.md"), String))
+        err = build_error("# Page\n\nThe page writes ``1 + 1``.\n\n```@docs\nMathDocs.two\n```\n"; modules = [mathdocs])
+        @test err isa WriterError && err.page == "index.md" &&
+              occursin("MarkdownAST.InlineMath, \"1 + 1\"", err.what) && occursin("package source", err.what)
     end
 end

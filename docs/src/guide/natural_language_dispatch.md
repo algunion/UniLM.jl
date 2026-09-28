@@ -23,6 +23,10 @@ restricted to the methods the call can reach; the answer is one of its entries b
 construction; and a combination no method covers is refused before anything is
 sent, instead of surfacing as a `MethodError` after the request was billed.
 
+Every block that calls Jev runs when this page is built, so what it prints is a
+real answer — a live call, or a recorded live answer when the build has no API
+key. The numbers in the prose are measurements, not what a block prints.
+
 ## The sixty-second version
 
 Write one method per meaning. [`meanings`](@ref) shows exactly what will be
@@ -71,18 +75,20 @@ piece of state into the instance to call with.
 pin at least one positional argument to a *concrete* meaning, in definition
 order: the world age each method was defined in. The options therefore follow
 the order in which the methods were defined — in a file, a script or a REPL
-session — and [`meanings`](@ref) previews it faithfully; methods defined
-together, as a package image activates them, fall back to source file and line.
-Redefining a method, by editing its body in a running session for instance,
-gives it a new world age and moves its meaning to the end. The order is part of
-what the model reads ([Definition order is an input](@ref nl_dispatch_order)).
-A method with no concrete meaning anywhere in its signature — a wildcard
-`f(::Meaning, x)`, or a method with no `Meaning` at all — is an ordinary method
-and is skipped. Every method that *is* collected must agree with the others on
-positional arity and on which positions are meaning slots, because one set of
-questions has to serve all of them; a disagreement is an `ArgumentError` naming
-both methods, raised before any request goes out. Varargs cannot carry a
-meaning.
+session — and [`meanings`](@ref) previews it faithfully. Methods loaded from a
+package image share one world and fall back to source file path, then line —
+not `include` order — so a function whose meanings span several files offers
+them in a different order from the image than with `--compiled-modules=no`; keep
+one function's meanings in one file. Redefining a method, by editing its body in
+a running session for instance, gives it a new world age and moves its meaning
+to the end. The order is part of what the model reads ([Definition order is an
+input](@ref nl_dispatch_order)). A method with no concrete meaning anywhere in
+its signature — a wildcard `f(::Meaning, x)`, or a method with no `Meaning` at
+all — is an ordinary method and is skipped. Every method that *is* collected
+must agree with the others on positional arity and on which positions are
+meaning slots, because one set of questions has to serve all of them; a
+disagreement is an `ArgumentError` naming both methods, raised before any
+request goes out. Varargs cannot carry a meaning.
 
 **How the request is built.** One [`choice`](@ref) question per slot, all in a
 single [`ask`](@ref):
@@ -217,11 +223,13 @@ reply(nl"a rant"(), nl"a calm tone"(), "…")   # no request; ordinary dispatch
 
 Prefer the first: a backstop tells you nothing about *why* it fired, while a
 catch-all meaning comes back with a name and a probability. A backstop also
-covers every combination, so once it exists `meaning_gaps` cannot report the
-method you forgot. Note what the wildcard is not allowed to be — a method that
-pins some slots and leaves others wild, such as
-`reply(::nl"a complaint", ::Meaning, msg)`, disagrees with the other methods
-about which positions are slots, and [`meanings`](@ref) and
+covers every combination that has no method, so once it exists `meaning_gaps`
+cannot report the method you forgot. It does not settle an *ambiguous*
+combination, which two methods match with neither more specific: the error
+names both, and a method for their intersection settles it. Note what the
+wildcard is not allowed to be — a method that pins some slots and leaves others
+wild, such as `reply(::nl"a complaint", ::Meaning, msg)`, disagrees with the
+other methods about which positions are slots, and [`meanings`](@ref) and
 [`nl_dispatch`](@ref) both reject it with an `ArgumentError` rather than send a
 question list that does not match the method table. Wildcard *every* slot or
 none of them.
@@ -262,19 +270,27 @@ on the argument types, so does what a fixed `min_confidence` means ([Confidence
 and control](@ref nl_dispatch_control)).
 
 This also makes the interface open. The option list is the method table, and a
-method table is extensible from anywhere — a downstream module or a package that
-does not own `handle` can add `handle(::nl"a refund request", who::String)`, and
-from the next call with a `String` on, it is one more option the model may
-choose. Nothing central enumerates the meanings, so adding a case never means
-editing a list in two places.
+method table is extensible from anywhere: a package that does not own `handle`
+can add a method on an ordinary argument type it owns —
+`handle(::nl"a refund request", t::MyTicket)` — and from the next call with a
+`MyTicket` on, it is one more option the model may choose. Nothing central
+enumerates the meanings, so adding a case never means editing a list in two
+places. A method on types the package does not own —
+`handle(::nl"a refund request", who::String)` added to someone else's `handle` —
+is type piracy: it changes what every caller with a `String` is offered, and two
+packages that add the same one collide silently, the one loaded last winning.
+Coordinate such a case with the owner of the function.
 
 ## [Confidence and control](@id nl_dispatch_control)
 
 A Choice answer always names a winner, even when the distribution is nearly
 flat, so the default gate is `confidence` rather than `choice`. `confidence`
 measures how concentrated the distribution is — all the mass on one option gives
-1.0, a flat spread gives a low number — and says nothing about whether the
-winner is *correct* ([Confidence](https://docs.typesafe.ai/confidence)).
+1.0, a flat spread gives a low number. The probabilities are calibrated across
+groups of answers, which is what makes a gate worth tuning, but that is not a
+guarantee about one answer: a high confidence says the distribution is peaked,
+not that the winner is *correct*
+([Confidence](https://docs.typesafe.ai/confidence)).
 
 ```@example nldispatch
 unclear = "Your update deleted my saved cards and now I've been billed for a plan I cancelled."
@@ -323,7 +339,7 @@ runs. The keywords:
 | Keyword | Meaning |
 | :--- | :--- |
 | `min_confidence` | threshold in `0 … 1`; below it, `fallback` runs or [`LowConfidenceError`](@ref) is thrown |
-| `decide` | a policy called with the slot's [`ChoiceAnswer`](@ref) — one callable for every slot, or a `Vector` with one per slot — returning an offered meaning, or `nothing` to decline: `fallback` runs or [`DecisionDeclinedError`](@ref) is thrown. Excludes a nonzero `min_confidence` |
+| `decide` | a policy called with the slot's [`ChoiceAnswer`](@ref) — one callable for every slot, or a `Vector` with one per slot — returning an offered meaning, or `nothing` to decline: `fallback` runs or [`DecisionDeclinedError`](@ref) is thrown. Excludes a nonzero `min_confidence` (in `@branch`, any `min_confidence`) |
 | `fallback` | called with the caller's `args...` when the policy declines |
 | `instructions` | a `String` for every slot, or a `Vector` with one entry per slot; default is the generic instruction above |
 | `state` | send this instead of the object built from the ordinary arguments |
@@ -372,18 +388,18 @@ end
 ```
 
 Measured on jev-1.13.0 (September 2026) on our own labeled sets, in the form
-`nl_dispatch` sends: reversing the order changed the routed method for 4 of 33
-ambiguous tickets, and the first-listed meaning gained about 3 percentage points
-on average. The ticket above went from P = 0.55 to 0.04 for the money-back
-meaning. Clear-cut inputs did not move (≈ 0.01), and every flip we saw had a
-confidence of 0.6 or less. So:
+`nl_dispatch` sends: across seven rotations of the option order, the routed
+method changed for 4 of 33 ambiguous tickets, and the first-listed meaning
+gained about 3 percentage points on average; clear-cut inputs did not move
+(≈ 0.01). When we measured the ticket above, reversing the order took the
+money-back meaning from P = 0.55 to 0.04 and gave "charged twice or
+unexpectedly" 0.92. A flip can land on a confident answer: a confidence gate
+declines only the shaky side of it. The defences are in the option list itself:
 
-- fix ambiguity in the meanings, not in the order — two overlapping meanings are
-  what give the order something to decide;
-- keep the order stable once thresholds are tuned: a new method, or a redefined
-  one, changes it;
-- gate with a threshold or a policy: every answer the order flipped was one a
-  gate above 0.6 declines.
+- fix ambiguity in the meanings, not in the order — distinct, non-overlapping
+  meanings leave the order nothing to decide;
+- choose the order deliberately and keep it stable once thresholds are tuned: a
+  new method, or a redefined one, changes it.
 
 ## `@branch`: the inline form
 
@@ -411,26 +427,31 @@ Every line is `option => expression`:
   that name. It is the only way to do so.
 - A final `_ => expression` is the fallback taken when the decision policy
   declines: the winner's confidence is below `min_confidence`, or `decide`
-  returned `nothing`. It *requires* one of the two: without a policy nothing is
-  ever declined and the line could never run, so that spelling is rejected.
+  returned `nothing`. It *requires* a policy: without one nothing is ever
+  declined and the line could never run. A block that names neither keyword is
+  rejected while the macro expands; one whose keyword sets no policy when it
+  runs — `decide = nothing`, or a `min_confidence` that is not positive — is
+  refused then, before any request.
 
 Keywords go between the state and the block, written `key = value`: `model`,
 `min_confidence`, `decide`, `instructions`, `service`, `config` and `cancel`,
-each meaning what it means for [`nl_dispatch`](@ref). Here `decide` is one
-callable, and it returns an option name — any of them, not only the winner — or
-`nothing` to take `_` (with no `_` line, [`DecisionDeclinedError`](@ref) is
-thrown).
+each meaning what it means for [`nl_dispatch`](@ref), except that `decide`
+excludes any `min_confidence`, zero included. Here `decide` is one callable, and
+it returns an option name — any of them, not only the winner — or `nothing` to
+take `_` (with no `_` line, [`DecisionDeclinedError`](@ref) is thrown).
 
 The whole block compiles to a **single** Choice request whose question is named
 `branch` and whose criteria are the option names, in source order. Only the
 selected body is evaluated — the others are not merely discarded, they never
-run — and the macro's value is that body's value. Everything that can be checked
-statically is checked while the macro expands, so it surfaces when the
-surrounding code is loaded rather than the first time the branch is reached: an
-unknown keyword, a block that is not `begin ... end`, a line that is not
-`option => expression`, no options at all, two `_` lines, a `_` that is not
-last, or `decide` together with `min_confidence`. A non-success call throws
-[`SystemOneError`](@ref); the branch is never guessed.
+run — and the macro's value is that body's value. The macro checks its syntax
+while it expands, so these mistakes surface when the surrounding code is loaded
+rather than the first time the branch is reached: an unknown keyword, a block
+that is not `begin ... end`, a line that is not `option => expression`, no
+options at all, two `_` lines, a `_` that is not last, or `decide` together with
+`min_confidence`. The option names are values, evaluated when the branch runs,
+so a duplicate or empty name — even a literal one — is refused then, still
+before any request. A non-success call throws [`SystemOneError`](@ref); the
+branch is never guessed.
 
 **Which to reach for.** `@branch` when the decision belongs to one call site and
 the arms are three lines of code — it keeps the options and their handling in
@@ -539,22 +560,30 @@ r = ask((ticket = "Is your refund policy the same for EU and US customers?",),
 [(form, r[form].choice, r[form].confidence) for form in ("sentences", "keys")]
 ```
 
-In our measurements the sentences answered "anything else" at confidence 0.97
-and the keys answered `refund` at confidence 0.6: the word in the question
-matched the key. On keyword traps in general, short keys were wrong more often,
-and confidently (the numbers are under Designing meanings above).
+When we measured this ticket, the sentences answered "anything else" at
+confidence 0.97 and the keys answered `refund` at confidence 0.6: the word in
+the question matched the key. On keyword traps in general, short keys were wrong
+more often, and confidently (the numbers are under Designing meanings above).
 
-**`Val` and a global `Dict` form one namespace for every loaded package.**
-`Val{:other}` is the same type in every module and a registry `Dict` is one
-object, so two packages that both register `:other` resolve by load order,
-silently. A package that writes into another module's `Dict` at top level does
-so while it precompiles, and the write is lost when the package is loaded from
-its cache; overwriting another module's method during precompilation leaves the
-package uncached.
+**A separate text registry drifts from the methods.** With `Val` keys the
+wording lives in a `Dict` beside the method table, and nothing keeps the two in
+step: a method can lack an entry, and an entry can outlive its method. A package
+that adds entries to another module's `Dict` at top level does so while it
+precompiles, and the writes are lost when the package is loaded from its cache.
+A sentence in the signature has no second table to drift from.
+
+Method collisions are the same for both spellings. `Val{:other}` and
+`nl"anything else"` are each one type in every loaded package, so two packages
+that both add `handle(::nl"anything else", ::String)` to a third package's
+`handle` define one method twice, and the one loaded last wins, silently. A
+module that owns neither the function nor an argument type is committing type
+piracy with either spelling. The remedy for both is a type the module owns.
 
 **Speed is not a reason.** Measured: resolving the options and dispatching took
-≈ 39 µs of local work against ≈ 300 ms for the request (0.013%), and dispatch
-on a `Val` and on a `Meaning` cost the same, ≈ 0.12 µs.
+≈ 39 µs of local work, uncached, against ≈ 300 ms for the request (0.013%), and
+dispatch on a `Val` and on a `Meaning` cost the same, ≈ 0.12 µs. `nl_dispatch`
+caches that plan — the options, argument names and gaps — per world, so after
+the first call it is looked up, not recomputed.
 
 Identity by sentence is content-addressed: two modules that write the same
 sentence mean the same thing, and an edited sentence is a new meaning. When you

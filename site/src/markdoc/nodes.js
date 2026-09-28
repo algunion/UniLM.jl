@@ -5,6 +5,7 @@ import yaml from 'js-yaml'
 import { DocLink } from '@/components/DocLink'
 import { DocsLayout } from '@/components/DocsLayout'
 import { Fence } from '@/components/Fence'
+import { Table } from '@/components/Table'
 
 let documentSlugifyMap = new Map()
 
@@ -71,6 +72,10 @@ const nodes = {
         children,
       )
     },
+  },
+  table: {
+    ...defaultNodes.table,
+    render: Table,
   },
   th: {
     ...defaultNodes.th,

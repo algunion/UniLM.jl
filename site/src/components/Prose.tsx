@@ -14,6 +14,8 @@ export function Prose<T extends React.ElementType = 'div'>({
       className={clsx(
         className,
         'prose max-w-none prose-slate dark:text-slate-400 dark:prose-invert',
+        // a word or code span wider than a narrow column breaks inside it
+        'wrap-break-word',
         // headings
         'prose-headings:scroll-mt-28 prose-headings:font-display prose-headings:font-normal lg:prose-headings:scroll-mt-34',
         // lead

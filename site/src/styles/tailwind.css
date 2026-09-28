@@ -46,3 +46,75 @@
     display: none;
   }
 }
+
+/* Overrides of Tailwind Typography's prose styles: in its layer and after it,
+   with its selectors' specificity. */
+@layer utilities {
+  /* Inline code is a pill, without the backticks the plugin puts around it; a
+     code block's <code> keeps the block's style. */
+  .prose
+    :where(code):not(
+      :where([class~='not-prose'], [class~='not-prose'] *)
+    )::before,
+  .prose
+    :where(code):not(
+      :where([class~='not-prose'], [class~='not-prose'] *)
+    )::after {
+    content: none;
+  }
+  .prose
+    :where(:not(pre, a) > code):not(
+      :where([class~='not-prose'], [class~='not-prose'] *)
+    ) {
+    @apply rounded-md bg-slate-900/5 px-1.5 py-0.5 font-medium dark:bg-white/10;
+  }
+
+  /* Code in a link takes the link's colour and weight, and a plain underline
+     instead of the link's thick band, which would run through the code. */
+  .prose
+    :where(a:has(> code)):not(
+      :where([class~='not-prose'], [class~='not-prose'] *)
+    ) {
+    box-shadow: none;
+    text-decoration: underline 2px
+      var(--tw-prose-underline, var(--color-sky-300));
+    text-underline-offset: 4px;
+
+    &:hover {
+      text-decoration-thickness: 3px;
+    }
+
+    @variant dark {
+      text-decoration-color: var(--tw-prose-underline, var(--color-sky-800));
+    }
+  }
+
+  /* A table scrolls in a box of its own (Table.tsx), which takes the table's
+     vertical margins (2em at the table's 0.875em), so tables space as before;
+     at zero specificity, the plugin's `h2 + *`, first- and last-child margins
+     still win. */
+  :where(.prose div:has(> table)) {
+    margin-block: 1.75em;
+  }
+  .prose
+    :where(div > table):not(
+      :where([class~='not-prose'], [class~='not-prose'] *)
+    ) {
+    margin-block: 0;
+  }
+
+  /* Badges: images linked from a paragraph stay in its line (the preflight
+     makes every image a block), without the link's underline. */
+  .prose
+    :where(p > a > img):not(
+      :where([class~='not-prose'], [class~='not-prose'] *)
+    ) {
+    @apply my-0 inline;
+  }
+  .prose
+    :where(p > a:has(> img)):not(
+      :where([class~='not-prose'], [class~='not-prose'] *)
+    ) {
+    box-shadow: none;
+  }
+}

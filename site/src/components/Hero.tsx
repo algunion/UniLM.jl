@@ -10,17 +10,22 @@ import blurIndigoImage from '@/images/blur-indigo.png'
 import '@/lib/prism'
 
 // The first call of "Start Here: Jev in Five Minutes"; `:billing` is the answer
-// recorded for it in docs/recorded_answers.
+// recorded for it in docs/recorded_answers. Its sentences are sent as written,
+// so the lines stay long: the panel's 12px type fits them when the hero is at
+// its widest, and a narrower panel scrolls them sideways.
 const codeLanguage = 'julia'
 const code = `using UniLM
 
-TEAM = (billing   = "payments, charges, invoices or refunds",
-        technical = "the app or the website does not work as expected",
-        shipping  = "a parcel that is late, lost or arrived damaged",
-        other     = "anything else")
+TEAM = (
+    billing   = "payments, charges, invoices or refunds",
+    technical = "the app or the website does not work as expected",
+    shipping  = "a parcel that is late, lost or arrived damaged",
+    other     = "anything else",
+)
 
 nl_classify("I was charged twice for order #4471. " *
-            "Please refund the duplicate payment.", TEAM)   # :billing`
+            "Please refund the duplicate payment.", TEAM)
+# :billing`
 
 const tabs = [{ name: 'Illustration: a recorded Jev call', isActive: true }]
 
@@ -118,7 +123,7 @@ export function Hero() {
                       </div>
                     ))}
                   </div>
-                  <div className="mt-6 flex items-start px-1 text-sm">
+                  <div className="mt-6 flex items-start px-1 text-xs/5">
                     <div
                       aria-hidden="true"
                       className="border-r border-slate-300/5 pr-4 font-mono text-slate-600 select-none"

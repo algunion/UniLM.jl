@@ -5,14 +5,16 @@ import { createLoader } from 'simple-functional-loader'
 // the options the Markdoc loader tokenizes a page with
 const tokenizer = new Markdoc.Tokenizer({ allowComments: true })
 const LITERAL = '{% process=false %}'
+const SITE = 'UniLM.jl'
 
 // What the site changes in a generated page before Markdoc reads it:
 // - every fence opts out of Markdoc processing. Markdoc reads `{% … %}` inside
 //   fenced code, so code printing a template such as `{% for … %}` would open a
 //   tag that swallows the rest of the page;
-// - the <title> becomes "<title> - UniLM.jl", as an absolute title: Next.js does
-//   not apply the layout's title template to the home page, which shares the
-//   layout's route segment.
+// - the <title> becomes "<title> - UniLM.jl", or "UniLM.jl" alone for the page
+//   titled so (the home page), as an absolute title: Next.js does not apply the
+//   layout's title template to the home page, which shares the layout's route
+//   segment.
 export function preprocess(source) {
   let lines = source.replace(/\r\n?/g, '\n').split('\n')
   let tokens = tokenizer.tokenize(lines.join('\n'))
@@ -31,7 +33,9 @@ export function preprocess(source) {
       'a page needs a frontmatter with `title` and `nextjs.metadata.title` strings',
     )
   }
-  data.nextjs.metadata.title = { absolute: `${title} - UniLM.jl` }
+  data.nextjs.metadata.title = {
+    absolute: title === SITE ? SITE : `${title} - ${SITE}`,
+  }
 
   // between the two `---` lines; padded to the original line count, so the
   // lines of Markdoc's errors still match the page

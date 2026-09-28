@@ -71,6 +71,13 @@ else
 end
 ```
 
+!!! tip "Check it with Jev"
+    Before the call, one Jev question can send a message to the team that handles it, so
+    the model writes with that team's instructions ([Route before you generate](@ref
+    jev_llm_route)). After it, one Jev request can check the draft for leaks, promises the
+    policy does not allow and rudeness before a user sees it ([Check the draft before a
+    customer sees it](@ref jev_llm_check_draft)).
+
 ## Structured Input
 
 For multimodal inputs, use [`InputMessage`](@ref) with content helpers:

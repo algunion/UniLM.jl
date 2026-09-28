@@ -218,7 +218,7 @@ end
 
 Batching matters more here than the per-token rate: every question in one
 [`ask`](@ref) shares a single ingestion of the state, so N questions in one call bill
-far fewer input tokens than N calls. See [Typed Judgments with Jev](@ref system_one_guide).
+far fewer input tokens than N calls. See [Ask many questions at once](@ref jev_many_questions).
 
 ## Prices drift
 

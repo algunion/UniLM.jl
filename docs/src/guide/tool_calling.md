@@ -287,6 +287,13 @@ the results back, and repeat until the model answers in text, a request fails, o
   last response the model sent (a tool-call turn whose calls ran), with `completed=false`
   and `llm_error = "max turns (N) exhausted"`.
 
+!!! tip "Check it with Jev"
+    Wrap the dispatcher so that a sensitive call runs only if the user asked for it: a
+    Jev question reads the proposed call against the user's own words, and the call runs,
+    waits for a confirmation, or is refused ([Approve tool calls](@ref jev_llm_tool_calls)).
+    With a large registry, one Jev question ranks the tools, and the model is offered only
+    the top few ([Offer the LLM only the tools it needs](@ref jev_llm_shortlist)).
+
 ### Chat Completions
 
 ```@example tools

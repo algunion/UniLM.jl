@@ -385,7 +385,7 @@ export
     TypeSafeModelsSuccess,
     list_models
 
-export with_recorded_answers, ReplayMissError
+export with_recorded_answers, ReplayMissError, RecordingWriteError
 
 # ─── Natural-language control flow (System One) ───
 export

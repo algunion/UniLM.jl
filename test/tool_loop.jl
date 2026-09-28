@@ -682,6 +682,29 @@ end
     end
 end
 
+@testset "a RecordingWriteError from a dispatch propagates instead of becoming a tool error" begin
+    # A dispatcher's paid request whose recording was lost: as a tool error the model would
+    # read a local I/O failure, and the loop would go on without the recording.
+    lost = RecordingWriteError(joinpath(mktempdir(), "0"^64 * ".json"), Base.IOError("no space left on device", -28))
+    dispatcher = (name, args) -> throw(lost)
+    thrown(f) = try f(); nothing catch e; e end
+    for n in (1, 3)
+        chat = _tl_chat(_TLFixture([_tl_calls(UniLM.TOOL_CALLS, "c1" => "triage", "c2" => "triage"),
+                                    _tl_reply("done")]))
+        _tl_scripted() do
+            @test thrown(() -> tool_loop!(chat, dispatcher; tool_concurrency=n)) === lost
+        end
+        @test [m.role for m in chat.messages] == [UniLM.RoleSystem, UniLM.RoleUser]   # rolled back
+    end
+    turn(n) = n == 1 ? _tl_resp("resp_1", [_tl_fcall("c1", "triage"), _tl_fcall("c2", "triage")]) :
+                       _tl_resp("resp_2", [_tl_text("done")])
+    for n in (1, 2)
+        _with_scripted((i, _) -> _json(200, turn(i))) do
+            @test thrown(() -> tool_loop(_tl_respond(), dispatcher; tool_concurrency=n)) === lost
+        end
+    end
+end
+
 @testset "tool_concurrency below 1 is rejected before any request" begin
     dead = GenericOpenAIEndpoint("http://127.0.0.1:1", "")
     @test_throws ArgumentError "tool_concurrency" tool_loop!(_tl_chat(dead), (a, b) -> "x"; tool_concurrency=0)

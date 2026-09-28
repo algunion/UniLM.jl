@@ -55,12 +55,23 @@
 - Inside a `with_recorded_answers` scope, `chatrequest!`, `respond` and
   `embeddingrequest!` — and so `tool_loop!` and `tool_loop` — throw `ReplayMissError`
   for a request the scope cannot replay, and a paid reply's recording that cannot be
-  written throws its I/O error, instead of returning an `LLMCallError`,
+  written throws `RecordingWriteError`, instead of returning an `LLMCallError`,
   `ResponseCallError` or `EmbeddingCallError` that a fallback would take for a service
   failure. Before, these verbs ignored the scope and called the provider. Upgrading:
   code that runs LLM calls inside a `:replay` scope must record them first (the same
   code once with the provider's key and `mode = :record_missing`) or make them
   outside the scope.
+- A recording that cannot be written after a paid answer throws the new exported
+  `RecordingWriteError` — its `file`, and the I/O error as its `cause` — out of `ask`,
+  `list_models` (and so `nl_dispatch`, `nl_classify` and `@branch`), `chatrequest!`,
+  `respond` and `embeddingrequest!`, where 0.21.0 threw the bare I/O error; its
+  `showerror` names the file and the cause and says that the answer was billed. A tool
+  loop no longer turns one raised by a dispatcher's request into a tool error the model
+  reads while the loop goes on: it propagates, as `ReplayMissError` does. An MCP server
+  answers one raised by a tool handler with the generic JSON-RPC `-32603` and logs it,
+  instead of relaying the error, with its local path, to the client as `isError` tool
+  content. Upgrading: catch `RecordingWriteError` where code caught `Base.IOError` or
+  `SystemError` from these verbs.
 - The manual's non-streaming LLM examples render recorded real output instead of a
   failed request. The documentation build chooses its mode by flag, not by the keys
   it finds: replay by default (with every provider key hidden, so it never calls a

@@ -206,6 +206,8 @@ end
     calls = (() -> ask(_ra_request("unwritable"); config=_RA_CFG),
              () -> list_models(; config=_RA_CFG),
              () -> nl_dispatch(_ra_route, "unwritable"; config=_RA_CFG),
+             () -> nl_classify("unwritable", (billing = "the customer was charged twice", shipping = "the parcel is late");
+                               config=_RA_CFG),
              () -> _ra_branch("unwritable"))
     _ra_online() do
         for mode in (:record, :record_missing), call in calls
@@ -215,8 +217,12 @@ end
                 write(dir, "")   # the checked directory is a file by the time the answer arrives
                 _ra_caught(call)
             end
-            # The write's own I/O error, not a call error a fallback would take for the service's.
-            @test e isa Union{Base.IOError,SystemError}
+            # The lost write, with its I/O error inside: not a call error a fallback would
+            # take for the service's.
+            @test e isa RecordingWriteError && e.cause isa Union{Base.IOError,SystemError}
+            @test dirname(e.file) == abspath(dir) && endswith(e.file, ".json")
+            msg = sprint(showerror, e)
+            @test contains(msg, e.file) && contains(msg, "billed") && contains(msg, sprint(showerror, e.cause))
             @test _RA_HITS[] == before + 1
             rm(dir)
         end
@@ -751,9 +757,32 @@ end
                 write(dir, "")   # the checked directory is a file by the time the reply arrives
                 _ra_caught(call)
             end
-            # The write's own I/O error — not a call error, and not a loop that goes on.
-            @test e isa Union{Base.IOError,SystemError}
+            # The lost write — not a call error, and not a loop that goes on.
+            @test e isa RecordingWriteError && e.cause isa Union{Base.IOError,SystemError}
+            @test dirname(e.file) == abspath(dir)
             @test _RL_HITS[] == before + 1
+            rm(dir)
+        end
+    end
+    # A dispatcher's own paid request whose recording is lost stops the loop too: as a
+    # tool error the model would read it and the loop would go on without the recording.
+    lost = (name, args) -> with_recorded_answers(dir; mode=:record) do
+        rm(dir; force=true, recursive=true)
+        write(dir, "")
+        embeddingrequest!(Embeddings("hello"; service=_RL_OPENAI, model="text-embedding-3-small", dimensions=3);
+                          config=_RL_CFG)
+        "5"
+    end
+    _rl_online() do
+        for (loop, turn) in ((n -> tool_loop!(_rl_loop_chat(), lost; config=_RL_CFG, tool_concurrency=n), "/chat/completions"),
+                             (n -> tool_loop(_rl_loop_respond(), lost; config=_RL_CFG, tool_concurrency=n), "/responses")),
+            n in (1, 2)
+            before = _RL_HITS[]
+            e = _ra_caught(() -> loop(n))
+            @test e isa RecordingWriteError && dirname(e.file) == abspath(dir)
+            # The first turn and the dispatcher's request were sent; no second turn followed.
+            @test _RL_HITS[] == before + 2
+            @test contains(@lock(_RL_LOCK, _RL_SEEN[end - 1]), turn)
             rm(dir)
         end
     end

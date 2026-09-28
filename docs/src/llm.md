@@ -1101,7 +1101,8 @@ to every turn of the loop and passed through unchanged (so they need `stream=tru
   `completed=false` with an `llm_error` naming it.
 - A dispatcher's `String` result is sent as is, any other value JSON-encoded; a throwing
   dispatcher sends `"Error: <message>"` and records a failed `ToolCallOutcome`; an
-  `InterruptException` propagates after the interrupted turn is removed from `chat`.
+  `InterruptException`, a `ReplayMissError` or a `RecordingWriteError` propagates after
+  the interrupted turn is removed from `chat`.
 - On `max_turns` exhaustion `response` is the last real response, `completed=false`,
   `llm_error = "max turns (N) exhausted"`.
 - `cancel` (default: the ambient token) scopes every turn and dispatch; a cancelled loop
@@ -1344,7 +1345,9 @@ close(handle)
 - **A throwing tool handler is a tool result, not a protocol error.** The client
   receives `isError: true` with the text `Error: <showerror text>`, which is exactly
   what lets a model see and correct its own mistake. Write handlers accordingly:
-  raise with a message you are willing to show the model *and* the client.
+  raise with a message you are willing to show the model *and* the client. A
+  `ReplayMissError` or `RecordingWriteError` from a handler's recorded request is
+  no mistake a model can correct: it is answered like a dispatch-layer error below.
 - **Resource, prompt and dispatch-layer errors are generic.** An exception from a
   resource or prompt handler, or any unhandled error below the handler, answers
   JSON-RPC `-32603` with the message `"Internal error"` — the exception and
@@ -1640,22 +1643,25 @@ issuccess(r) && println(r["department"].choice, " ", r["urgency"].score, " ", r[
 ### Recorded answers
 
 Identical requests are not answered identically, so tests and docs builds
-replay recorded answers. Inside the scope, every `ask` (hence `nl_dispatch` and
-`@branch`) and `list_models`, and every non-streaming `chatrequest!`, `respond` and
-`embeddingrequest!` (hence `tool_loop!` and `tool_loop`), exchanges through `dir`;
-everything else, including streaming, reaches the network as usual (images, audio,
-files, MCP, the Responses lifecycle operations). Scopes cover spawned tasks and
-nest (an inner scope's service is the enclosing scope).
+replay recorded answers. Inside the scope, every `ask` (hence `nl_dispatch`,
+`nl_classify` and `@branch`) and `list_models`, and every non-streaming
+`chatrequest!`, `respond` and `embeddingrequest!` (hence `tool_loop!` and
+`tool_loop`), exchanges through `dir`; everything else, including streaming,
+reaches the network as usual (images, audio, files, MCP, the Responses lifecycle
+operations), in every mode. Scopes cover spawned tasks and nest (an inner scope's
+service is the enclosing scope).
 
 ```julia
 with_recorded_answers(f, dir::AbstractString; mode::Symbol=:replay)   # -> f()
-    # :replay         answer from dir: no network, no key; no recording or an unreadable
-    #                 one throws ReplayMissError
+    # :replay         answer from dir: no recorded verb reaches the network or needs a key
+    #                 (an unrecorded verb behaves as outside the scope); no recording or an
+    #                 unreadable one throws ReplayMissError
     # :record         call the service; write each HTTP 200 to dir, replacing any earlier file
     # :record_missing replay what dir holds; call and record the rest; an unreadable
     #                 file throws ReplayMissError (never overwritten)
     # both recording modes create dir and prove it writable before f runs (else ArgumentError);
-    #   a recording that cannot be written after a paid answer throws its I/O error out of the verb
+    #   a recording that cannot be written after a paid answer throws RecordingWriteError out
+    #   of the verb, and out of a tool loop whose dispatcher made the request
     # file: <dir>/<key>.json, key = lowercase hex sha256("<METHOD> <path>\n" * body),
     #   <path> = the request URL's path alone (no host, no query);
     #   body = the exact body, except that in its top-level "tools" array an MCP tool's
@@ -1675,6 +1681,11 @@ struct ReplayMissError <: Exception       # thrown out of the recorded verbs, ne
     path::String                          # "/v1/systemone" | "/v1/models" | "/v1/chat/completions" | …
     body::String                          # the body as keyed: credentials "<redacted>" ("" for GET)
     reason::String                        # "no recording" | "unreadable recording: <what is wrong>"
+end
+
+struct RecordingWriteError <: Exception   # a paid answer whose recording could not be written;
+    file::String                          #   thrown out of the recorded verbs and the tool loops,
+    cause::Exception                      #   never a *CallError; an MCP handler's: -32603, logged
 end
 ```
 
@@ -2190,7 +2201,7 @@ Every exported symbol, grouped by area:
 
 **TypeSafe System One (Jev)**: `TYPESAFEServiceEndpoint`, `SystemOneQuestion`, `ChoiceQuestion`, `ScoreQuestion`, `NoulQuestion`, `NoulCriteria`, `choice`, `score`, `noul`, `SystemOneRequest`, `ask`, `SystemOneAnswer`, `ChoiceAnswer`, `ScoreAnswer`, `NoulAnswer`, `UnknownAnswer`, `SystemOneResponse`, `SystemOneSuccess`, `SystemOneFailure`, `SystemOneCallError`, `SystemOneError`, `answers`, `answer`, `TypeSafeModelCard`, `TypeSafeModelsSuccess`, `list_models`
 - *Natural-language control flow*: `Meaning`, `@nl_str`, `@branch`, `nl_dispatch`, `nl_classify`, `meanings`, `meaning_gaps`, `LowConfidenceError`, `DecisionDeclinedError`
-- *Recorded answers*: `with_recorded_answers`, `ReplayMissError`
+- *Recorded answers*: `with_recorded_answers`, `ReplayMissError`, `RecordingWriteError`
 
 **Audio**: `SpeechRequest`, `TranscriptionRequest`, `SpeechSuccess`, `TranscriptionSuccess`, `AudioFailure`, `AudioCallError`, `speak`, `save_audio`, `transcribe`, `translate`, `transcript_text`
 

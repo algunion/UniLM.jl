@@ -299,4 +299,5 @@ a recording flag replays every such example, System One and LLM alike.
 ```@docs
 with_recorded_answers
 ReplayMissError
+RecordingWriteError
 ```

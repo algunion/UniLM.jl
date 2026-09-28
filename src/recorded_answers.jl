@@ -6,13 +6,15 @@
 # winner can flip; a language model's reply varies from call to call — so a test
 # or a docs build that calls it live cannot be reproduced. Inside
 # `with_recorded_answers` the HTTP exchange of `ask` and `list_models` (and so of
-# `nl_dispatch` and `@branch`) and of the non-streaming `chatrequest!`, `respond`
-# and `embeddingrequest!` (and so of the tool loops) passes through a directory
-# of recordings on its way to the network.
+# `nl_dispatch`, `nl_classify` and `@branch`) and of the non-streaming
+# `chatrequest!`, `respond` and `embeddingrequest!` (and so of the tool loops)
+# passes through a directory of recordings on its way to the network.
 #
 # A recording is keyed by the exact request bytes, never a canonical form: the
 # order of Choice options and of the state's keys moves the answer, so a
-# reordered request is a different request.
+# reordered request is a different request. The one exception is a credential
+# the body carries (an MCP tool's token), which is replaced before anything is
+# keyed, written or reported.
 # ============================================================================
 
 """
@@ -22,13 +24,16 @@ Thrown inside a [`with_recorded_answers`](@ref) scope when a request cannot be
 replayed — in `:replay` mode the directory holds no recording of it, or in
 `:replay` or `:record_missing` mode its recording file cannot be read as one — by
 the verbs the scope records: [`ask`](@ref) and [`list_models`](@ref) (and so
-[`nl_dispatch`](@ref) and [`@branch`](@ref)), and the non-streaming
-[`chatrequest!`](@ref), [`respond`](@ref) and [`embeddingrequest!`](@ref) (and so
-[`tool_loop!`](@ref) and [`tool_loop`](@ref)). It is thrown rather than returned as
-the verb's call error ([`SystemOneCallError`](@ref), [`LLMCallError`](@ref),
-[`ResponseCallError`](@ref), [`EmbeddingCallError`](@ref)): a gap in the
-recordings is not a service failure, and a caller's
-`r isa SystemOneSuccess || fallback()` path must not absorb it as if it were one.
+[`nl_dispatch`](@ref), [`nl_classify`](@ref) and [`@branch`](@ref)), and the
+non-streaming [`chatrequest!`](@ref), [`respond`](@ref) and
+[`embeddingrequest!`](@ref) (and so [`tool_loop!`](@ref) and [`tool_loop`](@ref)).
+A verb the scope does not record — a streamed call, images, files, audio, MCP, the
+Responses lifecycle calls — never throws it: it behaves exactly as outside the
+scope. It is thrown rather than returned as the verb's call error
+([`SystemOneCallError`](@ref), [`LLMCallError`](@ref), [`ResponseCallError`](@ref),
+[`EmbeddingCallError`](@ref)): a gap in the recordings is not a service failure,
+and a caller's `r isa SystemOneSuccess || fallback()` path must not absorb it as if
+it were one.
 
 # Fields
 - `dir::String`: the recordings directory that was searched.
@@ -36,7 +41,9 @@ recordings is not a service failure, and a caller's
 - `method::String`, `path::String`: the request line, e.g. `"POST"` and
   `"/v1/systemone"` or `"/v1/chat/completions"`: the path of the request URL alone,
   never its host or query.
-- `body::String`: the exact request body (empty for `GET /v1/models`).
+- `body::String`: the request body the key was computed over — the exact body,
+  with the credentials [`with_recorded_answers`](@ref) never writes replaced by
+  `"<redacted>"` (empty for `GET /v1/models`).
 - `reason::String`: `"no recording"`, or `"unreadable recording: …"` followed by
   what is wrong with the file — not JSON, no `response` object, a status other
   than 200, a `body` that is not a JSON object, a `request_id` that is neither
@@ -82,6 +89,39 @@ function Base.showerror(io::IO, e::ReplayMissError)
               " and record it again: ", record)
 end
 
+"""
+    RecordingWriteError <: Exception
+
+Thrown inside a [`with_recorded_answers`](@ref) scope in `:record` or
+`:record_missing` mode when the service has answered a request, and billed it, but
+its recording cannot be written — the directory was removed or replaced after the
+scope checked it, or the disk is full. The verbs the scope records throw it —
+[`ask`](@ref), [`list_models`](@ref), and the non-streaming [`chatrequest!`](@ref),
+[`respond`](@ref) and [`embeddingrequest!`](@ref) — and so do the calls built on
+them: [`nl_dispatch`](@ref), [`nl_classify`](@ref), [`@branch`](@ref) and the tool
+loops, a request made by a loop's dispatcher included. It is thrown rather than
+returned as the verb's call error: the answer was paid for, and a caller's
+`r isa SystemOneSuccess || fallback()` path must not absorb the lost write as a
+service failure. An MCP server tool handler's is answered, like a
+[`ReplayMissError`](@ref), with the generic JSON-RPC `-32603` and logged, never
+relayed to the client.
+
+# Fields
+- `file::String`: the recording that could not be written, `<dir>/<key>.json`.
+- `cause::Exception`: what stopped the write, such as a `Base.IOError`.
+
+`showerror` names the file and the cause, and says that the answer was billed.
+"""
+struct RecordingWriteError <: Exception
+    file::String
+    cause::Exception
+end
+
+function Base.showerror(io::IO, e::RecordingWriteError)
+    print(io, "RecordingWriteError: the answer was billed, but its recording ", e.file, " could not be written: ")
+    showerror(io, e.cause)
+end
+
 const _ANSWER_MODES = (:replay, :record, :record_missing)
 
 # One active scope. `parent` is the enclosing scope, which serves as this scope's
@@ -99,19 +139,21 @@ const _ANSWER_SCOPE = ScopedValue{Union{Nothing,_AnswerScope}}(nothing)
 
 Run `f()` with the service exchanges inside it passing through the recordings in
 `dir`, and return `f()`'s value. Recorded: [`ask`](@ref) (and so
-[`nl_dispatch`](@ref) and [`@branch`](@ref)), [`list_models`](@ref), and the
-non-streaming [`chatrequest!`](@ref) (with its keyword form and
-[`tool_loop!`](@ref)), [`respond`](@ref) (with its convenience forms and
-[`tool_loop`](@ref)) and [`embeddingrequest!`](@ref); everything else, including
-streaming, reaches the network as usual — a streamed call, images, audio, files,
-MCP, the Responses lifecycle operations and every other verb behave inside a
-scope exactly as outside it.
+[`nl_dispatch`](@ref), [`nl_classify`](@ref) and [`@branch`](@ref)),
+[`list_models`](@ref), and the non-streaming [`chatrequest!`](@ref) (with its
+keyword form and [`tool_loop!`](@ref)), [`respond`](@ref) (with its convenience
+forms and [`tool_loop`](@ref)) and [`embeddingrequest!`](@ref); everything else,
+including streaming, reaches the network as usual — a streamed call, images,
+audio, files, MCP, the Responses lifecycle operations and every other verb behave
+inside a scope exactly as outside it.
 
 A service does not answer a repeated request identically, so a test or a docs
 build that calls it live cannot be reproduced; one recorded answer, replayed, can.
 
-- `:replay` (the default): nothing reaches the network and no API key is needed.
-  A request with no recording, or with a recording file that cannot be read as
+- `:replay` (the default): no recorded verb reaches the network or needs an API
+  key; a verb the scope does not record — a streamed call, images, files, audio,
+  MCP, the Responses lifecycle calls — behaves exactly as outside the scope. A
+  request with no recording, or with a recording file that cannot be read as
   one, throws [`ReplayMissError`](@ref) out of the verb itself (and so out of the
   tool loops). `dir` must exist.
 - `:record`: every request goes to the service; each HTTP 200 is written to
@@ -126,24 +168,29 @@ recording modes create `dir` if needed and prove it writable — a file is creat
 in it and removed — before `f` runs: a `dir` that is a file, or a directory that
 refuses a file, is an `ArgumentError` naming the path and the cause, and nothing
 is sent. A recording that still cannot be written once an answer has arrived —
-the directory was removed or replaced, the disk is full — throws that I/O error
-out of the verb (and so out of `nl_dispatch`, `@branch` and the tool loops)
-instead of returning its call error: the answer was paid for, and a caller's
-`r isa SystemOneSuccess || fallback()` path must not absorb the lost write as a
-service failure. A `tool_loop` dispatcher is the exception: the loop reports a
-dispatcher's I/O error to the model as a tool error (only `ReplayMissError` and
-interrupts escape it), so a write lost there surfaces as the missing recording
-on the next replay.
+the directory was removed or replaced, the disk is full — throws
+[`RecordingWriteError`](@ref), with that I/O error as its `cause`, out of the verb
+(and so out of `nl_dispatch`, `nl_classify`, `@branch` and the tool loops, a
+dispatcher's own request included) instead of returning its call error: the
+answer was paid for, and a caller's `r isa SystemOneSuccess || fallback()` path
+must not absorb the lost write as a service failure.
 
 A recording is `<dir>/<key>.json`, where `key` is the lowercase hex SHA-256 of
 `"<METHOD> <path>\\n"` followed by the exact request body, and `<path>` is the
 path of the request URL alone: never its host, nor its query, which can carry a
 credential. The key is never a canonical form of the request: the order of
 Choice options and of the state's keys moves the answer, so a reordered request
-is a different request. The file holds the request, the response body with its
-request id and the name of the header that carried it (`x-typesafe-request-id`,
-`x-request-id` or `request-id`), and the time of recording, pretty-printed so a
-diff is readable; the API key and every other header are never written. A
+is a different request. The one change to the body is a credential it carries:
+in each object of its top-level `tools` array, an MCP tool's `authorization` and
+`headers` (`"type": "mcp"`, the OpenAI Responses wire), a Gemini Interactions MCP
+server's `headers` (`"mcp_server"`) and the `api_key` of a Gemini `"retrieval"`
+tool's `exa_ai_search_config` and `parallel_ai_search_config` read `"<redacted>"`
+in the key, the file and a `ReplayMissError`, so a replay needs none of them; the
+request sent carries them as given. The file holds the request, the response body
+with its request id and the name of the header that carried it
+(`x-typesafe-request-id`, `x-request-id` or `request-id`), and the time of
+recording, pretty-printed so a diff is readable; the API key, the headers, and an
+MCP tool's `authorization` and `headers` are never written. A
 recording without that name replays its id as `x-typesafe-request-id`. Files are
 written atomically (a temporary file in `dir`, then a rename), so concurrent tasks
 can record at once. A replayed answer goes through the same decoding as a live
@@ -201,13 +248,6 @@ function _writable_dir(root::String)::Nothing
     nothing
 end
 
-# A recording that could not be written once the service had answered. The answer
-# was paid for, so the recorded verbs throw the `cause` itself rather than
-# returning it as a call error, which a fallback would absorb as a service failure.
-struct _UnwrittenRecording <: Exception
-    cause::Exception
-end
-
 _answer_key(method::String, path::String, body::String)::String =
     bytes2hex(sha256(string(method, ' ', path, '\n', body)))
 
@@ -216,15 +256,62 @@ _answer_key(method::String, path::String, body::String)::String =
 # error message.
 _request_path(url::String)::String = (p = HTTP.URI(url).path; isempty(p) ? "/" : String(p))
 
+# The credentials a request body carries, by the `type` of an object in its top-level
+# `tools` array: the path of each value replaced. An MCP tool on the OpenAI Responses
+# wire takes an OAuth token and headers; a Gemini Interactions MCP server takes headers,
+# and its retrieval tool the API keys of the search services it calls.
+const _BODY_CREDENTIALS = Dict{String,Vector{Vector{String}}}(
+    "mcp" => [["authorization"], ["headers"]],
+    "mcp_server" => [["headers"]],
+    "retrieval" => [["exa_ai_search_config", "api_key"], ["parallel_ai_search_config", "api_key"]])
+
+const _REDACTED = "<redacted>"
+
+# The body as it is keyed, written and reported: its credentials replaced. A body that
+# carries none is returned as it is, byte for byte, so its key does not move; one that
+# is not JSON has no `tools` array to carry one.
+function _redacted(body::String)::String
+    contains(body, "\"tools\"") || return body
+    parsed = try
+        JSON.parse(body)
+    catch err
+        err isa InterruptException && rethrow()
+        return body
+    end
+    tools = parsed isa AbstractDict ? get(parsed, "tools", nothing) : nothing
+    tools isa AbstractVector || return body
+    found = false
+    for t in tools
+        t isa AbstractDict || continue
+        for path in get(_BODY_CREDENTIALS, get(t, "type", nothing), Vector{String}[])
+            found |= _redact!(t, path)
+        end
+    end
+    found ? JSON.json(parsed) : body
+end
+
+# Replace the value at `path` inside `d`, if there is one; whether there was.
+function _redact!(d::AbstractDict, path::Vector{String})::Bool
+    key = first(path)
+    haskey(d, key) || return false
+    if length(path) > 1
+        inner = d[key]
+        return inner isa AbstractDict && _redact!(inner, path[2:end])
+    end
+    d[key] = _REDACTED
+    true
+end
+
 # The HTTP exchange behind every recorded verb: `live()` is the real call, and
 # every active scope stands between it and the caller, innermost first. Outside a
 # scope `live()` runs as it always did. The cancel check mirrors the seam's first
-# one, so a cancelled call reads no recording, just as it sends nothing.
+# one, so a cancelled call reads no recording, just as it sends nothing. `live()`
+# sends the body as given; the scopes see it with its credentials replaced.
 function _recorded_exchange(live::Function, method::String, url::String, body::String,
                             t0::UInt64, tok::Union{Nothing,CancelToken})::HTTP.Response
     iscancelled(tok) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
     scope = _ANSWER_SCOPE[]
-    isnothing(scope) ? live() : _exchange(scope, method, _request_path(url), body, live)
+    isnothing(scope) ? live() : _exchange(scope, method, _request_path(url), _redacted(body), live)
 end
 
 _exchange(::Nothing, ::String, ::String, ::String, live::Function)::HTTP.Response = live()
@@ -303,8 +390,10 @@ function _record(file::String, method::String, path::String, body::String, resp:
     try
         _write_recording(file, rec)
     catch err
+        # The answer was paid for: the verbs throw this, where a returned call error
+        # would be taken for a service failure by a fallback.
         err isa InterruptException && rethrow()
-        throw(_UnwrittenRecording(err))
+        throw(RecordingWriteError(file, err))
     end
     nothing
 end

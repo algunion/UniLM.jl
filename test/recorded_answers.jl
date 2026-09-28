@@ -206,6 +206,8 @@ end
     calls = (() -> ask(_ra_request("unwritable"); config=_RA_CFG),
              () -> list_models(; config=_RA_CFG),
              () -> nl_dispatch(_ra_route, "unwritable"; config=_RA_CFG),
+             () -> nl_classify("unwritable", (billing = "the customer was charged twice", shipping = "the parcel is late");
+                               config=_RA_CFG),
              () -> _ra_branch("unwritable"))
     _ra_online() do
         for mode in (:record, :record_missing), call in calls
@@ -215,8 +217,12 @@ end
                 write(dir, "")   # the checked directory is a file by the time the answer arrives
                 _ra_caught(call)
             end
-            # The write's own I/O error, not a call error a fallback would take for the service's.
-            @test e isa Union{Base.IOError,SystemError}
+            # The lost write, with its I/O error inside: not a call error a fallback would
+            # take for the service's.
+            @test e isa RecordingWriteError && e.cause isa Union{Base.IOError,SystemError}
+            @test dirname(e.file) == abspath(dir) && endswith(e.file, ".json")
+            msg = sprint(showerror, e)
+            @test contains(msg, e.file) && contains(msg, "billed") && contains(msg, sprint(showerror, e.cause))
             @test _RA_HITS[] == before + 1
             rm(dir)
         end
@@ -451,7 +457,7 @@ const _RL_SECRETS = [collect(values(_RL_KEYS)); _RL_DEEPSEEK_KEY; _RL_QUERY_KEY]
 const _RL_CFG = UniLM.RequestConfig(max_attempts=1, total_deadline=30.0)
 
 const _RL_HITS = Threads.Atomic{Int}(0)
-const _RL_SEEN = String[]            # each request's target and headers, one string per request
+const _RL_SEEN = String[]            # each request's target, headers and body, one string per request
 const _RL_LOCK = ReentrantLock()
 
 _rl_undecodable(raw) = occursin("undecodable", raw)
@@ -503,7 +509,7 @@ function _rl_serve(http::HTTP.Stream)
     req = http.message
     raw = String(read(http))
     n = Threads.atomic_add!(_RL_HITS, 1) + 1
-    @lock _RL_LOCK push!(_RL_SEEN, join([String(req.target); [string(k, ": ", v) for (k, v) in req.headers]], "\n"))
+    @lock _RL_LOCK push!(_RL_SEEN, join([String(req.target); [string(k, ": ", v) for (k, v) in req.headers]; raw], "\n"))
     b = JSON.parse(raw; dicttype=Dict{String,Any})
     path = String(HTTP.URI(String(req.target)).path)
     HTTP.setstatus(http, 200)
@@ -653,6 +659,54 @@ const _RL_CASES = [
     end
 end
 
+@testset "recorded LLM answers — a credential in the body is sent, and never keyed, written or reported" begin
+    dir = _ra_dir("llm-mcp")
+    mcp(token; input="Say hello.") = Respond(service=_RL_OPENAI, model="gpt-5.4-mini", input=input,
+        tools=[MCPTool(server_label="crm", server_url="https://mcp.example.com/sse", authorization="oauth-$token",
+                       headers=Dict("Authorization" => "Bearer header-$token")),
+               Dict("type" => "mcp", "server_label" => "drive", "connector_id" => "connector_googledrive",
+                    "authorization" => "oauth-$token")])
+    live = _rl_online(() -> with_recorded_answers(() -> respond(mcp("sentinel-1"); config=_RL_CFG), dir; mode=:record))
+    @test live isa ResponseSuccess
+    sent = @lock _RL_LOCK last(_RL_SEEN)
+    @test contains(sent, "oauth-sentinel-1") && contains(sent, "header-sentinel-1")   # the service gets them...
+    text = read(only(readdir(dir; join=true)), String)
+    @test !contains(text, "sentinel-1")                                                  # ...no recording does
+    tools = JSON.parse(text)["request"]["body"]["tools"]
+    @test [t["authorization"] for t in tools] == ["<redacted>", "<redacted>"] && tools[1]["headers"] == "<redacted>"
+    @test tools[1]["server_url"] == "https://mcp.example.com/sse" && tools[2]["connector_id"] == "connector_googledrive"
+
+    # The key never saw a token: another one replays the same recording, with no key and no service.
+    hits = _RL_HITS[]
+    replayed = _rl_offline(() -> with_recorded_answers(() -> respond(mcp("sentinel-2"); config=_RL_CFG), dir))
+    @test _RL_HITS[] == hits && _rl_seen(replayed) == _rl_seen(live)
+    # A miss carries the body as it was keyed.
+    miss = _rl_offline(() -> with_recorded_answers(() -> _ra_caught(() -> respond(mcp("sentinel-3"; input="Bye."))), dir))
+    @test miss isa ReplayMissError && miss.key == _ra_key("POST", "/v1/responses", miss.body)
+    @test !contains(repr(miss), "sentinel") && contains(miss.body, "\"authorization\":\"<redacted>\"")
+
+    # Gemini Interactions: an MCP server's headers, and the search keys of a retrieval tool.
+    gemini = Respond(service=_RLHere(GEMINIServiceEndpoint), model="gemini-3.8-flash", input="Say hello.",
+        tools=[Dict("type" => "mcp_server", "name" => "crm", "url" => "https://mcp.example.com/mcp",
+                    "headers" => Dict("Authorization" => "Bearer sentinel-4")),
+               Dict("type" => "retrieval", "retrieval_types" => ["exa_ai_search", "parallel_ai_search"],
+                    "exa_ai_search_config" => Dict("api_key" => "sentinel-5"),
+                    "parallel_ai_search_config" => Dict("api_key" => "sentinel-6"))])
+    g = _rl_offline(() -> with_recorded_answers(() -> _ra_caught(() -> respond(gemini)), mkpath(_ra_dir("llm-mcp-gemini"))))
+    @test g isa ReplayMissError && g.path == "/v1beta/interactions" && !contains(repr(g), "sentinel")
+    server, retrieval = JSON.parse(g.body)["tools"]
+    @test server["headers"] == "<redacted>" && server["url"] == "https://mcp.example.com/mcp"
+    @test retrieval["exa_ai_search_config"]["api_key"] == retrieval["parallel_ai_search_config"]["api_key"] == "<redacted>"
+    @test retrieval["retrieval_types"] == ["exa_ai_search", "parallel_ai_search"]
+
+    # A body with no credential is keyed byte for byte, as it always was: never re-encoded.
+    for plain in ("""{"tools": [{"type": "function", "name": "f"}], "temperature": 0.10}""",
+                  """{"tools": [{"type": "mcp", "server_label": "crm"}], "temperature": 0.10}""",
+                  "not JSON, though it mentions \"tools\"")
+        @test UniLM._redacted(plain) == plain
+    end
+end
+
 @testset "recorded LLM answers — a two-turn tool loop records two files and replays them offline" begin
     for (name, loop) in (("chat", () -> tool_loop!(_rl_loop_chat(), _rl_add; config=_RL_CFG)),
                          ("respond", () -> tool_loop(_rl_loop_respond(), _rl_add; config=_RL_CFG)),
@@ -703,9 +757,32 @@ end
                 write(dir, "")   # the checked directory is a file by the time the reply arrives
                 _ra_caught(call)
             end
-            # The write's own I/O error — not a call error, and not a loop that goes on.
-            @test e isa Union{Base.IOError,SystemError}
+            # The lost write — not a call error, and not a loop that goes on.
+            @test e isa RecordingWriteError && e.cause isa Union{Base.IOError,SystemError}
+            @test dirname(e.file) == abspath(dir)
             @test _RL_HITS[] == before + 1
+            rm(dir)
+        end
+    end
+    # A dispatcher's own paid request whose recording is lost stops the loop too: as a
+    # tool error the model would read it and the loop would go on without the recording.
+    lost = (name, args) -> with_recorded_answers(dir; mode=:record) do
+        rm(dir; force=true, recursive=true)
+        write(dir, "")
+        embeddingrequest!(Embeddings("hello"; service=_RL_OPENAI, model="text-embedding-3-small", dimensions=3);
+                          config=_RL_CFG)
+        "5"
+    end
+    _rl_online() do
+        for (loop, turn) in ((n -> tool_loop!(_rl_loop_chat(), lost; config=_RL_CFG, tool_concurrency=n), "/chat/completions"),
+                             (n -> tool_loop(_rl_loop_respond(), lost; config=_RL_CFG, tool_concurrency=n), "/responses")),
+            n in (1, 2)
+            before = _RL_HITS[]
+            e = _ra_caught(() -> loop(n))
+            @test e isa RecordingWriteError && dirname(e.file) == abspath(dir)
+            # The first turn and the dispatcher's request were sent; no second turn followed.
+            @test _RL_HITS[] == before + 2
+            @test contains(@lock(_RL_LOCK, _RL_SEEN[end - 1]), turn)
             rm(dir)
         end
     end

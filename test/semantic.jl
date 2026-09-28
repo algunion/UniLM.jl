@@ -728,17 +728,22 @@ end
     @test second isa DecisionDeclinedError && second.question == "meaning_2"
     @test second.answer.choice == "d2" && _pair_calls[] == 0
 
-    # Refused before any request: two policies at once, a wrong-length vector, and
-    # something that cannot be called on an answer.
+    # Refused before any request: two policies at once, a wrong-length vector, something
+    # that cannot be called on an answer, and a fallback that cannot take the arguments.
     refused, sent = _with_semantic_mock() do
         [caught(() -> nl_dispatch(route, "x"; service=SemanticMock, config=_SEM_CFG,
                                   decide=a -> a.choice, min_confidence=0.5)),
          caught(() -> nl_dispatch(pair; service=SemanticMock, config=_SEM_CFG, state="s",
                                   decide=[a -> a.choice])),
          caught(() -> nl_dispatch(route, "x"; service=SemanticMock, config=_SEM_CFG,
-                                  decide="the customer wants a refund"))]
+                                  decide="the customer wants a refund")),
+         caught(() -> nl_dispatch(route, "x"; service=SemanticMock, config=_SEM_CFG,
+                                  min_confidence=0.5, fallback=:escalate)),
+         caught(() -> nl_dispatch(route, 1.5; service=SemanticMock, config=_SEM_CFG,
+                                  min_confidence=0.5, fallback=(t::String) -> :escalate))]
     end
     @test all(e -> e isa ArgumentError, refused)
+    @test contains(refused[4].msg, "fallback(args...)") && contains(refused[5].msg, "Tuple{Float64}")
     @test isempty(sent)
 end
 
@@ -969,6 +974,15 @@ const C_TABLE = (c1 = "the first c", c2 = "the second c")
 key_cached(::Val{:a}, t::String) = (:a, t)   # gains a String method for :b during its test
 key_cached(::Val{:b}, t::Int) = (:b, t)
 
+# Methods that name nothing, defined before those that do: a wildcard for meanings, a
+# named catch-all for keys. The request is named from the first method that pins.
+wild_first(m::Meaning, t) = :wild
+wild_first(::nl"A", ticket) = (:a, ticket)
+wild_first(::nl"B", ticket) = (:b, ticket)
+catch_first(k, t) = (:caught, k)
+catch_first(::Val{:a}, ticket) = (:a, ticket)
+catch_first(::Val{:b}, ticket) = (:b, ticket)
+
 @testset "semantic — keyed dispatch sends only the sentences and calls the key's method" begin
     out, seen = _with_semantic_mock(; pick=Dict("meaning_1" => "the customer reports a bug in the app")) do
         nl_dispatch(intent_route, "it crashes"; service=SemanticMock, config=_SEM_CFG, texts=INTENT)
@@ -998,7 +1012,9 @@ end
 
 @testset "semantic — keyed dispatch puts the literal request on the wire, byte for byte" begin
     cases = [(lit_route, key_route, KEY_AB, Dict("meaning_1" => "B"), (:b, "the ticket")),
-             (lit_pair, key_pair, (KEY_X, KEY_Y), Dict("meaning_1" => "x2", "meaning_2" => "y1"), 21)]
+             (lit_pair, key_pair, (KEY_X, KEY_Y), Dict("meaning_1" => "x2", "meaning_2" => "y1"), 21),
+             # Named after the first method that pins, never a catch-all defined before it.
+             (wild_first, catch_first, KEY_AB, Dict("meaning_1" => "B"), (:b, "the ticket"))]
     for (lit, keyed, texts, pick, expected) in cases
         mktempdir() do dir
             outs, seen = _with_semantic_mock(; pick) do
@@ -1021,6 +1037,10 @@ end
     dispatch(f, args...; kw...) = () -> nl_dispatch(f, args...; service=SemanticMock, config=_SEM_CFG, kw...)
     classify(texts; kw...) = () -> nl_classify("s", texts; service=SemanticMock, config=_SEM_CFG, kw...)
     many = [Symbol("k", i) => "sentence $(i)" for i in 1:256]
+    # Equal to `Vector` without being it: spelled with `Vector`'s own type variable,
+    # `Array{T,1} where T` would be `Vector` itself.
+    vector_s = Array{S,1} where S
+    @test isequal(vector_s, Vector) && vector_s !== Vector
     refusals = [
         "a Dict"                       => (dispatch(key_route, "t"; texts=Dict(:a => "A", :b => "B")), "collect(pairs(d))"),
         "an empty table"               => (dispatch(key_route, "t"; texts=NamedTuple()), "at least one"),
@@ -1029,6 +1049,7 @@ end
         "a blank sentence"             => (dispatch(key_route, "t"; texts=(a = "  ",)), "non-empty string"),
         "a repeated sentence"          => (dispatch(key_route, "t"; texts=[:a => "same", :b => "same"]), "could not tell them apart"),
         "the same key twice"           => (dispatch(key_route, "t"; texts=[:a => "A", Val(:a) => "B"]), "are the same key"),
+        "two equal keys"               => (dispatch(key_route, "t"; texts=[Vector => "A", vector_s => "B"]), "are the same key"),
         "a Tuple of pairs"             => (dispatch(key_route, "t"; texts=(:a => "A", :b => "B")), "pass one table as a vector"),
         "an empty Tuple"               => (dispatch(key_route, "t"; texts=()), "empty"),
         "an entry that is no pair"     => (dispatch(key_route, "t"; texts=[:a => "A", "B"]), "`key => sentence` pairs"),
@@ -1045,6 +1066,8 @@ end
         "a gap"                        => (dispatch(key_half; texts=(P_TABLE, Q_TABLE), state="s"), "No method covers"),
         "a bad on_response"            => (dispatch(key_route, "t"; texts=KEY_AB, on_response=42), "on_response"),
         "decide with min_confidence"   => (dispatch(key_route, "t"; texts=KEY_AB, decide=a -> a.choice, min_confidence=0.5), "not both"),
+        "a fallback that is no callable" => (dispatch(key_route, "t"; texts=KEY_AB, min_confidence=0.5, fallback=:b), "fallback(args...)"),
+        "a fallback of another arity"  => (dispatch(key_route, "t"; texts=KEY_AB, min_confidence=0.5, fallback=() -> :b), "Tuple{String}"),
         "nl_classify: a tuple of tables"  => (classify((KEY_X, KEY_Y)), "one table"),
         "nl_classify: a Tuple of pairs"   => (classify((:a => "A", :b => "B")), "pass one table as a vector"),
         "nl_classify: a Dict"             => (classify(Dict(:a => "A")), "no order"),
@@ -1052,6 +1075,9 @@ end
         "nl_classify: a bad on_response"  => (classify(INTENT; on_response="audit"), "on_response"),
         "nl_classify: decide with min_confidence" => (classify(INTENT; decide=a -> a.choice, min_confidence=0.5), "not both"),
         "nl_classify: a decide that is no callable" => (classify(INTENT; decide=[a -> a.choice]), "decide"),
+        "nl_classify: two equal keys"     => (classify([Vector => "A", vector_s => "B"]), "are the same key"),
+        "nl_classify: a fallback that is no callable" => (classify(INTENT; min_confidence=0.5, fallback=:other), "fallback(state)"),
+        "nl_classify: a fallback of another arity"    => (classify(INTENT; min_confidence=0.5, fallback=(s, t) -> :other), "Tuple{String}"),
     ]
     results, sent = _with_semantic_mock() do
         [caught(call) for (_, (call, _)) in refusals]
@@ -1281,6 +1307,22 @@ end
     end
     @test fell_back[] == 0
     @test classify(; mock=(; status=500, body="""{"detail":"boom"}""")) isa SystemOneError
+end
+
+@testset "semantic — an answer that was not offered is refused in the words of what was" begin
+    caught(f) = try f(); nothing catch e; e end
+    stray = "a sentence nobody offered"
+    (literal, keyed, classified), _ = _with_semantic_mock(; pick=Dict("meaning_1" => stray, "classify" => stray)) do
+        [caught(() -> nl_dispatch(route, "t"; service=SemanticMock, config=_SEM_CFG)),
+         caught(() -> nl_dispatch(intent_route, "t"; service=SemanticMock, config=_SEM_CFG, texts=INTENT)),
+         caught(() -> nl_classify("t", INTENT; service=SemanticMock, config=_SEM_CFG))]
+    end
+    @test literal isa ArgumentError && literal.msg == "the model chose \"a sentence nobody offered\" for \"meaning_1\", " *
+        "which is not one of the offered meanings: [\"the customer wants a refund\", \"the customer reports a bug\"]"
+    for e in (keyed, classified)
+        @test e isa ArgumentError && contains(e.msg, "not one of the offered sentences: ") &&
+              !contains(e.msg, "offered meanings")
+    end
 end
 
 @testset "semantic — on_response sees the success once, before the decision policy" begin

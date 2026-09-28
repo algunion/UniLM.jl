@@ -168,6 +168,15 @@ function _nl_check_hook(on_response)::Nothing
     nothing
 end
 
+# A fallback too: one that cannot take what it is called with — values of the types in
+# `argtypes`, as dispatch sees them — would fail only after the declined answer was billed.
+function _nl_check_fallback(fallback, argtypes::Vector{Any}, call::String)::Nothing
+    isnothing(fallback) || hasmethod(fallback, Tuple{argtypes...}) || throw(ArgumentError(
+        "`fallback` must be `nothing` or callable as `$(call)`, with arguments of types " *
+        "$(Tuple{argtypes...}); got $(typeof(fallback))"))
+    nothing
+end
+
 # A policy's verdict on one answer: the index of the offered option it picked, or
 # `nothing` when it declined. Any other value would be a guess at what was meant.
 function _nl_verdict(v, offered::Vector{String}, question::String)::Union{Nothing,Int}
@@ -470,7 +479,10 @@ function _nl_entries(entries::Vector{Pair{Any,Any}})::_NLTable
         "a table of sentences holds at most 255 entries, the options one Choice question takes; " *
         "got $(length(entries))"))
     said = Dict{String,Any}()     # sentence => its key
-    held = IdDict{Any,Any}()      # dispatched value => its key: `:a` and `Val(:a)` collide
+    # Dispatched value => its key: `:a` and `Val(:a)` collide, and so do two keys that are
+    # equal without being identical (`Vector` and `Array{S,1} where S`), which a hash of
+    # identity would tell apart. A scan: a table holds at most 255 entries.
+    held = Pair{Any,Any}[]
     for (k, s) in entries
         # Singletons, but each already means something here: a policy returns `nothing`
         # to decline, so a `nothing` key could never be decided on, and `missing`
@@ -487,10 +499,11 @@ function _nl_entries(entries::Vector{Pair{Any,Any}})::_NLTable
             "the sentence $(repr(s)) is given for both $(repr(said[s])) and $(repr(k)): the model could " *
             "not tell them apart"))
         v = _nl_value(k)
-        haskey(held, v) && throw(ArgumentError(
-            "$(repr(held[v])) and $(repr(k)) are the same key: both dispatch as $(repr(v))"))
+        j = findfirst(h -> isequal(first(h), v), held)
+        isnothing(j) || throw(ArgumentError(
+            "$(repr(last(held[j]))) and $(repr(k)) are the same key: both dispatch as $(repr(v))"))
         said[s] = k
-        held[v] = k
+        push!(held, v => k)
     end
     _NLTable(Tuple(first(e) for e in entries), Tuple(String(last(e)) for e in entries))
 end
@@ -977,7 +990,16 @@ const _NLKeyedPlan = @NamedTuple{offer::_NLKeyedOffer, argnames::Vector{Symbol},
 
 function _nl_keyed_plan_uncached(f, argtypes::Vector{Any}, tables::Vector{_NLTable})::_NLKeyedPlan
     offer = _nl_keyed_offer(f, argtypes, tables)
-    (; offer, argnames = _nl_argnames(offer.slotted[1], offer.arity), gaps = _nl_gaps(f, offer, argtypes))
+    (; offer, argnames = _nl_argnames(_nl_namer(offer), offer.arity), gaps = _nl_gaps(f, offer, argtypes))
+end
+
+# The method the questions and the state keys are named from: the first, in definition
+# order, that pins a table at its position — as the literal path names them from its
+# first slotted method. A catch-all pins none, so its names never reach the request.
+# Some method pins every table: that is how its position was found.
+function _nl_namer(offer::_NLKeyedOffer)::Method
+    pins(m::Method) = any(k -> _nl_pins(m, offer.slots[k], _nl_values(offer.tables[k])), eachindex(offer.slots))
+    offer.slotted[something(findfirst(pins, offer.slotted))]
 end
 
 # Keyed plans depend on the tables too, so their key adds the tables' contents: each
@@ -1016,10 +1038,15 @@ previews that.
 
 With `texts` — a table of `key => sentence` entries, or a tuple of them, as
 `nl_dispatch` takes it — the options are sentences: each table's position maps to
-every sentence of the table, in table order, once the checks a call makes before
-its request pass. With no call to take an arity from, the arity is the one at
-which the methods of `f` declare arguments for the keys; when several arities do,
-pass `argtypes`.
+every sentence of the table, in table order. With no call to take an arity from,
+the arity is the one at which the methods of `f` declare arguments for the keys;
+when several arities do, pass `argtypes`. The tables and their positions are
+checked as a call checks them — each table is validated as `nl_dispatch`
+validates it, its keys must fill one position of its own, no method of that arity
+may pin a `Meaning`, and some method must take every key at its position — and a
+failure is an `ArgumentError`. The combinations of keys are not checked:
+[`meaning_gaps`](@ref)`(f, argtypes; texts)` lists those with no method, which a
+call refuses before its request.
 
 ```julia
 route(::nl"the customer wants a refund", ticket) = :refund
@@ -1173,7 +1200,9 @@ default, a `String` for every slot, or a `Vector` with one entry per slot.
 
 A decision policy turns the answers into meanings. The default is the argmax
 gated by `min_confidence`: below it, `fallback` is called with the caller's
-`args` if given, and otherwise [`LowConfidenceError`](@ref) is thrown.
+`args` if given, and otherwise [`LowConfidenceError`](@ref) is thrown. A
+`fallback` that cannot be called with arguments of the types of `args` is an
+`ArgumentError` before any request.
 `confidence` is computed over the options offered — `(n·p_max − 1)/(n − 1)`,
 clamped to `0 … 1`, for `n` of them
 ([Confidence](https://docs.typesafe.ai/confidence)) — so the same threshold is a
@@ -1245,8 +1274,11 @@ nl_dispatch(route, ticket; texts = INTENT)   # sends the 3 sentences; calls rout
 ```
 
 A table is a `NamedTuple` of sentences or a vector of `key => sentence` pairs,
-with at most 255 entries and no sentence or key twice. A `Dict` is refused: it
-has no order, and option order is part of what the model reads. A `Symbol` key is
+with at most 255 entries and no sentence or key twice — two keys are the same when
+their dispatched values are `isequal`, as `:a` and `Val(:a)` are. A `Dict` is
+refused: it has no order, and option order is part of what the model reads.
+`nothing` and `missing` cannot be keys: a policy returns `nothing` to decline, and
+`missing` compares as neither true nor false. A `Symbol` key is
 passed as `Val(key)`; a `Val` or other singleton instance (`Refund()`), a type
 (`Refund`) or an enum value is passed as written, so methods on `::Refund`,
 `::Type{<:Billing}` or an enum type select through ordinary dispatch, and a table
@@ -1256,9 +1288,11 @@ several keyed positions take a `Tuple` of tables, one per position. The call has
 `length(args)` positional arguments plus one per table, and only the methods of
 that arity take part; one of them pinning a `Meaning` is an `ArgumentError`, since
 a call uses meanings in signatures or `texts`, not both. Each keyed position is a
-slot as above — one question, named after its argument in the first of those
-methods, and one entry of an `instructions` or `decide` vector, in position order —
-and the state is built from `args` the same way.
+slot as above — one question, and one entry of an `instructions` or `decide`
+vector, in position order. The question names and the state's keys come from the
+first of those methods, in definition order, that pins a table (declares a type its
+keys have), as they come from the first natural-language method for meanings: a
+catch-all `route(k, t)` defined before it names nothing.
 
 Every key must be taken at its position by some method whatever the other
 arguments are: a key none takes is an `ArgumentError` before any request, naming
@@ -1286,6 +1320,7 @@ function nl_dispatch(f, args...;
     _nl_check_hook(on_response)
     # `Core.Typeof` is the type dispatch sees: `Type{Int}` for the argument `Int`.
     argtypes = Any[Core.Typeof(a) for a in args]
+    _nl_check_fallback(fallback, argtypes, "fallback(args...)")
     (; offer, argnames, gaps) = isnothing(texts) ? _nl_plan(f, argtypes) :
                                                    _nl_keyed_plan(f, argtypes, _nl_tables(texts))
     isempty(gaps) || throw(_nl_gap_error(f, offer, argtypes, gaps))
@@ -1297,7 +1332,7 @@ function nl_dispatch(f, args...;
     guidance = _nl_instructions(instructions, length(slots))
     questions = [names[k] => choice(guidance[k], [o => nothing for o in options[k]])
                  for k in eachindex(slots)]
-    picked = _nl_ask(payload, questions, options; model, service, config, cancel, on_response)
+    picked = _nl_ask(payload, questions, options, _nl_noun(offer); model, service, config, cancel, on_response)
 
     # Every slot is decided before anything runs, so an invalid verdict in a later
     # slot cannot follow a fallback or a call already made on an earlier one.
@@ -1318,27 +1353,32 @@ end
 
 # The one request behind `nl_dispatch` and `nl_classify`, and the Choice answer to each
 # of its questions. A failed call throws rather than resolving to anything, and
-# `on_response` sees the success before any policy runs on it.
-function _nl_ask(payload, questions::Vector{Pair{String,ChoiceQuestion}}, options::Vector{Vector{String}};
-                 model::Union{Nothing,AbstractString}, service::ServiceEndpointSpec,
+# `on_response` sees the success before any policy runs on it. `offered` names the
+# options in a message: meanings, or a table's sentences.
+function _nl_ask(payload, questions::Vector{Pair{String,ChoiceQuestion}}, options::Vector{Vector{String}},
+                 offered::String; model::Union{Nothing,AbstractString}, service::ServiceEndpointSpec,
                  config::Union{Nothing,RequestConfig}, cancel::Union{Nothing,CancelToken},
                  on_response)::Vector{ChoiceAnswer}
     result = isnothing(model) ? ask(payload, questions...; service, config, cancel) :
                                 ask(payload, questions...; model, service, config, cancel)
     result isa SystemOneSuccess || throw(SystemOneError(result))
     isnothing(on_response) || on_response(result)
-    ChoiceAnswer[_nl_choice(result, first(questions[k]), options[k]) for k in eachindex(questions)]
+    ChoiceAnswer[_nl_choice(result, first(questions[k]), options[k], offered) for k in eachindex(questions)]
 end
 
-function _nl_choice(result::SystemOneSuccess, name::String, options::Vector{String})::ChoiceAnswer
+function _nl_choice(result::SystemOneSuccess, name::String, options::Vector{String}, offered::String)::ChoiceAnswer
     a = answer(result, name)
     a isa ChoiceAnswer || throw(ArgumentError(
         "the answer to $(repr(name)) is a $(typeof(a)), not a ChoiceAnswer"))
     a.choice in options || throw(ArgumentError(
         "the model chose $(repr(a.choice)) for $(repr(name)), which is not one of the " *
-        "offered meanings: $(options)"))
+        "offered $(offered): $(options)"))
     a
 end
+
+# What a message calls a call's options: the meanings in its signatures, or its table's sentences.
+_nl_noun(::_NLOffer)::String = "meanings"
+_nl_noun(::_NLKeyedOffer)::String = "sentences"
 
 # A verdict for slot `k`, and what the slot then receives: a meaning is its own value;
 # a keyed slot may also be decided by a key as the table writes it, and receives the
@@ -1375,7 +1415,9 @@ returning an offered sentence, a key as the table writes it, or `nothing` to
 decline — not both. A declined answer calls `fallback(state)` when given, and
 otherwise throws [`LowConfidenceError`](@ref) or [`DecisionDeclinedError`](@ref)
 for the question `"classify"`; any other verdict is an `ArgumentError`, and
-`fallback` does not run. A non-success call throws [`SystemOneError`](@ref).
+`fallback` does not run. A `fallback` that cannot be called with `state` is an
+`ArgumentError` before the request. A non-success call throws
+[`SystemOneError`](@ref).
 `on_response` is called once with the [`SystemOneSuccess`](@ref) before the
 policy runs — audits get `request_id`, `model` and `raw` from its `response`,
 which `decide` cannot see — as it is for `nl_dispatch`.
@@ -1407,10 +1449,11 @@ function nl_classify(state, texts;
     table = _nl_table(texts)
     policy = _nl_one_policy(decide, min_confidence)
     _nl_check_hook(on_response)
+    _nl_check_fallback(fallback, Any[Core.Typeof(state)], "fallback(state)")
     options = collect(table.texts)
     question = "classify" => choice(String(something(instructions, _NL_INSTRUCTIONS)),
                                     [o => nothing for o in options])
-    a = only(_nl_ask(state, [question], [options]; model, service, config, cancel, on_response))
+    a = only(_nl_ask(state, [question], [options], "sentences"; model, service, config, cancel, on_response))
     keys = collect(Any, table.keys)
     i = _nl_keyed_verdict(policy(a), options, keys, "classify")
     isnothing(i) || return keys[i]

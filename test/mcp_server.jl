@@ -381,6 +381,20 @@ end
     @test !contains(JSON.json(resp), "recording")
 end
 
+@testset "tools/call — a RecordingWriteError is logged and answered -32603, and no local path reaches the client" begin
+    server = MCPServer("lost-write", "1.0.0")
+    file = joinpath(mktempdir(), "private-recordings", "0"^64 * ".json")
+    register_tool!(server, "judge", "Records a paid answer", Dict{String,Any}("type" => "object"),
+        args -> throw(RecordingWriteError(file, Base.IOError("mkdir(\"$(dirname(file))\"): file already exists", -17))))
+    req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 22, "method" => "tools/call",
+        "params" => Dict{String,Any}("name" => "judge", "arguments" => Dict{String,Any}()))
+    resp = @test_logs (:error,) match_mode=:any UniLM._dispatch_guarded(server, req)
+
+    @test !haskey(resp, "result")
+    @test resp["error"]["code"] == -32603 && resp["error"]["message"] == "Internal error"
+    @test !contains(JSON.json(resp), "private-recordings") && !contains(JSON.json(resp), "billed")
+end
+
 @testset "resources/read — template handler throws → generic -32603, detail logged" begin
     server = MCPServer("tmpl-err", "1.0.0")
     register_resource_template!(server, "boom://{id}", "BoomTmpl",

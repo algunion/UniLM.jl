@@ -1690,10 +1690,9 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
-        # As in `ask`: a missing recording, or the I/O error of a paid reply's lost
-        # recording, reaches the caller instead of reading as a service failure.
-        e isa Union{InterruptException,ReplayMissError} && rethrow()
-        e isa _UnwrittenRecording && throw(e.cause)
+        # As in `ask`: a missing recording, or a paid reply's lost recording, reaches
+        # the caller instead of reading as a service failure.
+        e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end

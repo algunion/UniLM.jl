@@ -13,9 +13,10 @@
   whose declared type its keys have; several keyed arguments take a tuple of tables. Options
   follow the types of the ordinary arguments as they do for meanings, in table order. Before
   any request, a `Dict` (it has no order), an empty table, more than 255 entries, a blank
-  sentence, a sentence or key given twice, a key no method takes at its position whatever the
-  other arguments are, a method that also pins a `Meaning`, and a gap in the method table are
-  each an `ArgumentError`. `decide` may return an offered key as the table writes it.
+  sentence, a sentence given twice, two keys whose dispatched values are `isequal` (`:a` and
+  `Val(:a)`), `nothing` or `missing` as a key, a key no method takes at its position whatever
+  the other arguments are, a method that also pins a `Meaning`, and a gap in the method table
+  are each an `ArgumentError`. `decide` may return an offered key as the table writes it.
   `meanings(f; texts)`, `meanings(f, argtypes; texts)` and `meaning_gaps(f, argtypes; texts)`
   preview a keyed call. Dispatch on `nl"..."` meanings is unchanged.
 - `nl_classify(state, texts; ...)` returns the chosen key as the table writes it (`:refund`
@@ -34,7 +35,13 @@
   `embeddingrequest!` exchanges through the recordings exactly as `ask` does — the
   same three modes, the same directory, the same key: the SHA-256 of the request line
   and the exact body, where the line holds the URL's path alone, never its host or its
-  query (which can carry a credential). A replayed reply decodes like the live one:
+  query (which can carry a credential). The credentials a body can carry are replaced
+  by `"<redacted>"` in the key, the recording and a `ReplayMissError`, so none is
+  written and a replay needs none: in the body's top-level `tools` array, an MCP tool's
+  (`"type": "mcp"`, `MCPTool`) `authorization` and `headers`, a Gemini Interactions
+  `"mcp_server"`'s `headers`, and the `api_key` of a Gemini `"retrieval"` tool's
+  `exa_ai_search_config` and `parallel_ai_search_config`. The request sent still
+  carries them. A replayed reply decodes like the live one:
   the message, finish reason and usage, the reply appended to the `Chat` and its cost
   accumulated, the `ResponseObject`, the embedding vectors. A streamed call, images,
   audio, files, MCP, the Responses lifecycle operations and every other verb reach
@@ -49,14 +56,37 @@
 - Inside a `with_recorded_answers` scope, `chatrequest!`, `respond` and
   `embeddingrequest!` — and so `tool_loop!` and `tool_loop` — throw `ReplayMissError`
   for a request the scope cannot replay, and a paid reply's recording that cannot be
-  written throws its I/O error, instead of returning an `LLMCallError`,
+  written throws `RecordingWriteError`, instead of returning an `LLMCallError`,
   `ResponseCallError` or `EmbeddingCallError` that a fallback would take for a service
   failure. Before, these verbs ignored the scope and called the provider. Upgrading:
   code that runs LLM calls inside a `:replay` scope must record them first (the same
   code once with the provider's key and `mode = :record_missing`) or make them
   outside the scope.
-- The manual's non-streaming LLM examples render recorded real output instead of a
-  failed request. The documentation build chooses its mode by flag, not by the keys
+- A recording that cannot be written after a paid answer throws the new exported
+  `RecordingWriteError` — its `file`, and the I/O error as its `cause` — out of `ask`,
+  `list_models` (and so `nl_dispatch`, `nl_classify` and `@branch`), `chatrequest!`,
+  `respond` and `embeddingrequest!`, where 0.21.0 threw the bare I/O error; its
+  `showerror` names the file and the cause and says that the answer was billed. A tool
+  loop no longer turns one raised by a dispatcher's request into a tool error the model
+  reads while the loop goes on: it propagates, as `ReplayMissError` does. An MCP server
+  answers one raised by a tool handler with the generic JSON-RPC `-32603` and logs it,
+  instead of relaying the error, with its local path, to the client as `isError` tool
+  content. Upgrading: catch `RecordingWriteError` where code caught `Base.IOError` or
+  `SystemError` from these verbs.
+- `nl_dispatch` and `nl_classify` refuse a `fallback` that cannot take what it would
+  be called with — the call's arguments (`fallback(args...)`), or the state
+  (`fallback(state)`) — with an `ArgumentError` before the request. Before, it failed
+  with a `MethodError` only after a declined answer had been billed.
+- On the Home, Getting Started, Chat Completions, Responses API, Embeddings, Tool
+  Calling, Agentic Workflows, Structured Output, Cost Tracking and Multi-Backend pages,
+  the examples that call `chatrequest!`, `respond` or `embeddingrequest!` without
+  streaming render recorded real output instead of a failed request. What the
+  recordings do not cover still runs, and fails, without a key: the two streamed
+  examples of the Streaming guide and the `count_input_tokens` and `compact_response`
+  examples of the Responses API guide render their failure, and its stored-response
+  example shows the stored id but nothing from `get_response`, `list_input_items` or
+  `delete_response`. The native Anthropic example of the Multi-Backend guide is shown
+  without running. The documentation build chooses its mode by flag, not by the keys
   it finds: replay by default (with every provider key hidden, so it never calls a
   service), `UNILM_DOCS_RECORD=1` to record the missing answers, `UNILM_DOCS_LIVE=1`
   to call every service live.

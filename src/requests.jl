@@ -1519,8 +1519,7 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
     catch e
         # A missing recording is not a service failure, nor is a paid reply whose
         # recording could not be written: both reach the caller, as from `ask`.
-        e isa Union{InterruptException,ReplayMissError} && rethrow()
-        e isa _UnwrittenRecording && throw(e.cause)
+        e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         e isa UniLMTimeout && return LLMCallError(error=sprint(showerror, e), self=chat,
                                                   status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
@@ -1626,8 +1625,7 @@ function embeddingrequest!(emb::Embeddings; config::Union{Nothing,RequestConfig}
             return EmbeddingFailure(response=String(resp.body), status=resp.status)
         end
     catch e
-        e isa Union{InterruptException,ReplayMissError} && rethrow()
-        e isa _UnwrittenRecording && throw(e.cause)
+        e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         e isa UniLMTimeout && return EmbeddingCallError(error=sprint(showerror, e),
                                                         status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing

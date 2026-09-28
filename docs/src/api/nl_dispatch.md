@@ -11,13 +11,20 @@ state; the winning option selects which expression is evaluated and the other
 bodies never run. However many options a branch lists, it costs a single
 request.
 
-[`nl_dispatch`](@ref) lifts the same idea into the method table. `nl"..."` is a
-[`Meaning`](@ref) type, so a meaning is writable in an ordinary signature;
-`nl_dispatch` sends one Choice question per `Meaning` position — again in a
-single request — turns each answer back into a `Meaning` instance and calls the
-function, so Julia's own dispatch selects the method and the remaining arguments
-still dispatch on their types. Both constructs act on an answer through a
-decision policy. The default gates on `confidence`: below `min_confidence`
+[`nl_dispatch`](@ref) lifts the same idea into the method table, in two
+spellings that send the same request. With `texts = TABLE`, methods dispatch on
+short keys — `Val{:billing}`, your own types or instances, enum values — and the
+ordered table holds the sentence the model reads for each key; the keys never
+leave the process. With `nl"..."`, the sentence is itself a [`Meaning`](@ref)
+type written in the signature. Either way `nl_dispatch` sends one Choice
+question per such position — again in a single request — turns each answer back
+into the key or the `Meaning` instance and calls the function, so Julia's own
+dispatch selects the method and the remaining arguments still dispatch on their
+types. [`nl_classify`](@ref) asks the same question over a table and returns the
+key itself, without dispatching. All three act on an answer through a decision
+policy, and all three take `on_response`, which sees the whole
+[`SystemOneSuccess`](@ref) — request id, model, raw body — before the policy
+runs. The default gates on `confidence`: below `min_confidence`
 `@branch` takes its `_` line and `nl_dispatch` calls `fallback`, and with
 neither they raise [`LowConfidenceError`](@ref) rather than act on a near-tie.
 `decide` replaces the gate with any function of the [`ChoiceAnswer`](@ref) that
@@ -25,7 +32,8 @@ returns an offered option — not only the winner — or `nothing` to decline,
 which takes the same fallback or raises [`DecisionDeclinedError`](@ref).
 [`meanings`](@ref)`(f)` is the union of the options of every natural-language
 method of `f`; `meanings(f, Tuple{…})` lists the ones a call with ordinary
-arguments of those types sends, in the order it sends them.
+arguments of those types sends, in the order it sends them. Both take the same
+`texts` a keyed call does.
 
 ```@docs
 Meaning

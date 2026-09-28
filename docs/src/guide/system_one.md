@@ -746,6 +746,7 @@ jev_llm_check_claims). [Jev with LLMs](@ref jev_llm_guide) builds each step.
 
 ## See also
 
+- [Start Here: Jev in Five Minutes](@ref jev_start) — which page answers which question
 - [Jev with LLMs](@ref jev_llm_guide) — Jev before and after an LLM call
 - [Dispatch on Meaning](@ref nl_dispatch_guide) — `nl_classify`,
   [`nl_dispatch`](@ref) and [`@branch`](@ref): the answer selects the code that

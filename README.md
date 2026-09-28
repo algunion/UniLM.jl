@@ -26,8 +26,9 @@ UniLM speaks each provider's own wire API, not just the OpenAI-compatible protoc
 - **Image Generation & Edits** — create and edit images with `gpt-image-2`
 - **Tool/Function Calling** — first-class support for function tools in both APIs, with automated `tool_loop`
 - **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool loop integration
-- **System One (TypeSafe Jev)** — typed judgments instead of generated text: `ask` answers `choice` / `score` / `noul` questions about a piece of state with a calibrated distribution, in one request
-- **Multiple Dispatch on Natural Language** — `nl"..."` is an ordinary Julia type, so `nl_dispatch` lets a Jev answer select which method runs; `@branch` is the same single-request decision inline
+- **Jev (TypeSafe System One)** — decisions about a text instead of generated text: `nl_classify` returns one of your own keys, and `ask` answers `choice` / `score` / `noul` questions with calibrated probabilities, many questions in one request
+- **Dispatch on Meaning** — `nl_dispatch` runs the method whose sentence fits the text: short keys with a table of sentences (`texts = TEAM`, methods on `Val{:billing}`), or `nl"..."` in the signature; `@branch` is the same decision inline
+- **Jev with LLMs** — route a message before an LLM call and check the draft after it; `with_recorded_answers` records Jev's answers and the non-streaming LLM calls once and replays them, so tests run without keys
 - **Embeddings** — text embedding generation with `text-embedding-3-small`
 - **Files, Vector Stores & Conversations** — upload files, build vector stores for `file_search`, and manage server-side conversation state
 - **Audio, Batch & Moderations** — TTS/transcription, async 50%-off bulk jobs, and free safety classification

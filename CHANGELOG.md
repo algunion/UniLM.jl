@@ -3,6 +3,31 @@
 ## Unreleased
 
 ### Added
+- Keyed natural-language dispatch: with `nl_dispatch(f, args...; texts = table)` the methods
+  dispatch on a short key — `route(::Val{:refund}, t)`, a singleton instance or type you own,
+  an enum value — and a table maps each key to the sentence the model reads. The request
+  carries only the sentences, byte for byte the one the same sentences written as `nl"..."`
+  send; the chosen sentence maps back to its key locally (a `Symbol` key is passed as
+  `Val(key)`, any other key as written), so no key reaches the model. A table is a
+  `NamedTuple` of sentences or a vector of `key => sentence` pairs, and fills the one position
+  whose declared type its keys have; several keyed arguments take a tuple of tables. Options
+  follow the types of the ordinary arguments as they do for meanings, in table order. Before
+  any request, a `Dict` (it has no order), an empty table, more than 255 entries, a blank
+  sentence, a sentence or key given twice, a key no method takes at its position whatever the
+  other arguments are, a method that also pins a `Meaning`, and a gap in the method table are
+  each an `ArgumentError`. `decide` may return an offered key as the table writes it.
+  `meanings(f; texts)`, `meanings(f, argtypes; texts)` and `meaning_gaps(f, argtypes; texts)`
+  preview a keyed call. Dispatch on `nl"..."` meanings is unchanged.
+- `nl_classify(state, texts; ...)` returns the chosen key as the table writes it (`:refund`
+  for a `NamedTuple` table) without dispatching: one Choice question named `"classify"` over
+  every sentence, with the decision policies of `nl_dispatch`. A declined answer calls
+  `fallback(state)`, or throws `LowConfidenceError` or `DecisionDeclinedError`.
+- An `on_response` keyword on `nl_dispatch`, `nl_classify` and `@branch`: called once with the
+  `SystemOneSuccess` before the decision policy runs, so an audit gets the response's
+  `request_id`, `model` and `raw`, which `decide` cannot see. Its return value is ignored, and
+  an exception from it propagates with nothing else run; it is not called for a failed call or
+  when nothing was sent. A value that cannot be called on a `SystemOneSuccess` is an
+  `ArgumentError` before the request.
 - `with_recorded_answers` records and replays the language-model verbs as well: inside
   a scope, every non-streaming `chatrequest!` (and so its keyword form and
   `tool_loop!`), `respond` (and so its convenience forms and `tool_loop`) and

@@ -190,6 +190,7 @@ Meaning
 @nl_str
 @branch
 nl_dispatch
+nl_classify
 meanings
 meaning_gaps
 LowConfidenceError

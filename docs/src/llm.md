@@ -1702,20 +1702,34 @@ end
     ("option name", "description") => expression   # the only way to add a description
     _                              => expression   # requires min_confidence > 0 or a decide policy
 end
-# keys: model, min_confidence, decide, instructions, service, config, cancel
+# keys: model, min_confidence, decide, instructions, service, config, cancel, on_response
 #   decide: ChoiceAnswer -> any option name, or nothing to decline; not with min_confidence
+#   on_response: SystemOneSuccess -> ignored; called once before the policy, never on a failed call
 # -> the selected body's value; LowConfidenceError, DecisionDeclinedError or SystemOneError otherwise
 
 nl_dispatch(f, args...; model=nothing, service=TYPESAFEServiceEndpoint, config=nothing,
             cancel=nothing, min_confidence=0.0, decide=nothing, fallback=nothing,
-            instructions=nothing, state=nothing)
-    # -> f(resolved meanings spliced into their positions, args...)
+            instructions=nothing, state=nothing, texts=nothing, on_response=nothing)
+    # -> f(resolved meanings — or keys — spliced into their positions, args...)
     # decide: nothing (argmax gated by min_confidence) | a callable | a Vector with one per slot;
     #   ChoiceAnswer -> any offered meaning, or nothing to decline; not with min_confidence
-meanings(f) -> Dict{Int,Vector{String}}   # slot position => options over every method
-meanings(f, argtypes::Type{<:Tuple}) -> Dict{Int,Vector{String}}
+    # texts: nothing (meanings are nl"..." in signatures) | a table | a Tuple of tables, one per keyed slot
+    #   table: NamedTuple of sentences | Vector of key => sentence pairs (a Dict is refused: no order)
+    #   key: Symbol (passed as Val(key)) | singleton instance (Val(:k), Refund()) | type | enum value
+    #   only the sentences are sent; the chosen one maps back to its key; decide may also
+    #   return an offered key as the table writes it (:refund, not Val(:refund))
+    # on_response: nothing | SystemOneSuccess -> ignored; called once before the policy
+    #   (audits: request_id, model, raw), never on a failed call; its exception propagates
+nl_classify(state, texts; min_confidence=0.0, decide=nothing, fallback=nothing,
+            instructions=nothing, model=nothing, service=TYPESAFEServiceEndpoint,
+            config=nothing, cancel=nothing, on_response=nothing)
+    # -> the chosen key as the table writes it; ONE table; one Choice "classify" over every
+    #   sentence in table order; a decline calls fallback(state), else LowConfidenceError /
+    #   DecisionDeclinedError
+meanings(f; texts=nothing) -> Dict{Int,Vector{String}}   # slot position => options over every method
+meanings(f, argtypes::Type{<:Tuple}; texts=nothing) -> Dict{Int,Vector{String}}
     # the options a call with ordinary arguments of these types sends, in send order
-meaning_gaps(f, argtypes::Type{<:Tuple}) -> Vector{Vector{String}}
+meaning_gaps(f, argtypes::Type{<:Tuple}; texts=nothing) -> Vector{Vector{String}}
     # offered combinations with no method (missing or ambiguous), first slot slowest
 ```
 
@@ -1736,6 +1750,18 @@ names of the first such method, in argument order. `confidence` is `(n·p_max �
 to `0 … 1` over the `n` offered options, so a `min_confidence` is a different bar
 whenever the option list changes.
 
+With `texts`, the methods of `f` dispatch on keys, and the request is the one the same
+sentences written as `nl"..."` would make. The call's arity is `length(args)` plus one per
+table, and only methods of that arity take part. A table fills the one position whose
+declared type its keys have (`::Val{:refund}`, `::Refund`, `::Type{<:Billing}`, `::Val`;
+`::Any` declares none). Refused before any request: a `Dict`, an empty table, more than 255
+entries, a blank sentence or one that is not a string, a sentence or dispatched key given twice
+(`:a` and `Val(:a)`), a Tuple of pairs, a key that is not a Symbol, singleton instance, type
+or enum value, a table with no position or several, two tables in one position, a method of
+that arity pinning a `Meaning`, and a key no method takes at its position whatever the other
+arguments are (a catch-all `f(k, t)` takes every key). Options follow the argument types in
+**table order**, where meanings are offered in definition order; gaps are refused alike.
+
 ```julia
 ticket = "My package arrived crushed and the screen is cracked. I want my money back."
 
@@ -1749,6 +1775,13 @@ route(::nl"the customer wants a refund", t)           = (:refund, t)
 route(::nl"the customer reports a bug in the app", t) = (:bug, t)
 nl_dispatch(route, ticket)                            # => (:refund, ticket)
 route(nl"the customer wants a refund"(), ticket)      # direct call, no request
+
+# The same request with the sentences in a table and the keys in the signatures.
+const INTENT = (refund = "the customer wants a refund", bug = "the customer reports a bug in the app")
+triage(::Val{:refund}, t) = (:refund, t)
+triage(::Val{:bug}, t)    = (:bug, t)
+nl_dispatch(triage, ticket; texts = INTENT)           # => (:refund, ticket), via triage(Val(:refund), ticket)
+nl_classify(ticket, INTENT)                           # => :refund
 
 # A policy may take any offered meaning, not only the argmax, or decline (-> fallback).
 refund_first(a) = a.probabilities["the customer wants a refund"] >= 0.3 ?
@@ -2152,7 +2185,7 @@ Every exported symbol, grouped by area:
 **Moderations**: `ModerationResponse`, `ModerationResult`, `ModerationSuccess`, `ModerationFailure`, `ModerationCallError`, `moderate`, `is_flagged`
 
 **TypeSafe System One (Jev)**: `TYPESAFEServiceEndpoint`, `SystemOneQuestion`, `ChoiceQuestion`, `ScoreQuestion`, `NoulQuestion`, `NoulCriteria`, `choice`, `score`, `noul`, `SystemOneRequest`, `ask`, `SystemOneAnswer`, `ChoiceAnswer`, `ScoreAnswer`, `NoulAnswer`, `UnknownAnswer`, `SystemOneResponse`, `SystemOneSuccess`, `SystemOneFailure`, `SystemOneCallError`, `SystemOneError`, `answers`, `answer`, `TypeSafeModelCard`, `TypeSafeModelsSuccess`, `list_models`
-- *Natural-language control flow*: `Meaning`, `@nl_str`, `@branch`, `nl_dispatch`, `meanings`, `meaning_gaps`, `LowConfidenceError`, `DecisionDeclinedError`
+- *Natural-language control flow*: `Meaning`, `@nl_str`, `@branch`, `nl_dispatch`, `nl_classify`, `meanings`, `meaning_gaps`, `LowConfidenceError`, `DecisionDeclinedError`
 - *Recorded answers*: `with_recorded_answers`, `ReplayMissError`
 
 **Audio**: `SpeechRequest`, `TranscriptionRequest`, `SpeechSuccess`, `TranscriptionSuccess`, `AudioFailure`, `AudioCallError`, `speak`, `save_audio`, `transcribe`, `translate`, `transcript_text`

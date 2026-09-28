@@ -1692,7 +1692,7 @@ end
 @branch state [key = value ...] begin
     "option name"                  => expression   # the name is what the model reads
     ("option name", "description") => expression   # the only way to add a description
-    _                              => expression   # requires min_confidence or decide
+    _                              => expression   # requires min_confidence > 0 or a decide policy
 end
 # keys: model, min_confidence, decide, instructions, service, config, cancel
 #   decide: ChoiceAnswer -> any option name, or nothing to decline; not with min_confidence
@@ -1714,14 +1714,17 @@ meaning_gaps(f, argtypes::Type{<:Tuple}) -> Vector{Vector{String}}
 Methods without a concrete `Meaning` argument (including wildcard `::Meaning`
 ones) are ordinary methods and are not part of the natural-language interface.
 Every natural-language method of `f` must agree on arity and on which positions
-are slots. A call offers only the meanings of methods that accept the types of
-its ordinary arguments. Types no such method accepts, and a combination of
-offered meanings no method covers, are each an `ArgumentError` raised before any
-request: define the missing methods, or add one wild in every slot
+are slots, so a partial wildcard (`f(::nl"a", ::Meaning, x)`) is an
+`ArgumentError`. A call offers only the meanings of methods that accept the
+types of its ordinary arguments. Types no such method accepts, and a combination
+of offered meanings with no method or an ambiguous one, are each an
+`ArgumentError` raised before any request. A combination with no method is
+closed by defining it, or by one method wild in every slot
 (`f(::Meaning, ::Meaning, x)`), which is not an option and covers every
-combination. Without `state`, the state
-is a `JSON.Object{String,Any}` keyed by the ordinary argument names of the first
-such method, in argument order. `confidence` is `(n·p_max − 1)/(n − 1)` clamped
+combination that has no method; an ambiguous one only by a method for the
+intersection of the methods it collides on, which the error names. Without
+`state`, the state is a `JSON.Object{String,Any}` keyed by the ordinary argument
+names of the first such method, in argument order. `confidence` is `(n·p_max − 1)/(n − 1)` clamped
 to `0 … 1` over the `n` offered options, so a `min_confidence` is a different bar
 whenever the option list changes.
 

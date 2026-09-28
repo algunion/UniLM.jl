@@ -175,6 +175,35 @@ counted(::nl"c2", t) = (_counted[] += 1; :c2)
 # Julia 1.13, the iteration order of a Dict holding the same keys.
 ship(::nl"asks where the parcel is", order, customer) = (order, customer)
 
+# A method that takes keywords records its unnamed positions under the empty name.
+kw_route(::nl"kw first", ::String; k=1) = (:first, k)
+kw_route(::nl"kw second", ::String; k=1) = (:second, k)
+
+# Two slots: ["n1", "o1"] is ambiguous for (Int, Int); ["n1", "o2"] and ["n2", "o1"] have no method.
+mixed(::nl"n1", ::nl"o1", x::Int, y) = 1
+mixed(::nl"n1", ::nl"o1", x, y::Int) = 2
+mixed(::nl"n2", ::nl"o2", x, y) = 3
+
+# A partial wildcard pins one slot and leaves the other as `::Meaning`, defined after
+# the concrete method and before it.
+partial_last(::nl"a complaint", ::nl"a calm tone", msg) = :apologise
+partial_last(::nl"a question", ::Meaning, msg) = :answer
+partial_first(::nl"a question", ::Meaning, msg) = :answer
+partial_first(::nl"a complaint", ::nl"a calm tone", msg) = :apologise
+
+const _pair_calls = Ref(0)               # how many times a `counted_pair` method ran
+counted_pair(::nl"c1", ::nl"d1") = (_pair_calls[] += 1; 11)
+counted_pair(::nl"c2", ::nl"d2") = (_pair_calls[] += 1; 22)
+counted_pair(::Meaning, ::Meaning) = (_pair_calls[] += 1; 0)
+
+cached_route(::nl"the first meaning", t) = (:first, t)   # gains a method during its test
+
+struct Router                            # a callable struct: its methods belong to its type
+    label::Symbol
+end
+(r::Router)(::nl"to the first desk", t) = (r.label, :first)
+(r::Router)(::nl"to the second desk", t) = (r.label, :second)
+
 # ─── 1. Meaning types ────────────────────────────────────────────────────────
 
 @testset "semantic — nl\"...\" is a type, and the description round-trips" begin
@@ -567,6 +596,64 @@ end
     @test collect(keys(seen[1]["body"]["questions"]["meaning_1"]["criteria"])) == ["u1", "u2"]
 end
 
+@testset "semantic — a gap error tells a missing method from an ambiguous one" begin
+    caught(f) = try f(); nothing catch e; e end
+    refused(call) = _with_semantic_mock(() -> caught(call))
+
+    # Missing: define it with every slot pinned, or one method wild in EVERY slot.
+    err, sent = refused(() -> nl_dispatch(half; service=SemanticMock, config=_SEM_CFG, state="s"))
+    @test err isa ArgumentError && isempty(sent)
+    text = sprint(showerror, err)
+    @test contains(text, "No method covers [\"p1\", \"q2\"], [\"p2\", \"q1\"]")
+    @test contains(text, "wild in EVERY slot, such as half(::Meaning, ::Meaning)")
+    @test contains(text, "A method wild in only some slots is not supported")
+    @test !contains(text, "ambiguous")
+
+    # Ambiguous: a backstop is less specific than the colliding methods, so the advice
+    # names them and their intersection instead.
+    err, sent = refused(() -> nl_dispatch(ambiguous, 1, 1; service=SemanticMock, config=_SEM_CFG))
+    @test err isa ArgumentError && isempty(sent)
+    text = sprint(showerror, err)
+    @test contains(text, "[\"m1\"] is ambiguous between")
+    @test all(m -> contains(text, string(m)), methods(ambiguous))
+    @test contains(text, "ambiguous(::nl\"m1\", ::Int64, ::Int64)")
+    @test !contains(text, "::Meaning") && !contains(text, "No method covers")
+
+    # Both kinds in one call: each gap gets the advice that closes it.
+    @test meaning_gaps(mixed, Tuple{Int,Int}) == [["n1", "o1"], ["n1", "o2"], ["n2", "o1"]]
+    err, sent = refused(() -> nl_dispatch(mixed, 1, 1; service=SemanticMock, config=_SEM_CFG))
+    @test err isa ArgumentError && isempty(sent)
+    text = sprint(showerror, err)
+    @test contains(text, "3 of the 4 combinations")
+    @test contains(text, "No method covers [\"n1\", \"o2\"], [\"n2\", \"o1\"]:")
+    @test contains(text, "mixed(::Meaning, ::Meaning, _, _)")
+    @test contains(text, "[\"n1\", \"o1\"] is ambiguous between")
+    @test contains(text, "mixed(::nl\"n1\", ::nl\"o1\", ::Int64, ::Int64)")
+end
+
+@testset "semantic — a partial wildcard is refused as one" begin
+    for f in (partial_last, partial_first)
+        err = try meanings(f); nothing catch e; e end
+        @test err isa ArgumentError
+        text = sprint(showerror, err)
+        @test contains(text, "partial wildcard") && contains(text, "not supported")
+        @test contains(text, "wild in EVERY slot")
+    end
+    # A slot that merely moves is not a wildcard, and is not reported as one.
+    @test !contains(sprint(showerror, try meanings(bad_slots); nothing catch e; e end), "wildcard")
+end
+
+# ─── 12b. Unnamed positions ──────────────────────────────────────────────────
+
+@testset "semantic — unnamed positions of a method with keywords are labelled by index" begin
+    out, seen = _with_semantic_mock(; pick=Dict("meaning_1" => "kw second")) do
+        nl_dispatch(kw_route, "the ticket"; service=SemanticMock, config=_SEM_CFG)
+    end
+    @test out == (:second, 1)
+    @test collect(keys(seen[1]["body"]["questions"])) == ["meaning_1"]
+    @test seen[1]["body"]["state"] == Dict("arg2" => "the ticket")
+end
+
 # ─── 13. Decision policy ─────────────────────────────────────────────────────
 
 @testset "semantic — nl_dispatch acts on the decision policy's verdict" begin
@@ -622,6 +709,24 @@ end
                     decide=[_ -> "x2", a -> a.choice])
     end
     @test out == 21
+
+    # Every slot is judged before any verdict is acted on: a decline in slot 1 does not
+    # hide an invalid verdict in slot 2...
+    _pair_calls[] = 0
+    fell_back = Ref(0)
+    bad, sent = _with_semantic_mock() do
+        caught(() -> nl_dispatch(counted_pair; service=SemanticMock, config=_SEM_CFG, state="s",
+                                 decide=[_ -> nothing, _ -> "zzz"], fallback=(a...) -> (fell_back[] += 1)))
+    end
+    @test bad isa ArgumentError && contains(bad.msg, "meaning_2") && contains(bad.msg, "zzz")
+    @test _pair_calls[] == 0 && fell_back[] == 0 && length(sent) == 1
+    # ...and a decline in slot 2 alone is reported for slot 2.
+    second, _ = _with_semantic_mock(; pick=Dict("meaning_1" => "c2", "meaning_2" => "d2")) do
+        caught(() -> nl_dispatch(counted_pair; service=SemanticMock, config=_SEM_CFG, state="s",
+                                 decide=[a -> a.choice, _ -> nothing]))
+    end
+    @test second isa DecisionDeclinedError && second.question == "meaning_2"
+    @test second.answer.choice == "d2" && _pair_calls[] == 0
 
     # Refused before any request: two policies at once, a wrong-length vector, and
     # something that cannot be called on an answer.
@@ -697,4 +802,61 @@ end
         e
     end
     @test both isa LoadError && both.error isa ArgumentError
+
+    # A policy that cannot decline when the branch runs leaves `_` unreachable: refused
+    # before the request.
+    caught(f) = try f(); nothing catch e; e end
+    unreachable, sent = _with_semantic_mock() do
+        [caught(() -> @branch "s" decide=nothing service=SemanticMock config=_SEM_CFG begin
+             "alpha" => :alpha
+             _       => :fallback
+         end),
+         caught(() -> @branch "s" min_confidence=0 service=SemanticMock config=_SEM_CFG begin
+             "alpha" => :alpha
+             _       => :fallback
+         end)]
+    end
+    @test all(e -> e isa ArgumentError && contains(e.msg, "could never run"), unreachable)
+    @test isempty(sent)
+end
+
+# ─── 14. The per-call plan ───────────────────────────────────────────────────
+
+@testset "semantic — nl_dispatch reuses its plan until the method table changes" begin
+    criteria(seen) = collect(keys(seen[1]["body"]["questions"]["meaning_1"]["criteria"]))
+    dispatch(pick) = _with_semantic_mock(; pick=Dict("meaning_1" => pick)) do
+        nl_dispatch(cached_route, "x"; service=SemanticMock, config=_SEM_CFG)
+    end
+    first_out, first_seen = dispatch("the first meaning")
+    again_out, again_seen = dispatch("the first meaning")
+    @test first_out == again_out == (:first, "x")
+    @test again_seen[1]["body"] == first_seen[1]["body"]
+
+    # A method defined after a cached call is offered, and callable, on the next one.
+    @eval cached_route(::nl"a later meaning", t) = (:later, t)
+    later_out, later_seen = dispatch("a later meaning")
+    @test criteria(later_seen) == ["the first meaning", "a later meaning"]
+    @test later_out == (:later, "x")
+
+    # The cached plan is the uncached one, and within one world it is computed once.
+    cases = [(route, Any[String]), (pair, Any[]), (step, Any[Confirming, String]),
+             (step, Any[Waiting, String]), (half, Any[]), (ambiguous, Any[Int, Int]),
+             (Ticket, Any[String]), (kinds, Any[Type{Int}]), (ship, Any[String, String]),
+             (kw_route, Any[String]), (cached_route, Any[String])]
+    for (f, types) in cases
+        plan = UniLM._nl_plan(f, types)
+        @test UniLM._nl_plan(f, types) === plan
+        @test plan == UniLM._nl_plan_uncached(f, types)
+    end
+    # Concurrent calls get the same plans.
+    plans = fetch.([Threads.@spawn UniLM._nl_plan(f, types) for (f, types) in repeat(cases, 20)])
+    @test all(p == UniLM._nl_plan_uncached(f, types) for ((f, types), p) in zip(repeat(cases, 20), plans))
+
+    # The key is the TYPE of `f`: two values of a callable struct share one plan, and
+    # each call still reaches its own value.
+    outs, _ = _with_semantic_mock() do
+        [nl_dispatch(Router(label), "x"; service=SemanticMock, config=_SEM_CFG) for label in (:a, :b)]
+    end
+    @test outs == [(:a, :first), (:b, :first)]
+    @test count(k -> k <: Tuple{Router,Vararg}, @lock(UniLM._NL_PLANS, collect(keys(UniLM._NL_PLANS[])))) == 1
 end

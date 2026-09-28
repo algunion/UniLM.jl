@@ -174,11 +174,16 @@ request.
 `nl_dispatch` sends one Choice question per `Meaning` position — again in a
 single request — turns each answer back into a `Meaning` instance and calls the
 function, so Julia's own dispatch selects the method and the remaining arguments
-still dispatch on their types. Both constructs gate on the answer's
-`confidence`: below the threshold `@branch` takes its `_` line and `nl_dispatch`
-calls `fallback`, and with neither they raise
-[`LowConfidenceError`](@ref) rather than act on a near-tie.
-[`meanings`](@ref) previews the options exactly as they will be sent.
+still dispatch on their types. Both constructs act on an answer through a
+decision policy. The default gates on `confidence`: below `min_confidence`
+`@branch` takes its `_` line and `nl_dispatch` calls `fallback`, and with
+neither they raise [`LowConfidenceError`](@ref) rather than act on a near-tie.
+`decide` replaces the gate with any function of the [`ChoiceAnswer`](@ref) that
+returns an offered option — not only the winner — or `nothing` to decline,
+which takes the same fallback or raises [`DecisionDeclinedError`](@ref).
+[`meanings`](@ref)`(f)` is the union of the options of every natural-language
+method of `f`; `meanings(f, Tuple{…})` lists the ones a call with ordinary
+arguments of those types sends, in the order it sends them.
 
 ```@docs
 Meaning

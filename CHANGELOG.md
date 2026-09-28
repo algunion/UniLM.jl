@@ -29,8 +29,9 @@
   a vector with one per slot; every slot is decided before anything runs. A decline
   runs `fallback` (the `_` line of `@branch`) or throws the new `DecisionDeclinedError`,
   which carries the question name and the full answer. Any other return is an
-  `ArgumentError`, and nothing runs. `decide` together with a nonzero `min_confidence`
-  is an `ArgumentError` before any request (at macro expansion for `@branch`).
+  `ArgumentError`, and nothing runs. `nl_dispatch` refuses `decide` together with a
+  nonzero `min_confidence` before any request; `@branch` refuses `decide` together
+  with any `min_confidence` while the macro expands.
 - `meanings(f, argtypes)`: the options `nl_dispatch` sends when its ordinary arguments
   have the types in `argtypes`, e.g. `meanings(step, Tuple{Waiting,String})`.
 - `meaning_gaps(f, argtypes)`: the combinations of offered meanings that no method
@@ -45,11 +46,22 @@
   are an `ArgumentError` before any request. `meanings(f)` still lists every method's
   options.
 - A gap in the method table — a combination of offered meanings with no method, or
-  with an ambiguous one — is an `ArgumentError` raised before any request, listing the
-  gaps, instead of Julia's `MethodError` after a billed one. Define the missing
-  methods, or add a method that is wild in every slot (`f(::Meaning, ::Meaning, x)`) as
-  a backstop: it is not an option and it covers every combination.
+  with an ambiguous one — is an `ArgumentError` raised before any request, instead of
+  Julia's `MethodError` after a billed one. For the combinations with no method the
+  error suggests defining them, or one method wild in every slot
+  (`f(::Meaning, ::Meaning, x)`), which is not an option and covers every combination
+  that has no method. Such a backstop is not more specific than the methods of an
+  ambiguous combination and cannot settle it, so for those the error names the
+  colliding methods and the intersection to define instead. A partial wildcard
+  (`f(::nl"a", ::Meaning, x)`) is still refused, and the error now says that it is one
+  and that it is not supported.
+- `nl_dispatch` works out its options, argument names and gap check once per type of
+  `f`, types of the ordinary arguments and state of the method table, instead of on
+  every call; a method defined later is offered from the next call on.
 - `@branch` accepts a `_` fallback line with `decide` as well as with `min_confidence`.
+  A `_` line whose policy cannot decline when the branch runs — `decide = nothing`, or
+  a `min_confidence` of 0 or less — is an `ArgumentError` before the request; before,
+  the request was sent and the line could never run.
 - `tool_loop!` and `tool_loop` let a `ReplayMissError` raised by a dispatcher propagate,
   as they do an `InterruptException`, instead of sending it to the model as a tool error
   while the loop goes on.
@@ -63,6 +75,11 @@
   raw JSON body as `SystemOneFailure.message`; the message is now the `error_type`,
   used only when no message string appears anywhere in the body (`detail.message`,
   `error`, a top-level `message`).
+- `nl_dispatch` on a function whose methods take keywords: Julia records an unnamed
+  positional argument of such a method under the empty name, so an unnamed slot got a
+  blank question name (an `ArgumentError` before the request) and an unnamed ordinary
+  argument the state key `""`. They are now `meaning_<index>` and `arg<index>`, as
+  without keywords.
 
 ## 0.20.1
 

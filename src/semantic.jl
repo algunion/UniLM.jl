@@ -190,6 +190,9 @@ function _branch_select(state, names::Vector{String}, descriptions::Vector{Any};
         "branch option names must be unique; the wire is a map, so a repeat would drop one: $(names)"))
     isnothing(decide) || _nl_is_decider(decide) || throw(ArgumentError(
         "@branch `decide` must be callable on a ChoiceAnswer; got $(typeof(decide))"))
+    has_fallback && isnothing(decide) && min_confidence <= 0 && throw(ArgumentError(
+        "a `_` fallback needs a policy that can decline, but `decide` is nothing and `min_confidence` " *
+        "is $(min_confidence): no answer is ever declined and the fallback could never run"))
     question = choice(isnothing(instructions) ? _NL_INSTRUCTIONS : instructions,
                       [names[i] => descriptions[i] for i in eachindex(names)])
     result = isnothing(model) ? ask(state, "branch" => question; service, config, cancel) :
@@ -229,7 +232,9 @@ A final `_ => expression` line is the fallback taken when the decision policy
 declines: the winner's confidence is below `min_confidence`, or `decide`
 returned `nothing`. It requires one of the two: without a policy nothing is ever
 declined and the line would be unreachable, so that spelling is rejected at
-macro-expansion time.
+macro-expansion time. A policy that cannot decline when the branch runs —
+`decide = nothing`, or a `min_confidence` of 0 or less — leaves the line just as
+unreachable, and is an `ArgumentError` before the request.
 
 Keywords go between the state and the block, written `key = value`:
 
@@ -383,6 +388,10 @@ _is_meaning_slot(p)::Bool =
 _nl_slots(params::Vector{Any})::Vector{Int} =
     Int[i for i in eachindex(params) if _is_meaning_slot(params[i])]
 
+# A position that takes any meaning rather than pinning one: `::Meaning`,
+# `::Meaning{S} where S`, or a union of meanings.
+_is_meaning_wildcard(p)::Bool = p isa Type && p <: Meaning && !_is_meaning_slot(p)
+
 """
     _nl_methods(f) -> (methods, slots, arity)
 
@@ -391,12 +400,16 @@ together with the shared slot positions and positional arity.
 
 Definition order is the world age each method was defined in (`primary_world`):
 source labels do not order REPL input (`"REPL[10]"` sorts before `"REPL[2]"`), and
-`methods` returns its own order. Methods that share a world — a package image
-activates its methods together — fall back to source position.
+`methods` returns its own order. Methods that share a world — a precompiled
+package activates its methods together — fall back to source file path, then line:
+when one function's methods span several files, that is path order, not `include`
+order.
 
 Methods with no slot are ignored (they are ordinary methods, including wildcard
 `::Meaning` ones). Every slotted method must agree on arity and on which
-positions are slots, because one set of questions has to serve all of them.
+positions are slots, because one set of questions has to serve all of them; a
+partial wildcard — a method that pins some slots and leaves another as
+`::Meaning` — breaks that agreement and is refused as such.
 """
 function _nl_methods(f)
     slotted = Method[]
@@ -420,7 +433,12 @@ function _nl_methods(f)
         found = _nl_slots(params)
         found == slots || throw(ArgumentError(
             "every natural-language method of $(f) must put its Meaning arguments in the same " *
-            "positions: $(slotted[1]) uses $(slots), $(m) uses $(found)"))
+            "positions: $(slotted[1]) uses $(slots), $(m) uses $(found)" *
+            (any(p -> _is_meaning_wildcard(reference[p]) || _is_meaning_wildcard(params[p]),
+                 symdiff(slots, found)) ?
+                ". A method that pins some slots and leaves another as `::Meaning` is a partial " *
+                "wildcard, which is not supported: define the missing concrete methods, or one " *
+                "method wild in EVERY slot" : "")))
     end
     return (slotted, slots, arity)
 end
@@ -466,6 +484,9 @@ function _nl_argtypes(argtypes::Type{<:Tuple})::Vector{Any}
             "Tuple{String}; got $(argtypes)"))
 end
 
+const _NLOffer = @NamedTuple{slotted::Vector{Method}, slots::Vector{Int}, ordinary::Vector{Int},
+                             arity::Int, options::Vector{Vector{String}}}
+
 """
     _nl_offer(f, argtypes) -> (; slotted, slots, ordinary, arity, options)
 
@@ -474,7 +495,7 @@ offers: the slot layout of the whole method table, and each slot's options drawn
 only from the natural-language methods that accept those types. A wrong number
 of types, or types no natural-language method accepts, is an `ArgumentError`.
 """
-function _nl_offer(f, argtypes::Vector{Any})
+function _nl_offer(f, argtypes::Vector{Any})::_NLOffer
     slotted, slots, arity = _nl_methods(f)
     ordinary = Int[p for p in 1:arity if !(p in slots)]
     length(argtypes) == length(ordinary) || throw(ArgumentError(
@@ -496,31 +517,66 @@ function _nl_combinations(options::AbstractVector{Vector{String}})::Vector{Vecto
     [String[o; t] for o in options[1] for t in tails]
 end
 
+# The positional argument types of the call made when the answers are `combo`.
+_nl_call_types(offer::_NLOffer, combo::Vector{String}, argtypes::Vector{Any})::Vector{Any} =
+    _nl_splice(offer.slots, offer.ordinary, Any[Meaning{Symbol(d)} for d in combo], argtypes)
+
 # The offered combinations with no method to call. `hasmethod` is false for an
 # ambiguous call as well as a missing one, and Julia could call neither. It looks
 # in the newest world, as `methods(f)` and the final `invokelatest` do; without
 # `world` it would use the caller's, blind to a method defined after the call began.
-_nl_gaps(f, offer, argtypes::Vector{Any})::Vector{Vector{String}} =
-    filter(c -> !hasmethod(f, Tuple{_nl_splice(offer.slots, offer.ordinary,
-                                               [Meaning{Symbol(d)} for d in c], argtypes)...};
-                           world = Base.get_world_counter()),
+_nl_gaps(f, offer::_NLOffer, argtypes::Vector{Any})::Vector{Vector{String}} =
+    filter(c -> !hasmethod(f, Tuple{_nl_call_types(offer, c, argtypes)...}; world = Base.get_world_counter()),
            _nl_combinations(offer.options))
 
-function _nl_gap_error(f, offer, argtypes::Vector{Any}, gaps::Vector{Vector{String}})::ArgumentError
+# The methods an ambiguous call of signature `sig` collides on: those that accept it
+# and that no other accepting method is more specific than. Empty when none accepts
+# it. `methods(f, types)` cannot tell: it lists nothing at all for an ambiguous call.
+function _nl_colliding(f, sig::DataType)::Vector{Method}
+    accepting = Method[m for m in methods(f) if sig <: m.sig]
+    filter(m -> !any(o -> o !== m && Base.morespecific(o, m), accepting), accepting)
+end
+
+# The method that settles an ambiguity, spelled as a signature: the intersection of
+# the colliding methods, or the call itself when that intersection needs a `where`.
+function _nl_intersection(f, colliding::Vector{Method}, sig::DataType)::String
+    both = reduce(typeintersect, (m.sig for m in colliding))
+    fix = both isa DataType && !Base.isvatuple(both) ? both : sig
+    string(f, "(", join(("::" * string(fix.parameters[i]) for i in 2:length(fix.parameters)), ", "), ")")
+end
+
+# A method wild in every slot is not more specific than the methods an ambiguous call
+# collides on, so it closes a missing combination and not an ambiguous one: each kind
+# of gap gets the advice that closes it.
+function _nl_gap_error(f, offer::_NLOffer, argtypes::Vector{Any}, gaps::Vector{Vector{String}})::ArgumentError
+    listed(xs, n, sep) = join(first(xs, n), sep) * (length(xs) > n ? "$(sep)and $(length(xs) - n) more" : "")
+    uncovered, ambiguous = Vector{String}[], String[]
+    for g in gaps
+        sig = Tuple{Core.Typeof(f), _nl_call_types(offer, g, argtypes)...}
+        colliding = _nl_colliding(f, sig)
+        isempty(colliding) ? push!(uncovered, g) : push!(ambiguous,
+            "$(repr(g)) is ambiguous between $(join(string.(colliding), " and ")): define their " *
+            "intersection, $(_nl_intersection(f, colliding, sig))")
+    end
     backstop = string(f, "(", join((p in offer.slots ? "::Meaning" : "_" for p in 1:offer.arity), ", "), ")")
     ArgumentError(
         "$(length(gaps)) of the $(prod(length, offer.options)) combinations of meanings $(f) offers " *
-        "for ordinary arguments of types $(Tuple{argtypes...}) have no method: " *
-        join(repr.(first(gaps, 10)), ", ") * (length(gaps) > 10 ? ", and $(length(gaps) - 10) more" : "") *
-        ". An answer landing on one would be billed and then end in a MethodError, so nothing was " *
-        "sent. Define the missing methods, or add a method that is wild in every slot, such as " *
-        "$(backstop), as an explicit backstop: it is not an option and it covers every combination.")
+        "for ordinary arguments of types $(Tuple{argtypes...}) have no method to call; an answer " *
+        "landing on one would be billed and then end in a MethodError, so nothing was sent." *
+        (isempty(uncovered) ? "" :
+            " No method covers $(listed(repr.(uncovered), 10, ", ")): define each with every slot pinned " *
+            "to a meaning, or one method wild in EVERY slot, such as $(backstop), which is not an " *
+            "option and covers every combination that has no method. A method wild in only some " *
+            "slots is not supported.") *
+        (isempty(ambiguous) ? "" :
+            " $(listed(ambiguous, 3, "; ")). A method wild in every slot does not settle an " *
+            "ambiguity: it is not more specific than the methods that collide."))
 end
 
-# Julia records an unnamed positional argument as `#unused#`, and gensymed names
-# also start with `#`; neither is a name a caller wrote, so such a position is
-# labelled by its index instead.
-_nl_anonymous(n::Symbol)::Bool = n === Symbol("#unused#") || startswith(String(n), "#")
+# Julia records an unnamed positional argument as `#unused#` — or, in a method that
+# takes keywords, as the empty name — and gensymed names also start with `#`; none
+# is a name a caller wrote, so such a position is labelled by its index instead.
+_nl_anonymous(n::Symbol)::Bool = (s = String(n); isempty(s) || startswith(s, "#"))
 
 function _nl_argnames(m::Method, arity::Int)::Vector{Symbol}
     recorded = Base.method_argnames(m)
@@ -557,13 +613,45 @@ function _nl_policy(decide, min_confidence::Real, n::Int)::Vector{Any}
     deciders
 end
 
+# What a call with ordinary arguments of types `argtypes` offers, the argument names
+# its questions and state keys come from, and its gaps.
+const _NLPlan = @NamedTuple{offer::_NLOffer, argnames::Vector{Symbol}, gaps::Vector{Vector{String}}}
+
+function _nl_plan_uncached(f, argtypes::Vector{Any})::_NLPlan
+    offer = _nl_offer(f, argtypes)
+    (; offer, argnames = _nl_argnames(offer.slotted[1], offer.arity), gaps = _nl_gaps(f, offer, argtypes))
+end
+
+# Plans by call signature, each with the world it was computed in. Reflection and the
+# gap check cost microseconds per offered combination, and a plan stays right for as
+# long as the method table does not change, which every method definition marks by
+# moving to a newer world. The key holds the TYPE of `f`, which owns the methods: a
+# callable struct keyed by value would add an entry per instance.
+const _NL_PLANS = Base.Lockable(Dict{Type,Tuple{UInt,_NLPlan}}())
+
+function _nl_plan(f, argtypes::Vector{Any})::_NLPlan
+    key = Tuple{Core.Typeof(f), argtypes...}
+    world = Base.get_world_counter()   # read first: a method defined while planning makes the entry stale
+    cached = @lock _NL_PLANS get(_NL_PLANS[], key, nothing)
+    !isnothing(cached) && first(cached) == world && return last(cached)
+    plan = _nl_plan_uncached(f, argtypes)
+    @lock _NL_PLANS _NL_PLANS[][key] = (world, plan)
+    plan
+end
+
 """
     meanings(f) -> Dict{Int,Vector{String}}
 
 The natural-language options `f` dispatches on, keyed by positional argument
-index. Each vector lists the distinct descriptions defined for that slot, in the
-order [`nl_dispatch`](@ref) sends them to the model — definition order, so the
-listing is a faithful preview of the request.
+index. Each vector lists the distinct descriptions defined for that slot in
+definition order, the order in which [`nl_dispatch`](@ref) sends them.
+
+Definition order is the order in which the methods were defined as the code ran:
+at the REPL, in a script, or in a package loaded from source
+(`--compiled-modules=no`). A precompiled package defines all of its methods at
+once when it loads, and those are ordered by source file path and then line —
+which is not `include` order when one function's meanings span several files.
+Keep each function's meanings in one file.
 
 Methods of `f` without a concrete [`Meaning`](@ref) argument are not part of the
 natural-language interface and do not appear. `f` with no such method at all is
@@ -593,8 +681,8 @@ The options [`nl_dispatch`](@ref) offers when its ordinary arguments have the
 types in `argtypes` — one entry per ordinary argument, in order, such as
 `Tuple{String}`, or `Tuple{}` when every argument is a meaning. A slot's options
 are the distinct descriptions of the natural-language methods whose signature
-accepts those types, in definition order; an abstract type admits only the
-methods that accept all of it.
+accepts those types, in definition order as `meanings(f)` defines it; an
+abstract type admits only the methods that accept all of it.
 
 A tuple type of the wrong length is an `ArgumentError`, and so are types no
 natural-language method accepts — `nl_dispatch` refuses such a call before any
@@ -631,9 +719,13 @@ call it either.
 
 `nl_dispatch` runs this check before its request and sends nothing while a gap
 exists, because an answer landing on one would be billed and then end in a
-`MethodError`. Close a gap by defining the missing method, or add a method that
-is wild in every slot, such as `f(::Meaning, ::Meaning, x)`: it is not an option,
-and it covers every combination.
+`MethodError`; its error tells the two kinds apart. Close a missing combination
+by defining its method, with every slot pinned to a meaning, or add a method
+that is wild in every slot, such as `f(::Meaning, ::Meaning, x)`: it is not an
+option, and it covers every combination that has no method. It does not settle
+an ambiguity, not being more specific than the methods that collide: close an
+ambiguous combination with a method for their intersection, which the error
+spells out.
 
 ```julia
 reply(::nl"a complaint", ::nl"a calm tone", msg)   = :apologise
@@ -643,7 +735,7 @@ reply(::nl"a question", ::nl"a calm tone", msg)    = :answer
 meaning_gaps(reply, Tuple{String})   # [["a question", "an angry tone"]]
 
 reply(::Meaning, ::Meaning, msg) = :triage
-meaning_gaps(reply, Tuple{String})   # empty: the backstop covers every combination
+meaning_gaps(reply, Tuple{String})   # empty: the backstop covers the combination with no method
 ```
 """
 function meaning_gaps(f, argtypes::Type{<:Tuple})::Vector{Vector{String}}
@@ -671,11 +763,15 @@ Only meanings the call can reach are offered: a slot's options come from the
 natural-language methods that accept the types of `args`, and
 [`meanings`](@ref)`(f, argtypes)` previews them exactly as they will be sent.
 Types no such method accepts are an `ArgumentError`. So is a gap — a combination
-of offered meanings with no method, which [`meaning_gaps`](@ref) lists — because
-an answer landing on it would be billed and then end in a `MethodError`: define
-the missing methods, or add a method that is wild in every slot
-(`f(::Meaning, ::Meaning, x)`), which is not an option and covers every
-combination. Both are raised before any request.
+of offered meanings with no method, or with an ambiguous one, which
+[`meaning_gaps`](@ref) lists — because an answer landing on it would be billed
+and then end in a `MethodError`. Define the missing methods, or add a method
+that is wild in every slot (`f(::Meaning, ::Meaning, x)`), which is not an
+option and covers every combination that has no method; an ambiguous
+combination needs a method for the intersection of the methods it collides on,
+which the error names. Both are raised before any request. The options and
+this check are worked out once per type of `f`, types of `args` and state of
+the method table, so a method defined later is offered from the next call on.
 
 The state is `state` when given, otherwise a `JSON.Object{String,Any}` built from
 `args` in argument order, keyed by the argument names of the first
@@ -746,13 +842,11 @@ function nl_dispatch(f, args...;
                      state=nothing)
     # `Core.Typeof` is the type dispatch sees: `Type{Int}` for the argument `Int`.
     argtypes = Any[Core.Typeof(a) for a in args]
-    offer = _nl_offer(f, argtypes)
-    gaps = _nl_gaps(f, offer, argtypes)
+    (; offer, argnames, gaps) = _nl_plan(f, argtypes)
     isempty(gaps) || throw(_nl_gap_error(f, offer, argtypes, gaps))
     slots, options = offer.slots, offer.options
     policy = _nl_policy(decide, min_confidence, length(slots))
 
-    argnames = _nl_argnames(offer.slotted[1], offer.arity)
     payload = _nl_state(f, state, args, offer.ordinary, argnames)
     names = String[_nl_question_name(argnames[p], p) for p in slots]
     texts = _nl_instructions(instructions, length(slots))

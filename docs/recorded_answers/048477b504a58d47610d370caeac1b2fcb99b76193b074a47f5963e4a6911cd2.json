@@ -1,0 +1,58 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": "Help! My payouts have been failing for 3 days and nobody has replied to my emails.",
+      "model": "jev-latest",
+      "questions": {
+        "urgency": {
+          "type": "score",
+          "instructions": "How urgent is this ticket?",
+          "criteria": [
+            "Can wait",
+            "Needs attention this week",
+            "Needs attention today"
+          ]
+        },
+        "wants_human": {
+          "type": "noul",
+          "instructions": "Is the customer asking for a human agent?"
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e789cfe37381bc3c8a8fb57aef51",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "urgency": {
+          "type": "score",
+          "score": 1.97,
+          "confidence": 0.96,
+          "legend": {
+            "0": "Can wait",
+            "1": "Needs attention this week",
+            "2": "Needs attention today"
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.03,
+            "2": 0.97
+          }
+        },
+        "wants_human": {
+          "type": "noul",
+          "noul": 0.65
+        }
+      },
+      "usage": {
+        "input_tokens": 337,
+        "output_tokens": 37
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T10:22:43Z"
+}

@@ -1637,6 +1637,30 @@ r = ask("Help! My payouts have been failing for 3 days.",
 issuccess(r) && println(r["department"].choice, " ", r["urgency"].score, " ", r["is_frustrated"].noul)
 ```
 
+### Recorded answers
+
+Identical requests are not answered identically, so tests and docs builds
+replay recorded answers. Inside the scope, every `ask` (hence `nl_dispatch` and
+`@branch`) and `list_models` exchanges through `dir`; scopes cover spawned tasks
+and nest (an inner scope's service is the enclosing scope).
+
+```julia
+with_recorded_answers(f, dir::AbstractString; mode::Symbol=:replay)   # -> f()
+    # :replay         answer from dir: no network, no key; a miss throws ReplayMissError
+    # :record         call the service; write each HTTP 200 to dir (created if needed)
+    # :record_missing replay what dir holds; call and record the rest
+    # file: <dir>/<key>.json, key = lowercase hex sha256("<METHOD> <path>\n" * exact body)
+    # {"request": {method, path, body}, "response": {status, request_id, body}, "recorded_at"}
+
+struct ReplayMissError <: Exception       # thrown out of ask/list_models, never a SystemOneCallError
+    dir::String
+    key::String
+    method::String                        # "POST" | "GET"
+    path::String                          # "/v1/systemone" | "/v1/models"
+    body::String                          # the exact request body ("" for GET)
+end
+```
+
 ### Natural-language control flow
 
 A Choice answer is already a branch decision, so two constructs compile ordinary
@@ -2088,6 +2112,7 @@ Every exported symbol, grouped by area:
 
 **TypeSafe System One (Jev)**: `TYPESAFEServiceEndpoint`, `SystemOneQuestion`, `ChoiceQuestion`, `ScoreQuestion`, `NoulQuestion`, `NoulCriteria`, `choice`, `score`, `noul`, `SystemOneRequest`, `ask`, `SystemOneAnswer`, `ChoiceAnswer`, `ScoreAnswer`, `NoulAnswer`, `UnknownAnswer`, `SystemOneResponse`, `SystemOneSuccess`, `SystemOneFailure`, `SystemOneCallError`, `SystemOneError`, `answers`, `answer`, `TypeSafeModelCard`, `TypeSafeModelsSuccess`, `list_models`
 - *Natural-language control flow*: `Meaning`, `@nl_str`, `@branch`, `nl_dispatch`, `meanings`, `LowConfidenceError`
+- *Recorded answers*: `with_recorded_answers`, `ReplayMissError`
 
 **Audio**: `SpeechRequest`, `TranscriptionRequest`, `SpeechSuccess`, `TranscriptionSuccess`, `AudioFailure`, `AudioCallError`, `speak`, `save_audio`, `transcribe`, `translate`, `transcript_text`
 

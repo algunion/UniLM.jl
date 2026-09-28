@@ -133,6 +133,10 @@ end
         include("typesafe.jl")
     end
 
+    @testset "recorded answers" begin
+        include("recorded_answers.jl")
+    end
+
     @testset "semantic" begin
         include("semantic.jl")
     end

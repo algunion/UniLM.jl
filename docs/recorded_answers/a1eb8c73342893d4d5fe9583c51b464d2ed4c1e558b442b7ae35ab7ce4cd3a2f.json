@@ -1,0 +1,52 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "ticket_message": "I was charged twice for order A-104. Please refund the duplicate.",
+        "order": {
+          "id": "A-104",
+          "charges": [
+            49,
+            49
+          ]
+        },
+        "refund_policy": "Duplicate charges are eligible for a refund."
+      },
+      "model": "jev-latest",
+      "questions": {
+        "refund_requested": {
+          "type": "noul",
+          "instructions": "Does `ticket_message` request a refund?"
+        },
+        "policy_allows": {
+          "type": "noul",
+          "instructions": "Does `refund_policy` allow refunding the duplicate charge in `order`?"
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e789cea473a9aa1937aa68d97645",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "refund_requested": {
+          "type": "noul",
+          "noul": 0.99
+        },
+        "policy_allows": {
+          "type": "noul",
+          "noul": 0.98
+        }
+      },
+      "usage": {
+        "input_tokens": 369,
+        "output_tokens": 39
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T10:22:43Z"
+}

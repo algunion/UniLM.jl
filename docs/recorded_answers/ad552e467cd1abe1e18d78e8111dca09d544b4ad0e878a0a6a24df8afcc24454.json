@@ -1,0 +1,50 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": "Help! My payouts have been failing for 3 days.",
+      "model": "jev-latest",
+      "questions": {
+        "urgency": {
+          "type": "score",
+          "instructions": "How urgent is this ticket?",
+          "criteria": [
+            "Can wait",
+            "Needs attention this week",
+            "Needs attention today"
+          ]
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e789b30a741f8501207cd430c7db",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "urgency": {
+          "type": "score",
+          "score": 1.98,
+          "confidence": 0.97,
+          "legend": {
+            "0": "Can wait",
+            "1": "Needs attention this week",
+            "2": "Needs attention today"
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.02,
+            "2": 0.98
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 314,
+        "output_tokens": 18
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T10:22:36Z"
+}

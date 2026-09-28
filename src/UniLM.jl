@@ -68,6 +68,7 @@ include("deepseek.jl")
 include("completions.jl")
 include("accounting.jl")
 include("typesafe.jl")
+include("recorded_answers.jl")
 include("semantic.jl")
 include("files.jl")
 include("vector_stores.jl")
@@ -383,6 +384,8 @@ export
     TypeSafeModelCard,
     TypeSafeModelsSuccess,
     list_models
+
+export with_recorded_answers, ReplayMissError
 
 # ─── Natural-language control flow (System One) ───
 export

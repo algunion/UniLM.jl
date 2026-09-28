@@ -37,7 +37,7 @@
   },
   "response": {
     "status": 200,
-    "request_id": "req_01a0e7899ce57400b6e686f0c0fc0601",
+    "request_id": "req_01a0e7b0970d7270ab591341f6c8fd39",
     "body": {
       "model": "jev-1.13.0",
       "answers": {
@@ -53,8 +53,8 @@
         },
         "urgency": {
           "type": "score",
-          "score": 1.98,
-          "confidence": 0.97,
+          "score": 1.97,
+          "confidence": 0.96,
           "legend": {
             "0": "Can wait",
             "1": "Needs attention this week",
@@ -62,13 +62,13 @@
           },
           "probabilities": {
             "0": 0.0,
-            "1": 0.02,
-            "2": 0.98
+            "1": 0.03,
+            "2": 0.97
           }
         },
         "is_frustrated": {
           "type": "noul",
-          "noul": 0.98
+          "noul": 0.97
         }
       },
       "usage": {
@@ -77,5 +77,5 @@
       }
     }
   },
-  "recorded_at": "2026-09-28T10:22:32Z"
+  "recorded_at": "2026-09-28T11:05:06Z"
 }

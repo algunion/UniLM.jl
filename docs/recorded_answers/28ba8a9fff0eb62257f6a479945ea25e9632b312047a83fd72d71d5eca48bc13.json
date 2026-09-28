@@ -1,0 +1,468 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "a": "Small typo on the About page: 'recieve' should be 'receive'.",
+        "b": "Checkout fails for about 20% of our customers since this morning.",
+        "c": "Could you add a keyboard shortcut for archiving? No rush at all.",
+        "d": "Our customers' full card numbers are visible on a public page right now.",
+        "e": "This month's invoices show the wrong tax rate; we need them by Friday.",
+        "f": "The mobile app crashes on launch for every Android user on our account."
+      },
+      "model": "jev-latest",
+      "questions": {
+        "a": {
+          "type": "score",
+          "instructions": "How urgent is ticket `a`?",
+          "criteria": [
+            "Can wait indefinitely",
+            "Can wait a few weeks",
+            "Should be handled this week",
+            "Should be handled today",
+            "Needs immediate action"
+          ]
+        },
+        "b": {
+          "type": "score",
+          "instructions": "How urgent is ticket `b`?",
+          "criteria": [
+            "Can wait indefinitely",
+            "Can wait a few weeks",
+            "Should be handled this week",
+            "Should be handled today",
+            "Needs immediate action"
+          ]
+        },
+        "c": {
+          "type": "score",
+          "instructions": "How urgent is ticket `c`?",
+          "criteria": [
+            "Can wait indefinitely",
+            "Can wait a few weeks",
+            "Should be handled this week",
+            "Should be handled today",
+            "Needs immediate action"
+          ]
+        },
+        "d": {
+          "type": "score",
+          "instructions": "How urgent is ticket `d`?",
+          "criteria": [
+            "Can wait indefinitely",
+            "Can wait a few weeks",
+            "Should be handled this week",
+            "Should be handled today",
+            "Needs immediate action"
+          ]
+        },
+        "e": {
+          "type": "score",
+          "instructions": "How urgent is ticket `e`?",
+          "criteria": [
+            "Can wait indefinitely",
+            "Can wait a few weeks",
+            "Should be handled this week",
+            "Should be handled today",
+            "Needs immediate action"
+          ]
+        },
+        "f": {
+          "type": "score",
+          "instructions": "How urgent is ticket `f`?",
+          "criteria": [
+            "Can wait indefinitely",
+            "Can wait a few weeks",
+            "Should be handled this week",
+            "Should be handled today",
+            "Needs immediate action"
+          ]
+        },
+        "a_b": {
+          "type": "choice",
+          "instructions": "Which ticket is more urgent, `a` or `b`?",
+          "criteria": {
+            "a": null,
+            "b": null
+          }
+        },
+        "a_c": {
+          "type": "choice",
+          "instructions": "Which ticket is more urgent, `a` or `c`?",
+          "criteria": {
+            "a": null,
+            "c": null
+          }
+        },
+        "a_d": {
+          "type": "choice",
+          "instructions": "Which ticket is more urgent, `a` or `d`?",
+          "criteria": {
+            "a": null,
+            "d": null
+          }
+        },
+        "a_e": {
+          "type": "choice",
+          "instructions": "Which ticket is more urgent, `a` or `e`?",
+          "criteria": {
+            "a": null,
+            "e": null
+          }
+        },
+        "a_f": {
+          "type": "choice",
+          "instructions": "Which ticket is more urgent, `a` or `f`?",
+          "criteria": {
+            "a": null,
+            "f": null
+          }
+        },
+        "b_c": {
+          "type": "choice",
+          "instructions": "Which ticket is more urgent, `b` or `c`?",
+          "criteria": {
+            "b": null,
+            "c": null
+          }
+        },
+        "b_d": {
+          "type": "choice",
+          "instructions": "Which ticket is more urgent, `b` or `d`?",
+          "criteria": {
+            "b": null,
+            "d": null
+          }
+        },
+        "b_e": {
+          "type": "choice",
+          "instructions": "Which ticket is more urgent, `b` or `e`?",
+          "criteria": {
+            "b": null,
+            "e": null
+          }
+        },
+        "b_f": {
+          "type": "choice",
+          "instructions": "Which ticket is more urgent, `b` or `f`?",
+          "criteria": {
+            "b": null,
+            "f": null
+          }
+        },
+        "c_d": {
+          "type": "choice",
+          "instructions": "Which ticket is more urgent, `c` or `d`?",
+          "criteria": {
+            "c": null,
+            "d": null
+          }
+        },
+        "c_e": {
+          "type": "choice",
+          "instructions": "Which ticket is more urgent, `c` or `e`?",
+          "criteria": {
+            "c": null,
+            "e": null
+          }
+        },
+        "c_f": {
+          "type": "choice",
+          "instructions": "Which ticket is more urgent, `c` or `f`?",
+          "criteria": {
+            "c": null,
+            "f": null
+          }
+        },
+        "d_e": {
+          "type": "choice",
+          "instructions": "Which ticket is more urgent, `d` or `e`?",
+          "criteria": {
+            "d": null,
+            "e": null
+          }
+        },
+        "d_f": {
+          "type": "choice",
+          "instructions": "Which ticket is more urgent, `d` or `f`?",
+          "criteria": {
+            "d": null,
+            "f": null
+          }
+        },
+        "e_f": {
+          "type": "choice",
+          "instructions": "Which ticket is more urgent, `e` or `f`?",
+          "criteria": {
+            "e": null,
+            "f": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0e1da716ea09613770bb7c952",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "a": {
+          "type": "score",
+          "score": 0.48,
+          "confidence": 0.6,
+          "legend": {
+            "0": "Can wait indefinitely",
+            "1": "Can wait a few weeks",
+            "2": "Should be handled this week",
+            "3": "Should be handled today",
+            "4": "Needs immediate action"
+          },
+          "probabilities": {
+            "0": 0.56,
+            "1": 0.41,
+            "2": 0.03,
+            "3": 0.0,
+            "4": 0.0
+          }
+        },
+        "b": {
+          "type": "score",
+          "score": 3.48,
+          "confidence": 0.59,
+          "legend": {
+            "0": "Can wait indefinitely",
+            "1": "Can wait a few weeks",
+            "2": "Should be handled this week",
+            "3": "Should be handled today",
+            "4": "Needs immediate action"
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.0,
+            "3": 0.51,
+            "4": 0.49
+          }
+        },
+        "c": {
+          "type": "score",
+          "score": 0.43,
+          "confidence": 0.64,
+          "legend": {
+            "0": "Can wait indefinitely",
+            "1": "Can wait a few weeks",
+            "2": "Should be handled this week",
+            "3": "Should be handled today",
+            "4": "Needs immediate action"
+          },
+          "probabilities": {
+            "0": 0.57,
+            "1": 0.43,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 0.0
+          }
+        },
+        "d": {
+          "type": "score",
+          "score": 4.0,
+          "confidence": 1.0,
+          "legend": {
+            "0": "Can wait indefinitely",
+            "1": "Can wait a few weeks",
+            "2": "Should be handled this week",
+            "3": "Should be handled today",
+            "4": "Needs immediate action"
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 1.0
+          }
+        },
+        "e": {
+          "type": "score",
+          "score": 2.2,
+          "confidence": 0.83,
+          "legend": {
+            "0": "Can wait indefinitely",
+            "1": "Can wait a few weeks",
+            "2": "Should be handled this week",
+            "3": "Should be handled today",
+            "4": "Needs immediate action"
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.82,
+            "3": 0.16,
+            "4": 0.02
+          }
+        },
+        "f": {
+          "type": "score",
+          "score": 3.41,
+          "confidence": 0.61,
+          "legend": {
+            "0": "Can wait indefinitely",
+            "1": "Can wait a few weeks",
+            "2": "Should be handled this week",
+            "3": "Should be handled today",
+            "4": "Needs immediate action"
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.03,
+            "3": 0.53,
+            "4": 0.44
+          }
+        },
+        "a_b": {
+          "type": "choice",
+          "choice": "b",
+          "confidence": 1.0,
+          "probabilities": {
+            "a": 0.0,
+            "b": 1.0
+          }
+        },
+        "a_c": {
+          "type": "choice",
+          "choice": "a",
+          "confidence": 0.08,
+          "probabilities": {
+            "a": 0.54,
+            "c": 0.46
+          }
+        },
+        "a_d": {
+          "type": "choice",
+          "choice": "d",
+          "confidence": 1.0,
+          "probabilities": {
+            "a": 0.0,
+            "d": 1.0
+          }
+        },
+        "a_e": {
+          "type": "choice",
+          "choice": "e",
+          "confidence": 1.0,
+          "probabilities": {
+            "e": 1.0,
+            "a": 0.0
+          }
+        },
+        "a_f": {
+          "type": "choice",
+          "choice": "f",
+          "confidence": 1.0,
+          "probabilities": {
+            "f": 1.0,
+            "a": 0.0
+          }
+        },
+        "b_c": {
+          "type": "choice",
+          "choice": "b",
+          "confidence": 1.0,
+          "probabilities": {
+            "c": 0.0,
+            "b": 1.0
+          }
+        },
+        "b_d": {
+          "type": "choice",
+          "choice": "d",
+          "confidence": 0.99,
+          "probabilities": {
+            "d": 1.0,
+            "b": 0.0
+          }
+        },
+        "b_e": {
+          "type": "choice",
+          "choice": "b",
+          "confidence": 0.98,
+          "probabilities": {
+            "e": 0.01,
+            "b": 0.99
+          }
+        },
+        "b_f": {
+          "type": "choice",
+          "choice": "b",
+          "confidence": 0.37,
+          "probabilities": {
+            "f": 0.32,
+            "b": 0.68
+          }
+        },
+        "c_d": {
+          "type": "choice",
+          "choice": "d",
+          "confidence": 1.0,
+          "probabilities": {
+            "c": 0.0,
+            "d": 1.0
+          }
+        },
+        "c_e": {
+          "type": "choice",
+          "choice": "e",
+          "confidence": 1.0,
+          "probabilities": {
+            "e": 1.0,
+            "c": 0.0
+          }
+        },
+        "c_f": {
+          "type": "choice",
+          "choice": "f",
+          "confidence": 1.0,
+          "probabilities": {
+            "f": 1.0,
+            "c": 0.0
+          }
+        },
+        "d_e": {
+          "type": "choice",
+          "choice": "d",
+          "confidence": 1.0,
+          "probabilities": {
+            "e": 0.0,
+            "d": 1.0
+          }
+        },
+        "d_f": {
+          "type": "choice",
+          "choice": "d",
+          "confidence": 0.99,
+          "probabilities": {
+            "f": 0.0,
+            "d": 1.0
+          }
+        },
+        "e_f": {
+          "type": "choice",
+          "choice": "f",
+          "confidence": 0.82,
+          "probabilities": {
+            "e": 0.09,
+            "f": 0.91
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1342,
+        "output_tokens": 516
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:24Z"
+}

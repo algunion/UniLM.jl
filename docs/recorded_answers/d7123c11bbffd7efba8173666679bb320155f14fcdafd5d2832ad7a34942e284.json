@@ -1,0 +1,52 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "item": "DYSON V15 DETECT stick vacuum cleaner, yellow/nickel",
+        "c1": "Dyson V15 Detect Absolute Cordless Vacuum (Gold)",
+        "c2": "Sony WH-1000XM4 Wireless Noise Cancelling Headphones",
+        "c3": "Sony WF-1000XM5 Earbuds, Silver"
+      },
+      "model": "jev-latest",
+      "questions": {
+        "match": {
+          "type": "choice",
+          "instructions": "Which candidate is the same product as `item`? Same product means same model, generation, capacity and edition; wording may differ.",
+          "criteria": {
+            "c1": null,
+            "c2": null,
+            "c3": null,
+            "none": "No candidate is the same product as `item`."
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0ec4a73558234006945d1b8ba",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "match": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.57,
+          "probabilities": {
+            "none": 0.68,
+            "c3": 0.0,
+            "c1": 0.32,
+            "c2": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 435,
+        "output_tokens": 48
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:27Z"
+}

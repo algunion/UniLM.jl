@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "ticket": "Your update deleted my saved cards and now I've been billed for a plan I cancelled."
+      },
+      "model": "jev-latest",
+      "questions": {
+        "meaning_1": {
+          "type": "choice",
+          "instructions": "Select the option that best describes the provided state.",
+          "criteria": {
+            "the customer wants a refund": null,
+            "the customer reports a bug in the app": null,
+            "anything else": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0d07875bbb47372d1bbab7a25",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "meaning_1": {
+          "type": "choice",
+          "choice": "the customer reports a bug in the app",
+          "confidence": 0.26,
+          "probabilities": {
+            "anything else": 0.02,
+            "the customer wants a refund": 0.47,
+            "the customer reports a bug in the app": 0.51
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 334,
+        "output_tokens": 59
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:19Z"
+}

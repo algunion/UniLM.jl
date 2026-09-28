@@ -1,0 +1,77 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": "I was charged twice this month. Refund the duplicate now!",
+      "model": "jev-latest",
+      "questions": {
+        "team": {
+          "type": "choice",
+          "instructions": "Which team should handle this ticket?",
+          "criteria": {
+            "billing": null,
+            "technical": null,
+            "shipping": null
+          }
+        },
+        "urgency": {
+          "type": "score",
+          "instructions": "How urgent is this ticket?",
+          "criteria": [
+            "low",
+            "normal",
+            "high"
+          ]
+        },
+        "wants_refund": {
+          "type": "noul",
+          "instructions": "Does the customer ask for their money back?"
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b105a07f7bb21fc9c98a7c11b9",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "team": {
+          "type": "choice",
+          "choice": "billing",
+          "confidence": 1.0,
+          "probabilities": {
+            "billing": 1.0,
+            "shipping": 0.0,
+            "technical": 0.0
+          }
+        },
+        "urgency": {
+          "type": "score",
+          "score": 1.85,
+          "confidence": 0.77,
+          "legend": {
+            "0": "low",
+            "1": "normal",
+            "2": "high"
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.15,
+            "2": 0.85
+          }
+        },
+        "wants_refund": {
+          "type": "noul",
+          "noul": 0.98
+        }
+      },
+      "usage": {
+        "input_tokens": 361,
+        "output_tokens": 72
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:33Z"
+}

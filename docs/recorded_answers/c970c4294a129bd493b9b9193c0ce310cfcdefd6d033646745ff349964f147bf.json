@@ -1,0 +1,52 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "item": "Amazon Kindle Paperwhite (16GB) - 6.8 inch display, black",
+        "c1": "Kindle Paperwhite 16 GB (2021), Black",
+        "c2": "Dyson V15 Detect Absolute Cordless Vacuum (Gold)",
+        "c3": "Apple iPhone 15 Pro 256GB Natural Titanium"
+      },
+      "model": "jev-latest",
+      "questions": {
+        "match": {
+          "type": "choice",
+          "instructions": "Which candidate is the same product as `item`? Same product means same model, generation, capacity and edition; wording may differ.",
+          "criteria": {
+            "c1": null,
+            "c2": null,
+            "c3": null,
+            "none": "No candidate is the same product as `item`."
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0ec49725ab50f764fe67de962",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "match": {
+          "type": "choice",
+          "choice": "c1",
+          "confidence": 0.9,
+          "probabilities": {
+            "c2": 0.0,
+            "c1": 0.93,
+            "none": 0.07,
+            "c3": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 440,
+        "output_tokens": 49
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:26Z"
+}

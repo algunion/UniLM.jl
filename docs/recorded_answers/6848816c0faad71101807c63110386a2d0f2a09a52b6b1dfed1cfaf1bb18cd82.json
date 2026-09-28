@@ -1,0 +1,51 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "ticket": "Please refund my annual plan, I cancelled on day two."
+      },
+      "model": "jev-latest",
+      "questions": {
+        "intent": {
+          "type": "choice",
+          "instructions": "Select the option that best describes the provided state.",
+          "criteria": {
+            "the customer wants their money back": null,
+            "the customer was charged twice or charged an amount they did not expect": null,
+            "the app crashes, freezes, or shows an error": null,
+            "the customer cannot sign in to their account": null,
+            "anything else": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0fea6790c80e7fefd047896f2",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "intent": {
+          "type": "choice",
+          "choice": "the customer wants their money back",
+          "confidence": 1.0,
+          "probabilities": {
+            "anything else": 0.0,
+            "the app crashes, freezes, or shows an error": 0.0,
+            "the customer cannot sign in to their account": 0.0,
+            "the customer was charged twice or charged an amount they did not expect": 0.0,
+            "the customer wants their money back": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 362,
+        "output_tokens": 91
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:31Z"
+}

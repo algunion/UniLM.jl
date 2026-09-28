@@ -54,7 +54,7 @@
   },
   "response": {
     "status": 200,
-    "request_id": "req_01a0e789d1fb7c6780c83c9beee810c5",
+    "request_id": "req_01a0e7b1212a7410bcdfef6f8f7905ef",
     "body": {
       "model": "jev-1.13.0",
       "answers": {
@@ -73,22 +73,22 @@
           "choice": "wrong_size",
           "confidence": 1.0,
           "probabilities": {
-            "wrong_item": 0.0,
-            "wrong_size": 1.0,
-            "other": 0.0,
             "changed_mind": 0.0,
-            "damaged": 0.0
+            "wrong_item": 0.0,
+            "other": 0.0,
+            "damaged": 0.0,
+            "wrong_size": 1.0
           }
         },
         "shipping_issue": {
           "type": "choice",
           "choice": "other",
-          "confidence": 0.37,
+          "confidence": 0.34,
           "probabilities": {
-            "other": 0.53,
             "wrong_address": 0.0,
+            "other": 0.51,
             "not_delivered": 0.0,
-            "delayed": 0.47
+            "delayed": 0.49
           }
         },
         "frustration": {
@@ -117,5 +117,5 @@
       }
     }
   },
-  "recorded_at": "2026-09-28T10:22:44Z"
+  "recorded_at": "2026-09-28T11:05:40Z"
 }

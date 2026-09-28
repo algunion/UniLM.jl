@@ -1,0 +1,45 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": "My package arrived crushed and the screen is cracked. I want my money back.",
+      "model": "jev-1.13.0",
+      "questions": {
+        "route": {
+          "type": "choice",
+          "instructions": "Which of these describes the message?",
+          "criteria": {
+            "the customer wants a refund": null,
+            "the customer reports a bug in the app": null,
+            "anything else": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0c3747c8fafe2e806b7b8a9a1",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "route": {
+          "type": "choice",
+          "choice": "the customer wants a refund",
+          "confidence": 1.0,
+          "probabilities": {
+            "anything else": 0.0,
+            "the customer reports a bug in the app": 0.0,
+            "the customer wants a refund": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 323,
+        "output_tokens": 54
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:16Z"
+}

@@ -1,0 +1,51 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "ticket": "There is a charge from your company on my card that I don't recognize at all."
+      },
+      "model": "jev-latest",
+      "questions": {
+        "intent": {
+          "type": "choice",
+          "instructions": "Select the option that best describes the provided state.",
+          "criteria": {
+            "the customer wants their money back": null,
+            "the customer was charged twice or charged an amount they did not expect": null,
+            "the app crashes, freezes, or shows an error": null,
+            "the customer cannot sign in to their account": null,
+            "anything else": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b1035a751e95662cbd16db4e26",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "intent": {
+          "type": "choice",
+          "choice": "the customer was charged twice or charged an amount they did not expect",
+          "confidence": 0.28,
+          "probabilities": {
+            "the app crashes, freezes, or shows an error": 0.0,
+            "the customer cannot sign in to their account": 0.0,
+            "the customer was charged twice or charged an amount they did not expect": 0.42,
+            "anything else": 0.19,
+            "the customer wants their money back": 0.39
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 368,
+        "output_tokens": 98
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:32Z"
+}

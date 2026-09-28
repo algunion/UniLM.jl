@@ -1,0 +1,56 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": "Our whole customer database was deleted after your update.",
+      "model": "jev-latest",
+      "questions": {
+        "severity": {
+          "type": "score",
+          "instructions": "How severe is the problem this customer reports?",
+          "criteria": [
+            "No problem: a question, praise, or feedback",
+            "Minor: a cosmetic issue or small inconvenience; everything still works",
+            "Moderate: a feature is broken or degraded, but there is a workaround",
+            "Major: a core feature is unusable for this customer, with no workaround",
+            "Critical: data loss, a security breach, a physical safety risk, or an outage"
+          ]
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0fcd57b4488d3dafc8a979ae0",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "severity": {
+          "type": "score",
+          "score": 4.0,
+          "confidence": 1.0,
+          "legend": {
+            "0": "No problem: a question, praise, or feedback",
+            "1": "Minor: a cosmetic issue or small inconvenience; everything still works",
+            "2": "Moderate: a feature is broken or degraded, but there is a workaround",
+            "3": "Major: a core feature is unusable for this customer, with no workaround",
+            "4": "Critical: data loss, a security breach, a physical safety risk, or an outage"
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.0,
+            "2": 0.0,
+            "3": 0.0,
+            "4": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 386,
+        "output_tokens": 17
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:31Z"
+}

@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "msg": "crushed box, cracked screen. refund pls"
+      },
+      "model": "jev-1.13.0",
+      "questions": {
+        "meaning_1": {
+          "type": "choice",
+          "instructions": "Select the option that best describes the provided state.",
+          "criteria": {
+            "the customer wants a refund": null,
+            "the customer reports a bug in the app": null,
+            "anything else": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0be81742ea3a517454bee0f8b",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "meaning_1": {
+          "type": "choice",
+          "choice": "the customer wants a refund",
+          "confidence": 1.0,
+          "probabilities": {
+            "anything else": 0.0,
+            "the customer reports a bug in the app": 0.0,
+            "the customer wants a refund": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 326,
+        "output_tokens": 56
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:15Z"
+}

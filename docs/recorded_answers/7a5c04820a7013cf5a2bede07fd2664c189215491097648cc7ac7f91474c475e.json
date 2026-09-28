@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "L01": "Agent: Hi! For verification I need your full name, date of birth and postcode.",
+        "L02": "Customer: Sure. My full name is Jordan Ellis.",
+        "L03": "Customer: Sorry for the wait, I had to cancel my dentist appointment to do this.",
+        "L04": "Agent: No problem. What seems to be the issue?",
+        "L05": "Customer: The export keeps failing. If it isn't fixed by Friday, I might cancel.",
+        "L06": "Agent: I've escalated it. May I have your date of birth?",
+        "L07": "Customer: I'd rather not share that yet.",
+        "L08": "Customer: The postcode on the account is M4 2BS.",
+        "L09": "Agent: Do you want me to cancel your subscription, or only pause the export?",
+        "L10": "Customer: The first one, please.",
+        "L11": "Agent: Understood. Last thing: your date of birth, for the records.",
+        "L12": "Customer: It's 14 March 1988."
+      },
+      "model": "jev-latest",
+      "questions": {
+        "v": {
+          "type": "noul",
+          "instructions": "So far, has the customer given all three of: full name, date of birth, postcode?"
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0e5e8714b8e87f3cf276b0029",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "v": {
+          "type": "noul",
+          "noul": 0.96
+        }
+      },
+      "usage": {
+        "input_tokens": 570,
+        "output_tokens": 20
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:25Z"
+}

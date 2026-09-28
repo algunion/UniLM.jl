@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": "Where is my parcel? Tracking hasn't moved in a week.",
+      "model": "jev-latest",
+      "questions": {
+        "intent": {
+          "type": "choice",
+          "instructions": "What does the customer primarily want us to do?",
+          "criteria": {
+            "refund": "The customer asks to get money back.",
+            "cancel_subscription": "The customer wants to cancel or not renew a subscription.",
+            "shipping_delivery": "The status, tracking, delay or address of a delivery.",
+            "other": "None of the above."
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0eded7c15accc015d016b3e0f",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "intent": {
+          "type": "choice",
+          "choice": "shipping_delivery",
+          "confidence": 1.0,
+          "probabilities": {
+            "cancel_subscription": 0.0,
+            "shipping_delivery": 1.0,
+            "refund": 0.0,
+            "other": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 381,
+        "output_tokens": 48
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:27Z"
+}

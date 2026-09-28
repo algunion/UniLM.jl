@@ -1,0 +1,50 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "assistant_asked": "Shall I refund order 48213? Please confirm.",
+        "customer_replied": "yes please"
+      },
+      "model": "jev-latest",
+      "questions": {
+        "meaning_2": {
+          "type": "choice",
+          "instructions": "Select the option that best describes the provided state.",
+          "criteria": {
+            "The customer confirms the refund": null,
+            "The customer declines or changes their mind": null,
+            "The customer asks for a human agent": null,
+            "Something else": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b10a8a7065a0bb3fd1216a40d7",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "meaning_2": {
+          "type": "choice",
+          "choice": "The customer confirms the refund",
+          "confidence": 1.0,
+          "probabilities": {
+            "Something else": 0.0,
+            "The customer confirms the refund": 1.0,
+            "The customer asks for a human agent": 0.0,
+            "The customer declines or changes their mind": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 357,
+        "output_tokens": 68
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:34Z"
+}

@@ -1,0 +1,48 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "assistant_asked": "Which order would you like refunded?",
+        "customer_replied": "It's 48213."
+      },
+      "model": "jev-latest",
+      "questions": {
+        "meaning_2": {
+          "type": "choice",
+          "instructions": "Select the option that best describes the provided state.",
+          "criteria": {
+            "The customer gives an order number": null,
+            "The customer asks for a human agent": null,
+            "Something else": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b1081c7c7ea540c5286981f80a",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "meaning_2": {
+          "type": "choice",
+          "choice": "The customer gives an order number",
+          "confidence": 1.0,
+          "probabilities": {
+            "Something else": 0.0,
+            "The customer asks for a human agent": 0.0,
+            "The customer gives an order number": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 345,
+        "output_tokens": 57
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:34Z"
+}

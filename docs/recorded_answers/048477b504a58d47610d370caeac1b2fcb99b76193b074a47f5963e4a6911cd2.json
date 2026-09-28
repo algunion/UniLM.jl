@@ -24,13 +24,13 @@
   },
   "response": {
     "status": 200,
-    "request_id": "req_01a0e789cfe37381bc3c8a8fb57aef51",
+    "request_id": "req_01a0e7b11f4374c0aef2ab3de0893235",
     "body": {
       "model": "jev-1.13.0",
       "answers": {
         "urgency": {
           "type": "score",
-          "score": 1.97,
+          "score": 1.98,
           "confidence": 0.96,
           "legend": {
             "0": "Can wait",
@@ -39,8 +39,8 @@
           },
           "probabilities": {
             "0": 0.0,
-            "1": 0.03,
-            "2": 0.97
+            "1": 0.02,
+            "2": 0.98
           }
         },
         "wants_human": {
@@ -54,5 +54,5 @@
       }
     }
   },
-  "recorded_at": "2026-09-28T10:22:43Z"
+  "recorded_at": "2026-09-28T11:05:39Z"
 }

@@ -1,0 +1,48 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "assistant_asked": "Anything else I can help with?",
+        "customer_replied": "no, that's all"
+      },
+      "model": "jev-latest",
+      "questions": {
+        "meaning_2": {
+          "type": "choice",
+          "instructions": "Select the option that best describes the provided state.",
+          "criteria": {
+            "The customer says goodbye or thanks": null,
+            "The customer asks for a human agent": null,
+            "Something else": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b10c1b75248c8ed7ebdfc9ae51",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "meaning_2": {
+          "type": "choice",
+          "choice": "Something else",
+          "confidence": 0.78,
+          "probabilities": {
+            "Something else": 0.86,
+            "The customer asks for a human agent": 0.0,
+            "The customer says goodbye or thanks": 0.14
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 341,
+        "output_tokens": 53
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:35Z"
+}

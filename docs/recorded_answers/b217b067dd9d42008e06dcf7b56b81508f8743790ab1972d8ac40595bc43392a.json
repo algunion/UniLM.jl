@@ -1,0 +1,47 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": "I was charged but my order never shipped.",
+      "model": "jev-latest",
+      "questions": {
+        "intent": {
+          "type": "choice",
+          "instructions": "What does the customer primarily want us to do?",
+          "criteria": {
+            "refund": "The customer asks to get money back.",
+            "cancel_subscription": "The customer wants to cancel or not renew a subscription.",
+            "shipping_delivery": "The status, tracking, delay or address of a delivery.",
+            "other": "None of the above."
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0ef9873958922c802365c8917",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "intent": {
+          "type": "choice",
+          "choice": "refund",
+          "confidence": 0.69,
+          "probabilities": {
+            "other": 0.0,
+            "cancel_subscription": 0.0,
+            "shipping_delivery": 0.23,
+            "refund": 0.77
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 377,
+        "output_tokens": 47
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:27Z"
+}

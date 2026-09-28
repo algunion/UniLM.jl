@@ -1,0 +1,62 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "msg": "This is the third time I have written about my broken order."
+      },
+      "model": "jev-latest",
+      "questions": {
+        "meaning_1": {
+          "type": "choice",
+          "instructions": "Select the option that best describes the provided state.",
+          "criteria": {
+            "a complaint": null,
+            "a question": null
+          }
+        },
+        "meaning_2": {
+          "type": "choice",
+          "instructions": "Select the option that best describes the provided state.",
+          "criteria": {
+            "a calm tone": null,
+            "an angry tone": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0ce87748cb5ea09d5bbdb3f9d",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "meaning_1": {
+          "type": "choice",
+          "choice": "a complaint",
+          "confidence": 1.0,
+          "probabilities": {
+            "a question": 0.0,
+            "a complaint": 1.0
+          }
+        },
+        "meaning_2": {
+          "type": "choice",
+          "choice": "an angry tone",
+          "confidence": 0.89,
+          "probabilities": {
+            "an angry tone": 0.94,
+            "a calm tone": 0.06
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 350,
+        "output_tokens": 72
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:19Z"
+}

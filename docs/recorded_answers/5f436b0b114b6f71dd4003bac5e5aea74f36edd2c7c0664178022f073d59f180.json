@@ -1,0 +1,55 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": "Tracking says delivered but there's nothing at my door.",
+      "model": "jev-latest",
+      "questions": {
+        "tool": {
+          "type": "choice",
+          "instructions": "Which tool should handle the user's request?",
+          "criteria": {
+            "get_order_status": "Look up the current status of an order",
+            "track_shipment": "Get the carrier tracking events for a shipped parcel",
+            "report_missing_parcel": "Open a claim for a parcel marked delivered that never arrived",
+            "start_return": "Start a return and generate a return shipping label",
+            "issue_refund": "Refund an order to the original payment method",
+            "reset_password": "Send a password reset link",
+            "update_payment_method": "Replace the card or payment method on file",
+            "transfer_to_human": "Hand the conversation to a human support agent"
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b112aa74c891772bd2eefe8d23",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "tool": {
+          "type": "choice",
+          "choice": "report_missing_parcel",
+          "confidence": 0.88,
+          "probabilities": {
+            "report_missing_parcel": 0.91,
+            "reset_password": 0.0,
+            "track_shipment": 0.09,
+            "update_payment_method": 0.0,
+            "get_order_status": 0.0,
+            "start_return": 0.0,
+            "issue_refund": 0.0,
+            "transfer_to_human": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 468,
+        "output_tokens": 93
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:36Z"
+}

@@ -1,0 +1,66 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": "What's the capital of Australia?",
+      "model": "jev-latest",
+      "questions": {
+        "closed": {
+          "type": "choice",
+          "instructions": "What does the customer primarily want us to do?",
+          "criteria": {
+            "refund": "The customer asks to get money back.",
+            "technical_issue": "The product, app or website is malfunctioning.",
+            "billing_question": "A question about a charge, invoice, price or payment method."
+          }
+        },
+        "open_set": {
+          "type": "choice",
+          "instructions": "What does the customer primarily want us to do?",
+          "criteria": {
+            "refund": "The customer asks to get money back.",
+            "technical_issue": "The product, app or website is malfunctioning.",
+            "billing_question": "A question about a charge, invoice, price or payment method.",
+            "other": "None of the above."
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0f8d9735aa90ccff049389a5f",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "closed": {
+          "type": "choice",
+          "choice": "technical_issue",
+          "confidence": 0.67,
+          "probabilities": {
+            "technical_issue": 0.78,
+            "refund": 0.01,
+            "billing_question": 0.21
+          }
+        },
+        "open_set": {
+          "type": "choice",
+          "choice": "other",
+          "confidence": 1.0,
+          "probabilities": {
+            "other": 1.0,
+            "technical_issue": 0.0,
+            "refund": 0.0,
+            "billing_question": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 474,
+        "output_tokens": 86
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:30Z"
+}

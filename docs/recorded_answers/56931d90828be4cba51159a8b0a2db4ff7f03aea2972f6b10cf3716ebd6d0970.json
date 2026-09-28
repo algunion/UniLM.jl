@@ -1,0 +1,135 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "L01": "Agent: Hi! For verification I need your full name, date of birth and postcode.",
+        "L02": "Customer: Sure. My full name is Jordan Ellis.",
+        "L03": "Customer: Sorry for the wait, I had to cancel my dentist appointment to do this.",
+        "L04": "Agent: No problem. What seems to be the issue?",
+        "L05": "Customer: The export keeps failing. If it isn't fixed by Friday, I might cancel.",
+        "L06": "Agent: I've escalated it. May I have your date of birth?",
+        "L07": "Customer: I'd rather not share that yet.",
+        "L08": "Customer: The postcode on the account is M4 2BS.",
+        "L09": "Agent: Do you want me to cancel your subscription, or only pause the export?",
+        "L10": "Customer: The first one, please.",
+        "L11": "Agent: Understood. Last thing: your date of birth, for the records.",
+        "L12": "Customer: It's 14 March 1988."
+      },
+      "model": "jev-latest",
+      "questions": {
+        "L01": {
+          "type": "noul",
+          "instructions": "Is line `L01` the customer asking to cancel their subscription (conditional threats and cancelling other things do not count)?"
+        },
+        "L02": {
+          "type": "noul",
+          "instructions": "Is line `L02` the customer asking to cancel their subscription (conditional threats and cancelling other things do not count)?"
+        },
+        "L03": {
+          "type": "noul",
+          "instructions": "Is line `L03` the customer asking to cancel their subscription (conditional threats and cancelling other things do not count)?"
+        },
+        "L04": {
+          "type": "noul",
+          "instructions": "Is line `L04` the customer asking to cancel their subscription (conditional threats and cancelling other things do not count)?"
+        },
+        "L05": {
+          "type": "noul",
+          "instructions": "Is line `L05` the customer asking to cancel their subscription (conditional threats and cancelling other things do not count)?"
+        },
+        "L06": {
+          "type": "noul",
+          "instructions": "Is line `L06` the customer asking to cancel their subscription (conditional threats and cancelling other things do not count)?"
+        },
+        "L07": {
+          "type": "noul",
+          "instructions": "Is line `L07` the customer asking to cancel their subscription (conditional threats and cancelling other things do not count)?"
+        },
+        "L08": {
+          "type": "noul",
+          "instructions": "Is line `L08` the customer asking to cancel their subscription (conditional threats and cancelling other things do not count)?"
+        },
+        "L09": {
+          "type": "noul",
+          "instructions": "Is line `L09` the customer asking to cancel their subscription (conditional threats and cancelling other things do not count)?"
+        },
+        "L10": {
+          "type": "noul",
+          "instructions": "Is line `L10` the customer asking to cancel their subscription (conditional threats and cancelling other things do not count)?"
+        },
+        "L11": {
+          "type": "noul",
+          "instructions": "Is line `L11` the customer asking to cancel their subscription (conditional threats and cancelling other things do not count)?"
+        },
+        "L12": {
+          "type": "noul",
+          "instructions": "Is line `L12` the customer asking to cancel their subscription (conditional threats and cancelling other things do not count)?"
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0e46d72aaa6205a2f13f7f698",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "L01": {
+          "type": "noul",
+          "noul": 0.01
+        },
+        "L02": {
+          "type": "noul",
+          "noul": 0.01
+        },
+        "L03": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "L04": {
+          "type": "noul",
+          "noul": 0.01
+        },
+        "L05": {
+          "type": "noul",
+          "noul": 0.05
+        },
+        "L06": {
+          "type": "noul",
+          "noul": 0.01
+        },
+        "L07": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "L08": {
+          "type": "noul",
+          "noul": 0.02
+        },
+        "L09": {
+          "type": "noul",
+          "noul": 0.05
+        },
+        "L10": {
+          "type": "noul",
+          "noul": 0.93
+        },
+        "L11": {
+          "type": "noul",
+          "noul": 0.01
+        },
+        "L12": {
+          "type": "noul",
+          "noul": 0.02
+        }
+      },
+      "usage": {
+        "input_tokens": 927,
+        "output_tokens": 220
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:24Z"
+}

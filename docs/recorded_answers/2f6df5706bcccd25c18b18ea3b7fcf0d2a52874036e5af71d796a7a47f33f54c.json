@@ -1,0 +1,52 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "msg": {
+          "subject": "Automatic reply: Out of office",
+          "body": "I am out of the office until Monday, with no access to email."
+        }
+      },
+      "model": "jev-1.13.0",
+      "questions": {
+        "meaning_1": {
+          "type": "choice",
+          "instructions": "Select the option that best describes the provided state.",
+          "criteria": {
+            "the customer wants a refund": null,
+            "the customer reports a bug in the app": null,
+            "an automatic out-of-office reply": null,
+            "anything else": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0b44c7afe85908d20e083450f",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "meaning_1": {
+          "type": "choice",
+          "choice": "an automatic out-of-office reply",
+          "confidence": 1.0,
+          "probabilities": {
+            "anything else": 0.0,
+            "the customer wants a refund": 0.0,
+            "an automatic out-of-office reply": 1.0,
+            "the customer reports a bug in the app": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 361,
+        "output_tokens": 69
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:12Z"
+}

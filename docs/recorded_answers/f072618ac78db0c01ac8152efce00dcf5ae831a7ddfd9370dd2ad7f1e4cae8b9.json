@@ -1,0 +1,86 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "ticket": "Is your refund policy the same for EU and US customers?"
+      },
+      "model": "jev-latest",
+      "questions": {
+        "sentences": {
+          "type": "choice",
+          "instructions": "Select the option that best describes the provided state.",
+          "criteria": {
+            "the customer wants their money back": null,
+            "the customer was charged twice or charged an amount they did not expect": null,
+            "the customer asks for an invoice, receipt, or billing document": null,
+            "the app crashes, freezes, or shows an error": null,
+            "the customer cannot sign in to their account": null,
+            "the order is late or has not arrived": null,
+            "the order arrived damaged or broken": null,
+            "anything else": null
+          }
+        },
+        "keys": {
+          "type": "choice",
+          "instructions": "Select the option that best describes the provided state.",
+          "criteria": {
+            "refund": "the customer wants their money back",
+            "double_charge": "the customer was charged twice or charged an amount they did not expect",
+            "invoice": "the customer asks for an invoice, receipt, or billing document",
+            "crash": "the app crashes, freezes, or shows an error",
+            "login": "the customer cannot sign in to their account",
+            "late": "the order is late or has not arrived",
+            "damaged": "the order arrived damaged or broken",
+            "other": "anything else"
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0d63a71eba3ba43e2877bd6fa",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "sentences": {
+          "type": "choice",
+          "choice": "anything else",
+          "confidence": 0.98,
+          "probabilities": {
+            "anything else": 0.98,
+            "the customer was charged twice or charged an amount they did not expect": 0.0,
+            "the app crashes, freezes, or shows an error": 0.0,
+            "the customer cannot sign in to their account": 0.0,
+            "the order arrived damaged or broken": 0.0,
+            "the order is late or has not arrived": 0.0,
+            "the customer wants their money back": 0.02,
+            "the customer asks for an invoice, receipt, or billing document": 0.0
+          }
+        },
+        "keys": {
+          "type": "choice",
+          "choice": "refund",
+          "confidence": 0.6,
+          "probabilities": {
+            "double_charge": 0.0,
+            "invoice": 0.0,
+            "login": 0.0,
+            "other": 0.35,
+            "damaged": 0.0,
+            "late": 0.0,
+            "crash": 0.0,
+            "refund": 0.65
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 586,
+        "output_tokens": 205
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:21Z"
+}

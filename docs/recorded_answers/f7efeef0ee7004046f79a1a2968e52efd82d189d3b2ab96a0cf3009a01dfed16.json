@@ -1,0 +1,86 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "ticket": "There is a charge from your company on my card that I don't recognize at all."
+      },
+      "model": "jev-latest",
+      "questions": {
+        "as defined": {
+          "type": "choice",
+          "instructions": "Select the option that best describes the provided state.",
+          "criteria": {
+            "the customer wants their money back": null,
+            "the customer was charged twice or charged an amount they did not expect": null,
+            "the customer asks for an invoice, receipt, or billing document": null,
+            "the app crashes, freezes, or shows an error": null,
+            "the customer cannot sign in to their account": null,
+            "the order is late or has not arrived": null,
+            "the order arrived damaged or broken": null,
+            "anything else": null
+          }
+        },
+        "reversed": {
+          "type": "choice",
+          "instructions": "Select the option that best describes the provided state.",
+          "criteria": {
+            "anything else": null,
+            "the order arrived damaged or broken": null,
+            "the order is late or has not arrived": null,
+            "the customer cannot sign in to their account": null,
+            "the app crashes, freezes, or shows an error": null,
+            "the customer asks for an invoice, receipt, or billing document": null,
+            "the customer was charged twice or charged an amount they did not expect": null,
+            "the customer wants their money back": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0d26f70caa7282916e6eebf28",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "as defined": {
+          "type": "choice",
+          "choice": "the customer wants their money back",
+          "confidence": 0.45,
+          "probabilities": {
+            "anything else": 0.17,
+            "the customer cannot sign in to their account": 0.0,
+            "the customer was charged twice or charged an amount they did not expect": 0.31,
+            "the customer wants their money back": 0.52,
+            "the order arrived damaged or broken": 0.0,
+            "the customer asks for an invoice, receipt, or billing document": 0.0,
+            "the order is late or has not arrived": 0.0,
+            "the app crashes, freezes, or shows an error": 0.0
+          }
+        },
+        "reversed": {
+          "type": "choice",
+          "choice": "the customer was charged twice or charged an amount they did not expect",
+          "confidence": 0.92,
+          "probabilities": {
+            "anything else": 0.04,
+            "the customer cannot sign in to their account": 0.0,
+            "the customer was charged twice or charged an amount they did not expect": 0.93,
+            "the order is late or has not arrived": 0.0,
+            "the app crashes, freezes, or shows an error": 0.0,
+            "the customer asks for an invoice, receipt, or billing document": 0.0,
+            "the customer wants their money back": 0.03,
+            "the order arrived damaged or broken": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 535,
+        "output_tokens": 277
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:20Z"
+}

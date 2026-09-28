@@ -1,0 +1,52 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "item": "Sony WH1000XM5/B Over-Ear Noise Canceling Headphones",
+        "c1": "Sony WH-1000XM4 Wireless Noise Cancelling Headphones",
+        "c2": "Sony WF-1000XM5 Earbuds, Silver",
+        "c3": "Apple iPhone 15 Pro 128GB Natural Titanium"
+      },
+      "model": "jev-latest",
+      "questions": {
+        "match": {
+          "type": "choice",
+          "instructions": "Which candidate is the same product as `item`? Same product means same model, generation, capacity and edition; wording may differ.",
+          "criteria": {
+            "c1": null,
+            "c2": null,
+            "c3": null,
+            "none": "No candidate is the same product as `item`."
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e7b0ec47712597af81b429c8614f",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "match": {
+          "type": "choice",
+          "choice": "none",
+          "confidence": 0.98,
+          "probabilities": {
+            "c1": 0.02,
+            "c2": 0.0,
+            "none": 0.98,
+            "c3": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 442,
+        "output_tokens": 48
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T11:05:26Z"
+}

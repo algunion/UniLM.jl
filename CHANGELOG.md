@@ -1,6 +1,34 @@
 # Changelog
 
-## Unreleased
+## 0.21.0
+
+### Breaking
+- **Options follow the argument types.** `nl_dispatch` offers only the meanings of
+  methods that accept the types of its ordinary arguments: with `step(::Waiting,
+  ::nl"gives an order number", msg)` defined, that meaning is no longer offered when
+  the first argument is a `Confirming()`. Before, the model could pick a meaning with
+  no method for the arguments and the call ended in a `MethodError` after a billed
+  request. Arguments no natural-language method accepts are an `ArgumentError` before
+  any request. `meanings(f)` still lists every method's options.
+  Upgrading: for a function whose natural-language methods restrict the types of its
+  ordinary arguments, the option list sent to the model is shorter, so its
+  probabilities and `confidence` — and what a tuned `min_confidence` means — change;
+  re-check thresholds tuned against the full list.
+- **Gaps are refused before billing.** A gap in the method table — a combination of
+  offered meanings with no method, or with an ambiguous one — is an `ArgumentError`
+  raised before any request, instead of Julia's `MethodError` after a billed one. For
+  the combinations with no method the error suggests defining them, or one method wild
+  in every slot (`f(::Meaning, ::Meaning, x)`), which is not an option and covers
+  every combination that has no method. Such a backstop is not more specific than the
+  methods of an ambiguous combination and cannot settle it, so for those the error
+  names the colliding methods and the intersection to define instead. A partial
+  wildcard (`f(::nl"a", ::Meaning, x)`) is still refused, and the error now says that
+  it is one and that it is not supported.
+- **`@branch` refuses an unreachable `_` line.** `@branch` accepts a `_` fallback line
+  with `decide` as well as with `min_confidence`. A `_` line whose policy cannot
+  decline when the branch runs — `decide = nothing`, or a `min_confidence` of 0 or
+  less — is an `ArgumentError` before the request; before, the request was sent and
+  the line could never run.
 
 ### Added
 - `with_recorded_answers(f, dir; mode)` records System One answers once and replays
@@ -36,38 +64,24 @@
   have the types in `argtypes`, e.g. `meanings(step, Tuple{Waiting,String})`.
 - `meaning_gaps(f, argtypes)`: the combinations of offered meanings that no method
   covers (missing or ambiguous), found without a request.
+- Three guides: *Semantic Programs with Jev* (loss-matrix decisions, catch-all
+  options, tail probabilities, taxonomies as type hierarchies, typed extraction,
+  conversation state machines, tool guards and shortlists), *Semantic Algorithms with
+  Jev* (keyed batches, rankings, search and bisection, joins, streaming with an early
+  stop) and *Developing and Testing with Jev* (recorded answers, coverage checks,
+  semantic assertions). Every System One example in the manual runs during the
+  build, from recorded live answers when no key is set.
 
 ### Changed
-- `nl_dispatch` offers only the meanings of methods that accept the types of its
-  ordinary arguments: with `step(::Waiting, ::nl"gives an order number", msg)` defined,
-  that meaning is no longer offered when the first argument is a `Confirming()`. Before,
-  the model could pick a meaning with no method for the arguments and the call ended in
-  a `MethodError` after a billed request. Arguments no natural-language method accepts
-  are an `ArgumentError` before any request. `meanings(f)` still lists every method's
-  options.
-- A gap in the method table — a combination of offered meanings with no method, or
-  with an ambiguous one — is an `ArgumentError` raised before any request, instead of
-  Julia's `MethodError` after a billed one. For the combinations with no method the
-  error suggests defining them, or one method wild in every slot
-  (`f(::Meaning, ::Meaning, x)`), which is not an option and covers every combination
-  that has no method. Such a backstop is not more specific than the methods of an
-  ambiguous combination and cannot settle it, so for those the error names the
-  colliding methods and the intersection to define instead. A partial wildcard
-  (`f(::nl"a", ::Meaning, x)`) is still refused, and the error now says that it is one
-  and that it is not supported.
-- `nl_dispatch` works out its options, argument names and gap check once per type of
-  `f`, types of the ordinary arguments and state of the method table, instead of on
-  every call; a method defined later is offered from the next call on.
-- `@branch` accepts a `_` fallback line with `decide` as well as with `min_confidence`.
-  A `_` line whose policy cannot decline when the branch runs — `decide = nothing`, or
-  a `min_confidence` of 0 or less — is an `ArgumentError` before the request; before,
-  the request was sent and the line could never run.
-- `tool_loop!` and `tool_loop` let a `ReplayMissError` raised by a dispatcher propagate,
-  as they do an `InterruptException`, instead of sending it to the model as a tool error
-  while the loop goes on.
 - The state `nl_dispatch` builds from its ordinary arguments lists them in argument
   order (a `JSON.Object`) instead of a `Dict`'s hash order, so the same arguments send
   the same request bytes on every Julia version.
+- `nl_dispatch` works out its options, argument names and gap check once per type of
+  `f`, types of the ordinary arguments and state of the method table, instead of on
+  every call; a method defined later is offered from the next call on.
+- `tool_loop!` and `tool_loop` let a `ReplayMissError` raised by a dispatcher propagate,
+  as they do an `InterruptException`, instead of sending it to the model as a tool error
+  while the loop goes on.
 
 ### Fixed
 - A System One error whose object `detail` carries an `error_type` and no `message`

@@ -89,7 +89,19 @@
   without running. The documentation build chooses its mode by flag, not by the keys
   it finds: replay by default (with every provider key hidden, so it never calls a
   service), `UNILM_DOCS_RECORD=1` to record the missing answers, `UNILM_DOCS_LIVE=1`
-  to call every service live.
+  to call every service live — a check that the examples still run, which never
+  deploys, because the prose quotes the recorded outputs.
+- The Jev documentation is rebuilt around jobs, each page opening with a table of
+  which pathway to take and what it gives: Start Here: Jev in Five Minutes (new), Jev
+  with LLMs (new: route before an LLM call, check a draft, check claims against the
+  source, pick the model, screen what the model reads, approve and shortlist tool
+  calls), Route and Decide (formerly Typed Judgments with Jev), Dispatch on Meaning
+  (keyed and `nl"..."` dispatch side by side), Many Items at Once and Test and
+  Develop. Semantic Programs is gone: its sections moved to Route and Decide, Dispatch
+  on Meaning and Jev with LLMs. Every example runs on recorded real answers,
+  measurements sit in collapsible Evidence boxes, the typed-extraction example sends
+  each option's sentence as its name (re-measured), natural-language dispatch has its
+  own API page, and the LLM guides point to the Jev check for what they build.
 
 ### Fixed
 - Cloudflare's origin errors 520–524 are retried like 502 and 504, within

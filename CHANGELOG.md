@@ -17,6 +17,36 @@
   replay. The documentation's System One examples replay committed recordings when the
   build has no `TYPESAFE_API_KEY`; `UNILM_DOCS_RECORD=1` with the key records the
   missing ones.
+- A `decide` keyword on `nl_dispatch` and `@branch`: a decision policy called with
+  each question's `ChoiceAnswer` that returns any offered meaning — not only the
+  argmax — or `nothing` to decline. `nl_dispatch` takes one callable for every slot or
+  a vector with one per slot; every slot is decided before anything runs. A decline
+  runs `fallback` (the `_` line of `@branch`) or throws the new `DecisionDeclinedError`,
+  which carries the question name and the full answer. Any other return is an
+  `ArgumentError`, and nothing runs. `decide` together with a nonzero `min_confidence`
+  is an `ArgumentError` before any request (at macro expansion for `@branch`).
+- `meanings(f, argtypes)`: the options `nl_dispatch` sends when its ordinary arguments
+  have the types in `argtypes`, e.g. `meanings(step, Tuple{Waiting,String})`.
+- `meaning_gaps(f, argtypes)`: the combinations of offered meanings that no method
+  covers (missing or ambiguous), found without a request.
+
+### Changed
+- `nl_dispatch` offers only the meanings of methods that accept the types of its
+  ordinary arguments: with `step(::Waiting, ::nl"gives an order number", msg)` defined,
+  that meaning is no longer offered when the first argument is a `Confirming()`. Before,
+  the model could pick a meaning with no method for the arguments and the call ended in
+  a `MethodError` after a billed request. Arguments no natural-language method accepts
+  are an `ArgumentError` before any request. `meanings(f)` still lists every method's
+  options.
+- A gap in the method table — a combination of offered meanings with no method, or
+  with an ambiguous one — is an `ArgumentError` raised before any request, listing the
+  gaps, instead of Julia's `MethodError` after a billed one. Define the missing
+  methods, or add a method that is wild in every slot (`f(::Meaning, ::Meaning, x)`) as
+  a backstop: it is not an option and it covers every combination.
+- `@branch` accepts a `_` fallback line with `decide` as well as with `min_confidence`.
+- The state `nl_dispatch` builds from its ordinary arguments lists them in argument
+  order (a `JSON.Object`) instead of a `Dict`'s hash order, so the same arguments send
+  the same request bytes on every Julia version.
 
 ### Fixed
 - A System One error whose object `detail` carries an `error_type` and no `message`

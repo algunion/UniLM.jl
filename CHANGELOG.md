@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+- A System One error whose object `detail` carries an `error_type` and no `message`
+  (the service's 400 `{"detail":{"error_type":"max_tokens_exceeded"}}`) reported the
+  raw JSON body as `SystemOneFailure.message`; the message is now the `error_type`.
+
 ## 0.20.1
 
 ### Fixed

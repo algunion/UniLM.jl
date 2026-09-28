@@ -817,9 +817,13 @@ function _validation_path(loc)::String
 end
 
 _detail_message(v::AbstractString)::Union{Nothing,String} = String(v)
+# An object with no `message` still names its `error_type` (a live 400 sends
+# `{"detail":{"error_type":"max_tokens_exceeded"}}`), which says more than raw JSON.
 function _detail_message(v::AbstractDict)::Union{Nothing,String}
     m = get(v, "message", nothing)
-    m isa AbstractString ? String(m) : nothing
+    m isa AbstractString && return String(m)
+    t = get(v, "error_type", nothing)
+    t isa AbstractString ? String(t) : nothing
 end
 function _detail_message(v::AbstractVector)::Union{Nothing,String}
     parts = String[]

@@ -432,6 +432,9 @@ end
     @test r.message == "<html>bad gateway</html>"
     @test isnothing(r.error_type)
     @test length(UniLM._typesafe_error_message("x"^500)) == 200
+    # An object `detail` with an `error_type` and no `message` (a live 400) reports the type, not raw JSON.
+    @test UniLM._typesafe_error_message("""{"detail":{"error_type":"max_tokens_exceeded"}}""") ==
+          "max_tokens_exceeded"
 
     # A call error has no answers either.
     ce = SystemOneCallError(error="connect refused")

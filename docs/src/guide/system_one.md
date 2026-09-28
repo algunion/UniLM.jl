@@ -92,37 +92,32 @@ r = ask(
 if r isa SystemOneSuccess
     d = r["department"]
     println("department:    ", d.choice, "  (confidence ", d.confidence, ")")
-    # => department:    billing  (confidence 1.0)
     println("urgency:       ", r["urgency"].score, " of ", length(r["urgency"].legend) - 1)
-    # => urgency:       1.98 of 2
     println("is_frustrated: ", r["is_frustrated"].noul)
-    # => is_frustrated: 0.98
     println("answered by:   ", r.response.model)
-    # => answered by:   jev-1.13.0
 else
-    println("Request failed — ", r)   # a SystemOneFailure or a SystemOneCallError — `ask` never throws
+    println("Request failed — ", r)   # a SystemOneFailure or SystemOneCallError: returned, not thrown
 end
 ```
 
-The `# =>` lines are the output of that exact request in one recorded run
-against the live service, and every number the service reports is rounded to
-two decimals. The output rendered under the block is the docs build's own call:
-a fresh answer, or the typed error when the build ran without a key. The rest
-of what came back with the recorded run:
+The output under the block above comes from the docs build itself: without a
+`TYPESAFE_API_KEY` the build replays an answer recorded from a live call, and
+with one it can ask the service for a fresh answer ([Developing and Testing with
+Jev](@ref jev_testing_guide) has the details). The service rounds every number
+it reports to two decimals, as a floating-point value: a 0.82 can arrive as
+0.8200000000000001. The rest of what came back:
 
-```julia
-r["department"].probabilities["billing"]     # => 1.0
-r["department"].probabilities["technical"]   # => 0.0
-r["department"].probabilities["sales"]       # => 0.0
-
-r["urgency"].confidence                      # => 0.96
-r["urgency"].probabilities[2]                # => 0.98  (level 2 = "Needs attention today")
-r["urgency"].probabilities[1]                # => 0.02
-r["urgency"].probabilities[0]                # => 0.0
-
-u = token_usage(r)
-u.prompt_tokens                              # => 445   (the billable half)
-u.completion_tokens                          # => 72
+```@example jev
+for team in ("billing", "technical", "sales")
+    println("P(", team, ") = ", r["department"].probabilities[team])
+end
+u = r["urgency"]
+println("urgency confidence ", u.confidence)
+for level in 2:-1:0
+    println("P(level ", level, ") = ", u.probabilities[level], "   ", u.legend[level])
+end
+usage = token_usage(r)
+println(usage.prompt_tokens, " input tokens (billed), ", usage.completion_tokens, " output tokens")
 ```
 
 The question names (`"department"`, `"urgency"`, `"is_frustrated"`) are yours
@@ -155,10 +150,17 @@ q = choice("Which team should handle this ticket?", (
 tone = choice("What is the customer's tone?", ["calm", "frustrated", "angry"])
 ```
 
-Option order is the insertion order of what you pass — a `NamedTuple` or a
-vector of `name => description` pairs preserves it, a plain `Dict` does not.
-Order never changes the meaning of an answer (answers are keyed by name), but it
-is what the model reads.
+Option order is the insertion order of what you pass — a `NamedTuple`, a vector
+of `name => description` pairs or a `JSON.Object` preserves it; a plain `Dict`
+iterates in hash order, which can change between Julia versions. Order never
+changes how answers are keyed (by name), but it is what the model reads, and on
+ambiguous inputs it moves the probabilities. Measured on jev-1.13.0 (September
+2026) on our own labeled sets, changing the option order shifted the
+probabilities of ambiguous items by 0.12 on average and by up to 0.28, and
+changing the key order of the state moved them by up to 0.16. Build criteria and
+state from ordered containers — a `NamedTuple`, pairs or a `JSON.Object`, never a
+`Dict` — so the order the model reads is the one you wrote, on every Julia
+version.
 
 ### Score — place the state on an ordered rubric
 
@@ -263,25 +265,25 @@ r = ask(state,
     "refund_requested" => noul("Does `ticket_message` request a refund?"),
     "policy_allows"    => noul("Does `refund_policy` allow refunding the duplicate charge in `order`?"))
 
-if r isa SystemOneSuccess
-    println("refund_requested: ", answer(r, "refund_requested"))
-    println("policy_allows:    ", answer(r, "policy_allows"))
-else
-    println("Request failed — ", r)
-end
+println("refund_requested: ", answer(r, "refund_requested"))
+println("policy_allows:    ", answer(r, "policy_allows"))
 ```
 
 The backtick form is a prompting convention the model reads, not a server-side
 resolver: nothing validates the name, and a path that does not exist raises no
 error — it just leaves the question vaguer than you intended. A `NamedTuple`,
 `Dict`, `Vector`, `Tuple` or plain `String` are all accepted as state; `nothing`
-is not ([State](https://docs.typesafe.ai/concepts/state)).
+is not ([State](https://docs.typesafe.ai/concepts/state)). Key order is part of
+what the model reads, so prefer the ordered forms to a `Dict`.
 
 ## Reading answers
 
 Any call that reaches the service returns one of the three result types below; a
 wrong `service` or a malformed request (duplicate or blank question names,
 invalid criteria) is an `ArgumentError` raised before any request is sent.
+Inside a [`with_recorded_answers`](@ref) replay scope, a request with no
+recording throws [`ReplayMissError`](@ref): a gap in the recordings is not a
+service failure.
 
 | Result | Meaning |
 | :--- | :--- |
@@ -300,45 +302,58 @@ r = ask(ticket,
                            ["Can wait", "Needs attention this week", "Needs attention today"]),
     "wants_human" => noul("Is the customer asking for a human agent?"))
 
-if r isa SystemOneSuccess
-    a = r["urgency"]              # getindex
-    a = answer(r, :urgency)       # by Symbol or String
-    every = answers(r)            # Dict{String,SystemOneAnswer}
+a = r["urgency"]              # getindex
+a = answer(r, :urgency)       # by Symbol or String
+every = answers(r)            # Dict{String,SystemOneAnswer}
 
-    println(a.score)              # probability-weighted position over the levels
-    println(a.confidence)         # how peaked the distribution is
-    println(a.probabilities)      # Dict{Int,Float64}, keyed by 0-based level number
-    println(a.legend[argmax(a.probabilities)])   # the description of the top level
-    println(a.raw)                # the unparsed JSON answer, always kept
+println(a.score)              # probability-weighted position over the levels
+println(a.confidence)         # how peaked the distribution is
+println(a.probabilities)      # Dict{Int,Float64}, keyed by 0-based level number
+println(a.legend[argmax(a.probabilities)])   # the description of the top level
+println(a.raw)                # the unparsed JSON answer, always kept
 
-    haskey(r, "wants_human") && println(r["wants_human"].noul)
-    println(collect(keys(r)))     # the question names that came back
-else
-    println("Request failed — ", r)
-end
+haskey(r, "wants_human") && println(r["wants_human"].noul)
+println(collect(keys(r)))     # the question names that came back
 ```
 
 **Confidence is a statistic of the distribution, not a claim about
 correctness.** It collapses the shape of `probabilities` into `0 … 1`: all the
-mass on one outcome gives 1.0, a flat spread gives a low number. A confidence of
-1.0 says the model is not torn, not that the model is right
-([Confidence](https://docs.typesafe.ai/confidence)). Low confidence on a Choice
-usually means no option wins; on a Score it usually means the levels overlap for
-this state, the question measures more than one thing, or the state does not say
-enough. A Noul has no confidence at all — 0.5 there is uncertainty, not medium
-intensity.
+mass on one outcome gives 1.0, a flat spread gives a low number. For a Choice
+over `n` options it is `clamp((n·p_max − 1)/(n − 1), 0, 1)`, the top probability
+`p_max` rescaled so that a uniform answer scores 0 (the formula fits every answer
+we measured within 0.02, on jev-1.13.0 in September 2026). The same confidence is
+therefore a different top probability for a different number of options: 0.5
+means `p_max ≥ 0.75` with 2 options, 0.6 with 5 and 0.55 with 10. A Score's
+confidence likewise measures how concentrated the probability is around the
+most likely level. A confidence of 1.0 says the model is not torn, not that the
+model is right ([Confidence](https://docs.typesafe.ai/confidence)). Low
+confidence on a Choice usually means no option wins; on a Score it usually means
+the levels overlap for this state, the question measures more than one thing, or
+the state does not say enough. A Noul has no confidence at all — 0.5 there is
+uncertainty, not medium intensity.
 
 **Thresholds are your policy, not the model's.** Where to cut is a function of
 what a wrong answer costs: a read-only action can act at a much lower confidence
 than a refund or a page. Start conservative, measure on your own data, and move
 the number; do not import a threshold from an example.
 
+**Answers vary between identical calls.** The service does not answer a repeated
+request bit for bit: measured on jev-1.13.0 (September 2026), identical requests
+differed in 60% of repeated pairs, by 0.011 in a probability on average and by
+up to 0.11. That is noise on a clear-cut input, but a decision near a threshold
+can flip between two identical calls. Log what a decision was based on — the
+answer's `raw`, `r.response.request_id` and `r.response.model` — and, for
+reproducible tests and docs, record an answer once and replay it with
+[`with_recorded_answers`](@ref) ([Developing and Testing with
+Jev](@ref jev_testing_guide)).
+
 **A failed call has no answers.** [`answers`](@ref), [`answer`](@ref) and
 `getindex` all throw [`SystemOneError`](@ref) on a
 [`SystemOneFailure`](@ref)/[`SystemOneCallError`](@ref) rather than returning an
 empty map — otherwise `r["is_unsafe"].noul > 0.9` would read as "safe" on a call
-that never happened. Branch on `r isa SystemOneSuccess` (or `issuccess`) before
-you read anything.
+that never happened. Where a failed call is a case your code handles, branch on
+`r isa SystemOneSuccess` (or `issuccess`) before you read anything, as the first
+example does; elsewhere, reading directly fails loudly.
 
 ## Ask many questions at once
 
@@ -348,7 +363,9 @@ questions themselves, so a battery of small questions in one [`ask`](@ref) is
 far cheaper and faster than one call per question — the [parallel-questions
 cookbook](https://docs.typesafe.ai/cookbooks/parallel_questions) measures a
 13-question run batched into one call at 12.2x cheaper and 10.0x faster than 13
-separate calls, with no change in the answers.
+separate calls, with no change in the answers. Latency is nearly flat in the
+number of questions: measured on jev-1.13.0 (September 2026), one question took
+0.30 s and 22 questions 0.31 s.
 
 That economics makes **speculative** questions worth asking: include the ones
 whose answers only matter for some inputs and let the code ignore the rest
@@ -377,19 +394,15 @@ TRIAGE = (
 
 r = ask("Shoes arrived two weeks late and in the wrong size. What are you going to do?", TRIAGE)
 
-if r isa SystemOneSuccess
-    d = r["department"]
-    detail = d.choice == "returns"  ? r["return_reason"].choice :
-             d.choice == "shipping" ? r["shipping_issue"].choice : nothing
-    # Both speculative answers came back; the code reads at most one and drops the other.
-    println("department: ", d.choice, ", detail: ", detail)
-    for (team, p) in d.probabilities
-        team != d.choice && p > 0.25 && println("also notify: ", team)
-    end
-    println("billable input tokens: ", token_usage(r).prompt_tokens)
-else
-    println("Request failed — ", r)
+d = r["department"]
+detail = d.choice == "returns"  ? r["return_reason"].choice :
+         d.choice == "shipping" ? r["shipping_issue"].choice : nothing
+# Both speculative answers came back; the code reads at most one and drops the other.
+println("department: ", d.choice, ", detail: ", detail)
+for (team, p) in d.probabilities
+    team != d.choice && p > 0.25 && println("also notify: ", team)
 end
+println("billable input tokens: ", token_usage(r).prompt_tokens)
 ```
 
 Two of the three Choice questions above end in an `other` option. Give the
@@ -403,6 +416,13 @@ build it until the first answer arrives — because the answer decides what to
 retrieve into the next state, or which options the next question should offer.
 If the second request's questions could have been asked against the original
 state, ask them in the first one.
+
+One request can also judge many **items**: put each item under its own key in
+the state and point each question at its key — "Which team should handle ticket
+`t17`?". Addressing items by array index instead (`items[17]`) collapsed to 33%
+accuracy at 150 items on our own labeled set (jev-1.13.0, September 2026);
+[Semantic Algorithms with Jev](@ref jev_algorithms_guide) has the measurements
+and the patterns built on keyed items.
 
 ## Combining Jev with the LLM APIs
 
@@ -625,14 +645,10 @@ r = ask("Help! My payouts have been failing for 3 days.",
         "urgency" => score("How urgent is this ticket?",
                            ["Can wait", "Needs attention this week", "Needs attention today"]))
 
-if r isa SystemOneSuccess
-    println(answer(r, "urgency"))
-    u = token_usage(r)                     # prompt_tokens = input, completion_tokens = output
-    println(u.prompt_tokens, " billable tokens")
-    println("USD ", estimated_cost(r))     # priced against r.response.model
-else
-    println("Request failed — ", r)
-end
+println(answer(r, "urgency"))
+u = token_usage(r)                     # prompt_tokens = input, completion_tokens = output
+println(u.prompt_tokens, " billable tokens")
+println("USD ", estimated_cost(r))     # priced against r.response.model
 ```
 
 [`estimated_cost`](@ref) prices the **versioned** id in `r.response.model`, not
@@ -651,7 +667,12 @@ at the `jev-latest` row; any other model that is not a key in
   what the outcomes are. When the two disagree, accuracy drops — treat the
   criteria as a continuation of the instruction.
 - **Always offer a way out.** Add an `other` / `none of the above` option
-  whenever the enumeration might not cover an input.
+  whenever the enumeration might not cover an input. On our own labeled set
+  (jev-1.13.0, September 2026) a catch-all option separated out-of-scope inputs
+  perfectly, while 1 − top probability did not: without one, "Please add a dark
+  mode" was routed to a technical team at top probability 1.00. A confidence
+  threshold is not an out-of-scope detector; a catch-all option is ([Semantic
+  Programs with Jev](@ref jev_programs_guide)).
 - **Keep the state relevant.** Accuracy falls as unrelated material grows around
   the decision. Retrieve and filter in code first and send only the fields the
   question needs.
@@ -681,6 +702,12 @@ TypeSafe maintains per version — re-read it when you move a pin.
 
 - [Multiple Dispatch on Natural Language](@ref nl_dispatch_guide) — `nl"..."`
   meanings in method signatures, `nl_dispatch`, and the `@branch` switch
+- [Semantic Programs with Jev](@ref jev_programs_guide) — decision policies,
+  catch-all options, taxonomies and typed extraction built on these answers
+- [Semantic Algorithms with Jev](@ref jev_algorithms_guide) — many judgments per
+  request over collections: routing, ranking, search and joins
+- [Developing and Testing with Jev](@ref jev_testing_guide) — recorded answers
+  and tests that need no key
 - [TypeSafe System One API (Jev)](@ref system_one_api) — every type, verb and
   accessor, plus the full error table
 - [Service Endpoints](../api/endpoints.md) — [`TYPESAFEServiceEndpoint`](@ref UniLM.TYPESAFEServiceEndpoint) and the environment variables

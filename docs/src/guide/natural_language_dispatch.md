@@ -18,9 +18,10 @@ judge in one shot rather than to generate ([System
 One](https://docs.typesafe.ai/concepts/system-one)). Contrast that with LLM tool
 calling, where a generative model writes a call into text that you prompt for
 and then parse, a malformed call costs a retry, and nothing in the reply tells
-you how close the runner-up was. Here the option list *is* the method table, the
-answer is one of its entries by construction, and a combination no method covers
-surfaces as Julia's own `MethodError` instead of a silent mis-route.
+you how close the runner-up was. Here the option list *is* the method table,
+restricted to the methods the call can reach; the answer is one of its entries by
+construction; and a combination no method covers is refused before anything is
+sent, instead of surfacing as a `MethodError` after the request was billed.
 
 ## The sixty-second version
 
@@ -41,9 +42,8 @@ end
 
 Then dispatch on a real ticket. This is the only line that talks to the service:
 
-```julia
+```@example nldispatch
 nl_dispatch(route, "My package arrived crushed and the screen is cracked. I want my money back.")
-# => :refund
 ```
 
 One request went out, it carried one Choice question over the three meanings,
@@ -68,15 +68,21 @@ network on its own; only [`nl_dispatch`](@ref) makes a call, and only to turn a
 piece of state into the instance to call with.
 
 **What `nl_dispatch` collects.** It reads `methods(f)` and keeps the methods that
-pin at least one positional argument to a *concrete* meaning. Those methods are
-sorted by source file and line, so within one file the option order is the order
-you wrote them in, and [`meanings`](@ref) previews it faithfully. A method with
-no concrete meaning anywhere in its signature — a wildcard `f(::Meaning, x)`, or
-a method with no `Meaning` at all — is an ordinary method and is skipped. Every
-method that *is* collected must agree with the others on positional arity and on
-which positions are meaning slots, because one set of questions has to serve all
-of them; a disagreement is an `ArgumentError` naming both methods, raised before
-any request goes out. Varargs cannot carry a meaning.
+pin at least one positional argument to a *concrete* meaning, in definition
+order: the world age each method was defined in. The options therefore follow
+the order in which the methods were defined — in a file, a script or a REPL
+session — and [`meanings`](@ref) previews it faithfully; methods defined
+together, as a package image activates them, fall back to source file and line.
+Redefining a method, by editing its body in a running session for instance,
+gives it a new world age and moves its meaning to the end. The order is part of
+what the model reads ([Definition order is an input](@ref nl_dispatch_order)).
+A method with no concrete meaning anywhere in its signature — a wildcard
+`f(::Meaning, x)`, or a method with no `Meaning` at all — is an ordinary method
+and is skipped. Every method that *is* collected must agree with the others on
+positional arity and on which positions are meaning slots, because one set of
+questions has to serve all of them; a disagreement is an `ArgumentError` naming
+both methods, raised before any request goes out. Varargs cannot carry a
+meaning.
 
 **How the request is built.** One [`choice`](@ref) question per slot, all in a
 single [`ask`](@ref):
@@ -85,12 +91,16 @@ single [`ask`](@ref):
   when the slot is unnamed (`::nl"..."` with nothing in front of the `::`).
   Question names key the answers and are never sent to the model.
 - The **option names are the meanings themselves**, with no description
-  attached. There is no other text for the model to read, so the description you
-  write in the signature *is* the prompt for that option.
+  attached: each slot offers the distinct meanings of the methods that accept
+  the call's ordinary arguments ([Composing with ordinary
+  dispatch](@ref nl_dispatch_composing)). There is no other text for the model to
+  read, so the description you write in the signature *is* the prompt for that
+  option.
 - The **state** is a JSON object keyed by the names of the remaining, ordinary
-  arguments (`arg<position>` for an unnamed one). Pass `state = ...` to send
-  something else instead; with no ordinary arguments at all there is nothing to
-  describe, so `state` is then required.
+  arguments (`arg<position>` for an unnamed one), in argument order, so the same
+  arguments always make the same request. Pass `state = ...` to send something
+  else instead; with no ordinary arguments at all there is nothing to describe,
+  so `state` is then required.
 - The **instructions** default to a generic *"Select the option that best
   describes the provided state."* — the options carry the semantics.
 - The **model** is the client default (`jev-latest`, or whatever
@@ -126,8 +136,10 @@ concerned this is one Choice question like any other
 ([Choice](https://docs.typesafe.ai/primitives/choice)).
 
 **How the answer comes back.** Each answer is a [`ChoiceAnswer`](@ref) whose
-`choice` is one of the option names by construction. `nl_dispatch` turns it back
-into `Meaning{Symbol(choice)}()`, splices it into the position it came from,
+`choice` is one of the option names by construction. A decision policy picks the
+meaning to act on — by default the winner, gated by `min_confidence`
+([Confidence and control](@ref nl_dispatch_control)). `nl_dispatch` turns it
+back into a `Meaning` instance, splices it into the position it came from,
 fills the remaining positions with your arguments in order, and makes a normal
 Julia call. From there nothing is special: the value it returns is whatever the
 selected method returns.
@@ -148,9 +160,8 @@ for (position, options) in sort(collect(meanings(reply)))
 end
 ```
 
-```julia
+```@example nldispatch
 nl_dispatch(reply, "This is the third time I have written about my broken order.")
-# one request, two questions; the resolved pair selects one of the four methods
 ```
 
 Both slots resolve in **one** request. The two questions are independent — they
@@ -160,93 +171,160 @@ second ingestion of the state. That is the same economics as batching questions
 into one [`ask`](@ref) ([parallel
 questions](https://docs.typesafe.ai/cookbooks/parallel_questions)).
 
-Four methods cover all four combinations here. When they do not, the resolved
-pair lands on a gap in the method table and Julia raises its own `MethodError` —
-`nl_dispatch` does not catch it, because a missing method is your bug and not a
-service failure. Two ways to close the gap:
+Four methods cover all four combinations here. When they do not, an answer can
+land on a combination that has no method, and the request would already be
+billed by the time Julia raised its `MethodError`. So `nl_dispatch` checks every
+combination of the offered meanings against the method table first, and a gap is
+an `ArgumentError` naming it, with nothing sent. [`meaning_gaps`](@ref) runs the
+same check without a call — in a unit test, for instance — for ordinary
+arguments of the types you name. A catch-all meaning added for only one of the
+tones opens a gap:
 
 ```@example nldispatch
-# 1. A wildcard method. `::Meaning` is not a concrete meaning, so this method is
-#    never collected and never offered to the model — it is a pure Julia
-#    backstop that ordinary dispatch reaches when nothing more specific matches.
+reply(::nl"anything else", ::nl"a calm tone", msg) = :triage
+
+meaning_gaps(reply, Tuple{String})   # the message is a String
+```
+
+```@example nldispatch
+try
+    nl_dispatch(reply, "This is the third time I have written about my broken order.")
+catch err
+    println(sprint(showerror, err))
+end
+```
+
+Two ways to close a gap:
+
+```@example nldispatch
+# 1. Define the missing combination. A catch-all meaning IS offered to the model,
+#    so the model can say "none of these" instead of forcing its probability onto
+#    an option that does not fit.
+reply(::nl"anything else", ::nl"an angry tone", msg) = :triage
+
+meaning_gaps(reply, Tuple{String})
+```
+
+```@example nldispatch
+# 2. A method wild in every slot. `::Meaning` is not a concrete meaning, so this
+#    method is never collected and never offered to the model — it is a pure
+#    Julia backstop that ordinary dispatch reaches when nothing more specific
+#    matches.
 reply(::Meaning, ::Meaning, msg) = :unclassified
 
 reply(nl"a rant"(), nl"a calm tone"(), "…")   # no request; ordinary dispatch
 ```
 
-```@example nldispatch
-# 2. An explicit catch-all meaning, which IS offered to the model, so the model
-#    can say "none of these" instead of forcing its probability onto an option
-#    that does not fit.
-reply(::nl"anything else", ::nl"a calm tone", msg)  = :triage
-reply(::nl"anything else", ::nl"an angry tone", msg) = :triage
-
-for (position, options) in sort(collect(meanings(reply)))
-    println(position, " => ", options)
-end
-```
-
-Prefer the second: a wildcard tells you nothing about *why* it fired, while a
-catch-all meaning comes back with a name and a probability. Note what the
-wildcard is not allowed to be — a method that pins some slots and leaves others
-wild, such as `reply(::nl"a complaint", ::Meaning, msg)`, disagrees with the
-other methods about which positions are slots, and [`meanings`](@ref) and
+Prefer the first: a backstop tells you nothing about *why* it fired, while a
+catch-all meaning comes back with a name and a probability. A backstop also
+covers every combination, so once it exists `meaning_gaps` cannot report the
+method you forgot. Note what the wildcard is not allowed to be — a method that
+pins some slots and leaves others wild, such as
+`reply(::nl"a complaint", ::Meaning, msg)`, disagrees with the other methods
+about which positions are slots, and [`meanings`](@ref) and
 [`nl_dispatch`](@ref) both reject it with an `ArgumentError` rather than send a
 question list that does not match the method table. Wildcard *every* slot or
 none of them.
 
-## Composing with ordinary dispatch
+## [Composing with ordinary dispatch](@id nl_dispatch_composing)
 
 A resolved meaning is an ordinary argument, so the remaining positions keep
-dispatching on their types exactly as they always did:
+dispatching on their types exactly as they always did — and their types decide
+which meanings are offered at all:
 
 ```@example nldispatch
 handle(::nl"a greeting", who::String) = "hello, " * who
 handle(::nl"a greeting", n::Int)      = "hello, customer #" * string(n)
 handle(::nl"a complaint", who::String) = "sorry, " * who
 
-println(meanings(handle))
-println(handle(nl"a greeting"(), "ada"))
+println(meanings(handle))                  # every meaning of every method
+println(meanings(handle, Tuple{String}))   # what nl_dispatch(handle, "ada") offers
+println(meanings(handle, Tuple{Int}))      # what nl_dispatch(handle, 41) offers
 println(handle(nl"a greeting"(), 41))
 ```
 
-`meanings(handle)` lists `"a greeting"` once even though two methods declare it:
-the options are the *distinct* descriptions per slot. The model picks the
-meaning; Julia picks between the `String` and the `Int` method afterwards, with
-no extra request.
+`meanings(handle)` is the union over the method table, and lists `"a greeting"`
+once even though two methods declare it: the options are the *distinct*
+descriptions per slot. A call offers only the meanings whose method accepts the
+concrete types of its ordinary arguments, and `meanings(f, Tuple{…})` lists them
+for the types you name, exactly as they will be sent. `nl_dispatch(handle, 41)`
+never offers `"a complaint"`: no method could act on that answer with an `Int`.
+The model picks among the meanings the call can reach; Julia picks between the
+`String` and the `Int` method afterwards, with no extra request. A call whose
+argument types no natural-language method accepts, such as
+`nl_dispatch(handle, 2.5)`, is an `ArgumentError` before any request.
+
+That is what turns a method table into a state machine: make the conversation's
+state a typed, ordinary argument, and each state offers the model only its own
+transitions. [Semantic Programs with Jev](@ref jev_programs_guide) builds a
+conversation state machine this way. Because the number of options now depends
+on the argument types, so does what a fixed `min_confidence` means ([Confidence
+and control](@ref nl_dispatch_control)).
 
 This also makes the interface open. The option list is the method table, and a
 method table is extensible from anywhere — a downstream module or a package that
 does not own `handle` can add `handle(::nl"a refund request", who::String)`, and
-from the next call on it is one more option the model may choose. Nothing
-central enumerates the meanings, so adding a case never means editing a list in
-two places.
+from the next call with a `String` on, it is one more option the model may
+choose. Nothing central enumerates the meanings, so adding a case never means
+editing a list in two places.
 
-## Confidence and control
+## [Confidence and control](@id nl_dispatch_control)
 
 A Choice answer always names a winner, even when the distribution is nearly
-flat, so the gate is `confidence` rather than `choice`. `confidence` measures how
-concentrated the distribution is — all the mass on one option gives 1.0, a flat
-spread gives a low number — and says nothing about whether the winner is
-*correct* ([Confidence](https://docs.typesafe.ai/confidence)).
+flat, so the default gate is `confidence` rather than `choice`. `confidence`
+measures how concentrated the distribution is — all the mass on one option gives
+1.0, a flat spread gives a low number — and says nothing about whether the
+winner is *correct* ([Confidence](https://docs.typesafe.ai/confidence)).
 
-```julia
+```@example nldispatch
+unclear = "Your update deleted my saved cards and now I've been billed for a plan I cancelled."
+
 # Below the threshold, `fallback` is called with the caller's own arguments.
-nl_dispatch(route, ticket; min_confidence = 0.7, fallback = t -> :needs_a_human)
-
-# With no fallback, the same answer is a loud failure instead of a route.
-nl_dispatch(route, ticket; min_confidence = 0.7)
-# => throws LowConfidenceError, whose `.answer` carries the full probabilities
+nl_dispatch(route, unclear; min_confidence = 0.7, fallback = t -> :needs_a_human)
 ```
 
-[`LowConfidenceError`](@ref) holds the whole [`ChoiceAnswer`](@ref), so a handler
-can read `probabilities` for a diagnostic or a second-best policy. The other
-keywords:
+With no `fallback`, an answer below the threshold is a loud failure instead of a
+route: [`LowConfidenceError`](@ref), which holds the whole
+[`ChoiceAnswer`](@ref), so a handler can read `probabilities` for a diagnostic
+or a second-best policy.
+
+For a Choice over `n` options, `confidence` is `clamp((n·p_max − 1)/(n − 1), 0, 1)`:
+the top probability `p_max`, rescaled so that a uniform answer scores 0. The
+formula fits every answer we measured within 0.02 (jev-1.13.0, September 2026,
+on our own labeled sets). A fixed `min_confidence` is therefore a different bar
+on the top probability for every number of options — 0.5 means `p_max ≥ 0.75`
+with 2 options, 0.6 with 5 and 0.55 with 10 — and adding a method, or calling
+with argument types that reach fewer methods, moves it.
+
+`decide` replaces the gate with any policy over the full answer. It is called
+with the [`ChoiceAnswer`](@ref) and returns an offered meaning — any of them,
+not only the winner — or `nothing` to decline, which runs `fallback` or throws
+[`DecisionDeclinedError`](@ref). A bar on the top probability itself stays where
+you put it, whatever the number of options:
+
+```@example nldispatch
+sure(a) = a.probabilities[a.choice] >= 0.8 ? a.choice : nothing
+
+[nl_dispatch(route, ticket; decide = sure, fallback = t -> :needs_a_human)
+ for ticket in ("My package arrived crushed and the screen is cracked. I want my money back.", unclear)]
+```
+
+With three options, `min_confidence = 0.7` sets about the same bar; a fourth
+meaning would lower it to `p_max ≥ 0.775` and leave `sure` at 0.8. A policy can
+also prefer a cheaper meaning to a slightly likelier one: the loss-matrix
+section of [Semantic Programs with Jev](@ref jev_programs_guide) derives such a
+policy from what each mistake costs. `decide` together with a nonzero
+`min_confidence` is an `ArgumentError` before any request, because a threshold
+is itself the policy `a -> a.confidence >= τ ? a.choice : nothing`. Every slot
+is decided before anything runs, and a policy that returns anything but an
+offered meaning or `nothing` is an `ArgumentError`: neither `f` nor `fallback`
+runs. The keywords:
 
 | Keyword | Meaning |
 | :--- | :--- |
 | `min_confidence` | threshold in `0 … 1`; below it, `fallback` runs or [`LowConfidenceError`](@ref) is thrown |
-| `fallback` | called with the caller's `args...` when the gate trips |
+| `decide` | a policy called with the slot's [`ChoiceAnswer`](@ref) — one callable for every slot, or a `Vector` with one per slot — returning an offered meaning, or `nothing` to decline: `fallback` runs or [`DecisionDeclinedError`](@ref) is thrown. Excludes a nonzero `min_confidence` |
+| `fallback` | called with the caller's `args...` when the policy declines |
 | `instructions` | a `String` for every slot, or a `Vector` with one entry per slot; default is the generic instruction above |
 | `state` | send this instead of the object built from the ordinary arguments |
 | `model` | pin a version, e.g. `"jev-1.13.0"`, instead of the `jev-latest` alias |
@@ -265,13 +343,55 @@ A call that failed outright throws [`SystemOneError`](@ref) rather than
 resolving to a method, so a timeout or a 500 can never be mistaken for a
 routing decision.
 
+## [Definition order is an input](@id nl_dispatch_order)
+
+Definition order is the order the model reads the options in, and on ambiguous
+inputs it moves the probabilities. Here one request asks the same question twice
+about a ticket that fits two meanings — once with the options as defined, once
+reversed:
+
+```@example nldispatch
+triage(::nl"the customer wants their money back", ticket)                                     = :refund
+triage(::nl"the customer was charged twice or charged an amount they did not expect", ticket) = :billing_error
+triage(::nl"the customer asks for an invoice, receipt, or billing document", ticket)          = :invoice
+triage(::nl"the app crashes, freezes, or shows an error", ticket)                             = :crash
+triage(::nl"the customer cannot sign in to their account", ticket)                            = :login
+triage(::nl"the order is late or has not arrived", ticket)                                    = :late
+triage(::nl"the order arrived damaged or broken", ticket)                                     = :damaged
+triage(::nl"anything else", ticket)                                                           = :other
+
+defined = meanings(triage)[1]    # what nl_dispatch(triage, ticket) offers, in this order
+question(options) = choice("Select the option that best describes the provided state.", options)
+
+r = ask((ticket = "There is a charge from your company on my card that I don't recognize at all.",),
+        "as defined" => question(defined), "reversed" => question(reverse(defined)))
+for order in ("as defined", "reversed")
+    p = r[order].probabilities
+    println(rpad(order, 12), "money back ", p[defined[1]], "   charged twice or unexpectedly ", p[defined[2]])
+end
+```
+
+Measured on jev-1.13.0 (September 2026) on our own labeled sets, in the form
+`nl_dispatch` sends: reversing the order changed the routed method for 4 of 33
+ambiguous tickets, and the first-listed meaning gained about 3 percentage points
+on average. The ticket above went from P = 0.55 to 0.04 for the money-back
+meaning. Clear-cut inputs did not move (≈ 0.01), and every flip we saw had a
+confidence of 0.6 or less. So:
+
+- fix ambiguity in the meanings, not in the order — two overlapping meanings are
+  what give the order something to decide;
+- keep the order stable once thresholds are tuned: a new method, or a redefined
+  one, changes it;
+- gate with a threshold or a policy: every answer the order flipped was one a
+  gate above 0.6 declines.
+
 ## `@branch`: the inline form
 
 When the decision is local and nobody needs to extend it, [`@branch`](@ref) is
 the same request without the method table. It is a `switch` whose cases are
 written in plain language:
 
-```julia
+```@example nldispatch
 ticket = "My package arrived crushed and the screen is cracked. I want my money back."
 
 action = @branch ticket min_confidence=0.6 begin
@@ -280,7 +400,6 @@ action = @branch ticket min_confidence=0.6 begin
     "the customer asks a pricing question"                     => :pricing
     _                                                          => :escalate
 end
-# => :refund
 ```
 
 Every line is `option => expression`:
@@ -290,14 +409,17 @@ Every line is `option => expression`:
   once in source order, so a name may be computed.
 - The 2-tuple form `("name", "description")` attaches a longer description to
   that name. It is the only way to do so.
-- A final `_ => expression` is the fallback taken when the winner's confidence is
-  below `min_confidence`. It *requires* `min_confidence`: without a threshold
-  nothing is ever low-confidence and the line could never run, so that spelling
-  is rejected.
+- A final `_ => expression` is the fallback taken when the decision policy
+  declines: the winner's confidence is below `min_confidence`, or `decide`
+  returned `nothing`. It *requires* one of the two: without a policy nothing is
+  ever declined and the line could never run, so that spelling is rejected.
 
 Keywords go between the state and the block, written `key = value`: `model`,
-`min_confidence`, `instructions`, `service`, `config` and `cancel`, each meaning what
-it means for [`nl_dispatch`](@ref).
+`min_confidence`, `decide`, `instructions`, `service`, `config` and `cancel`,
+each meaning what it means for [`nl_dispatch`](@ref). Here `decide` is one
+callable, and it returns an option name — any of them, not only the winner — or
+`nothing` to take `_` (with no `_` line, [`DecisionDeclinedError`](@ref) is
+thrown).
 
 The whole block compiles to a **single** Choice request whose question is named
 `branch` and whose criteria are the option names, in source order. Only the
@@ -306,9 +428,9 @@ run — and the macro's value is that body's value. Everything that can be check
 statically is checked while the macro expands, so it surfaces when the
 surrounding code is loaded rather than the first time the branch is reached: an
 unknown keyword, a block that is not `begin ... end`, a line that is not
-`option => expression`, no options at all, two `_` lines, or a `_` that is not
-last. A non-success call throws [`SystemOneError`](@ref); the branch is never
-guessed.
+`option => expression`, no options at all, two `_` lines, a `_` that is not
+last, or `decide` together with `min_confidence`. A non-success call throws
+[`SystemOneError`](@ref); the branch is never guessed.
 
 **Which to reach for.** `@branch` when the decision belongs to one call site and
 the arms are three lines of code — it keeps the options and their handling in
@@ -332,51 +454,47 @@ t = "My package arrived crushed and the screen is cracked. I want my money back.
  route(Meaning("anything else"), t))
 ```
 
-That covers the method bodies. To cover the *resolution* — question names,
-option order, the state that goes on the wire, the confidence gate — point
-`TYPESAFE_BASE_URL` at a local server and answer the Choice yourself:
+That covers the method bodies. Coverage needs no service either:
+[`meaning_gaps`](@ref) is the check `nl_dispatch` runs before its request. The
+*resolution* — question names, option order, the state on the wire, the policy —
+needs one real answer: record it once (`mode = :record_missing`, with a key) and
+replay it in the test with [`with_recorded_answers`](@ref):
 
 ```julia
-using UniLM, HTTP, JSON
+using Test, UniLM
 
-canned = """
-{"model": "jev-1.13.0",
- "answers": {"meaning_1": {"type": "choice",
-                           "choice": "the customer wants a refund",
-                           "confidence": 0.97,
-                           "probabilities": {"the customer wants a refund": 0.97,
-                                             "the customer reports a bug in the app": 0.02,
-                                             "anything else": 0.01}}},
- "usage": {"input_tokens": 96, "output_tokens": 3}}
-"""
-
-seen = String[]
-server = HTTP.serve!("127.0.0.1", 8123; verbose=false) do request
-    push!(seen, String(copy(request.body)))          # assert on the request you sent
-    HTTP.Response(200, ["Content-Type" => "application/json"], Vector{UInt8}(canned))
+@testset "routing" begin
+    t = "My package arrived crushed and the screen is cracked. I want my money back."
+    @test route(nl"the customer wants a refund"(), t) === :refund   # the method
+    @test isempty(meaning_gaps(reply, Tuple{String}))               # the coverage
+    with_recorded_answers(joinpath(@__DIR__, "answers")) do          # the resolution, replayed
+        @test nl_dispatch(route, t) === :refund
+    end
 end
-
-withenv("TYPESAFE_BASE_URL" => "http://127.0.0.1:8123", "TYPESAFE_API_KEY" => "test") do
-    @assert nl_dispatch(route, t) === :refund
-end
-close(server)
 ```
 
-The response shape is the whole contract: a `model`, an `answers` object keyed by
-the question names the client sent (`meaning_1` here, or the slot's argument name
-when it has one), each answer a Choice with `choice`, `confidence` and
-`probabilities`, plus a `usage` object. The numbers are yours to pick — that is
-the point of a canned answer. Make `confidence` low to exercise `min_confidence`,
-`fallback` and [`LowConfidenceError`](@ref); return a non-200 to exercise
-[`SystemOneError`](@ref); answer with a meaning whose combination no method
-covers to exercise the `MethodError`.
+A replayed answer is the one the service gave to exactly those request bytes,
+and a request with no recording throws [`ReplayMissError`](@ref) instead of
+reaching the network. [Developing and Testing with Jev](@ref jev_testing_guide)
+covers recording, and crafted edge cases — a low confidence, a failed call —
+answered by a local mock server.
 
 ## Designing meanings
 
 - **Write the meaning as a description, not a label.** It is the option name and
   it is the only text the model gets for that branch. `nl"the customer wants a
   refund"` works; `nl"refund"` asks the model to guess what you meant by the
-  word.
+  word. Measured on jev-1.13.0 (September 2026) on our own labeled sets, bare
+  labels were 10 points less accurate than sentences (0.877 against 0.981). A
+  short key with the sentence attached as its description was confidently wrong
+  on keyword traps (an example is in the [design note](@ref nl_dispatch_design)
+  below), and 10% of the short-key answers at confidence 0.8 or more were wrong,
+  against 0% for sentences. Structured descriptions did not beat plain sentences
+  on ordinary traffic.
+- **An edited sentence is a new method.** Edit a meaning's sentence in a running
+  session and the method with the old sentence still exists, so `meanings(f)`
+  offers both until you delete it or restart Julia. Read the list: a duplicate
+  meaning split one ticket's probability from 1.0 to 0.51 in our measurements.
 - **Keep them mutually exclusive.** Two meanings that overlap split the
   probability between them, which shows up as low confidence rather than as a
   wrong answer — check `meanings(f)` and read the list as the model will.
@@ -399,10 +517,62 @@ covers to exercise the `MethodError`.
   and [`choice`](@ref) checks it locally before the round trip
   ([Choice](https://docs.typesafe.ai/primitives/choice)).
 
+## [Design note: meanings are sentences, not keys](@id nl_dispatch_design)
+
+The question every Julia reader asks: why not `route(::Val{:refund}, t)`, with
+the text kept in `Dict(:refund => "the customer wants a refund")`? A key
+separates a meaning's identity from its wording, stays short while the wording
+changes, and dispatches as fast as any type. Three findings decided against it.
+
+**The model reads the option name.** A Choice sends each option's name, and the
+model reads it along with any description, so a key sent as the name is part of
+the prompt. Here the same eight descriptions are offered once as the option
+names and once under short keys (`defined` and `question` come from [Definition
+order is an input](@ref nl_dispatch_order)):
+
+```@example nldispatch
+short = ["refund", "double_charge", "invoice", "crash", "login", "late", "damaged", "other"]
+
+r = ask((ticket = "Is your refund policy the same for EU and US customers?",),
+        "sentences" => question(defined),             # what nl_dispatch sends
+        "keys"      => question(short .=> defined))   # a key per option, the sentence as its description
+[(form, r[form].choice, r[form].confidence) for form in ("sentences", "keys")]
+```
+
+In our measurements the sentences answered "anything else" at confidence 0.97
+and the keys answered `refund` at confidence 0.6: the word in the question
+matched the key. On keyword traps in general, short keys were wrong more often,
+and confidently (the numbers are under Designing meanings above).
+
+**`Val` and a global `Dict` form one namespace for every loaded package.**
+`Val{:other}` is the same type in every module and a registry `Dict` is one
+object, so two packages that both register `:other` resolve by load order,
+silently. A package that writes into another module's `Dict` at top level does
+so while it precompiles, and the write is lost when the package is loaded from
+its cache; overwriting another module's method during precompilation leaves the
+package uncached.
+
+**Speed is not a reason.** Measured: resolving the options and dispatching took
+≈ 39 µs of local work against ≈ 300 ms for the request (0.013%), and dispatch
+on a `Val` and on a `Meaning` cost the same, ≈ 0.12 µs.
+
+Identity by sentence is content-addressed: two modules that write the same
+sentence mean the same thing, and an edited sentence is a new meaning. When you
+want short handles and a hierarchy, use module-scoped types — `Refund` in one
+package and `Refund` in another are different types — and send the sentence as
+the option name; the taxonomy section of [Semantic Programs with
+Jev](@ref jev_programs_guide) builds one.
+
 ## See also
 
 - [Typed Judgments with Jev (TypeSafe System One)](@ref system_one_guide) — the
   `ask` verb, the three primitives, and the setup this page assumes
+- [Semantic Programs with Jev](@ref jev_programs_guide) — decision policies,
+  taxonomies and conversation state machines built on these answers
+- [Semantic Algorithms with Jev](@ref jev_algorithms_guide) — many judgments per
+  request over collections: routing, ranking, search and joins
+- [Developing and Testing with Jev](@ref jev_testing_guide) — recorded answers,
+  coverage checks and mock servers for tests
 - [TypeSafe System One API (Jev)](@ref system_one_api) — every type and verb,
   including [`Meaning`](@ref), [`@branch`](@ref) and [`nl_dispatch`](@ref)
 - [TypeSafe documentation](https://docs.typesafe.ai) — the service's own

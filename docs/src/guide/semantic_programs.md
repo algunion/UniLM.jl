@@ -86,9 +86,13 @@ function cheapest(a::ChoiceAnswer)
 end
 
 for ticket in TICKETS
-    println(ticket, "\n  => ", nl_dispatch(route, ticket; decide = cheapest, fallback = escalate))
+    println(rpad(ticket, 78), repr(nl_dispatch(route, ticket; decide = cheapest, fallback = escalate)))
 end
 ```
+
+The model reads different option text here — the sentences themselves rather
+than keys with descriptions — so a borderline ticket can get a different
+distribution, and with it a different action, than in the first version.
 
 A threshold is a policy too — `a -> a.confidence >= τ ? a.choice : nothing` —
 so `decide` replaces `min_confidence` rather than stacking on it: combining it
@@ -169,8 +173,8 @@ A category tree is a type hierarchy: abstract types for the inner nodes,
 singleton structs for the leaves. Ask one Choice over the leaves, sum the
 probabilities up the tree with `<:`, and take the most specific node whose
 probability clears a threshold. The handler is ordinary dispatch on that node:
-`route(::Type{<:Billing}, t)` catches the billing tickets that
-`route(::Type{Refund}, t)` does not, by Julia's own specificity rules, with no
+`desk(::Type{<:Billing}, t)` catches the billing tickets that
+`desk(::Type{Refund}, t)` does not, by Julia's own specificity rules, with no
 table mapping nodes to handlers.
 
 ```@example jevprog
@@ -193,10 +197,10 @@ const LEAF = choice("Select the option that best describes the provided state.",
                     [text => nothing for (_, text) in LEAVES])
 
 # Handlers at any level of the tree; Julia picks the most specific one for the chosen node.
-route(::Type{<:Intent}, ticket)    = :human_triage
-route(::Type{<:Billing}, ticket)   = :billing_desk
-route(::Type{<:Technical}, ticket) = :tech_desk
-route(::Type{Refund}, ticket)      = :refund_flow
+desk(::Type{<:Intent}, ticket)    = :human_triage
+desk(::Type{<:Billing}, ticket)   = :billing_desk
+desk(::Type{<:Technical}, ticket) = :tech_desk
+desk(::Type{Refund}, ticket)      = :refund_flow
 
 function route_by_meaning(ticket; threshold = 0.7)
     p = ask((ticket = ticket,), "intent" => LEAF)["intent"].probabilities
@@ -204,7 +208,7 @@ function route_by_meaning(ticket; threshold = 0.7)
     candidates = [first.(LEAVES); Billing; Technical]        # most specific first
     i = findfirst(node -> marginal(node) >= threshold, candidates)
     node = isnothing(i) ? Intent : candidates[i]
-    (node = node, marginal = round(marginal(node); digits = 2), action = route(node, ticket))
+    (node = node, marginal = round(marginal(node); digits = 2), action = desk(node, ticket))
 end
 
 for ticket in ("Please refund my annual plan, I cancelled on day two.",
@@ -227,7 +231,7 @@ often.
 **Types, not keys.** Each leaf's identity is a type scoped to its module, so
 two packages can both define `Refund` without colliding. The text the model
 reads is the sentence next to the type, never the type's name — short keys
-measurably mislead the model; see the design notes in
+measurably mislead the model; see the design note in
 [Multiple Dispatch on Natural Language](@ref nl_dispatch_guide).
 
 ## The struct is the prompt: typed extraction
@@ -306,20 +310,24 @@ end
 struct Closed <: Conversation
     outcome::Symbol
 end
+# A state prints as its constructor call, e.g. Closed(:refunded).
+Base.show(io::IO, s::Conversation) =
+    print(io, nameof(typeof(s)), "(", join((repr(getfield(s, f)) for f in fieldnames(typeof(s))), ", "), ")")
 
 asked(::AwaitingOrderId) = "Which order would you like refunded?"
 asked(s::ConfirmingRefund) = "Shall I refund order $(s.order)? Please confirm."
 asked(::Closed) = "Anything else I can help with?"
 order_number(msg) = match(r"\d{4,}", msg).match      # the value is read by code, not by the model
 
-step(::AwaitingOrderId,  ::nl"The customer gives an order number", msg)          = ConfirmingRefund(order_number(msg))
-step(::ConfirmingRefund, ::nl"The customer confirms the refund", msg)            = Closed(:refunded)
-step(::ConfirmingRefund, ::nl"The customer declines or changes their mind", msg) = Closed(:kept)
-step(::Closed,           ::nl"The customer says goodbye or thanks", msg)          = Closed(:done)
-step(::Conversation,     ::nl"The customer asks for a human agent", msg)          = Closed(:handoff)
-step(s::Conversation,    ::nl"Something else", msg)                              = s
+transition(::AwaitingOrderId,  ::nl"The customer gives an order number", msg)          = ConfirmingRefund(order_number(msg))
+transition(::ConfirmingRefund, ::nl"The customer confirms the refund", msg)            = Closed(:refunded)
+transition(::ConfirmingRefund, ::nl"The customer declines or changes their mind", msg) = Closed(:kept)
+transition(::Closed,           ::nl"The customer says goodbye or thanks", msg)          = Closed(:done)
+transition(::Conversation,     ::nl"The customer asks for a human agent", msg)          = Closed(:handoff)
+transition(s::Conversation,    ::nl"Something else", msg)                              = s
 
-meanings(step, Tuple{ConfirmingRefund, String})
+println(length(meanings(transition)[2]), " meanings in all; offered while confirming a refund:")
+foreach(println, meanings(transition, Tuple{ConfirmingRefund, String})[2])
 ```
 
 Each turn is one request whose state is what the assistant asked and what the
@@ -330,7 +338,7 @@ context(s, msg) = (assistant_asked = asked(s), customer_replied = msg)
 
 let s = AwaitingOrderId()
     for msg in ("It's 48213.", "thanks, bye", "yes please", "no, that's all")
-        s = nl_dispatch(step, s, msg; state = context(s, msg))
+        s = nl_dispatch(transition, s, msg; state = context(s, msg))
         println(rpad(repr(msg), 18), "→ ", s)
     end
 end

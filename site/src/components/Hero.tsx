@@ -7,20 +7,22 @@ import { Button } from '@/components/Button'
 import { HeroBackground } from '@/components/HeroBackground'
 import blurCyanImage from '@/images/blur-cyan.png'
 import blurIndigoImage from '@/images/blur-indigo.png'
+import '@/lib/prism'
 
-const codeLanguage = 'javascript'
-const code = `export default {
-  strategy: 'predictive',
-  engine: {
-    cpus: 12,
-    backups: ['./storage/cache.wtf'],
-  },
-}`
+// The first call of "Start Here: Jev in Five Minutes"; `:billing` is the answer
+// recorded for it in docs/recorded_answers.
+const codeLanguage = 'julia'
+const code = `using UniLM
 
-const tabs = [
-  { name: 'cache-advance.config.js', isActive: true },
-  { name: 'package.json', isActive: false },
-]
+TEAM = (billing   = "payments, charges, invoices or refunds",
+        technical = "the app or the website does not work as expected",
+        shipping  = "a parcel that is late, lost or arrived damaged",
+        other     = "anything else")
+
+nl_classify("I was charged twice for order #4471. " *
+            "Please refund the duplicate payment.", TEAM)   # :billing`
+
+const tabs = [{ name: 'Illustration: a recorded Jev call', isActive: true }]
 
 function TrafficLightsIcon(props: React.ComponentPropsWithoutRef<'svg'>) {
   return (
@@ -49,16 +51,17 @@ export function Hero() {
             />
             <div className="relative">
               <p className="inline bg-linear-to-r from-indigo-200 via-sky-400 to-indigo-200 bg-clip-text font-display text-5xl tracking-tight text-transparent">
-                Never miss the cache again.
+                A unified Julia interface for large language models.
               </p>
               <p className="mt-3 text-2xl tracking-tight text-slate-400">
-                Cache every single thing your app could ever do ahead of time,
-                so your code never even has to run at all.
+                Native backends for OpenAI, Anthropic and Gemini, any
+                OpenAI-compatible provider, and Jev, TypeSafe’s System One
+                model, for typed, calibrated decisions about a text.
               </p>
               <div className="mt-8 flex gap-4 md:justify-center lg:justify-start">
-                <Button href="/">Get started</Button>
-                <Button href="/" variant="secondary">
-                  View on GitHub
+                <Button href="/getting_started/">Get started</Button>
+                <Button href="/guide/jev_start/" variant="secondary">
+                  Jev in five minutes
                 </Button>
               </div>
             </div>

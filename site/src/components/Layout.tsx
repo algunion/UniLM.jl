@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation'
 import clsx from 'clsx'
 
 import { Hero } from '@/components/Hero'
-import { Logo, Logomark } from '@/components/Logo'
+import { Logo, PopperianMark } from '@/components/Logo'
 import { MobileNavigation } from '@/components/MobileNavigation'
 import { Navigation } from '@/components/Navigation'
 import { Search } from '@/components/Search'
@@ -19,6 +19,14 @@ function GitHubIcon(props: React.ComponentPropsWithoutRef<'svg'>) {
     </svg>
   )
 }
+
+// dev, stable, or a release such as v0.22.0 (next.config.mjs checks it)
+const docsVersion = process.env.NEXT_PUBLIC_DOCS_VERSION ?? 'dev'
+const versionLabels: Partial<Record<string, string>> = {
+  dev: 'Dev',
+  stable: 'Stable',
+}
+const versionLabel = versionLabels[docsVersion] ?? docsVersion
 
 function Header() {
   let [isScrolled, setIsScrolled] = useState(false)
@@ -46,18 +54,28 @@ function Header() {
       <div className="mr-6 flex lg:hidden">
         <MobileNavigation />
       </div>
-      <div className="relative flex grow basis-0 items-center">
+      <div className="relative flex grow basis-0 items-baseline gap-3">
         <Link href="/" aria-label="Home page">
-          <Logomark className="h-9 w-9 lg:hidden" />
-          <Logo className="hidden h-9 w-auto fill-slate-700 lg:block dark:fill-sky-100" />
+          <Logo />
         </Link>
+        <PopperianMark className="hidden sm:inline" />
       </div>
       <div className="-my-5 mr-6 sm:mr-8 md:mr-0">
         <Search />
       </div>
-      <div className="relative flex basis-0 justify-end gap-6 sm:gap-8 md:grow">
+      <div className="relative flex basis-0 items-center justify-end gap-6 sm:gap-8 md:grow">
+        <span
+          title="Documentation version"
+          className="hidden rounded-full bg-slate-100 px-2.5 py-0.5 font-display text-xs font-medium text-slate-600 sm:inline dark:bg-slate-800 dark:text-slate-400"
+        >
+          {versionLabel}
+        </span>
         <ThemeSelector className="relative z-10" />
-        <Link href="https://github.com" className="group" aria-label="GitHub">
+        <Link
+          href="https://github.com/algunion/UniLM.jl"
+          className="group"
+          aria-label="GitHub"
+        >
           <GitHubIcon className="h-6 w-6 fill-slate-400 group-hover:fill-slate-500 dark:group-hover:fill-slate-300" />
         </Link>
       </div>

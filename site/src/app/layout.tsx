@@ -21,13 +21,13 @@ const lexend = localFont({
   variable: '--font-lexend',
 })
 
+// Manual pages set an absolute "<title> - UniLM.jl" (src/markdoc/preprocess.mjs).
 export const metadata: Metadata = {
   title: {
-    template: '%s - Docs',
-    default: 'CacheAdvance - Never miss the cache again.',
+    template: '%s - UniLM.jl',
+    default: 'UniLM.jl',
   },
-  description:
-    'Cache every single thing your app could ever do ahead of time, so your code never even has to run at all.',
+  description: 'A unified Julia interface for large language models.',
 }
 
 export default function RootLayout({

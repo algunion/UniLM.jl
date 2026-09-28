@@ -179,7 +179,6 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
             "```@index\n```" => "Documenter.IndexNode",
             "```@contents\n```" => "Documenter.ContentsNode",
             "```math\nx^2\n```" => "MarkdownAST.DisplayMath",
-            "Inline ``x^2`` math." => "MarkdownAST.InlineMath",
             "A remark[^1].\n\n[^1]: The remark." => "MarkdownAST.FootnoteLink",
             "!!! danger\n    Careful." => "`!!! danger`",
             "```@example\nMain.WriterFixture.Picture()\n```" => "image/png",
@@ -191,6 +190,12 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
             err = build_error("# Page\n\n" * markdown * "\n")
             @test err isa WriterError && err.page == "index.md" && occursin(named, err.what)
         end
+        # A double-backtick span is a code span, not mathematics: it builds, and shows as code.
+        root = mktempdir()
+        mkpath(joinpath(root, "src"))
+        write(joinpath(root, "src", "index.md"), "# Page\n\nAsk ``\"Does `a` cover `b`?\"`` first.\n")
+        build(root, joinpath(root, "site"))
+        @test occursin("``\"Does `a` cover `b`?\"``", read(joinpath(root, "site", "src", "app", "page.md"), String))
         err = build_error("Text before the title.\n\n# Page\n")
         @test err isa WriterError && occursin("does not open with its title", err.what)
     end

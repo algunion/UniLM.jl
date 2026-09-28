@@ -194,6 +194,9 @@ isexternal(url::AbstractString) = startswith(url, r"https?://|mailto:")
 
 inline(w::Walk, e::MarkdownAST.Text, n) = Text(e.text)
 inline(w::Walk, e::MarkdownAST.Code, n) = Code(e.code)
+# Julia's Markdown reads a double-backtick span (``x``) as inline LaTeX. The manual has no
+# mathematics, so such a span is a code span written with two backticks, and is shown as code.
+inline(w::Walk, e::MarkdownAST.InlineMath, n) = Code(e.math)
 inline(w::Walk, ::MarkdownAST.Emph, n) = Emph(inlines(w, n))
 inline(w::Walk, ::MarkdownAST.Strong, n) = Strong(inlines(w, n))
 inline(w::Walk, e::MarkdownAST.Link, n) =

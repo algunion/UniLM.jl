@@ -105,7 +105,10 @@ the directory was removed or replaced, the disk is full — throws that I/O erro
 out of `ask` and `list_models` (and so out of `nl_dispatch` and `@branch`)
 instead of returning a `SystemOneCallError`: the answer was paid for, and a
 caller's `r isa SystemOneSuccess || fallback()` path must not absorb the lost
-write as a service failure.
+write as a service failure. A `tool_loop` dispatcher is the exception: the loop
+reports a dispatcher's I/O error to the model as a tool error (only
+`ReplayMissError` and interrupts escape it), so a write lost there surfaces as the
+missing recording on the next replay.
 
 A recording is `<dir>/<key>.json`, where `key` is the lowercase hex SHA-256 of
 `"<METHOD> <path>\\n"` followed by the exact request body. The key is never a

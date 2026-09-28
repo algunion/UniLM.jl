@@ -3174,6 +3174,37 @@ end
 
 # ─── Streamable HTTP conformance ──────────────────────────────────────────────
 
+@testset "Streamable HTTP: a call after an idle gap does not reuse the connection the server closed" begin
+    # Servers close idle keep-alive connections on their own clock; this one answers the
+    # idle connection with a 408 after 0.3 s and closes it, as HTTP.jl's server does. The
+    # next call must go out on a fresh connection: the dead pooled one would fail the POST
+    # (or hand it the stale 408), and HTTP.jl never replays a POST.
+    port = _free_port()
+    httpserver = HTTP.serve!("127.0.0.1", port; verbose=false, idle_timeout=0.3) do req
+        req.method == "DELETE" && return HTTP.Response(200, "")
+        parsed = JSON.parse(String(req.body); dicttype=Dict{String,Any})
+        id = get(parsed, "id", nothing)
+        isnothing(id) && return HTTP.Response(202, "")
+        result = get(parsed, "method", "") == "initialize" ?
+            Dict{String,Any}("protocolVersion" => UniLM._MCP_PROTOCOL_VERSION,
+                "capabilities" => Dict{String,Any}(),
+                "serverInfo" => Dict{String,Any}("name" => "idle-closer", "version" => "1.0")) :
+            Dict{String,Any}()
+        HTTP.Response(200, ["Content-Type" => "application/json"],
+            JSON.json(Dict{String,Any}("jsonrpc" => "2.0", "id" => id, "result" => result)))
+    end
+    session = mcp_connect("http://127.0.0.1:$port")
+    try
+        @test ping(session) === nothing
+        sleep(UniLM._MCP_HTTP_IDLE_REUSE_NS / 1e9 + 0.5)   # past the server's close and the reuse bound
+        @test ping(session) === nothing
+        @test ping(session) === nothing                    # and the redialed connection serves the next call
+    finally
+        mcp_disconnect!(session)
+        close(httpserver)
+    end
+end
+
 @testset "SSE priming events (an id with empty data) are not frames" begin
     # A Streamable HTTP server SHOULD open each SSE stream with an event carrying an id and
     # empty data (a reconnection cursor). SSE dispatch skips an event whose data buffer is

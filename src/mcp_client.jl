@@ -464,11 +464,26 @@ function _transport_isconnected(t::StdioTransport)::Bool
     !isnothing(t.output) && !isnothing(proc) && process_running(proc)
 end
 
+# Servers close idle keep-alive connections on their own clock (uvicorn and Node.js
+# after 5 s by default; HTTP.jl's server first answers the idle connection with a
+# 408), and HTTP.jl hands a pooled connection to the next request without checking
+# that the peer is still there. It replays only idempotent requests that fail on
+# such a connection, and every MCP message is a POST, so the first call after an
+# idle gap would fail. Each HTTP session therefore owns its pool, and a connection
+# idle for longer than this bound is redialed instead of reused.
+const _MCP_HTTP_IDLE_REUSE_NS = 1_000_000_000
+
+_mcp_http_client() = HTTP.Client(; transport=HTTP.Transport(;
+    proxy=HTTP.ProxyFromEnvironment(), idle_timeout_ns=_MCP_HTTP_IDLE_REUSE_NS))
+
 """
     HTTPTransport <: MCPTransport
 
 Streamable HTTP transport: communicates via POST requests to an MCP endpoint.
-Handles `Mcp-Session-Id` header for session management.
+Handles `Mcp-Session-Id` header for session management. Each transport keeps its
+own connection pool and never reuses a connection that has been idle for more than
+a second, so a server that closes idle keep-alive connections cannot fail the next
+request.
 """
 mutable struct HTTPTransport <: MCPTransport
     url::String
@@ -480,8 +495,9 @@ mutable struct HTTPTransport <: MCPTransport
     protocol_version::String
     connected::Bool
     pending::Vector{String}  # frames from the last response body, not yet consumed
+    client::HTTP.Client      # this session's own connection pool (_MCP_HTTP_IDLE_REUSE_NS)
     function HTTPTransport(url::String; headers::Vector{Pair{String,String}}=Pair{String,String}[])
-        new(url, headers, nothing, _MCP_PROTOCOL_VERSION, false, String[])
+        new(url, headers, nothing, _MCP_PROTOCOL_VERSION, false, String[], _mcp_http_client())
     end
 end
 
@@ -539,7 +555,7 @@ end
 function _transport_send!(t::HTTPTransport, msg::String;
                           cfg::RequestConfig=current_config())::String
     t.connected || throw(_not_connected("HTTP"))
-    resp = _http("POST", t.url, _mcp_post_headers(t), msg; cfg=cfg, remaining=Inf)
+    resp = _http("POST", t.url, _mcp_post_headers(t), msg; cfg=cfg, remaining=Inf, client=t.client)
     # Capture session ID from response
     sid = HTTP.header(resp, "Mcp-Session-Id", "")
     !isempty(sid) && (t.session_id = sid)
@@ -578,7 +594,7 @@ _transport_trailing!(t::HTTPTransport) = splice!(t.pending, eachindex(t.pending)
 function _transport_notify!(t::HTTPTransport, msg::String;
                             cfg::RequestConfig=current_config())
     t.connected || throw(_not_connected("HTTP"))
-    resp = _http("POST", t.url, _mcp_post_headers(t), msg; cfg=cfg, remaining=Inf)
+    resp = _http("POST", t.url, _mcp_post_headers(t), msg; cfg=cfg, remaining=Inf, client=t.client)
     # A notification carries no response frame to demux, but its STATUS is the server's
     # only channel for refusing it (202 Accepted is the usual acceptance). Dropping the
     # status turns a rejected `notifications/initialized` into a session the client
@@ -598,12 +614,13 @@ function _transport_disconnect!(t::HTTPTransport; cfg::RequestConfig=current_con
         try
             # Teardown often runs right after a cancel (a `finally` around the cancelled
             # work): the DELETE must not obey the cancelled ambient token.
-            _http("DELETE", t.url, hdrs; cfg=cfg, remaining=Inf, cancel=nothing)
+            _http("DELETE", t.url, hdrs; cfg=cfg, remaining=Inf, cancel=nothing, client=t.client)
         catch e
             e isa InterruptException && rethrow()
             @debug "MCP HTTP disconnect failed" exception=e
         end
     end
+    HTTP.close_idle_connections!(t.client)   # release this session's pooled sockets
     t.connected = false
     t.session_id = nothing
     nothing

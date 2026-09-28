@@ -330,7 +330,7 @@ route(::nl"the customer wants a refund", ticket)           = :refund
 route(::nl"the customer reports a bug in the app", ticket) = :bug
 route(::nl"anything else", ticket)                         = :other
 
-meanings(route)   # the options exactly as they will be sent, no request made
+meanings(route, Tuple{String})   # the options sent for a String ticket, no request made
 
 nl_dispatch(route, "My package arrived crushed and the screen is cracked. I want my money back.")
 # => :refund

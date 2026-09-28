@@ -11,6 +11,8 @@ include(joinpath(@__DIR__, "undocumented_allowlist.jl"))
 #   TYPESAFE_API_KEY and UNILM_DOCS_RECORD=1 → replay what is recorded, record the rest live
 #   TYPESAFE_API_KEY alone                   → no replay: every example calls the service live
 # After a recording run, commit the new files in docs/recorded_answers.
+# Replay and record ignore TYPESAFE_DEFAULT_MODEL: an unpinned request names the
+# default model, so an exported default would change every recording's key.
 const HAS_TYPESAFE_KEY = !isempty(strip(get(ENV, "TYPESAFE_API_KEY", "")))
 const RECORD_FLAG = get(ENV, "UNILM_DOCS_RECORD", "")
 RECORD_FLAG in ("", "0", "1") || error("UNILM_DOCS_RECORD must be 1, 0 or unset; got $(repr(RECORD_FLAG))")
@@ -19,8 +21,9 @@ RECORD_FLAG == "1" && !HAS_TYPESAFE_KEY &&
 const ANSWERS_MODE = RECORD_FLAG == "1" ? :record_missing : HAS_TYPESAFE_KEY ? nothing : :replay
 
 with_answers(build, ::Nothing) = build()
-with_answers(build, mode::Symbol) =
+with_answers(build, mode::Symbol) = withenv("TYPESAFE_DEFAULT_MODEL" => nothing) do
     with_recorded_answers(build, joinpath(@__DIR__, "recorded_answers"); mode)
+end
 
 build_docs() = makedocs(;
     modules=[UniLM],

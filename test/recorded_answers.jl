@@ -647,7 +647,11 @@ const _RL_CASES = [
             @test isempty(UniLM._replayed(file).headers)
         else
             @test res["request_id"] == "req_$(before + 1)" && res["request_id_header"] == header
-            @test UniLM._replayed(file).headers == [header => res["request_id"]]
+            # That one header and no other. Header names are case-insensitive, and HTTP.jl
+            # 2.7 capitalises them on construction ("X-Request-Id") where 2.8 does not.
+            replayed = UniLM._replayed(file)
+            @test HTTP.header(replayed, header) == res["request_id"]
+            @test [lowercase(String(first(h))) for h in replayed.headers] == [header]
         end
         # Replayed with no key: nothing reaches the mock, and the caller reads the same result.
         hits = _RL_HITS[]

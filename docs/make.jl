@@ -13,7 +13,9 @@ include(joinpath(@__DIR__, "undocumented_allowlist.jl"))
 #   no flag             → replay, even when keys are set; an example with no recording fails the build
 #   UNILM_DOCS_RECORD=1 → replay what is recorded, record the rest live (with the keys
 #                         of the providers whose examples have no recording)
-#   UNILM_DOCS_LIVE=1   → no replay: every example calls its service live
+#   UNILM_DOCS_LIVE=1   → no replay: every example calls its service live, and nothing is
+#                         deployed — the prose quotes the recorded outputs, which a live
+#                         build does not reproduce
 # Each flag is 1, 0 or unset, and at most one is 1. What the scope does not record —
 # a streamed call, images, files, MCP, … — goes to its service when recording or
 # live. Replay hides every provider key, so a build without a flag never spends and
@@ -118,7 +120,7 @@ with_answers(build_docs, ANSWERS_MODE)
 
 assert_doc_coverage(UniLM, joinpath(@__DIR__, "src"), KNOWN_UNDOCUMENTED)
 
-deploydocs(;
+LIVE || deploydocs(;
     repo="github.com/algunion/UniLM.jl",
     devbranch="main",
     versions=["stable" => "v^", "v#.#.#", "dev" => "dev"],

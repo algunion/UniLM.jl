@@ -1648,10 +1648,11 @@ and nest (an inner scope's service is the enclosing scope).
 with_recorded_answers(f, dir::AbstractString; mode::Symbol=:replay)   # -> f()
     # :replay         answer from dir: no network, no key; no recording or an unreadable
     #                 one throws ReplayMissError
-    # :record         call the service; write each HTTP 200 to dir (created if needed),
-    #                 replacing any earlier file
+    # :record         call the service; write each HTTP 200 to dir, replacing any earlier file
     # :record_missing replay what dir holds; call and record the rest; an unreadable
     #                 file throws ReplayMissError (never overwritten)
+    # both recording modes create dir and prove it writable before f runs (else ArgumentError);
+    #   a recording that cannot be written after a paid answer throws its I/O error out of ask
     # file: <dir>/<key>.json, key = lowercase hex sha256("<METHOD> <path>\n" * exact body)
     # {"request": {method, path, body}, "response": {status, request_id, body}, "recorded_at"}
 

@@ -90,11 +90,22 @@ build that calls it live cannot be reproduced; one recorded answer, replayed, ca
   A request with no recording, or with a recording file that cannot be read as
   one, throws [`ReplayMissError`](@ref) out of `ask` itself. `dir` must exist.
 - `:record`: every request goes to the service; each HTTP 200 is written to
-  `dir` (created if needed), replacing an earlier recording of the same request,
-  readable or not. A non-200 result is returned as usual and never recorded.
+  `dir`, replacing an earlier recording of the same request, readable or not. A
+  non-200 result is returned as usual and never recorded.
 - `:record_missing`: replay what `dir` holds, and send the rest to the service,
   recording their 200s. An unreadable recording throws `ReplayMissError` here
   too instead of being overwritten: delete the file to record it again.
+
+A recording is written after the service has answered, and billed, so both
+recording modes create `dir` if needed and prove it writable — a file is created
+in it and removed — before `f` runs: a `dir` that is a file, or a directory that
+refuses a file, is an `ArgumentError` naming the path and the cause, and nothing
+is sent. A recording that still cannot be written once an answer has arrived —
+the directory was removed or replaced, the disk is full — throws that I/O error
+out of `ask` and `list_models` (and so out of `nl_dispatch` and `@branch`)
+instead of returning a `SystemOneCallError`: the answer was paid for, and a
+caller's `r isa SystemOneSuccess || fallback()` path must not absorb the lost
+write as a service failure.
 
 A recording is `<dir>/<key>.json`, where `key` is the lowercase hex SHA-256 of
 `"<METHOD> <path>\\n"` followed by the exact request body. The key is never a
@@ -134,7 +145,33 @@ function with_recorded_answers(f::Function, dir::AbstractString; mode::Symbol=:r
     root = abspath(dir)
     mode === :replay && !isdir(root) && throw(ArgumentError(
         "no recordings directory at $(repr(root)); record into it first with mode = :record_missing"))
+    mode === :replay || _writable_dir(root)
     with(f, _ANSWER_SCOPE => _AnswerScope(root, mode, _ANSWER_SCOPE[]))
+end
+
+# Created, then a file made and removed in it the way `_record` makes one: a directory
+# that cannot take a recording fails here, before `f` sends a request to pay for.
+function _writable_dir(root::String)::Nothing
+    ispath(root) && !isdir(root) && throw(ArgumentError(
+        "cannot record answers into $(repr(root)): it exists and is not a directory"))
+    try
+        mkpath(root)
+        tmp, io = mktemp(root; cleanup=false)
+        close(io)
+        rm(tmp)
+    catch err
+        err isa InterruptException && rethrow()
+        throw(ArgumentError("cannot record answers into $(repr(root)): " *
+                            first(split(sprint(showerror, err), '\n'))))
+    end
+    nothing
+end
+
+# A recording that could not be written once the service had answered. The answer
+# was paid for, so `ask` and `list_models` throw the `cause` itself rather than
+# returning it as a call error, which a fallback would absorb as a service failure.
+struct _UnwrittenRecording <: Exception
+    cause::Exception
 end
 
 _answer_key(method::String, path::String, body::String)::String =
@@ -202,6 +239,16 @@ function _record(file::String, method::String, path::String, body::String, resp:
         "response" => JSON.Object{String,Any}(
             "status" => 200, "request_id" => _typesafe_request_id(resp), "body" => JSON.parse(resp.body)),
         "recorded_at" => _rfc3339_utc(time()))
+    try
+        _write_recording(file, rec)
+    catch err
+        err isa InterruptException && rethrow()
+        throw(_UnwrittenRecording(err))
+    end
+    nothing
+end
+
+function _write_recording(file::String, rec::JSON.Object{String,Any})::Nothing
     dir = dirname(file)
     mkpath(dir)
     tmp, io = mktemp(dir; cleanup=false)
@@ -212,6 +259,7 @@ function _record(file::String, method::String, path::String, body::String, resp:
         finally
             close(io)
         end
+        chmod(tmp, 0o644)           # `mktemp` makes it owner-only; a recording is meant to be read and committed
         mv(tmp, file; force=true)   # a rename: a reader sees the old file or the new, never a torn one
     catch
         rm(tmp; force=true)

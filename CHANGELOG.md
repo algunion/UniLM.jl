@@ -14,7 +14,11 @@
   `ReplayMissError` out of `ask` instead of returning a `SystemOneCallError`; its
   `reason` says which. `:record` sends every request and writes each HTTP 200,
   replacing any earlier file; `:record_missing` replays what is recorded and records
-  the rest, and throws on an unreadable file rather than overwrite it. The scope
+  the rest, and throws on an unreadable file rather than overwrite it. Both create
+  `dir` and prove it writable before `f` runs, so a directory that cannot take a
+  recording is an `ArgumentError` before anything is billed; a recording that still
+  cannot be written once an answer has arrived throws its I/O error out of `ask`
+  rather than returning a `SystemOneCallError` a fallback would absorb. The scope
   covers tasks started inside it, scopes nest, and a cancelled token ends a call
   before any replay. The documentation's System One examples replay committed
   recordings when the build has no `TYPESAFE_API_KEY`; `UNILM_DOCS_RECORD=1` with the

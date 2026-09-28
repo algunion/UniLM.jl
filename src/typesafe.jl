@@ -963,8 +963,10 @@ function ask(request::SystemOneRequest; service::ServiceEndpointSpec=TYPESAFESer
             SystemOneSuccess(_decode_systemone(String(resp.body), _typesafe_request_id(resp))) :
             _typesafe_failure(resp)
     catch e
-        # A missing recording is not a service failure: it must reach the caller.
+        # A missing recording is not a service failure: it must reach the caller. Nor
+        # is a paid answer whose recording could not be written: its I/O error does.
         e isa Union{InterruptException,ReplayMissError} && rethrow()
+        e isa _UnwrittenRecording && throw(e.cause)
         _typesafe_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
@@ -1129,6 +1131,7 @@ function list_models(; service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
         TypeSafeModelsSuccess(cards, raw)
     catch e
         e isa Union{InterruptException,ReplayMissError} && rethrow()
+        e isa _UnwrittenRecording && throw(e.cause)
         _typesafe_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end

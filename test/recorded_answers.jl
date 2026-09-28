@@ -156,6 +156,8 @@ _ra_caught(f::Function) = try f(); nothing catch e; e end
     written = join(read.(files, String))
     @test !contains(written, _RA_KEY)
     @test !contains(lowercase(written), "bearer") && !contains(lowercase(written), "authorization")
+    # Readable like any file written in place, not private like the temporary file it was.
+    @test Sys.iswindows() || all(f -> filemode(f) & 0o777 == 0o644, files)
 end
 
 @testset "recorded answers — :record_missing calls the service only for what is missing" begin
@@ -197,6 +199,28 @@ end
     @test r isa SystemOneFailure && r.status == 422
     @test contains(r.message, "rejected by the mock")
     @test !isfile(_ra_file(dir, _ra_request("fail")))
+end
+
+@testset "recorded answers — a paid answer that cannot be written is thrown, never returned" begin
+    dir = _ra_dir("unwritable")
+    calls = (() -> ask(_ra_request("unwritable"); config=_RA_CFG),
+             () -> list_models(; config=_RA_CFG),
+             () -> nl_dispatch(_ra_route, "unwritable"; config=_RA_CFG),
+             () -> _ra_branch("unwritable"))
+    _ra_online() do
+        for mode in (:record, :record_missing), call in calls
+            before = _RA_HITS[]
+            e = with_recorded_answers(dir; mode) do
+                rm(dir; force=true, recursive=true)
+                write(dir, "")   # the checked directory is a file by the time the answer arrives
+                _ra_caught(call)
+            end
+            # The write's own I/O error, not a call error a fallback would take for the service's.
+            @test e isa Union{Base.IOError,SystemError}
+            @test _RA_HITS[] == before + 1
+            rm(dir)
+        end
+    end
 end
 
 @testset "recorded answers — twenty requests recorded at once are twenty whole files" begin
@@ -377,12 +401,32 @@ end
           (typeof(out[1]), out[1].status, out[1].request_id, typeof(out[1].cause))
 end
 
-@testset "recorded answers — a bad mode or a missing directory fails before f runs" begin
+@testset "recorded answers — a bad mode or a bad directory fails before f runs" begin
     ran = Ref(false)
     @test_throws ArgumentError with_recorded_answers(() -> (ran[] = true), _ra_dir("replay"); mode=:bogus)
     @test_throws ArgumentError with_recorded_answers(() -> (ran[] = true), _ra_dir("absent"))
-    @test !ran[]
-    # A recording mode creates the directory when it first has an answer to write.
+    # A recording mode creates the directory and writes a file into it before f runs,
+    # so a directory that could not hold an answer fails before one is paid for.
     @test with_recorded_answers(() -> :done, _ra_dir("absent"); mode=:record) === :done
-    @test !ispath(_ra_dir("absent"))
+    @test isdir(_ra_dir("absent")) && isempty(readdir(_ra_dir("absent")))
+    file = _ra_dir("a-file")
+    write(file, "not a directory")
+    for dir in (file, joinpath(file, "below")), mode in (:record, :record_missing)
+        e = _ra_caught(() -> with_recorded_answers(() -> (ran[] = true), dir; mode))
+        @test e isa ArgumentError && contains(e.msg, repr(dir))
+        @test contains(e.msg, dir == file ? "not a directory" : "EEXIST")
+    end
+    readonly = mkpath(_ra_dir("read-only"))
+    chmod(readonly, 0o555)
+    try
+        # Root, and Windows, write into it anyway: the check is only observable where the mode holds.
+        refused = try touch(joinpath(readonly, "probe")); false catch; true end
+        if refused
+            e = _ra_caught(() -> with_recorded_answers(() -> (ran[] = true), readonly; mode=:record))
+            @test e isa ArgumentError && contains(e.msg, repr(readonly)) && contains(e.msg, "Permission denied")
+        end
+    finally
+        chmod(readonly, 0o755)
+    end
+    @test !ran[]
 end

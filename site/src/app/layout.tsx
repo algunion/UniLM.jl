@@ -21,7 +21,7 @@ const lexend = localFont({
   variable: '--font-lexend',
 })
 
-// Manual pages set an absolute "<title> - UniLM.jl" (src/markdoc/preprocess.mjs).
+// Manual pages set an absolute title (src/markdoc/preprocess.mjs).
 export const metadata: Metadata = {
   title: {
     template: '%s - UniLM.jl',

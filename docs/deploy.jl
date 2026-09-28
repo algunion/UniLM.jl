@@ -16,9 +16,9 @@
 #
 # REDEPLOY_VERSION=vX.Y.Z deploys this checkout's manual into a released version's
 # folder instead, leaving stable and versions.js pointing where they did. It is
-# refused, by `plan` before anything is built, unless the tag exists and src/ and
-# Project.toml are unchanged since it: a release's manual must not describe
-# unreleased code.
+# refused, by `plan` before anything is built, unless it runs on main and the tag
+# exists and src/ and Project.toml are unchanged since it: a release's manual must
+# not describe unreleased code.
 using Documenter
 
 const ROOT = dirname(@__DIR__)
@@ -30,10 +30,16 @@ const REDEPLOY = let v = get(ENV, "REDEPLOY_VERSION", "")
     isempty(v) ? nothing : v
 end
 
-"`version`, if this checkout's manual may be published as its docs: a `vX.Y.Z` tag whose `src/` and `Project.toml` are `HEAD`'s."
-function release(version::String)
-    occursin(r"^v\d+\.\d+\.\d+$", version) ||
+"""
+`version`, if this checkout's manual may be published as its docs: a `vX.Y.Z` tag whose
+`src/` and `Project.toml` are `HEAD`'s, redeployed by a run on the development branch
+(`ref` is the run's `GITHUB_REF`).
+"""
+function release(version::String, ref::String)
+    occursin(r"^v\d+\.\d+\.\d+\z", version) ||
         error("REDEPLOY_VERSION must be a release version such as v0.22.0; got $(repr(version))")
+    ref == "refs/heads/$DEVBRANCH" ||
+        error("cannot redeploy $version from $(repr(ref)): run the workflow on $DEVBRANCH")
     tag = "refs/tags/$version"
     success(pipeline(`git -C $ROOT rev-parse --verify --quiet "$tag^{commit}"`; stdout = devnull)) ||
         error("cannot redeploy $version: there is no tag $version")
@@ -45,8 +51,8 @@ end
 
 "The folder the site is built for: the release being redeployed, the version tag being built, else dev."
 function folder(redeploy::Union{Nothing,String}, ref::String)
-    redeploy === nothing || return release(redeploy)
-    tag = match(r"^refs/tags/(v\d+\.\d+\.\d+)$", ref)
+    redeploy === nothing || return release(redeploy, ref)
+    tag = match(r"^refs/tags/(v\d+\.\d+\.\d+)\z", ref)
     tag === nothing ? "dev" : String(tag[1])
 end
 
@@ -84,7 +90,8 @@ Documenter.authentication_method(c::SiteDeploy) = Documenter.authentication_meth
 Documenter.authenticated_repo_url(c::SiteDeploy) = Documenter.authenticated_repo_url(c.ci)
 Documenter.post_status(c::SiteDeploy; kwargs...) = Documenter.post_status(c.ci; kwargs...)
 
-config() = SiteDeploy(Documenter.GitHubActions(), REDEPLOY === nothing ? nothing : release(REDEPLOY))
+config() = SiteDeploy(Documenter.GitHubActions(),
+                      REDEPLOY === nothing ? nothing : release(REDEPLOY, get(ENV, "GITHUB_REF", "")))
 deploy(cfg::Documenter.DeployConfig; kwargs...) =
     deploydocs(; root = ROOT, target = TARGET, repo = REPO, devbranch = DEVBRANCH,
                versions = ["stable" => "v^", "v#.#.#", "dev" => "dev"], deploy_config = cfg, kwargs...)

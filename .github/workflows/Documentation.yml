@@ -7,7 +7,7 @@ on:
     branches: [main]
   # Allow manual (re)builds for any ref — e.g. to (re)deploy versioned docs for a
   # release tag whose TagBot push did not trigger this workflow, or to redeploy a
-  # released version's docs, built from the dispatched ref, into its folder.
+  # released version's docs, built from main, into its folder.
   workflow_dispatch:
     inputs:
       live_examples:
@@ -15,7 +15,7 @@ on:
         type: boolean
         default: false
       redeploy_version:
-        description: Redeploy this release's docs (e.g. v0.22.0) from the dispatched ref; refused unless its tag exists and src/ and Project.toml equal the tag's
+        description: Redeploy this release's docs (e.g. v0.22.0) from main; refused unless its tag exists and src/ and Project.toml equal the tag's
         type: string
         default: ''
 
@@ -50,8 +50,8 @@ jobs:
             Pkg.develop(PackageSpec(path=pwd()))
             Pkg.instantiate()'
       # The gh-pages folder the site is built for: the release being redeployed (refused
-      # here, before anything is built, unless its tag exists and src/ and Project.toml
-      # equal the tag's), the version tag being built, else dev.
+      # here, before anything is built, unless the run is on main, its tag exists and src/
+      # and Project.toml equal the tag's), the version tag being built, else dev.
       - name: Choose the site's folder
         id: site
         run: julia --project=docs/ docs/deploy.jl plan >> "$GITHUB_OUTPUT"

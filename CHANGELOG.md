@@ -14,11 +14,11 @@
   cross-references and checks that every export is documented; the site is built from its
   output and published with Documenter's versioned deployment, so `stable` and the version
   list behave as before, and the pages of earlier releases stay as they were.
-- A manual run of the Documentation workflow with `redeploy_version` (such as `v0.22.0`)
-  publishes the current manual as that release's docs, in its folder, without a new
-  release. It is refused before anything is built unless the release's tag exists and
-  `src/` and `Project.toml` are unchanged since the tag, so a release's docs never describe
-  unreleased code.
+- A manual run of the Documentation workflow on `main` with `redeploy_version` (such as
+  `v0.22.0`) publishes the current manual as that release's docs, in its folder, without a
+  new release. It is refused before anything is built unless it runs on `main`, the
+  release's tag exists and `src/` and `Project.toml` are unchanged since the tag, so a
+  release's docs never describe unreleased code.
 
 ## 0.22.0
 

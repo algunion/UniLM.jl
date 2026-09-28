@@ -153,6 +153,14 @@ defined by the OpenAI API — inspect a `call` dict to see everything returned. 
 `file_search_call` items, but their `"results"` array is omitted: you get the answer, not
 the chunk text.
 
+!!! tip "Check it with Jev"
+    With the answer and its chunks in hand, one Jev question can read the answer against a
+    chunk — supports, contradicts or says nothing — and send anything but a confident
+    *supports* to a person ([Check claims against the source](@ref jev_llm_check_claims)).
+    When you retrieve passages yourself and put them in the prompt, one Jev question per
+    passage can first drop those that carry instructions aimed at the model ([Screen what
+    the model reads](@ref jev_llm_screen_input)).
+
 ## Cleanup
 
 Vector stores and files persist on OpenAI's servers until you remove them:

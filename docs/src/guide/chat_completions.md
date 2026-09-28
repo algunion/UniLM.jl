@@ -94,6 +94,13 @@ else
 end
 ```
 
+!!! tip "Check it with Jev"
+    Before the request, one Jev question can send a message to the team that handles it,
+    so the model writes with that team's system message ([Route before you
+    generate](@ref jev_llm_route)). After it, one Jev request can check the reply for
+    leaks, promises the policy does not allow and rudeness before a user sees it ([Check
+    the draft before a customer sees it](@ref jev_llm_check_draft)).
+
 ### One-Shot Requests via Keywords
 
 Skip the `Chat` object entirely for simple one-off requests:

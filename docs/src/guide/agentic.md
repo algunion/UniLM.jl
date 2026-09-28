@@ -94,6 +94,12 @@ result = tool_loop("What's the weather in Paris?"; service=GEMINIServiceEndpoint
 The loop takes the same `cancel` and `tool_concurrency` keywords on both providers; see
 [Tool Calling](@ref tools_guide) for its stop rules.
 
+!!! tip "Check it with Jev"
+    Before the loop, one Jev question can score how much expertise a request needs and
+    pick the cheap or the strong model for it ([Pick the model](@ref jev_llm_pick_model)).
+    Inside it, wrap the dispatcher so that a sensitive tool call runs only if the user
+    asked for it ([Approve tool calls](@ref jev_llm_tool_calls)).
+
 ## Feeding tool output back manually
 
 Use [`tool_result`](@ref) to return a function's output on the next turn:

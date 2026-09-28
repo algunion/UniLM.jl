@@ -38,6 +38,12 @@ may be coalesced into one callback), so multibyte characters are never split acr
 boundaries — and then exactly once at end-of-stream with the fully assembled
 [`Message`](@ref), whose `content` equals the concatenation of every forwarded `String`.
 
+!!! tip "Check it with Jev"
+    When the finished text is sent on — as an email, or a reply in a ticket — check it
+    before it goes: one Jev request asks whether it leaks, overpromises or is rude, and your
+    code decides pass, review or block ([Check the draft before a customer sees it](@ref
+    jev_llm_check_draft)).
+
 ### [Stopping a Stream Early](@id streaming_stop)
 
 The callback receives a `Ref{Bool}` that you can set to `true` to stop streaming:

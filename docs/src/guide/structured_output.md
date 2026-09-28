@@ -82,6 +82,12 @@ else
 end
 ```
 
+!!! tip "Check it with Jev"
+    When every field of the record is a category, a yes/no or a rubric — which team,
+    whether the customer wants a refund, how urgent — Jev fills the struct in one request,
+    with a certainty for each field, and the constructor receives only values its field
+    types allow ([Fill a struct in one request](@ref jev_fill_struct)).
+
 ## Responses API
 
 The Responses API uses [`TextConfig`](@ref) with convenience constructors:

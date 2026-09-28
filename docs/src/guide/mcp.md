@@ -202,6 +202,12 @@ result = tool_loop("List files in /tmp"; tools=tools)
 mcp_disconnect!(session)
 ```
 
+!!! tip "Check it with Jev"
+    Each bridged tool's `callable` takes `(name, args)`, as a tool-loop dispatcher does, so
+    it can be wrapped the way [Approve tool calls](@ref jev_llm_tool_calls) wraps one:
+    before the MCP server runs a call, a Jev question reads it against the user's own
+    words, and the call runs, waits for a confirmation, or is refused.
+
 ---
 
 ## MCP Server

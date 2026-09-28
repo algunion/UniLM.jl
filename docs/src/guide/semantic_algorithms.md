@@ -1,27 +1,38 @@
-# [Semantic Algorithms with Jev](@id jev_algorithms_guide)
+# [Many Items at Once](@id jev_algorithms_guide)
 
-An algorithm over a collection interleaves two kinds of step. Iteration,
-ordering, arithmetic, concurrency and control flow belong to Julia; the
-judgments — which team, which is more urgent, which line, same product or not —
-come from Jev as typed answers ([Typed Judgments with Jev](@ref system_one_guide)).
+Jev answers many questions about one state in a single request, and neither the
+time nor the bill grows much with the number of questions. So when you have many
+items — tickets, lines of a chat or a log, rows of a table — put each under its
+own key in the state, point one question at each key, and send them together.
+Julia does the rest: loops, sorting, counting, searching and stopping.
 
-Jev's cost model makes one shape win. The state is ingested once per request
-and every question is answered independently against it, latency is nearly flat
-in the number of questions (1 question 0.30 s, 22 questions 0.31 s), and only
-input tokens are billed ([Models](https://docs.typesafe.ai/models)). So a
-collection algorithm puts many judgments into one request, points each question
-at its item by a **key**, and does everything that is not a judgment in Julia.
-The figures in the prose were measured on jev-1.13.0 (September 2026) on our own
-labeled sets. Every block that calls Jev runs when this page is built, so what
-it prints is a real answer — a live call, or a recorded live answer when the
-build has no API key. The numbers in the prose are measurements, not what a
-block prints.
+| I want to… | Section |
+| :--- | :--- |
+| judge a batch of items in one request: route every ticket in an inbox | [Judge a batch in one request](@ref jev_items_batch) |
+| rank candidates: which ticket to handle first | [Rank candidates](@ref jev_items_rank) |
+| find the first line in a log or a chat where something happens | [Find the first line where something happens](@ref jev_items_find) |
+| match records across two lists: incoming listings against a catalogue | [Match records across two lists](@ref jev_items_match) |
+| stop reading a stream as soon as the line is found | [Stop reading once it is found](@ref jev_items_stop) |
 
-## Many items in one request: address them by key, not by index
+!!! details "Evidence"
+    Measured on jev-1.13.0 (September 2026): a request with 1 question took
+    0.30 s, and one with 22 questions 0.31 s. Only input tokens are billed
+    ([Models](https://docs.typesafe.ai/models)), and the state is read once per
+    request, however many questions it carries.
 
-Give every item its own key in the state and its own question, and name the key
-in backticks inside the question. Six tickets, one of them an attempted prompt
-injection, go out in one request:
+Every block that calls Jev runs when this page is built and prints a real
+answer, recorded once and replayed ([Test and Develop](@ref jev_testing_guide)).
+
+## [Judge a batch in one request](@id jev_items_batch)
+
+**The job:** route every ticket in an inbox to its team — or judge any batch of
+items — with one request instead of one per item. **Without Jev**, one
+classifier or LLM call per ticket, or one prompt that lists them all and an
+answer you parse back into items. **With Jev**, each ticket goes under its own
+key in the state, with its own question that names the key in backticks, and one
+request answers every question.
+
+Six tickets, one of them an attempted prompt injection, go out in one request:
 
 ```@example jevalgo
 using UniLM, JSON
@@ -49,27 +60,46 @@ end
 println("1 request, ", token_usage(r).prompt_tokens, " billed input tokens")
 ```
 
-Measured with 150 labeled support messages routed five ways, keyed items in one
-request held accuracy — 0.987 and 0.980 at N = 150 in two orderings, 0.983 at
-N = 300 (every message twice) — against 0.980 for one request per message. Each
-message billed ≈ 186 input tokens instead of ≈ 428, and the collection took one
-request instead of N.
+Every ticket gets its own answer. The sixth tells the model to classify it as
+billing, and is routed on what it reports, a lost package, to `shipping`, at
+confidence 0.8.
 
-Addressing items by position collapsed. With the messages as a JSON array and
-each question pointing at `messages[17]` — the form of TypeSafe's own counting
-example, `items[i]` — accuracy fell to 0.94, 0.45 and 0.33 at N = 10, 50 and
-150. A plausible reason: resolving a position means counting elements, which the
-model does not do reliably; a key is a name the question quotes exactly.
+Keyed items in one request kept the accuracy of one request per item, at less
+than half the input tokens per item. Point each question at a key, never at a
+position in a list: questions about `messages[17]` collapsed as the list grew.
 
-### Limits and chunking
+!!! details "Evidence"
+    Measured on jev-1.13.0 (September 2026) on our own labelled set of 150
+    support messages routed five ways. Keyed items in one request scored 0.987
+    and 0.980 at N = 150 in two orderings, and 0.983 at N = 300 (every message
+    twice), against 0.980 for one request per message. Each message billed
+    ≈ 186 input tokens instead of ≈ 428, and the collection took one request
+    instead of N.
 
-A request holds 64k tokens, and the state plus the single longest question must
-fit in 32k ([Models](https://docs.typesafe.ai/models)). A request over the limit
-is refused whole: 300 routed messages billed 55,670 tokens in one request, while
-450 came back HTTP 400 `max_tokens_exceeded`. Longer collections go in chunks:
-split the indices with `Iterators.partition`, send the chunks concurrently, and
-keep the global keys so every answer stays addressable. `asyncmap` returns its
-results in input order, so concatenating them restores item order:
+    Addressing items by position collapsed. With the messages as a JSON array and
+    each question pointing at `messages[17]` — the form of TypeSafe's own
+    counting example, `items[i]` — accuracy fell to 0.94, 0.45 and 0.33 at
+    N = 10, 50 and 150. A plausible reason: resolving a position means counting
+    elements, which the model does not do reliably; a key is a name the question
+    quotes exactly.
+
+**Tune it**
+
+- **Keys.** Give each item a short, unique name — `t1`, `t2`, … — and quote it
+  exactly in its question, in backticks.
+- **A `JSON.Object`, not a `Dict`,** keeps the items in the order you wrote them:
+  the order of the state's keys is part of the request, and it can move an answer.
+- **One question per item**, so each answer stands on its own; counting, sorting
+  and comparing happen in Julia.
+
+### [More items than one request holds](@id jev_items_chunks)
+
+**The job:** route an inbox larger than one request holds. A request over the
+size limit ([Limits](@ref jev_limits)) is refused whole, so a long collection
+goes in chunks: split the indices with `Iterators.partition`, send the chunks
+concurrently, and keep the global keys so every answer stays addressable.
+`asyncmap` returns its results in input order, so concatenating them restores
+item order:
 
 ```@example jevalgo
 function route(texts; per_request = 150)
@@ -85,8 +115,18 @@ end
 route(tickets; per_request = 4)       # two requests, 4 + 2 tickets, sent concurrently
 ```
 
-Counting belongs in code as well. Ask one Noul per item and count the answers in
-Julia; never ask Jev how many items match ([Jev 1.13
+Here the two chunks route every ticket as the single request did.
+
+!!! details "Evidence"
+    Measured on jev-1.13.0 (September 2026): 300 routed messages billed 55,670
+    tokens in one request, while 450 came back HTTP 400 `max_tokens_exceeded`.
+
+### [Count in Julia](@id jev_items_count)
+
+**The job:** count the tickets that report a problem with a delivery. **Without
+Jev**, you would ask a model "how many?" and trust its arithmetic. **With Jev**,
+one Noul per ticket gives the probability of yes, and Julia counts the tickets
+at 0.5 or above; never ask Jev how many items match ([Jev 1.13
 jaggedness](https://docs.typesafe.ai/model-jaggedness/jev-1.13)):
 
 ```@example jevalgo
@@ -94,12 +134,14 @@ r = ask(state, [id => noul("Does ticket `$id` report a problem with a delivery?"
 count(p -> p >= 0.5, (r[id].noul for id in ids))
 ```
 
-## Ranking
+## [Rank candidates](@id jev_items_rank)
 
-One request can carry two rankings. A Score per item places every item on the
-same rubric; a Choice per unordered pair runs a round-robin tournament. Julia
-does the sorting: by each Score's expectation, and by the number of comparisons
-each item won (its Copeland count).
+**The job:** put a backlog of tickets in order of urgency, so the team handles
+the worst first. **Without Jev**, you ask an LLM to sort the list and parse its
+answer back, or run a sort that calls a model once per comparison. **With Jev**,
+one request carries a Score per ticket and a Choice per pair of tickets, and
+Julia sorts: by each Score's expectation, and by the number of comparisons each
+ticket won (its Copeland count).
 
 ```@example jevalgo
 backlog = JSON.Object(
@@ -129,36 +171,57 @@ end
 println(length(ids) + length(matchups), " questions, 1 request, ", token_usage(r).prompt_tokens, " billed input tokens")
 ```
 
-Measured against our own gold urgency order of 20 tickets (Kendall τ_b):
+Both orders agree here: the exposed card numbers first, the keyboard shortcut
+last.
 
-| Method | Requests | τ_b |
-| :--- | :--- | :--- |
-| a Score per ticket, one request | 1 | 0.888 |
-| all 190 pairs, one request | 1 | 0.905–0.926 |
-| the same pairs as separate requests, both orders | 380 | 0.937 |
-| Julia's `sort!` driven by a semantic `lt` | 119, sequential (37 s) | 0.926 |
-| one Choice ("which ticket is the most urgent?"), ranked by its probabilities | 1 | 0.590 |
+A Score per ticket asks one question per ticket; the tournament of pairs ranked
+a little better on our tickets, at n(n − 1)/2 questions. Do not rank by one
+Choice's probabilities: a Choice picks one winner, and its runner-up
+probabilities are not a ranking.
 
-The pairwise rows rank by summed win probabilities. One request's figure
-depends on which item of each pair the question names first: 0.926 when the
-less urgent item (by our gold order) came first in every pair, 0.905 when it
-came second, 0.916 with both orientations averaged (two requests). Counting
-wins, as the example does, gave 0.937 and 0.889, against 0.931 for the 380
-requests. Each orientation puts the more urgent item in the same place in every
-pair, so a preference for a position counts as accuracy in one of them and as
-error in the other: the better figure may owe part of its lead to position.
-`sort!` gets there too, but a comparison sort cannot choose its next pair before
-the last answer arrives, so its requests run one after another. Do not rank by
-one Choice's probabilities: a Choice picks one winner, and its runner-up
-probabilities are not a ranking. Two costs remain. A tournament asks
-n(n − 1)/2 questions — the 190 pairs billed 9,324 input tokens. And position
-matters a little: swapping the two items of a pair flipped 3.2% of pairwise
-answers.
+!!! details "Evidence"
+    Measured on jev-1.13.0 (September 2026) against our own gold urgency order
+    of 20 tickets (Kendall τ_b):
 
-## Finding where something happens in a long sequence
+    | Method | Requests | τ_b |
+    | :--- | :--- | :--- |
+    | a Score per ticket, one request | 1 | 0.888 |
+    | all 190 pairs, one request | 1 | 0.905–0.926 |
+    | the same pairs as separate requests, both orders | 380 | 0.937 |
+    | Julia's `sort!` driven by a semantic `lt` | 119, sequential (37 s) | 0.926 |
+    | one Choice ("which ticket is the most urgent?"), ranked by its probabilities | 1 | 0.590 |
 
-When the event shows on one line, one request finds it. Key every line, ask one
-Noul per line, and take the first line at or above 0.5:
+    The pairwise rows rank by summed win probabilities. One request's figure
+    depends on which item of each pair the question names first: 0.926 when the
+    less urgent item (by our gold order) came first in every pair, 0.905 when it
+    came second, 0.916 with both orientations averaged (two requests). Counting
+    wins, as the example does, gave 0.937 and 0.889, against 0.931 for the 380
+    requests. Each orientation puts the more urgent item in the same place in
+    every pair, so a preference for a position counts as accuracy in one of them
+    and as error in the other: the better figure may owe part of its lead to
+    position. `sort!` gets there too, but a comparison sort cannot choose its
+    next pair before the last answer arrives, so its requests run one after
+    another. The 190 pairs billed 9,324 input tokens, and swapping the two items
+    of a pair flipped 3.2% of pairwise answers.
+
+**Tune it**
+
+- **Score or tournament.** A Score per item asks n questions; a tournament asks
+  n(n − 1)/2. Pay for the tournament when the finer order is worth the extra
+  questions.
+- **Position matters a little.** Swapping the two items of a pair flips some
+  answers: ask each pair in both orders and average the two, so that neither
+  position is favoured.
+
+## [Find the first line where something happens](@id jev_items_find)
+
+**The job:** find the first line of a support chat where the customer asks to
+cancel their subscription — or the first line of a log where something happens.
+**Without Jev**, a keyword search for "cancel", which also fires on a cancelled
+dentist appointment and on a threat, or an LLM that reads the chat and quotes a
+line back. **With Jev**, every line goes under its own key, one Noul per line
+asks whether that line is the event, and `findfirst` takes the first at or above
+0.5:
 
 ```@example jevalgo
 chat = ["Agent: Hi! For verification I need your full name, date of birth and postcode.",
@@ -193,11 +256,15 @@ the request. `L10`, "The first one, please.", is a cancellation only as the
 answer to `L09` — the line search finds such replies because the whole chat is
 the state.
 
-A condition that accumulates — has the customer given all three of name, date of
-birth and postcode? — shows on no single line, so no per-line question can find
-it. Ask it about prefixes instead. For lines `1:k` the answer runs false … false,
-true … true as `k` grows, so a bisection finds the first true prefix in
-≈ log2(n) sequential requests. That needs the predicate to be monotone:
+### [When the condition builds up over several lines](@id jev_items_bisect)
+
+**The job:** find the line after which a condition that builds up holds — has
+the customer given all three of name, date of birth and postcode? **Without
+Jev**, code that tracks each field through the chat. **With Jev**, since the
+condition shows on no single line and no per-line question can find it, ask it
+about prefixes instead. For lines `1:k` the answer runs false … false, true …
+true as `k` grows, so a bisection finds the first true prefix in ≈ log2(n)
+sequential requests. That needs the predicate to be monotone:
 
 ```@example jevalgo
 # The smallest k in 1:n with pred(k), for a monotone pred (false … false, true … true).
@@ -213,17 +280,36 @@ k = first_true(verified, length(chat))
 println("verified at ", line(k), " (", chat[k], ") after ", requests[], " requests")
 ```
 
-Measured on 14 synthetic support transcripts of 600 lines each: the one-request
-line search found the line-level events, including replies that mean something
-only after their question, and missed every cumulative condition tested
-(0 of 3); bisection over prefixes was right on all 14, two of which contain no
-event.
+The customer declined the date of birth at `L07` and gave it at `L12`, the line
+the bisection found.
 
-## Joining two tables
+On long transcripts, the one-request line search found the events that show on
+one line and missed every condition that builds up; bisection over prefixes was
+right on every transcript.
 
-Entity matching splits the same way. Julia does the blocking — a cheap string
-similarity keeps a few candidates per row — and Jev makes one judgment per row: a
-Choice over that row's candidates plus an explicit "none of these" option.
+!!! details "Evidence"
+    Measured on jev-1.13.0 (September 2026) on 14 synthetic support transcripts
+    of 600 lines each: the one-request line search found the line-level events,
+    including replies that mean something only after their question, and missed
+    every cumulative condition tested (0 of 3); bisection over prefixes was right
+    on all 14, two of which contain no event.
+
+**Tune it**
+
+- **Say what does not count.** The model reads literally: name the near-misses
+  in the question, as `event` does.
+- **One line or a prefix.** An event that shows on one line needs one request; a
+  condition that builds up needs the bisection, with a question that stays true
+  once true ("So far, has…").
+
+## [Match records across two lists](@id jev_items_match)
+
+**The job:** match each incoming product listing to the same product in your
+catalogue, or to none. **Without Jev**, string similarity with a threshold you
+tune, which misses rewordings and matches near-misses such as the 128 GB and the
+256 GB phone. **With Jev**, Julia keeps a few similar candidates per row (the
+blocking), and one Choice per row picks the same product among them or says none
+of them is, with a confidence gate that sends an unsure row to review.
 
 ```@example jevalgo
 catalog = ["Apple iPhone 15 Pro 128GB Natural Titanium", "Apple iPhone 15 Pro 256GB Natural Titanium",
@@ -252,38 +338,54 @@ end
 foreach((item, m) -> println(rpad(item, 58), "=> ", m), incoming, matches)
 ```
 
+The XM5 headphones are not the XM4 in the catalogue and stay unmatched, and the
+Dyson answer, `none` at confidence 0.57, goes to review.
+
 A Choice is relative: it names the closest candidate even when none matches. The
 explicit `none` option and the `confidence` gate are what make the join safe —
-an unsure answer becomes a review item instead of a match. When "is this the same
-entity?" must be judged absolutely, ask one Noul per candidate instead — "Is `c1`
-the same product as `item`?", and so on — and accept a candidate only at or above
-your threshold.
+an unsure answer becomes a review item instead of a match. On a product
+catalogue of our own, the join matched every true pair and nothing else.
 
-Measured on a product catalogue (66 incoming rows, 66 entries, 41 true matches,
-5 candidates per row): F1 1.000, against 0.605 for trigram similarity alone at
-its best threshold, and all 25 rows without a match stayed unmatched. On company
-names with renames, acronyms and subsidiaries (30 rows, 35 names, every name a
-candidate): F1 0.927 with one Choice per row and 0.974 with one Noul per
-candidate, at about three times the input tokens. Blocking by trigrams does not
-survive renames — it kept the true match among 5 candidates for only 60% of
-those rows, which capped a blocked Choice at F1 0.727.
+!!! details "Evidence"
+    Measured on jev-1.13.0 (September 2026) on a product catalogue (66 incoming
+    rows, 66 entries, 41 true matches, 5 candidates per row): F1 1.000, against
+    0.605 for trigram similarity alone at its best threshold, and all 25 rows
+    without a match stayed unmatched. On company names with renames, acronyms
+    and subsidiaries (30 rows, 35 names, every name a candidate): F1 0.927 with
+    one Choice per row and 0.974 with one Noul per candidate, at about three
+    times the input tokens. Blocking by trigrams does not survive renames — it
+    kept the true match among 5 candidates for only 60% of those rows, which
+    capped a blocked Choice at F1 0.727.
 
-## Streaming with an early stop
+**Tune it**
 
-Some searches end at the first hit: lines arrive in order, and every line judged
-after the answer is known is wasted. The pieces are plain Julia — a `Channel` of
-line numbers, N worker tasks, and a main task that reads the answers — plus
-three rules:
+- **The gate** (0.7 here): below it, a row goes to review instead of being
+  matched.
+- **The candidates.** Blocking by string similarity misses renames and acronyms:
+  when names change, offer every name as a candidate.
+- **Absolute judgments.** When "is this the same entity?" must be judged on its
+  own, ask one Noul per candidate instead — "Is `c1` the same product as
+  `item`?", and so on — and accept a candidate only at or above your threshold.
+
+## [Stop reading once it is found](@id jev_items_stop)
+
+**The job:** read a log as it arrives and stop at the first line that shows data
+was lost. **Without Jev**, a search for "lost" or "loss", which also fires on
+`records_lost=0` and on a drill that only simulates data loss, or an LLM call per
+line that keeps running after the answer is known. **With Jev**, worker tasks
+send one Noul per line concurrently, and the reader reports the first matching
+line in input order and cancels what is still in flight.
+
+The pieces are plain Julia — a `Channel` of line numbers, N worker tasks, and a
+main task that reads the answers — plus three rules:
 
 - **Report the first matching line in input order, not the first answer to
   arrive.** Workers finish out of order, so a hit is final only when every
   earlier line has an answer — when the *frontier* of answered lines reaches it.
-  Stopping at the first answer to arrive reported the wrong line in 36% of 10,000
-  simulated runs.
 - **Stop what is in flight with one token.** Every worker runs inside
   [`with_cancel`](@ref)`(stop)`, so one [`cancel!`](@ref) ends the requests still
-  in flight (measured ≈ 13 ms once warm), and a call whose token is already
-  cancelled sends nothing ([Cancellation](@ref concurrency_cancellation)).
+  in flight, and a call whose token is already cancelled sends nothing
+  ([Cancellation](@ref concurrency_cancellation)).
 - **Let a worker's failure reach the reader.** A worker that throws — a
   malformed request, or a replay miss in a replay scope — never sends its answer,
   and a reader blocked on `take!` would wait for it forever. Bind the results
@@ -291,6 +393,11 @@ three rules:
   failure, the channel closes with it, and `take!` rethrows it. (Binding each
   worker instead closes the channel as soon as the first worker runs out of
   lines, while the others still have answers to deliver.)
+
+!!! details "Evidence"
+    In 10,000 simulated runs, stopping at the first answer to arrive reported the
+    wrong line 36% of the time. One `cancel!` ended the requests still in flight
+    in ≈ 13 ms once warm (measured).
 
 Which requests go out depends on scheduling, so the docs build does not run this
 block; the `# =>` lines are the output of one live run, pasted as comments.
@@ -344,17 +451,30 @@ println(n, " lines answered")
 ```
 
 The `yes`/`no` criteria carry the policy, because the model reads literally:
-without them, the routine `INFO purged 1204 expired sessions per retention policy`
-line was flagged as data loss (0.65; 0.10 with the criteria).
+without them, the routine `INFO purged 1204 expired sessions per retention
+policy` line was flagged as data loss.
+
+!!! details "Evidence"
+    Measured on jev-1.13.0 (September 2026): that line scored 0.65 without the
+    criteria and 0.10 with them.
+
+**Tune it**
+
+- **`workers`** sets how many lines are in flight at once: the hit arrives
+  sooner, and more requests past it are answered or cancelled — 23 answered for
+  a hit at line 19 above.
+- **The criteria** decide what counts: write the near-misses into `no`.
 
 ## See also
 
-- [Typed Judgments with Jev (TypeSafe System One)](@ref system_one_guide) — `ask`,
-  the three primitives, and reading answers
-- [Multiple Dispatch on Natural Language](@ref nl_dispatch_guide) — a Jev answer
-  selects the method that runs
+- [Route and Decide](@ref system_one_guide) — `ask`, the three primitives,
+  reading answers, and [asking many questions at once](@ref jev_many_questions)
+- [Dispatch on Meaning](@ref nl_dispatch_guide) — a Jev answer selects the
+  method that runs
 - [Concurrency, Tasks and Cancellation](@ref concurrency_guide) — `asyncmap`,
   `Channel`s, [`CancelToken`](@ref) and [`with_cancel`](@ref)
+- [TypeSafe System One API (Jev)](@ref system_one_api) — [limits](@ref
+  jev_limits) and [cost](@ref jev_cost)
 - TypeSafe cookbooks: [line-by-line
   search](https://docs.typesafe.ai/cookbooks/semantic_find) and [parallel
   questions](https://docs.typesafe.ai/cookbooks/parallel_questions)

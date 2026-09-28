@@ -4,11 +4,13 @@ A Jev answer is a calibrated probability distribution over outcomes you
 enumerated, delivered as a typed value. Measured on jev-1.13.0 (September 2026)
 on our own labeled sets: over 129 routed tickets the expected calibration error
 was 0.015, and the 113 answers whose top probability was at least 0.9 were
-99.1% correct. Julia turns such values into programs cheaply — a decision rule
-is one line of arithmetic, a taxonomy is a type hierarchy, a record is a
-struct, a protocol is a method table. Each section below is a system that
-would otherwise need a trained model, an LLM plus parsing, or hand-maintained
-tables.
+99.1% correct. Other sets measured higher errors: 0.047 on a stress set of 100
+items built on the model's documented failure modes, and 0.071 on 74 yes/no
+(Noul) answers, which were underconfident. Julia turns such values into
+programs cheaply — a decision rule is one line of arithmetic, a taxonomy is a
+type hierarchy, a record is a struct, a protocol is a method table. Each section
+below is a system that would otherwise need a trained model, an LLM plus
+parsing, or hand-maintained tables.
 
 Every block that calls Jev runs when this page is built, so what it prints is a
 real answer — a live call, or a recorded live answer when the build has no API
@@ -32,11 +34,12 @@ const HUMAN = 2.0
 const HARM = (refund = 8.0, cancel_subscription = 10.0, shipping_delivery = 1.0, other = 0.5)
 cost(action, truth) = action === :escalate ? HUMAN : action === truth ? 0.0 : HARM[action] + HUMAN
 
+const WANTS = "What does the customer primarily want us to do?"
 const OUTCOMES = (refund              = "The customer asks to get money back.",
                   cancel_subscription = "The customer wants to cancel or not renew a subscription.",
                   shipping_delivery   = "The status, tracking, delay or address of a delivery.",
                   other               = "None of the above.")
-const INTENT = choice("What does the customer primarily want us to do?", OUTCOMES)
+const INTENT = choice(WANTS, OUTCOMES)
 
 function triage(message)
     a = ask(message, "intent" => INTENT)["intent"]
@@ -57,13 +60,15 @@ end
 Price a wrong automated action as its harm **plus** the person who then fixes
 it. Priced at its harm alone, a cheap action such as `other` (0.5) would
 undercut escalation (2.0) under every distribution and become a free hedge —
-nothing would ever reach a person. Measured on our 129 labeled tickets (seven
-intents, a cost table of this shape, two-fold cross-validation): the Bayes
-rule's held-out cost was 15.5 against 35.0 for the best `min_confidence` tuned
-on the same data, and the 95% bootstrap interval of the paired difference
-excluded zero.
-The threshold needed labeled tickets to tune; the Bayes rule needs none — only
-costs.
+nothing would ever reach a person (an earlier table of ours priced a wrong
+`other` below escalation, and its Bayes rule escalated no ticket at all).
+Measured on jev-1.13.0 (September 2026) with this question and this cost table,
+on our 129 labeled tickets (their labels mapped onto these four outcomes,
+two-fold cross-validation): the Bayes rule's held-out cost was 56.5 against 83.5
+for the best `min_confidence` tuned on the other fold, and the 95% bootstrap
+interval of the paired difference, −53.0 to −8.0, excluded zero. The Bayes rule
+escalated 2 of the tickets, the tuned threshold 18. The threshold needed labeled
+tickets to tune; the Bayes rule needs none — only costs.
 
 The same rule runs inside [`nl_dispatch`](@ref) as its `decide` policy. The
 policy receives each slot's [`ChoiceAnswer`](@ref) and returns the offered
@@ -86,13 +91,15 @@ function cheapest(a::ChoiceAnswer)
 end
 
 for ticket in TICKETS
-    println(rpad(ticket, 78), repr(nl_dispatch(route, ticket; decide = cheapest, fallback = escalate)))
+    action = nl_dispatch(route, ticket; state = ticket, instructions = WANTS, decide = cheapest, fallback = escalate)
+    println(rpad(ticket, 78), repr(action))
 end
 ```
 
-The model reads different option text here — the sentences themselves rather
-than keys with descriptions — so a borderline ticket can get a different
-distribution, and with it a different action, than in the first version.
+With `state` and `instructions`, the model reads what the first version sent in
+all but the option text — each sentence is now an option's name instead of a
+key's description — and that alone can give a borderline ticket a different
+distribution, and with it a different action.
 
 A threshold is a policy too — `a -> a.confidence >= τ ? a.choice : nothing` —
 so `decide` replaces `min_confidence` rather than stacking on it: combining it
@@ -110,7 +117,6 @@ a closed and an open option set, as two questions in one request:
 const TEAMS = ["refund"           => "The customer asks to get money back.",
                "technical_issue"  => "The product, app or website is malfunctioning.",
                "billing_question" => "A question about a charge, invoice, price or payment method."]
-const WANTS = "What does the customer primarily want us to do?"
 const CLOSED   = choice(WANTS, TEAMS)
 const OPEN_SET = choice(WANTS, [TEAMS; "other" => "None of the above."])
 
@@ -216,7 +222,7 @@ for ticket in ("Please refund my annual plan, I cancelled on day two.",
                "Since the update I can't get past the login screen, it just freezes.",
                "There is a charge from your company on my card that I don't recognize at all.")
     r = route_by_meaning(ticket)
-    println(rpad(nameof(r.node), 10), rpad(r.marginal, 6), rpad(r.action, 14), ticket)
+    println(rpad(nameof(r.node), 13), rpad(r.marginal, 6), rpad(r.action, 14), ticket)
 end
 ```
 
@@ -231,8 +237,8 @@ often.
 **Types, not keys.** Each leaf's identity is a type scoped to its module, so
 two packages can both define `Refund` without colliding. The text the model
 reads is the sentence next to the type, never the type's name — short keys
-measurably mislead the model; see the design note in
-[Multiple Dispatch on Natural Language](@ref nl_dispatch_guide).
+measurably mislead the model; see [Design note: meanings are sentences, not
+keys](@ref nl_dispatch_design).
 
 ## The struct is the prompt: typed extraction
 
@@ -256,12 +262,23 @@ const QUESTIONS = (team         = "Which team should handle this ticket?",
                    urgency      = "How urgent is this ticket?",
                    wants_refund = "Does the customer ask for their money back?")
 
+# One line per enum value: the text the model reads for it, instead of a bare label.
+const DESCRIPTIONS = (
+    billing   = "Charges, invoices, refunds, payment methods, subscription prices",
+    technical = "Bugs, crashes, errors, outages, integration or configuration problems",
+    shipping  = "Delivery of physical goods: tracking, delays, damaged or missing parcels",
+    low       = "Low: a question or a minor annoyance; no loss of money, data or access",
+    normal    = "Normal: something is wrong, but there is a workaround or no deadline",
+    high      = "High: the customer is blocked, is losing money, or has a deadline within days")
+describe(x::Enum) = DESCRIPTIONS[Symbol(x)]
+
 ordinal(::Type) = false
 ordinal(::Type{Urgency}) = true         # an ordered rubric: asked as a Score, not a Choice
 
 labels(E) = [string(x) for x in instances(E)]
+descriptions(E) = [describe(x) for x in instances(E)]
 question(::Type{Bool}, q) = noul(q)
-question(E::Type{<:Enum}, q) = ordinal(E) ? score(q, labels(E)) : choice(q, labels(E))
+question(E::Type{<:Enum}, q) = ordinal(E) ? score(q, descriptions(E)) : choice(q, labels(E) .=> descriptions(E))
 
 value(::Type{Bool}, a::NoulAnswer) = a.noul >= 0.5
 value(E::Type{<:Enum}, a::ChoiceAnswer) = instances(E)[findfirst(==(a.choice), labels(E))]
@@ -283,14 +300,15 @@ for f in fieldnames(Ticket)
 end
 ```
 
-Measured on a five-field version of this struct (with option descriptions)
+Measured on a five-field version of this struct, with descriptions like these,
 over 32 labeled tickets: per-field accuracy 0.981 against 0.967 for
 gpt-5.6-luna filling a strict JSON schema, median latency 0.28 s against
 1.3–1.5 s, and not one prediction changed across three repeated runs, while the
-LLM changed 1–3% of its fields between runs. Keep the questions in code, as
-`QUESTIONS` does. Field docstrings look like their natural home, but reading
-them goes through Julia's non-public docstring internals, and they are silently
-absent when the struct itself has no docstring.
+LLM changed 1–3% of its fields between runs. Keep the questions and
+descriptions in code, as `QUESTIONS` and `DESCRIPTIONS` do. Field docstrings
+look like their natural home, but reading them goes through Julia's non-public
+docstring internals, and they are silently absent when the struct itself has no
+docstring.
 
 ## Conversation state machines
 
@@ -400,11 +418,18 @@ end
 In an agent, pass `guarded(run_tool, request; sensitive, account)` wherever
 [`tool_loop`](@ref) takes a dispatcher: a `Refused` reaches the model as that
 call's error output, the loop continues, and the model can ask the user to
-confirm. Measured limits: with the identifier check in place, 24 of 25
-unrequested calls were blocked, but on one run 2 of 4 legitimate refunds
-requested together with a second action landed between the bands. This is a
-confirmation filter that keeps an agent from acting on what the user did not
-ask for — not a security boundary.
+confirm. In a replay scope, a guard request with no recording throws
+[`ReplayMissError`](@ref), which escapes `tool_loop` instead of becoming a tool
+error.
+
+Measured limits of the wording shown, on 13 legitimate and 25 unrequested calls
+of our own — in-sample, since the wording was tuned on these cases: all 13
+legitimate calls were allowed, including a refund requested together with a
+second action (P = 0.99). Of the 25 unrequested calls the judgment blocked 17,
+sent 5 to confirmation and allowed 3; the identifier check refuses two of those
+three, so one call got through — "Unsubscribe me from the newsletter." allowed
+a subscription cancellation (P = 0.85). This is a confirmation filter that keeps
+an agent from acting on what the user did not ask for — not a security boundary.
 
 ## Shortlisting tools for an LLM
 
@@ -432,7 +457,7 @@ function ranking(tools, request)
     sort([(prob, name) for (name, prob) in p if prob > 0]; rev = true)
 end
 
-# Keep the rank order: the LLM favours the first-listed tool.
+# Keep the rank order: in two runs the LLM picked the first-listed tool.
 shortlist(tools, ranked; k = 3) = [only(filter(t -> t.name == name, tools)) for (_, name) in first(ranked, k)]
 
 request = "Tracking says delivered but there's nothing at my door."
@@ -442,8 +467,9 @@ println("Jev ranking: ", ranked)
 println("shortlist:   ", [t.name for t in tools])
 ```
 
-The LLM step is not executed here; the comments show the output of a recorded
-run, in which the shortlist was `report_missing_parcel`, `track_shipment`:
+The LLM step is not executed here. Its `# =>` lines are the output of one live
+run, pasted as comments; in that run the shortlist was `report_missing_parcel`,
+`track_shipment`:
 
 ```julia
 res = respond(request; tools, model = "gpt-6-luna", reasoning = Reasoning(effort = "none"),
@@ -456,7 +482,8 @@ Measured with a 50-tool registry over 40 requests (gpt-5.6-luna, low reasoning
 effort): the right tool was in Jev's top 5 for 40 of 40 requests, and handing
 the LLM that top 5 instead of all 50 tools cut its input from 979 to 152 tokens
 per request (−84%) while accuracy went from 0.950 to 0.975. Keep the shortlist
-in rank order: the LLM favoured the first-listed tool.
+in rank order: in two runs with the shortlist in registry order, the LLM picked
+the first-listed tool.
 
 ## See also
 

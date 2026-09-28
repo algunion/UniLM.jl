@@ -952,13 +952,16 @@ function ask(request::SystemOneRequest; service::ServiceEndpointSpec=TYPESAFESer
     local resp
     try
         body = JSON.json(request)
-        resp = _http_with_retries(cfg, t0, "POST", _api_base_url(service) * SYSTEMONE_PATH,
-                                  auth_header(service), body; cancel=tok)
+        resp = _recorded_exchange("POST", SYSTEMONE_PATH, body, t0, tok) do
+            _http_with_retries(cfg, t0, "POST", _api_base_url(service) * SYSTEMONE_PATH,
+                               auth_header(service), body; cancel=tok)
+        end
         resp.status == 200 ?
             SystemOneSuccess(_decode_systemone(String(resp.body), _typesafe_request_id(resp))) :
             _typesafe_failure(resp)
     catch e
-        e isa InterruptException && rethrow()
+        # A missing recording is not a service failure: it must reach the caller.
+        e isa Union{InterruptException,ReplayMissError} && rethrow()
         _typesafe_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
@@ -1102,8 +1105,10 @@ function list_models(; service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
     cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
     local resp
     try
-        resp = _http_with_retries(cfg, t0, "GET", _api_base_url(service) * TYPESAFE_MODELS_PATH,
-                                  auth_header(service); cancel=tok)
+        resp = _recorded_exchange("GET", TYPESAFE_MODELS_PATH, "", t0, tok) do
+            _http_with_retries(cfg, t0, "GET", _api_base_url(service) * TYPESAFE_MODELS_PATH,
+                               auth_header(service); cancel=tok)
+        end
         resp.status == 200 || return _typesafe_failure(resp)
         parsed = JSON.parse(String(resp.body); dicttype=Dict{String,Any})
         parsed isa AbstractDict || throw(ArgumentError("models listing body is not a JSON object"))
@@ -1118,7 +1123,7 @@ function list_models(; service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
         end
         TypeSafeModelsSuccess(cards, raw)
     catch e
-        e isa InterruptException && rethrow()
+        e isa Union{InterruptException,ReplayMissError} && rethrow()
         _typesafe_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end

@@ -5,19 +5,11 @@
     "body": {
       "messages": [
         {
-          "content": "You are a concise Julia programming tutor.",
+          "content": "You are a concise Julia programming tutor. Answer in plain text, without Markdown.",
           "role": "system"
         },
         {
           "content": "What is multiple dispatch? Answer in 2-3 sentences.",
-          "role": "user"
-        },
-        {
-          "content": "Multiple dispatch is a programming style where a function chooses which method to run based on the types of **all** its arguments, not just one. In Julia, this lets you define several versions of the same function for different type combinations, making code flexible and efficient.",
-          "role": "assistant"
-        },
-        {
-          "content": "Give a short Julia code example of it.",
           "role": "user"
         }
       ],
@@ -26,19 +18,19 @@
   },
   "response": {
     "status": 200,
-    "request_id": "req_55381f2cafc7467fb95e4753b131ccdd",
+    "request_id": "req_95185fd7b8824f0ba99729dfa0c3f1bf",
     "request_id_header": "x-request-id",
     "body": {
-      "id": "chatcmpl-ET7sMBb42PILJNvg7eIAhZGR0AyK4",
+      "id": "chatcmpl-ETB3qJEOWGMjFnRdAZXf6vbI41NXF",
       "object": "chat.completion",
-      "created": 1790610494,
+      "created": 1790622738,
       "model": "gpt-5.4-mini-2026-03-17",
       "choices": [
         {
           "index": 0,
           "message": {
             "role": "assistant",
-            "content": "```julia\nf(x::Int, y::Int) = x + y\nf(x::Int, y::String) = string(x, y)\n\nf(2, 3)      # 5\nf(2, \"hi\")   # \"2hi\"\n```\n\nHere, `f` dispatches to a different method depending on the types of both arguments.",
+            "content": "Multiple dispatch is a programming feature where the method chosen to run depends on the runtime types of all of the arguments, not just one “receiver” object. In Julia, this lets you define many versions of a function for different combinations of input types, and Julia picks the most specific matching method automatically.",
             "refusal": null,
             "annotations": []
           },
@@ -46,9 +38,9 @@
         }
       ],
       "usage": {
-        "prompt_tokens": 103,
-        "completion_tokens": 82,
-        "total_tokens": 185,
+        "prompt_tokens": 39,
+        "completion_tokens": 63,
+        "total_tokens": 102,
         "prompt_tokens_details": {
           "cached_tokens": 0,
           "audio_tokens": 0
@@ -64,5 +56,5 @@
       "system_fingerprint": null
     }
   },
-  "recorded_at": "2026-09-28T15:48:15Z"
+  "recorded_at": "2026-09-28T19:12:19Z"
 }

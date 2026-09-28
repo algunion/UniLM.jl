@@ -3,25 +3,25 @@
     "method": "POST",
     "path": "/v1/responses",
     "body": {
-      "input": "Explain Julia's type system in 3 bullet points",
+      "input": "Explain multiple dispatch in one plain-text sentence.",
       "model": "gpt-5.4-mini"
     }
   },
   "response": {
     "status": 200,
-    "request_id": "req_805ad30b961441f79bfbde3307a821cd",
+    "request_id": "req_7aeef1d82fa74fcd94424fdd3afc95d7",
     "request_id_header": "x-request-id",
     "body": {
-      "id": "resp_0f4242e19d2e098b006aba8c1f853087d287020d46f193eda3",
+      "id": "resp_0dc9ceb79566eb16006ababc14073087d2b09a15f6b63b5264",
       "object": "response",
-      "created_at": 1790610463,
+      "created_at": 1790622740,
       "status": "completed",
       "access_programs": null,
       "background": false,
       "billing": {
         "payer": "developer"
       },
-      "completed_at": 1790610465,
+      "completed_at": 1790622741,
       "error": null,
       "frequency_penalty": 0.0,
       "incomplete_details": null,
@@ -32,7 +32,7 @@
       "moderation": null,
       "output": [
         {
-          "id": "msg_0f4242e19d2e098b006aba8c2058e487d2b5b1ab15a343593c",
+          "id": "msg_0dc9ceb79566eb16006ababc15094087d289e005f1db5447ac",
           "type": "message",
           "status": "completed",
           "content": [
@@ -40,7 +40,7 @@
               "type": "output_text",
               "annotations": [],
               "logprobs": [],
-              "text": "- **Dynamic, but strongly typed:** Julia checks types at runtime, not compile time in the way static languages do. You don’t declare variable types in advance, but values always have types, and operations are type-checked.\n\n- **Multiple dispatch is central:** Functions in Julia choose which method to run based on the types of *all* their arguments, not just one. This makes Julia’s type system tightly linked to how you write and optimize code.\n\n- **Types are used for performance and structure:** You can write generic code with abstract types and make it fast by specializing on concrete types. This lets Julia stay flexible like a dynamic language while still achieving near C-like performance in many cases."
+              "text": "Multiple dispatch is a programming technique where the function to run is chosen based on the runtime types of more than one argument, not just the first one."
             }
           ],
           "phase": "final_answer",
@@ -92,20 +92,20 @@
       "top_p": 0.98,
       "truncation": "disabled",
       "usage": {
-        "input_tokens": 16,
+        "input_tokens": 15,
         "input_tokens_details": {
           "cache_write_tokens": 0,
           "cached_tokens": 0
         },
-        "output_tokens": 144,
+        "output_tokens": 34,
         "output_tokens_details": {
           "reasoning_tokens": 0
         },
-        "total_tokens": 160
+        "total_tokens": 49
       },
       "user": null,
       "metadata": {}
     }
   },
-  "recorded_at": "2026-09-28T15:47:47Z"
+  "recorded_at": "2026-09-28T19:12:21Z"
 }

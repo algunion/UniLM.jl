@@ -117,7 +117,7 @@ using JSON
 The simplest way to get started — one function call:
 
 ```@example gs
-result = respond("Explain Julia's type system in 3 bullet points", model="gpt-5.4-mini")
+result = respond("Explain Julia's type system in three short bullet points, in plain text without Markdown.", model="gpt-5.4-mini")
 if result isa ResponseSuccess
     println(output_text(result))
 else
@@ -131,7 +131,7 @@ For stateful, multi-turn conversations:
 
 ```@example gs
 chat = Chat(model="gpt-5.4-mini")
-push!(chat, Message(Val(:system), "You are a concise Julia programming tutor."))
+push!(chat, Message(Val(:system), "You are a concise Julia programming tutor. Answer in plain text, without Markdown."))
 push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
 result = chatrequest!(chat)
 if result isa LLMSuccess

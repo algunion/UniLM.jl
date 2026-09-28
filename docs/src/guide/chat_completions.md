@@ -31,7 +31,7 @@ Messages are added with `push!`, which enforces the conversation structure: a `p
 
 ```@example chat
 # System message must come first
-push!(chat, Message(Val(:system), "You are a helpful Julia programming tutor."))
+push!(chat, Message(Val(:system), "You are a helpful Julia programming tutor. Answer in plain text, without Markdown, in at most three sentences."))
 
 # Then user messages
 push!(chat, Message(Val(:user), "What are parametric types?"))
@@ -125,7 +125,7 @@ Because `chatrequest!` appends the response, you can keep chatting:
 
 ```@example chat
 chat = Chat(model="gpt-5.4-mini")
-push!(chat, Message(Val(:system), "You are a concise Julia programming tutor."))
+push!(chat, Message(Val(:system), "You are a concise Julia programming tutor. Answer in plain text, without Markdown."))
 push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
 result = chatrequest!(chat)
 if result isa LLMSuccess
@@ -157,7 +157,7 @@ end
 
 ```@example chat
 fresh = Chat(model="gpt-5.4-mini")
-push!(fresh, Message(Val(:system), "You are a concise Julia programming tutor."))
+push!(fresh, Message(Val(:system), "You are a concise Julia programming tutor. Answer in plain text, without Markdown."))
 push!(fresh, Message(Val(:user), "What is multiple dispatch?"))
 println("Is chat valid? ", issendvalid(fresh))  # true — system + user
 

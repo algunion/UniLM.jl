@@ -52,7 +52,7 @@ build_docs() = makedocs(;
         prettyurls=get(ENV, "CI", "false") == "true",
         canonical="https://algunion.github.io/UniLM.jl",
         edit_link="main",
-        assets=String[],
+        assets=["assets/example-output.css"],
         sidebar_sitename=true,
         repolink="https://github.com/algunion/UniLM.jl",
     ),

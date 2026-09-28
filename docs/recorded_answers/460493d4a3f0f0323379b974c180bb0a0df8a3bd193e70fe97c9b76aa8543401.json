@@ -3,25 +3,25 @@
     "method": "POST",
     "path": "/v1/responses",
     "body": {
-      "input": "Explain multiple dispatch in one sentence.",
+      "input": "Explain Julia's type system in three short bullet points, in plain text without Markdown.",
       "model": "gpt-5.4-mini"
     }
   },
   "response": {
     "status": 200,
-    "request_id": "req_9f6f5081926f4b92889e1d07829bed22",
+    "request_id": "req_4fe970883d934841a1e5e2f9dce56d2d",
     "request_id_header": "x-request-id",
     "body": {
-      "id": "resp_0d7324dbf8eedcd1006aba8c28b3d887d2825156ebbb6f9ea7",
+      "id": "resp_05e93312b0d28a8f006ababc0b6d7087d2a4e3f382f90155ef",
       "object": "response",
-      "created_at": 1790610472,
+      "created_at": 1790622731,
       "status": "completed",
       "access_programs": null,
       "background": false,
       "billing": {
         "payer": "developer"
       },
-      "completed_at": 1790610473,
+      "completed_at": 1790622733,
       "error": null,
       "frequency_penalty": 0.0,
       "incomplete_details": null,
@@ -32,7 +32,7 @@
       "moderation": null,
       "output": [
         {
-          "id": "msg_0d7324dbf8eedcd1006aba8c296b7887d2bf4a170cab098a4c",
+          "id": "msg_05e93312b0d28a8f006ababc0cc1f487d28f90abaea0c71a5f",
           "type": "message",
           "status": "completed",
           "content": [
@@ -40,7 +40,7 @@
               "type": "output_text",
               "annotations": [],
               "logprobs": [],
-              "text": "Multiple dispatch is a programming technique where a function’s behavior is chosen based on the runtime types of two or more of its arguments."
+              "text": "- Julia has a dynamic type system: you can write code without declaring types, but the language still knows the types of values at runtime.\n- Types are used to organize data and methods: functions can work on many types, and Julia chooses the right version based on the actual argument types.\n- The type hierarchy is built around abstract and concrete types, so you can define broad categories for general behavior and specific types for efficient storage and computation."
             }
           ],
           "phase": "final_answer",
@@ -92,20 +92,20 @@
       "top_p": 0.98,
       "truncation": "disabled",
       "usage": {
-        "input_tokens": 13,
+        "input_tokens": 23,
         "input_tokens_details": {
           "cache_write_tokens": 0,
           "cached_tokens": 0
         },
-        "output_tokens": 30,
+        "output_tokens": 92,
         "output_tokens_details": {
           "reasoning_tokens": 0
         },
-        "total_tokens": 43
+        "total_tokens": 115
       },
       "user": null,
       "metadata": {}
     }
   },
-  "recorded_at": "2026-09-28T15:47:53Z"
+  "recorded_at": "2026-09-28T19:12:17Z"
 }

@@ -136,7 +136,7 @@ end
 
 ```@example responses
 result = respond(
-    "What is the latest stable release of the Julia programming language?",
+    "What is the latest stable release of the Julia programming language? Answer in one plain-text sentence.",
     tools=[web_search()],
     model="gpt-5.4-mini"
 )

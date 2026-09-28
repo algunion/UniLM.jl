@@ -5,32 +5,33 @@
     "body": {
       "messages": [
         {
-          "content": "You are a concise Julia programming tutor.",
+          "content": "You are a helpful Julia programming tutor. Answer in plain text, without Markdown, in at most three sentences.",
           "role": "system"
         },
         {
-          "content": "What is multiple dispatch? Answer in 2-3 sentences.",
+          "content": "What are parametric types?",
           "role": "user"
         }
       ],
-      "model": "gpt-5.4-mini"
+      "model": "gpt-5.4-mini",
+      "temperature": 0.7
     }
   },
   "response": {
     "status": 200,
-    "request_id": "req_34daa47a82e341a083cf3870666ef57d",
+    "request_id": "req_3ca92a2c4e754c69a98c3210a68bc1f4",
     "request_id_header": "x-request-id",
     "body": {
-      "id": "chatcmpl-ET7rxexAV1DvH5hmgl5cHcR30LU0C",
+      "id": "chatcmpl-ETB48fIS61yfVKAuqCon6Yw7qmaOk",
       "object": "chat.completion",
-      "created": 1790610469,
+      "created": 1790622756,
       "model": "gpt-5.4-mini-2026-03-17",
       "choices": [
         {
           "index": 0,
           "message": {
             "role": "assistant",
-            "content": "Multiple dispatch is a programming style where a function chooses which method to run based on the types of **all** its arguments, not just one. In Julia, this lets you define several versions of the same function for different type combinations, making code flexible and efficient.",
+            "content": "Parametric types are types that take type parameters, letting you define a family of related types with shared structure, like Vector{Int} and Vector{Float64}. In Julia, this makes code more flexible and efficient because the compiler can specialize methods for concrete parameter values. For example, Array{T, N} means an array whose element type is T and whose number of dimensions is N.",
             "refusal": null,
             "annotations": []
           },
@@ -38,9 +39,9 @@
         }
       ],
       "usage": {
-        "prompt_tokens": 31,
-        "completion_tokens": 56,
-        "total_tokens": 87,
+        "prompt_tokens": 38,
+        "completion_tokens": 82,
+        "total_tokens": 120,
         "prompt_tokens_details": {
           "cached_tokens": 0,
           "audio_tokens": 0
@@ -56,5 +57,5 @@
       "system_fingerprint": null
     }
   },
-  "recorded_at": "2026-09-28T15:47:49Z"
+  "recorded_at": "2026-09-28T19:12:36Z"
 }

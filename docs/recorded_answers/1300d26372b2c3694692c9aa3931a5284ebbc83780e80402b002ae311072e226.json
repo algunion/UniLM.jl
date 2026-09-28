@@ -3,7 +3,7 @@
     "method": "POST",
     "path": "/v1/responses",
     "body": {
-      "input": "What is the latest stable release of the Julia programming language?",
+      "input": "What is the latest stable release of the Julia programming language? Answer in one plain-text sentence.",
       "model": "gpt-5.4-mini",
       "tools": [
         {
@@ -15,19 +15,19 @@
   },
   "response": {
     "status": 200,
-    "request_id": "req_2aedf18350fc49eead60998a4eddfe78",
+    "request_id": "req_07899d612ea6428ba7c5a513fb48daed",
     "request_id_header": "x-request-id",
     "body": {
-      "id": "resp_0382f506694ac58e006aba8c536b0087d2816720f708186352",
+      "id": "resp_015e863df6a4497a006ababc980e0c87d2867a455125600bd3",
       "object": "response",
-      "created_at": 1790610515,
+      "created_at": 1790622872,
       "status": "completed",
       "access_programs": null,
       "background": false,
       "billing": {
         "payer": "developer"
       },
-      "completed_at": 1790610518,
+      "completed_at": 1790622874,
       "error": null,
       "frequency_penalty": 0.0,
       "incomplete_details": null,
@@ -38,36 +38,27 @@
       "moderation": null,
       "output": [
         {
-          "id": "ws_0382f506694ac58e006aba8c543b0487d2b092dca84a2ef008",
+          "id": "ws_015e863df6a4497a006ababc98e7d087d2811cfd519de8c910",
           "type": "web_search_call",
           "status": "completed",
           "action": {
             "type": "search",
             "queries": [
-              "Julia language latest stable release official release notes site:julialang.org",
-              "site:julialang.org Julia release 1.x latest stable"
+              "Julia programming language latest stable release official"
             ],
-            "query": "Julia language latest stable release official release notes site:julialang.org"
+            "query": "Julia programming language latest stable release official"
           }
         },
         {
-          "id": "msg_0382f506694ac58e006aba8c564ac887d2be485beccacde02f",
+          "id": "msg_015e863df6a4497a006ababc9a518887d29737f55079c8eb43",
           "type": "message",
           "status": "completed",
           "content": [
             {
               "type": "output_text",
-              "annotations": [
-                {
-                  "type": "url_citation",
-                  "end_index": 177,
-                  "start_index": 87,
-                  "title": "Manual Downloads",
-                  "url": "https://www.julialang.org/downloads/manual-downloads/?utm_source=openai"
-                }
-              ],
+              "annotations": [],
               "logprobs": [],
-              "text": "The latest stable release of Julia is **v1.13.1**, released on **September 25, 2026**. ([julialang.org](https://www.julialang.org/downloads/manual-downloads/?utm_source=openai))\n\nIf you want, I can also tell you the current **LTS** release or how to install the latest version with `juliaup`."
+              "text": "The latest stable release of Julia is v1.13.1, released on September 25, 2026."
             }
           ],
           "phase": "final_answer",
@@ -135,20 +126,20 @@
       "top_p": 0.98,
       "truncation": "disabled",
       "usage": {
-        "input_tokens": 8466,
+        "input_tokens": 8428,
         "input_tokens_details": {
           "cache_write_tokens": 0,
-          "cached_tokens": 0
+          "cached_tokens": 4224
         },
-        "output_tokens": 143,
+        "output_tokens": 66,
         "output_tokens_details": {
-          "reasoning_tokens": 61
+          "reasoning_tokens": 38
         },
-        "total_tokens": 8609
+        "total_tokens": 8494
       },
       "user": null,
       "metadata": {}
     }
   },
-  "recorded_at": "2026-09-28T15:48:39Z"
+  "recorded_at": "2026-09-28T19:14:37Z"
 }

@@ -90,7 +90,7 @@ julia> result.response.model
 ```julia
 julia> chat = Chat(model="gpt-5.4-mini")
 
-julia> push!(chat, Message(Val(:system), "You are a concise Julia programming tutor."))
+julia> push!(chat, Message(Val(:system), "You are a concise Julia programming tutor. Answer in plain text, without Markdown."))
 
 julia> push!(chat, Message(Val(:user), "What is multiple dispatch? Answer in 2-3 sentences."))
 
@@ -240,7 +240,7 @@ julia> JSON.parse(calls[1]["arguments"])
 
 ```julia
 julia> result = respond(
-           "What is the latest stable release of the Julia programming language?",
+           "What is the latest stable release of the Julia programming language? Answer in one plain-text sentence.",
            tools=[web_search()]
        )
 

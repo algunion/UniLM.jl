@@ -12,7 +12,7 @@ using UniLM
 ## One call, two providers
 
 ```@example agentic
-result = respond("Explain multiple dispatch in one sentence.", model="gpt-5.4-mini")
+result = respond("Explain multiple dispatch in one plain-text sentence.", model="gpt-5.4-mini")
 if result isa ResponseSuccess
     println(output_text(result))
 else
@@ -23,7 +23,7 @@ end
 Swap the provider with a single keyword:
 
 ```@example agentic
-result = respond("Explain multiple dispatch in one sentence."; service=GEMINIServiceEndpoint, model="gemini-3.8-flash")
+result = respond("Explain multiple dispatch in one plain-text sentence."; service=GEMINIServiceEndpoint, model="gemini-3.8-flash")
 if result isa ResponseSuccess
     println(output_text(result))
 else
@@ -53,7 +53,7 @@ Gemini Interactions exposes server-side hosted tools via
 [`gemini_url_context`](@ref) — pass them in `tools=`:
 
 ```@example agentic
-result = respond("What are the latest stable Julia releases?";
+result = respond("What is the latest stable Julia release? Answer in one plain-text sentence.";
                  service=GEMINIServiceEndpoint, tools=[gemini_google_search()], model="gemini-3.8-flash")
 if result isa ResponseSuccess
     println(output_text(result))

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- The manual's LLM examples that ask open questions now ask for a short plain-text
+  answer, so their recorded replies read cleanly in an output block instead of showing
+  raw Markdown (`**bold**`, `##` headings, code fences), and long output lines wrap
+  instead of scrolling sideways.
+
 ## 0.22.0
 
 ### Added

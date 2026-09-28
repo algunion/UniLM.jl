@@ -118,7 +118,8 @@ end
     _dispatch_tool(name, args, dispatcher) -> ToolCallOutcome
 
 Call `dispatcher(name, args)`, wrap result in [`FunctionCallResult`](@ref),
-return a [`ToolCallOutcome`](@ref). Catches exceptions as error outcomes.
+return a [`ToolCallOutcome`](@ref). Catches exceptions as error outcomes, except an
+`InterruptException` and a [`ReplayMissError`](@ref), which propagate.
 The model reads the result as text: a `String` is passed through, any other value
 is JSON-encoded (`JSON.json`), never sent as its Julia `repr`.
 """
@@ -131,8 +132,10 @@ function _dispatch_tool(name::String, args::Dict{String,Any}, dispatcher::Functi
         ToolCallOutcome(name, args, fcr, true, nothing)
     catch e
         # A user Ctrl-C (InterruptException) must abort the loop, not be recorded
-        # as a tool failure and swallowed — propagate it before any conversion.
-        e isa InterruptException && rethrow()
+        # as a tool failure and swallowed — propagate it before any conversion. So
+        # must a request a recorded-answers scope cannot replay: as a tool error the
+        # model would read it and the loop would go on without the missing answer.
+        e isa Union{InterruptException,ReplayMissError} && rethrow()
         # Store the tool's own message faithfully: `error("x")` carries it verbatim
         # in `.msg`, and any other error renders through `showerror` (its
         # human-readable form, e.g. `KeyError: key "x" not found`). `string(e)` would
@@ -162,8 +165,8 @@ _tool_output(o::ToolCallOutcome)::String = o.success ? string(o.result.result) :
 # a cancelled `tok` stopped the hand-out of calls first. `n == 1` runs them one at a time
 # in this task. `n > 1` runs up to `n` at once on spawned tasks and emits after all have
 # finished, so the next request does not depend on completion order. An exception
-# escaping a dispatch (`_dispatch_tool` lets only an InterruptException through)
-# propagates once the in-flight dispatches are done.
+# escaping a dispatch (`_dispatch_tool` lets only an InterruptException or a
+# ReplayMissError through) propagates once the in-flight dispatches are done.
 function _run_calls(emit::Function, dispatch::Function, calls::AbstractVector,
                     tok::Union{Nothing,CancelToken}, n::Int)::Bool
     if n == 1
@@ -258,7 +261,10 @@ requested them.
   thread-safe; their results are appended in call order once all have finished, so the
   next request does not depend on completion order. An `InterruptException` from any
   dispatch propagates, after the interrupted turn is removed from `chat` (with any
-  results already appended), so the conversation stays sendable.
+  results already appended), so the conversation stays sendable. So does a
+  [`ReplayMissError`](@ref) from a request the dispatcher made inside a
+  [`with_recorded_answers`](@ref) scope: as a tool error, the model would read it and
+  the loop would go on without the answer.
 
 # Example
 ```julia
@@ -429,7 +435,9 @@ cancelled loop returns promptly with `completed=false` and the turn's typed
 cancellation result — the cancelled request's `ResponseCallError`, or, between
 dispatches, a `ResponseCallError` whose `cause` is [`UniLMCancelled`](@ref).
 `tool_concurrency` (default 1) works as in [`tool_loop!`](@ref): above 1, up to that
-many of a turn's calls run at once and their outputs are sent in call order.
+many of a turn's calls run at once and their outputs are sent in call order. An
+`InterruptException` or a [`ReplayMissError`](@ref) from a dispatch propagates, as in
+`tool_loop!`.
 
 Per-call `config::RequestConfig` overrides timeouts/retry budget.
 """

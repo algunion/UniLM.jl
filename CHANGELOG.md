@@ -50,6 +50,9 @@
   methods, or add a method that is wild in every slot (`f(::Meaning, ::Meaning, x)`) as
   a backstop: it is not an option and it covers every combination.
 - `@branch` accepts a `_` fallback line with `decide` as well as with `min_confidence`.
+- `tool_loop!` and `tool_loop` let a `ReplayMissError` raised by a dispatcher propagate,
+  as they do an `InterruptException`, instead of sending it to the model as a tool error
+  while the loop goes on.
 - The state `nl_dispatch` builds from its ordinary arguments lists them in argument
   order (a `JSON.Object`) instead of a `Dict`'s hash order, so the same arguments send
   the same request bytes on every Julia version.

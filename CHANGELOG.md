@@ -9,14 +9,16 @@
   `ask` — and so `nl_dispatch` and `@branch` — and `list_models` exchanges through
   `<dir>/<key>.json`, keyed by the SHA-256 of the request line and the exact request
   body (a request with its options or state keys reordered is a different request).
-  `:replay` (the default) needs no API key and no network, and throws the new
-  `ReplayMissError` out of `ask` for a request with no recording instead of returning
-  a `SystemOneCallError`; `:record` sends every request and writes each HTTP 200;
-  `:record_missing` replays what is recorded and records the rest. The scope covers
-  tasks started inside it, scopes nest, and a cancelled token ends a call before any
-  replay. The documentation's System One examples replay committed recordings when the
-  build has no `TYPESAFE_API_KEY`; `UNILM_DOCS_RECORD=1` with the key records the
-  missing ones.
+  `:replay` (the default) needs no API key and no network. A request with no
+  recording, or with a recording file that cannot be read, throws the new
+  `ReplayMissError` out of `ask` instead of returning a `SystemOneCallError`; its
+  `reason` says which. `:record` sends every request and writes each HTTP 200,
+  replacing any earlier file; `:record_missing` replays what is recorded and records
+  the rest, and throws on an unreadable file rather than overwrite it. The scope
+  covers tasks started inside it, scopes nest, and a cancelled token ends a call
+  before any replay. The documentation's System One examples replay committed
+  recordings when the build has no `TYPESAFE_API_KEY`; `UNILM_DOCS_RECORD=1` with the
+  key records the missing ones.
 
 ### Fixed
 - A System One error whose object `detail` carries an `error_type` and no `message`

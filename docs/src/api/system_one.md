@@ -226,9 +226,9 @@ docs build that calls it live cannot be reproduced.
 [`with_recorded_answers`](@ref) records a real answer once and replays it
 offline: inside its scope, `ask`, `list_models`, `nl_dispatch` and `@branch` are
 answered from a directory of recordings keyed by the exact request bytes, with
-no API key and no network, and a request with no recording throws
-[`ReplayMissError`](@ref). A build of this documentation without
-`TYPESAFE_API_KEY` renders its System One examples from such recordings.
+no API key and no network, and a request with no recording, or with an
+unreadable one, throws [`ReplayMissError`](@ref). A build of this documentation
+without `TYPESAFE_API_KEY` renders its System One examples from such recordings.
 
 ```@docs
 with_recorded_answers

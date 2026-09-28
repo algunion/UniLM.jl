@@ -15,3 +15,11 @@ docs/superpowers/
 *.jl.cov
 *.jl.*.cov
 *.jl.mem
+
+# written by docs/make.jl and by the site's build
+site/src/app/**/page.md
+site/src/navigation.json
+site/public/assets/
+site/out/
+site/node_modules/
+site/.next/

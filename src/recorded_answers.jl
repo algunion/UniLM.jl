@@ -18,20 +18,27 @@
 
 Thrown by [`ask`](@ref) and [`list_models`](@ref) — and so out of
 [`nl_dispatch`](@ref) and [`@branch`](@ref) — inside a
-[`with_recorded_answers`](@ref) scope in `:replay` mode when the directory holds
-no recording of the request. It is thrown rather than returned as a
-[`SystemOneCallError`](@ref): a missing recording is a gap in the recordings, and
-a caller's `r isa SystemOneSuccess || fallback()` path must not absorb it as if
-the service had failed.
+[`with_recorded_answers`](@ref) scope when a request cannot be replayed: in
+`:replay` mode the directory holds no recording of it, or in `:replay` or
+`:record_missing` mode its recording file cannot be read as one. It is thrown
+rather than returned as a [`SystemOneCallError`](@ref): a gap in the recordings
+is not a service failure, and a caller's `r isa SystemOneSuccess || fallback()`
+path must not absorb it as if it were one.
 
 # Fields
 - `dir::String`: the recordings directory that was searched.
-- `key::String`: the recording key; the missing file is `<dir>/<key>.json`.
+- `key::String`: the recording key; the recording is the file `<dir>/<key>.json`.
 - `method::String`, `path::String`: the request line, e.g. `"POST"` and `"/v1/systemone"`.
 - `body::String`: the exact request body (empty for `GET /v1/models`).
+- `reason::String`: `"no recording"`, or `"unreadable recording: …"` followed by
+  what is wrong with the file — not JSON, no `response` object, a status other
+  than 200, a `body` that is not a JSON object, or a `request_id` that is neither
+  a string nor null.
 
-`showerror` names the directory, the start of the key, the questions the request
-asked and how to record the answer.
+`showerror` names the request line, the start of the key, the questions the
+request asked, the directory or (for an unreadable recording) the file, and how to
+record the answer: an unreadable file must be deleted first, because
+`:record_missing` never overwrites one.
 """
 struct ReplayMissError <: Exception
     dir::String
@@ -39,16 +46,22 @@ struct ReplayMissError <: Exception
     method::String
     path::String
     body::String
+    reason::String
 end
 
+const _NO_RECORDING = "no recording"
+
 function Base.showerror(io::IO, e::ReplayMissError)
-    print(io, "ReplayMissError: ", e.dir, " holds no recorded answer to ", e.method, " ",
-          e.path, " (key ", first(e.key, 12), "…)")
+    print(io, "ReplayMissError: ", e.method, " ", e.path, " (key ", first(e.key, 12), "…)")
     parsed = _typesafe_parse_body(e.body)
     asked = parsed isa AbstractDict ? get(parsed, "questions", nothing) : nothing
     asked isa AbstractDict && !isempty(asked) &&
         print(io, " asking ", join(sort!([repr(string(k)) for k in keys(asked)]), ", "))
-    print(io, ". To record it, run the same code with TYPESAFE_API_KEY set and `mode = :record_missing`.")
+    record = "run the same code with TYPESAFE_API_KEY set and `mode = :record_missing`."
+    e.reason == _NO_RECORDING ?
+        print(io, ": ", e.reason, " in ", e.dir, ". To record it, ", record) :
+        print(io, ": ", e.reason, ". Delete ", joinpath(e.dir, e.key * ".json"),
+              " and record it again: ", record)
 end
 
 const _ANSWER_MODES = (:replay, :record, :record_missing)
@@ -74,13 +87,14 @@ The service does not answer a repeated request identically, so a test or a docs
 build that calls it live cannot be reproduced; one recorded answer, replayed, can.
 
 - `:replay` (the default): nothing reaches the network and no API key is needed.
-  A request with no recording throws [`ReplayMissError`](@ref) out of `ask`
-  itself. `dir` must exist.
+  A request with no recording, or with a recording file that cannot be read as
+  one, throws [`ReplayMissError`](@ref) out of `ask` itself. `dir` must exist.
 - `:record`: every request goes to the service; each HTTP 200 is written to
-  `dir` (created if needed), replacing an earlier recording of the same request.
-  A non-200 result is returned as usual and never recorded.
+  `dir` (created if needed), replacing an earlier recording of the same request,
+  readable or not. A non-200 result is returned as usual and never recorded.
 - `:record_missing`: replay what `dir` holds, and send the rest to the service,
-  recording their 200s.
+  recording their 200s. An unreadable recording throws `ReplayMissError` here
+  too instead of being overwritten: delete the file to record it again.
 
 A recording is `<dir>/<key>.json`, where `key` is the lowercase hex SHA-256 of
 `"<METHOD> <path>\\n"` followed by the exact request body. The key is never a
@@ -138,26 +152,46 @@ end
 
 _exchange(::Nothing, ::String, ::String, ::String, live::Function)::HTTP.Response = live()
 
+# A file that is not a readable recording is as loud as a missing one: returned as
+# a call error, it would read as a service failure. `:record` never reads it, so
+# recording over it is how it gets replaced.
 function _exchange(s::_AnswerScope, method::String, path::String, body::String,
                    live::Function)::HTTP.Response
     key = _answer_key(method, path, body)
     file = joinpath(s.dir, key * ".json")
-    s.mode !== :record && isfile(file) && return _replayed(file)
-    s.mode === :replay && throw(ReplayMissError(s.dir, key, method, path, body))
+    miss(reason::String) = ReplayMissError(s.dir, key, method, path, body, reason)
+    if s.mode !== :record && isfile(file)
+        return try
+            _replayed(file)
+        catch err
+            err isa InterruptException && rethrow()
+            # The first line only: a JSON parse error goes on to quote the text around it.
+            why = String(first(split(err isa ArgumentError ? err.msg : sprint(showerror, err), '\n')))
+            throw(miss("unreadable recording: " * why))
+        end
+    end
+    s.mode === :replay && throw(miss(_NO_RECORDING))
     resp = _exchange(s.parent, method, path, body, live)
     resp.status == 200 && _record(file, method, path, body, resp)
     resp
 end
 
-# A recording rebuilt as the 200 it captured, for the caller to decode as a live one.
+# A recording rebuilt as the 200 it captured, for the caller to decode as a live
+# one. Only the recording's own shape is checked here: whether the body is a
+# usable answer is the decoder's call, exactly as for a live 200.
 function _replayed(file::String)::HTTP.Response
     rec = JSON.parse(read(file, String))
     res = rec isa AbstractDict ? get(rec, "response", nothing) : nothing
-    res isa AbstractDict && haskey(res, "body") || throw(ArgumentError(
-        "$file is not a recorded System One answer: it has no \"response\" object with a \"body\""))
+    res isa AbstractDict || throw(ArgumentError("it has no \"response\" object"))
+    status = get(res, "status", nothing)
+    status == 200 || throw(ArgumentError("its status is $(repr(status)), and only HTTP 200s are recorded"))
+    answer = get(res, "body", nothing)
+    answer isa AbstractDict || throw(ArgumentError("its \"body\" is not a JSON object"))
     id = get(res, "request_id", nothing)
-    HTTP.Response(200, id isa AbstractString ? ["x-typesafe-request-id" => String(id)] : Pair{String,String}[],
-                  Vector{UInt8}(JSON.json(res["body"])))
+    id isa Union{Nothing,AbstractString} || throw(ArgumentError(
+        "its \"request_id\" is neither a string nor null"))
+    HTTP.Response(200, isnothing(id) ? Pair{String,String}[] : ["x-typesafe-request-id" => String(id)],
+                  Vector{UInt8}(JSON.json(answer)))
 end
 
 function _record(file::String, method::String, path::String, body::String, resp::HTTP.Response)::Nothing

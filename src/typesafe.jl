@@ -913,9 +913,12 @@ _typesafe_call_error(e, resp::Union{Nothing,HTTP.Response})::SystemOneCallError 
     ask(state, questions...; model=default_typesafe_model(), service=TYPESAFEServiceEndpoint, config=nothing, cancel=nothing)
 
 Evaluate every question against `state` in one `POST /v1/systemone` call and
-return exactly one of [`SystemOneSuccess`](@ref), [`SystemOneFailure`](@ref) (a
-non-2xx response) or [`SystemOneCallError`](@ref) (no response, or a 200 whose
-body was not a usable set of answers).
+return one of [`SystemOneSuccess`](@ref), [`SystemOneFailure`](@ref) (a non-2xx
+response) or [`SystemOneCallError`](@ref) (no response, or a 200 whose body was
+not a usable set of answers). Inside a [`with_recorded_answers`](@ref) scope, a
+request the scope cannot replay — no recording in `:replay` mode, or a recording
+file that cannot be read — throws [`ReplayMissError`](@ref) instead of returning:
+a gap in the recordings is not a service failure.
 
 `questions` takes the same forms as [`SystemOneRequest`](@ref): `name => question`
 pairs, a `NamedTuple` or `AbstractDict` of them, or bare questions auto-named
@@ -1090,7 +1093,9 @@ end
 List the models and aliases the authenticated account may name in
 [`SystemOneRequest`](@ref)`.model` (`GET /v1/models`). Returns
 [`TypeSafeModelsSuccess`](@ref), [`SystemOneFailure`](@ref), or
-[`SystemOneCallError`](@ref).
+[`SystemOneCallError`](@ref). Inside a [`with_recorded_answers`](@ref) scope that
+cannot replay the listing it throws [`ReplayMissError`](@ref) instead, as
+[`ask`](@ref) does.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout and retry
 budget; like [`ask`](@ref), this rides the shared retry seam, so `max_attempts`

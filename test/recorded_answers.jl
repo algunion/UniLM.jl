@@ -174,6 +174,23 @@ end
     @test isfile(_ra_file(dir, b))
 end
 
+@testset "recorded answers — :record replaces an unreadable recording, :record_missing refuses to" begin
+    dir = mkpath(_ra_dir("replace"))
+    req = _ra_request("replace me")
+    file = _ra_file(dir, req)
+    write(file, "{not json")
+    _ra_online() do
+        before = _RA_HITS[]
+        e = with_recorded_answers(() -> _ra_caught(() -> ask(req; config=_RA_CFG)), dir; mode=:record_missing)
+        @test e isa ReplayMissError && startswith(e.reason, "unreadable recording: ")
+        @test _RA_HITS[] == before && read(file, String) == "{not json"   # nothing sent, nothing written
+        r = with_recorded_answers(() -> ask(req; config=_RA_CFG), dir; mode=:record)
+        @test r isa SystemOneSuccess && _RA_HITS[] == before + 1
+        @test JSON.parse(read(file, String))["response"]["body"] == r.response.raw
+        @test _ra_seen(with_recorded_answers(() -> ask(req; config=_RA_CFG), dir)) == _ra_seen(r)
+    end
+end
+
 @testset "recorded answers — a non-200 is returned as usual and never recorded" begin
     dir = _ra_dir("failure")
     r = _ra_online(() -> with_recorded_answers(() -> ask(_ra_request("fail"); config=_RA_CFG), dir; mode=:record))
@@ -237,6 +254,7 @@ end
     @test e.dir == abspath(dir) && e.method == "POST" && e.path == "/v1/systemone"
     @test e.body == JSON.json(unrecorded)
     @test e.key == _ra_key("POST", "/v1/systemone", e.body)
+    @test e.reason == "no recording"
     msg = sprint(showerror, e)
     @test contains(msg, abspath(dir)) && contains(msg, first(e.key, 12)) && !contains(msg, e.key)
     @test contains(msg, "\"team\", \"upset\", \"urgency\"")
@@ -255,12 +273,64 @@ end
         @test listing isa ReplayMissError && listing.key * ".json" == _RA_MODELS_FILE
         @test !contains(sprint(showerror, listing), "asking")
     end
+end
 
-    # A recording that is not one is a failed call naming the file, not an answer.
-    corrupt = mkpath(_ra_dir("corrupt"))
-    write(_ra_file(corrupt, unrecorded), """{"request": {}}""")
-    r = _ra_offline(() -> with_recorded_answers(() -> ask(unrecorded; config=_RA_CFG), corrupt))
-    @test r isa SystemOneCallError && contains(r.error, "is not a recorded System One answer")
+@testset "recorded answers — an unreadable recording is thrown like a miss, never returned" begin
+    req = _ra_request("unreadable")
+    response(body; status=200, id="req_x") =
+        JSON.json(Dict("response" => Dict("status" => status, "request_id" => id, "body" => body)))
+    # Each file exists under the request's key, and none of them is a recording.
+    cases = [
+        ("{not json",                                     "invalid JSON"),
+        ("",                                              "invalid JSON"),
+        ("""["a list"]""",                                "no \"response\" object"),
+        ("""{"request": {}}""",                           "no \"response\" object"),
+        (response(Dict("model" => "m"); status=500),      "status is 500"),
+        (JSON.json(Dict("response" => Dict("body" => Dict()))), "status is nothing"),
+        (response("a string"),                            "\"body\" is not a JSON object"),
+        (response(nothing),                               "\"body\" is not a JSON object"),
+        (response(Dict("model" => "m"); id=7),            "\"request_id\" is neither a string nor null"),
+    ]
+    _ra_offline() do
+        for (i, (text, why)) in enumerate(cases)
+            dir = mkpath(_ra_dir("unreadable-$i"))
+            file = _ra_file(dir, req)
+            write(file, text)
+            # Thrown out of ask, not returned: a call error here would read as a service failure.
+            e = with_recorded_answers(() -> _ra_caught(() -> ask(req; config=_RA_CFG)), dir)
+            @test e isa ReplayMissError
+            @test startswith(e.reason, "unreadable recording: ") && contains(e.reason, why)
+            msg = sprint(showerror, e)
+            @test contains(msg, file) && contains(msg, "Delete") && contains(msg, ":record_missing")
+            @test contains(msg, "\"team\", \"upset\", \"urgency\"") && !contains(msg, "\n")
+            # :record_missing reports it the same way instead of recording over it.
+            @test with_recorded_answers(() -> _ra_caught(() -> ask(req; config=_RA_CFG)), dir;
+                                        mode=:record_missing) isa ReplayMissError
+            @test read(file, String) == text
+        end
+        # The listing, and the verbs built on ask, surface it the same way.
+        dir = mkpath(_ra_dir("unreadable-listing"))
+        write(joinpath(dir, _RA_MODELS_FILE), response("a string"))
+        listing = with_recorded_answers(() -> _ra_caught(() -> list_models(; config=_RA_CFG)), dir)
+        @test listing isa ReplayMissError && startswith(listing.reason, "unreadable recording: ")
+        dispatch() = with_recorded_answers(() -> _ra_caught(() -> nl_dispatch(_ra_route, "unreadable";
+                                                                               config=_RA_CFG)), dir)
+        missed = dispatch()          # its miss names the key its recording would have
+        @test missed isa ReplayMissError && missed.reason == "no recording"
+        write(joinpath(dir, missed.key * ".json"), "{not json")
+        again = dispatch()
+        @test again isa ReplayMissError && startswith(again.reason, "unreadable recording: ")
+
+        # A well-formed recording whose body the decoder rejects is the service's payload,
+        # not the recording's: the same call error a live 200 with that body returns.
+        dir = mkpath(_ra_dir("undecodable"))
+        write(_ra_file(dir, req), response(Dict("model" => "m"); id="req_broken"))
+        write(joinpath(dir, _RA_MODELS_FILE), response(Dict("data" => []); id="req_broken"))
+        r = with_recorded_answers(() -> ask(req; config=_RA_CFG), dir)
+        @test r isa SystemOneCallError && r.request_id == "req_broken" && contains(r.error, "answers")
+        m = with_recorded_answers(() -> list_models(; config=_RA_CFG), dir)
+        @test m isa SystemOneCallError && m.request_id == "req_broken" && contains(m.error, "models")
+    end
 end
 
 @testset "recorded answers — the scope reaches spawned tasks, and scopes nest" begin

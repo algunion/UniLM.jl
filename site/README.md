@@ -21,7 +21,7 @@ into this directory, and the site renders it.
 
    ```bash
    cd site
-   npm ci
+   npm ci --ignore-scripts
    DOCS_BASE_PATH=/UniLM.jl/dev npm run build
    ```
 

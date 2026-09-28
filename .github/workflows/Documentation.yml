@@ -7,7 +7,7 @@ on:
     branches: [main]
   # Allow manual (re)builds for any ref — e.g. to (re)deploy versioned docs for a
   # release tag whose TagBot push did not trigger this workflow, or to redeploy a
-  # released version's docs, built from the dispatched ref, into its folder.
+  # released version's docs, built from main, into its folder.
   workflow_dispatch:
     inputs:
       live_examples:
@@ -15,18 +15,20 @@ on:
         type: boolean
         default: false
       redeploy_version:
-        description: Redeploy this release's docs (e.g. v0.22.0) from the dispatched ref; refused unless its tag exists and src/ and Project.toml equal the tag's
+        description: Redeploy this release's docs (e.g. v0.22.0) from main; refused unless its tag exists and src/ and Project.toml equal the tag's
         type: string
         default: ''
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
-permissions:
-  contents: write
-  statuses: write
+# Each job asks for the token permissions it uses.
+permissions: {}
 
 jobs:
+  # Runs the manual's examples and the site's npm dependencies: it can read the
+  # repository and nothing more, and it never holds the deploy key.
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     env:
       REDEPLOY_VERSION: ${{ inputs.redeploy_version }}
     steps:
@@ -37,6 +39,7 @@ jobs:
           exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # a redeploy compares the checkout with the release's tag
           fetch-tags: ${{ inputs.redeploy_version != '' }}
       - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3.0.2
@@ -50,11 +53,13 @@ jobs:
             Pkg.develop(PackageSpec(path=pwd()))
             Pkg.instantiate()'
       # The gh-pages folder the site is built for: the release being redeployed (refused
-      # here, before anything is built, unless its tag exists and src/ and Project.toml
-      # equal the tag's), the version tag being built, else dev.
+      # here, before anything is built, unless the run is on main, its tag exists and src/
+      # and Project.toml equal the tag's), the version tag being built, else dev.
       - name: Choose the site's folder
         id: site
-        run: julia --project=docs/ docs/deploy.jl plan >> "$GITHUB_OUTPUT"
+        run: |
+          julia --project=docs/ docs/deploy.jl plan > site/plan.env
+          cat site/plan.env >> "$GITHUB_OUTPUT"
       # Automatic builds and releases replay the recorded answers without provider keys.
       # A live build incurs API spend, requires an explicit manual opt-in, and only
       # checks that the examples still run: its outputs differ from the recorded ones
@@ -79,7 +84,7 @@ jobs:
           cache-dependency-path: site/package-lock.json
       - name: Install the site's dependencies
         working-directory: site
-        # No install scripts: the site needs none, and a dependency's script would run in the job that deploys.
+        # No install scripts: the site needs none.
         run: npm ci --ignore-scripts
       - name: Build the site
         working-directory: site
@@ -87,10 +92,55 @@ jobs:
           DOCS_BASE_PATH: ${{ steps.site.outputs.base_path }}
           NEXT_PUBLIC_DOCS_VERSION: ${{ steps.site.outputs.version }}
         run: npm run build
-      # Pull requests and live builds are built only.
+      # The export, with the plan it was built for beside it, is all the deploy job receives.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: site
+          path: |
+            site/out
+            site/plan.env
+          if-no-files-found: error
+          retention-days: 1
+
+  # Publishes the export on gh-pages. A fresh runner: nothing the build job ran or wrote
+  # is here but the artifact, static files that are copied, never run. No npm and no
+  # manual build code runs in this job. Pull requests and live builds are built only.
+  deploy:
+    needs: build
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.live_examples)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Documenter pushes to gh-pages with GITHUB_TOKEN when DOCUMENTER_KEY is absent
+      statuses: write  # Documenter reports the deployment as a commit status
+    env:
+      REDEPLOY_VERSION: ${{ inputs.redeploy_version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # docs/deploy.jl checks a redeploy against the release's tag again
+          fetch-tags: ${{ inputs.redeploy_version != '' }}
+      # The export lands in site/out, the plan in site/plan.env. The folder the export is
+      # deployed into is decided again from this run's event, never read from the
+      # artifact, and the export must have been built for it.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: site
+          path: site
+      - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3.0.2
+        with:
+          version: '1'
+      # docs/deploy.jl loads Documenter alone: the docs environment is cut down to it, so
+      # neither the package nor the manual's other dependencies are installed here.
+      - name: Install Documenter
+        run: |
+          julia --startup-file=no --project=docs/ -e '
+            using Pkg
+            Pkg.rm([name for name in keys(Pkg.project().dependencies) if name != "Documenter"])
+            Pkg.resolve()
+            Pkg.instantiate()'
       - name: Deploy the site
-        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.live_examples)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
-        run: julia --project=docs/ docs/deploy.jl
+        run: julia --startup-file=no --project=docs/ docs/deploy.jl

@@ -19,7 +19,8 @@ import JSON
     WriterError <: Exception
 
 A page holds something the site cannot show the way Documenter's HTML shows it — an
-unsupported node, an output that is not text, a link to an anchor no page defines.
+unsupported node, an output that is not text, a link to an anchor no page defines — or
+would be served at the route of another page (`a.md` and `a/index.md`).
 `page` is the page's path under `docs/src` (or ``make.jl `pages` `` for the
 navigation), `what` names the node or the problem.
 """
@@ -105,12 +106,26 @@ struct Walk
     doc::Documenter.Document
     key::String                    # the page being read
     titles::Dict{String,String}    # page key => anchor of its title heading
+    packages::Dict{Module,Vector{String}}  # a package's top module => its src/**/*.jl, read once per build
+    source::Vector{String}         # what the node was written in: the page's file, or a docstring's package source
     indocstring::Bool
     ids::Vector{String}
     links::Vector{String}
 end
 fail(w::Walk, what::AbstractString) = throw(WriterError(w.key, what))
 unsupported(w::Walk, e) = fail(w, "unsupported node $(typeof(e))")
+
+# Documenter parses a page with its carriage returns removed; the source is read the same way.
+source_text(path::AbstractString) = replace(read(path, String), '\r' => "")
+
+"The `src/**/*.jl` files of the package that defines `mod`: none for a module outside a package."
+package_source(::Dict{Module,Vector{String}}, ::Nothing) = String[]
+package_source(packages::Dict{Module,Vector{String}}, mod::Module) =
+    get!(packages, Base.moduleroot(mod)) do
+        dir = pkgdir(mod)
+        dir === nothing ? String[] :
+            [source_text(joinpath(d, f)) for (d, _, fs) in walkdir(joinpath(dir, "src")) for f in fs if endswith(f, ".jl")]
+    end
 
 "Documenter's URL for a page key, kept as the site route: `guide/x.md` → `/guide/x/`, `index.md` → `/`."
 function route(key::AbstractString)
@@ -145,9 +160,11 @@ block(w::Walk, ::Documenter.SetupNode, n) = Block[]
 block(w::Walk, ::Documenter.DocsNodesBlock, n) = blocks(w, n.children)
 function block(w::Walk, e::Documenter.DocsNode, n)
     push!(w.ids, e.anchor.id)
-    inside = Walk(w.doc, w.key, w.titles, true, w.ids, w.links)
-    [Docstring(e.anchor.id, Documenter.bindingstring(e.object.binding), Documenter.doccat(e.object),
-               [blocks(inside, md.children) for md in e.mdasts])]
+    bodies = map(e.mdasts, e.results) do md, docstring
+        source = package_source(w.packages, get(docstring.data, :module, nothing))
+        blocks(Walk(w.doc, w.key, w.titles, w.packages, source, true, w.ids, w.links), md.children)
+    end
+    [Docstring(e.anchor.id, Documenter.bindingstring(e.object.binding), Documenter.doccat(e.object), bodies)]
 end
 function block(w::Walk, e::MarkdownAST.Admonition, n)
     body = blocks(w, n.children)
@@ -195,8 +212,15 @@ isexternal(url::AbstractString) = startswith(url, r"https?://|mailto:")
 inline(w::Walk, e::MarkdownAST.Text, n) = Text(e.text)
 inline(w::Walk, e::MarkdownAST.Code, n) = Code(e.code)
 # Julia's Markdown reads a double-backtick span (``x``) as inline LaTeX. The manual has no
-# mathematics, so such a span is a code span written with two backticks, and is shown as code.
-inline(w::Walk, e::MarkdownAST.InlineMath, n) = Code(e.math)
+# mathematics: a span its source writes that way — the page's file, or for a docstring its
+# package's src/**/*.jl — is code written with two backticks, and is shown as code. Other
+# inline mathematics, such as $x$, stops the build.
+function inline(w::Walk, e::MarkdownAST.InlineMath, n)
+    written = "``" * e.math * "``"
+    any(s -> occursin(written, s), w.source) && return Code(e.math)
+    fail(w, "unsupported node MarkdownAST.InlineMath, $(repr(e.math)): the site shows no mathematics, and " *
+            "$(w.indocstring ? "the docstring's package source" : "the page's source") does not write it as $written")
+end
 inline(w::Walk, ::MarkdownAST.Emph, n) = Emph(inlines(w, n))
 inline(w::Walk, ::MarkdownAST.Strong, n) = Strong(inlines(w, n))
 inline(w::Walk, e::MarkdownAST.Link, n) =
@@ -242,23 +266,31 @@ function description(body::Vector{Block})
     nothing
 end
 
-function read_page(doc::Documenter.Document, key::String, titles::Dict{String,String})
-    w = Walk(doc, key, titles, false, String[], String[])
+function read_page(doc::Documenter.Document, key::String, titles::Dict{String,String},
+                   packages::Dict{Module,Vector{String}})
     page = doc.blueprint.pages[key]
+    w = Walk(doc, key, titles, packages, [source_text(joinpath(doc.user.root, page.source))], false, String[], String[])
     title = title_node(page)
     title === nothing && fail(w, "the page does not open with its title, a level-1 heading")
     body = blocks(w, (n for n in page.mdast.children if n !== title))
     Page(key, route(key), plain(inlines(w, only(title.children))), description(body), body, w.ids, w.links)
 end
 
-"Every page of the manual as the site's page model, its internal links checked."
+"Every page of the manual as the site's page model, its routes distinct and its internal links checked."
 function read_site(doc::Documenter.Document)
+    pagekeys = sort!(collect(keys(doc.blueprint.pages)))
+    routes = Dict{String,String}()  # route => the first page served there
+    for key in pagekeys
+        first_key = get!(routes, route(key), key)
+        first_key == key || throw(WriterError(key, "its route $(route(key)) is also the route of $first_key"))
+    end
     titles = Dict{String,String}()
     for (key, page) in doc.blueprint.pages
         t = title_node(page)
         t === nothing || (titles[key] = Documenter.anchor_label(t.element.anchor))
     end
-    pages = [read_page(doc, key, titles) for key in sort!(collect(keys(doc.blueprint.pages)))]
+    packages = Dict{Module,Vector{String}}()
+    pages = [read_page(doc, key, titles, packages) for key in pagekeys]
     ids = Dict(p.route => Set(p.ids) for p in pages)
     for p in pages
         twice = unique(filter(id -> count(==(id), p.ids) > 1, p.ids))

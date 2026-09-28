@@ -459,7 +459,7 @@ Runs at most `cfg.max_attempts` attempts inside `cfg.total_deadline`
 (breaching it throws `UniLMTimeout(:deadline, …)`); each attempt gets
 `min(cfg.request_timeout, remaining)` via [`_http`](@ref).
 
-Retryable = retryable status (408/429/500/502/503/504/529) ∪ per-attempt
+Retryable = retryable status (408/429/500/502–504/520–524/529) ∪ per-attempt
 `UniLMTimeout(:connect|:request)` ∪ transport-level IO exceptions — never
 `InterruptException`. When the backoff (`Retry-After`/jitter) exceeds the
 remaining budget, fail NOW with the last real outcome: sleeping less and
@@ -1431,7 +1431,7 @@ end
 Send `chat` to its provider and return a typed result.
 
 Non-streaming (`chat.stream !== true`): returns `LLMSuccess`, `LLMFailure`, or
-`LLMCallError`. Transient statuses (408/429/500/502/503/504/529) are retried with
+`LLMCallError`. Transient statuses (408/429/500/502–504/520–524/529) are retried with
 backoff and jitter under the resolved [`RequestConfig`](@ref) (`max_attempts`,
 `total_deadline`; `Retry-After` honored). Timeouts surface as `LLMCallError` with
 `status = nothing` and the `UniLMTimeout` in `cause` — no fabricated HTTP statuses.
@@ -1590,7 +1590,7 @@ Send an Embeddings API request for the `input` in `emb`. Returns `EmbeddingSucce
 resulting vectors are filled into `emb.embeddings` in place and are also reachable via
 `embedding_vectors(result)`.
 
-Transient statuses (408/429/500/502/503/504/529) are retried with backoff and jitter
+Transient statuses (408/429/500/502–504/520–524/529) are retried with backoff and jitter
 under the resolved [`RequestConfig`](@ref) (`config === nothing` resolves the ambient
 configuration). Timeouts surface as `EmbeddingCallError` with `status = nothing` and
 the `UniLMTimeout` in `cause`. Inside a [`with_recorded_answers`](@ref) scope the

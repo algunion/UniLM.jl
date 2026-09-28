@@ -1,0 +1,67 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-3.8-flash:generateContent",
+    "body": {
+      "contents": [
+        {
+          "parts": [
+            {
+              "text": "Say hello in one short sentence."
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "generationConfig": {
+        "maxOutputTokens": 1024,
+        "thinkingConfig": {
+          "thinkingLevel": "LOW"
+        }
+      },
+      "systemInstruction": {
+        "parts": [
+          {
+            "text": "You are a helpful assistant."
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Hello, it is great to meet you!",
+                "thoughtSignature": "EmkKZwFpFH0TFmTf1Jel9KOQlnz10DoRcFnrrPnNguelvKxGAaxujOBZrLZHz74lE3rPYaRVuO6lYUgyg0hU+fzkuZuHzP2ClHW9k84eevFxs00/oOvhAPHinq2WG0q5lhq2PB83vUsrMx4="
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 14,
+        "candidatesTokenCount": 9,
+        "totalTokenCount": 23,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 14
+          }
+        ],
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-3.8-flash",
+      "responseId": "SIy6arDjOdvtxs0P-_bJ4QQ"
+    }
+  },
+  "recorded_at": "2026-09-28T15:48:25Z"
+}

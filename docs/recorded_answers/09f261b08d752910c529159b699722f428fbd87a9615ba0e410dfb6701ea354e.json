@@ -1,0 +1,105 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "Use the provided tools to answer.",
+          "role": "system"
+        },
+        {
+          "content": "What's the weather in Paris?",
+          "role": "user"
+        }
+      ],
+      "model": "gpt-5.4-mini",
+      "parallel_tool_calls": false,
+      "tool_choice": {
+        "function": {
+          "name": "get_weather"
+        },
+        "type": "function"
+      },
+      "tools": [
+        {
+          "function": {
+            "name": "get_weather",
+            "description": "Get current weather for a location",
+            "parameters": {
+              "properties": {
+                "location": {
+                  "description": "City name",
+                  "type": "string"
+                },
+                "unit": {
+                  "enum": [
+                    "celsius",
+                    "fahrenheit"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "location"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "function"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_c85804f622d4421f887c2a296a66e096",
+    "request_id_header": "x-request-id",
+    "body": {
+      "id": "chatcmpl-ET7tJwE7oERyeMofI8bpTiwlWO3al",
+      "object": "chat.completion",
+      "created": 1790610553,
+      "model": "gpt-5.4-mini-2026-03-17",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": null,
+            "tool_calls": [
+              {
+                "id": "call_oeGj1MNjd3A0MEFphlsn0E6c",
+                "type": "function",
+                "function": {
+                  "name": "get_weather",
+                  "arguments": "{\"location\":\"Paris\",\"unit\":\"celsius\"}"
+                }
+              }
+            ],
+            "refusal": null,
+            "annotations": []
+          },
+          "finish_reason": "tool_calls"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 156,
+        "completion_tokens": 22,
+        "total_tokens": 178,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "audio_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "audio_tokens": 0,
+          "accepted_prediction_tokens": 0,
+          "rejected_prediction_tokens": 0
+        }
+      },
+      "service_tier": "default",
+      "system_fingerprint": null
+    }
+  },
+  "recorded_at": "2026-09-28T15:49:13Z"
+}

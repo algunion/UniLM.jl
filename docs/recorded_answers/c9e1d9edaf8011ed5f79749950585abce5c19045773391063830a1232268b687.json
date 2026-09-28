@@ -1,0 +1,96 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "Return structured data about programming languages.",
+          "role": "system"
+        },
+        {
+          "content": "List Julia, Python, and Rust",
+          "role": "user"
+        }
+      ],
+      "model": "gpt-5.4-mini",
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "name": "languages",
+          "description": "A list of programming languages",
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "languages": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "year": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "year"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "languages"
+            ],
+            "type": "object"
+          },
+          "strict": true
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_5091799d61e041fca433384c222fbdd1",
+    "request_id_header": "x-request-id",
+    "body": {
+      "id": "chatcmpl-ET7t9UmzUx5OpSRPijbhM8e9j77hn",
+      "object": "chat.completion",
+      "created": 1790610543,
+      "model": "gpt-5.4-mini-2026-03-17",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "{\"languages\":[{\"name\":\"Julia\",\"year\":2012},{\"name\":\"Python\",\"year\":1991},{\"name\":\"Rust\",\"year\":2010}]}",
+            "refusal": null,
+            "annotations": []
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 78,
+        "completion_tokens": 38,
+        "total_tokens": 116,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "audio_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "audio_tokens": 0,
+          "accepted_prediction_tokens": 0,
+          "rejected_prediction_tokens": 0
+        }
+      },
+      "service_tier": "default",
+      "system_fingerprint": null
+    }
+  },
+  "recorded_at": "2026-09-28T15:49:04Z"
+}

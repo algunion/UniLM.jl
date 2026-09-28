@@ -1,0 +1,116 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "body": {
+      "input": "List 3 colors as a JSON object",
+      "model": "gpt-5.4-mini",
+      "text": {
+        "format": {
+          "type": "json_object"
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_3a357717334947189bc69d9ba6c66652",
+    "request_id_header": "x-request-id",
+    "body": {
+      "id": "resp_074ece47ebbdaba2006aba8c707a9c87d2b09793fa3837d6c2",
+      "object": "response",
+      "created_at": 1790610544,
+      "status": "completed",
+      "access_programs": null,
+      "background": false,
+      "billing": {
+        "payer": "developer"
+      },
+      "completed_at": 1790610546,
+      "error": null,
+      "frequency_penalty": 0.0,
+      "incomplete_details": null,
+      "instructions": null,
+      "max_output_tokens": null,
+      "max_tool_calls": null,
+      "model": "gpt-5.4-mini-2026-03-17",
+      "moderation": null,
+      "output": [
+        {
+          "id": "msg_074ece47ebbdaba2006aba8c712ba887d2b3b6d7b901643237",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "{\"color1\":\"red\",\"color2\":\"blue\",\"color3\":\"green\"}"
+            }
+          ],
+          "phase": "final_answer",
+          "role": "assistant"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "presence_penalty": 0.0,
+      "previous_response_id": null,
+      "prompt_cache_key": null,
+      "prompt_cache_retention": "24h",
+      "reasoning": {
+        "context": "current_turn",
+        "effort": "none",
+        "mode": "standard",
+        "summary": null
+      },
+      "safety_identifier": null,
+      "service_tier": "default",
+      "store": true,
+      "temperature": 1.0,
+      "text": {
+        "format": {
+          "type": "json_object"
+        },
+        "verbosity": "medium"
+      },
+      "tool_choice": "auto",
+      "tool_usage": {
+        "image_gen": {
+          "input_tokens": 0,
+          "input_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "output_tokens": 0,
+          "output_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "total_tokens": 0
+        },
+        "web_search": {
+          "num_requests": 0
+        }
+      },
+      "tools": [],
+      "top_logprobs": 0,
+      "top_p": 0.98,
+      "truncation": "disabled",
+      "usage": {
+        "input_tokens": 14,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens": 23,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 37
+      },
+      "user": null,
+      "metadata": {}
+    }
+  },
+  "recorded_at": "2026-09-28T15:49:06Z"
+}

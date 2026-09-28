@@ -1,0 +1,112 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "body": {
+      "input": "Explain why that's funny, in one sentence.",
+      "model": "gpt-5.4-mini",
+      "previous_response_id": "resp_09d151d4b8cfacb0006aba8c50a8fc87d2af9b76e67c2660c7"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_42d6f1b379cf444b9c23abad6bb26362",
+    "request_id_header": "x-request-id",
+    "body": {
+      "id": "resp_09d151d4b8cfacb0006aba8c52638087d2ad6c5443d1d67b52",
+      "object": "response",
+      "created_at": 1790610514,
+      "status": "completed",
+      "access_programs": null,
+      "background": false,
+      "billing": {
+        "payer": "developer"
+      },
+      "completed_at": 1790610514,
+      "error": null,
+      "frequency_penalty": 0.0,
+      "incomplete_details": null,
+      "instructions": null,
+      "max_output_tokens": null,
+      "max_tool_calls": null,
+      "model": "gpt-5.4-mini-2026-03-17",
+      "moderation": null,
+      "output": [
+        {
+          "id": "msg_09d151d4b8cfacb0006aba8c52b07c87d280702fc6e0f51934",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "It’s funny because it plays on the double meaning of “sleep,” as a computer state and as a human action, while treating the computer like it’s understanding a casual request."
+            }
+          ],
+          "phase": "final_answer",
+          "role": "assistant"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "presence_penalty": 0.0,
+      "previous_response_id": "resp_09d151d4b8cfacb0006aba8c50a8fc87d2af9b76e67c2660c7",
+      "prompt_cache_key": null,
+      "prompt_cache_retention": "24h",
+      "reasoning": {
+        "context": "current_turn",
+        "effort": "none",
+        "mode": "standard",
+        "summary": null
+      },
+      "safety_identifier": null,
+      "service_tier": "default",
+      "store": true,
+      "temperature": 1.0,
+      "text": {
+        "format": {
+          "type": "text"
+        },
+        "verbosity": "medium"
+      },
+      "tool_choice": "auto",
+      "tool_usage": {
+        "image_gen": {
+          "input_tokens": 0,
+          "input_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "output_tokens": 0,
+          "output_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "total_tokens": 0
+        },
+        "web_search": {
+          "num_requests": 0
+        }
+      },
+      "tools": [],
+      "top_logprobs": 0,
+      "top_p": 0.98,
+      "truncation": "disabled",
+      "usage": {
+        "input_tokens": 57,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens": 40,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 97
+      },
+      "user": null,
+      "metadata": {}
+    }
+  },
+  "recorded_at": "2026-09-28T15:48:35Z"
+}

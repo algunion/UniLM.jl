@@ -1,0 +1,98 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/interactions",
+    "body": {
+      "input": "What is 2+2?",
+      "model": "gemini-3.8-flash"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "body": {
+      "id": "v1_ChdPSXk2YXRHVUhyWGZ4czBQaWFIXzhBTRIXT0l5NmF0R1VIclhmeHMwUGlhSF84QU0",
+      "status": "completed",
+      "usage": {
+        "total_tokens": 83,
+        "total_input_tokens": 8,
+        "input_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 8
+          }
+        ],
+        "total_cached_tokens": 0,
+        "total_output_tokens": 7,
+        "total_tool_use_tokens": 0,
+        "total_thought_tokens": 68,
+        "raw_prompt_token": 39,
+        "model_invocation_token_counts": [
+          {
+            "prompt_tokens_details": [
+              {
+                "modality": "text",
+                "tokens": 39
+              }
+            ],
+            "candidates_tokens_details": [
+              {
+                "modality": "text",
+                "tokens": 11
+              }
+            ],
+            "thoughts_tokens_details": [
+              {
+                "modality": "text",
+                "tokens": 68
+              }
+            ]
+          }
+        ],
+        "non_grounding_model_invocation_token_counts": [
+          {
+            "prompt_tokens_details": [
+              {
+                "modality": "text",
+                "tokens": 39
+              }
+            ],
+            "candidates_tokens_details": [
+              {
+                "modality": "text",
+                "tokens": 11
+              }
+            ],
+            "thoughts_tokens_details": [
+              {
+                "modality": "text",
+                "tokens": 68
+              }
+            ]
+          }
+        ]
+      },
+      "created": "2026-09-28T15:48:08Z",
+      "updated": "2026-09-28T15:48:08Z",
+      "service_tier": "standard",
+      "steps": [
+        {
+          "signature": "EtMCCtACAWkUfRMJgxqnFaIP5d/+B0TeYb5cgbykxoZAQEY/1tFua2fiAOfkWxdyitK123xwkWsYDEIY/X+FghRXYDfaq6OWTyjJfqamwHg/6nhGo1U3I9dFzv707vJUj1WLdF5rocKEIPMzv3lTgZvtxjYZcDzEQvOAzLLuZ1TyeqjjT9aYo9rYSiyqLK3FOd76Eh69rbAymf/5P24XTvgInGGbQX5XLVwuweV+7gdRnzQD9RG5J4HY1u8/dPbsHUQP0dJFaf+TkloVp/6NGJhR0QBoOSJib0fCitga9mmhkbmwpEUXBfCLSReuTXyy90DAUE04lb7tiu380eurG717xTJwr0RHRjFtlrsMjg76nqlarJLl+G1KbiKX8QrmfOSvcRxxVdVmsb/LekDQZlbtw5iAyn8h4ptljG/PDu9eQVnR4ViGfX7NMB7htLpWIOK4cgh4",
+          "type": "thought"
+        },
+        {
+          "content": [
+            {
+              "text": "2 + 2 = 4",
+              "type": "text"
+            }
+          ],
+          "type": "model_output"
+        }
+      ],
+      "object": "interaction",
+      "model": "gemini-3.8-flash"
+    }
+  },
+  "recorded_at": "2026-09-28T15:48:10Z"
+}

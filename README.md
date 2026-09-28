@@ -297,59 +297,74 @@ chat = Chat(service=OllamaEndpoint(), model="llama3.1")
 
 TypeSafe's System One endpoint (`TYPESAFEServiceEndpoint`, `TYPESAFE_API_KEY`) is deliberately absent from that table: it answers enumerated questions rather than generating text, so `chatrequest!`, `respond`, `embeddingrequest!` and the other platform verbs reject it up front with an `ArgumentError` (naming it on a `Chat` or an `Embeddings` is allowed only with an explicit `model=` — omitting it throws `ArgumentError` — and sending the request is not). It has its own section below.
 
-## System One: Typed Judgments and Dispatch on Natural Language
+## Jev: Decisions About Text (TypeSafe System One)
 
-[TypeSafe](https://docs.typesafe.ai)'s System One model **Jev** does not write text. It reads a piece of state and answers the questions you enumerated with a typed value and a probability distribution over the outcomes you named — one request, no parsing, no tool loop ([System One](https://docs.typesafe.ai/concepts/system-one)). Only input tokens are billed ([Models](https://docs.typesafe.ai/models)).
+An LLM writes text; [TypeSafe](https://docs.typesafe.ai)'s System One model **Jev** reads a text and decides — which team, how urgent, is it safe to send, does it match the source — answering only the questions you list, with a probability for each answer, in one request billed only for the text it reads ([Models](https://docs.typesafe.ai/models)).
+Set `export TYPESAFE_API_KEY="..."` and pick a path:
 
-```bash
-export TYPESAFE_API_KEY="..."
-```
+| I want to… | Use | You get | Read |
+| :--- | :--- | :--- | :--- |
+| label a text with one of my own values | `nl_classify(text, TEAM)` | the key of the sentence that fits, e.g. `:billing` | [Start Here: Jev in Five Minutes](https://algunion.github.io/UniLM.jl/dev/guide/jev_start/) |
+| run the right function for a text | `nl_dispatch` with a table of sentences, or `nl"..."` in the signatures | what the method of the chosen meaning returns | [Dispatch on Meaning](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/) |
+| ask several things about one text, and act only when Jev is sure | `ask` with `choice` / `score` / `noul`, then `min_confidence` or a `decide` policy | every answer from one request, with its probabilities | [Route and Decide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/) |
+| decide before an LLM call, or check its output after | a Jev question on each side of `respond` | the team, the model to call, a draft checked before it is sent | [Jev with LLMs](https://algunion.github.io/UniLM.jl/dev/guide/jev_with_llms/) |
 
-**Typed judgments** — every question is answered against one ingestion of the state:
+**Label a text** with one of your own keys. Jev reads the sentences, never the keys:
 
 ```julia
 using UniLM
 
-r = ask("Help! My payouts have been failing for 3 days and nobody has replied to my emails.",
-    "department" => choice("Which team should handle this ticket?", (
-        billing   = "Payments, invoicing, payouts, refunds",
-        technical = "Bugs, outages, integrations",
-        sales     = "Pricing, upgrades, new accounts")),
-    "urgency" => score("How urgent is this ticket?",
-        ["Can wait", "Needs attention this week", "Needs attention today"]),
-    "is_frustrated" => noul("Is the customer frustrated?"))
+const TEAM = (billing   = "payments, charges, invoices or refunds",
+              technical = "the app or the website does not work as expected",
+              shipping  = "a parcel that is late, lost or arrived damaged",
+              other     = "anything else")
 
-r isa SystemOneSuccess && println(r["department"].choice, "  confidence ", r["department"].confidence)
-# => billing  confidence 1.0
+nl_classify("I was charged twice for order #4471. Please refund the duplicate payment.", TEAM)
+# => :billing
+
+# Unsure goes to a person, not to a guess (Jev's confidence here: 0.49, below the 0.6 asked for):
+nl_classify("Do you ship to Norway, and how much does delivery cost?", TEAM;
+            min_confidence = 0.6, fallback = message -> :person)
+# => :person
 ```
 
-**Multiple dispatch on natural language** — `nl"..."` is a Julia type, so a meaning is writable in an ordinary method signature. `nl_dispatch` asks Jev which declared meaning fits the input, then Julia's own dispatch picks the method:
+**Run the right function**, one method per key; `texts = TEAM` supplies the sentences, and a key with no method is refused before any request:
 
 ```julia
-route(::nl"the customer wants a refund", ticket)           = :refund
-route(::nl"the customer reports a bug in the app", ticket) = :bug
-route(::nl"anything else", ticket)                         = :other
+route(::Val{:billing}, message)   = "opened a payment review"
+route(::Val{:technical}, message) = "filed a bug report"
+route(::Val{:shipping}, message)  = "opened a claim with the carrier"
+route(::Val{:other}, message)     = "forwarded to the front desk"
 
-meanings(route, Tuple{String})   # the options sent for a String ticket, no request made
-
-nl_dispatch(route, "My package arrived crushed and the screen is cracked. I want my money back.")
-# => :refund
+nl_dispatch(route, "The app crashes every time I open my order history. iPhone 15, latest version."; texts = TEAM)
+# => "filed a bug report"
 ```
 
-**`@branch`** — the same single Choice request, inline, when the decision belongs to one call site:
+**Or put each sentence in the signature**: `nl"..."` is a Julia type, so the router needs no table; for the same message both forms send the same request, byte for byte. `@branch` is the same decision inline, for one call site:
 
 ```julia
-ticket = "My package arrived crushed and the screen is cracked. I want my money back."
+route_by_sentence(::nl"payments, charges, invoices or refunds", message)           = "opened a payment review"
+route_by_sentence(::nl"the app or the website does not work as expected", message) = "filed a bug report"
+route_by_sentence(::nl"a parcel that is late, lost or arrived damaged", message)    = "opened a claim with the carrier"
+route_by_sentence(::nl"anything else", message)                                    = "forwarded to the front desk"
 
-action = @branch ticket min_confidence=0.6 begin
-    "the customer wants a refund"           => refund!(ticket)
-    "the customer reports a bug in the app" => file_bug!(ticket)
-    "the customer asks a pricing question"  => quote_price(ticket)
-    _                                       => escalate(ticket)
-end
+nl_dispatch(route_by_sentence, "I was charged twice for order #4471. Please refund the duplicate payment.")
+# => "opened a payment review"
 ```
 
-Only the selected body runs, and a confidence below the threshold takes `_` rather than guessing. See the [System One guide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/) and [Multiple Dispatch on Natural Language](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/).
+**Check an LLM's draft** before the customer sees it: the LLM writes, Jev reads, your code decides:
+
+```julia
+reply = output_text(respond("The phone I received has a cracked screen and the box was crushed. I want my money back.";
+                            model = "gpt-5.4-mini",
+                            instructions = "You answer customers of a small online shop, in at most three sentences."))
+# => "I’m sorry your order arrived damaged. Please send us a photo of the cracked screen and the crushed box along with your order number, and we’ll help arrange a refund right away."
+
+ask(reply, "refund" => noul("Does this reply promise the customer a refund?"))["refund"].noul
+# => 0.81 — above a cut of 0.3, so a person approves the reply before it is sent
+```
+
+The Jev guides follow one shop's support desk: [Start Here](https://algunion.github.io/UniLM.jl/dev/guide/jev_start/), [Jev with LLMs](https://algunion.github.io/UniLM.jl/dev/guide/jev_with_llms/), [Route and Decide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/), [Dispatch on Meaning](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/), [Many Items at Once](https://algunion.github.io/UniLM.jl/dev/guide/semantic_algorithms/) and [Test and Develop](https://algunion.github.io/UniLM.jl/dev/guide/jev_testing/).
 
 ## Chat Completions vs Responses (OpenAI)
 
@@ -382,11 +397,12 @@ Full documentation with guides and API reference: **[https://algunion.github.io/
 - [Structured Output Guide](https://algunion.github.io/UniLM.jl/dev/guide/structured_output/) — JSON Schema output
 - [Multi-Backend Guide](https://algunion.github.io/UniLM.jl/dev/guide/multi_backend/) — Azure, Gemini, DeepSeek, Ollama, and more
 - [MCP Guide](https://algunion.github.io/UniLM.jl/dev/guide/mcp/) — MCP client/server
-- [System One Guide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/) — typed judgments with Jev: `ask`, `choice` / `score` / `noul`, confidence gating
-- [Multiple Dispatch on Natural Language](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/) — `nl"..."` meanings in method signatures, `nl_dispatch`, `@branch`
-- [Semantic Programs with Jev](https://algunion.github.io/UniLM.jl/dev/guide/semantic_programs/) — decision policies, taxonomies, typed extraction, state machines and guarded tools built on Jev's typed answers
-- [Semantic Algorithms with Jev](https://algunion.github.io/UniLM.jl/dev/guide/semantic_algorithms/) — many items in one request, ranking, finding an event in a long sequence, joining tables, stopping early
-- [Developing and Testing with Jev](https://algunion.github.io/UniLM.jl/dev/guide/jev_testing/) — the development loop, recorded answers (`with_recorded_answers`), and tests from the methods to the model's judgment
+- [Start Here: Jev in Five Minutes](https://algunion.github.io/UniLM.jl/dev/guide/jev_start/) — what Jev decides, a first decision, and which Jev page answers your question
+- [Jev with LLMs](https://algunion.github.io/UniLM.jl/dev/guide/jev_with_llms/) — route a message before an LLM call and check the draft after it
+- [Route and Decide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/) — `ask` with `choice` / `score` / `noul`, calibrated answers, and decision rules on them
+- [Dispatch on Meaning](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/) — `nl_classify`, `nl_dispatch` with a table of sentences or `nl"..."` in the signatures, `@branch`
+- [Many Items at Once](https://algunion.github.io/UniLM.jl/dev/guide/semantic_algorithms/) — many items in one request, ranking, finding an event in a long sequence, matching records, stopping early
+- [Test and Develop](https://algunion.github.io/UniLM.jl/dev/guide/jev_testing/) — recorded answers for Jev and LLM calls (`with_recorded_answers`), tests that need no key, an audit trail
 - [Timeouts & Retries Guide](https://algunion.github.io/UniLM.jl/dev/guide/timeouts/) — bounds, typed failures, retry contracts
 - [Concurrency, Tasks and Cancellation](https://algunion.github.io/UniLM.jl/dev/guide/concurrency/) — sharing rules, fan-out, streaming into a `Channel`, `CancelToken`
 

@@ -11,6 +11,12 @@
 
 ## What is UniLM.jl?
 
+| I want to… | Use | Start with |
+| :--- | :--- | :--- |
+| generate text, call tools, run agents | an LLM: OpenAI, Anthropic, Gemini or any OpenAI-compatible provider | [Getting Started](@ref) |
+| decide about a text: route it, check it, classify it | Jev, TypeSafe's System One model | [Start Here: Jev in Five Minutes](@ref jev_start) |
+| both: decide before an LLM call, check its output after | Jev and an LLM together | [Jev with LLMs](@ref jev_llm_guide) |
+
 UniLM.jl provides a **Julian**, type-safe interface to **LLM providers** with **first-class native backends** — OpenAI (Chat Completions + Responses), Anthropic (Messages), and Google Gemini (generateContent + agentic Interactions) — plus any **OpenAI-compatible** provider (Azure, DeepSeek, Mistral, Ollama, vLLM, LM Studio). It covers Chat Completions & Responses, a cross-provider agentic `respond` verb, Image Generation/Edits, Embeddings, Files/Vector Stores, Conversations, Audio, Batch, Moderations, Fine-tuning, Webhooks, Realtime, and MCP (client & server) — with built-in token/cost accounting.
 It also speaks TypeSafe's System One model **Jev**, which answers enumerated questions about a piece of state with a typed, calibrated judgment instead of generated text — and which can select a Julia method by natural-language meaning.
 
@@ -21,8 +27,9 @@ It also speaks TypeSafe's System One model **Jev**, which answers enumerated que
 - 🖼️ **Image Generation & Edits** — create and edit images with `gpt-image-2`
 - 🔧 **Tool/Function Calling** — first-class function tools in both APIs, with an automated `tool_loop`
 - 🔌 **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool-loop integration
-- ⚖️ **System One (TypeSafe Jev)** — typed judgments instead of generated text: `ask` answers `choice` / `score` / `noul` questions about a piece of state with a calibrated distribution, in one request
-- 🔀 **Multiple Dispatch on Natural Language** — `nl"..."` is an ordinary Julia type, so `nl_dispatch` lets a Jev answer select which method runs; `@branch` is the same single-request decision inline
+- ⚖️ **Jev (TypeSafe System One)** — decisions about a text instead of generated text: `nl_classify` returns one of your own keys, and `ask` answers `choice` / `score` / `noul` questions with calibrated probabilities, many questions in one request
+- 🔀 **Dispatch on Meaning** — `nl_dispatch` runs the method whose sentence fits the text: short keys with a table of sentences (`texts = TEAM`, methods on `Val{:billing}`), or `nl"..."` in the signature; `@branch` is the same decision inline
+- 🤝 **Jev with LLMs** — route a message before an LLM call and check the draft after it; `with_recorded_answers` records Jev's answers and the non-streaming LLM calls once and replays them, so tests run without keys
 - 📊 **Embeddings** — text embedding generation
 - 💰 **Cost & Token Accounting** — per-call `estimated_cost`, per-`Chat` `cumulative_cost`, and a built-in multi-provider pricing table
 - 🌊 **Streaming** — real-time token streaming with `do`-block syntax
@@ -151,11 +158,12 @@ end
 - [MCP Guide](@ref mcp_guide) — connect to MCP servers or build your own
 - [Timeouts & Retries](@ref timeouts_guide) — `RequestConfig`, typed timeout failures, retry contracts
 - [Concurrency, Tasks and Cancellation](@ref concurrency_guide) — sharing, fan-out, streaming into a `Channel`, `CancelToken`
-- [Typed Judgments with Jev](@ref system_one_guide) — TypeSafe's System One model: `ask` with `choice`, `score` and `noul` questions, calibrated answers, limits and cost
-- [Multiple Dispatch on Natural Language](@ref nl_dispatch_guide) — `nl"..."` meanings in method signatures, `nl_dispatch`, `decide` policies and `@branch`
-- [Semantic Programs with Jev](@ref jev_programs_guide) — decision policies, taxonomies, typed extraction, state machines and guarded tools built on Jev's typed answers
-- [Semantic Algorithms with Jev](@ref jev_algorithms_guide) — many items in one request, ranking, finding an event in a long sequence, joining tables, stopping early
-- [Developing and Testing with Jev](@ref jev_testing_guide) — the development loop, recorded answers (`with_recorded_answers`), and tests from the methods to the model's judgment
+- [Start Here: Jev in Five Minutes](@ref jev_start) — what Jev decides, a first decision, and which Jev page answers your question
+- [Jev with LLMs](@ref jev_llm_guide) — route a message before an LLM call and check the draft after it
+- [Route and Decide](@ref system_one_guide) — TypeSafe's System One model: `ask` with `choice`, `score` and `noul` questions, calibrated answers, and decision rules on them
+- [Dispatch on Meaning](@ref nl_dispatch_guide) — `nl_classify`, `nl_dispatch` with a table of sentences or `nl"..."` in the signatures, `decide` policies and `@branch`
+- [Many Items at Once](@ref jev_algorithms_guide) — many items in one request, ranking, finding an event in a long sequence, matching records, stopping early
+- [Test and Develop](@ref jev_testing_guide) — recorded answers for Jev and LLM calls (`with_recorded_answers`), tests that need no key, an audit trail
 - [API Reference](@ref chat_api) — full type and function reference
 
 ### Platform APIs

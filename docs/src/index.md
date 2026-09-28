@@ -151,6 +151,9 @@ end
 - [MCP Guide](@ref mcp_guide) — connect to MCP servers or build your own
 - [Timeouts & Retries](@ref timeouts_guide) — `RequestConfig`, typed timeout failures, retry contracts
 - [Concurrency, Tasks and Cancellation](@ref concurrency_guide) — sharing, fan-out, streaming into a `Channel`, `CancelToken`
+- [Semantic Programs with Jev](@ref jev_programs_guide) — decision policies, taxonomies, typed extraction, state machines and guarded tools built on Jev's typed answers
+- [Semantic Algorithms with Jev](@ref jev_algorithms_guide) — many items in one request, ranking, finding an event in a long sequence, joining tables, stopping early
+- [Developing and Testing with Jev](@ref jev_testing_guide) — the development loop, recorded answers (`with_recorded_answers`), and tests from the methods to the model's judgment
 - [API Reference](@ref chat_api) — full type and function reference
 
 ### Platform APIs

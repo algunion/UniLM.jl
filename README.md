@@ -384,6 +384,9 @@ Full documentation with guides and API reference: **[https://algunion.github.io/
 - [MCP Guide](https://algunion.github.io/UniLM.jl/dev/guide/mcp/) — MCP client/server
 - [System One Guide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/) — typed judgments with Jev: `ask`, `choice` / `score` / `noul`, confidence gating
 - [Multiple Dispatch on Natural Language](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/) — `nl"..."` meanings in method signatures, `nl_dispatch`, `@branch`
+- [Semantic Programs with Jev](https://algunion.github.io/UniLM.jl/dev/guide/semantic_programs/) — decision policies, taxonomies, typed extraction, state machines and guarded tools built on Jev's typed answers
+- [Semantic Algorithms with Jev](https://algunion.github.io/UniLM.jl/dev/guide/semantic_algorithms/) — many items in one request, ranking, finding an event in a long sequence, joining tables, stopping early
+- [Developing and Testing with Jev](https://algunion.github.io/UniLM.jl/dev/guide/jev_testing/) — the development loop, recorded answers (`with_recorded_answers`), and tests from the methods to the model's judgment
 - [Timeouts & Retries Guide](https://algunion.github.io/UniLM.jl/dev/guide/timeouts/) — bounds, typed failures, retry contracts
 - [Concurrency, Tasks and Cancellation](https://algunion.github.io/UniLM.jl/dev/guide/concurrency/) — sharing rules, fan-out, streaming into a `Channel`, `CancelToken`
 

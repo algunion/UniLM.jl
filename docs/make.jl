@@ -63,6 +63,7 @@ build_docs() = makedocs(;
             "Multiple Dispatch on Natural Language" => "guide/natural_language_dispatch.md",
             "Semantic Programs" => "guide/semantic_programs.md",
             "Semantic Algorithms" => "guide/semantic_algorithms.md",
+            "Developing and Testing with Jev" => "guide/jev_testing.md",
         ],
         "API Reference" => [
             "Chat Types" => "api/chat.md",

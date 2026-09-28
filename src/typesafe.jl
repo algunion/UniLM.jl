@@ -590,8 +590,8 @@ A TypeSafe call that reached the service and came back non-2xx.
 # Fields
 - `response::String`: the raw body, kept verbatim.
 - `status::Int`: the HTTP status. 401 (invalid key) and 403 (no key) are both
-  auth failures; 400 and 422 are request problems; 408, 429, 500, 502, 503, 504
-  and 529 are the retryable band.
+  auth failures; 400 and 422 are request problems; 408, 429, 500, 502–504,
+  520–524 and 529 are the retryable band.
 - `request_id::Union{Nothing,String}`: `x-typesafe-request-id`, present on error
   responses too.
 - `error_type::Union{Nothing,String}`: `detail.error_type` when the body uses the
@@ -935,7 +935,7 @@ issuccess(r) && println(r["department"].choice, " ", r["urgency"].score)
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout and retry
 budget for this call. The request rides the package's shared retry seam, so
-`max_attempts` applies: a retryable status (408, 429, 500, 502, 503, 504, 529)
+`max_attempts` applies: a retryable status (408, 429, 500, 502–504, 520–524, 529)
 or a transport failure is retried within `total_deadline`, honouring
 `Retry-After`. Other statuses — 400, 401, 403, 404, 422 — are returned as they
 came, because a second identical request cannot fix them.

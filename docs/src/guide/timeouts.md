@@ -282,7 +282,7 @@ retryable statuses and per-attempt timeouts until their own wall-clock `timeout`
 `max_attempts` (default 3) caps the total attempts. All attempts share the single
 `total_deadline`:
 
-- A retryable outcome (HTTP `408`/`429`/`500`/`502`/`503`/`504`/`529`, a
+- A retryable outcome (HTTP `408`/`429`/`500`/`502`–`504`/`520`–`524`/`529`, a
   per-attempt connect/request timeout, or a transport-level IO error) is retried
   with full-jitter exponential backoff.
 - **`Retry-After` is a floor, not a replacement.** The pause is the header's wait

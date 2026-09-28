@@ -270,7 +270,7 @@ return that `VectorStoreBatchSuccess`. `timeout` bounds the wall-clock time of t
 poll (`Inf` waits indefinitely); `interval` is the pause between GETs. Both must be
 positive, else `ArgumentError`.
 
-A transient failure — a status in the retryable set (408/429/500/502/503/504/529) or a
+A transient failure — a status in the retryable set (408/429/500/502–504/520–524/529) or a
 GET that timed out — is polled through; any other failure is returned as it came. When
 the time runs out the result is a `VectorStoreCallError` with
 `cause = UniLMTimeout(:deadline, …)` and `last_observed` set to the last

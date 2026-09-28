@@ -190,7 +190,7 @@ declares its capabilities without it throws `ArgumentError` before any request.
 
 ## Retry Behaviour
 
-`generate_image` and `edit_image` retry transient HTTP statuses (408, 429, 500, 502, 503, 504, 529) within the request budget configured by `RequestConfig` (`max_attempts`, default 3), with exponential backoff and jitter; a `Retry-After` header is a floor under the jittered wait. Override per call with `config=RequestConfig(...)`. Both take `cancel=` (default: the ambient `with_cancel` token); a cancelled call returns an `ImageCallError` whose `cause` is a [`UniLMCancelled`](@ref). Every `ImageFailure` and `ImageCallError` carries the provider's `request_id` when one was sent, and a call error its exception in `cause`.
+`generate_image` and `edit_image` retry transient HTTP statuses (408, 429, 500, 502–504, 520–524, 529) within the request budget configured by `RequestConfig` (`max_attempts`, default 3), with exponential backoff and jitter; a `Retry-After` header is a floor under the jittered wait. Override per call with `config=RequestConfig(...)`. Both take `cancel=` (default: the ambient `with_cancel` token); a cancelled call returns an `ImageCallError` whose `cause` is a [`UniLMCancelled`](@ref). Every `ImageFailure` and `ImageCallError` carries the provider's `request_id` when one was sent, and a call error its exception in `cause`.
 
 ## See Also
 

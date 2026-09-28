@@ -34,17 +34,18 @@ jobs:
             using Pkg
             Pkg.develop(PackageSpec(path=pwd()))
             Pkg.instantiate()'
+      # The gh-pages folder the site is built for: the version tag being built, else dev.
+      - name: Choose the site's folder
+        id: site
+        run: julia --project=docs/ docs/deploy.jl plan >> "$GITHUB_OUTPUT"
       # Automatic builds and releases replay the recorded answers without provider keys.
       # A live build incurs API spend, requires an explicit manual opt-in, and only
       # checks that the examples still run: its outputs differ from the recorded ones
       # the prose quotes, so it is never deployed.
-      - name: Build and deploy (offline examples)
+      - name: Build the manual (offline examples)
         if: github.event_name != 'workflow_dispatch' || !inputs.live_examples
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
         run: julia --project=docs/ docs/make.jl
-      - name: Build with live examples (not deployed)
+      - name: Build the manual with live examples (not deployed)
         if: github.event_name == 'workflow_dispatch' && inputs.live_examples
         env:
           UNILM_DOCS_LIVE: '1'
@@ -54,3 +55,24 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
         run: julia --project=docs/ docs/make.jl
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Install the site's dependencies
+        working-directory: site
+        run: npm ci
+      - name: Build the site
+        working-directory: site
+        env:
+          DOCS_BASE_PATH: ${{ steps.site.outputs.base_path }}
+          NEXT_PUBLIC_DOCS_VERSION: ${{ steps.site.outputs.version }}
+        run: npm run build
+      # Pull requests and live builds are built only.
+      - name: Deploy the site
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.live_examples)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}
+        run: julia --project=docs/ docs/deploy.jl

@@ -1,81 +1,26 @@
-# [Typed Judgments with Jev (TypeSafe System One)](@id system_one_guide)
+# [Route and Decide](@id system_one_guide)
 
-## What System One is
+Jev reads a piece of text and answers the questions you list about it — which
+one, how much, yes or no — with a probability for each outcome, never with
+generated text. Your code keeps the control flow: it asks, reads the answer and
+decides what to do. Setup is one variable, `export TYPESAFE_API_KEY=…`
+([Setup](@ref jev_setup) has the rest).
 
-A System One model reads a piece of `state` and answers the questions you
-enumerated with a typed value and a probability distribution over the outcomes
-you named — never with generated text. Jev is TypeSafe's flagship System One
-model and the first one of its kind. The division of labour is the point: your
-code owns the control flow, the deterministic rules and the side effects, and
-the model is called only where the system needs a narrow semantic decision over
-unstructured input. Compared with an LLM there is no reasoning trace to read, no
-prose to parse, no tool loop to drive and no system prompt to jailbreak — one
-request, one round trip, a fixed set of answers. The probabilities are trained
-to be calibrated across groups of predictions, which is what makes
-confidence-gating meaningful: the answer says *what*, the distribution says
-*whether to act on it*. Calibration across a population is not a guarantee about
-any single answer, so treat a high confidence as "the distribution is peaked",
-not as "this is correct".
-
-This is a first-class surface in UniLM alongside the LLM providers because the
-two are complements, not alternatives. Route, verify, guard and rank with Jev;
-generate with an LLM. A typical pipeline classifies the request with a
-[`choice`](@ref), sends only the requests that need prose to
-[`respond`](@ref), and screens the draft with a [`noul`](@ref) before it reaches
-a user.
-
-See the [System One concept page](https://docs.typesafe.ai/concepts/system-one)
-for the model class, and [How to build with
-TypeSafe](https://docs.typesafe.ai/concepts/how-to-build-with-system-one) for
-the workflow it implies.
-
-Because the answer is already a branch decision, it also drives Julia's control
-flow directly: [Multiple Dispatch on Natural Language](@ref nl_dispatch_guide)
-turns a meaning into a method signature, so a Jev answer selects which method
-runs.
-
-## Setup
-
-Set the API key:
-
-```bash
-export TYPESAFE_API_KEY="..."
-```
-
-Two optional variables change where the call goes and what it names:
-
-| Variable | Default | Meaning |
-| :--- | :--- | :--- |
-| `TYPESAFE_API_KEY` | — | Required. A missing key is a [`SystemOneCallError`](@ref), not a thrown `KeyError`. |
-| `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` | API root override, for a proxy or a mock server. |
-| `TYPESAFE_DEFAULT_MODEL` | `jev-latest` | The model [`ask`](@ref) names when a call does not. |
-
-All three are read at call time, so exporting them after `using UniLM` still
-works.
-
-`jev-latest` is an alias that moves when a new version ships. That is what you
-want while you are building. Once you have tuned a confidence threshold against
-a specific version, pin the versioned id — `ask(...; model="jev-1.13.0")` or
-`TYPESAFE_DEFAULT_MODEL=jev-1.13.0` — and move to the next one on your own
-schedule ([Models](https://docs.typesafe.ai/models)). The variable changes every
-request that names no model, and with it the key its recorded answer is filed
-under: in code whose answers you record, pin with `model =`, or record with the
-same environment you replay with ([Developing and Testing with
-Jev](@ref jev_testing_guide)).
-
-[`TYPESAFEServiceEndpoint`](@ref UniLM.TYPESAFEServiceEndpoint) is not a chat
-backend. It declares only `:system_one` and `:models`, so the verbs reject it up
-front with an `ArgumentError` rather than posting a request the service would
-not answer: [`chatrequest!`](@ref), [`respond`](@ref),
-[`embeddingrequest!`](@ref) and the other platform verbs. Constructing a
-[`Chat`](@ref) or an [`Embeddings`](@ref embeddings_api) that names the endpoint
-is allowed; only sending one is refused. Omitting `model=` is refused too,
-because this endpoint has no chat default to resolve. See [Provider
-Capabilities](@ref capabilities_api).
+| I want to… | Use | You get | Section |
+| :--- | :--- | :--- | :--- |
+| pick one of a set: a team, an intent | [`choice`](@ref) | the chosen option and a probability for each option | [Choice, Score, Noul](@ref jev_primitives) |
+| place a text on a scale: how urgent, how severe | [`score`](@ref) | a position on your levels and a probability for each level | [Choice, Score, Noul](@ref jev_primitives) |
+| know whether a statement holds: does the customer want a refund? | [`noul`](@ref) | the probability of yes | [Choice, Score, Noul](@ref jev_primitives) |
+| ask several questions about one text | one [`ask`](@ref) with every question | every answer from one request, the text paid for once | [Ask many questions at once](@ref jev_many_questions) |
+| fill a struct from a text | one `ask`, one question per field | a typed value and a certainty for each field | [Fill a struct in one request](@ref jev_fill_struct) |
+| act only when Jev is sure, and hand the rest to a person | a confidence threshold | the answer, or a hand-over | [Act on the answer](@ref jev_act_on_answer) |
+| act when some mistakes cost more than others | a price for each mistake | the cheapest action, a person included | [When mistakes have different prices](@ref jev_loss_matrix) |
+| catch the messages that fit none of my options | a catch-all option | the probability that none fits | [Let Jev say none of these](@ref jev_none_of_these) |
+| act on a small chance of the worst case | the probability at the top level | an alarm that a middling score would not raise | [Act on the risk of the worst level](@ref jev_worst_level) |
 
 ## First request
 
-One call carries the state once and every question you want answered about it.
+One call carries the text once and every question you want answered about it.
 Answers come back keyed by the names you chose:
 
 ```@example jev
@@ -104,12 +49,9 @@ else
 end
 ```
 
-The output under the block above comes from the docs build itself: without a
-`TYPESAFE_API_KEY` the build replays an answer recorded from a live call, and
-with one it can ask the service for a fresh answer ([Developing and Testing with
-Jev](@ref jev_testing_guide) has the details). The service rounds every number
-it reports to two decimals, as a floating-point value: a 0.82 can arrive as
-0.8200000000000001. The rest of what came back:
+The output under each block is the docs build's own: it replays an answer
+recorded from a live call ([Test and Develop](@ref jev_testing_guide)). The rest
+of what came back:
 
 ```@example jev
 for team in ("billing", "technical", "sales")
@@ -129,22 +71,23 @@ and are **not** sent to the model — they only key the answers. Write the whole
 question in the instructions even when the name looks self-explanatory
 ([Primitives](https://docs.typesafe.ai/primitives)).
 
-## The three primitives
+## [Choice, Score, Noul](@id jev_primitives)
+
+Three question types cover the judgments: pick one of a set, place on a scale,
+say whether a statement holds. A Choice takes 1–255 options and a Score 1–10
+levels, both checked before the request ([Limits](@ref jev_limits)).
 
 ### Choice — pick one of a named set
 
 [`choice`](@ref) builds a question whose answer is exactly one of the options
-you enumerated. The [`ChoiceAnswer`](@ref) carries `choice` (the argmax),
-`probabilities` (one entry per option, keyed by option name, summing to
-approximately 1) and `confidence` (how peaked that distribution is).
+you enumerated. The [`ChoiceAnswer`](@ref) carries `choice` (the most likely
+option), `probabilities` (one per option, keyed by option name, summing to
+about 1) and `confidence` (how peaked they are). Use it for a fixed set with no
+order between the options: a team, an intent, a document type. A runner-up with
+a real share is information your code can act on.
 
-Use it when the outcomes are a fixed set with no order between them: routing a
-ticket, picking a handler, classifying a document type. Read `probabilities`
-when the ranking matters — `choice` is only its argmax, and a runner-up with a
-real share is information your code can act on.
-
-```julia
-q = choice("Which team should handle this ticket?", (
+```@example jev
+department = choice("Which team should handle this ticket?", (
     returns  = "Exchanges, wrong or damaged items",
     shipping = "Delivery status, delays, lost packages",
     billing  = "Charges, invoices, payment problems",
@@ -152,80 +95,74 @@ q = choice("Which team should handle this ticket?", (
 
 # Names alone, when the option names are already unambiguous:
 tone = choice("What is the customer's tone?", ["calm", "frustrated", "angry"])
+nothing # hide
 ```
 
-Option order is the insertion order of what you pass — a `NamedTuple`, a vector
-of `name => description` pairs or a `JSON.Object` preserves it; a plain `Dict`
-iterates in hash order, which can change between Julia versions. Order never
-changes how answers are keyed (by name), but it is what the model reads, and on
-ambiguous inputs it moves the probabilities. Measured on jev-1.13.0 (September
-2026) on our own labeled sets, changing the option order shifted the
-probabilities of ambiguous items by 0.12 on average, and reversing it moved one
-ambiguous ticket's probability by about 0.5; changing the key order of the state
-moved probabilities by up to 0.16. Build criteria and state from ordered
-containers — a `NamedTuple`, pairs or a `JSON.Object`, never a `Dict` — so the
-order the model reads is the one you wrote, on every Julia version.
+Option order is the order of what you pass, and it is what the model reads: on
+ambiguous inputs it moves the probabilities (answers stay keyed by name). Build
+options and state from ordered containers — a `NamedTuple`, a vector of
+`name => description` pairs or a `JSON.Object`, never a `Dict`, whose hash
+order can change between Julia versions.
 
-### Score — place the state on an ordered rubric
+!!! details "Evidence"
+    Measured on jev-1.13.0 (September 2026) on our own labeled sets, changing
+    the option order shifted the probabilities of ambiguous items by 0.12 on
+    average, and reversing it moved one ambiguous ticket's probability by about
+    0.5; changing the key order of the state moved probabilities by up to 0.16.
 
-[`score`](@ref) takes an ordered list of level descriptions, lowest first.
-`levels[1]` is level `0`, so a three-level rubric produces a score in `0.0 …
-2.0`. The [`ScoreAnswer`](@ref) carries `score`, `confidence`, `legend` and
-`probabilities`, the last two keyed by the **0-based level number** as an `Int`.
+### Score — place the text on an ordered rubric
 
-`score` is the probability-weighted expectation over the levels, so it falls
-between them. Threshold it; do not read a magnitude into the fractional part.
-Different distributions produce the same number — a score of `1.0` can mean all
-the probability on level 1, or half on level 0 and half on level 2 — so read
-`probabilities` and `confidence` alongside it
+[`score`](@ref) takes the level descriptions lowest first; `levels[1]` is level
+`0`, so three levels give a score in `0.0 … 2.0`. The [`ScoreAnswer`](@ref)
+carries `score`, `confidence`, `legend` and `probabilities`, the last two keyed
+by the **0-based level number** as an `Int`. `score` is the probability-weighted
+average level, so it falls between levels: threshold it, and read
+`probabilities` when the shape matters — a `1.0` can be all the probability on
+level 1, or half on level 0 and half on level 2
 ([Score](https://docs.typesafe.ai/primitives/score)).
 
-```julia
+```@example jev
 severity = score("How severe is the reported issue?", [
     "Cosmetic; no impact to functionality",
     "Broken or degraded feature, but workaround exists",
     "Blocking issue; no workaround exists"])
+nothing # hide
 ```
 
-Describe situations, not degrees. Every level is judged on its own against the
-state: the model never sees a level's number or its neighbours, so "worse than
-the previous level" and numeric labels carry nothing. Keep one dimension per
-question — a level that says "punctual and smart and experienced" is three
-questions wearing one hat.
+Describe situations, not degrees: every level is judged on its own against the
+state, without its number or its neighbours, so "worse than the previous level"
+carries nothing. Keep one dimension per question.
 
 ### Noul — the probability that a statement is true
 
-[`noul`](@ref) asks a single yes/no question. The [`NoulAnswer`](@ref) is one
-number in `0 … 1`: near 1 a strong yes, near 0 a strong no, near 0.5 maximal
-uncertainty. There is no `confidence` field, because with two outcomes the value
-already describes the whole distribution.
+[`noul`](@ref) asks one yes/no question. The [`NoulAnswer`](@ref) is one number
+in `0 … 1` — near 1 a strong yes, near 0 a strong no, near 0.5 maximal
+uncertainty — and has no `confidence` field: with two outcomes the value is the
+whole distribution.
 
-```julia
+```@example jev
 wants_human = noul("Is the customer asking for a human agent?")
 
 repeat_contact = noul("Has the customer contacted support about this before?";
     yes = "Mentions a prior attempt, ticket, or that they have asked before",
     no  = "No sign of any previous contact")
+nothing # hide
 ```
 
-A Noul value is not a scale of the thing you asked about — it is the probability
-that the proposition holds. "Is the candidate strong in Python?" at 0.5 means the
-model splits evenly between yes and no, **not** that the candidate is
-middling. If you want degree, use a Score with levels you wrote; if you want a
-decision, define the boundary so sharply that there is no middle ground
+A Noul is the probability that the statement holds, not a degree: "Is the
+candidate strong in Python?" at 0.5 means the model is split, **not** that the
+candidate is middling — ask a Score for degree
 ([Noul](https://docs.typesafe.ai/primitives/noul)). Phrase the question so that
-a high value means yes: "Is the message free of personal data?" inverts the
-reading and the calling code will get it backwards.
+a high value means yes.
 
-### Structured instructions and criteria
+### Structured criteria
 
-Anywhere a piece of guidance appears — `instructions`, a Choice option
-description, a Score level, a Noul `yes`/`no` — the value may be a string, a
-`NamedTuple`/`Dict`, or a vector. Start with strings. Reach for an object when
-two options keep getting confused and each needs to say what it covers, what it
-does *not* cover, and a few examples:
+Wherever guidance appears — `instructions`, a Choice option's description, a
+Score level, a Noul `yes`/`no` — it may be a string, a `NamedTuple`/`Dict` or a
+vector. Start with strings. When two options keep getting confused, give each
+what it covers, what it does not, and a few examples:
 
-```julia
+```@example jev
 return_topic = choice("Which returns topic is the customer asking about?", (
     return_policy = (what     = "Whether and how an item can be returned",
                      not_for  = "Progress of a return already sent",
@@ -235,29 +172,18 @@ return_topic = choice("Which returns topic is the customer asking about?", (
                      not_for  = "Whether and how an item can be returned",
                      examples = ["Has my return arrived yet?",
                                  "When will my refund be paid?"])))
-
-bug_severity = score("How severe is the reported issue?", [
-    (what = "Cosmetic; no impact to functionality",
-     examples = ["typo in a label", "misaligned icon"]),
-    (what = "Broken or degraded feature, but workaround exists",
-     examples = ["export fails in one browser but works in another"]),
-    (what = "Blocking issue; no workaround exists",
-     examples = ["cannot log in", "data loss"])])
+nothing # hide
 ```
 
-The field names `what`, `not_for` and `examples` are not part of the API and
-none are reserved — you choose them the way you choose option names. The model
-reads the names along with the values, so keep them short and descriptive, and
-use the same names on every level so it compares like with like
-([Choice](https://docs.typesafe.ai/primitives/choice),
-[Score](https://docs.typesafe.ai/primitives/score)).
+The field names `what`, `not_for` and `examples` are yours, not the API's. The
+model reads them with the values, so keep them short and the same on every
+option ([Choice](https://docs.typesafe.ai/primitives/choice)).
 
 ### Pointing a question at part of the state
 
-The `state` is often structured: a conversation, a record and a policy in one
-object. Name the part a question is about with its key in backticks inside the
-instructions, and keep the content itself in the state rather than in the
-question:
+When the state holds several parts — a message, a record and a policy — name the
+part a question is about with its key in backticks, and keep the content in the
+state rather than in the question:
 
 ```@example jev
 state = (
@@ -273,30 +199,32 @@ println("refund_requested: ", answer(r, "refund_requested"))
 println("policy_allows:    ", answer(r, "policy_allows"))
 ```
 
-The backtick form is a prompting convention the model reads, not a server-side
-resolver: nothing validates the name, and a path that does not exist raises no
-error — it just leaves the question vaguer than you intended. A `NamedTuple`,
-`Dict`, `Vector`, `Tuple` or plain `String` are all accepted as state; `nothing`
-is not ([State](https://docs.typesafe.ai/concepts/state)). Key order is part of
-what the model reads, so prefer the ordered forms to a `Dict`.
+The backticks are a prompting convention the model reads, not a server-side
+resolver: a name that does not exist raises no error, it only leaves the
+question vaguer. The state may be a `NamedTuple`, `Dict`, `Vector`, `Tuple` or
+`String`, not `nothing` ([State](https://docs.typesafe.ai/concepts/state)), and
+its key order is read too, so prefer the ordered forms.
 
 ## Reading answers
 
-Any call that reaches the service returns one of the three result types below; a
-wrong `service` or a malformed request (duplicate or blank question names,
-invalid criteria) is an `ArgumentError` raised before any request is sent.
-Inside a [`with_recorded_answers`](@ref) replay scope, a request with no
-recording throws [`ReplayMissError`](@ref): a gap in the recordings is not a
-service failure.
+Any call that reaches the service returns one of three result types. A
+malformed request — a wrong `service`, duplicate or blank question names,
+invalid criteria — is an `ArgumentError` before anything is sent, and inside a
+[`with_recorded_answers`](@ref) replay scope a request with no recording throws
+[`ReplayMissError`](@ref): a gap in the recordings is not a service failure.
 
 | Result | Meaning |
 | :--- | :--- |
 | [`SystemOneSuccess`](@ref) | HTTP 200, decoded into answers |
-| [`SystemOneFailure`](@ref) | the service answered non-2xx |
+| [`SystemOneFailure`](@ref) | the service answered non-2xx ([Errors](@ref jev_errors)) |
 | [`SystemOneCallError`](@ref) | no response at all: timeout, transport failure, missing key, or a 200 whose body was not a usable set of answers |
 
-On a success, three equivalent accessors reach an answer, and the usual
-`Dict`-like queries work:
+A failed call has no answers: [`answers`](@ref), [`answer`](@ref) and
+`getindex` throw [`SystemOneError`](@ref) on it rather than returning an empty
+map, so `r["is_unsafe"].noul > 0.9` can never read as "safe" on a call that
+never happened. Where a failed call is a case your code handles, branch on
+`r isa SystemOneSuccess` first, as the first example does. On a success, three
+equivalent accessors reach an answer:
 
 ```@example jev
 ticket = "Help! My payouts have been failing for 3 days and nobody has replied to my emails."
@@ -320,60 +248,57 @@ haskey(r, "wants_human") && println(r["wants_human"].noul)
 println(collect(keys(r)))     # the question names that came back
 ```
 
-**Confidence is a statistic of the distribution, not a claim about
-correctness.** It collapses the shape of `probabilities` into `0 … 1`: all the
-mass on one outcome gives 1.0, a flat spread gives a low number. For a Choice
-over `n` options it is `clamp((n·p_max − 1)/(n − 1), 0, 1)`, the top probability
-`p_max` rescaled so that a uniform answer scores 0 (the formula fits every answer
-we measured within 0.02, on jev-1.13.0 in September 2026). The same confidence is
+The service rounds every number to two decimals, as a floating-point value: a
+0.82 can arrive as 0.8200000000000001.
+
+**Confidence describes the distribution, not correctness.** It collapses
+`probabilities` into `0 … 1`: all the mass on one outcome gives 1.0, a flat
+spread a low number. For a Choice over `n` options it is
+`clamp((n·p_max − 1)/(n − 1), 0, 1)`, the top probability `p_max` rescaled so
+that a uniform answer scores 0
+([Confidence](https://docs.typesafe.ai/confidence)). The same confidence is
 therefore a different top probability for a different number of options: 0.5
 means `p_max ≥ 0.75` with 2 options, 0.6 with 5 and 0.55 with 10. A Score's
 confidence likewise measures how concentrated the probability is around the
-most likely level. A confidence of 1.0 says the model is not torn, not that the
-model is right ([Confidence](https://docs.typesafe.ai/confidence)). Low
-confidence on a Choice usually means no option wins; on a Score it usually means
-the levels overlap for this state, the question measures more than one thing, or
-the state does not say enough. A Noul has no confidence at all — 0.5 there is
-uncertainty, not medium intensity.
+most likely level. Low confidence on a Choice usually means no option wins; on
+a Score, that the levels overlap for this state, the question measures more than
+one thing, or the state does not say enough.
 
-**Thresholds are your policy, not the model's.** Where to cut is a function of
-what a wrong answer costs: a read-only action can act at a much lower confidence
-than a refund or a page. Start conservative, measure on your own data, and move
-the number; do not import a threshold from an example.
+!!! details "Evidence"
+    The formula fits every answer we measured within 0.02, on jev-1.13.0 in
+    September 2026.
 
-**Answers vary between identical calls.** The service does not answer a repeated
-request bit for bit: measured on jev-1.13.0 (September 2026), identical requests
-differed in 60% of repeated pairs, by 0.011 in a probability on average and by
-up to 0.11. That is noise on a clear-cut input, but a decision near a threshold
-can flip between two identical calls. Log what a decision was based on — the
-answer's `raw`, `r.response.request_id` and `r.response.model` — and, for
-reproducible tests and docs, record an answer once and replay it with
-[`with_recorded_answers`](@ref) ([Developing and Testing with
-Jev](@ref jev_testing_guide)).
+**Answers vary between identical calls.** The service does not answer a
+repeated request bit for bit: noise on a clear-cut input, but a decision near a
+threshold can flip between two identical calls. Log what a decision was based
+on — the answer's `raw`, `r.response.request_id` and `r.response.model` — and,
+for reproducible tests and docs, record an answer once and replay it with
+[`with_recorded_answers`](@ref) ([Test and Develop](@ref jev_testing_guide)).
 
-**A failed call has no answers.** [`answers`](@ref), [`answer`](@ref) and
-`getindex` all throw [`SystemOneError`](@ref) on a
-[`SystemOneFailure`](@ref)/[`SystemOneCallError`](@ref) rather than returning an
-empty map — otherwise `r["is_unsafe"].noul > 0.9` would read as "safe" on a call
-that never happened. Where a failed call is a case your code handles, branch on
-`r isa SystemOneSuccess` (or `issuccess`) before you read anything, as the first
-example does; elsewhere, reading directly fails loudly.
+!!! details "Evidence"
+    Measured on jev-1.13.0 (September 2026), identical requests differed in 60%
+    of repeated pairs, by 0.011 in a probability on average and by up to 0.11.
 
-## Ask many questions at once
+## [Ask many questions at once](@id jev_many_questions)
 
-The state is ingested once per request and every question is evaluated against
-it independently and in parallel. Adding questions costs only the tokens of the
-questions themselves, so a battery of small questions in one [`ask`](@ref) is
-far cheaper and faster than one call per question — the [parallel-questions
-cookbook](https://docs.typesafe.ai/cookbooks/parallel_questions) measures a
-13-question run batched into one call at 12.2x cheaper and 10.0x faster than 13
-separate calls, with no change in the answers. Latency is nearly flat in the
-number of questions: measured on jev-1.13.0 (September 2026), one question took
-0.30 s and 22 questions 0.31 s.
+**The job:** learn several things about one message — which team, why, how
+upset, whether the customer wants a person — without paying for the message
+once per question. **Without Jev:** one classifier or one prompt per question,
+or one long prompt whose answer you parse. **With Jev:** one [`ask`](@ref)
+carries every question; the text is read once and each question is answered on
+its own against it.
 
-That economics makes **speculative** questions worth asking: include the ones
-whose answers only matter for some inputs and let the code ignore the rest
-([Speculative fan-out](https://docs.typesafe.ai/patterns/fan-out)).
+A question costs only its own tokens and barely moves the latency, which makes
+**speculative** questions worth asking: include the ones whose answers matter
+only for some inputs, and let the code ignore the rest ([Speculative
+fan-out](https://docs.typesafe.ai/patterns/fan-out)).
+
+!!! details "Evidence"
+    The [parallel-questions
+    cookbook](https://docs.typesafe.ai/cookbooks/parallel_questions) measures a
+    13-question run batched into one call at 12.2x cheaper and 10.0x faster than
+    13 separate calls, with no change in the answers. Measured on jev-1.13.0
+    (September 2026), one question took 0.30 s and 22 questions 0.31 s.
 
 ```@example jev
 TRIAGE = (
@@ -409,313 +334,431 @@ end
 println("billable input tokens: ", token_usage(r).prompt_tokens)
 ```
 
-Two of the three Choice questions above end in an `other` option. Give the
-model a way to say "none of these" whenever the enumeration might not cover
-every input, otherwise the probability has nowhere to go but onto an option that
-does not fit.
+**Tune it**
 
-Questions in one request are independent: an answer never becomes hidden context
-for another question. A **second** request is needed only when your code cannot
-build it until the first answer arrives — because the answer decides what to
-retrieve into the next state, or which options the next question should offer.
-If the second request's questions could have been asked against the original
-state, ask them in the first one.
+- End every enumeration that might not cover an input with an `other` option,
+  as two of the three Choices above do: otherwise the probability has nowhere to
+  go but onto an option that does not fit.
+- Questions in one request are independent: an answer never becomes context for
+  another question. Send a second request only when your code cannot build it
+  before the first answer arrives — because that answer decides what to
+  retrieve, or which options to offer next.
+- To judge many items in one request, put each under its own key in the state
+  and name the key in the question — "Which team should handle ticket `t17`?" —
+  as [Many Items at Once](@ref jev_algorithms_guide) does; addressing them by
+  array index fails as the list grows.
 
-One request can also judge many **items**: put each item under its own key in
-the state and point each question at its key — "Which team should handle ticket
-`t17`?". Addressing items by array index instead (`items[17]`) collapsed to 33%
-accuracy at 150 items on our own labeled set (jev-1.13.0, September 2026);
-[Semantic Algorithms with Jev](@ref jev_algorithms_guide) has the measurements
-and the patterns built on keyed items.
+!!! details "Evidence"
+    Addressing items by array index (`items[17]`) collapsed to 33% accuracy at
+    150 items on our own labeled set (jev-1.13.0, September 2026).
 
-## Combining Jev with the LLM APIs
+## [Fill a struct in one request](@id jev_fill_struct)
 
-### Confidence-gated intent routing
+**The job:** turn a support message into a typed record — which team, how
+urgent, whether the customer wants a refund — that your code can store and act
+on. **Without Jev:** an LLM filling a JSON schema, whose output you then
+validate and parse, or one classifier per field. **With Jev:** a struct already
+says what each field may hold, so each field type maps to a question — an enum
+to a [`choice`](@ref), an ordered enum to a [`score`](@ref), a `Bool` to a
+[`noul`](@ref) — and one request fills them all, with a certainty per field.
 
-Jev decides which handler runs. High confidence and a deterministic intent go to
-ordinary code; everything else that is still confident goes to an LLM; a flat
-distribution goes to a person
-([Intent routing](https://docs.typesafe.ai/patterns/intent-routing)).
+Each enum value is offered to the model as its sentence in `DESCRIPTIONS`: the
+sentence is the option's name, and the sentence the model picks maps back to the
+value, so a value's name never reaches the model — the same idea as
+`nl_classify` ([Dispatch on Meaning](@ref nl_dispatch_guide)). The constructor
+only ever receives values its field types allow.
 
-```julia
-using UniLM
+```@example jev
+@enum Team billing technical shipping
+@enum Urgency low normal high
 
-const INTENT = choice("What is the primary intent of this customer message?", (
-    order_status     = "Asking about an existing order",
-    product_question = "Asking about a product before buying",
-    return_exchange  = "Wants to return or exchange something",
-    other            = "None of the above"))
+struct Ticket
+    team::Team
+    urgency::Urgency
+    wants_refund::Bool
+end
 
-lookup_order(msg)    = "Order A-104 shipped on Tuesday."   # deterministic path, no model
-queue_for_human(msg) = (handler = :human, text = "")
+const QUESTIONS = (team         = "Which team should handle this ticket?",
+                   urgency      = "How urgent is this ticket?",
+                   wants_refund = "Does the customer ask for their money back?")
 
-function handle(message::AbstractString)
-    r = ask(message, "intent" => INTENT)
-    r isa SystemOneSuccess || return queue_for_human(message)   # a failed call has no answers
-    intent = r["intent"]
-    intent.confidence < 0.5 && return queue_for_human(message)
-    intent.choice == "order_status" && return (handler = :code, text = lookup_order(message))
-    intent.choice == "other" && return queue_for_human(message)
+# One table per enum: each value with the sentence the model reads for it, in the order it reads them.
+const DESCRIPTIONS = Dict(
+    Team    => [billing   => "Charges, invoices, refunds, payment methods, subscription prices",
+                technical => "Bugs, crashes, errors, outages, integration or configuration problems",
+                shipping  => "Delivery of physical goods: tracking, delays, damaged or missing parcels"],
+    Urgency => [low    => "Low: a question or a minor annoyance; no loss of money, data or access",
+                normal => "Normal: something is wrong, but there is a workaround or no deadline",
+                high   => "High: the customer is blocked, is losing money, or has a deadline within days"])
+sentences(E) = last.(DESCRIPTIONS[E])
 
-    reply = respond(message;
-        instructions = "You are the $(intent.choice) specialist. Answer in two sentences.",
-        model = "gpt-5.6-luna")
-    reply isa ResponseSuccess ? (handler = :llm, text = output_text(reply)) :
-                                queue_for_human(message)
+ordinal(::Type) = false
+ordinal(::Type{Urgency}) = true         # an ordered rubric: asked as a Score, not a Choice
+
+question(::Type{Bool}, q) = noul(q)
+question(E::Type{<:Enum}, q) = ordinal(E) ? score(q, sentences(E)) : choice(q, sentences(E))
+
+# The chosen sentence, or the most likely level, back to its enum value.
+value(::Type{Bool}, a::NoulAnswer) = a.noul >= 0.5
+value(E::Type{<:Enum}, a::ChoiceAnswer) = only(v for (v, s) in DESCRIPTIONS[E] if s == a.choice)
+value(E::Type{<:Enum}, a::ScoreAnswer) = first(DESCRIPTIONS[E][argmax(a.probabilities) + 1])   # levels count from 0
+certainty(a::NoulAnswer) = abs(2a.noul - 1)             # 0 at a coin flip, 1 at a sure yes or no
+certainty(a::Union{ChoiceAnswer,ScoreAnswer}) = a.confidence
+
+# One request for the whole struct. A failed call throws: it never becomes a default T.
+function extract(::Type{T}, text) where {T}
+    fields = fieldnames(T)
+    r = ask(text, [String(f) => question(fieldtype(T, f), QUESTIONS[f]) for f in fields])
+    (T((value(fieldtype(T, f), answer(r, f)) for f in fields)...),
+     NamedTuple{fields}(map(f -> certainty(answer(r, f)), fields)))
+end
+
+ticket, certainties = extract(Ticket, "I was charged twice this month. Refund the duplicate now!")
+for f in fieldnames(Ticket)
+    println(rpad(f, 13), rpad(getfield(ticket, f), 9), "certainty ", certainties[f])
 end
 ```
 
-### Guardrail over an LLM draft
+The ticket comes back as a `billing` ticket of `high` urgency that asks for a
+refund, and urgency is its least certain field (0.72).
 
-Screen the generated text before it reaches the user. One request carries the
-whole hazard battery plus a severity rubric, and your code owns the pass /
-review / block policy
-([Guardrails for LLMs](https://docs.typesafe.ai/cookbooks/llm_guardrails)).
+On 32 hand-labeled tickets, one request per ticket filled a five-field version
+of this struct at 0.979 accuracy per field. A confidence threshold tuned for one
+option wording does not transfer to another: with the sentences as option
+names, the Choice confidence on that set came out lower at the same accuracy.
 
-```julia
+!!! details "Evidence"
+    Measured on jev-1.13.0 (September 2026) on 32 hand-labeled tickets and a
+    five-field version of this struct, both encodings in one session, runs
+    interleaved. Sentences as the option names (this recipe): 0.979 per field
+    over three runs (0.981, 0.981, 0.975); exact-match rate 0.896. Labels with
+    the sentences as their descriptions (the earlier recipe), same session:
+    0.981 in all three runs; exact-match rate 0.906. The whole gap
+    is one near-tie flip (0.40 vs 0.39) in the urgency Score, whose request is
+    identical under both encodings; neither encoding made an error on a Choice
+    field. Across the three runs, 1 of 480 predictions changed: that urgency
+    near-tie.
+
+    The three-field struct above: both encodings 0.974 per field (team 1.0 on 21
+    gradable items, urgency 0.923 on 26, wants_refund 1.0 on 32).
+
+    Choice confidence was somewhat lower with the sentences as option names
+    (department: mean 0.894 vs 0.910; 24 vs 18 of 96 answers below 0.8), with no
+    change in accuracy. Input tokens per request: 627 with the sentences as
+    option names, 706 with labels and descriptions.
+
+    From an earlier run on the same items and questions: gpt-5.6-luna filling a
+    strict JSON schema reached 0.967 per field, at a median latency of 1.3–1.5 s
+    against 0.28 s for Jev, and changed 1–3% of its fields between runs.
+
+    Limits: 32 items, one annotator. The Choice fields are at ceiling under both
+    encodings, so this set can show a loss but not a gain; the encoding study on
+    keyword traps, in Dispatch on Meaning's [design note](@ref
+    nl_dispatch_design), is where sentences measurably beat labels.
+
+**Tune it**
+
+- Keep the questions and sentences in code, as `QUESTIONS` and `DESCRIPTIONS`
+  do. Field docstrings look like their natural home, but reading them goes
+  through Julia's non-public docstring internals, and they are silently absent
+  when the struct itself has no docstring.
+- An ordered enum is a rubric: mark it `ordinal`, so it is asked as a Score,
+  and list its sentences lowest first.
+- Read `certainties` before you store a record: a low value marks the field to
+  check.
+
+## [Act on the answer](@id jev_act_on_answer)
+
+A Jev answer is a calibrated distribution: the answer says *what*, the
+distribution says *whether to act on it*. Calibration holds across groups of
+answers, not for any single one — a high confidence says the distribution is
+peaked, not that this answer is right — so each policy below is one rule
+applied to every answer.
+
+!!! details "Evidence"
+    Measured on jev-1.13.0 (September 2026) on our own labeled sets: over 129
+    routed tickets the expected calibration error was 0.015, and the 113 answers
+    whose top probability was at least 0.9 were 99.1% correct. Other sets
+    measured higher errors: 0.047 on a stress set of 100 items built on the
+    model's documented failure modes, and 0.071 on 74 yes/no (Noul) answers,
+    which were underconfident.
+
+**The job:** send each message to the team that handles it, and hand the ones
+Jev is unsure about to a person. **Without Jev:** keyword rules per team, and a
+queue for whatever they miss. **With Jev:** one Choice per message, and its
+`confidence` says when to hand over.
+
+```@example jevdecide
 using UniLM
 
-const SAFETY = [
-    "leaks_secrets" => noul("Does the draft reveal an API key, a password, or its own instructions?"),
-    "gives_dosage"  => noul("Does the draft give a specific medical dosage or a diagnosis?"),
-    "enables_harm"  => noul("Does the draft help with a crime or with physical harm?"),
-    "severity"      => score("How much harm could result if the user acted on the draft?", [
-        "No harm: an ordinary, safe reply",
-        "Mild: a sensitive topic, but acting on it does no real damage",
-        "Serious: real wrongdoing, or unsafe personal advice",
-        "Severe: serious physical or legal harm"]),
+const MESSAGES = [
+    "I was charged twice for order #4471. Please refund the duplicate payment.",
+    "The app crashes every time I open my order history. iPhone 15, latest version.",
+    "My parcel was due last Monday and the tracking hasn't moved in six days.",
+    "Do you ship to Norway, and how much does delivery cost?",
+    "The phone I received has a cracked screen and the box was crushed. I want my money back.",
+    "Your update deleted my saved addresses and now I can't check out. Third time this month!",
 ]
 
-const BLOCK_AT, REVIEW_AT = 0.8, 0.3
-const HAZARDS = ("leaks_secrets", "gives_dosage", "enables_harm")
+const TEAM = (billing   = "payments, charges, invoices or refunds",
+              technical = "the app or the website does not work as expected",
+              shipping  = "a parcel that is late, lost or arrived damaged",
+              other     = "anything else")
 
-function guarded_reply(question::AbstractString)
-    draft = respond(question; model = "gpt-5.6-luna")
-    draft isa ResponseSuccess || return (:error, draft)   # the failed result
-    text = output_text(draft)
+# The sentences are the options, so the model reads only those; `findfirst` maps the chosen one to its key.
+const WHICH_TEAM = choice("Which team should handle this message?", collect(TEAM))
 
-    g = ask((user_question = question, draft = text), SAFETY)
-    g isa SystemOneSuccess || return (:review, text)   # unscreened is not the same as cleared
-    worst = maximum(g[h].noul for h in HAZARDS)
-    worst >= BLOCK_AT && return (:block, "")
-    (worst >= REVIEW_AT || g["severity"].score >= 2) && return (:review, text)
-    (:pass, text)
+for message in MESSAGES
+    a = ask(message, "team" => WHICH_TEAM)["team"]
+    team = findfirst(==(a.choice), TEAM)            # :billing, :technical, :shipping or :other
+    println(rpad(a.confidence >= 0.8 ? team : :person, 10), rpad(a.confidence, 6), message)
 end
 ```
 
-### Verifying a claim against its source
+Four messages go straight to their team. Two go to a person: the question about
+delivery to Norway (confidence 0.67), and the cracked phone (0.75), a damaged
+parcel and a refund request in one message.
 
-An LLM writes a claim from a passage; a Choice decides whether the passage
-actually supports it, and the confidence decides whether a human sees it first
-([Double-checking citations](https://docs.typesafe.ai/cookbooks/citation_check)).
+**Tune it**
 
-```julia
-using UniLM
+- The bar is your policy, not the model's: a read-only action can act at a much
+  lower confidence than a refund. Start conservative, measure on your own
+  messages, and move it — and pin the model first, since a tuned bar is a claim
+  about one version ([Models and versions](@ref jev_models)).
+- Confidence is rescaled for the number of options, so adding a team moves the
+  bar ([Reading answers](@ref)); rewording the options moves it too
+  ([Fill a struct in one request](@ref jev_fill_struct)).
+- `nl_classify` packages this pattern — the sentences as options, the key back,
+  a `min_confidence` gate or a `decide` policy — in one call ([Dispatch on
+  Meaning](@ref nl_dispatch_guide)).
 
-const RELATION = choice("How does `section` relate to `claim`?", (
-    supports     = "The section states the claim, or directly implies that it is true",
-    contradicts  = "The section states the opposite of the claim, or implies it is false",
-    says_nothing = "The section does not address what the claim asserts, either way"))
+### [When mistakes have different prices](@id jev_loss_matrix)
 
-const AUTO_ACCEPT = 0.8   # start high; lower it as you measure on your own documents
+**The job:** route tickets when a wrong refund costs far more than a wrong
+tracking link, with "ask a person" as one of the actions at its own price.
+**Without Jev:** one confidence threshold for every action, tuned on labeled
+tickets. **With Jev:** write down the price of each mistake; the calibrated
+probabilities give every action's expected cost in one line of arithmetic, and
+the cheapest action — the Bayes action — wins.
 
-function checked_answer(passage::AbstractString, question::AbstractString)
-    drafted = respond("$question\n\nAnswer in one sentence, using only this passage:\n$passage";
-                      model = "gpt-5.6-luna")
-    drafted isa ResponseSuccess || return (verdict = :unchecked, claim = output_text(drafted))
-    claim = output_text(drafted)
+```@example jevdecide
+# Minutes of staff time. A person resolves any ticket in HUMAN minutes. A wrong automated
+# action does its own harm and still ends with that person, so it is priced as both.
+const HUMAN = 2.0
+const HARM = (refund = 8.0, cancel_subscription = 10.0, shipping_delivery = 1.0, other = 0.5)
+cost(action, truth) = action === :escalate ? HUMAN : action === truth ? 0.0 : HARM[action] + HUMAN
 
-    r = ask((claim = claim, section = passage), "relation" => RELATION)
-    r isa SystemOneSuccess || return (verdict = :unchecked, claim = claim)
-    a = r["relation"]
-    verdict = a.confidence < AUTO_ACCEPT ? :needs_human : Symbol(a.choice)
-    (verdict = verdict, claim = claim, probabilities = a.probabilities)
+const WANTS = "What does the customer primarily want us to do?"
+const OUTCOMES = (refund              = "The customer asks to get money back.",
+                  cancel_subscription = "The customer wants to cancel or not renew a subscription.",
+                  shipping_delivery   = "The status, tracking, delay or address of a delivery.",
+                  other               = "None of the above.")
+const INTENT = choice(WANTS, OUTCOMES)
+
+function triage(message)
+    a = ask(message, "intent" => INTENT)["intent"]
+    expected(action) = sum(a.probabilities[String(t)] * cost(action, t) for t in keys(OUTCOMES))
+    action = argmin(expected, (:escalate, keys(OUTCOMES)...))           # the Bayes action; a tie escalates
+    (action = action, expected_cost = round(expected(action); digits = 2),
+     argmax = a.choice, confidence = a.confidence)
+end
+
+const TICKETS = ("Where is my parcel? Tracking hasn't moved in a week.",
+                 "I was charged but my order never shipped.",
+                 "Your update broke everything. I'm done with you, and I want this month back.")
+for ticket in TICKETS
+    println(ticket, "\n  => ", triage(ticket))
 end
 ```
 
-Note what the Choice is *not* asked to do: it never re-reads the whole corpus
-and never produces the claim. Locate the passage with a string match or a
-retriever first, and give the model only the judgment
-([Classifying RAG passages](https://docs.typesafe.ai/cookbooks/classifying_rag_passages)).
+The second ticket's most likely intent is a refund (confidence 0.69), yet the
+rule escalates it: a wrong refund costs 10 minutes against a person's 2, and at
+these probabilities the person is cheaper. The third ticket is refunded
+(expected cost 1.0), and the first goes to shipping at no expected cost.
 
-## Models and versions
+On our labeled tickets this rule had a lower held-out cost than the best tuned
+threshold (56.5 against 83.5), and it needs no labels to set — only prices.
 
-[`list_models`](@ref) returns the names the authenticated account may put in
-`model`:
+!!! details "Evidence"
+    Measured on jev-1.13.0 (September 2026) with this question and this cost
+    table, on our 129 labeled tickets (their labels mapped onto these four
+    outcomes, two-fold cross-validation): the Bayes rule's held-out cost was
+    56.5 against 83.5 for the best `min_confidence` tuned on the other fold, and
+    the 95% bootstrap interval of the paired difference, −53.0 to −8.0, excluded
+    zero. The Bayes rule escalated 2 of the tickets, the tuned threshold 18. The
+    threshold needed labeled tickets to tune; the Bayes rule needs none — only
+    costs.
 
-```@example jev
-m = list_models()
-if m isa TypeSafeModelsSuccess
-    for card in m.models
-        println(card.name, "  ", card.release_date, "  ", card.description)
-    end
-else
-    println("Request failed — ", m)
+    An earlier table of ours priced a wrong `other` below escalation, and its
+    Bayes rule escalated no ticket at all.
+
+**Tune it**
+
+- Price a wrong automated action as its harm **plus** the person who then fixes
+  it. Priced at its harm alone, a cheap action such as `other` (0.5) would
+  undercut escalation (2.0) under every distribution and become a free hedge:
+  nothing would ever reach a person.
+- The same arithmetic can decide inside `nl_classify`, [`nl_dispatch`](@ref)
+  and [`@branch`](@ref): their `decide` keyword takes a function of the answer
+  that returns the option to act on, or `nothing` to hand the case to
+  `fallback`. A threshold is itself such a policy, so `decide` replaces
+  `min_confidence` ([Confidence and control](@ref nl_dispatch_control)).
+
+### [Let Jev say none of these](@id jev_none_of_these)
+
+**The job:** notice the messages that fit none of your options, instead of
+forcing each onto one. **Without Jev:** read low confidence as "out of scope",
+which misses the out-of-scope messages a model routes confidently. **With
+Jev:** add a catch-all option; its probability is the out-of-scope signal. Here
+the same message is asked against a closed and an open option set, as two
+questions in one request:
+
+```@example jevdecide
+const IN_SCOPE = ["refund"           => "The customer asks to get money back.",
+                  "technical_issue"  => "The product, app or website is malfunctioning.",
+                  "billing_question" => "A question about a charge, invoice, price or payment method."]
+const CLOSED   = choice(WANTS, IN_SCOPE)
+const OPEN_SET = choice(WANTS, [IN_SCOPE; "other" => "None of the above."])
+
+for message in ("The export button crashes the app.",           # in scope
+                "Please add a dark mode, it would be great.",   # out of scope
+                "What's the capital of Australia?")             # out of scope
+    r = ask(message, "closed" => CLOSED, "open_set" => OPEN_SET)
+    closed, open_set = r["closed"], r["open_set"]
+    println(rpad(message, 44), " closed: ", rpad(closed.choice, 16), " confidence ", closed.confidence,
+            " | open: ", rpad(open_set.choice, 16), " P(other) ", open_set.probabilities["other"])
 end
 ```
 
-The listing contains **aliases**. `jev-latest` is the most recent stable
-release and the default here; `jev-preview` is the most recent release of any
-kind and moves ahead of `jev-latest` when a preview build exists. A versioned
-id such as `jev-1.13.0` is a valid `model` whether or not it appears in the
-listing, and the listing is scoped to the account, so do not hard-code names
-read from someone else's ([Models](https://docs.typesafe.ai/models)).
+In the closed set both out-of-scope messages went to `technical_issue`,
+"Please add a dark mode" at confidence 1.0. With a catch-all, `P(other)` took
+both at 1.0, and the in-scope message kept its team.
 
-[`SystemOneResponse`](@ref)`.model` reports the **versioned** id that actually
-answered, which may differ from the alias the request named. Log it. An alias
-moving is invisible on your side otherwise, and a confidence threshold tuned
-against one version is a claim about that version only — pin the id once the
-threshold matters.
+On our labeled set, the catch-all's probability separated the out-of-scope
+messages perfectly; one minus the top probability of the closed question did
+not.
 
-## Limits, errors, timeouts, and cost
+!!! details "Evidence"
+    Measured on our labeled set (25 out-of-scope and 104 in-scope tickets):
+    `P(other)` from a catch-all option separated the out-of-scope inputs
+    perfectly (AUROC 1.00), while one minus the top probability of the same
+    question without the catch-all did not (AUROC 0.86); the extra option left
+    in-scope accuracy unchanged (0.962 either way).
 
-### Limits
+**Tune it**
 
-| Limit | Value |
-| :--- | :--- |
-| Choice options | 1–255 per question ([Choice](https://docs.typesafe.ai/primitives/choice)) |
-| Score levels | 1–10 per question, TypeSafe advises at least two ([Score](https://docs.typesafe.ai/primitives/score)) |
-| Context | 64k tokens per request; 32k for `state` plus the single longest question ([Models](https://docs.typesafe.ai/models)) |
-| Rate limits | 250,000 tokens/second and 1,200 requests/minute, over either → 429; TypeSafe documents these as subject to change without notice ([Models](https://docs.typesafe.ai/models)) |
+- A confidence threshold is not an out-of-scope detector; a catch-all option
+  is. Add one wherever the options might not cover every input.
+- On our set the catch-all cost no in-scope accuracy, so there is little reason
+  to leave it out.
 
-The two option/level bounds are checked in the constructors, before the round
-trip: [`choice`](@ref) with 256 options and [`score`](@ref) with 11 levels each
-throw an `ArgumentError` locally.
+### [Act on the risk of the worst level](@id jev_worst_level)
 
-### Errors
+**The job:** page someone when a report might be critical, even when it is
+probably not. **Without Jev:** a severity label or an average score, which hides
+a small but real chance of the worst case. **With Jev:** read the probability
+mass at and above the worst level, and page when it beats the ratio of your
+prices. A [`ScoreAnswer`](@ref)'s `score` is the probability-weighted average —
+fine for ranking, misleading for a decision whose cost sits on one level.
 
-| Status | Cause | What comes back |
-| :--- | :--- | :--- |
-| 400 | unknown model, or a request the schema accepted and the service rejected (a bare noul, too many options or levels) | `error_type = "api_usage_error"` with `"Unknown model: …"`, or `nothing` with a plain-string reason |
-| 401 | the key was present but invalid | `error_type = "authentication_error"` |
-| 403 | no `Authorization` header reached the service | `error_type = "authentication_error"` |
-| 422 | schema validation failed | `error_type = nothing`; `message` lists each field path as `"<path>: <reason>"`, e.g. `questions.department.choice.criteria: Field required` |
-| 429 | rate limit — 250,000 tokens/second or 1,200 requests/minute at the time of writing | retried by the seam up to `max_attempts` honouring `Retry-After`; the final failure carries `retry_after`, the wait the service asked for in seconds |
-| 500, 502, 503, 504, 529 | service-side failure (including the non-standard `529 Overloaded`) | retried by the request seam |
+```@example jevdecide
+const SEVERITY = score("How severe is the problem this customer reports?", [
+    "No problem: a question, praise, or feedback",
+    "Minor: a cosmetic issue or small inconvenience; everything still works",
+    "Moderate: a feature is broken or degraded, but there is a workaround",
+    "Major: a core feature is unusable for this customer, with no workaround",
+    "Critical: data loss, a security breach, a physical safety risk, or an outage"])
 
-A non-2xx response is a [`SystemOneFailure`](@ref) carrying `.status`,
-`.error_type`, `.message` (extracted from whichever of the service's three
-`detail` body shapes arrived), `.request_id` (the `x-typesafe-request-id`
-header, the id to quote in a support report), `.retry_after` (seconds, from
-`retry-after-ms` or `Retry-After`, `nothing` when the service sent neither) and
-`.response` (the verbatim body). The full table is on the
-[API reference page](@ref system_one_api).
+# P(level ≥ k): the probability mass at or above rung k (levels count from 0).
+at_least(a::ScoreAnswer, k) = sum(p for (level, p) in a.probabilities if level >= k; init = 0.0)
 
-### Timeouts and retries
-
-[`ask`](@ref) and [`list_models`](@ref) ride the package's shared retry seam, so
-[`RequestConfig`](@ref) governs them exactly as it governs a chat call: 408,
-429, 500, 502, 503, 504 and 529 are retried up to `max_attempts` within
-`total_deadline`, honouring `Retry-After`. The rest — 400, 401, 403, 404, 422 —
-come back as they are, because an identical retry cannot fix them.
-
-```@example jev
-state     = "Help! My payouts have been failing for 3 days."
-questions = ["urgency" => score("How urgent is this ticket?",
-                                ["Can wait", "Needs attention this week", "Needs attention today"])]
-
-# Per call.
-r = ask(state, questions; config = RequestConfig(request_timeout = 20.0, max_attempts = 5))
-
-# Or for a whole scope, including tasks spawned inside it.
-scoped = with_request_config(request_timeout = 20.0, max_attempts = 1) do
-    ask(state, questions)
-end
-
-for res in (r, scoped)
-    if res isa SystemOneSuccess
-        println(answer(res, "urgency"))
-    else
-        println("Request failed — ", res)
-    end
+# A false page costs 1, a missed critical report costs 10: page when P(critical) > 1 / (1 + 10).
+for message in ("The tooltip on the export icon is misspelled.",
+                "The heater smelled like burning for a moment. Might have been dust, might not.",
+                "Our whole customer database was deleted after your update.")
+    a = ask(message, "severity" => SEVERITY)["severity"]
+    println(rpad(message, 80), " score ", a.score, "  P(critical) ", round(at_least(a, 4); digits = 2),
+            "  page: ", at_least(a, 4) > 1 / 11, "  (score ≥ 3.5: ", a.score >= 3.5, ")")
 end
 ```
 
-A timeout or a transport failure surfaces as [`SystemOneCallError`](@ref), never
-as a partial success, with the exception in `cause` and the service's request id in
-`request_id` when it sent one. `ask` and `list_models` also take `cancel=` (default:
-the ambient [`with_cancel`](@ref) token): a cancelled call returns a
-`SystemOneCallError` whose `cause` is a [`UniLMCancelled`](@ref), and sends nothing
-when the token was already cancelled. See [Timeouts & Retries](@ref timeouts_guide) and
-[Concurrency, Tasks and Cancellation](@ref concurrency_guide).
+The heater report's score, 2.24, sits in the middle of the scale, where a
+threshold at 3.5 does not fire, yet it puts 0.4 on "critical" — far above the
+1/11 that pays for a page.
 
-### Cost
+Paging pays when the expected cost of silence, 10 · P(critical), exceeds that
+of a false alarm, 1 · (1 − P(critical)) — that is, when P(critical) > 1/11. The
+two rules part only on split distributions like the heater's; on our labeled
+severity reports they never did.
 
-Only **input** tokens are billed; output tokens are currently free
-([Models](https://docs.typesafe.ai/models)).
+!!! details "Evidence"
+    The two rules part only on such split distributions: on our 75 labeled
+    severity reports none occurred, and both made identical decisions.
 
-```@example jev
-r = ask("Help! My payouts have been failing for 3 days.",
-        "urgency" => score("How urgent is this ticket?",
-                           ["Can wait", "Needs attention this week", "Needs attention today"]))
+**Tune it**
 
-println(answer(r, "urgency"))
-u = token_usage(r)                     # prompt_tokens = input, completion_tokens = output
-println(u.prompt_tokens, " billable tokens")
-println("USD ", estimated_cost(r))     # priced against r.response.model
-```
+- The cut is the ratio of your prices: with a false page at `c_false` and a
+  missed critical report at `c_miss`, page when P(critical) >
+  `c_false / (c_false + c_miss)`.
+- Keep `score` for ranking and for thresholds on the middle of the scale; read
+  the tail when one level carries the cost.
 
-[`estimated_cost`](@ref) prices the **versioned** id in `r.response.model`, not
-the alias the request named. A versioned `jev-X.Y.Z` id without its own row is priced
-at the `jev-latest` row; any other model that is not a key in
-[`DEFAULT_PRICING`](@ref) returns `0.0`. See [Cost Tracking](@ref cost_guide).
+## [Designing good questions](@id jev_designing_questions)
 
-## Designing good questions
-
-- **One narrow judgment per question.** Ask for something a knowledgeable person
-  decides in a second given the right context. "Does this message convey
-  urgency?" is a question; "analyse this and decide what to do" is a workflow —
-  split it and compose the answers in code.
+- **One narrow judgment per question.** Ask what a knowledgeable person decides
+  in a second given the right context. "Does this message convey urgency?" is a
+  question; "analyse this and decide what to do" is a workflow — split it and
+  compose the answers in code.
 - **Judgment in `instructions`, answer space in `criteria`.** The instruction
   says what is being decided; the options, levels or `yes`/`no` descriptions say
-  what the outcomes are. When the two disagree, accuracy drops — treat the
-  criteria as a continuation of the instruction.
-- **Always offer a way out.** Add an `other` / `none of the above` option
-  whenever the enumeration might not cover an input. On our own labeled set
-  (jev-1.13.0, September 2026) a catch-all option separated out-of-scope inputs
-  perfectly, while 1 − top probability did not: without one, "Please add a dark
-  mode" was routed to a technical team at top probability 1.00. A confidence
-  threshold is not an out-of-scope detector; a catch-all option is ([Semantic
-  Programs with Jev](@ref jev_programs_guide)).
+  what the outcomes are. When the two disagree, accuracy drops.
+- **Always offer a way out.** Add an `other` option whenever the enumeration
+  might not cover an input ([Let Jev say none of these](@ref
+  jev_none_of_these)).
 - **Keep the state relevant.** Accuracy falls as unrelated material grows around
-  the decision. Retrieve and filter in code first and send only the fields the
+  the decision: retrieve and filter in code, and send only the fields the
   question needs.
 - **The model reads literally.** Scoping words, negations and implied conditions
   are taken at face value. When you find yourself explaining what you *really*
-  meant by a question, that explanation is the missing half of the instruction.
+  meant, that explanation is the missing half of the instruction.
 - **No arithmetic, no date comparison.** Counting, numeric magnitude and
-  ordering dates are unreliable. Extract the parts as a Choice over enumerated
-  options — including an explicit "not stated" — and let code assemble and
-  compare them. Do not interpolate a real number out of a Score either; a Score
-  is for thresholding.
+  ordering dates are unreliable: extract the parts as a Choice over enumerated
+  options — including an explicit "not stated" — and let code compare them. Do
+  not read a real number out of a Score either; a Score is for thresholding.
 - **Do not carry thresholds across primitives.** A Noul and a yes/no Choice
-  answer different questions — the Choice is relative and settles *which*, each
-  Noul is absolute and can be low for every option. `P(q)` and `1 - P(not q)`
-  are not guaranteed to agree, so do not build arithmetic identities out of
-  separate answers.
-- **Treat the state as untrusted text.** Jev does not treat the state as
-  hostile by default, and content written to steer a classifier can move the
-  answer. Be explicit in the criteria, and test adversarial inputs before you
-  ship.
+  answer different questions — the Choice settles *which*, each Noul is
+  absolute — and `P(q)` and `1 - P(not q)` are not guaranteed to agree.
+- **Treat the state as untrusted text.** Content written to steer a classifier
+  can move the answer. Be explicit in the criteria, and test adversarial inputs
+  before you ship.
 
-All of these come from the documented failure modes of the current model; see
-[Jev 1.13 jaggedness](https://docs.typesafe.ai/model-jaggedness/jev-1.13), which
-TypeSafe maintains per version — re-read it when you move a pin.
+These come from the documented failure modes of the current model: [Jev 1.13
+jaggedness](https://docs.typesafe.ai/model-jaggedness/jev-1.13), which TypeSafe
+maintains per version — re-read it when you move a pin.
+
+## With an LLM
+
+Jev decides and an LLM writes, so they meet on both sides of a generation:
+before it, [route the message](@ref jev_llm_route) and decide whether and how to
+generate; after it, [check the draft](@ref jev_llm_check_draft) before a
+customer sees it and [check its claims against the source](@ref
+jev_llm_check_claims). [Jev with LLMs](@ref jev_llm_guide) builds each step.
 
 ## See also
 
-- [Multiple Dispatch on Natural Language](@ref nl_dispatch_guide) — `nl"..."`
-  meanings in method signatures, `nl_dispatch`, and the `@branch` switch
-- [Semantic Programs with Jev](@ref jev_programs_guide) — decision policies,
-  catch-all options, taxonomies and typed extraction built on these answers
-- [Semantic Algorithms with Jev](@ref jev_algorithms_guide) — many judgments per
-  request over collections: routing, ranking, search and joins
-- [Developing and Testing with Jev](@ref jev_testing_guide) — recorded answers
-  and tests that need no key
-- [TypeSafe System One API (Jev)](@ref system_one_api) — every type, verb and
-  accessor, plus the full error table
-- [Service Endpoints](../api/endpoints.md) — [`TYPESAFEServiceEndpoint`](@ref UniLM.TYPESAFEServiceEndpoint) and the environment variables
-- [Cost Tracking](@ref cost_guide) — token usage and USD estimates across every surface
-- [TypeSafe documentation](https://docs.typesafe.ai) and its
-  [cookbooks](https://docs.typesafe.ai/cookbooks) — worked, measured examples
-  of each pattern above
+- [Jev with LLMs](@ref jev_llm_guide) — Jev before and after an LLM call
+- [Dispatch on Meaning](@ref nl_dispatch_guide) — `nl_classify`,
+  [`nl_dispatch`](@ref) and [`@branch`](@ref): the answer selects the code that
+  runs
+- [Many Items at Once](@ref jev_algorithms_guide) — many judgments per request
+  over collections: routing, ranking, search and joins
+- [Test and Develop](@ref jev_testing_guide) — recorded answers and tests that
+  need no key
+- [TypeSafe System One API (Jev)](@ref system_one_api) — setup, models, limits,
+  errors and cost, then every type, verb and accessor
+- [Cost Tracking](@ref cost_guide) — token usage and USD estimates across every
+  surface
+- [TypeSafe documentation](https://docs.typesafe.ai) — [System
+  One](https://docs.typesafe.ai/concepts/system-one), [How to build with
+  TypeSafe](https://docs.typesafe.ai/concepts/how-to-build-with-system-one) and
+  the [cookbooks](https://docs.typesafe.ai/cookbooks)

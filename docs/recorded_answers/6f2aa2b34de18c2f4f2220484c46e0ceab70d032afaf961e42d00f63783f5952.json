@@ -1,0 +1,112 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "body": {
+      "input": "My case arrived scratched, but I only noticed it ten days later. Can I still get a replacement?",
+      "instructions": "You write replies for the shipping team of a small online shop that sells phones and accessories. Follow the shop's policy:\nRefunds: we refund the full price of an item returned within 30 days of delivery, in its original packaging.\nDamaged items: report them within 7 days with a photo; we send a replacement or refund the item, as you prefer.\nShipping: orders leave our warehouse within 2 business days; standard delivery takes 3 to 7 business days.\nWe refund shipping costs only when the item arrived damaged.\nAnswer in at most three sentences.",
+      "model": "gpt-5.4-mini"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_95ed31904e5a4228a14db4a809cefa53",
+    "request_id_header": "x-request-id",
+    "body": {
+      "id": "resp_096bad422dc81681006aba974db86887d2b6851c4b7605e183",
+      "object": "response",
+      "created_at": 1790613325,
+      "status": "completed",
+      "access_programs": null,
+      "background": false,
+      "billing": {
+        "payer": "developer"
+      },
+      "completed_at": 1790613326,
+      "error": null,
+      "frequency_penalty": 0.0,
+      "incomplete_details": null,
+      "instructions": "You write replies for the shipping team of a small online shop that sells phones and accessories. Follow the shop's policy:\nRefunds: we refund the full price of an item returned within 30 days of delivery, in its original packaging.\nDamaged items: report them within 7 days with a photo; we send a replacement or refund the item, as you prefer.\nShipping: orders leave our warehouse within 2 business days; standard delivery takes 3 to 7 business days.\nWe refund shipping costs only when the item arrived damaged.\nAnswer in at most three sentences.",
+      "max_output_tokens": null,
+      "max_tool_calls": null,
+      "model": "gpt-5.4-mini-2026-03-17",
+      "moderation": null,
+      "output": [
+        {
+          "id": "msg_096bad422dc81681006aba974e193c87d2b9d79cf5516f11b1",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "Sorry, but damaged items need to be reported within 7 days of delivery with a photo, so a replacement isn’t covered under our damaged-item policy now. If you’d like, I can still help check whether any other option is available."
+            }
+          ],
+          "phase": "final_answer",
+          "role": "assistant"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "presence_penalty": 0.0,
+      "previous_response_id": null,
+      "prompt_cache_key": null,
+      "prompt_cache_retention": "24h",
+      "reasoning": {
+        "context": "current_turn",
+        "effort": "none",
+        "mode": "standard",
+        "summary": null
+      },
+      "safety_identifier": null,
+      "service_tier": "default",
+      "store": true,
+      "temperature": 1.0,
+      "text": {
+        "format": {
+          "type": "text"
+        },
+        "verbosity": "medium"
+      },
+      "tool_choice": "auto",
+      "tool_usage": {
+        "image_gen": {
+          "input_tokens": 0,
+          "input_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "output_tokens": 0,
+          "output_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "total_tokens": 0
+        },
+        "web_search": {
+          "num_requests": 0
+        }
+      },
+      "tools": [],
+      "top_logprobs": 0,
+      "top_p": 0.98,
+      "truncation": "disabled",
+      "usage": {
+        "input_tokens": 147,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens": 53,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 200
+      },
+      "user": null,
+      "metadata": {}
+    }
+  },
+  "recorded_at": "2026-09-28T16:35:28Z"
+}

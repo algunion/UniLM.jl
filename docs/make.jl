@@ -78,6 +78,7 @@ build_docs() = makedocs(;
             "FIM & Prefix Completion" => "guide/completions.md",
         ],
         "System One (TypeSafe Jev)" => [
+            "Jev with LLMs" => "guide/jev_with_llms.md",
             "Typed Judgments with Jev" => "guide/system_one.md",
             "Multiple Dispatch on Natural Language" => "guide/natural_language_dispatch.md",
             "Semantic Programs" => "guide/semantic_programs.md",

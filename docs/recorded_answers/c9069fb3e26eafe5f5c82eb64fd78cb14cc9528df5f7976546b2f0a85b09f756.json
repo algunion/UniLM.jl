@@ -1,0 +1,234 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "body": {
+      "input": [
+        {
+          "call_id": "call_LzqSUJnHVGNd3soB8aypMUtA",
+          "name": "issue_refund",
+          "output": "done",
+          "type": "function_call_output"
+        }
+      ],
+      "instructions": "You are the support agent of a small online shop. The customer's orders are 4471 and 4472. Use the tools to act on the customer's message, then answer in at most three sentences.",
+      "model": "gpt-5.4-mini",
+      "previous_response_id": "resp_043379531586bca0006aba9598f92087d285f36e74c48c8cbc",
+      "tools": [
+        {
+          "description": "Get the carrier's tracking events for an order",
+          "name": "track_parcel",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "order_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "order_id"
+            ],
+            "type": "object"
+          },
+          "strict": true,
+          "type": "function"
+        },
+        {
+          "description": "Refund an order's payment to the original payment method",
+          "name": "issue_refund",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "order_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "order_id"
+            ],
+            "type": "object"
+          },
+          "strict": true,
+          "type": "function"
+        },
+        {
+          "description": "Cancel an order that has not shipped yet",
+          "name": "cancel_order",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "order_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "order_id"
+            ],
+            "type": "object"
+          },
+          "strict": true,
+          "type": "function"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_68e55c37ad1748618f96632c9a213cc7",
+    "request_id_header": "x-request-id",
+    "body": {
+      "id": "resp_043379531586bca0006aba975a62f887d2a33c1e7fbb4d0b0a",
+      "object": "response",
+      "created_at": 1790613338,
+      "status": "completed",
+      "access_programs": null,
+      "background": false,
+      "billing": {
+        "payer": "developer"
+      },
+      "completed_at": 1790613338,
+      "error": null,
+      "frequency_penalty": 0.0,
+      "incomplete_details": null,
+      "instructions": "You are the support agent of a small online shop. The customer's orders are 4471 and 4472. Use the tools to act on the customer's message, then answer in at most three sentences.",
+      "max_output_tokens": null,
+      "max_tool_calls": null,
+      "model": "gpt-5.4-mini-2026-03-17",
+      "moderation": null,
+      "output": [
+        {
+          "id": "msg_043379531586bca0006aba975ab9a487d28fbca9cbd89bde03",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "I’ve processed a refund for order #4471 to reverse the duplicate payment. You should see the credit return to your original payment method soon, depending on your bank or card issuer."
+            }
+          ],
+          "phase": "final_answer",
+          "role": "assistant"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "presence_penalty": 0.0,
+      "previous_response_id": "resp_043379531586bca0006aba9598f92087d285f36e74c48c8cbc",
+      "prompt_cache_key": null,
+      "prompt_cache_retention": "24h",
+      "reasoning": {
+        "context": "current_turn",
+        "effort": "none",
+        "mode": "standard",
+        "summary": null
+      },
+      "safety_identifier": null,
+      "service_tier": "default",
+      "store": true,
+      "temperature": 1.0,
+      "text": {
+        "format": {
+          "type": "text"
+        },
+        "verbosity": "medium"
+      },
+      "tool_choice": "auto",
+      "tool_usage": {
+        "image_gen": {
+          "input_tokens": 0,
+          "input_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "output_tokens": 0,
+          "output_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "total_tokens": 0
+        },
+        "web_search": {
+          "num_requests": 0
+        }
+      },
+      "tools": [
+        {
+          "type": "function",
+          "description": "Get the carrier's tracking events for an order",
+          "name": "track_parcel",
+          "output_schema": null,
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "order_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "order_id"
+            ],
+            "type": "object"
+          },
+          "strict": true
+        },
+        {
+          "type": "function",
+          "description": "Refund an order's payment to the original payment method",
+          "name": "issue_refund",
+          "output_schema": null,
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "order_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "order_id"
+            ],
+            "type": "object"
+          },
+          "strict": true
+        },
+        {
+          "type": "function",
+          "description": "Cancel an order that has not shipped yet",
+          "name": "cancel_order",
+          "output_schema": null,
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "order_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "order_id"
+            ],
+            "type": "object"
+          },
+          "strict": true
+        }
+      ],
+      "top_logprobs": 0,
+      "top_p": 0.98,
+      "truncation": "disabled",
+      "usage": {
+        "input_tokens": 194,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens": 41,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 235
+      },
+      "user": null,
+      "metadata": {}
+    }
+  },
+  "recorded_at": "2026-09-28T16:35:39Z"
+}

@@ -1,0 +1,119 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "body": {
+      "input": "My parcel came a week late, the charger was missing from the box and the phone's screen is scratched. I want all of this fixed today.",
+      "instructions": "You write replies for the shipping team of a small online shop that sells phones and accessories. Follow the shop's policy:\nRefunds: we refund the full price of an item returned within 30 days of delivery, in its original packaging.\nDamaged items: report them within 7 days with a photo; we send a replacement or refund the item, as you prefer.\nShipping: orders leave our warehouse within 2 business days; standard delivery takes 3 to 7 business days.\nWe refund shipping costs only when the item arrived damaged.\nAnswer in at most three sentences.",
+      "model": "gpt-5.6-sol"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_4d5f23bb30084d358962d464fa3541f8",
+    "request_id_header": "x-request-id",
+    "body": {
+      "id": "resp_0617644b7e402b54006aba9750b8fc87d2be3dd0d895e9d1be",
+      "object": "response",
+      "created_at": 1790613328,
+      "status": "completed",
+      "access_programs": null,
+      "background": false,
+      "billing": {
+        "payer": "developer"
+      },
+      "completed_at": 1790613333,
+      "error": null,
+      "frequency_penalty": 0.0,
+      "incomplete_details": null,
+      "instructions": "You write replies for the shipping team of a small online shop that sells phones and accessories. Follow the shop's policy:\nRefunds: we refund the full price of an item returned within 30 days of delivery, in its original packaging.\nDamaged items: report them within 7 days with a photo; we send a replacement or refund the item, as you prefer.\nShipping: orders leave our warehouse within 2 business days; standard delivery takes 3 to 7 business days.\nWe refund shipping costs only when the item arrived damaged.\nAnswer in at most three sentences.",
+      "max_output_tokens": null,
+      "max_tool_calls": null,
+      "model": "gpt-5.6-sol",
+      "moderation": null,
+      "output": [
+        {
+          "id": "rs_0617644b7e402b54006aba9751f11887d2ac8edf2a4aeca861",
+          "type": "reasoning",
+          "content": [],
+          "encrypted_content": "gAAAAABqupdVYfQ-Jzdd84YFva-PiBZ1qTAdanuqwbf2XGewyo7RqqqRDfZWbuA5xN-K798gl4qqdKi7wlCtez1cgyeveLKRP59J6QYGHwfKML59njJAr5vd83ZWctxjvXtn-uvRs3l1DXToz9sTGOsroLDvYWsmkv57APxUKNlY0I3gzkL-jbJjowFP0btrkxzhCCV00spbSfvGBJn83vsa6YfhRCEG9TU-p7gXk_Lyh0j7aEytnE1_etPicOaUuqw5-imsvfiSaLbmSMK2g9rssT_BxvQB6YYotkH78Z0ef6GUIcwbZ4twiFV1FmiS1CpIeYtTn7MrHK3F0--mPhtFQGWGXhVqljz_2NAJ8HeXXwx6YtGdT_w4CRFzJQQOhKVoYaQv4Qnugb2n8r3ryzhsLWNrifX0G8F4NfzuEr3uIlYUaCM6JENCnPnfkqefqROqepqwxrI3snNB-YbsB_SUXu8VRqpWrb-ZIK3knNyjQTnmeFw8-81NTfnH5laOacCbZ4OeMmrWhSYUBZBtS041mix2CtXv13bBwVq57rv1oym3jX74xahNN0dtxo8ysTT2ZsIuZotT56UL8N3KR_45mFCRnFf_4vJpDAgG27BlFxUCJIDJAEArcSgGr9RLakyZdq3mzxoDdkNtdKHFZkn1fndLvWpIJUkn4Do48IdL-Hu5tyAkHLruR3-JkVRWQdC03jA9p9uct_E2ggfOaxZRH2TQ6U70oKWjQhO9UvOYEML64y6qHhv-BRYldmevvyPEnioFoUVwSDazdBvRa8EUhISDW5J5JUCrQQ7k_VK2yZjQKMsZL4Hw5nS4o6gJlpL2Ji1p1f3kOgMmwkKKZO6qvTwnkZHGYoSwrgJnzbwvAM1v_uK2WY7PBgpcbZJUxqGH4k0YSt2fPjexIWJIUatRpFg84a5xEl-LPjOpPgIQihg-cA5nE6WGlZ3VYbbuy1oWIZn_Qf8BtT1_R44uUXC5wgvu8etKJREWCw6nHA57Oec3c8GtDtpCYBZMjTXGMOS5vRPiHXtnieZeB4TMxjqjEr0pSWgaXDRyXPgqRb-p5EGTbUC_5fBsnI0X3lW5GUBr8KwKYWei8FJWvgUkxug8hXV0WX_b13KMsU-a0Ohnigis7NVVdyYi6MSuivzZM8EsmhLjU8qJapIUco0WyX3cP0zZl1sBA_wOWui-MU5kor4C_8IdwVdcWWWPrZg5pW2RlohrODhX04ZffsHDcbHBfIIKzDEfJ0Yh5Wr8FXSTkpCf7heZ2g9wH5MP7zfSn73J7ZF7hp9TBA50En_JK4ToqXLC_ar8aWJ6GvxUNiTj1iw1o8DUwxj_hwtw7ftUuOT3TEYtDse6mhGWfduRqS5gXwci5PTxVuE2DFMoul0f5jGYUXV0fUbncCafYCX0BHcm3pBKPSe5Fz30PRSC3WI1khMOG7eA2bE3v2L5fQA5neIeDgd359EEfr-zJrpzYBQFzjDbqqda5obIKXmZBnreF2kjWEnl2JKunOdXSuQx7G8tmbtoV2bQeSgwCsl76cJ8oeFKJ_OFrSP-_WMju_O5kj5haFjRF6Wm-qROeRgfMMQfSjgylIMG3J5-bB6AqhckJVODz9MA1ZVVfvhCdgL7HJ3g5HuP-vRQ00Ko5dSK5nJtQBFoRuGxp6R8zbodyiyLA9ftE1cK_Jeh62zqzJzicxABdFF9agCrNkzW_dE3ETxPD_1-N0m2om5bF5wNwb74Ur477Y9cv5J5SRVhbT8_6E6_BvYv-ZlmOthEFPr4vqUXrs56zE_bw3wb4Iln8ab31SB034eE4OpXL47uwIYMh-JWKeiDedRMM0p2ud2SzYUkZE1JfgI5XwALLSnLeZSgd4xF5InT4INxulEU_pzMts5DBscsiVPAjRCeuvDixMBwEKymF-V0dG3Y5gE4ILCOkyjMSSngZhSCkHThqs3qRCCVCAY_neYxdj2Z0gJNm2iXzcyjWu7F7501RdGSwlIhzVw2h9PyB0j6R345DcAcDB_gIND9LrMgBTaY4MwFHWBhKv8TdHC6EeX2F_UvgTJ3vq8ZHuQKNf7BMga5VIotm9MBdydpVPakDuCFzgeGcYnlpJ_aFShqzpU0YDg67leYV0r8A75ybbmTN2MliqmRpzHV-pv1aGpQHRT3RrGH73xGTgNvLHtloKKrPlJoAitxJakHQ9Ny",
+          "summary": []
+        },
+        {
+          "id": "msg_0617644b7e402b54006aba9753fb6c87d2beb9f366d2e22349",
+          "type": "message",
+          "status": "completed",
+          "content": [
+            {
+              "type": "output_text",
+              "annotations": [],
+              "logprobs": [],
+              "text": "We’re sorry your order arrived late, with a missing charger and a scratched screen. Please send your order number and a photo of the damage within 7 days of delivery, and tell us whether you prefer a replacement phone or a full item refund; we’ll also arrange the missing charger and refund your shipping cost. We’ll prioritize this today, though we can’t guarantee the replacement or refund will be completed today."
+            }
+          ],
+          "phase": "final_answer",
+          "role": "assistant"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "presence_penalty": 0.0,
+      "previous_response_id": null,
+      "prompt_cache_key": null,
+      "prompt_cache_retention": "24h",
+      "reasoning": {
+        "context": "all_turns",
+        "effort": "medium",
+        "mode": "standard",
+        "summary": null
+      },
+      "safety_identifier": null,
+      "service_tier": "default",
+      "store": true,
+      "temperature": 1.0,
+      "text": {
+        "format": {
+          "type": "text"
+        },
+        "verbosity": "medium"
+      },
+      "tool_choice": "auto",
+      "tool_usage": {
+        "image_gen": {
+          "input_tokens": 0,
+          "input_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "output_tokens": 0,
+          "output_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "total_tokens": 0
+        },
+        "web_search": {
+          "num_requests": 0
+        }
+      },
+      "tools": [],
+      "top_logprobs": 0,
+      "top_p": 0.98,
+      "truncation": "disabled",
+      "usage": {
+        "input_tokens": 156,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens": 231,
+        "output_tokens_details": {
+          "reasoning_tokens": 142
+        },
+        "total_tokens": 387
+      },
+      "user": null,
+      "metadata": {}
+    }
+  },
+  "recorded_at": "2026-09-28T16:35:33Z"
+}

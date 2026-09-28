@@ -1,0 +1,49 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "policy": "Refunds: we refund the full price of an item returned within 30 days of delivery, in its original packaging.\nDamaged items: report them within 7 days with a photo; we send a replacement or refund the item, as you prefer.\nShipping: orders leave our warehouse within 2 business days; standard delivery takes 3 to 7 business days.\nWe refund shipping costs only when the item arrived damaged.",
+        "reply": "Sorry about the delay. Our standard delivery is 3 to 7 business days after dispatch, and orders leave our warehouse within 2 business days, so if it’s now outside that window please send us your order number and tracking details and we’ll look into it right away."
+      },
+      "model": "jev-latest",
+      "questions": {
+        "relation": {
+          "type": "choice",
+          "instructions": "How does `policy` relate to `reply`?",
+          "criteria": {
+            "supports": "The policy states what the reply says, or directly implies that it is true",
+            "contradicts": "The policy states the opposite of what the reply says, or implies it is false",
+            "says_nothing": "The policy does not address what the reply asserts, either way"
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e8df443277b8bed961a76a6295c2",
+    "request_id_header": "x-typesafe-request-id",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "relation": {
+          "type": "choice",
+          "choice": "supports",
+          "confidence": 1.0,
+          "probabilities": {
+            "says_nothing": 0.0,
+            "supports": 1.0,
+            "contradicts": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 524,
+        "output_tokens": 44
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T16:35:41Z"
+}

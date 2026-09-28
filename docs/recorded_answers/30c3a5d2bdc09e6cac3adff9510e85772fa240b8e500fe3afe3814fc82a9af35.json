@@ -1,0 +1,83 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "policy": "Refunds: we refund the full price of an item returned within 30 days of delivery, in its original packaging.\nDamaged items: report them within 7 days with a photo; we send a replacement or refund the item, as you prefer.\nShipping: orders leave our warehouse within 2 business days; standard delivery takes 3 to 7 business days.\nWe refund shipping costs only when the item arrived damaged.",
+        "internal_notes": "Today's status (internal): the courier ParcelNow is on strike in the north; about 400 parcels are stuck at their depot.",
+        "customer_message": "My parcel was due last Monday and the tracking hasn't moved in six days.",
+        "reply": "Sorry for the delay — ParcelNow is currently on strike in the north, and some parcels are stuck at their depot, which may be affecting your order. Please send us your order number and tracking number, and we’ll check the latest status for you. If the item arrives damaged, let us know within 7 days with a photo and we can arrange a replacement or refund."
+      },
+      "model": "jev-latest",
+      "questions": {
+        "leaks_internal": {
+          "type": "noul",
+          "instructions": "Does `reply` tell the customer something that is only in `internal_notes`?"
+        },
+        "overpromises": {
+          "type": "noul",
+          "instructions": "Does `reply` promise something that `policy` does not allow?"
+        },
+        "rude": {
+          "type": "noul",
+          "instructions": "Is `reply` rude or dismissive?"
+        },
+        "severity": {
+          "type": "score",
+          "instructions": "How much damage could sending `reply` do to the shop?",
+          "criteria": [
+            "None: an ordinary, accurate and polite reply",
+            "Mild: unclear or unhelpful, but it commits the shop to nothing",
+            "Serious: it commits the shop to money or a promise it has not agreed to",
+            "Severe: it exposes internal information or could cause legal trouble"
+          ]
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e8dee62279eb80fc878c059bcc25",
+    "request_id_header": "x-typesafe-request-id",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "leaks_internal": {
+          "type": "noul",
+          "noul": 0.9
+        },
+        "overpromises": {
+          "type": "noul",
+          "noul": 0.07
+        },
+        "rude": {
+          "type": "noul",
+          "noul": 0.04
+        },
+        "severity": {
+          "type": "score",
+          "score": 1.83,
+          "confidence": 0.0,
+          "legend": {
+            "0": "None: an ordinary, accurate and polite reply",
+            "1": "Mild: unclear or unhelpful, but it commits the shop to nothing",
+            "2": "Serious: it commits the shop to money or a promise it has not agreed to",
+            "3": "Severe: it exposes internal information or could cause legal trouble"
+          },
+          "probabilities": {
+            "0": 0.38,
+            "1": 0.02,
+            "2": 0.01,
+            "3": 0.59
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 659,
+        "output_tokens": 70
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T16:35:18Z"
+}

@@ -19,7 +19,8 @@ import JSON
     WriterError <: Exception
 
 A page holds something the site cannot show the way Documenter's HTML shows it — an
-unsupported node, an output that is not text, a link to an anchor no page defines.
+unsupported node, an output that is not text, a link to an anchor no page defines — or
+would be served at the route of another page (`a.md` and `a/index.md`).
 `page` is the page's path under `docs/src` (or ``make.jl `pages` `` for the
 navigation), `what` names the node or the problem.
 """
@@ -251,14 +252,20 @@ function read_page(doc::Documenter.Document, key::String, titles::Dict{String,St
     Page(key, route(key), plain(inlines(w, only(title.children))), description(body), body, w.ids, w.links)
 end
 
-"Every page of the manual as the site's page model, its internal links checked."
+"Every page of the manual as the site's page model, its routes distinct and its internal links checked."
 function read_site(doc::Documenter.Document)
+    pagekeys = sort!(collect(keys(doc.blueprint.pages)))
+    routes = Dict{String,String}()  # route => the first page served there
+    for key in pagekeys
+        first_key = get!(routes, route(key), key)
+        first_key == key || throw(WriterError(key, "its route $(route(key)) is also the route of $first_key"))
+    end
     titles = Dict{String,String}()
     for (key, page) in doc.blueprint.pages
         t = title_node(page)
         t === nothing || (titles[key] = Documenter.anchor_label(t.element.anchor))
     end
-    pages = [read_page(doc, key, titles) for key in sort!(collect(keys(doc.blueprint.pages)))]
+    pages = [read_page(doc, key, titles) for key in pagekeys]
     ids = Dict(p.route => Set(p.ids) for p in pages)
     for p in pages
         twice = unique(filter(id -> count(==(id), p.ids) > 1, p.ids))

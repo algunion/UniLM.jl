@@ -41,11 +41,13 @@ build(root::String, site::String; pages = []) =
              remotes = nothing, doctest = false, checkdocs = :none, modules = [WriterFixture], pages,
              warnonly = [:missing_docs, :cross_references])
 
-"The error a one-page manual stops with (`nothing` if it builds)."
-function build_error(markdown::String)
+"The error a manual of `files` (path under `src/` => Markdown) stops with (`nothing` if it builds)."
+function build_error(files::Dict{String,String})
     root = mktempdir()
-    mkpath(joinpath(root, "src"))
-    write(joinpath(root, "src", "index.md"), markdown)
+    for (path, markdown) in files
+        mkpath(dirname(joinpath(root, "src", path)))
+        write(joinpath(root, "src", path), markdown)
+    end
     try
         build(root, joinpath(root, "site"))
         nothing
@@ -53,6 +55,7 @@ function build_error(markdown::String)
         err
     end
 end
+build_error(markdown::String) = build_error(Dict("index.md" => markdown))
 
 paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
 
@@ -198,5 +201,7 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
         @test occursin("``\"Does `a` cover `b`?\"``", read(joinpath(root, "site", "src", "app", "page.md"), String))
         err = build_error("Text before the title.\n\n# Page\n")
         @test err isa WriterError && occursin("does not open with its title", err.what)
+        err = build_error(Dict("index.md" => "# Home\n", "a.md" => "# A\n", "a/index.md" => "# A index\n"))
+        @test err isa WriterError && err.page == "a/index.md" && occursin("route /a/ is also the route of a.md", err.what)
     end
 end

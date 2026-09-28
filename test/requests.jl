@@ -777,6 +777,9 @@ end
     @test UniLM._is_retryable(504) == true
     @test UniLM._is_retryable(408) == true
     @test UniLM._is_retryable(529) == true
+    @test all(UniLM._is_retryable, 520:524)   # Cloudflare origin errors
+    @test UniLM._is_retryable(501) == false   # Not Implemented: a retry cannot fix it
+    @test UniLM._is_retryable(525) == false   # TLS handshake with the origin failed
     @test UniLM._is_retryable(400) == false
     @test UniLM._is_retryable(401) == false
     @test UniLM._is_retryable(200) == false

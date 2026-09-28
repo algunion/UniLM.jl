@@ -10,7 +10,12 @@ const _RETRY_BASE = 1.0
 const _RETRY_FACTOR = 2.0
 const _RETRY_MAX_DELAY = 60.0
 
-_is_retryable(status::Integer)::Bool = status in (408, 429, 500, 502, 503, 504, 529)
+# 520–524 are the origin errors of a Cloudflare-fronted API (unknown origin error, web
+# server down, connection timed out, origin unreachable, origin response timeout):
+# transient in the same way as 502 and 504, and just as likely to succeed on retry.
+# Like 504, a 524 may follow a request the origin went on to process.
+_is_retryable(status::Integer)::Bool =
+    status in (408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 529)
 
 # RFC 7231 IMF-fixdate, the one HTTP-date form every sender must emit. Always GMT.
 const _IMF_FIXDATE = r"^[A-Za-z]{3}, (\d{2}) ([A-Za-z]{3}) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$"

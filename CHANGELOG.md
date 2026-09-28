@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.20.1
+
+### Fixed
+- An MCP session over Streamable HTTP failed the first call after an idle gap longer
+  than the server's keep-alive timeout (5 s for uvicorn and Node.js servers by
+  default). HTTP.jl handed the connection the server had closed to the next request
+  without checking it and never replays a POST, so the call failed with a transport
+  error, or with the 408 an HTTP.jl server writes on a connection it times out. Each
+  `HTTPTransport` now keeps its own connection pool and redials a connection that has
+  been idle for more than a second; `mcp_disconnect!` releases the pooled sockets.
+
 ## 0.20.0
 
 ### Breaking

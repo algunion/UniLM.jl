@@ -3146,7 +3146,10 @@ end
     # the timeout surfaces at the bound instead of after the kill ladder's grace, and
     # the reply the server sends later is never returned. The server replies after
     # 10 s under a shell that ignores SIGTERM, so a ladder alone would release the read
-    # only at its last rung, the group kill 0.3 + 5 + 2 s in.
+    # only at its last rung, the group kill 0.3 + 5 + 2 s in. Which of the two released
+    # it is checked as state, not elapsed time: the server is still running when the
+    # error surfaces only if the closed pipe released the read, so a stalled runner
+    # cannot fail the check and a ladder-released read cannot pass it.
     marker = "UNILMLATE" * string(rand(UInt64); base=16)
     proj = dirname(dirname(pathof(UniLM)))
     childfile, io = mktemp(); write(io, _slowreply_child_src(marker; reply_delay=10.0)); close(io)
@@ -3155,13 +3158,19 @@ end
     session = nothing
     try
         session = mcp_connect(cmd; config=RequestConfig(current_config(); mcp_request_timeout=10.0))
+        proc = session.transport.process
         box = Ref{Any}(nothing)
-        w = @async (box[] = try call_tool(session, "slowreply", Dict{String,Any}(); timeout=0.3) catch e; e end)
+        w = @async (box[] = try
+                (call_tool(session, "slowreply", Dict{String,Any}(); timeout=0.3), nothing)
+            catch e
+                (e, process_running(proc))   # sampled the moment the error surfaces
+            end)
         @test timedwait(() -> istaskdone(w), 25.0) === :ok
-        err = box[]
+        err, alive = box[]
         @test err isa MCPTimeoutError
         @test err isa MCPTimeoutError && err.phase === :request && err.limit == 0.3
-        @test err isa MCPTimeoutError && 0.3 <= err.elapsed < 2.4   # a 2 s stall budget; a third of 7.3 s
+        @test err isa MCPTimeoutError && err.elapsed >= 0.3   # never before the bound
+        @test alive === true                                  # released by the closed pipe, not the ladder
         @test session.status === :closed && session._close_cause === :timeout
     finally
         session === nothing ||

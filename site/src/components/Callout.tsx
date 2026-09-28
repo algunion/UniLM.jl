@@ -7,19 +7,19 @@ const styles = {
     container:
       'bg-sky-50 dark:bg-slate-800/60 dark:ring-1 dark:ring-slate-300/10',
     title: 'text-sky-900 dark:text-sky-400',
-    body: 'text-sky-800 [--tw-prose-background:var(--color-sky-50)] prose-a:text-sky-900 prose-code:text-sky-900 dark:text-slate-300 dark:prose-code:text-slate-300',
+    body: 'text-sky-800 [--tw-prose-background:var(--color-sky-50)] prose-a:text-sky-900 prose-code:text-sky-900 prose-strong:text-sky-900 dark:text-slate-300 dark:prose-code:text-slate-300 dark:prose-strong:text-slate-100',
   },
   tip: {
     container:
       'bg-emerald-50 dark:bg-slate-800/60 dark:ring-1 dark:ring-slate-300/10',
     title: 'text-emerald-900 dark:text-emerald-400',
-    body: 'text-emerald-800 [--tw-prose-underline:var(--color-emerald-400)] [--tw-prose-background:var(--color-emerald-50)] prose-a:text-emerald-900 prose-code:text-emerald-900 dark:text-slate-300 dark:[--tw-prose-underline:var(--color-sky-700)] dark:prose-code:text-slate-300',
+    body: 'text-emerald-800 [--tw-prose-underline:var(--color-emerald-400)] [--tw-prose-background:var(--color-emerald-50)] prose-a:text-emerald-900 prose-code:text-emerald-900 prose-strong:text-emerald-900 dark:text-slate-300 dark:[--tw-prose-underline:var(--color-sky-700)] dark:prose-code:text-slate-300 dark:prose-strong:text-slate-100',
   },
   warning: {
     container:
       'bg-amber-50 dark:bg-slate-800/60 dark:ring-1 dark:ring-slate-300/10',
     title: 'text-amber-900 dark:text-amber-500',
-    body: 'text-amber-800 [--tw-prose-underline:var(--color-amber-400)] [--tw-prose-background:var(--color-amber-50)] prose-a:text-amber-900 prose-code:text-amber-900 dark:text-slate-300 dark:[--tw-prose-underline:var(--color-sky-700)] dark:prose-code:text-slate-300',
+    body: 'text-amber-800 [--tw-prose-underline:var(--color-amber-400)] [--tw-prose-background:var(--color-amber-50)] prose-a:text-amber-900 prose-code:text-amber-900 prose-strong:text-amber-900 dark:text-slate-300 dark:[--tw-prose-underline:var(--color-sky-700)] dark:prose-code:text-slate-300 dark:prose-strong:text-slate-100',
   },
 }
 

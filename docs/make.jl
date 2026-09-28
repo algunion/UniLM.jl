@@ -15,8 +15,9 @@ include(joinpath(@__DIR__, "undocumented_allowlist.jl"))
 #                         of the providers whose examples have no recording)
 #   UNILM_DOCS_LIVE=1   → no replay: every example calls its service live
 # Each flag is 1, 0 or unset, and at most one is 1. What the scope does not record —
-# a streamed call, images, files, MCP, … — goes to its service in every mode, with
-# whatever key is set.
+# a streamed call, images, files, MCP, … — goes to its service when recording or
+# live. Replay hides every provider key, so a build without a flag never spends and
+# renders what the keyless CI build renders, whatever the shell exports.
 # After a recording run, commit the new files in docs/recorded_answers.
 # Replay and record ignore TYPESAFE_DEFAULT_MODEL: an unpinned request names the
 # default model, so an exported default would change every recording's key.
@@ -31,8 +32,12 @@ RECORD && LIVE && error("UNILM_DOCS_RECORD=1 and UNILM_DOCS_LIVE=1 exclude each 
                         "neither (replay), UNILM_DOCS_RECORD=1 (record the missing) or UNILM_DOCS_LIVE=1 (live)")
 const ANSWERS_MODE = LIVE ? nothing : RECORD ? :record_missing : :replay
 
+const PROVIDER_KEYS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY",
+                       "MISTRAL_API_KEY", "AZURE_OPENAI_API_KEY", "TYPESAFE_API_KEY")
+hidden(mode::Symbol) = mode === :replay ? [k => nothing for k in PROVIDER_KEYS] : Pair{String,Nothing}[]
+
 with_answers(build, ::Nothing) = build()
-with_answers(build, mode::Symbol) = withenv("TYPESAFE_DEFAULT_MODEL" => nothing) do
+with_answers(build, mode::Symbol) = withenv("TYPESAFE_DEFAULT_MODEL" => nothing, hidden(mode)...) do
     with_recorded_answers(build, joinpath(@__DIR__, "recorded_answers"); mode)
 end
 

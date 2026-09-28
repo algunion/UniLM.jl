@@ -32,8 +32,18 @@
   outside the scope.
 - The manual's non-streaming LLM examples render recorded real output instead of a
   failed request. The documentation build chooses its mode by flag, not by the keys
-  it finds: replay by default, `UNILM_DOCS_RECORD=1` to record the missing answers,
-  `UNILM_DOCS_LIVE=1` to call every service live.
+  it finds: replay by default (with every provider key hidden, so it never calls a
+  service), `UNILM_DOCS_RECORD=1` to record the missing answers, `UNILM_DOCS_LIVE=1`
+  to call every service live.
+
+### Fixed
+- Cloudflare's origin errors 520–524 are retried like 502 and 504, within
+  `RequestConfig.max_attempts` and honouring `Retry-After`. A Cloudflare-fronted API
+  that answered one of them used to fail the call on the first attempt.
+- An MCP server tool handler that throws `ReplayMissError` — a request with no
+  recording inside `with_recorded_answers` — no longer answers the client with
+  `isError` tool content that a model would try to correct from: the dispatcher logs
+  it and answers the generic JSON-RPC `-32603`.
 
 ## 0.21.0
 

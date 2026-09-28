@@ -13,9 +13,10 @@
   whose declared type its keys have; several keyed arguments take a tuple of tables. Options
   follow the types of the ordinary arguments as they do for meanings, in table order. Before
   any request, a `Dict` (it has no order), an empty table, more than 255 entries, a blank
-  sentence, a sentence or key given twice, a key no method takes at its position whatever the
-  other arguments are, a method that also pins a `Meaning`, and a gap in the method table are
-  each an `ArgumentError`. `decide` may return an offered key as the table writes it.
+  sentence, a sentence given twice, two keys whose dispatched values are `isequal` (`:a` and
+  `Val(:a)`), `nothing` or `missing` as a key, a key no method takes at its position whatever
+  the other arguments are, a method that also pins a `Meaning`, and a gap in the method table
+  are each an `ArgumentError`. `decide` may return an offered key as the table writes it.
   `meanings(f; texts)`, `meanings(f, argtypes; texts)` and `meaning_gaps(f, argtypes; texts)`
   preview a keyed call. Dispatch on `nl"..."` meanings is unchanged.
 - `nl_classify(state, texts; ...)` returns the chosen key as the table writes it (`:refund`
@@ -72,6 +73,10 @@
   instead of relaying the error, with its local path, to the client as `isError` tool
   content. Upgrading: catch `RecordingWriteError` where code caught `Base.IOError` or
   `SystemError` from these verbs.
+- `nl_dispatch` and `nl_classify` refuse a `fallback` that cannot take what it would
+  be called with — the call's arguments (`fallback(args...)`), or the state
+  (`fallback(state)`) — with an `ArgumentError` before the request. Before, it failed
+  with a `MethodError` only after a declined answer had been billed.
 - The manual's non-streaming LLM examples render recorded real output instead of a
   failed request. The documentation build chooses its mode by flag, not by the keys
   it finds: replay by default (with every provider key hidden, so it never calls a

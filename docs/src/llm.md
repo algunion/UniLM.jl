@@ -1728,9 +1728,12 @@ nl_dispatch(f, args...; model=nothing, service=TYPESAFEServiceEndpoint, config=n
     # -> f(resolved meanings — or keys — spliced into their positions, args...)
     # decide: nothing (argmax gated by min_confidence) | a callable | a Vector with one per slot;
     #   ChoiceAnswer -> any offered meaning, or nothing to decline; not with min_confidence
+    # fallback: nothing | callable as fallback(args...) on a decline; one that cannot take
+    #   arguments of the types of args is an ArgumentError before the request
     # texts: nothing (meanings are nl"..." in signatures) | a table | a Tuple of tables, one per keyed slot
     #   table: NamedTuple of sentences | Vector of key => sentence pairs (a Dict is refused: no order)
-    #   key: Symbol (passed as Val(key)) | singleton instance (Val(:k), Refund()) | type | enum value
+    #   key: Symbol (passed as Val(key)) | singleton instance (Val(:k), Refund()) | type | enum value;
+    #   never nothing or missing; two keys whose dispatched values are isequal are one key
     #   only the sentences are sent; the chosen one maps back to its key; decide may also
     #   return an offered key as the table writes it (:refund, not Val(:refund))
     # on_response: nothing | SystemOneSuccess -> ignored; called once before the policy
@@ -1740,7 +1743,8 @@ nl_classify(state, texts; min_confidence=0.0, decide=nothing, fallback=nothing,
             config=nothing, cancel=nothing, on_response=nothing)
     # -> the chosen key as the table writes it; ONE table; one Choice "classify" over every
     #   sentence in table order; a decline calls fallback(state), else LowConfidenceError /
-    #   DecisionDeclinedError
+    #   DecisionDeclinedError; a fallback that cannot take state is an ArgumentError before
+    #   the request
 meanings(f; texts=nothing) -> Dict{Int,Vector{String}}   # slot position => options over every method
 meanings(f, argtypes::Type{<:Tuple}; texts=nothing) -> Dict{Int,Vector{String}}
     # the options a call with ordinary arguments of these types sends, in send order
@@ -1761,7 +1765,8 @@ closed by defining it, or by one method wild in every slot
 combination that has no method; an ambiguous one only by a method for the
 intersection of the methods it collides on, which the error names. Without
 `state`, the state is a `JSON.Object{String,Any}` keyed by the ordinary argument
-names of the first such method, in argument order. `confidence` is `(n·p_max − 1)/(n − 1)` clamped
+names of the first such method, in argument order; the questions are named from the
+same method. `confidence` is `(n·p_max − 1)/(n − 1)` clamped
 to `0 … 1` over the `n` offered options, so a `min_confidence` is a different bar
 whenever the option list changes.
 
@@ -1770,12 +1775,15 @@ sentences written as `nl"..."` would make. The call's arity is `length(args)` pl
 table, and only methods of that arity take part. A table fills the one position whose
 declared type its keys have (`::Val{:refund}`, `::Refund`, `::Type{<:Billing}`, `::Val`;
 `::Any` declares none). Refused before any request: a `Dict`, an empty table, more than 255
-entries, a blank sentence or one that is not a string, a sentence or dispatched key given twice
-(`:a` and `Val(:a)`), a Tuple of pairs, a key that is not a Symbol, singleton instance, type
-or enum value, a table with no position or several, two tables in one position, a method of
-that arity pinning a `Meaning`, and a key no method takes at its position whatever the other
-arguments are (a catch-all `f(k, t)` takes every key). Options follow the argument types in
-**table order**, where meanings are offered in definition order; gaps are refused alike.
+entries, a blank sentence or one that is not a string, a sentence given twice, two keys whose
+dispatched values are `isequal` (`:a` and `Val(:a)`, `Vector` and `Array{S,1} where S`),
+`nothing` or `missing` as a key, a Tuple of pairs, a key that is not a Symbol, singleton
+instance, type or enum value, a table with no position or several, two tables in one position,
+a method of that arity pinning a `Meaning`, and a key no method takes at its position whatever
+the other arguments are (a catch-all `f(k, t)` takes every key). Options follow the argument
+types in **table order**, where meanings are offered in definition order; gaps are refused
+alike. The questions and the state are named from the first method, in definition order, that
+pins a table — never from a catch-all defined before it.
 
 ```julia
 ticket = "My package arrived crushed and the screen is cracked. I want my money back."

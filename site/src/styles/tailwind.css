@@ -89,6 +89,20 @@
     }
   }
 
+  /* A table scrolls in a box of its own (Table.tsx), which takes the table's
+     vertical margins (2em at the table's 0.875em), so tables space as before;
+     at zero specificity, the plugin's `h2 + *`, first- and last-child margins
+     still win. */
+  :where(.prose div:has(> table)) {
+    margin-block: 1.75em;
+  }
+  .prose
+    :where(div > table):not(
+      :where([class~='not-prose'], [class~='not-prose'] *)
+    ) {
+    margin-block: 0;
+  }
+
   /* Badges: images linked from a paragraph stay in its line (the preflight
      makes every image a block), without the link's underline. */
   .prose

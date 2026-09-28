@@ -625,9 +625,8 @@ sure(a) = a.probabilities[a.choice] >= 0.8 ? a.choice : nothing
 On this inbox both policies hold the same message. With the four teams,
 `min_confidence = 0.7` is the bar `p_max ≥ 0.775`; `sure` stays at 0.8 whatever
 the number of options. A policy can also prefer a cheaper action to a slightly
-likelier one: "When mistakes have different prices", in [Route and
-Decide](@ref system_one_guide), derives such a policy from what each mistake
-costs. `decide` together with a nonzero `min_confidence` is an
+likelier one: [When mistakes have different prices](@ref jev_loss_matrix)
+derives such a policy from what each mistake costs. `decide` together with a nonzero `min_confidence` is an
 `ArgumentError` before any request, because a threshold is itself the policy
 `a -> a.confidence >= τ ? a.choice : nothing`. Every position is decided before
 anything runs, and a policy that returns anything else is an `ArgumentError`:
@@ -732,7 +731,8 @@ the table entry, or the `nl"…"` in the signature.
   probability between them, which shows up as low confidence rather than as a
   wrong answer: read `meanings(f)` as the model will.
 - **Always include an "anything else".** Without one, a text outside the list has
-  nowhere to put its probability except on a sentence that does not fit.
+  nowhere to put its probability except on a sentence that does not fit
+  ([Let Jev say none of these](@ref jev_none_of_these)).
 - **Keep the state to what matters.** Accuracy falls as unrelated material grows
   around the decision, so filter and retrieve in code and pass only the fields
   the decision needs, or pass `state = ...` explicitly.
@@ -843,6 +843,8 @@ replaying, and crafting edge cases with a local server.
 
 ## See also
 
+- [Start Here: Jev in Five Minutes](@ref jev_start) — which pathway, in one table
+- [Jev with LLMs](@ref jev_llm_guide) — route before an LLM call, check after it
 - [Route and Decide](@ref system_one_guide) — [`ask`](@ref), the three
   primitives, and decision policies built on the answers
 - [Many Items at Once](@ref jev_algorithms_guide) — many judgments per request

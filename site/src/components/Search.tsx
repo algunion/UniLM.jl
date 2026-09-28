@@ -63,6 +63,14 @@ function useAutocomplete({
     close(autocomplete)
   }
 
+  // A new tab or window opens the URL as given, without the router: add the base path.
+  function openWithBasePath({ itemUrl }: { itemUrl?: string }) {
+    if (itemUrl) {
+      let url = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}${itemUrl}`
+      window.open(url, '_blank', 'noopener')
+    }
+  }
+
   let [autocomplete] = useState<Autocomplete>(() =>
     createAutocomplete<
       Result,
@@ -81,6 +89,8 @@ function useAutocomplete({
       },
       navigator: {
         navigate,
+        navigateNewTab: openWithBasePath,
+        navigateNewWindow: openWithBasePath,
       },
       getSources({ query }) {
         return import('@/markdoc/search.mjs').then(({ search }) => {

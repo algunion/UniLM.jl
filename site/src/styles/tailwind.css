@@ -88,4 +88,19 @@
       text-decoration-color: var(--tw-prose-underline, var(--color-sky-800));
     }
   }
+
+  /* Badges: images linked from a paragraph stay in its line (the preflight
+     makes every image a block), without the link's underline. */
+  .prose
+    :where(p > a > img):not(
+      :where([class~='not-prose'], [class~='not-prose'] *)
+    ) {
+    @apply my-0 inline;
+  }
+  .prose
+    :where(p > a:has(> img)):not(
+      :where([class~='not-prose'], [class~='not-prose'] *)
+    ) {
+    box-shadow: none;
+  }
 }

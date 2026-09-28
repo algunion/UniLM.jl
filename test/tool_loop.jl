@@ -656,15 +656,19 @@ end
 @testset "a ReplayMissError from a dispatch propagates instead of becoming a tool error" begin
     # A tool that asks Jev, run where nothing is recorded: the miss must stop the loop,
     # not reach the model as a tool error while the loop goes on without the answer.
+    # The scope wraps only the dispatch — the loop's own requests are recorded verbs
+    # too, and must reach the scripted server for the dispatcher to run at all.
     nothing_recorded = mktempdir()
-    jev = (name, args) -> ask("the ticket", "urgent" => noul("Is it urgent?"))
+    jev = (name, args) -> with_recorded_answers(nothing_recorded) do
+        ask("the ticket", "urgent" => noul("Is it urgent?"))
+    end
+    thrown(f) = try f(); nothing catch e; e end
     for n in (1, 3)
         chat = _tl_chat(_TLFixture([_tl_calls(UniLM.TOOL_CALLS, "c1" => "triage", "c2" => "triage"),
                                     _tl_reply("done")]))
         _tl_scripted() do
-            @test_throws ReplayMissError with_recorded_answers(nothing_recorded) do
-                tool_loop!(chat, jev; tool_concurrency=n)
-            end
+            e = thrown(() -> tool_loop!(chat, jev; tool_concurrency=n))
+            @test e isa ReplayMissError && e.path == "/v1/systemone"   # the dispatcher's miss
         end
         @test [m.role for m in chat.messages] == [UniLM.RoleSystem, UniLM.RoleUser]   # rolled back
     end
@@ -672,9 +676,8 @@ end
                        _tl_resp("resp_2", [_tl_text("done")])
     for n in (1, 2)
         _with_scripted((i, _) -> _json(200, turn(i))) do
-            @test_throws ReplayMissError with_recorded_answers(nothing_recorded) do
-                tool_loop(_tl_respond(), jev; tool_concurrency=n)
-            end
+            e = thrown(() -> tool_loop(_tl_respond(), jev; tool_concurrency=n))
+            @test e isa ReplayMissError && e.path == "/v1/systemone"
         end
     end
 end

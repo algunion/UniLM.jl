@@ -817,14 +817,8 @@ function _validation_path(loc)::String
 end
 
 _detail_message(v::AbstractString)::Union{Nothing,String} = String(v)
-# An object with no `message` still names its `error_type` (a live 400 sends
-# `{"detail":{"error_type":"max_tokens_exceeded"}}`), which says more than raw JSON.
-function _detail_message(v::AbstractDict)::Union{Nothing,String}
-    m = get(v, "message", nothing)
-    m isa AbstractString && return String(m)
-    t = get(v, "error_type", nothing)
-    t isa AbstractString ? String(t) : nothing
-end
+_detail_message(v::AbstractDict)::Union{Nothing,String} =
+    (m = get(v, "message", nothing); m isa AbstractString ? String(m) : nothing)
 function _detail_message(v::AbstractVector)::Union{Nothing,String}
     parts = String[]
     for e in v
@@ -843,8 +837,9 @@ _detail_message(::Any)::Union{Nothing,String} = nothing
 
 The human-readable message inside a TypeSafe error body, whichever shape it
 used. Validation lists become `"<dotted loc>: <msg>"` entries joined by `"; "`.
-A body that is not JSON, or that carries no recognisable message, is returned as
-raw text truncated to 200 characters.
+With no message string anywhere in the body, an object `detail`'s `error_type`
+stands in for one. A body that is not JSON, or that carries neither, is returned
+as raw text truncated to 200 characters.
 """
 function _typesafe_error_message(body::AbstractString)::String
     parsed = _typesafe_parse_body(body)
@@ -854,7 +849,10 @@ function _typesafe_error_message(body::AbstractString)::String
         m = _detail_message(parsed[key])
         isnothing(m) || return m
     end
-    _truncate_body(body)
+    # A `detail` object with no message still names its `error_type` (a live 400 sends
+    # `{"detail":{"error_type":"max_tokens_exceeded"}}`), which says more than raw JSON;
+    # it comes last, because a message string anywhere in the body is written for a reader.
+    something(_typesafe_error_type(body), _truncate_body(body))
 end
 
 "`detail.error_type` when the body uses the object shape, else `nothing`."

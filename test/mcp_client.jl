@@ -3029,7 +3029,7 @@ end
     @test err isa MCPTimeoutError && err.phase === :queue && err.limit == 0.3
     # A 2 s runner-stall budget over the 0.3 s bound; a wait bounded by the session's
     # 120 s default instead would outlast the 25 s window above.
-    @test err isa MCPTimeoutError && 0.3 <= err.elapsed < 2.5
+    @test err isa MCPTimeoutError && 0.3 - 0.005 <= err.elapsed < 2.5   # floor to libuv's clock
     @test err isa MCPTimeoutError && occursin("timeout", err.msg)
     @test isempty(_log(t))                                # it never touched the session
     @test session.status === :ready
@@ -3169,7 +3169,10 @@ end
         err, alive = box[]
         @test err isa MCPTimeoutError
         @test err isa MCPTimeoutError && err.phase === :request && err.limit == 0.3
-        @test err isa MCPTimeoutError && err.elapsed >= 0.3   # never before the bound
+        # Never before the bound, to libuv's clock: its loop time is whole milliseconds and
+        # may run on Linux's coarse monotonic clock, so a timer can fire a millisecond or
+        # two before time_ns says the bound has passed.
+        @test err isa MCPTimeoutError && err.elapsed >= err.limit - 0.005
         @test alive === true                                  # released by the closed pipe, not the ladder
         @test session.status === :closed && session._close_cause === :timeout
     finally

@@ -108,7 +108,10 @@ end
         @test e isa UniLM.UniLMTimeout
         @test e.phase === :request
         @test e.limit == 0.5
-        @test 0.5 <= e.elapsed < 10.0
+        # The floor allows 5 ms: libuv arms timers on its millisecond loop clock, which on
+        # Linux may be the coarse monotonic clock, so a timer can fire a tick before
+        # time_ns reaches the bound.
+        @test 0.5 - 0.005 <= e.elapsed < 10.0
     finally
         close(server)
         isopen(sock) && close(sock)
@@ -237,7 +240,7 @@ end
     @test err isa UniLM.UniLMTimeout
     @test err.phase === :request
     @test err.limit == limit
-    @test limit <= err.elapsed < limit + 3.0      # [limit, limit + timer latency + runner stall]
+    @test limit - 0.005 <= err.elapsed < limit + 3.0   # [limit to libuv's clock, limit + timer latency + runner stall]
     @test ran_to_end[] == 0                        # worker not yet finished at breach time
     # the abandoned worker was NOT terminated — it runs on to its own completion
     @test timedwait(() -> ran_to_end[] == 1, 15.0) === :ok

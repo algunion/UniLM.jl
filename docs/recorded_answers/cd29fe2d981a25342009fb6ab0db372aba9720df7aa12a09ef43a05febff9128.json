@@ -3,14 +3,12 @@
     "method": "POST",
     "path": "/v1/systemone",
     "body": {
-      "state": {
-        "ticket": "I was charged but my order never shipped."
-      },
+      "state": "Where is my parcel? Tracking hasn't moved in a week.",
       "model": "jev-latest",
       "questions": {
         "meaning_1": {
           "type": "choice",
-          "instructions": "Select the option that best describes the provided state.",
+          "instructions": "What does the customer primarily want us to do?",
           "criteria": {
             "The customer asks to get money back.": null,
             "The customer wants to cancel or not renew a subscription.": null,
@@ -23,27 +21,27 @@
   },
   "response": {
     "status": 200,
-    "request_id": "req_01a0e7b0f3b97bcc86ac805c14de3c02",
+    "request_id": "req_01a0e7e8e7cf75acabacb056ddcd62f9",
     "body": {
       "model": "jev-1.13.0",
       "answers": {
         "meaning_1": {
           "type": "choice",
           "choice": "The status, tracking, delay or address of a delivery.",
-          "confidence": 0.79,
+          "confidence": 1.0,
           "probabilities": {
+            "The customer asks to get money back.": 0.0,
             "The customer wants to cancel or not renew a subscription.": 0.0,
-            "None of the above.": 0.02,
-            "The customer asks to get money back.": 0.14,
-            "The status, tracking, delay or address of a delivery.": 0.84
+            "None of the above.": 0.0,
+            "The status, tracking, delay or address of a delivery.": 1.0
           }
         }
       },
       "usage": {
-        "input_tokens": 351,
+        "input_tokens": 349,
         "output_tokens": 90
       }
     }
   },
-  "recorded_at": "2026-09-28T11:05:28Z"
+  "recorded_at": "2026-09-28T12:06:35Z"
 }

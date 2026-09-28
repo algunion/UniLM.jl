@@ -3,14 +3,12 @@
     "method": "POST",
     "path": "/v1/systemone",
     "body": {
-      "state": {
-        "ticket": "Your update broke everything. I'm done with you, and I want this month back."
-      },
+      "state": "I was charged but my order never shipped.",
       "model": "jev-latest",
       "questions": {
         "meaning_1": {
           "type": "choice",
-          "instructions": "Select the option that best describes the provided state.",
+          "instructions": "What does the customer primarily want us to do?",
           "criteria": {
             "The customer asks to get money back.": null,
             "The customer wants to cancel or not renew a subscription.": null,
@@ -23,27 +21,27 @@
   },
   "response": {
     "status": 200,
-    "request_id": "req_01a0e7b0f4fd75ca986ef8b35a8abc0f",
+    "request_id": "req_01a0e7e8e95378888fabd3738898e719",
     "body": {
       "model": "jev-1.13.0",
       "answers": {
         "meaning_1": {
           "type": "choice",
           "choice": "The customer asks to get money back.",
-          "confidence": 0.93,
+          "confidence": 0.81,
           "probabilities": {
-            "The customer asks to get money back.": 0.95,
-            "The customer wants to cancel or not renew a subscription.": 0.05,
-            "The status, tracking, delay or address of a delivery.": 0.0,
-            "None of the above.": 0.0
+            "The customer asks to get money back.": 0.86,
+            "None of the above.": 0.0,
+            "The customer wants to cancel or not renew a subscription.": 0.0,
+            "The status, tracking, delay or address of a delivery.": 0.14
           }
         }
       },
       "usage": {
-        "input_tokens": 360,
+        "input_tokens": 345,
         "output_tokens": 86
       }
     }
   },
-  "recorded_at": "2026-09-28T11:05:29Z"
+  "recorded_at": "2026-09-28T12:06:36Z"
 }

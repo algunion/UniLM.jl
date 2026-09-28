@@ -10,18 +10,18 @@
           "type": "choice",
           "instructions": "Which team should handle this ticket?",
           "criteria": {
-            "billing": null,
-            "technical": null,
-            "shipping": null
+            "billing": "Charges, invoices, refunds, payment methods, subscription prices",
+            "technical": "Bugs, crashes, errors, outages, integration or configuration problems",
+            "shipping": "Delivery of physical goods: tracking, delays, damaged or missing parcels"
           }
         },
         "urgency": {
           "type": "score",
           "instructions": "How urgent is this ticket?",
           "criteria": [
-            "low",
-            "normal",
-            "high"
+            "Low: a question or a minor annoyance; no loss of money, data or access",
+            "Normal: something is wrong, but there is a workaround or no deadline",
+            "High: the customer is blocked, is losing money, or has a deadline within days"
           ]
         },
         "wants_refund": {
@@ -33,7 +33,7 @@
   },
   "response": {
     "status": 200,
-    "request_id": "req_01a0e7b105a07f7bb21fc9c98a7c11b9",
+    "request_id": "req_01a0e7e8ee8a7d82a904ed98876349fd",
     "body": {
       "model": "jev-1.13.0",
       "answers": {
@@ -49,12 +49,12 @@
         },
         "urgency": {
           "type": "score",
-          "score": 1.85,
+          "score": 1.84,
           "confidence": 0.77,
           "legend": {
-            "0": "low",
-            "1": "normal",
-            "2": "high"
+            "0": "Low: a question or a minor annoyance; no loss of money, data or access",
+            "1": "Normal: something is wrong, but there is a workaround or no deadline",
+            "2": "High: the customer is blocked, is losing money, or has a deadline within days"
           },
           "probabilities": {
             "0": 0.0,
@@ -68,10 +68,10 @@
         }
       },
       "usage": {
-        "input_tokens": 361,
+        "input_tokens": 466,
         "output_tokens": 72
       }
     }
   },
-  "recorded_at": "2026-09-28T11:05:33Z"
+  "recorded_at": "2026-09-28T12:06:37Z"
 }

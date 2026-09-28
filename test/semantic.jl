@@ -860,3 +860,541 @@ end
     @test outs == [(:a, :first), (:b, :first)]
     @test count(k -> k <: Tuple{Router,Vararg}, @lock(UniLM._NL_PLANS, collect(keys(UniLM._NL_PLANS[])))) == 1
 end
+
+# ─── 15. Keyed dispatch: the sentences in a table, the keys in the signatures ─
+
+# The same meanings written twice: as `nl"..."` in the signatures, and as keys whose
+# sentences a table holds. Both must put the same bytes on the wire.
+lit_route(::nl"A", ticket) = (:a, ticket)
+lit_route(::nl"B", ticket) = (:b, ticket)
+key_route(::Val{:a}, ticket) = (:a, ticket)
+key_route(::Val{:b}, ticket) = (:b, ticket)
+const KEY_AB = (a = "A", b = "B")
+
+lit_pair(::nl"x1", ::nl"y1", t) = 11
+lit_pair(::nl"x1", ::nl"y2", t) = 12
+lit_pair(::nl"x2", ::nl"y1", t) = 21
+lit_pair(::nl"x2", ::nl"y2", t) = 22
+key_pair(::Val{:x1}, ::Val{:y1}, t) = 11
+key_pair(::Val{:x1}, ::Val{:y2}, t) = 12
+key_pair(::Val{:x2}, ::Val{:y1}, t) = 21
+key_pair(::Val{:x2}, ::Val{:y2}, t) = 22
+const KEY_X = (x1 = "x1", x2 = "x2")
+const KEY_Y = (y1 = "y1", y2 = "y2")
+
+# The call shape the documentation shows.
+const INTENT = (refund = "the customer wants a refund",
+                bug    = "the customer reports a bug in the app",
+                other  = "anything else")
+intent_route(::Val{:refund}, t) = (:refund, t)
+intent_route(::Val{:bug}, t)    = (:bug, t)
+intent_route(::Val{:other}, t)  = (:other, t)
+
+# A taxonomy as a type hierarchy: the table names the leaves, and ordinary dispatch
+# picks the most specific method for each — with instances as keys, and with types.
+abstract type Intent end
+abstract type Billing <: Intent end
+abstract type Technical <: Intent end
+struct Refund <: Billing end
+struct DoubleCharge <: Billing end
+struct Crash <: Technical end
+struct Other <: Intent end
+desk(::Refund, t) = :refund
+desk(::Billing, t) = :billing
+desk(::Intent, t) = :intent
+const LEAVES = [Refund() => "the customer wants a refund",
+                DoubleCharge() => "the customer was charged twice",
+                Crash() => "the app crashes",
+                Other() => "anything else"]
+type_desk(::Type{Refund}, t) = :refund
+type_desk(::Type{<:Billing}, t) = :billing
+type_desk(::Type{<:Intent}, t) = :intent
+const LEAF_TYPES = [Refund => "the customer wants a refund",
+                    DoubleCharge => "the customer was charged twice",
+                    Crash => "the app crashes",
+                    Other => "anything else"]
+
+# The state machine of section 11, keyed: which keys a turn can resolve to depends on
+# the phase the conversation is in.
+kstep(::Waiting, ::Val{:order}, msg) = :to_confirming
+kstep(::Confirming, ::Val{:yes}, msg) = :confirmed
+kstep(::Confirming, ::Val{:no}, msg) = :declined
+kstep(::Phase, ::Val{:human}, msg) = :human
+const TURN = (order = "gives an order number", yes = "confirms", no = "declines",
+              human = "asks for a human")
+
+@enum Tone calm_tone angry_tone          # enum values are keys, dispatched on their type
+tone_reply(tone::Tone, msg) = (tone, msg)
+const TONES = [calm_tone => "a calm tone", angry_tone => "an angry tone"]
+
+val_route(::Val{:v1}, t) = :v1           # Val instances are keys as written
+val_route(::Val{:v2}, t) = :v2
+const VALS = [Val(:v1) => "the first", Val(:v2) => "the second"]
+
+catch_route(::Val{:a}, t) = :a           # a catch-all is the caller's explicit backstop
+catch_route(k, t) = (:caught, k)
+
+mutable struct MutableKey end            # an identity no signature can name
+both_val(::Val{:a}, mode::Val) = 1       # a table of Val keys fits both positions
+typed_route(::Val{:a}, t::Int) = t       # takes only an Int beside its key
+two_arity(::Val{:a}, t) = 1              # the same key at two arities
+two_arity(::Val{:a}, t, u) = 2
+
+key_half(::Val{:p1}, ::Val{:q1}) = 1     # only 2 of the 4 combinations exist
+key_half(::Val{:p2}, ::Val{:q2}) = 2
+const P_TABLE = (p1 = "p1", p2 = "p2")
+const Q_TABLE = (q1 = "q1", q2 = "q2")
+
+key_patched(::Val{:p1}, ::Val{:q1}) = 11 # the same gaps, closed by a catch-all
+key_patched(::Val{:p2}, ::Val{:q2}) = 22
+key_patched(p, q) = :backstop
+
+# Two keyed positions tied by a `where` clause: an entry is offered when some entry of the
+# other table completes a call, which for "vb" is not the first one tried.
+tied(::Val{S}, ::Type{Val{S}}, t) where {S} = S
+const TIED = ([Val(:a) => "va", Val(:b) => "vb"], [Val{:a} => "ta", Val{:b} => "tb"])
+
+# ["n1", "o1"] is ambiguous for (Int, Int); ["n1", "o2"] and ["n2", "o1"] have no method.
+key_mixed(::Val{:n1}, ::Val{:o1}, x::Int, y) = 1
+key_mixed(::Val{:n1}, ::Val{:o1}, x, y::Int) = 2
+key_mixed(::Val{:n2}, ::Val{:o2}, x, y) = 3
+const N_TABLE = (n1 = "n1", n2 = "n2")
+const O_TABLE = (o1 = "o1", o2 = "o2")
+
+const _key_calls = Ref(0)                # how many times a `key_counted` method ran
+key_counted(::Val{:c1}, t) = (_key_calls[] += 1; :c1)
+key_counted(::Val{:c2}, t) = (_key_calls[] += 1; :c2)
+const C_TABLE = (c1 = "the first c", c2 = "the second c")
+
+key_cached(::Val{:a}, t::String) = (:a, t)   # gains a String method for :b during its test
+key_cached(::Val{:b}, t::Int) = (:b, t)
+
+@testset "semantic — keyed dispatch sends only the sentences and calls the key's method" begin
+    out, seen = _with_semantic_mock(; pick=Dict("meaning_1" => "the customer reports a bug in the app")) do
+        nl_dispatch(intent_route, "it crashes"; service=SemanticMock, config=_SEM_CFG, texts=INTENT)
+    end
+    @test out == (:bug, "it crashes")
+    @test length(seen) == 1
+    body = seen[1]["body"]
+    @test collect(keys(body["questions"])) == ["meaning_1"]
+    q = body["questions"]["meaning_1"]
+    @test collect(keys(q["criteria"])) == collect(values(INTENT))   # the sentences, in table order
+    @test all(isnothing, values(q["criteria"]))
+    @test body["state"] == Dict("t" => "it crashes")
+    wire = JSON.json(body)                                          # no key reaches the model
+    @test !any(k -> contains(wire, "\"$(k)\""), keys(INTENT)) && !contains(wire, "Val")
+
+    first_out, _ = _with_semantic_mock() do                         # the argmax is the first option
+        nl_dispatch(intent_route, "my money back"; service=SemanticMock, config=_SEM_CFG, texts=INTENT)
+    end
+    @test first_out == (:refund, "my money back")
+
+    # A catch-all takes every key: the caller's backstop, not a key no method takes.
+    backstop, _ = _with_semantic_mock(; pick=Dict("meaning_1" => "Z")) do
+        nl_dispatch(catch_route, "t"; service=SemanticMock, config=_SEM_CFG, texts=(a = "A", z = "Z"))
+    end
+    @test backstop == (:caught, Val(:z))
+end
+
+@testset "semantic — keyed dispatch puts the literal request on the wire, byte for byte" begin
+    cases = [(lit_route, key_route, KEY_AB, Dict("meaning_1" => "B"), (:b, "the ticket")),
+             (lit_pair, key_pair, (KEY_X, KEY_Y), Dict("meaning_1" => "x2", "meaning_2" => "y1"), 21)]
+    for (lit, keyed, texts, pick, expected) in cases
+        mktempdir() do dir
+            outs, seen = _with_semantic_mock(; pick) do
+                with_recorded_answers(dir; mode=:record) do
+                    (nl_dispatch(lit, "the ticket"; service=SemanticMock, config=_SEM_CFG),
+                     nl_dispatch(keyed, "the ticket"; service=SemanticMock, config=_SEM_CFG, texts))
+                end
+            end
+            @test outs == (expected, expected)
+            @test length(seen) == 2
+            @test JSON.json(seen[1]["body"]) == JSON.json(seen[2]["body"])
+            # A recording is keyed by the SHA-256 of the exact request bytes: one file, one body.
+            @test length(readdir(dir)) == 1
+        end
+    end
+end
+
+@testset "semantic — a keyed call refuses a bad table, or keys its methods do not take, before any request" begin
+    caught(f) = try f(); nothing catch e; e end
+    dispatch(f, args...; kw...) = () -> nl_dispatch(f, args...; service=SemanticMock, config=_SEM_CFG, kw...)
+    classify(texts; kw...) = () -> nl_classify("s", texts; service=SemanticMock, config=_SEM_CFG, kw...)
+    many = [Symbol("k", i) => "sentence $(i)" for i in 1:256]
+    refusals = [
+        "a Dict"                       => (dispatch(key_route, "t"; texts=Dict(:a => "A", :b => "B")), "collect(pairs(d))"),
+        "an empty table"               => (dispatch(key_route, "t"; texts=NamedTuple()), "at least one"),
+        "more than 255 entries"        => (dispatch(key_route, "t"; texts=many), "at most 255"),
+        "a sentence that is no string" => (dispatch(key_route, "t"; texts=(a = 1,)), "non-empty string"),
+        "a blank sentence"             => (dispatch(key_route, "t"; texts=(a = "  ",)), "non-empty string"),
+        "a repeated sentence"          => (dispatch(key_route, "t"; texts=[:a => "same", :b => "same"]), "could not tell them apart"),
+        "the same key twice"           => (dispatch(key_route, "t"; texts=[:a => "A", Val(:a) => "B"]), "are the same key"),
+        "a Tuple of pairs"             => (dispatch(key_route, "t"; texts=(:a => "A", :b => "B")), "pass one table as a vector"),
+        "an empty Tuple"               => (dispatch(key_route, "t"; texts=()), "empty"),
+        "an entry that is no pair"     => (dispatch(key_route, "t"; texts=[:a => "A", "B"]), "`key => sentence` pairs"),
+        "a String key"                 => (dispatch(key_route, "t"; texts=["a" => "A"]), "\"a\""),
+        "an Int key"                   => (dispatch(key_route, "t"; texts=[1 => "A"]), "Int64"),
+        "a mutable instance key"       => (dispatch(key_route, "t"; texts=[MutableKey() => "A"]), "MutableKey"),
+        "keys no method declares"      => (dispatch(key_route, "t"; texts=(zz = "Z",)), "Val{:zz}"),
+        "keys declared twice"          => (dispatch(both_val, Val(:fast); texts=(a = "A",)), "positions 1 and 2"),
+        "two tables at one position"   => (dispatch(key_route; texts=((a = "A",), (b = "B",)), state="s"), "each table needs its own position"),
+        "meanings and keys mixed"      => (dispatch(route, "t"; texts=(a = "A",)), "not both"),
+        "a key no method takes"        => (dispatch(key_route, "t"; texts=(a = "A", b = "B", c = "C")), "key_route(::Val{:c}, _)"),
+        "no key for these types"       => (dispatch(typed_route, "t"; texts=(a = "A",)), "Tuple{String}"),
+        "no method of the arity"       => (dispatch(key_route, "t", "u"; texts=KEY_AB), "3 positional arguments"),
+        "a gap"                        => (dispatch(key_half; texts=(P_TABLE, Q_TABLE), state="s"), "No method covers"),
+        "a bad on_response"            => (dispatch(key_route, "t"; texts=KEY_AB, on_response=42), "on_response"),
+        "decide with min_confidence"   => (dispatch(key_route, "t"; texts=KEY_AB, decide=a -> a.choice, min_confidence=0.5), "not both"),
+        "nl_classify: a tuple of tables"  => (classify((KEY_X, KEY_Y)), "one table"),
+        "nl_classify: a Tuple of pairs"   => (classify((:a => "A", :b => "B")), "pass one table as a vector"),
+        "nl_classify: a Dict"             => (classify(Dict(:a => "A")), "no order"),
+        "nl_classify: a bad key"          => (classify(["a" => "A"]), "\"a\""),
+        "nl_classify: a bad on_response"  => (classify(INTENT; on_response="audit"), "on_response"),
+        "nl_classify: decide with min_confidence" => (classify(INTENT; decide=a -> a.choice, min_confidence=0.5), "not both"),
+        "nl_classify: a decide that is no callable" => (classify(INTENT; decide=[a -> a.choice]), "decide"),
+    ]
+    results, sent = _with_semantic_mock() do
+        [caught(call) for (_, (call, _)) in refusals]
+    end
+    @test isempty(sent)                                              # nothing was billed
+    for ((label, (_, fragment)), err) in zip(refusals, results)
+        @testset "refused: $(label)" begin
+            @test err isa ArgumentError
+            @test contains(sprint(showerror, err), fragment)
+        end
+    end
+
+    # The drift error names the key and the method that would take it.
+    drift = results[findfirst(r -> first(r) == "a key no method takes", refusals)]
+    @test contains(drift.msg, ":c") && contains(drift.msg, "key_route(::Val{:c}, _)")
+
+    # @branch checks its hook before its request too.
+    branch_err, branch_sent = _with_semantic_mock() do
+        caught(() -> @branch "s" service=SemanticMock config=_SEM_CFG on_response=42 begin
+            "alpha" => :alpha
+            "beta"  => :beta
+        end)
+    end
+    @test branch_err isa ArgumentError && contains(branch_err.msg, "on_response") && isempty(branch_sent)
+end
+
+@testset "semantic — a table of leaves dispatches through the type hierarchy" begin
+    for (f, table) in ((desk, LEAVES), (type_desk, LEAF_TYPES))
+        @test meanings(f; texts=table) == Dict(1 => last.(table))
+        @test meanings(f, Tuple{String}; texts=table) == Dict(1 => last.(table))   # all four offered
+        @test isempty(meaning_gaps(f, Tuple{String}; texts=table))
+        for (sentence, expected) in zip(last.(table), (:refund, :billing, :intent, :intent))
+            out, seen = _with_semantic_mock(; pick=Dict("meaning_1" => sentence)) do
+                nl_dispatch(f, "a ticket"; service=SemanticMock, config=_SEM_CFG, texts=table)
+            end
+            @test out === expected
+            @test collect(keys(seen[1]["body"]["questions"]["meaning_1"]["criteria"])) == last.(table)
+        end
+    end
+end
+
+@testset "semantic — keyed options follow the argument types, in table order" begin
+    @test meanings(kstep; texts=TURN) ==
+          Dict(2 => ["gives an order number", "confirms", "declines", "asks for a human"])
+    @test meanings(kstep, Tuple{Waiting,String}; texts=TURN) == Dict(2 => ["gives an order number", "asks for a human"])
+    @test meanings(kstep, Tuple{Confirming,String}; texts=TURN) == Dict(2 => ["confirms", "declines", "asks for a human"])
+    # Table order, not definition order.
+    backwards = (human = "asks for a human", no = "declines", yes = "confirms", order = "gives an order number")
+    @test meanings(kstep, Tuple{Confirming,String}; texts=backwards) ==
+          Dict(2 => ["asks for a human", "declines", "confirms"])
+    @test_throws ArgumentError meanings(kstep, Tuple{Int,String}; texts=TURN)   # no key for an Int phase
+    @test isempty(meaning_gaps(kstep, Tuple{Waiting,String}; texts=TURN))
+
+    for (phase, pick, expected) in ((Waiting(), "gives an order number", :to_confirming),
+                                    (Confirming(), "declines", :declined),
+                                    (Confirming(), "asks for a human", :human))
+        out, seen = _with_semantic_mock(; pick=Dict("meaning_2" => pick)) do
+            nl_dispatch(kstep, phase, "A-17"; service=SemanticMock, config=_SEM_CFG, texts=TURN)
+        end
+        @test out === expected
+        # The preview is the wire.
+        @test collect(keys(seen[1]["body"]["questions"]["meaning_2"]["criteria"])) ==
+              meanings(kstep, Tuple{typeof(phase),String}; texts=TURN)[2]
+        @test collect(keys(seen[1]["body"]["state"])) == ["arg1", "msg"]
+    end
+end
+
+@testset "semantic — enum values and Val instances are keys" begin
+    out, seen = _with_semantic_mock(; pick=Dict("tone" => "an angry tone")) do
+        nl_dispatch(tone_reply, "WHY IS IT BROKEN"; service=SemanticMock, config=_SEM_CFG, texts=TONES)
+    end
+    @test out == (angry_tone, "WHY IS IT BROKEN")
+    @test collect(keys(seen[1]["body"]["questions"])) == ["tone"]      # a named slot names its question
+    @test collect(keys(seen[1]["body"]["questions"]["tone"]["criteria"])) == ["a calm tone", "an angry tone"]
+    out, _ = _with_semantic_mock(; pick=Dict("meaning_1" => "the second")) do
+        nl_dispatch(val_route, "x"; service=SemanticMock, config=_SEM_CFG, texts=VALS)
+    end
+    @test out === :v2
+end
+
+@testset "semantic — keyed previews, and the arity they take from a call" begin
+    @test meanings(intent_route; texts=INTENT) == Dict(1 => collect(values(INTENT)))
+    @test meanings(intent_route, Tuple{String}; texts=INTENT) == Dict(1 => collect(values(INTENT)))
+    # Two arities declare the key: only argument types can say which call is meant.
+    err = try meanings(two_arity; texts=(a = "A",)); nothing catch e; e end
+    @test err isa ArgumentError && contains(err.msg, "argtypes")
+    @test meanings(two_arity, Tuple{String}; texts=(a = "A",)) == Dict(1 => ["A"])
+    @test meanings(two_arity, Tuple{String,Int}; texts=(a = "A",)) == Dict(1 => ["A"])
+    # Without `texts`, the previews are those of the literal pathway.
+    @test_throws ArgumentError meanings(intent_route)
+end
+
+@testset "semantic — several tables: one per keyed position, every combination checked first" begin
+    caught(f) = try f(); nothing catch e; e end
+    refused(call) = _with_semantic_mock(() -> caught(call))
+    @test meanings(key_pair, Tuple{String}; texts=(KEY_X, KEY_Y)) == Dict(1 => ["x1", "x2"], 2 => ["y1", "y2"])
+    @test meanings(key_pair, Tuple{String}; texts=(KEY_Y, KEY_X)) == Dict(1 => ["x1", "x2"], 2 => ["y1", "y2"])
+
+    # Each key lands in its own position, whatever the order of the tables.
+    out, seen = _with_semantic_mock(; pick=Dict("meaning_1" => "x2", "meaning_2" => "y2")) do
+        nl_dispatch(key_pair, "t"; service=SemanticMock, config=_SEM_CFG, texts=(KEY_Y, KEY_X))
+    end
+    @test out == 22
+    @test collect(keys(seen[1]["body"]["questions"])) == ["meaning_1", "meaning_2"]
+
+    # Missing combinations: define each, or one catch-all.
+    @test meaning_gaps(key_half, Tuple{}; texts=(P_TABLE, Q_TABLE)) == [["p1", "q2"], ["p2", "q1"]]
+    err, sent = refused(() -> nl_dispatch(key_half; service=SemanticMock, config=_SEM_CFG, state="s",
+                                          texts=(P_TABLE, Q_TABLE)))
+    @test err isa ArgumentError && isempty(sent)
+    text = sprint(showerror, err)
+    @test contains(text, "No method covers [\"p1\", \"q2\"], [\"p2\", \"q1\"]")
+    @test contains(text, "key_half(::Val{:p1}, ::Val{:q2})")
+    @test contains(text, "key_half(_, _)")
+    @test !contains(text, "Meaning") && !contains(text, "ambiguous")
+    @test isempty(meaning_gaps(key_patched, Tuple{}; texts=(P_TABLE, Q_TABLE)))
+    out, _ = _with_semantic_mock(; pick=Dict("meaning_1" => "p1", "meaning_2" => "q2")) do
+        nl_dispatch(key_patched; service=SemanticMock, config=_SEM_CFG, state="s", texts=(P_TABLE, Q_TABLE))
+    end
+    @test out === :backstop
+
+    # Positions tied by a `where` clause are searched as whole calls.
+    @test meanings(tied, Tuple{String}; texts=TIED) == Dict(1 => ["va", "vb"], 2 => ["ta", "tb"])
+    @test meaning_gaps(tied, Tuple{String}; texts=TIED) == [["va", "tb"], ["vb", "ta"]]
+
+    # Ambiguous and missing combinations in one call: each gets the advice that closes it.
+    @test meaning_gaps(key_mixed, Tuple{Int,Int}; texts=(N_TABLE, O_TABLE)) == [["n1", "o1"], ["n1", "o2"], ["n2", "o1"]]
+    err, sent = refused(() -> nl_dispatch(key_mixed, 1, 1; service=SemanticMock, config=_SEM_CFG,
+                                          texts=(N_TABLE, O_TABLE)))
+    @test err isa ArgumentError && isempty(sent)
+    text = sprint(showerror, err)
+    @test contains(text, "3 of the 4 combinations")
+    @test contains(text, "No method covers [\"n1\", \"o2\"], [\"n2\", \"o1\"]:")
+    @test contains(text, "[\"n1\", \"o1\"] is ambiguous between")
+    @test contains(text, "key_mixed(::Val{:n1}, ::Val{:o1}, ::Int64, ::Int64)")
+end
+
+@testset "semantic — a keyed decision names a sentence, a key as written, or nothing" begin
+    outcome(f) = try f() catch e; e end                  # the value, or what was thrown
+    keyed(f, args...; mock=(;), kw...) = first(_with_semantic_mock(; mock...) do    # argmax: the first option
+        outcome(() -> nl_dispatch(f, args...; service=SemanticMock, config=_SEM_CFG, kw...))
+    end)
+    @test keyed(intent_route, "t"; texts=INTENT, decide=_ -> :bug) == (:bug, "t")
+    @test keyed(intent_route, "t"; texts=INTENT, decide=_ -> "anything else") == (:other, "t")
+    @test keyed(desk, "t"; texts=LEAVES, decide=_ -> Crash()) === :intent
+    @test keyed(type_desk, "t"; texts=LEAF_TYPES, decide=_ -> DoubleCharge) === :billing
+    @test keyed(tone_reply, "t"; texts=TONES, decide=_ -> angry_tone) == (angry_tone, "t")
+    @test keyed(val_route, "t"; texts=VALS, decide=_ -> Val(:v2)) === :v2
+
+    # A decline runs the fallback with the caller's arguments, or is a typed error.
+    received = Ref{Any}(nothing)
+    @test keyed(intent_route, "t"; texts=INTENT, decide=_ -> nothing, fallback=(a...) -> (received[] = a; :fb)) === :fb
+    @test received[] == ("t",)
+    declined = keyed(intent_route, "t"; texts=INTENT, decide=_ -> nothing)
+    @test declined isa DecisionDeclinedError && declined.question == "meaning_1"
+    @test declined.answer.choice == "the customer wants a refund"
+    low = keyed(intent_route, "t"; mock=(; confidence=0.1), texts=INTENT, min_confidence=0.9)
+    @test low isa LowConfidenceError && low.question == "meaning_1"
+
+    # Anything else runs neither f nor the fallback: a key's dispatch value is not the key
+    # as written, and a key the table does not hold is not an option.
+    for verdict in (Val(:c2), 1, "not offered", :c3)
+        _key_calls[] = 0
+        fell_back = Ref(0)
+        bad = keyed(key_counted, "x"; texts=C_TABLE, decide=_ -> verdict, fallback=(a...) -> (fell_back[] += 1))
+        @test bad isa ArgumentError
+        @test _key_calls[] == 0 && fell_back[] == 0
+    end
+    # Nor is a key of the table that this call does not offer.
+    not_offered = keyed(kstep, Waiting(), "x"; texts=TURN, decide=_ -> :yes)
+    @test not_offered isa ArgumentError && contains(not_offered.msg, ":yes")
+end
+
+@testset "semantic — nl_classify returns the chosen key as written in the table" begin
+    key, seen = _with_semantic_mock(; pick=Dict("classify" => "the customer reports a bug in the app")) do
+        nl_classify("the app crashes on start", INTENT; service=SemanticMock, config=_SEM_CFG)
+    end
+    @test key === :bug                                   # the Symbol as written, not Val(:bug)
+    @test length(seen) == 1
+    body = seen[1]["body"]
+    @test body["state"] == "the app crashes on start"    # passed as given
+    @test body["model"] == UniLM.default_typesafe_model()
+    @test collect(keys(body["questions"])) == ["classify"]
+    q = body["questions"]["classify"]
+    @test collect(keys(q["criteria"])) == collect(values(INTENT)) && all(isnothing, values(q["criteria"]))
+    @test q["instructions"] == "Select the option that best describes the provided state."
+
+    for (table, sentence, expected) in ((LEAF_TYPES, "the app crashes", Crash),
+                                        (LEAVES, "anything else", Other()),
+                                        (TONES, "an angry tone", angry_tone),
+                                        (VALS, "the second", Val(:v2)))
+        got, _ = _with_semantic_mock(; pick=Dict("classify" => sentence)) do
+            nl_classify("s", table; service=SemanticMock, config=_SEM_CFG)
+        end
+        @test got === expected
+    end
+
+    # A structured state goes out as given, and so do the model and the instructions.
+    state = JSON.Object{String,Any}("ticket" => "it crashes", "customer" => "ada")
+    _, seen = _with_semantic_mock() do
+        nl_classify(state, INTENT; service=SemanticMock, config=_SEM_CFG, model="jev-1.13.0",
+                    instructions="Which intent does the ticket show?")
+    end
+    @test collect(keys(seen[1]["body"]["state"])) == ["ticket", "customer"]
+    @test seen[1]["body"]["model"] == "jev-1.13.0"
+    @test seen[1]["body"]["questions"]["classify"]["instructions"] == "Which intent does the ticket show?"
+end
+
+@testset "semantic — nl_classify acts on the decision policy" begin
+    outcome(f) = try f() catch e; e end                  # the value, or what was thrown
+    classify(; mock=(;), kw...) = first(_with_semantic_mock(; mock...) do
+        outcome(() -> nl_classify("the ticket", INTENT; service=SemanticMock, config=_SEM_CFG, kw...))
+    end)
+    low = classify(; mock=(; confidence=0.1), min_confidence=0.9)
+    @test low isa LowConfidenceError && low.question == "classify"
+    got = Ref{Any}(nothing)
+    @test classify(; mock=(; confidence=0.1), min_confidence=0.9, fallback=s -> (got[] = s; :fb)) === :fb
+    @test got[] == "the ticket"                                              # fallback(state)
+    @test classify(; decide=_ -> :other) === :other                          # a key as written
+    @test classify(; decide=_ -> "the customer reports a bug in the app") === :bug   # a sentence
+    declined = classify(; decide=_ -> nothing)
+    @test declined isa DecisionDeclinedError && declined.question == "classify"
+    @test classify(; decide=_ -> nothing, fallback=s -> (:fb, s)) == (:fb, "the ticket")
+    fell_back = Ref(0)
+    for verdict in (Val(:bug), "not offered", 2)
+        @test classify(; decide=_ -> verdict, fallback=_ -> (fell_back[] += 1)) isa ArgumentError
+    end
+    @test fell_back[] == 0
+    @test classify(; mock=(; status=500, body="""{"detail":"boom"}""")) isa SystemOneError
+end
+
+@testset "semantic — on_response sees the success once, before the decision policy" begin
+    branch(hook, decide) = @branch "x" service=SemanticMock config=_SEM_CFG on_response=hook decide=decide begin
+        "alpha" => :alpha
+        "beta"  => :beta
+    end
+    calls = [
+        "nl_dispatch" => (hook, decide) -> nl_dispatch(route, "x"; service=SemanticMock, config=_SEM_CFG,
+                                                       on_response=hook, decide),
+        "keyed nl_dispatch" => (hook, decide) -> nl_dispatch(intent_route, "x"; service=SemanticMock,
+                                                             config=_SEM_CFG, texts=INTENT, on_response=hook, decide),
+        "nl_classify" => (hook, decide) -> nl_classify("x", INTENT; service=SemanticMock, config=_SEM_CFG,
+                                                       on_response=hook, decide),
+        "@branch" => branch,
+    ]
+    for (label, call) in calls
+        @testset "$(label)" begin
+            log = Any[]
+            _, sent = _with_semantic_mock() do
+                call(r -> push!(log, r), a -> (push!(log, :decide); a.choice))
+            end
+            @test length(sent) == 1
+            @test length(log) == 2 && log[2] === :decide
+            @test log[1] isa SystemOneSuccess
+            @test log[1].response.request_id == "req_mock" && log[1].response.model == "jev-1.13.0"
+        end
+    end
+
+    caught(f) = try f(); nothing catch e; e end
+    hooked = Ref(0)
+    hook = _ -> (hooked[] += 1)
+    # A failed call throws SystemOneError, which carries the result; the hook never runs.
+    failed, _ = _with_semantic_mock(; status=500, body="""{"detail":"boom"}""") do
+        [caught(() -> nl_dispatch(route, "x"; service=SemanticMock, config=_SEM_CFG, on_response=hook)),
+         caught(() -> nl_dispatch(intent_route, "x"; service=SemanticMock, config=_SEM_CFG, texts=INTENT,
+                                  on_response=hook)),
+         caught(() -> nl_classify("x", INTENT; service=SemanticMock, config=_SEM_CFG, on_response=hook)),
+         caught(() -> @branch "x" service=SemanticMock config=_SEM_CFG on_response=hook begin
+             "alpha" => :alpha
+             "beta"  => :beta
+         end)]
+    end
+    @test all(e -> e isa SystemOneError, failed) && hooked[] == 0
+    # Nothing sent, nothing to see.
+    tok = cancel!(CancelToken())
+    unsent, sent = _with_semantic_mock() do
+        [caught(() -> nl_dispatch(intent_route, "x"; service=SemanticMock, config=_SEM_CFG, texts=INTENT,
+                                  on_response=hook, cancel=tok)),
+         caught(() -> nl_classify("x", INTENT; service=SemanticMock, config=_SEM_CFG, on_response=hook, cancel=tok)),
+         caught(() -> nl_dispatch(key_half; service=SemanticMock, config=_SEM_CFG, state="s",
+                                  texts=(P_TABLE, Q_TABLE), on_response=hook))]
+    end
+    @test isempty(sent) && hooked[] == 0
+    @test unsent[1] isa SystemOneError && unsent[2] isa SystemOneError && unsent[3] isa ArgumentError
+
+    # An exception from the hook propagates, and nothing after it runs: no method, no body,
+    # no fallback — even where the policy would have declined.
+    boom = _ -> error("the audit store is down")
+    _key_calls[] = 0
+    _counted[] = 0
+    ran = Ref(0)
+    raised, sent = _with_semantic_mock(; confidence=0.1) do
+        [caught(() -> nl_dispatch(key_counted, "x"; service=SemanticMock, config=_SEM_CFG, texts=C_TABLE,
+                                  on_response=boom)),
+         caught(() -> nl_dispatch(key_counted, "x"; service=SemanticMock, config=_SEM_CFG, texts=C_TABLE,
+                                  on_response=boom, min_confidence=0.9, fallback=(a...) -> (ran[] += 1))),
+         caught(() -> nl_dispatch(counted, "x"; service=SemanticMock, config=_SEM_CFG, on_response=boom)),
+         caught(() -> nl_classify("x", C_TABLE; service=SemanticMock, config=_SEM_CFG, on_response=boom,
+                                  min_confidence=0.9, fallback=_ -> (ran[] += 1))),
+         caught(() -> @branch "x" service=SemanticMock config=_SEM_CFG on_response=boom min_confidence=0.9 begin
+             "alpha" => (ran[] += 1)
+             _       => (ran[] += 1)
+         end)]
+    end
+    @test length(sent) == 5
+    @test all(e -> e isa ErrorException && contains(e.msg, "audit store"), raised)
+    @test _key_calls[] == 0 && _counted[] == 0 && ran[] == 0
+end
+
+@testset "semantic — a keyed plan follows the table's contents and the method table" begin
+    criteria(seen) = collect(keys(seen[1]["body"]["questions"]["meaning_1"]["criteria"]))
+    dispatch(texts; pick=Dict{String,String}()) = _with_semantic_mock(; pick) do
+        nl_dispatch(key_cached, "x"; service=SemanticMock, config=_SEM_CFG, texts)
+    end
+    # Only :a has a String method so far.
+    table = (a = "the first sentence", b = "the second sentence")
+    @test criteria(last(dispatch(table))) == ["the first sentence"]
+    table = (a = "a reworded first sentence", b = "the second sentence")    # rebound, new contents
+    @test criteria(last(dispatch(table))) == ["a reworded first sentence"]
+
+    # A vector mutated in place after a call does not reach the plan made from it.
+    v = [:a => "the first sentence", :b => "the second sentence"]
+    @test criteria(last(dispatch(v))) == ["the first sentence"]
+    v[1] = :a => "a mutated sentence"
+    @test criteria(last(dispatch(v))) == ["a mutated sentence"]
+    stored = @lock UniLM._NL_KEYED_PLANS collect(keys(UniLM._NL_KEYED_PLANS[]))
+    @test all(k -> last(k) isa Tuple && all(t -> t isa UniLM._NLTable, last(k)), stored)
+
+    # A method defined after a cached call is offered, and callable, on the next one.
+    @eval key_cached(::Val{:b}, t::String) = (:b, t)
+    out, seen = dispatch(v; pick=Dict("meaning_1" => "the second sentence"))
+    @test criteria(seen) == ["a mutated sentence", "the second sentence"]
+    @test out == (:b, "x")
+
+    # The cached plan is the uncached one, and within one world it is computed once.
+    cases = [(intent_route, Any[String], INTENT), (kstep, Any[Waiting, String], TURN),
+             (kstep, Any[Confirming, String], TURN), (desk, Any[String], LEAVES),
+             (type_desk, Any[String], LEAF_TYPES), (key_pair, Any[String], (KEY_Y, KEY_X)),
+             (key_half, Any[], (P_TABLE, Q_TABLE)), (key_mixed, Any[Int, Int], (N_TABLE, O_TABLE))]
+    for (f, types, texts) in cases
+        tables = UniLM._nl_tables(texts)
+        plan = UniLM._nl_keyed_plan(f, types, tables)
+        @test UniLM._nl_keyed_plan(f, types, UniLM._nl_tables(texts)) === plan
+        @test plan == UniLM._nl_keyed_plan_uncached(f, types, tables)
+    end
+end

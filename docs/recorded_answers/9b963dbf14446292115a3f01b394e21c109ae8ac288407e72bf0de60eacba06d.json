@@ -1,0 +1,78 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": "I was charged twice this month. Refund the duplicate now!",
+      "model": "jev-latest",
+      "questions": {
+        "team": {
+          "type": "choice",
+          "instructions": "Which team should handle this ticket?",
+          "criteria": {
+            "Charges, invoices, refunds, payment methods, subscription prices": null,
+            "Bugs, crashes, errors, outages, integration or configuration problems": null,
+            "Delivery of physical goods: tracking, delays, damaged or missing parcels": null
+          }
+        },
+        "urgency": {
+          "type": "score",
+          "instructions": "How urgent is this ticket?",
+          "criteria": [
+            "Low: a question or a minor annoyance; no loss of money, data or access",
+            "Normal: something is wrong, but there is a workaround or no deadline",
+            "High: the customer is blocked, is losing money, or has a deadline within days"
+          ]
+        },
+        "wants_refund": {
+          "type": "noul",
+          "instructions": "Does the customer ask for their money back?"
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e8d4614473389a17380dd007788e",
+    "request_id_header": "x-typesafe-request-id",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "team": {
+          "type": "choice",
+          "choice": "Charges, invoices, refunds, payment methods, subscription prices",
+          "confidence": 1.0,
+          "probabilities": {
+            "Bugs, crashes, errors, outages, integration or configuration problems": 0.0,
+            "Charges, invoices, refunds, payment methods, subscription prices": 1.0,
+            "Delivery of physical goods: tracking, delays, damaged or missing parcels": 0.0
+          }
+        },
+        "urgency": {
+          "type": "score",
+          "score": 1.81,
+          "confidence": 0.72,
+          "legend": {
+            "0": "Low: a question or a minor annoyance; no loss of money, data or access",
+            "1": "Normal: something is wrong, but there is a workaround or no deadline",
+            "2": "High: the customer is blocked, is losing money, or has a deadline within days"
+          },
+          "probabilities": {
+            "0": 0.0,
+            "1": 0.18,
+            "2": 0.82
+          }
+        },
+        "wants_refund": {
+          "type": "noul",
+          "noul": 0.98
+        }
+      },
+      "usage": {
+        "input_tokens": 442,
+        "output_tokens": 119
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T16:23:48Z"
+}

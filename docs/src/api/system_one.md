@@ -2,22 +2,158 @@
 
 A System One model does not write text. It reads a piece of `state` and answers
 the questions you enumerate with a probability distribution over the outcomes
-you named: which of these options, where on this rubric, how likely is this
-statement. The answer arrives already typed — a `String` option, a `Float64`
-score, a probability — so there is nothing to parse and nothing to re-prompt
-when the shape comes back wrong. Every answer also carries the full
-distribution, which is what makes confidence-gated routing possible: the answer
-says *what*, the distribution says *whether to act on it*.
+you named, already typed — a `String` option, a `Float64` score, a probability —
+so there is nothing to parse. The answer says *what*, the distribution says
+*whether to act on it*. [Route and Decide](@ref system_one_guide) is the how-to;
+this page starts with setup, models, limits, errors and cost, then documents
+every type and verb.
 
-This complements a text model rather than replacing one. Jev classifies,
-ranks, screens and routes; a generative model writes. Set `TYPESAFE_API_KEY` to
-use it. The default model is `jev-latest`, an alias that moves when a new
-version ships — [`SystemOneResponse`](@ref)`.model` reports the versioned id
-that actually answered, and pinning `"jev-1.13.0"` keeps a tuned confidence
-threshold meaningful across releases. `TYPESAFE_BASE_URL` overrides the API root
-and `TYPESAFE_DEFAULT_MODEL` the default model name. The endpoint type is
-[`TYPESAFEServiceEndpoint`](@ref UniLM.TYPESAFEServiceEndpoint), documented on
-the [Service Endpoints](endpoints.md) page.
+## [Setup](@id jev_setup)
+
+```bash
+export TYPESAFE_API_KEY="..."
+```
+
+| Variable | Default | Meaning |
+| :--- | :--- | :--- |
+| `TYPESAFE_API_KEY` | — | Required. A missing key is a [`SystemOneCallError`](@ref), not a thrown `KeyError`. |
+| `TYPESAFE_BASE_URL` | `https://api.typesafe.ai` | API root override, for a proxy or a mock server. |
+| `TYPESAFE_DEFAULT_MODEL` | `jev-latest` | The model [`ask`](@ref) names when a call does not. |
+
+All three are read at call time. `jev-latest` is an alias that moves when a new
+version ships, which suits building; once a confidence threshold is tuned
+against a version, pin its id — `ask(...; model="jev-1.13.0")` or
+`TYPESAFE_DEFAULT_MODEL=jev-1.13.0` — and move on your own schedule
+([Models](https://docs.typesafe.ai/models)). `TYPESAFE_DEFAULT_MODEL` changes
+every request that names no model, and with it the key its recorded answer is
+filed under: in code whose answers you record, pin with `model =`, or record
+with the same environment you replay with ([Test and Develop](@ref
+jev_testing_guide)).
+
+[`TYPESAFEServiceEndpoint`](@ref UniLM.TYPESAFEServiceEndpoint) ([Service
+Endpoints](endpoints.md)) is not a chat backend: it declares only `:system_one`
+and `:models`, so [`chatrequest!`](@ref), [`respond`](@ref),
+[`embeddingrequest!`](@ref) and the other platform verbs refuse it with an
+`ArgumentError` before sending anything. A `Chat` or `Embeddings` naming it can
+be built, with an explicit `model=`, but not sent ([Provider
+Capabilities](@ref capabilities_api)).
+
+## [Models and versions](@id jev_models)
+
+[`list_models`](@ref) returns the names the account may put in `model`:
+
+```@setup jev
+using UniLM
+```
+
+```@example jev
+m = list_models()
+if m isa TypeSafeModelsSuccess
+    for card in m.models
+        println(card.name, "  ", card.release_date, "  ", card.description)
+    end
+else
+    println("Request failed — ", m)
+end
+```
+
+The listing holds **aliases**: `jev-latest`, the most recent stable release and
+the default here, and `jev-preview`, the most recent release of any kind, ahead
+of `jev-latest` when a preview build exists. A versioned id such as `jev-1.13.0`
+is a valid `model` whether or not it is listed, and the listing is scoped to the
+account ([Models](https://docs.typesafe.ai/models)).
+[`SystemOneResponse`](@ref)`.model` reports the **versioned** id that answered:
+log it, since an alias moving is otherwise invisible, and a threshold tuned
+against one version is a claim about that version only.
+
+## [Limits](@id jev_limits)
+
+| Limit | Value |
+| :--- | :--- |
+| Choice options | 1–255 per question ([Choice](https://docs.typesafe.ai/primitives/choice)) |
+| Score levels | 1–10 per question, TypeSafe advises at least two ([Score](https://docs.typesafe.ai/primitives/score)) |
+| Context | 64k tokens per request; 32k for `state` plus the single longest question ([Models](https://docs.typesafe.ai/models)) |
+| Rate limits | 250,000 tokens/second and 1,200 requests/minute, over either → 429; TypeSafe documents these as subject to change without notice ([Models](https://docs.typesafe.ai/models)) |
+
+[`choice`](@ref) with 256 options and [`score`](@ref) with 11 levels throw an
+`ArgumentError` locally, before the round trip.
+
+## [Errors, timeouts and retries](@id jev_errors)
+
+A call that reaches the service returns a [`SystemOneSuccess`](@ref), a
+[`SystemOneFailure`](@ref) (non-2xx) or a [`SystemOneCallError`](@ref) (no usable
+response), and `issuccess` separates them; a wrong `service` or a malformed
+request is an `ArgumentError` before anything is sent. The service writes errors
+in three `detail` shapes: `message` is extracted from whichever arrived, and
+`error_type` is filled in only by the object shape.
+
+| Status | What it means | `error_type` / `message` |
+| :--- | :--- | :--- |
+| 400 | Unknown model, or a request the schema accepted but the service rejected (a bare noul, more than 255 Choice options, more than 10 Score levels) | `"api_usage_error"` with `"Unknown model: …"`, or `nothing` with the plain-string reason |
+| 401 | The API key was present but not valid | `"authentication_error"` |
+| 403 | No `Authorization` header reached the service | `"authentication_error"` |
+| 404 | Unknown path | `nothing`, message `"Not Found"` |
+| 405 | Wrong method for the path | `nothing`, message `"Method Not Allowed"` |
+| 422 | Schema validation failed | `nothing`; the message joins each validation entry as `"<field path>: <reason>"`, e.g. `questions.department.choice.criteria: Field required` |
+| 429 | Rate limit — 250,000 tokens/second or 1,200 requests/minute at the time of writing | retried by the seam up to `max_attempts` honouring `Retry-After`; the final failure carries `retry_after`, the wait the service asked for in seconds |
+| 500, 502, 503, 504, 520–524, 529 | Service-side failure, including the non-standard `529 Overloaded` and the origin errors 520–524 of a service behind Cloudflare | retried by the request seam, 520–524 like 502 and 504; a captured 529 used the object shape with `error_type = "system_overloaded"` and sent no retry header |
+
+[`ask`](@ref) and [`list_models`](@ref) ride the shared retry seam, so
+[`RequestConfig`](@ref) governs them as it governs a chat call: 408, 429, 500,
+502, 503, 504, 520–524 and 529 are retried up to `max_attempts` within
+`total_deadline`, honouring `Retry-After`; 400, 401, 403, 404 and 422 come back
+as they are, because an identical retry cannot fix them.
+
+```@example jev
+state     = "Help! My payouts have been failing for 3 days."
+questions = ["urgency" => score("How urgent is this ticket?",
+                                ["Can wait", "Needs attention this week", "Needs attention today"])]
+
+# Per call.
+r = ask(state, questions; config = RequestConfig(request_timeout = 20.0, max_attempts = 5))
+
+# Or for a whole scope, including tasks spawned inside it.
+scoped = with_request_config(request_timeout = 20.0, max_attempts = 1) do
+    ask(state, questions)
+end
+
+for res in (r, scoped)
+    if res isa SystemOneSuccess
+        println(answer(res, "urgency"))
+    else
+        println("Request failed — ", res)
+    end
+end
+```
+
+A timeout, a transport failure or a cancellation — through `cancel=` or the
+ambient [`with_cancel`](@ref) token, with a [`UniLMCancelled`](@ref) as the
+`cause` — is a `SystemOneCallError`, never a partial success ([Timeouts &
+Retries](@ref timeouts_guide), [Concurrency, Tasks and Cancellation](@ref
+concurrency_guide)).
+
+## [Cost](@id jev_cost)
+
+Only **input** tokens are billed; output tokens are currently free
+([Models](https://docs.typesafe.ai/models)). Every question in one call shares
+one ingestion of the `state`, so many questions in one [`ask`](@ref) cost far
+less than one call per question.
+
+```@example jev
+r = ask("Help! My payouts have been failing for 3 days.",
+        "urgency" => score("How urgent is this ticket?",
+                           ["Can wait", "Needs attention this week", "Needs attention today"]))
+
+println(answer(r, "urgency"))
+u = token_usage(r)                     # prompt_tokens = input, completion_tokens = output
+println(u.prompt_tokens, " billable tokens")
+println("USD ", estimated_cost(r))     # priced against r.response.model
+```
+
+[`estimated_cost`](@ref) prices the **versioned** id in `r.response.model`, not
+the alias the request named: a `jev-X.Y.Z` id without its own row at the
+`jev-latest` row, and any other name that is not a key in
+[`DEFAULT_PRICING`](@ref) at `0.0` ([Cost Tracking](@ref cost_guide)).
 
 ## Questions
 
@@ -78,88 +214,6 @@ answer
 [`SystemOneResponse`](@ref), so `result["urgency"]` is `answer(result,
 "urgency")`. On a [`SystemOneFailure`](@ref) or [`SystemOneCallError`](@ref) all
 of them throw [`SystemOneError`](@ref) instead of returning an empty map.
-
-## Errors
-
-A call that reached the service and came back non-2xx is a
-[`SystemOneFailure`](@ref). The service uses three different `detail` body
-shapes; `message` is extracted from whichever one arrived, and `error_type` is
-filled in only by the object shape.
-
-| Status | What it means | `error_type` / `message` |
-| :--- | :--- | :--- |
-| 400 | Unknown model, or a request the schema accepted but the service rejected (a bare noul, more than 255 Choice options, more than 10 Score levels) | `"api_usage_error"` with `"Unknown model: …"`, or `nothing` with the plain-string reason |
-| 401 | The API key was present but not valid | `"authentication_error"` |
-| 403 | No `Authorization` header reached the service | `"authentication_error"` |
-| 404 | Unknown path | `nothing`, message `"Not Found"` |
-| 405 | Wrong method for the path | `nothing`, message `"Method Not Allowed"` |
-| 422 | Schema validation failed | `nothing`; the message joins each validation entry as `"<field path>: <reason>"`, e.g. `questions.department.choice.criteria: Field required` |
-| 429 | Rate limit — 250,000 tokens/second or 1,200 requests/minute at the time of writing | retried by the seam up to `max_attempts` honouring `Retry-After`; the final failure carries `retry_after`, the wait the service asked for in seconds |
-| 500, 502, 503, 504, 529 | Service-side failure, including the non-standard `529 Overloaded` | retried by the request seam; a captured 529 used the object shape with `error_type = "system_overloaded"` and sent no retry header |
-
-[`ask`](@ref) and [`list_models`](@ref) ride the package's shared retry seam, so
-`RequestConfig.max_attempts` applies: 408, 429, 500, 502, 503, 504 and 529 are
-retried within `total_deadline`, honouring `Retry-After`. The rest — 400, 401,
-403, 404, 422 — come back as they are, because repeating an identical request
-cannot fix them. A call that never produced a response at all (a timeout, a
-transport failure, a missing key, a cancellation through `cancel=` or an ambient
-[`with_cancel`](@ref) token, or a 200 whose body was not a usable set of answers) is a
-[`SystemOneCallError`](@ref), carrying the exception in `cause`.
-
-Any call that reaches the service returns one of the three result types, and
-`issuccess` separates them; a wrong `service` or a malformed request (duplicate
-or blank question names, invalid criteria) is an `ArgumentError` raised before
-any request is sent.
-
-## Usage
-
-```@example jev
-using UniLM
-
-route(team) = println("route to ", team)   # stand-ins for your own handlers
-escalate()  = println("escalate to a human")
-
-result = ask(
-    "Help! My payouts have been failing for 3 days and nobody has replied to my emails.",
-    "department" => choice("Which team should handle this ticket?", (
-        billing   = "Payments, invoicing, payouts, refunds",
-        technical = "Bugs, outages, integrations",
-        sales     = "Pricing, upgrades, new accounts")),
-    "urgency" => score("How urgent is this ticket?",
-        ["Can wait", "Needs attention this week", "Needs attention today"]),
-    "is_frustrated" => noul("Is the customer frustrated?";
-        yes = "The customer expresses frustration or impatience",
-        no  = "The customer is neutral or satisfied"))
-
-if result isa SystemOneSuccess
-    println(result["department"].choice)              # e.g. "billing"
-    println(result["department"].probabilities)       # every option, not just the winner
-    println(result["urgency"].score)                  # e.g. 1.98 on the 0..2 rubric
-    println(result["is_frustrated"].noul)             # e.g. 0.98
-    println(result.response.model)                    # e.g. "jev-1.13.0" — the version that answered
-    println(token_usage(result).prompt_tokens)        # the billed input tokens
-    println(estimated_cost(result))                   # only input tokens are billed
-
-    # Confidence is the second axis: act when the distribution is concentrated,
-    # hand the rest to a human or a larger model.
-    d = result["department"]
-    d.confidence >= 0.8 ? route(d.choice) : escalate()
-else
-    println("Request failed — ", result)
-end
-
-# The models the account may name in `model`.
-models = list_models()
-if models isa TypeSafeModelsSuccess
-    println([m.name for m in models.models])
-else
-    println("Request failed — ", models)
-end
-```
-
-All questions in one call share one ingestion of the `state`, so batching many
-small questions into a single [`ask`](@ref) costs far less than one call per
-question — and speculative questions you may not use are cheap to include.
 
 ## Natural-Language Control Flow
 
@@ -229,17 +283,18 @@ gaps without a request.
 
 ## Recorded answers
 
-The service does not answer a repeated request identically, so a test or a
-docs build that calls it live cannot be reproduced.
-[`with_recorded_answers`](@ref) records a real answer once and replays it
-offline: inside its scope, `ask`, `list_models`, `nl_dispatch` and `@branch`
-exchange through a directory of recordings keyed by the exact request bytes. In
-the default `:replay` mode they are answered from it with no API key and no
-network, and a request with no recording, or with an unreadable one, throws
-[`ReplayMissError`](@ref); the `:record` and `:record_missing` modes call the
-service, with the key, for the answers they write. A build of this
-documentation without `TYPESAFE_API_KEY` renders its System One examples from
-such recordings.
+A service does not answer a repeated request identically, so a test or a docs
+build that calls it live cannot be reproduced. [`with_recorded_answers`](@ref)
+records a real answer once and replays it offline. Inside its scope, `ask` and
+`list_models` (and so `nl_dispatch` and `@branch`) and the non-streaming
+[`chatrequest!`](@ref), [`respond`](@ref) and [`embeddingrequest!`](@ref) (and
+so the tool loops) exchange through a directory of recordings keyed by the exact
+request bytes; a streamed call and every other verb reach the network as usual.
+In the default `:replay` mode nothing reaches the network and no key is needed,
+and a request with no recording, or an unreadable one, throws
+[`ReplayMissError`](@ref); `:record` and `:record_missing` call the service,
+with its key, for the answers they write. A build of this documentation without
+a recording flag replays every such example, System One and LLM alike.
 
 ```@docs
 with_recorded_answers

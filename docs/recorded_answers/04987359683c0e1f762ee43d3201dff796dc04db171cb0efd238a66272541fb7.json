@@ -1,0 +1,48 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": "Do you ship to Norway, and how much does delivery cost?",
+      "model": "jev-latest",
+      "questions": {
+        "team": {
+          "type": "choice",
+          "instructions": "Which team should handle this message?",
+          "criteria": {
+            "payments, charges, invoices or refunds": null,
+            "the app or the website does not work as expected": null,
+            "a parcel that is late, lost or arrived damaged": null,
+            "anything else": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e8d47a5c7c329ca8e17560bc91db",
+    "request_id_header": "x-typesafe-request-id",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "team": {
+          "type": "choice",
+          "choice": "anything else",
+          "confidence": 0.67,
+          "probabilities": {
+            "payments, charges, invoices or refunds": 0.25,
+            "the app or the website does not work as expected": 0.0,
+            "a parcel that is late, lost or arrived damaged": 0.0,
+            "anything else": 0.75
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 339,
+        "output_tokens": 71
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T16:23:54Z"
+}

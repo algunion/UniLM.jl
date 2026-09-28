@@ -46,3 +46,46 @@
     display: none;
   }
 }
+
+/* Overrides of Tailwind Typography's prose styles: in its layer and after it,
+   with its selectors' specificity. */
+@layer utilities {
+  /* Inline code is a pill, without the backticks the plugin puts around it; a
+     code block's <code> keeps the block's style. */
+  .prose
+    :where(code):not(
+      :where([class~='not-prose'], [class~='not-prose'] *)
+    )::before,
+  .prose
+    :where(code):not(
+      :where([class~='not-prose'], [class~='not-prose'] *)
+    )::after {
+    content: none;
+  }
+  .prose
+    :where(:not(pre, a) > code):not(
+      :where([class~='not-prose'], [class~='not-prose'] *)
+    ) {
+    @apply rounded-md bg-slate-900/5 px-1.5 py-0.5 font-medium dark:bg-white/10;
+  }
+
+  /* Code in a link takes the link's colour and weight, and a plain underline
+     instead of the link's thick band, which would run through the code. */
+  .prose
+    :where(a:has(> code)):not(
+      :where([class~='not-prose'], [class~='not-prose'] *)
+    ) {
+    box-shadow: none;
+    text-decoration: underline 2px
+      var(--tw-prose-underline, var(--color-sky-300));
+    text-underline-offset: 4px;
+
+    &:hover {
+      text-decoration-thickness: 3px;
+    }
+
+    @variant dark {
+      text-decoration-color: var(--tw-prose-underline, var(--color-sky-800));
+    }
+  }
+}

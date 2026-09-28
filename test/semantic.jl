@@ -1398,3 +1398,26 @@ end
         @test plan == UniLM._nl_keyed_plan_uncached(f, types, tables)
     end
 end
+
+@testset "keyed: nothing and missing are not keys, and the plan cache stays bounded" begin
+    caught(f) = try f(); nothing catch e; e end
+    for bad in (nothing, missing)
+        err, sent = _with_semantic_mock() do
+            caught(() -> nl_classify("s", [bad => "a sentence", :b => "another sentence"];
+                                     service=SemanticMock, config=_SEM_CFG))
+        end
+        @test err isa ArgumentError && contains(sprint(showerror, err), "cannot be a table key")
+        @test isempty(sent)
+    end
+
+    # A table built per call, its sentence templated from the input, is a new cache key
+    # every time: past the limit the cache starts over instead of growing.
+    templated(::Val{:yes}, t) = :yes
+    templated(::Val{:no}, t) = :no
+    limit = UniLM._NL_KEYED_PLANS_LIMIT
+    for i in 1:limit + 10
+        table = UniLM._nl_tables((yes = "the sender mentions order $i", no = "anything else"))
+        UniLM._nl_keyed_plan(templated, Any[String], table)
+        @test (@lock UniLM._NL_KEYED_PLANS length(UniLM._NL_KEYED_PLANS[])) <= limit
+    end
+end

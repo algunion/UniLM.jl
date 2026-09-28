@@ -472,6 +472,12 @@ function _nl_entries(entries::Vector{Pair{Any,Any}})::_NLTable
     said = Dict{String,Any}()     # sentence => its key
     held = IdDict{Any,Any}()      # dispatched value => its key: `:a` and `Val(:a)` collide
     for (k, s) in entries
+        # Singletons, but each already means something here: a policy returns `nothing`
+        # to decline, so a `nothing` key could never be decided on, and `missing`
+        # compares as `missing` rather than `true` or `false`.
+        k isa Union{Nothing,Missing} && throw(ArgumentError(
+            "$(repr(k)) cannot be a table key: a decision policy returns `nothing` to decline, and " *
+            "`missing` does not compare as true or false. Use a Symbol or a type of your own"))
         _nl_is_key(k) || throw(ArgumentError(
             "the table key $(repr(k)) is a $(typeof(k)); a key must be a Symbol, a singleton instance such " *
             "as `Val(:k)`, a type, or an enum value, so that a method signature can name it"))
@@ -799,13 +805,17 @@ end
 const _NL_PLANS = Base.Lockable(Dict{Type,Tuple{UInt,_NLPlan}}())
 
 # The plan under `key` in `cache`, made by `make()` unless one made in the current
-# world is there.
-function _nl_cached(make::Function, cache::Base.Lockable, key)
+# world is there. A cache that reaches `limit` entries starts over: that costs the
+# next calls a re-plan, never a wrong plan.
+function _nl_cached(make::Function, cache::Base.Lockable, key; limit::Int=typemax(Int))
     world = Base.get_world_counter()   # read first: a method defined while planning makes the entry stale
     cached = @lock cache get(cache[], key, nothing)
     !isnothing(cached) && first(cached) == world && return last(cached)
     plan = make()
-    @lock cache cache[][key] = (world, plan)
+    @lock cache begin
+        length(cache[]) >= limit && !haskey(cache[], key) && empty!(cache[])
+        cache[][key] = (world, plan)
+    end
     plan
 end
 
@@ -972,11 +982,15 @@ end
 
 # Keyed plans depend on the tables too, so their key adds the tables' contents: each
 # `_NLTable` is an immutable copy, never the vector a caller passed and may mutate.
+# Method definitions bound the literal cache; sentences do not bound this one — a
+# table built per call, with a sentence templated from the input, adds an entry per
+# call — so it is capped.
 const _NL_KEYED_PLANS = Base.Lockable(Dict{Tuple{Type,Tuple{Vararg{_NLTable}}},Tuple{UInt,_NLKeyedPlan}}())
+const _NL_KEYED_PLANS_LIMIT = 1024
 
 _nl_keyed_plan(f, argtypes::Vector{Any}, tables::Vector{_NLTable})::_NLKeyedPlan =
     _nl_cached(() -> _nl_keyed_plan_uncached(f, argtypes, tables), _NL_KEYED_PLANS,
-               (Tuple{Core.Typeof(f), argtypes...}, Tuple(tables)))
+               (Tuple{Core.Typeof(f), argtypes...}, Tuple(tables)); limit=_NL_KEYED_PLANS_LIMIT)
 
 """
     meanings(f; texts=nothing) -> Dict{Int,Vector{String}}

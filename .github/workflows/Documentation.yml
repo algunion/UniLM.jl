@@ -79,7 +79,8 @@ jobs:
           cache-dependency-path: site/package-lock.json
       - name: Install the site's dependencies
         working-directory: site
-        run: npm ci
+        # No install scripts: the site needs none, and a dependency's script would run in the job that deploys.
+        run: npm ci --ignore-scripts
       - name: Build the site
         working-directory: site
         env:

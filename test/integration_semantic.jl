@@ -1,8 +1,9 @@
 # ─── Natural-language control-flow integration tests ─────────────────────────
 # Requires UNILM_LIVE=1 and TYPESAFE_API_KEY (both, or the suite skips).
-# Spend is capped at exactly two calls: one @branch and one nl_dispatch, each
-# over a state whose intent is unambiguous, so a correct client is the only
-# thing standing between the text and the asserted symbol.
+# Spend is capped at exactly four calls: one @branch, one nl_dispatch on
+# sentences, one on keys and one nl_classify, each over a state whose intent is
+# unambiguous, so a correct client is the only thing standing between the text
+# and the asserted symbol.
 
 # Defined in a module of its own: these methods must not merge with the unit
 # suite's `route`, which `include` loads into the same test module and which
@@ -12,6 +13,13 @@ using UniLM
 route(::nl"the customer wants a refund", ticket) = :refund
 route(::nl"the customer asks a pricing question", ticket) = :pricing
 route(::nl"the customer reports a bug in the app", ticket) = :bug
+
+const INTENT = (refund  = "the customer wants a refund",
+                pricing = "the customer asks a pricing question",
+                bug     = "the customer reports a bug in the app")
+keyed(::Val{:refund}, ticket)  = :refund
+keyed(::Val{:pricing}, ticket) = :pricing
+keyed(::Val{:bug}, ticket)     = :bug
 end
 
 const _SEMANTIC_LIVE_TICKET =
@@ -33,6 +41,16 @@ end
 @testset "nl_dispatch — live routing" begin
     @test nl_dispatch(SemanticLiveRoutes.route, _SEMANTIC_LIVE_TICKET;
                       config=RequestConfig(max_attempts=1, total_deadline=60.0)) === :refund
+end
+
+@testset "keyed nl_dispatch and nl_classify — live routing" begin
+    cfg = RequestConfig(max_attempts=1, total_deadline=60.0)
+    seen = SystemOneSuccess[]
+    @test nl_dispatch(SemanticLiveRoutes.keyed, _SEMANTIC_LIVE_TICKET; texts=SemanticLiveRoutes.INTENT,
+                      config=cfg, on_response=r -> push!(seen, r)) === :refund
+    @test length(seen) == 1
+    @test startswith(seen[1].response.model, "jev-") && seen[1].response.request_id isa String
+    @test nl_classify(_SEMANTIC_LIVE_TICKET, SemanticLiveRoutes.INTENT; config=cfg) === :refund
 end
 
 end

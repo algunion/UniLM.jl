@@ -6,13 +6,18 @@ on:
   pull_request:
     branches: [main]
   # Allow manual (re)builds for any ref — e.g. to (re)deploy versioned docs for a
-  # release tag whose TagBot push did not trigger this workflow.
+  # release tag whose TagBot push did not trigger this workflow, or to redeploy a
+  # released version's docs, built from the dispatched ref, into its folder.
   workflow_dispatch:
     inputs:
       live_examples:
         description: Run billed examples using configured provider API keys
         type: boolean
         default: false
+      redeploy_version:
+        description: Redeploy this release's docs (e.g. v0.22.0) from the dispatched ref; refused unless its tag exists and src/ and Project.toml equal the tag's
+        type: string
+        default: ''
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
@@ -22,8 +27,18 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      REDEPLOY_VERSION: ${{ inputs.redeploy_version }}
     steps:
+      - name: Refuse to redeploy a live build
+        if: inputs.live_examples && inputs.redeploy_version
+        run: |
+          echo "::error::redeploy_version needs live_examples off: a live build is never deployed"
+          exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # a redeploy compares the checkout with the release's tag
+          fetch-tags: ${{ inputs.redeploy_version != '' }}
       - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3.0.2
         with:
           version: '1'
@@ -34,7 +49,9 @@ jobs:
             using Pkg
             Pkg.develop(PackageSpec(path=pwd()))
             Pkg.instantiate()'
-      # The gh-pages folder the site is built for: the version tag being built, else dev.
+      # The gh-pages folder the site is built for: the release being redeployed (refused
+      # here, before anything is built, unless its tag exists and src/ and Project.toml
+      # equal the tag's), the version tag being built, else dev.
       - name: Choose the site's folder
         id: site
         run: julia --project=docs/ docs/deploy.jl plan >> "$GITHUB_OUTPUT"

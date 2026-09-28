@@ -13,6 +13,12 @@
 #                                                `version=…` and `base_path=…` lines
 #   julia --project=docs docs/deploy.jl dry-run  Documenter's decision; deploys nothing
 #   julia --project=docs docs/deploy.jl          deploys (the Documentation workflow)
+#
+# REDEPLOY_VERSION=vX.Y.Z deploys this checkout's manual into a released version's
+# folder instead, leaving stable and versions.js pointing where they did. It is
+# refused, by `plan` before anything is built, unless the tag exists and src/ and
+# Project.toml are unchanged since it: a release's manual must not describe
+# unreleased code.
 using Documenter
 
 const ROOT = dirname(@__DIR__)
@@ -20,9 +26,26 @@ const TARGET = joinpath("site", "out")  # deploydocs resolves `target` inside `r
 const SITE_PATH = "/UniLM.jl"           # GitHub Pages serves gh-pages under the repository's name
 const REPO = "github.com/algunion/UniLM.jl"
 const DEVBRANCH = "main"
+const REDEPLOY = let v = get(ENV, "REDEPLOY_VERSION", "")
+    isempty(v) ? nothing : v
+end
 
-"The folder the site is built for: the version tag being built, else dev."
-function folder(ref::String)
+"`version`, if this checkout's manual may be published as its docs: a `vX.Y.Z` tag whose `src/` and `Project.toml` are `HEAD`'s."
+function release(version::String)
+    occursin(r"^v\d+\.\d+\.\d+$", version) ||
+        error("REDEPLOY_VERSION must be a release version such as v0.22.0; got $(repr(version))")
+    tag = "refs/tags/$version"
+    success(pipeline(`git -C $ROOT rev-parse --verify --quiet "$tag^{commit}"`; stdout = devnull)) ||
+        error("cannot redeploy $version: there is no tag $version")
+    changed = readchomp(`git -C $ROOT diff --name-only $tag HEAD -- src Project.toml`)
+    isempty(changed) ||
+        error("cannot redeploy $version: its manual would describe unreleased code; changed since the tag:\n$changed")
+    version
+end
+
+"The folder the site is built for: the release being redeployed, the version tag being built, else dev."
+function folder(redeploy::Union{Nothing,String}, ref::String)
+    redeploy === nothing || return release(redeploy)
     tag = match(r"^refs/tags/(v\d+\.\d+\.\d+)$", ref)
     tag === nothing ? "dev" : String(tag[1])
 end
@@ -37,30 +60,37 @@ function built_for(subfolder::String)
 end
 
 """
-    SiteDeploy(ci)
+    SiteDeploy(ci, version)
 
-Deploys where the GitHub Actions deployment `ci` decides, and only an export built
-for that folder.
+Deploys where the GitHub Actions deployment `ci` decides — into `version`'s folder
+instead when `version` is a release being redeployed — and only an export built for
+that folder. A redeploy that `ci` would not deploy is an error, not a skipped step.
 """
 struct SiteDeploy <: Documenter.DeployConfig
     ci::Documenter.GitHubActions
+    version::Union{Nothing,String}
 end
 function Documenter.deploy_folder(c::SiteDeploy; kwargs...)
     d = Documenter.deploy_folder(c.ci; kwargs...)
-    d.all_ok && built_for(d.subfolder)
-    d
+    if !d.all_ok
+        c.version === nothing || error("cannot redeploy $(c.version): the deployment criteria above do not hold")
+        return d
+    end
+    subfolder = something(c.version, d.subfolder)
+    built_for(subfolder)
+    Documenter.DeployDecision(; all_ok = true, d.branch, d.is_preview, d.repo, subfolder)
 end
 Documenter.authentication_method(c::SiteDeploy) = Documenter.authentication_method(c.ci)
 Documenter.authenticated_repo_url(c::SiteDeploy) = Documenter.authenticated_repo_url(c.ci)
 Documenter.post_status(c::SiteDeploy; kwargs...) = Documenter.post_status(c.ci; kwargs...)
 
-config() = SiteDeploy(Documenter.GitHubActions())
+config() = SiteDeploy(Documenter.GitHubActions(), REDEPLOY === nothing ? nothing : release(REDEPLOY))
 deploy(cfg::Documenter.DeployConfig; kwargs...) =
     deploydocs(; root = ROOT, target = TARGET, repo = REPO, devbranch = DEVBRANCH,
                versions = ["stable" => "v^", "v#.#.#", "dev" => "dev"], deploy_config = cfg, kwargs...)
 
 if ARGS == ["plan"]
-    f = folder(get(ENV, "GITHUB_REF", ""))
+    f = folder(REDEPLOY, get(ENV, "GITHUB_REF", ""))
     println("version=$f\nbase_path=$SITE_PATH/$f")
 elseif ARGS == ["dry-run"]
     # the question deploydocs asks, with its defaults for devurl and push_preview

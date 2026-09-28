@@ -1,5 +1,6 @@
 import { Callout } from '@/components/Callout'
-import { QuickLink, QuickLinks } from '@/components/QuickLinks'
+import { Details } from '@/components/Details'
+import { Docstring } from '@/components/Docstring'
 
 const tags = {
   callout: {
@@ -8,39 +9,25 @@ const tags = {
       type: {
         type: String,
         default: 'note',
-        matches: ['note', 'warning'],
+        matches: ['note', 'tip', 'warning'],
         errorLevel: 'critical',
       },
     },
     render: Callout,
   },
-  figure: {
-    selfClosing: true,
+  details: {
     attributes: {
-      src: { type: String },
-      alt: { type: String },
-      caption: { type: String },
+      summary: { type: String, required: true },
     },
-    render: ({ src, alt = '', caption }) => (
-      <figure>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={src} alt={alt} />
-        <figcaption>{caption}</figcaption>
-      </figure>
-    ),
+    render: Details,
   },
-  'quick-links': {
-    render: QuickLinks,
-  },
-  'quick-link': {
-    selfClosing: true,
-    render: QuickLink,
+  docstring: {
     attributes: {
-      title: { type: String },
-      description: { type: String },
-      icon: { type: String },
-      href: { type: String },
+      id: { type: String, required: true },
+      name: { type: String, required: true },
+      kind: { type: String, required: true },
     },
+    render: Docstring,
   },
 }
 

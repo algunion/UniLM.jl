@@ -7,6 +7,8 @@ import * as path from 'path'
 import { createLoader } from 'simple-functional-loader'
 import * as url from 'url'
 
+import { preprocess } from './preprocess.mjs'
+
 const __filename = url.fileURLToPath(import.meta.url)
 const slugify = slugifyWithCounter()
 
@@ -24,23 +26,33 @@ function toString(node) {
   return str
 }
 
-function extractSections(node, sections, isRoot = true) {
-  if (isRoot) {
-    slugify.reset()
+// Collects [title, hash, content] entries into `sections` and returns the
+// entry that text met next belongs to.
+function extractSections(node, sections, current) {
+  if (node.type === 'heading' && node.attributes.level <= 2) {
+    let content = toString(node).trim()
+    let entry = [content, node.attributes.id ?? slugify(content), []]
+    sections.push(entry)
+    return entry
   }
   if (node.type === 'heading' || node.type === 'paragraph') {
-    let content = toString(node).trim()
-    if (node.type === 'heading' && node.attributes.level <= 2) {
-      let hash = node.attributes?.id ?? slugify(content)
-      sections.push([content, hash, []])
-    } else {
-      sections.at(-1)[2].push(content)
-    }
-  } else if ('children' in node) {
-    for (let child of node.children) {
-      extractSections(child, sections, false)
-    }
+    current[2].push(toString(node).trim())
+    return current
   }
+  if (node.type === 'tag' && node.tag === 'docstring') {
+    // found by its binding's name, linking to Documenter's anchor for it
+    let entry = [node.attributes.name, node.attributes.id, []]
+    sections.push(entry)
+    node.children.reduce(
+      (target, child) => extractSections(child, sections, target),
+      entry,
+    )
+    return current
+  }
+  return node.children.reduce(
+    (target, child) => extractSections(child, sections, target),
+    current,
+  )
 }
 
 export default function withSearch(nextConfig = {}) {
@@ -69,13 +81,14 @@ export default function withSearch(nextConfig = {}) {
               if (cache.get(file)?.[0] === md) {
                 sections = cache.get(file)[1]
               } else {
-                let ast = Markdoc.parse(md)
+                let ast = Markdoc.parse(preprocess(md))
                 let title = yaml.load(ast.attributes.frontmatter ?? '')?.title
                 if (typeof title !== 'string') {
                   throw new Error(`${file}: the frontmatter has no title`)
                 }
                 sections = [[title, null, []]]
-                extractSections(ast, sections)
+                slugify.reset()
+                extractSections(ast, sections, sections[0])
                 cache.set(file, [md, sections])
               }
 

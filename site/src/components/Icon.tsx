@@ -1,18 +1,10 @@
 import { useId } from 'react'
 import clsx from 'clsx'
 
-import { InstallationIcon } from '@/components/icons/InstallationIcon'
 import { LightbulbIcon } from '@/components/icons/LightbulbIcon'
-import { PluginsIcon } from '@/components/icons/PluginsIcon'
-import { PresetsIcon } from '@/components/icons/PresetsIcon'
-import { ThemingIcon } from '@/components/icons/ThemingIcon'
 import { WarningIcon } from '@/components/icons/WarningIcon'
 
 const icons = {
-  installation: InstallationIcon,
-  presets: PresetsIcon,
-  plugins: PluginsIcon,
-  theming: ThemingIcon,
   lightbulb: LightbulbIcon,
   warning: WarningIcon,
 }
@@ -21,6 +13,8 @@ const iconStyles = {
   blue: '[--icon-foreground:var(--color-slate-900)] [--icon-background:var(--color-white)]',
   amber:
     '[--icon-foreground:var(--color-amber-900)] [--icon-background:var(--color-amber-100)]',
+  emerald:
+    '[--icon-foreground:var(--color-emerald-900)] [--icon-background:var(--color-emerald-100)]',
 }
 
 export function Icon({
@@ -57,6 +51,10 @@ const gradients = {
   amber: [
     { stopColor: '#FDE68A', offset: '.08' },
     { stopColor: '#F59E0B', offset: '.837' },
+  ],
+  emerald: [
+    { stopColor: '#A7F3D0', offset: '.08' },
+    { stopColor: '#10B981', offset: '.837' },
   ],
 }
 

@@ -43,6 +43,7 @@ makedocs(;
         "System One (TypeSafe Jev)" => [
             "Typed Judgments with Jev" => "guide/system_one.md",
             "Multiple Dispatch on Natural Language" => "guide/natural_language_dispatch.md",
+            "Semantic Algorithms" => "guide/semantic_algorithms.md",
         ],
         "API Reference" => [
             "Chat Types" => "api/chat.md",

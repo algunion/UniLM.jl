@@ -12,7 +12,9 @@
 #
 # A recording is keyed by the exact request bytes, never a canonical form: the
 # order of Choice options and of the state's keys moves the answer, so a
-# reordered request is a different request.
+# reordered request is a different request. The one exception is a credential
+# the body carries (an MCP tool's token), which is replaced before anything is
+# keyed, written or reported.
 # ============================================================================
 
 """
@@ -36,7 +38,9 @@ recordings is not a service failure, and a caller's
 - `method::String`, `path::String`: the request line, e.g. `"POST"` and
   `"/v1/systemone"` or `"/v1/chat/completions"`: the path of the request URL alone,
   never its host or query.
-- `body::String`: the exact request body (empty for `GET /v1/models`).
+- `body::String`: the request body the key was computed over — the exact body,
+  with the credentials [`with_recorded_answers`](@ref) never writes replaced by
+  `"<redacted>"` (empty for `GET /v1/models`).
 - `reason::String`: `"no recording"`, or `"unreadable recording: …"` followed by
   what is wrong with the file — not JSON, no `response` object, a status other
   than 200, a `body` that is not a JSON object, a `request_id` that is neither
@@ -140,10 +144,17 @@ A recording is `<dir>/<key>.json`, where `key` is the lowercase hex SHA-256 of
 path of the request URL alone: never its host, nor its query, which can carry a
 credential. The key is never a canonical form of the request: the order of
 Choice options and of the state's keys moves the answer, so a reordered request
-is a different request. The file holds the request, the response body with its
-request id and the name of the header that carried it (`x-typesafe-request-id`,
-`x-request-id` or `request-id`), and the time of recording, pretty-printed so a
-diff is readable; the API key and every other header are never written. A
+is a different request. The one change to the body is a credential it carries:
+in each object of its top-level `tools` array, an MCP tool's `authorization` and
+`headers` (`"type": "mcp"`, the OpenAI Responses wire), a Gemini Interactions MCP
+server's `headers` (`"mcp_server"`) and the `api_key` of a Gemini `"retrieval"`
+tool's `exa_ai_search_config` and `parallel_ai_search_config` read `"<redacted>"`
+in the key, the file and a `ReplayMissError`, so a replay needs none of them; the
+request sent carries them as given. The file holds the request, the response body
+with its request id and the name of the header that carried it
+(`x-typesafe-request-id`, `x-request-id` or `request-id`), and the time of
+recording, pretty-printed so a diff is readable; the API key, the headers, and an
+MCP tool's `authorization` and `headers` are never written. A
 recording without that name replays its id as `x-typesafe-request-id`. Files are
 written atomically (a temporary file in `dir`, then a rename), so concurrent tasks
 can record at once. A replayed answer goes through the same decoding as a live
@@ -216,15 +227,62 @@ _answer_key(method::String, path::String, body::String)::String =
 # error message.
 _request_path(url::String)::String = (p = HTTP.URI(url).path; isempty(p) ? "/" : String(p))
 
+# The credentials a request body carries, by the `type` of an object in its top-level
+# `tools` array: the path of each value replaced. An MCP tool on the OpenAI Responses
+# wire takes an OAuth token and headers; a Gemini Interactions MCP server takes headers,
+# and its retrieval tool the API keys of the search services it calls.
+const _BODY_CREDENTIALS = Dict{String,Vector{Vector{String}}}(
+    "mcp" => [["authorization"], ["headers"]],
+    "mcp_server" => [["headers"]],
+    "retrieval" => [["exa_ai_search_config", "api_key"], ["parallel_ai_search_config", "api_key"]])
+
+const _REDACTED = "<redacted>"
+
+# The body as it is keyed, written and reported: its credentials replaced. A body that
+# carries none is returned as it is, byte for byte, so its key does not move; one that
+# is not JSON has no `tools` array to carry one.
+function _redacted(body::String)::String
+    contains(body, "\"tools\"") || return body
+    parsed = try
+        JSON.parse(body)
+    catch err
+        err isa InterruptException && rethrow()
+        return body
+    end
+    tools = parsed isa AbstractDict ? get(parsed, "tools", nothing) : nothing
+    tools isa AbstractVector || return body
+    found = false
+    for t in tools
+        t isa AbstractDict || continue
+        for path in get(_BODY_CREDENTIALS, get(t, "type", nothing), Vector{String}[])
+            found |= _redact!(t, path)
+        end
+    end
+    found ? JSON.json(parsed) : body
+end
+
+# Replace the value at `path` inside `d`, if there is one; whether there was.
+function _redact!(d::AbstractDict, path::Vector{String})::Bool
+    key = first(path)
+    haskey(d, key) || return false
+    if length(path) > 1
+        inner = d[key]
+        return inner isa AbstractDict && _redact!(inner, path[2:end])
+    end
+    d[key] = _REDACTED
+    true
+end
+
 # The HTTP exchange behind every recorded verb: `live()` is the real call, and
 # every active scope stands between it and the caller, innermost first. Outside a
 # scope `live()` runs as it always did. The cancel check mirrors the seam's first
-# one, so a cancelled call reads no recording, just as it sends nothing.
+# one, so a cancelled call reads no recording, just as it sends nothing. `live()`
+# sends the body as given; the scopes see it with its credentials replaced.
 function _recorded_exchange(live::Function, method::String, url::String, body::String,
                             t0::UInt64, tok::Union{Nothing,CancelToken})::HTTP.Response
     iscancelled(tok) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
     scope = _ANSWER_SCOPE[]
-    isnothing(scope) ? live() : _exchange(scope, method, _request_path(url), body, live)
+    isnothing(scope) ? live() : _exchange(scope, method, _request_path(url), _redacted(body), live)
 end
 
 _exchange(::Nothing, ::String, ::String, ::String, live::Function)::HTTP.Response = live()

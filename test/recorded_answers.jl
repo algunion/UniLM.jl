@@ -451,7 +451,7 @@ const _RL_SECRETS = [collect(values(_RL_KEYS)); _RL_DEEPSEEK_KEY; _RL_QUERY_KEY]
 const _RL_CFG = UniLM.RequestConfig(max_attempts=1, total_deadline=30.0)
 
 const _RL_HITS = Threads.Atomic{Int}(0)
-const _RL_SEEN = String[]            # each request's target and headers, one string per request
+const _RL_SEEN = String[]            # each request's target, headers and body, one string per request
 const _RL_LOCK = ReentrantLock()
 
 _rl_undecodable(raw) = occursin("undecodable", raw)
@@ -503,7 +503,7 @@ function _rl_serve(http::HTTP.Stream)
     req = http.message
     raw = String(read(http))
     n = Threads.atomic_add!(_RL_HITS, 1) + 1
-    @lock _RL_LOCK push!(_RL_SEEN, join([String(req.target); [string(k, ": ", v) for (k, v) in req.headers]], "\n"))
+    @lock _RL_LOCK push!(_RL_SEEN, join([String(req.target); [string(k, ": ", v) for (k, v) in req.headers]; raw], "\n"))
     b = JSON.parse(raw; dicttype=Dict{String,Any})
     path = String(HTTP.URI(String(req.target)).path)
     HTTP.setstatus(http, 200)
@@ -650,6 +650,54 @@ const _RL_CASES = [
         @test replayed isa T && _rl_seen(replayed) == _rl_seen(live)
         T === LLMSuccess && @test estimated_cost(live) > 0 && cumulative_cost(live.self) > 0
         T <: Union{LLMCallError,ResponseFailure} && @test replayed.request_id == "req_$(before + 1)"
+    end
+end
+
+@testset "recorded LLM answers — a credential in the body is sent, and never keyed, written or reported" begin
+    dir = _ra_dir("llm-mcp")
+    mcp(token; input="Say hello.") = Respond(service=_RL_OPENAI, model="gpt-5.4-mini", input=input,
+        tools=[MCPTool(server_label="crm", server_url="https://mcp.example.com/sse", authorization="oauth-$token",
+                       headers=Dict("Authorization" => "Bearer header-$token")),
+               Dict("type" => "mcp", "server_label" => "drive", "connector_id" => "connector_googledrive",
+                    "authorization" => "oauth-$token")])
+    live = _rl_online(() -> with_recorded_answers(() -> respond(mcp("sentinel-1"); config=_RL_CFG), dir; mode=:record))
+    @test live isa ResponseSuccess
+    sent = @lock _RL_LOCK last(_RL_SEEN)
+    @test contains(sent, "oauth-sentinel-1") && contains(sent, "header-sentinel-1")   # the service gets them...
+    text = read(only(readdir(dir; join=true)), String)
+    @test !contains(text, "sentinel-1")                                                  # ...no recording does
+    tools = JSON.parse(text)["request"]["body"]["tools"]
+    @test [t["authorization"] for t in tools] == ["<redacted>", "<redacted>"] && tools[1]["headers"] == "<redacted>"
+    @test tools[1]["server_url"] == "https://mcp.example.com/sse" && tools[2]["connector_id"] == "connector_googledrive"
+
+    # The key never saw a token: another one replays the same recording, with no key and no service.
+    hits = _RL_HITS[]
+    replayed = _rl_offline(() -> with_recorded_answers(() -> respond(mcp("sentinel-2"); config=_RL_CFG), dir))
+    @test _RL_HITS[] == hits && _rl_seen(replayed) == _rl_seen(live)
+    # A miss carries the body as it was keyed.
+    miss = _rl_offline(() -> with_recorded_answers(() -> _ra_caught(() -> respond(mcp("sentinel-3"; input="Bye."))), dir))
+    @test miss isa ReplayMissError && miss.key == _ra_key("POST", "/v1/responses", miss.body)
+    @test !contains(repr(miss), "sentinel") && contains(miss.body, "\"authorization\":\"<redacted>\"")
+
+    # Gemini Interactions: an MCP server's headers, and the search keys of a retrieval tool.
+    gemini = Respond(service=_RLHere(GEMINIServiceEndpoint), model="gemini-3.8-flash", input="Say hello.",
+        tools=[Dict("type" => "mcp_server", "name" => "crm", "url" => "https://mcp.example.com/mcp",
+                    "headers" => Dict("Authorization" => "Bearer sentinel-4")),
+               Dict("type" => "retrieval", "retrieval_types" => ["exa_ai_search", "parallel_ai_search"],
+                    "exa_ai_search_config" => Dict("api_key" => "sentinel-5"),
+                    "parallel_ai_search_config" => Dict("api_key" => "sentinel-6"))])
+    g = _rl_offline(() -> with_recorded_answers(() -> _ra_caught(() -> respond(gemini)), mkpath(_ra_dir("llm-mcp-gemini"))))
+    @test g isa ReplayMissError && g.path == "/v1beta/interactions" && !contains(repr(g), "sentinel")
+    server, retrieval = JSON.parse(g.body)["tools"]
+    @test server["headers"] == "<redacted>" && server["url"] == "https://mcp.example.com/mcp"
+    @test retrieval["exa_ai_search_config"]["api_key"] == retrieval["parallel_ai_search_config"]["api_key"] == "<redacted>"
+    @test retrieval["retrieval_types"] == ["exa_ai_search", "parallel_ai_search"]
+
+    # A body with no credential is keyed byte for byte, as it always was: never re-encoded.
+    for plain in ("""{"tools": [{"type": "function", "name": "f"}], "temperature": 0.10}""",
+                  """{"tools": [{"type": "mcp", "server_label": "crm"}], "temperature": 0.10}""",
+                  "not JSON, though it mentions \"tools\"")
+        @test UniLM._redacted(plain) == plain
     end
 end
 

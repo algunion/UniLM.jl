@@ -34,7 +34,13 @@
   `embeddingrequest!` exchanges through the recordings exactly as `ask` does — the
   same three modes, the same directory, the same key: the SHA-256 of the request line
   and the exact body, where the line holds the URL's path alone, never its host or its
-  query (which can carry a credential). A replayed reply decodes like the live one:
+  query (which can carry a credential). The credentials a body can carry are replaced
+  by `"<redacted>"` in the key, the recording and a `ReplayMissError`, so none is
+  written and a replay needs none: in the body's top-level `tools` array, an MCP tool's
+  (`"type": "mcp"`, `MCPTool`) `authorization` and `headers`, a Gemini Interactions
+  `"mcp_server"`'s `headers`, and the `api_key` of a Gemini `"retrieval"` tool's
+  `exa_ai_search_config` and `parallel_ai_search_config`. The request sent still
+  carries them. A replayed reply decodes like the live one:
   the message, finish reason and usage, the reply appended to the `Chat` and its cost
   accumulated, the `ResponseObject`, the embedding vectors. A streamed call, images,
   audio, files, MCP, the Responses lifecycle operations and every other verb reach

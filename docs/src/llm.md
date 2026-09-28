@@ -1656,8 +1656,12 @@ with_recorded_answers(f, dir::AbstractString; mode::Symbol=:replay)   # -> f()
     #                 file throws ReplayMissError (never overwritten)
     # both recording modes create dir and prove it writable before f runs (else ArgumentError);
     #   a recording that cannot be written after a paid answer throws its I/O error out of the verb
-    # file: <dir>/<key>.json, key = lowercase hex sha256("<METHOD> <path>\n" * exact body),
-    #   <path> = the request URL's path alone (no host, no query)
+    # file: <dir>/<key>.json, key = lowercase hex sha256("<METHOD> <path>\n" * body),
+    #   <path> = the request URL's path alone (no host, no query);
+    #   body = the exact body, except that in its top-level "tools" array an MCP tool's
+    #   ("type": "mcp") "authorization" and "headers", a Gemini "mcp_server"'s "headers" and
+    #   a Gemini "retrieval" tool's exa_ai_search_config / parallel_ai_search_config "api_key"
+    #   read "<redacted>" (key, file and ReplayMissError alike; the request sent is unchanged)
     # {"request": {method, path, body},
     #  "response": {status, request_id, request_id_header, body}, "recorded_at"}
     #   request_id_header: "x-typesafe-request-id" | "x-request-id" | "request-id", the one header
@@ -1669,7 +1673,7 @@ struct ReplayMissError <: Exception       # thrown out of the recorded verbs, ne
     key::String
     method::String                        # "POST" | "GET"
     path::String                          # "/v1/systemone" | "/v1/models" | "/v1/chat/completions" | …
-    body::String                          # the exact request body ("" for GET)
+    body::String                          # the body as keyed: credentials "<redacted>" ("" for GET)
     reason::String                        # "no recording" | "unreadable recording: <what is wrong>"
 end
 ```

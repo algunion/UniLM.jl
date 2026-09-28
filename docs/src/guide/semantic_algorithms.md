@@ -1,18 +1,19 @@
 # [Many Items at Once](@id jev_algorithms_guide)
 
-Jev answers many questions about one state in a single request, and neither the
-time nor the bill grows much with the number of questions. So when you have many
+Jev answers many questions about one state in a single request: the state is
+read and billed once, each question adds only its own tokens, and the time stays
+about the same. So when you have many
 items — tickets, lines of a chat or a log, rows of a table — put each under its
 own key in the state, point one question at each key, and send them together.
 Julia does the rest: loops, sorting, counting, searching and stopping.
 
-| I want to… | Section |
-| :--- | :--- |
-| judge a batch of items in one request: route every ticket in an inbox | [Judge a batch in one request](@ref jev_items_batch) |
-| rank candidates: which ticket to handle first | [Rank candidates](@ref jev_items_rank) |
-| find the first line in a log or a chat where something happens | [Find the first line where something happens](@ref jev_items_find) |
-| match records across two lists: incoming listings against a catalogue | [Match records across two lists](@ref jev_items_match) |
-| stop reading a stream as soon as the line is found | [Stop reading once it is found](@ref jev_items_stop) |
+| I want to… | Use | You get | Section |
+| :--- | :--- | :--- | :--- |
+| judge a batch of items in one request: route every ticket in an inbox | one [`ask`](@ref), a Choice per item, each pointed at the item's key | every item's answer from one request | [Judge a batch in one request](@ref jev_items_batch) |
+| rank candidates: which ticket to handle first | a Score per item and a Choice per pair, in one request | the items in order, sorted in Julia | [Rank candidates](@ref jev_items_rank) |
+| find the first line in a log or a chat where something happens | a Noul per line, and `findfirst` | the first line at or above your bar | [Find the first line where something happens](@ref jev_items_find) |
+| match records across two lists: incoming listings against a catalogue | a few candidates per row, picked in Julia, and a Choice per row | the matching record, or none, or a review | [Match records across two lists](@ref jev_items_match) |
+| stop reading a stream as soon as the line is found | worker tasks sending a Noul per line | the first matching line, with the rest cancelled | [Stop reading once it is found](@ref jev_items_stop) |
 
 !!! details "Evidence"
     Measured on jev-1.13.0 (September 2026): a request with 1 question took

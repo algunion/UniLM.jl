@@ -365,7 +365,7 @@ ask(reply, "refund" => noul("Does this reply promise the customer a refund?"))["
 # => 0.81 — above a cut of 0.3, so a person approves the reply before it is sent
 ```
 
-The Jev guides follow one shop's support desk: [Start Here](https://algunion.github.io/UniLM.jl/dev/guide/jev_start/), [Jev with LLMs](https://algunion.github.io/UniLM.jl/dev/guide/jev_with_llms/), [Route and Decide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/), [Dispatch on Meaning](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/), [Many Items at Once](https://algunion.github.io/UniLM.jl/dev/guide/semantic_algorithms/) and [Test and Develop](https://algunion.github.io/UniLM.jl/dev/guide/jev_testing/).
+The Jev guides, most of them built around one small shop's support desk: [Start Here](https://algunion.github.io/UniLM.jl/dev/guide/jev_start/), [Jev with LLMs](https://algunion.github.io/UniLM.jl/dev/guide/jev_with_llms/), [Route and Decide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/), [Dispatch on Meaning](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/), [Many Items at Once](https://algunion.github.io/UniLM.jl/dev/guide/semantic_algorithms/) and [Test and Develop](https://algunion.github.io/UniLM.jl/dev/guide/jev_testing/).
 
 ## Chat Completions vs Responses (OpenAI)
 

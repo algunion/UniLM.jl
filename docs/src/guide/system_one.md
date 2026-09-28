@@ -110,6 +110,13 @@ order can change between Julia versions.
     average, and reversing it moved one ambiguous ticket's probability by about
     0.5; changing the key order of the state moved probabilities by up to 0.16.
 
+The model reads each option's name as well as its description: a short name
+such as `returns` is part of the prompt, and a word in the text can pull the
+answer toward it. When only the description should decide, send the sentences
+themselves as the names — `choice(question, collect(TEAM))` — and map the chosen
+sentence back to your key, which is what [`nl_classify`](@ref) does
+([Design note: what the model reads](@ref nl_dispatch_design)).
+
 ### Score — place the text on an ordered rubric
 
 [`score`](@ref) takes the level descriptions lowest first; `levels[1]` is level
@@ -242,7 +249,7 @@ println(a.score)              # probability-weighted position over the levels
 println(a.confidence)         # how peaked the distribution is
 println(a.probabilities)      # Dict{Int,Float64}, keyed by 0-based level number
 println(a.legend[argmax(a.probabilities)])   # the description of the top level
-println(a.raw)                # the unparsed JSON answer, always kept
+println(a.raw)                # the answer as the service sent it, parsed, always kept
 
 haskey(r, "wants_human") && println(r["wants_human"].noul)
 println(collect(keys(r)))     # the question names that came back
@@ -424,17 +431,18 @@ refund, and urgency is its least certain field (0.72).
 
 On 32 hand-labeled tickets, one request per ticket filled a five-field version
 of this struct at 0.979 accuracy per field. A confidence threshold tuned for one
-option wording does not transfer to another: with the sentences as option
-names, the Choice confidence on that set came out lower at the same accuracy.
+option wording may not carry over to another: with the sentences as option
+names, the Choice confidence on that set came out slightly lower at the same
+accuracy.
 
 !!! details "Evidence"
     Measured on jev-1.13.0 (September 2026) on 32 hand-labeled tickets and a
     five-field version of this struct, both encodings in one session, runs
     interleaved. Sentences as the option names (this recipe): 0.979 per field
     over three runs (0.981, 0.981, 0.975); exact-match rate 0.896. Labels with
-    the sentences as their descriptions (the earlier recipe), same session:
+    the sentences as their descriptions (the other common encoding), same session:
     0.981 in all three runs; exact-match rate 0.906. The whole gap
-    is one near-tie flip (0.40 vs 0.39) in the urgency Score, whose request is
+    is one near-tie flip (0.40 vs 0.39) in the urgency Score, whose question is
     identical under both encodings; neither encoding made an error on a Choice
     field. Across the three runs, 1 of 480 predictions changed: that urgency
     near-tie.
@@ -468,20 +476,6 @@ names, the Choice confidence on that set came out lower at the same accuracy.
   check.
 
 ## [Act on the answer](@id jev_act_on_answer)
-
-A Jev answer is a calibrated distribution: the answer says *what*, the
-distribution says *whether to act on it*. Calibration holds across groups of
-answers, not for any single one — a high confidence says the distribution is
-peaked, not that this answer is right — so each policy below is one rule
-applied to every answer.
-
-!!! details "Evidence"
-    Measured on jev-1.13.0 (September 2026) on our own labeled sets: over 129
-    routed tickets the expected calibration error was 0.015, and the 113 answers
-    whose top probability was at least 0.9 were 99.1% correct. Other sets
-    measured higher errors: 0.047 on a stress set of 100 items built on the
-    model's documented failure modes, and 0.071 on 74 yes/no (Noul) answers,
-    which were underconfident.
 
 **The job:** send each message to the team that handles it, and hand the ones
 Jev is unsure about to a person. **Without Jev:** keyword rules per team, and a
@@ -518,6 +512,20 @@ end
 Four messages go straight to their team. Two go to a person: the question about
 delivery to Norway (confidence 0.67), and the cracked phone (0.75), a damaged
 parcel and a refund request in one message.
+
+A Jev answer is a calibrated distribution: the answer says *what*, the
+distribution says *whether to act on it*. Calibration holds across groups of
+answers, not for any single one — a high confidence says the distribution is
+peaked, not that this answer is right — so each policy below is one rule
+applied to every answer.
+
+!!! details "Evidence"
+    Measured on jev-1.13.0 (September 2026) on our own labeled sets: over 129
+    routed tickets the expected calibration error was 0.015, and the 113 answers
+    whose top probability was at least 0.9 were 99.1% correct. Other sets
+    measured higher errors: 0.047 on a stress set of 100 items built on the
+    model's documented failure modes, and 0.071 on 74 yes/no (Noul) answers,
+    which were underconfident.
 
 **Tune it**
 

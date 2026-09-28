@@ -54,20 +54,26 @@ const TEAM = (billing   = "payments, charges, invoices or refunds",
 # :other, or a confidence below 0.6, means a person handles the message.
 team_for(message; kwargs...) = nl_classify(message, TEAM; min_confidence = 0.6, fallback = _ -> :other, kwargs...)
 
-audit = SystemOneSuccess[]                       # every answer, kept for the log
 for message in MESSAGES
-    team = team_for(message; on_response = r -> push!(audit, r))
-    confidence = round(audit[end]["classify"].confidence; digits = 2)
-    println(rpad(team, 10), rpad(confidence, 6), message)
+    println(rpad(team_for(message), 10), message)
 end
 ```
 
-Five messages reach a team with confidence 0.98 or more. The Norway question
-comes back at 0.49, below 0.6, so it goes to a person as `:other`. The model
-reads only the sentences; the keys stay in your program. `on_response` receives
-each whole answer before the decision is made, so the loop keeps it for the log
-and reads the confidence from it (the one question [`nl_classify`](@ref) asks is
-named `"classify"`).
+Five messages reach a team, and the Norway question goes to a person as
+`:other`. The model reads only the sentences; the keys stay in your program. To
+see how sure Jev was, keep each whole answer: `on_response` receives it before
+the decision is made (the one question [`nl_classify`](@ref) asks is named
+`"classify"`):
+
+```@example jevllm
+audit = SystemOneSuccess[]                       # every answer, kept for the log
+team_for(MESSAGES[4]; on_response = r -> push!(audit, r))
+a = only(audit)["classify"]
+(choice = a.choice, confidence = a.confidence)
+```
+
+Jev leaned toward billing, at a confidence of 0.49 — below 0.6, so the message
+went to a person.
 
 Each team gets an LLM draft, written with that team's instructions and the
 shop's policy:
@@ -262,7 +268,7 @@ for (p, r) in zip(reviews, risk)
     println(rpad(r, 6), p)
 end
 
-clean = reviews[risk .< 0.5]
+clean = reviews[risk .< 0.2]
 answered = respond("Is the leather case for the iPhone 15 any good?"; model = "gpt-5.4-mini",
                    instructions = "Answer from these customer reviews only:\n" * join(clean, "\n") *
                                   "\nAnswer in at most three sentences.")

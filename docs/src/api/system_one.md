@@ -222,7 +222,7 @@ of them throw [`SystemOneError`](@ref) instead of returning an empty map.
 A service does not answer a repeated request identically, so a test or a docs
 build that calls it live cannot be reproduced. [`with_recorded_answers`](@ref)
 records a real answer once and replays it offline. Inside its scope, `ask` and
-`list_models` (and so `nl_dispatch` and `@branch`) and the non-streaming
+`list_models` (and so `nl_dispatch`, `nl_classify` and `@branch`) and the non-streaming
 [`chatrequest!`](@ref), [`respond`](@ref) and [`embeddingrequest!`](@ref) (and
 so the tool loops) exchange through a directory of recordings keyed by the exact
 request bytes, with any credential the body carries redacted; a streamed call and

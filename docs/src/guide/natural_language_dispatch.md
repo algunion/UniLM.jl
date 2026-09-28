@@ -99,7 +99,8 @@ A table is ordered, and its order is the order the model reads the options in:
   value, a singleton instance such as `Refund()`, or a type such as `Refund` —
   each passed as written, so a method on the enum type, on `::Refund` or on
   `::Type{<:Billing}` takes it through ordinary dispatch
-  ([Hierarchies](@ref nl_dispatch_hierarchy)).
+  ([Hierarchies](@ref nl_dispatch_hierarchy)); a `Symbol` key in a vector still
+  reaches its method as `Val(key)`.
 
 A `Dict` is refused, because it has no order. A table holds 1 to 255 entries, the
 options one Choice question takes, with no sentence and no key twice. Enum values
@@ -136,9 +137,9 @@ both: a method of the same arity with an `nl"…"` in its signature makes a keye
 call an `ArgumentError`, which is why the sentence router above has a name of its
 own.
 
-**The drift check.** Every key must reach a method at its position, whatever the
-other arguments are. A key that no method takes is refused before any request,
-with the method to write:
+**The drift check.** Every key needs some method that takes it at its position —
+for any of the other arguments' types. A key that no method takes is refused
+before any request, with the method to write:
 
 ```@example nldispatch
 RETURNS = (; TEAM..., returns = "the customer wants to send an item back")   # a new team, no method yet
@@ -388,6 +389,15 @@ exactly as they will be sent; types that no method accepts are an
 and Julia picks the method afterwards, with no extra request. Values the model
 must not guess are read by code: the model decides that the customer gave an
 order number, and `order_number` parses it.
+
+Two turns leave the state as it was, and both are the model's reading, not a
+dispatch fault. "thanks, bye" arrives while the refund awaits confirmation, where
+saying goodbye is not an option, so the model picks "Something else" and the
+question stands. "no, that's all", after the refund, is read as "Something else"
+rather than a goodbye, so the conversation stays closed as it was. Offering only
+the replies that make sense at each step rules out a `MethodError`, not a
+misreading: a turn the model is unsure about is a job for `min_confidence` and a
+`fallback` ([Confidence and control](@ref nl_dispatch_control)).
 
 !!! details "Evidence"
     Measured on 30 live turns of a larger version of this machine (nine meanings):
@@ -779,8 +789,8 @@ r = ask((ticket = "Is your refund policy the same for EU and US customers?",),
 ```
 
 As sentences, the question about a refund *policy* went to "anything else" at
-confidence 0.98; under keys it went to `refund` at confidence 0.6, because the
-word in the question matched the key. A `texts` table never sends its keys: the
+confidence 0.98; under keys it went to `refund` at confidence 0.6, most likely
+because the word in the question matched the key. A `texts` table never sends its keys: the
 chosen sentence maps back to its key locally, after the answer.
 
 !!! details "Evidence"

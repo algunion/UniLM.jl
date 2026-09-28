@@ -24,9 +24,11 @@ types. [`nl_classify`](@ref) asks the same question over a table and returns the
 key itself, without dispatching. All three act on an answer through a decision
 policy, and all three take `on_response`, which sees the whole
 [`SystemOneSuccess`](@ref) — request id, model, raw body — before the policy
-runs. The default gates on `confidence`: below `min_confidence`
-`@branch` takes its `_` line and `nl_dispatch` calls `fallback`, and with
-neither they raise [`LowConfidenceError`](@ref) rather than act on a near-tie.
+runs. The default policy gates on `confidence`: below `min_confidence`
+`@branch` takes its `_` line and `nl_dispatch` and `nl_classify` call
+`fallback`, and with neither they raise [`LowConfidenceError`](@ref) rather than
+act on a near-tie. The default `min_confidence` is 0, which acts on every answer,
+near-ties included: set it, or pass `decide`, to hand unsure answers elsewhere.
 `decide` replaces the gate with any function of the [`ChoiceAnswer`](@ref) that
 returns an offered option — not only the winner — or `nothing` to decline,
 which takes the same fallback or raises [`DecisionDeclinedError`](@ref).
@@ -70,6 +72,18 @@ route(::nl"the customer asks a pricing question", t)  = (:pricing, t)
 meanings(route)                     # Dict(1 => [...the three descriptions...])
 nl_dispatch(route, ticket)          # one request, then route(nl"..."(), ticket)
 route(nl"the customer wants a refund"(), ticket)   # direct call, no request at all
+
+# The same request with short keys: the table holds the sentences, the methods
+# dispatch on the keys, and no key reaches the model.
+const INTENT = (refund  = "the customer wants a refund",
+                bug     = "the customer reports a bug in the app",
+                pricing = "the customer asks a pricing question")
+by_key(::Val{:refund}, t)  = (:refund, t)
+by_key(::Val{:bug}, t)     = (:bug, t)
+by_key(::Val{:pricing}, t) = (:pricing, t)
+
+nl_dispatch(by_key, ticket; texts = INTENT)   # one request, then by_key(Val(:refund), ticket)
+nl_classify(ticket, INTENT)                   # the key alone: :refund
 ```
 
 A non-success call raises [`SystemOneError`](@ref) instead of resolving to a

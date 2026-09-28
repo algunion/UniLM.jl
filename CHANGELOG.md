@@ -97,7 +97,7 @@
   source, pick the model, screen what the model reads, approve and shortlist tool
   calls), Route and Decide (formerly Typed Judgments with Jev), Dispatch on Meaning
   (keyed and `nl"..."` dispatch side by side), Many Items at Once and Test and
-  Develop. Semantic Programs is gone: its sections moved to Route and Decide, Dispatch
+  Develop. Semantic Programs (`guide/semantic_programs/`) is gone: its sections moved to Route and Decide, Dispatch
   on Meaning and Jev with LLMs. Every example runs on recorded real answers,
   measurements sit in collapsible Evidence boxes, the typed-extraction example sends
   each option's sentence as its name (re-measured), natural-language dispatch has its

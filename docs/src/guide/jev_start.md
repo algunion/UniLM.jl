@@ -8,6 +8,18 @@ quick request billed only for the text it reads ([prices](https://docs.typesafe.
 **Setup:** `export TYPESAFE_API_KEY=…` in your shell, then `using UniLM` in
 Julia ([Setup](@ref jev_setup) lists the optional variables).
 
+## Which path?
+
+| I want to… | Use | You get | Section |
+| :--- | :--- | :--- | :--- |
+| label a text with one of my own values | [`nl_classify`](@ref)`(text, TEAM)` | the key of the sentence that fits, e.g. `:billing` | [Dispatch on Meaning](@ref nl_dispatch_keyed) |
+| ask several things about one text at once | one [`ask`](@ref) with a [`choice`](@ref), [`score`](@ref) or [`noul`](@ref) per question | every answer from one request, each with its probabilities | [Route and Decide](@ref jev_many_questions) |
+| act only when Jev is sure enough, or weigh what mistakes cost | `min_confidence` and `fallback`, or a `decide` policy | the answer when it clears your bar, a hand-over otherwise | [Route and Decide](@ref jev_act_on_answer) |
+| run the right function for a text | [`nl_dispatch`](@ref) with `texts = TEAM`, or `nl"…"` in the signatures | what the method of the chosen meaning returns | [Dispatch on Meaning](@ref nl_dispatch_paths) |
+| decide before an LLM call, or check its output after | a Jev question on each side of [`respond`](@ref) | the team, the model to call, a draft checked before it is sent | [Jev with LLMs](@ref jev_llm_guide) |
+| judge a whole list at once | one [`ask`](@ref), one question per item | every item judged in one request | [Many Items at Once](@ref jev_algorithms_guide) |
+| test without the network | [`with_recorded_answers`](@ref) | real answers recorded once, replayed with no key | [Test and Develop](@ref jev_testing_recorded) |
+
 ## Your first decision
 
 One plain sentence per team, and a customer message:
@@ -26,22 +38,11 @@ nl_classify("I was charged twice for order #4471. Please refund the duplicate pa
 Jev read the message and the four sentences, never the keys, and the key of the
 sentence that fits came back: a value your program can act on.
 
-## Which path?
-
-| I want to… | Use | You get | Read |
-| :--- | :--- | :--- | :--- |
-| label a text with one of my own values | [`nl_classify`](@ref)`(text, TEAM)` | the key of the sentence that fits, e.g. `:billing` | [Dispatch on Meaning](@ref nl_dispatch_keyed) |
-| ask several things about one text at once | one [`ask`](@ref) with a [`choice`](@ref), [`score`](@ref) or [`noul`](@ref) per question | every answer from one request, each with its probabilities | [Route and Decide](@ref jev_many_questions) |
-| act only when Jev is sure enough, or weigh what mistakes cost | `min_confidence` and `fallback`, or a `decide` policy | the answer when it clears your bar, a hand-over otherwise | [Route and Decide](@ref jev_act_on_answer) |
-| run the right function for a text | [`nl_dispatch`](@ref) with `texts = TEAM`, or `nl"…"` in the signatures | what the method of the chosen meaning returns | [Dispatch on Meaning](@ref nl_dispatch_paths) |
-| decide before an LLM call, or check its output after | a Jev question on each side of [`respond`](@ref) | the team, the model to call, a draft checked before it is sent | [Jev with LLMs](@ref jev_llm_guide) |
-| judge a whole list at once | one [`ask`](@ref), one question per item | every item judged in one request | [Many Items at Once](@ref jev_algorithms_guide) |
-| test without the network | [`with_recorded_answers`](@ref) | real answers recorded once, replayed with no key | [Test and Develop](@ref jev_testing_recorded) |
-
 ## Five-minute tour
 
 The support desk of a small online shop that sells phones and accessories,
-ships parcels and has a mobile app; the other Jev pages follow the same shop.
+ships parcels and has a mobile app. Jev with LLMs and Test and Develop build the
+same desk; the other Jev pages borrow from it where it fits.
 Without Jev, each step below would be keyword rules, a classifier trained on
 labelled messages, or an LLM whose free-text answer you parse. Every example
 runs when this manual is built, from answers recorded once and replayed ([Test

@@ -71,8 +71,11 @@ meaning_gaps(reply, Tuple{String})
 [`nl_dispatch`](@ref) runs the same check before every request and, while a gap
 exists, sends nothing and throws an `ArgumentError` that lists it. Close it with
 the missing method, or with a backstop that is wild in every slot
-(`reply(::Meaning, ::Meaning, msg)`), which is not offered and covers every
-combination:
+(`reply(::Meaning, ::Meaning, msg)`): it is not offered, and it covers every
+combination that has no method. A backstop does not settle an *ambiguous*
+combination, which two methods match with neither more specific; the error names
+both, and a method for their intersection settles it. Here the missing method
+closes the gap:
 
 ```@example jevtest
 reply(::nl"a complaint", ::nl"an angry tone", msg) = :escalate
@@ -112,6 +115,10 @@ nothing # hide
 The model name is part of the request, and so of the key a recorded answer is
 filed under: when you move the pin, every recorded answer misses until you
 record again, instead of testing the new version against the old one's answers.
+A request without `model =` names the client default — `jev-latest`, or whatever
+`TYPESAFE_DEFAULT_MODEL` holds at call time — so exporting that variable changes
+the key of every unpinned request, and a replay misses them all. In code you
+record, pin with `model =`, or record with the same environment you replay with.
 
 **Record from a fresh session.** Re-evaluating a method whose sentence you edited
 defines a second method beside the first, which stays on offer until you restart
@@ -120,7 +127,11 @@ Julia or delete it
 also follow definition order, so re-evaluating a method — even one whose sentence
 did not change — can move its meaning to the end of the list. A session with such
 edits sends requests a fresh one never sends; record in a fresh session, such as
-a run of the test suite.
+a run of the test suite. How the package is loaded matters as well: methods
+loaded from a package image share one world and are ordered by source file path,
+then line, not by `include` order, so a function whose meanings span several
+files sends a different option order from the image than with
+`--compiled-modules=no`. Keep one function's meanings in one file.
 
 ## Recorded answers
 
@@ -142,7 +153,8 @@ and [`list_models`](@ref) — passing through a directory of recordings:
 - **The key is the exact request.** It is never a canonical form, because the
   order of a Choice's options and of the state's keys moves the answer: a
   reordered request is a different request, with a recording of its own. So is a
-  request with another model, other instructions, or one changed byte in the
+  request with another model — for an unpinned request, another
+  `TYPESAFE_DEFAULT_MODEL` — other instructions, or one changed byte in the
   state.
 - **A miss is loud.** In `:replay`, a request with no recording throws
   `ReplayMissError` out of `ask` itself — never a silent call to the service,
@@ -164,7 +176,8 @@ with `TYPESAFE_API_KEY` set and `mode = :record_missing`.
 The demo records two calls into a temporary directory, replays them, and shows a
 changed request missing. In this manual's build the recording scope's service is
 whatever encloses it (last section): the committed recordings in a keyless
-build, the service itself in a build with a key.
+build; in a recording build, the committed recordings where they exist and the
+service for the rest; the service itself in a build with only a key.
 
 ```@example jevtest
 recordings = mktempdir()     # in a package: a directory committed next to the tests
@@ -422,10 +435,10 @@ Measured on jev-1.13.0 (September 2026) with three versions of one five-way
 router — options with descriptions, bare option names, deliberately vague
 descriptions — on 15 inputs with six paraphrases each: the share of paraphrases
 routed like their original was 1.000, 0.989 and 0.967, in the same order as
-labelled accuracy (1.000, 0.990, 0.971). Every paraphrase that moved came from
-one of the 15 inputs, and a router that sends an input and all its paraphrases
-to the same wrong place passes. It is a cheap smoke test that needs no labels,
-not proof.
+labelled accuracy (1.000, 0.990, 0.971). The paraphrases that moved all came
+from a single input (1 of 15), and a router that sends an input and all its
+paraphrases to the same wrong place passes. It is a cheap smoke test that needs
+no labels, not proof.
 
 ## Logging for audits
 
@@ -470,8 +483,9 @@ which mode:
 stops the build before anything runs. After a recording run, commit the new files
 in `docs/recorded_answers`; to prune the ones no example uses any more, delete
 the directory and record again. The output under an example is the build's own —
-a recorded answer in a keyless build, a fresh one in a build with a key — and the
-numbers in the prose were measured separately.
+a recorded answer in a keyless build, a fresh one in a build with only a key,
+and in a recording build the committed recording where one exists and a fresh
+answer otherwise — and the numbers in the prose were measured separately.
 
 ## See also
 

@@ -57,7 +57,11 @@ works.
 want while you are building. Once you have tuned a confidence threshold against
 a specific version, pin the versioned id — `ask(...; model="jev-1.13.0")` or
 `TYPESAFE_DEFAULT_MODEL=jev-1.13.0` — and move to the next one on your own
-schedule ([Models](https://docs.typesafe.ai/models)).
+schedule ([Models](https://docs.typesafe.ai/models)). The variable changes every
+request that names no model, and with it the key its recorded answer is filed
+under: in code whose answers you record, pin with `model =`, or record with the
+same environment you replay with ([Developing and Testing with
+Jev](@ref jev_testing_guide)).
 
 [`TYPESAFEServiceEndpoint`](@ref UniLM.TYPESAFEServiceEndpoint) is not a chat
 backend. It declares only `:system_one` and `:models`, so the verbs reject it up
@@ -156,11 +160,11 @@ iterates in hash order, which can change between Julia versions. Order never
 changes how answers are keyed (by name), but it is what the model reads, and on
 ambiguous inputs it moves the probabilities. Measured on jev-1.13.0 (September
 2026) on our own labeled sets, changing the option order shifted the
-probabilities of ambiguous items by 0.12 on average and by up to 0.28, and
-changing the key order of the state moved them by up to 0.16. Build criteria and
-state from ordered containers — a `NamedTuple`, pairs or a `JSON.Object`, never a
-`Dict` — so the order the model reads is the one you wrote, on every Julia
-version.
+probabilities of ambiguous items by 0.12 on average, and reversing it moved one
+ambiguous ticket's probability by about 0.5; changing the key order of the state
+moved probabilities by up to 0.16. Build criteria and state from ordered
+containers — a `NamedTuple`, pairs or a `JSON.Object`, never a `Dict` — so the
+order the model reads is the one you wrote, on every Julia version.
 
 ### Score — place the state on an ordered rubric
 

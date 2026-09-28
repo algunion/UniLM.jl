@@ -12,8 +12,10 @@ input tokens are billed ([Models](https://docs.typesafe.ai/models)). So a
 collection algorithm puts many judgments into one request, points each question
 at its item by a **key**, and does everything that is not a judgment in Julia.
 The figures in the prose were measured on jev-1.13.0 (September 2026) on our own
-labeled sets; the blocks print whatever the service answers when the docs are
-built.
+labeled sets. Every block that calls Jev runs when this page is built, so what
+it prints is a real answer — a live call, or a recorded live answer when the
+build has no API key. The numbers in the prose are measurements, not what a
+block prints.
 
 ## Many items in one request: address them by key, not by index
 
@@ -132,21 +134,26 @@ Measured against our own gold urgency order of 20 tickets (Kendall τ_b):
 | Method | Requests | τ_b |
 | :--- | :--- | :--- |
 | a Score per ticket, one request | 1 | 0.888 |
-| all 190 pairs, one request | 1 | 0.926 |
+| all 190 pairs, one request | 1 | 0.905–0.926 |
 | the same pairs as separate requests, both orders | 380 | 0.937 |
 | Julia's `sort!` driven by a semantic `lt` | 119, sequential (37 s) | 0.926 |
 | one Choice ("which ticket is the most urgent?"), ranked by its probabilities | 1 | 0.590 |
 
-The two pairwise rows rank by summed win probabilities; counting wins, as the
-example does, gave 0.937 (one request) and 0.931 (380 requests) on the same
-answers. Either way, one request for the whole tournament lands within 0.011 of
-380 separate requests. `sort!` gets there too, but a comparison sort cannot
-choose its next pair before the last answer arrives, so its requests run one
-after another. Do not rank by one Choice's probabilities: a Choice picks one
-winner, and its runner-up probabilities are not a ranking. Two costs remain. A
-tournament asks n(n − 1)/2 questions — the 190 pairs billed 9,324 input tokens.
-And position matters a little: swapping the two items of a pair flipped 3.2% of
-pairwise answers.
+The pairwise rows rank by summed win probabilities. One request's figure
+depends on which item of each pair the question names first: 0.926 when the
+less urgent item (by our gold order) came first in every pair, 0.905 when it
+came second, 0.916 with both orientations averaged (two requests). Counting
+wins, as the example does, gave 0.937 and 0.889, against 0.931 for the 380
+requests. Each orientation puts the more urgent item in the same place in every
+pair, so a preference for a position counts as accuracy in one of them and as
+error in the other: the better figure may owe part of its lead to position.
+`sort!` gets there too, but a comparison sort cannot choose its next pair before
+the last answer arrives, so its requests run one after another. Do not rank by
+one Choice's probabilities: a Choice picks one winner, and its runner-up
+probabilities are not a ranking. Two costs remain. A tournament asks
+n(n − 1)/2 questions — the 190 pairs billed 9,324 input tokens. And position
+matters a little: swapping the two items of a pair flipped 3.2% of pairwise
+answers.
 
 ## Finding where something happens in a long sequence
 
@@ -265,8 +272,8 @@ those rows, which capped a blocked Choice at F1 0.727.
 
 Some searches end at the first hit: lines arrive in order, and every line judged
 after the answer is known is wasted. The pieces are plain Julia — a `Channel` of
-line numbers, N worker tasks, and a main task that reads the answers — plus two
-rules:
+line numbers, N worker tasks, and a main task that reads the answers — plus
+three rules:
 
 - **Report the first matching line in input order, not the first answer to
   arrive.** Workers finish out of order, so a hit is final only when every
@@ -277,10 +284,16 @@ rules:
   [`with_cancel`](@ref)`(stop)`, so one [`cancel!`](@ref) ends the requests still
   in flight (measured ≈ 13 ms once warm), and a call whose token is already
   cancelled sends nothing ([Cancellation](@ref concurrency_cancellation)).
+- **Let a worker's failure reach the reader.** A worker that throws — a
+  malformed request, or a replay miss in a replay scope — never sends its answer,
+  and a reader blocked on `take!` would wait for it forever. Bind the results
+  channel to one task that waits for all workers: `waitall` returns at the first
+  failure, the channel closes with it, and `take!` rethrows it. (Binding each
+  worker instead closes the channel as soon as the first worker runs out of
+  lines, while the others still have answers to deliver.)
 
 Which requests go out depends on scheduling, so the docs build does not run this
-block; the `# =>` lines are the output of one recorded run against the live
-service.
+block; the `# =>` lines are the output of one live run, pasted as comments.
 
 ```julia
 using UniLM
@@ -302,15 +315,16 @@ function first_match(lines, question; workers = 8)
     stop = CancelToken()
     jobs, results = Channel{Int}(workers), Channel{Tuple{Int,LLMRequestResponse}}(Inf)
     Threads.@spawn (for i in eachindex(lines); iscancelled(stop) && break; put!(jobs, i); end; close(jobs))
-    for _ in 1:workers
+    tasks = map(1:workers) do _
         Threads.@spawn with_cancel(stop) do          # every ask in this task observes `stop`
             for i in jobs; put!(results, (i, ask(lines[i], "q" => question))); end
         end
     end
+    bind(results, Threads.@spawn waitall(tasks))     # a worker that throws closes `results` with its error
     answered, frontier, hit = falses(length(lines)), 0, nothing
     try
         while frontier < length(lines)
-            i, r = take!(results)
+            i, r = take!(results)                    # rethrows a worker's failure
             answered[i] = true
             r["q"].noul >= 0.5 && (hit = isnothing(hit) ? i : min(hit, i))   # a failed call throws
             while frontier < length(lines) && answered[frontier + 1]; frontier += 1; end

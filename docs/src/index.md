@@ -151,6 +151,8 @@ end
 - [MCP Guide](@ref mcp_guide) — connect to MCP servers or build your own
 - [Timeouts & Retries](@ref timeouts_guide) — `RequestConfig`, typed timeout failures, retry contracts
 - [Concurrency, Tasks and Cancellation](@ref concurrency_guide) — sharing, fan-out, streaming into a `Channel`, `CancelToken`
+- [Typed Judgments with Jev](@ref system_one_guide) — TypeSafe's System One model: `ask` with `choice`, `score` and `noul` questions, calibrated answers, limits and cost
+- [Multiple Dispatch on Natural Language](@ref nl_dispatch_guide) — `nl"..."` meanings in method signatures, `nl_dispatch`, `decide` policies and `@branch`
 - [Semantic Programs with Jev](@ref jev_programs_guide) — decision policies, taxonomies, typed extraction, state machines and guarded tools built on Jev's typed answers
 - [Semantic Algorithms with Jev](@ref jev_algorithms_guide) — many items in one request, ranking, finding an event in a long sequence, joining tables, stopping early
 - [Developing and Testing with Jev](@ref jev_testing_guide) — the development loop, recorded answers (`with_recorded_answers`), and tests from the methods to the model's judgment

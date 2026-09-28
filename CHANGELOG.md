@@ -77,8 +77,16 @@
   be called with — the call's arguments (`fallback(args...)`), or the state
   (`fallback(state)`) — with an `ArgumentError` before the request. Before, it failed
   with a `MethodError` only after a declined answer had been billed.
-- The manual's non-streaming LLM examples render recorded real output instead of a
-  failed request. The documentation build chooses its mode by flag, not by the keys
+- On the Home, Getting Started, Chat Completions, Responses API, Embeddings, Tool
+  Calling, Agentic Workflows, Structured Output, Cost Tracking and Multi-Backend pages,
+  the examples that call `chatrequest!`, `respond` or `embeddingrequest!` without
+  streaming render recorded real output instead of a failed request. What the
+  recordings do not cover still runs, and fails, without a key: the two streamed
+  examples of the Streaming guide and the `count_input_tokens` and `compact_response`
+  examples of the Responses API guide render their failure, and its stored-response
+  example shows the stored id but nothing from `get_response`, `list_input_items` or
+  `delete_response`. The native Anthropic example of the Multi-Backend guide is shown
+  without running. The documentation build chooses its mode by flag, not by the keys
   it finds: replay by default (with every provider key hidden, so it never calls a
   service), `UNILM_DOCS_RECORD=1` to record the missing answers, `UNILM_DOCS_LIVE=1`
   to call every service live.

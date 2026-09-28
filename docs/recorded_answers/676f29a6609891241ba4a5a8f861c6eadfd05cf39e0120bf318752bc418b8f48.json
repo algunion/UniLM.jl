@@ -1,0 +1,48 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": "My parcel was due last Monday and the tracking hasn't moved in six days.",
+      "model": "jev-latest",
+      "questions": {
+        "team": {
+          "type": "choice",
+          "instructions": "Which team should handle this message?",
+          "criteria": {
+            "payments, charges, invoices or refunds": null,
+            "the app or the website does not work as expected": null,
+            "a parcel that is late, lost or arrived damaged": null,
+            "anything else": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e8d474ac7444b614a5fec213a766",
+    "request_id_header": "x-typesafe-request-id",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "team": {
+          "type": "choice",
+          "choice": "a parcel that is late, lost or arrived damaged",
+          "confidence": 1.0,
+          "probabilities": {
+            "anything else": 0.0,
+            "payments, charges, invoices or refunds": 0.0,
+            "the app or the website does not work as expected": 0.0,
+            "a parcel that is late, lost or arrived damaged": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 342,
+        "output_tokens": 79
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T16:23:53Z"
+}

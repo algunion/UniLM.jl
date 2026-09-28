@@ -368,6 +368,19 @@ end
     @test !contains(JSON.json(resp), "exploded")
 end
 
+@testset "tools/call — a ReplayMissError is logged and answered -32603, not relayed to the model" begin
+    server = MCPServer("replay-gap", "1.0.0")
+    register_tool!(server, "judge", "Needs a recorded answer", Dict{String,Any}("type" => "object"),
+        args -> throw(ReplayMissError("/recordings", "0"^64, "POST", "/v1/systemone", "{}", "no recording")))
+    req = Dict{String,Any}("jsonrpc" => "2.0", "id" => 21, "method" => "tools/call",
+        "params" => Dict{String,Any}("name" => "judge", "arguments" => Dict{String,Any}()))
+    resp = @test_logs (:error,) match_mode=:any UniLM._dispatch_guarded(server, req)
+
+    @test !haskey(resp, "result")
+    @test resp["error"]["code"] == -32603
+    @test !contains(JSON.json(resp), "recording")
+end
+
 @testset "resources/read — template handler throws → generic -32603, detail logged" begin
     server = MCPServer("tmpl-err", "1.0.0")
     register_resource_template!(server, "boom://{id}", "BoomTmpl",

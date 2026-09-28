@@ -176,7 +176,10 @@ failure and correct itself. Write handlers with that in mind — raise with a me
 you are willing to show both the model and the client, and never one carrying secrets
 or internals. Errors below the handler (in dispatch itself) answer a generic JSON-RPC
 `-32603` instead, with the detail going to the server's logs. An `InterruptException`
-is never converted: it propagates.
+is never converted: it propagates. Neither is a [`ReplayMissError`](@ref) — a request
+the handler made inside [`with_recorded_answers`](@ref) that has no recording: the
+client gets the generic `-32603` and the server logs the error, since a gap in the
+recordings is not a mistake the model can correct.
 
 Over HTTP, handlers run concurrently — one task per request, on the default thread
 pool — so a handler must be thread-safe. Over stdio they run one at a time, with the
@@ -385,7 +388,9 @@ function _handle_tools_call(server::MCPServer, id, params::Dict{String,Any})
         _jsonrpc_result(id, Dict{String,Any}(
             "content" => _format_tool_result(result), "isError" => false))
     catch e
-        e isa InterruptException && rethrow()
+        # A request with no recording is a gap in a test's recordings, not a failure the
+        # model could correct from: it goes to the dispatcher, which logs it.
+        e isa Union{InterruptException,ReplayMissError} && rethrow()
         # A tool execution error — the handler's own, or an argument the by-name binding
         # rejected (MCP 2025-11-25 server/tools classes input validation errors as tool
         # execution errors) — is a result the model can read and correct its call from.
@@ -760,8 +765,9 @@ including an exception from a resource or prompt handler — is answered with a
 generic `-32603` "Internal error" and logged locally, so one bad frame cannot take
 the transport down and no exception text (file paths, argument values) reaches the
 peer. Tool-handler exceptions are excluded: they reach the client as tool results —
-see [`register_tool!`](@ref). An `InterruptException` is never converted into an
-answer: it propagates. A JSON-RPC response sent to the server is accepted without
+see [`register_tool!`](@ref) — except a [`ReplayMissError`](@ref), which is answered
+and logged like any other dispatch error. An `InterruptException` is never
+converted into an answer: it propagates. A JSON-RPC response sent to the server is accepted without
 an answer (HTTP: 202).
 
 # Examples

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.22.0
 
 ### Added
 - Keyed natural-language dispatch: with `nl_dispatch(f, args...; texts = table)` the methods

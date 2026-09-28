@@ -1,0 +1,29 @@
+[
+  {
+    "title": "Introduction",
+    "links": [
+      {
+        "title": "Home",
+        "href": "/"
+      }
+    ]
+  },
+  {
+    "title": "Guide",
+    "links": [
+      {
+        "title": "Fixture: Every Construct",
+        "href": "/guide/fixture/"
+      }
+    ]
+  },
+  {
+    "title": "API Reference",
+    "links": [
+      {
+        "title": "Fixture: Docstrings",
+        "href": "/api/fixture/"
+      }
+    ]
+  }
+]

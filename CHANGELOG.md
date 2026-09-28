@@ -30,6 +30,10 @@
   code that runs LLM calls inside a `:replay` scope must record them first (the same
   code once with the provider's key and `mode = :record_missing`) or make them
   outside the scope.
+- The manual's non-streaming LLM examples render recorded real output instead of a
+  failed request. The documentation build chooses its mode by flag, not by the keys
+  it finds: replay by default, `UNILM_DOCS_RECORD=1` to record the missing answers,
+  `UNILM_DOCS_LIVE=1` to call every service live.
 
 ## 0.21.0
 

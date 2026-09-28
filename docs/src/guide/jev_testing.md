@@ -177,9 +177,9 @@ with `TYPESAFE_API_KEY` set and `mode = :record_missing`.
 
 The demo records two calls into a temporary directory, replays them, and shows a
 changed request missing. In this manual's build the recording scope's service is
-whatever encloses it (last section): the committed recordings in a keyless
+whatever encloses it (last section): the committed recordings in a default
 build; in a recording build, the committed recordings where they exist and the
-service for the rest; the service itself in a build with only a key.
+service for the rest; the service itself in a live build.
 
 ```@example jevtest
 recordings = mktempdir()     # in a package: a directory committed next to the tests
@@ -471,23 +471,23 @@ make the decision with `ask`.
 
 ## How this manual runs its examples
 
-`docs/make.jl` reads the environment to decide whether the whole build runs
-inside one `with_recorded_answers` scope over `docs/recorded_answers`, and in
-which mode:
+`docs/make.jl` reads two flags to decide whether the whole build runs inside one
+`with_recorded_answers` scope over `docs/recorded_answers`, and in which mode;
+which API keys are set never decides it:
 
 | Environment | Scope |
 | :--- | :--- |
-| no `TYPESAFE_API_KEY` | `:replay`: the committed recordings answer, and an example with no recording fails the build |
-| `TYPESAFE_API_KEY` and `UNILM_DOCS_RECORD=1` | `:record_missing`: recorded requests are replayed; the rest go to the service and are recorded |
-| `TYPESAFE_API_KEY` alone | none: every example calls the service |
+| neither flag | `:replay`: the committed recordings answer, and an example with no recording fails the build |
+| `UNILM_DOCS_RECORD=1` | `:record_missing`: recorded requests are replayed; the rest go to their service, with its key, and are recorded |
+| `UNILM_DOCS_LIVE=1` | none: every example calls its service |
 
-`UNILM_DOCS_RECORD` set to anything but `1` or `0`, or set to `1` without a key,
-stops the build before anything runs. After a recording run, commit the new files
-in `docs/recorded_answers`; to prune the ones no example uses any more, delete
-the directory and record again. The output under an example is the build's own —
-a recorded answer in a keyless build, a fresh one in a build with only a key,
-and in a recording build the committed recording where one exists and a fresh
-answer otherwise — and the numbers in the prose were measured separately.
+A flag set to anything but `1` or `0`, or both flags set to `1`, stops the build
+before anything runs. After a recording run, commit the new files in
+`docs/recorded_answers`; to prune the ones no example uses any more, delete the
+directory and record again. The output under an example is the build's own — a
+recorded answer in a default build, a fresh one in a live build, and in a
+recording build the committed recording where one exists and a fresh answer
+otherwise — and the numbers in the prose were measured separately.
 
 ## See also
 

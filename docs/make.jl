@@ -4,21 +4,32 @@ using UniLM
 include(joinpath(@__DIR__, "doc_coverage.jl"))
 include(joinpath(@__DIR__, "undocumented_allowlist.jl"))
 
-# The System One examples (`ask`, `list_models`) replay the answers committed in
-# docs/recorded_answers: the service does not answer a repeated request
-# identically, and a build without a key would otherwise render only the error.
-#   TYPESAFE_API_KEY unset                   → replay; an example with no recording fails the build
-#   TYPESAFE_API_KEY and UNILM_DOCS_RECORD=1 → replay what is recorded, record the rest live
-#   TYPESAFE_API_KEY alone                   → no replay: every example calls the service live
+# The examples that call a service replay the answers committed in
+# docs/recorded_answers: System One (`ask`, `list_models`) and the non-streaming LLM
+# verbs (`chatrequest!`, `respond`, `embeddingrequest!`, the tool loops). A service
+# does not answer a repeated request identically, and a build without keys would
+# otherwise render only the error. The mode is chosen by flag, never by which keys
+# are set:
+#   no flag             → replay, even when keys are set; an example with no recording fails the build
+#   UNILM_DOCS_RECORD=1 → replay what is recorded, record the rest live (with the keys
+#                         of the providers whose examples have no recording)
+#   UNILM_DOCS_LIVE=1   → no replay: every example calls its service live
+# Each flag is 1, 0 or unset, and at most one is 1. What the scope does not record —
+# a streamed call, images, files, MCP, … — goes to its service in every mode, with
+# whatever key is set.
 # After a recording run, commit the new files in docs/recorded_answers.
 # Replay and record ignore TYPESAFE_DEFAULT_MODEL: an unpinned request names the
 # default model, so an exported default would change every recording's key.
-const HAS_TYPESAFE_KEY = !isempty(strip(get(ENV, "TYPESAFE_API_KEY", "")))
-const RECORD_FLAG = get(ENV, "UNILM_DOCS_RECORD", "")
-RECORD_FLAG in ("", "0", "1") || error("UNILM_DOCS_RECORD must be 1, 0 or unset; got $(repr(RECORD_FLAG))")
-RECORD_FLAG == "1" && !HAS_TYPESAFE_KEY &&
-    error("UNILM_DOCS_RECORD=1 records answers from the live service and needs TYPESAFE_API_KEY")
-const ANSWERS_MODE = RECORD_FLAG == "1" ? :record_missing : HAS_TYPESAFE_KEY ? nothing : :replay
+function docs_flag(name::String)::Bool
+    value = get(ENV, name, "")
+    value in ("", "0", "1") || error("$name must be 1, 0 or unset; got $(repr(value))")
+    value == "1"
+end
+const RECORD = docs_flag("UNILM_DOCS_RECORD")
+const LIVE = docs_flag("UNILM_DOCS_LIVE")
+RECORD && LIVE && error("UNILM_DOCS_RECORD=1 and UNILM_DOCS_LIVE=1 exclude each other; accepted: " *
+                        "neither (replay), UNILM_DOCS_RECORD=1 (record the missing) or UNILM_DOCS_LIVE=1 (live)")
+const ANSWERS_MODE = LIVE ? nothing : RECORD ? :record_missing : :replay
 
 with_answers(build, ::Nothing) = build()
 with_answers(build, mode::Symbol) = withenv("TYPESAFE_DEFAULT_MODEL" => nothing) do

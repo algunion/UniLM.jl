@@ -3,7 +3,7 @@ using UniLM
 
 include(joinpath(@__DIR__, "doc_coverage.jl"))
 include(joinpath(@__DIR__, "undocumented_allowlist.jl"))
-include(joinpath(@__DIR__, "protocol", "ProtocolWriter.jl"))
+include(joinpath(@__DIR__, "site_writer", "SiteWriter.jl"))
 
 # The examples that call a service replay the answers committed in
 # docs/recorded_answers: System One (`ask`, `list_models`) and the non-streaming LLM
@@ -50,7 +50,7 @@ build_docs() = makedocs(;
     repo="https://github.com/algunion/UniLM.jl/blob/{commit}{path}#{line}",
     sitename="UniLM.jl",
     # Markdoc pages, the sidebar and the assets of the Next.js site in site/
-    format=ProtocolWriter.ProtocolMDX(joinpath(dirname(@__DIR__), "site")),
+    format=SiteWriter.SiteMarkdoc(joinpath(dirname(@__DIR__), "site")),
     pages=[
         "Home" => "index.md",
         "LLM Reference" => "llm.md",

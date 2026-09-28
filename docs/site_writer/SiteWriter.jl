@@ -10,7 +10,7 @@
 # Anything the model cannot hold stops the build with a `WriterError` naming the
 # page and the node: nothing is dropped or silently rewritten.
 # ============================================================================
-module ProtocolWriter
+module SiteWriter
 
 using Documenter: Documenter, MarkdownAST, Selectors
 import JSON
@@ -30,9 +30,9 @@ end
 Base.showerror(io::IO, e::WriterError) = print(io, "WriterError: ", e.page, ": ", e.what)
 
 """
-    ProtocolMDX(site)
+    SiteMarkdoc(site)
 
-Documenter output format (`makedocs(format = ProtocolMDX(site))`) that writes the
+Documenter output format (`makedocs(format = SiteMarkdoc(site))`) that writes the
 manual into the site directory `site`:
 
 - `src/app/<route>/page.md` for every page: `P.md` is served at `/P/`, `index.md`
@@ -43,14 +43,14 @@ manual into the site directory `site`:
 
 Nothing is written unless every page converts.
 """
-struct ProtocolMDX <: Documenter.Writer
+struct SiteMarkdoc <: Documenter.Writer
     site::String
-    ProtocolMDX(site::AbstractString) = new(abspath(site))
+    SiteMarkdoc(site::AbstractString) = new(abspath(site))
 end
 
 abstract type SiteFormat <: Documenter.FormatSelector end
 Selectors.order(::Type{SiteFormat}) = 4.0
-Selectors.matcher(::Type{SiteFormat}, fmt, _) = fmt isa ProtocolMDX
+Selectors.matcher(::Type{SiteFormat}, fmt, _) = fmt isa SiteMarkdoc
 Selectors.runner(::Type{SiteFormat}, fmt, doc) = Documenter.render(doc, fmt)
 
 # ── The page model ──────────────────────────────────────────────────────────
@@ -175,7 +175,7 @@ example_part(w::Walk, e::Documenter.MultiOutputElement) = Output(output_text(w, 
 example_part(w::Walk, e) = unsupported(w, e)
 
 # The site shows an output as plain text, so examples run without ANSI colours.
-Documenter.writer_supports_ansicolor(::ProtocolMDX) = false
+Documenter.writer_supports_ansicolor(::SiteMarkdoc) = false
 
 # Documenter's HTML shows the richest representation of a result (HTML, an image,
 # LaTeX, Markdown) before plain text; the site shows text only.
@@ -287,8 +287,8 @@ function navigation(doc::Documenter.Document, pages::Vector{Page})
     isempty(singles) ? sections : [(title = "Introduction", links = singles); sections]
 end
 
-function Documenter.render(doc::Documenter.Document, w::ProtocolMDX)
-    @info "ProtocolWriter: writing the site's pages into $(w.site)."
+function Documenter.render(doc::Documenter.Document, w::SiteMarkdoc)
+    @info "SiteWriter: writing the site's pages into $(w.site)."
     pages = read_site(doc)
     app = joinpath(w.site, "src", "app")
     files = [joinpath(app, split(p.route, '/'; keepempty = false)..., "page.md") => markdoc(p) for p in pages]
@@ -310,7 +310,7 @@ function Documenter.render(doc::Documenter.Document, w::ProtocolMDX)
         mkpath(dirname(public))
         cp(assets, public)
     end
-    @info "ProtocolWriter: wrote $(length(files)) pages, the navigation and the assets."
+    @info "SiteWriter: wrote $(length(files)) pages, the navigation and the assets."
     nothing
 end
 

@@ -1,13 +1,13 @@
 # The writer's own tests: the Markdoc serialisation of the page model, a build of the
 # fixture manual in fixture/ (every construct the site supports), and builds of pages
 # holding what the site cannot show. Keyless and offline:
-#   julia --startup-file=no --project=docs docs/protocol/test/runtests.jl
+#   julia --startup-file=no --project=docs docs/site_writer/test/runtests.jl
 
 using Documenter, Test
 
-include(joinpath(@__DIR__, "..", "ProtocolWriter.jl"))
-using .ProtocolWriter: ProtocolMDX, WriterError
-const W = ProtocolWriter
+include(joinpath(@__DIR__, "..", "SiteWriter.jl"))
+using .SiteWriter: SiteMarkdoc, WriterError
+const W = SiteWriter
 
 module WriterFixture
 """
@@ -37,7 +37,7 @@ const FIXTURE_PAGES = ["Home" => "index.md",
                        "Reference" => ["API" => "api.md"]]
 
 build(root::String, site::String; pages = []) =
-    makedocs(; root, source = "src", build = mktempdir(), sitename = "Fixture", format = ProtocolMDX(site),
+    makedocs(; root, source = "src", build = mktempdir(), sitename = "Fixture", format = SiteMarkdoc(site),
              remotes = nothing, doctest = false, checkdocs = :none, modules = [WriterFixture], pages,
              warnonly = [:missing_docs, :cross_references])
 
@@ -56,7 +56,7 @@ end
 
 paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
 
-@testset "ProtocolWriter" begin
+@testset "SiteWriter" begin
     @testset "text keeps every character literal" begin
         @test W.md(W.Inline[W.Text("a*b_c {% d %} `e` \\ | <x> [y](z) #1 & ~s~")]) ==
               raw"a\*b\_c \{\% d \%\} \`e\` \\ \| \<x\> \[y\]\(z\) \#1 \& \~s\~"

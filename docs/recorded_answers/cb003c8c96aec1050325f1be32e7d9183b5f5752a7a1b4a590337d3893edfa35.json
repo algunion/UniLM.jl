@@ -1,0 +1,48 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": "I was charged twice for order #4471. Please refund the duplicate payment.",
+      "model": "jev-latest",
+      "questions": {
+        "classify": {
+          "type": "choice",
+          "instructions": "Select the option that best describes the provided state.",
+          "criteria": {
+            "payments, charges, invoices or refunds": null,
+            "the app or the website does not work as expected": null,
+            "a parcel that is late, lost or arrived damaged": null,
+            "anything else": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e8d0d9d573aeb04c3d90b91cedc4",
+    "request_id_header": "x-typesafe-request-id",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "classify": {
+          "type": "choice",
+          "choice": "payments, charges, invoices or refunds",
+          "confidence": 1.0,
+          "probabilities": {
+            "the app or the website does not work as expected": 0.0,
+            "payments, charges, invoices or refunds": 1.0,
+            "a parcel that is late, lost or arrived damaged": 0.0,
+            "anything else": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 347,
+        "output_tokens": 77
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T16:19:57Z"
+}

@@ -1,0 +1,219 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/responses",
+    "body": {
+      "input": "I was charged twice for order #4471. Please refund the duplicate payment.",
+      "instructions": "You are the support agent of a small online shop. The customer's orders are 4471 and 4472. Use the tools to act on the customer's message, then answer in at most three sentences.",
+      "model": "gpt-5.4-mini",
+      "tools": [
+        {
+          "description": "Get the carrier's tracking events for an order",
+          "name": "track_parcel",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "order_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "order_id"
+            ],
+            "type": "object"
+          },
+          "strict": true,
+          "type": "function"
+        },
+        {
+          "description": "Refund an order's payment to the original payment method",
+          "name": "issue_refund",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "order_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "order_id"
+            ],
+            "type": "object"
+          },
+          "strict": true,
+          "type": "function"
+        },
+        {
+          "description": "Cancel an order that has not shipped yet",
+          "name": "cancel_order",
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "order_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "order_id"
+            ],
+            "type": "object"
+          },
+          "strict": true,
+          "type": "function"
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_a475cac6b5254dcc964e9c74eb8114c5",
+    "request_id_header": "x-request-id",
+    "body": {
+      "id": "resp_043379531586bca0006aba9598f92087d285f36e74c48c8cbc",
+      "object": "response",
+      "created_at": 1790612889,
+      "status": "completed",
+      "access_programs": null,
+      "background": false,
+      "billing": {
+        "payer": "developer"
+      },
+      "completed_at": 1790612889,
+      "error": null,
+      "frequency_penalty": 0.0,
+      "incomplete_details": null,
+      "instructions": "You are the support agent of a small online shop. The customer's orders are 4471 and 4472. Use the tools to act on the customer's message, then answer in at most three sentences.",
+      "max_output_tokens": null,
+      "max_tool_calls": null,
+      "model": "gpt-5.4-mini-2026-03-17",
+      "moderation": null,
+      "output": [
+        {
+          "id": "fc_043379531586bca0006aba9599511087d2b366a11fca9d0f33",
+          "type": "function_call",
+          "status": "completed",
+          "arguments": "{\"order_id\":\"4471\"}",
+          "call_id": "call_LzqSUJnHVGNd3soB8aypMUtA",
+          "name": "issue_refund"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "presence_penalty": 0.0,
+      "previous_response_id": null,
+      "prompt_cache_key": null,
+      "prompt_cache_retention": "24h",
+      "reasoning": {
+        "context": "current_turn",
+        "effort": "none",
+        "mode": "standard",
+        "summary": null
+      },
+      "safety_identifier": null,
+      "service_tier": "default",
+      "store": true,
+      "temperature": 1.0,
+      "text": {
+        "format": {
+          "type": "text"
+        },
+        "verbosity": "medium"
+      },
+      "tool_choice": "auto",
+      "tool_usage": {
+        "image_gen": {
+          "input_tokens": 0,
+          "input_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "output_tokens": 0,
+          "output_tokens_details": {
+            "image_tokens": 0,
+            "text_tokens": 0
+          },
+          "total_tokens": 0
+        },
+        "web_search": {
+          "num_requests": 0
+        }
+      },
+      "tools": [
+        {
+          "type": "function",
+          "description": "Get the carrier's tracking events for an order",
+          "name": "track_parcel",
+          "output_schema": null,
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "order_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "order_id"
+            ],
+            "type": "object"
+          },
+          "strict": true
+        },
+        {
+          "type": "function",
+          "description": "Refund an order's payment to the original payment method",
+          "name": "issue_refund",
+          "output_schema": null,
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "order_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "order_id"
+            ],
+            "type": "object"
+          },
+          "strict": true
+        },
+        {
+          "type": "function",
+          "description": "Cancel an order that has not shipped yet",
+          "name": "cancel_order",
+          "output_schema": null,
+          "parameters": {
+            "additionalProperties": false,
+            "properties": {
+              "order_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "order_id"
+            ],
+            "type": "object"
+          },
+          "strict": true
+        }
+      ],
+      "top_logprobs": 0,
+      "top_p": 0.98,
+      "truncation": "disabled",
+      "usage": {
+        "input_tokens": 160,
+        "input_tokens_details": {
+          "cache_write_tokens": 0,
+          "cached_tokens": 0
+        },
+        "output_tokens": 21,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 181
+      },
+      "user": null,
+      "metadata": {}
+    }
+  },
+  "recorded_at": "2026-09-28T16:28:10Z"
+}

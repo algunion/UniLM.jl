@@ -1,0 +1,49 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "policy": "Refunds: we refund the full price of an item returned within 30 days of delivery, in its original packaging.\nDamaged items: report them within 7 days with a photo; we send a replacement or refund the item, as you prefer.\nShipping: orders leave our warehouse within 2 business days; standard delivery takes 3 to 7 business days.\nWe refund shipping costs only when the item arrived damaged.",
+        "reply": "Sorry about that. Please reply with the last 4 digits of the card used and the date of the duplicate charge, and we’ll review the payment and refund any confirmed duplicate charge."
+      },
+      "model": "jev-latest",
+      "questions": {
+        "relation": {
+          "type": "choice",
+          "instructions": "How does `policy` relate to `reply`?",
+          "criteria": {
+            "supports": "The policy states what the reply says, or directly implies that it is true",
+            "contradicts": "The policy states the opposite of what the reply says, or implies it is false",
+            "says_nothing": "The policy does not address what the reply asserts, either way"
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e8defc6f77be8d661df7c90ad53e",
+    "request_id_header": "x-typesafe-request-id",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "relation": {
+          "type": "choice",
+          "choice": "says_nothing",
+          "confidence": 1.0,
+          "probabilities": {
+            "supports": 0.0,
+            "contradicts": 0.0,
+            "says_nothing": 1.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 505,
+        "output_tokens": 48
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T16:35:23Z"
+}

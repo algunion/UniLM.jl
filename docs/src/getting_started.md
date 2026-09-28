@@ -92,7 +92,9 @@ export TYPESAFE_API_KEY="..."
 
 Optional: `TYPESAFE_BASE_URL` overrides the API root (default
 `https://api.typesafe.ai`) and `TYPESAFE_DEFAULT_MODEL` the model used when a call
-names none (default `jev-latest`). See [Typed Judgments with Jev](@ref system_one_guide).
+names none (default `jev-latest`); [Setup](@ref jev_setup) has the details.
+[Start Here: Jev in Five Minutes](@ref jev_start) makes a first decision and shows
+which Jev page answers your question.
 
 ### Ollama (local — no key needed)
 

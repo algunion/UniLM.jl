@@ -79,13 +79,13 @@ build_docs() = makedocs(;
             "MCP (Model Context Protocol)" => "guide/mcp.md",
             "FIM & Prefix Completion" => "guide/completions.md",
         ],
-        "System One (TypeSafe Jev)" => [
+        "Jev (TypeSafe System One)" => [
+            "Start Here: Jev in Five Minutes" => "guide/jev_start.md",
             "Jev with LLMs" => "guide/jev_with_llms.md",
-            "Typed Judgments with Jev" => "guide/system_one.md",
-            "Multiple Dispatch on Natural Language" => "guide/natural_language_dispatch.md",
-            "Semantic Programs" => "guide/semantic_programs.md",
-            "Semantic Algorithms" => "guide/semantic_algorithms.md",
-            "Developing and Testing with Jev" => "guide/jev_testing.md",
+            "Route and Decide" => "guide/system_one.md",
+            "Dispatch on Meaning" => "guide/natural_language_dispatch.md",
+            "Many Items at Once" => "guide/semantic_algorithms.md",
+            "Test and Develop" => "guide/jev_testing.md",
         ],
         "API Reference" => [
             "Chat Types" => "api/chat.md",
@@ -100,6 +100,7 @@ build_docs() = makedocs(;
             "FIM Types" => "api/completions.md",
             "Provider Capabilities" => "api/capabilities.md",
             "TypeSafe System One" => "api/system_one.md",
+            "Natural-Language Dispatch" => "api/nl_dispatch.md",
             "Files" => "api/files.md",
             "Vector Stores" => "api/vector_stores.md",
             "Conversations" => "api/conversations.md",

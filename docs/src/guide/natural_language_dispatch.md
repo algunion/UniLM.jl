@@ -851,9 +851,10 @@ replaying, and crafting edge cases with a local server.
   over collections: routing, ranking, search and joins
 - [Test and Develop](@ref jev_testing_guide) — recorded answers, coverage checks
   and mock servers for tests
-- [TypeSafe System One API (Jev)](@ref system_one_api) — every type and verb,
-  including [`Meaning`](@ref), [`nl_classify`](@ref), [`nl_dispatch`](@ref) and
-  [`@branch`](@ref)
+- [Natural-Language Dispatch](@ref nl_dispatch_api) — the API reference of
+  [`Meaning`](@ref), [`nl_classify`](@ref), [`nl_dispatch`](@ref) and
+  [`@branch`](@ref); [TypeSafe System One API (Jev)](@ref system_one_api) has
+  the rest
 - [TypeSafe documentation](https://docs.typesafe.ai) — the service's own
   reference for [Choice](https://docs.typesafe.ai/primitives/choice),
   [confidence](https://docs.typesafe.ai/confidence) and

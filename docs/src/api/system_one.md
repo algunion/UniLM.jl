@@ -289,8 +289,9 @@ records a real answer once and replays it offline. Inside its scope, `ask` and
 `list_models` (and so `nl_dispatch` and `@branch`) and the non-streaming
 [`chatrequest!`](@ref), [`respond`](@ref) and [`embeddingrequest!`](@ref) (and
 so the tool loops) exchange through a directory of recordings keyed by the exact
-request bytes; a streamed call and every other verb reach the network as usual.
-In the default `:replay` mode nothing reaches the network and no key is needed,
+request bytes, with any credential the body carries redacted; a streamed call and
+every other verb reach the network as usual. In the default `:replay` mode no
+recorded verb reaches the network and none needs a key,
 and a request with no recording, or an unreadable one, throws
 [`ReplayMissError`](@ref); `:record` and `:record_missing` call the service,
 with its key, for the answers they write. A build of this documentation without

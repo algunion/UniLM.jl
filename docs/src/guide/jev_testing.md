@@ -139,7 +139,7 @@ through a directory of recordings:
 
 | `mode` | Behaviour |
 | :--- | :--- |
-| `:replay` (default) | Answers come from `dir`, which must exist. Nothing reaches the network and no API key is needed. A request with no recording throws [`ReplayMissError`](@ref). |
+| `:replay` (default) | Answers come from `dir`, which must exist. No recorded verb reaches the network or needs an API key. A request with no recording throws [`ReplayMissError`](@ref). |
 | `:record` | Every request goes to the service; each HTTP 200 is written to `dir`, replacing an earlier recording of the same request. A failure is returned as usual and never recorded. |
 | `:record_missing` | What `dir` holds is replayed; the rest goes to the service, and its 200s are recorded. |
 
@@ -148,7 +148,9 @@ through a directory of recordings:
   that carried it, and the time of recording, pretty-printed so a diff is
   readable. The API key and every other header are never written.
 - **The key is the exact request:** the SHA-256 of the method, the path of the
-  URL and the exact request body. The host is not part of it — a base URL that
+  URL and the exact request body — except a credential the body carries, such as
+  an MCP tool's `authorization`, which reads `"<redacted>"` in the key and the
+  file, so a replay needs none. The host is not part of it — a base URL that
   differs only in its host files its requests under the same keys — and neither
   is the query, which can carry a credential. The key is never a canonical form,
   because the order of a Choice's options and of the state's keys moves the

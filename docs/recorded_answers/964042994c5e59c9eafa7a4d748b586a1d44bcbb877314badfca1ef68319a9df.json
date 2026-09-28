@@ -1,0 +1,121 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": "Shoes arrived two weeks late and in the wrong size. What are you going to do?",
+      "model": "jev-latest",
+      "questions": {
+        "department": {
+          "type": "choice",
+          "instructions": "Which team should handle this ticket?",
+          "criteria": {
+            "returns": "Exchanges, wrong or damaged items",
+            "shipping": "Delivery status, delays, lost packages",
+            "billing": "Charges, invoices, payment problems"
+          }
+        },
+        "return_reason": {
+          "type": "choice",
+          "instructions": "If the customer wants to return something, why?",
+          "criteria": {
+            "wrong_size": "The item doesn't fit",
+            "wrong_item": "A different product was delivered",
+            "damaged": "The item arrived broken or faulty",
+            "changed_mind": "The item is fine, the customer no longer wants it",
+            "other": "A return reason that fits none of the above"
+          }
+        },
+        "shipping_issue": {
+          "type": "choice",
+          "instructions": "If this is a shipping problem, which kind is it?",
+          "criteria": {
+            "not_delivered": "The package never arrived",
+            "delayed": "The package is late but still on its way",
+            "wrong_address": "The package went to the wrong place",
+            "other": "A shipping problem that fits none of the above"
+          }
+        },
+        "frustration": {
+          "type": "score",
+          "instructions": "How frustrated does the customer appear?",
+          "criteria": [
+            "Calm, just stating facts",
+            "Frustrated but civil",
+            "Very angry, strong language"
+          ]
+        },
+        "wants_human": {
+          "type": "noul",
+          "instructions": "Is the customer asking for a human agent?"
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a0e789d1fb7c6780c83c9beee810c5",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "department": {
+          "type": "choice",
+          "choice": "returns",
+          "confidence": 0.96,
+          "probabilities": {
+            "shipping": 0.03,
+            "billing": 0.0,
+            "returns": 0.97
+          }
+        },
+        "return_reason": {
+          "type": "choice",
+          "choice": "wrong_size",
+          "confidence": 1.0,
+          "probabilities": {
+            "wrong_item": 0.0,
+            "wrong_size": 1.0,
+            "other": 0.0,
+            "changed_mind": 0.0,
+            "damaged": 0.0
+          }
+        },
+        "shipping_issue": {
+          "type": "choice",
+          "choice": "other",
+          "confidence": 0.37,
+          "probabilities": {
+            "other": 0.53,
+            "wrong_address": 0.0,
+            "not_delivered": 0.0,
+            "delayed": 0.47
+          }
+        },
+        "frustration": {
+          "type": "score",
+          "score": 0.92,
+          "confidence": 0.88,
+          "legend": {
+            "0": "Calm, just stating facts",
+            "1": "Frustrated but civil",
+            "2": "Very angry, strong language"
+          },
+          "probabilities": {
+            "0": 0.08,
+            "1": 0.92,
+            "2": 0.0
+          }
+        },
+        "wants_human": {
+          "type": "noul",
+          "noul": 0.25
+        }
+      },
+      "usage": {
+        "input_tokens": 653,
+        "output_tokens": 176
+      }
+    }
+  },
+  "recorded_at": "2026-09-28T10:22:44Z"
+}

@@ -4,7 +4,25 @@ using UniLM
 include(joinpath(@__DIR__, "doc_coverage.jl"))
 include(joinpath(@__DIR__, "undocumented_allowlist.jl"))
 
-makedocs(;
+# The System One examples (`ask`, `list_models`) replay the answers committed in
+# docs/recorded_answers: the service does not answer a repeated request
+# identically, and a build without a key would otherwise render only the error.
+#   TYPESAFE_API_KEY unset                   → replay; an example with no recording fails the build
+#   TYPESAFE_API_KEY and UNILM_DOCS_RECORD=1 → replay what is recorded, record the rest live
+#   TYPESAFE_API_KEY alone                   → no replay: every example calls the service live
+# After a recording run, commit the new files in docs/recorded_answers.
+const HAS_TYPESAFE_KEY = !isempty(strip(get(ENV, "TYPESAFE_API_KEY", "")))
+const RECORD_FLAG = get(ENV, "UNILM_DOCS_RECORD", "")
+RECORD_FLAG in ("", "0", "1") || error("UNILM_DOCS_RECORD must be 1 or unset; got $(repr(RECORD_FLAG))")
+RECORD_FLAG == "1" && !HAS_TYPESAFE_KEY &&
+    error("UNILM_DOCS_RECORD=1 records answers from the live service and needs TYPESAFE_API_KEY")
+const ANSWERS_MODE = RECORD_FLAG == "1" ? :record_missing : HAS_TYPESAFE_KEY ? nothing : :replay
+
+with_answers(build, ::Nothing) = build()
+with_answers(build, mode::Symbol) =
+    with_recorded_answers(build, joinpath(@__DIR__, "recorded_answers"); mode)
+
+build_docs() = makedocs(;
     modules=[UniLM],
     authors="Marius Fersigan <marius.fersigan@gmail.com> and contributors",
     repo="https://github.com/algunion/UniLM.jl/blob/{commit}{path}#{line}",
@@ -72,6 +90,8 @@ makedocs(;
     ],
     warnonly=[:missing_docs, :cross_references],
 )
+
+with_answers(build_docs, ANSWERS_MODE)
 
 assert_doc_coverage(UniLM, joinpath(@__DIR__, "src"), KNOWN_UNDOCUMENTED)
 

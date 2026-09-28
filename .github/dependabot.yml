@@ -30,16 +30,14 @@ updates:
     groups:
       actions:
         patterns: ["*"]
-  # The documentation site. `next` stays on its pinned version until an upgrade is
-  # made on purpose: the site's build relies on one of Next's internals.
+  # The documentation site. An upgrade of `next` must pass CI before it is merged: the
+  # site's build relies on one of Next's internals.
   - package-ecosystem: "npm"
     directory: "/site"
     schedule:
       interval: "weekly"
     cooldown:
       default-days: 7
-    ignore:
-      - dependency-name: "next"
     groups:
       site:
         patterns: ["*"]

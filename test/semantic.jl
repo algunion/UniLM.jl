@@ -144,6 +144,37 @@ function _define_late_route_then_dispatch()
     nl_dispatch(late_route, "x"; service=SemanticMock, config=_SEM_CFG)
 end
 
+# A conversation state machine: which meanings a turn can resolve to depends on the
+# state the conversation is in.
+abstract type Phase end
+struct Waiting <: Phase end
+struct Confirming <: Phase end
+step(::Waiting, ::nl"gives an order number", msg) = :to_confirming
+step(::Confirming, ::nl"confirms", msg) = :confirmed
+step(::Confirming, ::nl"declines", msg) = :declined
+step(::Phase, ::nl"asks for a human", msg) = :human
+
+patched(::nl"u1", ::nl"v1") = 11         # a gap, closed by a method wild in every slot
+patched(::nl"u2", ::nl"v2") = 22
+patched(::Meaning, ::Meaning) = :backstop
+
+ambiguous(::nl"m1", x::Int, y) = 1       # an (Int, Int) call matches both equally well
+ambiguous(::nl"m1", x, y::Int) = 2
+
+struct Ticket                            # a constructor dispatches on Type{Ticket}
+    kind::Symbol
+end
+Ticket(::nl"urgent", text) = Ticket(:urgent)
+kinds(::nl"k", ::Type{Int}) = :int       # a type argument dispatches on Type{Int}
+
+const _counted = Ref(0)                  # how many times a `counted` method ran
+counted(::nl"c1", t) = (_counted[] += 1; :c1)
+counted(::nl"c2", t) = (_counted[] += 1; :c2)
+
+# Two ordinary arguments whose position order is neither their sorted order nor, on
+# Julia 1.13, the iteration order of a Dict holding the same keys.
+ship(::nl"asks where the parcel is", order, customer) = (order, customer)
+
 # ─── 1. Meaning types ────────────────────────────────────────────────────────
 
 @testset "semantic — nl\"...\" is a type, and the description round-trips" begin
@@ -395,16 +426,21 @@ end
     end
     @test failed isa SystemOneError
 
-    # A combination no method covers is Julia's own MethodError, not swallowed.
-    gap = try
-        _with_semantic_mock(; pick=Dict("meaning_1" => "p1", "meaning_2" => "q2")) do
+    # A combination no method covers is refused before the request: an answer landing
+    # on it would be billed and then end in a MethodError.
+    gap, billed = _with_semantic_mock(; pick=Dict("meaning_1" => "p1", "meaning_2" => "q2")) do
+        try
             nl_dispatch(half; service=SemanticMock, config=_SEM_CFG, state="s")
+            nothing
+        catch e
+            e
         end
-        nothing
-    catch e
-        e
     end
-    @test gap isa MethodError
+    @test gap isa ArgumentError
+    @test isempty(billed)
+    gaptext = sprint(showerror, gap)
+    @test contains(gaptext, repr(["p1", "q2"]))
+    @test contains(gaptext, repr(["p2", "q1"]))
 end
 
 @testset "semantic — a cancelled token throws SystemOneError before any request" begin
@@ -458,4 +494,207 @@ end
     @test route(Meaning("the customer wants a refund"), "x") == (:refund, "x")
     @test route(nl"anything else"(), "x") === :wildcard
     @test pair(nl"x2"(), nl"y2"()) == 22
+end
+
+# ─── 11. Options follow the ordinary argument types ──────────────────────────
+
+@testset "semantic — a call offers only the meanings whose method accepts its arguments" begin
+    @test meanings(step) ==
+          Dict(2 => ["gives an order number", "confirms", "declines", "asks for a human"])
+    @test meanings(step, Tuple{Waiting,String}) == Dict(2 => ["gives an order number", "asks for a human"])
+    @test meanings(step, Tuple{Confirming,String}) == Dict(2 => ["confirms", "declines", "asks for a human"])
+    @test_throws ArgumentError meanings(step, Tuple{String})              # one ordinary type short
+    @test_throws ArgumentError meanings(step, Tuple{Vararg{String}})      # no definite length
+    @test_throws ArgumentError meanings(step, Tuple{Int,String})          # no method accepts an Int
+
+    out, seen = _with_semantic_mock(; pick=Dict("meaning_2" => "asks for a human")) do
+        nl_dispatch(step, Confirming(), "yes"; service=SemanticMock, config=_SEM_CFG)
+    end
+    @test out === :human
+    @test length(seen) == 1
+    @test collect(keys(seen[1]["body"]["questions"]["meaning_2"]["criteria"])) ==
+          ["confirms", "declines", "asks for a human"]
+
+    # No natural-language method accepts these types: refused before anything is sent.
+    err, sent = _with_semantic_mock() do
+        try
+            nl_dispatch(step, 1, "x"; service=SemanticMock, config=_SEM_CFG)
+            nothing
+        catch e
+            e
+        end
+    end
+    @test err isa ArgumentError
+    @test isempty(sent)
+    text = sprint(showerror, err)
+    @test contains(text, "step")
+    @test contains(text, "Tuple{Int64, String}")
+    @test contains(text, "asks for a human")
+
+    # A constructor and a type argument dispatch on Type{T}, not on DataType.
+    @test meanings(kinds, Tuple{Type{Int}}) == Dict(1 => ["k"])
+    typed, _ = _with_semantic_mock() do
+        (nl_dispatch(Ticket, "it is on fire"; service=SemanticMock, config=_SEM_CFG),
+         nl_dispatch(kinds, Int; service=SemanticMock, config=_SEM_CFG, state="s"))
+    end
+    @test typed == (Ticket(:urgent), :int)
+end
+
+@testset "semantic — the state lists the ordinary arguments in position order" begin
+    _, seen = _with_semantic_mock() do
+        nl_dispatch(ship, "A-17", "ada"; service=SemanticMock, config=_SEM_CFG)
+    end
+    @test collect(keys(seen[1]["body"]["state"])) == ["order", "customer"]
+end
+
+# ─── 12. Coverage before the request ─────────────────────────────────────────
+
+@testset "semantic — meaning_gaps lists the offered combinations no method covers" begin
+    @test meaning_gaps(half, Tuple{}) == [["p1", "q2"], ["p2", "q1"]]
+    @test meaning_gaps(half, Tuple{}) isa Vector{Vector{String}}
+    @test isempty(meaning_gaps(pair, Tuple{}))
+    @test isempty(meaning_gaps(patched, Tuple{}))                 # the wild method covers both
+    @test isempty(meaning_gaps(step, Tuple{Confirming,String}))
+    @test meaning_gaps(ambiguous, Tuple{Int,Int}) == [["m1"]]     # ambiguous is a gap too
+    @test isempty(meaning_gaps(ambiguous, Tuple{Int,String}))
+    @test_throws ArgumentError meaning_gaps(half, Tuple{String})
+
+    # The backstop is not an option, so the call still offers only the defined meanings.
+    out, seen = _with_semantic_mock(; pick=Dict("meaning_1" => "u1", "meaning_2" => "v2")) do
+        nl_dispatch(patched; service=SemanticMock, config=_SEM_CFG, state="s")
+    end
+    @test out === :backstop
+    @test collect(keys(seen[1]["body"]["questions"]["meaning_1"]["criteria"])) == ["u1", "u2"]
+end
+
+# ─── 13. Decision policy ─────────────────────────────────────────────────────
+
+@testset "semantic — nl_dispatch acts on the decision policy's verdict" begin
+    caught(f) = try f(); nothing catch e; e end
+
+    # An offered meaning that is not the argmax is dispatched, and the policy saw the answer.
+    saw = Ref{Any}(nothing)
+    out, _ = _with_semantic_mock(; pick=Dict("meaning_1" => "the customer wants a refund")) do
+        nl_dispatch(route, "t"; service=SemanticMock, config=_SEM_CFG,
+                    decide=a -> (saw[] = a; "the customer reports a bug"))
+    end
+    @test out == (:bug, "t")
+    @test saw[] isa ChoiceAnswer && saw[].choice == "the customer wants a refund"
+
+    # A decline runs the fallback with the caller's arguments.
+    received = Ref{Any}(nothing)
+    out, _ = _with_semantic_mock() do
+        nl_dispatch(route, "it crashes"; service=SemanticMock, config=_SEM_CFG,
+                    decide=_ -> nothing, fallback=(a...) -> (received[] = a; :fb))
+    end
+    @test out === :fb
+    @test received[] == ("it crashes",)
+
+    # A decline without a fallback is a typed error carrying the question and the answer.
+    err, _ = _with_semantic_mock(; pick=Dict("meaning_1" => "the customer reports a bug")) do
+        caught(() -> nl_dispatch(route, "x"; service=SemanticMock, config=_SEM_CFG,
+                                 decide=_ -> nothing))
+    end
+    @test err isa DecisionDeclinedError
+    @test err.question == "meaning_1"
+    @test err.answer isa ChoiceAnswer && err.answer.choice == "the customer reports a bug"
+    text = sprint(showerror, err)
+    @test contains(text, "meaning_1")
+    @test contains(text, "the customer reports a bug")
+    @test contains(text, "0.9")
+
+    # A verdict that is neither an offered meaning nor `nothing` runs neither f nor fallback.
+    for verdict in ("not offered", :c1, 1)
+        _counted[] = 0
+        fell_back = Ref(0)
+        bad, _ = _with_semantic_mock() do
+            caught(() -> nl_dispatch(counted, "x"; service=SemanticMock, config=_SEM_CFG,
+                                     decide=_ -> verdict, fallback=(a...) -> (fell_back[] += 1)))
+        end
+        @test bad isa ArgumentError
+        @test _counted[] == 0
+        @test fell_back[] == 0
+    end
+
+    # One policy per slot.
+    out, _ = _with_semantic_mock(; pick=Dict("meaning_1" => "x1", "meaning_2" => "y1")) do
+        nl_dispatch(pair; service=SemanticMock, config=_SEM_CFG, state="s",
+                    decide=[_ -> "x2", a -> a.choice])
+    end
+    @test out == 21
+
+    # Refused before any request: two policies at once, a wrong-length vector, and
+    # something that cannot be called on an answer.
+    refused, sent = _with_semantic_mock() do
+        [caught(() -> nl_dispatch(route, "x"; service=SemanticMock, config=_SEM_CFG,
+                                  decide=a -> a.choice, min_confidence=0.5)),
+         caught(() -> nl_dispatch(pair; service=SemanticMock, config=_SEM_CFG, state="s",
+                                  decide=[a -> a.choice])),
+         caught(() -> nl_dispatch(route, "x"; service=SemanticMock, config=_SEM_CFG,
+                                  decide="the customer wants a refund"))]
+    end
+    @test all(e -> e isa ArgumentError, refused)
+    @test isempty(sent)
+end
+
+@testset "semantic — @branch acts on the decision policy's verdict" begin
+    out, _ = _with_semantic_mock(; pick=Dict("branch" => "alpha")) do
+        @branch "s" decide=(_ -> "beta") service=SemanticMock config=_SEM_CFG begin
+            "alpha" => :alpha
+            "beta"  => :beta
+        end
+    end
+    @test out === :beta
+
+    # `decide` alone makes a `_` line reachable: a decline takes it.
+    out, _ = _with_semantic_mock() do
+        @branch "s" decide=(_ -> nothing) service=SemanticMock config=_SEM_CFG begin
+            "alpha" => :alpha
+            "beta"  => :beta
+            _       => :fallback
+        end
+    end
+    @test out === :fallback
+
+    # A decline with no `_` line is a typed error.
+    declined = try
+        _with_semantic_mock() do
+            @branch "s" decide=(_ -> nothing) service=SemanticMock config=_SEM_CFG begin
+                "alpha" => :alpha
+                "beta"  => :beta
+            end
+        end
+        nothing
+    catch e
+        e
+    end
+    @test declined isa DecisionDeclinedError
+    @test declined.question == "branch"
+    @test declined.answer.choice == "alpha"
+
+    # A verdict that is not an option name runs no body at all.
+    ran = Ref(0)
+    bad = try
+        _with_semantic_mock() do
+            @branch "s" decide=(_ -> "gamma") service=SemanticMock config=_SEM_CFG begin
+                "alpha" => (ran[] += 1; :alpha)
+                "beta"  => (ran[] += 1; :beta)
+                _       => (ran[] += 1; :fallback)
+            end
+        end
+        nothing
+    catch e
+        e
+    end
+    @test bad isa ArgumentError
+    @test ran[] == 0
+
+    # Two policies at once fail while the macro expands.
+    both = try
+        Core.eval(@__MODULE__, :(@branch s decide=identity min_confidence=0.5 begin "a" => 1 end))
+        nothing
+    catch e
+        e
+    end
+    @test both isa LoadError && both.error isa ArgumentError
 end

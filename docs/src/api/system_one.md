@@ -186,7 +186,9 @@ Meaning
 @branch
 nl_dispatch
 meanings
+meaning_gaps
 LowConfidenceError
+DecisionDeclinedError
 ```
 
 ### Usage
@@ -215,6 +217,6 @@ route(nl"the customer wants a refund"(), ticket)   # direct call, no request at 
 ```
 
 A non-success call raises [`SystemOneError`](@ref) instead of resolving to a
-branch, and a combination of meanings that no method covers raises Julia's own
-`MethodError` — a gap in the method table is not a service failure and is not
-swallowed.
+branch, and a combination of offered meanings that no method covers is an
+`ArgumentError` raised before any request — [`meaning_gaps`](@ref) lists such
+gaps without a request.

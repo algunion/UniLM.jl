@@ -391,7 +391,9 @@ export
     @branch,
     nl_dispatch,
     meanings,
-    LowConfidenceError
+    meaning_gaps,
+    LowConfidenceError,
+    DecisionDeclinedError
 
 # ─── Audio API ────────────────────────────────────────────────────────────────
 export

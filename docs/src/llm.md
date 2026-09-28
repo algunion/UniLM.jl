@@ -1655,26 +1655,46 @@ struct LowConfidenceError <: Exception    # raised when confidence < min_confide
     min_confidence::Float64
 end
 
+struct DecisionDeclinedError <: Exception # raised when `decide` returned nothing
+    question::String                      # "branch" for @branch
+    answer::ChoiceAnswer
+end
+
 @branch state [key = value ...] begin
     "option name"                  => expression   # the name is what the model reads
     ("option name", "description") => expression   # the only way to add a description
-    _                              => expression   # requires min_confidence
+    _                              => expression   # requires min_confidence or decide
 end
-# keys: model, min_confidence, instructions, service, config, cancel
-# -> the selected body's value; LowConfidenceError or SystemOneError otherwise
+# keys: model, min_confidence, decide, instructions, service, config, cancel
+#   decide: ChoiceAnswer -> any option name, or nothing to decline; not with min_confidence
+# -> the selected body's value; LowConfidenceError, DecisionDeclinedError or SystemOneError otherwise
 
 nl_dispatch(f, args...; model=nothing, service=TYPESAFEServiceEndpoint, config=nothing,
-            cancel=nothing, min_confidence=0.0, fallback=nothing, instructions=nothing, state=nothing)
+            cancel=nothing, min_confidence=0.0, decide=nothing, fallback=nothing,
+            instructions=nothing, state=nothing)
     # -> f(resolved meanings spliced into their positions, args...)
-meanings(f) -> Dict{Int,Vector{String}}   # slot position => options, in send order
+    # decide: nothing (argmax gated by min_confidence) | a callable | a Vector with one per slot;
+    #   ChoiceAnswer -> any offered meaning, or nothing to decline; not with min_confidence
+meanings(f) -> Dict{Int,Vector{String}}   # slot position => options over every method
+meanings(f, argtypes::Type{<:Tuple}) -> Dict{Int,Vector{String}}
+    # the options a call with ordinary arguments of these types sends, in send order
+meaning_gaps(f, argtypes::Type{<:Tuple}) -> Vector{Vector{String}}
+    # offered combinations with no method (missing or ambiguous), first slot slowest
 ```
 
 Methods without a concrete `Meaning` argument (including wildcard `::Meaning`
 ones) are ordinary methods and are not part of the natural-language interface.
 Every natural-language method of `f` must agree on arity and on which positions
-are slots. Without `state`, the state is a `Dict{String,Any}` keyed by the
-ordinary argument names of the first such method. A resolved combination no
-method covers raises Julia's own `MethodError`.
+are slots. A call offers only the meanings of methods that accept the types of
+its ordinary arguments. Types no such method accepts, and a combination of
+offered meanings no method covers, are each an `ArgumentError` raised before any
+request: define the missing methods, or add one wild in every slot
+(`f(::Meaning, ::Meaning, x)`), which is not an option and covers every
+combination. Without `state`, the state
+is a `JSON.Object{String,Any}` keyed by the ordinary argument names of the first
+such method, in argument order. `confidence` is `(n·p_max − 1)/(n − 1)` clamped
+to `0 … 1` over the `n` offered options, so a `min_confidence` is a different bar
+whenever the option list changes.
 
 ```julia
 ticket = "My package arrived crushed and the screen is cracked. I want my money back."
@@ -1689,6 +1709,11 @@ route(::nl"the customer wants a refund", t)           = (:refund, t)
 route(::nl"the customer reports a bug in the app", t) = (:bug, t)
 nl_dispatch(route, ticket)                            # => (:refund, ticket)
 route(nl"the customer wants a refund"(), ticket)      # direct call, no request
+
+# A policy may take any offered meaning, not only the argmax, or decline (-> fallback).
+refund_first(a) = a.probabilities["the customer wants a refund"] >= 0.3 ?
+                  "the customer wants a refund" : (a.confidence >= 0.7 ? a.choice : nothing)
+nl_dispatch(route, ticket; decide = refund_first, fallback = t -> :escalate)
 ```
 
 ---
@@ -2087,7 +2112,7 @@ Every exported symbol, grouped by area:
 **Moderations**: `ModerationResponse`, `ModerationResult`, `ModerationSuccess`, `ModerationFailure`, `ModerationCallError`, `moderate`, `is_flagged`
 
 **TypeSafe System One (Jev)**: `TYPESAFEServiceEndpoint`, `SystemOneQuestion`, `ChoiceQuestion`, `ScoreQuestion`, `NoulQuestion`, `NoulCriteria`, `choice`, `score`, `noul`, `SystemOneRequest`, `ask`, `SystemOneAnswer`, `ChoiceAnswer`, `ScoreAnswer`, `NoulAnswer`, `UnknownAnswer`, `SystemOneResponse`, `SystemOneSuccess`, `SystemOneFailure`, `SystemOneCallError`, `SystemOneError`, `answers`, `answer`, `TypeSafeModelCard`, `TypeSafeModelsSuccess`, `list_models`
-- *Natural-language control flow*: `Meaning`, `@nl_str`, `@branch`, `nl_dispatch`, `meanings`, `LowConfidenceError`
+- *Natural-language control flow*: `Meaning`, `@nl_str`, `@branch`, `nl_dispatch`, `meanings`, `meaning_gaps`, `LowConfidenceError`, `DecisionDeclinedError`
 
 **Audio**: `SpeechRequest`, `TranscriptionRequest`, `SpeechSuccess`, `TranscriptionSuccess`, `AudioFailure`, `AudioCallError`, `speak`, `save_audio`, `transcribe`, `translate`, `transcript_text`
 

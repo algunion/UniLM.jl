@@ -1,0 +1,98 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/interactions",
+    "body": {
+      "input": "Explain multiple dispatch in one sentence.",
+      "model": "gemini-3.8-flash"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "body": {
+      "id": "v1_ChdMWXk2YW9fWEdzR2d4TjhQcDZ5dXlBURIXTFl5NmFvX1hHc0dneE44UHA2eXV5QVE",
+      "status": "completed",
+      "usage": {
+        "total_tokens": 564,
+        "total_input_tokens": 8,
+        "input_tokens_by_modality": [
+          {
+            "modality": "text",
+            "tokens": 8
+          }
+        ],
+        "total_cached_tokens": 0,
+        "total_output_tokens": 37,
+        "total_tool_use_tokens": 0,
+        "total_thought_tokens": 519,
+        "raw_prompt_token": 39,
+        "model_invocation_token_counts": [
+          {
+            "prompt_tokens_details": [
+              {
+                "modality": "text",
+                "tokens": 39
+              }
+            ],
+            "candidates_tokens_details": [
+              {
+                "modality": "text",
+                "tokens": 41
+              }
+            ],
+            "thoughts_tokens_details": [
+              {
+                "modality": "text",
+                "tokens": 519
+              }
+            ]
+          }
+        ],
+        "non_grounding_model_invocation_token_counts": [
+          {
+            "prompt_tokens_details": [
+              {
+                "modality": "text",
+                "tokens": 39
+              }
+            ],
+            "candidates_tokens_details": [
+              {
+                "modality": "text",
+                "tokens": 41
+              }
+            ],
+            "thoughts_tokens_details": [
+              {
+                "modality": "text",
+                "tokens": 519
+              }
+            ]
+          }
+        ]
+      },
+      "created": "2026-09-28T15:47:57Z",
+      "updated": "2026-09-28T15:47:57Z",
+      "service_tier": "standard",
+      "steps": [
+        {
+          "signature": "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",
+          "type": "thought"
+        },
+        {
+          "content": [
+            {
+              "text": "**Multiple dispatch** is a programming feature where the specific function or method implementation to execute is dynamically chosen at runtime based on the types of multiple arguments, rather than just the caller alone.",
+              "type": "text"
+            }
+          ],
+          "type": "model_output"
+        }
+      ],
+      "object": "interaction",
+      "model": "gemini-3.8-flash"
+    }
+  },
+  "recorded_at": "2026-09-28T15:47:59Z"
+}

@@ -1,0 +1,89 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1beta/models/gemini-3.8-flash:generateContent",
+    "body": {
+      "contents": [
+        {
+          "parts": [
+            {
+              "text": "Give the capital of Norway as JSON."
+            }
+          ],
+          "role": "user"
+        }
+      ],
+      "generationConfig": {
+        "maxOutputTokens": 1024,
+        "responseFormat": {
+          "text": {
+            "mimeType": "APPLICATION_JSON",
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "country": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city",
+                "country"
+              ],
+              "type": "object"
+            }
+          }
+        },
+        "thinkingConfig": {
+          "thinkingLevel": "LOW"
+        }
+      },
+      "systemInstruction": {
+        "parts": [
+          {
+            "text": "You output JSON."
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "body": {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "{\n  \"city\": \"Oslo\",\n  \"country\": \"Norway\"\n}",
+                "thoughtSignature": "EvsBCvgBAWkUfRPb47UX/3jLCB0jV7ANnMvZIrA4tdLBdf3v/p7UNZyrcMIgTZmdsMxz+dcZ+bux0YdnWf7tC885qICVRepUPzDnYLEVy+5n5hPxtHXEkrhz9ZmTmc4cPVJrVqa7ui96zlqLsG2+9XKFEWq/e4pwLejbVXkLzkHOri7SDmMZuxlMhuz2W3aabh65Juc7jI6oJXU1tIFQCgbKVFDkAhtz0f8UP2uDHh1QiQxN2k9RYrEnxpWP4Yl36uNHGlI07Nm0kjgPdh2btz9z5LmcO7YEDFnSsKVGnAc7ZKblheFyqACgXwQYy0METpFHrGVYbXul2pfq8TA="
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP",
+          "index": 0
+        }
+      ],
+      "usageMetadata": {
+        "promptTokenCount": 13,
+        "candidatesTokenCount": 20,
+        "totalTokenCount": 65,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 13
+          }
+        ],
+        "thoughtsTokenCount": 32,
+        "serviceTier": "standard"
+      },
+      "modelVersion": "gemini-3.8-flash",
+      "responseId": "dYy6avvLNdH7xs0Pub2ziQ0"
+    }
+  },
+  "recorded_at": "2026-09-28T15:49:11Z"
+}

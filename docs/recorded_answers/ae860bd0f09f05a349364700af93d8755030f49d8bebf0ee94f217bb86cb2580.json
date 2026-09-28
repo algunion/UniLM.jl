@@ -1,0 +1,61 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You are a helpful Julia programming tutor.",
+          "role": "system"
+        },
+        {
+          "content": "What are parametric types?",
+          "role": "user"
+        }
+      ],
+      "model": "gpt-5.4-mini",
+      "temperature": 0.7
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_d9215d2cf1054aa3be1bdbd661b91e2b",
+    "request_id_header": "x-request-id",
+    "body": {
+      "id": "chatcmpl-ET7sJa3SKffIKNipITMgL4MyCXu0u",
+      "object": "chat.completion",
+      "created": 1790610491,
+      "model": "gpt-5.4-mini-2026-03-17",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "In Julia, **parametric types** are types that are **defined with type parameters**. They let you create a family of related types from one definition.\n\n## Basic idea\n\nInstead of writing separate types for `Int`, `Float64`, `String`, etc., you can define one type that works with a parameter:\n\n```julia\nstruct Box{T}\n    value::T\nend\n```\n\nHere, `Box` is a parametric type, and `T` is a **type parameter**.\n\nExamples:\n\n```julia\nBox{Int}(3)\nBox{Float64}(3.14)\nBox{String}(\"hello\")\n```\n\nEach of these is a different concrete type:\n- `Box{Int}`\n- `Box{Float64}`\n- `Box{String}`\n\n## Why use them?\n\nParametric types are useful because they:\n- **preserve type information**\n- **improve performance**\n- **let you write generic code**\n\nFor example:\n\n```julia\nfunction getvalue(b::Box{T}) where T\n    return b.value\nend\n```\n\nThis works for any `Box{T}`.\n\n## Common example: arrays\n\nJulia arrays are parametric too:\n\n```julia\nVector{Int}\nMatrix{Float64}\nArray{String, 3}\n```\n\nThese are shorthand for:\n\n```julia\nArray{Int,1}\nArray{Float64,2}\nArray{String,3}\n```\n\n## Important note\n\nA type parameter is not necessarily a value; it is part of the type itself. So `Box{Int}` and `Box{Float64}` are different types, even though they share the same structure.\n\n## Summary\n\nParametric types are types with type variables, like `T`, allowing one type definition to represent many concrete types.\n\nIf you want, I can also show:\n- how parametric types affect performance\n- the difference between `struct Foo{T}` and `struct Foo`\n- how to write methods using `where`",
+            "refusal": null,
+            "annotations": []
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 24,
+        "completion_tokens": 417,
+        "total_tokens": 441,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "audio_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "audio_tokens": 0,
+          "accepted_prediction_tokens": 0,
+          "rejected_prediction_tokens": 0
+        }
+      },
+      "service_tier": "default",
+      "system_fingerprint": null
+    }
+  },
+  "recorded_at": "2026-09-28T15:48:13Z"
+}

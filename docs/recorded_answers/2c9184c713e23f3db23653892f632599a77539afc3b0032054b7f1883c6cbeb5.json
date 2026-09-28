@@ -1,0 +1,63 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You output JSON. Always respond with valid JSON.",
+          "role": "system"
+        },
+        {
+          "content": "List 3 programming languages with their year of creation.",
+          "role": "user"
+        }
+      ],
+      "model": "gpt-5.4-mini",
+      "response_format": {
+        "type": "json_object"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_c2748dcb02754733b57388c8b094fc8f",
+    "request_id_header": "x-request-id",
+    "body": {
+      "id": "chatcmpl-ET7t8y6jW0FXD4EJ8TLJcmNHHlqul",
+      "object": "chat.completion",
+      "created": 1790610542,
+      "model": "gpt-5.4-mini-2026-03-17",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "{\"languages\":[{\"name\":\"Python\",\"year_of_creation\":1991},{\"name\":\"Java\",\"year_of_creation\":1995},{\"name\":\"C++\",\"year_of_creation\":1985}]}",
+            "refusal": null,
+            "annotations": []
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 31,
+        "completion_tokens": 45,
+        "total_tokens": 76,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "audio_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "audio_tokens": 0,
+          "accepted_prediction_tokens": 0,
+          "rejected_prediction_tokens": 0
+        }
+      },
+      "service_tier": "default",
+      "system_fingerprint": null
+    }
+  },
+  "recorded_at": "2026-09-28T15:49:02Z"
+}

@@ -1,0 +1,60 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You are a concise Julia programming tutor.",
+          "role": "system"
+        },
+        {
+          "content": "What is multiple dispatch? Answer in 2-3 sentences.",
+          "role": "user"
+        }
+      ],
+      "model": "gpt-5.4-mini"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_34daa47a82e341a083cf3870666ef57d",
+    "request_id_header": "x-request-id",
+    "body": {
+      "id": "chatcmpl-ET7rxexAV1DvH5hmgl5cHcR30LU0C",
+      "object": "chat.completion",
+      "created": 1790610469,
+      "model": "gpt-5.4-mini-2026-03-17",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Multiple dispatch is a programming style where a function chooses which method to run based on the types of **all** its arguments, not just one. In Julia, this lets you define several versions of the same function for different type combinations, making code flexible and efficient.",
+            "refusal": null,
+            "annotations": []
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 31,
+        "completion_tokens": 56,
+        "total_tokens": 87,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "audio_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "audio_tokens": 0,
+          "accepted_prediction_tokens": 0,
+          "rejected_prediction_tokens": 0
+        }
+      },
+      "service_tier": "default",
+      "system_fingerprint": null
+    }
+  },
+  "recorded_at": "2026-09-28T15:47:49Z"
+}

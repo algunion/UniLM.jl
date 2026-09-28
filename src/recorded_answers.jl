@@ -1,12 +1,14 @@
 # ============================================================================
-# Recorded System One answers: record a real answer once, replay it offline.
+# Recorded answers: record a real answer once, replay it offline.
 #
-# The service does not answer a repeated request identically — probabilities
-# move between byte-identical calls, and on an ambiguous input the winner can
-# flip — so a test or a docs build that calls it live cannot be reproduced.
-# Inside `with_recorded_answers` the HTTP exchange of `ask` and `list_models`
-# (and so of `nl_dispatch` and `@branch`) passes through a directory of
-# recordings on its way to the network.
+# A service does not answer a repeated request identically — System One's
+# probabilities move between byte-identical calls, and on an ambiguous input the
+# winner can flip; a language model's reply varies from call to call — so a test
+# or a docs build that calls it live cannot be reproduced. Inside
+# `with_recorded_answers` the HTTP exchange of `ask` and `list_models` (and so of
+# `nl_dispatch` and `@branch`) and of the non-streaming `chatrequest!`, `respond`
+# and `embeddingrequest!` (and so of the tool loops) passes through a directory
+# of recordings on its way to the network.
 #
 # A recording is keyed by the exact request bytes, never a canonical form: the
 # order of Choice options and of the state's keys moves the answer, so a
@@ -16,28 +18,36 @@
 """
     ReplayMissError <: Exception
 
-Thrown by [`ask`](@ref) and [`list_models`](@ref) — and so out of
-[`nl_dispatch`](@ref) and [`@branch`](@ref) — inside a
-[`with_recorded_answers`](@ref) scope when a request cannot be replayed: in
-`:replay` mode the directory holds no recording of it, or in `:replay` or
-`:record_missing` mode its recording file cannot be read as one. It is thrown
-rather than returned as a [`SystemOneCallError`](@ref): a gap in the recordings
-is not a service failure, and a caller's `r isa SystemOneSuccess || fallback()`
-path must not absorb it as if it were one.
+Thrown inside a [`with_recorded_answers`](@ref) scope when a request cannot be
+replayed — in `:replay` mode the directory holds no recording of it, or in
+`:replay` or `:record_missing` mode its recording file cannot be read as one — by
+the verbs the scope records: [`ask`](@ref) and [`list_models`](@ref) (and so
+[`nl_dispatch`](@ref) and [`@branch`](@ref)), and the non-streaming
+[`chatrequest!`](@ref), [`respond`](@ref) and [`embeddingrequest!`](@ref) (and so
+[`tool_loop!`](@ref) and [`tool_loop`](@ref)). It is thrown rather than returned as
+the verb's call error ([`SystemOneCallError`](@ref), [`LLMCallError`](@ref),
+[`ResponseCallError`](@ref), [`EmbeddingCallError`](@ref)): a gap in the
+recordings is not a service failure, and a caller's
+`r isa SystemOneSuccess || fallback()` path must not absorb it as if it were one.
 
 # Fields
 - `dir::String`: the recordings directory that was searched.
 - `key::String`: the recording key; the recording is the file `<dir>/<key>.json`.
-- `method::String`, `path::String`: the request line, e.g. `"POST"` and `"/v1/systemone"`.
+- `method::String`, `path::String`: the request line, e.g. `"POST"` and
+  `"/v1/systemone"` or `"/v1/chat/completions"`: the path of the request URL alone,
+  never its host or query.
 - `body::String`: the exact request body (empty for `GET /v1/models`).
 - `reason::String`: `"no recording"`, or `"unreadable recording: …"` followed by
   what is wrong with the file — not JSON, no `response` object, a status other
-  than 200, a `body` that is not a JSON object, or a `request_id` that is neither
-  a string nor null.
+  than 200, a `body` that is not a JSON object, a `request_id` that is neither
+  a string nor null, or a `request_id_header` other than `"x-typesafe-request-id"`,
+  `"x-request-id"` and `"request-id"`.
 
-`showerror` names the request line, the start of the key, the questions the
-request asked, the directory or (for an unreadable recording) the file, and how to
-record the answer: an unreadable file must be deleted first, because
+`showerror` names the request line, the start of the key, what the request asked
+for — a System One request's questions, any other request's `model` — the
+directory or (for an unreadable recording) the file, and how to record the
+answer: with `TYPESAFE_API_KEY` set for a System One request, with the provider's
+API key set for any other. An unreadable file must be deleted first, because
 `:record_missing` never overwrites one.
 """
 struct ReplayMissError <: Exception
@@ -54,10 +64,18 @@ const _NO_RECORDING = "no recording"
 function Base.showerror(io::IO, e::ReplayMissError)
     print(io, "ReplayMissError: ", e.method, " ", e.path, " (key ", first(e.key, 12), "…)")
     parsed = _typesafe_parse_body(e.body)
-    asked = parsed isa AbstractDict ? get(parsed, "questions", nothing) : nothing
-    asked isa AbstractDict && !isempty(asked) &&
-        print(io, " asking ", join(sort!([repr(string(k)) for k in keys(asked)]), ", "))
-    record = "run the same code with TYPESAFE_API_KEY set and `mode = :record_missing`."
+    field(name::String) = parsed isa AbstractDict ? get(parsed, name, nothing) : nothing
+    systemone = e.path in (SYSTEMONE_PATH, TYPESAFE_MODELS_PATH)
+    if systemone
+        asked = field("questions")
+        asked isa AbstractDict && !isempty(asked) &&
+            print(io, " asking ", join(sort!([repr(string(k)) for k in keys(asked)]), ", "))
+    else
+        model = field("model")
+        model isa AbstractString && print(io, " for model ", repr(model))
+    end
+    record = string("run the same code with ", systemone ? "TYPESAFE_API_KEY" : "the provider's API key",
+                    " set and `mode = :record_missing`.")
     e.reason == _NO_RECORDING ?
         print(io, ": ", e.reason, " in ", e.dir, ". To record it, ", record) :
         print(io, ": ", e.reason, ". Delete ", joinpath(e.dir, e.key * ".json"),
@@ -79,16 +97,23 @@ const _ANSWER_SCOPE = ScopedValue{Union{Nothing,_AnswerScope}}(nothing)
 """
     with_recorded_answers(f, dir::AbstractString; mode::Symbol = :replay)
 
-Run `f()` with every System One exchange inside it — [`ask`](@ref), and so
-[`nl_dispatch`](@ref) and [`@branch`](@ref), and [`list_models`](@ref) — passing
-through the recordings in `dir`, and return `f()`'s value.
+Run `f()` with the service exchanges inside it passing through the recordings in
+`dir`, and return `f()`'s value. Recorded: [`ask`](@ref) (and so
+[`nl_dispatch`](@ref) and [`@branch`](@ref)), [`list_models`](@ref), and the
+non-streaming [`chatrequest!`](@ref) (with its keyword form and
+[`tool_loop!`](@ref)), [`respond`](@ref) (with its convenience forms and
+[`tool_loop`](@ref)) and [`embeddingrequest!`](@ref); everything else, including
+streaming, reaches the network as usual — a streamed call, images, audio, files,
+MCP, the Responses lifecycle operations and every other verb behave inside a
+scope exactly as outside it.
 
-The service does not answer a repeated request identically, so a test or a docs
+A service does not answer a repeated request identically, so a test or a docs
 build that calls it live cannot be reproduced; one recorded answer, replayed, can.
 
 - `:replay` (the default): nothing reaches the network and no API key is needed.
   A request with no recording, or with a recording file that cannot be read as
-  one, throws [`ReplayMissError`](@ref) out of `ask` itself. `dir` must exist.
+  one, throws [`ReplayMissError`](@ref) out of the verb itself (and so out of the
+  tool loops). `dir` must exist.
 - `:record`: every request goes to the service; each HTTP 200 is written to
   `dir`, replacing an earlier recording of the same request, readable or not. A
   non-200 result is returned as usual and never recorded.
@@ -102,25 +127,30 @@ in it and removed — before `f` runs: a `dir` that is a file, or a directory th
 refuses a file, is an `ArgumentError` naming the path and the cause, and nothing
 is sent. A recording that still cannot be written once an answer has arrived —
 the directory was removed or replaced, the disk is full — throws that I/O error
-out of `ask` and `list_models` (and so out of `nl_dispatch` and `@branch`)
-instead of returning a `SystemOneCallError`: the answer was paid for, and a
-caller's `r isa SystemOneSuccess || fallback()` path must not absorb the lost
-write as a service failure. A `tool_loop` dispatcher is the exception: the loop
-reports a dispatcher's I/O error to the model as a tool error (only
-`ReplayMissError` and interrupts escape it), so a write lost there surfaces as the
-missing recording on the next replay.
+out of the verb (and so out of `nl_dispatch`, `@branch` and the tool loops)
+instead of returning its call error: the answer was paid for, and a caller's
+`r isa SystemOneSuccess || fallback()` path must not absorb the lost write as a
+service failure. A `tool_loop` dispatcher is the exception: the loop reports a
+dispatcher's I/O error to the model as a tool error (only `ReplayMissError` and
+interrupts escape it), so a write lost there surfaces as the missing recording
+on the next replay.
 
 A recording is `<dir>/<key>.json`, where `key` is the lowercase hex SHA-256 of
-`"<METHOD> <path>\\n"` followed by the exact request body. The key is never a
-canonical form of the request: the order of Choice options and of the state's
-keys moves the answer, so a reordered request is a different request. The file
-holds the request, the response body with its `x-typesafe-request-id`, and the
-time of recording, pretty-printed so a diff is readable; the API key and the
-headers are never written. Files are written atomically (a temporary file in
-`dir`, then a rename), so concurrent tasks can record at once. A replayed answer
-goes through the same decoding as a live 200 and has the same type and fields.
-A cancelled token ends a call before any recording is read, exactly as it ends
-one before anything is sent.
+`"<METHOD> <path>\\n"` followed by the exact request body, and `<path>` is the
+path of the request URL alone: never its host, nor its query, which can carry a
+credential. The key is never a canonical form of the request: the order of
+Choice options and of the state's keys moves the answer, so a reordered request
+is a different request. The file holds the request, the response body with its
+request id and the name of the header that carried it (`x-typesafe-request-id`,
+`x-request-id` or `request-id`), and the time of recording, pretty-printed so a
+diff is readable; the API key and every other header are never written. A
+recording without that name replays its id as `x-typesafe-request-id`. Files are
+written atomically (a temporary file in `dir`, then a rename), so concurrent tasks
+can record at once. A replayed answer goes through the same decoding as a live
+200 and has the same type and fields: a `Chat` gets the reply appended and its
+cost accumulated, and `Embeddings` get their vectors. A cancelled token ends a
+call before any recording is read, exactly as it ends one before anything is
+sent.
 
 The scope is a `ScopedValue`, so it covers the tasks started inside `f`
 (`Threads.@spawn`, `asyncmap`). Scopes nest: an inner scope's service is the
@@ -140,7 +170,8 @@ end
 ```
 
 A request that has no recording yet is recorded by running the same code once
-with `TYPESAFE_API_KEY` set and `mode = :record_missing`.
+with the API key of its service set (`TYPESAFE_API_KEY` for System One) and
+`mode = :record_missing`.
 """
 function with_recorded_answers(f::Function, dir::AbstractString; mode::Symbol=:replay)
     mode in _ANSWER_MODES || throw(ArgumentError(
@@ -171,7 +202,7 @@ function _writable_dir(root::String)::Nothing
 end
 
 # A recording that could not be written once the service had answered. The answer
-# was paid for, so `ask` and `list_models` throw the `cause` itself rather than
+# was paid for, so the recorded verbs throw the `cause` itself rather than
 # returning it as a call error, which a fallback would absorb as a service failure.
 struct _UnwrittenRecording <: Exception
     cause::Exception
@@ -180,14 +211,20 @@ end
 _answer_key(method::String, path::String, body::String)::String =
     bytes2hex(sha256(string(method, ' ', path, '\n', body)))
 
-# The HTTP exchange behind `ask` and `list_models`: `live()` is the real call, and
-# every active scope stands between it and the caller, innermost first. The
-# cancel check mirrors the seam's first one, so a cancelled call reads no
-# recording, just as it sends nothing.
-function _recorded_exchange(live::Function, method::String, path::String, body::String,
+# The path of a request URL (or of a bare path): never its scheme, host, query or
+# fragment. A query can carry a credential, which must reach no key, recording or
+# error message.
+_request_path(url::String)::String = (p = HTTP.URI(url).path; isempty(p) ? "/" : String(p))
+
+# The HTTP exchange behind every recorded verb: `live()` is the real call, and
+# every active scope stands between it and the caller, innermost first. Outside a
+# scope `live()` runs as it always did. The cancel check mirrors the seam's first
+# one, so a cancelled call reads no recording, just as it sends nothing.
+function _recorded_exchange(live::Function, method::String, url::String, body::String,
                             t0::UInt64, tok::Union{Nothing,CancelToken})::HTTP.Response
     iscancelled(tok) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
-    _exchange(_ANSWER_SCOPE[], method, path, body, live)
+    scope = _ANSWER_SCOPE[]
+    isnothing(scope) ? live() : _exchange(scope, method, _request_path(url), body, live)
 end
 
 _exchange(::Nothing, ::String, ::String, ::String, live::Function)::HTTP.Response = live()
@@ -230,17 +267,38 @@ function _replayed(file::String)::HTTP.Response
     id = get(res, "request_id", nothing)
     id isa Union{Nothing,AbstractString} || throw(ArgumentError(
         "its \"request_id\" is neither a string nor null"))
-    HTTP.Response(200, isnothing(id) ? Pair{String,String}[] : ["x-typesafe-request-id" => String(id)],
+    # A recording that names no header was made when only System One was recorded.
+    i = findfirst(==(get(res, "request_id_header", first(_REQUEST_ID_HEADERS))), _REQUEST_ID_HEADERS)
+    isnothing(i) && throw(ArgumentError("its \"request_id_header\" is none of " *
+                                        join(map(repr, _REQUEST_ID_HEADERS), ", ")))
+    HTTP.Response(200, isnothing(id) ? Pair{String,String}[] : [_REQUEST_ID_HEADERS[i] => String(id)],
                   Vector{UInt8}(JSON.json(answer)))
 end
 
+# The headers a recording keeps a request id from, in the order they are looked for:
+# System One's, the only one `ask` reads, then the two the LLM verbs read, in their
+# order — OpenAI's and most compatible servers', then Anthropic's. Only TypeSafe sends
+# the first, so the first a response carries is the one its verb reads.
+const _REQUEST_ID_HEADERS = ("x-typesafe-request-id", "x-request-id", "request-id")
+
+function _request_id_header(resp::HTTP.Response)::Union{Nothing,Pair{String,String}}
+    for name in _REQUEST_ID_HEADERS
+        v = HTTP.header(resp, name, "")
+        isempty(v) || return name => String(v)
+    end
+    nothing
+end
+
 function _record(file::String, method::String, path::String, body::String, resp::HTTP.Response)::Nothing
+    id = _request_id_header(resp)
+    response = JSON.Object{String,Any}("status" => 200, "request_id" => isnothing(id) ? nothing : last(id))
+    isnothing(id) || (response["request_id_header"] = first(id))
+    # Parsed from the bytes, which stay unconsumed for the caller's own decoding.
+    response["body"] = JSON.parse(resp.body)
     rec = JSON.Object{String,Any}(
         "request" => JSON.Object{String,Any}(
             "method" => method, "path" => path, "body" => isempty(body) ? nothing : JSON.parse(body)),
-        # Parsed from the bytes, which stay unconsumed for the caller's own decoding.
-        "response" => JSON.Object{String,Any}(
-            "status" => 200, "request_id" => _typesafe_request_id(resp), "body" => JSON.parse(resp.body)),
+        "response" => response,
         "recorded_at" => _rfc3339_utc(time()))
     try
         _write_recording(file, rec)

@@ -1,0 +1,60 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You are helpful.",
+          "role": "system"
+        },
+        {
+          "content": "Hello!",
+          "role": "user"
+        }
+      ],
+      "model": "gpt-5.4-mini"
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_190963bdad5f4fa580cde0cf5b78ce0f",
+    "request_id_header": "x-request-id",
+    "body": {
+      "id": "chatcmpl-ET7rzpBcW1fxazGfSAsVnXJxl0woD",
+      "object": "chat.completion",
+      "created": 1790610471,
+      "model": "gpt-5.4-mini-2026-03-17",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Hello! How can I help you today?",
+            "refusal": null,
+            "annotations": []
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 16,
+        "completion_tokens": 12,
+        "total_tokens": 28,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "audio_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "audio_tokens": 0,
+          "accepted_prediction_tokens": 0,
+          "rejected_prediction_tokens": 0
+        }
+      },
+      "service_tier": "default",
+      "system_fingerprint": null
+    }
+  },
+  "recorded_at": "2026-09-28T15:47:51Z"
+}

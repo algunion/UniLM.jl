@@ -1,0 +1,61 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "content": "You are a calculator. Respond only with the number.",
+          "role": "system"
+        },
+        {
+          "content": "What is 42 * 17?",
+          "role": "user"
+        }
+      ],
+      "model": "gpt-5.4-mini",
+      "temperature": 0.0
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_cf0e678b941244239b0b5c041e5d2e17",
+    "request_id_header": "x-request-id",
+    "body": {
+      "id": "chatcmpl-ET7rytBbirIwzhRw4otFyYEX96R7i",
+      "object": "chat.completion",
+      "created": 1790610470,
+      "model": "gpt-5.4-mini-2026-03-17",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "714",
+            "refusal": null,
+            "annotations": []
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 29,
+        "completion_tokens": 4,
+        "total_tokens": 33,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "audio_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0,
+          "audio_tokens": 0,
+          "accepted_prediction_tokens": 0,
+          "rejected_prediction_tokens": 0
+        }
+      },
+      "service_tier": "default",
+      "system_fingerprint": null
+    }
+  },
+  "recorded_at": "2026-09-28T15:47:50Z"
+}

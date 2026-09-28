@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `with_recorded_answers` records and replays the language-model verbs as well: inside
+  a scope, every non-streaming `chatrequest!` (and so its keyword form and
+  `tool_loop!`), `respond` (and so its convenience forms and `tool_loop`) and
+  `embeddingrequest!` exchanges through the recordings exactly as `ask` does — the
+  same three modes, the same directory, the same key: the SHA-256 of the request line
+  and the exact body, where the line holds the URL's path alone, never its host or its
+  query (which can carry a credential). A replayed reply decodes like the live one:
+  the message, finish reason and usage, the reply appended to the `Chat` and its cost
+  accumulated, the `ResponseObject`, the embedding vectors. A streamed call, images,
+  audio, files, MCP, the Responses lifecycle operations and every other verb reach
+  the network as before, inside a scope or not. A recording now also keeps the name
+  of the header its request id came in (`request_id_header`: `x-typesafe-request-id`,
+  `x-request-id` or `request-id`), restores that one header on replay, and keeps no
+  other; a recording without the name replays its id as `x-typesafe-request-id`, as
+  before. A `ReplayMissError` for an LLM request names the request's `model` and says
+  to record it with the provider's API key.
+
+### Changed
+- Inside a `with_recorded_answers` scope, `chatrequest!`, `respond` and
+  `embeddingrequest!` — and so `tool_loop!` and `tool_loop` — throw `ReplayMissError`
+  for a request the scope cannot replay, and a paid reply's recording that cannot be
+  written throws its I/O error, instead of returning an `LLMCallError`,
+  `ResponseCallError` or `EmbeddingCallError` that a fallback would take for a service
+  failure. Before, these verbs ignored the scope and called the provider. Upgrading:
+  code that runs LLM calls inside a `:replay` scope must record them first (the same
+  code once with the provider's key and `mode = :record_missing`) or make them
+  outside the scope.
+- The manual's non-streaming LLM examples render recorded real output instead of a
+  failed request. The documentation build chooses its mode by flag, not by the keys
+  it finds: replay by default, `UNILM_DOCS_RECORD=1` to record the missing answers,
+  `UNILM_DOCS_LIVE=1` to call every service live.
+
 ## 0.21.0
 
 ### Breaking

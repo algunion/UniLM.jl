@@ -224,7 +224,7 @@ writes with the uncached input (`cached_tokens` is the cache-read share), and
 `reasoning_tokens` comes from `output_tokens_details.thinking_tokens`. The request id
 is read from the `request-id` header.
 
-```@example backends
+```julia
 claude_chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-4-5")  # native Messages API
 push!(claude_chat, Message(Val(:system), "You are a helpful assistant."))
 push!(claude_chat, Message(Val(:user), "Say hello in one short sentence."))

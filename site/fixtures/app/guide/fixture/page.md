@@ -12,7 +12,7 @@ Every construct the Documenter writer emits\, in its exact output format\, so th
 
 Emphasis is *emphasis*\, strong is **strong**\, inline code is `nl_classify(text, TEAM)` and code with a backtick is `` `x` ``\.
 
-Links\: [the home page](/)\, [a docstring on another page](/api/fixture/#UniLM.nl_classify)\, [a method docstring](/api/fixture/#Base.push!-Tuple{Chat,%20Message})\, [a section on this page](#Callouts-and-details)\, [an h3 on this page](#jev_output) and [TypeSafe\'s documentation](https://docs.typesafe.ai)\.
+Links\: [the home page](/)\, [a docstring on another page](/api/fixture/#UniLM.nl_classify)\, [a method docstring](</api/fixture/#Base.push!-Tuple{Chat, Message}>)\, [a section on this page](#Callouts-and-details)\, [an h3 on this page](#jev_output) and [TypeSafe\'s documentation](https://docs.typesafe.ai)\.
 
 ### Escaped text {% id="escaped-text" %}
 

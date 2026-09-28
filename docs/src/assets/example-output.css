@@ -1,8 +1,0 @@
-/* An example's output is text a program printed — an LLM's reply, a request body, an
-   error message — not code with a layout to keep: wrap long lines instead of scrolling
-   them sideways. Code blocks keep their own layout. */
-.content pre.documenter-example-output,
-.content pre.documenter-example-output > code {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}

@@ -698,36 +698,36 @@ _ollama_options(o::OllamaOptions)::Dict{String,Any} =
 # bind-all address (0.0.0.0, [::]) tells the server to listen everywhere; a client
 # reaches it on the loopback address, as the Ollama CLI does.
 function _ollama_host_url(host::AbstractString)::String
-    s = strip(host)
+    s = String(strip(host))
     isempty(s) && return "http://127.0.0.1:11434"
-    scheme, rest, port = "http", s, "11434"
+    # Groups that always take part in a match are asserted; only the port is optional.
     m = match(r"^([A-Za-z][A-Za-z0-9+.-]*)://(.*)$", s)
-    if !isnothing(m)
-        scheme = lowercase(m.captures[1])
-        scheme in ("http", "https") || throw(ArgumentError(
-            "OLLAMA_HOST scheme must be http or https (got $(repr(String(m.captures[1]))))"))
-        rest = m.captures[2]
-        port = scheme == "https" ? "443" : "80"
-    end
-    hostport, path = let i = findfirst('/', rest)
-        isnothing(i) ? (rest, "") : (rest[1:prevind(rest, i)], rstrip(rest[i:end], '/'))
-    end
+    given = isnothing(m) ? "http" : String(m.captures[1]::SubString{String})
+    scheme = lowercase(given)
+    scheme in ("http", "https") || throw(ArgumentError(
+        "OLLAMA_HOST scheme must be http or https (got $(repr(given)))"))
+    rest = isnothing(m) ? s : String(m.captures[2]::SubString{String})
+    port = isnothing(m) ? "11434" : scheme == "https" ? "443" : "80"
+    i = findfirst('/', rest)
+    hostport, path = isnothing(i) ? (rest, "") : (rest[1:prevind(rest, i)], String(rstrip(rest[i:end], '/')))
     h = match(r"^(\[[^\]]*\]|[^:]*)(?::(\d*))?$", hostport)
     isnothing(h) && throw(ArgumentError("OLLAMA_HOST is not host[:port] (got $(repr(String(host))))"))
-    name = isempty(h.captures[1]) || h.captures[1] == "0.0.0.0" ? "127.0.0.1" :
-           h.captures[1] == "[::]" ? "[::1]" : h.captures[1]
+    given_host = String(h.captures[1]::SubString{String})
+    name = isempty(given_host) || given_host == "0.0.0.0" ? "127.0.0.1" :
+           given_host == "[::]" ? "[::1]" : given_host
     p = h.captures[2]
     if !isnothing(p) && !isempty(p)
         n = tryparse(Int, p)
-        (isnothing(n) || !(0 < n <= 65535)) && throw(ArgumentError("OLLAMA_HOST port must be 1-65535 (got $(repr(p)))"))
-        port = p
+        (isnothing(n) || !(0 < n <= 65535)) && throw(ArgumentError("OLLAMA_HOST port must be 1-65535 (got $(repr(String(p))))"))
+        port = String(p)
     end
     string(scheme, "://", name, ":", port, path)
 end
 
 """
     OllamaEndpoint <: OpenAIWireEndpoint
-    OllamaEndpoint(; base_url=<OLLAMA_HOST or http://127.0.0.1:11434>, keep_alive=nothing, options...)
+    OllamaEndpoint(; base_url=<OLLAMA_HOST or http://127.0.0.1:11434>, keep_alive=nothing,
+                   truncate=false, shift=nothing, options...)
 
 A local (or remote) [Ollama](https://ollama.com) server. Chat requests use Ollama's
 native `/api/chat` API, which carries what the OpenAI-compatible route cannot: the

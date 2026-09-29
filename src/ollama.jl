@@ -133,12 +133,13 @@ function _ollama_messages(msgs::Vector{Message})::Vector{Dict{String,Any}}
                 foreach(tc -> names[tc.id] = tc.func.name, m.tool_calls)
             end
         elseif m.role == RoleTool
-            name = get(names, m.tool_call_id, nothing)
+            id = m.tool_call_id::String          # a tool message always names its call
+            name = get(names, id, nothing)
             isnothing(name) && throw(ArgumentError(
-                "tool result $(repr(m.tool_call_id)) (message $i) answers no earlier tool call; " *
+                "tool result $(repr(id)) (message $i) answers no earlier tool call; " *
                 "Ollama identifies a tool result by the called function's name"))
             d["tool_name"] = name
-            _is_synthetic_call_id(m.tool_call_id) || (d["tool_call_id"] = m.tool_call_id)
+            _is_synthetic_call_id(id) || (d["tool_call_id"] = id)
         end
         push!(out, d)
     end

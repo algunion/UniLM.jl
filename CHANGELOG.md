@@ -9,6 +9,8 @@
   `/api/chat` and its embeddings to `/api/embed` instead of the OpenAI-compatible routes, and
   its default server is `http://127.0.0.1:11434` (or `OLLAMA_HOST`) instead of
   `http://localhost:11434`. `respond` and `fim_complete` keep the OpenAI-compatible routes.
+  `GenericOpenAIEndpoint("http://127.0.0.1:11434", "")` still reaches Ollama's
+  OpenAI-compatible chat route, as `OllamaEndpoint()` did before.
 
 ### Added
 - Ollama, with Gemma 4 as the reference model (`gemma4:e4b`, measured on Ollama 0.34.4):

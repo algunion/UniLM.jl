@@ -1101,10 +1101,25 @@ budget; like [`ask`](@ref), this rides the shared retry seam, so `max_attempts`
 applies to the retryable statuses. `cancel::Union{Nothing,CancelToken}` makes the
 call cancellable as for [`ask`](@ref): a cancelled call returns a
 `SystemOneCallError` whose `cause` is a [`UniLMCancelled`](@ref).
+
+With an [`OllamaEndpoint`](@ref) as `service`, it lists the models installed on that
+Ollama server instead (`GET /api/tags`) and returns an [`OllamaSuccess`](@ref) holding a
+`Vector{`[`OllamaModel`](@ref)`}`, an [`OllamaFailure`](@ref), or an
+[`OllamaCallError`](@ref); `config` and `cancel` apply as above, and the listing is not
+recorded by [`with_recorded_answers`](@ref).
+
+```julia
+r = list_models(service=OllamaEndpoint())
+issuccess(r) && [m.name for m in r.response]   # e.g. ["gemma4:e4b", "embeddinggemma:latest"]
+```
 """
-function list_models(; service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
-                     config::Union{Nothing,RequestConfig}=nothing,
-                     cancel::Union{Nothing,CancelToken}=nothing)
+list_models(; service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
+            config::Union{Nothing,RequestConfig}=nothing,
+            cancel::Union{Nothing,CancelToken}=nothing) = _list_models(service, config, cancel)
+
+# The listing of the service that serves one: TypeSafe's here, Ollama's in ollama_models.jl.
+function _list_models(service::ServiceEndpointSpec, config::Union{Nothing,RequestConfig},
+                      cancel::Union{Nothing,CancelToken})
     validate_capability(service, :models, "TypeSafe models listing")
     cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
     local resp

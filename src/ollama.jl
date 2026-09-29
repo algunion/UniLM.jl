@@ -16,7 +16,7 @@ _resolve_base_url(s::OllamaEndpoint) = s.base_url
 auth_header(::OllamaEndpoint)::Vector{Pair{String,String}} = ["Content-Type" => "application/json"]
 
 provider_capabilities(::OllamaEndpoint) =
-    Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses])
+    Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses, :models])
 
 _model_hint(::OllamaEndpoint) = " (an installed model, e.g. model=\"gemma4:e4b\"; `ollama list` shows them)"
 

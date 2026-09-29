@@ -54,6 +54,16 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "OPENAI_API_KEY")
                 Dict("type" => "tool_search")])
         @test result isa ResponseSuccess
     end
+
+    @testset "OpenAI Chat reads an image attachment (image_url content part)" begin
+        # First run (2026-09-29): gpt-5.4-mini answered "red" for about $0.00004.
+        chat = Chat(model="gpt-5.4-mini")
+        push!(chat, Message(Val(:system), "Answer with one word."))
+        push!(chat, Message(Val(:user), "What colour is the shape?",
+                            ImageAttachment(joinpath(@__DIR__, "fixtures", "ollama", "red_circle.png"))))
+        result = chatrequest!(chat)
+        @test result isa LLMSuccess && occursin("red", lowercase(text(result)))
+    end
 end
 
 if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "GEMINI_API_KEY")
@@ -131,6 +141,16 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "GEMINI_API_KEY")
             model="gemini-embedding-2"))
         @info "gemini-embedding-2 via GEMINIOpenAIServiceEndpoint" result_type = typeof(result)
         @test result isa EmbeddingSuccess
+    end
+
+    @testset "Gemini OpenAI-compatible chat reads an image attachment" begin
+        # First run (2026-09-29): gemini-3.8-flash answered "Red".
+        chat = Chat(service=GEMINIOpenAIServiceEndpoint, model="gemini-3.8-flash")
+        push!(chat, Message(Val(:system), "Answer with one word."))
+        push!(chat, Message(Val(:user), "What colour is the shape?",
+                            ImageAttachment(joinpath(@__DIR__, "fixtures", "ollama", "red_circle.png"))))
+        result = chatrequest!(chat)
+        @test result isa LLMSuccess && occursin("red", lowercase(text(result)))
     end
 else
     @info "Skipping current Gemini wire integration tests (set UNILM_LIVE=1 and GEMINI_API_KEY)"

@@ -82,8 +82,8 @@ println("Cosine similarity (Julia vs Fortran): ", round(sim, digits=4))
 Pass `service` and `model` to embed with a different backend:
 
 ```julia
-# Ollama (local)
-emb = Embeddings("test"; service=OllamaEndpoint(), model="nomic-embed-text")
+# Ollama (local): native /api/embed; an input longer than the model's window fails
+emb = Embeddings("test"; service=OllamaEndpoint(), model="embeddinggemma")
 embeddingrequest!(emb)
 
 # Gemini (OpenAI-compatible endpoint; the native generateContent API has no embeddings)

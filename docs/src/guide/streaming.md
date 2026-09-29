@@ -195,8 +195,9 @@ re-assembled verbatim from the SSE deltas and attached to the final
 `Message.provider_content`, so a streamed tool-calling turn round-trips
 exactly like a non-streamed one.
 
-Providers on the OpenAI-compatible Chat Completions standard (DeepSeek, Ollama, vLLM, LM
-Studio, …) stream through the same `stream=true` + callback path.
+Providers on the OpenAI-compatible Chat Completions standard (DeepSeek, vLLM, LM Studio, …)
+stream through the same `stream=true` + callback path, and so does
+[`OllamaEndpoint`](@ref), whose native stream is newline-delimited JSON rather than SSE.
 
 ## Dropped SSE Payloads
 

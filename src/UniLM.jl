@@ -18,7 +18,7 @@ UniLM.jl provides:
   natural-language switch and multiple dispatch on `nl"..."` meanings, one System One request each.
 - **MCP** via [`MCPSession`](@ref) and [`MCPServer`](@ref) — Model Context Protocol client and server.
 - **Cost accounting** via [`estimated_cost`](@ref) and [`cumulative_cost`](@ref) — token-usage and USD cost estimation.
-- **Multi-provider support**: native OpenAI, Anthropic, and Gemini backends, plus Azure, DeepSeek, Mistral, Ollama, vLLM, and any OpenAI-compatible provider via [`GenericOpenAIEndpoint`](@ref).
+- **Multi-provider support**: native OpenAI, Anthropic, and Gemini backends, local models through Ollama's native API ([`OllamaEndpoint`](@ref)), plus Azure, DeepSeek, Mistral, vLLM, and any OpenAI-compatible provider via [`GenericOpenAIEndpoint`](@ref).
 
 # Quick Start
 ```julia

@@ -98,7 +98,9 @@ which Jev page answers your question.
 
 ### Ollama (local — no key needed)
 
-Just have the Ollama server running on `localhost:11434`. No API key required.
+Have an Ollama server running (the app, or `ollama serve`) and a model pulled
+(`ollama pull gemma4:e4b`); `OllamaEndpoint()` finds it at `OLLAMA_HOST`, else at
+`127.0.0.1:11434`. No API key is required. See [Local Models with Ollama](@ref ollama_guide).
 
 ```@setup gs
 using UniLM

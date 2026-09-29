@@ -42,6 +42,12 @@ end
         @test AudioAttachment(wav).format == "wav"
     end
     @test_throws SystemError ImageAttachment(joinpath(tempdir(), "unilm-no-such-file.png"))
+    # A URL is not a file: the error says to download it.
+    for url in ("https://example.com/cat.png", "http://h/x.wav", "file:///tmp/x.png")
+        err = try ImageAttachment(url); nothing catch x; x end
+        @test err isa ArgumentError && occursin("not a URL", err.msg)
+        @test_throws ArgumentError AudioAttachment(url)
+    end
 end
 
 @testset "show and equality" begin

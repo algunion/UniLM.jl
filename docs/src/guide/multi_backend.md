@@ -3,9 +3,9 @@
 UniLM.jl is built around **neutral verbs**: the same `Chat` + [`chatrequest!`](@ref) — with
 tools, streaming, and [cost accounting](@ref cost_guide) — run unchanged across every backend;
 you only change the `service`. Cost accounting needs a price row for the model: the built-in
-table covers the OpenAI, Anthropic, Gemini, DeepSeek and TypeSafe models it lists, and any
-other model (Ollama, Mistral, custom) is estimated at `\$0` with a one-time warning unless you
-supply `pricing=`. The agentic [`respond`](@ref) verb is neutral the same way
+table covers the OpenAI, Anthropic, Gemini, DeepSeek and TypeSafe models it lists, a local
+Ollama model costs `0.0`, and any other model (Mistral, custom) is estimated at `0.0` with a
+one-time warning unless you supply `pricing=`. The agentic [`respond`](@ref) verb is neutral the same way
 across OpenAI (Responses) and Gemini (Interactions); see [Agentic Workflows](@ref agentic_guide).
 Native OpenAI, Anthropic, and Gemini are first-class backends with their own wire formats (each
 exercised by live integration tests), not OpenAI-compatible shims.
@@ -261,19 +261,23 @@ println("Service: ", r.service)
 println("Model: ", r.model)
 ```
 
+## Ollama (local)
+
+[`OllamaEndpoint`](@ref) speaks Ollama's native API — the context window, keep-alive
+and thinking controls the OpenAI-compatible route ignores — and needs no key. [Local
+Models with Ollama](@ref ollama_guide) covers it in full.
+
+```@example backends
+ep = OllamaEndpoint(num_ctx=32_768)   # OLLAMA_HOST, else http://127.0.0.1:11434
+chat = Chat(service=ep, model="gemma4:e4b")
+println("URL: ", UniLM.get_url(chat))
+```
+
 ## OpenAI-Compatible Providers (Generic Endpoint)
 
 Any provider that implements the OpenAI-compatible `/v1/chat/completions` endpoint can be
-used with [`GenericOpenAIEndpoint`](@ref). This includes Ollama, vLLM, LM Studio, Mistral,
-and many others.
-
-### Ollama (local)
-
-```@example backends
-ep = OllamaEndpoint()  # defaults to http://localhost:11434
-chat = Chat(service=ep, model="llama3.1")
-println("URL: ", UniLM.get_url(chat))
-```
+used with [`GenericOpenAIEndpoint`](@ref). This includes vLLM, LM Studio, Mistral, and
+many others.
 
 ### Mistral
 
@@ -339,7 +343,7 @@ println("Has auth: ", any(p -> p.first == "Authorization", UniLM.auth_header(ep)
 Embeddings also support the `service` parameter:
 
 ```@example backends
-emb = Embeddings("test"; service=OllamaEndpoint(), model="nomic-embed-text")
+emb = Embeddings("test"; service=GenericOpenAIEndpoint("http://127.0.0.1:8000", ""), model="bge-m3")
 println("URL: ", UniLM.get_url(emb))
 ```
 
@@ -347,9 +351,9 @@ println("URL: ", UniLM.get_url(emb))
 
 | API Surface | Standard Status | Supported Providers |
 |---|---|---|
-| Chat Completions | De facto standard | OpenAI, Azure, Gemini, Mistral, DeepSeek, Ollama, vLLM, LM Studio, Anthropic* |
-| Embeddings | Widely adopted | OpenAI, Gemini, Mistral, Ollama, vLLM |
-| Responses API | Emerging (Open Responses) | OpenAI, Ollama, vLLM, Amazon Bedrock |
+| Chat Completions | De facto standard | OpenAI, Azure, Gemini, Mistral, DeepSeek, vLLM, LM Studio, Anthropic* (Ollama: native `/api/chat`) |
+| Embeddings | Widely adopted | OpenAI, Gemini, Mistral, vLLM (Ollama: native `/api/embed`) |
+| Responses API | Emerging (Open Responses) | OpenAI, Ollama (stateless), vLLM, Amazon Bedrock |
 | FIM Completion | Provider-specific | DeepSeek (beta), Mistral (`/v1/fim/completions`), Ollama |
 | Image Generation | Limited | OpenAI |
 

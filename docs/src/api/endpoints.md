@@ -31,10 +31,11 @@ it up front.
 ```@docs
 GenericOpenAIEndpoint
 ServiceEndpointSpec
-OllamaEndpoint
 MistralEndpoint
 DeepSeekEndpoint
 ```
+
+[`OllamaEndpoint`](@ref) and its options are on the [Ollama](@ref ollama_api) page.
 
 ## Configuration
 

@@ -1,6 +1,6 @@
 # UniLM.jl
 
-> A Julian, type-safe interface to LLM providers with first-class native backends — OpenAI (Chat + Responses), Anthropic (Messages), and Google Gemini (generateContent + agentic Interactions) — plus any OpenAI-compatible provider (Azure, DeepSeek, Mistral, Ollama, vLLM, LM Studio). One cross-provider agentic `respond` verb, an MCP client and server, and built-in token/cost accounting.
+> A Julian, type-safe interface to LLM providers with first-class native backends — OpenAI (Chat + Responses), Anthropic (Messages), Google Gemini (generateContent + agentic Interactions), and local models through Ollama's native API — plus any OpenAI-compatible provider (Azure, DeepSeek, Mistral, vLLM, LM Studio). One cross-provider agentic `respond` verb, an MCP client and server, and built-in token/cost accounting.
 > It also speaks TypeSafe's System One model Jev, which answers enumerated questions about a piece of state with a typed, calibrated judgment instead of generated text — and which can select a Julia method by natural-language meaning.
 
 Install: `using Pkg; Pkg.add("UniLM")` (registered in Julia's General registry; requires Julia 1.13+). Source: https://github.com/algunion/UniLM.jl
@@ -22,6 +22,7 @@ Install: `using Pkg; Pkg.add("UniLM")` (registered in Julia's General registry; 
 - [Concurrency, Tasks and Cancellation](https://algunion.github.io/UniLM.jl/dev/guide/concurrency/): what a concurrent call may share (`fork` for `Chat`), fan-out patterns, streaming into a `Channel`, `CancelToken` / `with_cancel`, MCP sessions under load
 - [Structured Output](https://algunion.github.io/UniLM.jl/dev/guide/structured_output/): JSON-schema-constrained generation
 - [Multi-Backend](https://algunion.github.io/UniLM.jl/dev/guide/multi_backend/): native + OpenAI-compatible providers
+- [Local Models with Ollama](https://algunion.github.io/UniLM.jl/dev/guide/ollama/): `OllamaEndpoint` on Ollama's native API with Gemma 4 — thinking (`reasoning_text`), tools, structured output, `ImageAttachment`/`AudioAttachment`, embeddings, `num_ctx`/`keep_alive`, model management (`list_models`, `pull_model`, `model_info`, …)
 - [Custom Backends](https://algunion.github.io/UniLM.jl/dev/guide/custom_backends/): implement a new `ServiceEndpoint`
 - [MCP](https://algunion.github.io/UniLM.jl/dev/guide/mcp/): Model Context Protocol client & server
 - [Start Here: Jev in Five Minutes](https://algunion.github.io/UniLM.jl/dev/guide/jev_start/): what TypeSafe's System One model Jev decides, a first `nl_classify` call, and which Jev page answers which question

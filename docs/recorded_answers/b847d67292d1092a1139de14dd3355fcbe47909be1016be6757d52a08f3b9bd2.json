@@ -1,0 +1,48 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/api/chat",
+    "body": {
+      "messages": [
+        {
+          "content": "You are concise.",
+          "role": "system"
+        },
+        {
+          "content": "A bat and a ball cost 1.10 in total. The bat costs 1.00 more than the ball. How much does the ball cost? Answer with the number only.",
+          "role": "user"
+        }
+      ],
+      "model": "gemma4:e4b",
+      "options": {
+        "temperature": 0.0
+      },
+      "stream": false,
+      "think": "low",
+      "truncate": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "body": {
+      "model": "gemma4:e4b",
+      "created_at": "2026-09-29T07:35:24.778921Z",
+      "message": {
+        "role": "assistant",
+        "content": "0.05",
+        "thinking": "Let $B$ be the cost of the bat and $L$ be the cost of the ball.\nWe are given two pieces of information:\n1. $B + L = 1.10$ (Total cost)\n2. $B = L + 1.00$ (Bat costs $1.00 more than the ball)\n\nSubstitute (2) into (1):\n$(L + 1.00) + L = 1.10$\n$2L + 1.00 = 1.10$\n$2L = 1.10 - 1.00$\n$2L = 0.10$\n$L = 0.05$\n\nThe ball costs $0.05.\n\nCheck the bat cost:\n$B = L + 1.00 = 0.05 + 1.00 = 1.05$\n\nCheck the total cost:\n$B + L = 1.05 + 0.05 = 1.10$\n\nThe calculation is correct. The question asks for the cost of the ball, and the answer must be the number only."
+      },
+      "done": true,
+      "done_reason": "stop",
+      "total_duration": 3195281208,
+      "load_duration": 2828750,
+      "prompt_eval_count": 60,
+      "prompt_eval_cached_count": 0,
+      "prompt_eval_duration": 145016000,
+      "eval_count": 268,
+      "eval_duration": 3043294000
+    }
+  },
+  "recorded_at": "2026-09-29T07:35:24Z"
+}

@@ -200,8 +200,8 @@ Pass a `service` to target any supported backend:
 # DeepSeek (default model: deepseek-flash)
 chat = Chat(service=DeepSeekEndpoint())
 
-# Ollama (local)
-chat = Chat(service=OllamaEndpoint(), model="llama3.1")
+# Ollama (local; see "Local Models with Ollama")
+chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b")
 
 # Mistral
 chat = Chat(service=MistralEndpoint(), model="mistral-large-latest")

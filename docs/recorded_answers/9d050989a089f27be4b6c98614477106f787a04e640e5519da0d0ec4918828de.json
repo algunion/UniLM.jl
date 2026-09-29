@@ -1,0 +1,44 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/api/chat",
+    "body": {
+      "messages": [
+        {
+          "content": "You are a concise assistant.",
+          "role": "system"
+        },
+        {
+          "content": "In one sentence: why run a language model locally?",
+          "role": "user"
+        }
+      ],
+      "model": "gemma4:e4b",
+      "stream": false,
+      "think": false,
+      "truncate": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "body": {
+      "model": "gemma4:e4b",
+      "created_at": "2026-09-29T07:35:19.362661Z",
+      "message": {
+        "role": "assistant",
+        "content": "Running a language model locally ensures complete privacy and control over data, bypassing cloud service dependencies and potential costs."
+      },
+      "done": true,
+      "done_reason": "stop",
+      "total_duration": 335632167,
+      "load_duration": 1966709,
+      "prompt_eval_count": 31,
+      "prompt_eval_cached_count": 0,
+      "prompt_eval_duration": 102569000,
+      "eval_count": 22,
+      "eval_duration": 225100000
+    }
+  },
+  "recorded_at": "2026-09-29T07:35:20Z"
+}

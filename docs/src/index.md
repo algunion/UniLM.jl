@@ -17,7 +17,7 @@
 | decide about a text: route it, check it, classify it | Jev, TypeSafe's System One model | [Start Here: Jev in Five Minutes](@ref jev_start) |
 | both: decide before an LLM call, check its output after | Jev and an LLM together | [Jev with LLMs](@ref jev_llm_guide) |
 
-UniLM.jl provides a **Julian**, type-safe interface to **LLM providers** with **first-class native backends** — OpenAI (Chat Completions + Responses), Anthropic (Messages), and Google Gemini (generateContent + agentic Interactions) — plus any **OpenAI-compatible** provider (Azure, DeepSeek, Mistral, Ollama, vLLM, LM Studio). It covers Chat Completions & Responses, a cross-provider agentic `respond` verb, Image Generation/Edits, Embeddings, Files/Vector Stores, Conversations, Audio, Batch, Moderations, Fine-tuning, Webhooks, Realtime, and MCP (client & server) — with built-in token/cost accounting.
+UniLM.jl provides a **Julian**, type-safe interface to **LLM providers** with **first-class native backends** — OpenAI (Chat Completions + Responses), Anthropic (Messages), Google Gemini (generateContent + agentic Interactions), and local models through Ollama's native API — plus any **OpenAI-compatible** provider (Azure, DeepSeek, Mistral, vLLM, LM Studio). It covers Chat Completions & Responses, a cross-provider agentic `respond` verb, Image Generation/Edits, Embeddings, Files/Vector Stores, Conversations, Audio, Batch, Moderations, Fine-tuning, Webhooks, Realtime, and MCP (client & server) — with built-in token/cost accounting.
 It also speaks TypeSafe's System One model **Jev**, which answers enumerated questions about a piece of state with a typed, calibrated judgment instead of generated text — and which can select a Julia method by natural-language meaning.
 
 ### Key Features
@@ -34,7 +34,8 @@ It also speaks TypeSafe's System One model **Jev**, which answers enumerated que
 - 💰 **Cost & Token Accounting** — per-call `estimated_cost`, per-`Chat` `cumulative_cost`, and a built-in multi-provider pricing table
 - 🌊 **Streaming** — real-time token streaming with `do`-block syntax
 - 📐 **Structured Output** — JSON Schema–constrained generation
-- ☁️ **Multi-Backend** — native OpenAI/Anthropic/Gemini plus Azure, DeepSeek, Ollama, Mistral, vLLM, LM Studio, and any OpenAI-compatible provider
+- ☁️ **Multi-Backend** — native OpenAI/Anthropic/Gemini plus Azure, DeepSeek, Mistral, vLLM, LM Studio, and any OpenAI-compatible provider
+- 🖥️ **Local models** — [Ollama](@ref ollama_guide)'s native API with Gemma 4: thinking, tools, structured output, images, audio, embeddings and model management, at no cost
 - ✅ **Type Safety & Capability Introspection** — invalid states are unrepresentable and unsupported requests fail fast via `provider_capabilities`; tested with [JET.jl](https://github.com/aviatesk/JET.jl) and [Aqua.jl](https://github.com/JuliaTesting/Aqua.jl)
 
 ### Chat Completions vs Responses (OpenAI)

@@ -7,7 +7,7 @@
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://algunion.github.io/UniLM.jl/stable/)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://algunion.github.io/UniLM.jl/dev/)
 
-A **Julian**, type-safe interface to **LLM providers** with **first-class native backends** — OpenAI (Chat Completions + Responses), Anthropic (Messages), and Google Gemini (generateContent + agentic Interactions) — plus any **OpenAI-compatible** provider (Azure, DeepSeek, Mistral, Ollama, vLLM, LM Studio). Covers the **Chat Completions** & **Responses** APIs, a cross-provider agentic **`respond`** verb, **Image Generation/Edits**, **Embeddings**, **Files/Vector Stores**, **Conversations**, **Audio**, **Batch**, **Moderations**, **Fine-tuning**, **Webhooks**, **Realtime**, and **MCP** (client & server) — with built-in token/cost accounting and illegal states made unrepresentable.
+A **Julian**, type-safe interface to **LLM providers** with **first-class native backends** — OpenAI (Chat Completions + Responses), Anthropic (Messages), Google Gemini (generateContent + agentic Interactions), and local models through Ollama's native API — plus any **OpenAI-compatible** provider (Azure, DeepSeek, Mistral, vLLM, LM Studio). Covers the **Chat Completions** & **Responses** APIs, a cross-provider agentic **`respond`** verb, **Image Generation/Edits**, **Embeddings**, **Files/Vector Stores**, **Conversations**, **Audio**, **Batch**, **Moderations**, **Fine-tuning**, **Webhooks**, **Realtime**, and **MCP** (client & server) — with built-in token/cost accounting and illegal states made unrepresentable.
 
 ## When to choose UniLM
 
@@ -37,7 +37,8 @@ UniLM speaks each provider's own wire API, not just the OpenAI-compatible protoc
 - **Not wrapped in this release: GPT-Live sessions** — `v1/live/sessions` (GPT-Live 1); the Realtime wrappers do not cover it.
 - **Streaming** — real-time token streaming with `do`-block syntax
 - **Structured Output** — JSON Schema–constrained generation
-- **Multi-Backend** — OpenAI, Azure, Gemini, Anthropic, DeepSeek, Ollama, Mistral, vLLM, LM Studio, and any OpenAI-compatible provider
+- **Multi-Backend** — OpenAI, Azure, Gemini, Anthropic, DeepSeek, Mistral, vLLM, LM Studio, and any OpenAI-compatible provider
+- **Local models** — Ollama's native API with Gemma 4: thinking, tools, structured output, images, audio, embeddings, a context window of your choosing, model management — at no cost
 - **Type Safety** — invalid states are unrepresentable; tested with [JET.jl](https://github.com/aviatesk/JET.jl) and [Aqua.jl](https://github.com/JuliaTesting/Aqua.jl)
 
 ## Installation
@@ -63,7 +64,7 @@ Pkg.add(url="https://github.com/algunion/UniLM.jl")
 
 ## Quick Start
 
-> 💡 **Costs & free local option:** hosted API calls bill your provider key. To try UniLM for free with no key, use a local model via Ollama (`service=OllamaEndpoint()`) — see [Multi-Backend Support](#multi-backend-support).
+> 💡 **Costs & free local option:** hosted API calls bill your provider key. To try UniLM for free with no key, run a local model with Ollama (`ollama pull gemma4:e4b`, then `service=OllamaEndpoint()`) — see [Local Models with Ollama](https://algunion.github.io/UniLM.jl/dev/guide/ollama/).
 
 Set your API key:
 
@@ -292,8 +293,8 @@ chat = Chat(service=ANTHROPICServiceEndpoint)       # default: claude-opus-5-5
 # DeepSeek
 chat = Chat(service=DeepSeekEndpoint())             # default: deepseek-flash
 
-# Ollama (local)
-chat = Chat(service=OllamaEndpoint(), model="llama3.1")
+# Ollama (local, native API): context window, keep-alive, thinking, images and audio
+chat = Chat(service=OllamaEndpoint(num_ctx=32_768), model="gemma4:e4b")
 ```
 
 TypeSafe's System One endpoint (`TYPESAFEServiceEndpoint`, `TYPESAFE_API_KEY`) is deliberately absent from that table: it answers enumerated questions rather than generating text, so `chatrequest!`, `respond`, `embeddingrequest!` and the other platform verbs reject it up front with an `ArgumentError` (naming it on a `Chat` or an `Embeddings` is allowed only with an explicit `model=` — omitting it throws `ArgumentError` — and sending the request is not). It has its own section below.
@@ -397,6 +398,7 @@ Full documentation with guides and API reference: **[https://algunion.github.io/
 - [Streaming Guide](https://algunion.github.io/UniLM.jl/dev/guide/streaming/) — real-time streaming
 - [Structured Output Guide](https://algunion.github.io/UniLM.jl/dev/guide/structured_output/) — JSON Schema output
 - [Multi-Backend Guide](https://algunion.github.io/UniLM.jl/dev/guide/multi_backend/) — Azure, Gemini, DeepSeek, Ollama, and more
+- [Local Models with Ollama](https://algunion.github.io/UniLM.jl/dev/guide/ollama/) — Gemma 4 on your own machine
 - [MCP Guide](https://algunion.github.io/UniLM.jl/dev/guide/mcp/) — MCP client/server
 - [Start Here: Jev in Five Minutes](https://algunion.github.io/UniLM.jl/dev/guide/jev_start/) — what Jev decides, a first decision, and which Jev page answers your question
 - [Jev with LLMs](https://algunion.github.io/UniLM.jl/dev/guide/jev_with_llms/) — route a message before an LLM call and check the draft after it

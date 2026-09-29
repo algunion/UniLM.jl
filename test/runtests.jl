@@ -248,6 +248,10 @@ end
         include("integration_semantic.jl")
     end
 
+    @testset "integration — ollama" begin
+        include("integration_ollama.jl")
+    end
+
     @testset "integration — live MCP" begin
         include("integration_mcp_live.jl")
     end

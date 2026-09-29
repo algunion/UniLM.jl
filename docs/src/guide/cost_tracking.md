@@ -178,9 +178,10 @@ res = embeddingrequest!(emb)
 embeddings_cost = estimated_cost(res)                       # USD for this batch
 ```
 
-Note that non-OpenAI embedding models (e.g. Ollama's `nomic-embed-text`,
-`gemini-embedding-001`) are not in the default table and hit the same `\$0` behavior —
-supply `pricing=` for them too.
+Note that embedding models missing from the default table (e.g. `gemini-embedding-001`)
+hit the same `0.0` behavior — supply `pricing=` for them too. Chat and embeddings
+results from an [`OllamaEndpoint`](@ref) are local and cost `0.0` without a warning;
+pass `model=` to price one as if it had run elsewhere.
 
 ## System One (TypeSafe Jev) is input-only
 

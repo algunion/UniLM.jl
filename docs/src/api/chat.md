@@ -13,6 +13,18 @@ Chat
 ```@docs
 Message
 ProviderContent
+reasoning_text
+```
+
+### Attachments
+
+Images and sound clips sent with a user message; see
+[Images and audio](@ref ollama_media) for a worked example.
+
+```@docs
+Attachment
+ImageAttachment
+AudioAttachment
 ```
 
 ### Convenience Constructors

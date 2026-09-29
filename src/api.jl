@@ -335,7 +335,7 @@ struct ImageAttachment <: Attachment
         new(Vector{UInt8}(data), mime)
     end
 end
-ImageAttachment(path::AbstractString) = ImageAttachment(read(path))
+ImageAttachment(path::AbstractString) = ImageAttachment(read(_attachment_file(path)))
 
 """
     AudioAttachment(path::AbstractString)
@@ -359,7 +359,13 @@ struct AudioAttachment <: Attachment
         new(Vector{UInt8}(data), format)
     end
 end
-AudioAttachment(path::AbstractString) = AudioAttachment(read(path))
+AudioAttachment(path::AbstractString) = AudioAttachment(read(_attachment_file(path)))
+
+# Attachments hold bytes, and not every provider fetches URLs (Ollama does not): a URL
+# given where a file path is expected is named as such instead of failing as a missing file.
+_attachment_file(path::AbstractString) = occursin(r"^[A-Za-z][A-Za-z0-9+.-]*://", path) ? throw(ArgumentError(
+    "attachments are read from a file or from bytes, not a URL ($(repr(String(path)))); download it " *
+    "first, e.g. ImageAttachment(HTTP.get(url).body)")) : path
 
 # The bytes stay reachable through the fields; printing them would flood the REPL.
 Base.show(io::IO, a::ImageAttachment) = print(io, "ImageAttachment(", a.mime, ", ", length(a.data), " bytes)")

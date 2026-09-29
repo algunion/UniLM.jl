@@ -1,0 +1,89 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/api/chat",
+    "body": {
+      "messages": [
+        {
+          "content": "You are concise.",
+          "role": "system"
+        },
+        {
+          "content": "What's the weather in Lyon? Use the tool, then answer in one sentence.",
+          "role": "user"
+        },
+        {
+          "content": "",
+          "role": "assistant",
+          "thinking": "The user wants to know the weather in Lyon.\nI have a tool `get_weather` that takes a `city` name.\nI need to call this tool with `city=\"Lyon\"`.\nAfter getting the result, I must answer in exactly one sentence.",
+          "tool_calls": [
+            {
+              "function": {
+                "arguments": {
+                  "city": "Lyon"
+                },
+                "name": "get_weather"
+              },
+              "id": "call_xskqncx9"
+            }
+          ]
+        },
+        {
+          "content": "18°C and sunny in Lyon",
+          "role": "tool",
+          "tool_call_id": "call_xskqncx9",
+          "tool_name": "get_weather"
+        }
+      ],
+      "model": "gemma4:e4b",
+      "options": {
+        "temperature": 0.0
+      },
+      "stream": false,
+      "tools": [
+        {
+          "function": {
+            "name": "get_weather",
+            "description": "Current weather in a city",
+            "parameters": {
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "function"
+        }
+      ],
+      "truncate": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "body": {
+      "model": "gemma4:e4b",
+      "created_at": "2026-09-29T07:35:29.300336Z",
+      "message": {
+        "role": "assistant",
+        "content": "The weather in Lyon is 18°C and sunny.",
+        "thinking": "The user asked for the weather in Lyon, instructed me to use the tool, and then answer in one sentence.\nThe tool returned: \"18°C and sunny in Lyon\".\nI need to formulate a single sentence answer based on this information."
+      },
+      "done": true,
+      "done_reason": "stop",
+      "total_duration": 1464255666,
+      "load_duration": 2853458,
+      "prompt_eval_count": 179,
+      "prompt_eval_cached_count": 75,
+      "prompt_eval_duration": 260007000,
+      "eval_count": 68,
+      "eval_duration": 1198474000
+    }
+  },
+  "recorded_at": "2026-09-29T07:35:29Z"
+}

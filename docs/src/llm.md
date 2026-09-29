@@ -64,9 +64,17 @@ struct GenericOpenAIEndpoint <: OpenAIWireEndpoint    # any OpenAI-compatible pr
     api_key::String
 end
 # DeepSeekEndpoint <: OpenAIWireEndpoint  (constructor below)
+struct OllamaEndpoint <: OpenAIWireEndpoint   # local Ollama: native /api/chat + /api/embed; /v1/responses, /v1/completions
+    base_url::String                          # server root; default OLLAMA_HOST, else "http://127.0.0.1:11434"
+    keep_alive::Union{Float64,Nothing}        # seconds the model stays loaded (Inf: until the server stops)
+    truncate::Bool                            # false (default): input that does not fit the context window is a 400
+    shift::Union{Bool,Nothing}                # context shift while generating; nothing = server default
+    options::OllamaOptions                    # num_ctx, top_k, min_p, … (fields Chat does not have)
+end
 
 # Convenience constructors
-OllamaEndpoint(; base_url="http://localhost:11434")   # Ollama local
+OllamaEndpoint(; base_url=<OLLAMA_HOST or "http://127.0.0.1:11434">, keep_alive=nothing,
+               truncate=false, shift=nothing, options...)   # options: OllamaOptions keywords, e.g. num_ctx=32_768
 MistralEndpoint(; api_key=ENV["MISTRAL_API_KEY"])     # Mistral AI
 DeepSeekEndpoint(; api_key=ENV["DEEPSEEK_API_KEY"])   # DeepSeek
 
@@ -82,10 +90,10 @@ UniLM talks to **native** provider APIs where it implements them, and rides the 
 
 | Access path | Providers |
 |---|---|
-| **Native backends** (own wire format) | OpenAI (Chat + Responses), Anthropic (Messages), Gemini (generateContent + agentic Interactions) |
-| Chat Completions (OpenAI-compat) | OpenAI, Azure, DeepSeek, Mistral, Ollama, vLLM, LM Studio, Gemini (compat shim) |
-| Embeddings (OpenAI-compat) | OpenAI, Gemini (compat shim), Mistral, Ollama, vLLM |
-| Responses API | OpenAI, Ollama, vLLM, Amazon Bedrock (emerging Open Responses) |
+| **Native backends** (own wire format) | OpenAI (Chat + Responses), Anthropic (Messages), Gemini (generateContent + agentic Interactions), Ollama (`/api/chat` + `/api/embed`) |
+| Chat Completions (OpenAI-compat) | OpenAI, Azure, DeepSeek, Mistral, vLLM, LM Studio, Gemini (compat shim) |
+| Embeddings (OpenAI-compat) | OpenAI, Gemini (compat shim), Mistral, vLLM |
+| Responses API | OpenAI, Ollama (stateless), vLLM, Amazon Bedrock (emerging Open Responses) |
 | Image Generation | OpenAI |
 
 Anthropic and native Gemini use their **own** APIs here (`ANTHROPICServiceEndpoint` / `GEMINIServiceEndpoint`) — not an OpenAI-compat shim — and that is the recommended path. The OpenAI-compat Gemini shim (`GEMINIOpenAIServiceEndpoint`) exists for embeddings and drop-in compatibility.
@@ -103,6 +111,17 @@ Pass the backend via the `service` keyword on `Chat`, `Respond`, or `ImageGenera
 Chat(service=AZUREServiceEndpoint, model="gpt-5.2")
 Respond(service=OPENAIServiceEndpoint, input="Hello")
 ```
+
+### Ollama (local)
+
+`OllamaEndpoint` needs no key and has no default model (`Chat(service=OllamaEndpoint())` throws `ArgumentError`; name an installed model, e.g. `"gemma4:e4b"`). Contract of its native chat wire (`/api/chat`):
+
+- **Mapped**: `model`, `messages` (attachments → `images`; captured `:ollama` thinking → `thinking`; tool calls with their ids; tool results → `tool_name` + `tool_call_id`), `tools`, `stream` (always sent), `temperature`/`top_p`/`seed`/`stop`/`presence_penalty`/`frequency_penalty` and `max_completion_tokens` (else `max_tokens`) → `options` (as `num_predict`), `response_format` → `format` (a schema; `json_object` → `{"type":"object"}`), `reasoning_effort` → `think`, plus the endpoint's `OllamaOptions` → `options`, `keep_alive`, `truncate` (always sent, default `false`) and `shift`.
+- **Thinking**: `"none"` → `think: false`; `"low"`/`"medium"`/`"high"` pass through; other efforts throw. Unset → the model's default, except that a `response_format` sends `think: false` (Ollama constrains output only after thinking ends); a `response_format` with a thinking effort throws.
+- **Refused** (`ArgumentError` before I/O): `logit_bias`, `user`, `stream_options`, `verbosity`, `store`, `metadata`, `service_tier`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key`, `safety_identifier`, `prompt_cache_options`, `moderation`; `tool_choice` other than `"auto"`; tools with `strict=true`; a message `name`; a tool result that answers no earlier call. `parallel_tool_calls` is not sent (the model may return several calls in a turn).
+- **Replies**: `message.thinking` → `ProviderContent(:ollama, [Dict("thinking" => …)])`; a tool call without an id gets `"unilm_call_<k>"` (never sent back); usage = `prompt_eval_count` / `eval_count` (thinking included), cached = `prompt_eval_cached_count`; `done_reason` → `finish_reason` (`"tool_calls"` when calls are present). Streams are newline-delimited JSON; an `{"error": …}` line on a 200 stream is an `LLMCallError`, an error body with another status an `LLMFailure` with that status.
+- **Embeddings** go to `/api/embed` (`truncate`, `keep_alive`, `options` from the endpoint; `user` refused). **`respond`** goes to the stateless `/v1/responses`: only `model`, `input`, `instructions`, `tools`, `tool_choice="auto"`, `temperature`, `top_p`, `max_output_tokens`, `stream`, `text` (json_schema format, no verbosity) and `reasoning` (effort only) are accepted; `tool_loop(::Respond)` throws. **FIM** uses `/v1/completions`.
+- `estimated_cost` of an Ollama `LLMSuccess` / `EmbeddingSuccess` is `0.0` without a warning (unless `model=` is passed); a connection failure's error text ends with how to start the server.
 
 ---
 
@@ -175,20 +194,26 @@ through that accessor, never directly.
     tool_calls::Union{Nothing,Vector{ToolCall}} = nothing
     tool_call_id::Union{String,Nothing} = nothing         # required when role == "tool"
     provider_content::Union{Nothing,ProviderContent} = nothing
+    attachments::Union{Nothing,Vector{Attachment}} = nothing   # user messages only: ImageAttachment / AudioAttachment
 end
 ```
 
-**Validation**: `role` must be one of the four roles; at least one of `content`, `tool_calls`, or `refusal_message` must be non-`nothing`; `tool_call_id` is required when `role == "tool"`.
+**Validation**: `role` must be one of the four roles; at least one of `content`, `tool_calls`, or `refusal_message` must be non-`nothing`; `tool_call_id` is required when `role == "tool"`; `attachments` only on user messages (an empty vector is stored as `nothing`).
+
+**Attachments**: `ImageAttachment(path_or_bytes)` (PNG, JPEG, GIF or WebP) and `AudioAttachment(path_or_bytes)` (WAV or MP3), both `<: Attachment`, recognised by their leading bytes. OpenAI-wire endpoints send them as `image_url` (data URL) / `input_audio` content parts after the text part; `OllamaEndpoint` sends them in the message's `images`; the native Anthropic and Gemini encoders throw `ArgumentError`.
+
+**Reasoning**: `reasoning_text(m::Message)` / `reasoning_text(r::LLMSuccess)` → the thinking text a provider returned (`:ollama` `thinking`, `:deepseek` `reasoning_content`, `:anthropic` thinking blocks joined by a blank line, `:gemini` thought parts), else `nothing`; throws `LLMResultError` on a failure result.
 
 On the wire a message never sends `finish_reason` (response-only) or `provider_content`, and a refusal travels as `refusal` (with `content: null`). A tool-call turn reads `finish_reason == "tool_calls"` when the provider finished it with `"stop"` or reported none, and keeps any other reason (`"length"`, `"content_filter"`, …). Partial calls are dropped: on a turn that kept another reason, a call whose arguments are not a JSON object (cut off by the token limit) is removed and the turn — text, reason, usage — kept; under `"tool_calls"` such arguments are an `LLMCallError`.
 
-`provider_content` carries provider-native blocks captured for verbatim round-trip — Anthropic thinking blocks (`:anthropic`), Gemini parts with thought signatures (`:gemini`), DeepSeek `reasoning_content` (`:deepseek`, echoed on requests that carry tools); it never serializes on the OpenAI wire.
+`provider_content` carries provider-native blocks captured for verbatim round-trip — Anthropic thinking blocks (`:anthropic`), Gemini parts with thought signatures (`:gemini`), DeepSeek `reasoning_content` (`:deepseek`, echoed on requests that carry tools), Ollama `thinking` (`:ollama`, echoed as the assistant message's `thinking`); it never serializes on the OpenAI wire.
 
 **Convenience constructors**:
 
 ```julia
 Message(Val(:system), "You are a helpful assistant")
 Message(Val(:user), "Hello!")
+Message(Val(:user), "What colour is the shape?", ImageAttachment("shape.png"))   # attachments...
 ```
 
 **Role constants**: `RoleSystem = "system"`, `RoleUser = "user"`, `RoleAssistant = "assistant"`.
@@ -2168,7 +2193,7 @@ mutate (see the Custom Backends guide): `get_url`, `auth_header`, `default_model
 
 Every exported symbol, grouped by area:
 
-**Chat Completions**: `Chat`, `Message`, `ProviderContent`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `Tool`, `ToolCall`, `FunctionSignature`, `FunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
+**Chat Completions**: `Chat`, `Message`, `ProviderContent`, `Attachment`, `ImageAttachment`, `AudioAttachment`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `Tool`, `ToolCall`, `FunctionSignature`, `FunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
 - *Legacy aliases* (pre-rename names, exported and non-breaking, retained until 1.0): `GPTTool` → `Tool`, `GPTToolCall` → `ToolCall`, `GPTFunctionSignature` → `FunctionSignature`, `GPTFunctionCallResult` → `FunctionCallResult`
 
 **Responses API & Agentic**: `Respond`, `InputMessage`, `ResponseObject`, `ResponseSuccess`, `ResponseFailure`, `ResponseCallError`, `Reasoning`, `PromptCacheOptions`, `ModerationConfig`, `TextConfig`, `TextFormatSpec`, `respond`, `get_response`, `delete_response`, `cancel_response`, `list_input_items`, `compact_response`, `count_input_tokens`, `text_format`, `json_schema_format`, `json_object_format`
@@ -2185,7 +2210,9 @@ Every exported symbol, grouped by area:
 
 **Cost Tracking**: `TokenUsage`, `token_usage`, `estimated_cost`, `cumulative_cost`, `DEFAULT_PRICING`
 
-**Service Endpoints**: `ServiceEndpoint`, `OpenAIWireEndpoint`, `ServiceEndpointSpec`, `OPENAIServiceEndpoint`, `AZUREServiceEndpoint`, `GEMINIServiceEndpoint`, `GEMINIOpenAIServiceEndpoint`, `ANTHROPICServiceEndpoint`, `GenericOpenAIEndpoint`, `OllamaEndpoint`, `MistralEndpoint`, `DeepSeekEndpoint`, `add_azure_deploy_name!`
+**Service Endpoints**: `ServiceEndpoint`, `OpenAIWireEndpoint`, `ServiceEndpointSpec`, `OPENAIServiceEndpoint`, `AZUREServiceEndpoint`, `GEMINIServiceEndpoint`, `GEMINIOpenAIServiceEndpoint`, `ANTHROPICServiceEndpoint`, `GenericOpenAIEndpoint`, `OllamaEndpoint`, `OllamaOptions`, `MistralEndpoint`, `DeepSeekEndpoint`, `add_azure_deploy_name!`
+
+**Ollama model management**: `OllamaModel`, `OllamaModelInfo`, `OllamaRunningModel`, `OllamaPullProgress`, `OllamaSuccess`, `OllamaFailure`, `OllamaCallError`, `model_info`, `pull_model`, `running_models`, `load_model`, `unload_model` (and `list_models` with `service=OllamaEndpoint()`)
 
 **Provider Capabilities**: `provider_capabilities`, `has_capability`
 
@@ -2225,6 +2252,6 @@ Every exported symbol, grouped by area:
 
 **Realtime**: `RealtimeSession`, `RealtimeSecretSuccess`, `RealtimeFailure`, `RealtimeCallError`, `mint_realtime_secret`, `realtime_connect`, `realtime_send`, `realtime_receive`, `realtime_event`, `session_update`, `input_audio_append`, `response_create`
 
-**Result Types (base)**: `LLMRequestResponse`, `LLMSuccess`, `LLMFailure`, `LLMCallError`, `LLMResultError`, `issuccess`, `isfailure`, `text`
+**Result Types (base)**: `LLMRequestResponse`, `LLMSuccess`, `LLMFailure`, `LLMCallError`, `LLMResultError`, `issuccess`, `isfailure`, `text`, `reasoning_text`
 
 **Request Config, Timeouts & Cancellation**: `RequestConfig`, `current_config`, `with_request_config`, `set_default_config!`, `UniLMTimeout`, `MCPTimeoutError`, `UniLMCancelled`, `CancelToken`, `cancel!`, `iscancelled`, `with_cancel`

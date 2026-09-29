@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+### Breaking
+- `OllamaEndpoint` is its own type (`OllamaEndpoint <: OpenAIWireEndpoint`), no longer a
+  `GenericOpenAIEndpoint`: code that dispatched on `GenericOpenAIEndpoint` for Ollama, or read
+  its `api_key` field, must use `OllamaEndpoint`. Its chat requests go to Ollama's native
+  `/api/chat` and its embeddings to `/api/embed` instead of the OpenAI-compatible routes, and
+  its default server is `http://127.0.0.1:11434` (or `OLLAMA_HOST`) instead of
+  `http://localhost:11434`. `respond` and `fim_complete` keep the OpenAI-compatible routes.
+
+### Added
+- Ollama, with Gemma 4 as the reference model (`gemma4:e4b`, measured on Ollama 0.34.4):
+  - The native API carries what the OpenAI-compatible route ignores: the context window
+    and the other runtime options (`OllamaEndpoint(num_ctx=32_768, top_k=64, …)`, typed as
+    `OllamaOptions`), `keep_alive` (seconds, `Inf` to stay loaded) and thinking control.
+  - Thinking is captured (streamed or not) and sent back with its turn, which Gemma 4's
+    tool loops rely on; `reasoning_text(result)` reads it, and also DeepSeek's
+    `reasoning_content`, Anthropic thinking blocks and Gemini thought parts.
+  - A `response_format` turns thinking off: Ollama constrains a reply only after thinking
+    ends, and with thinking on `gemma4:e4b` answered plain text to 10 of 10 schema
+    requests (10 of 10 valid with it off). A format together with a thinking effort is
+    refused.
+  - An input that does not fit the context window is an HTTP 400 ("exceeds the available
+    context size") instead of an answer to a silently shortened prompt, for chat and for
+    embeddings (`truncate=false` by default; `truncate=true` restores Ollama's behaviour).
+  - Fields the native API or Ollama's stateless Responses API would ignore
+    (`tool_choice` other than `"auto"`, strict tools, `logit_bias`, `previous_response_id`,
+    `store`, …) are refused before any request; a `Respond` tool loop is refused in favour
+    of `tool_loop!` on a `Chat`.
+  - `OLLAMA_HOST` is honoured with the rules of Ollama's own clients; local turns and
+    embeddings cost `0.0` without a missing-price warning; an unreachable server's error
+    says how to start one.
+  - Model management: `list_models(service=OllamaEndpoint())`, `model_info`, `pull_model`
+    (streamed progress), `running_models`, `load_model` and `unload_model`, with typed
+    results (`OllamaModel`, `OllamaModelInfo`, `OllamaRunningModel`, `OllamaPullProgress`;
+    `OllamaSuccess`, `OllamaFailure`, `OllamaCallError`).
+- Images and audio in a user `Message`: `Message(Val(:user), "…", ImageAttachment("shape.png"),
+  AudioAttachment("clip.wav"))`, recognised by their leading bytes (PNG, JPEG, GIF, WebP;
+  WAV, MP3). OpenAI-compatible endpoints send them as `image_url` / `input_audio` content
+  parts, `OllamaEndpoint` in the message's `images`; the native Anthropic and Gemini
+  encoders refuse them for now. `prefix_complete` sends each message in its full wire form.
+- A new guide, *Local Models with Ollama*, and an *Ollama* API page.
+
 ### Changed
 - The manual's LLM examples that ask open questions now ask for a short plain-text
   answer, so their recorded replies read cleanly in an output block instead of showing

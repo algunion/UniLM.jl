@@ -1,0 +1,49 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/api/chat",
+    "body": {
+      "messages": [
+        {
+          "content": "You are concise.",
+          "role": "system"
+        },
+        {
+          "content": "What colour is the shape? One word.",
+          "images": [
+            "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAA0UlEQVR4nO3PQQ7DMAwDQf//0+2xaC+VRFmM4SVyjbyzXodvuQPUAXAPgHsA3APgHoDfeyv0NT7YdCbWvUEinyinNzE0QEu9ZhAAjfWCofRbe7rAyAO21ucNtwEG6pOGDGCsPmMIA4brw4ZLAJb6mAHAAQBjfcAAAAAAAAAAAAAA4MGGv2kAjgC4DJGuawDzhmBUAjBpiBflADOGVM59gN2GbEsFsIlRq6gDeg3lBAnQZVDeVwEiQ39ZP/F9b6j782DjLcsAuAfAPQDuAXDveMAbE4sL73v1SXUAAAAASUVORK5CYII="
+          ],
+          "role": "user"
+        }
+      ],
+      "model": "gemma4:e4b",
+      "options": {
+        "temperature": 0.0
+      },
+      "stream": false,
+      "truncate": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "body": {
+      "model": "gemma4:e4b",
+      "created_at": "2026-09-29T07:35:30.927558Z",
+      "message": {
+        "role": "assistant",
+        "content": "Red"
+      },
+      "done": true,
+      "done_reason": "stop",
+      "total_duration": 381072708,
+      "load_duration": 2785042,
+      "prompt_eval_count": 112,
+      "prompt_eval_cached_count": 0,
+      "prompt_eval_duration": 353105000,
+      "eval_count": 2,
+      "eval_duration": 14745000
+    }
+  },
+  "recorded_at": "2026-09-29T07:35:30Z"
+}

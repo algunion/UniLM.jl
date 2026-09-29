@@ -11,8 +11,8 @@ results that say what to do.
 pull a model:
 
 ```bash
-ollama pull gemma4:e4b       # Gemma 4 E4B: text, images, audio, tools, thinking (9.6 GB)
-ollama pull embeddinggemma   # embeddings (0.6 GB)
+ollama pull gemma4:e4b      # Gemma 4 E4B: text, images, audio, tools (9.6 GB)
+ollama pull embeddinggemma  # embeddings (0.6 GB)
 ```
 
 `OllamaEndpoint()` finds the server at `OLLAMA_HOST` when that is set (the same
@@ -42,9 +42,11 @@ Develop](@ref jev_testing_recorded)), so its build needs no Ollama server.
 ```@example ollama
 using UniLM
 
-chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b", reasoning_effort="none")
+chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b",
+            reasoning_effort="none")
 push!(chat, Message(Val(:system), "You are a concise assistant."))
-push!(chat, Message(Val(:user), "In one sentence: why run a language model locally?"))
+push!(chat, Message(Val(:user),
+                    "In one sentence: why run a language model locally?"))
 
 result = chatrequest!(chat)
 text(result)
@@ -67,10 +69,12 @@ the three behave alike), and leaving it unset keeps the model's default: on. The
 thinking comes back beside the answer, and [`reasoning_text`](@ref) reads it:
 
 ```@example ollama
-chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b", reasoning_effort="low", temperature=0.0)
+chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b",
+            reasoning_effort="low", temperature=0.0)
 push!(chat, Message(Val(:system), "You are concise."))
-push!(chat, Message(Val(:user), "A bat and a ball cost 1.10 in total. The bat costs 1.00 more " *
-                                "than the ball. How much does the ball cost? Answer with the number only."))
+push!(chat, Message(Val(:user),
+    "A bat and a ball cost 1.10 in total. The bat costs 1.00 more than " *
+    "the ball. How much does the ball cost? Answer with the number only."))
 result = chatrequest!(chat)
 text(result)
 ```
@@ -95,18 +99,23 @@ thinking of finished turns itself.
 Tools work as with every backend (see [Tool Calling](@ref tools_guide)):
 
 ```@example ollama
+city = Dict("type" => "object", "required" => ["city"],
+            "properties" => Dict("city" => Dict("type" => "string")))
 weather = UniLM.CallableTool(
-    Tool(func=FunctionSignature(name="get_weather", description="Current weather in a city",
-        parameters=Dict("type" => "object", "properties" => Dict("city" => Dict("type" => "string")),
-                        "required" => ["city"]))),
+    Tool(func=FunctionSignature(name="get_weather",
+                                description="Current weather in a city",
+                                parameters=city)),
     (name, args) -> "18°C and sunny in $(args["city"])")
 
-chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b", tools=[weather], temperature=0.0)
+chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b", tools=[weather],
+            temperature=0.0)
 push!(chat, Message(Val(:system), "You are concise."))
-push!(chat, Message(Val(:user), "What's the weather in Lyon? Use the tool, then answer in one sentence."))
+push!(chat, Message(Val(:user), "What's the weather in Lyon? " *
+                                "Use the tool, then answer in one sentence."))
 
 loop = tool_loop!(chat; tools=[weather])
-loop.completed, [(o.tool_name, o.arguments) for o in loop.tool_calls], text(loop.response)
+calls = [(o.tool_name, o.arguments) for o in loop.tool_calls]
+loop.completed, calls, text(loop.response)
 ```
 
 Ollama has no `tool_choice`: the model decides whether to call a tool, so a
@@ -129,7 +138,8 @@ schema = Dict("type" => "object", "additionalProperties" => false,
 chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b",
             response_format=UniLM.json_schema("person", "A person", schema))
 push!(chat, Message(Val(:system), "You extract facts."))
-push!(chat, Message(Val(:user), "Extract the person: Ada Lovelace, born 1815 in London."))
+push!(chat, Message(Val(:user),
+                    "Extract the person: Ada Lovelace, born 1815 in London."))
 
 using JSON
 JSON.parse(text(chatrequest!(chat)))
@@ -163,12 +173,14 @@ push!(chat, Message(Val(:user), "What colour is the shape? One word.",
 text(chatrequest!(chat))
 ```
 
-The [recording](../assets/secret_word.wav) says *"The secret word is banana."*:
+The [recording](https://github.com/algunion/UniLM.jl/raw/main/docs/src/assets/secret_word.wav)
+says *"The secret word is banana."*:
 
 ```@example ollama
 chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b", temperature=0.0)
 push!(chat, Message(Val(:system), "You are concise."))
-push!(chat, Message(Val(:user), "What is the secret word in this recording? One word.",
+push!(chat, Message(Val(:user),
+                    "What is the secret word in this recording? One word.",
                     AudioAttachment("../assets/secret_word.wav")))
 text(chatrequest!(chat))
 ```
@@ -181,11 +193,13 @@ bytes: Ollama does not fetch image URLs.
 ## [Embeddings](@id ollama_embeddings)
 
 ```@example ollama
-texts = ["The cat purrs on the sofa.", "A kitten is sleeping.", "Stock markets fell sharply."]
-result = embeddingrequest!(Embeddings(texts; service=OllamaEndpoint(), model="embeddinggemma"))
-v = embedding_vectors(result)
+texts = ["The cat purrs on the sofa.", "A kitten is sleeping.",
+         "Stock markets fell sharply."]
+emb = Embeddings(texts; service=OllamaEndpoint(), model="embeddinggemma")
+v = embedding_vectors(embeddingrequest!(emb))
 cosine(a, b) = sum(a .* b) / sqrt(sum(abs2, a) * sum(abs2, b))
-length(v[1]), round(cosine(v[1], v[2]), digits=2), round(cosine(v[1], v[3]), digits=2)
+near, far = cosine(v[1], v[2]), cosine(v[1], v[3])
+length(v[1]), round(near; digits=2), round(far; digits=2)
 ```
 
 An input longer than the model's context window (2048 tokens for EmbeddingGemma) is
@@ -198,8 +212,8 @@ What would be a command-line flag or a Modelfile line in Ollama is an argument o
 [`OllamaEndpoint`](@ref), sent with every chat and embeddings request:
 
 ```julia
-ollama = OllamaEndpoint(num_ctx=32_768,   # context window, in tokens
-                        keep_alive=3600,  # seconds the model stays loaded (Inf: until the server stops)
+ollama = OllamaEndpoint(num_ctx=32_768,  # context window, in tokens
+                        keep_alive=3600, # seconds loaded after a call
                         top_k=64, min_p=0.05)
 chat = Chat(service=ollama, model="gemma4:e4b")
 ```
@@ -226,16 +240,19 @@ The model-management verbs return typed results like every other call:
 ```julia
 ollama = OllamaEndpoint()
 
-models = list_models(service=ollama).response    # Vector{OllamaModel}: name, size, capabilities, context_length
+models = list_models(service=ollama).response  # Vector{OllamaModel}
 info = model_info("gemma4:e4b"; service=ollama).response
-info.capabilities       # [:completion, :vision, :audio, :tools, :thinking]
-info.thinking_levels    # [false, true]
+info.capabilities     # [:completion, :vision, :audio, :tools, :thinking]
+info.context_length   # 131072
+info.thinking_levels  # [false, true]
 
+percent(p) = isnothing(p.total) ? "" :
+             string(round(Int, 100p.completed / p.total), "%")
 pull_model("gemma4:e2b"; service=ollama,
-           progress = p -> isnothing(p.total) || print("\r", p.status, " ", round(100p.completed / p.total), "%"))
+           progress = p -> print("\r", p.status, " ", percent(p)))
 
-load_model("gemma4:e4b"; service=ollama)         # load now, with the endpoint's num_ctx and keep_alive
-running_models(service=ollama).response           # what is loaded, its context window and memory
+load_model("gemma4:e4b"; service=ollama)  # with the endpoint's settings
+running_models(service=ollama).response    # context, memory, expiry
 unload_model("gemma4:e4b"; service=ollama)
 ```
 
@@ -256,7 +273,8 @@ Streaming works as on every backend (see [Streaming](@ref streaming_guide)):
 chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b", stream=true)
 push!(chat, Message(Val(:system), "You are concise."))
 push!(chat, Message(Val(:user), "Write a haiku about Julia."))
-result = fetch(chatrequest!(chat; callback=(chunk, _) -> chunk isa String && print(chunk)))
+result = fetch(chatrequest!(chat;
+    callback=(chunk, _) -> chunk isa String && print(chunk)))
 ```
 
 [`respond`](@ref) reaches Ollama's OpenAI-compatible Responses API, which keeps no

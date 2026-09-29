@@ -72,6 +72,7 @@ include("typesafe.jl")
 include("recorded_answers.jl")
 include("semantic.jl")
 include("files.jl")
+include("ollama_models.jl")
 include("vector_stores.jl")
 include("conversations.jl")
 include("moderations.jl")
@@ -404,6 +405,21 @@ export
     meaning_gaps,
     LowConfidenceError,
     DecisionDeclinedError
+
+# ─── Ollama model management ───
+export
+    OllamaModel,
+    OllamaModelInfo,
+    OllamaRunningModel,
+    OllamaPullProgress,
+    OllamaSuccess,
+    OllamaFailure,
+    OllamaCallError,
+    model_info,
+    pull_model,
+    running_models,
+    load_model,
+    unload_model
 
 # ─── Audio API ────────────────────────────────────────────────────────────────
 export

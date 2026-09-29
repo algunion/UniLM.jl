@@ -55,6 +55,10 @@ end
         include("ollama.jl")
     end
 
+    @testset "Ollama model management" begin
+        include("ollama_models.jl")
+    end
+
     @testset "config.jl" begin
         include("config.jl")
     end

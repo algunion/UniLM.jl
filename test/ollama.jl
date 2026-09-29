@@ -85,6 +85,12 @@ const _WEATHER = Tool(func=FunctionSignature(name="get_weather", description="We
                         "0.0.0.0:8080" => "http://127.0.0.1:8080", "[::]" => "http://[::1]:11434")
         @test UniLM._ollama_host_url(host) == url
     end
+    # Bare IPv6 addresses and Ollama's cloud host, as Ollama's own client reads them.
+    @test UniLM._ollama_host_url("::1") == "http://[::1]:11434"
+    @test UniLM._ollama_host_url("::") == "http://[::1]:11434"
+    @test UniLM._ollama_host_url("fe80::1") == "http://[fe80::1]:11434"
+    @test UniLM._ollama_host_url("ollama.com") == "https://ollama.com:443"
+    @test UniLM._ollama_host_url("http://ollama.com") == "http://ollama.com:80"
     @test_throws ArgumentError UniLM._ollama_host_url("ftp://box")
     @test_throws ArgumentError UniLM._ollama_host_url("box:99999")
     @test_throws ArgumentError UniLM._ollama_host_url("box:port")
@@ -97,10 +103,15 @@ const _WEATHER = Tool(func=FunctionSignature(name="get_weather", description="We
     @test_throws ArgumentError OllamaEndpoint(base_url="box:11434")
     @test_throws ArgumentError OllamaEndpoint(keep_alive=-1)
     @test_throws ArgumentError OllamaEndpoint(keep_alive=NaN)
+    # A finite keep_alive beyond 1e9 s would overflow the server's duration: Inf says "stay loaded".
+    @test OllamaEndpoint(keep_alive=1e9).keep_alive == 1e9
+    @test_throws ArgumentError OllamaEndpoint(keep_alive=1e9 + 1)
+    @test_throws ArgumentError OllamaEndpoint(keep_alive=typemax(Int))
+    @test OllamaOptions(top_k=0).top_k == 0                           # 0 turns top-k sampling off
     err = try OllamaEndpoint(num_ctxx=10); nothing catch x; x end
     @test err isa ArgumentError && occursin("num_ctxx", err.msg) && occursin("num_ctx", err.msg)
     for (k, v) in (:num_ctx => 0, :num_batch => 0, :num_thread => 0, :num_gpu => -2, :main_gpu => -1,
-                   :num_keep => -2, :top_k => 0, :min_p => 1.5, :repeat_last_n => -2,
+                   :num_keep => -2, :top_k => -1, :min_p => 1.5, :repeat_last_n => -2,
                    :repeat_penalty => -0.1)
         @test_throws ArgumentError OllamaOptions(; k => v)
     end
@@ -473,4 +484,39 @@ end
     finally
         close(server)
     end
+end
+
+@testset "respond: a format turns thinking off; tools Ollama cannot honour are refused" begin
+    e = OllamaEndpoint()
+    schema = Dict("type" => "object", "properties" => Dict("name" => Dict("type" => "string")), "required" => ["name"])
+    fmt = TextConfig(format=TextFormatSpec(type="json_schema", name="person", schema=schema))
+    enc(; kw...) = JSON.parse(UniLM.encode_agentic(e, Respond(; service=e, model="gemma4:e4b", input="x", kw...)))
+    # Refuted by: a format request that leaves Gemma 4 free to skip thinking and answer unconstrained.
+    @test enc(text=fmt)["reasoning"] == Dict("effort" => "none")
+    @test enc(text=fmt, reasoning=Reasoning(effort="none"))["reasoning"]["effort"] == "none"
+    @test !haskey(enc(), "reasoning")                                   # no format: the model's default
+    @test enc(reasoning=Reasoning(effort="high"))["reasoning"]["effort"] == "high"
+    for lvl in ("low", "medium", "high")
+        err = try enc(text=fmt, reasoning=Reasoning(effort=lvl)); nothing catch x; x end
+        @test err isa ArgumentError && occursin("response_format", err.msg)
+    end
+    @test_throws ArgumentError enc(text=TextConfig(format=TextFormatSpec(type="json_schema", name="p")))  # no schema
+    ft(; kw...) = FunctionTool(; name="f", parameters=Dict("type" => "object"), kw...)
+    @test only(enc(tools=[ft()])["tools"])["type"] == "function"
+    @test only(enc(tools=[Dict("type" => "function", "name" => "g", "parameters" => Dict())])["tools"])["name"] == "g"
+    for bad in (ft(strict=true), ft(async=true), ft(allowed_callers=["direct"]), ft(defer_loading=true),
+                ft(output_schema=Dict("type" => "object")), web_search(), Dict("type" => "file_search"))
+        @test_throws ArgumentError enc(tools=[bad])
+    end
+end
+
+@testset "a user message may carry media alone" begin
+    img = ImageAttachment(UInt8[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    m = Message(role=RoleUser, attachments=[img])
+    @test isnothing(m.content)
+    @test [p[:type] for p in JSON.lower(m)[:content]] == ["image_url"]
+    c = Chat(service=OllamaEndpoint(), model="m"); push!(c, Message(Val(:system), "s")); push!(c, m)
+    @test _wire(c)["messages"][2] == Dict("role" => "user", "content" => "", "images" => [UniLM.Base64.base64encode(img.data)])
+    @test_throws ArgumentError Message(role=RoleUser)                                  # nothing at all
+    @test_throws ArgumentError Message(role=RoleUser, attachments=Attachment[])        # an empty list is nothing
 end

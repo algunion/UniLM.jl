@@ -81,9 +81,8 @@ function Base.showerror(io::IO, e::ReplayMissError)
         model = field("model")
         model isa AbstractString && print(io, " for model ", repr(model))
     end
-    # A local Ollama server takes no key; its native routes live under /api/.
-    needs = systemone ? "TYPESAFE_API_KEY set" : startswith(e.path, "/api/") ? "the Ollama server running" :
-            "the provider's API key set"
+    needs = systemone ? "TYPESAFE_API_KEY set" :
+            "access to the provider (its API key set, or a local server such as Ollama running)"
     record = string("run the same code with ", needs, " and `mode = :record_missing`.")
     e.reason == _NO_RECORDING ?
         print(io, ": ", e.reason, " in ", e.dir, ". To record it, ", record) :

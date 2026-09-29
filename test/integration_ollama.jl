@@ -24,8 +24,9 @@ _has(tags, m) = m in tags || (m * ":latest") in tags
 # The server's loaded models: name => context length.
 _ollama_ps(ep::OllamaEndpoint) = Dict(m.name => m.context_length for m in running_models(; service=ep).response)
 
-const _OLLAMA_EP = OllamaEndpoint()
-const _OLLAMA_TAGS = get(ENV, "UNILM_LIVE_OLLAMA", "") == "1" ? _ollama_installed(_OLLAMA_EP) : nothing
+# Built only when the witnesses run: an unusual OLLAMA_HOST must not break the offline suite.
+const _OLLAMA_EP = get(ENV, "UNILM_LIVE_OLLAMA", "") == "1" ? OllamaEndpoint() : nothing
+const _OLLAMA_TAGS = isnothing(_OLLAMA_EP) ? nothing : _ollama_installed(_OLLAMA_EP)
 
 if isnothing(_OLLAMA_TAGS) || !_has(_OLLAMA_TAGS, _OLLAMA_MODEL) || !_has(_OLLAMA_TAGS, _OLLAMA_EMBED)
     @info "Skipping Ollama live witnesses (set UNILM_LIVE_OLLAMA=1, run an Ollama server and pull " *
@@ -196,6 +197,14 @@ end
                          input=[InputMessage(role="user", content=[input_text("What colour is the shape? One word."),
                                                                   input_image("data:image/png;base64," * png)])]))
     @test ri isa ResponseSuccess && occursin("red", lowercase(output_text(ri)))
+    # Refuted by: a schema request answered with plain text (the format turns thinking off here too).
+    schema = Dict("type" => "object", "additionalProperties" => false, "required" => ["name", "year"],
+                  "properties" => Dict("name" => Dict("type" => "string"), "year" => Dict("type" => "integer")))
+    for _ in 1:3
+        rj = respond(Respond(service=_OLLAMA_EP, model=_OLLAMA_MODEL, input="Extract: Ada Lovelace, born 1815.",
+                             text=TextConfig(format=TextFormatSpec(type="json_schema", name="p", schema=schema))))
+        @test JSON.parse(output_text(rj))["year"] == 1815
+    end
 end
 
 @testset "fill-in-the-middle with a code model" begin

@@ -806,7 +806,7 @@ end
             @test e.key == _ra_key("POST", "/v1/chat/completions", e.body)
             msg = sprint(showerror, e)
             @test contains(msg, "POST /v1/chat/completions") && contains(msg, "for model \"gpt-5.4-mini\"")
-            @test contains(msg, "the provider's API key") && contains(msg, ":record_missing")
+            @test contains(msg, "access to the provider") && contains(msg, ":record_missing")
             @test !contains(msg, "TYPESAFE_API_KEY") && !contains(msg, "asking") && !contains(msg, "\n")
 
             @test_throws ReplayMissError chatrequest!(; service=_RL_OPENAI, model="gpt-5.4-mini",

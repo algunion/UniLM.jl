@@ -280,7 +280,8 @@ result = fetch(chatrequest!(chat;
 [`respond`](@ref) reaches Ollama's OpenAI-compatible Responses API, which keeps no
 state between calls: `previous_response_id`, `store`, `conversation` and the other
 fields it would ignore are refused, and a [`Respond`](@ref) tool loop is refused in
-favour of `tool_loop!` on a `Chat`. [`fim_complete`](@ref) works with models that
+favour of `tool_loop!` on a `Chat`. The structured-output rule holds there too: a
+`json_schema` text format turns thinking off, and only function tools are accepted. [`fim_complete`](@ref) works with models that
 fill in the middle, such as `qwen2.5-coder` (Gemma 4 does not).
 
 ## [When something fails](@id ollama_failures)
@@ -295,10 +296,12 @@ fill in the middle, such as `qwen2.5-coder` (Gemma 4 does not).
 | `ArgumentError` before any request | an option Ollama would ignore | the message names it |
 | an empty answer with finish reason `"length"` | thinking used the whole `max_tokens` budget | raise `max_tokens`, or `reasoning_effort="none"` |
 | a slow first call | the model is loading | [`load_model`](@ref) first, or a longer `keep_alive` |
+| a streamed call that stays silent, then fails with a timeout | Ollama sends nothing while it loads the model, while the call waits its turn, or while the model writes a tool call | raise `stream_idle_timeout` |
 
 Ollama runs one request at a time per model unless `OLLAMA_NUM_PARALLEL` says
-otherwise: concurrent calls queue on the server. A streamed call waits for its turn
-before its first byte, so with many long streams in flight raise
-`stream_idle_timeout` ([Timeouts & Retries](@ref timeouts_guide)). An unreachable
+otherwise: concurrent calls queue on the server. A streamed call receives nothing
+until its turn comes — and nothing while the model writes a tool call — so with many
+long streams in flight, or a slow machine, raise `stream_idle_timeout` ([Timeouts &
+Retries](@ref timeouts_guide)); it bounds the wait for the first byte too. An unreachable
 server is retried like any transport failure; `RequestConfig(max_attempts=1)`
 reports it at once.

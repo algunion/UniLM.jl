@@ -300,6 +300,9 @@ _file_image(d::AbstractDict) =
     (get(d, "type", get(d, :type, nothing)) == "input_image" && (haskey(d, "file_id") || haskey(d, :file_id))) ||
     _file_image(collect(values(d)))
 
+# Keys of a function tool that Ollama's Responses tools do not have (OpenAI-only).
+const _OLLAMA_RESPOND_TOOL_KEYS = ("async", "allowed_callers", "defer_loading", "output_schema")
+
 function encode_agentic(service::OllamaEndpoint, r::Respond)::String
     fields = Symbol[f for f in _OLLAMA_RESPOND_UNMAPPED_FIELDS if !isnothing(getfield(r, f))]
     isempty(fields) || throw(ArgumentError(
@@ -309,21 +312,38 @@ function encode_agentic(service::OllamaEndpoint, r::Respond)::String
     isnothing(r.tool_choice) || r.tool_choice == "auto" || throw(ArgumentError(
         "Ollama has no tool_choice: the model decides whether to call a tool (\"auto\")"))
     rs = r.reasoning
-    if !isnothing(rs)
-        all(isnothing, (rs.generate_summary, rs.summary, rs.context, rs.mode)) || throw(ArgumentError(
-            "Ollama reads only reasoning.effort"))
-        isnothing(rs.effort) || rs.effort in _OLLAMA_EFFORTS || throw(ArgumentError(
-            "Ollama takes reasoning effort $(join(repr.(_OLLAMA_EFFORTS), ", ")) (got $(repr(rs.effort)))"))
-    end
+    isnothing(rs) || all(isnothing, (rs.generate_summary, rs.summary, rs.context, rs.mode)) ||
+        throw(ArgumentError("Ollama reads only reasoning.effort"))
     t = r.text
+    constrained = false
     if !isnothing(t)
         isnothing(t.verbosity) || throw(ArgumentError("Ollama ignores text.verbosity"))
         t.format.type in ("text", "json_schema") || throw(ArgumentError(
             "Ollama's Responses API constrains output only to a json_schema text.format (got $(repr(t.format.type)))"))
+        # Without a schema Ollama sends no format at all.
+        constrained = t.format.type == "json_schema"
+        constrained && !(t.format.schema isa AbstractDict) && throw(ArgumentError(
+            "a json_schema text.format needs its schema: without one Ollama constrains nothing"))
     end
+    # The Chat rule, for the same reason: a format turns thinking off, and a format with a
+    # thinking effort is refused (Ollama applies the format only after thinking ends).
+    effort = isnothing(rs) ? nothing : rs.effort
+    think = _ollama_think(effort, constrained)
     _file_image(r.input) && throw(ArgumentError(
         "Ollama reads input images from data URLs only; an input_image with a file_id would be skipped"))
-    invoke(encode_agentic, Tuple{OpenAIWireEndpointSpec,Respond}, service, r)
+    body = JSON.parse(invoke(encode_agentic, Tuple{OpenAIWireEndpointSpec,Respond}, service, r))
+    think === false && isnothing(effort) && (body["reasoning"] = Dict("effort" => "none"))
+    for tool in something(get(body, "tools", nothing), Any[])
+        type = get(tool, "type", nothing)
+        type == "function" || throw(ArgumentError(
+            "Ollama's Responses API runs function tools here (got a $(repr(type)) tool)"))
+        get(tool, "strict", nothing) === true && throw(ArgumentError(
+            "Ollama does not enforce strict tool schemas (tool $(repr(get(tool, "name", "")))); leave strict unset"))
+        extra = filter(k -> haskey(tool, k), _OLLAMA_RESPOND_TOOL_KEYS)
+        isempty(extra) || throw(ArgumentError(
+            "Ollama's Responses tools have no $(join(extra, ", ")) (tool $(repr(get(tool, "name", ""))))"))
+    end
+    JSON.json(body)
 end
 
 # ─── Embeddings (/api/embed) ────────────────────────────────────────────────

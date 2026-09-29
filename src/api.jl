@@ -391,7 +391,7 @@ Represents a single message in a Chat Completions conversation.
 
 # Validation
 - `role` must be one of `"system"`, `"user"`, `"assistant"`, `"tool"`.
-- At least one of `content`, `tool_calls`, or `refusal_message` must be non-`nothing`.
+- At least one of `content`, `tool_calls`, `refusal_message` or `attachments` must be given.
 - `tool_call_id` is required when `role == "tool"`.
 - `attachments` are accepted on user messages only; an empty vector is stored as `nothing`.
 
@@ -416,7 +416,9 @@ Message(Val(:user), "What colour is the shape?", ImageAttachment("shape.png"))
                      tool_call_id, provider_content=nothing, attachments=nothing)
         role in _MESSAGE_ROLES || throw(ArgumentError(
             "message role must be one of $(join(_MESSAGE_ROLES, ", ")) (got $(repr(role)))"))
-        isnothing(content) && isnothing(tool_calls) && isnothing(refusal_message) && throw(ArgumentError("`content`, `tool_calls`, and `refusal_message` cannot all be nothing"))
+        isnothing(content) && isnothing(tool_calls) && isnothing(refusal_message) &&
+            (isnothing(attachments) || isempty(attachments)) && throw(ArgumentError(
+                "`content`, `tool_calls`, `refusal_message` and `attachments` cannot all be empty"))
         role == RoleTool && isnothing(tool_call_id) && throw(ArgumentError("`tool_call_id` cannot be empty when role is `tool`"))
         isnothing(attachments) || !isempty(attachments) || (attachments = nothing)   # no media is no media list
         isnothing(attachments) || role == RoleUser || throw(ArgumentError(
@@ -654,7 +656,7 @@ omitted, so the model's own defaults apply. Options `Chat` already names
 - `top_k`, `min_p`, `repeat_last_n`, `repeat_penalty`: sampling.
 
 The constructor throws `ArgumentError` for a value out of range: `num_ctx`,
-`num_batch` and `num_thread` must be positive, `top_k` at least 1, `min_p` in
+`num_batch` and `num_thread` must be positive, `top_k` non-negative (0 turns top-k off), `min_p` in
 [0, 1], `repeat_penalty` non-negative, `repeat_last_n` and `num_keep` at least -1,
 `num_gpu` at least -1 and `main_gpu` non-negative.
 """
@@ -679,7 +681,7 @@ The constructor throws `ArgumentError` for a value out of range: `num_ctx`,
         isnothing(main_gpu)       || _check(main_gpu >= 0, "main_gpu must be non-negative (got $main_gpu)")
         isnothing(num_thread)     || _check(num_thread > 0, "num_thread must be positive (got $num_thread)")
         isnothing(num_keep)       || _check(num_keep >= -1, "num_keep must be at least -1 (got $num_keep)")
-        isnothing(top_k)          || _check(top_k >= 1, "top_k must be at least 1 (got $top_k)")
+        isnothing(top_k)          || _check(top_k >= 0, "top_k must be non-negative (got $top_k)")
         isnothing(min_p)          || _check(0.0 <= min_p <= 1.0, "min_p must be in [0, 1] (got $min_p)")
         isnothing(repeat_last_n)  || _check(repeat_last_n >= -1, "repeat_last_n must be at least -1 (got $repeat_last_n)")
         isnothing(repeat_penalty) || _check(repeat_penalty >= 0.0, "repeat_penalty must be non-negative (got $repeat_penalty)")
@@ -693,10 +695,11 @@ _ollama_options(o::OllamaOptions)::Dict{String,Any} =
     Dict{String,Any}(String(f) => getfield(o, f) for f in fieldnames(OllamaOptions) if !isnothing(getfield(o, f)))
 
 # `OLLAMA_HOST` → base URL, by the rules of Ollama's own clients: no scheme means
-# http on port 11434; an explicit http:// or https:// without a port means 80 or 443;
-# a missing host means 127.0.0.1; a path is kept. Blank means the default server. A
-# bind-all address (0.0.0.0, [::]) tells the server to listen everywhere; a client
-# reaches it on the loopback address, as the Ollama CLI does.
+# http on port 11434 (https on 443 for ollama.com); an explicit http:// or https://
+# without a port means 80 or 443; a missing host means 127.0.0.1; an IPv6 address may
+# be bracketed or bare; a path is kept. Blank means the default server. A bind-all
+# address (0.0.0.0, ::) tells the server to listen everywhere; a client reaches it on
+# the loopback address, as the Ollama CLI does.
 function _ollama_host_url(host::AbstractString)::String
     s = String(strip(host))
     isempty(s) && return "http://127.0.0.1:11434"
@@ -710,11 +713,15 @@ function _ollama_host_url(host::AbstractString)::String
     port = isnothing(m) ? "11434" : scheme == "https" ? "443" : "80"
     i = findfirst('/', rest)
     hostport, path = isnothing(i) ? (rest, "") : (rest[1:prevind(rest, i)], String(rstrip(rest[i:end], '/')))
+    count(==(':'), hostport) > 1 && !startswith(hostport, '[') && (hostport = "[" * hostport * "]")  # bare IPv6
+    if isnothing(m) && lowercase(hostport) == "ollama.com"                                  # Ollama's cloud
+        scheme, port = "https", "443"
+    end
     h = match(r"^(\[[^\]]*\]|[^:]*)(?::(\d*))?$", hostport)
     isnothing(h) && throw(ArgumentError("OLLAMA_HOST is not host[:port] (got $(repr(String(host))))"))
     given_host = String(h.captures[1]::SubString{String})
     name = isempty(given_host) || given_host == "0.0.0.0" ? "127.0.0.1" :
-           given_host == "[::]" ? "[::1]" : given_host
+           given_host in ("[::]", "[0:0:0:0:0:0:0:0]") ? "[::1]" : given_host
     p = h.captures[2]
     if !isnothing(p) && !isempty(p)
         n = tryparse(Int, p)
@@ -732,8 +739,8 @@ end
 A local (or remote) [Ollama](https://ollama.com) server. Chat requests use Ollama's
 native `/api/chat` API, which carries what the OpenAI-compatible route cannot: the
 context window and the other [`OllamaOptions`](@ref), how long the model stays
-loaded, and thinking control. [`respond`](@ref), [`Embeddings`](@ref) and
-[`FIMCompletion`](@ref) use Ollama's OpenAI-compatible routes.
+loaded, and thinking control; [`Embeddings`](@ref) use the native `/api/embed`.
+[`respond`](@ref) and [`FIMCompletion`](@ref) use Ollama's OpenAI-compatible routes.
 
 - `base_url`: server root, without `/v1` or `/api`. Defaults to the `OLLAMA_HOST`
   environment variable, read with the rules of Ollama's own clients (`"gpu-box"` →
@@ -752,7 +759,8 @@ loaded, and thinking control. [`respond`](@ref), [`Embeddings`](@ref) and
 - `options...`: keyword arguments of [`OllamaOptions`](@ref), e.g. `num_ctx=32_768`.
 
 No API key is sent. Local models cost nothing: [`estimated_cost`](@ref) reports `0.0`
-for them without a missing-price warning.
+for a chat or embeddings result without a missing-price warning (a `respond` or FIM
+result does not record its endpoint, so it is priced by its model name like any other).
 
 ```julia
 ollama = OllamaEndpoint(num_ctx=32_768, keep_alive=600)
@@ -770,8 +778,9 @@ struct OllamaEndpoint <: OpenAIWireEndpoint
         url = String(rstrip(base_url, '/'))
         occursin(r"^https?://[^/]", url) || throw(ArgumentError(
             "Ollama base_url must start with http:// or https:// (got $(repr(String(base_url))))"))
-        isnothing(keep_alive) || (!isnan(keep_alive) && keep_alive >= 0) || throw(ArgumentError(
-            "keep_alive must be a non-negative number of seconds, or Inf to keep the model loaded (got $keep_alive)"))
+        isnothing(keep_alive) || (!isnan(keep_alive) && 0 <= keep_alive && (isinf(keep_alive) || keep_alive <= 1e9)) ||
+            throw(ArgumentError("keep_alive must be a number of seconds from 0 to 1e9, or Inf to keep " *
+                                "the model loaded (got $keep_alive)"))
         new(url, isnothing(keep_alive) ? nothing : Float64(keep_alive), truncate, shift, options)
     end
 end

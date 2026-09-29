@@ -43,6 +43,10 @@
   encoders refuse them for now. `prefix_complete` sends each message in its full wire form.
 - A new guide, *Local Models with Ollama*, and an *Ollama* API page.
 
+### Fixed
+- The `SystemOneRequest` docstring shows its example question, which names a state key
+  in backticks, as text; the manual rendered it as a formula.
+
 ### Changed
 - The manual's LLM examples that ask open questions now ask for a short plain-text
   answer, so their recorded replies read cleanly in an output block instead of showing

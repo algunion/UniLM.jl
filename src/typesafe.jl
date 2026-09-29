@@ -417,7 +417,7 @@ per question.
 # Fields
 - `state::SystemOneState`: a string, object, or array — the content every
   question refers to. A question points into it by naming a key in backticks,
-  e.g. ``"Does `refund_policy` cover this charge?"``.
+  e.g. "Does \\`refund_policy\\` cover this charge?".
 - `questions::Vector{Pair{String,SystemOneQuestion}}`: ordered, with unique
   non-empty names. Answers come back keyed by these names.
 - `model::String`: `"jev-latest"`, `"jev-preview"`, or a pinned version such as

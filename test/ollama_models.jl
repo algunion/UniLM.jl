@@ -206,8 +206,9 @@ end
                                                "keep_alive" => -1, "options" => Dict("num_ctx" => 8192, "num_gpu" => 99))
         @test load_model("gemma4:e2b"; service=OllamaEndpoint(base_url=base), config=_OM_CFG) isa OllamaSuccess
         @test JSON.parse(seen[2].body) == Dict("model" => "gemma4:e2b", "messages" => [], "stream" => false)
-        @test load_model("gemma4:e2b"; service=OllamaEndpoint(base_url=base, keep_alive=600), config=_OM_CFG) isa OllamaSuccess
+        @test load_model("gemma4:e2b"; service=OllamaEndpoint(base_url=base, keep_alive=600, shift=false), config=_OM_CFG) isa OllamaSuccess
         @test JSON.parse(seen[3].body)["keep_alive"] == 600
+        @test JSON.parse(seen[3].body)["shift"] === false    # a runner setting: the chat that follows must not reload
         u = unload_model("gemma4:e2b"; service=ep, config=_OM_CFG)
         @test u isa OllamaSuccess{Nothing}
         @test JSON.parse(seen[4].body) == Dict("model" => "gemma4:e2b", "messages" => [], "stream" => false, "keep_alive" => 0)

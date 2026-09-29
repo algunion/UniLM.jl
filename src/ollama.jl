@@ -18,7 +18,8 @@ auth_header(::OllamaEndpoint)::Vector{Pair{String,String}} = ["Content-Type" => 
 provider_capabilities(::OllamaEndpoint) =
     Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses, :models])
 
-_model_hint(::OllamaEndpoint) = " (an installed model, e.g. model=\"gemma4:e4b\"; `ollama list` shows them)"
+_model_hint(::OllamaEndpoint) =
+    " (an installed model, e.g. model=\"gemma4:e4b\"; list_models(service=OllamaEndpoint()) lists them)"
 
 # A model on the caller's own machine is free: its turns cost 0.0, with no
 # missing-price warning.

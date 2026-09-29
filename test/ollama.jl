@@ -108,7 +108,7 @@ const _WEATHER = Tool(func=FunctionSignature(name="get_weather", description="We
     @test provider_capabilities(e) == Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses, :models])
     @test !occursin("redacted", sprint(show, e))                     # no key to hide
     @test_throws ArgumentError Chat(service=e)                       # no default model
-    @test occursin("ollama list", try Chat(service=e); "" catch x; x.msg end)
+    @test occursin("list_models(service=OllamaEndpoint())", try Chat(service=e); "" catch x; x.msg end)
 end
 
 @testset "URL routing" begin

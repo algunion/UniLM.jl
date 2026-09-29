@@ -365,7 +365,7 @@ AudioAttachment(path::AbstractString) = AudioAttachment(read(_attachment_file(pa
 # given where a file path is expected is named as such instead of failing as a missing file.
 _attachment_file(path::AbstractString) = occursin(r"^[A-Za-z][A-Za-z0-9+.-]*://", path) ? throw(ArgumentError(
     "attachments are read from a file or from bytes, not a URL ($(repr(String(path)))); download it " *
-    "first, e.g. ImageAttachment(HTTP.get(url).body)")) : path
+    "first (e.g. with Downloads.download) and pass the file or its bytes")) : path
 
 # The bytes stay reachable through the fields; printing them would flood the REPL.
 Base.show(io::IO, a::ImageAttachment) = print(io, "ImageAttachment(", a.mime, ", ", length(a.data), " bytes)")

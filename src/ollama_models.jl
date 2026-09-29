@@ -270,10 +270,10 @@ end
     load_model(name; service=OllamaEndpoint(), config=nothing, cancel=nothing)
 
 Load `name` into memory now, so the first request does not wait for it (an empty chat
-request, answered once the model is loaded). The endpoint's `keep_alive` and
-[`OllamaOptions`](@ref) go with it: Ollama loads the model with those options, and a
-later chat with a different `num_ctx`, `num_batch` or `num_gpu` loads it again — load
-through the endpoint you will chat with. Returns `OllamaSuccess{Nothing}`, an
+request, answered once the model is loaded). The endpoint's `keep_alive`, `shift` and
+[`OllamaOptions`](@ref) go with it: Ollama loads the model with those settings, and a
+later chat with a different `num_ctx`, `num_batch`, `num_gpu` or `shift` loads it again —
+load through the endpoint you will chat with. Returns `OllamaSuccess{Nothing}`, an
 [`OllamaFailure`](@ref) (404 for a model that is not installed), or an
 [`OllamaCallError`](@ref), also for a reply that does not report the load. `config` and
 `cancel` work as for [`model_info`](@ref). An empty `name` throws `ArgumentError` before
@@ -296,6 +296,7 @@ function load_model(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint
     end
     opts = _ollama_options(service.options)
     isempty(opts) || (body["options"] = opts)
+    isnothing(service.shift) || (body["shift"] = service.shift)
     _ollama_call(d -> _ollama_done(d, "load"), service, "POST", OLLAMA_CHAT_PATH, JSON.json(body), config, cancel)
 end
 

@@ -16,19 +16,13 @@ const _OLLAMA_MEDIA = joinpath(@__DIR__, "fixtures", "ollama")
 
 # The server's installed tags, or `nothing` when it does not answer.
 function _ollama_installed(ep::OllamaEndpoint)
-    try
-        r = HTTP.get(ep.base_url * "/api/tags"; readtimeout=5, connect_timeout=5, retry=false)
-        Set(String(m["name"]) for m in JSON.parse(r.body)["models"])
-    catch
-        nothing
-    end
+    r = list_models(; service=ep, config=RequestConfig(max_attempts=1, request_timeout=5.0))
+    r isa OllamaSuccess ? Set(m.name for m in r.response) : nothing
 end
 _has(tags, m) = m in tags || (m * ":latest") in tags
 
-# The server's loaded models, from /api/ps: name => context length.
-_ollama_ps(ep::OllamaEndpoint) =
-    Dict(String(m["name"]) => get(m, "context_length", nothing)
-         for m in JSON.parse(HTTP.get(ep.base_url * "/api/ps"; retry=false).body)["models"])
+# The server's loaded models: name => context length.
+_ollama_ps(ep::OllamaEndpoint) = Dict(m.name => m.context_length for m in running_models(; service=ep).response)
 
 const _OLLAMA_EP = OllamaEndpoint()
 const _OLLAMA_TAGS = get(ENV, "UNILM_LIVE_OLLAMA", "") == "1" ? _ollama_installed(_OLLAMA_EP) : nothing
@@ -233,6 +227,27 @@ end
                                  reasoning_effort="none", messages=copy(base.messages))) for _ in 1:3]
     @test all(t -> fetch(t) isa LLMSuccess, chats)
     @test all(t -> fetch(t) isa LLMSuccess, streams)
+end
+
+@testset "model management" begin
+    # Refuted by: a listing without the chat model's capabilities, a load that does not use the endpoint's
+    # context window, an unload that leaves the model loaded, or a pull of an installed tag that fails.
+    info = model_info(_OLLAMA_MODEL; service=_OLLAMA_EP)
+    @test info isa OllamaSuccess
+    @test issubset([:completion, :tools, :thinking], info.response.capabilities)
+    @test info.response.thinking_levels == [false, true] && (info.response.context_length::Int) >= 32_768
+    @test only(m for m in list_models(service=_OLLAMA_EP).response if m.name == _OLLAMA_MODEL).capabilities ==
+          info.response.capabilities
+    @test model_info("gemma4:no-such-tag"; service=_OLLAMA_EP) isa OllamaFailure
+    ep = OllamaEndpoint(num_ctx=8192)
+    @test load_model(_OLLAMA_MODEL; service=ep) isa OllamaSuccess
+    @test _ollama_ps(ep)[_OLLAMA_MODEL] == 8192
+    @test unload_model(_OLLAMA_MODEL; service=ep) isa OllamaSuccess
+    @test timedwait(() -> !haskey(_ollama_ps(ep), _OLLAMA_MODEL), 10.0) == :ok
+    seen = OllamaPullProgress[]
+    @test pull_model(_OLLAMA_EMBED; service=_OLLAMA_EP, progress=p -> push!(seen, p)) isa OllamaSuccess
+    @test first(seen).status == "pulling manifest" && last(seen).status == "success"
+    @test pull_model("gemma4:no-such-tag"; service=_OLLAMA_EP) isa OllamaCallError
 end
 
 @testset "record once, replay offline" begin

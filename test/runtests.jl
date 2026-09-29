@@ -47,6 +47,14 @@ end
         include("api.jl")
     end
 
+    @testset "message attachments" begin
+        include("attachments.jl")
+    end
+
+    @testset "Ollama (native /api/chat)" begin
+        include("ollama.jl")
+    end
+
     @testset "config.jl" begin
         include("config.jl")
     end

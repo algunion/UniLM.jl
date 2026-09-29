@@ -178,6 +178,11 @@ function _error_text(e)::String
     _mask_auth_headers(txt)
 end
 
+# `_error_text` followed by what the endpoint knows about the failure, such as how to
+# reach a local server that did not answer. Endpoints add `_failure_hint` methods.
+_error_text(service, e)::String = _error_text(e) * _failure_hint(service, e)
+_failure_hint(_, _) = ""
+
 # HTTP.jl's timeout kwargs take ::Real seconds but require them finite: Inf
 # must be translated to the documented "off" value 0 BEFORE the call.
 _native_seconds_real(x::Float64)::Float64 = x == Inf ? 0.0 : x
@@ -1253,8 +1258,9 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
             end
         end
         serr = state.error
-        if !isnothing(serr)
-            # In-band `error` event on an HTTP-200 stream: never LLMSuccess.
+        if !isnothing(serr) && resp.status == 200
+            # In-band `error` event on an HTTP-200 stream: never LLMSuccess. (On any
+            # other status the body is the failure: its status and bytes are kept below.)
             return (; result=_stream_error_result(chat, serr, _get_request_id(resp),
                                                   state.sse_dropped), resp)
         elseif resp.status == 200 && !isnothing(m[])
@@ -1387,7 +1393,7 @@ function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestCon
             return LLMCallError(error=sprint(showerror, u), self=chat, status=nothing,
                                 request_id=req_id, cause=u)
         statuserror = hasproperty(u, :status) ? u.status : nothing
-        return LLMCallError(error=_error_text(e), self=chat, status=statuserror,
+        return LLMCallError(error=_error_text(chat.service, e), self=chat, status=statuserror,
                             request_id=req_id, cause=u isa Exception ? u : nothing)
     finally
         _off_cancel(token, link)
@@ -1524,7 +1530,7 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
                                                   status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return LLMCallError(error=_error_text(e), self=chat, status=statuserror,
+        return LLMCallError(error=_error_text(chat.service, e), self=chat, status=statuserror,
                             request_id=req_id, cause=e isa Exception ? e : nothing)
     end
 end
@@ -1581,6 +1587,12 @@ _prompt_message(role::String, prompt::AbstractString)::Message = Message(; role,
 _prompt_message(::String, prompt::Message)::Message = prompt
 
 
+# The embeddings wire: the OpenAI Embeddings API unless the endpoint speaks its own.
+# Encoding runs before any I/O, so a request the endpoint cannot express throws.
+# Decoding yields the OpenAI-shaped rows (`{"embedding", "index"}`) and the usage.
+_encode_embeddings(_, emb::Embeddings)::String = JSON.json(emb)
+_decode_embeddings(_, data::Dict{String,Any}) = (data["data"], _parse_usage(data))
+
 """
     embeddingrequest!(emb::Embeddings; config=nothing, cancel=nothing) -> LLMRequestResponse
 
@@ -1611,16 +1623,17 @@ function embeddingrequest!(emb::Embeddings; config::Union{Nothing,RequestConfig}
     cfg = _resolve_config(config)
     tok = _resolve_cancel(cancel)
     t0 = time_ns()
+    body = _encode_embeddings(emb.service, emb)
     try
-        body = JSON.json(emb)
         url = get_url(emb)
         resp = _recorded_exchange("POST", url, body, t0, tok) do
             _http_with_retries(cfg, t0, "POST", url, auth_header(emb.service), body; cancel=tok)
         end
         if resp.status == 200
             data = JSON.parse(resp.body; dicttype=Dict{String,Any})
-            update!(emb, data["data"])
-            return EmbeddingSuccess(embeddings=emb, usage=_parse_usage(data), raw=data)
+            rows, usage = _decode_embeddings(emb.service, data)
+            update!(emb, rows)
+            return EmbeddingSuccess(; embeddings=emb, usage, raw=data)
         else
             return EmbeddingFailure(response=String(resp.body), status=resp.status)
         end
@@ -1629,7 +1642,7 @@ function embeddingrequest!(emb::Embeddings; config::Union{Nothing,RequestConfig}
         e isa UniLMTimeout && return EmbeddingCallError(error=sprint(showerror, e),
                                                         status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
-        return EmbeddingCallError(error=_error_text(e), status=statuserror,
+        return EmbeddingCallError(error=_error_text(emb.service, e), status=statuserror,
                                   cause=e isa Exception ? e : nothing)
     end
 end

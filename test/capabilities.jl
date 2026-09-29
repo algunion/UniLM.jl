@@ -47,10 +47,9 @@ end
 end
 
 @testset "OllamaEndpoint" begin
-    ollama = OllamaEndpoint()
-    @test ollama isa GenericOpenAIEndpoint
-    @test ollama.base_url == "http://localhost:11434"
-    @test ollama.api_key == ""
+    ollama = withenv(OllamaEndpoint, "OLLAMA_HOST" => nothing)
+    @test ollama isa UniLM.OpenAIWireEndpoint
+    @test ollama.base_url == "http://127.0.0.1:11434"
     caps = provider_capabilities(ollama)
     @test :chat in caps
     @test :embeddings in caps

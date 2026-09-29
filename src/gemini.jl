@@ -111,6 +111,7 @@ end
 
 function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
     _gemini_validate_chat(chat)
+    _reject_attachments(chat, "Gemini generateContent")
     body = Dict{Symbol,Any}()
     sysinstr, contents = _gemini_contents(chat.messages)
     isnothing(sysinstr) || (body[:systemInstruction] = Dict(:parts => [Dict(:text => sysinstr)]))

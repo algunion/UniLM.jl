@@ -53,6 +53,12 @@ const IMAGES_GENERATIONS_PATH::String = "/v1/images/generations"
 """Legacy Completions API path (used for FIM by DeepSeek and Ollama; Mistral uses `MISTRAL_FIM_PATH`)."""
 const COMPLETIONS_PATH::String = "/v1/completions"
 
+"""Ollama native chat path (`POST`; JSON reply, or newline-delimited JSON when streaming)."""
+const OLLAMA_CHAT_PATH::String = "/api/chat"
+
+"""Ollama native embeddings path (`POST`)."""
+const OLLAMA_EMBED_PATH::String = "/api/embed"
+
 """Mistral API host (the base URL of [`MistralEndpoint`](@ref))."""
 const MISTRAL_API_HOST::String = "api.mistral.ai"
 

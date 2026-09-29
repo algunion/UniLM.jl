@@ -181,6 +181,7 @@ end
 
 function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
     _anthropic_validate_fields(chat)
+    _reject_attachments(chat, "Anthropic Messages")
     fam = _claude_family(chat.model)
     _anthropic_validate_model(chat, fam)
     body = Dict{Symbol,Any}(:model => chat.model)

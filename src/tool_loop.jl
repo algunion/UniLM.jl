@@ -451,6 +451,9 @@ function tool_loop(r::Respond, dispatcher::Function;
                    tool_concurrency::Int=1)::ToolLoopResult
     _check_max_turns(max_turns)
     _check_concurrency(tool_concurrency)
+    _stateless_responses(r.service) && throw(ArgumentError(
+        "$(_service_name(r.service))'s Responses API keeps no state between calls, so a Respond " *
+        "tool loop cannot chain its turns; run the loop on a Chat with tool_loop!"))
     tok = _resolve_cancel(cancel)
     t0 = time_ns()
     _in_cancel_scope(tok) do

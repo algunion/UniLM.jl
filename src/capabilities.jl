@@ -126,9 +126,13 @@ default_fim_model(_) = nothing
 function _resolve_model(service, model::String)
     !isempty(model) && return model
     dm = default_model(service)
-    isnothing(dm) && throw(ArgumentError("model must be specified when using $(_service_name(service))"))
+    isnothing(dm) && throw(ArgumentError("model must be specified when using $(_service_name(service))" *
+                                         _model_hint(service)))
     dm
 end
+
+# What to name in the missing-model error, where an endpoint has more to say.
+_model_hint(_) = ""
 
 _model_family(model::AbstractString, family::AbstractString) =
     model == family || startswith(model, family * "-")

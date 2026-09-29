@@ -1,0 +1,126 @@
+{
+    "models": [
+        {
+            "name": "gemma4:e2b",
+            "model": "gemma4:e2b",
+            "modified_at": "2026-09-29T10:05:41.659835542+03:00",
+            "size": 7162405886,
+            "digest": "7fbdbf8f5e45a75bb122155ed546e765b4d9c53a1285f62fd9f506baa1c5a47e",
+            "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "gemma4",
+                "families": [
+                    "gemma4"
+                ],
+                "parameter_size": "5.1B",
+                "quantization_level": "Q4_K_M",
+                "context_length": 131072,
+                "embedding_length": 1536
+            },
+            "capabilities": [
+                "completion",
+                "vision",
+                "audio",
+                "tools",
+                "thinking"
+            ]
+        },
+        {
+            "name": "gemma4:31b",
+            "model": "gemma4:31b",
+            "modified_at": "2026-09-17T22:19:15.792684857+03:00",
+            "size": 19868981791,
+            "digest": "6316f0629137b426c9d9b853ffc4c8209589f30ee39aebede6285096c0ff47e7",
+            "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "gemma4",
+                "families": [
+                    "gemma4"
+                ],
+                "parameter_size": "31.3B",
+                "quantization_level": "Q4_K_M",
+                "context_length": 262144,
+                "embedding_length": 5376
+            },
+            "capabilities": [
+                "completion",
+                "vision",
+                "tools",
+                "thinking"
+            ]
+        },
+        {
+            "name": "qwen2.5-coder:1.5b-base",
+            "model": "qwen2.5-coder:1.5b-base",
+            "modified_at": "2026-08-29T13:11:08.261532909+03:00",
+            "size": 986060385,
+            "digest": "02e0f2817a890a6de385d534465c04c5d0980abddc83615c09e79cee2c094446",
+            "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "qwen2",
+                "families": [
+                    "qwen2"
+                ],
+                "parameter_size": "1.5B",
+                "quantization_level": "Q4_K_M",
+                "context_length": 32768,
+                "embedding_length": 1536
+            },
+            "capabilities": [
+                "completion",
+                "insert"
+            ]
+        },
+        {
+            "name": "embeddinggemma:latest",
+            "model": "embeddinggemma:latest",
+            "modified_at": "2026-08-29T13:10:11.481168804+03:00",
+            "size": 621875917,
+            "digest": "85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1",
+            "details": {
+                "parent_model": "embeddinggemma:300m-bf16",
+                "format": "gguf",
+                "family": "gemma3",
+                "families": [
+                    "gemma3"
+                ],
+                "parameter_size": "307.58M",
+                "quantization_level": "BF16",
+                "context_length": 2048,
+                "embedding_length": 768
+            },
+            "capabilities": [
+                "embedding"
+            ]
+        },
+        {
+            "name": "gemma4:latest",
+            "model": "gemma4:latest",
+            "modified_at": "2026-04-05T21:37:32.366021271+03:00",
+            "size": 9608350718,
+            "digest": "c6eb396dbd5992bbe3f5cdb947e8bbc0ee413d7c17e2beaae69f5d569cf982eb",
+            "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "gemma4",
+                "families": [
+                    "gemma4"
+                ],
+                "parameter_size": "8.0B",
+                "quantization_level": "Q4_K_M",
+                "context_length": 131072,
+                "embedding_length": 2560
+            },
+            "capabilities": [
+                "completion",
+                "vision",
+                "audio",
+                "tools",
+                "thinking"
+            ]
+        }
+    ]
+}

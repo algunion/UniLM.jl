@@ -1,0 +1,23 @@
+{
+    "models": [
+        {
+            "name": "gemma4:e2b",
+            "model": "gemma4:e2b",
+            "size": 8141469121,
+            "digest": "7fbdbf8f5e45a75bb122155ed546e765b4d9c53a1285f62fd9f506baa1c5a47e",
+            "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "gemma4",
+                "families": [
+                    "gemma4"
+                ],
+                "parameter_size": "5.1B",
+                "quantization_level": "Q4_K_M"
+            },
+            "expires_at": "2026-09-29T10:11:00.036845+03:00",
+            "size_vram": 8141469121,
+            "context_length": 131072
+        }
+    ]
+}

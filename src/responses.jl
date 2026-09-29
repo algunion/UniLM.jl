@@ -1525,7 +1525,7 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
             end
             statuserror = hasproperty(u, :status) ? u.status : nothing
             req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : _get_request_id(e)
-            return ResponseCallError(error=_error_text(e), status=statuserror, request_id=req_id, cause=u isa Exception ? u : nothing)
+            return ResponseCallError(error=_error_text(r.service, e), status=statuserror, request_id=req_id, cause=u isa Exception ? u : nothing)
         finally
             # Disarm on EVERY attempt exit — every return, every continue, and the
             # interrupt rethrow (which is neither) — so the periodic idle timer never
@@ -1576,6 +1576,10 @@ wire overrides it (the Gemini Interactions backend is the in-repo reference). An
 Public extension API (not exported); see the Custom Backends guide.
 """
 encode_agentic(service::OpenAIWireEndpointSpec, r::Respond)::String = JSON.json(r)
+
+# Whether the endpoint's Responses API forgets every call (no previous_response_id,
+# no conversation): a Respond tool loop cannot chain turns there.
+_stateless_responses(_) = false
 
 """
     decode_agentic(service, resp::HTTP.Response) -> ResponseObject
@@ -1693,17 +1697,17 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
         # As in `ask`: a missing recording, or a paid reply's lost recording, reaches
         # the caller instead of reading as a service failure.
         e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
-        return _response_call_error(e, @isdefined(resp) ? resp : nothing)
+        return _response_call_error(e, @isdefined(resp) ? resp : nothing; service=r.service)
     end
 end
 
 # The result for an exception that ended a non-streaming Responses call (`respond`
 # and the lifecycle operations): `cause` always carries the exception; a timeout or
 # cancellation keeps its own rendering and never reports an HTTP status.
-function _response_call_error(e, resp::Union{Nothing,HTTP.Response})::ResponseCallError
+function _response_call_error(e, resp::Union{Nothing,HTTP.Response}; service=nothing)::ResponseCallError
     e isa Union{UniLMTimeout,UniLMCancelled} &&
         return ResponseCallError(error=sprint(showerror, e), status=nothing, cause=e)
-    ResponseCallError(error=_error_text(e), status=(hasproperty(e, :status) ? e.status : nothing),
+    ResponseCallError(error=_error_text(service, e), status=(hasproperty(e, :status) ? e.status : nothing),
                       request_id=(isnothing(resp) ? _get_request_id(e) : _get_request_id(resp)),
                       cause=(e isa Exception ? e : nothing))
 end

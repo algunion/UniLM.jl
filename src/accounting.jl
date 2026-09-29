@@ -166,6 +166,7 @@ function estimated_cost(result::LLMRequestResponse;
     pricing::AbstractDict{String, PriceRow}=DEFAULT_PRICING)::Float64
 
     u = token_usage(result)
+    isnothing(model) && _is_local(_result_service(result)) && return 0.0
     mdl = if !isnothing(model)
         model
     elseif result isa LLMSuccess
@@ -200,6 +201,13 @@ function _price_row(pricing::AbstractDict{String,PriceRow}, model::String)::Unio
         "unilm_unpriced_", model) maxlog = 1
     rates
 end
+
+# The endpoint a result came from, where the result records it; a local one prices
+# at 0.0 (`_is_local`, defined with the endpoint).
+_result_service(r::LLMSuccess) = r.self.service
+_result_service(r::EmbeddingSuccess) = r.embeddings.service
+_result_service(_) = nothing
+_is_local(_) = false
 
 # Override the stub from requests.jl to accumulate cost automatically
 _accumulate_cost!(chat::Chat, result::LLMSuccess) = (chat._cumulative_cost[] += estimated_cost(result); nothing)

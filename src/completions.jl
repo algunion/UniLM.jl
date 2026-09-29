@@ -232,7 +232,7 @@ function fim_complete(fim::FIMCompletion; config::Union{Nothing,RequestConfig}=n
         e isa UniLMTimeout && return FIMCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return FIMCallError(error=_error_text(e), status=statuserror, request_id=req_id,
+        return FIMCallError(error=_error_text(fim.service, e), status=statuserror, request_id=req_id,
                             cause=e isa Exception ? e : nothing)
     end
 end
@@ -290,15 +290,9 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
     isempty(chat) && throw(ArgumentError("Chat must not be empty for prefix completion"))
     last(chat).role != RoleAssistant && throw(ArgumentError("Last message must be role=assistant for prefix completion"))
     body_dict = JSON.lower(chat)
-    # Convert messages to mutable dicts so we can inject the prefix flag
-    msgs = map(body_dict[:messages]) do m
-        d = Dict{Symbol,Any}(:role => m.role)
-        !isnothing(m.content) && (d[:content] = m.content)
-        !isnothing(m.name) && (d[:name] = m.name)
-        !isnothing(m.tool_calls) && (d[:tool_calls] = m.tool_calls)
-        !isnothing(m.tool_call_id) && (d[:tool_call_id] = m.tool_call_id)
-        d
-    end
+    # The messages' own wire form (attachments included), as mutable dicts so the
+    # prefix flag can be set on the last one.
+    msgs = Dict{Symbol,Any}[JSON.lower(m) for m in chat.messages]
     msgs[end][:prefix] = true
     body_dict[:messages] = msgs
     body = JSON.json(body_dict)
@@ -325,7 +319,7 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
         e isa UniLMTimeout && return LLMCallError(error=sprint(showerror, e), self=chat, status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
-        return LLMCallError(error=_error_text(e), self=chat, status=statuserror, request_id=req_id,
+        return LLMCallError(error=_error_text(chat.service, e), self=chat, status=statuserror, request_id=req_id,
                             cause=e isa Exception ? e : nothing)
     end
 end

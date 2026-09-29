@@ -28,8 +28,8 @@ end
     fim = FIMCompletion(service=ds, prompt="test")
     @test UniLM.get_url(ds, fim) == "https://api.deepseek.com/beta/v1/completions"
 
-    ollama = OllamaEndpoint()
-    fim2 = FIMCompletion(service=ollama, prompt="test")
+    ollama = OllamaEndpoint(base_url="http://localhost:11434")
+    fim2 = FIMCompletion(service=ollama, model="qwen2.5-coder:1.5b-base", prompt="test")
     @test UniLM.get_url(ollama, fim2) == "http://localhost:11434/v1/completions"
 
     gen = GenericOpenAIEndpoint("http://localhost:8000/", "")

@@ -122,6 +122,11 @@ type (dispatch is on the first argument); see the Custom Backends guide.
 """
 function handle_sse_event! end
 
+# How a provider frames its stream into (event, payload) pairs: SSE for every
+# built-in wire but Ollama's, whose lines are each one JSON payload (src/ollama.jl).
+_stream_frames(service, carry::IOBuffer, current_event::Ref{String}, chunk::String) =
+    _sse_events!(carry, current_event, chunk)
+
 """
     _sse_dispatch!(service, carry::IOBuffer, current_event::Ref{String},
                    chunk::String, state::StreamState) -> Symbol
@@ -135,7 +140,7 @@ payload's: it propagates.
 """
 function _sse_dispatch!(service, carry::IOBuffer, current_event::Ref{String},
                         chunk::String, state::StreamState)::Symbol
-    for (event, payload) in _sse_events!(carry, current_event, chunk)
+    for (event, payload) in _stream_frames(service, carry, current_event, chunk)
         status = try
             handle_sse_event!(service, event, payload, state)
         catch e

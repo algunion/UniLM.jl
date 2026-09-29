@@ -66,6 +66,7 @@ include("gemini.jl")
 include("interactions.jl")
 include("deepseek.jl")
 include("completions.jl")
+include("ollama.jl")
 include("accounting.jl")
 include("typesafe.jl")
 include("recorded_answers.jl")
@@ -98,6 +99,7 @@ export
     ANTHROPICServiceEndpoint,
     GenericOpenAIEndpoint,
     OllamaEndpoint,
+    OllamaOptions,
     MistralEndpoint,
     DeepSeekEndpoint,
     add_azure_deploy_name!
@@ -121,6 +123,9 @@ export
     Chat,
     Message,
     ProviderContent,
+    Attachment,
+    ImageAttachment,
+    AudioAttachment,
     RoleSystem,
     RoleUser,
     RoleAssistant,
@@ -152,6 +157,7 @@ export
     issuccess,
     isfailure,
     text,
+    reasoning_text,
     # Token usage and accounting
     TokenUsage,
     token_usage,

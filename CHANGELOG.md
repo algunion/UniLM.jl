@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.23.0
 
 ### Breaking
 - `OllamaEndpoint` is its own type (`OllamaEndpoint <: OpenAIWireEndpoint`), no longer a

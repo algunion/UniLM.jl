@@ -16,14 +16,15 @@
 - Ollama, with Gemma 4 as the reference model (`gemma4:e4b`, measured on Ollama 0.34.4):
   - The native API carries what the OpenAI-compatible route ignores: the context window
     and the other runtime options (`OllamaEndpoint(num_ctx=32_768, top_k=64, …)`, typed as
-    `OllamaOptions`), `keep_alive` (seconds, `Inf` to stay loaded) and thinking control.
+    `OllamaOptions`), `keep_alive` (seconds, `Inf` to stay loaded) and the `think` and
+    `truncate` fields.
   - Thinking is captured (streamed or not) and sent back with its turn, which Gemma 4's
     tool loops rely on; `reasoning_text(result)` reads it, and also DeepSeek's
     `reasoning_content`, Anthropic thinking blocks and Gemini thought parts.
   - A `response_format` turns thinking off: Ollama constrains a reply only after thinking
-    ends, and with thinking on `gemma4:e4b` answered plain text to 10 of 10 schema
-    requests (10 of 10 valid with it off). A format together with a thinking effort is
-    refused.
+    ends, and with thinking at its default `gemma4:e4b` answered plain text to 10 of 10
+    schema requests (10 of 10 valid with it off). A format together with a thinking
+    effort is refused; `respond` follows the same rule for a `json_schema` text format.
   - An input that does not fit the context window is an HTTP 400 ("exceeds the available
     context size") instead of an answer to a silently shortened prompt, for chat and for
     embeddings (`truncate=false` by default; `truncate=true` restores Ollama's behaviour).

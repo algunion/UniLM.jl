@@ -12,9 +12,9 @@ One model installed on an Ollama server, as [`list_models`](@ref) reports it
 (`/api/tags`): `name` (e.g. `"gemma4:e4b"`), `size` on disk in bytes, content `digest`,
 `modified_at` (the server's RFC 3339 text), and from its details `family`,
 `parameter_size` (e.g. `"8.0B"`), `quantization` (e.g. `"Q4_K_M"`) and
-`context_length`, the longest context the model supports. `capabilities` is a subset
-of `:completion`, `:tools`, `:insert`, `:vision`, `:embedding`, `:thinking`, `:image`
-and `:audio`. A detail the server does not report is `nothing`; `raw` holds the
+`context_length`, the longest context the model supports. `capabilities` holds what
+the server reports, e.g. `:completion`, `:tools`, `:insert`, `:vision`, `:embedding`,
+`:thinking`, `:image` and `:audio`. A detail the server does not report is `nothing`; `raw` holds the
 unparsed entry.
 """
 struct OllamaModel
@@ -79,7 +79,8 @@ end
 One progress report of [`pull_model`](@ref): `status` (`"pulling manifest"`,
 `"pulling <digest prefix>"`, `"verifying sha256 digest"`, `"writing manifest"`,
 `"success"`) and, while a layer downloads, its `digest` and the `completed` and
-`total` bytes (`nothing` otherwise).
+`total` bytes (`nothing` otherwise). `completed` is an `Int` whenever `total` is:
+Ollama leaves a zero count out of its report, and it is read back as `0`.
 """
 struct OllamaPullProgress
     status::String
@@ -217,7 +218,8 @@ _list_models(service::OllamaEndpoint, config::Union{Nothing,RequestConfig}, canc
                  UInt8[], config, cancel)
 
 """
-    model_info(name; service=OllamaEndpoint(), config=nothing, cancel=nothing)
+    model_info(name; service=OllamaEndpoint(), config=nothing,
+                     cancel=nothing)
 
 What an Ollama server knows about the installed model `name` (`POST /api/show`):
 an [`OllamaSuccess`](@ref) holding an [`OllamaModelInfo`](@ref) — capabilities, context
@@ -240,7 +242,8 @@ function model_info(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint
 end
 
 """
-    running_models(; service=OllamaEndpoint(), config=nothing, cancel=nothing)
+    running_models(; service=OllamaEndpoint(), config=nothing,
+                     cancel=nothing)
 
 The models an Ollama server holds in memory now (`GET /api/ps`): an
 [`OllamaSuccess`](@ref) holding a `Vector{`[`OllamaRunningModel`](@ref)`}` — empty when
@@ -267,7 +270,8 @@ function _ollama_done(d::Dict{String,Any}, expected::String)::Nothing
 end
 
 """
-    load_model(name; service=OllamaEndpoint(), config=nothing, cancel=nothing)
+    load_model(name; service=OllamaEndpoint(), config=nothing,
+                     cancel=nothing)
 
 Load `name` into memory now, so the first request does not wait for it (an empty chat
 request, answered once the model is loaded). The endpoint's `keep_alive`, `shift` and
@@ -282,7 +286,7 @@ an unload.
 
 ```julia
 ollama = OllamaEndpoint(num_ctx=32_768, keep_alive=Inf)
-load_model("gemma4:e4b"; service=ollama)   # stays loaded, with a 32k context
+load_model("gemma4:e4b"; service=ollama)  # 32k context, stays loaded
 ```
 """
 function load_model(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint(),
@@ -301,7 +305,8 @@ function load_model(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint
 end
 
 """
-    unload_model(name; service=OllamaEndpoint(), config=nothing, cancel=nothing)
+    unload_model(name; service=OllamaEndpoint(), config=nothing,
+                       cancel=nothing)
 
 Free the memory `name` holds now rather than when its keep-alive runs out (an empty
 chat request with `keep_alive` 0). Returns `OllamaSuccess{Nothing}`, an
@@ -335,6 +340,8 @@ function _decode_pull_line(line::AbstractString)::Union{OllamaPullProgress,Nothi
     err = get(d, "error", nothing)
     isnothing(err) || error(err isa AbstractString ? err : JSON.json(err))
     s, digest, completed, total = (get(d, k, nothing) for k in ("status", "digest", "completed", "total"))
+    # Ollama omits a zero `completed` (JSON omitempty): a layer that has not started reports only its total.
+    isnothing(completed) && total isa Int && (completed = 0)
     s isa String && digest isa Union{String,Nothing} && completed isa Union{Int,Nothing} &&
         total isa Union{Int,Nothing} || return nothing
     OllamaPullProgress(s, digest, completed, total)
@@ -359,7 +366,8 @@ function _pull_lines!(report::Function, carry::IOBuffer, chunk::String, dropped:
 end
 
 """
-    pull_model(name; service=OllamaEndpoint(), progress=nothing, config=nothing, cancel=nothing)
+    pull_model(name; service=OllamaEndpoint(), progress=nothing,
+               config=nothing, cancel=nothing)
 
 Download `name` from the Ollama registry to the server (`POST /api/pull`).
 `progress(p::`[`OllamaPullProgress`](@ref)`)` runs once per report the server streams,
@@ -378,7 +386,9 @@ excluded — bounds the download, however long it runs. `cancel` (default: the a
 An empty `name` throws `ArgumentError` before any request.
 
 ```julia
-r = pull_model("gemma4:e2b"; progress=p -> println(p.status, " ", something(p.completed, ""), "/", something(p.total, "")))
+show_progress(p) = isnothing(p.total) ? println(p.status) :
+    println(p.status, " ", p.completed, "/", p.total, " bytes")
+r = pull_model("gemma4:e2b"; progress=show_progress)
 issuccess(r)
 ```
 """

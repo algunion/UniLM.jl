@@ -263,8 +263,8 @@ println("Model: ", r.model)
 
 ## Ollama (local)
 
-[`OllamaEndpoint`](@ref) speaks Ollama's native API — the context window, keep-alive
-and thinking controls the OpenAI-compatible route ignores — and needs no key. [Local
+[`OllamaEndpoint`](@ref) speaks Ollama's native API — the context window, keep-alive,
+`think` and `truncate` fields the OpenAI-compatible route ignores — and needs no key. [Local
 Models with Ollama](@ref ollama_guide) covers it in full.
 
 ```@example backends

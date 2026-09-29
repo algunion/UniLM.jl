@@ -11,7 +11,7 @@ results that say what to do.
 pull a model:
 
 ```bash
-ollama pull gemma4:e4b      # Gemma 4 E4B: text, images, audio, tools (9.6 GB)
+ollama pull gemma4:e4b      # text, images, audio, tools (9.6 GB)
 ollama pull embeddinggemma  # embeddings (0.6 GB)
 ```
 
@@ -21,21 +21,22 @@ rules as Ollama's own clients, so `gpu-box` means `http://gpu-box:11434`), else 
 
 ## Which path?
 
-| I want to… | Use | You get | Section |
-| :--- | :--- | :--- | :--- |
-| chat with a local model | `Chat(service=OllamaEndpoint(), model="gemma4:e4b")` | the reply, its token counts, a cost of 0.0 | [First chat](@ref ollama_first) |
-| see how the model reasoned | `reasoning_effort="low"` and [`reasoning_text`](@ref) | the thinking text, when the model thinks | [Thinking](@ref ollama_thinking) |
-| let the model call Julia functions | `tools` and [`tool_loop!`](@ref) | the calls run and a final answer | [Tools](@ref ollama_tools) |
-| get JSON that matches a schema | `response_format=UniLM.json_schema(…)` | JSON that follows the schema | [Structured output](@ref ollama_json) |
-| ask about an image or a recording | [`ImageAttachment`](@ref), [`AudioAttachment`](@ref) | an answer about what the model saw or heard | [Images and audio](@ref ollama_media) |
-| embed texts for search | `Embeddings(…; service=OllamaEndpoint(), model="embeddinggemma")` | one vector per text | [Embeddings](@ref ollama_embeddings) |
-| give the model more context, or keep it loaded | `OllamaEndpoint(num_ctx=…, keep_alive=…)` | the model run the way you asked | [Runtime options](@ref ollama_options) |
-| install, inspect or unload models from Julia | [`list_models`](@ref), [`pull_model`](@ref), [`model_info`](@ref), … | typed model cards | [Models](@ref ollama_models) |
-| know what went wrong | the result's status and text | a remedy in the message | [When something fails](@ref ollama_failures) |
+| I want to… | Use | You get |
+| :--- | :--- | :--- |
+| [chat with a local model](@ref ollama_first) | `Chat(service=OllamaEndpoint(), model="gemma4:e4b")` | the reply, its token counts, a cost of 0.0 |
+| [see how the model reasoned](@ref ollama_thinking) | `reasoning_effort="low"`, [`reasoning_text`](@ref) | the thinking text, when the model thinks |
+| [let the model call Julia functions](@ref ollama_tools) | `tools`, [`tool_loop!`](@ref) | the calls run, then a final answer |
+| [get JSON that matches a schema](@ref ollama_json) | `response_format=UniLM.json_schema(…)` | JSON that follows the schema |
+| [ask about an image or a recording](@ref ollama_media) | [`ImageAttachment`](@ref), [`AudioAttachment`](@ref) | an answer about what the model saw or heard |
+| [embed texts for search](@ref ollama_embeddings) | `Embeddings(…; service=OllamaEndpoint(), model="embeddinggemma")` | one vector per text |
+| [give the model more context, or keep it loaded](@ref ollama_options) | `OllamaEndpoint(num_ctx=…, keep_alive=…)` | the model run the way you asked |
+| [install, inspect or unload models](@ref ollama_models) | [`list_models`](@ref), [`pull_model`](@ref), [`model_info`](@ref), … | typed model cards |
+| [know what went wrong](@ref ollama_failures) | the result's status and message | the fix for each failure |
 
-Every example on this page ran against `gemma4:e4b` on Ollama 0.34.4, on an Apple
-M4 Max with 64 GB; the manual replays those recorded answers ([Test and
-Develop](@ref jev_testing_recorded)), so its build needs no Ollama server.
+Every executed example on this page ran on Ollama 0.34.4 on an Apple M4 Max with
+64 GB, against `gemma4:e4b` (the embeddings one against `embeddinggemma`); the manual
+replays those recorded answers ([Test and Develop](@ref jev_testing_recorded)), so
+its build needs no Ollama server.
 
 ## [First chat](@id ollama_first)
 
@@ -58,7 +59,7 @@ result.usage, estimated_cost(result)
 
 A local model has no price, so its cost is 0.0 — without the missing-price warning
 other unlisted models get. The first request to a model also loads it into memory:
-about 2 s for Gemma 4 E4B on the machine above, then about 0.05 s to the first token.
+about 1.7 s for Gemma 4 E4B on the machine above, then about 0.04 s to the first token.
 [`load_model`](@ref) loads it ahead of time.
 
 ## [Thinking](@id ollama_thinking)
@@ -73,8 +74,9 @@ chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b",
             reasoning_effort="low", temperature=0.0)
 push!(chat, Message(Val(:system), "You are concise."))
 push!(chat, Message(Val(:user),
-    "A bat and a ball cost 1.10 in total. The bat costs 1.00 more than " *
-    "the ball. How much does the ball cost? Answer with the number only."))
+    "A bat and a ball cost 1.10 in total. The bat costs 1.00 more " *
+    "than the ball. How much does the ball cost? " *
+    "Answer with the number only."))
 result = chatrequest!(chat)
 text(result)
 ```
@@ -84,8 +86,10 @@ print(first(reasoning_text(result), 300), "…")
 ```
 
 The thinking stays on its turn in `chat`, and goes back to Ollama with the next
-request: during a tool loop Gemma 4 reads its earlier thinking, and it drops the
-thinking of finished turns itself.
+request. Ollama's Gemma 4 template shows the model the thinking of the turns since
+the last user message (the current tool loop) and leaves older thinking out, as
+Gemma 4's own guidance asks; in a tool round trip measured with `gemma4:e2b`, the
+turn succeeded 10 of 10 times with the thinking sent back and 8 of 10 without it.
 
 !!! note "A thinking model decides when to think"
     With thinking on, Gemma 4 E4B still answers easy prompts without thinking:
@@ -111,7 +115,7 @@ chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b", tools=[weather],
             temperature=0.0)
 push!(chat, Message(Val(:system), "You are concise."))
 push!(chat, Message(Val(:user), "What's the weather in Lyon? " *
-                                "Use the tool, then answer in one sentence."))
+    "Use the tool, then answer in one sentence."))
 
 loop = tool_loop!(chat; tools=[weather])
 calls = [(o.tool_name, o.arguments) for o in loop.tool_calls]
@@ -135,11 +139,12 @@ schema = Dict("type" => "object", "additionalProperties" => false,
                                    "year" => Dict("type" => "integer"),
                                    "city" => Dict("type" => "string")))
 
+person = UniLM.json_schema("person", "A person", schema)
 chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b",
-            response_format=UniLM.json_schema("person", "A person", schema))
+            response_format=person)
 push!(chat, Message(Val(:system), "You extract facts."))
 push!(chat, Message(Val(:user),
-                    "Extract the person: Ada Lovelace, born 1815 in London."))
+    "Extract the person: Ada Lovelace, born 1815 in London."))
 
 using JSON
 JSON.parse(text(chatrequest!(chat)))
@@ -152,10 +157,11 @@ together with a thinking effort (`"low"`, `"medium"`, `"high"`) is refused befor
 the request is sent.
 
 !!! details "Evidence"
-    The extraction request above, 10 runs each on Ollama 0.34.4: with Ollama's
-    default (thinking on), `gemma4:e4b` answered plain text in 10 of 10 runs and
-    `gemma4:e2b` in 3 of 10; with thinking off, both returned valid JSON in 10 of 10.
-    With a thinking effort set, `gemma4:e4b` returned valid JSON in 5 of 10.
+    The extraction request above, sent to `/api/chat` 10 times per setting on
+    Ollama 0.34.4: `gemma4:e4b` returned valid JSON in 0 of 10 runs with thinking at
+    its default (it answered plain text), 1 of 10 with thinking on, and 10 of 10 with
+    it off; `gemma4:e2b` in 10, 8 and 10 of 10. Every failure was a run in which the
+    model did not think.
 
 ## [Images and audio](@id ollama_media)
 
@@ -180,8 +186,8 @@ says *"The secret word is banana."*:
 chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b", temperature=0.0)
 push!(chat, Message(Val(:system), "You are concise."))
 push!(chat, Message(Val(:user),
-                    "What is the secret word in this recording? One word.",
-                    AudioAttachment("../assets/secret_word.wav")))
+    "What is the secret word in this recording? One word.",
+    AudioAttachment("../assets/secret_word.wav")))
 text(chatrequest!(chat))
 ```
 
@@ -220,9 +226,10 @@ chat = Chat(service=ollama, model="gemma4:e4b")
 
 - **Context window.** Ollama picks a default from the GPU memory it finds — 4096
   tokens under 23 GiB, 32768 from 23 GiB, 262144 from 47 GiB — capped at what the
-  model was trained for (128K for Gemma 4 E2B and E4B). `num_ctx` sets it; Ollama
-  reloads the model when it changes, so keep one value per model.
-- **Input that does not fit.** By default a prompt longer than the window is an
+  model was trained for (128K for Gemma 4 E2B and E4B). `num_ctx` sets it (a vision
+  model gets at least 2048: `num_ctx=512` loaded Gemma 4 with 2048); Ollama reloads
+  the model when it changes, so keep one value per model.
+- **Input that does not fit.** By default (`truncate=false`), a prompt longer than the window is an
   [`LLMFailure`](@ref) with HTTP 400 — `"request (… tokens) exceeds the available
   context size (… tokens), try increasing it"` — instead of an answer to a prompt
   Ollama shortened by dropping the oldest messages. `truncate=true` restores
@@ -257,8 +264,8 @@ unload_model("gemma4:e4b"; service=ollama)
 ```
 
 !!! details "Choosing a small Gemma 4"
-    Measured on Ollama 0.34.4 (Apple M4 Max, 64 GB; 10 runs per text cell, 5 per
-    media cell). Both E2B (7.2 GB) and E4B (9.6 GB) called tools correctly in 10 of 10
+    Measured on Ollama 0.34.4 (Apple M4 Max, 64 GB; 10 runs per text cell, 6 for the
+    prime question, 5 per media cell). Both E2B (7.2 GB) and E4B (9.6 GB) called tools correctly in 10 of 10
     runs and named the colour in 5 of 5; E4B named the spoken word in 5 of 5, E2B in 4
     of 5. With thinking off, E2B misjudged "Is 391 prime?" in 6 of 6 runs and E4B
     answered correctly in 6 of 6. E2B decodes faster (86 against 54 tokens per

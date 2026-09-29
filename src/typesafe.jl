@@ -1110,7 +1110,7 @@ recorded by [`with_recorded_answers`](@ref).
 
 ```julia
 r = list_models(service=OllamaEndpoint())
-issuccess(r) && [m.name for m in r.response]   # e.g. ["gemma4:e4b", "embeddinggemma:latest"]
+issuccess(r) && [m.name for m in r.response]   # ["gemma4:e4b", …]
 ```
 """
 list_models(; service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,

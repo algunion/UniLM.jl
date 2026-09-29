@@ -40,8 +40,8 @@ const _OLLAMA_CHAT_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Chat), _OLLAMA_CHA
 # model's default applies (Gemma 4 thinks) — except with a response_format: Ollama
 # constrains a reply to the format only after a thinking block ends, so a thinking
 # model that answers without thinking is not constrained at all (gemma4:e4b answered
-# plain text to 10 of 10 schema requests with thinking on, and valid JSON to 10 of 10
-# with it off, on Ollama 0.34.4). A format therefore turns thinking off, and a format
+# plain text to 10 of 10 schema requests with thinking at its default, and valid JSON
+# to 10 of 10 with it off, on Ollama 0.34.4). A format therefore turns thinking off, and a format
 # with a thinking effort is refused rather than sent to fail at random.
 const _OLLAMA_EFFORTS = ("none", "low", "medium", "high")
 function _ollama_think(effort::Union{String,Nothing}, constrained::Bool)

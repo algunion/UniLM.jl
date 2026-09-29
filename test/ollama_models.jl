@@ -65,8 +65,10 @@ end
 
 const _OM_PULL = [
     _om_line(Dict("status" => "pulling manifest")),
-    (_om_line(Dict("status" => "pulling 4e30e2665218", "digest" => "sha256:4e30e2665218745ef463f722c0bf86be0cab6ee676320f1cfadf91e989107448",
-                   "total" => 7162405886, "completed" => c)) for c in (0, 3_000_000_000, 7162405886))...,
+    # Ollama omits a zero "completed" (omitempty), as in the first report of a layer.
+    (_om_line(filter(kv -> kv[2] != 0, Dict{String,Any}("status" => "pulling 4e30e2665218",
+                   "digest" => "sha256:4e30e2665218745ef463f722c0bf86be0cab6ee676320f1cfadf91e989107448",
+                   "total" => 7162405886, "completed" => c))) for c in (0, 3_000_000_000, 7162405886))...,
     _om_line(Dict("status" => "verifying sha256 digest")),
     _om_line(Dict("status" => "writing manifest")),
     _om_line(Dict("status" => "success"))]

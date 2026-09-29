@@ -262,11 +262,12 @@ The neutral [`Message`](@ref) carries `content::String` + `tool_calls`, but some
 providers attach blocks that must round-trip byte-faithfully for multi-turn
 flows to work: Anthropic `thinking`/`redacted_thinking` blocks (their
 `signature` must be echoed unmodified or tool round-trips on thinking models
-are rejected with HTTP 400), Gemini text-part `thoughtSignature`s, and DeepSeek
-`reasoning_content`. `provider` tags the wire dialect (`:anthropic`, `:gemini` or
-`:deepseek`); `blocks` is the provider's content/parts array exactly as decoded
-(String-keyed JSON) — for `:deepseek`, `[Dict("reasoning_content" => text)]`, echoed
-only on requests that carry tools.
+are rejected with HTTP 400), Gemini text-part `thoughtSignature`s, DeepSeek
+`reasoning_content` and Ollama `thinking`. `provider` tags the wire dialect
+(`:anthropic`, `:gemini`, `:deepseek` or `:ollama`); `blocks` is the provider's
+content/parts array exactly as decoded (String-keyed JSON) — for `:deepseek`,
+`[Dict("reasoning_content" => text)]`, echoed only on requests that carry tools; for
+`:ollama`, `[Dict("thinking" => text)]`, echoed as the assistant message's `thinking`.
 
 Encoders ignore a `ProviderContent` tagged for a different provider — a
 conversation moved across providers falls back to the neutral reconstruction
@@ -322,7 +323,8 @@ leading bytes. `mime` holds the media type (`"image/png"`, …). Throws `Argumen
 for empty data or bytes in any other format.
 
 ```julia
-msg = Message(Val(:user), "What colour is the shape?", ImageAttachment("shape.png"))
+msg = Message(Val(:user), "What colour is the shape?",
+              ImageAttachment("shape.png"))
 ```
 """
 struct ImageAttachment <: Attachment
@@ -346,7 +348,8 @@ bytes. `format` holds `"wav"` or `"mp3"`, the names the OpenAI `input_audio` par
 uses. Throws `ArgumentError` for empty data or bytes in any other format.
 
 ```julia
-msg = Message(Val(:user), "Transcribe this.", AudioAttachment("clip.wav"))
+msg = Message(Val(:user), "Transcribe this.",
+              AudioAttachment("clip.wav"))
 ```
 """
 struct AudioAttachment <: Attachment
@@ -374,7 +377,10 @@ Base.:(==)(a::A, b::A) where {A<:Attachment} = all(f -> getfield(a, f) == getfie
 Base.hash(a::Attachment, h::UInt) = foldl((h, f) -> hash(getfield(a, f), h), fieldnames(typeof(a)); init=hash(typeof(a), h))
 
 """
-    Message(; role, content=nothing, name=nothing, finish_reason=nothing, refusal_message=nothing, tool_calls=nothing, tool_call_id=nothing, provider_content=nothing, attachments=nothing)
+    Message(; role, content=nothing, name=nothing,
+              finish_reason=nothing, refusal_message=nothing,
+              tool_calls=nothing, tool_call_id=nothing,
+              provider_content=nothing, attachments=nothing)
 
 Represents a single message in a Chat Completions conversation.
 
@@ -386,7 +392,7 @@ Represents a single message in a Chat Completions conversation.
 - `refusal_message::Union{String,Nothing}`: Refusal text when content is filtered; sent on the wire as `refusal`.
 - `tool_calls::Union{Nothing,Vector{ToolCall}}`: Tool calls requested by the assistant.
 - `tool_call_id::Union{String,Nothing}`: Required when `role` is `"tool"` — the ID of the tool call being responded to.
-- `provider_content::Union{Nothing,ProviderContent}`: Provider-native content blocks captured for verbatim round-trip (see [`ProviderContent`](@ref)); set by the Anthropic, Gemini and DeepSeek decoders (tags `:anthropic`, `:gemini`, `:deepseek`), `nothing` otherwise. Never serialized on the OpenAI wire.
+- `provider_content::Union{Nothing,ProviderContent}`: Provider-native content blocks captured for verbatim round-trip (see [`ProviderContent`](@ref)); set by the Anthropic, Gemini, DeepSeek and Ollama decoders (tags `:anthropic`, `:gemini`, `:deepseek`, `:ollama`), `nothing` otherwise. Never serialized on the OpenAI wire.
 - `attachments::Union{Nothing,Vector{Attachment}}`: Images and sound clips sent with a user message ([`ImageAttachment`](@ref), [`AudioAttachment`](@ref)); `nothing` for none. See [`Attachment`](@ref) for how each endpoint sends them.
 
 # Validation
@@ -399,7 +405,8 @@ Represents a single message in a Chat Completions conversation.
 ```julia
 Message(Val(:system), "You are a helpful assistant")
 Message(Val(:user), "Hello!")
-Message(Val(:user), "What colour is the shape?", ImageAttachment("shape.png"))
+Message(Val(:user), "What colour is the shape?",
+        ImageAttachment("shape.png"))
 ```
 """
 @kwdef struct Message
@@ -556,7 +563,8 @@ Built-in subtypes:
 - `GEMINIOpenAIServiceEndpoint` — Google Gemini via OpenAI-compatible endpoint
 - `GEMINIServiceEndpoint` — Google Gemini native generateContent API
 - `ANTHROPICServiceEndpoint` — Anthropic (Claude) native Messages API
-- `GenericOpenAIEndpoint` — any OpenAI-compatible provider (Ollama, Mistral, vLLM, etc.)
+- `OllamaEndpoint` — a local Ollama server (native chat and embeddings API)
+- `GenericOpenAIEndpoint` — any OpenAI-compatible provider (Mistral, vLLM, LM Studio, etc.)
 """
 abstract type ServiceEndpoint end
 
@@ -577,7 +585,9 @@ implement `encode_request`, `decode_response`, and `handle_sse_event!`. A bare
 call time rather than silently emitting OpenAI-shaped requests to a foreign API.
 
 Built-in OpenAI-wire subtypes: `OPENAIServiceEndpoint`, `AZUREServiceEndpoint`,
-`GEMINIOpenAIServiceEndpoint`, `GenericOpenAIEndpoint`, `DeepSeekEndpoint`.
+`GEMINIOpenAIServiceEndpoint`, `GenericOpenAIEndpoint`, `DeepSeekEndpoint`, and
+`OllamaEndpoint`, which overrides the chat seam with Ollama's native wire and keeps the
+OpenAI-wire Responses and completions routes.
 """
 abstract type OpenAIWireEndpoint <: ServiceEndpoint end
 
@@ -609,12 +619,13 @@ Embeddings, and (where the provider implements it) the Responses API.
 
 # Example
 ```julia
-# Ollama (local)
-chat = Chat(service=GenericOpenAIEndpoint("http://localhost:11434", ""), model="llama3.1")
+# vLLM (local)
+chat = Chat(service=GenericOpenAIEndpoint("http://localhost:8000", ""),
+            model="Qwen/Qwen3-8B")
 
 # Mistral
-chat = Chat(service=GenericOpenAIEndpoint("https://api.mistral.ai", ENV["MISTRAL_API_KEY"]),
-            model="mistral-large-latest")
+mistral = GenericOpenAIEndpoint("https://api.mistral.ai", ENV["MISTRAL_API_KEY"])
+chat = Chat(service=mistral, model="mistral-large-latest")
 ```
 """
 struct GenericOpenAIEndpoint <: OpenAIWireEndpoint
@@ -638,9 +649,10 @@ const ServiceEndpointSpec = Union{Type{<:ServiceEndpoint}, ServiceEndpoint}
 const OpenAIWireEndpointSpec = Union{Type{<:OpenAIWireEndpoint}, OpenAIWireEndpoint}
 
 """
-    OllamaOptions(; num_ctx=nothing, num_batch=nothing, num_gpu=nothing, main_gpu=nothing,
-                  num_thread=nothing, use_mmap=nothing, num_keep=nothing, top_k=nothing,
-                  min_p=nothing, repeat_last_n=nothing, repeat_penalty=nothing)
+    OllamaOptions(; num_ctx=nothing, num_batch=nothing, num_gpu=nothing,
+                  main_gpu=nothing, num_thread=nothing, use_mmap=nothing,
+                  num_keep=nothing, top_k=nothing, min_p=nothing,
+                  repeat_last_n=nothing, repeat_penalty=nothing)
 
 The Ollama runtime and sampling options that [`Chat`](@ref) has no field for, sent as
 the `options` object of an [`OllamaEndpoint`](@ref) request; unset options are
@@ -648,7 +660,8 @@ omitted, so the model's own defaults apply. Options `Chat` already names
 (`temperature`, `top_p`, `seed`, `stop`, `max_tokens`, `presence_penalty`,
 `frequency_penalty`) stay on the `Chat`, so no option can be set in two places.
 
-- `num_ctx`: context window in tokens. Ollama loads the model with this window, so a
+- `num_ctx`: context window in tokens. Ollama loads the model with this window (a
+  vision model with at least 2048: `num_ctx=512` loaded Gemma 4 with 2048), so a
   change reloads it.
 - `num_batch`, `num_gpu` (layers offloaded to the GPU), `main_gpu`, `num_thread`,
   `use_mmap`: how the model runs on this machine.
@@ -733,14 +746,16 @@ end
 
 """
     OllamaEndpoint <: OpenAIWireEndpoint
-    OllamaEndpoint(; base_url=<OLLAMA_HOST or http://127.0.0.1:11434>, keep_alive=nothing,
-                   truncate=false, shift=nothing, options...)
+    OllamaEndpoint(; base_url=<OLLAMA_HOST or http://127.0.0.1:11434>,
+                   keep_alive=nothing, truncate=false, shift=nothing,
+                   options...)
 
-A local (or remote) [Ollama](https://ollama.com) server. Chat requests use Ollama's
-native `/api/chat` API, which carries what the OpenAI-compatible route cannot: the
-context window and the other [`OllamaOptions`](@ref), how long the model stays
-loaded, and thinking control; [`Embeddings`](@ref) use the native `/api/embed`.
-[`respond`](@ref) and [`FIMCompletion`](@ref) use Ollama's OpenAI-compatible routes.
+A local (or remote) [Ollama](https://ollama.com) server. Chat and [`Embeddings`](@ref)
+requests use Ollama's native `/api/chat` and `/api/embed`, which carry what the
+OpenAI-compatible routes ignore: the context window and the other
+[`OllamaOptions`](@ref), how long the model stays loaded (`keep_alive`), and the
+`think` and `truncate` fields. [`respond`](@ref) and [`FIMCompletion`](@ref) use the
+OpenAI-compatible routes.
 
 - `base_url`: server root, without `/v1` or `/api`. Defaults to the `OLLAMA_HOST`
   environment variable, read with the rules of Ollama's own clients (`"gpu-box"` →
@@ -1337,7 +1352,8 @@ turn carries none — the provider returned no reasoning, or the model did not t
 Like [`text`](@ref), it throws an [`LLMResultError`](@ref) on a failure result.
 
 ```julia
-chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b", reasoning_effort="high")
+chat = Chat(service=OllamaEndpoint(), model="gemma4:e4b",
+            reasoning_effort="high")
 push!(chat, Message(Val(:system), "Answer briefly."))
 push!(chat, Message(Val(:user), "Is 391 prime?"))
 r = chatrequest!(chat)

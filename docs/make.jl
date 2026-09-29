@@ -37,7 +37,9 @@ const ANSWERS_MODE = LIVE ? nothing : RECORD ? :record_missing : :replay
 
 const PROVIDER_KEYS = ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY",
                        "MISTRAL_API_KEY", "AZURE_OPENAI_API_KEY", "TYPESAFE_API_KEY")
-hidden(mode::Symbol) = mode === :replay ? [k => nothing for k in PROVIDER_KEYS] : Pair{String,Nothing}[]
+# Replay contacts no server: the builder's OLLAMA_HOST must not show up in the examples' output.
+hidden(mode::Symbol) = mode === :replay ? [k => nothing for k in (PROVIDER_KEYS..., "OLLAMA_HOST")] :
+                                          Pair{String,Nothing}[]
 
 with_answers(build, ::Nothing) = build()
 with_answers(build, mode::Symbol) = withenv("TYPESAFE_DEFAULT_MODEL" => nothing, hidden(mode)...) do

@@ -306,8 +306,8 @@ The table and the methods live apart, so test that they agree:
 `meanings(f; texts)` makes the check `nl_dispatch` makes before its request and
 throws when a key has no method, `meanings(f, argtypes; texts)` pins what a call
 offers, in table order, and `meaning_gaps(f, argtypes; texts)` lists the
-combinations no method covers. Here the support desk's teams from [Jev with
-LLMs](@ref jev_llm_route) each go to a queue:
+combinations no method covers. Here the support desk's teams from [Decisions
+with LLMs](@ref jev_llm_route) each go to a queue:
 
 ```@example jevdesk
 using UniLM, Test
@@ -540,7 +540,7 @@ LLM on every run, pays for both, and asserts on a new draft each time. **With
 [`with_recorded_answers`](@ref)**, the LLM's draft is recorded like Jev's
 answers, and the whole pipeline replays.
 
-The desk from [Jev with LLMs](@ref jev_llm_desk), cut to three steps: route with
+The desk from [Decisions with LLMs](@ref jev_llm_desk), cut to three steps: route with
 [`nl_classify`](@ref) over `TEAM` (above), draft with [`respond`](@ref), and
 check the draft against the shop's policy with one Jev question:
 
@@ -691,12 +691,12 @@ Evidence boxes were measured separately.
 
 ## See also
 
-- [Start Here: Jev in Five Minutes](@ref jev_start) — which page answers which question
+- [Start Here: Decisions in Five Minutes](@ref jev_start) — which page answers which question
 - [Route and Decide](@ref system_one_guide) — `ask`, the three primitives, and
   reading answers
 - [Dispatch on Meaning](@ref nl_dispatch_guide) — meanings in method signatures
   and keyed tables, `nl_dispatch`, `decide` and `@branch`
-- [Jev with LLMs](@ref jev_llm_guide) — the support desk tested above, step by
+- [Decisions with LLMs](@ref jev_llm_guide) — the support desk tested above, step by
   step
 - [TypeSafe System One API (Jev)](@ref system_one_api) — every type and verb,
   including [`with_recorded_answers`](@ref) and [`ReplayMissError`](@ref)

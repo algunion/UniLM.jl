@@ -1,4 +1,4 @@
-# [Start Here: Jev in Five Minutes](@id jev_start)
+# [Start Here: Decisions in Five Minutes](@id jev_start)
 
 An LLM writes text. Jev reads a text and decides: which team handles it, how
 urgent it is, whether a reply is safe to send, whether it matches the source. It
@@ -8,6 +8,13 @@ quick request billed only for the text it reads ([prices](https://docs.typesafe.
 **Setup:** `export TYPESAFE_API_KEY=…` in your shell, then `using UniLM` in
 Julia ([Setup](@ref jev_setup) lists the optional variables).
 
+!!! note "Providers"
+    Decisions run on **Jev**, TypeSafe's System One model
+    ([`TYPESAFEServiceEndpoint`](@ref), default model `jev-latest`). OpenAI
+    announced a Decisions API on 29 September 2026, in limited preview; it has no
+    public API reference yet, and UniLM does not support it yet. Support is
+    planned once that reference is published.
+
 ## Which path?
 
 | I want to… | Use | You get | Section |
@@ -16,7 +23,7 @@ Julia ([Setup](@ref jev_setup) lists the optional variables).
 | ask several things about one text at once | one [`ask`](@ref) with a [`choice`](@ref), [`score`](@ref) or [`noul`](@ref) per question | every answer from one request, each with its probabilities | [Route and Decide](@ref jev_many_questions) |
 | act only when Jev is sure enough, or weigh what mistakes cost | `min_confidence` and `fallback`, or a `decide` policy | the answer when it clears your bar, a hand-over otherwise | [Route and Decide](@ref jev_act_on_answer) |
 | run the right function for a text | [`nl_dispatch`](@ref) with `texts = TEAM`, or `nl"…"` in the signatures | what the method of the chosen meaning returns | [Dispatch on Meaning](@ref nl_dispatch_paths) |
-| decide before an LLM call, or check its output after | a Jev question on each side of [`respond`](@ref) | the team, the model to call, a draft checked before it is sent | [Jev with LLMs](@ref jev_llm_guide) |
+| decide before an LLM call, or check its output after | a Jev question on each side of [`respond`](@ref) | the team, the model to call, a draft checked before it is sent | [Decisions with LLMs](@ref jev_llm_guide) |
 | judge a whole list at once | one [`ask`](@ref), one question per item | every item judged in one request | [Many Items at Once](@ref jev_algorithms_guide) |
 | test without the network | [`with_recorded_answers`](@ref) | real answers recorded once, replayed with no key | [Test and Develop](@ref jev_testing_recorded) |
 
@@ -41,8 +48,8 @@ sentence that fits came back: a value your program can act on.
 ## Five-minute tour
 
 The support desk of a small online shop that sells phones and accessories,
-ships parcels and has a mobile app. Jev with LLMs and Test and Develop build the
-same desk; the other Jev pages borrow from it where it fits.
+ships parcels and has a mobile app. Decisions with LLMs and Test and Develop
+build the same desk; the other Decisions pages borrow from it where it fits.
 Without Jev, each step below would be keyword rules, a classifier trained on
 labelled messages, or an LLM whose free-text answer you parse. Every example
 runs when this manual is built, from answers recorded once and replayed ([Test
@@ -112,14 +119,14 @@ println("P(promises a refund) = ", promises, promises >= 0.3 ? ": a person appro
 
 The draft ends with "we’ll help arrange a refund right away". Jev puts the
 probability that it promises a refund at 0.81, above the cut, so a person
-approves the reply before the customer sees it. [Jev with LLMs](@ref
+approves the reply before the customer sees it. [Decisions with LLMs](@ref
 jev_llm_check_draft) checks one draft for a leak, a promise the policy does not
 allow and rudeness in one request, and checks its claims against the source.
 
 ## What Jev is not for
 
 - **Writing.** Jev answers the questions you list; it never writes text. A reply
-  is an LLM's job, and [Jev with LLMs](@ref jev_llm_guide) combines the two.
+  is an LLM's job, and [Decisions with LLMs](@ref jev_llm_guide) combines the two.
 - **Arithmetic, counting and dates.** Adding amounts, counting items and
   comparing dates are unreliable: compute them in Julia, and ask Jev only for
   the judgment.
@@ -131,7 +138,7 @@ jaggedness](https://docs.typesafe.ai/model-jaggedness/jev-1.13).
 
 ## Where next
 
-- [Jev with LLMs](@ref jev_llm_guide) — route before an LLM call, check the
+- [Decisions with LLMs](@ref jev_llm_guide) — route before an LLM call, check the
   draft after it, pick the model, approve tool calls
 - [Route and Decide](@ref system_one_guide) — [`ask`](@ref) and its three
   question types, a struct filled in one request, decision rules on the answers

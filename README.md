@@ -26,9 +26,9 @@ UniLM speaks each provider's own wire API, not just the OpenAI-compatible protoc
 - **Image Generation & Edits** — create and edit images with `gpt-image-2`
 - **Tool/Function Calling** — first-class support for function tools in both APIs, with automated `tool_loop`
 - **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool loop integration
-- **Jev (TypeSafe System One)** — decisions about a text instead of generated text: `nl_classify` returns one of your own keys, and `ask` answers `choice` / `score` / `noul` questions with calibrated probabilities, many questions in one request
+- **Decisions (Jev, TypeSafe System One)** — decisions about a text instead of generated text: `nl_classify` returns one of your own keys, and `ask` answers `choice` / `score` / `noul` questions with calibrated probabilities, many questions in one request
 - **Dispatch on Meaning** — `nl_dispatch` runs the method whose sentence fits the text: short keys with a table of sentences (`texts = TEAM`, methods on `Val{:billing}`), or `nl"..."` in the signature; `@branch` is the same decision inline
-- **Jev with LLMs** — route a message before an LLM call and check the draft after it; `with_recorded_answers` records Jev's answers and the non-streaming LLM calls once and replays them, so tests run without keys
+- **Decisions with LLMs** — route a message before an LLM call and check the draft after it; `with_recorded_answers` records Jev's answers and the non-streaming LLM calls once and replays them, so tests run without keys
 - **Embeddings** — text embedding generation with `text-embedding-3-small`
 - **Files, Vector Stores & Conversations** — upload files, build vector stores for `file_search`, and manage server-side conversation state
 - **Audio, Batch & Moderations** — TTS/transcription, async 50%-off bulk jobs, and free safety classification
@@ -299,17 +299,17 @@ chat = Chat(service=OllamaEndpoint(num_ctx=32_768), model="gemma4:e4b")
 
 TypeSafe's System One endpoint (`TYPESAFEServiceEndpoint`, `TYPESAFE_API_KEY`) is deliberately absent from that table: it answers enumerated questions rather than generating text, so `chatrequest!`, `respond`, `embeddingrequest!` and the other platform verbs reject it up front with an `ArgumentError` (naming it on a `Chat` or an `Embeddings` is allowed only with an explicit `model=` — omitting it throws `ArgumentError` — and sending the request is not). It has its own section below.
 
-## Jev: Decisions About Text (TypeSafe System One)
+## Decisions (Jev, TypeSafe System One)
 
 An LLM writes text; [TypeSafe](https://docs.typesafe.ai)'s System One model **Jev** reads a text and decides — which team, how urgent, is it safe to send, does it match the source — answering only the questions you list, with a probability for each answer, in one request billed only for the text it reads ([Models](https://docs.typesafe.ai/models)).
 Set `export TYPESAFE_API_KEY="..."` and pick a path:
 
 | I want to… | Use | You get | Read |
 | :--- | :--- | :--- | :--- |
-| label a text with one of my own values | `nl_classify(text, TEAM)` | the key of the sentence that fits, e.g. `:billing` | [Start Here: Jev in Five Minutes](https://algunion.github.io/UniLM.jl/dev/guide/jev_start/) |
+| label a text with one of my own values | `nl_classify(text, TEAM)` | the key of the sentence that fits, e.g. `:billing` | [Start Here: Decisions in Five Minutes](https://algunion.github.io/UniLM.jl/dev/guide/jev_start/) |
 | run the right function for a text | `nl_dispatch` with a table of sentences, or `nl"..."` in the signatures | what the method of the chosen meaning returns | [Dispatch on Meaning](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/) |
 | ask several things about one text, and act only when Jev is sure | `ask` with `choice` / `score` / `noul`, then `min_confidence` or a `decide` policy | every answer from one request, with its probabilities | [Route and Decide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/) |
-| decide before an LLM call, or check its output after | a Jev question on each side of `respond` | the team, the model to call, a draft checked before it is sent | [Jev with LLMs](https://algunion.github.io/UniLM.jl/dev/guide/jev_with_llms/) |
+| decide before an LLM call, or check its output after | a Jev question on each side of `respond` | the team, the model to call, a draft checked before it is sent | [Decisions with LLMs](https://algunion.github.io/UniLM.jl/dev/guide/jev_with_llms/) |
 
 **Label a text** with one of your own keys. Jev reads the sentences, never the keys:
 
@@ -366,7 +366,7 @@ ask(reply, "refund" => noul("Does this reply promise the customer a refund?"))["
 # => 0.81 — above a cut of 0.3, so a person approves the reply before it is sent
 ```
 
-The Jev guides, most of them built around one small shop's support desk: [Start Here](https://algunion.github.io/UniLM.jl/dev/guide/jev_start/), [Jev with LLMs](https://algunion.github.io/UniLM.jl/dev/guide/jev_with_llms/), [Route and Decide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/), [Dispatch on Meaning](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/), [Many Items at Once](https://algunion.github.io/UniLM.jl/dev/guide/semantic_algorithms/) and [Test and Develop](https://algunion.github.io/UniLM.jl/dev/guide/jev_testing/).
+The Decisions guides, most of them built around one small shop's support desk: [Start Here](https://algunion.github.io/UniLM.jl/dev/guide/jev_start/), [Decisions with LLMs](https://algunion.github.io/UniLM.jl/dev/guide/jev_with_llms/), [Route and Decide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/), [Dispatch on Meaning](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/), [Many Items at Once](https://algunion.github.io/UniLM.jl/dev/guide/semantic_algorithms/) and [Test and Develop](https://algunion.github.io/UniLM.jl/dev/guide/jev_testing/).
 
 ## Chat Completions vs Responses (OpenAI)
 
@@ -400,8 +400,8 @@ Full documentation with guides and API reference: **[https://algunion.github.io/
 - [Multi-Backend Guide](https://algunion.github.io/UniLM.jl/dev/guide/multi_backend/) — Azure, Gemini, DeepSeek, Ollama, and more
 - [Local Models with Ollama](https://algunion.github.io/UniLM.jl/dev/guide/ollama/) — Gemma 4 on your own machine
 - [MCP Guide](https://algunion.github.io/UniLM.jl/dev/guide/mcp/) — MCP client/server
-- [Start Here: Jev in Five Minutes](https://algunion.github.io/UniLM.jl/dev/guide/jev_start/) — what Jev decides, a first decision, and which Jev page answers your question
-- [Jev with LLMs](https://algunion.github.io/UniLM.jl/dev/guide/jev_with_llms/) — route a message before an LLM call and check the draft after it
+- [Start Here: Decisions in Five Minutes](https://algunion.github.io/UniLM.jl/dev/guide/jev_start/) — what Jev decides, a first decision, and which Decisions page answers your question
+- [Decisions with LLMs](https://algunion.github.io/UniLM.jl/dev/guide/jev_with_llms/) — route a message before an LLM call and check the draft after it
 - [Route and Decide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/) — `ask` with `choice` / `score` / `noul`, calibrated answers, and decision rules on them
 - [Dispatch on Meaning](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/) — `nl_classify`, `nl_dispatch` with a table of sentences or `nl"..."` in the signatures, `@branch`
 - [Many Items at Once](https://algunion.github.io/UniLM.jl/dev/guide/semantic_algorithms/) — many items in one request, ranking, finding an event in a long sequence, matching records, stopping early

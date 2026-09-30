@@ -750,12 +750,12 @@ Jev decides and an LLM writes, so they meet on both sides of a generation:
 before it, [route the message](@ref jev_llm_route) and decide whether and how to
 generate; after it, [check the draft](@ref jev_llm_check_draft) before a
 customer sees it and [check its claims against the source](@ref
-jev_llm_check_claims). [Jev with LLMs](@ref jev_llm_guide) builds each step.
+jev_llm_check_claims). [Decisions with LLMs](@ref jev_llm_guide) builds each step.
 
 ## See also
 
-- [Start Here: Jev in Five Minutes](@ref jev_start) — which page answers which question
-- [Jev with LLMs](@ref jev_llm_guide) — Jev before and after an LLM call
+- [Start Here: Decisions in Five Minutes](@ref jev_start) — which page answers which question
+- [Decisions with LLMs](@ref jev_llm_guide) — Jev before and after an LLM call
 - [Dispatch on Meaning](@ref nl_dispatch_guide) — `nl_classify`,
   [`nl_dispatch`](@ref) and [`@branch`](@ref): the answer selects the code that
   runs

@@ -853,8 +853,8 @@ replaying, and crafting edge cases with a local server.
 
 ## See also
 
-- [Start Here: Jev in Five Minutes](@ref jev_start) — which pathway, in one table
-- [Jev with LLMs](@ref jev_llm_guide) — route before an LLM call, check after it
+- [Start Here: Decisions in Five Minutes](@ref jev_start) — which pathway, in one table
+- [Decisions with LLMs](@ref jev_llm_guide) — route before an LLM call, check after it
 - [Route and Decide](@ref system_one_guide) — [`ask`](@ref), the three
   primitives, and decision policies built on the answers
 - [Many Items at Once](@ref jev_algorithms_guide) — many judgments per request

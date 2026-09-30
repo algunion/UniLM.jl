@@ -468,7 +468,7 @@ policy` line was flagged as data loss.
 
 ## See also
 
-- [Start Here: Jev in Five Minutes](@ref jev_start) — which page answers which question
+- [Start Here: Decisions in Five Minutes](@ref jev_start) — which page answers which question
 - [Route and Decide](@ref system_one_guide) — `ask`, the three primitives,
   reading answers, and [asking many questions at once](@ref jev_many_questions)
 - [Dispatch on Meaning](@ref nl_dispatch_guide) — a Jev answer selects the

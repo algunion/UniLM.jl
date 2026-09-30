@@ -1,4 +1,4 @@
-# [Jev with LLMs](@id jev_llm_guide)
+# [Decisions with LLMs](@id jev_llm_guide)
 
 An LLM writes text; Jev decides. Put a Jev question before an LLM call to decide
 whether and how to make it, and after it to decide whether its output can be
@@ -513,7 +513,7 @@ arithmetic, counting, comparing dates, or a long state of unrelated text
 
 ## See also
 
-- [Start Here: Jev in Five Minutes](@ref jev_start) — which page answers which question
+- [Start Here: Decisions in Five Minutes](@ref jev_start) — which page answers which question
 - [Route and Decide](@ref system_one_guide) — [`ask`](@ref), the three
   primitives, confidence, and decision rules on the answers
 - [Dispatch on Meaning](@ref nl_dispatch_guide) — methods selected by a table of

@@ -9,10 +9,10 @@ import blurCyanImage from '@/images/blur-cyan.png'
 import blurIndigoImage from '@/images/blur-indigo.png'
 import '@/lib/prism'
 
-// The first call of "Start Here: Jev in Five Minutes"; `:billing` is the answer
-// recorded for it in docs/recorded_answers. Its sentences are sent as written,
-// so the lines stay long: the panel's 12px type fits them when the hero is at
-// its widest, and a narrower panel scrolls them sideways.
+// The first call of "Start Here: Decisions in Five Minutes"; `:billing` is the
+// answer recorded for it in docs/recorded_answers. Its sentences are sent as
+// written, so the lines stay long: the panel's 12px type fits them when the hero
+// is at its widest, and a narrower panel scrolls them sideways.
 const codeLanguage = 'julia'
 const code = `using UniLM
 
@@ -66,7 +66,7 @@ export function Hero() {
               <div className="mt-8 flex gap-4 md:justify-center lg:justify-start">
                 <Button href="/getting_started/">Get started</Button>
                 <Button href="/guide/jev_start/" variant="secondary">
-                  Jev in five minutes
+                  Decisions in five minutes
                 </Button>
               </div>
             </div>

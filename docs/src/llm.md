@@ -2010,7 +2010,7 @@ not observe the token. See the Concurrency, Tasks and Cancellation guide.
 
 ## Result Type Hierarchy
 
-All 65 API call result types inherit from `LLMRequestResponse`, in 16 per-API
+All 68 API call result types inherit from `LLMRequestResponse`, in 17 per-API
 families:
 
 ```
@@ -2031,6 +2031,7 @@ LLMRequestResponse   (abstract parent of every result type below)
 ├─ Containers         ContainerSuccess · ContainerListSuccess · ContainerDeleteSuccess · ContainerFailure · ContainerCallError
 ├─ Uploads            UploadSuccess · UploadPartSuccess · UploadFailure · UploadCallError
 ├─ Realtime           RealtimeSecretSuccess · RealtimeFailure · RealtimeCallError
+├─ Ollama models      OllamaSuccess · OllamaFailure · OllamaCallError
 └─ System One         SystemOneSuccess · TypeSafeModelsSuccess · SystemOneFailure · SystemOneCallError
 ```
 

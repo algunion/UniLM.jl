@@ -38,13 +38,13 @@ UniLM.jl wraps these surfaces:
 3. **Image Generation** (`ImageGeneration` + `generate_image`) — text-to-image with `gpt-image-2`. OpenAI only.
 4. **Embeddings** (`Embeddings` + `embeddingrequest!`) — vector embeddings. Multi-provider via `service` parameter.
 5. **FIM Completion** (`FIMCompletion` + `fim_complete`) — code infilling. DeepSeek (beta), Mistral, Ollama.
-6. **System One** (`ask`, plus `nl_dispatch` and `@branch`) — enumerated questions about a piece of `state`, answered with a typed value and a calibrated probability distribution instead of generated text. TypeSafe's Jev (`TYPESAFEServiceEndpoint`, the default) or any endpoint declaring `:system_one`, through a provider protocol (`UniLM.system_one_protocol`); `with_system_one` sets the backend for a scope. Not a chat surface.
+6. **System One** (`ask`, `ask_each`, plus `nl_classify`, `nl_dispatch` and `@branch`) — enumerated questions about a piece of `state`, answered with a typed value and a calibrated probability distribution instead of generated text. One surface over three backends: TypeSafe's Jev (`TYPESAFEServiceEndpoint`, the default), OpenAI's Decisions API (`OPENAIServiceEndpoint`, public beta) and local decision models on Ollama (`OllamaEndpoint()`); any endpoint declaring `:system_one` is reached through a provider protocol (`UniLM.system_one_protocol`); `with_system_one` sets the backend for a scope. Not a chat surface.
 
 **Which API to use:**
 - **Chat Completions** — best for multi-turn conversations; broadest provider support. Use for chat, tool calling, or streaming across any supported backend.
 - **Responses API** — simpler for single-shot or chained requests; built-in web search, file search, MCP, computer use tools. OpenAI Responses plus Google's Gemini Interactions via the unified `respond` verb (see the Agentic Workflows guide).
 - **FIM Completion** — code infilling between prefix and suffix. DeepSeek (beta), Mistral and Ollama (vLLM's completions endpoint does not accept `suffix`).
-- **System One** — classify, rank, screen or route unstructured input when the outcomes are a fixed set you can enumerate and you want a probability, not prose. `ask` returns typed results; `nl_dispatch` turns the answer into ordinary Julia multiple dispatch and `@branch` into an inline switch, both throwing rather than guessing a branch.
+- **System One** — classify, rank, screen or route unstructured input when the outcomes are a fixed set you can enumerate and you want a probability, not prose. `ask` returns typed results and `ask_each` one per item, in order; `nl_dispatch` turns the answer into ordinary Julia multiple dispatch and `@branch` into an inline switch, both throwing rather than guessing a branch. A `min_confidence` tuned on one backend does not carry over to another.
 
 ---
 
@@ -121,7 +121,7 @@ Respond(service=OPENAIServiceEndpoint, input="Hello")
 - **Refused** (`ArgumentError` before I/O): `logit_bias`, `user`, `stream_options`, `verbosity`, `store`, `metadata`, `service_tier`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key`, `safety_identifier`, `prompt_cache_options`, `moderation`; `tool_choice` other than `"auto"`; tools with `strict=true`; a message `name`; a tool result that answers no earlier call. `parallel_tool_calls` is not sent (the model may return several calls in a turn).
 - **Replies**: `message.thinking` → `ProviderContent(:ollama, [Dict("thinking" => …)])`; a tool call without an id gets `"unilm_call_<k>"` (never sent back); usage = `prompt_eval_count` / `eval_count` (thinking included), cached = `prompt_eval_cached_count`; `done_reason` → `finish_reason` (`"tool_calls"` when calls are present). Streams are newline-delimited JSON; an `{"error": …}` line on a 200 stream is an `LLMCallError`, an error body with another status an `LLMFailure` with that status.
 - **Embeddings** go to `/api/embed` (`truncate`, `keep_alive`, `options` from the endpoint; `user` refused). **`respond`** goes to the stateless `/v1/responses`: only `model`, `input`, `instructions`, `tools` (function tools without `strict=true`, `async`, `allowed_callers`, `defer_loading` or `output_schema`), `tool_choice="auto"`, `temperature`, `top_p`, `max_output_tokens`, `stream`, `text` (a json_schema format with its schema, no verbosity) and `reasoning` (effort only) are accepted; a json_schema format sends `reasoning.effort="none"` when unset and throws with a thinking effort; `tool_loop(::Respond)` throws. **FIM** uses `/v1/completions`.
-- **System One** (`ask` and the NL verbs) goes to `/v1/systemone` (`UniLM.OllamaSystemOneProtocol`; Ollama 0.35 or later; recordings under `/ollama/v1/systemone`). No default model: `model=` (e.g. `"tev1:0.8b"`) or `with_system_one(OllamaEndpoint(); model=…)`, else `ArgumentError`. Refused before I/O: more than 64 questions; a Choice/Score/Noul without `instructions` (a non-blank string, an object or an array); Choice options outside 2–26 or described by anything but a string or `nothing`; Score levels outside 2–10 or not strings; Noul criteria that are not strings; a blank `state`; Box questions; images; any option but `keep_alive` (seconds, `Inf` = stay loaded; unset → the endpoint's `keep_alive`; written after `questions`). A model may cap lower and says so in its 400 (`tev1:0.8b`: 24 options). A `RawQuestion` is sent verbatim. Choice/Score `confidence` is recomputed from the probabilities with TypeSafe's published formulas (`(n·p_max − 1)/(n − 1)` clamped to `0 … 1`; `max(0, 1 − Σ pᵢ·|i − m| / MAD_unif)`, `m` the lowest most likely level; `1` for a single outcome); the server's value stays in `raw`. Probability-sum tolerance `n·0.5e-4 + 1e-6`. `request_id` is `nothing`; usage cached = `prompt_eval_cached_count`; an `{"error": …}` body is a `SystemOneFailure` with that message, and a missing model's 404 adds `ollama pull <model>`.
+- **System One** (`ask` and the NL verbs) goes to `/v1/systemone` (`UniLM.OllamaSystemOneProtocol`; Ollama 0.35 or later; recordings under `/ollama/v1/systemone`). No default model: `model=` (e.g. `"tev1:0.8b"`) or `with_system_one(OllamaEndpoint(); model=…)`, else `ArgumentError`. Refused before I/O: more than 64 questions; a Choice/Score/Noul without `instructions` (a non-blank string, an object or an array); Choice options outside 2–26 or described by anything but a string or `nothing`; Score levels outside 2–10 or not strings; Noul criteria that are not strings; a blank `state`; Box questions; images; any option but `keep_alive` (seconds, `Inf` = stay loaded; unset → the endpoint's `keep_alive`; written after `questions`). A model may cap lower and says so in its 400 (`tev1:0.8b`: 24 options). A `RawQuestion` is sent verbatim. Choice/Score `confidence` is recomputed from the probabilities with TypeSafe's published formulas (`(n·p_max − 1)/(n − 1)` clamped to `0 … 1`; `max(0, 1 − Σ pᵢ·|i − m| / MAD_unif)`, `m` the lowest most likely level; `1` for a single outcome); the server's value stays in `raw`. Probability-sum tolerance `n·0.5e-4 + 1e-6`, and the chosen option may sit `1e-4 + 1e-6` below the most probable. `request_id` is `nothing`; usage cached = `prompt_eval_cached_count`; an `{"error": …}` body is a `SystemOneFailure` with that message, and a missing model's 404 adds `ollama pull <model>`. No default `RequestConfig` of its own (the field defaults apply: loading a model can take minutes); `ask_each` keeps 1 request in flight unless `ntasks` says otherwise.
 - `estimated_cost` of an Ollama `LLMSuccess` / `EmbeddingSuccess` / `SystemOneSuccess` is `0.0` without a warning (unless `model=` is passed); `ResponseSuccess` / `FIMSuccess` do not record their endpoint and are priced by model name (an unpriced local model logs the one-time warning). A connection failure's error text ends with how to start the server.
 - `OllamaEndpoint` keywords: `keep_alive` in [0, 1e9] seconds or `Inf`; `OLLAMA_HOST` read like Ollama's clients (bare or bracketed IPv6; `0.0.0.0`/`::` → loopback; `ollama.com` → `https://ollama.com:443`).
 
@@ -1006,7 +1006,11 @@ DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict)
   models. The formula bills
   `min(cached_tokens, prompt_tokens)` at `cached_input`, the remaining prompt
   tokens at `input`, and `completion_tokens` at `output` (reasoning tokens are
-  already counted within completion tokens).
+  already counted within completion tokens). A `SystemOneSuccess` is priced by the
+  backend that answered (`response.service`): one from OpenAI's Decisions API
+  bills every input token, cached ones included, at the row's `input` rate (twice
+  that above 272K input tokens) and no output; one from an `OllamaEndpoint` costs
+  `0.0` unless `model=` is passed.
 
 Current OpenAI, Gemini, and TypeSafe rows were verified September 22, 2026 (Anthropic
 and DeepSeek rows September 24, 2026; the DeepSeek rows are its peak rates, and
@@ -1508,18 +1512,25 @@ result = prefix_complete(chat)
 
 ---
 
-## TypeSafe System One API (Jev)
+## System One API (Jev, OpenAI Decisions, Ollama)
 
 A System One model answers enumerated questions about a piece of `state` with a
 probability distribution over the outcomes you named — no generated text, no
 parsing. The generic surface below works with any backend that declares
-`:system_one`; TypeSafe (`TYPESAFEServiceEndpoint`) is the default, needs
-`TYPESAFE_API_KEY`, defaults to the model `jev-latest`, and pinning
-`"jev-1.13.0"` keeps tuned confidence thresholds meaningful. The types carry only
-invariants every backend shares; a backend's own limits (TypeSafe: 255 Choice
-options, 10 Score levels, PNG/JPEG images of 280–1568 pixels a side and at most
-16 MiB, 64 levels of nesting, a 32 MiB body, and the one option `long_context`)
-are checked by its wrapper before anything is sent.
+`:system_one`. Three ship, each behind a wrapper (its protocol) that checks
+before anything is sent what its wire cannot carry, with an `ArgumentError`
+naming the backend, the rule and the fix:
+
+| Backend | `service` | Model when a call names none | Wrapper's rules (refused before any I/O) |
+| --- | --- | --- | --- |
+| TypeSafe's Jev (default) | `TYPESAFEServiceEndpoint` (`TYPESAFE_API_KEY`) | `TYPESAFE_DEFAULT_MODEL`, else `"jev-latest"`; pin e.g. `"jev-1.13.0"` to keep tuned thresholds meaningful | ≤ 255 Choice options, ≤ 10 Score levels; images PNG/JPEG, still, ≤ 16 MiB, 280–1568 px a side; ≤ 64 levels of nesting in state/instructions/criteria; body ≤ 32 MiB; a Box needs an image in the request (and Jev 1.14+: `"jev-1.14.0"`/`"jev-preview"`); one option, `long_context::Bool` |
+| OpenAI's Decisions API (public beta since 2026-10-06) | `OPENAIServiceEndpoint` (`OPENAI_API_KEY`) | `"gpt-6-luna"` (the only model) | 1–200 questions; string `instructions` on every question; Choice 2–255 options, descriptions strings or `nothing`; Score 2–10 levels, each a string; Noul `yes`/`no` criteria and Box refused; images only in the state (an `ImageAttachment`, or a `Vector` of strings and images; ≤ 128); input ≤ 10,485,760 characters; options `prompt_cache_key::String` (≤ 64 chars), `safety_identifier::String` (≤ 128) |
+| Ollama decision models (Ollama ≥ 0.35) | `OllamaEndpoint()` (no key) | none: `model = "tev1:0.8b"` or a `with_system_one` model, else `ArgumentError` | see the Ollama bullet under Service Endpoints: 1–64 questions, `instructions` required, 2–26 options, 2–10 levels, text only, Box refused, one option `keep_alive` |
+
+Calibration differs per backend: on 129 labelled tickets with 7 options
+(2026-10-20) Jev (`jev-1.13.0`) scored accuracy 0.969 / ECE 0.016 and OpenAI
+(`gpt-6-luna`) 0.946 / 0.080, under-confident (accuracy ≥ mean top probability
+in every bin above 0.5) — tune `min_confidence` per backend.
 
 ```julia
 # What a piece of guidance may be: string | object | array | image (an image only where the backend sends images)
@@ -1674,7 +1685,23 @@ ask(state, questions...; model=nothing, service=nothing, config=nothing, cancel=
     # -> SystemOneSuccess | SystemOneFailure | SystemOneCallError
     # backend: service, else the with_system_one scope's, else TYPESAFEServiceEndpoint
     # model: model (or the request's), else (no service) the scope's, else the backend's default, read at send time
-    # any other keyword is a provider option (TypeSafe accepts long_context::Bool; any other: ArgumentError listing the accepted ones)
+    # any other keyword is a provider option, checked by the backend's wrapper: TypeSafe long_context::Bool;
+    #   OpenAI prompt_cache_key, safety_identifier; Ollama keep_alive (seconds, Inf = stay loaded);
+    #   any other: ArgumentError listing the accepted ones
+
+ask_each(states::AbstractVector, questions...; model=nothing, service=nothing, config=nothing,
+         cancel=nothing, ntasks=nothing, on_result=nothing, options...)
+ask_each(requests::AbstractVector{<:SystemOneRequest}; service=nothing, config=nothing,
+         cancel=nothing, ntasks=nothing, on_result=nothing)
+    # -> Vector{Union{SystemOneSuccess,SystemOneFailure,SystemOneCallError}}, result i for item i (input order),
+    #    each what ask returns for that item alone (one request per item; nothing is packed)
+    # every request is built and checked by its wrapper before any is sent: "item i of n" ArgumentError, 0 sent
+    # ntasks: requests in flight (≥ 1), default 16 on TypeSafe's wire and OpenAI's, 1 on Ollama, 8 otherwise
+    # a 429/529 to any request holds every not-yet-started attempt (retry-after-ms, else Retry-After, else backoff)
+    # on_result(i, result): in the worker task, as each result lands (completion order)
+    # cancel (default: ambient token): pending items become SystemOneCallError(cause = UniLMCancelled);
+    #   ReplayMissError, RecordingWriteError, InterruptException or an on_result exception stops the batch and
+    #   the first is rethrown once every worker has stopped
 
 with_system_one(f, service; model=nothing)          # -> f(); the backend (and model) of every call
     # inside f that names no service, spawned tasks included; service must declare :system_one
@@ -1698,19 +1725,29 @@ is checked against the request before a success is built (each question answered
 once and nothing else; the question's kind, except for a `RawQuestion`; a Choice
 of an offered option that is the most probable, with probabilities for exactly
 the offered options; Score levels exactly `0 … n−1` in canonical decimal, a score
-between them; every probability, confidence, noul and box edge in `0 … 1`;
-probabilities summing to 1 within the backend's rounding; a `model` string); a
-reply that fails is a `SystemOneCallError`. A usage value that is not a
-non-negative whole number reads as 0 with a warning. Both verbs ride the shared
-retry seam, so `RequestConfig.max_attempts` applies to 408, 429, 500, 502–504,
-520–524 and 529, and the final `SystemOneFailure` carries `retry_after` — the
-wait the service asked for in seconds, or `nothing` when it sent no hint.
+between them; every probability, confidence, noul and box edge in `0 … 1`, a box
+not inside out (`top ≤ bottom`, `left ≤ right`); probabilities summing to 1
+within the backend's rounding — `0.005n` on TypeSafe and OpenAI, `n·0.5e-4` on
+Ollama, plus a floating-point margin — and the chosen option at most one rounding
+step below the most probable (0.01, 0.01, 1e-4); a `model` string); a reply that
+fails is a `SystemOneCallError`. A usage value that is not a non-negative whole
+number reads as 0 with a warning. `ask`, `ask_each` and `list_models` ride the
+shared retry seam, so `RequestConfig.max_attempts` applies to 408, 429, 500,
+502–504, 520–524 and 529, and the final `SystemOneFailure` carries `retry_after`
+— the wait the service asked for in seconds, or `nothing` when it sent no hint.
+With no `RequestConfig` set by the user (no `config`, no `with_request_config`
+scope, no `set_default_config!`), calls on TypeSafe's wire and OpenAI's use
+`request_timeout = 60`, `total_deadline = 150`; Ollama's use the field defaults.
+TypeSafe retries carry `X-TypeSafe-Retry-Count` (`"1"` on the second attempt).
+Every System One exchange uses one connection pool per process (256 idle
+connections per host, kept 30 s), created by the first live request.
 
 ### Provider protocol (public, not exported)
 
 ```julia
 abstract type SystemOneProtocol end
 struct TypeSafeProtocol <: SystemOneProtocol end    # TypeSafe's wire; the trait's untyped fallback
+struct OpenAIDecisionsProtocol <: SystemOneProtocol end   # OpenAI's /v1/decisions; system_one_protocol(::Type{OPENAIServiceEndpoint})
 struct OllamaSystemOneProtocol <: SystemOneProtocol end   # Ollama's /v1/systemone; system_one_protocol(::OllamaEndpoint)
 
 UniLM.system_one_protocol(service) -> SystemOneProtocol    # Holy trait: Type{T} for singletons, instances
@@ -1734,9 +1771,14 @@ SystemOneWire(method, url, path, body; parts=[], headers=[], key_extra="")
 
 The exchange: resolve the backend and model, check `:system_one`, encode (outside
 the error handling), then — through any `with_recorded_answers` scope, keyed by
-`"/<namespace>" * path` (TypeSafe's namespace is empty) and `body` plus
-`key_extra` — send with `auth_header(service)` read only for a live call, and
-decode.
+`"/<namespace>" * path` (TypeSafe's namespace is empty, OpenAI's
+`"openai-decisions"`, Ollama's `"ollama"`, a protocol of your own its type's
+name) and `body` plus `key_extra` — send with `auth_header(service)` read only
+for a live call, through the System One connection pool, and decode. An endpoint
+that declares `:system_one` and no protocol speaks TypeSafe's wire: a gateway
+needs `provider_capabilities` (with `:system_one`), a base URL (the internal hook
+`UniLM._api_base_url`) and `auth_header`, or no code at all when
+`TYPESAFE_BASE_URL` points `TYPESAFEServiceEndpoint` at it.
 
 ### Example
 
@@ -1755,8 +1797,8 @@ issuccess(r) && println(r["department"].choice, " ", r["urgency"].score, " ", r[
 ### Recorded answers
 
 Identical requests are not answered identically, so tests and docs builds
-replay recorded answers. Inside the scope, every `ask` (hence `nl_dispatch`,
-`nl_classify` and `@branch`) and `list_models`, and every non-streaming
+replay recorded answers. Inside the scope, every `ask` (hence `ask_each`,
+`nl_dispatch`, `nl_classify` and `@branch`) and `list_models`, and every non-streaming
 `chatrequest!`, `respond` and `embeddingrequest!` (hence `tool_loop!` and
 `tool_loop`), exchanges through `dir`; everything else, including streaming,
 reaches the network as usual (images, audio, files, MCP, the Responses lifecycle
@@ -1815,6 +1857,8 @@ the remaining arguments still dispatch on their types.
 ```julia
 struct Meaning{S} end                     # S::Symbol IS the description
 Meaning(text::AbstractString)             # the instance; nl"..." is the TYPE
+# the type prints as Julia prints types, Meaning{Symbol("…")} (in MethodErrors and methods(f) too);
+# an instance prints as nl"…"(); identical sentences are one type (===)
 
 struct LowConfidenceError <: Exception    # raised when confidence < min_confidence
     question::String
@@ -1822,9 +1866,9 @@ struct LowConfidenceError <: Exception    # raised when confidence < min_confide
     min_confidence::Float64
 end
 
-struct DecisionDeclinedError <: Exception # raised when `decide` returned nothing
-    question::String                      # "branch" for @branch
-    answer::ChoiceAnswer
+struct DecisionDeclinedError <: Exception # raised when `decide` returned nothing, or the backend
+    question::String                      #   declined the question (a RefusalAnswer); "branch" for @branch
+    answer::Union{ChoiceAnswer,RefusalAnswer}
 end
 
 @branch state [key = value ...] begin
@@ -1832,9 +1876,15 @@ end
     ("option name", "description") => expression   # the only way to add a description
     _                              => expression   # requires min_confidence > 0 or a decide policy
 end
+# an option name is a String, or a Symbol sent as its String; any other value is an
+#   ArgumentError naming its line, before the request
 # keys: model, min_confidence, decide, instructions, service, config, cancel, on_response
+#   min_confidence: a finite number in 0 … 1; anything else, NaN included, is an ArgumentError
+#     before the request (nl_dispatch and nl_classify alike)
 #   decide: ChoiceAnswer -> any option name, or nothing to decline; not with min_confidence
 #   on_response: SystemOneSuccess -> ignored; called once before the policy, never on a failed call
+#   service/model: resolved as for ask (the with_system_one scope, else TYPESAFEServiceEndpoint)
+# a RefusalAnswer (the backend declined the question) takes `_`, else DecisionDeclinedError; decide not called
 # -> the selected body's value; LowConfidenceError, DecisionDeclinedError or SystemOneError otherwise
 
 nl_dispatch(f, args...; model=nothing, service=nothing, config=nothing,
@@ -1842,8 +1892,14 @@ nl_dispatch(f, args...; model=nothing, service=nothing, config=nothing,
             instructions=nothing, state=nothing, texts=nothing, on_response=nothing)
     # service/model: resolved as for ask (the with_system_one scope, else TYPESAFEServiceEndpoint)
     # -> f(resolved meanings — or keys — spliced into their positions, args...)
+    # state: nothing builds it from args, every value as JSON.jl writes it — every field of a struct
+    #   included, and written to disk by a :record scope; a function, type, module, Ref or Ptr, Task,
+    #   Channel, lock, condition, event, IO or Expr anywhere in it, or a container nested deeper than
+    #   64 levels, is an ArgumentError before the request naming the argument and the path; an
+    #   explicit state is sent as given
     # decide: nothing (argmax gated by min_confidence) | a callable | a Vector with one per slot;
-    #   ChoiceAnswer -> any offered meaning, or nothing to decline; not with min_confidence
+    #   ChoiceAnswer -> any offered meaning, or nothing to decline; not with min_confidence;
+    #   a slot the backend refused (RefusalAnswer) is declined without calling its policy
     # fallback: nothing | callable as fallback(args...) on a decline; one that cannot take
     #   arguments of the types of args is an ArgumentError before the request
     # texts: nothing (meanings are nl"..." in signatures) | a table | a Tuple of tables, one per keyed slot
@@ -1858,9 +1914,9 @@ nl_classify(state, texts; min_confidence=0.0, decide=nothing, fallback=nothing,
             instructions=nothing, model=nothing, service=nothing,
             config=nothing, cancel=nothing, on_response=nothing)
     # -> the chosen key as the table writes it; ONE table; one Choice "classify" over every
-    #   sentence in table order; a decline calls fallback(state), else LowConfidenceError /
-    #   DecisionDeclinedError; a fallback that cannot take state is an ArgumentError before
-    #   the request
+    #   sentence in table order; a decline (a refusal included) calls fallback(state), else
+    #   LowConfidenceError / DecisionDeclinedError; a fallback that cannot take state is an
+    #   ArgumentError before the request
 meanings(f; texts=nothing) -> Dict{Int,Vector{String}}   # slot position => options over every method
 meanings(f, argtypes::Type{<:Tuple}; texts=nothing) -> Dict{Int,Vector{String}}
     # the options a call with ordinary arguments of these types sends, in send order
@@ -1946,7 +2002,7 @@ has_capability(service, cap::Symbol) -> Bool
 
 | Provider | Capabilities |
 |---|---|
-| OpenAI | `:chat`, `:responses`, `:agentic`, `:embeddings`, `:images`, `:image_edits`, `:tools`, `:streaming`, `:json_output`, `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`, `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime` |
+| OpenAI | `:chat`, `:responses`, `:agentic`, `:embeddings`, `:images`, `:image_edits`, `:tools`, `:streaming`, `:json_output`, `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`, `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`, `:system_one` (its Decisions API) |
 | Azure | `:chat`, `:tools`, `:streaming`, `:json_output` |
 | Gemini (native) | `:chat`, `:tools`, `:json_output`, `:streaming`, `:agentic` |
 | Gemini (OpenAI-compat) | `:chat`, `:embeddings`, `:tools`, `:streaming`, `:json_output` |
@@ -1954,6 +2010,7 @@ has_capability(service, cap::Symbol) -> Bool
 | TypeSafe (System One) | `:system_one`, `:models` |
 | DeepSeek | `:chat`, `:tools`, `:streaming`, `:fim`, `:prefix_completion`, `:json_output` |
 | Generic | `:chat`, `:embeddings`, `:fim`, `:tools`, `:streaming`, `:json_output`, `:responses` |
+| Ollama | `:chat`, `:embeddings`, `:fim`, `:tools`, `:streaming`, `:json_output`, `:responses`, `:models`, `:system_one` |
 
 Validation comes in two strengths, and the difference matters if you write your
 own endpoint:
@@ -1962,7 +2019,9 @@ own endpoint:
   moderations, audio, batch, fine-tuning, containers, uploads, realtime, FIM,
   prefix completion, System One) validate **strictly**: an endpoint with no
   declaration at all is not dispatched — the call throws `MethodError` (no
-  `provider_capabilities` method) — because those surfaces are provider-specific
+  `provider_capabilities` method), or for the System One verbs (`ask`,
+  `ask_each`, `with_system_one`, the natural-language verbs) an `ArgumentError`
+  saying to declare `:system_one` — because those surfaces are provider-specific
   and an undeclared backend would just 404.
 - **The four primary verbs** — `chatrequest!` (`:chat`), `embeddingrequest!`
   (`:embeddings`), `respond` (`:responses` **or** `:agentic`), and
@@ -1997,12 +2056,13 @@ end
 - `connect_timeout` — per-attempt connection establishment. `request_timeout` — per-attempt whole exchange (non-stream); a stream's exchange up to its first byte. `stream_idle_timeout` — byte-gap between raw stream chunks. `total_deadline` — across ALL attempts including backoff (streams: until first byte). `max_attempts` — wire attempts (`1` disables retries). `mcp_connect_timeout` / `mcp_request_timeout` — MCP handshake / per-exchange bounds.
 - **Validation**: every `Float64` field rejects `NaN`, values `≤ 0` and finite values above `1e9` s with `ArgumentError` (`Inf` = disabled); `max_attempts ≥ 1`.
 - **Copy-with-overrides**: `RequestConfig(base::RequestConfig; kwargs...)`.
-- **Four channels, struct-wise precedence** (a channel supplies a complete struct):
+- **Five channels, struct-wise precedence** (a channel supplies a complete struct):
   1. per-call `config::Union{Nothing,RequestConfig}` keyword on request verbs;
   2. dynamic scope: `with_request_config(f; kwargs...)` — merges kwargs over `current_config()` at entry; propagates into `Threads.@spawn`;
-  3. process default: `set_default_config!(cfg)` or `set_default_config!(; kwargs...)` (merges over the current default) — the channel for REPL/notebook sessions;
-  4. the built-in defaults above.
-  `current_config()` returns the ambient struct (active scope, else process default).
+  3. process default, once set: `set_default_config!(cfg)` or `set_default_config!(; kwargs...)` (merges over the current default, or over the built-in defaults while none is set) — the channel for REPL/notebook sessions;
+  4. a backend's own default — System One only: `ask`, `ask_each` and the NL verbs on TypeSafe's wire and on OpenAI's Decisions API, and `list_models` on TypeSafe, use `request_timeout = 60`, `total_deadline = 150`; Ollama brings none. It applies only while channels 1–3 supply nothing: a process default you set, even one equal to the built-in defaults, replaces it;
+  5. the built-in defaults above.
+  `current_config()` returns the ambient struct (active scope, else the process default you set, else the built-in defaults) — channel 4 is never in it.
 
 ```julia
 with_request_config(request_timeout=30.0, max_attempts=1) do
@@ -2015,7 +2075,7 @@ set_default_config!(total_deadline=120.0)   # process-wide default
 
 `max_attempts` applies to the inference verbs only: `chatrequest!`,
 `embeddingrequest!`, `respond`, `fim_complete`, `prefix_complete`,
-`generate_image`, `edit_image`, `ask`, `list_models`, and the `tool_loop` family
+`generate_image`, `edit_image`, `ask`, `ask_each` (per request), `list_models`, and the `tool_loop` family
 (streams retry only before the first callback fires). Platform and lifecycle verbs
 — batch, container, conversation, file (`upload_file` included: a create is never
 retried), fine-tuning, moderation, upload, vector-store, audio, realtime, and the
@@ -2037,8 +2097,8 @@ with_cancel(f, tok)                 # tok is the ambient token inside f (and tas
 
 HTTP verbs take `cancel::Union{Nothing,CancelToken}=nothing` (`chatrequest!`,
 `respond`, `embeddingrequest!`, `generate_image`, `edit_image`, `fim_complete`,
-`prefix_complete`, `ask`, `list_models`, `poll_batch`, `poll_file_batch`, the tool
-loops, `nl_dispatch`, `@branch`); `nothing` resolves the ambient token, and every other
+`prefix_complete`, `ask`, `ask_each`, `list_models`, `poll_batch`, `poll_file_batch`, the tool
+loops, `nl_dispatch`, `nl_classify`, `@branch`); `nothing` resolves the ambient token, and every other
 HTTP verb observes the ambient token. A cancelled call returns its call-error result
 with `status = nothing` and `cause = UniLMCancelled(source, elapsed)` (`source` is
 `:token`, or `:callback` for a stream stopped with `close[] = true`), is never retried,
@@ -2274,19 +2334,20 @@ instead (the session closes with cause `:crash`), and a call on a closed session
 
 ## Public Extension API (not exported)
 
-Declared `public`, not exported — qualify them (`UniLM.get_url`). These are the
-functions a new backend adds methods to and the stream-state types its handlers
-mutate (see the Custom Backends guide): `get_url`, `auth_header`, `default_model`,
-`encode_request`, `decode_response`, `handle_sse_event!`, `StreamState`,
-`encode_agentic`, `decode_agentic`, `decode_agentic_stream`, `AgenticStreamState`;
-and the System One protocol seam: `SystemOneProtocol`, `TypeSafeProtocol`,
+Declared public, not exported (19 names) — qualify them (`UniLM.get_url`). These
+are the functions a new backend adds methods to and the stream-state types its
+handlers mutate (see the Custom Backends guide): `get_url`, `auth_header`,
+`default_model`, `encode_request`, `decode_response`, `handle_sse_event!`,
+`StreamState`, `encode_agentic`, `decode_agentic`, `decode_agentic_stream`,
+`AgenticStreamState`; and the System One protocol seam: `SystemOneProtocol`,
+`TypeSafeProtocol`, `OpenAIDecisionsProtocol`, `OllamaSystemOneProtocol`,
 `system_one_protocol`, `encode_system_one`, `decode_system_one`, `SystemOneWire`.
 
 ---
 
 ## Complete Exports List
 
-Every exported symbol, grouped by area:
+Every exported symbol (397), grouped by area:
 
 **Chat Completions**: `Chat`, `Message`, `ProviderContent`, `Attachment`, `ImageAttachment`, `AudioAttachment`, `RoleSystem`, `RoleUser`, `RoleAssistant`, `Tool`, `ToolCall`, `FunctionSignature`, `FunctionCallResult`, `ResponseFormat`, `InvalidConversationError`, `issendvalid`, `chatrequest!`, `update!`, `fork`
 - *Legacy aliases* (pre-rename names, exported and non-breaking, retained until 1.0): `GPTTool` → `Tool`, `GPTToolCall` → `ToolCall`, `GPTFunctionSignature` → `FunctionSignature`, `GPTFunctionCallResult` → `FunctionCallResult`
@@ -2329,7 +2390,7 @@ Every exported symbol, grouped by area:
 
 **Moderations**: `ModerationResponse`, `ModerationResult`, `ModerationSuccess`, `ModerationFailure`, `ModerationCallError`, `moderate`, `is_flagged`
 
-**System One (TypeSafe's Jev and other backends)**: `TYPESAFEServiceEndpoint`, `SystemOneQuestion`, `ChoiceQuestion`, `ScoreQuestion`, `NoulQuestion`, `NoulCriteria`, `BoxQuestion`, `RawQuestion`, `choice`, `score`, `noul`, `box`, `SystemOneRequest`, `ask`, `with_system_one`, `SystemOneAnswer`, `ChoiceAnswer`, `ScoreAnswer`, `NoulAnswer`, `BoxCoordinates`, `BoxAnswer`, `RefusalAnswer`, `UnknownAnswer`, `SystemOneResponse`, `SystemOneSuccess`, `SystemOneFailure`, `SystemOneCallError`, `SystemOneError`, `answers`, `answer`, `TypeSafeModelCard`, `TypeSafeModelsSuccess`, `list_models`
+**System One (TypeSafe's Jev and other backends)**: `TYPESAFEServiceEndpoint`, `SystemOneQuestion`, `ChoiceQuestion`, `ScoreQuestion`, `NoulQuestion`, `NoulCriteria`, `BoxQuestion`, `RawQuestion`, `choice`, `score`, `noul`, `box`, `SystemOneRequest`, `ask`, `ask_each`, `with_system_one`, `SystemOneAnswer`, `ChoiceAnswer`, `ScoreAnswer`, `NoulAnswer`, `BoxCoordinates`, `BoxAnswer`, `RefusalAnswer`, `UnknownAnswer`, `SystemOneResponse`, `SystemOneSuccess`, `SystemOneFailure`, `SystemOneCallError`, `SystemOneError`, `answers`, `answer`, `TypeSafeModelCard`, `TypeSafeModelsSuccess`, `list_models`
 - *Natural-language control flow*: `Meaning`, `@nl_str`, `@branch`, `nl_dispatch`, `nl_classify`, `meanings`, `meaning_gaps`, `LowConfidenceError`, `DecisionDeclinedError`
 - *Recorded answers*: `with_recorded_answers`, `ReplayMissError`, `RecordingWriteError`
 

@@ -2,7 +2,8 @@
 # One immutable struct carries every timeout/retry knob (seconds; Inf means
 # "disabled"). Resolution is struct-wise: whichever channel supplies the
 # config supplies ALL fields — per-call kwarg > dynamic scope > process
-# default > built-in defaults.
+# default set by the user > a backend's own default (System One) > built-in
+# defaults.
 
 using Base.ScopedValues: ScopedValue, with
 
@@ -86,28 +87,36 @@ end
 # 1. per-call kwarg (config::Union{Nothing,RequestConfig}) → _resolve_config;
 # 2. dynamic scope — a ScopedValue, which propagates into Threads.@spawn;
 # 3. process default — REPL/notebook sessions cannot hold a dynamic scope
-#    across cells, so they mutate the process default instead;
-# 4. the @kwdef field defaults (the initial process default).
+#    across cells, so they set the process default instead;
+# 4. a backend's own default, for the verbs whose backends have one (System
+#    One: a service that answers in a second needs no ten-minute bound);
+# 5. the @kwdef field defaults.
 
 const _REQUEST_CONFIG = ScopedValue{Union{Nothing,RequestConfig}}(nothing)
 
-# Process-default holder. Plain global stores are already atomic on Julia 1.12+
-# (no torn writes); the @atomic field exists for the compare-and-swap that
-# `set_default_config!`'s read-modify-write retries on.
+const _BUILTIN_CONFIG = RequestConfig()
+
+# Process-default holder: `nothing` until `set_default_config!` sets one, so a
+# backend's own default applies only while the user has chosen none. Plain global
+# stores are already atomic on Julia 1.12+ (no torn writes); the @atomic field
+# exists for the compare-and-swap that `set_default_config!`'s read-modify-write
+# retries on.
 mutable struct _ConfigHolder
-    @atomic cfg::RequestConfig
+    @atomic cfg::Union{Nothing,RequestConfig}
 end
-const _PROCESS_DEFAULT_CONFIG = _ConfigHolder(RequestConfig())
+const _PROCESS_DEFAULT_CONFIG = _ConfigHolder(nothing)
 
 """
     current_config() -> RequestConfig
 
 The ambient [`RequestConfig`](@ref): the innermost active
 [`with_request_config`](@ref) scope if any, otherwise the process default set
-by [`set_default_config!`](@ref) (initially the field defaults).
+by [`set_default_config!`](@ref), otherwise the field defaults. A System One
+call with no scope and no process default set uses its backend's own default
+instead of the field defaults (see [`set_default_config!`](@ref)).
 """
 current_config()::RequestConfig =
-    @something(_REQUEST_CONFIG[], @atomic(_PROCESS_DEFAULT_CONFIG.cfg))
+    @something(_REQUEST_CONFIG[], @atomic(_PROCESS_DEFAULT_CONFIG.cfg), _BUILTIN_CONFIG)
 
 """
     with_request_config(f; kwargs...)
@@ -134,21 +143,32 @@ with_request_config(f::Function; kwargs...) =
 
 Set the process-wide default [`RequestConfig`](@ref) and return it. The
 keyword form merges the given fields over the CURRENT process default (never
-over an active scope). Intended for REPL/notebook sessions, which cannot hold
-a dynamic scope across cells; prefer [`with_request_config`](@ref) in
-programs.
+over an active scope), or over the field defaults while none is set. Intended
+for REPL/notebook sessions, which cannot hold a dynamic scope across cells;
+prefer [`with_request_config`](@ref) in programs.
+
+A process default you set — even one equal to the field defaults — also
+replaces the default a System One backend brings. Until one is set,
+[`ask`](@ref), [`ask_each`](@ref) and the natural-language verbs on TypeSafe use
+`request_timeout = 60` and `total_deadline = 150` (TypeSafe answers in under a
+second; the field defaults' ten minutes per attempt would only delay reporting
+a stalled call), while every other verb uses the field defaults. A
+[`with_request_config`](@ref) scope or a per-call `config` replaces it too, as a
+whole.
 
 The keyword form is a read-modify-write and retries on a compare-and-swap miss:
 a plain read-then-write loses one of two concurrent calls, because the loser
 installs a snapshot taken before the winner's write and silently drops its field.
 """
-set_default_config!(cfg::RequestConfig)::RequestConfig =
-    (@atomic _PROCESS_DEFAULT_CONFIG.cfg = cfg)
+function set_default_config!(cfg::RequestConfig)::RequestConfig
+    @atomic _PROCESS_DEFAULT_CONFIG.cfg = cfg
+    cfg
+end
 
 function set_default_config!(; kwargs...)::RequestConfig
     while true
         base = @atomic _PROCESS_DEFAULT_CONFIG.cfg
-        merged = RequestConfig(base; kwargs...)
+        merged = RequestConfig(something(base, _BUILTIN_CONFIG); kwargs...)
         (@atomicreplace _PROCESS_DEFAULT_CONFIG.cfg base => merged).success && return merged
     end
 end
@@ -156,3 +176,9 @@ end
 # Per-verb resolution: an explicit per-call config wins over every ambient channel.
 _resolve_config(c::Union{Nothing,RequestConfig})::RequestConfig =
     c !== nothing ? c : current_config()
+
+# The same for a verb whose backend brings its own default: it ranks below every channel
+# the user controls — the call's config, the scope, a process default they set — and
+# above the field defaults, which apply when the backend brings none (`nothing`).
+_resolve_config(c::Union{Nothing,RequestConfig}, backend::Union{Nothing,RequestConfig})::RequestConfig =
+    @something(c, _REQUEST_CONFIG[], @atomic(_PROCESS_DEFAULT_CONFIG.cfg), backend, _BUILTIN_CONFIG)

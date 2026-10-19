@@ -224,6 +224,7 @@ RawQuestion
 ```@docs
 SystemOneRequest
 ask
+ask_each
 with_system_one
 ```
 

@@ -457,7 +457,8 @@ function _http(method::AbstractString, url::AbstractString,
 end
 
 """
-    _http_with_retries(cfg, t0, method, url, headers=[], body=UInt8[]; cancel, kwargs...) -> HTTP.Response
+    _http_with_retries(cfg, t0, method, url, headers=[], body=UInt8[]; cancel, retry_header, hold, observe,
+                       kwargs...) -> HTTP.Response
 
 The one retry loop. `t0` is the verb-entry monotonic origin (`time_ns()`).
 Runs at most `cfg.max_attempts` attempts inside `cfg.total_deadline`
@@ -475,20 +476,43 @@ retries log at debug; the final failure warns once.
 `cancel` (default: the ambient token) is checked before every attempt, backoff
 sleeps wake at once on a cancel, and a cancelled call is never retried: each
 surfaces as [`UniLMCancelled`](@ref) with `elapsed` measured from `t0`.
+
+Three hooks, each off (`nothing`) by default:
+- `retry_header::Union{Nothing,String}`: a header sent on every attempt after the
+  first, holding the retry's number — `"1"` on the second attempt, `"2"` on the
+  third — as TypeSafe's official SDKs label theirs. The first attempt never
+  carries it.
+- `hold::Union{Nothing,Function}`: `hold()` returns how many seconds no attempt
+  may start yet (`0.0` when one may), a wait shared by requests sent together.
+  Before every attempt the loop waits it out — cancellably, and never past
+  `total_deadline`, whose breach is then reported as usual.
+- `observe::Union{Nothing,Function}`: `observe(attempt, response)` sees every
+  response an attempt returns, before the loop decides whether to retry it.
+
+Every other keyword passes through to `HTTP.request` (e.g. `client`).
 """
 function _http_with_retries(cfg::RequestConfig, t0::UInt64,
                             method::AbstractString, url::AbstractString,
                             headers=Pair{String,String}[], body=UInt8[];
                             cancel::Union{Nothing,CancelToken}=_current_cancel(),
+                            retry_header::Union{Nothing,String}=nothing,
+                            hold::Union{Nothing,Function}=nothing,
+                            observe::Union{Nothing,Function}=nothing,
                             kwargs...)::HTTP.Response
     cancelled() = UniLMCancelled(:token, _elapsed_s(t0))
     for attempt in 1:cfg.max_attempts
         iscancelled(cancel) && throw(cancelled())
+        if !isnothing(hold)
+            while (w = min(hold()::Float64, _remaining_s(cfg, t0))) > 0
+                _cancel_sleep(cancel, w) && throw(cancelled())
+            end
+        end
         remaining = _remaining_s(cfg, t0)
         ispositive(remaining) || throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
         final = attempt == cfg.max_attempts
+        sent = isnothing(retry_header) || attempt == 1 ? headers : [headers; retry_header => string(attempt - 1)]
         resp = try
-            _http(method, url, headers, body; cfg, remaining, cancel, kwargs...)
+            _http(method, url, sent, body; cfg, remaining, cancel, kwargs...)
         catch e
             e isa InterruptException && rethrow()
             e isa UniLMCancelled && throw(cancelled())   # never retried
@@ -504,6 +528,7 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
             _cancel_sleep(cancel, delay) && throw(cancelled())
             continue
         end
+        isnothing(observe) || observe(attempt, resp)
         if _is_retryable(resp.status) && !final
             action, delay = _retry_pause(cfg, t0, attempt, resp)
             if action === :budget

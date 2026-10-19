@@ -43,5 +43,13 @@ supplies every field):
 
 1. A per-call `config` keyword (a complete struct wins outright).
 2. The innermost active [`with_request_config`](@ref) scope.
-3. The process default set by [`set_default_config!`](@ref).
-4. The built-in field defaults.
+3. The process default, once set by [`set_default_config!`](@ref).
+4. The backend's own default — System One calls only: [`ask`](@ref),
+   [`ask_each`](@ref) and the natural-language verbs on TypeSafe use
+   `request_timeout = 60` and `total_deadline = 150`.
+5. The built-in field defaults.
+
+A backend's default fills in only while you have chosen nothing: a scope, a
+per-call `config` or a process default you set — even one equal to the field
+defaults — replaces it as a whole. [`current_config`](@ref) reports channels 2,
+3 and 5, the config of every verb whose backend brings none.

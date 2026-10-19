@@ -149,10 +149,11 @@ prefer [`with_request_config`](@ref) in programs.
 
 A process default you set — even one equal to the field defaults — also
 replaces the default a System One backend brings. Until one is set,
-[`ask`](@ref), [`ask_each`](@ref) and the natural-language verbs on TypeSafe use
-`request_timeout = 60` and `total_deadline = 150` (TypeSafe answers in under a
-second; the field defaults' ten minutes per attempt would only delay reporting
-a stalled call), while every other verb uses the field defaults. A
+[`ask`](@ref), [`ask_each`](@ref) and the natural-language verbs on TypeSafe and
+OpenAI's Decisions API, and [`list_models`](@ref) on TypeSafe, use
+`request_timeout = 60` and `total_deadline = 150` (both services typically answer
+in under a second; the field defaults' ten minutes per attempt would only delay
+reporting a stalled call), while every other verb uses the field defaults. A
 [`with_request_config`](@ref) scope or a per-call `config` replaces it too, as a
 whole.
 

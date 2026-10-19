@@ -33,7 +33,8 @@ Run `f()` against a local System One mock and return `(f(), recorded_requests)`.
 Every Choice question is answered with `pick[question_name]` when the table has
 an entry and with the question's FIRST criteria key otherwise, at probability
 1.0 against 0.0 for the rest. Request bodies are recorded parsed with
-`JSON.parse`, which keeps object key order, so criteria order is observable.
+`JSON.parse`, which keeps object key order, so criteria order is observable —
+the `request` part of a multipart request, whose parts' names are recorded too.
 A `status` other than 200 serves `body` verbatim instead.
 """
 function _with_semantic_mock(f::Function; pick::AbstractDict=Dict{String,String}(),
@@ -43,12 +44,15 @@ function _with_semantic_mock(f::Function; pick::AbstractDict=Dict{String,String}
     # A request with no body at all arrives as a sentinel that supports no byte access.
     bodytext(req) = applicable(copy, req.body) ? String(copy(req.body)) : ""
     handler = function (req)
-        raw = bodytext(req)
+        parts = startswith(HTTP.header(req, "Content-Type", ""), "multipart/form-data") ?
+                HTTP.parse_multipart_form(req) : nothing
+        raw = isnothing(parts) ? bodytext(req) : String(read(first(parts).data))
         parsed = isempty(raw) ? JSON.Object{String,Any}() : JSON.parse(raw)
         push!(recorded, Dict{String,Any}(
             "method" => String(req.method),
             "target" => String(req.target),
             "body" => parsed,
+            "parts" => isnothing(parts) ? String[] : String[p.name for p in parts],
             "headers" => Dict{String,String}(
                 lowercase(String(k)) => String(v) for (k, v) in req.headers)))
         status == 200 || return HTTP.Response(status, ["Content-Type" => "application/json"],
@@ -1623,6 +1627,75 @@ end
         nl_dispatch(state_route, println; service=SemanticMock, config=_SEM_CFG, state="a ticket")
     end
     @test out === :refund && seen[1]["body"]["state"] == "a ticket"
+end
+
+photo_route(photo, ::nl"a red square") = :red
+photo_route(photo, ::nl"a blue square") = :blue
+
+@testset "semantic — an image argument travels as an image; a value JSON.jl cannot write is refused by name" begin
+    caught(f) = try f(); nothing catch e; e end
+    img = ImageAttachment(joinpath(@__DIR__, "fixtures", "typesafe", "images", "red-300.png"))
+    ref = "<image:" * first(bytes2hex(UniLM.SHA.sha256(img.data)), 32) * ">"
+    # On TypeSafe's wire an image is data: an asset of a multipart request, alone or nested.
+    out, seen = _with_semantic_mock() do
+        [nl_dispatch(photo_route, img; service=SemanticMock, config=_SEM_CFG),
+         nl_dispatch(photo_route, (shot = img, note = "a swatch"); service=SemanticMock, config=_SEM_CFG)]
+    end
+    @test out == [:red, :red]
+    @test all(s -> startswith(s["headers"]["content-type"], "multipart/form-data") && s["parts"] == ["request", "asset-0"],
+              seen)
+    @test seen[1]["body"]["state"] == Dict("photo" => ref)
+    @test seen[2]["body"]["state"] == Dict("photo" => Dict("shot" => ref, "note" => "a swatch"))
+    # A backend that cannot carry it there refuses it in its own words, before any request.
+    for (service, model, needle) in ((OPENAIServiceEndpoint, nothing, "OpenAI's Decisions API takes images in the state only"),
+                                     (OllamaEndpoint(base_url="http://127.0.0.1:1"), "tev1:0.8b",
+                                      "not supported by UniLM's Ollama wrapper yet"))
+        e = caught(() -> nl_dispatch(photo_route, img; service, model))
+        @test e isa ArgumentError && contains(e.msg, needle)
+    end
+    # A value JSON.jl cannot write is not data: refused by the argument and the path to it.
+    clip = AudioAttachment(read(joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")))
+    refused, sent = _with_semantic_mock() do
+        [caught(() -> nl_dispatch(photo_route, clip; service=SemanticMock, config=_SEM_CFG)),
+         caught(() -> nl_dispatch(photo_route, Dict("clips" => [clip]); service=SemanticMock, config=_SEM_CFG))]
+    end
+    @test isempty(sent)
+    @test all(e -> e isa ArgumentError && contains(e.msg, "the argument `photo` of photo_route") &&
+                   contains(e.msg, "AudioAttachment") && contains(e.msg, "not data") && contains(e.msg, "Pass `state = …`"),
+              refused)
+    @test contains(refused[1].msg, "is a value JSON.jl cannot write")
+    @test contains(refused[2].msg, "at `photo[\"clips\"][1]`")
+end
+
+@testset "semantic — provider options reach the request from every verb, and from a scope" begin
+    long(s) = get(s["headers"], "typesafe-danger-zone-long-context", nothing)
+    ticket = "I want my money back"
+    out, seen = _with_semantic_mock() do
+        (nl_classify(ticket, INTENT; service=SemanticMock, config=_SEM_CFG, options=(long_context=true,)),
+         nl_dispatch(intent_route, ticket; texts=INTENT, service=SemanticMock, config=_SEM_CFG, options=(long_context=true,)),
+         (@eval @branch $ticket service=SemanticMock config=_SEM_CFG options=(long_context=true,) begin
+             "a refund" => :refund
+             "a bug"    => :bug
+         end),
+         nl_classify(ticket, INTENT; service=SemanticMock, config=_SEM_CFG))
+    end
+    @test out == (:refund, (:refund, ticket), :refund, :refund)
+    @test long.(seen) == ["true", "true", "true", nothing]
+    # Without options the request is the one it always was, byte for byte.
+    @test seen[4]["body"] == seen[1]["body"]
+    # A scope's options apply to the calls on its backend that name none, like its model.
+    _, scoped = _with_semantic_mock() do
+        with_system_one(SemanticMock; long_context=true) do
+            (nl_classify(ticket, INTENT; config=_SEM_CFG),
+             nl_classify(ticket, INTENT; config=_SEM_CFG, options=(long_context=false,)),
+             nl_classify(ticket, INTENT; service=SemanticMock, config=_SEM_CFG))
+        end
+    end
+    @test long.(scoped) == ["true", nothing, nothing]
+    @test :options in UniLM._BRANCH_KEYWORDS
+    # An option the backend does not accept is its wrapper's refusal, before the request.
+    e = try nl_classify(ticket, INTENT; service=SemanticMock, options=(temperature=0,)) catch err; err end
+    @test e isa ArgumentError && contains(e.msg, "temperature")
 end
 
 # ─── 19. The caches: bounded, read without a lock, validated once ───────────

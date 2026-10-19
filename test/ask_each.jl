@@ -11,16 +11,18 @@ using Test, HTTP, JSON, UniLM, Sockets
 
 # An endpoint on TypeSafe's wire through the trait's fallback, as a gateway would be; one
 # whose protocol speaks the same wire under another name (TypeSafe's transport is
-# TypeSafe's alone); one whose protocol brings a tight default config; and one that
-# declares no System One at all.
+# TypeSafe's alone); one whose protocol brings a tight default config; one whose protocol
+# notes every request it encodes; and one that declares no System One at all.
 struct _AEMock <: UniLM.ServiceEndpoint end
 struct _AEOther <: UniLM.ServiceEndpoint end
 struct _AETight <: UniLM.ServiceEndpoint end
+struct _AECounted <: UniLM.ServiceEndpoint end
 struct _AENone <: UniLM.ServiceEndpoint end
 struct _AEOtherProtocol <: UniLM.SystemOneProtocol end
 struct _AETightProtocol <: UniLM.SystemOneProtocol end
+struct _AECountedProtocol <: UniLM.SystemOneProtocol end
 const _AE_BASE = Ref("")
-for T in (_AEMock, _AEOther, _AETight)
+for T in (_AEMock, _AEOther, _AETight, _AECounted)
     @eval UniLM._resolve_base_url(::Type{$T}) = _AE_BASE[]
     @eval UniLM.auth_header(::Type{$T}) = ["Authorization" => "Bearer ae", "Content-Type" => "application/json"]
     @eval UniLM.provider_capabilities(::Type{$T}) = Set([:system_one])
@@ -28,13 +30,23 @@ end
 UniLM.provider_capabilities(::Type{_AENone}) = Set([:chat])
 UniLM.system_one_protocol(::Type{_AEOther}) = _AEOtherProtocol()
 UniLM.system_one_protocol(::Type{_AETight}) = _AETightProtocol()
-for P in (_AEOtherProtocol, _AETightProtocol)
-    @eval UniLM.encode_system_one(::$P, s, r::SystemOneRequest) = UniLM.encode_system_one(UniLM.TypeSafeProtocol(), s, r)
+UniLM.system_one_protocol(::Type{_AECounted}) = _AECountedProtocol()
+for P in (_AEOtherProtocol, _AETightProtocol, _AECountedProtocol)
     @eval UniLM.decode_system_one(::$P, s, r::SystemOneRequest, resp::HTTP.Response) =
         UniLM.decode_system_one(UniLM.TypeSafeProtocol(), s, r, resp)
 end
+for P in (_AEOtherProtocol, _AETightProtocol)
+    @eval UniLM.encode_system_one(::$P, s, r::SystemOneRequest) = UniLM.encode_system_one(UniLM.TypeSafeProtocol(), s, r)
+end
 const _AE_TIGHT = RequestConfig(request_timeout=0.3, max_attempts=1, total_deadline=5.0)
 UniLM._system_one_default_config(::_AETightProtocol, _) = _AE_TIGHT
+# What happened, in order: each request encoded (`"encode <state>"`) and each one the
+# server received (`"send <state>"`, noted by the scripts that want it).
+const _AE_EVENTS = String[]
+function UniLM.encode_system_one(::_AECountedProtocol, s, r::SystemOneRequest)
+    @lock _AE_LOCK push!(_AE_EVENTS, "encode " * r.state)
+    UniLM.encode_system_one(UniLM.TypeSafeProtocol(), s, r)
+end
 
 # ─── One mock for the whole file ─────────────────────────────────────────────
 # A pooled connection stays reusable from one testset to the next, and the task and
@@ -272,6 +284,19 @@ end
     @test all(issuccess, few) && _AE_PEAK[] == 2
 end
 
+@testset "ask_each — ntasks is any Integer of at least 1" begin
+    q = "q" => noul("x")
+    widths, _ = _ae_run(_ae_ok_script) do
+        [ask_each(["a", "b"], q; service=_AEMock, ntasks=w) for w in (Int128(2), UInt8(2), big(3), Int32(1))]
+    end
+    @test all(rs -> length(rs) == 2 && all(issuccess, rs), widths)
+    errs, seen = _ae_run(_ae_ok_script) do
+        [_ae_caught(() -> ask_each(["a"], q; service=_AEMock, ntasks=w)) for w in (0, -1, big(0), Int128(2)^70)]
+    end
+    @test isempty(seen)
+    @test all(e -> e isa ArgumentError && contains(e.msg, "ntasks"), errs)
+end
+
 @testset "ask_each — a 429 holds every attempt of the batch until the wait it asked for" begin
     q = "q" => noul("x")
     # Whichever request arrives first is rate-limited and asked to wait 0.8 s; the others
@@ -301,6 +326,34 @@ end
         (fetch.(tasks), late)
     end
     @test only(s.at for s in seen3 if s.state == "late") - seen3[1].at < 0.8
+end
+
+@testset "ask_each — a held request waits at most its own total_deadline, and then nothing is sent for it" begin
+    q = "q" => noul("x")
+    # The first request to arrive is asked to wait 6 s; every request may take 1 s in all.
+    cfg = RequestConfig(request_timeout=2.0, total_deadline=1.0, max_attempts=3)
+    limited = (n, body) -> n == 1 ?
+        _ae_json(429, """{"detail":"slow down"}"""; headers=["Retry-After" => "6"]) : _ae_ok(body)
+    # A single ask is unchanged: a wait longer than its budget returns the 429 at once.
+    (single, t_single), seen1 = _ae_run(limited) do
+        t0 = time()
+        r = ask("a", q; service=_AEMock, config=cfg)
+        (r, time() - t0)
+    end
+    @test single isa SystemOneFailure && single.status == 429 && single.retry_after == 6.0
+    @test t_single < 1.0 && length(seen1) == 1
+    # In a batch, each item's clock starts when its worker takes it: the held ones spend
+    # their own second each, one after the other, and end at their deadline unsent.
+    (rs, wall), seen = _ae_run(limited) do
+        t0 = time()
+        r = ask_each(["a", "b", "c"], q; service=_AEMock, ntasks=1, config=cfg)
+        (r, time() - t0)
+    end
+    @test rs[1] isa SystemOneFailure && rs[1].status == 429
+    @test all(r -> r isa SystemOneCallError && r.cause isa UniLMTimeout && r.cause.phase === :deadline &&
+                   r.cause.limit == 1.0, rs[2:3])
+    @test length(seen) == 1                    # nothing was sent for the held items
+    @test 2.0 - 0.05 <= wall < 4.0             # their two budgets, far short of the 6 s asked for
 end
 
 @testset "ask and ask_each — TypeSafe's retries are numbered in X-TypeSafe-Retry-Count, no other protocol's" begin
@@ -405,6 +458,55 @@ end
         _ae_caught(() -> ask_each(["a", "b"], q; service=_AEMock, ntasks=1, on_result=(i, r) -> throw(InterruptException())))
     end
     @test e3 isa InterruptException
+end
+
+@testset "ask_each — on_result runs one call at a time, whatever the number of workers" begin
+    q = "q" => noul("x")
+    current, peak = Threads.Atomic{Int}(0), Threads.Atomic{Int}(0)
+    landed, lk = Int[], ReentrantLock()
+    rs, _ = _ae_run(_ae_ok_script) do
+        ask_each(["s$i" for i in 1:12], q; service=_AEMock, ntasks=4, on_result=(i, r) -> begin
+            Threads.atomic_max!(peak, Threads.atomic_add!(current, 1) + 1)
+            @lock lk push!(landed, i)
+            sleep(0.05)                          # long enough for the other workers' results to land
+            Threads.atomic_sub!(current, 1)
+        end)
+    end
+    @test all(issuccess, rs)
+    @test peak[] == 1
+    @test sort(landed) == 1:12
+end
+
+# A callable that is not a Function.
+struct _AETally
+    n::Threads.Atomic{Int}
+end
+(t::_AETally)(i, r) = Threads.atomic_add!(t.n, 1)
+
+@testset "ask_each — on_result is any callable of (i, result), checked before anything is sent" begin
+    q = "q" => noul("x")
+    tally = _AETally(Threads.Atomic{Int}(0))
+    rs, _ = _ae_run(() -> ask_each(["a", "b", "c"], q; service=_AEMock, on_result=tally), _ae_ok_script)
+    @test all(issuccess, rs) && tally.n[] == 3
+    errs, seen = _ae_run(_ae_ok_script) do
+        [_ae_caught(() -> ask_each(["a"], q; service=_AEMock, on_result=r -> nothing)),
+         _ae_caught(() -> ask_each(["a"], q; service=_AEMock, on_result=(i, r::SystemOneSuccess) -> nothing)),
+         _ae_caught(() -> ask_each(["a"], q; service=_AEMock, on_result="not callable"))]
+    end
+    @test isempty(seen)                          # refused before the batch started
+    @test all(e -> e isa ArgumentError && contains(e.msg, "on_result"), errs)
+end
+
+@testset "ask_each — every request is checked before the first is sent, and encoded again as it is sent" begin
+    q = "q" => noul("x")
+    noted = (n, body) -> (@lock(_AE_LOCK, push!(_AE_EVENTS, "send " * body["state"])); _ae_ok(body))
+    @lock _AE_LOCK empty!(_AE_EVENTS)
+    rs, _ = _ae_run(() -> ask_each(["a", "b", "c"], q; service=_AECounted, ntasks=1), noted)
+    @test all(issuccess, rs)
+    # Checked up front, then each worker encodes its item when it takes it, so no more than
+    # `ntasks` bodies are held at once.
+    @test @lock(_AE_LOCK, copy(_AE_EVENTS)) ==
+          ["encode a", "encode b", "encode c", "encode a", "send a", "encode b", "send b", "encode c", "send c"]
 end
 
 @testset "ask_each — no task or descriptor outlives a batch, however it ends" begin

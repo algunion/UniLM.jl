@@ -7,7 +7,7 @@
 # API key; the replay tests run after it is closed and with TYPESAFE_API_KEY
 # unset, so a request that went for the network could not be sent.
 
-using Sockets
+using Sockets, Base64
 
 const _RA_KEY = "ts-sentinel-3f9c2a71"   # must appear in no recording
 const _RA_CFG = UniLM.RequestConfig(max_attempts=1, total_deadline=30.0)
@@ -18,7 +18,8 @@ const _RA_HITS = Threads.Atomic{Int}(0)
 
 # The mock's answer to one question of request number `n`: the LAST Choice option
 # (a replayed dispatch cannot pass by landing on the default first one), and
-# numbers that carry `n`, so no two recordings look alike.
+# numbers that carry `n`, so no two recordings look alike — a Score's mass moved from its
+# first level to its last by n/10⁵, and its score the expectation that makes.
 function _ra_answer(q::AbstractDict, n::Int)::Dict{String,Any}
     kind = q["type"]
     if kind == "choice"
@@ -28,9 +29,11 @@ function _ra_answer(q::AbstractDict, n::Int)::Dict{String,Any}
                 o => (o == last(options) ? 0.9 : 0.1 / max(length(options) - 1, 1)) for o in options))
     elseif kind == "score"
         levels = q["criteria"]
-        Dict{String,Any}("type" => kind, "score" => 1 + n / 1000, "confidence" => 0.5,
+        k, shift = length(levels), n / 100_000
+        p = k == 1 ? [1.0] : [1 / k + (i == 1 ? -shift : i == k ? shift : 0.0) for i in 1:k]
+        Dict{String,Any}("type" => kind, "score" => sum((i - 1) * p[i] for i in 1:k), "confidence" => 0.5,
             "legend" => Dict{String,Any}(string(i - 1) => levels[i] for i in eachindex(levels)),
-            "probabilities" => Dict{String,Any}(string(i - 1) => 1 / length(levels) for i in eachindex(levels)))
+            "probabilities" => Dict{String,Any}(string(i - 1) => p[i] for i in 1:k))
     else
         Dict{String,Any}("type" => kind, "noul" => n / 1000)
     end
@@ -709,6 +712,59 @@ end
                   "not JSON, though it mentions \"tools\"")
         @test UniLM._redacted(plain) == plain
     end
+end
+
+@testset "recorded answers — an image a body carries as a data URL is keyed and written as its digest" begin
+    png, jpeg = base64encode(UInt8[0x89, 0x50, 0x4e, 0x47, 0x01, 0x02]), base64encode(UInt8[0xff, 0xd8, 0x03])
+    body = JSON.json(JSON.Object{String,Any}(
+        "messages" => [JSON.Object{String,Any}("role" => "user", "content" => [
+            JSON.Object{String,Any}("type" => "text", "text" => "an image follows; its URL holds ;base64,"),
+            JSON.Object{String,Any}("type" => "image_url", "image_url" => JSON.Object{String,Any}("url" => "data:image/png;base64," * png))])],
+        "input" => Any["data:image/jpeg;name=photo.jpg;base64," * jpeg, "data:text/plain,plain", 7]))
+    keyed = UniLM._redacted(body)
+    sha(s) = bytes2hex(UniLM.SHA.sha256(s))
+    parsed = JSON.parse(keyed)
+    @test parsed["messages"][1]["content"][2]["image_url"]["url"] == "data:image/png;sha256," * sha(png)
+    @test parsed["input"] == Any["data:image/jpeg;name=photo.jpg;sha256," * sha(jpeg), "data:text/plain,plain", 7]
+    @test parsed["messages"][1]["content"][1]["text"] == "an image follows; its URL holds ;base64,"   # not a data URL
+    @test !contains(keyed, png) && !contains(keyed, jpeg)
+    @test UniLM._redacted(keyed) == keyed                    # a digest is not a data URL: keying is idempotent
+    # A body whose text merely mentions the marker is keyed byte for byte, never re-encoded.
+    for plain in ("""{"note": "a ;base64, b", "temperature": 0.10}""", "not JSON ;base64, at all")
+        @test UniLM._redacted(plain) == plain
+    end
+end
+
+@testset "recorded answers — the committed recordings hold no data URL, so every key stays as it was" begin
+    files = readdir(joinpath(pkgdir(UniLM), "docs", "recorded_answers"); join=true)
+    @test length(files) >= 146
+    for f in files
+        body = JSON.parse(read(f, String))["request"]["body"]
+        isnothing(body) && continue                         # a GET has none
+        text = JSON.json(body)
+        @test !contains(text, ";base64,") && UniLM._redacted(text) == text
+    end
+end
+
+@testset "recorded LLM answers — an image attachment is keyed and written as its digest, never its bytes" begin
+    images = joinpath(@__DIR__, "fixtures", "typesafe", "images")
+    red, blue = (ImageAttachment(read(joinpath(images, f))) for f in ("red-300.png", "blue-300.png"))
+    pic(img) = chatrequest!(Chat(service=_RL_OPENAI, model="gpt-5.4-mini",
+                                 messages=[Message(Val(:user), "What colour is this?", img)]); config=_RL_CFG)
+    dir = _ra_dir("llm-image")
+    live = _rl_online(() -> with_recorded_answers(() -> pic(red), dir; mode=:record))
+    @test live isa LLMSuccess
+    b64 = base64encode(red.data)
+    @test contains(@lock(_RL_LOCK, last(_RL_SEEN)), b64)              # the provider gets the image
+    text = read(only(readdir(dir; join=true)), String)
+    @test !contains(text, b64) && !contains(text, "base64,")
+    @test contains(text, "data:image/png;sha256," * bytes2hex(UniLM.SHA.sha256(b64)))
+    hits = _RL_HITS[]
+    replayed = _rl_offline(() -> with_recorded_answers(() -> pic(red), dir))
+    @test _RL_HITS[] == hits && _rl_seen(replayed) == _rl_seen(live)
+    miss = _rl_offline(() -> with_recorded_answers(() -> _ra_caught(() -> pic(blue)), dir))
+    @test miss isa ReplayMissError && !contains(miss.body, "base64,") &&
+          contains(miss.body, "data:image/png;sha256," * bytes2hex(UniLM.SHA.sha256(base64encode(blue.data))))
 end
 
 @testset "recorded LLM answers — a two-turn tool loop records two files and replays them offline" begin

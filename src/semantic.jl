@@ -229,7 +229,7 @@ _nl_declined(question::String, a::RefusalAnswer, _, ::Real)::Exception = Decisio
 # ─── @branch ─────────────────────────────────────────────────────────────────
 
 const _BRANCH_KEYWORDS = (:model, :min_confidence, :decide, :instructions, :service, :config, :cancel,
-                          :on_response)
+                          :on_response, :options)
 
 """
     _branch_select(state, names, descriptions; kwargs...) -> Int
@@ -252,6 +252,7 @@ function _branch_select(state, names::Vector{String}, descriptions::Vector{Any};
                         config::Union{Nothing,RequestConfig}=nothing,
                         cancel::Union{Nothing,CancelToken}=nothing,
                         on_response=nothing,
+                        options::NamedTuple=(;),
                         has_fallback::Bool=false)::Int
     _nl_check_threshold(min_confidence)
     isempty(names) && throw(ArgumentError("a branch needs at least one option"))
@@ -266,8 +267,7 @@ function _branch_select(state, names::Vector{String}, descriptions::Vector{Any};
         "is $(min_confidence): no answer is ever declined and the fallback could never run"))
     question = choice(isnothing(instructions) ? _NL_INSTRUCTIONS : instructions,
                       [names[i] => descriptions[i] for i in eachindex(names)])
-    result = isnothing(model) ? ask(state, "branch" => question; service, config, cancel) :
-                                ask(state, "branch" => question; model, service, config, cancel)
+    result = ask(SystemOneRequest(state, ["branch" => question], model, options); service, config, cancel)
     result isa SystemOneSuccess || throw(SystemOneError(result))
     isnothing(on_response) || on_response(result)
     a = answer(result, "branch")
@@ -337,6 +337,7 @@ Keywords go between the state and the block, written `key = value`:
 | `config` | `RequestConfig` for this call |
 | `cancel` | [`CancelToken`](@ref) for this call (default: the ambient [`with_cancel`](@ref) token) |
 | `on_response` | called once with the [`SystemOneSuccess`](@ref) before the policy runs, and never for a failed call — audits get `request_id`, `model` and `raw` from its `response`, which `decide` cannot see; its return value is ignored, and an exception from it propagates and runs no body |
+| `options` | a `NamedTuple` of provider options for the request, as the keywords of [`ask`](@ref) are (default: none, or those of the [`with_system_one`](@ref) scope); checked by the backend's wrapper before the request |
 
 `confidence` is computed over the options offered — `(n·p_max − 1)/(n − 1)`,
 clamped to `0 … 1`, for `n` of them
@@ -1278,7 +1279,8 @@ end
 """
     nl_dispatch(f, args...; model=nothing, service=nothing, config=nothing,
                 cancel=nothing, min_confidence=0.0, decide=nothing, fallback=nothing,
-                instructions=nothing, state=nothing, texts=nothing, on_response=nothing)
+                instructions=nothing, state=nothing, texts=nothing, on_response=nothing,
+                options=(;))
 
 Resolve the natural-language arguments of `f` against a piece of state and call
 the method Julia's own dispatch selects.
@@ -1317,10 +1319,13 @@ argument, a credential held in one included — and a `:record` scope of
 to send only what the model should read. A value that is not data is an
 `ArgumentError` before the request, naming the argument, the path to the value
 and its type: a function or closure, a type, a module, a `Ptr` or other `Ref`, a
-`Task`, a `Channel`, a lock, a condition, an event, an `IO` or an `Expr`, in the
+`Task`, a `Channel`, a lock, a condition, an event, an `IO`, an `Expr`, or a
+value JSON.jl cannot write (such as an [`AudioAttachment`](@ref)), in the
 argument or anywhere in its dicts, arrays, sets, tuples and fields. So is a
-container nested more than 64 levels deep, where the check stops. An explicit
-`state` is sent as given.
+container nested more than 64 levels deep, where the check stops. An
+[`ImageAttachment`](@ref) is data: the backend's wrapper sends it as it sends
+the images of any state (TypeSafe as an asset), or refuses it before the request.
+An explicit `state` is sent as given.
 
 Each slot's question is named after that argument (an unnamed one becomes
 `"meaning_<index>"`) and carries `instructions`: `nothing` for a generic
@@ -1356,6 +1361,11 @@ ignored; an exception from it propagates, and neither `f` nor `fallback` runs. I
 is not called when nothing was sent, nor for a failed call, whose result the
 thrown [`SystemOneError`](@ref) carries. A value that cannot be called on a
 `SystemOneSuccess` is an `ArgumentError` before the request.
+
+`options` are the request's provider options, a `NamedTuple` of what [`ask`](@ref)
+takes as keywords (`(long_context = true,)` on TypeSafe); none given, a call that
+names no `service` takes those of the enclosing [`with_system_one`](@ref) scope.
+The backend's wrapper checks them before the request.
 
 A non-success call throws [`SystemOneError`](@ref) — including one cancelled
 through `cancel::Union{Nothing,CancelToken}` (default: the ambient
@@ -1449,16 +1459,17 @@ function nl_dispatch(@nospecialize(f), @nospecialize(args...);
                      instructions=nothing,
                      state=nothing,
                      texts=nothing,
-                     on_response=nothing)
+                     on_response=nothing,
+                     options::NamedTuple=(;))
     # A keyword body is specialized on every keyword's type, so this one is compiled again
     # for each `decide`, `fallback` or table type a call site passes: it only hands over to
     # a body compiled once.
     _nl_dispatch(f, args, model, service, config, cancel, min_confidence, decide, fallback, instructions,
-                 state, texts, on_response)
+                 state, texts, on_response, options)
 end
 
 function _nl_dispatch(f, args::Tuple, model, service, config, cancel, min_confidence::Real, decide, fallback,
-                      instructions, state, texts, on_response)
+                      instructions, state, texts, on_response, request_options::NamedTuple)
     @nospecialize
     _nl_check_threshold(min_confidence)
     _nl_check_hook(on_response)
@@ -1476,7 +1487,8 @@ function _nl_dispatch(f, args::Tuple, model, service, config, cancel, min_confid
     guidance = _nl_instructions(instructions, length(slots))
     questions = [names[k] => choice(guidance[k], [o => nothing for o in options[k]])
                  for k in eachindex(slots)]
-    picked = _nl_ask(payload, questions, options, _nl_noun(offer); model, service, config, cancel, on_response)
+    picked = _nl_ask(payload, questions, options, _nl_noun(offer); model, service, config, cancel, on_response,
+                     request_options)
 
     # Every slot is decided before anything runs, so an invalid verdict in a later
     # slot cannot follow a fallback or a call already made on an earlier one. A slot the
@@ -1500,13 +1512,12 @@ end
 # of its questions — or the refusal, where the backend declined one. A failed call throws
 # rather than resolving to anything, and `on_response` sees the success before any
 # policy runs on it. `offered` names the options in a message: meanings, or a table's
-# sentences.
+# sentences; `request_options` are the request's provider options.
 function _nl_ask(payload, questions::Vector{Pair{String,ChoiceQuestion}}, options::Vector{Vector{String}},
                  offered::String; model::Union{Nothing,AbstractString}, service::Union{Nothing,ServiceEndpointSpec},
                  config::Union{Nothing,RequestConfig}, cancel::Union{Nothing,CancelToken},
-                 on_response)::Vector{Union{ChoiceAnswer,RefusalAnswer}}
-    result = isnothing(model) ? ask(payload, questions...; service, config, cancel) :
-                                ask(payload, questions...; model, service, config, cancel)
+                 on_response, request_options::NamedTuple)::Vector{Union{ChoiceAnswer,RefusalAnswer}}
+    result = ask(SystemOneRequest(payload, questions, model, request_options); service, config, cancel)
     result isa SystemOneSuccess || throw(SystemOneError(result))
     isnothing(on_response) || on_response(result)
     Union{ChoiceAnswer,RefusalAnswer}[_nl_choice(result, first(questions[k]), options[k], offered)
@@ -1542,7 +1553,7 @@ _nl_resolved(offer::_NLKeyedOffer, k::Int, i::Int) = _nl_value(offer.tables[k].k
 """
     nl_classify(state, texts; min_confidence=0.0, decide=nothing, fallback=nothing,
                 instructions=nothing, model=nothing, service=nothing,
-                config=nothing, cancel=nothing, on_response=nothing)
+                config=nothing, cancel=nothing, on_response=nothing, options=(;))
 
 Classify `state` against ONE table of `key => sentence` entries and return the
 chosen key as the table writes it: `:refund` for a `NamedTuple` table — the
@@ -1572,7 +1583,8 @@ is a `min_confidence` that is not a finite number in `0 … 1`, NaN included. A
 non-success call throws [`SystemOneError`](@ref).
 `on_response` is called once with the [`SystemOneSuccess`](@ref) before the
 policy runs — audits get `request_id`, `model` and `raw` from its `response`,
-which `decide` cannot see — as it is for `nl_dispatch`.
+which `decide` cannot see — and `options` are the request's provider options, as
+they are for `nl_dispatch`.
 
 ```julia
 const INTENT = (refund = "the customer wants a refund",
@@ -1594,7 +1606,8 @@ function nl_classify(state, @nospecialize(texts);
                      service::Union{Nothing,ServiceEndpointSpec}=nothing,
                      config::Union{Nothing,RequestConfig}=nothing,
                      cancel::Union{Nothing,CancelToken}=nothing,
-                     on_response=nothing)
+                     on_response=nothing,
+                     options::NamedTuple=(;))
     _nl_check_threshold(min_confidence)
     texts isa Tuple && !any(x -> x isa Pair, texts) && throw(ArgumentError(
         "nl_classify takes one table; got a tuple of $(length(texts)). A tuple of tables is for " *
@@ -1603,12 +1616,13 @@ function nl_classify(state, @nospecialize(texts);
     policy = _nl_one_policy(decide, min_confidence)
     _nl_check_hook(on_response)
     _nl_check_fallback(fallback, Any[Core.Typeof(state)], "fallback(state)")
-    options = collect(String, table.texts)
+    sentences = collect(String, table.texts)
     question = "classify" => choice(String(something(instructions, _NL_INSTRUCTIONS)),
-                                    [o => nothing for o in options])
-    a = only(_nl_ask(state, [question], [options], "sentences"; model, service, config, cancel, on_response))
+                                    [o => nothing for o in sentences])
+    a = only(_nl_ask(state, [question], [sentences], "sentences"; model, service, config, cancel, on_response,
+                     request_options=options))
     keys = collect(Any, table.keys)
-    i = a isa RefusalAnswer ? nothing : _nl_keyed_verdict(policy(a), options, keys, "classify")
+    i = a isa RefusalAnswer ? nothing : _nl_keyed_verdict(policy(a), sentences, keys, "classify")
     isnothing(i) || return keys[i]
     isnothing(fallback) || return fallback(state)
     throw(_nl_declined("classify", a, decide, min_confidence))
@@ -1650,13 +1664,17 @@ const _NL_SCALAR = Union{Number,AbstractString,Symbol,AbstractChar,Nothing,Missi
 # value it has not reached is not known to be data.
 const _NL_STATE_DEPTH = 64
 
-# A value the state must not carry: the path to it, innermost step first, and whether
-# it was refused for its depth rather than for its kind.
+# A value the state must not carry: the path to it, innermost step first, and why — it is
+# not data (`:kind`), it lies deeper than the walk goes (`:deep`), or JSON.jl cannot write
+# it (`:lower`, with what its lowering threw).
 struct _NLStray
     path::Vector{String}
     value::Any
-    deep::Bool
+    why::Symbol
+    cause::Any
 end
+
+_NLStray(value, why::Symbol, cause=nothing) = _NLStray(String[], value, why, cause)
 
 _nl_via(s::_NLStray, step::String)::_NLStray = (push!(s.path, step); s)
 
@@ -1666,14 +1684,22 @@ _nl_via(s::_NLStray, step::String)::_NLStray = (push!(s.path, step); s)
 # mutable value is walked once: seen again, it was checked already, or it is a cycle,
 # which JSON.jl writes as `null`.
 function _nl_stray(@nospecialize(x), depth::Int, seen::Base.IdSet{Any})::Union{Nothing,_NLStray}
-    x isa _NL_NOT_DATA && return _NLStray(String[], x, false)
+    x isa _NL_NOT_DATA && return _NLStray(x, :kind)
     x isa _NL_SCALAR && return nothing
-    depth > _NL_STATE_DEPTH && return _NLStray(String[], x, true)
+    # An image is data: the backend's wrapper sends it as an image — TypeSafe as an asset,
+    # OpenAI's Decisions API as an input_image — or refuses it in its own words.
+    x isa ImageAttachment && return nothing
+    depth > _NL_STATE_DEPTH && return _NLStray(x, :deep)
     if ismutable(x)
         x in seen && return nothing
         push!(seen, x)
     end
-    lowered = JSON.lower(x)
+    lowered = try
+        JSON.lower(x)
+    catch e
+        e isa InterruptException && rethrow()
+        return _NLStray(x, :lower, e)
+    end
     lowered === x || return _nl_stray(lowered, depth + 1, seen)
     if x isa AbstractDict
         keytype(x) <: _NL_SCALAR && valtype(x) <: _NL_SCALAR && return nothing
@@ -1711,13 +1737,17 @@ function _nl_check_data(@nospecialize(f), name::String, @nospecialize(x))::Nothi
     isnothing(stray) && return nothing
     at = name * join(Iterators.reverse(stray.path))
     fix = "Pass `state = …` with only what the model should read"
-    stray.deep && throw(ArgumentError(
+    stray.why === :deep && throw(ArgumentError(
         "the argument `$(name)` of $(f) nests deeper than $(_NL_STATE_DEPTH) levels at `$(at)`, where " *
         "nl_dispatch stops checking that its state is data. $(fix)"))
+    located(what) = "the argument `$(name)` of $(f) " * (isempty(stray.path) ? "is $(what)" : "holds $(what) at `$(at)`")
+    stray.why === :lower && throw(ArgumentError(
+        located("a value JSON.jl cannot write ($(typeof(stray.value)))") * ", which is not data: nl_dispatch " *
+        "sends its ordinary arguments as the state, and writing this one fails (" *
+        first(split(sprint(showerror, stray.cause), '\n')) * "). $(fix)"))
     kind = last(_NL_NOT_DATA_KINDS[something(findfirst(p -> stray.value isa first(p), _NL_NOT_DATA_KINDS))])
-    what = "$(kind) ($(typeof(stray.value)))"
     throw(ArgumentError(
-        "the argument `$(name)` of $(f) " * (isempty(stray.path) ? "is $(what)" : "holds $(what) at `$(at)`") *
+        located("$(kind) ($(typeof(stray.value)))") *
         ", which is not data: nl_dispatch sends its ordinary arguments as the state, and JSON.jl would " *
         "send its name or its internals rather than fail. $(fix)"))
 end

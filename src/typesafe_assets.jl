@@ -55,10 +55,21 @@ function _png_size(d::Vector{UInt8})::Union{Tuple{Int,Int},String}
 end
 
 # A JPEG's size is in its frame header, the SOFn segment: every marker 0xC0–0xCF but DHT
-# (C4), JPG (C8) and DAC (CC). The segments before it are skipped by their lengths.
+# (C4), JPG (C8) and DAC (CC). The segments before it are skipped by their lengths. The
+# file ends with the end-of-image marker, FF D9 (ITU-T T.81, B.2.1): one that ends
+# otherwise is cut short — its frame header can be whole while its image data is not —
+# or carries bytes after its image.
 _is_sof(m::UInt8)::Bool = 0xc0 <= m <= 0xcf && m != 0xc4 && m != 0xc8 && m != 0xcc
 
 function _jpeg_size(d::Vector{UInt8})::Union{Tuple{Int,Int},String}
+    size = _jpeg_frame_size(d)
+    size isa String && return size
+    length(d) >= 4 && d[end-1] == 0xff && d[end] == 0xd9 ? size :
+        "its JPEG data does not end with the end-of-image marker (FF D9): the file is cut short, or carries bytes " *
+        "after the image"
+end
+
+function _jpeg_frame_size(d::Vector{UInt8})::Union{Tuple{Int,Int},String}
     n, pos = length(d), 3                                  # past the start-of-image marker
     while pos <= n
         d[pos] == 0xff || return "its JPEG markers cannot be read"

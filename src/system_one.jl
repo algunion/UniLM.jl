@@ -203,8 +203,9 @@ _dict_pairs(d::AbstractDict) = d
     RawQuestion(fields::AbstractDict)
 
 A question of a kind this version has no type for, kept as the JSON object
-`fields` and sent verbatim by the backends that allow raw questions (TypeSafe
-does); a backend that does not refuses it before the request is sent. `fields`
+`fields` and sent verbatim by the backends that allow raw questions — TypeSafe,
+OpenAI's Decisions API (which adds the question's name as `"name"`) and Ollama
+all do; a backend that does not refuses it before the request is sent. `fields`
 is copied into a `JSON.Object{String,Any}` with `String` keys — a plain `Dict`
 in sorted key order, any other dictionary in its own order — and must hold a
 non-blank String `"type"`.
@@ -792,7 +793,9 @@ end
 """
     SystemOneFailure
 
-A System One call that reached its backend and came back non-2xx.
+A System One call that reached its backend and came back with a status other
+than 200 — the status TypeSafe, OpenAI's Decisions API and Ollama answer a
+success with.
 
 # Fields
 - `response::String`: the raw body, kept verbatim.
@@ -834,8 +837,9 @@ failure, a missing API key (`TYPESAFE_API_KEY` on TypeSafe), or a 200 whose body
 could not be decoded into answers or whose answers do not fit the request — a
 question unanswered or one answered that was not asked, an answer of the wrong
 kind, an option that was not offered, probabilities that are not a distribution,
-or a value outside its range. `status` is filled in only when the underlying
-exception carried one.
+a value outside its range, a Score whose `score` its probabilities contradict or
+whose legend renames a level asked, or no model named. `status` is filled in
+only when the underlying exception carried one.
 
 `cause` is that underlying exception — a [`UniLMTimeout`](@ref) for a timeout —
 and `request_id` is the backend's request id of the 200 that could not be used
@@ -899,8 +903,8 @@ _no_parts() = Pair{String,ImageAttachment}[]
 _no_headers() = Pair{String,String}[]
 
 """
-    SystemOneWire(method, url, path, body, parts, headers, key_extra)
-    SystemOneWire(method, url, path, body; parts=[], headers=[], key_extra="")
+    SystemOneWire(method, url, path, body, parts, headers, key_extra[, record_body])
+    SystemOneWire(method, url, path, body; parts=[], headers=[], key_extra="", record_body=body)
 
 One System One exchange as a protocol encoded it — what is sent and what its
 recording is keyed by. Credentials are not part of it: the endpoint's
@@ -925,6 +929,11 @@ no key.
 - `key_extra::String`: appended to what the recording key is computed over, after
   a newline, when it is not empty — the canonical form of the request's options,
   digests of its parts — so requests that differ only there are recorded apart.
+- `record_body::String`: the body as a recording is keyed on and writes it —
+  `body` itself unless the protocol leaves out fields that change how a request
+  is served but never what it is answered (Ollama's `keep_alive`; OpenAI's
+  `prompt_cache_key` and `safety_identifier`), so requests that differ only
+  there replay one recording. What is sent is `body`.
 
 Public extension API (not exported).
 """
@@ -936,8 +945,10 @@ struct SystemOneWire
     parts::Vector{Pair{String,ImageAttachment}}
     headers::Vector{Pair{String,String}}
     key_extra::String
+    record_body::String
     function SystemOneWire(method::AbstractString, url::AbstractString, path::AbstractString, body::AbstractString,
-                           parts::AbstractVector, headers::AbstractVector, key_extra::AbstractString)
+                           parts::AbstractVector, headers::AbstractVector, key_extra::AbstractString,
+                           record_body::AbstractString)
         isempty(method) && throw(ArgumentError("a System One wire needs an HTTP method"))
         startswith(path, '/') && !occursin(r"[?#]", path) || throw(ArgumentError(
             "a System One wire's keyed path must start with \"/\" and hold no query or fragment; got $(repr(path))"))
@@ -948,12 +959,16 @@ struct SystemOneWire
                 "got $(repr(name))"))
             push!(seen, name)
         end
-        new(method, url, path, body, parts, headers, key_extra)
+        new(method, url, path, body, parts, headers, key_extra, record_body)
     end
 end
 
-SystemOneWire(method, url, path, body; parts=_no_parts(), headers=_no_headers(), key_extra="") =
-    SystemOneWire(method, url, path, body, parts, headers, key_extra)
+SystemOneWire(method::AbstractString, url::AbstractString, path::AbstractString, body::AbstractString,
+              parts::AbstractVector, headers::AbstractVector, key_extra::AbstractString) =
+    SystemOneWire(method, url, path, body, parts, headers, key_extra, body)
+
+SystemOneWire(method, url, path, body; parts=_no_parts(), headers=_no_headers(), key_extra="", record_body=body) =
+    SystemOneWire(method, url, path, body, parts, headers, key_extra, record_body)
 
 """
     system_one_protocol(service) -> SystemOneProtocol
@@ -993,8 +1008,8 @@ encode_system_one(p::SystemOneProtocol, service, ::SystemOneRequest) = throw(Arg
 The typed result of `response`, the reply `service` sent to `request`: a
 [`SystemOneSuccess`](@ref) whose answers have passed the checks every backend's
 answers pass — one per question asked, of the question's kind, each value in its
-range (see [`ask`](@ref)) — or a [`SystemOneFailure`](@ref) for a status that is
-not a success. A 200 that is not a usable answer throws, and [`ask`](@ref)
+range (see [`ask`](@ref)) — or a [`SystemOneFailure`](@ref) for a status other
+than 200. A 200 that is not a usable answer throws, and [`ask`](@ref)
 returns the throw as a [`SystemOneCallError`](@ref) carrying the reply's request
 id.
 
@@ -1107,6 +1122,10 @@ function _check_distribution(name::String, probabilities::AbstractDict, tol::Flo
 end
 
 function _check_answers(p::SystemOneProtocol, request::SystemOneRequest, response::SystemOneResponse)::Nothing
+    # The id that answered is what a tuned threshold and a price are about: a blank one
+    # names no model.
+    isempty(strip(response.model)) && throw(ArgumentError(
+        "the System One reply names no model: its \"model\" is $(repr(response.model))"))
     got = response.answers
     asked = request.questions
     missed = String[name for (name, _) in asked if !haskey(got, name)]
@@ -1176,6 +1195,21 @@ function _check_kind(p::SystemOneProtocol, name::String, q::ScoreQuestion, a::Sc
     slack = _probability_slack(p)
     -slack <= a.score <= n - 1 + slack || throw(ArgumentError(
         "System One answer $(repr(name)) has the score $(a.score), outside 0 … $(n - 1)"))
+    # The score is the expected level. Probabilities that err by the sum's tolerance in all
+    # move that expectation by at most n − 1 times it, and a rounded score is off by one step.
+    expected = sum(l * pr for (l, pr) in a.probabilities)
+    allowed = (n - 1) * tol + slack
+    abs(a.score - expected) <= allowed || throw(ArgumentError(
+        "System One answer $(repr(name)) has the score $(a.score), but its probabilities put the expected level at " *
+        "$(expected) (allowed difference $(allowed))"))
+    # A level asked as a string comes back in the legend as it was asked. A level that is an
+    # object or an array is not compared: a backend may write it back re-serialized (another
+    # key order, another number format). Nor is an image: TypeSafe echoes its reference.
+    for (i, level) in enumerate(q.criteria)
+        level isa AbstractString && a.legend[i-1] != level && throw(ArgumentError(
+            "System One answer $(repr(name)) describes level $(i - 1) as $(repr(a.legend[i-1])), not as the level " *
+            "asked, $(repr(level))"))
+    end
     _unit(a.confidence) || throw(ArgumentError(
         "System One answer $(repr(name)) has the confidence $(a.confidence), outside 0 … 1"))
     nothing
@@ -1202,10 +1236,12 @@ end
 
 # ─── Ambient backend ─────────────────────────────────────────────────────────
 
-# The backend, and the model, a System One verb uses when the call names no service.
+# The backend, the model and the provider options a System One verb uses when the call
+# names no service.
 struct _SystemOneTarget
     service::ServiceEndpointSpec
     model::Union{Nothing,String}
+    options::NamedTuple
 end
 
 const _SYSTEM_ONE_TARGET = ScopedValue{Union{Nothing,_SystemOneTarget}}(nothing)
@@ -1220,55 +1256,58 @@ function _check_system_one_service(service)::Nothing
 end
 
 """
-    with_system_one(f, service; model=nothing)
+    with_system_one(f, service; model=nothing, options...)
 
 Run `f()` with `service` as the System One backend of every verb inside it that
 names none — [`ask`](@ref), [`list_models`](@ref), [`nl_dispatch`](@ref),
-[`nl_classify`](@ref) and [`@branch`](@ref) — and `model`, when given, as the
-model of those calls that name none; return `f()`'s value. `service` must
-declare `:system_one` and `model` must not be blank, or this is an
-`ArgumentError` before `f` runs.
+[`nl_classify`](@ref) and [`@branch`](@ref) — `model`, when given, as the
+model of those calls that name none, and any other keyword as
+the provider options of those calls that name none (see [`ask`](@ref); checked
+by the backend's wrapper when each request is sent); return `f()`'s value.
+`service` must declare `:system_one` and `model` must not be blank, or this is
+an `ArgumentError` before `f` runs.
 
-A call resolves its backend and model this way:
+A call resolves its backend, model and options this way:
 
-- with `service`: that backend, and `model` if the call names one, else the
-  backend's default, read when the request is sent — the scope's model belongs
-  to the scope's backend and is never applied to another;
+- with `service`: that backend, and `model` and options if the call names them,
+  else the backend's default model and no options — the scope's model and
+  options belong to the scope's backend and are never applied to another;
 - without `service`: the scope's backend, and the call's `model` if it names
-  one, else the scope's;
+  one, else the scope's; the call's options if it names any, else the scope's;
 - outside every scope: [`TYPESAFEServiceEndpoint`](@ref) and its default model.
 
 The scope is a `ScopedValue`, so it covers the tasks started inside `f`
 (`Threads.@spawn`, `asyncmap`), and scopes nest: the innermost applies.
 
 ```julia
-with_system_one(TYPESAFEServiceEndpoint; model = "jev-1.13.0") do
-    nl_classify(ticket, INTENT)          # asks jev-1.13.0
+with_system_one(TYPESAFEServiceEndpoint; model = "jev-1.13.0", long_context = true) do
+    nl_classify(ticket, INTENT)          # asks jev-1.13.0, with TypeSafe's long context
 end
 ```
 """
-function with_system_one(f::Function, service; model::Union{Nothing,AbstractString}=nothing)
+function with_system_one(f::Function, service; model::Union{Nothing,AbstractString}=nothing, options...)
     service isa ServiceEndpointSpec || throw(ArgumentError(
         "with_system_one takes an endpoint (a ServiceEndpoint type or instance); got $(typeof(service))"))
     _check_system_one_service(service)
-    with(f, _SYSTEM_ONE_TARGET => _SystemOneTarget(service, _model_name(model)))
+    with(f, _SYSTEM_ONE_TARGET => _SystemOneTarget(service, _model_name(model), values(options)))
 end
 
-# The backend and model of a call: the call's own, then the ambient scope's — whose
-# model applies only with its own backend — then TypeSafe and its default. (No return
-# annotation: a tuple holding a type has the element type `DataType`, not `Type{T}`.)
-function _system_one_target(service::Union{Nothing,ServiceEndpointSpec}, model::Union{Nothing,String})
-    isnothing(service) || return (service, model)
+# The backend, model and options of a call: the call's own, then the ambient scope's —
+# whose model and options apply only with its own backend — then TypeSafe and its default.
+# (No return annotation: a tuple holding a type has the element type `DataType`, not `Type{T}`.)
+function _system_one_target(service::Union{Nothing,ServiceEndpointSpec}, model::Union{Nothing,String},
+                            options::NamedTuple=(;))
+    isnothing(service) || return (service, model, options)
     t = _SYSTEM_ONE_TARGET[]
-    isnothing(t) && return (TYPESAFEServiceEndpoint, model)
-    (t.service, isnothing(model) ? t.model : model)
+    isnothing(t) && return (TYPESAFEServiceEndpoint, model, options)
+    (t.service, isnothing(model) ? t.model : model, isempty(options) ? t.options : options)
 end
 
 # ─── Verbs ───────────────────────────────────────────────────────────────────
 
 # A request ready to send: its backend, that backend's protocol, the request with the
-# model the call resolved, and the exchange it encodes to. Building one sends nothing,
-# and every local refusal happens here.
+# model and options the call resolved, and the exchange it encodes to. Building one sends
+# nothing, and every local refusal happens here.
 struct _SystemOneCall
     protocol::SystemOneProtocol
     service::ServiceEndpointSpec
@@ -1276,14 +1315,26 @@ struct _SystemOneCall
     wire::SystemOneWire
 end
 
-function _system_one_call(request::SystemOneRequest, service::Union{Nothing,ServiceEndpointSpec})::_SystemOneCall
-    svc, model = _system_one_target(service, request.model)
+# The same before it is encoded: what `ask_each` keeps of each item, so a batch holds no
+# more request bodies than it has requests in flight.
+const _SystemOneResolved = @NamedTuple{protocol::SystemOneProtocol, service::ServiceEndpointSpec,
+                                       request::SystemOneRequest}
+
+function _system_one_resolve(request::SystemOneRequest,
+                             service::Union{Nothing,ServiceEndpointSpec})::_SystemOneResolved
+    svc, model, options = _system_one_target(service, request.model, request.options)
     _check_system_one_service(svc)
     p = system_one_protocol(svc)::SystemOneProtocol
-    req = model === request.model ? request :
-          SystemOneRequest(request.state, request.questions, model, request.options)
-    _SystemOneCall(p, svc, req, encode_system_one(p, svc, req)::SystemOneWire)
+    req = model === request.model && options === request.options ? request :
+          SystemOneRequest(request.state, request.questions, model, options)
+    (protocol=p, service=svc, request=req)
 end
+
+_system_one_call(r::_SystemOneResolved)::_SystemOneCall =
+    _SystemOneCall(r.protocol, r.service, r.request, encode_system_one(r.protocol, r.service, r.request)::SystemOneWire)
+
+_system_one_call(request::SystemOneRequest, service::Union{Nothing,ServiceEndpointSpec})::_SystemOneCall =
+    _system_one_call(_system_one_resolve(request, service))
 
 # A multipart body is consumed by the attempt that sends it, so each attempt builds its
 # own: the JSON part first, named `request`, then the parts in order.
@@ -1351,22 +1402,23 @@ function _system_one_send(cfg::RequestConfig, t0::UInt64, protocol::SystemOnePro
 end
 
 # One call's exchange: through any recorded-answers scope (keyed by the protocol's
-# namespace, the wire's path, body and key_extra) to the live send, then the protocol's
-# decoding. A missing or unwritable recording and an interrupt propagate; anything else
-# that goes wrong is the call's error, with the reply's request id when one arrived. The
-# backend's own default config applies when no channel the user controls sets one.
+# namespace, the wire's path, record_body and key_extra) to the live send of its body,
+# then the protocol's decoding. A missing or unwritable recording and an interrupt
+# propagate; anything else that goes wrong is the call's error, with the reply's request
+# id when one arrived. The backend's own default config applies when no channel the user
+# controls sets one, and its `total_deadline` runs from `t0`.
 function _system_one_exchange(call::_SystemOneCall, config::Union{Nothing,RequestConfig},
-                              cancel::Union{Nothing,CancelToken}; hooks...)
+                              cancel::Union{Nothing,CancelToken}; t0::UInt64=time_ns(), hooks...)
     (; protocol, service, request, wire) = call
     cfg = _resolve_config(config, _system_one_default_config(protocol, service))
-    tok = _resolve_cancel(cancel); t0 = time_ns()
+    tok = _resolve_cancel(cancel)
     # Asserted: `protocol` is abstract here, and once a hook has more methods than inference
     # splits over, its result would be inferred as `Any` however each method is annotated.
     ns = _system_one_namespace(protocol)::String
     local resp
     try
-        resp = _recorded_exchange(wire.method, isempty(ns) ? wire.path : "/" * ns * wire.path, wire.body, t0, tok;
-                                  key_extra=wire.key_extra) do
+        resp = _recorded_exchange(wire.method, isempty(ns) ? wire.path : "/" * ns * wire.path, wire.record_body, t0,
+                                  tok; key_extra=wire.key_extra) do
             _system_one_send(cfg, t0, protocol, service, wire, tok; hooks...)
         end
         decode_system_one(protocol, service, request, resp)::Union{SystemOneSuccess,SystemOneFailure}
@@ -1385,8 +1437,8 @@ end
 
 Evaluate every question against `state` in one request to a System One backend
 and return one of [`SystemOneSuccess`](@ref), [`SystemOneFailure`](@ref) (a
-non-2xx response) or [`SystemOneCallError`](@ref) (no response, or a 200 that
-was not a usable set of answers). Inside a [`with_recorded_answers`](@ref) scope,
+response with a status other than 200) or [`SystemOneCallError`](@ref) (no
+response, or a 200 that was not a usable set of answers). Inside a [`with_recorded_answers`](@ref) scope,
 a request the scope cannot replay — no recording in `:replay` mode, or a
 recording file that cannot be read — throws [`ReplayMissError`](@ref) instead of
 returning: a gap in the recordings is not a service failure.
@@ -1402,8 +1454,10 @@ pairs, a `NamedTuple` or `AbstractDict` of them, or bare questions auto-named
 `"q1"`, `"q2"`, … Any other keyword is a provider option and becomes the
 request's `options`, which the backend's wrapper checks before anything is sent:
 TypeSafe accepts `long_context::Bool` (`true` raises its context limits to 262k
-tokens), so any other keyword — a misspelt one included — is an `ArgumentError`
-that lists the options it accepts.
+tokens), OpenAI's Decisions API `prompt_cache_key` and `safety_identifier`
+(strings), Ollama `keep_alive` (the seconds the model stays loaded), so any other
+keyword — a misspelt one included — is an `ArgumentError` that lists the options
+the backend accepts.
 
 ```julia
 r = ask("Help! My payouts have been failing for 3 days.",
@@ -1420,18 +1474,20 @@ Malformed input is an `ArgumentError` before anything is sent: a `state` that is
 not a string, object, array or image; a value JSON cannot carry (`NaN`, `Inf`);
 a request the backend cannot carry — TypeSafe takes at most 255 options per
 Choice and 10 levels per Score, PNG and JPEG images of at most 16 MiB with 280
-to 1568 pixels on each side, 64 levels of nesting in the state, instructions and
-criteria, and a body of at most 32 MiB; a `service` that does not declare
-`:system_one`.
+to 1568 pixels on each side (a JPEG ending with its end-of-image marker), 64
+levels of nesting in the state, instructions and criteria, and a body of at most
+32 MiB; a `service` that does not declare `:system_one`.
 
 Every answer is checked against the request before a success is built: each
 question asked is answered once and nothing else is; each answer is of its
 question's kind (an answer to a [`RawQuestion`](@ref) may be any); a Choice picks
 an offered option that is the most probable and gives a probability to exactly
-the options offered; a Score gives one to exactly the levels `0` to `n − 1` and
-its `score` lies between them; probabilities lie in `0 … 1` and sum to 1 within
-the backend's rounding; confidences, Noul probabilities and box edges lie in
-`0 … 1`; the response names the model that answered. A reply that fails any of
+the options offered; a Score gives one to exactly the levels `0` to `n − 1`, its
+`score` lies between them and is the expectation of its probabilities within the
+backend's rounding, and its `legend` repeats every level asked as a string;
+probabilities lie in `0 … 1` and sum to 1 within the backend's rounding;
+confidences, Noul probabilities and box edges lie in `0 … 1`; the response names
+the model that answered, by a name that is not blank. A reply that fails any of
 these is a `SystemOneCallError` — never a success built from a malformed answer.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout and retry

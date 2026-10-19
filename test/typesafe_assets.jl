@@ -93,6 +93,15 @@ end
         e = _ta_caught(() -> check(img))
         @test e isa ArgumentError && contains(e.msg, "TypeSafe cannot take") && contains(e.msg, needle)
     end
+    # A JPEG ends with its end-of-image marker (FF D9), as the one the live service accepted
+    # does: one cut short after its frame header, or carrying bytes after the image, is refused.
+    jpg = _TA_SCENE_JPEG.data
+    @test jpg[end-1:end] == [0xff, 0xd9]
+    sos = findfirst(i -> jpg[i] == 0xff && jpg[i+1] == 0xda, 1:length(jpg)-1)
+    for img in (ImageAttachment(jpg[1:sos+20]), ImageAttachment(jpg[1:end-1]), ImageAttachment([jpg; 0x00; 0x00]))
+        e = _ta_caught(() -> check(img))
+        @test e isa ArgumentError && contains(e.msg, "TypeSafe cannot take") && contains(e.msg, "end-of-image marker")
+    end
     # At most 16 MiB a file, exactly.
     base = length(_ta_png_bytes(300, 300))
     at_limit = _ta_png(300, 300; pad=16 * 1024 * 1024 - base - 12)
@@ -121,8 +130,9 @@ end
     @test [a["part"] for a in values(sent["assets"])] == ["asset-0", "asset-1", "asset-2"]
     @test all(a -> a["type"] == "image" && length(a) == 2, values(sent["assets"]))
     @test w.parts == ["asset-0" => _TA_SCENE, "asset-1" => _TA_RED, "asset-2" => _TA_BLUE]
-    # Keyed on the digests of the parts, never on their bytes.
+    # Keyed on the digests of the parts, never on their bytes, after the JSON part as sent.
     @test w.key_extra == "asset-0 $(_ta_digest(_TA_SCENE))\nasset-1 $(_ta_digest(_TA_RED))\nasset-2 $(_ta_digest(_TA_BLUE))"
+    @test w.record_body == w.body
     @test w.headers == ["TypeSafe-Danger-Zone-Images" => "true"]
     @test w.path == "/v1/systemone" && w.method == "POST"
 

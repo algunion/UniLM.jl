@@ -149,9 +149,10 @@ _s1_same(::SystemOneAnswer, ::AbstractDict) = false
             for (key, rec) in corpus
                 req = _s1_rebuild(rec["request"]["body"])
                 wire = UniLM.encode_system_one(UniLM.TypeSafeProtocol(), TYPESAFEServiceEndpoint, req)
-                # (i) the key: TypeSafe keeps the plain path and keys nothing beyond the body.
+                # (i) the key: TypeSafe keeps the plain path and keys the body it sends, nothing
+                # more and nothing less.
                 keys_ok += wire.path == "/v1/systemone" && isempty(wire.key_extra) && isempty(wire.parts) &&
-                           _s1_key("POST", wire.path, wire.body) == key
+                           wire.record_body == wire.body && _s1_key("POST", wire.path, wire.record_body) == key
                 # (ii) the body: a recording stores it parsed, so it is compared parsed, key order included.
                 bodies_ok += JSON.json(JSON.parse(wire.body)) == JSON.json(rec["request"]["body"])
                 # (iii) the replay: the same success, field by field, with no key set.
@@ -320,6 +321,51 @@ end
     @test e isa ArgumentError && contains(e.msg, "_BareProtocol")
 end
 
+# A backend whose `hint` option is sent but does not change an answer, so its recording
+# is keyed on the body without it.
+struct _TrimProtocol <: UniLM.SystemOneProtocol end
+struct _TrimEndpoint <: UniLM.ServiceEndpoint end
+UniLM.provider_capabilities(::Type{_TrimEndpoint}) = Set([:system_one])
+UniLM.system_one_protocol(::Type{_TrimEndpoint}) = _TrimProtocol()
+UniLM.auth_header(::Type{_TrimEndpoint}) = ["Content-Type" => "application/json"]
+UniLM._system_one_namespace(::_TrimProtocol) = "trim"
+UniLM._system_one_default_model(::_TrimProtocol, _) = "trim-model"
+function UniLM.encode_system_one(p::_TrimProtocol, service, r::SystemOneRequest)
+    o = UniLM._system_one_json(r, UniLM._system_one_model(p, service, r))
+    keyed = UniLM._system_one_body(o)
+    haskey(r.options, :hint) && (o["hint"] = r.options.hint)
+    UniLM.SystemOneWire("POST", _S1_BASE[] * "/v1/systemone", "/v1/systemone", UniLM._system_one_body(o);
+                        record_body=keyed)
+end
+UniLM.decode_system_one(::_TrimProtocol, service, r::SystemOneRequest, resp::HTTP.Response) =
+    UniLM.decode_system_one(UniLM.TypeSafeProtocol(), service, r, resp)
+
+@testset "System One — a wire keys and records its record_body, and sends its body" begin
+    W = UniLM.SystemOneWire
+    none, heads = Pair{String,ImageAttachment}[], Pair{String,String}[]
+    @test W("POST", "u", "/p", "{\"a\":1}").record_body == "{\"a\":1}"                   # by default, the body
+    @test W("POST", "u", "/p", "b", none, heads, "k").record_body == "b"
+    @test W("POST", "u", "/p", "b", none, heads, "k", "r").record_body == "r"
+    @test W("POST", "u", "/p", "{\"a\":1,\"x\":2}"; record_body="{\"a\":1}").record_body == "{\"a\":1}"
+
+    dir = mktempdir()
+    q = "q" => noul("Is it?")
+    plain = """{"state":"s","model":"trim-model","questions":{"q":{"type":"noul","instructions":"Is it?"}}}"""
+    live, seen = _s1_serve(_s1_valid) do
+        with_recorded_answers(() -> ask("s", q; service=_TrimEndpoint, hint="warm", config=_S1_CFG), dir; mode=:record)
+    end
+    @test live isa SystemOneSuccess
+    @test _s1_text(only(seen)) == plain[1:end-1] * ""","hint":"warm"}"""               # sent: the body
+    file = only(readdir(dir; join=true))
+    @test basename(file) == _s1_key("POST", "/trim/v1/systemone", plain) * ".json"     # keyed: the record_body
+    @test JSON.json(JSON.parse(read(file, String))["request"]["body"]) == plain        # recorded: the record_body
+    # The same request with another hint, or none, is the same recording.
+    for kw in ((hint = "cold",), (;))
+        r = with_recorded_answers(() -> ask("s", q; service=_TrimEndpoint, kw...), dir)
+        @test r isa SystemOneSuccess && r.response.raw == live.response.raw
+    end
+end
+
 # ─── Multipart ───────────────────────────────────────────────────────────────
 
 # A backend that sends the images of a request's `images` option as parts, keyed by
@@ -456,6 +502,30 @@ end
         @test e isa ArgumentError
     end
     @test !ran[]
+end
+
+@testset "System One — with_system_one sets the provider options of the calls on its backend that name none" begin
+    q = "q" => noul("Is it?")
+    long(s) = any(h -> lowercase(first(h)) == "typesafe-danger-zone-long-context" && last(h) == "true", s.headers)
+    out, seen = _s1_serve(_s1_valid) do
+        withenv(UniLM.TYPESAFE_DEFAULT_MODEL_ENV => nothing) do
+            with_system_one(_S1Mock; model="m-scope", long_context=true) do
+                [ask("s", q; config=_S1_CFG),                                    # the scope's options
+                 ask("s", q; config=_S1_CFG, long_context=false),                # a call's own options win
+                 ask("s", q; service=_S1Mock, config=_S1_CFG),                   # a named backend: not the scope's
+                 fetch(Threads.@spawn ask("s", q; config=_S1_CFG)),              # spawned tasks inherit them
+                 only(ask_each(["s"], q; config=_S1_CFG)),                       # and so do batches
+                 with_system_one(() -> ask("s", q; config=_S1_CFG), _S1Mock)]    # an inner scope without options
+            end
+        end
+    end
+    @test all(issuccess, out)
+    @test long.(seen) == [true, false, false, true, true, false]
+    # With no options the wire is what it was, byte for byte.
+    @test _s1_text(seen[6]) == """{"state":"s","model":"jev-latest","questions":{"q":{"type":"noul","instructions":"Is it?"}}}"""
+    # An option the backend does not accept is refused when the request is sent, by name.
+    e = _s1_caught(() -> with_system_one(() -> ask("s", q), _S1Mock; temperature=0))
+    @test e isa ArgumentError && contains(e.msg, "temperature")
 end
 
 _s1_route(::Val{:refund}, ticket) = :refund
@@ -670,9 +740,15 @@ end
         "an overflowing level"     => _s1_body(Dict("urg" => """{"type":"score","score":1.0,"confidence":0.5,"legend":{"0":"a","1":"b","2":"c"},"probabilities":{"99999999999999999999":1.0}}""")),
         "a legend short of a level" => _s1_body(Dict("urg" => """{"type":"score","score":1.0,"confidence":0.5,"legend":{"0":"a","1":"b"},"probabilities":{"0":0.0,"1":1.0,"2":0.0}}""")),
         "a score beyond the rubric" => _s1_body(Dict("urg" => """{"type":"score","score":2.5,"confidence":0.5,"legend":{"0":"a","1":"b","2":"c"},"probabilities":{"0":0.0,"1":0.0,"2":1.0}}""")),
+        # a score is the expectation of its probabilities, and the legend repeats the levels asked
+        "a score its probabilities contradict" => _s1_body(Dict("urg" => """{"type":"score","score":2.0,"confidence":1.0,"legend":{"0":"Can wait","1":"This week","2":"Today"},"probabilities":{"0":1.0,"1":0.0,"2":0.0}}""")),
+        "a legend that renames a level" => _s1_body(Dict("urg" => """{"type":"score","score":1.98,"confidence":0.96,"legend":{"0":"WRONG","1":"This week","2":"Today"},"probabilities":{"0":0.0,"1":0.02,"2":0.98}}""")),
+        "a legend entry that is no string" => _s1_body(Dict("urg" => """{"type":"score","score":1.98,"confidence":0.96,"legend":{"0":"Can wait","1":{"text":"This week"},"2":"Today"},"probabilities":{"0":0.0,"1":0.02,"2":0.98}}""")),
         # the response names its model
         "no model"                 => _s1_body(; model=""),
         "a model that is no string" => _s1_body(; model="\"model\":7,"),
+        "a blank model"            => _s1_body(; model="\"model\":\"\","),
+        "a model of spaces"        => _s1_body(; model="\"model\":\"  \","),
     ]
     for (label, body) in malformed
         @testset "$(label)" begin
@@ -688,6 +764,29 @@ end
         _s1_caught(() -> nl_classify("s", (refund = "a refund", other = "anything else"); service=_S1Mock, config=_S1_CFG))
     end
     @test e isa SystemOneError && e.result isa SystemOneCallError && contains(e.result.error, "a pony")
+end
+
+@testset "System One — a Score agrees with its probabilities within the rounding, and repeats its string levels" begin
+    urg(score, ps; legend="""{"0":"Can wait","1":"This week","2":"Today"}""") = _s1_body(Dict("urg" =>
+        """{"type":"score","score":$score,"confidence":0.5,"legend":$legend,"probabilities":$ps}"""))
+    even = """{"0":0.0,"1":0.5,"2":0.5}"""                     # an expectation of 1.5
+    # TypeSafe's rounding to two decimals: three probabilities off by 0.005 each move the
+    # expectation by up to (n − 1)·0.015, and the score itself by one step of 0.01.
+    @test first(_s1_ask_with(urg(1.54, even))) isa SystemOneSuccess
+    @test first(_s1_ask_with(urg(1.46, even))) isa SystemOneSuccess
+    @test first(_s1_ask_with(urg(1.545, even))) isa SystemOneCallError
+    e = first(_s1_ask_with(urg(2.0, """{"0":1.0,"1":0.0,"2":0.0}""")))
+    @test e isa SystemOneCallError && contains(e.error, "2.0") && contains(e.error, "expect")
+    e = first(_s1_ask_with(urg(1.5, even; legend="""{"0":"Can wait","1":"Next week","2":"Today"}""")))
+    @test e isa SystemOneCallError && contains(e.error, "\"Next week\"") && contains(e.error, "\"This week\"")
+    # A level that is an object or an array is not compared: a backend may write it back
+    # re-serialized. A level that is a string is.
+    req = SystemOneRequest("s", ["r" => score("Rate.", [(label = "low",), "high"])]; model="m")
+    resp(legend) = SystemOneResponse("m", Dict{String,SystemOneAnswer}("r" => ScoreAnswer(1.0, 1.0, legend,
+        Dict(0 => 0.0, 1 => 1.0), Dict{String,Any}())), TokenUsage(), nothing, Dict{String,Any}())
+    ts = UniLM.TypeSafeProtocol()
+    @test UniLM._check_answers(ts, req, resp(Dict{Int,Any}(0 => Dict("label" => "LOW"), 1 => "high"))) === nothing
+    @test_throws ArgumentError UniLM._check_answers(ts, req, resp(Dict{Int,Any}(0 => Dict("label" => "low"), 1 => "HIGH")))
 end
 
 @testset "System One — usage that is not a token count reads as 0 with a warning, never failing the answers" begin

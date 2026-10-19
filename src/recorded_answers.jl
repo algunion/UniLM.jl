@@ -12,9 +12,11 @@
 #
 # A recording is keyed by the exact request bytes, never a canonical form: the
 # order of Choice options and of the state's keys moves the answer, so a
-# reordered request is a different request. The one exception is a credential
-# the body carries (an MCP tool's token), which is replaced before anything is
-# keyed, written or reported.
+# reordered request is a different request. Two things in a body are replaced
+# before anything is keyed, written or reported — a credential it carries (an MCP
+# tool's token), and an image it carries as a `data:` URL, by the digest of its
+# payload — and a System One backend keys its request without the fields that
+# change how it is served but never what it is answered.
 # ============================================================================
 
 """
@@ -43,11 +45,12 @@ it were one.
   never its host or query — for a System One backend other than TypeSafe, after the
   backend's namespace (`"/<namespace>/v1/systemone"`), so backends never share a
   recording.
-- `body::String`: what the key was computed over after the request line — the exact
-  body, with the credentials [`with_recorded_answers`](@ref) never writes replaced by
-  `"<redacted>"` (empty for `GET /v1/models`), followed, for a System One request
-  whose backend keys more than its body (its provider options, the digests of its
-  image parts), by a newline and that canonical text.
+- `body::String`: what the key was computed over after the request line — the body
+  as its backend keys it, with the credentials [`with_recorded_answers`](@ref) never
+  writes replaced by `"<redacted>"` and each image carried as a `data:` URL by its
+  digest (empty for `GET /v1/models`), followed, for a System One request whose
+  backend keys more than its body (its provider options, the digests of its image
+  parts), by a newline and that canonical text.
 - `reason::String`: `"no recording"`, or `"unreadable recording: …"` followed by
   what is wrong with the file — not JSON, no `response` object, a status other
   than 200, a `body` that is not a JSON object, a `request_id` that is neither
@@ -185,24 +188,36 @@ A recording is `<dir>/<key>.json`, where `key` is the lowercase hex SHA-256 of
 path of the request URL alone: never its host, nor its query, which can carry a
 credential. A System One backend other than TypeSafe files its requests under a
 namespace of its own, `"/<namespace>/v1/systemone"`, so the same question asked of
-two backends is two recordings; and a System One request that carries provider
-options (or image parts) appends a newline and their canonical text — options as
-sorted `name=value` lines with JSON values — to the body it is keyed on, so a
-request without them keeps its key. The key is never a canonical form of the
-request: the order of Choice options and of the state's keys moves the answer, so
-a reordered request is a different request. The one change to the body is a credential it carries:
-in each object of its top-level `tools` array, an MCP tool's `authorization` and
-`headers` (`"type": "mcp"`, the OpenAI Responses wire), a Gemini Interactions MCP
-server's `headers` (`"mcp_server"`) and the `api_key` of a Gemini `"retrieval"`
-tool's `exa_ai_search_config` and `parallel_ai_search_config` read `"<redacted>"`
-in the key, the file and a `ReplayMissError`, so a replay needs none of them; the
-request sent carries them as given. The file holds the request (with that
-canonical text as `key_extra` when there is one — never an image's bytes), the
-response body with its request id and the name of the header that carried it
+two backends is two recordings; a System One request that carries an option its
+backend keys (TypeSafe's `long_context`) or image parts appends a newline and
+their canonical text — options as sorted `name=value` lines with JSON values,
+parts as their names and SHA-256 digests — to the body it is keyed on, so a
+request without them keeps its key; and a System One backend keys its body
+without the options that change how a request is served but never what it is
+answered — Ollama's `keep_alive`, OpenAI's `prompt_cache_key` and
+`safety_identifier` — which are sent, and neither keyed nor written, so the same
+question replays one recording whatever they are. The key is never a canonical
+form of the request: the order of Choice options and of the state's keys moves
+the answer, so a reordered request is a different request. Two changes are made
+to the body. A credential it carries: in each object of its top-level `tools`
+array, an MCP tool's `authorization` and `headers` (`"type": "mcp"`, the OpenAI
+Responses wire), a Gemini Interactions MCP server's `headers` (`"mcp_server"`)
+and the `api_key` of a Gemini `"retrieval"` tool's `exa_ai_search_config` and
+`parallel_ai_search_config` read `"<redacted>"` in the key, the file and a
+`ReplayMissError`, so a replay needs none of them; the request sent carries them
+as given. And an image it carries as a `data:` URL whose payload is base64 — an
+OpenAI chat attachment, an OpenAI Decisions image, a Responses `input_image` —
+reads `data:<mime>;sha256,<hex>`, the SHA-256 of that base64 text, in the key,
+the file and a `ReplayMissError`: a recording names the image it answered without
+holding its bytes, and another image is another request. The file holds the
+request (with that canonical text as `key_extra` when there is one), the response
+body with its request id and the name of the header that carried it
 (`x-typesafe-request-id`, `x-request-id` or `request-id`), and the time of
-recording, pretty-printed so a diff is readable; the API key, the headers, and an
-MCP tool's `authorization` and `headers` are never written. A
-recording without that name replays its id as `x-typesafe-request-id`. Files are
+recording, pretty-printed so a diff is readable; the API key, the headers, an
+MCP tool's `authorization` and `headers`, and the bytes of an image sent as a
+`data:` URL or as a System One image part are never written — media sent in
+another form, such as Ollama's chat `images` or a sound clip, is written as sent.
+A recording without that name replays its id as `x-typesafe-request-id`. Files are
 written atomically (a temporary file in `dir`, then a rename), so concurrent tasks
 can record at once. A replayed answer goes through the same decoding as a live
 200 and has the same type and fields: a `Chat` gets the reply appended and its
@@ -282,27 +297,54 @@ const _BODY_CREDENTIALS = Dict{String,Vector{Vector{String}}}(
 
 const _REDACTED = "<redacted>"
 
-# The body as it is keyed, written and reported: its credentials replaced. A body that
-# carries none is returned as it is, byte for byte, so its key does not move; one that
-# is not JSON has no `tools` array to carry one.
+# The body as it is keyed, written and reported: its credentials replaced, and each image
+# it carries as a data URL. A body that carries neither is returned as it is, byte for
+# byte, so its key does not move; one that is not JSON has no value to carry either.
 function _redacted(body::String)::String
-    contains(body, "\"tools\"") || return body
+    tools, images = contains(body, "\"tools\""), contains(body, ";base64,")
+    tools || images || return body
     parsed = try
         JSON.parse(body)
     catch err
         err isa InterruptException && rethrow()
         return body
     end
-    tools = parsed isa AbstractDict ? get(parsed, "tools", nothing) : nothing
-    tools isa AbstractVector || return body
-    found = false
-    for t in tools
+    found = images && _digest_images!(parsed)
+    list = tools && parsed isa AbstractDict ? get(parsed, "tools", nothing) : nothing
+    for t in (list isa AbstractVector ? list : ())
         t isa AbstractDict || continue
         for path in get(_BODY_CREDENTIALS, get(t, "type", nothing), Vector{String}[])
             found |= _redact!(t, path)
         end
     end
     found ? JSON.json(parsed) : body
+end
+
+# An image a body carries inline, as a `data:` URL whose payload is base64 (RFC 2397) — an
+# OpenAI chat attachment, an OpenAI Decisions `input_image`: the same URL with the payload
+# replaced by the hex SHA-256 of its text, `data:<mime>;sha256,<hex>`. A recording then
+# names the image it answered, and the same image keys alike, without holding its bytes.
+function _image_digest(s::AbstractString)::Union{Nothing,String}
+    startswith(s, "data:") || return nothing
+    comma = findfirst(',', s)
+    isnothing(comma) && return nothing
+    head = SubString(s, 6, prevind(s, comma))            # `<mime>;base64`
+    endswith(head, ";base64") || return nothing
+    string("data:", chop(head; tail=7), ";sha256,", bytes2hex(sha256(SubString(s, nextind(s, comma)))))
+end
+
+# Every data-URL image in a parsed body replaced by its digest, in place; whether there was one.
+_digest_images!(x::Union{AbstractDict,AbstractVector})::Bool =
+    foldl((found, k) -> _digest_image_at!(x, k) | found, collect(keys(x)); init=false)
+_digest_images!(_)::Bool = false
+
+function _digest_image_at!(x::Union{AbstractDict,AbstractVector}, k)::Bool
+    v = x[k]
+    v isa AbstractString || return _digest_images!(v)
+    digest = _image_digest(v)
+    isnothing(digest) && return false
+    x[k] = digest
+    true
 end
 
 # Replace the value at `path` inside `d`, if there is one; whether there was.
@@ -320,10 +362,11 @@ end
 # The HTTP exchange behind every recorded verb: `live()` is the real call, and
 # every active scope stands between it and the caller, innermost first. Outside a
 # scope `live()` runs as it always did. The cancel check mirrors the seam's first
-# one, so a cancelled call reads no recording, just as it sends nothing. `live()`
-# sends the body as given; the scopes see it with its credentials replaced.
-# `key_extra` is what a System One request is keyed on beyond its body (its options,
-# its image parts' digests): keyed and recorded, never sent.
+# one, so a cancelled call reads no recording, just as it sends nothing. `body` is
+# the request as it is keyed and recorded — a System One wire's `record_body` — and
+# `live()` sends the request as given; the scopes see `body` with its credentials and
+# data-URL images replaced. `key_extra` is what a System One request is keyed on
+# beyond its body (its options, its image parts' digests): keyed and recorded, never sent.
 function _recorded_exchange(live::Function, method::String, url::String, body::String,
                             t0::UInt64, tok::Union{Nothing,CancelToken}; key_extra::String="")::HTTP.Response
     iscancelled(tok) && throw(UniLMCancelled(:token, _elapsed_s(t0)))

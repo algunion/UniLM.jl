@@ -196,6 +196,33 @@ end
     @test e isa ArgumentError && contains(e.msg, "`keep_alive`") && contains(e.msg, "runner, think")
 end
 
+@testset "Ollama System One — keep_alive is sent, and left out of what a recording is keyed on" begin
+    req = SystemOneRequest("state", ["q" => noul("Is it?")]; model="tev1:0.8b")
+    w1 = UniLM.encode_system_one(_OS1_P, OllamaEndpoint(base_url="http://box:1"), req)
+    w2 = UniLM.encode_system_one(_OS1_P, OllamaEndpoint(base_url="http://box:1", keep_alive=300), req)
+    @test !contains(w1.body, "keep_alive") && endswith(w2.body, ",\"keep_alive\":300}")
+    @test w1.record_body == w2.record_body == w1.body
+    mktempdir() do dir
+        q = "is_urgent" => noul("Does this need attention today?")
+        live, sent = _os1_serve() do ep, seen
+            r = with_recorded_answers(dir; mode=:record) do
+                ask(_OS1_TICKET, q; service=ep, model="tev1:0.8b", config=_OS1_CFG, keep_alive=0)
+            end
+            (r, only(seen).body)
+        end
+        @test live isa SystemOneSuccess && JSON.parse(sent)["keep_alive"] == 0
+        rec = JSON.parse(read(only(readdir(dir; join=true)), String))
+        @test !haskey(rec["request"]["body"], "keep_alive")
+        # Replayed with no server whatever the keep_alive: another, the endpoint's own, or none.
+        for (ep, kw) in ((OllamaEndpoint(base_url="http://127.0.0.1:1"), (keep_alive=600,)),
+                         (OllamaEndpoint(base_url="http://127.0.0.1:1", keep_alive=Inf), (;)),
+                         (OllamaEndpoint(base_url="http://127.0.0.1:1"), (;)))
+            r = with_recorded_answers(() -> ask(_OS1_TICKET, q; service=ep, model="tev1:0.8b", kw...), dir)
+            @test r isa SystemOneSuccess && r.response.raw == live.response.raw
+        end
+    end
+end
+
 # ─── Local refusals ──────────────────────────────────────────────────────────
 
 struct _Os1Odd <: SystemOneQuestion end

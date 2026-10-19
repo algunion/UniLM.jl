@@ -26,7 +26,8 @@ The request:
   `NamedTuple`) as its JSON text; an [`ImageAttachment`](@ref), or a `Vector` of
   strings and images, as one user message of `input_text` and `input_image`
   parts (base64 data URLs), in order. Images go there and nowhere else, at most
-  128 of them; the input is at most 10,485,760 characters.
+  128 of them; each text — the input, or each text part of the message — is at
+  most 10,485,760 characters.
 - each question is one entry of `questions`, in order, carrying its name: a
   [`NoulQuestion`](@ref) a `predicate`; a [`ChoiceQuestion`](@ref) a `choice` of
   2 to 255 options, each option's name its `value` and a string description its
@@ -48,9 +49,12 @@ each level to its label, and a `refusal` — the API may decline any question �
 a [`RefusalAnswer`](@ref). Probabilities and confidences arrive rounded to two
 decimals, so a distribution over `n` outcomes may sum to 1 within `0.005n`.
 `usage` counts input, cached and output tokens; `request_id` is the
-`x-request-id` header; a non-2xx reply is a [`SystemOneFailure`](@ref) whose
-`error_type` is the error's `code`, else its `type`. Recordings are filed under
-`/openai-decisions/v1/decisions`. [`estimated_cost`](@ref) bills what OpenAI
+`x-request-id` header; a reply with a status other than 200 is a
+[`SystemOneFailure`](@ref) whose `error_type` is the error's `code`, else its
+`type`. Recordings are filed under `/openai-decisions/v1/decisions`, keyed
+without the two options, which change how a request is served but never what it
+is answered, and with each image as the SHA-256 of its base64 text, never its
+bytes. [`estimated_cost`](@ref) bills what OpenAI
 bills: every input token, cached ones included, at the model's input rate, twice
 that for a request of more than 272K input tokens, and no output.
 
@@ -266,11 +270,15 @@ function encode_system_one(p::OpenAIDecisionsProtocol, service, request::SystemO
     body["model"] = _system_one_model(p, service, request)
     body["input"] = _decisions_input(request.state)
     body["questions"] = questions
+    url, keyed = _api_base_url(service) * _DECISIONS_PATH, _system_one_body(body)
+    isempty(options) && return SystemOneWire("POST", url, _DECISIONS_PATH, keyed)
+    # The options choose a prompt cache and an identity for abuse monitoring: they change
+    # how a request is served, never what it is answered, so they are sent as fields of the
+    # body and left out of what a recording is keyed on.
     for (k, v) in options
         body[k] = v
     end
-    # The options are fields of the body, so the body alone keys a recording.
-    SystemOneWire("POST", _api_base_url(service) * _DECISIONS_PATH, _DECISIONS_PATH, _system_one_body(body))
+    SystemOneWire("POST", url, _DECISIONS_PATH, _system_one_body(body); record_body=keyed)
 end
 
 # ─── Decoding ────────────────────────────────────────────────────────────────
@@ -354,14 +362,27 @@ end
 function _decisions_usage(d::AbstractDict)::TokenUsage
     haskey(d, "usage") || return TokenUsage()
     u = d["usage"]
-    at(path) = _token_count(foldl((v, k) -> v isa AbstractDict ? get(v, k, 0) : v, path; init=u))
-    counts = (at(("input_tokens",)), at(("output_tokens",)), at(("input_tokens_details", "cached_tokens")),
-              at(("output_tokens_details", "reasoning_tokens")))
+    counts = (_decisions_count(u, ("input_tokens",)), _decisions_count(u, ("output_tokens",)),
+              _decisions_count(u, ("input_tokens_details", "cached_tokens")),
+              _decisions_count(u, ("output_tokens_details", "reasoning_tokens")))
     any(isnothing, counts) &&
         @warn "System One usage holds a value that is not a non-negative whole token count; it reads as 0" usage = u
     i, o, cached, reasoning = map(c -> something(c, 0), counts)
     TokenUsage(prompt_tokens=i, completion_tokens=o, total_tokens=i + o, cached_tokens=cached,
                reasoning_tokens=reasoning)
+end
+
+# The count at `path` in a usage object: 0 when a step is missing, `nothing` when a step is
+# not the object the schema gives it (`input_tokens_details` is an object holding
+# `cached_tokens`) or the count is no token count.
+function _decisions_count(u, path::Tuple{Vararg{String}})::Union{Nothing,Int}
+    v = u
+    for k in path
+        v isa AbstractDict || return nothing
+        haskey(v, k) || return 0
+        v = v[k]
+    end
+    _token_count(v)
 end
 
 # The decoded reply and the order its answers came in.

@@ -1226,6 +1226,17 @@ natural-language method (an unnamed position becomes `"arg<index>"`), so the
 same arguments always make the same request. With no ordinary arguments there is
 nothing to describe, so `state` is then required.
 
+Every value of that state is sent as JSON.jl writes it — every field of a struct
+argument, a credential held in one included — and a `:record` scope of
+[`with_recorded_answers`](@ref) writes it to disk with the request: pass `state`
+to send only what the model should read. A value that is not data is an
+`ArgumentError` before the request, naming the argument, the path to the value
+and its type: a function or closure, a type, a module, a `Ptr` or other `Ref`, a
+`Task`, a `Channel`, a lock, a condition, an event, an `IO` or an `Expr`, in the
+argument or anywhere in its dicts, arrays, sets, tuples and fields. So is a
+container nested more than 64 levels deep, where the check stops. An explicit
+`state` is sent as given.
+
 Each slot's question is named after that argument (an unnamed one becomes
 `"meaning_<index>"`) and carries `instructions`: `nothing` for a generic
 default, a `String` for every slot, or a `Vector` with one entry per slot.
@@ -1497,19 +1508,110 @@ function nl_classify(state, texts;
     throw(_nl_declined("classify", a, decide, min_confidence))
 end
 
-# Values are passed through untouched: JSON.jl lowers what it knows, and
-# anything it cannot encode fails loudly at serialization rather than being
-# stringified into something the model would silently misread. The keys follow
-# argument order, so the same arguments make byte-identical requests: a `Dict`
-# iterates in hash order, which may change between Julia versions, and key order
-# is part of what the model reads.
-function _nl_state(f, state, args::Tuple, ordinary::Vector{Int}, argnames::Vector{Symbol})
+# The state built from the ordinary arguments. The keys follow argument order, so the
+# same arguments make byte-identical requests: a `Dict` iterates in hash order, which
+# may change between Julia versions, and key order is part of what the model reads.
+# Values are sent as JSON.jl writes them, which does not fail on what is not data: it
+# writes a function (a closure by its generated name), a type, a module or a pointer
+# by its `string`, and a task, a channel, a lock or an `IO` field by field. So every
+# value is walked first, and one the state must not carry is refused before the request.
+function _nl_state(@nospecialize(f), state, @nospecialize(args::Tuple), ordinary::Vector{Int}, argnames::Vector{Symbol})
     isnothing(state) || return state
     isempty(ordinary) && throw(ArgumentError(
         "$(f) has no ordinary arguments to describe the state; pass `state = ...` to nl_dispatch"))
     payload = JSON.Object{String,Any}()
     for k in eachindex(ordinary)
-        payload[_nl_state_key(argnames[ordinary[k]], ordinary[k])] = args[k]
+        name = _nl_state_key(argnames[ordinary[k]], ordinary[k])
+        _nl_check_data(f, name, args[k])
+        payload[name] = args[k]
     end
     payload
+end
+
+# What is not data, and what a message calls it. A `Ref` is shared memory rather than a
+# value, and an `Expr` is code; of the rest a model would read only process internals.
+const _NL_NOT_DATA_KINDS = (Function => "a function", Type => "a type", Module => "a module",
+                            Ref => "a reference", Task => "a task", Base.AbstractChannel => "a channel",
+                            Base.AbstractLock => "a lock", Base.GenericCondition => "a condition",
+                            Base.Event => "an event", IO => "a stream", Expr => "code")
+const _NL_NOT_DATA = Union{map(first, _NL_NOT_DATA_KINDS)...}
+
+# What JSON.jl writes as one scalar, whatever the fields hold (a big number holds a
+# pointer, a regex its compiled form): nothing in it to walk.
+const _NL_SCALAR = Union{Number,AbstractString,Symbol,AbstractChar,Nothing,Missing,Enum,Regex}
+
+# How deep the walk goes. A container below it is refused: the walk must end, and a
+# value it has not reached is not known to be data.
+const _NL_STATE_DEPTH = 64
+
+# A value the state must not carry: the path to it, innermost step first, and whether
+# it was refused for its depth rather than for its kind.
+struct _NLStray
+    path::Vector{String}
+    value::Any
+    deep::Bool
+end
+
+_nl_via(s::_NLStray, step::String)::_NLStray = (push!(s.path, step); s)
+
+# The first value in `x` the state must not carry, walking what JSON.jl writes: a value
+# that lowers (`JSON.lower`) is walked as lowered, then the keys and values of a dict,
+# the elements of an array, a set or a tuple, and the fields of anything else. A
+# mutable value is walked once: seen again, it was checked already, or it is a cycle,
+# which JSON.jl writes as `null`.
+function _nl_stray(@nospecialize(x), depth::Int, seen::Base.IdSet{Any})::Union{Nothing,_NLStray}
+    x isa _NL_NOT_DATA && return _NLStray(String[], x, false)
+    x isa _NL_SCALAR && return nothing
+    depth > _NL_STATE_DEPTH && return _NLStray(String[], x, true)
+    if ismutable(x)
+        x in seen && return nothing
+        push!(seen, x)
+    end
+    lowered = JSON.lower(x)
+    lowered === x || return _nl_stray(lowered, depth + 1, seen)
+    if x isa AbstractDict
+        keytype(x) <: _NL_SCALAR && valtype(x) <: _NL_SCALAR && return nothing
+        for (k, v) in x
+            s = _nl_stray(k, depth + 1, seen)
+            isnothing(s) || return _nl_via(s, "[key $(repr(k))]")
+            s = _nl_stray(v, depth + 1, seen)
+            isnothing(s) || return _nl_via(s, "[$(repr(k))]")
+        end
+    elseif x isa AbstractArray
+        eltype(x) <: _NL_SCALAR && return nothing
+        for i in eachindex(x)
+            isassigned(x, i) || continue
+            s = _nl_stray(x[i], depth + 1, seen)
+            isnothing(s) || return _nl_via(s, "[$(i)]")
+        end
+    elseif x isa Union{AbstractSet,Tuple}
+        for (i, v) in enumerate(x)
+            s = _nl_stray(v, depth + 1, seen)
+            isnothing(s) || return _nl_via(s, "[$(i)]")
+        end
+    else
+        for i in 1:nfields(x)
+            isdefined(x, i) || continue
+            s = _nl_stray(getfield(x, i), depth + 1, seen)
+            isnothing(s) || return _nl_via(s, ".$(fieldname(typeof(x), i))")
+        end
+    end
+    nothing
+end
+
+function _nl_check_data(@nospecialize(f), name::String, @nospecialize(x))::Nothing
+    x isa _NL_SCALAR && return nothing                 # the common case: nothing to walk
+    stray = _nl_stray(x, 1, Base.IdSet{Any}())
+    isnothing(stray) && return nothing
+    at = name * join(Iterators.reverse(stray.path))
+    fix = "Pass `state = …` with only what the model should read"
+    stray.deep && throw(ArgumentError(
+        "the argument `$(name)` of $(f) nests deeper than $(_NL_STATE_DEPTH) levels at `$(at)`, where " *
+        "nl_dispatch stops checking that its state is data. $(fix)"))
+    kind = last(_NL_NOT_DATA_KINDS[something(findfirst(p -> stray.value isa first(p), _NL_NOT_DATA_KINDS))])
+    what = "$(kind) ($(typeof(stray.value)))"
+    throw(ArgumentError(
+        "the argument `$(name)` of $(f) " * (isempty(stray.path) ? "is $(what)" : "holds $(what) at `$(at)`") *
+        ", which is not data: nl_dispatch sends its ordinary arguments as the state, and JSON.jl would " *
+        "send its name or its internals rather than fail. $(fix)"))
 end

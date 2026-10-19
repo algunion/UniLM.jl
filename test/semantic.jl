@@ -1548,3 +1548,80 @@ end
     @test contains(errs[1].msg, "the @branch option `1` at ") && contains(errs[1].msg, "is 1 (Int64)")
     @test contains(errs[2].msg, "the @branch option `'c'` at ") && contains(errs[2].msg, "(Char)")
 end
+
+# ─── 18. What the default state may carry ───────────────────────────────────
+
+state_route(::nl"the customer wants a refund", ticket) = :refund
+state_route(::nl"anything else", ticket) = :other
+
+struct ShopClient                        # a credential is data: sent as written
+    base_url::String
+    api_key::String
+end
+struct SessionHandle                     # a lock is not
+    user::String
+    guard::ReentrantLock
+end
+mutable struct LoopNode                  # a cycle, which JSON.jl writes as null
+    label::String
+    next::Any
+end
+
+@testset "semantic — a default state holding what is not data is refused before the request" begin
+    caught(f) = try f(); nothing catch e; e end
+    deep = foldl((inner, _) -> Any[inner], 1:70; init=Any["leaf"])
+    # (the argument, where the message must point, what it must call the value)
+    refusals = [
+        "a closure"              => ((x -> x), "argument `ticket` of state_route is a function", "#"),
+        "a function"             => (println, "is a function (typeof(println))", "`ticket`"),
+        "a lock in a field"      => (SessionHandle("ada", ReentrantLock()), "a lock (ReentrantLock) at `ticket.guard`", "ticket"),
+        "a function in a dict"   => (Dict("on_done" => println), "a function (typeof(println)) at `ticket[\"on_done\"]`", "ticket"),
+        "a task in a vector"     => (Any["a note", Task(() -> 1)], "a task (Task) at `ticket[2]`", "ticket"),
+        "a channel in a tuple"   => (("a note", Channel{Int}(1)), "a channel (Channel{Int64}) at `ticket[2]`", "ticket"),
+        "a type in a NamedTuple" => ((kind = Int,), "a type (DataType) at `ticket.kind`", "ticket"),
+        "a pointer in a pair"    => ("p" => Ptr{Cvoid}(0), "a reference (Ptr{Nothing}) at `ticket.second`", "ticket"),
+        "a condition in a set"   => (Set(Any[Threads.Condition()]), "a condition", "`ticket[1]`"),
+        "a function in a key"    => (Dict((println, 1) => "v"), "a function (typeof(println)) at `ticket[key (println, 1)][1]`", "ticket"),
+        "a module"               => (Base, "is a module (Module)", "ticket"),
+        "a Ref"                  => (Ref(1), "is a reference", "RefValue"),
+        "an event"               => (Base.Event(), "is an event", "Event"),
+        "an IO"                  => (IOBuffer(), "is a stream (IOBuffer)", "ticket"),
+        "an Expr"                => (:(a + b), "is code (Expr)", "ticket"),
+        "a container too deep"   => (deep, "nests deeper than 64 levels at `ticket[1][1]", "stops checking"),
+    ]
+    mktempdir() do dir
+        results, sent = _with_semantic_mock() do
+            with_recorded_answers(dir; mode=:record) do
+                [caught(() -> nl_dispatch(state_route, arg; service=SemanticMock, config=_SEM_CFG))
+                 for (_, (arg, _, _)) in refusals]
+            end
+        end
+        @test isempty(sent) && isempty(readdir(dir))       # nothing sent, nothing recorded
+        for ((label, (_, fragment, also)), err) in zip(refusals, results)
+            @testset "refused: $(label)" begin
+                @test err isa ArgumentError
+                msg = sprint(showerror, err)
+                @test contains(msg, fragment) && contains(msg, also) && contains(msg, "Pass `state = …`")
+            end
+        end
+    end
+
+    # Data goes out as JSON.jl writes it: a Symbol as its String, a regex as its pattern, a
+    # cycle as null, and every field of a struct — a credential too, as documented.
+    loop = LoopNode("first", nothing)
+    loop.next = loop
+    outs, seen = _with_semantic_mock() do
+        [nl_dispatch(state_route, arg; service=SemanticMock, config=_SEM_CFG)
+         for arg in (:refund, r"ab+c", loop, ShopClient("https://shop.example", "sk-test-0000"))]
+    end
+    @test outs == fill(:refund, 4)
+    @test [s["body"]["state"]["ticket"] for s in seen] ==
+          ["refund", "ab+c", Dict("label" => "first", "next" => nothing),
+           Dict("base_url" => "https://shop.example", "api_key" => "sk-test-0000")]
+
+    # An explicit state is the caller's, and is sent as given: the arguments are not walked.
+    out, seen = _with_semantic_mock() do
+        nl_dispatch(state_route, println; service=SemanticMock, config=_SEM_CFG, state="a ticket")
+    end
+    @test out === :refund && seen[1]["body"]["state"] == "a ticket"
+end

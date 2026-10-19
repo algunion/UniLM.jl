@@ -84,9 +84,13 @@
   changed the string hash); the order of the options is part of what the model
   reads. Any other dictionary, a `NamedTuple` and a vector of pairs keep their
   order, and a `Dict` state was already written in sorted order by JSON.jl.
-  Upgrading: such a request's bytes change, so its recordings must be made again
-  (`mode = :record_missing`); pass a `NamedTuple` or a vector of pairs to fix the
-  order you mean.
+  Upgrading: such a request's bytes change, and with them the key of its
+  recording: one that 0.23.0 recorded in hash order no longer replays, unless that
+  order happened to be sorted (`with_recorded_answers` throws `ReplayMissError`),
+  so record it again (`mode = :record_missing`); pass a `NamedTuple` or a vector of
+  pairs to fix the order you mean. The recordings of every other request keep
+  their keys: the test suite rebuilds each of the 90 System One recordings
+  committed in this repository from typed requests, to the same key.
 - **An attachment where no request carries media is refused.** An
   `ImageAttachment` or `AudioAttachment` written as JSON anywhere but a message's
   `attachments` or a System One request's state, instructions or criteria —
@@ -227,6 +231,8 @@
   options, image digests), when there is any. A `ReplayMissError` for a backend
   other than TypeSafe shows its namespaced path and says to record it with access
   to that backend — its API key set, or its local server running.
+- PLACEHOLDER (confirm when its code change lands): `ask_each`: a batch held by a
+  rate limit counts the hold against each item's `total_deadline`.
 - The manual's decision pages form a **Decisions (Jev)** lane at the same
   addresses: *Start Here: Decisions in Five Minutes* (formerly *Start Here: Jev in
   Five Minutes*), a new *Backends: Jev, OpenAI and Local Models*, *Decisions with
@@ -258,6 +264,8 @@
   type of the ordinary arguments.
 - A `@branch` option name that is neither a `String` nor a `Symbol` is an
   `ArgumentError` naming its line, instead of a `MethodError`.
+- PLACEHOLDER (confirm when its code change lands): Recordings never hold an
+  image's bytes (data URLs are recorded as digests).
 
 ### Performance
 - Loading UniLM invalidated 1,438 compiled method instances in the session — among

@@ -129,18 +129,26 @@ returned `nothing` for an answer — it declined to act on it — and no fallbac
 was given. `question` names the question (`"branch"` for `@branch`); `answer` is
 the full [`ChoiceAnswer`](@ref) the policy saw.
 
+A refusal is a decline by the backend: when the backend declined to answer the
+question — a [`RefusalAnswer`](@ref), which OpenAI's Decisions API may send for
+any question — and no fallback was given, this error is thrown whatever the
+policy, with that `RefusalAnswer` as `answer`; no policy sees it.
+
 Supply a `_` fallback line to `@branch` or the `fallback` keyword of
 `nl_dispatch`, or return an offered option from the policy, to handle the case.
 A `min_confidence` threshold raises [`LowConfidenceError`](@ref) instead.
 """
 struct DecisionDeclinedError <: Exception
     question::String
-    answer::ChoiceAnswer
+    answer::Union{ChoiceAnswer,RefusalAnswer}
 end
 
 function Base.showerror(io::IO, e::DecisionDeclinedError)
+    a = e.answer
+    a isa RefusalAnswer && return print(io, "DecisionDeclinedError: the backend declined to answer ",
+                                        repr(e.question), ". Add a fallback, or rephrase the question or the state.")
     print(io, "DecisionDeclinedError: the decision policy declined the answer to ", repr(e.question),
-          ", which selected ", repr(e.answer.choice), " with confidence ", e.answer.confidence,
+          ", which selected ", repr(a.choice), " with confidence ", a.confidence,
           ". Add a fallback, or handle the case in the policy.")
 end
 
@@ -211,10 +219,12 @@ function _nl_keyed_verdict(v, offered::Vector{String}, keys::Vector{Any}, questi
     i
 end
 
-# A decline with no fallback: the threshold keeps its own error type.
+# A decline with no fallback: the threshold keeps its own error type, and a refusal is
+# the backend's decline whatever the policy.
 _nl_declined(question::String, a::ChoiceAnswer, decide, min_confidence::Real)::Exception =
     isnothing(decide) ? LowConfidenceError(question, a, Float64(min_confidence)) :
                         DecisionDeclinedError(question, a)
+_nl_declined(question::String, a::RefusalAnswer, _, ::Real)::Exception = DecisionDeclinedError(question, a)
 
 # ─── @branch ─────────────────────────────────────────────────────────────────
 
@@ -261,6 +271,10 @@ function _branch_select(state, names::Vector{String}, descriptions::Vector{Any};
     result isa SystemOneSuccess || throw(SystemOneError(result))
     isnothing(on_response) || on_response(result)
     a = answer(result, "branch")
+    if a isa RefusalAnswer        # the backend declined: no policy runs
+        has_fallback && return 0
+        throw(_nl_declined("branch", a, decide, min_confidence))
+    end
     a isa ChoiceAnswer || throw(ArgumentError(
         "a branch needs a Choice answer; the service answered with a $(typeof(a))"))
     a.choice in names || throw(ArgumentError(
@@ -306,7 +320,10 @@ returned `nothing`. It requires one of the two: without a policy nothing is ever
 declined and the line would be unreachable, so that spelling is rejected at
 macro-expansion time. A policy that cannot decline when the branch runs —
 `decide = nothing`, or a `min_confidence` of 0 or less — leaves the line just as
-unreachable, and is an `ArgumentError` before the request.
+unreachable, and is an `ArgumentError` before the request. A backend that
+declines the question itself — a [`RefusalAnswer`](@ref), which OpenAI's
+Decisions API may send — takes the `_` line too, or throws
+[`DecisionDeclinedError`](@ref) without one; `decide` is not called.
 
 Keywords go between the state and the block, written `key = value`:
 
@@ -1324,7 +1341,10 @@ with one per slot, each called with that slot's [`ChoiceAnswer`](@ref) and
 returning an offered meaning — any of them, not only the argmax — or `nothing`
 to decline. Every slot is decided before anything is called; if any declined,
 `fallback` runs, or [`DecisionDeclinedError`](@ref) is thrown for the first
-declined slot. Any other return is an `ArgumentError`, and neither `f` nor
+declined slot. A slot whose question the backend declined to answer — a
+[`RefusalAnswer`](@ref), which OpenAI's Decisions API may send — is declined
+without calling its policy, and its error is a `DecisionDeclinedError` whatever
+the policy. Any other return is an `ArgumentError`, and neither `f` nor
 `fallback` runs. `decide` with a nonzero `min_confidence` is an `ArgumentError`
 before any request: a threshold is itself the policy
 `a -> a.confidence >= τ ? a.choice : nothing`.
@@ -1459,9 +1479,10 @@ function _nl_dispatch(f, args::Tuple, model, service, config, cancel, min_confid
     picked = _nl_ask(payload, questions, options, _nl_noun(offer); model, service, config, cancel, on_response)
 
     # Every slot is decided before anything runs, so an invalid verdict in a later
-    # slot cannot follow a fallback or a call already made on an earlier one.
-    chosen = Union{Nothing,Int}[_nl_verdict(policy[k](picked[k]), offer, k, names[k])
-                                for k in eachindex(slots)]
+    # slot cannot follow a fallback or a call already made on an earlier one. A slot the
+    # backend refused is declined, and its policy never sees the refusal.
+    chosen = Union{Nothing,Int}[picked[k] isa RefusalAnswer ? nothing :
+                                _nl_verdict(policy[k](picked[k]), offer, k, names[k]) for k in eachindex(slots)]
     declined = findfirst(isnothing, chosen)
     if !isnothing(declined)
         isnothing(fallback) || return fallback(args...)
@@ -1476,22 +1497,26 @@ function _nl_dispatch(f, args::Tuple, model, service, config, cancel, min_confid
 end
 
 # The one request behind `nl_dispatch` and `nl_classify`, and the Choice answer to each
-# of its questions. A failed call throws rather than resolving to anything, and
-# `on_response` sees the success before any policy runs on it. `offered` names the
-# options in a message: meanings, or a table's sentences.
+# of its questions — or the refusal, where the backend declined one. A failed call throws
+# rather than resolving to anything, and `on_response` sees the success before any
+# policy runs on it. `offered` names the options in a message: meanings, or a table's
+# sentences.
 function _nl_ask(payload, questions::Vector{Pair{String,ChoiceQuestion}}, options::Vector{Vector{String}},
                  offered::String; model::Union{Nothing,AbstractString}, service::Union{Nothing,ServiceEndpointSpec},
                  config::Union{Nothing,RequestConfig}, cancel::Union{Nothing,CancelToken},
-                 on_response)::Vector{ChoiceAnswer}
+                 on_response)::Vector{Union{ChoiceAnswer,RefusalAnswer}}
     result = isnothing(model) ? ask(payload, questions...; service, config, cancel) :
                                 ask(payload, questions...; model, service, config, cancel)
     result isa SystemOneSuccess || throw(SystemOneError(result))
     isnothing(on_response) || on_response(result)
-    ChoiceAnswer[_nl_choice(result, first(questions[k]), options[k], offered) for k in eachindex(questions)]
+    Union{ChoiceAnswer,RefusalAnswer}[_nl_choice(result, first(questions[k]), options[k], offered)
+                                      for k in eachindex(questions)]
 end
 
-function _nl_choice(result::SystemOneSuccess, name::String, options::Vector{String}, offered::String)::ChoiceAnswer
+function _nl_choice(result::SystemOneSuccess, name::String, options::Vector{String},
+                    offered::String)::Union{ChoiceAnswer,RefusalAnswer}
     a = answer(result, name)
+    a isa RefusalAnswer && return a
     a isa ChoiceAnswer || throw(ArgumentError(
         "the answer to $(repr(name)) is a $(typeof(a)), not a ChoiceAnswer"))
     a.choice in options || throw(ArgumentError(
@@ -1539,10 +1564,12 @@ returning an offered sentence, a key as the table writes it, or `nothing` to
 decline — not both. A declined answer calls `fallback(state)` when given, and
 otherwise throws [`LowConfidenceError`](@ref) or [`DecisionDeclinedError`](@ref)
 for the question `"classify"`; any other verdict is an `ArgumentError`, and
-`fallback` does not run. A `fallback` that cannot be called with `state` is an
-`ArgumentError` before the request, and so is a `min_confidence` that is not a
-finite number in `0 … 1`, NaN included. A non-success call throws
-[`SystemOneError`](@ref).
+`fallback` does not run. A refusal by the backend — a [`RefusalAnswer`](@ref),
+which OpenAI's Decisions API may send — is a decline that no policy sees: it
+calls `fallback(state)`, or throws `DecisionDeclinedError`. A `fallback` that
+cannot be called with `state` is an `ArgumentError` before the request, and so
+is a `min_confidence` that is not a finite number in `0 … 1`, NaN included. A
+non-success call throws [`SystemOneError`](@ref).
 `on_response` is called once with the [`SystemOneSuccess`](@ref) before the
 policy runs — audits get `request_id`, `model` and `raw` from its `response`,
 which `decide` cannot see — as it is for `nl_dispatch`.
@@ -1581,7 +1608,7 @@ function nl_classify(state, @nospecialize(texts);
                                     [o => nothing for o in options])
     a = only(_nl_ask(state, [question], [options], "sentences"; model, service, config, cancel, on_response))
     keys = collect(Any, table.keys)
-    i = _nl_keyed_verdict(policy(a), options, keys, "classify")
+    i = a isa RefusalAnswer ? nothing : _nl_keyed_verdict(policy(a), options, keys, "classify")
     isnothing(i) || return keys[i]
     isnothing(fallback) || return fallback(state)
     throw(_nl_declined("classify", a, decide, min_confidence))

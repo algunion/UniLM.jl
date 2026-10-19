@@ -1360,7 +1360,9 @@ function _system_one_exchange(call::_SystemOneCall, config::Union{Nothing,Reques
     (; protocol, service, request, wire) = call
     cfg = _resolve_config(config, _system_one_default_config(protocol, service))
     tok = _resolve_cancel(cancel); t0 = time_ns()
-    ns = _system_one_namespace(protocol)
+    # Asserted: `protocol` is abstract here, and once a hook has more methods than inference
+    # splits over, its result would be inferred as `Any` however each method is annotated.
+    ns = _system_one_namespace(protocol)::String
     local resp
     try
         resp = _recorded_exchange(wire.method, isempty(ns) ? wire.path : "/" * ns * wire.path, wire.body, t0, tok;

@@ -456,7 +456,9 @@ end
         "a level twice"               => answer_at(1, a -> a["probabilities"][3]["value"] = 1),
         "a level beyond the rubric"   => answer_at(1, a -> a["probabilities"][3]["value"] = 7),
         "a level without a label"     => answer_at(1, a -> delete!(a["probabilities"][1], "label")),
+        "a label that is not the level asked" => answer_at(1, a -> a["probabilities"][1]["label"] = "WRONG"),
         "a score beyond the rubric"   => answer_at(1, a -> a["score"] = 2.5),
+        "a score its probabilities contradict" => answer_at(1, a -> a["score"] = 2.0),
         "no model"                    => _od_d02(b -> delete!(b, "model")),
         "not an object"               => "[]",
     ]

@@ -716,9 +716,15 @@ end
         "an overflowing level"     => _s1_body(Dict("urg" => """{"type":"score","score":1.0,"confidence":0.5,"legend":{"0":"a","1":"b","2":"c"},"probabilities":{"99999999999999999999":1.0}}""")),
         "a legend short of a level" => _s1_body(Dict("urg" => """{"type":"score","score":1.0,"confidence":0.5,"legend":{"0":"a","1":"b"},"probabilities":{"0":0.0,"1":1.0,"2":0.0}}""")),
         "a score beyond the rubric" => _s1_body(Dict("urg" => """{"type":"score","score":2.5,"confidence":0.5,"legend":{"0":"a","1":"b","2":"c"},"probabilities":{"0":0.0,"1":0.0,"2":1.0}}""")),
+        # a score is the expectation of its probabilities, and the legend repeats the levels asked
+        "a score its probabilities contradict" => _s1_body(Dict("urg" => """{"type":"score","score":2.0,"confidence":1.0,"legend":{"0":"Can wait","1":"This week","2":"Today"},"probabilities":{"0":1.0,"1":0.0,"2":0.0}}""")),
+        "a legend that renames a level" => _s1_body(Dict("urg" => """{"type":"score","score":1.98,"confidence":0.96,"legend":{"0":"WRONG","1":"This week","2":"Today"},"probabilities":{"0":0.0,"1":0.02,"2":0.98}}""")),
+        "a legend entry that is no string" => _s1_body(Dict("urg" => """{"type":"score","score":1.98,"confidence":0.96,"legend":{"0":"Can wait","1":{"text":"This week"},"2":"Today"},"probabilities":{"0":0.0,"1":0.02,"2":0.98}}""")),
         # the response names its model
         "no model"                 => _s1_body(; model=""),
         "a model that is no string" => _s1_body(; model="\"model\":7,"),
+        "a blank model"            => _s1_body(; model="\"model\":\"\","),
+        "a model of spaces"        => _s1_body(; model="\"model\":\"  \","),
     ]
     for (label, body) in malformed
         @testset "$(label)" begin
@@ -734,6 +740,29 @@ end
         _s1_caught(() -> nl_classify("s", (refund = "a refund", other = "anything else"); service=_S1Mock, config=_S1_CFG))
     end
     @test e isa SystemOneError && e.result isa SystemOneCallError && contains(e.result.error, "a pony")
+end
+
+@testset "System One — a Score agrees with its probabilities within the rounding, and repeats its string levels" begin
+    urg(score, ps; legend="""{"0":"Can wait","1":"This week","2":"Today"}""") = _s1_body(Dict("urg" =>
+        """{"type":"score","score":$score,"confidence":0.5,"legend":$legend,"probabilities":$ps}"""))
+    even = """{"0":0.0,"1":0.5,"2":0.5}"""                     # an expectation of 1.5
+    # TypeSafe's rounding to two decimals: three probabilities off by 0.005 each move the
+    # expectation by up to (n − 1)·0.015, and the score itself by one step of 0.01.
+    @test first(_s1_ask_with(urg(1.54, even))) isa SystemOneSuccess
+    @test first(_s1_ask_with(urg(1.46, even))) isa SystemOneSuccess
+    @test first(_s1_ask_with(urg(1.545, even))) isa SystemOneCallError
+    e = first(_s1_ask_with(urg(2.0, """{"0":1.0,"1":0.0,"2":0.0}""")))
+    @test e isa SystemOneCallError && contains(e.error, "2.0") && contains(e.error, "expect")
+    e = first(_s1_ask_with(urg(1.5, even; legend="""{"0":"Can wait","1":"Next week","2":"Today"}""")))
+    @test e isa SystemOneCallError && contains(e.error, "\"Next week\"") && contains(e.error, "\"This week\"")
+    # A level that is an object or an array is not compared: a backend may write it back
+    # re-serialized. A level that is a string is.
+    req = SystemOneRequest("s", ["r" => score("Rate.", [(label = "low",), "high"])]; model="m")
+    resp(legend) = SystemOneResponse("m", Dict{String,SystemOneAnswer}("r" => ScoreAnswer(1.0, 1.0, legend,
+        Dict(0 => 0.0, 1 => 1.0), Dict{String,Any}())), TokenUsage(), nothing, Dict{String,Any}())
+    ts = UniLM.TypeSafeProtocol()
+    @test UniLM._check_answers(ts, req, resp(Dict{Int,Any}(0 => Dict("label" => "LOW"), 1 => "high"))) === nothing
+    @test_throws ArgumentError UniLM._check_answers(ts, req, resp(Dict{Int,Any}(0 => Dict("label" => "low"), 1 => "HIGH")))
 end
 
 @testset "System One — usage that is not a token count reads as 0 with a warning, never failing the answers" begin

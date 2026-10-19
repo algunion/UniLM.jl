@@ -18,7 +18,8 @@ const _RA_HITS = Threads.Atomic{Int}(0)
 
 # The mock's answer to one question of request number `n`: the LAST Choice option
 # (a replayed dispatch cannot pass by landing on the default first one), and
-# numbers that carry `n`, so no two recordings look alike.
+# numbers that carry `n`, so no two recordings look alike — a Score's mass moved from its
+# first level to its last by n/10⁵, and its score the expectation that makes.
 function _ra_answer(q::AbstractDict, n::Int)::Dict{String,Any}
     kind = q["type"]
     if kind == "choice"
@@ -28,9 +29,11 @@ function _ra_answer(q::AbstractDict, n::Int)::Dict{String,Any}
                 o => (o == last(options) ? 0.9 : 0.1 / max(length(options) - 1, 1)) for o in options))
     elseif kind == "score"
         levels = q["criteria"]
-        Dict{String,Any}("type" => kind, "score" => 1 + n / 1000, "confidence" => 0.5,
+        k, shift = length(levels), n / 100_000
+        p = k == 1 ? [1.0] : [1 / k + (i == 1 ? -shift : i == k ? shift : 0.0) for i in 1:k]
+        Dict{String,Any}("type" => kind, "score" => sum((i - 1) * p[i] for i in 1:k), "confidence" => 0.5,
             "legend" => Dict{String,Any}(string(i - 1) => levels[i] for i in eachindex(levels)),
-            "probabilities" => Dict{String,Any}(string(i - 1) => 1 / length(levels) for i in eachindex(levels)))
+            "probabilities" => Dict{String,Any}(string(i - 1) => p[i] for i in 1:k))
     else
         Dict{String,Any}("type" => kind, "noul" => n / 1000)
     end

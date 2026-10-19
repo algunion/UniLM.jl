@@ -837,8 +837,9 @@ failure, a missing API key (`TYPESAFE_API_KEY` on TypeSafe), or a 200 whose body
 could not be decoded into answers or whose answers do not fit the request — a
 question unanswered or one answered that was not asked, an answer of the wrong
 kind, an option that was not offered, probabilities that are not a distribution,
-or a value outside its range. `status` is filled in only when the underlying
-exception carried one.
+a value outside its range, a Score whose `score` its probabilities contradict or
+whose legend renames a level asked, or no model named. `status` is filled in
+only when the underlying exception carried one.
 
 `cause` is that underlying exception — a [`UniLMTimeout`](@ref) for a timeout —
 and `request_id` is the backend's request id of the 200 that could not be used
@@ -1121,6 +1122,10 @@ function _check_distribution(name::String, probabilities::AbstractDict, tol::Flo
 end
 
 function _check_answers(p::SystemOneProtocol, request::SystemOneRequest, response::SystemOneResponse)::Nothing
+    # The id that answered is what a tuned threshold and a price are about: a blank one
+    # names no model.
+    isempty(strip(response.model)) && throw(ArgumentError(
+        "the System One reply names no model: its \"model\" is $(repr(response.model))"))
     got = response.answers
     asked = request.questions
     missed = String[name for (name, _) in asked if !haskey(got, name)]
@@ -1190,6 +1195,21 @@ function _check_kind(p::SystemOneProtocol, name::String, q::ScoreQuestion, a::Sc
     slack = _probability_slack(p)
     -slack <= a.score <= n - 1 + slack || throw(ArgumentError(
         "System One answer $(repr(name)) has the score $(a.score), outside 0 … $(n - 1)"))
+    # The score is the expected level. Probabilities that err by the sum's tolerance in all
+    # move that expectation by at most n − 1 times it, and a rounded score is off by one step.
+    expected = sum(l * pr for (l, pr) in a.probabilities)
+    allowed = (n - 1) * tol + slack
+    abs(a.score - expected) <= allowed || throw(ArgumentError(
+        "System One answer $(repr(name)) has the score $(a.score), but its probabilities put the expected level at " *
+        "$(expected) (allowed difference $(allowed))"))
+    # A level asked as a string comes back in the legend as it was asked. A level that is an
+    # object or an array is not compared: a backend may write it back re-serialized (another
+    # key order, another number format). Nor is an image: TypeSafe echoes its reference.
+    for (i, level) in enumerate(q.criteria)
+        level isa AbstractString && a.legend[i-1] != level && throw(ArgumentError(
+            "System One answer $(repr(name)) describes level $(i - 1) as $(repr(a.legend[i-1])), not as the level " *
+            "asked, $(repr(level))"))
+    end
     _unit(a.confidence) || throw(ArgumentError(
         "System One answer $(repr(name)) has the confidence $(a.confidence), outside 0 … 1"))
     nothing
@@ -1437,18 +1457,20 @@ Malformed input is an `ArgumentError` before anything is sent: a `state` that is
 not a string, object, array or image; a value JSON cannot carry (`NaN`, `Inf`);
 a request the backend cannot carry — TypeSafe takes at most 255 options per
 Choice and 10 levels per Score, PNG and JPEG images of at most 16 MiB with 280
-to 1568 pixels on each side, 64 levels of nesting in the state, instructions and
-criteria, and a body of at most 32 MiB; a `service` that does not declare
-`:system_one`.
+to 1568 pixels on each side (a JPEG ending with its end-of-image marker), 64
+levels of nesting in the state, instructions and criteria, and a body of at most
+32 MiB; a `service` that does not declare `:system_one`.
 
 Every answer is checked against the request before a success is built: each
 question asked is answered once and nothing else is; each answer is of its
 question's kind (an answer to a [`RawQuestion`](@ref) may be any); a Choice picks
 an offered option that is the most probable and gives a probability to exactly
-the options offered; a Score gives one to exactly the levels `0` to `n − 1` and
-its `score` lies between them; probabilities lie in `0 … 1` and sum to 1 within
-the backend's rounding; confidences, Noul probabilities and box edges lie in
-`0 … 1`; the response names the model that answered. A reply that fails any of
+the options offered; a Score gives one to exactly the levels `0` to `n − 1`, its
+`score` lies between them and is the expectation of its probabilities within the
+backend's rounding, and its `legend` repeats every level asked as a string;
+probabilities lie in `0 … 1` and sum to 1 within the backend's rounding;
+confidences, Noul probabilities and box edges lie in `0 … 1`; the response names
+the model that answered, by a name that is not blank. A reply that fails any of
 these is a `SystemOneCallError` — never a success built from a malformed answer.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout and retry

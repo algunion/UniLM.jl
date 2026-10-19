@@ -1,0 +1,1 @@
+{"state":{"photo":"<image:2c7dfa0170ae61700cef42fb477bacd3>","note":"A drawing of two shapes."},"model":"jev-latest","questions":{"disc":{"type":"noul","instructions":"Is there a blue disc in `photo`?"}},"assets":{"<image:2c7dfa0170ae61700cef42fb477bacd3>":{"type":"image","part":"asset-0"}}}

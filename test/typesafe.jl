@@ -405,8 +405,8 @@ end
         ("09-err-unknown-model.response.json", 400, "api_usage_error", "Unknown model: not-a-real-model"),
         ("18-instructions-omitted.response.json", 400, nothing,
             "Noul question must have criteria or instructions: bare_noul"),
-        ("30-choice-256-options.response.json", 400, nothing,
-            "Too many choices. Must have at most 255 choices."),
+        ("30-choice-256-options.response.json", 422, nothing,
+            "questions.pick.choice.criteria: Dictionary should have at most 255 items after validation, not 256"),
         ("22-err-unknown-path.response.json", 404, nothing, "Not Found"),
     ]
     for (fixture, status, error_type, needle) in cases

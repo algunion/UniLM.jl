@@ -1,0 +1,107 @@
+{
+ "tag": "D04",
+ "utc": "2026-10-19T19:00:08+00:00",
+ "request": {
+  "model": "gpt-6-luna",
+  "input": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "input_text",
+      "text": "Inspect this image."
+     },
+     {
+      "type": "input_image",
+      "image_url": "data:image/png;base64,<234 bytes elided>"
+     }
+    ]
+   }
+  ],
+  "questions": [
+   {
+    "type": "predicate",
+    "name": "red_square",
+    "instructions": "Does the image contain a red square?"
+   },
+   {
+    "type": "choice",
+    "name": "quadrant",
+    "instructions": "In which quadrant of the image is the colored shape?",
+    "choices": [
+     {
+      "value": "top-left"
+     },
+     {
+      "value": "top-right"
+     },
+     {
+      "value": "bottom-left"
+     },
+     {
+      "value": "bottom-right"
+     }
+    ]
+   }
+  ]
+ },
+ "status": 200,
+ "headers": {
+  "content-type": "application/json",
+  "x-ratelimit-limit-requests": "30000",
+  "x-ratelimit-limit-tokens": "180000000",
+  "x-ratelimit-remaining-requests": "29998",
+  "x-ratelimit-remaining-tokens": "179999493",
+  "x-ratelimit-reset-requests": "4ms",
+  "x-ratelimit-reset-tokens": "0s",
+  "openai-processing-ms": "1104",
+  "x-request-id": "req_0c883d58a154440da946f730b691b6c6"
+ },
+ "latency_s": 2.1366,
+ "body": {
+  "model": "gpt-6-luna",
+  "answers": [
+   {
+    "type": "predicate",
+    "name": "red_square",
+    "probability": 0.92
+   },
+   {
+    "type": "choice",
+    "name": "quadrant",
+    "choice": "top-left",
+    "probabilities": [
+     {
+      "value": "top-left",
+      "probability": 0.76
+     },
+     {
+      "value": "top-right",
+      "probability": 0.11
+     },
+     {
+      "value": "bottom-left",
+      "probability": 0.09
+     },
+     {
+      "value": "bottom-right",
+      "probability": 0.04
+     }
+    ],
+    "confidence": 0.68
+   }
+  ],
+  "usage": {
+   "input_tokens": 285,
+   "input_tokens_details": {
+    "cached_tokens": 0,
+    "cache_write_tokens": 0
+   },
+   "output_tokens": 0,
+   "output_tokens_details": {
+    "reasoning_tokens": 0
+   },
+   "total_tokens": 285
+  }
+ }
+}

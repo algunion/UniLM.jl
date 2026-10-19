@@ -1,0 +1,50 @@
+{
+ "tag": "D01",
+ "utc": "2026-10-19T19:00:05+00:00",
+ "request": {
+  "model": "gpt-6-luna",
+  "input": "The package arrived with a broken screen.",
+  "questions": [
+   {
+    "type": "predicate",
+    "name": "damaged",
+    "instructions": "Does the customer report a damaged item?"
+   }
+  ]
+ },
+ "status": 200,
+ "headers": {
+  "content-type": "application/json",
+  "x-ratelimit-limit-requests": "30000",
+  "x-ratelimit-limit-tokens": "180000000",
+  "x-ratelimit-remaining-requests": "29999",
+  "x-ratelimit-remaining-tokens": "179999835",
+  "x-ratelimit-reset-requests": "2ms",
+  "x-ratelimit-reset-tokens": "0s",
+  "openai-processing-ms": "1148",
+  "x-request-id": "req_ad51b2ec1c4444d5915c5e69ed1dffa1"
+ },
+ "latency_s": 2.1062,
+ "body": {
+  "model": "gpt-6-luna",
+  "answers": [
+   {
+    "type": "predicate",
+    "name": "damaged",
+    "probability": 1.0
+   }
+  ],
+  "usage": {
+   "input_tokens": 164,
+   "input_tokens_details": {
+    "cached_tokens": 0,
+    "cache_write_tokens": 0
+   },
+   "output_tokens": 0,
+   "output_tokens_details": {
+    "reasoning_tokens": 0
+   },
+   "total_tokens": 164
+  }
+ }
+}

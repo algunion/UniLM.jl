@@ -1,0 +1,105 @@
+{
+ "tag": "D03",
+ "utc": "2026-10-19T19:00:06+00:00",
+ "request": {
+  "model": "gpt-6-luna",
+  "input": "I love this blender, it works perfectly.",
+  "questions": [
+   {
+    "type": "choice",
+    "name": "positive",
+    "instructions": "Is the review positive?",
+    "choices": [
+     {
+      "value": true
+     },
+     {
+      "value": false
+     }
+    ]
+   },
+   {
+    "type": "choice",
+    "name": "bare",
+    "instructions": "Which product is reviewed?",
+    "choices": [
+     {
+      "value": "blender"
+     },
+     {
+      "value": "toaster"
+     },
+     {
+      "value": "kettle"
+     }
+    ]
+   }
+  ]
+ },
+ "status": 200,
+ "headers": {
+  "content-type": "application/json",
+  "x-ratelimit-limit-requests": "30000",
+  "x-ratelimit-limit-tokens": "180000000",
+  "x-ratelimit-remaining-requests": "29999",
+  "x-ratelimit-remaining-tokens": "179999778",
+  "x-ratelimit-reset-requests": "2ms",
+  "x-ratelimit-reset-tokens": "0s",
+  "openai-processing-ms": "189",
+  "x-request-id": "req_ecf98c35475347f7aae29fd099d851e9"
+ },
+ "latency_s": 0.8415,
+ "body": {
+  "model": "gpt-6-luna",
+  "answers": [
+   {
+    "type": "choice",
+    "name": "positive",
+    "choice": true,
+    "probabilities": [
+     {
+      "value": true,
+      "probability": 1.0
+     },
+     {
+      "value": false,
+      "probability": 0.0
+     }
+    ],
+    "confidence": 1.0
+   },
+   {
+    "type": "choice",
+    "name": "bare",
+    "choice": "blender",
+    "probabilities": [
+     {
+      "value": "blender",
+      "probability": 1.0
+     },
+     {
+      "value": "toaster",
+      "probability": 0.0
+     },
+     {
+      "value": "kettle",
+      "probability": 0.0
+     }
+    ],
+    "confidence": 1.0
+   }
+  ],
+  "usage": {
+   "input_tokens": 221,
+   "input_tokens_details": {
+    "cached_tokens": 0,
+    "cache_write_tokens": 0
+   },
+   "output_tokens": 0,
+   "output_tokens_details": {
+    "reasoning_tokens": 0
+   },
+   "total_tokens": 221
+  }
+ }
+}

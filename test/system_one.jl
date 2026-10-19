@@ -258,8 +258,8 @@ struct _S1Undeclared <: UniLM.ServiceEndpoint end
         e = _s1_caught(call)
         @test e isa ArgumentError && contains(e.msg, "_S1Undeclared")
     end
-    e = _s1_caught(() -> ask("s", noul("q?"); service=OPENAIServiceEndpoint))
-    @test e isa ArgumentError && contains(e.msg, "System One API is not supported by OPENAIServiceEndpoint")
+    e = _s1_caught(() -> ask("s", noul("q?"); service=AZUREServiceEndpoint))
+    @test e isa ArgumentError && contains(e.msg, "System One API is not supported by AZUREServiceEndpoint")
 end
 
 @testset "System One — another backend's namespace never replays TypeSafe's recordings" begin
@@ -451,7 +451,7 @@ end
 
     # Refused before f runs.
     ran = Ref(false)
-    for (service, kw) in ((OPENAIServiceEndpoint, (;)), (_S1Mock, (model="  ",)), ("typesafe", (;)))
+    for (service, kw) in ((AZUREServiceEndpoint, (;)), (_S1Mock, (model="  ",)), ("typesafe", (;)))
         e = _s1_caught(() -> with_system_one(() -> (ran[] = true), service; kw...))
         @test e isa ArgumentError
     end
@@ -633,8 +633,12 @@ end
     # Floating-point drift far beyond what TypeSafe has shown is still an answer.
     drift = _s1_body(Dict("dept" => """{"type":"choice","choice":"billing","confidence":0.9,"probabilities":{"billing":0.900000001,"technical":0.1,"sales":0.0}}"""))
     @test first(_s1_ask_with(drift)) isa SystemOneSuccess
+    # So is two-decimal rounding: TypeSafe answered a live four-option Choice summing to 0.99.
+    rounded = _s1_body(Dict("dept" => """{"type":"choice","choice":"billing","confidence":0.96,"probabilities":{"billing":0.97,"technical":0.01,"sales":0.01}}"""))
+    @test first(_s1_ask_with(rounded)) isa SystemOneSuccess
     malformed = [
-        "a sum of 1.001"           => _s1_body(Dict("dept" => """{"type":"choice","choice":"billing","confidence":0.9,"probabilities":{"billing":0.901,"technical":0.1,"sales":0.0}}""")),
+        "a sum of 1.1"             => _s1_body(Dict("dept" => """{"type":"choice","choice":"billing","confidence":0.9,"probabilities":{"billing":1.0,"technical":0.1,"sales":0.0}}""")),
+        "a choice two hundredths below the best" => _s1_body(Dict("dept" => """{"type":"choice","choice":"technical","confidence":0.0,"probabilities":{"billing":0.5,"technical":0.48,"sales":0.02}}""")),
         # every asked question answered once, and nothing else
         "answers empty"            => """{"model":"jev-1.13.0","answers":{},"usage":{"input_tokens":1,"output_tokens":0}}""",
         "a question unanswered"    => _s1_body(; drop=["urg"]),

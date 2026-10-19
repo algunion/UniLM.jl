@@ -566,10 +566,10 @@ end
     @test !has_capability(TYPESAFEServiceEndpoint, :chat)
 
     # TypeSafe verbs reject a provider that does not serve them, before any request.
-    @test_throws ArgumentError ask("x", noul("q?"); service=OPENAIServiceEndpoint)
-    @test_throws ArgumentError list_models(; service=OPENAIServiceEndpoint)
-    err = try ask("x", noul("q?"); service=OPENAIServiceEndpoint) catch e; e end
-    @test contains(sprint(showerror, err), "System One API is not supported by OPENAIServiceEndpoint")
+    @test_throws ArgumentError ask("x", noul("q?"); service=AZUREServiceEndpoint)
+    @test_throws ArgumentError list_models(; service=AZUREServiceEndpoint)
+    err = try ask("x", noul("q?"); service=AZUREServiceEndpoint) catch e; e end
+    @test contains(sprint(showerror, err), "System One API is not supported by AZUREServiceEndpoint")
 
     # And the chat/agentic/embedding verbs reject this endpoint, loudly, with no
     # network: a System One model answers questions, it does not generate text.

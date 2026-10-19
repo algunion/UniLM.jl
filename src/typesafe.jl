@@ -135,14 +135,16 @@ _system_one_default_model(::TypeSafeProtocol, service)::String = default_typesaf
 # recording made before backends had namespaces keeps its key.
 _system_one_namespace(::TypeSafeProtocol)::String = ""
 _system_one_request_id(::TypeSafeProtocol, resp::HTTP.Response)::Union{Nothing,String} = _typesafe_request_id(resp)
-# TypeSafe normalises its probabilities in floating point: over every answer recorded in
-# docs/recorded_answers, kept in test/fixtures/typesafe and captured live on 2026-10-19
-# (142 Choice and Score distributions, up to 255 options), the largest Float64 deviation
-# of a sum from 1 was 2.2e-16 — one unit in the last place. The generic 1e-6 is far above
-# any such drift, so a harmless change in how the service rounds cannot fail every call,
-# and it gives up nothing: a missing, extra or out-of-range probability is caught by the
-# key-set and range checks whatever the tolerance.
-_probability_tolerance(::TypeSafeProtocol, n::Int)::Float64 = _FLOAT_PROBABILITY_TOLERANCE
+# TypeSafe's probabilities nearly always sum to 1 in floating point: over every answer
+# recorded in docs/recorded_answers, kept in test/fixtures/typesafe and captured live on
+# 2026-10-19 (142 Choice and Score distributions, up to 255 options), the largest
+# deviation was 2.2e-16. But one live reply on 2026-10-20, a Choice of four options,
+# summed to 0.99 — the mark of values rounded to two decimals — so the allowances are
+# those of two-decimal rounding: 0.005 per outcome on the sum, one step of 0.01 on the
+# choice. A gross defect (a sum of 0.9 over three options) is still refused, and a missing,
+# extra or out-of-range probability is caught by the key-set and range checks regardless.
+_probability_tolerance(::TypeSafeProtocol, n::Int)::Float64 = 0.005n + _FLOAT_PROBABILITY_TOLERANCE
+_probability_slack(::TypeSafeProtocol)::Float64 = 0.01 + _FLOAT_PROBABILITY_TOLERANCE
 _allows_refusal(::TypeSafeProtocol)::Bool = false
 _allows_raw(::TypeSafeProtocol)::Bool = true
 # Transport: a hosted service's bounds; TypeSafe's official SDKs number every retry in
@@ -231,6 +233,7 @@ function encode_system_one(p::TypeSafeProtocol, service, request::SystemOneReque
     for (name, q) in request.questions
         _typesafe_carries(name, q)
     end
+    _check_box_image(request)
     long_context = _typesafe_long_context(request.options)
     _typesafe_check_nesting(request)
     # Only keys the service defines: it rejects any other top-level key with 400, so

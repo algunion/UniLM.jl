@@ -1015,14 +1015,18 @@ _system_one_default_model(p::SystemOneProtocol, service)::String = throw(Argumen
 _system_one_namespace(p::SystemOneProtocol)::String = String(nameof(typeof(p)))
 # The request id a backend sends with a reply, from its headers.
 _system_one_request_id(::SystemOneProtocol, ::HTTP.Response)::Union{Nothing,String} = nothing
-# How far probabilities over `n` outcomes may sum from 1, and the winner fall short of the
-# maximum, before the answer is malformed. A backend that normalises in floating point
-# drifts by about `n` units in the last place; 1e-6 admits that with orders of magnitude
-# to spare, and a defect the tolerance could hide — a missing, extra or out-of-range
-# probability — is caught by the key-set and range checks on its own. A backend that
-# rounds its probabilities (to two decimals, say) defines its own.
+# Two allowances for how a backend writes its numbers, each a protocol's to set. The
+# tolerance: how far probabilities over `n` outcomes may sum from 1 — a backend that
+# rounds each value to `d` decimals can be off by n·0.5·10⁻ᵈ in all. The slack: how far
+# the chosen option may fall below the most probable one, and a Score's expectation
+# outside its levels — a single rounding step, since two rounded values swap order by at
+# most that, however many outcomes there are. A backend that normalises in floating point
+# drifts by units in the last place; 1e-6 admits that with orders of magnitude to spare,
+# and a defect an allowance could hide — a missing, extra or out-of-range probability —
+# is caught by the key-set and range checks on their own.
 const _FLOAT_PROBABILITY_TOLERANCE = 1.0e-6
 _probability_tolerance(::SystemOneProtocol, n::Int)::Float64 = _FLOAT_PROBABILITY_TOLERANCE
+_probability_slack(::SystemOneProtocol)::Float64 = _FLOAT_PROBABILITY_TOLERANCE
 # Whether a backend may decline single questions (`RefusalAnswer`), and send raw questions.
 _allows_refusal(::SystemOneProtocol)::Bool = false
 _allows_raw(::SystemOneProtocol)::Bool = false
@@ -1067,9 +1071,14 @@ function _check_request(p::SystemOneProtocol, service, r::SystemOneRequest)::Not
             "raw questions are not supported by $(_service_name(service)): $(repr(name)) is a RawQuestion " *
             "of type $(repr(q.fields["type"]))"))
     end
-    # A Box question locates something in an image. Asked about a request that carries
-    # none, a backend can still answer — TypeSafe returns a box at near-zero confidence —
-    # but nothing it answers can mean anything, so the request is refused before it is paid for.
+    nothing
+end
+
+# A Box question locates something in an image. Asked about a request that carries none, a
+# backend can still answer — TypeSafe returns a box at near-zero confidence — but nothing it
+# answers can mean anything, so a wrapper that carries Box questions refuses such a request
+# before it is paid for (after its own checks: a wire with no Box at all says so first).
+function _check_box_image(r::SystemOneRequest)::Nothing
     box = findfirst(((_, q),) -> q isa BoxQuestion, r.questions)
     isnothing(box) || !isempty(_system_one_images(r)) || throw(ArgumentError(
         "the Box question $(repr(first(r.questions[box]))) locates something in an image, and this request " *
@@ -1147,7 +1156,7 @@ function _check_kind(p::SystemOneProtocol, name::String, q::ChoiceQuestion, a::C
         "System One answer $(repr(name)) gives no probability to the offered $(_listed(unscored))"))
     tol = _probability_tolerance(p, length(offered))
     _check_distribution(name, a.probabilities, tol)
-    a.probabilities[a.choice] >= maximum(values(a.probabilities)) - tol || throw(ArgumentError(
+    a.probabilities[a.choice] >= maximum(values(a.probabilities)) - _probability_slack(p) || throw(ArgumentError(
         "System One answer $(repr(name)) chose $(repr(a.choice)) at probability $(a.probabilities[a.choice]), " *
         "below another option's $(maximum(values(a.probabilities)))"))
     _unit(a.confidence) || throw(ArgumentError(
@@ -1164,7 +1173,8 @@ function _check_kind(p::SystemOneProtocol, name::String, q::ScoreQuestion, a::Sc
     end
     tol = _probability_tolerance(p, n)
     _check_distribution(name, a.probabilities, tol)
-    -tol <= a.score <= n - 1 + tol || throw(ArgumentError(
+    slack = _probability_slack(p)
+    -slack <= a.score <= n - 1 + slack || throw(ArgumentError(
         "System One answer $(repr(name)) has the score $(a.score), outside 0 … $(n - 1)"))
     _unit(a.confidence) || throw(ArgumentError(
         "System One answer $(repr(name)) has the confidence $(a.confidence), outside 0 … 1"))
@@ -1423,7 +1433,11 @@ the backend's rounding; confidences, Noul probabilities and box edges lie in
 these is a `SystemOneCallError` — never a success built from a malformed answer.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout and retry
-budget for this call. The request rides the package's shared retry seam, so
+budget for this call. With none — no `config`, no [`with_request_config`](@ref)
+scope, no process default set — the backend's own default applies: on TypeSafe
+and OpenAI's Decisions API, 60 s per attempt and 150 s in all. On TypeSafe a
+retry carries its number in `X-TypeSafe-Retry-Count`, as the official SDKs send
+it. The request rides the package's shared retry seam, so
 `max_attempts` applies: a retryable status (408, 429, 500, 502–504, 520–524, 529)
 or a transport failure is retried within `total_deadline`, honouring
 `Retry-After`. Other statuses — 400, 401, 403, 404, 413, 415, 422 — are returned
@@ -1552,12 +1566,26 @@ id without its own row is priced at the `jev-latest` row (assuming a later Jev
 keeps the price TypeSafe lists for Jev 1.13); any other unpriced name returns
 `0.0`. An answer from a model on the caller's own machine — through an
 [`OllamaEndpoint`](@ref) — costs `0.0`, without a missing-price warning, unless
-`model` is passed.
+`model` is passed. A backend that bills otherwise is priced its own way: an
+answer from OpenAI's Decisions API
+([`OpenAIDecisionsProtocol`](@ref UniLM.OpenAIDecisionsProtocol)) costs its input
+tokens alone, cached ones included, at the row's input rate — twice that rate
+above 272K input tokens.
 """
 function estimated_cost(result::SystemOneSuccess; model::Union{String,Nothing}=nothing,
                         pricing::AbstractDict{String,PriceRow}=DEFAULT_PRICING)::Float64
+    service = result.response.service
+    isnothing(model) && _is_local(service) && return 0.0
+    _system_one_cost(isnothing(service) ? nothing : system_one_protocol(service)::SystemOneProtocol,
+                     result, model, pricing)
+end
+
+# The price of one evaluation on the backend that answered it, by its protocol: input,
+# cached input and output tokens at the rates of the model's row, unless the protocol
+# bills otherwise. A response built by hand names no backend and is priced this way.
+function _system_one_cost(::Union{Nothing,SystemOneProtocol}, result::SystemOneSuccess,
+                          model::Union{String,Nothing}, pricing::AbstractDict{String,PriceRow})::Float64
     u = token_usage(result)
-    isnothing(model) && _is_local(result.response.service) && return 0.0
     rates = _price_row(pricing, isnothing(model) ? result.response.model : model)
     isnothing(rates) && return 0.0
     cached = min(u.cached_tokens, u.prompt_tokens)

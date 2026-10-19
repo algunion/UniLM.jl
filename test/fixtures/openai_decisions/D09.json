@@ -1,0 +1,30 @@
+{
+ "tag": "D09",
+ "utc": "2026-10-19T19:00:12+00:00",
+ "request": {
+  "model": "gpt-6-luna",
+  "input": "x",
+  "temperature": 0,
+  "questions": [
+   {
+    "type": "predicate",
+    "instructions": "Is this a test?"
+   }
+  ]
+ },
+ "status": 400,
+ "headers": {
+  "content-type": "application/json",
+  "openai-processing-ms": "1",
+  "x-request-id": "req_9fb8f4875d00476ea3e2d7d8d4221883"
+ },
+ "latency_s": 0.2288,
+ "body": {
+  "error": {
+   "message": "Unknown parameter: 'temperature'.",
+   "type": "invalid_request_error",
+   "param": "temperature",
+   "code": "unknown_parameter"
+  }
+ }
+}

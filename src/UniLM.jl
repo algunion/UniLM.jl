@@ -71,6 +71,7 @@ include("accounting.jl")
 include("system_one.jl")
 include("typesafe.jl")
 include("typesafe_assets.jl")
+include("openai_decisions.jl")
 include("ollama_system_one.jl")
 include("ask_each.jl")
 include("recorded_answers.jl")
@@ -593,6 +594,7 @@ public
     AgenticStreamState,
     SystemOneProtocol,
     TypeSafeProtocol,
+    OpenAIDecisionsProtocol,
     OllamaSystemOneProtocol,
     system_one_protocol,
     encode_system_one,

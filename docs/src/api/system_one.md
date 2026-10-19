@@ -403,3 +403,52 @@ end
 ```@docs
 UniLM.OllamaSystemOneProtocol
 ```
+
+## [OpenAI Decisions](@id system_one_openai)
+
+OpenAI's Decisions API (`POST /v1/decisions`, a public beta) answers predicate,
+choice and score questions, and [`OPENAIServiceEndpoint`](@ref) speaks it: name
+the endpoint as the `service` of [`ask`](@ref) or of a [`with_system_one`](@ref)
+scope, and set `OPENAI_API_KEY`. The model is `gpt-6-luna`, the only one the API
+serves, unless the call names another ([Decisions
+guide](https://developers.openai.com/api/docs/guides/decisions)).
+
+```julia
+r = ask("Export fails in Safari but works in Chrome.",
+        "severity" => score("How severe is this issue?",
+                            ["Cosmetic", "Workaround available", "Fully blocked"]),
+        "angry"    => noul("Is the customer angry?");
+        service = OPENAIServiceEndpoint)
+
+with_system_one(OPENAIServiceEndpoint) do
+    nl_classify(ticket, INTENT)          # every verb inside asks OpenAI
+end
+```
+
+| Generic surface | Decisions wire |
+| :--- | :--- |
+| `state`: a string, or a JSON value | `input`: the string, or the value's JSON text |
+| `state`: an image, or a `Vector` of strings and images | one user message of `input_text` and `input_image` parts, in order; at most 128 images |
+| [`noul`](@ref) | `predicate` |
+| [`choice`](@ref) | `choice` of 2–255 options: the name is the `value`, a string description the `description` |
+| [`score`](@ref) | `score` of 2–10 levels, each a string: its `label` |
+| [`RawQuestion`](@ref) | sent verbatim, with the question's name added as `name` |
+| keywords of [`ask`](@ref) | `prompt_cache_key` (at most 64 characters), `safety_identifier` (at most 128) |
+
+Every question needs string `instructions`, and at most 200 go in one request.
+What has no form on this wire — a Box question, a description or level that is
+not a string, a Noul's `yes`/`no` criteria, an image outside the state, any other
+keyword — is an `ArgumentError` before anything is sent. The answers come back
+typed as on any backend, and a question the API declined comes back as a
+[`RefusalAnswer`](@ref): [`nl_dispatch`](@ref), [`nl_classify`](@ref) and
+[`@branch`](@ref) take it as a decline — the fallback, or
+[`DecisionDeclinedError`](@ref). Probabilities and confidences arrive rounded to
+two decimals, so a distribution over `n` outcomes is accepted when it sums to 1
+within `0.005n`. A failure's `error_type` is the error's `code`, and the request
+id is the `x-request-id` header. [`estimated_cost`](@ref) charges what the guide
+prices: input tokens only, cached ones at the full input rate, twice that rate
+for a request of more than 272K input tokens.
+
+```@docs
+UniLM.OpenAIDecisionsProtocol
+```

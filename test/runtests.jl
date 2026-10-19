@@ -154,6 +154,10 @@ end
         include("ask_each.jl")
     end
 
+    @testset "OpenAI Decisions" begin
+        include("openai_decisions.jl")
+    end
+
     @testset "Ollama System One" begin
         include("ollama_system_one.jl")
     end
@@ -259,6 +263,10 @@ end
 
     @testset "integration — typesafe" begin
         include("integration_typesafe.jl")
+    end
+
+    @testset "integration — openai decisions" begin
+        include("integration_openai_decisions.jl")
     end
 
     @testset "integration — semantic" begin

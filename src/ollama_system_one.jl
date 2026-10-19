@@ -60,8 +60,10 @@ _system_one_concurrency(::OllamaSystemOneProtocol, service)::Int = 1
 # server does for GGUF decision models: the replies of tev1 and kev captured live sum to 1
 # within 4.4e-16. Kev models on Ollama's own runner round every probability to four
 # decimals (decision/kev.go, `roundKev`), so n of them may sum up to n·0.5e-4 away from 1;
-# that bound is admitted, with the Float64 margin on top.
+# that bound is admitted, with the Float64 margin on top — and one four-decimal step,
+# 1e-4, between the chosen option and the most probable.
 _probability_tolerance(::OllamaSystemOneProtocol, n::Int)::Float64 = n * 0.5e-4 + _FLOAT_PROBABILITY_TOLERANCE
+_probability_slack(::OllamaSystemOneProtocol)::Float64 = 1.0e-4 + _FLOAT_PROBABILITY_TOLERANCE
 
 # ─── Encoding ────────────────────────────────────────────────────────────────
 

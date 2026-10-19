@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.24.0] - 2026-10-XX
+## 0.24.0
 
 ### Breaking
 - **Provider limits are checked when a request is sent, not when a question is

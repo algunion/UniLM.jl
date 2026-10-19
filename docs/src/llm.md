@@ -38,7 +38,7 @@ UniLM.jl wraps these surfaces:
 3. **Image Generation** (`ImageGeneration` + `generate_image`) — text-to-image with `gpt-image-2`. OpenAI only.
 4. **Embeddings** (`Embeddings` + `embeddingrequest!`) — vector embeddings. Multi-provider via `service` parameter.
 5. **FIM Completion** (`FIMCompletion` + `fim_complete`) — code infilling. DeepSeek (beta), Mistral, Ollama.
-6. **System One** (`ask`, plus `nl_dispatch` and `@branch`) — TypeSafe's Jev: enumerated questions about a piece of `state`, answered with a typed value and a calibrated probability distribution instead of generated text. `service=TYPESAFEServiceEndpoint` only; not a chat backend.
+6. **System One** (`ask`, plus `nl_dispatch` and `@branch`) — enumerated questions about a piece of `state`, answered with a typed value and a calibrated probability distribution instead of generated text. TypeSafe's Jev (`TYPESAFEServiceEndpoint`, the default) or any endpoint declaring `:system_one`, through a provider protocol (`UniLM.system_one_protocol`); `with_system_one` sets the backend for a scope. Not a chat surface.
 
 **Which API to use:**
 - **Chat Completions** — best for multi-turn conversations; broadest provider support. Use for chat, tool calling, or streaming across any supported backend.
@@ -1511,23 +1511,28 @@ result = prefix_complete(chat)
 
 A System One model answers enumerated questions about a piece of `state` with a
 probability distribution over the outcomes you named — no generated text, no
-parsing. `TYPESAFE_API_KEY` is required; the default model is `jev-latest` and
-pinning `"jev-1.13.0"` keeps tuned confidence thresholds meaningful.
+parsing. The generic surface below works with any backend that declares
+`:system_one`; TypeSafe (`TYPESAFEServiceEndpoint`) is the default, needs
+`TYPESAFE_API_KEY`, defaults to the model `jev-latest`, and pinning
+`"jev-1.13.0"` keeps tuned confidence thresholds meaningful. The types carry only
+invariants every backend shares; a backend's own limits (TypeSafe: 255 Choice
+options, 10 Score levels; no Box question, image or option in this version) are
+checked by its wrapper before anything is sent.
 
 ```julia
-# What a piece of guidance may be on the wire: string | object | array
-const SystemOneEntry = Union{AbstractString, AbstractDict, AbstractVector, NamedTuple}
-# What `state` may be. No `nothing`: the server reports a null state as missing.
-const SystemOneState = Union{AbstractString, AbstractDict, AbstractVector, Tuple, NamedTuple}
+# What a piece of guidance may be: string | object | array | image (an image only where the backend sends images)
+const SystemOneEntry = Union{AbstractString, AbstractDict, AbstractVector, NamedTuple, ImageAttachment}
+# What `state` may be. No `nothing`: a request about nothing asks nothing.
+const SystemOneState = Union{AbstractString, AbstractDict, AbstractVector, Tuple, NamedTuple, ImageAttachment}
 
 abstract type SystemOneQuestion end
 
-struct ChoiceQuestion <: SystemOneQuestion          # 1..255 options, insertion order kept
+struct ChoiceQuestion <: SystemOneQuestion          # ≥ 1 option, names not blank, insertion order kept
     instructions::Union{Nothing,SystemOneEntry}
     criteria::JSON.Object{String,Any}               # option name => description (or nothing)
 end
 
-struct ScoreQuestion <: SystemOneQuestion           # 1..10 levels, criteria[1] is level 0
+struct ScoreQuestion <: SystemOneQuestion           # ≥ 1 level, criteria[1] is level 0
     instructions::Union{Nothing,SystemOneEntry}
     criteria::Vector{Any}
 end
@@ -1542,10 +1547,19 @@ struct NoulQuestion <: SystemOneQuestion            # needs instructions or one 
     criteria::Union{Nothing,NoulCriteria}
 end
 
+struct BoxQuestion <: SystemOneQuestion             # where in an image; instructions required
+    instructions::SystemOneEntry                    # (a string must not be blank)
+end
+
+struct RawQuestion <: SystemOneQuestion             # a kind this version has no type for
+    fields::JSON.Object{String,Any}                 # sent verbatim; needs a non-blank String "type"
+end
+
 struct SystemOneRequest
     state::SystemOneState
-    questions::Vector{Pair{String,SystemOneQuestion}}   # ordered, unique non-empty names
-    model::String
+    questions::Vector{Pair{String,SystemOneQuestion}}   # ordered, unique names, not blank
+    model::Union{Nothing,String}                    # nothing: resolved when sent (scope's, else backend default)
+    options::NamedTuple                             # provider options, checked by the backend's wrapper
 end
 
 abstract type SystemOneAnswer end
@@ -1570,18 +1584,37 @@ struct ScoreAnswer <: SystemOneAnswer
     raw::Dict{String,Any}
 end
 
-struct UnknownAnswer <: SystemOneAnswer             # forward-compatible, never dropped
-    type::String
+struct BoxCoordinates                               # fractions of the image's height / width
+    top::Float64
+    bottom::Float64
+    left::Float64
+    right::Float64
+end
+
+struct BoxAnswer <: SystemOneAnswer
+    box::BoxCoordinates
+    confidence::Union{Nothing,Float64}              # nothing when the backend reports none
+    raw::Dict{String,Any}
+end
+
+struct RefusalAnswer <: SystemOneAnswer             # a backend declined one question
+    raw::Dict{String,Any}                           #   (accepted only from one that documents refusals)
+end
+
+struct UnknownAnswer <: SystemOneAnswer             # an unknown type: kept for a RawQuestion,
+    type::String                                    #   a call error for a question of a known kind
     raw::Dict{String,Any}
 end
 
 struct SystemOneResponse
-    model::String                                   # the versioned id that answered
-    answers::Dict{String,SystemOneAnswer}           # keyed by question name
+    model::String                                   # the id that answered (TypeSafe: versioned)
+    answers::Dict{String,SystemOneAnswer}           # keyed by question name, one per question asked
     usage::TokenUsage                               # prompt = input, completion = output
-    request_id::Union{Nothing,String}               # x-typesafe-request-id header
+    request_id::Union{Nothing,String}               # the backend's request id (TypeSafe: x-typesafe-request-id)
     raw::Dict{String,Any}
+    service::Union{Nothing,ServiceEndpointSpec}     # the backend that answered; nothing when built by hand
 end
+# SystemOneResponse(model, answers, usage, request_id, raw) fills service = nothing
 
 struct SystemOneSuccess <: LLMRequestResponse
     response::SystemOneResponse
@@ -1591,12 +1624,12 @@ end
     response::String
     status::Int
     request_id::Union{Nothing,String} = nothing
-    error_type::Union{Nothing,String} = nothing     # "authentication_error", "api_usage_error"
+    error_type::Union{Nothing,String} = nothing     # TypeSafe: "authentication_error", "api_usage_error"
     message::String = ""
     retry_after::Union{Nothing,Float64} = nothing   # seconds; retry-after-ms, else Retry-After
 end
 
-@kwdef struct SystemOneCallError <: LLMRequestResponse # no usable response
+@kwdef struct SystemOneCallError <: LLMRequestResponse # no usable response, or answers that do not fit the request
     error::String
     status::Union{Int,Nothing} = nothing
     request_id::Union{Nothing,String} = nothing
@@ -1623,22 +1656,30 @@ end
 ### Constructors, verbs and accessors
 
 ```julia
-choice(instructions, criteria) -> ChoiceQuestion    # criteria: NamedTuple | Dict |
+choice(instructions, criteria) -> ChoiceQuestion    # criteria: NamedTuple | Dict (sorted) |
 choice(criteria) -> ChoiceQuestion                  #   Vector{Pair} | Vector{String}
 score(instructions, levels::AbstractVector) -> ScoreQuestion
 score(levels::AbstractVector) -> ScoreQuestion
 noul(instructions; yes=nothing, no=nothing) -> NoulQuestion
 noul(; yes=nothing, no=nothing) -> NoulQuestion
+box(instructions) -> BoxQuestion
+RawQuestion(fields::AbstractDict)                   # copied into a JSON.Object (a plain Dict sorted)
 
-SystemOneRequest(state, questions; model=UniLM.default_typesafe_model())
+SystemOneRequest(state, questions; model=nothing, options=(;))
 
-ask(request::SystemOneRequest; service=TYPESAFEServiceEndpoint, config=nothing, cancel=nothing)
-ask(state, questions...; model=UniLM.default_typesafe_model(), service=TYPESAFEServiceEndpoint,
-    config=nothing, cancel=nothing)
+ask(request::SystemOneRequest; service=nothing, config=nothing, cancel=nothing)
+ask(state, questions...; model=nothing, service=nothing, config=nothing, cancel=nothing, options...)
     # -> SystemOneSuccess | SystemOneFailure | SystemOneCallError
+    # backend: service, else the with_system_one scope's, else TYPESAFEServiceEndpoint
+    # model: model (or the request's), else (no service) the scope's, else the backend's default, read at send time
+    # any other keyword is a provider option (TypeSafe accepts none: ArgumentError listing the accepted ones)
 
-list_models(; service=TYPESAFEServiceEndpoint, config=nothing, cancel=nothing)
-    # -> TypeSafeModelsSuccess | SystemOneFailure | SystemOneCallError
+with_system_one(f, service; model=nothing)          # -> f(); the backend (and model) of every call
+    # inside f that names no service, spawned tasks included; service must declare :system_one
+
+list_models(; service=nothing, config=nothing, cancel=nothing)
+    # -> TypeSafeModelsSuccess | SystemOneFailure | SystemOneCallError (TypeSafe);
+    #    ArgumentError for a backend whose protocol has no listing
 
 answers(result) -> Dict{String,SystemOneAnswer}     # throws SystemOneError on a non-success
 answer(result, name)                                # name::Union{AbstractString,Symbol}
@@ -1646,11 +1687,53 @@ result[name]; haskey(result, name); keys(result)    # same, on Success or Respon
 ```
 
 `questions` accepts `name => question` pairs (vector, tuple, `NamedTuple`, or
-`AbstractDict`), or bare questions auto-named `"q1"`, `"q2"`, … in order. Mixing
-the two, repeating a name, or passing none is an `ArgumentError`. Both verbs ride
-the shared retry seam, so `RequestConfig.max_attempts` applies to 408, 429, 500,
-502–504, 520–524 and 529, and the final `SystemOneFailure` carries `retry_after` —
-the wait the service asked for in seconds, or `nothing` when it sent no hint.
+`AbstractDict` — a plain `Dict` in sorted name order), or bare questions
+auto-named `"q1"`, `"q2"`, … in order. Mixing the two, repeating a name, a blank
+name, or passing none is an `ArgumentError`; so is a `state` that is not a
+string, object, array or image, a `NaN`/`Inf` anywhere in the content, and
+anything the backend's wrapper refuses — all before any request. Every answer
+is checked against the request before a success is built (each question answered
+once and nothing else; the question's kind, except for a `RawQuestion`; a Choice
+of an offered option that is the most probable, with probabilities for exactly
+the offered options; Score levels exactly `0 … n−1` in canonical decimal, a score
+between them; every probability, confidence, noul and box edge in `0 … 1`;
+probabilities summing to 1 within the backend's rounding; a `model` string); a
+reply that fails is a `SystemOneCallError`. A usage value that is not a
+non-negative whole number reads as 0 with a warning. Both verbs ride the shared
+retry seam, so `RequestConfig.max_attempts` applies to 408, 429, 500, 502–504,
+520–524 and 529, and the final `SystemOneFailure` carries `retry_after` — the
+wait the service asked for in seconds, or `nothing` when it sent no hint.
+
+### Provider protocol (public, not exported)
+
+```julia
+abstract type SystemOneProtocol end
+struct TypeSafeProtocol <: SystemOneProtocol end    # TypeSafe's wire; the trait's untyped fallback
+
+UniLM.system_one_protocol(service) -> SystemOneProtocol    # Holy trait: Type{T} for singletons, instances
+                                                           #   otherwise; fallback TypeSafeProtocol()
+UniLM.encode_system_one(p, service, request::SystemOneRequest) -> SystemOneWire
+    # the backend's checks (limits, kinds, content, options): ArgumentError before any I/O
+UniLM.decode_system_one(p, service, request, response::HTTP.Response)
+    # -> SystemOneSuccess (answers checked) | SystemOneFailure; a malformed 200 throws (→ SystemOneCallError)
+
+struct SystemOneWire
+    method::String
+    url::String
+    path::String                                    # the keyed path: never derived from url
+    body::String                                    # the JSON body exactly as sent
+    parts::Vector{Pair{String,ImageAttachment}}     # non-empty: multipart/form-data, "request" part first
+    headers::Vector{Pair{String,String}}            # non-credential extra headers, after auth_header
+    key_extra::String                               # appended to the key input (after "\n") when non-empty
+end
+SystemOneWire(method, url, path, body; parts=[], headers=[], key_extra="")
+```
+
+The exchange: resolve the backend and model, check `:system_one`, encode (outside
+the error handling), then — through any `with_recorded_answers` scope, keyed by
+`"/<namespace>" * path` (TypeSafe's namespace is empty) and `body` plus
+`key_extra` — send with `auth_header(service)` read only for a live call, and
+decode.
 
 ### Example
 
@@ -1689,12 +1772,15 @@ with_recorded_answers(f, dir::AbstractString; mode::Symbol=:replay)   # -> f()
     #   a recording that cannot be written after a paid answer throws RecordingWriteError out
     #   of the verb, and out of a tool loop whose dispatcher made the request
     # file: <dir>/<key>.json, key = lowercase hex sha256("<METHOD> <path>\n" * body),
-    #   <path> = the request URL's path alone (no host, no query);
+    #   <path> = the request URL's path alone (no host, no query), after "/<namespace>" for a
+    #   System One backend other than TypeSafe ("/<namespace>/v1/systemone");
+    #   a System One request keyed on more (provider options as sorted name=<JSON> lines,
+    #   image-part digests) appends "\n" * that text to the body it is keyed on;
     #   body = the exact body, except that in its top-level "tools" array an MCP tool's
     #   ("type": "mcp") "authorization" and "headers", a Gemini "mcp_server"'s "headers" and
     #   a Gemini "retrieval" tool's exa_ai_search_config / parallel_ai_search_config "api_key"
     #   read "<redacted>" (key, file and ReplayMissError alike; the request sent is unchanged)
-    # {"request": {method, path, body},
+    # {"request": {method, path, body, key_extra (only when not empty; never image bytes)},
     #  "response": {status, request_id, request_id_header, body}, "recorded_at"}
     #   request_id_header: "x-typesafe-request-id" | "x-request-id" | "request-id", the one header
     #   kept; absent when the reply carried no id, and in recordings made before it existed,
@@ -1704,8 +1790,8 @@ struct ReplayMissError <: Exception       # thrown out of the recorded verbs, ne
     dir::String
     key::String
     method::String                        # "POST" | "GET"
-    path::String                          # "/v1/systemone" | "/v1/models" | "/v1/chat/completions" | …
-    body::String                          # the body as keyed: credentials "<redacted>" ("" for GET)
+    path::String                          # as keyed: "/v1/systemone" | "/<namespace>/v1/systemone" | "/v1/models" | …
+    body::String                          # as keyed: credentials "<redacted>" ("" for GET), then "\n" * key_extra if any
     reason::String                        # "no recording" | "unreadable recording: <what is wrong>"
 end
 
@@ -1748,9 +1834,10 @@ end
 #   on_response: SystemOneSuccess -> ignored; called once before the policy, never on a failed call
 # -> the selected body's value; LowConfidenceError, DecisionDeclinedError or SystemOneError otherwise
 
-nl_dispatch(f, args...; model=nothing, service=TYPESAFEServiceEndpoint, config=nothing,
+nl_dispatch(f, args...; model=nothing, service=nothing, config=nothing,
             cancel=nothing, min_confidence=0.0, decide=nothing, fallback=nothing,
             instructions=nothing, state=nothing, texts=nothing, on_response=nothing)
+    # service/model: resolved as for ask (the with_system_one scope, else TYPESAFEServiceEndpoint)
     # -> f(resolved meanings — or keys — spliced into their positions, args...)
     # decide: nothing (argmax gated by min_confidence) | a callable | a Vector with one per slot;
     #   ChoiceAnswer -> any offered meaning, or nothing to decline; not with min_confidence
@@ -1765,7 +1852,7 @@ nl_dispatch(f, args...; model=nothing, service=TYPESAFEServiceEndpoint, config=n
     # on_response: nothing | SystemOneSuccess -> ignored; called once before the policy
     #   (audits: request_id, model, raw), never on a failed call; its exception propagates
 nl_classify(state, texts; min_confidence=0.0, decide=nothing, fallback=nothing,
-            instructions=nothing, model=nothing, service=TYPESAFEServiceEndpoint,
+            instructions=nothing, model=nothing, service=nothing,
             config=nothing, cancel=nothing, on_response=nothing)
     # -> the chosen key as the table writes it; ONE table; one Choice "classify" over every
     #   sentence in table order; a decline calls fallback(state), else LowConfidenceError /
@@ -1800,8 +1887,9 @@ With `texts`, the methods of `f` dispatch on keys, and the request is the one th
 sentences written as `nl"..."` would make. The call's arity is `length(args)` plus one per
 table, and only methods of that arity take part. A table fills the one position whose
 declared type its keys have (`::Val{:refund}`, `::Refund`, `::Type{<:Billing}`, `::Val`;
-`::Any` declares none). Refused before any request: a `Dict`, an empty table, more than 255
-entries, a blank sentence or one that is not a string, a sentence given twice, two keys whose
+`::Any` declares none). Refused before any request: a `Dict`, an empty table, more entries
+than the backend lets one question offer (255 on TypeSafe), a blank sentence or one that is
+not a string, a sentence given twice, two keys whose
 dispatched values are `isequal` (`:a` and `Val(:a)`, `Vector` and `Array{S,1} where S`),
 `nothing` or `missing` as a key, a Tuple of pairs, a key that is not a Symbol, singleton
 instance, type or enum value, a table with no position or several, two tables in one position,
@@ -2187,7 +2275,9 @@ Declared `public`, not exported — qualify them (`UniLM.get_url`). These are th
 functions a new backend adds methods to and the stream-state types its handlers
 mutate (see the Custom Backends guide): `get_url`, `auth_header`, `default_model`,
 `encode_request`, `decode_response`, `handle_sse_event!`, `StreamState`,
-`encode_agentic`, `decode_agentic`, `decode_agentic_stream`, `AgenticStreamState`.
+`encode_agentic`, `decode_agentic`, `decode_agentic_stream`, `AgenticStreamState`;
+and the System One protocol seam: `SystemOneProtocol`, `TypeSafeProtocol`,
+`system_one_protocol`, `encode_system_one`, `decode_system_one`, `SystemOneWire`.
 
 ---
 
@@ -2236,7 +2326,7 @@ Every exported symbol, grouped by area:
 
 **Moderations**: `ModerationResponse`, `ModerationResult`, `ModerationSuccess`, `ModerationFailure`, `ModerationCallError`, `moderate`, `is_flagged`
 
-**TypeSafe System One (Jev)**: `TYPESAFEServiceEndpoint`, `SystemOneQuestion`, `ChoiceQuestion`, `ScoreQuestion`, `NoulQuestion`, `NoulCriteria`, `choice`, `score`, `noul`, `SystemOneRequest`, `ask`, `SystemOneAnswer`, `ChoiceAnswer`, `ScoreAnswer`, `NoulAnswer`, `UnknownAnswer`, `SystemOneResponse`, `SystemOneSuccess`, `SystemOneFailure`, `SystemOneCallError`, `SystemOneError`, `answers`, `answer`, `TypeSafeModelCard`, `TypeSafeModelsSuccess`, `list_models`
+**System One (TypeSafe's Jev and other backends)**: `TYPESAFEServiceEndpoint`, `SystemOneQuestion`, `ChoiceQuestion`, `ScoreQuestion`, `NoulQuestion`, `NoulCriteria`, `BoxQuestion`, `RawQuestion`, `choice`, `score`, `noul`, `box`, `SystemOneRequest`, `ask`, `with_system_one`, `SystemOneAnswer`, `ChoiceAnswer`, `ScoreAnswer`, `NoulAnswer`, `BoxCoordinates`, `BoxAnswer`, `RefusalAnswer`, `UnknownAnswer`, `SystemOneResponse`, `SystemOneSuccess`, `SystemOneFailure`, `SystemOneCallError`, `SystemOneError`, `answers`, `answer`, `TypeSafeModelCard`, `TypeSafeModelsSuccess`, `list_models`
 - *Natural-language control flow*: `Meaning`, `@nl_str`, `@branch`, `nl_dispatch`, `nl_classify`, `meanings`, `meaning_gaps`, `LowConfidenceError`, `DecisionDeclinedError`
 - *Recorded answers*: `with_recorded_answers`, `ReplayMissError`, `RecordingWriteError`
 

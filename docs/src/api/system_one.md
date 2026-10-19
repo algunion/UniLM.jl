@@ -77,15 +77,22 @@ against one version is a claim about that version only.
 | Context | 64k tokens per request; 32k for `state` plus the single longest question ([Models](https://docs.typesafe.ai/models)) |
 | Rate limits | 250,000 tokens/second and 1,200 requests/minute, over either → 429; TypeSafe documents these as subject to change without notice ([Models](https://docs.typesafe.ai/models)) |
 
-[`choice`](@ref) with 256 options and [`score`](@ref) with 11 levels throw an
-`ArgumentError` locally, before the round trip.
+[`ask`](@ref) refuses a Choice of 256 options or a Score of 11 levels with an
+`ArgumentError` naming TypeSafe's limit, before the round trip. The question
+types themselves set no upper bound — other System One backends have other
+limits, which their wrappers check the same way — so [`choice`](@ref) and
+[`score`](@ref) build such questions; only sending one to TypeSafe is refused.
 
 ## [Errors, timeouts and retries](@id jev_errors)
 
 A call that reaches the service returns a [`SystemOneSuccess`](@ref), a
 [`SystemOneFailure`](@ref) (non-2xx) or a [`SystemOneCallError`](@ref) (no usable
 response), and `issuccess` separates them; a wrong `service` or a malformed
-request is an `ArgumentError` before anything is sent. The service writes errors
+request is an `ArgumentError` before anything is sent. A 200 whose answers do not
+fit the request — a question unanswered, an answer of another kind, an option
+that was not offered, probabilities that are not a distribution over the offered
+outcomes, a value outside `0 … 1` — is a `SystemOneCallError` too, carrying the
+request id: no success is built from a malformed answer. The service writes errors
 in three `detail` shapes: `message` is extracted from whichever arrived, and
 `error_type` is filled in only by the object shape.
 
@@ -164,10 +171,13 @@ SystemOneQuestion
 choice
 score
 noul
+box
 ChoiceQuestion
 ScoreQuestion
 NoulQuestion
 NoulCriteria
+BoxQuestion
+RawQuestion
 ```
 
 ## Request & Verb
@@ -175,6 +185,7 @@ NoulCriteria
 ```@docs
 SystemOneRequest
 ask
+with_system_one
 ```
 
 ## Answers
@@ -184,6 +195,9 @@ SystemOneAnswer
 ChoiceAnswer
 ScoreAnswer
 NoulAnswer
+BoxCoordinates
+BoxAnswer
+RefusalAnswer
 UnknownAnswer
 ```
 
@@ -216,6 +230,36 @@ answer
 [`SystemOneResponse`](@ref), so `result["urgency"]` is `answer(result,
 "urgency")`. On a [`SystemOneFailure`](@ref) or [`SystemOneCallError`](@ref) all
 of them throw [`SystemOneError`](@ref) instead of returning an empty map.
+
+## [Provider protocol](@id system_one_protocol_api)
+
+Every System One verb reaches its backend through a protocol, a Holy trait of
+the endpoint: [`system_one_protocol`](@ref UniLM.system_one_protocol) maps an
+endpoint to a [`SystemOneProtocol`](@ref UniLM.SystemOneProtocol), whose
+[`encode_system_one`](@ref UniLM.encode_system_one) turns a request into a
+[`SystemOneWire`](@ref UniLM.SystemOneWire) — refusing, before any I/O, what its
+backend cannot carry — and whose [`decode_system_one`](@ref UniLM.decode_system_one)
+turns the reply into a typed result, its answers checked against the request.
+The rest is shared by every backend: the backend and model a call resolves
+(through [`with_system_one`](@ref)), recording and replay, retries and
+cancellation, and credentials, which `auth_header` supplies only when a request
+really goes out, so a replay needs no key.
+
+An endpoint that declares `:system_one` and no protocol of its own speaks
+[`TypeSafeProtocol`](@ref UniLM.TypeSafeProtocol), TypeSafe's wire — a
+TypeSafe-compatible gateway or proxy needs nothing more. A protocol other than
+TypeSafe's files its recordings under a namespace of its own
+(`"/<namespace>/v1/systemone"`), so two backends never replay each other's
+answers, while every TypeSafe recording keeps its key.
+
+```@docs
+UniLM.SystemOneProtocol
+UniLM.TypeSafeProtocol
+UniLM.system_one_protocol
+UniLM.encode_system_one
+UniLM.decode_system_one
+UniLM.SystemOneWire
+```
 
 ## Recorded answers
 

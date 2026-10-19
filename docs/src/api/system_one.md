@@ -282,3 +282,84 @@ with_recorded_answers
 ReplayMissError
 RecordingWriteError
 ```
+
+## [Ollama](@id system_one_ollama)
+
+An [`OllamaEndpoint`](@ref) answers System One requests from a local decision
+model — Tev1, Nimble, Kev and the others Ollama lists as [decision
+models](https://ollama.com/search?c=decision) — through Ollama's
+TypeSafe-compatible route `POST /v1/systemone` (Ollama 0.35 or later). The
+verbs, the questions and the result types are the ones above; no key is sent and
+nothing is billed.
+
+```julia
+ollama = OllamaEndpoint()                     # OLLAMA_HOST, else http://127.0.0.1:11434
+
+r = ask("Help! My payouts have been failing for 3 days.",
+        "department" => choice("Which team should handle this ticket?",
+                               (billing = "Payments, invoicing, payouts, refunds",
+                                technical = "Bugs, outages, integrations")),
+        "is_frustrated" => noul("Is the customer frustrated?");
+        service = ollama, model = "tev1:0.8b")
+
+INTENT = (refund = "the customer wants a refund", bug = "the customer reports a software bug")
+with_system_one(ollama; model = "kev:0.8b-q8_0") do     # every verb inside asks Kev
+    nl_classify("I was charged twice. Please give me my money back.", INTENT)   # :refund
+end
+```
+
+- **Model.** There is no default: name an installed decision model with
+  `model = …`, or set one for a scope with [`with_system_one`](@ref); a call
+  without one is an `ArgumentError` before anything is sent. A model that is not
+  installed comes back as a 404 [`SystemOneFailure`](@ref) whose message says to
+  `ollama pull` it, and a server that does not answer as a
+  [`SystemOneCallError`](@ref) that says how to start one.
+- **Refused before any request.** Ollama's decision encodings are stricter than
+  TypeSafe's wire; [`ask`](@ref) checks their rules first and throws an
+  `ArgumentError` naming Ollama and the rule.
+
+| Rule | Ollama |
+| :--- | :--- |
+| Questions per request | 1–64 |
+| `instructions` | required on every Choice, Score and Noul question: a string that is not blank, an object or an array |
+| Choice options | 2–26, each described by a string or `nothing` |
+| Score levels | 2–10, each a string |
+| Noul criteria | strings |
+| `state` | not a blank string |
+| Box questions | refused: the route answers Choice, Score and Noul |
+| Images | not sent yet: no vision decision model has been verified with this wrapper |
+| Options | `keep_alive` only |
+
+- **A model's own limits.** A model may cap lower than the route, and its 400
+  says so: `tev1:0.8b` takes at most 24 options (Ollama 0.40.6). A
+  [`RawQuestion`](@ref) is sent verbatim, for the server to judge.
+- **`keep_alive`.** `ask(...; keep_alive = 600)` keeps the model loaded for 600
+  seconds after the request, `0` unloads it at once and `Inf` keeps it loaded;
+  without it the endpoint's own `keep_alive` applies, else the server's default.
+  The endpoint's other settings — `truncate`, `shift` and the
+  [`OllamaOptions`](@ref) such as `num_ctx` — have no field on this route and
+  are not sent.
+- **Confidence.** `confidence` is TypeSafe's published measure, computed from the
+  returned probabilities — `(n·p_max − 1)/(n − 1)` for a Choice and
+  `1 − Σᵢ pᵢ·|i − m| / MAD_unif`, floored at 0, for a Score
+  ([Confidence](https://docs.typesafe.ai/confidence)) — so a threshold means the
+  same on every backend. Ollama's generic decision models report
+  `1 − H(p)/ln n` instead (Kev models report TypeSafe's); the server's value stays
+  in each answer's `raw`.
+- **Results.** `request_id` is `nothing`, as Ollama sends none; `usage` counts
+  `prompt_eval_cached_count` as cached tokens; [`estimated_cost`](@ref) is `0.0`.
+  [`with_recorded_answers`](@ref) files the exchanges under
+  `/ollama/v1/systemone`, apart from TypeSafe's.
+- **Known upstream issues**, open at Ollama 0.40.6: a model may score a request's
+  questions one after another, so its latency grows with their number
+  ([#18750](https://github.com/ollama/ollama/issues/18750)); one over-long request
+  left a llama.cpp runner answering later ones with HTTP 200 and wrong
+  probabilities until the model was unloaded
+  ([#19090](https://github.com/ollama/ollama/issues/19090)); a vision decision
+  runner returned repeated HTTP 500s after many sequential requests
+  ([#19062](https://github.com/ollama/ollama/issues/19062)). `keep_alive = 0`
+  unloads a model whose answers stop making sense.
+
+```@docs
+UniLM.OllamaSystemOneProtocol
+```

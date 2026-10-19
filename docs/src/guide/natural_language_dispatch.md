@@ -102,9 +102,10 @@ A table is ordered, and its order is the order the model reads the options in:
   ([Hierarchies](@ref nl_dispatch_hierarchy)); a `Symbol` key in a vector still
   reaches its method as `Val(key)`.
 
-A `Dict` is refused, because it has no order. A table holds 1 to 255 entries, the
-options one Choice question takes, with no sentence and no key twice. Enum values
-make [`nl_classify`](@ref) return one of your own values:
+A `Dict` is refused, because it has no order. A table holds at least one entry,
+with no sentence and no key twice; how many one question may offer is the
+backend's limit (255 on TypeSafe), checked before the request. Enum values make
+[`nl_classify`](@ref) return one of your own values:
 
 ```@example nldispatch
 @enum Team billing technical shipping other
@@ -184,7 +185,9 @@ const Payments = nl"payments, charges, invoices or refunds"    # a type alias
 (Payments, Payments(), Meaning(TEAM.billing) isa Payments)
 ```
 
-Two identical sentences are the same type, so `===` compares them.
+The type prints as Julia prints any type, `Meaning{Symbol("…")}`, and an
+instance as `nl"…"()`. Two identical sentences are the same type, so `===`
+compares them.
 [`nl_dispatch`](@ref) collects the methods that pin at least one position to one
 concrete sentence; a wildcard `f(::Meaning, x)`, or a method with no meaning, is
 an ordinary method and is skipped. The collected methods must agree on their
@@ -300,8 +303,11 @@ One [`choice`](@ref) question per keyed or meaning position, all in one
 - The **instructions** default to *"Select the option that best describes the
   provided state."*; the options carry the meaning. `instructions = ...`
   overrides them.
-- The **model** is the client default (`jev-latest`, or whatever
-  `TYPESAFE_DEFAULT_MODEL` names) unless `model = ...` pins one for the call.
+- The **backend** is TypeSafe unless `service = ...` names another or a
+  [`with_system_one`](@ref) scope sets one ([Backends](@ref system_one_backends)).
+  The **model** is the backend's default — on TypeSafe `jev-latest`, or whatever
+  `TYPESAFE_DEFAULT_MODEL` names when the request is sent — unless `model = ...`
+  or the scope pins one.
 
 The model sees the state, the instructions and the sentences. It does **not** see
 the keys, the function's name, the method bodies, the question name, or the fact
@@ -316,6 +322,32 @@ control](@ref nl_dispatch_control)). The sentence becomes its key's value
 the position it came from, the other arguments fill the rest in order, and Julia
 makes an ordinary call. From there nothing is special: the value is whatever the
 selected method returns.
+
+**What the state carries.** Each argument goes into the state as JSON.jl writes
+it: a struct with every one of its fields. A value that is not data — a function,
+a type, a module, a `Ref` or `Ptr`, a `Task`, a `Channel`, a lock, a condition,
+an event, an `IO` or an `Expr` — anywhere in an argument, or a container nested
+more than 64 levels deep, is an `ArgumentError` before the request, naming the
+argument and the path to the value:
+
+```@example nldispatch
+struct SupportTicket
+    text::String
+    notify::Function          # how to tell the customer; not something the model should read
+end
+
+try
+    nl_dispatch(route, SupportTicket(message, println); texts = TEAM)
+catch err
+    println(sprint(showerror, err))
+end
+```
+
+A `String` is data, so a secret a struct holds in a field — an API key, a
+customer's address — is sent, and a `:record` scope of
+[`with_recorded_answers`](@ref) writes it to disk with the request. Pass
+`state = ...` with only what the model should read; an explicit state is sent as
+given.
 
 ## [Composing with ordinary dispatch](@id nl_dispatch_composing)
 
@@ -642,6 +674,11 @@ derives such a policy from what each mistake costs. `decide` together with a non
 anything runs, and a policy that returns anything else is an `ArgumentError`:
 neither the method nor `fallback` runs.
 
+A backend may also decline a question itself: OpenAI's Decisions API answers it
+with a [`RefusalAnswer`](@ref) ([Backends](@ref backends_openai)). That is a
+decline whatever the policy, which never sees it: `fallback` runs, or
+[`DecisionDeclinedError`](@ref) is thrown with the refusal as its `answer`.
+
 `on_response` is for audits. It is called once with the
 [`SystemOneSuccess`](@ref), before the policy runs, and gets what `decide` cannot
 see: the request id to quote in a support report, the model version that
@@ -660,14 +697,14 @@ keywords of [`nl_dispatch`](@ref):
 | Keyword | Meaning |
 | :--- | :--- |
 | `texts` | a table of `key => sentence` entries, or a `Tuple` of them, one per keyed position ([Keys and tables](@ref nl_dispatch_keyed)) |
-| `min_confidence` | threshold in `0 … 1`; below it, `fallback` runs or [`LowConfidenceError`](@ref) is thrown |
+| `min_confidence` | a finite threshold in `0 … 1` — anything else, `NaN` included, is an `ArgumentError` before the request; below it, `fallback` runs or [`LowConfidenceError`](@ref) is thrown |
 | `decide` | a policy called with the position's [`ChoiceAnswer`](@ref) — one callable for every position, or a `Vector` with one per position — returning an offered sentence, the key of one, or `nothing` to decline: `fallback` runs or [`DecisionDeclinedError`](@ref) is thrown. Excludes a nonzero `min_confidence` |
 | `fallback` | called with the caller's `args...` when the policy declines |
 | `on_response` | called once with the [`SystemOneSuccess`](@ref) before the policy runs; never for a failed call. Its return value is ignored; an exception from it propagates, and neither the method nor `fallback` runs |
 | `instructions` | a `String` for every position, or a `Vector` with one entry per position; default is the generic instruction above |
 | `state` | send this instead of the object built from the other arguments |
-| `model` | pin a version, e.g. `"jev-1.13.0"`, instead of the `jev-latest` alias |
-| `service` | endpoint type; defaults to [`TYPESAFEServiceEndpoint`](@ref UniLM.TYPESAFEServiceEndpoint) |
+| `model` | pin a version, e.g. `"jev-1.13.0"`, instead of the backend's default, `jev-latest` on TypeSafe |
+| `service` | endpoint; defaults to the [`with_system_one`](@ref) backend, else [`TYPESAFEServiceEndpoint`](@ref UniLM.TYPESAFEServiceEndpoint) |
 | `config` | a [`RequestConfig`](@ref) governing timeouts and the retry budget for this call |
 | `cancel` | a [`CancelToken`](@ref) that can cancel the call from another task; `nothing` (the default) uses the ambient [`with_cancel`](@ref) token. A cancelled call throws `SystemOneError` like any failed call |
 
@@ -676,7 +713,9 @@ keywords of [`nl_dispatch`](@ref):
 - Pin the model before you tune a threshold: a threshold is a claim about one
   version, `jev-latest` moves when a new one ships
   ([Models](https://docs.typesafe.ai/models)), and
-  [`SystemOneResponse`](@ref)`.model` reports the version that answered.
+  [`SystemOneResponse`](@ref)`.model` reports the version that answered. It is
+  a claim about one backend too: tune it again on another ([Backends](@ref
+  backends_confidence)).
 - Read `meanings(f, argtypes; texts)` first: a threshold that keeps tripping is
   usually two overlapping options, not a number that needs lowering.
 - When mistakes cost different amounts, price them in a `decide` policy instead
@@ -702,9 +741,12 @@ end
 ```
 
 Every line is `option => expression`. A bare left-hand side is the option name,
-the text the model reads; the form `("name", "description")` attaches a
-description to it. A final `_ => expression` runs when the policy declines, so it
-needs `min_confidence` or `decide`. Keywords go between the state and the block,
+the text the model reads: a `String`, or a `Symbol` sent as its `String`, and any
+other value is an `ArgumentError` naming its line, before the request. The form
+`("name", "description")` attaches a description to it. A final
+`_ => expression` runs when the policy declines, so it needs `min_confidence` or
+`decide`; it runs as well when the backend declines the question itself, with a
+[`RefusalAnswer`](@ref). Keywords go between the state and the block,
 written `key = value`: `model`, `min_confidence`, `decide`, `instructions`,
 `service`, `config`, `cancel` and `on_response`, as for [`nl_dispatch`](@ref),
 except that `decide` returns an option name and excludes any `min_confidence`,
@@ -755,9 +797,10 @@ the table entry, or the `nl"…"` in the signature.
   same single request, and the extra cost of an option is the tokens of its
   sentence. Only input tokens are billed
   ([Models](https://docs.typesafe.ai/models)).
-- **255 options per position is the ceiling.** That is the server's Choice limit,
-  and [`choice`](@ref) checks it locally before the round trip
-  ([Choice](https://docs.typesafe.ai/primitives/choice)).
+- **255 options per position is the ceiling on TypeSafe.** That is TypeSafe's
+  Choice limit ([Choice](https://docs.typesafe.ai/primitives/choice)), and
+  [`ask`](@ref) refuses more with an `ArgumentError` before the round trip; other
+  backends have their own ([Backends](@ref backends_table)).
 
 ## [Design note: what the model reads](@id nl_dispatch_design)
 
@@ -828,10 +871,13 @@ from the next call with a `MyTicket` on it is one more option the model may
 choose.
 
 **Speed.** Not a reason to pick either. Both pathways cache their plan — the
-options, the argument names and the gaps — per state of the method table (and,
-with a table, per its contents), so after the first call it is looked up, not
-recomputed; measured with sentences in signatures, even the uncached work was a
-rounding error next to the request.
+options, the argument names and the gaps — per function, argument types and
+world age (and, with a table, per its contents), so a repeated call looks it up
+instead of recomputing it. The world age is Julia's count of definitions: any
+new method, constant or global, of any module, moves it, and the next call plans
+again. A cache holds 1,024 plans and starts over when full. Measured with
+sentences in signatures, even the uncached work was a rounding error next to the
+request.
 
 !!! details "Evidence"
     Measured with sentences in signatures: resolving the options and dispatching
@@ -854,6 +900,8 @@ replaying, and crafting edge cases with a local server.
 ## See also
 
 - [Start Here: Decisions in Five Minutes](@ref jev_start) — which pathway, in one table
+- [Backends: Jev, OpenAI and Local Models](@ref system_one_backends) — the same
+  calls on OpenAI's Decisions API and on local models
 - [Decisions with LLMs](@ref jev_llm_guide) — route before an LLM call, check after it
 - [Route and Decide](@ref system_one_guide) — [`ask`](@ref), the three
   primitives, and decision policies built on the answers
@@ -863,8 +911,7 @@ replaying, and crafting edge cases with a local server.
   and mock servers for tests
 - [Natural-Language Dispatch](@ref nl_dispatch_api) — the API reference of
   [`Meaning`](@ref), [`nl_classify`](@ref), [`nl_dispatch`](@ref) and
-  [`@branch`](@ref); [TypeSafe System One API (Jev)](@ref system_one_api) has
-  the rest
+  [`@branch`](@ref); the [System One API](@ref system_one_api) has the rest
 - [TypeSafe documentation](https://docs.typesafe.ai) — the service's own
   reference for [Choice](https://docs.typesafe.ai/primitives/choice),
   [confidence](https://docs.typesafe.ai/confidence) and

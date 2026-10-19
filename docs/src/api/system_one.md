@@ -44,9 +44,9 @@ probabilities; a reply that does not fit is a [`SystemOneCallError`](@ref).
 `confidence` is one measure on every backend — `(n·p_max − 1)/(n − 1)` for a
 Choice over `n` options, `1 − Σᵢ pᵢ·|i − m| / MAD_unif` for a Score whose most
 likely level is `m` ([Confidence](https://docs.typesafe.ai/confidence)): TypeSafe
-and OpenAI report it, and the Ollama wrapper computes it from the probabilities.
-How far a value of it can be trusted is a property of the model, not of the
-formula.
+and OpenAI report it, and the Ollama wrapper computes it from the probabilities;
+over a single option it is 1.0, as TypeSafe answers a one-option Choice. How far
+a confidence can be trusted is a property of the model, not of the formula.
 
 !!! warning "Tune `min_confidence` per backend"
     A threshold tuned on one backend does not carry over to another. On the same
@@ -157,7 +157,7 @@ models. `long_context = true` works on both ([Limits](@ref jev_limits)).
 | Images | PNG or JPEG, still (no animated PNG); at most 16 MiB a file; 280 to 1568 pixels on each side ([Images](https://docs.typesafe.ai/images)) |
 | Request body | 32 MiB (33,554,432 bytes), multipart framing included ([API](https://docs.typesafe.ai/api)) |
 | Nesting | 64 levels of objects and arrays in each of `state`, `instructions` and `criteria` ([API](https://docs.typesafe.ai/api)) |
-| Rate limits | 250,000 tokens/second and 1,200 requests/minute, over either → 429; TypeSafe documents these as subject to change without notice ([Models](https://docs.typesafe.ai/models)) |
+| Rate limits | set per organization, in tokens per second and requests per second, and shown in TypeSafe's developer console; a request over either → 429 ([Models](https://docs.typesafe.ai/models)) |
 
 [`ask`](@ref) checks every limit but the context and the rate limits before the
 round trip, and refuses a request over one with an `ArgumentError` naming
@@ -222,7 +222,7 @@ whichever arrived, and `error_type` is filled in only by the object shape.
 | 413 | Over a size limit: an image file over 16 MiB, a body over 32 MiB (after decompression too), references too long | `"api_usage_error"` with `"Request exceeds size limits."` or `"Request body of at least … bytes exceeds the hard maximum of 33554432 bytes."` |
 | 415 | An unsupported `Content-Encoding` — never one [`ask`](@ref) sends, which compresses nothing; a proxy's | `"api_usage_error"` with `"Unsupported Content-Encoding '…'; supported: gzip, zstd."` |
 | 422 | Schema validation failed, including more than 255 Choice options or 10 Score levels | `nothing`; the message joins each validation entry as `"<field path>: <reason>"`, e.g. `questions.department.choice.criteria: Field required` or `questions.pick.choice.criteria: Dictionary should have at most 255 items after validation, not 256` |
-| 429 | Rate limit — 250,000 tokens/second or 1,200 requests/minute at the time of writing | retried by the seam up to `max_attempts` honouring `Retry-After`; the final failure carries `retry_after`, the wait the service asked for in seconds |
+| 429 | Over the organization's rate limit, in tokens or requests per second (shown in TypeSafe's developer console) | `"api_usage_error"` with `"Rate limit exceeded. Please retry shortly."`, sent live (2026-10-19) with both `retry-after` and `retry-after-ms` headers; retried by the seam up to `max_attempts` honouring `Retry-After`; the final failure carries `retry_after`, the wait the service asked for in seconds |
 | 500, 502, 503, 504, 520–524, 529 | Service-side failure, including the non-standard `529 Overloaded` and the origin errors 520–524 of a service behind Cloudflare | retried by the request seam, 520–524 like 502 and 504; a captured 529 used the object shape with `error_type = "system_overloaded"` and sent no retry header |
 
 [`ask`](@ref) and [`list_models`](@ref) ride the shared retry seam, so
@@ -339,9 +339,7 @@ cached ones at the full input rate, twice that rate for a request of more than
 The calls are bounded as TypeSafe's are (60 s per attempt, 150 s in all, while
 you set no `RequestConfig` of your own), [`ask_each`](@ref) keeps 16 of them in
 flight, and [`list_models`](@ref) has no listing here: it is an `ArgumentError`.
-A recording of a request with images holds them, base64-encoded in its body, as
-the request does. On the 129 support tickets of the [Backends](@ref
-system_one_backend_api) section,
+On the 129 support tickets of the [Backends](@ref system_one_backend_api) section,
 OpenAI answered in 0.48 s at the median and 2.44 s at the 95th percentile (Jev:
 0.25 s and 0.33 s), at \$0.0000296 a ticket (Jev: \$0.0000225).
 

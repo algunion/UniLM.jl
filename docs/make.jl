@@ -79,6 +79,7 @@ build_docs() = makedocs(;
         ],
         "Decisions (Jev)" => [
             "Start Here: Decisions in Five Minutes" => "guide/jev_start.md",
+            "Backends: Jev, OpenAI and Local Models" => "guide/system_one_backends.md",
             "Decisions with LLMs" => "guide/jev_with_llms.md",
             "Route and Decide" => "guide/system_one.md",
             "Dispatch on Meaning" => "guide/natural_language_dispatch.md",

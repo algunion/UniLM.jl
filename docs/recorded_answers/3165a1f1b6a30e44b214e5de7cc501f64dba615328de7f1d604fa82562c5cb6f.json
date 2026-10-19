@@ -1,0 +1,78 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/openai-decisions/v1/decisions",
+    "body": {
+      "model": "gpt-6-luna",
+      "input": "The app crashes every time I open my order history. iPhone 15, latest version.",
+      "questions": [
+        {
+          "type": "choice",
+          "name": "classify",
+          "instructions": "Select the option that best describes the provided state.",
+          "choices": [
+            {
+              "value": "payments, charges, invoices or refunds"
+            },
+            {
+              "value": "the app or the website does not work as expected"
+            },
+            {
+              "value": "a parcel that is late, lost or arrived damaged"
+            },
+            {
+              "value": "anything else"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_e85e4cb165dd40a29d8d766eddc8d463",
+    "request_id_header": "x-request-id",
+    "body": {
+      "model": "gpt-6-luna",
+      "answers": [
+        {
+          "type": "choice",
+          "name": "classify",
+          "choice": "the app or the website does not work as expected",
+          "probabilities": [
+            {
+              "value": "payments, charges, invoices or refunds",
+              "probability": 0.0
+            },
+            {
+              "value": "the app or the website does not work as expected",
+              "probability": 1.0
+            },
+            {
+              "value": "a parcel that is late, lost or arrived damaged",
+              "probability": 0.0
+            },
+            {
+              "value": "anything else",
+              "probability": 0.0
+            }
+          ],
+          "confidence": 1.0
+        }
+      ],
+      "usage": {
+        "input_tokens": 163,
+        "input_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output_tokens": 0,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 163
+      }
+    }
+  },
+  "recorded_at": "2026-10-19T22:48:25Z"
+}

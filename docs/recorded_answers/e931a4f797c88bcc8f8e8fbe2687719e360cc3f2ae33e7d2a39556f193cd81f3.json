@@ -1,0 +1,48 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/ollama/v1/systemone",
+    "body": {
+      "state": "The phone I received has a cracked screen and the box was crushed. I want my money back.",
+      "model": "tev1:0.8b",
+      "questions": {
+        "classify": {
+          "type": "choice",
+          "instructions": "Select the option that best describes the provided state.",
+          "criteria": {
+            "payments, charges, invoices or refunds": null,
+            "the app or the website does not work as expected": null,
+            "a parcel that is late, lost or arrived damaged": null,
+            "anything else": null
+          }
+        }
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "body": {
+      "model": "tev1:0.8b",
+      "answers": {
+        "classify": {
+          "type": "choice",
+          "choice": "payments, charges, invoices or refunds",
+          "probabilities": {
+            "payments, charges, invoices or refunds": 0.5337198786127964,
+            "the app or the website does not work as expected": 0.0003002579280898548,
+            "a parcel that is late, lost or arrived damaged": 0.40874216511798883,
+            "anything else": 0.057237698341125
+          },
+          "confidence": 0.37461325031435555
+        }
+      },
+      "usage": {
+        "input_tokens": 213,
+        "output_tokens": 0
+      },
+      "prompt_eval_cached_count": 44
+    }
+  },
+  "recorded_at": "2026-10-19T22:48:27Z"
+}

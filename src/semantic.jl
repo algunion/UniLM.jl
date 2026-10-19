@@ -529,9 +529,14 @@ function _nl_entries(entries::Vector{Pair{Any,Any}})::_NLTable
             "the sentence $(repr(s)) is given for both $(repr(said[s])) and $(repr(k)): the model could " *
             "not tell them apart"))
         v = _nl_value(k)
-        j = findfirst(h -> isequal(first(h), v), held)
-        isnothing(j) || throw(ArgumentError(
-            "$(repr(last(held[j]))) and $(repr(k)) are the same key: both dispatch as $(repr(v))"))
+        # Only keys of one type can be equal (`:a` and `Val(:a)` are both `Val{:a}`; `Vector`
+        # and `Array{S,1} where S` are both a `UnionAll`), and `typeof`/`===` are builtins: an
+        # `isequal` dispatched on every pair of key types — each `Val(:k)` is a type of its own
+        # — would compile a method instance per pair, quadratic in the size of the table.
+        for h in held
+            typeof(first(h)) === typeof(v) && isequal(first(h), v) && throw(ArgumentError(
+                "$(repr(last(h))) and $(repr(k)) are the same key: both dispatch as $(repr(v))"))
+        end
         said[s] = k
         push!(held, v => k)
     end

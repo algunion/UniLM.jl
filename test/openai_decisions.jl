@@ -5,8 +5,6 @@
 # decoding (the captured replies, malformed ones, error bodies), the tolerance its
 # two-decimal rounding needs, the natural-language verbs on a backend that refuses,
 # recording, and cost. Local mocks only; nothing here reaches a network.
-#
-# Requires test/platform_seam_fixtures.jl to be included first.
 
 using Sockets, Logging, Base64
 
@@ -226,16 +224,19 @@ end
          _od_caught(() -> ask("s", "q" => RawQuestion(Dict("type" => "predicate", "instructions" => "x", "img" => _OD_PNG));
                               service=_ODMock)),
          _od_caught(() -> ask("x"^10_485_761, "q" => noul("Is it?"); service=_ODMock)),
-         _od_caught(() -> ask(Dict("x" => NaN), "q" => noul("Is it?"); service=_ODMock))]
+         _od_caught(() -> ask(Dict("x" => NaN), "q" => noul("Is it?"); service=_ODMock)),
+         _od_caught(() -> ask("s", "q" => score("Rate.", ["low", _OD_PNG]); service=_ODMock))]
     end
     @test isempty(seen)
     @test all(e -> e isa ArgumentError, refusals)
     @test all(e -> contains(e.msg, "OpenAI's Decisions API") && contains(e.msg, "Vector of strings and ImageAttachments"),
               refusals[1:5])
     @test contains(refusals[6].msg, "at most 128 images") && contains(refusals[6].msg, "129")
-    @test contains(refusals[7].msg, "must be a string") && contains(refusals[7].msg, "an image belongs in the state")
-    @test contains(refusals[8].msg, "description of its option \"a\"")
-    @test contains(refusals[9].msg, "images go in the state only")
+    @test contains(refusals[7].msg, "must be a string") && contains(refusals[8].msg, "description of its option \"a\"")
+    @test all(e -> contains(e.msg, "an image belongs in the state") &&
+                   contains(e.msg, "Vector of strings and ImageAttachments"), refusals[[7, 8, 12]])
+    @test contains(refusals[12].msg, "level 1 must be a string")
+    @test contains(refusals[9].msg, "images go in the state only") && contains(refusals[9].msg, "Vector of strings")
     @test contains(refusals[10].msg, "10485760 characters") && contains(refusals[10].msg, "10485761")
     @test contains(refusals[11].msg, "JSON")
     @test length(input("x"^10_485_760)) == 10_485_760

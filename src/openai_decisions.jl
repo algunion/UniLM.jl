@@ -95,14 +95,17 @@ _decisions_refuse(name::String, why::String) = throw(ArgumentError(
 const _DECISIONS_IMAGE_FORMS = "an ImageAttachment, or a Vector of strings and ImageAttachments, which is sent as " *
                                "one user message of text and image parts in order"
 
+# The fix for guidance that is not text: write it as text, and move an image to the state.
+_decisions_as_text(x)::String = "Write it as text" *
+    (x isa ImageAttachment ? "; an image belongs in the state, as $(_DECISIONS_IMAGE_FORMS)" : "")
+
 # Every question carries instructions, as a string (the `instructions` OpenAI requires).
 function _decisions_instructions(name::String, instructions)::String
     instructions isa AbstractString && return String(instructions)
     _decisions_refuse(name, isnothing(instructions) ?
         "every question needs `instructions`, a string. Give them as the first argument, as in " *
         "`choice(\"Which team should handle this?\", options)`" :
-        "its `instructions` must be a string, not $(typeof(instructions)). Write them as text" *
-        (instructions isa ImageAttachment ? "; an image belongs in the state ($(_DECISIONS_IMAGE_FORMS))" : ""))
+        "its `instructions` must be a string, not $(typeof(instructions)). $(_decisions_as_text(instructions))")
 end
 
 function _decisions_head(type::String, name::String, instructions)::JSON.Object{String,Any}
@@ -139,7 +142,7 @@ function _decisions_choice(name::String, value::String, description)::JSON.Objec
     isnothing(description) && return c
     description isa AbstractString || _decisions_refuse(name,
         "the description of its option $(repr(value)) must be a string or `nothing`, not $(typeof(description)). " *
-        "Write it as text")
+        _decisions_as_text(description))
     c["description"] = String(description)
     c
 end
@@ -156,7 +159,7 @@ end
 
 function _decisions_level(name::String, index::Int, level)::JSON.Object{String,Any}
     level isa AbstractString || _decisions_refuse(name,
-        "its level $index must be a string, the level's label, not $(typeof(level)). Write it as text")
+        "its level $index must be a string, the level's label, not $(typeof(level)). $(_decisions_as_text(level))")
     l = JSON.Object{String,Any}()
     l["label"] = String(level)
     l

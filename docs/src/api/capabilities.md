@@ -14,7 +14,10 @@ Validation comes in two strengths, and which one applies depends on the verb:
   prefix completion, System One — validate **strictly**. These surfaces are
   provider-specific, and a backend that has not declared them would simply 404,
   so an endpoint that declares no capabilities at all is not dispatched: the call
-  throws `MethodError: no method matching provider_capabilities(::YourEndpoint)`.
+  throws `MethodError: no method matching provider_capabilities(::YourEndpoint)`,
+  except that the System One verbs ([`ask`](@ref), [`ask_each`](@ref),
+  [`with_system_one`](@ref) and the natural-language verbs) throw an
+  `ArgumentError` saying to declare `:system_one`.
 - **The four primary verbs** — [`chatrequest!`](@ref) (`:chat`),
   [`embeddingrequest!`](@ref) (`:embeddings`), [`respond`](@ref) (`:responses`
   **or** `:agentic`, since the two agentic wires name the same surface
@@ -68,7 +71,7 @@ has_capability
 | `:containers` | Containers API |
 | `:uploads` | Resumable Uploads API |
 | `:realtime` | Realtime API |
-| `:system_one` | TypeSafe System One evaluation ([`ask`](@ref)) |
+| `:system_one` | System One evaluation ([`ask`](@ref)): TypeSafe, OpenAI (its Decisions API) and Ollama |
 | `:models` | Model listing ([`list_models`](@ref)) |
 
 ## Capabilities by Provider
@@ -84,6 +87,7 @@ for (name, svc) in [
     ("Anthropic",              ANTHROPICServiceEndpoint),
     ("DeepSeek",               DeepSeekEndpoint("k")),
     ("Generic",                GenericOpenAIEndpoint("http://x", "")),
+    ("Ollama",                 OllamaEndpoint()),
     ("TypeSafe (System One)",  TYPESAFEServiceEndpoint)
 ]
     caps = join(sort(collect(provider_capabilities(svc))), ", ")

@@ -2,8 +2,9 @@
 
 [Dispatch on Meaning](@ref nl_dispatch_guide) is the how-to. `nl_classify`,
 `nl_dispatch` and `@branch` each send one [`ask`](@ref) request, whose answers,
-errors and limits are documented in [TypeSafe System One API (Jev)](@ref
-system_one_api).
+errors and limits are documented in [System One API](@ref system_one_api). Like
+`ask`, they run on the backend a call names with `service`, else on the one of
+the enclosing [`with_system_one`](@ref) scope, else on TypeSafe's Jev.
 
 [`@branch`](@ref) is a `switch` whose cases are written in plain language. The
 option names become the criteria of one [`choice`](@ref) question about the
@@ -31,11 +32,34 @@ act on a near-tie. The default `min_confidence` is 0, which acts on every answer
 near-ties included: set it, or pass `decide`, to hand unsure answers elsewhere.
 `decide` replaces the gate with any function of the [`ChoiceAnswer`](@ref) that
 returns an offered option — not only the winner — or `nothing` to decline,
-which takes the same fallback or raises [`DecisionDeclinedError`](@ref).
+which takes the same fallback or raises [`DecisionDeclinedError`](@ref). A
+question the backend declines to answer — a [`RefusalAnswer`](@ref), which
+OpenAI's Decisions API may send — is a decline no policy sees: the fallback
+runs, or `DecisionDeclinedError` carries the refusal.
 [`meanings`](@ref)`(f)` is the union of the options of every natural-language
 method of `f`; `meanings(f, Tuple{…})` lists the ones a call with ordinary
 arguments of those types sends, in the order it sends them. Both take the same
 `texts` a keyed call does.
+
+Before any request, the inputs of a call are checked. `min_confidence` must be a
+finite number in `0 … 1`: anything else, `NaN` included, is an `ArgumentError`.
+A `@branch` option name is a `String`, or a `Symbol` sent as its `String`; any
+other value is an `ArgumentError` naming its line. How many options one question
+may offer — a table's entries, a branch's lines — is the backend's limit (255 on
+TypeSafe). And the state `nl_dispatch` builds from its ordinary arguments must be
+data: a function, a type, a module, a `Ref` or `Ptr`, a `Task`, a `Channel`, a
+lock, a condition, an event, an `IO` or an `Expr` anywhere in an argument, or a
+container nested more than 64 levels deep, is an `ArgumentError` naming the
+argument and the path to the value. Everything else is sent as JSON.jl writes
+it — every field of a struct argument, a credential held as a `String`
+included — and a `:record` scope of [`with_recorded_answers`](@ref) writes it to
+disk: pass `state = …` to send only what the model should read. An explicit
+`state` is sent as given.
+
+A `Meaning` type prints as Julia prints any type, `Meaning{Symbol("…")}` — in a
+`MethodError` or a `methods(f)` listing too — and an instance as `nl"…"()`. Two
+identical sentences are the same type, so `===` compares them, and
+[`meanings`](@ref) lists the sentences as strings.
 
 ```@docs
 Meaning

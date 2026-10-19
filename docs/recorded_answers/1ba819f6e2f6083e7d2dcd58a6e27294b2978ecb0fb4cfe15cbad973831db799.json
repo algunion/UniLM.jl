@@ -1,0 +1,66 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": {
+        "message": "I ordered the round blue sticker. Is that what the photo shows?",
+        "photo": "<image:0aa3720196bef00c31209f8300002225>"
+      },
+      "model": "jev-latest",
+      "questions": {
+        "shows_it": {
+          "type": "noul",
+          "instructions": "Does `photo` show what `message` asks about?"
+        },
+        "red_shape": {
+          "type": "choice",
+          "instructions": "What is the red shape in `photo`?",
+          "criteria": {
+            "a rectangle": null,
+            "a disc": null,
+            "a triangle": null,
+            "there is no red shape": null
+          }
+        }
+      },
+      "assets": {
+        "<image:0aa3720196bef00c31209f8300002225>": {
+          "type": "image",
+          "part": "asset-0"
+        }
+      }
+    },
+    "key_extra": "asset-0 0aa3720196bef00c31209f830000222507894401bf50c7e6a6fa32195bcd4cf4"
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a1565a007a72b288fba97b47e284b2",
+    "request_id_header": "x-typesafe-request-id",
+    "body": {
+      "model": "jev-1.13.0",
+      "answers": {
+        "shows_it": {
+          "type": "noul",
+          "noul": 0.82
+        },
+        "red_shape": {
+          "type": "choice",
+          "choice": "a rectangle",
+          "confidence": 1.0,
+          "probabilities": {
+            "a rectangle": 1.0,
+            "a disc": 0.0,
+            "a triangle": 0.0,
+            "there is no red shape": 0.0
+          }
+        }
+      },
+      "usage": {
+        "input_tokens": 1114,
+        "output_tokens": 71
+      }
+    }
+  },
+  "recorded_at": "2026-10-19T22:48:21Z"
+}

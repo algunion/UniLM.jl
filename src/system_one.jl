@@ -512,7 +512,8 @@ per question.
   answered.
 - `options::NamedTuple`: provider options, checked by the backend's wrapper when
   the request is sent; keyword arguments of [`ask`](@ref) become these.
-  TypeSafe accepts one, `long_context::Bool`.
+  TypeSafe accepts one, `long_context::Bool`; OpenAI's Decisions API
+  `prompt_cache_key` and `safety_identifier`; Ollama `keep_alive`.
 
 `questions` accepts `name => question` pairs (vector, tuple, `NamedTuple`, or
 `AbstractDict`), or bare questions in a vector or tuple, which are auto-named

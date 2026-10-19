@@ -15,7 +15,7 @@ Standard capability symbols include:
 - Completions: `:fim`, `:prefix_completion`
 - Platform APIs: `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`,
   `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`
-- System One ([`ask`](@ref)): `:system_one` (TypeSafe; OpenAI, through its Decisions API)
+- System One ([`ask`](@ref)): `:system_one` (TypeSafe; OpenAI, through its Decisions API; Ollama)
 - Model listing ([`list_models`](@ref)): `:models` (TypeSafe System One, Ollama)
 """
 provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :streaming, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime, :system_one])

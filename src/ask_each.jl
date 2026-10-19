@@ -141,8 +141,11 @@ function ask_each(requests::AbstractVector{<:SystemOneRequest};
     _run_each(batch, _resolve_cancel(cancel), min(something(width, _system_one_concurrency(p, svc)), n))
 end
 
-# The batch width a call names: any Integer of at least 1, as an Int.
+# The batch width a call names: any Integer of at least 1, as an Int. A Bool is an Integer
+# in Julia, but `ntasks = true` names no width: it is refused rather than read as 1.
 _each_width(::Nothing)::Nothing = nothing
+_each_width(n::Bool) = throw(ArgumentError(
+    "`ntasks` is how many requests ask_each keeps in flight, an Integer of at least 1; got $n"))
 _each_width(n::Integer)::Int = 1 <= n <= typemax(Int) ? Int(n) : throw(ArgumentError(
     "`ntasks` is how many requests ask_each keeps in flight, an Integer of at least 1; got $n"))
 

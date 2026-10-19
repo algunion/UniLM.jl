@@ -284,14 +284,14 @@ end
     @test all(issuccess, few) && _AE_PEAK[] == 2
 end
 
-@testset "ask_each — ntasks is any Integer of at least 1" begin
+@testset "ask_each — ntasks is any Integer of at least 1, never a Bool" begin
     q = "q" => noul("x")
     widths, _ = _ae_run(_ae_ok_script) do
         [ask_each(["a", "b"], q; service=_AEMock, ntasks=w) for w in (Int128(2), UInt8(2), big(3), Int32(1))]
     end
     @test all(rs -> length(rs) == 2 && all(issuccess, rs), widths)
     errs, seen = _ae_run(_ae_ok_script) do
-        [_ae_caught(() -> ask_each(["a"], q; service=_AEMock, ntasks=w)) for w in (0, -1, big(0), Int128(2)^70)]
+        [_ae_caught(() -> ask_each(["a"], q; service=_AEMock, ntasks=w)) for w in (0, -1, big(0), Int128(2)^70, true, false)]
     end
     @test isempty(seen)
     @test all(e -> e isa ArgumentError && contains(e.msg, "ntasks"), errs)

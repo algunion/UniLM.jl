@@ -7,6 +7,8 @@ import Sockets
     @test :images in UniLM.provider_capabilities(OPENAIServiceEndpoint)
     @test :tools in UniLM.provider_capabilities(OPENAIServiceEndpoint)
     @test !(:fim in UniLM.provider_capabilities(OPENAIServiceEndpoint))
+    @test :system_one in UniLM.provider_capabilities(OPENAIServiceEndpoint)     # the Decisions API
+    @test !(:models in UniLM.provider_capabilities(OPENAIServiceEndpoint))
 
     @test :chat in UniLM.provider_capabilities(AZUREServiceEndpoint)
     @test :tools in UniLM.provider_capabilities(AZUREServiceEndpoint)
@@ -274,7 +276,7 @@ end
 struct _NoDefaultModelEndpoint <: UniLM.OpenAIWireEndpoint end
 
 @testset "capability and model errors name the endpoint, not DataType" begin
-    for (svc, name) in ((OPENAIServiceEndpoint, "OPENAIServiceEndpoint"), (DeepSeekEndpoint("k"), "DeepSeekEndpoint"))
+    for (svc, name) in ((AZUREServiceEndpoint, "AZUREServiceEndpoint"), (DeepSeekEndpoint("k"), "DeepSeekEndpoint"))
         err = try UniLM.validate_capability(svc, :system_one, "System One"); nothing catch e; e end
         @test err isa ArgumentError && occursin("System One is not supported by $name.", err.msg)
         @test !occursin("DataType", err.msg)

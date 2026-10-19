@@ -465,3 +465,87 @@ end
         close(server)
     end
 end
+
+# ─── Retry-loop hooks ────────────────────────────────────────────────────────
+
+@testset "retry hooks: a retry header numbers the retries, never the first attempt; off by default" begin
+    seen = Union{Nothing,String}[]
+    lk = ReentrantLock()
+    n = Threads.Atomic{Int}(0)
+    server, base = _seam_server(req -> begin
+        v = HTTP.header(req, "X-TypeSafe-Retry-Count", "")
+        @lock lk push!(seen, isempty(v) ? nothing : String(v))
+        HTTP.Response(Threads.atomic_add!(n, 1) < 2 ? 503 : 200, ["Content-Type" => "application/json"],
+                      Vector{UInt8}("{}"))
+    end)
+    try
+        headers = ["Content-Type" => "application/json"]
+        resp = UniLM._http_with_retries(RequestConfig(max_attempts=3, total_deadline=Inf), time_ns(), "POST",
+                                        base * "/", headers, "{}"; retry_header="X-TypeSafe-Retry-Count")
+        @test resp.status == 200
+        @test seen == [nothing, "1", "2"]
+        @test headers == ["Content-Type" => "application/json"]      # the caller's headers are left alone
+        empty!(seen); n[] = 1                                        # one 503, then 200
+        UniLM._http_with_retries(RequestConfig(max_attempts=2, total_deadline=Inf), time_ns(), "POST",
+                                 base * "/", headers, "{}")
+        @test seen == [nothing, nothing]
+    finally
+        close(server)
+    end
+end
+
+@testset "retry hooks: observe sees every response, with its attempt, before the retry decision" begin
+    n = Threads.Atomic{Int}(0)
+    server, base = _seam_server(req ->
+        HTTP.Response(Threads.atomic_add!(n, 1) == 0 ? 429 : 200, ["Retry-After" => "0"], Vector{UInt8}("{}")))
+    try
+        seen = Tuple{Int,Int}[]
+        resp = UniLM._http_with_retries(RequestConfig(max_attempts=3, total_deadline=Inf), time_ns(), "GET",
+                                        base * "/"; observe=(k, r) -> push!(seen, (k, r.status)))
+        @test resp.status == 200
+        @test seen == [(1, 429), (2, 200)]
+    finally
+        close(server)
+    end
+end
+
+@testset "retry hooks: a hold delays every attempt, cancellably and never past the budget" begin
+    arrived = Float64[]
+    lk = ReentrantLock()
+    server, base = _seam_server(req -> (@lock(lk, push!(arrived, time())); HTTP.Response(200, [], Vector{UInt8}("{}"))))
+    try
+        until = time() + 0.6
+        resp = UniLM._http_with_retries(RequestConfig(max_attempts=1, total_deadline=Inf), time_ns(), "GET",
+                                        base * "/"; hold=() -> max(until - time(), 0.0))
+        @test resp.status == 200
+        @test only(arrived) >= until - 0.01                       # sent once the hold had passed
+
+        # A cancel during the hold ends the call at once, with nothing sent.
+        empty!(arrived)
+        tok = CancelToken()
+        task = Threads.@spawn try
+            UniLM._http_with_retries(RequestConfig(), time_ns(), "GET", base * "/"; cancel=tok, hold=() -> 30.0)
+        catch e
+            e
+        end
+        sleep(0.3)
+        cancel!(tok)
+        @test timedwait(() -> istaskdone(task), 5.0) === :ok
+        @test fetch(task) isa UniLMCancelled
+        @test isempty(arrived)
+
+        # A hold longer than the budget: the deadline breach, once the budget is spent,
+        # with nothing sent.
+        t0 = time_ns()
+        e = try
+            UniLM._http_with_retries(RequestConfig(total_deadline=0.5), t0, "GET", base * "/"; hold=() -> 30.0)
+        catch ex
+            ex
+        end
+        @test e isa UniLMTimeout && e.phase === :deadline
+        @test 0.45 <= (time_ns() - t0) / 1e9 < 5.0
+        @test isempty(arrived)
+    finally
+        close(server)
+    end
+end

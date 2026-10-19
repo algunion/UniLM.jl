@@ -21,10 +21,12 @@ UniLM.ANTHROPICServiceEndpoint
 UniLM.TYPESAFEServiceEndpoint
 ```
 
-`TYPESAFEServiceEndpoint` is not a chat backend: it serves the
-[TypeSafe System One API (Jev)](@ref system_one_api) and declares only
+`TYPESAFEServiceEndpoint` is not a chat backend: it serves TypeSafe's System One
+model, Jev ([System One API](@ref system_one_api)), and declares only
 `:system_one` and `:models`, so the chat, Responses and embedding verbs reject
-it up front.
+it up front. `OPENAIServiceEndpoint` answers System One requests too, through
+OpenAI's Decisions API, and so does an [`OllamaEndpoint`](@ref), from a local
+decision model.
 
 ## Generic Endpoint
 
@@ -151,3 +153,41 @@ UniLM.decode_agentic
 UniLM.decode_agentic_stream
 UniLM.AgenticStreamState
 ```
+
+### System One protocols
+
+A System One backend is reached through a protocol, a Holy trait of its endpoint:
+[`UniLM.system_one_protocol`](@ref UniLM.system_one_protocol) maps the endpoint
+to a [`UniLM.SystemOneProtocol`](@ref UniLM.SystemOneProtocol), whose
+[`UniLM.encode_system_one`](@ref UniLM.encode_system_one) turns a request into a
+[`UniLM.SystemOneWire`](@ref UniLM.SystemOneWire) — refusing before any I/O what
+the backend cannot carry — and whose
+[`UniLM.decode_system_one`](@ref UniLM.decode_system_one) turns the reply into a
+typed result. Three protocols ship:
+[`UniLM.TypeSafeProtocol`](@ref UniLM.TypeSafeProtocol) (TypeSafe's
+`POST /v1/systemone`),
+[`UniLM.OpenAIDecisionsProtocol`](@ref UniLM.OpenAIDecisionsProtocol) (OpenAI's
+`POST /v1/decisions`, for `OPENAIServiceEndpoint`) and
+[`UniLM.OllamaSystemOneProtocol`](@ref UniLM.OllamaSystemOneProtocol) (Ollama's
+`POST /v1/systemone`, for `OllamaEndpoint`). They are documented with the
+[System One API](@ref system_one_protocol_api).
+
+A server that speaks TypeSafe's wire — a gateway, a proxy, a mock — needs no
+protocol code. To send `TYPESAFEServiceEndpoint`'s requests there, set
+`TYPESAFE_BASE_URL`. To give it an endpoint of its own, declare `:system_one`,
+its base URL and its credentials; an endpoint without a `system_one_protocol`
+method speaks `TypeSafeProtocol`:
+
+```julia
+struct JevGateway <: UniLM.ServiceEndpoint end
+UniLM.provider_capabilities(::Type{JevGateway}) = Set([:system_one])
+UniLM._api_base_url(::Type{JevGateway}) = "https://jev-gateway.example.com"   # internal hook
+UniLM.auth_header(::Type{JevGateway}) =
+    ["Authorization" => "Bearer $(ENV["JEV_GATEWAY_KEY"])", "Content-Type" => "application/json"]
+
+ask("My parcel never arrived.", "team" => choice(["billing", "shipping"]); service = JevGateway)
+```
+
+Its requests are TypeSafe's, byte for byte, and its recordings are keyed as
+TypeSafe's — on the request's path and body, never its host — so an answer
+recorded through one replays for the other.

@@ -26,7 +26,7 @@ UniLM speaks each provider's own wire API, not just the OpenAI-compatible protoc
 - **Image Generation & Edits** — create and edit images with `gpt-image-2`
 - **Tool/Function Calling** — first-class support for function tools in both APIs, with automated `tool_loop`
 - **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool loop integration
-- **Decisions (Jev, TypeSafe System One)** — decisions about a text instead of generated text: `nl_classify` returns one of your own keys, and `ask` answers `choice` / `score` / `noul` questions with calibrated probabilities, many questions in one request
+- **Decisions (System One)** — decisions about a text instead of generated text, from one surface over TypeSafe's Jev, OpenAI's Decisions API (beta) and local decision models through Ollama: `nl_classify` returns one of your own keys, `ask` answers `choice` / `score` / `noul` questions with calibrated probabilities, many questions in one request — about images too (Jev and OpenAI), and `box` locates what you name in one (Jev) — and `ask_each` asks the same questions about many texts at once
 - **Dispatch on Meaning** — `nl_dispatch` runs the method whose sentence fits the text: short keys with a table of sentences (`texts = TEAM`, methods on `Val{:billing}`), or `nl"..."` in the signature; `@branch` is the same decision inline
 - **Decisions with LLMs** — route a message before an LLM call and check the draft after it; `with_recorded_answers` records Jev's answers and the non-streaming LLM calls once and replays them, so tests run without keys
 - **Embeddings** — text embedding generation with `text-embedding-3-small`
@@ -297,9 +297,9 @@ chat = Chat(service=DeepSeekEndpoint())             # default: deepseek-flash
 chat = Chat(service=OllamaEndpoint(num_ctx=32_768), model="gemma4:e4b")
 ```
 
-TypeSafe's System One endpoint (`TYPESAFEServiceEndpoint`, `TYPESAFE_API_KEY`) is deliberately absent from that table: it answers enumerated questions rather than generating text, so `chatrequest!`, `respond`, `embeddingrequest!` and the other platform verbs reject it up front with an `ArgumentError` (naming it on a `Chat` or an `Embeddings` is allowed only with an explicit `model=` — omitting it throws `ArgumentError` — and sending the request is not). It has its own section below.
+TypeSafe's System One endpoint (`TYPESAFEServiceEndpoint`, `TYPESAFE_API_KEY`) is deliberately absent from that table: it answers enumerated questions rather than generating text, so `chatrequest!`, `respond`, `embeddingrequest!` and the other platform verbs reject it up front with an `ArgumentError` (naming it on a `Chat` or an `Embeddings` is allowed only with an explicit `model=` — omitting it throws `ArgumentError` — and sending the request is not). `OPENAIServiceEndpoint` (through OpenAI's Decisions API) and `OllamaEndpoint()` (through a local decision model) answer the same System One questions. They have their own section below.
 
-## Decisions (Jev, TypeSafe System One)
+## Decisions (System One: Jev, OpenAI, Ollama)
 
 An LLM writes text; [TypeSafe](https://docs.typesafe.ai)'s System One model **Jev** reads a text and decides — which team, how urgent, is it safe to send, does it match the source — answering only the questions you list, with a probability for each answer, in one request billed only for the text it reads ([Models](https://docs.typesafe.ai/models)).
 Set `export TYPESAFE_API_KEY="..."` and pick a path:
@@ -366,7 +366,30 @@ ask(reply, "refund" => noul("Does this reply promise the customer a refund?"))["
 # => 0.81 — above a cut of 0.3, so a person approves the reply before it is sent
 ```
 
-The Decisions guides, most of them built around one small shop's support desk: [Start Here](https://algunion.github.io/UniLM.jl/dev/guide/jev_start/), [Decisions with LLMs](https://algunion.github.io/UniLM.jl/dev/guide/jev_with_llms/), [Route and Decide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/), [Dispatch on Meaning](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/), [Many Items at Once](https://algunion.github.io/UniLM.jl/dev/guide/semantic_algorithms/) and [Test and Develop](https://algunion.github.io/UniLM.jl/dev/guide/jev_testing/).
+**Many texts at once.** `ask_each` asks the same questions about every text, one request each and 16 in flight on TypeSafe, and returns the results in order. On 50 support tickets it took 3.28 s on TypeSafe, against 13.21 s for one `ask` after another (2026-10-20):
+
+```julia
+tickets = ["I was charged twice for order #4471.",
+           "The app crashes when I open my order history.",
+           "My parcel has been stuck in transit for two weeks."]
+results = ask_each(tickets, "team" => choice("Which team should handle this ticket?", TEAM))
+[issuccess(r) ? r["team"].choice : "no answer" for r in results]
+```
+
+**Other backends.** The same calls run on OpenAI's Decisions API (a public beta; `OPENAI_API_KEY`) and on local decision models through Ollama (`ollama pull tev1:0.8b`; no key, no cost) — per call, or for a scope:
+
+```julia
+message = "I was charged twice for order #4471. Please refund the duplicate payment."
+nl_classify(message, TEAM; service = OPENAIServiceEndpoint)   # OpenAI's Decisions API
+
+with_system_one(OllamaEndpoint(); model = "tev1:0.8b") do     # every call inside asks Ollama
+    nl_classify(message, TEAM)
+end
+```
+
+Each backend refuses before any request what its wire cannot carry, and a `min_confidence` tuned on one does not carry over to another: on the same 129 labelled tickets (2026-10-20) Jev was right on 96.9% of them and OpenAI on 94.6%, and OpenAI was under-confident — in every bin above 0.5 its accuracy was at least its mean top probability. [Backends: Jev, OpenAI and Local Models](https://algunion.github.io/UniLM.jl/dev/guide/system_one_backends/) compares them.
+
+The Decisions guides, most of them built around one small shop's support desk: [Start Here](https://algunion.github.io/UniLM.jl/dev/guide/jev_start/), [Backends](https://algunion.github.io/UniLM.jl/dev/guide/system_one_backends/), [Decisions with LLMs](https://algunion.github.io/UniLM.jl/dev/guide/jev_with_llms/), [Route and Decide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/), [Dispatch on Meaning](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/), [Many Items at Once](https://algunion.github.io/UniLM.jl/dev/guide/semantic_algorithms/) and [Test and Develop](https://algunion.github.io/UniLM.jl/dev/guide/jev_testing/).
 
 ## Chat Completions vs Responses (OpenAI)
 
@@ -401,10 +424,11 @@ Full documentation with guides and API reference: **[https://algunion.github.io/
 - [Local Models with Ollama](https://algunion.github.io/UniLM.jl/dev/guide/ollama/) — Gemma 4 on your own machine
 - [MCP Guide](https://algunion.github.io/UniLM.jl/dev/guide/mcp/) — MCP client/server
 - [Start Here: Decisions in Five Minutes](https://algunion.github.io/UniLM.jl/dev/guide/jev_start/) — what Jev decides, a first decision, and which Decisions page answers your question
+- [Backends: Jev, OpenAI and Local Models](https://algunion.github.io/UniLM.jl/dev/guide/system_one_backends/) — one System One surface on TypeSafe's Jev, OpenAI's Decisions API (beta) and Ollama's decision models, and why a threshold is tuned per backend
 - [Decisions with LLMs](https://algunion.github.io/UniLM.jl/dev/guide/jev_with_llms/) — route a message before an LLM call and check the draft after it
-- [Route and Decide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/) — `ask` with `choice` / `score` / `noul`, calibrated answers, and decision rules on them
+- [Route and Decide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/) — `ask` with `choice` / `score` / `noul`, images and `box`, calibrated answers, and decision rules on them
 - [Dispatch on Meaning](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/) — `nl_classify`, `nl_dispatch` with a table of sentences or `nl"..."` in the signatures, `@branch`
-- [Many Items at Once](https://algunion.github.io/UniLM.jl/dev/guide/semantic_algorithms/) — many items in one request, ranking, finding an event in a long sequence, matching records, stopping early
+- [Many Items at Once](https://algunion.github.io/UniLM.jl/dev/guide/semantic_algorithms/) — `ask_each` over many texts, many items in one request, ranking, finding an event in a long sequence, matching records, stopping early
 - [Test and Develop](https://algunion.github.io/UniLM.jl/dev/guide/jev_testing/) — recorded answers for Jev and LLM calls (`with_recorded_answers`), tests that need no key, an audit trail
 - [Timeouts & Retries Guide](https://algunion.github.io/UniLM.jl/dev/guide/timeouts/) — bounds, typed failures, retry contracts
 - [Concurrency, Tasks and Cancellation](https://algunion.github.io/UniLM.jl/dev/guide/concurrency/) — sharing rules, fan-out, streaming into a `Channel`, `CancelToken`
@@ -433,7 +457,7 @@ A timeout surfaces as the call's usual error result with `status = nothing` and 
 `cause` — never a hang and never a fabricated HTTP status. `max_attempts` (default 3)
 applies to the inference verbs (`chatrequest!`, `embeddingrequest!`, `respond`,
 `generate_image`, `edit_image`, `fim_complete`, `prefix_complete`, `ask`,
-`list_models`); platform and lifecycle verbs, `upload_file` included, make a single
+`ask_each`, `list_models`); platform and lifecycle verbs, `upload_file` included, make a single
 bounded attempt. A `Retry-After` header is a floor under the jittered backoff, so a
 rate-limited batch does not retry in lockstep.
 

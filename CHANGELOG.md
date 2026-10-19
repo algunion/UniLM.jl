@@ -1,5 +1,293 @@
 # Changelog
 
+## [0.24.0] - 2026-10-XX
+
+### Breaking
+- **Provider limits are checked when a request is sent, not when a question is
+  built.** `choice`, `score`, `ChoiceQuestion` and `ScoreQuestion` take any number
+  of options or levels from one up, so a Choice of 256 options builds, and `ask`
+  refuses it on TypeSafe with an `ArgumentError` before the request. Each backend
+  has its own bounds: TypeSafe at most 255 options and 10 levels, OpenAI's
+  Decisions API 2–255 and 2–10, Ollama 2–26 and 2–10. A keyed table of
+  `nl_dispatch` or `nl_classify` likewise holds any number of entries, and the
+  backend refuses more options than one question may offer. Upgrading: code that
+  relied on the constructor to refuse an oversized question gets the
+  `ArgumentError` from `ask`, `ask_each` (naming the item) or the
+  natural-language verb instead; `meanings` and `meaning_gaps` accept a table of
+  any size.
+- **`SystemOneRequest.model` is a `Union{Nothing,String}`, resolved when the
+  request is sent, and a request has a fourth field, `options`.** A request built
+  without a model holds `nothing` and is sent with the model of the enclosing
+  `with_system_one` scope, else the backend's default read at that moment
+  (TypeSafe: `TYPESAFE_DEFAULT_MODEL`, else `jev-latest`). Before, the default
+  was read when the request was built, so a `TYPESAFE_DEFAULT_MODEL` set in
+  between was ignored. `JSON.json(request)` writes `"model"` only when the request
+  names one. `options::NamedTuple` holds the provider options (see Added).
+  Upgrading: read the model that answered from `SystemOneResponse.model`, not
+  from the request; code that read `request.model` as a `String` must handle
+  `nothing`. `SystemOneRequest(state, questions, model)` and the keyword
+  constructor keep working.
+- **The default `service` of `ask`, `list_models`, `nl_dispatch`, `nl_classify`
+  and `@branch` is `nothing`:** the backend of the enclosing `with_system_one`
+  scope, else `TYPESAFEServiceEndpoint` as before. Upgrading: nothing changes
+  outside a `with_system_one` scope; inside one, pass
+  `service = TYPESAFEServiceEndpoint` to keep a call on TypeSafe.
+- **A reply whose answers do not fit the request is a `SystemOneCallError`**,
+  carrying the request id, instead of a `SystemOneSuccess` built from it: a
+  question left unanswered or one answered that was not asked; an answer of
+  another kind than its question; a Choice of an option that was not offered or
+  is not the most probable; probabilities missing, extra, outside `0 … 1` or not
+  summing to 1 within the backend's rounding (`0.005` per outcome on TypeSafe and
+  OpenAI, the allowance of values rounded to two decimals; `0.00005` on Ollama);
+  Score levels other than `0` to `n − 1`; a score, confidence, Noul probability or
+  box edge out of range; a reply that names no model. `nl_dispatch`,
+  `nl_classify` and `@branch` raise `SystemOneError` for such a reply, where they
+  raised a `KeyError` or an `ArgumentError` after the request was billed.
+  Upgrading: handle these as failed calls; every answer recorded in this
+  repository passes the checks.
+- **Calls to TypeSafe and to OpenAI's Decisions API are bounded by 60 s per
+  attempt and 150 s in all** while no `RequestConfig` is set — no `config`, no
+  `with_request_config` scope, no `set_default_config!` — instead of the field
+  defaults' 600 s and 900 s: TypeSafe answers a typical request in about 0.3 s,
+  and the slowest call measured took 5.3 s. Upgrading: pass a `config`, open a
+  scope or set a process default to choose other bounds; any of them replaces the
+  backend's default as a whole.
+- **`DecisionDeclinedError.answer` is a `Union{ChoiceAnswer,RefusalAnswer}`**: it
+  carries the `RefusalAnswer` when the backend declined to answer the question,
+  as OpenAI's Decisions API may. Upgrading: check `e.answer isa ChoiceAnswer`
+  before reading `e.answer.choice` or `e.answer.confidence`.
+- **`nl_dispatch` refuses a default state that holds what is not data.** When it
+  builds the state from its ordinary arguments, a function or closure, a type, a
+  module, a `Ref` or `Ptr`, a `Task`, a `Channel`, a lock, a condition, an event,
+  an `IO` or an `Expr` anywhere in an argument — in its dicts, arrays, sets,
+  tuples and fields — or a container nested more than 64 levels deep is an
+  `ArgumentError` before the request, naming the argument and the path to the
+  value. Before, JSON.jl wrote a function by its name and a task, lock or stream
+  field by field, and the model read that. Every other value is still sent as
+  JSON.jl writes it, every field of a struct included — a `String` credential a
+  struct holds as well. Upgrading: pass `state = …` with only what the model
+  should read.
+- **`min_confidence` must be a finite number in `0 … 1`** for `nl_dispatch`,
+  `nl_classify` and `@branch`; anything else is an `ArgumentError` before the
+  request. Before, `NaN` declined nothing, so a `_` line or a `fallback` could
+  never run, and a value above 1 declined every answer. Upgrading: pass a
+  threshold in `0 … 1`.
+- **A `Meaning` type prints as Julia prints any type**, `Meaning{Symbol("…")}`,
+  instead of `nl"…"`; an instance still prints as `nl"…"()`. The method that
+  printed the type extended `show(::IO, ::Type)`, and invalidated compiled code in
+  every session that loaded UniLM (see Performance). A `MethodError` and a
+  `methods(f)` listing show the new form; the messages UniLM writes still quote
+  the sentences. Upgrading: compare `Meaning` types with `===`, never their
+  printed form; `meanings(f)` lists the sentences as strings.
+- **A plain `Dict` of Choice options or of questions is sent in sorted key
+  order**, not in its hash order, which changed between Julia versions (1.13
+  changed the string hash); the order of the options is part of what the model
+  reads. Any other dictionary, a `NamedTuple` and a vector of pairs keep their
+  order, and a `Dict` state was already written in sorted order by JSON.jl.
+  Upgrading: such a request's bytes change, and with them the key of its
+  recording: one that 0.23.0 recorded in hash order no longer replays, unless that
+  order happened to be sorted (`with_recorded_answers` throws `ReplayMissError`),
+  so record it again (`mode = :record_missing`); pass a `NamedTuple` or a vector of
+  pairs to fix the order you mean. The recordings of every other request keep
+  their keys: the test suite rebuilds each of the 90 System One recordings this
+  repository committed before this release from typed requests, to the same key.
+- **An attachment where no request carries media is refused.** An
+  `ImageAttachment` or `AudioAttachment` written as JSON anywhere but a message's
+  `attachments` or a System One request's state, instructions or criteria —
+  inside a struct of your own, say — is an `ArgumentError` (`JSON.lower` throws),
+  where JSON.jl wrote its bytes as an array of numbers that no service reads as
+  media. Upgrading: put the attachment where a request carries media, or write
+  its fields yourself (`base64encode(a.data)`, `a.mime`).
+- **A question type of your own is no longer sent.** A subtype of
+  `SystemOneQuestion` that is not one of UniLM's is an `ArgumentError` before the
+  request on every backend: TypeSafe's wire carries Choice, Score, Noul and Box
+  questions and a `RawQuestion` verbatim. Upgrading: build such a question as a
+  `RawQuestion(fields)`, whose answer is accepted whatever its kind, or a Box
+  question with `box(instructions)` — which needs an image in the request.
+
+### Added
+- **One System One surface over three backends.** `ask`, `ask_each`,
+  `list_models`, `nl_classify`, `nl_dispatch` and `@branch` run on:
+  - TypeSafe's Jev, the default (`TYPESAFEServiceEndpoint`), with what its API
+    offers in October 2026: images, Box questions and long context (below);
+  - OpenAI's Decisions API, a public beta since October 6, 2026
+    (`service = OPENAIServiceEndpoint`, `OPENAI_API_KEY`, model `gpt-6-luna`): a
+    `noul` is sent as a `predicate`, a `choice` as a `choice` of 2–255 options, a
+    `score` as a `score` of 2–10 levels; images go in the state (an
+    `ImageAttachment`, or a `Vector` of strings and images, at most 128); the
+    provider options are `prompt_cache_key` and `safety_identifier`; a question the
+    API declines comes back as a `RefusalAnswer`, which the natural-language verbs
+    take as a decline (the fallback, or `DecisionDeclinedError`). What its wire has
+    no form for — a question without string `instructions`, a Noul's `yes`/`no`
+    criteria, a description or level that is not a string, a Box question, an
+    image outside the state — is an `ArgumentError` before the request.
+    `estimated_cost` bills input tokens only, \$0.10 per million, cached ones at
+    the same rate and twice that rate above 272K input tokens; the request id is
+    the `x-request-id` header;
+  - local decision models through Ollama 0.35 or later
+    (`service = OllamaEndpoint()`, with `model = "tev1:0.8b"` or another decision
+    model: there is no default): 1–64 questions, `instructions` on every question,
+    2–26 options and 2–10 levels described by strings, text only, no Box
+    questions, and one option, `keep_alive`. A model may cap lower and says so in
+    its 400 (`tev1:0.8b`: 24 options). Answers cost `0.0` and carry no request id.
+    Measured on 2026-10-20 (Apple M4 Max, Ollama 0.40.6): about 17 ms per warm
+    request on `kev:0.8b-q8_0` and 25–130 ms on `tev1:0.8b`; 0.9–2.6 s for a first
+    call that loads the model.
+
+  Each backend's wrapper refuses before anything is sent what its wire cannot
+  carry, naming the backend, the rule and the fix. `confidence` is one measure
+  everywhere — TypeSafe's published formulas, which TypeSafe and OpenAI report and
+  the Ollama wrapper computes from the probabilities (Ollama's generic decision
+  models report `1 − H(p)/ln n`, kept in `raw`). Calibration belongs to the model,
+  so tune `min_confidence` per backend: on 129 labelled support tickets with 7
+  options (2026-10-20), Jev (`jev-1.13.0`) reached accuracy 0.969 with an
+  expected calibration error of 0.016, and OpenAI (`gpt-6-luna`) 0.946 with 0.080,
+  under-confident (its accuracy at least its mean top probability in every bin
+  above 0.5); Jev answered in 0.25 s at the median and 0.33 s at the 95th
+  percentile, OpenAI in 0.48 s and 2.44 s.
+- `with_system_one(f, service; model = nothing)` sets the backend, and the model,
+  of every System One call inside `f` that names none — tasks spawned there
+  included; scopes nest, and the innermost applies.
+- `ask_each(states, questions...; …)` and `ask_each(requests; …)` send one request
+  per item, concurrently, and return one typed result per item in input order:
+  what `ask` returns for that item alone (nothing is packed in this release).
+  Every request is built and checked before the first is sent, so an item that
+  cannot be sent is an `ArgumentError` naming its position, and nothing is sent.
+  At most `ntasks` requests are in flight — by default 16 on TypeSafe and OpenAI,
+  1 on Ollama, 8 on a protocol of your own; a 429 or 529 to any of them holds
+  every attempt not yet started until the wait the service asked for has passed;
+  `cancel` turns every unanswered item into a `SystemOneCallError` whose `cause`
+  is a `UniLMCancelled`; `on_result(i, result)` runs as each result lands; a
+  `ReplayMissError`, a `RecordingWriteError`, an interrupt or an exception from
+  `on_result` stops the batch and is rethrown once every worker has stopped. 50
+  support tickets took 3.28 s on TypeSafe, against 13.21 s for one `ask` after
+  another, over one HTTP/2 connection (2026-10-20).
+- Images on TypeSafe: an `ImageAttachment` anywhere in the state, the instructions
+  or the criteria — directly, or inside a `Dict`, a vector, a tuple or a
+  `NamedTuple` — is sent as a TypeSafe asset: each distinct image once, as a part
+  of a `multipart/form-data` request, every place it stood holding its reference
+  `<image:…>` (the first 32 hex digits of the SHA-256 of its bytes), with the
+  `TypeSafe-Danger-Zone-Images: true` header TypeSafe requires. TypeSafe marks
+  images experimental. Refused before the request: an image that is not a still
+  PNG or JPEG, is over 16 MiB, has a side outside 280–1568 pixels or a header that
+  cannot be read; a body over 32 MiB; more than 64 levels of nesting. Each use of
+  an image is billed; on 2026-10-19 the input tokens of a W×H image fit
+  2·⌈W/28⌉·⌈H/28⌉, plus about 4 per use. A Score level that is an image comes back
+  in the answer's `legend` as that `ImageAttachment`. A recording of a request
+  with images is keyed on its JSON part and the SHA-256 of each image, and holds
+  no image.
+- Box questions: `box(instructions)` builds a `BoxQuestion` — where, in an image of
+  the state, is what the instructions name — answered by a
+  `BoxAnswer(box::BoxCoordinates, confidence, raw)` whose `top`, `bottom`, `left`
+  and `right` edges are fractions of the image's height and width. On TypeSafe a
+  Box question needs Jev 1.14 or later (`model = "jev-1.14.0"` or
+  `"jev-preview"`; `jev-latest` answered as 1.13 on 2026-10-20, and its bare
+  400 `"Invalid request."` comes back with a hint naming those models) and an
+  image in the request: one without is refused before it is sent, since TypeSafe
+  would answer it with a box at about 0.05 confidence. A box turned inside out is
+  a `SystemOneCallError`. OpenAI and Ollama refuse Box questions.
+- Long context on TypeSafe: `ask(…; long_context = true)` sends
+  `TypeSafe-Danger-Zone-Long-Context: true`, which raises the context limits from
+  32k tokens per question and 64k per request to 262k, at the same price per
+  token; TypeSafe documents it as slower and less accurate. A
+  `max_tokens_exceeded` failure's `message` names the option and the limits.
+- Provider options: every keyword of `ask` and `ask_each` that is not their own
+  becomes the request's `options`, which the backend's wrapper checks — TypeSafe
+  `long_context`, OpenAI `prompt_cache_key` and `safety_identifier`, Ollama
+  `keep_alive` — and any other is an `ArgumentError` listing the accepted ones.
+  Options are part of a recording's key only when given, so a request without
+  them keeps its key.
+- `RawQuestion(fields)`: a question of a kind this version has no type for, sent
+  verbatim by each of the three backends (OpenAI adds its name). Its answer is
+  accepted whatever its kind; one this version does not know is an
+  `UnknownAnswer`.
+- `RefusalAnswer`: a question the backend declined to answer, accepted only from a
+  backend that documents refusals (OpenAI's Decisions API).
+- `SystemOneResponse.service`: the backend that answered, as the call resolved it;
+  the five-argument constructor fills `nothing`.
+- The System One protocol seam, public and not exported:
+  `UniLM.system_one_protocol(service)`, a Holy trait, returns the endpoint's
+  `UniLM.SystemOneProtocol` (`TypeSafeProtocol`, `OpenAIDecisionsProtocol` or
+  `OllamaSystemOneProtocol`), whose `UniLM.encode_system_one` builds the
+  `UniLM.SystemOneWire` it sends and whose `UniLM.decode_system_one` reads the
+  reply. An endpoint that declares `:system_one` without a protocol speaks
+  TypeSafe's wire, so a TypeSafe-compatible gateway needs no protocol code. A
+  protocol other than TypeSafe's files its recordings under a namespace of its
+  own (`/openai-decisions/v1/decisions`, `/ollama/v1/systemone`), so backends
+  never replay each other's answers, while every TypeSafe recording keeps its
+  key.
+- Every System One exchange goes through one connection pool per process, which
+  keeps up to 256 idle connections per host for 30 s and is created by the first
+  live request. A retry of a TypeSafe request carries `X-TypeSafe-Retry-Count`
+  (`1` on the second attempt), as TypeSafe's official SDKs send it.
+- A `@branch` option name may be a `Symbol`, sent as its `String`.
+
+### Changed
+- `OPENAIServiceEndpoint` and `OllamaEndpoint` declare `:system_one`.
+- An endpoint that declares no capabilities is refused by `ask`, `ask_each`,
+  `with_system_one` and the natural-language verbs with an `ArgumentError` saying
+  to declare `:system_one`, instead of a `MethodError`.
+- A recording holds `key_extra`, what its key covers beyond the body (provider
+  options, image digests), when there is any. A `ReplayMissError` for a backend
+  other than TypeSafe shows its namespaced path and says to record it with access
+  to that backend — its API key set, or its local server running.
+- PLACEHOLDER (confirm when its code change lands): `ask_each`: a batch held by a
+  rate limit counts the hold against each item's `total_deadline`.
+- The manual's decision pages form a **Decisions (Jev)** lane at the same
+  addresses: *Start Here: Decisions in Five Minutes* (formerly *Start Here: Jev in
+  Five Minutes*), a new *Backends: Jev, OpenAI and Local Models*, *Decisions with
+  LLMs* (formerly *Jev with LLMs*), *Route and Decide*, now with images, Box
+  questions and long context, *Dispatch on Meaning*, *Many Items at Once*, now
+  led by `ask_each`, and *Test and Develop*. The API page *System One API (Jev,
+  OpenAI Decisions, Ollama)* documents what the backends share and each one's
+  setup, rules, errors and cost, and the result-type hierarchy lists the Ollama
+  model-management results (68 result types in 17 families).
+
+### Fixed
+- A Score answer's levels are read strictly: `"-1"`, `"+1"`, `" 2"` and a level
+  beyond the rubric were accepted, and `"01"` beside `"1"` read as one level,
+  dropping a probability. Each is now a `SystemOneCallError`.
+- A token count in a reply's `usage` that is not a non-negative whole number reads
+  as 0 with a warning: `1e300` made the whole call a `SystemOneCallError`,
+  discarding answers that were paid for, a negative count gave a negative cost,
+  and `2.5` read as 2.
+- Input that cannot be sent is an `ArgumentError` before the request:
+  `ask(42, …)`, `ask(nothing, …)` and `nl_classify(42, …)` threw a `MethodError`;
+  a `NaN` or `Inf` in the content came back as a `SystemOneCallError`, as though
+  the service had failed; a question or option name of blanks, such as `" "`, was
+  sent (both are now refused when the request or the question is built).
+- A request whose questions changed after it was built is checked again when it
+  is sent: 302 options and 14 levels pushed into built questions reached TypeSafe,
+  and a repeated question name replaced the first question on the wire.
+- The plans `nl_dispatch` caches per function and argument types are capped at
+  1,024, as keyed plans already were: they grew without bound, one per distinct
+  type of the ordinary arguments.
+- A `@branch` option name that is neither a `String` nor a `Symbol` is an
+  `ArgumentError` naming its line, instead of a `MethodError`.
+- PLACEHOLDER (confirm when its code change lands): Recordings never hold an
+  image's bytes (data URLs are recorded as digests).
+
+### Performance
+- Loading UniLM invalidated 1,438 compiled method instances in the session — among
+  them the code that prints any type — through the `show` method of `Meaning`
+  types; it now invalidates 13 (see Breaking).
+- A function's first natural-language call compiles in about 27 ms instead of 85
+  ms: `nl_dispatch` and `nl_classify` are compiled once, not once per function,
+  argument type or keyword type.
+- A keyed table checks its keys for duplicates by type first, so a table of new
+  keys no longer compiles an equality method for every pair of them: the first
+  call with a table of 50 new keys took 0.09 s instead of 1.0 s.
+- Plans are read without a lock, and a table is validated once per contents
+  instead of on every call.
+- 64 workers calling a local HTTP/1.1 server in a closed loop for 60 s failed no
+  call, over 66 connections (53,729 calls/s); HTTP.jl's default client, which
+  keeps two idle connections per host, opened over 16,000 connections, ran out of
+  ephemeral ports and failed 324 calls. A burst of 1,000 requests to a server that
+  answers in 300 ms took 0.44–0.54 s.
+- PLACEHOLDER (to be filled before release): the precompile workload's
+  measurements — the first `ask`, the first natural-language call and the first
+  live answer of a session, the added precompile time and package image size.
+
 ## 0.23.0
 
 ### Breaking

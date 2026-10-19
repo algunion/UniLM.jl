@@ -45,8 +45,9 @@ supplies every field):
 2. The innermost active [`with_request_config`](@ref) scope.
 3. The process default, once set by [`set_default_config!`](@ref).
 4. The backend's own default — System One calls only: [`ask`](@ref),
-   [`ask_each`](@ref) and the natural-language verbs on TypeSafe use
-   `request_timeout = 60` and `total_deadline = 150`.
+   [`ask_each`](@ref) and the natural-language verbs on TypeSafe and on OpenAI's
+   Decisions API, and [`list_models`](@ref) on TypeSafe, use
+   `request_timeout = 60` and `total_deadline = 150`; Ollama brings none.
 5. The built-in field defaults.
 
 A backend's default fills in only while you have chosen nothing: a scope, a

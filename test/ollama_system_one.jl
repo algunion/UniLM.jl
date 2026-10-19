@@ -6,7 +6,7 @@
 # in-process server that applies the route's own rules (decision/systemone.go of Ollama
 # 0.40.6: ValidateLimits and compileField) and answers as its generic encodings do.
 
-using Sockets, Logging
+using Sockets
 
 const _OS1_FIXTURES = joinpath(@__DIR__, "fixtures", "ollama")
 const _OS1_CFG = RequestConfig(max_attempts=1, total_deadline=30.0)
@@ -257,7 +257,7 @@ end
 @testset "Ollama System One — the edges Ollama accepts are sent and answered" begin
     _os1_serve() do ep, seen
         rs = [ask("s", choice("Which?", ["a" => "A", "b" => nothing]); service=ep, model="tev1:0.8b", config=_OS1_CFG),
-              ask("s", choice("Which?", ["o$i" => "option $i" for i in 1:26]); service=ep, model="tev1:0.8b", config=_OS1_CFG),
+              ask("s", choice("Which?", ["o$i" => "option $i" for i in 1:26]); service=ep, model="kev:0.8b-q8_0", config=_OS1_CFG),
               ask("s", score(Dict("ask" => "How urgent?"), ["level $i" for i in 1:10]); service=ep, model="tev1:0.8b", config=_OS1_CFG),
               ask(Dict("ticket" => "x"), noul(["Is", "it?"]; yes="It is", no="It is not"); service=ep, model="kev:0.8b-q8_0", config=_OS1_CFG),
               ask("s", ["q$i" => noul("Is $i odd?") for i in 1:64]; service=ep, model="tev1:0.8b", config=_OS1_CFG)]

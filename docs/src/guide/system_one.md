@@ -268,7 +268,10 @@ println(collect(keys(r)))     # the question names that came back
 ```
 
 The service rounds every number to two decimals, as a floating-point value: a
-0.82 can arrive as 0.8200000000000001.
+0.82 can arrive as 0.8200000000000001. Rounded probabilities need not sum to
+exactly 1 — a live reply over four options summed to 0.99 on 20 October 2026 —
+so [`ask`](@ref) accepts a sum within 0.005 per outcome of 1, and returns a reply
+further off as a [`SystemOneCallError`](@ref).
 
 **Confidence describes the distribution, not correctness.** It collapses
 `probabilities` into `0 … 1`: all the mass on one outcome gives 1.0, a flat
@@ -762,7 +765,10 @@ An image may stand anywhere a string can: in the state, alone or among text in a
 `NamedTuple`, `Dict`, vector or tuple; in a question's instructions; in its
 criteria — a Choice whose options are example pictures, a Score whose levels
 are. A Score level that is an image comes back in the answer's `legend` as the
-same `ImageAttachment`.
+same `ImageAttachment`. UniLM looks for images in those containers, not in the
+fields of a struct of your own: a request whose image only a struct holds is
+refused with an `ArgumentError` before anything is sent, rather than writing the
+image's bytes into the JSON as numbers.
 
 - **Sent once, billed per use.** Each distinct image goes out once, as a part of
   a multipart request, and every place it stood holds a reference to it. Every

@@ -468,6 +468,16 @@ _wire_part(a::ImageAttachment) = Dict{Symbol,Any}(:type => "image_url",
 _wire_part(a::AudioAttachment) = Dict{Symbol,Any}(:type => "input_audio",
     :input_audio => Dict(:data => base64encode(a.data), :format => a.format))
 
+# An attachment goes out only in the shape its wire gives it — an `image_url` or
+# `input_audio` part, an Ollama `images` entry, a System One asset — and every path that
+# carries one maps it explicitly. Written by JSON.jl's struct lowering, its bytes would go
+# out as an array of numbers that no service reads as media; reaching this method means
+# the attachment sits where nothing maps it, such as inside a struct of the caller's own.
+JSON.lower(a::Attachment) = throw(ArgumentError(
+    "an $(nameof(typeof(a))) cannot be written as JSON: put it where the request carries media — a message's " *
+    "`attachments`, or a System One request's state, instructions or criteria (directly, or inside a Dict, " *
+    "vector, tuple or NamedTuple; not inside a struct of your own)"))
+
 function _content_parts(content::Union{String,Nothing}, attachments::Vector{Attachment})::Vector{Dict{Symbol,Any}}
     parts = Dict{Symbol,Any}[_wire_part(a) for a in attachments]
     isnothing(content) || isempty(content) || pushfirst!(parts, Dict{Symbol,Any}(:type => "text", :text => content))

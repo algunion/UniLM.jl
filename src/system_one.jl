@@ -511,7 +511,7 @@ per question.
   answered.
 - `options::NamedTuple`: provider options, checked by the backend's wrapper when
   the request is sent; keyword arguments of [`ask`](@ref) become these.
-  TypeSafe accepts none in this version.
+  TypeSafe accepts one, `long_context::Bool`.
 
 `questions` accepts `name => question` pairs (vector, tuple, `NamedTuple`, or
 `AbstractDict`), or bare questions in a vector or tuple, which are auto-named
@@ -565,8 +565,8 @@ function _system_one_body(x)::String
         JSON.json(x)
     catch e
         e isa InterruptException && rethrow()
-        throw(ArgumentError("the System One request cannot be written as JSON (which has no NaN or Inf), " *
-                            "so nothing was sent: " * first(split(sprint(showerror, e), '\n'))))
+        throw(ArgumentError("the System One request cannot be written as JSON, so nothing was sent: " *
+                            first(split(sprint(showerror, e), '\n'))))
     end
 end
 
@@ -665,8 +665,9 @@ end
 may fall between them; `confidence` is in `0 … 1`. `legend` and `probabilities`
 are keyed by the **0-based level number** (parsed from the wire's `"0"`, `"1"`,
 …), so `argmax(a.probabilities)` is a level on the same scale as `score` and
-`legend[argmax(a.probabilities)]` is that level's description — a string, or the
-original object/array when the rubric was structured.
+`legend[argmax(a.probabilities)]` is that level's description — a string, the
+original object/array when the rubric was structured, or the level's own
+[`ImageAttachment`](@ref) when it was an image.
 
 `raw` is the unparsed JSON answer.
 """
@@ -1066,6 +1067,13 @@ function _check_request(p::SystemOneProtocol, service, r::SystemOneRequest)::Not
             "raw questions are not supported by $(_service_name(service)): $(repr(name)) is a RawQuestion " *
             "of type $(repr(q.fields["type"]))"))
     end
+    # A Box question locates something in an image. Asked about a request that carries
+    # none, a backend can still answer — TypeSafe returns a box at near-zero confidence —
+    # but nothing it answers can mean anything, so the request is refused before it is paid for.
+    box = findfirst(((_, q),) -> q isa BoxQuestion, r.questions)
+    isnothing(box) || !isempty(_system_one_images(r)) || throw(ArgumentError(
+        "the Box question $(repr(first(r.questions[box]))) locates something in an image, and this request " *
+        "carries none: put an `ImageAttachment` in the state"))
     nothing
 end
 
@@ -1172,6 +1180,11 @@ function _check_kind(::SystemOneProtocol, name::String, ::BoxQuestion, a::BoxAns
         _unit(v) || throw(ArgumentError(
             "System One answer $(repr(name)) has the $(edge) edge at $(v), outside 0 … 1 of the image"))
     end
+    # Edges are measured from the top and from the left, so a box's top lies above its bottom
+    # and its left before its right; a box turned inside out is not a location.
+    b.top <= b.bottom && b.left <= b.right || throw(ArgumentError(
+        "System One answer $(repr(name)) has a box turned inside out (top $(b.top), bottom $(b.bottom), " *
+        "left $(b.left), right $(b.right))"))
     isnothing(a.confidence) || _unit(a.confidence) || throw(ArgumentError(
         "System One answer $(repr(name)) has the confidence $(a.confidence), outside 0 … 1"))
     nothing

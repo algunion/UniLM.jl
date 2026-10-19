@@ -143,6 +143,7 @@ end
 
     @testset "typesafe" begin
         include("typesafe.jl")
+        include("typesafe_assets.jl")
     end
 
     @testset "system one" begin

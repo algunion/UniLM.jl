@@ -551,7 +551,7 @@ end
          _s1_caught(() -> ask("s", "c" => choice("pick", (a = (weight = Inf,),)); service=_S1Mock)),
          _s1_caught(() -> ask("s", " " => q; service=_S1Mock)),
          _s1_caught(() -> ask("s", q; service=_S1Mock, confg=_S1_CFG)),       # a misspelt keyword is an option
-         _s1_caught(() -> ask("s", "w" => box("the dent"); service=_S1Mock)),
+         _s1_caught(() -> ask("s", "w" => box(ImageAttachment(UInt8[0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01])); service=_S1Mock)),
          _s1_caught(() -> ask(_S1_PNG, q; service=_S1Mock)),
          _s1_caught(() -> ask("s", "c" => choice("pick", ["a" => _S1_PNG, "b" => nothing]); service=_S1Mock))]
     end
@@ -560,9 +560,9 @@ end
     @test contains(errors[1].msg, "Int64") && contains(errors[2].msg, "nothing")
     @test contains(errors[4].msg, "JSON") && contains(errors[5].msg, "JSON")
     @test contains(errors[6].msg, "blank")
-    @test contains(errors[7].msg, "accepted: none") && contains(errors[7].msg, "confg")
-    @test contains(errors[8].msg, "Box") && contains(errors[8].msg, "TypeSafe")
-    @test contains(errors[9].msg, "images") && contains(errors[10].msg, "images")
+    @test contains(errors[7].msg, "accepted: long_context") && contains(errors[7].msg, "confg")
+    @test contains(errors[8].msg, "PNG and JPEG images only") && contains(errors[8].msg, "TypeSafe")
+    @test contains(errors[9].msg, "TypeSafe cannot take image 1") && contains(errors[10].msg, "TypeSafe cannot take image 1")
 end
 
 @testset "System One — a plain Dict is taken in sorted key order, any other dictionary in its own" begin
@@ -724,6 +724,10 @@ UniLM._allows_refusal(::_RefusingProtocol) = true
     @test_throws ArgumentError check(ts, BoxAnswer(BoxCoordinates(0.1, 1.5, 0.2, 0.6), 0.9, Dict{String,Any}()))
     @test_throws ArgumentError check(ts, BoxAnswer(BoxCoordinates(0.1, 0.5, NaN, 0.6), 0.9, Dict{String,Any}()))
     @test_throws ArgumentError check(ts, BoxAnswer(BoxCoordinates(0.1, 0.5, 0.2, 0.6), 1.5, Dict{String,Any}()))
+    # Edges are measured from the top and the left: a box turned inside out is no location; a point is one.
+    @test_throws ArgumentError check(ts, BoxAnswer(BoxCoordinates(0.6, 0.2, 0.2, 0.6), 0.9, Dict{String,Any}()))
+    @test_throws ArgumentError check(ts, BoxAnswer(BoxCoordinates(0.1, 0.5, 0.7, 0.3), 0.9, Dict{String,Any}()))
+    @test check(ts, BoxAnswer(BoxCoordinates(0.4, 0.4, 0.2, 0.2), 0.9, Dict{String,Any}())) === nothing
     @test_throws ArgumentError check(ts, NoulAnswer(0.5, Dict{String,Any}()))
     @test_throws ArgumentError check(ts, UnknownAnswer("box", Dict{String,Any}()))
     # A refusal: only from a backend that declines questions.
@@ -740,6 +744,30 @@ UniLM._allows_refusal(::_RefusingProtocol) = true
     @test_throws ArgumentError box("  ")
     @test_throws ArgumentError box(42)
     @test box((what = "the dent", where = "front")) isa BoxQuestion && box(_S1_PNG).instructions === _S1_PNG
+end
+
+struct _S1Holder          # a caller's own struct, which no wire maps
+    img::ImageAttachment
+end
+
+@testset "System One — a Box question needs an image; an attachment no wire maps is refused, never sent as bytes" begin
+    img = ImageAttachment(joinpath(@__DIR__, "fixtures", "typesafe", "images", "red-300.png"))
+    call(state, qs...) = UniLM._system_one_call(SystemOneRequest(state, collect(qs); model="jev-1.14.0"),
+                                               TYPESAFEServiceEndpoint)
+    caught(f) = try f(); nothing catch e; e end
+    # Nothing to locate in: refused before anything is sent, on any backend.
+    e = caught(() -> call("no image in here", "where" => box("the dent")))
+    @test e isa ArgumentError && occursin("carries none", e.msg)
+    @test call((photo = img,), "where" => box("the red square")) isa UniLM._SystemOneCall
+    # An image inside a struct of the caller's own is reached by no mapping: refused, never
+    # written as the array of numbers JSON.jl would make of its bytes.
+    e = caught(() -> call((note = "see the photo", held = _S1Holder(img)), "q" => choice(["a", "b"])))
+    @test e isa ArgumentError
+    @test_throws ArgumentError JSON.json(img)
+    @test_throws ArgumentError JSON.json(AudioAttachment(read(joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav"))))
+    # A message's attachments keep their own mapping: an image_url part.
+    m = Message(Val(:user), "What colour is this?", img)
+    @test occursin("data:image/png;base64,", JSON.json(m))
 end
 
 @testset "System One — the images of a request, depth first in document order" begin

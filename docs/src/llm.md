@@ -1517,8 +1517,9 @@ parsing. The generic surface below works with any backend that declares
 `TYPESAFE_API_KEY`, defaults to the model `jev-latest`, and pinning
 `"jev-1.13.0"` keeps tuned confidence thresholds meaningful. The types carry only
 invariants every backend shares; a backend's own limits (TypeSafe: 255 Choice
-options, 10 Score levels; no Box question, image or option in this version) are
-checked by its wrapper before anything is sent.
+options, 10 Score levels, PNG/JPEG images of 280–1568 pixels a side and at most
+16 MiB, 64 levels of nesting, a 32 MiB body, and the one option `long_context`)
+are checked by its wrapper before anything is sent.
 
 ```julia
 # What a piece of guidance may be: string | object | array | image (an image only where the backend sends images)
@@ -1580,7 +1581,7 @@ end
 struct ScoreAnswer <: SystemOneAnswer
     score::Float64                                  # expectation; may fall between levels
     confidence::Float64
-    legend::Dict{Int,Any}                           # 0-based level number => description
+    legend::Dict{Int,Any}                           # 0-based level number => description (an image level: its ImageAttachment)
     probabilities::Dict{Int,Float64}                # same keys as legend
     raw::Dict{String,Any}
 end
@@ -1673,7 +1674,7 @@ ask(state, questions...; model=nothing, service=nothing, config=nothing, cancel=
     # -> SystemOneSuccess | SystemOneFailure | SystemOneCallError
     # backend: service, else the with_system_one scope's, else TYPESAFEServiceEndpoint
     # model: model (or the request's), else (no service) the scope's, else the backend's default, read at send time
-    # any other keyword is a provider option (TypeSafe accepts none: ArgumentError listing the accepted ones)
+    # any other keyword is a provider option (TypeSafe accepts long_context::Bool; any other: ArgumentError listing the accepted ones)
 
 with_system_one(f, service; model=nothing)          # -> f(); the backend (and model) of every call
     # inside f that names no service, spawned tasks included; service must declare :system_one

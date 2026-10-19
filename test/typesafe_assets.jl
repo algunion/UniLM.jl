@@ -168,10 +168,11 @@ end
         @test isempty(w.parts) && isempty(w.headers) && w.key_extra == ""
         @test !contains(w.body, "assets")
     end
-    # A Box question alone needs the images header, and nothing else changes.
-    w = _ta_wire(SystemOneRequest("A white page with a red rectangle.", "rect" => box("the red rectangle"); model="jev-1.14.0"))
-    @test w.headers == ["TypeSafe-Danger-Zone-Images" => "true"] && isempty(w.parts) && w.key_extra == ""
-    @test w.body == """{"state":"A white page with a red rectangle.","model":"jev-1.14.0","questions":{"rect":{"type":"box","instructions":"the red rectangle"}}}"""
+    # A Box question locates something in an image; with none in the request there is nothing
+    # to locate in, and it is refused before anything is sent.
+    e = _ta_caught(() -> _ta_wire(SystemOneRequest("A white page with a red rectangle.",
+                                                   "rect" => box("the red rectangle"); model="jev-1.14.0")))
+    @test e isa ArgumentError && contains(e.msg, "carries none")
 end
 
 @testset "TypeSafe long context — one option, a header, and a key of its own" begin
@@ -206,7 +207,7 @@ _ta_nest(n::Int) = foldl((a, _) -> Any[a], 1:n; init="x")
                        (SystemOneRequest("s", "c" => choice(["a" => _ta_nest(64)]); model="m"), "the criteria of \"c\""),
                        (SystemOneRequest("s", "r" => score([_ta_nest(64)]); model="m"), "the criteria of \"r\""),
                        (SystemOneRequest("s", "n" => noul("q?"; yes=_ta_nest(64)); model="m"), "the criteria of \"n\""),
-                       (SystemOneRequest("s", "b" => box(_ta_nest(65)); model="m"), "the instructions of \"b\""),
+                       (SystemOneRequest(_TA_RED, "b" => box(_ta_nest(65)); model="m"), "the instructions of \"b\""),
                        (SystemOneRequest("s", "x" => RawQuestion(Dict("type" => "rank", "criteria" => _ta_nest(65))); model="m"),
                         "the criteria of \"x\""))
         e = _ta_caught(() -> _ta_wire(r))

@@ -336,6 +336,9 @@ end
 - **`keep_alive`.** `ask(...; keep_alive = 600)` keeps the model loaded for 600
   seconds after the request, `0` unloads it at once and `Inf` keeps it loaded;
   without it the endpoint's own `keep_alive` applies, else the server's default.
+  The endpoint's other settings — `truncate`, `shift` and the
+  [`OllamaOptions`](@ref) such as `num_ctx` — have no field on this route and
+  are not sent.
 - **Confidence.** `confidence` is TypeSafe's published measure, computed from the
   returned probabilities — `(n·p_max − 1)/(n − 1)` for a Choice and
   `1 − Σᵢ pᵢ·|i − m| / MAD_unif`, floored at 0, for a Score

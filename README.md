@@ -387,7 +387,7 @@ with_system_one(OllamaEndpoint(); model = "tev1:0.8b") do     # every call insid
 end
 ```
 
-Each backend refuses before any request what its wire cannot carry, and a `min_confidence` tuned on one does not carry over to another: on the same 129 labelled tickets (2026-10-20) Jev was right on 96.9% of them and OpenAI on 94.6%, and OpenAI was under-confident — in every bin above 0.5 its accuracy was at least its top probability. [Backends: Jev, OpenAI and Local Models](https://algunion.github.io/UniLM.jl/dev/guide/system_one_backends/) compares them.
+Each backend refuses before any request what its wire cannot carry, and a `min_confidence` tuned on one does not carry over to another: on the same 129 labelled tickets (2026-10-20) Jev was right on 96.9% of them and OpenAI on 94.6%, and OpenAI was under-confident — in every bin above 0.5 its accuracy was at least its mean top probability. [Backends: Jev, OpenAI and Local Models](https://algunion.github.io/UniLM.jl/dev/guide/system_one_backends/) compares them.
 
 The Decisions guides, most of them built around one small shop's support desk: [Start Here](https://algunion.github.io/UniLM.jl/dev/guide/jev_start/), [Backends](https://algunion.github.io/UniLM.jl/dev/guide/system_one_backends/), [Decisions with LLMs](https://algunion.github.io/UniLM.jl/dev/guide/jev_with_llms/), [Route and Decide](https://algunion.github.io/UniLM.jl/dev/guide/system_one/), [Dispatch on Meaning](https://algunion.github.io/UniLM.jl/dev/guide/natural_language_dispatch/), [Many Items at Once](https://algunion.github.io/UniLM.jl/dev/guide/semantic_algorithms/) and [Test and Develop](https://algunion.github.io/UniLM.jl/dev/guide/jev_testing/).
 

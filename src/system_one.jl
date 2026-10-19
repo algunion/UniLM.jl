@@ -1303,7 +1303,7 @@ function _system_one_exchange(call::_SystemOneCall, config::Union{Nothing,Reques
         # A missing recording is not a service failure: it must reach the caller. Nor
         # is a paid answer whose recording could not be written.
         e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
-        _callerr(SystemOneCallError, e;
+        _callerr(SystemOneCallError, e; error=_error_text(service, e),
                  request_id=@isdefined(resp) ? _system_one_request_id(protocol, resp) : nothing)
     end
 end
@@ -1488,11 +1488,14 @@ free, which the shipped `jev-*` price rows encode as an output rate of `0.0`. An
 id with a dated snapshot suffix uses its base id's row; a versioned `jev-X.Y.Z`
 id without its own row is priced at the `jev-latest` row (assuming a later Jev
 keeps the price TypeSafe lists for Jev 1.13); any other unpriced name returns
-`0.0`.
+`0.0`. An answer from a model on the caller's own machine — through an
+[`OllamaEndpoint`](@ref) — costs `0.0`, without a missing-price warning, unless
+`model` is passed.
 """
 function estimated_cost(result::SystemOneSuccess; model::Union{String,Nothing}=nothing,
                         pricing::AbstractDict{String,PriceRow}=DEFAULT_PRICING)::Float64
     u = token_usage(result)
+    isnothing(model) && _is_local(result.response.service) && return 0.0
     rates = _price_row(pricing, isnothing(model) ? result.response.model : model)
     isnothing(rates) && return 0.0
     cached = min(u.cached_tokens, u.prompt_tokens)

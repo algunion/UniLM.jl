@@ -70,6 +70,7 @@ include("ollama.jl")
 include("accounting.jl")
 include("system_one.jl")
 include("typesafe.jl")
+include("ollama_system_one.jl")
 include("recorded_answers.jl")
 include("semantic.jl")
 include("files.jl")
@@ -589,6 +590,7 @@ public
     AgenticStreamState,
     SystemOneProtocol,
     TypeSafeProtocol,
+    OllamaSystemOneProtocol,
     system_one_protocol,
     encode_system_one,
     decode_system_one,

@@ -149,6 +149,10 @@ end
         include("system_one.jl")
     end
 
+    @testset "Ollama System One" begin
+        include("ollama_system_one.jl")
+    end
+
     @testset "recorded answers" begin
         include("recorded_answers.jl")
     end
@@ -258,6 +262,10 @@ end
 
     @testset "integration — ollama" begin
         include("integration_ollama.jl")
+    end
+
+    @testset "integration — ollama System One" begin
+        include("integration_ollama_system_one.jl")
     end
 
     @testset "integration — live MCP" begin

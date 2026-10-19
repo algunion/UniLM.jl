@@ -1012,10 +1012,13 @@ _system_one_namespace(p::SystemOneProtocol)::String = String(nameof(typeof(p)))
 # The request id a backend sends with a reply, from its headers.
 _system_one_request_id(::SystemOneProtocol, ::HTTP.Response)::Union{Nothing,String} = nothing
 # How far probabilities over `n` outcomes may sum from 1, and the winner fall short of the
-# maximum, before the answer is malformed. A Float64 sum of `n` decimal values carries at
-# most about `n` units of rounding in the last place; ten times that admits rounding and
-# nothing else. A backend that rounds its probabilities defines its own.
-_probability_tolerance(::SystemOneProtocol, n::Int)::Float64 = 10 * n * eps(1.0)
+# maximum, before the answer is malformed. A backend that normalises in floating point
+# drifts by about `n` units in the last place; 1e-6 admits that with orders of magnitude
+# to spare, and a defect the tolerance could hide — a missing, extra or out-of-range
+# probability — is caught by the key-set and range checks on its own. A backend that
+# rounds its probabilities (to two decimals, say) defines its own.
+const _FLOAT_PROBABILITY_TOLERANCE = 1.0e-6
+_probability_tolerance(::SystemOneProtocol, n::Int)::Float64 = _FLOAT_PROBABILITY_TOLERANCE
 # Whether a backend may decline single questions (`RefusalAnswer`), and send raw questions.
 _allows_refusal(::SystemOneProtocol)::Bool = false
 _allows_raw(::SystemOneProtocol)::Bool = false

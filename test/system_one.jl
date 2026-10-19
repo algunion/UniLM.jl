@@ -174,7 +174,7 @@ _s1_same(::SystemOneAnswer, ::AbstractDict) = false
     @test replays_ok == n            # so no committed recording is rejected by the answer checks
 end
 
-@testset "System One — TypeSafe's probability tolerance is ten times the largest deviation it has shown" begin
+@testset "System One — TypeSafe's probability tolerance is at least ten times the largest deviation it has shown" begin
     # Every Choice and Score distribution the repository holds: the committed recordings
     # and the live captures kept as fixtures.
     bodies = Any[]
@@ -630,7 +630,11 @@ end
 
 @testset "System One — a reply whose answers do not fit the request is a call error, never a success" begin
     @test first(_s1_ask_with(_s1_body())) isa SystemOneSuccess
+    # Floating-point drift far beyond what TypeSafe has shown is still an answer.
+    drift = _s1_body(Dict("dept" => """{"type":"choice","choice":"billing","confidence":0.9,"probabilities":{"billing":0.900000001,"technical":0.1,"sales":0.0}}"""))
+    @test first(_s1_ask_with(drift)) isa SystemOneSuccess
     malformed = [
+        "a sum of 1.001"           => _s1_body(Dict("dept" => """{"type":"choice","choice":"billing","confidence":0.9,"probabilities":{"billing":0.901,"technical":0.1,"sales":0.0}}""")),
         # every asked question answered once, and nothing else
         "answers empty"            => """{"model":"jev-1.13.0","answers":{},"usage":{"input_tokens":1,"output_tokens":0}}""",
         "a question unanswered"    => _s1_body(; drop=["urg"]),

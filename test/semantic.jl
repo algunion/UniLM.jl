@@ -210,7 +210,7 @@ end
     @test nl"abc" === Meaning{Symbol("abc")}
     @test Meaning("abc") isa nl"abc"
     @test nl"abc"() isa nl"abc"
-    @test contains(sprint(show, nl"abc"), "nl\"abc\"")
+    @test contains(sprint(show, nl"abc"), "Meaning{:abc}")       # the type prints as Julia prints it
     @test contains(sprint(show, nl"abc"()), "nl\"abc\"()")
     @test UniLM._description(nl"abc") == "abc"
     @test UniLM._description(nl"abc"()) == "abc"
@@ -616,8 +616,8 @@ end
     text = sprint(showerror, err)
     @test contains(text, "[\"m1\"] is ambiguous between")
     @test all(m -> contains(text, string(m)), methods(ambiguous))
-    @test contains(text, "ambiguous(::nl\"m1\", ::Int64, ::Int64)")
-    @test !contains(text, "::Meaning") && !contains(text, "No method covers")
+    @test contains(text, "ambiguous(::$(nl"m1"), ::Int64, ::Int64)")
+    @test !contains(text, r"::Meaning[,)]") && !contains(text, "No method covers")   # no wildcard advice
 
     # Both kinds in one call: each gap gets the advice that closes it.
     @test meaning_gaps(mixed, Tuple{Int,Int}) == [["n1", "o1"], ["n1", "o2"], ["n2", "o1"]]
@@ -628,7 +628,7 @@ end
     @test contains(text, "No method covers [\"n1\", \"o2\"], [\"n2\", \"o1\"]:")
     @test contains(text, "mixed(::Meaning, ::Meaning, _, _)")
     @test contains(text, "[\"n1\", \"o1\"] is ambiguous between")
-    @test contains(text, "mixed(::nl\"n1\", ::nl\"o1\", ::Int64, ::Int64)")
+    @test contains(text, "mixed(::$(nl"n1"), ::$(nl"o1"), ::Int64, ::Int64)")
 end
 
 @testset "semantic — a partial wildcard is refused as one" begin
@@ -1462,4 +1462,16 @@ end
         UniLM._nl_keyed_plan(templated, Any[String], table)
         @test (@lock UniLM._NL_KEYED_PLANS length(UniLM._NL_KEYED_PLANS[])) <= limit
     end
+end
+
+# ─── 16. How a meaning prints ────────────────────────────────────────────────
+
+@testset "semantic — a Meaning type prints as Julia prints types, and messages keep the sentences" begin
+    # A `show` method for the type would extend `show(::IO, ::Type)` and invalidate the code
+    # compiled to print any type: the type's printing is Base's.
+    @test which(show, Tuple{IO,Type{nl"abc"}}).module === Base
+    @test sprint(show, nl"abc"()) == "nl\"abc\"()"
+    @test meanings(route) == Dict(1 => ["the customer wants a refund", "the customer reports a bug"])
+    err = try nl_dispatch(step, 1, "x"; service=SemanticMock, config=_SEM_CFG); nothing catch e; e end
+    @test err isa ArgumentError && contains(err.msg, "gives an order number") && contains(err.msg, "asks for a human")
 end

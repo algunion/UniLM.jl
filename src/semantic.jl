@@ -60,8 +60,11 @@ Meaning(text::AbstractString) = Meaning{Symbol(text)}()
 _description(::Type{Meaning{S}}) where {S} = String(S)
 _description(::Meaning{S}) where {S} = String(S)
 
+# An instance prints as it is written. The type keeps Julia's own printing,
+# `Meaning{Symbol("…")}`: a method of `show(::IO, ::Type{Meaning{S}})` would extend
+# `show(::IO, ::Type)`, and invalidate the code compiled to print any type in every
+# session that loads UniLM.
 Base.show(io::IO, ::Meaning{S}) where {S} = print(io, "nl\"", S, "\"()")
-Base.show(io::IO, ::Type{Meaning{S}}) where {S} = print(io, "nl\"", S, "\"")
 
 """
     nl"some natural-language description"

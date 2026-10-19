@@ -1,39 +1,37 @@
 # [Many Items at Once](@id jev_algorithms_guide)
 
-Jev answers many questions about one state in a single request: the state is
-read and billed once, each question adds only its own tokens, and the time stays
-about the same. So when you have many
-items — tickets, lines of a chat or a log, rows of a table — put each under its
-own key in the state, point one question at each key, and send them together.
-Julia does the rest: loops, sorting, counting, searching and stopping.
+Many items — tickets, lines of a chat or a log, rows of a table — are judged in
+one of two ways. [`ask_each`](@ref) sends one request per item, many at a time,
+and returns the results in input order: each item is asked exactly as one
+[`ask`](@ref) would ask it alone. Or the items go into one request, each under
+its own key in the state with one question pointed at it: the request is read
+and billed once, each question adds only its own tokens, and the time stays
+about the same. UniLM does not pack items for you: the sections from [Judge a
+batch in one request](@ref jev_items_batch) on show how. Either way, Julia does
+the rest: loops, sorting, counting, searching and stopping.
 
 | I want to… | Use | You get | Section |
 | :--- | :--- | :--- | :--- |
+| judge each of many items in its own request, concurrently | [`ask_each`](@ref)`(items, questions...)` | one typed result per item, in input order | [Many requests at once](@ref jev_items_each) |
 | judge a batch of items in one request: route every ticket in an inbox | one [`ask`](@ref), a Choice per item, each pointed at the item's key | every item's answer from one request | [Judge a batch in one request](@ref jev_items_batch) |
 | rank candidates: which ticket to handle first | a Score per item and a Choice per pair, in one request | the items in order, sorted in Julia | [Rank candidates](@ref jev_items_rank) |
 | find the first line in a log or a chat where something happens | a Noul per line, and `findfirst` | the first line at or above your bar | [Find the first line where something happens](@ref jev_items_find) |
 | match records across two lists: incoming listings against a catalogue | a few candidates per row, picked in Julia, and a Choice per row | the matching record, or none, or a review | [Match records across two lists](@ref jev_items_match) |
 | stop reading a stream as soon as the line is found | worker tasks sending a Noul per line | the first matching line, with the rest cancelled | [Stop reading once it is found](@ref jev_items_stop) |
 
-!!! details "Evidence"
-    Measured on jev-1.13.0 (September 2026): a request with 1 question took
-    0.30 s, and one with 22 questions 0.31 s. Only input tokens are billed
-    ([Models](https://docs.typesafe.ai/models)), and the state is read once per
-    request, however many questions it carries.
-
 Every block that calls Jev runs when this page is built and prints a real
 answer, recorded once and replayed ([Test and Develop](@ref jev_testing_guide)).
 
-## [Judge a batch in one request](@id jev_items_batch)
+## [Many requests at once: `ask_each`](@id jev_items_each)
 
-**The job:** route every ticket in an inbox to its team — or judge any batch of
-items — with one request instead of one per item. **Without Jev**, one
-classifier or LLM call per ticket, or one prompt that lists them all and an
-answer you parse back into items. **With Jev**, each ticket goes under its own
-key in the state, with its own question that names the key in backticks, and one
-request answers every question.
+**The job:** route every ticket of an inbox, each judged on its own, as fast as
+the service allows. **Without `ask_each`**, a loop of [`ask`](@ref) calls one
+after another, or tasks of your own with a limit on how many run, a shared
+backoff when the service is busy, and a way to stop them. **With it**, one call
+sends a request per ticket, several at a time, and returns the results in the
+order of the tickets.
 
-Six tickets, one of them an attempted prompt injection, go out in one request:
+Six tickets, one of them an attempted prompt injection:
 
 ```@example jevalgo
 using UniLM, JSON
@@ -51,8 +49,98 @@ teams = (billing   = "Charges, invoices, refunds, payment methods",
          account   = "Login, passwords, profile, account settings",
          other     = "Anything else")
 
+results = ask_each(tickets, "team" => choice("Which team should handle this ticket?", teams))
+
+for (text, r) in zip(tickets, results)
+    a = r["team"]       # a failed item throws SystemOneError here; test issuccess(r) to handle it
+    println(rpad(a.choice, 10), rpad(a.confidence, 6), text)
+end
+println(length(results), " requests, ", sum(r -> token_usage(r).prompt_tokens, results), " billed input tokens")
+```
+
+Every ticket gets its team. The sixth tells the model to classify it as
+billing, and is routed on what it reports, a lost package, to `shipping`. The
+six requests billed 2,330 input tokens; packed into one request, in the next
+section, the same tickets bill 1,100.
+
+`results[i]` is what [`ask`](@ref) returns for `tickets[i]` alone — a
+[`SystemOneSuccess`](@ref), [`SystemOneFailure`](@ref) or
+[`SystemOneCallError`](@ref) — whatever order the answers arrived in. Every
+request is built and checked by its backend's wrapper before the first goes
+out, so one item that cannot be sent stops the batch with an `ArgumentError`
+that names it, and nothing is sent:
+
+```@example jevalgo
+with_missing = [tickets[1], nothing, tickets[3]]      # a ticket whose text was lost
+
+try
+    ask_each(with_missing, "team" => choice("Which team should handle this ticket?", teams))
+catch err
+    println(sprint(showerror, err))
+end
+```
+
+- **How many at a time.** At most `ntasks` requests are in flight. The default is
+  the backend's: 16 on TypeSafe and on OpenAI's Decisions API, 1 on Ollama, whose
+  decision runners answer one request at a time, and 8 on any other backend — a
+  default, not a limit.
+- **One backoff for the batch.** When the service answers any request with 429
+  or 529, no request of the batch starts until the wait it asked for has passed
+  (`retry-after-ms`, else `Retry-After`); the requests already in flight finish.
+- **Stopping.** `cancel` — a [`CancelToken`](@ref), by default the ambient
+  [`with_cancel`](@ref) token — ends the requests in flight at once and sends no
+  more; each item left unanswered becomes a [`SystemOneCallError`](@ref) whose
+  `cause` is a [`UniLMCancelled`](@ref). `on_result(i, result)` runs as each
+  result lands, in the order they complete: for progress, or to cancel the
+  batch once you know enough. A [`ReplayMissError`](@ref) or
+  [`RecordingWriteError`](@ref), an interrupt, or an error thrown by `on_result`
+  stops the batch too, and the first of them is rethrown once every request has
+  stopped.
+- **Requests of your own.** `ask_each(requests)` sends a vector of
+  [`SystemOneRequest`](@ref)s, each with its own state and questions;
+  [More items than one request holds](@ref jev_items_chunks) uses it.
+
+!!! details "Evidence"
+    Measured live on 20 October 2026 (`jev-1.13.0`): 50 support tickets, three
+    questions each, took 3.28 s through `ask_each` with its default of 16 in
+    flight, and 13.21 s as 50 `ask` calls one after another. The batch used a
+    single connection (HTTP/2). One sequential call came back as a call error,
+    so 49 tickets were answered both ways: their departments matched every
+    time, and their scores differed by at most 0.06 and their Nouls by 0.03, as
+    the answers to identical requests do.
+
+**Tune it**
+
+- **`ntasks`**: raise it for a large batch on a hosted backend whose rate
+  limits allow it; keep 1 on a local Ollama server.
+- **`ask_each` or one request?** `ask_each` asks every item as `ask` would ask
+  it alone, so answers you tested one at a time stay the answers you get. One
+  request for many items bills fewer tokens per item, as the next section
+  shows, and needs its questions pointed at keys.
+- **`config`** applies to every request of the batch: `request_timeout` to
+  each attempt, `total_deadline` to each request with its retries.
+
+## [Judge a batch in one request](@id jev_items_batch)
+
+**The job:** route every ticket in an inbox to its team — or judge any batch of
+items — with one request instead of one per item. **Without Jev**, one
+classifier or LLM call per ticket, or one prompt that lists them all and an
+answer you parse back into items. **With Jev**, each ticket goes under its own
+key in the state, with its own question that names the key in backticks, and one
+request answers every question. UniLM does not pack the items for you: the
+state and the questions are yours to build, as here.
+
+!!! details "Evidence"
+    Measured on jev-1.13.0 (September 2026): a request with 1 question took
+    0.30 s, and one with 22 questions 0.31 s. Only input tokens are billed
+    ([Models](https://docs.typesafe.ai/models)), and the state is read once per
+    request, however many questions it carries.
+
+The same six tickets go out in one request:
+
+```@example jevalgo
 ids   = ["t$i" for i in eachindex(tickets)]
-state = JSON.Object(zip(ids, tickets))       # ordered keys t1 … t6 (a Dict's order is not fixed)
+state = JSON.Object(zip(ids, tickets))       # keys in the order written; a Dict would sort them: t1, t10, t2, …
 r = ask(state, [id => choice("Which team should handle ticket `$id`?", teams) for id in ids])
 
 for (id, text) in zip(ids, tickets)
@@ -63,7 +151,8 @@ println("1 request, ", token_usage(r).prompt_tokens, " billed input tokens")
 
 Every ticket gets its own answer. The sixth tells the model to classify it as
 billing, and is routed on what it reports, a lost package, to `shipping`, at
-confidence 0.8.
+confidence 0.8. The request billed 1,100 input tokens, against 2,330 for the
+six requests `ask_each` sent above.
 
 Keyed items in one request kept the accuracy of one request per item, at less
 than half the input tokens per item. Point each question at a key, never at a
@@ -90,6 +179,7 @@ position in a list: questions about `messages[17]` collapsed as the list grew.
   exactly in its question, in backticks.
 - **A `JSON.Object`, not a `Dict`,** keeps the items in the order you wrote them:
   the order of the state's keys is part of the request, and it can move an answer.
+  A `Dict`'s keys go out sorted as strings, `t10` before `t2`.
 - **One question per item**, so each answer stands on its own; counting, sorting
   and comparing happen in Julia.
 
@@ -97,20 +187,20 @@ position in a list: questions about `messages[17]` collapsed as the list grew.
 
 **The job:** route an inbox larger than one request holds. A request over the
 size limit ([Limits](@ref jev_limits)) is refused whole, so a long collection
-goes in chunks: split the indices with `Iterators.partition`, send the chunks
-concurrently, and keep the global keys so every answer stays addressable.
-`asyncmap` returns its results in input order, so concatenating them restores
-item order:
+goes in chunks: split the indices with `Iterators.partition`, build one
+[`SystemOneRequest`](@ref) per chunk, send them all with [`ask_each`](@ref), and
+keep the global keys so every answer stays addressable. `ask_each` returns its
+results in input order, so concatenating them restores item order:
 
 ```@example jevalgo
 function route(texts; per_request = 150)
     ids = ["t$i" for i in eachindex(texts)]
-    chunks = asyncmap(Iterators.partition(eachindex(texts), per_request); ntasks = 4) do idx
-        r = ask(JSON.Object(ids[i] => texts[i] for i in idx),
-                [ids[i] => choice("Which team should handle ticket `$(ids[i])`?", teams) for i in idx])
-        [r[ids[i]].choice for i in idx]
-    end
-    reduce(vcat, chunks)
+    chunks = collect(Iterators.partition(eachindex(texts), per_request))
+    requests = [SystemOneRequest(JSON.Object(ids[i] => texts[i] for i in idx),
+                                 [ids[i] => choice("Which team should handle ticket `$(ids[i])`?", teams) for i in idx])
+                for idx in chunks]
+    results = ask_each(requests)               # one request per chunk, sent concurrently
+    reduce(vcat, [[r[ids[i]].choice for i in idx] for (r, idx) in zip(results, chunks)])
 end
 
 route(tickets; per_request = 4)       # two requests, 4 + 2 tickets, sent concurrently
@@ -475,8 +565,10 @@ policy` line was flagged as data loss.
   method that runs
 - [Concurrency, Tasks and Cancellation](@ref concurrency_guide) — `asyncmap`,
   `Channel`s, [`CancelToken`](@ref) and [`with_cancel`](@ref)
-- [TypeSafe System One API (Jev)](@ref system_one_api) — [limits](@ref
-  jev_limits) and [cost](@ref jev_cost)
+- [Backends: Jev, OpenAI and Local Models](@ref system_one_backends) — how many
+  requests `ask_each` keeps in flight, and the timeouts, on each backend
+- [System One API](@ref system_one_api) — [limits](@ref jev_limits) and
+  [cost](@ref jev_cost)
 - TypeSafe cookbooks: [line-by-line
   search](https://docs.typesafe.ai/cookbooks/semantic_find) and [parallel
   questions](https://docs.typesafe.ai/cookbooks/parallel_questions)

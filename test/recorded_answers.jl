@@ -867,4 +867,35 @@ end
     end
 end
 
+@testset "recorded answers — a request keyed on more than its body files the extra with it" begin
+    # A System One backend keys its provider options (or image parts) after the body; the
+    # exchange is driven directly here, with a stand-in for the network.
+    dir = mkpath(_ra_dir("key-extra"))
+    body = JSON.json(_ra_request("keyed on more"))
+    extra = "long_context=true"
+    answered = HTTP.Response(200, ["x-typesafe-request-id" => "req_extra"],
+                             Vector{UInt8}("""{"model":"m","answers":{},"usage":{}}"""))
+    calls = Ref(0)
+    exchange(mode::Symbol, key_extra::String) = with_recorded_answers(dir; mode) do
+        UniLM._recorded_exchange(() -> (calls[] += 1; answered), "POST", "/v1/systemone", body, time_ns(), nothing;
+                                 key_extra)
+    end
+    @test exchange(:record, extra).status == 200 && calls[] == 1
+    file = joinpath(dir, _ra_key("POST", "/v1/systemone", body * "\n" * extra) * ".json")
+    rec = JSON.parse(read(file, String))
+    @test rec["request"]["key_extra"] == extra && rec["request"]["body"] == JSON.parse(body)
+    # Replayed under the same extra; with none, or another, it is another request.
+    @test exchange(:replay, extra).status == 200 && calls[] == 1
+    miss = _ra_caught(() -> exchange(:replay, ""))
+    @test miss isa ReplayMissError && miss.body == body && miss.key == _ra_key("POST", "/v1/systemone", body)
+    other = _ra_caught(() -> exchange(:replay, "long_context=false"))
+    @test other isa ReplayMissError && other.body == body * "\nlong_context=false"
+    @test other.key == _ra_key("POST", "/v1/systemone", other.body)
+    @test contains(sprint(showerror, other), "asking \"team\", \"upset\", \"urgency\"")   # its questions still named
+    # With no extra, nothing in the file names one: every earlier key and file stays as it was.
+    exchange(:record, "")
+    plain = JSON.parse(read(joinpath(dir, _ra_key("POST", "/v1/systemone", body) * ".json"), String))
+    @test !haskey(plain["request"], "key_extra")
+end
+
 close(_RL_MOCK.server)

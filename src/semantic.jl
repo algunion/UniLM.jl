@@ -226,7 +226,7 @@ function _branch_select(state, names::Vector{String}, descriptions::Vector{Any};
                         min_confidence::Real=0.0,
                         decide=nothing,
                         instructions=nothing,
-                        service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
+                        service::Union{Nothing,ServiceEndpointSpec}=nothing,
                         config::Union{Nothing,RequestConfig}=nothing,
                         cancel::Union{Nothing,CancelToken}=nothing,
                         on_response=nothing,
@@ -293,7 +293,7 @@ Keywords go between the state and the block, written `key = value`:
 | `min_confidence` | threshold in `0 … 1`; below it, take `_` or throw [`LowConfidenceError`](@ref) |
 | `decide` | a policy called with the [`ChoiceAnswer`](@ref): return an option name — any of them, not only the winner — or `nothing` to take `_` or throw [`DecisionDeclinedError`](@ref) |
 | `instructions` | the question's instructions (default: `"Select the option that best describes the provided state."`) |
-| `service` | endpoint type (default `TYPESAFEServiceEndpoint`) |
+| `service` | endpoint (default: the [`with_system_one`](@ref) backend, else `TYPESAFEServiceEndpoint`) |
 | `config` | `RequestConfig` for this call |
 | `cancel` | [`CancelToken`](@ref) for this call (default: the ambient [`with_cancel`](@ref) token) |
 | `on_response` | called once with the [`SystemOneSuccess`](@ref) before the policy runs, and never for a failed call — audits get `request_id`, `model` and `raw` from its `response`, which `decide` cannot see; its return value is ignored, and an exception from it propagates and runs no body |
@@ -452,10 +452,11 @@ const _NL_TUPLE_OF_PAIRS =
     _nl_table(t) -> _NLTable
 
 The one validator of a table, for every entry point: a `NamedTuple` of sentences or
-a vector of `key => sentence` pairs, holding 1 to 255 entries (the options one
-Choice question takes), each key one a signature can name, each sentence a string
-that is not blank, and no sentence or dispatched value twice. Anything else is an
-`ArgumentError`, raised before any request.
+a vector of `key => sentence` pairs, holding at least one entry, each key one a
+signature can name, each sentence a string that is not blank, and no sentence or
+dispatched value twice. Anything else is an `ArgumentError`, raised before any
+request. How many options one question may offer is the backend's limit, checked
+when the request is sent (TypeSafe: 255).
 """
 _nl_table(t::NamedTuple)::_NLTable = _nl_entries(Pair{Any,Any}[k => v for (k, v) in pairs(t)])
 function _nl_table(t::AbstractVector)::_NLTable
@@ -475,13 +476,10 @@ _nl_table(t) = throw(ArgumentError(
 
 function _nl_entries(entries::Vector{Pair{Any,Any}})::_NLTable
     isempty(entries) && throw(ArgumentError("a table of sentences needs at least one `key => sentence` entry"))
-    length(entries) <= 255 || throw(ArgumentError(
-        "a table of sentences holds at most 255 entries, the options one Choice question takes; " *
-        "got $(length(entries))"))
     said = Dict{String,Any}()     # sentence => its key
     # Dispatched value => its key: `:a` and `Val(:a)` collide, and so do two keys that are
     # equal without being identical (`Vector` and `Array{S,1} where S`), which a hash of
-    # identity would tell apart. A scan: a table holds at most 255 entries.
+    # identity would tell apart. A scan: a table holds the options of one question.
     held = Pair{Any,Any}[]
     for (k, s) in entries
         # Singletons, but each already means something here: a policy returns `nothing`
@@ -1159,7 +1157,7 @@ function meaning_gaps(f, argtypes::Type{<:Tuple}; texts=nothing)::Vector{Vector{
 end
 
 """
-    nl_dispatch(f, args...; model=nothing, service=TYPESAFEServiceEndpoint, config=nothing,
+    nl_dispatch(f, args...; model=nothing, service=nothing, config=nothing,
                 cancel=nothing, min_confidence=0.0, decide=nothing, fallback=nothing,
                 instructions=nothing, state=nothing, texts=nothing, on_response=nothing)
 
@@ -1274,7 +1272,8 @@ nl_dispatch(route, ticket; texts = INTENT)   # sends the 3 sentences; calls rout
 ```
 
 A table is a `NamedTuple` of sentences or a vector of `key => sentence` pairs,
-with at most 255 entries and no sentence or key twice — two keys are the same when
+with no sentence or key twice, and as many entries as the backend lets one question
+offer (255 on TypeSafe, checked before the request) — two keys are the same when
 their dispatched values are `isequal`, as `:a` and `Val(:a)` are. A `Dict` is
 refused: it has no order, and option order is part of what the model reads.
 `nothing` and `missing` cannot be keys: a policy returns `nothing` to decline, and
@@ -1307,7 +1306,7 @@ the chosen key without dispatching.
 """
 function nl_dispatch(f, args...;
                      model::Union{Nothing,AbstractString}=nothing,
-                     service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
+                     service::Union{Nothing,ServiceEndpointSpec}=nothing,
                      config::Union{Nothing,RequestConfig}=nothing,
                      cancel::Union{Nothing,CancelToken}=nothing,
                      min_confidence::Real=0.0,
@@ -1356,7 +1355,7 @@ end
 # `on_response` sees the success before any policy runs on it. `offered` names the
 # options in a message: meanings, or a table's sentences.
 function _nl_ask(payload, questions::Vector{Pair{String,ChoiceQuestion}}, options::Vector{Vector{String}},
-                 offered::String; model::Union{Nothing,AbstractString}, service::ServiceEndpointSpec,
+                 offered::String; model::Union{Nothing,AbstractString}, service::Union{Nothing,ServiceEndpointSpec},
                  config::Union{Nothing,RequestConfig}, cancel::Union{Nothing,CancelToken},
                  on_response)::Vector{ChoiceAnswer}
     result = isnothing(model) ? ask(payload, questions...; service, config, cancel) :
@@ -1392,7 +1391,7 @@ _nl_resolved(offer::_NLKeyedOffer, k::Int, i::Int) = _nl_value(offer.tables[k].k
 
 """
     nl_classify(state, texts; min_confidence=0.0, decide=nothing, fallback=nothing,
-                instructions=nothing, model=nothing, service=TYPESAFEServiceEndpoint,
+                instructions=nothing, model=nothing, service=nothing,
                 config=nothing, cancel=nothing, on_response=nothing)
 
 Classify `state` against ONE table of `key => sentence` entries and return the
@@ -1405,9 +1404,9 @@ One [`ask`](@ref) goes out, with one [`choice`](@ref) question named
 no descriptions and the default instructions of `nl_dispatch` unless
 `instructions`, a `String`, is given; `state` is sent as given. The keys never
 reach the model. The table is checked as `nl_dispatch` checks it — a `Dict`, an
-empty table or one of more than 255 entries, a blank sentence, a sentence or key
-given twice, or a key no signature could name is an `ArgumentError` before the
-request — and a tuple of tables is an `ArgumentError` too.
+empty table or one longer than the backend accepts (255 on TypeSafe), a blank
+sentence, a sentence or key given twice, or a key no signature could name is an
+`ArgumentError` before the request — and a tuple of tables is an `ArgumentError` too.
 
 The decision policy is that of `nl_dispatch`: the argmax gated by
 `min_confidence`, or `decide`, called with the [`ChoiceAnswer`](@ref) and
@@ -1439,7 +1438,7 @@ function nl_classify(state, texts;
                      fallback=nothing,
                      instructions::Union{Nothing,AbstractString}=nothing,
                      model::Union{Nothing,AbstractString}=nothing,
-                     service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
+                     service::Union{Nothing,ServiceEndpointSpec}=nothing,
                      config::Union{Nothing,RequestConfig}=nothing,
                      cancel::Union{Nothing,CancelToken}=nothing,
                      on_response=nothing)

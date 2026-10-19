@@ -38,12 +38,16 @@ it were one.
 # Fields
 - `dir::String`: the recordings directory that was searched.
 - `key::String`: the recording key; the recording is the file `<dir>/<key>.json`.
-- `method::String`, `path::String`: the request line, e.g. `"POST"` and
+- `method::String`, `path::String`: the request line as keyed, e.g. `"POST"` and
   `"/v1/systemone"` or `"/v1/chat/completions"`: the path of the request URL alone,
-  never its host or query.
-- `body::String`: the request body the key was computed over — the exact body,
-  with the credentials [`with_recorded_answers`](@ref) never writes replaced by
-  `"<redacted>"` (empty for `GET /v1/models`).
+  never its host or query — for a System One backend other than TypeSafe, after the
+  backend's namespace (`"/<namespace>/v1/systemone"`), so backends never share a
+  recording.
+- `body::String`: what the key was computed over after the request line — the exact
+  body, with the credentials [`with_recorded_answers`](@ref) never writes replaced by
+  `"<redacted>"` (empty for `GET /v1/models`), followed, for a System One request
+  whose backend keys more than its body (its provider options, the digests of its
+  image parts), by a newline and that canonical text.
 - `reason::String`: `"no recording"`, or `"unreadable recording: …"` followed by
   what is wrong with the file — not JSON, no `response` object, a status other
   than 200, a `body` that is not a JSON object, a `request_id` that is neither
@@ -53,9 +57,9 @@ it were one.
 `showerror` names the request line, the start of the key, what the request asked
 for — a System One request's questions, any other request's `model` — the
 directory or (for an unreadable recording) the file, and how to record the
-answer: with `TYPESAFE_API_KEY` set for a System One request, with the provider's
-API key set for any other. An unreadable file must be deleted first, because
-`:record_missing` never overwrites one.
+answer: with `TYPESAFE_API_KEY` set for a TypeSafe request, with access to the
+provider — its API key, or a local server running — for any other. An unreadable
+file must be deleted first, because `:record_missing` never overwrites one.
 """
 struct ReplayMissError <: Exception
     dir::String
@@ -70,18 +74,18 @@ const _NO_RECORDING = "no recording"
 
 function Base.showerror(io::IO, e::ReplayMissError)
     print(io, "ReplayMissError: ", e.method, " ", e.path, " (key ", first(e.key, 12), "…)")
-    parsed = _typesafe_parse_body(e.body)
+    # A keyed body is the JSON body, then — for a request keyed on more — a newline and
+    # that text; the JSON writers here never put a raw newline in a body.
+    parsed = _typesafe_parse_body(first(split(e.body, '\n'; limit=2)))
     field(name::String) = parsed isa AbstractDict ? get(parsed, name, nothing) : nothing
-    systemone = e.path in (SYSTEMONE_PATH, TYPESAFE_MODELS_PATH)
-    if systemone
-        asked = field("questions")
-        asked isa AbstractDict && !isempty(asked) &&
-            print(io, " asking ", join(sort!([repr(string(k)) for k in keys(asked)]), ", "))
-    else
-        model = field("model")
-        model isa AbstractString && print(io, " for model ", repr(model))
+    asked = field("questions")
+    model = field("model")
+    if asked isa AbstractDict           # a System One request, on any backend
+        isempty(asked) || print(io, " asking ", join(sort!([repr(string(k)) for k in keys(asked)]), ", "))
+    elseif model isa AbstractString
+        print(io, " for model ", repr(model))
     end
-    needs = systemone ? "TYPESAFE_API_KEY set" :
+    needs = e.path in (SYSTEMONE_PATH, TYPESAFE_MODELS_PATH) ? "TYPESAFE_API_KEY set" :
             "access to the provider (its API key set, or a local server such as Ollama running)"
     record = string("run the same code with ", needs, " and `mode = :record_missing`.")
     e.reason == _NO_RECORDING ?
@@ -179,16 +183,22 @@ must not absorb the lost write as a service failure.
 A recording is `<dir>/<key>.json`, where `key` is the lowercase hex SHA-256 of
 `"<METHOD> <path>\\n"` followed by the exact request body, and `<path>` is the
 path of the request URL alone: never its host, nor its query, which can carry a
-credential. The key is never a canonical form of the request: the order of
-Choice options and of the state's keys moves the answer, so a reordered request
-is a different request. The one change to the body is a credential it carries:
+credential. A System One backend other than TypeSafe files its requests under a
+namespace of its own, `"/<namespace>/v1/systemone"`, so the same question asked of
+two backends is two recordings; and a System One request that carries provider
+options (or image parts) appends a newline and their canonical text — options as
+sorted `name=value` lines with JSON values — to the body it is keyed on, so a
+request without them keeps its key. The key is never a canonical form of the
+request: the order of Choice options and of the state's keys moves the answer, so
+a reordered request is a different request. The one change to the body is a credential it carries:
 in each object of its top-level `tools` array, an MCP tool's `authorization` and
 `headers` (`"type": "mcp"`, the OpenAI Responses wire), a Gemini Interactions MCP
 server's `headers` (`"mcp_server"`) and the `api_key` of a Gemini `"retrieval"`
 tool's `exa_ai_search_config` and `parallel_ai_search_config` read `"<redacted>"`
 in the key, the file and a `ReplayMissError`, so a replay needs none of them; the
-request sent carries them as given. The file holds the request, the response body
-with its request id and the name of the header that carried it
+request sent carries them as given. The file holds the request (with that
+canonical text as `key_extra` when there is one — never an image's bytes), the
+response body with its request id and the name of the header that carried it
 (`x-typesafe-request-id`, `x-request-id` or `request-id`), and the time of
 recording, pretty-printed so a diff is readable; the API key, the headers, and an
 MCP tool's `authorization` and `headers` are never written. A
@@ -249,6 +259,10 @@ function _writable_dir(root::String)::Nothing
     nothing
 end
 
+# The body a request is keyed on: the body, then a newline and `key_extra` when there is
+# one, so a request without it keeps its key.
+_keyed_body(body::String, key_extra::String)::String = isempty(key_extra) ? body : string(body, '\n', key_extra)
+
 _answer_key(method::String, path::String, body::String)::String =
     bytes2hex(sha256(string(method, ' ', path, '\n', body)))
 
@@ -308,23 +322,26 @@ end
 # scope `live()` runs as it always did. The cancel check mirrors the seam's first
 # one, so a cancelled call reads no recording, just as it sends nothing. `live()`
 # sends the body as given; the scopes see it with its credentials replaced.
+# `key_extra` is what a System One request is keyed on beyond its body (its options,
+# its image parts' digests): keyed and recorded, never sent.
 function _recorded_exchange(live::Function, method::String, url::String, body::String,
-                            t0::UInt64, tok::Union{Nothing,CancelToken})::HTTP.Response
+                            t0::UInt64, tok::Union{Nothing,CancelToken}; key_extra::String="")::HTTP.Response
     iscancelled(tok) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
     scope = _ANSWER_SCOPE[]
-    isnothing(scope) ? live() : _exchange(scope, method, _request_path(url), _redacted(body), live)
+    isnothing(scope) ? live() : _exchange(scope, method, _request_path(url), _redacted(body), key_extra, live)
 end
 
-_exchange(::Nothing, ::String, ::String, ::String, live::Function)::HTTP.Response = live()
+_exchange(::Nothing, ::String, ::String, ::String, ::String, live::Function)::HTTP.Response = live()
 
 # A file that is not a readable recording is as loud as a missing one: returned as
 # a call error, it would read as a service failure. `:record` never reads it, so
 # recording over it is how it gets replaced.
-function _exchange(s::_AnswerScope, method::String, path::String, body::String,
+function _exchange(s::_AnswerScope, method::String, path::String, body::String, key_extra::String,
                    live::Function)::HTTP.Response
-    key = _answer_key(method, path, body)
+    keyed = _keyed_body(body, key_extra)
+    key = _answer_key(method, path, keyed)
     file = joinpath(s.dir, key * ".json")
-    miss(reason::String) = ReplayMissError(s.dir, key, method, path, body, reason)
+    miss(reason::String) = ReplayMissError(s.dir, key, method, path, keyed, reason)
     if s.mode !== :record && isfile(file)
         return try
             _replayed(file)
@@ -336,8 +353,8 @@ function _exchange(s::_AnswerScope, method::String, path::String, body::String,
         end
     end
     s.mode === :replay && throw(miss(_NO_RECORDING))
-    resp = _exchange(s.parent, method, path, body, live)
-    resp.status == 200 && _record(file, method, path, body, resp)
+    resp = _exchange(s.parent, method, path, body, key_extra, live)
+    resp.status == 200 && _record(file, method, path, body, key_extra, resp)
     resp
 end
 
@@ -377,15 +394,19 @@ function _request_id_header(resp::HTTP.Response)::Union{Nothing,Pair{String,Stri
     nothing
 end
 
-function _record(file::String, method::String, path::String, body::String, resp::HTTP.Response)::Nothing
+function _record(file::String, method::String, path::String, body::String, key_extra::String,
+                 resp::HTTP.Response)::Nothing
     id = _request_id_header(resp)
     response = JSON.Object{String,Any}("status" => 200, "request_id" => isnothing(id) ? nothing : last(id))
     isnothing(id) || (response["request_id_header"] = first(id))
     # Parsed from the bytes, which stay unconsumed for the caller's own decoding.
     response["body"] = JSON.parse(resp.body)
+    request = JSON.Object{String,Any}(
+        "method" => method, "path" => path, "body" => isempty(body) ? nothing : JSON.parse(body))
+    # What the request is keyed on beyond its body, so the file shows what it answers.
+    isempty(key_extra) || (request["key_extra"] = key_extra)
     rec = JSON.Object{String,Any}(
-        "request" => JSON.Object{String,Any}(
-            "method" => method, "path" => path, "body" => isempty(body) ? nothing : JSON.parse(body)),
+        "request" => request,
         "response" => response,
         "recorded_at" => _rfc3339_utc(time()))
     try

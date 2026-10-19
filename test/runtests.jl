@@ -145,6 +145,10 @@ end
         include("typesafe.jl")
     end
 
+    @testset "system one" begin
+        include("system_one.jl")
+    end
+
     @testset "recorded answers" begin
         include("recorded_answers.jl")
     end

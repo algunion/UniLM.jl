@@ -68,6 +68,7 @@ include("deepseek.jl")
 include("completions.jl")
 include("ollama.jl")
 include("accounting.jl")
+include("system_one.jl")
 include("typesafe.jl")
 include("recorded_answers.jl")
 include("semantic.jl")
@@ -363,7 +364,7 @@ export
     moderate,
     is_flagged
 
-# ─── TypeSafe System One API (Jev) ───
+# ─── System One (TypeSafe's Jev and other backends) ───
 export
     TYPESAFEServiceEndpoint,
     SystemOneQuestion,
@@ -371,15 +372,22 @@ export
     ScoreQuestion,
     NoulQuestion,
     NoulCriteria,
+    BoxQuestion,
+    RawQuestion,
     choice,
     score,
     noul,
+    box,
     SystemOneRequest,
     ask,
+    with_system_one,
     SystemOneAnswer,
     ChoiceAnswer,
     ScoreAnswer,
     NoulAnswer,
+    BoxCoordinates,
+    BoxAnswer,
+    RefusalAnswer,
     UnknownAnswer,
     SystemOneResponse,
     SystemOneSuccess,
@@ -564,8 +572,9 @@ export
 
 # ─── Provider extension API (public, not exported) ───────────────────────────
 # The functions a new backend adds methods to, and the stream-state types its
-# handlers mutate: routing and authentication, the default-model hook, and the
-# chat and agentic wire seams (see the Custom Backends guide).
+# handlers mutate: routing and authentication, the default-model hook, the
+# chat and agentic wire seams (see the Custom Backends guide), and the System
+# One protocol seam.
 public
     get_url,
     auth_header,
@@ -577,7 +586,13 @@ public
     encode_agentic,
     decode_agentic,
     decode_agentic_stream,
-    AgenticStreamState
+    AgenticStreamState,
+    SystemOneProtocol,
+    TypeSafeProtocol,
+    system_one_protocol,
+    encode_system_one,
+    decode_system_one,
+    SystemOneWire
 
 # Every concrete result type whose exported name ends in `Success` reports
 # success; the generic `issuccess(::LLMRequestResponse)` fallback (in api.jl)

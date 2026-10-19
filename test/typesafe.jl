@@ -165,12 +165,19 @@ _ts_request_02() = SystemOneRequest(
     @test pos2("\"zeta\"") < pos2("\"alpha\"") < pos2("\"mid\"")
 end
 
-@testset "TypeSafe — construction rejects what the server would reject" begin
-    # Choice: 1..255 options, non-empty names, known criteria shapes.
+"The body TypeSafe's encoder sends for `r` (it throws what TypeSafe refuses)."
+_ts_wire(r::SystemOneRequest) = UniLM.encode_system_one(UniLM.TypeSafeProtocol(), TYPESAFEServiceEndpoint, r)
+
+@testset "TypeSafe — construction and the encoder reject what the server would reject" begin
+    # Choice: at least one option, non-empty names, known criteria shapes; TypeSafe's
+    # 255-option limit is its encoder's, checked before the request is sent.
     @test length(choice(["a"]).criteria) == 1
     names255 = ["opt$(lpad(i, 3, '0'))" for i in 0:254]
     @test length(choice("pick", names255).criteria) == 255
-    @test_throws ArgumentError choice("pick", [names255; "opt255"])          # 256
+    @test _ts_wire(SystemOneRequest("s", "c" => choice("pick", names255))) isa UniLM.SystemOneWire
+    c256 = choice("pick", [names255; "opt255"])                              # 256: a valid question...
+    @test length(c256.criteria) == 256
+    @test_throws ArgumentError _ts_wire(SystemOneRequest("s", "c" => c256))   # ...that TypeSafe refuses
     @test_throws ArgumentError choice("pick", String[])                      # 0
     @test_throws ArgumentError choice("pick", Dict{String,Any}())
     @test_throws ArgumentError choice("pick", ["" => "blank name"])
@@ -182,11 +189,13 @@ end
     @test collect(keys(choice((a = "A", b = "B")).criteria)) == ["a", "b"]
     @test collect(keys(choice(["b" => "B", :a => "A"]).criteria)) == ["b", "a"]
 
-    # Score: 1..10 levels, never `nothing`.
+    # Score: at least one level, never `nothing`; TypeSafe's limit of 10 is its encoder's.
     @test length(score(["only"]).criteria) == 1
     ten = ["level $i" for i in 0:9]
     @test length(score("rate", ten).criteria) == 10
-    @test_throws ArgumentError score("rate", [ten; "level 10"])               # 11
+    @test _ts_wire(SystemOneRequest("s", "r" => score("rate", ten))) isa UniLM.SystemOneWire
+    @test length(score("rate", [ten; "level 10"]).criteria) == 11
+    @test_throws ArgumentError _ts_wire(SystemOneRequest("s", "r" => score("rate", [ten; "level 10"])))   # 11
     @test_throws ArgumentError score("rate", [])                             # 0
     @test_throws ArgumentError score("rate", ["ok", nothing])
     @test_throws ArgumentError score("rate", ["ok", 3])
@@ -223,15 +232,20 @@ end
     @test_throws ArgumentError SystemOneRequest("s", q; model = "")
     @test_throws ArgumentError SystemOneRequest("s", q; model = "   ")
 
-    # `state` has no `nothing` member: an unset state is a type error here, not
+    # `state` has no `nothing` member: an unset state is an ArgumentError here, not
     # a 422 after a round trip.
-    @test_throws Union{MethodError,ArgumentError} SystemOneRequest(nothing, q)
+    @test_throws ArgumentError SystemOneRequest(nothing, q)
 
-    # Default model comes from the environment, read at call time.
-    @test SystemOneRequest("s", q).model == "jev-latest"
+    # The default model comes from the environment, read when the request is sent.
+    @test SystemOneRequest("s", q).model === nothing
+    sent_model(r) = JSON.parse(_ts_wire(r).body)["model"]
+    withenv(UniLM.TYPESAFE_DEFAULT_MODEL_ENV => nothing) do
+        @test sent_model(SystemOneRequest("s", q)) == "jev-latest"
+    end
     withenv(UniLM.TYPESAFE_DEFAULT_MODEL_ENV => "jev-1.13.0") do
         @test UniLM.default_typesafe_model() == "jev-1.13.0"
-        @test SystemOneRequest("s", q).model == "jev-1.13.0"
+        @test sent_model(SystemOneRequest("s", q)) == "jev-1.13.0"
+        @test sent_model(SystemOneRequest("s", q; model="jev-preview")) == "jev-preview"   # a named model wins
     end
     withenv(UniLM.TYPESAFE_DEFAULT_MODEL_ENV => "   ") do
         @test UniLM.default_typesafe_model() == "jev-latest"   # blank is not a choice
@@ -555,7 +569,7 @@ end
     @test_throws ArgumentError ask("x", noul("q?"); service=OPENAIServiceEndpoint)
     @test_throws ArgumentError list_models(; service=OPENAIServiceEndpoint)
     err = try ask("x", noul("q?"); service=OPENAIServiceEndpoint) catch e; e end
-    @test contains(sprint(showerror, err), "TypeSafe System One API is not supported")
+    @test contains(sprint(showerror, err), "System One API is not supported by OPENAIServiceEndpoint")
 
     # And the chat/agentic/embedding verbs reject this endpoint, loudly, with no
     # network: a System One model answers questions, it does not generate text.

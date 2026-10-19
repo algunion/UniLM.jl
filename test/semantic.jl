@@ -1044,7 +1044,7 @@ end
     refusals = [
         "a Dict"                       => (dispatch(key_route, "t"; texts=Dict(:a => "A", :b => "B")), "collect(pairs(d))"),
         "an empty table"               => (dispatch(key_route, "t"; texts=NamedTuple()), "at least one"),
-        "more than 255 entries"        => (dispatch(key_route, "t"; texts=many), "at most 255"),
+        "more than 255 entries"        => (classify(many), "TypeSafe accepts at most 255 options"),
         "a sentence that is no string" => (dispatch(key_route, "t"; texts=(a = 1,)), "non-empty string"),
         "a blank sentence"             => (dispatch(key_route, "t"; texts=(a = "  ",)), "non-empty string"),
         "a repeated sentence"          => (dispatch(key_route, "t"; texts=[:a => "same", :b => "same"]), "could not tell them apart"),
@@ -1309,7 +1309,7 @@ end
     @test classify(; mock=(; status=500, body="""{"detail":"boom"}""")) isa SystemOneError
 end
 
-@testset "semantic — an answer that was not offered is refused in the words of what was" begin
+@testset "semantic — an answer that was not offered is a failed call, never a dispatch" begin
     caught(f) = try f(); nothing catch e; e end
     stray = "a sentence nobody offered"
     (literal, keyed, classified), _ = _with_semantic_mock(; pick=Dict("meaning_1" => stray, "classify" => stray)) do
@@ -1317,11 +1317,10 @@ end
          caught(() -> nl_dispatch(intent_route, "t"; service=SemanticMock, config=_SEM_CFG, texts=INTENT)),
          caught(() -> nl_classify("t", INTENT; service=SemanticMock, config=_SEM_CFG))]
     end
-    @test literal isa ArgumentError && literal.msg == "the model chose \"a sentence nobody offered\" for \"meaning_1\", " *
-        "which is not one of the offered meanings: [\"the customer wants a refund\", \"the customer reports a bug\"]"
-    for e in (keyed, classified)
-        @test e isa ArgumentError && contains(e.msg, "not one of the offered sentences: ") &&
-              !contains(e.msg, "offered meanings")
+    # `ask` checks every answer against the request, so the reply is a call error naming the stray option.
+    for e in (literal, keyed, classified)
+        @test e isa SystemOneError && e.result isa SystemOneCallError &&
+              contains(e.result.error, "\"a sentence nobody offered\", which was not one of the options offered")
     end
 end
 

@@ -48,9 +48,12 @@ each level to its label, and a `refusal` — the API may decline any question �
 a [`RefusalAnswer`](@ref). Probabilities and confidences arrive rounded to two
 decimals, so a distribution over `n` outcomes may sum to 1 within `0.005n`.
 `usage` counts input, cached and output tokens; `request_id` is the
-`x-request-id` header; a non-2xx reply is a [`SystemOneFailure`](@ref) whose
-`error_type` is the error's `code`, else its `type`. Recordings are filed under
-`/openai-decisions/v1/decisions`. [`estimated_cost`](@ref) bills what OpenAI
+`x-request-id` header; a reply with a status other than 200 is a
+[`SystemOneFailure`](@ref) whose `error_type` is the error's `code`, else its
+`type`. Recordings are filed under `/openai-decisions/v1/decisions`, keyed
+without the two options, which change how a request is served but never what it
+is answered, and with each image as the SHA-256 of its base64 text, never its
+bytes. [`estimated_cost`](@ref) bills what OpenAI
 bills: every input token, cached ones included, at the model's input rate, twice
 that for a request of more than 272K input tokens, and no output.
 
@@ -266,11 +269,15 @@ function encode_system_one(p::OpenAIDecisionsProtocol, service, request::SystemO
     body["model"] = _system_one_model(p, service, request)
     body["input"] = _decisions_input(request.state)
     body["questions"] = questions
+    url, keyed = _api_base_url(service) * _DECISIONS_PATH, _system_one_body(body)
+    isempty(options) && return SystemOneWire("POST", url, _DECISIONS_PATH, keyed)
+    # The options choose a prompt cache and an identity for abuse monitoring: they change
+    # how a request is served, never what it is answered, so they are sent as fields of the
+    # body and left out of what a recording is keyed on.
     for (k, v) in options
         body[k] = v
     end
-    # The options are fields of the body, so the body alone keys a recording.
-    SystemOneWire("POST", _api_base_url(service) * _DECISIONS_PATH, _DECISIONS_PATH, _system_one_body(body))
+    SystemOneWire("POST", url, _DECISIONS_PATH, _system_one_body(body); record_body=keyed)
 end
 
 # ─── Decoding ────────────────────────────────────────────────────────────────

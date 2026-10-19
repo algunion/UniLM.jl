@@ -899,8 +899,8 @@ _no_parts() = Pair{String,ImageAttachment}[]
 _no_headers() = Pair{String,String}[]
 
 """
-    SystemOneWire(method, url, path, body, parts, headers, key_extra)
-    SystemOneWire(method, url, path, body; parts=[], headers=[], key_extra="")
+    SystemOneWire(method, url, path, body, parts, headers, key_extra[, record_body])
+    SystemOneWire(method, url, path, body; parts=[], headers=[], key_extra="", record_body=body)
 
 One System One exchange as a protocol encoded it — what is sent and what its
 recording is keyed by. Credentials are not part of it: the endpoint's
@@ -925,6 +925,11 @@ no key.
 - `key_extra::String`: appended to what the recording key is computed over, after
   a newline, when it is not empty — the canonical form of the request's options,
   digests of its parts — so requests that differ only there are recorded apart.
+- `record_body::String`: the body as a recording is keyed on and writes it —
+  `body` itself unless the protocol leaves out fields that change how a request
+  is served but never what it is answered (Ollama's `keep_alive`; OpenAI's
+  `prompt_cache_key` and `safety_identifier`), so requests that differ only
+  there replay one recording. What is sent is `body`.
 
 Public extension API (not exported).
 """
@@ -936,8 +941,10 @@ struct SystemOneWire
     parts::Vector{Pair{String,ImageAttachment}}
     headers::Vector{Pair{String,String}}
     key_extra::String
+    record_body::String
     function SystemOneWire(method::AbstractString, url::AbstractString, path::AbstractString, body::AbstractString,
-                           parts::AbstractVector, headers::AbstractVector, key_extra::AbstractString)
+                           parts::AbstractVector, headers::AbstractVector, key_extra::AbstractString,
+                           record_body::AbstractString)
         isempty(method) && throw(ArgumentError("a System One wire needs an HTTP method"))
         startswith(path, '/') && !occursin(r"[?#]", path) || throw(ArgumentError(
             "a System One wire's keyed path must start with \"/\" and hold no query or fragment; got $(repr(path))"))
@@ -948,12 +955,16 @@ struct SystemOneWire
                 "got $(repr(name))"))
             push!(seen, name)
         end
-        new(method, url, path, body, parts, headers, key_extra)
+        new(method, url, path, body, parts, headers, key_extra, record_body)
     end
 end
 
-SystemOneWire(method, url, path, body; parts=_no_parts(), headers=_no_headers(), key_extra="") =
-    SystemOneWire(method, url, path, body, parts, headers, key_extra)
+SystemOneWire(method::AbstractString, url::AbstractString, path::AbstractString, body::AbstractString,
+              parts::AbstractVector, headers::AbstractVector, key_extra::AbstractString) =
+    SystemOneWire(method, url, path, body, parts, headers, key_extra, body)
+
+SystemOneWire(method, url, path, body; parts=_no_parts(), headers=_no_headers(), key_extra="", record_body=body) =
+    SystemOneWire(method, url, path, body, parts, headers, key_extra, record_body)
 
 """
     system_one_protocol(service) -> SystemOneProtocol
@@ -1351,22 +1362,23 @@ function _system_one_send(cfg::RequestConfig, t0::UInt64, protocol::SystemOnePro
 end
 
 # One call's exchange: through any recorded-answers scope (keyed by the protocol's
-# namespace, the wire's path, body and key_extra) to the live send, then the protocol's
-# decoding. A missing or unwritable recording and an interrupt propagate; anything else
-# that goes wrong is the call's error, with the reply's request id when one arrived. The
-# backend's own default config applies when no channel the user controls sets one.
+# namespace, the wire's path, record_body and key_extra) to the live send of its body,
+# then the protocol's decoding. A missing or unwritable recording and an interrupt
+# propagate; anything else that goes wrong is the call's error, with the reply's request
+# id when one arrived. The backend's own default config applies when no channel the user
+# controls sets one, and its `total_deadline` runs from `t0`.
 function _system_one_exchange(call::_SystemOneCall, config::Union{Nothing,RequestConfig},
-                              cancel::Union{Nothing,CancelToken}; hooks...)
+                              cancel::Union{Nothing,CancelToken}; t0::UInt64=time_ns(), hooks...)
     (; protocol, service, request, wire) = call
     cfg = _resolve_config(config, _system_one_default_config(protocol, service))
-    tok = _resolve_cancel(cancel); t0 = time_ns()
+    tok = _resolve_cancel(cancel)
     # Asserted: `protocol` is abstract here, and once a hook has more methods than inference
     # splits over, its result would be inferred as `Any` however each method is annotated.
     ns = _system_one_namespace(protocol)::String
     local resp
     try
-        resp = _recorded_exchange(wire.method, isempty(ns) ? wire.path : "/" * ns * wire.path, wire.body, t0, tok;
-                                  key_extra=wire.key_extra) do
+        resp = _recorded_exchange(wire.method, isempty(ns) ? wire.path : "/" * ns * wire.path, wire.record_body, t0,
+                                  tok; key_extra=wire.key_extra) do
             _system_one_send(cfg, t0, protocol, service, wire, tok; hooks...)
         end
         decode_system_one(protocol, service, request, resp)::Union{SystemOneSuccess,SystemOneFailure}

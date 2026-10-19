@@ -17,7 +17,9 @@ Ollama's System One wire, the protocol [`OllamaEndpoint`](@ref) speaks:
 form TypeSafe's wrapper writes — `state`, `model`, `questions`, then
 `keep_alive` when one is set — answered by a local decision model such as
 `tev1:0.8b` and decoded as a TypeSafe reply is. No key is sent, no request id
-comes back, and recordings are filed under the namespace `"ollama"`.
+comes back, and recordings are filed under the namespace `"ollama"`, keyed
+without `keep_alive`, which changes how long the model stays loaded but never an
+answer.
 
 There is no default model: the call names one (`model = "tev1:0.8b"`), or a
 [`with_system_one`](@ref) scope does. Before any I/O it refuses what Ollama's
@@ -159,8 +161,12 @@ function encode_system_one(p::OllamaSystemOneProtocol, service, request::SystemO
         "Ollama refuses a blank `state`: it must hold the content the questions are about"))
     keep_alive = _ollama_system_one_keep_alive(request.options, service)
     o = _system_one_json(request, _system_one_model(p, service, request))
-    isnothing(keep_alive) || (o["keep_alive"] = _ollama_keep_alive(keep_alive))
-    SystemOneWire("POST", _api_base_url(service) * SYSTEMONE_PATH, SYSTEMONE_PATH, _system_one_body(o))
+    url, keyed = _api_base_url(service) * SYSTEMONE_PATH, _system_one_body(o)
+    isnothing(keep_alive) && return SystemOneWire("POST", url, SYSTEMONE_PATH, keyed)
+    # How long the model stays loaded afterwards changes no answer: it is sent, and left out
+    # of what a recording is keyed on.
+    o["keep_alive"] = _ollama_keep_alive(keep_alive)
+    SystemOneWire("POST", url, SYSTEMONE_PATH, _system_one_body(o); record_body=keyed)
 end
 
 # ─── Decoding ────────────────────────────────────────────────────────────────

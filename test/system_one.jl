@@ -149,9 +149,10 @@ _s1_same(::SystemOneAnswer, ::AbstractDict) = false
             for (key, rec) in corpus
                 req = _s1_rebuild(rec["request"]["body"])
                 wire = UniLM.encode_system_one(UniLM.TypeSafeProtocol(), TYPESAFEServiceEndpoint, req)
-                # (i) the key: TypeSafe keeps the plain path and keys nothing beyond the body.
+                # (i) the key: TypeSafe keeps the plain path and keys the body it sends, nothing
+                # more and nothing less.
                 keys_ok += wire.path == "/v1/systemone" && isempty(wire.key_extra) && isempty(wire.parts) &&
-                           _s1_key("POST", wire.path, wire.body) == key
+                           wire.record_body == wire.body && _s1_key("POST", wire.path, wire.record_body) == key
                 # (ii) the body: a recording stores it parsed, so it is compared parsed, key order included.
                 bodies_ok += JSON.json(JSON.parse(wire.body)) == JSON.json(rec["request"]["body"])
                 # (iii) the replay: the same success, field by field, with no key set.
@@ -318,6 +319,51 @@ end
     e = _s1_caught(() -> UniLM.decode_system_one(_BareProtocol(), _BareEndpoint, SystemOneRequest("s", noul("q?")),
                                                  HTTP.Response(200, "{}")))
     @test e isa ArgumentError && contains(e.msg, "_BareProtocol")
+end
+
+# A backend whose `hint` option is sent but does not change an answer, so its recording
+# is keyed on the body without it.
+struct _TrimProtocol <: UniLM.SystemOneProtocol end
+struct _TrimEndpoint <: UniLM.ServiceEndpoint end
+UniLM.provider_capabilities(::Type{_TrimEndpoint}) = Set([:system_one])
+UniLM.system_one_protocol(::Type{_TrimEndpoint}) = _TrimProtocol()
+UniLM.auth_header(::Type{_TrimEndpoint}) = ["Content-Type" => "application/json"]
+UniLM._system_one_namespace(::_TrimProtocol) = "trim"
+UniLM._system_one_default_model(::_TrimProtocol, _) = "trim-model"
+function UniLM.encode_system_one(p::_TrimProtocol, service, r::SystemOneRequest)
+    o = UniLM._system_one_json(r, UniLM._system_one_model(p, service, r))
+    keyed = UniLM._system_one_body(o)
+    haskey(r.options, :hint) && (o["hint"] = r.options.hint)
+    UniLM.SystemOneWire("POST", _S1_BASE[] * "/v1/systemone", "/v1/systemone", UniLM._system_one_body(o);
+                        record_body=keyed)
+end
+UniLM.decode_system_one(::_TrimProtocol, service, r::SystemOneRequest, resp::HTTP.Response) =
+    UniLM.decode_system_one(UniLM.TypeSafeProtocol(), service, r, resp)
+
+@testset "System One — a wire keys and records its record_body, and sends its body" begin
+    W = UniLM.SystemOneWire
+    none, heads = Pair{String,ImageAttachment}[], Pair{String,String}[]
+    @test W("POST", "u", "/p", "{\"a\":1}").record_body == "{\"a\":1}"                   # by default, the body
+    @test W("POST", "u", "/p", "b", none, heads, "k").record_body == "b"
+    @test W("POST", "u", "/p", "b", none, heads, "k", "r").record_body == "r"
+    @test W("POST", "u", "/p", "{\"a\":1,\"x\":2}"; record_body="{\"a\":1}").record_body == "{\"a\":1}"
+
+    dir = mktempdir()
+    q = "q" => noul("Is it?")
+    plain = """{"state":"s","model":"trim-model","questions":{"q":{"type":"noul","instructions":"Is it?"}}}"""
+    live, seen = _s1_serve(_s1_valid) do
+        with_recorded_answers(() -> ask("s", q; service=_TrimEndpoint, hint="warm", config=_S1_CFG), dir; mode=:record)
+    end
+    @test live isa SystemOneSuccess
+    @test _s1_text(only(seen)) == plain[1:end-1] * ""","hint":"warm"}"""               # sent: the body
+    file = only(readdir(dir; join=true))
+    @test basename(file) == _s1_key("POST", "/trim/v1/systemone", plain) * ".json"     # keyed: the record_body
+    @test JSON.json(JSON.parse(read(file, String))["request"]["body"]) == plain        # recorded: the record_body
+    # The same request with another hint, or none, is the same recording.
+    for kw in ((hint = "cold",), (;))
+        r = with_recorded_answers(() -> ask("s", q; service=_TrimEndpoint, kw...), dir)
+        @test r isa SystemOneSuccess && r.response.raw == live.response.raw
+    end
 end
 
 # ─── Multipart ───────────────────────────────────────────────────────────────

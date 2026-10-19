@@ -302,6 +302,8 @@ end
     b = UniLM.encode_system_one(_OD, _ODMock, SystemOneRequest("s", q; options=(prompt_cache_key = "tickets", safety_identifier = "user-1")))
     @test a.body == b.body && a.key_extra == "" && b.key_extra == ""
     @test endswith(a.body, ""","prompt_cache_key":"tickets","safety_identifier":"user-1"}""")
+    # Keyed and recorded without them: the body the same request has with no options.
+    @test a.record_body == b.record_body == UniLM.encode_system_one(_OD, _ODMock, SystemOneRequest("s", q)).body
     @test collect(keys(JSON.parse(UniLM.encode_system_one(_OD, _ODMock,
         SystemOneRequest("s", q; options=(safety_identifier = "u",))).body))) == ["model", "input", "questions", "safety_identifier"]
     # Through ask, the keywords are the options, sent as fields of the body.
@@ -590,9 +592,55 @@ end
     replayed = with_recorded_answers(() -> ask(state, q; service=_ODMock), dir)
     @test replayed isa SystemOneSuccess && replayed.response.raw == live.response.raw
     @test replayed.response.request_id == "req_1" && replayed["damaged"].noul == 0.5
-    # The options are fields of the body, and so of the key.
-    other = with_recorded_answers(() -> _od_caught(() -> ask(state, q; service=_ODMock, prompt_cache_key="k")), dir)
-    @test other isa ReplayMissError && contains(other.body, "\"prompt_cache_key\":\"k\"")
+    # The options are sent, and left out of the key: neither changes an answer, so the same
+    # question with them replays the recording made without them.
+    other, unsent = _od_serve(_od_valid) do
+        with_recorded_answers(() -> ask(state, q; service=_ODMock, prompt_cache_key="k", safety_identifier="u"), dir)
+    end
+    @test other isa SystemOneSuccess && other.response.raw == live.response.raw && isempty(unsent)
+    with_options = mktempdir()
+    _, sent = _od_serve(_od_valid) do
+        with_recorded_answers(() -> ask(state, q; service=_ODMock, config=_OD_CFG, prompt_cache_key="k"),
+                              with_options; mode=:record)
+    end
+    @test _od_body(only(sent))["prompt_cache_key"] == "k"                       # the service receives them
+    @test readdir(with_options) == readdir(dir)                                 # filed under the same key
+    @test !haskey(JSON.parse(read(only(readdir(with_options; join=true)), String))["request"]["body"], "prompt_cache_key")
+end
+
+@testset "OpenAI Decisions — an image is recorded by its digest, never by its bytes" begin
+    dir = mktempdir()
+    q = "red" => noul("Is the circle red?")
+    live, seen = _od_serve(_od_valid) do
+        with_recorded_answers(() -> ask(_OD_PNG, q; service=_ODMock, config=_OD_CFG), dir; mode=:record)
+    end
+    b64 = base64encode(_OD_PNG.data)
+    @test live isa SystemOneSuccess && contains(only(seen).body, b64)              # the service gets the image
+    file = only(readdir(dir; join=true))
+    text = read(file, String)
+    @test !contains(text, b64) && !contains(text, "base64,")
+    digest = "data:image/png;sha256," * bytes2hex(UniLM.SHA.sha256(b64))
+    @test only(JSON.parse(text)["request"]["body"]["input"])["content"][1]["image_url"] == digest
+    keyed = replace(only(seen).body, "data:image/png;base64," * b64 => digest)
+    @test basename(file) == bytes2hex(UniLM.SHA.sha256("POST /openai-decisions/v1/decisions\n" * keyed)) * ".json"
+    # Replayed with no server; another image is another request, reported by its digest too.
+    @test with_recorded_answers(() -> ask(_OD_PNG, q; service=_ODMock), dir).response.raw == live.response.raw
+    miss = with_recorded_answers(() -> _od_caught(() -> ask(_OD_JPEG, q; service=_ODMock)), dir)
+    @test miss isa ReplayMissError && contains(miss.body, "data:image/jpeg;sha256,") && !contains(miss.body, "base64,")
+end
+
+@testset "OpenAI Decisions — ask_each sends each image request as a single ask sends it, byte for byte" begin
+    states = [Any["Inspect image $i.", _OD_PNG] for i in 1:3]
+    q = "damaged" => noul("Is anything damaged?")
+    each, seen_each = _od_serve(_od_valid) do
+        ask_each(states, q; service=_ODMock, config=_OD_CFG, ntasks=2)
+    end
+    alone, seen_alone = _od_serve(_od_valid) do
+        [ask(s, q; service=_ODMock, config=_OD_CFG) for s in states]
+    end
+    @test all(issuccess, each) && all(issuccess, alone)
+    @test sort([s.body for s in seen_each]) == sort([s.body for s in seen_alone])
+    @test length(unique(s.body for s in seen_each)) == 3
 end
 
 # ─── The natural-language verbs on a backend that refuses ───────────────────

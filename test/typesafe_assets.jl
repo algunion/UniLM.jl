@@ -121,8 +121,9 @@ end
     @test [a["part"] for a in values(sent["assets"])] == ["asset-0", "asset-1", "asset-2"]
     @test all(a -> a["type"] == "image" && length(a) == 2, values(sent["assets"]))
     @test w.parts == ["asset-0" => _TA_SCENE, "asset-1" => _TA_RED, "asset-2" => _TA_BLUE]
-    # Keyed on the digests of the parts, never on their bytes.
+    # Keyed on the digests of the parts, never on their bytes, after the JSON part as sent.
     @test w.key_extra == "asset-0 $(_ta_digest(_TA_SCENE))\nasset-1 $(_ta_digest(_TA_RED))\nasset-2 $(_ta_digest(_TA_BLUE))"
+    @test w.record_body == w.body
     @test w.headers == ["TypeSafe-Danger-Zone-Images" => "true"]
     @test w.path == "/v1/systemone" && w.method == "POST"
 

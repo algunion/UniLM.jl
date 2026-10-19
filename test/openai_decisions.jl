@@ -383,6 +383,15 @@ end
         r = @test_logs (:warn, r"System One usage") min_level=Logging.Warn first(_od_ask_with(_od_d02(b -> b["usage"] = usage)))
         @test r isa SystemOneSuccess && token_usage(r) == TokenUsage()
     end
+    # The details are objects in the schema: a count where the object should be is no count.
+    for details in (5, "lots", [1024], nothing)
+        odd = _od_d02(body -> body["usage"]["input_tokens_details"] = details)
+        r = @test_logs (:warn, r"System One usage") min_level=Logging.Warn first(_od_ask_with(odd))
+        @test r isa SystemOneSuccess && token_usage(r).cached_tokens == 0 && token_usage(r).prompt_tokens == 589
+    end
+    r = @test_logs (:warn, r"System One usage") min_level=Logging.Warn first(_od_ask_with(
+        _od_d02(body -> body["usage"]["output_tokens_details"] = 2)))
+    @test r isa SystemOneSuccess && token_usage(r).reasoning_tokens == 0
     r = @test_logs min_level=Logging.Warn first(_od_ask_with(_od_d02(b -> delete!(b, "usage"))))
     @test r isa SystemOneSuccess && token_usage(r) == TokenUsage()
     r = @test_logs min_level=Logging.Warn first(_od_ask_with(_od_d02(b -> b["usage"] = Dict("input_tokens" => 7))))

@@ -26,7 +26,8 @@ The request:
   `NamedTuple`) as its JSON text; an [`ImageAttachment`](@ref), or a `Vector` of
   strings and images, as one user message of `input_text` and `input_image`
   parts (base64 data URLs), in order. Images go there and nowhere else, at most
-  128 of them; the input is at most 10,485,760 characters.
+  128 of them; each text — the input, or each text part of the message — is at
+  most 10,485,760 characters.
 - each question is one entry of `questions`, in order, carrying its name: a
   [`NoulQuestion`](@ref) a `predicate`; a [`ChoiceQuestion`](@ref) a `choice` of
   2 to 255 options, each option's name its `value` and a string description its
@@ -361,14 +362,27 @@ end
 function _decisions_usage(d::AbstractDict)::TokenUsage
     haskey(d, "usage") || return TokenUsage()
     u = d["usage"]
-    at(path) = _token_count(foldl((v, k) -> v isa AbstractDict ? get(v, k, 0) : v, path; init=u))
-    counts = (at(("input_tokens",)), at(("output_tokens",)), at(("input_tokens_details", "cached_tokens")),
-              at(("output_tokens_details", "reasoning_tokens")))
+    counts = (_decisions_count(u, ("input_tokens",)), _decisions_count(u, ("output_tokens",)),
+              _decisions_count(u, ("input_tokens_details", "cached_tokens")),
+              _decisions_count(u, ("output_tokens_details", "reasoning_tokens")))
     any(isnothing, counts) &&
         @warn "System One usage holds a value that is not a non-negative whole token count; it reads as 0" usage = u
     i, o, cached, reasoning = map(c -> something(c, 0), counts)
     TokenUsage(prompt_tokens=i, completion_tokens=o, total_tokens=i + o, cached_tokens=cached,
                reasoning_tokens=reasoning)
+end
+
+# The count at `path` in a usage object: 0 when a step is missing, `nothing` when a step is
+# not the object the schema gives it (`input_tokens_details` is an object holding
+# `cached_tokens`) or the count is no token count.
+function _decisions_count(u, path::Tuple{Vararg{String}})::Union{Nothing,Int}
+    v = u
+    for k in path
+        v isa AbstractDict || return nothing
+        haskey(v, k) || return 0
+        v = v[k]
+    end
+    _token_count(v)
 end
 
 # The decoded reply and the order its answers came in.

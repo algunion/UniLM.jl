@@ -30,7 +30,11 @@ by anything but a string or `nothing`; a Score of fewer than 2 or more than 10
 levels, or a level that is not a string; a Noul criterion that is not a string;
 a blank `state` — and a Box question, which Ollama does not answer, and images,
 which this wrapper does not send yet. A model may cap lower than these bounds and
-says so in its own 400 (`tev1:0.8b` takes at most 24 options on Ollama 0.40.6). A
+says so in its own 400 (`tev1:0.8b` takes at most 24 options on Ollama 0.40.6).
+Ollama also caps a local request's text and schema, images excluded, at 64 KiB:
+that limit is the server's to count, by its own measure, and is not checked here;
+a request over it comes back as a [`SystemOneFailure`](@ref) carrying Ollama's
+413, `text and schema must not exceed 64 KiB`. A
 [`RawQuestion`](@ref) is sent verbatim, for the server to judge. Its
 one option is `keep_alive`: the seconds the model stays loaded after the request
 (`0` unloads it at once, `Inf` keeps it loaded), by default the endpoint's own.

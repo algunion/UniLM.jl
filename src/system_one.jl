@@ -203,8 +203,9 @@ _dict_pairs(d::AbstractDict) = d
     RawQuestion(fields::AbstractDict)
 
 A question of a kind this version has no type for, kept as the JSON object
-`fields` and sent verbatim by the backends that allow raw questions (TypeSafe
-does); a backend that does not refuses it before the request is sent. `fields`
+`fields` and sent verbatim by the backends that allow raw questions — TypeSafe,
+OpenAI's Decisions API (which adds the question's name as `"name"`) and Ollama
+all do; a backend that does not refuses it before the request is sent. `fields`
 is copied into a `JSON.Object{String,Any}` with `String` keys — a plain `Dict`
 in sorted key order, any other dictionary in its own order — and must hold a
 non-blank String `"type"`.
@@ -792,7 +793,9 @@ end
 """
     SystemOneFailure
 
-A System One call that reached its backend and came back non-2xx.
+A System One call that reached its backend and came back with a status other
+than 200 — the status TypeSafe, OpenAI's Decisions API and Ollama answer a
+success with.
 
 # Fields
 - `response::String`: the raw body, kept verbatim.
@@ -1004,8 +1007,8 @@ encode_system_one(p::SystemOneProtocol, service, ::SystemOneRequest) = throw(Arg
 The typed result of `response`, the reply `service` sent to `request`: a
 [`SystemOneSuccess`](@ref) whose answers have passed the checks every backend's
 answers pass — one per question asked, of the question's kind, each value in its
-range (see [`ask`](@ref)) — or a [`SystemOneFailure`](@ref) for a status that is
-not a success. A 200 that is not a usable answer throws, and [`ask`](@ref)
+range (see [`ask`](@ref)) — or a [`SystemOneFailure`](@ref) for a status other
+than 200. A 200 that is not a usable answer throws, and [`ask`](@ref)
 returns the throw as a [`SystemOneCallError`](@ref) carrying the reply's request
 id.
 
@@ -1397,8 +1400,8 @@ end
 
 Evaluate every question against `state` in one request to a System One backend
 and return one of [`SystemOneSuccess`](@ref), [`SystemOneFailure`](@ref) (a
-non-2xx response) or [`SystemOneCallError`](@ref) (no response, or a 200 that
-was not a usable set of answers). Inside a [`with_recorded_answers`](@ref) scope,
+response with a status other than 200) or [`SystemOneCallError`](@ref) (no
+response, or a 200 that was not a usable set of answers). Inside a [`with_recorded_answers`](@ref) scope,
 a request the scope cannot replay — no recording in `:replay` mode, or a
 recording file that cannot be read — throws [`ReplayMissError`](@ref) instead of
 returning: a gap in the recordings is not a service failure.
@@ -1414,8 +1417,10 @@ pairs, a `NamedTuple` or `AbstractDict` of them, or bare questions auto-named
 `"q1"`, `"q2"`, … Any other keyword is a provider option and becomes the
 request's `options`, which the backend's wrapper checks before anything is sent:
 TypeSafe accepts `long_context::Bool` (`true` raises its context limits to 262k
-tokens), so any other keyword — a misspelt one included — is an `ArgumentError`
-that lists the options it accepts.
+tokens), OpenAI's Decisions API `prompt_cache_key` and `safety_identifier`
+(strings), Ollama `keep_alive` (the seconds the model stays loaded), so any other
+keyword — a misspelt one included — is an `ArgumentError` that lists the options
+the backend accepts.
 
 ```julia
 r = ask("Help! My payouts have been failing for 3 days.",

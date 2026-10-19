@@ -1,25 +1,9 @@
 # ============================================================================
 # ask_each — the same questions about many states, or many requests, sent
-# concurrently and returned in order; and the transport each built-in backend
-# brings to every System One exchange (the hooks and the connection pool are
-# in system_one.jl, beside the exchange that uses them).
+# concurrently and returned in order. Each backend's transport (its timeouts,
+# retry header and default batch width) is set by its protocol's hooks, in its
+# own file; the hooks and the connection pool are in system_one.jl.
 # ============================================================================
-
-# ─── The built-in backends' transport ────────────────────────────────────────
-
-# TypeSafe answers a typical request in about 0.3 s, and the slowest one measured — 262k
-# tokens of long context — in 5.3 s: 60 s per attempt is over ten times that, and 150 s
-# bounds a call with its retries, where the field defaults would hold a stalled call for
-# 10 minutes per attempt and 15 in all. (TypeSafe's own SDKs allow 10 s per attempt.)
-const _HOSTED_SYSTEM_ONE_CONFIG = RequestConfig(request_timeout=60.0, total_deadline=150.0)
-
-_system_one_default_config(::TypeSafeProtocol, service)::Union{Nothing,RequestConfig} = _HOSTED_SYSTEM_ONE_CONFIG
-# TypeSafe's official SDKs number every retry in this header ("1" on the second attempt),
-# which tells the service a retry from a new request.
-_system_one_retry_header(::TypeSafeProtocol)::Union{Nothing,String} = "X-TypeSafe-Retry-Count"
-# At about 0.3 s a request, 16 in flight serve a batch at some 50 requests a second; a
-# rate limit, should one come, holds the whole batch (below).
-_system_one_concurrency(::TypeSafeProtocol, service)::Int = 16
 
 # ─── Shared backoff ──────────────────────────────────────────────────────────
 

@@ -105,7 +105,7 @@ end
     finally
         # restore the process default so this unit does not leak into other tests
         try
-            UniLM.set_default_config!(UniLM.RequestConfig())
+            @atomic UniLM._PROCESS_DEFAULT_CONFIG.cfg = nothing
         catch
         end
     end
@@ -165,7 +165,7 @@ end
         finally
             isnothing(server) || HTTP.forceclose(server)
             try
-                UniLM.set_default_config!(UniLM.RequestConfig())
+                @atomic UniLM._PROCESS_DEFAULT_CONFIG.cfg = nothing
             catch
             end
         end

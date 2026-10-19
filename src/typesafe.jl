@@ -145,6 +145,13 @@ _system_one_request_id(::TypeSafeProtocol, resp::HTTP.Response)::Union{Nothing,S
 _probability_tolerance(::TypeSafeProtocol, n::Int)::Float64 = _FLOAT_PROBABILITY_TOLERANCE
 _allows_refusal(::TypeSafeProtocol)::Bool = false
 _allows_raw(::TypeSafeProtocol)::Bool = true
+# Transport: a hosted service's bounds; TypeSafe's official SDKs number every retry in
+# this header ("1" on the second attempt), which tells the service a retry from a new
+# request; at about 0.3 s a request, 16 in flight serve an `ask_each` batch at some 50
+# requests a second, and a rate limit, should one come, holds the whole batch.
+_system_one_default_config(::TypeSafeProtocol, service)::Union{Nothing,RequestConfig} = _HOSTED_SYSTEM_ONE_CONFIG
+_system_one_retry_header(::TypeSafeProtocol)::Union{Nothing,String} = "X-TypeSafe-Retry-Count"
+_system_one_concurrency(::TypeSafeProtocol, service)::Int = 16
 
 # ─── Encoding ────────────────────────────────────────────────────────────────
 
@@ -602,15 +609,16 @@ function _model_card(d::AbstractDict)::TypeSafeModelCard
     TypeSafeModelCard(String(name), text("description"), text("release_date"), raw)
 end
 
-function _system_one_models(::TypeSafeProtocol, service, config::Union{Nothing,RequestConfig},
+function _system_one_models(p::TypeSafeProtocol, service, config::Union{Nothing,RequestConfig},
                             cancel::Union{Nothing,CancelToken})
     validate_capability(service, :models, "TypeSafe models listing")
-    cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
+    cfg = _resolve_config(config, _system_one_default_config(p, service)); tok = _resolve_cancel(cancel); t0 = time_ns()
     local resp
     try
         resp = _recorded_exchange("GET", TYPESAFE_MODELS_PATH, "", t0, tok) do
             _http_with_retries(cfg, t0, "GET", _api_base_url(service) * TYPESAFE_MODELS_PATH,
-                               auth_header(service); cancel=tok)
+                               auth_header(service); cancel=tok, client=_system_one_client(),
+                               retry_header=_system_one_retry_header(p))
         end
         resp.status == 200 || return _typesafe_failure(resp)
         parsed = JSON.parse(String(resp.body); dicttype=Dict{String,Any})

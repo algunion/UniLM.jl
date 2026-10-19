@@ -150,6 +150,10 @@ end
         include("system_one.jl")
     end
 
+    @testset "ask_each" begin
+        include("ask_each.jl")
+    end
+
     @testset "Ollama System One" begin
         include("ollama_system_one.jl")
     end

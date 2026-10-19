@@ -369,8 +369,8 @@ end
     @test startswith(h["user-agent"], "UniLM.jl/")
     @test startswith(h["x-typesafe-sdk"], "UniLM.jl/")
     @test startswith(h["x-typesafe-runtime"], "julia/")
-    # No retry-count header is ever sent: this client's retries are the package's
-    # shared seam, which does not label attempts.
+    # The first attempt carries no retry-count header; a retry carries
+    # X-TypeSafe-Retry-Count (test/ask_each.jl).
     @test !haskey(h, "x-typesafe-retry-count")
 
     # The keyword form builds the same request.

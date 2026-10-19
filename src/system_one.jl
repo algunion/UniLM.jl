@@ -1316,6 +1316,13 @@ _system_one_default_config(::SystemOneProtocol, service)::Union{Nothing,RequestC
 _system_one_retry_header(::SystemOneProtocol)::Union{Nothing,String} = nothing
 _system_one_concurrency(::SystemOneProtocol, service)::Int = 8
 
+# The bounds of a hosted System One service. TypeSafe answers a typical request in about
+# 0.3 s and the slowest one measured — 262k tokens of long context — in 5.3 s; OpenAI's
+# Decisions API answers in about 0.5 s with a tail near 4 s. 60 s per attempt is over ten
+# times the slowest, and 150 s bounds a call with its retries, where the field defaults
+# would hold a stalled call for 10 minutes per attempt and 15 in all.
+const _HOSTED_SYSTEM_ONE_CONFIG = RequestConfig(request_timeout=60.0, total_deadline=150.0)
+
 # The live exchange. Credentials are read here and only here, so a replay needs none, and
 # so is the connection pool, so a replay opens no connection. A multipart request carries
 # no JSON Content-Type: HTTP.jl sets the form's own, with its boundary, and a second one

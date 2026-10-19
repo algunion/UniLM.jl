@@ -72,6 +72,7 @@ include("system_one.jl")
 include("typesafe.jl")
 include("typesafe_assets.jl")
 include("ollama_system_one.jl")
+include("ask_each.jl")
 include("recorded_answers.jl")
 include("semantic.jl")
 include("files.jl")
@@ -382,6 +383,7 @@ export
     box,
     SystemOneRequest,
     ask,
+    ask_each,
     with_system_one,
     SystemOneAnswer,
     ChoiceAnswer,

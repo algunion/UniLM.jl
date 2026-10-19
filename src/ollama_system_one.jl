@@ -52,6 +52,10 @@ _system_one_default_model(::OllamaSystemOneProtocol, service)::String = throw(Ar
 _system_one_namespace(::OllamaSystemOneProtocol)::String = "ollama"
 _allows_refusal(::OllamaSystemOneProtocol)::Bool = false
 _allows_raw(::OllamaSystemOneProtocol)::Bool = true
+# A local Ollama server's decision runners answer one request at a time, so a queue of
+# local requests only adds timeouts; its config stays the field defaults (the fallback's
+# `nothing`), since loading a model on a CPU can take minutes.
+_system_one_concurrency(::OllamaSystemOneProtocol, service)::Int = 1
 # Ollama's generic decision encodings normalise a softmax in Float64, as llama.cpp's
 # server does for GGUF decision models: the replies of tev1 and kev captured live sum to 1
 # within 4.4e-16. Kev models on Ollama's own runner round every probability to four

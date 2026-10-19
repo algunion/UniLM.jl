@@ -210,7 +210,7 @@ end
     @test nl"abc" === Meaning{Symbol("abc")}
     @test Meaning("abc") isa nl"abc"
     @test nl"abc"() isa nl"abc"
-    @test contains(sprint(show, nl"abc"), "nl\"abc\"")
+    @test contains(sprint(show, nl"abc"), "Meaning{:abc}")       # the type prints as Julia prints it
     @test contains(sprint(show, nl"abc"()), "nl\"abc\"()")
     @test UniLM._description(nl"abc") == "abc"
     @test UniLM._description(nl"abc"()) == "abc"
@@ -616,8 +616,8 @@ end
     text = sprint(showerror, err)
     @test contains(text, "[\"m1\"] is ambiguous between")
     @test all(m -> contains(text, string(m)), methods(ambiguous))
-    @test contains(text, "ambiguous(::nl\"m1\", ::Int64, ::Int64)")
-    @test !contains(text, "::Meaning") && !contains(text, "No method covers")
+    @test contains(text, "ambiguous(::$(nl"m1"), ::Int64, ::Int64)")
+    @test !contains(text, r"::Meaning[,)]") && !contains(text, "No method covers")   # no wildcard advice
 
     # Both kinds in one call: each gap gets the advice that closes it.
     @test meaning_gaps(mixed, Tuple{Int,Int}) == [["n1", "o1"], ["n1", "o2"], ["n2", "o1"]]
@@ -628,7 +628,7 @@ end
     @test contains(text, "No method covers [\"n1\", \"o2\"], [\"n2\", \"o1\"]:")
     @test contains(text, "mixed(::Meaning, ::Meaning, _, _)")
     @test contains(text, "[\"n1\", \"o1\"] is ambiguous between")
-    @test contains(text, "mixed(::nl\"n1\", ::nl\"o1\", ::Int64, ::Int64)")
+    @test contains(text, "mixed(::$(nl"n1"), ::$(nl"o1"), ::Int64, ::Int64)")
 end
 
 @testset "semantic — a partial wildcard is refused as one" begin
@@ -863,7 +863,7 @@ end
         [nl_dispatch(Router(label), "x"; service=SemanticMock, config=_SEM_CFG) for label in (:a, :b)]
     end
     @test outs == [(:a, :first), (:b, :first)]
-    @test count(k -> k <: Tuple{Router,Vararg}, @lock(UniLM._NL_PLANS, collect(keys(UniLM._NL_PLANS[])))) == 1
+    @test count(k -> k <: Tuple{Router,Vararg}, keys(UniLM._nl_snapshot(UniLM._NL_PLANS))) == 1
 end
 
 # ─── 15. Keyed dispatch: the sentences in a table, the keys in the signatures ─
@@ -1418,7 +1418,7 @@ end
     @test criteria(last(dispatch(v))) == ["the first sentence"]
     v[1] = :a => "a mutated sentence"
     @test criteria(last(dispatch(v))) == ["a mutated sentence"]
-    stored = @lock UniLM._NL_KEYED_PLANS collect(keys(UniLM._NL_KEYED_PLANS[]))
+    stored = collect(keys(UniLM._nl_snapshot(UniLM._NL_KEYED_PLANS)))
     @test all(k -> last(k) isa Tuple && all(t -> t isa UniLM._NLTable, last(k)), stored)
 
     # A method defined after a cached call is offered, and callable, on the next one.
@@ -1455,10 +1455,285 @@ end
     # every time: past the limit the cache starts over instead of growing.
     templated(::Val{:yes}, t) = :yes
     templated(::Val{:no}, t) = :no
-    limit = UniLM._NL_KEYED_PLANS_LIMIT
+    limit = UniLM._NL_KEYED_PLANS.limit
     for i in 1:limit + 10
         table = UniLM._nl_tables((yes = "the sender mentions order $i", no = "anything else"))
         UniLM._nl_keyed_plan(templated, Any[String], table)
-        @test (@lock UniLM._NL_KEYED_PLANS length(UniLM._NL_KEYED_PLANS[])) <= limit
+        @test length(UniLM._nl_snapshot(UniLM._NL_KEYED_PLANS)) <= limit
     end
+end
+
+# ─── 16. How a meaning prints ────────────────────────────────────────────────
+
+@testset "semantic — a Meaning type prints as Julia prints types, and messages keep the sentences" begin
+    # A `show` method for the type would extend `show(::IO, ::Type)` and invalidate the code
+    # compiled to print any type: the type's printing is Base's.
+    @test which(show, Tuple{IO,Type{nl"abc"}}).module === Base
+    @test sprint(show, nl"abc"()) == "nl\"abc\"()"
+    @test meanings(route) == Dict(1 => ["the customer wants a refund", "the customer reports a bug"])
+    err = try nl_dispatch(step, 1, "x"; service=SemanticMock, config=_SEM_CFG); nothing catch e; e end
+    @test err isa ArgumentError && contains(err.msg, "gives an order number") && contains(err.msg, "asks for a human")
+end
+
+# ─── 17. Policy inputs are checked before the request ───────────────────────
+
+@testset "semantic — min_confidence is a confidence: outside 0 … 1 it is refused before the request" begin
+    caught(f) = try f(); nothing catch e; e end
+    branch(τ) = @branch "s" min_confidence=τ service=SemanticMock config=_SEM_CFG begin
+        "alpha" => :alpha
+        _       => :fallback
+    end
+    calls = Function[]
+    for τ in (NaN, Inf, -Inf, -0.1, 1.5)
+        push!(calls,
+              () -> nl_dispatch(route, "t"; service=SemanticMock, config=_SEM_CFG, min_confidence=τ),
+              () -> nl_dispatch(route, "t"; service=SemanticMock, config=_SEM_CFG, min_confidence=τ,
+                                fallback=(a...) -> :fb),
+              () -> nl_dispatch(intent_route, "t"; service=SemanticMock, config=_SEM_CFG, texts=INTENT,
+                                min_confidence=τ),
+              () -> nl_classify("t", INTENT; service=SemanticMock, config=_SEM_CFG, min_confidence=τ,
+                                fallback=_ -> :fb),
+              () -> branch(τ))
+    end
+    # NaN beside a policy is refused as well, whichever rule names it.
+    push!(calls, () -> nl_dispatch(route, "t"; service=SemanticMock, config=_SEM_CFG, min_confidence=NaN,
+                                   decide=a -> a.choice),
+                 () -> nl_classify("t", INTENT; service=SemanticMock, config=_SEM_CFG, min_confidence=NaN,
+                                   decide=a -> a.choice))
+    errs, sent = _with_semantic_mock(() -> [caught(c) for c in calls])
+    @test isempty(sent)
+    @test all(e -> e isa ArgumentError && contains(e.msg, "min_confidence"), errs)
+    @test count(e -> contains(e.msg, "finite number in 0 … 1"), errs) == length(errs)
+
+    # Both ends are thresholds: an answer at confidence 1 clears 1, and any clears 0.
+    outs, sent = _with_semantic_mock(; confidence=1.0) do
+        [nl_dispatch(route, "t"; service=SemanticMock, config=_SEM_CFG, min_confidence=1),
+         nl_classify("t", INTENT; service=SemanticMock, config=_SEM_CFG, min_confidence=1//2),
+         branch(1), branch(0.999)]
+    end
+    @test outs == [(:refund, "t"), :refund, :alpha, :alpha] && length(sent) == 4
+    low, _ = _with_semantic_mock(; confidence=0.0) do
+        [nl_dispatch(route, "t"; service=SemanticMock, config=_SEM_CFG, min_confidence=0), branch(1)]
+    end
+    @test low == [(:refund, "t"), :fallback]
+end
+
+@testset "semantic — a @branch option name is a String or a Symbol, and any other value names its line" begin
+    option = :beta
+    out, seen = _with_semantic_mock(; pick=Dict("branch" => "beta")) do
+        @branch "s" service=SemanticMock config=_SEM_CFG begin
+            :alpha                         => :a
+            option                         => :b
+            (:gamma, "a described option") => :c
+        end
+    end
+    @test out === :b
+    criteria = seen[1]["body"]["questions"]["branch"]["criteria"]
+    @test collect(keys(criteria)) == ["alpha", "beta", "gamma"] && criteria["gamma"] == "a described option"
+
+    caught(f) = try f(); nothing catch e; e end
+    errs, sent = _with_semantic_mock() do
+        [caught(() -> @branch "s" service=SemanticMock config=_SEM_CFG begin
+             "alpha" => :a
+             1       => :b
+         end),
+         caught(() -> @branch "s" service=SemanticMock config=_SEM_CFG begin
+             ('c', "a character is not a name") => :c
+         end)]
+    end
+    @test isempty(sent)
+    @test all(e -> e isa ArgumentError && contains(e.msg, "an option name is a String, or a Symbol"), errs)
+    @test all(e -> contains(e.msg, "$(basename(@__FILE__)):"), errs)      # the line, by file and number
+    @test contains(errs[1].msg, "the @branch option `1` at ") && contains(errs[1].msg, "is 1 (Int64)")
+    @test contains(errs[2].msg, "the @branch option `'c'` at ") && contains(errs[2].msg, "(Char)")
+end
+
+# ─── 18. What the default state may carry ───────────────────────────────────
+
+state_route(::nl"the customer wants a refund", ticket) = :refund
+state_route(::nl"anything else", ticket) = :other
+
+struct ShopClient                        # a credential is data: sent as written
+    base_url::String
+    api_key::String
+end
+struct SessionHandle                     # a lock is not
+    user::String
+    guard::ReentrantLock
+end
+mutable struct LoopNode                  # a cycle, which JSON.jl writes as null
+    label::String
+    next::Any
+end
+
+@testset "semantic — a default state holding what is not data is refused before the request" begin
+    caught(f) = try f(); nothing catch e; e end
+    deep = foldl((inner, _) -> Any[inner], 1:70; init=Any["leaf"])
+    # (the argument, where the message must point, what it must call the value)
+    refusals = [
+        "a closure"              => ((x -> x), "argument `ticket` of state_route is a function", "#"),
+        "a function"             => (println, "is a function (typeof(println))", "`ticket`"),
+        "a lock in a field"      => (SessionHandle("ada", ReentrantLock()), "a lock (ReentrantLock) at `ticket.guard`", "ticket"),
+        "a function in a dict"   => (Dict("on_done" => println), "a function (typeof(println)) at `ticket[\"on_done\"]`", "ticket"),
+        "a task in a vector"     => (Any["a note", Task(() -> 1)], "a task (Task) at `ticket[2]`", "ticket"),
+        "a channel in a tuple"   => (("a note", Channel{Int}(1)), "a channel (Channel{Int64}) at `ticket[2]`", "ticket"),
+        "a type in a NamedTuple" => ((kind = Int,), "a type (DataType) at `ticket.kind`", "ticket"),
+        "a pointer in a pair"    => ("p" => Ptr{Cvoid}(0), "a reference (Ptr{Nothing}) at `ticket.second`", "ticket"),
+        "a condition in a set"   => (Set(Any[Threads.Condition()]), "a condition", "`ticket[1]`"),
+        "a function in a key"    => (Dict((println, 1) => "v"), "a function (typeof(println)) at `ticket[key (println, 1)][1]`", "ticket"),
+        "a module"               => (Base, "is a module (Module)", "ticket"),
+        "a Ref"                  => (Ref(1), "is a reference", "RefValue"),
+        "an event"               => (Base.Event(), "is an event", "Event"),
+        "an IO"                  => (IOBuffer(), "is a stream (IOBuffer)", "ticket"),
+        "an Expr"                => (:(a + b), "is code (Expr)", "ticket"),
+        "a container too deep"   => (deep, "nests deeper than 64 levels at `ticket[1][1]", "stops checking"),
+    ]
+    mktempdir() do dir
+        results, sent = _with_semantic_mock() do
+            with_recorded_answers(dir; mode=:record) do
+                [caught(() -> nl_dispatch(state_route, arg; service=SemanticMock, config=_SEM_CFG))
+                 for (_, (arg, _, _)) in refusals]
+            end
+        end
+        @test isempty(sent) && isempty(readdir(dir))       # nothing sent, nothing recorded
+        for ((label, (_, fragment, also)), err) in zip(refusals, results)
+            @testset "refused: $(label)" begin
+                @test err isa ArgumentError
+                msg = sprint(showerror, err)
+                @test contains(msg, fragment) && contains(msg, also) && contains(msg, "Pass `state = …`")
+            end
+        end
+    end
+
+    # Data goes out as JSON.jl writes it: a Symbol as its String, a regex as its pattern, a
+    # cycle as null, and every field of a struct — a credential too, as documented.
+    loop = LoopNode("first", nothing)
+    loop.next = loop
+    outs, seen = _with_semantic_mock() do
+        [nl_dispatch(state_route, arg; service=SemanticMock, config=_SEM_CFG)
+         for arg in (:refund, r"ab+c", loop, ShopClient("https://shop.example", "sk-test-0000"))]
+    end
+    @test outs == fill(:refund, 4)
+    @test [s["body"]["state"]["ticket"] for s in seen] ==
+          ["refund", "ab+c", Dict("label" => "first", "next" => nothing),
+           Dict("base_url" => "https://shop.example", "api_key" => "sk-test-0000")]
+
+    # An explicit state is the caller's, and is sent as given: the arguments are not walked.
+    out, seen = _with_semantic_mock() do
+        nl_dispatch(state_route, println; service=SemanticMock, config=_SEM_CFG, state="a ticket")
+    end
+    @test out === :refund && seen[1]["body"]["state"] == "a ticket"
+end
+
+# ─── 19. The caches: bounded, read without a lock, validated once ───────────
+
+capped(::nl"the only meaning", x) = :capped   # every new argument type is a new plan
+
+# Equal to `Vector` without being it, as in the refusals of section 15.
+const VECTOR_S = Array{S,1} where S
+
+@testset "semantic — plans are capped like keyed plans, and read without a lock while others write" begin
+    @test UniLM._NL_PLANS.limit == UniLM._NL_KEYED_PLANS.limit == 1024
+    sizes = Int[]
+    for i in 1:UniLM._NL_PLANS.limit + 10
+        UniLM._nl_plan(capped, Any[Val{i}])
+        push!(sizes, length(UniLM._nl_snapshot(UniLM._NL_PLANS)))
+    end
+    @test maximum(sizes) <= UniLM._NL_PLANS.limit
+    @test UniLM._nl_plan(capped, Any[String]) == UniLM._nl_plan_uncached(capped, Any[String])
+
+    # Many readers while writers publish new snapshots: every plan read is the plan.
+    expected = [(f, UniLM._nl_plan_uncached(f, Any[String])) for f in (route, cached_route, kw_route, Ticket)]
+    good = fetch.([Threads.@spawn begin
+        ok = true
+        for j in 1:200
+            for (f, plan) in expected
+                ok &= UniLM._nl_plan(f, Any[String]) == plan
+            end
+            UniLM._nl_plan(capped, Any[Val{(t, j)}])      # a write: a new key
+        end
+        ok
+    end for t in 1:16])
+    @test all(good)
+end
+
+@testset "semantic — a table is validated once per contents, and again once they change" begin
+    memo() = UniLM._nl_snapshot(UniLM._NL_TABLES)
+    first_table = only(UniLM._nl_tables((yes = "the sender asks for a refund", no = "anything else")))
+    @test haskey(memo(), first_table)
+    @test only(UniLM._nl_tables((yes = "the sender asks for a refund", no = "anything else"))) === first_table
+    # The same entries as a vector are the same table.
+    v = [:yes => "the sender asks for a refund", :no => "anything else"]
+    @test only(UniLM._nl_tables(v)) === first_table
+    # Mutated in place, it is another table: validated again, never served the old result.
+    v[2] = :no => "the sender asks for a refund"
+    @test_throws ArgumentError UniLM._nl_tables(v)
+    v[2] = :no => SubString("something else entirely", 1, 14)
+    @test only(UniLM._nl_tables(v)).texts == ("the sender asks for a refund", "something else")
+    # Keys are told apart as dispatch tells them: two keys that are equal without being the
+    # same object make two tables, and each classification returns its own key.
+    @test isequal(VECTOR_S, Vector) && VECTOR_S !== Vector
+    got, _ = _with_semantic_mock(; pick=Dict("classify" => "A")) do
+        [nl_classify("s", [Vector => "A", Int => "B"]; service=SemanticMock, config=_SEM_CFG),
+         nl_classify("s", [VECTOR_S => "A", Int => "B"]; service=SemanticMock, config=_SEM_CFG)]
+    end
+    @test got[1] === Vector && got[2] === VECTOR_S
+    # Bounded, as the plans are.
+    sizes = Int[]
+    for i in 1:UniLM._NL_TABLES.limit + 10
+        UniLM._nl_tables((yes = "the sender mentions order $i", no = "anything else"))
+        push!(sizes, length(memo()))
+    end
+    @test maximum(sizes) <= UniLM._NL_TABLES.limit
+end
+
+# ─── 20. The wire, byte for byte ─────────────────────────────────────────────
+
+# The documented examples, whose requests docs/recorded_answers holds, each also written
+# the other way: keys for the sentences in signatures, and sentences for the keys.
+doc_route(::nl"the customer wants a refund", msg) = :refund
+doc_route(::nl"the customer reports a bug in the app", msg) = :bug
+doc_route(::nl"anything else", msg) = :other
+doc_keyed_route(::Val{:refund}, msg) = :refund
+doc_keyed_route(::Val{:bug}, msg) = :bug
+doc_keyed_route(::Val{:other}, msg) = :other
+const DOC_ROUTE = (refund = "the customer wants a refund", bug = "the customer reports a bug in the app",
+                   other = "anything else")
+doc_handle(intent::Val, ticket) = intent
+const DOC_INTENTS = [:refund => "the customer wants their money back",
+                     :double => "the customer was charged twice or charged an amount they did not expect",
+                     :crash  => "the app crashes, freezes, or shows an error",
+                     :signin => "the customer cannot sign in to their account",
+                     :other  => "anything else"]
+doc_sentence_handle(intent::nl"the customer wants their money back", ticket) = :refund
+doc_sentence_handle(intent::nl"the customer was charged twice or charged an amount they did not expect", ticket) = :double
+doc_sentence_handle(intent::nl"the app crashes, freezes, or shows an error", ticket) = :crash
+doc_sentence_handle(intent::nl"the customer cannot sign in to their account", ticket) = :signin
+doc_sentence_handle(intent::nl"anything else", ticket) = :other
+const DOC_TEAMS = (billing   = "payments, charges, invoices or refunds",
+                   technical = "the app or the website does not work as expected",
+                   shipping  = "a parcel that is late, lost or arrived damaged",
+                   other     = "anything else")
+
+@testset "semantic — the documented calls make their recorded requests, byte for byte" begin
+    # A recording is keyed by the SHA-256 of the exact request bytes, and :replay sends
+    # nothing: a request that changed by one byte would end in a ReplayMissError. Each
+    # literal example is replayed in keys as well, and each keyed one in sentences.
+    ticket = "My package arrived crushed and the screen is cracked. I want my money back."
+    refund = "Please refund my annual plan, I cancelled on day two."
+    charged = "I was charged twice for order #4471. Please refund the duplicate payment."
+    replayed = withenv(UniLM.TYPESAFE_API_KEY => nothing, "TYPESAFE_DEFAULT_MODEL" => nothing) do
+        with_recorded_answers(joinpath(pkgdir(UniLM), "docs", "recorded_answers"); mode=:replay) do
+            branched = @branch ticket min_confidence=0.6 begin
+                "the customer wants a refund"                              => :refund
+                ("the customer reports a bug", "A defect in the software") => :bug
+                "the customer asks a pricing question"                     => :pricing
+                _                                                          => :escalate
+            end
+            [nl_dispatch(doc_route, ticket), nl_dispatch(doc_keyed_route, ticket; texts=DOC_ROUTE),
+             nl_dispatch(doc_handle, refund; texts=DOC_INTENTS), nl_dispatch(doc_sentence_handle, refund),
+             nl_classify(charged, DOC_TEAMS), branched]
+        end
+    end
+    @test replayed == [:refund, :refund, Val(:refund), :refund, :billing, :refund]
 end

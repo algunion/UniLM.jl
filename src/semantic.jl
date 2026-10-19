@@ -60,8 +60,11 @@ Meaning(text::AbstractString) = Meaning{Symbol(text)}()
 _description(::Type{Meaning{S}}) where {S} = String(S)
 _description(::Meaning{S}) where {S} = String(S)
 
+# An instance prints as it is written. The type keeps Julia's own printing,
+# `Meaning{Symbol("…")}`: a method of `show(::IO, ::Type{Meaning{S}})` would extend
+# `show(::IO, ::Type)`, and invalidate the code compiled to print any type in every
+# session that loads UniLM.
 Base.show(io::IO, ::Meaning{S}) where {S} = print(io, "nl\"", S, "\"()")
-Base.show(io::IO, ::Type{Meaning{S}}) where {S} = print(io, "nl\"", S, "\"")
 
 """
     nl"some natural-language description"
@@ -143,6 +146,15 @@ end
 
 # The policy a `min_confidence` threshold stands for: the argmax, declined below it.
 _nl_gate(min_confidence::Real) = (a::ChoiceAnswer) -> a.confidence < min_confidence ? nothing : a.choice
+
+# A threshold is a confidence, so it lies in 0 … 1: NaN would decline nothing, leaving a
+# fallback unreachable, and a bar above 1 would decline every answer. Checked before the
+# request, like every other input of a policy.
+function _nl_check_threshold(min_confidence::Real)::Nothing
+    isfinite(min_confidence) && 0 <= min_confidence <= 1 || throw(ArgumentError(
+        "`min_confidence` must be a finite number in 0 … 1, the range of a confidence; got $(min_confidence)"))
+    nothing
+end
 
 # Checked before the request, so a `decide` that cannot take the answer fails
 # before one is billed rather than after.
@@ -231,6 +243,7 @@ function _branch_select(state, names::Vector{String}, descriptions::Vector{Any};
                         cancel::Union{Nothing,CancelToken}=nothing,
                         on_response=nothing,
                         has_fallback::Bool=false)::Int
+    _nl_check_threshold(min_confidence)
     isempty(names) && throw(ArgumentError("a branch needs at least one option"))
     any(isempty, names) && throw(ArgumentError("branch option names must be non-empty"))
     length(unique(names)) == length(names) || throw(ArgumentError(
@@ -259,6 +272,14 @@ function _branch_select(state, names::Vector{String}, descriptions::Vector{Any};
     throw(_nl_declined("branch", a, decide, min_confidence))
 end
 
+# An option name as the wire takes it; `line` names the @branch line it was computed on.
+# `_branch_source` spells that line's left-hand side as written: a literal `'c'` as `'c'`.
+_branch_source(lhs)::String = lhs isa Union{Expr,Symbol,QuoteNode} ? string(lhs) : repr(lhs)
+_branch_option(name::Union{AbstractString,Symbol}, ::String)::String = String(name)
+_branch_option(name, line::String) = throw(ArgumentError(
+    "the @branch option $(line) is $(repr(name)) ($(typeof(name))): an option name is a String, or a " *
+    "Symbol sent as its String"))
+
 """
     @branch state begin
         "option name"                  => expression
@@ -275,7 +296,9 @@ Each line is `option => expression`. A bare left-hand side is the option **name*
 — the text the model actually reads and the text the answer returns. The
 2-tuple form `("name", "description")` attaches a longer description to that
 name; it is the only way to do so. Left-hand sides are ordinary expressions
-evaluated once, in source order, so an option name may be computed.
+evaluated once, in source order, so an option name may be computed. A name is a
+`String`, or a `Symbol` sent as its `String`; any other value is an
+`ArgumentError` naming its line, before the request.
 
 A final `_ => expression` line is the fallback taken when the decision policy
 declines: the winner's confidence is below `min_confidence`, or `decide`
@@ -290,7 +313,7 @@ Keywords go between the state and the block, written `key = value`:
 | Keyword | Meaning |
 | :--- | :--- |
 | `model` | model name; omitted, the client default applies |
-| `min_confidence` | threshold in `0 … 1`; below it, take `_` or throw [`LowConfidenceError`](@ref) |
+| `min_confidence` | a finite threshold in `0 … 1` (anything else, NaN included, is an `ArgumentError` before the request); below it, take `_` or throw [`LowConfidenceError`](@ref) |
 | `decide` | a policy called with the [`ChoiceAnswer`](@ref): return an option name — any of them, not only the winner — or `nothing` to take `_` or throw [`DecisionDeclinedError`](@ref) |
 | `instructions` | the question's instructions (default: `"Select the option that best describes the provided state."`) |
 | `service` | endpoint (default: the [`with_system_one`](@ref) backend, else `TYPESAFEServiceEndpoint`) |
@@ -353,7 +376,14 @@ macro branch(args...)
         "`a -> a.confidence >= τ ? a.choice : nothing`"))
 
     lines = Any[x for x in block.args if !(x isa LineNumberNode)]
+    # Where each line is written: an option name is only known at run time, and an
+    # error about it names its line.
+    place, wheres = __source__, String[]
+    for x in block.args
+        x isa LineNumberNode ? (place = x) : push!(wheres, "$(something(place.file, :unknown)):$(place.line)")
+    end
     option_names = Any[]
+    option_lines = String[]
     option_descriptions = Any[]
     bodies = Any[]
     has_fallback = false
@@ -375,10 +405,12 @@ macro branch(args...)
             length(lhs.args) == 2 || throw(ArgumentError(
                 "a tuple @branch option is `(\"name\", \"description\") => expression`; got $(repr(lhs))"))
             push!(option_names, lhs.args[1])
+            push!(option_lines, "`$(_branch_source(lhs.args[1]))` at $(wheres[i])")
             push!(option_descriptions, lhs.args[2])
             push!(bodies, rhs)
         else
             push!(option_names, lhs)
+            push!(option_lines, "`$(_branch_source(lhs))` at $(wheres[i])")
             push!(option_descriptions, nothing)
             push!(bodies, rhs)
         end
@@ -395,7 +427,7 @@ macro branch(args...)
                 :(local $namesv = String[]),
                 :(local $descv = Any[])]
     for i in eachindex(option_names)
-        push!(setup, :(push!($namesv, $(esc(option_names[i])))))
+        push!(setup, :(push!($namesv, _branch_option($(esc(option_names[i])), $(option_lines[i])))))
         d = option_descriptions[i]
         push!(setup, :(push!($descv, $(isnothing(d) ? nothing : esc(d)))))
     end
@@ -508,11 +540,66 @@ end
 
 # The tables of a keyed call: one table, or a Tuple with one table per keyed argument.
 function _nl_tables(texts)::Vector{_NLTable}
-    texts isa Tuple || return _NLTable[_nl_table(texts)]
+    texts isa Tuple || return _NLTable[_nl_validated(texts)]
     isempty(texts) && throw(ArgumentError(
         "`texts` is an empty tuple; pass one table, or a tuple with one table per keyed argument"))
     any(x -> x isa Pair, texts) && throw(ArgumentError(_NL_TUPLE_OF_PAIRS))
-    _NLTable[_nl_table(t) for t in texts]
+    _NLTable[_nl_validated(t) for t in texts]
+end
+
+# ─── Caches ──────────────────────────────────────────────────────────────────
+
+# A dictionary read without a lock. A writer publishes a new dictionary, copied from the
+# one it replaces, and a published one is never written again, so every reader holds a
+# consistent snapshot however many tasks read at once; two writers racing retry on the
+# newer snapshot. Reaching `limit` entries starts over: that costs the next calls a
+# recomputation, never a wrong result.
+mutable struct _NLCache{K,V}
+    @atomic entries::Dict{K,V}
+    const limit::Int
+end
+_NLCache{K,V}(limit::Int) where {K,V} = _NLCache{K,V}(Dict{K,V}(), limit)
+
+const _NL_CACHE_LIMIT = 1024
+
+_nl_snapshot(cache::_NLCache) = @atomic cache.entries
+
+# A key is typed as the cache's key type, never as itself: a plan's key is a type, and
+# code specialized on it would be compiled anew for every key.
+function _nl_publish!(cache::_NLCache{K,V}, @nospecialize(key), value::V)::V where {K,V}
+    k = key::K
+    old = _nl_snapshot(cache)
+    while true
+        new = length(old) >= cache.limit && !haskey(old, k) ? Dict{K,V}() : copy(old)
+        new[k] = value
+        old, done = @atomicreplace cache.entries old => new
+        done && return value
+    end
+end
+
+# The tables validated so far. Validation is a function of exactly the keys and the text
+# of the sentences, so a table accepted once is accepted again; a table holding other
+# keys or other text — a vector mutated since, say — is another table.
+const _NL_TABLES = _NLCache{_NLTable,Nothing}(_NL_CACHE_LIMIT)
+
+# The table `t` would validate to, built without validating: `nothing` when `t` is not a
+# NamedTuple or a vector of pairs whose sentences are strings, which only `_nl_table`
+# can explain. Not specialized on the table: every NamedTuple table is a type of its own.
+function _nl_seen(@nospecialize(t::NamedTuple))::Union{Nothing,_NLTable}
+    texts = values(t)
+    all(s -> s isa AbstractString, texts) ? _NLTable(keys(t), map(String, texts)) : nothing
+end
+_nl_seen(@nospecialize(t::AbstractVector))::Union{Nothing,_NLTable} =
+    all(e -> e isa Pair && last(e) isa AbstractString, t) ?
+        _NLTable(Tuple(first(e) for e in t), Tuple(String(last(e)) for e in t)) : nothing
+_nl_seen(@nospecialize(t)) = nothing
+
+function _nl_validated(@nospecialize(t))::_NLTable
+    seen = _nl_seen(t)
+    !isnothing(seen) && haskey(_nl_snapshot(_NL_TABLES), seen) && return seen
+    table = _nl_table(t)
+    _nl_publish!(_NL_TABLES, table, nothing)
+    table
 end
 
 _nl_listed(xs::Vector{String}, n::Int, sep::String)::String =
@@ -667,7 +754,11 @@ function _nl_offer(f, argtypes::Vector{Any})::_NLOffer
     length(argtypes) == length(ordinary) || throw(ArgumentError(
         "$(f) takes $(length(ordinary)) ordinary argument(s) beside its $(length(slots)) " *
         "natural-language slot(s); got $(length(argtypes))"))
-    fits = filter(m -> _nl_accepts(f, m, slots, ordinary, argtypes), slotted)
+    # A loop rather than a closure over `f`, which would be compiled anew for every function.
+    fits = Method[]
+    for m in slotted
+        _nl_accepts(f, m, slots, ordinary, argtypes) && push!(fits, m)
+    end
     isempty(fits) && throw(ArgumentError(
         "no natural-language method of $(f) accepts ordinary arguments of types " *
         "$(Tuple{argtypes...}); its natural-language methods are " *
@@ -698,9 +789,15 @@ _nl_key(t::_NLTable, s::String) = t.keys[something(findfirst(==(s), t.texts))]
 # ambiguous call as well as a missing one, and Julia could call neither. It looks
 # in the newest world, as `methods(f)` and the final `invokelatest` do; without
 # `world` it would use the caller's, blind to a method defined after the call began.
-_nl_gaps(f, offer::Union{_NLOffer,_NLKeyedOffer}, argtypes::Vector{Any})::Vector{Vector{String}} =
-    filter(c -> !hasmethod(f, Tuple{_nl_call_types(offer, c, argtypes)...}; world = Base.get_world_counter()),
-           _nl_combinations(offer.options))
+# A loop rather than a closure over `f`, as in `_nl_offer`.
+function _nl_gaps(f, offer::Union{_NLOffer,_NLKeyedOffer}, argtypes::Vector{Any})::Vector{Vector{String}}
+    gaps = Vector{String}[]
+    for c in _nl_combinations(offer.options)
+        hasmethod(f, Tuple{_nl_call_types(offer, c, argtypes)...}; world = Base.get_world_counter()) ||
+            push!(gaps, c)
+    end
+    gaps
+end
 
 # The methods an ambiguous call of signature `sig` collides on: those that accept it
 # and that no other accepting method is more specific than. Empty when none accepts
@@ -812,26 +909,24 @@ end
 # gap check cost microseconds per offered combination, and a plan stays right for as
 # long as the method table does not change, which every method definition marks by
 # moving to a newer world. The key holds the TYPE of `f`, which owns the methods: a
-# callable struct keyed by value would add an entry per instance.
-const _NL_PLANS = Base.Lockable(Dict{Type,Tuple{UInt,_NLPlan}}())
+# callable struct keyed by value would add an entry per instance. Every new type of
+# an ordinary argument is a new key too, so the cache is capped.
+const _NL_PLANS = _NLCache{Type,Tuple{UInt,_NLPlan}}(_NL_CACHE_LIMIT)
 
-# The plan under `key` in `cache`, made by `make()` unless one made in the current
-# world is there. A cache that reaches `limit` entries starts over: that costs the
-# next calls a re-plan, never a wrong plan.
-function _nl_cached(make::Function, cache::Base.Lockable, key; limit::Int=typemax(Int))
-    world = Base.get_world_counter()   # read first: a method defined while planning makes the entry stale
-    cached = @lock cache get(cache[], key, nothing)
-    !isnothing(cached) && first(cached) == world && return last(cached)
-    plan = make()
-    @lock cache begin
-        length(cache[]) >= limit && !haskey(cache[], key) && empty!(cache[])
-        cache[][key] = (world, plan)
-    end
-    plan
+# The plan under `key` in `cache` if it was made in `world`, which the caller reads
+# before it plans: a method defined while planning makes the entry stale.
+function _nl_cached(cache::_NLCache{K,Tuple{UInt,V}}, @nospecialize(key), world::UInt)::Union{Nothing,V} where {K,V}
+    cached = get(_nl_snapshot(cache), key::K, nothing)   # typed as in `_nl_publish!`
+    isnothing(cached) || first(cached) != world ? nothing : last(cached)
 end
 
-_nl_plan(f, argtypes::Vector{Any})::_NLPlan =
-    _nl_cached(() -> _nl_plan_uncached(f, argtypes), _NL_PLANS, Tuple{Core.Typeof(f), argtypes...})
+function _nl_plan(@nospecialize(f), argtypes::Vector{Any})::_NLPlan
+    world = Base.get_world_counter()   # read before planning: see `_nl_cached`
+    key = Tuple{Core.Typeof(f), argtypes...}
+    plan = _nl_cached(_NL_PLANS, key, world)
+    isnothing(plan) || return plan
+    last(_nl_publish!(_NL_PLANS, key, (world, _nl_plan_uncached(f, argtypes))))
+end
 
 # ─── Keyed dispatch ──────────────────────────────────────────────────────────
 # With `texts`, the methods of `f` dispatch on keys, and a table maps each key to the
@@ -1001,16 +1096,18 @@ function _nl_namer(offer::_NLKeyedOffer)::Method
 end
 
 # Keyed plans depend on the tables too, so their key adds the tables' contents: each
-# `_NLTable` is an immutable copy, never the vector a caller passed and may mutate.
-# Method definitions bound the literal cache; sentences do not bound this one — a
+# `_NLTable` is an immutable copy, never the vector a caller passed and may mutate. A
 # table built per call, with a sentence templated from the input, adds an entry per
-# call — so it is capped.
-const _NL_KEYED_PLANS = Base.Lockable(Dict{Tuple{Type,Tuple{Vararg{_NLTable}}},Tuple{UInt,_NLKeyedPlan}}())
-const _NL_KEYED_PLANS_LIMIT = 1024
+# call; the cap bounds that as it bounds new argument types.
+const _NL_KEYED_PLANS = _NLCache{Tuple{Type,Tuple{Vararg{_NLTable}}},Tuple{UInt,_NLKeyedPlan}}(_NL_CACHE_LIMIT)
 
-_nl_keyed_plan(f, argtypes::Vector{Any}, tables::Vector{_NLTable})::_NLKeyedPlan =
-    _nl_cached(() -> _nl_keyed_plan_uncached(f, argtypes, tables), _NL_KEYED_PLANS,
-               (Tuple{Core.Typeof(f), argtypes...}, Tuple(tables)); limit=_NL_KEYED_PLANS_LIMIT)
+function _nl_keyed_plan(@nospecialize(f), argtypes::Vector{Any}, tables::Vector{_NLTable})::_NLKeyedPlan
+    world = Base.get_world_counter()   # read before planning, as for `_nl_plan`
+    key = (Tuple{Core.Typeof(f), argtypes...}, Tuple(tables))
+    plan = _nl_cached(_NL_KEYED_PLANS, key, world)
+    isnothing(plan) || return plan
+    last(_nl_publish!(_NL_KEYED_PLANS, key, (world, _nl_keyed_plan_uncached(f, argtypes, tables))))
+end
 
 """
     meanings(f; texts=nothing) -> Dict{Int,Vector{String}}
@@ -1192,6 +1289,17 @@ natural-language method (an unnamed position becomes `"arg<index>"`), so the
 same arguments always make the same request. With no ordinary arguments there is
 nothing to describe, so `state` is then required.
 
+Every value of that state is sent as JSON.jl writes it — every field of a struct
+argument, a credential held in one included — and a `:record` scope of
+[`with_recorded_answers`](@ref) writes it to disk with the request: pass `state`
+to send only what the model should read. A value that is not data is an
+`ArgumentError` before the request, naming the argument, the path to the value
+and its type: a function or closure, a type, a module, a `Ptr` or other `Ref`, a
+`Task`, a `Channel`, a lock, a condition, an event, an `IO` or an `Expr`, in the
+argument or anywhere in its dicts, arrays, sets, tuples and fields. So is a
+container nested more than 64 levels deep, where the check stops. An explicit
+`state` is sent as given.
+
 Each slot's question is named after that argument (an unnamed one becomes
 `"meaning_<index>"`) and carries `instructions`: `nothing` for a generic
 default, a `String` for every slot, or a `Vector` with one entry per slot.
@@ -1200,7 +1308,8 @@ A decision policy turns the answers into meanings. The default is the argmax
 gated by `min_confidence`: below it, `fallback` is called with the caller's
 `args` if given, and otherwise [`LowConfidenceError`](@ref) is thrown. A
 `fallback` that cannot be called with arguments of the types of `args` is an
-`ArgumentError` before any request.
+`ArgumentError` before any request, and so is a `min_confidence` that is not a
+finite number in `0 … 1`, NaN included.
 `confidence` is computed over the options offered — `(n·p_max − 1)/(n − 1)`,
 clamped to `0 … 1`, for `n` of them
 ([Confidence](https://docs.typesafe.ai/confidence)) — so the same threshold is a
@@ -1304,7 +1413,7 @@ cached by the tables' contents as well. [`meanings`](@ref) and
 [`meaning_gaps`](@ref) take the same `texts`, and [`nl_classify`](@ref) returns
 the chosen key without dispatching.
 """
-function nl_dispatch(f, args...;
+function nl_dispatch(@nospecialize(f), @nospecialize(args...);
                      model::Union{Nothing,AbstractString}=nothing,
                      service::Union{Nothing,ServiceEndpointSpec}=nothing,
                      config::Union{Nothing,RequestConfig}=nothing,
@@ -1316,6 +1425,17 @@ function nl_dispatch(f, args...;
                      state=nothing,
                      texts=nothing,
                      on_response=nothing)
+    # A keyword body is specialized on every keyword's type, so this one is compiled again
+    # for each `decide`, `fallback` or table type a call site passes: it only hands over to
+    # a body compiled once.
+    _nl_dispatch(f, args, model, service, config, cancel, min_confidence, decide, fallback, instructions,
+                 state, texts, on_response)
+end
+
+function _nl_dispatch(f, args::Tuple, model, service, config, cancel, min_confidence::Real, decide, fallback,
+                      instructions, state, texts, on_response)
+    @nospecialize
+    _nl_check_threshold(min_confidence)
     _nl_check_hook(on_response)
     # `Core.Typeof` is the type dispatch sees: `Type{Int}` for the argument `Int`.
     argtypes = Any[Core.Typeof(a) for a in args]
@@ -1415,7 +1535,8 @@ decline — not both. A declined answer calls `fallback(state)` when given, and
 otherwise throws [`LowConfidenceError`](@ref) or [`DecisionDeclinedError`](@ref)
 for the question `"classify"`; any other verdict is an `ArgumentError`, and
 `fallback` does not run. A `fallback` that cannot be called with `state` is an
-`ArgumentError` before the request. A non-success call throws
+`ArgumentError` before the request, and so is a `min_confidence` that is not a
+finite number in `0 … 1`, NaN included. A non-success call throws
 [`SystemOneError`](@ref).
 `on_response` is called once with the [`SystemOneSuccess`](@ref) before the
 policy runs — audits get `request_id`, `model` and `raw` from its `response`,
@@ -1432,7 +1553,7 @@ nl_classify(ticket, INTENT)                                            # :refund
 nl_classify(ticket, INTENT; min_confidence = 0.7, fallback = t -> :other)
 ```
 """
-function nl_classify(state, texts;
+function nl_classify(state, @nospecialize(texts);
                      min_confidence::Real=0.0,
                      decide=nothing,
                      fallback=nothing,
@@ -1442,14 +1563,15 @@ function nl_classify(state, texts;
                      config::Union{Nothing,RequestConfig}=nothing,
                      cancel::Union{Nothing,CancelToken}=nothing,
                      on_response=nothing)
+    _nl_check_threshold(min_confidence)
     texts isa Tuple && !any(x -> x isa Pair, texts) && throw(ArgumentError(
         "nl_classify takes one table; got a tuple of $(length(texts)). A tuple of tables is for " *
         "nl_dispatch, one per keyed argument"))
-    table = _nl_table(texts)
+    table = _nl_validated(texts)
     policy = _nl_one_policy(decide, min_confidence)
     _nl_check_hook(on_response)
     _nl_check_fallback(fallback, Any[Core.Typeof(state)], "fallback(state)")
-    options = collect(table.texts)
+    options = collect(String, table.texts)
     question = "classify" => choice(String(something(instructions, _NL_INSTRUCTIONS)),
                                     [o => nothing for o in options])
     a = only(_nl_ask(state, [question], [options], "sentences"; model, service, config, cancel, on_response))
@@ -1460,19 +1582,110 @@ function nl_classify(state, texts;
     throw(_nl_declined("classify", a, decide, min_confidence))
 end
 
-# Values are passed through untouched: JSON.jl lowers what it knows, and
-# anything it cannot encode fails loudly at serialization rather than being
-# stringified into something the model would silently misread. The keys follow
-# argument order, so the same arguments make byte-identical requests: a `Dict`
-# iterates in hash order, which may change between Julia versions, and key order
-# is part of what the model reads.
-function _nl_state(f, state, args::Tuple, ordinary::Vector{Int}, argnames::Vector{Symbol})
+# The state built from the ordinary arguments. The keys follow argument order, so the
+# same arguments make byte-identical requests: a `Dict` iterates in hash order, which
+# may change between Julia versions, and key order is part of what the model reads.
+# Values are sent as JSON.jl writes them, which does not fail on what is not data: it
+# writes a function (a closure by its generated name), a type, a module or a pointer
+# by its `string`, and a task, a channel, a lock or an `IO` field by field. So every
+# value is walked first, and one the state must not carry is refused before the request.
+function _nl_state(@nospecialize(f), state, @nospecialize(args::Tuple), ordinary::Vector{Int}, argnames::Vector{Symbol})
     isnothing(state) || return state
     isempty(ordinary) && throw(ArgumentError(
         "$(f) has no ordinary arguments to describe the state; pass `state = ...` to nl_dispatch"))
     payload = JSON.Object{String,Any}()
     for k in eachindex(ordinary)
-        payload[_nl_state_key(argnames[ordinary[k]], ordinary[k])] = args[k]
+        name = _nl_state_key(argnames[ordinary[k]], ordinary[k])
+        _nl_check_data(f, name, args[k])
+        payload[name] = args[k]
     end
     payload
+end
+
+# What is not data, and what a message calls it. A `Ref` is shared memory rather than a
+# value, and an `Expr` is code; of the rest a model would read only process internals.
+const _NL_NOT_DATA_KINDS = (Function => "a function", Type => "a type", Module => "a module",
+                            Ref => "a reference", Task => "a task", Base.AbstractChannel => "a channel",
+                            Base.AbstractLock => "a lock", Base.GenericCondition => "a condition",
+                            Base.Event => "an event", IO => "a stream", Expr => "code")
+const _NL_NOT_DATA = Union{map(first, _NL_NOT_DATA_KINDS)...}
+
+# What JSON.jl writes as one scalar, whatever the fields hold (a big number holds a
+# pointer, a regex its compiled form): nothing in it to walk.
+const _NL_SCALAR = Union{Number,AbstractString,Symbol,AbstractChar,Nothing,Missing,Enum,Regex}
+
+# How deep the walk goes. A container below it is refused: the walk must end, and a
+# value it has not reached is not known to be data.
+const _NL_STATE_DEPTH = 64
+
+# A value the state must not carry: the path to it, innermost step first, and whether
+# it was refused for its depth rather than for its kind.
+struct _NLStray
+    path::Vector{String}
+    value::Any
+    deep::Bool
+end
+
+_nl_via(s::_NLStray, step::String)::_NLStray = (push!(s.path, step); s)
+
+# The first value in `x` the state must not carry, walking what JSON.jl writes: a value
+# that lowers (`JSON.lower`) is walked as lowered, then the keys and values of a dict,
+# the elements of an array, a set or a tuple, and the fields of anything else. A
+# mutable value is walked once: seen again, it was checked already, or it is a cycle,
+# which JSON.jl writes as `null`.
+function _nl_stray(@nospecialize(x), depth::Int, seen::Base.IdSet{Any})::Union{Nothing,_NLStray}
+    x isa _NL_NOT_DATA && return _NLStray(String[], x, false)
+    x isa _NL_SCALAR && return nothing
+    depth > _NL_STATE_DEPTH && return _NLStray(String[], x, true)
+    if ismutable(x)
+        x in seen && return nothing
+        push!(seen, x)
+    end
+    lowered = JSON.lower(x)
+    lowered === x || return _nl_stray(lowered, depth + 1, seen)
+    if x isa AbstractDict
+        keytype(x) <: _NL_SCALAR && valtype(x) <: _NL_SCALAR && return nothing
+        for (k, v) in x
+            s = _nl_stray(k, depth + 1, seen)
+            isnothing(s) || return _nl_via(s, "[key $(repr(k))]")
+            s = _nl_stray(v, depth + 1, seen)
+            isnothing(s) || return _nl_via(s, "[$(repr(k))]")
+        end
+    elseif x isa AbstractArray
+        eltype(x) <: _NL_SCALAR && return nothing
+        for i in eachindex(x)
+            isassigned(x, i) || continue
+            s = _nl_stray(x[i], depth + 1, seen)
+            isnothing(s) || return _nl_via(s, "[$(i)]")
+        end
+    elseif x isa Union{AbstractSet,Tuple}
+        for (i, v) in enumerate(x)
+            s = _nl_stray(v, depth + 1, seen)
+            isnothing(s) || return _nl_via(s, "[$(i)]")
+        end
+    else
+        for i in 1:nfields(x)
+            isdefined(x, i) || continue
+            s = _nl_stray(getfield(x, i), depth + 1, seen)
+            isnothing(s) || return _nl_via(s, ".$(fieldname(typeof(x), i))")
+        end
+    end
+    nothing
+end
+
+function _nl_check_data(@nospecialize(f), name::String, @nospecialize(x))::Nothing
+    x isa _NL_SCALAR && return nothing                 # the common case: nothing to walk
+    stray = _nl_stray(x, 1, Base.IdSet{Any}())
+    isnothing(stray) && return nothing
+    at = name * join(Iterators.reverse(stray.path))
+    fix = "Pass `state = …` with only what the model should read"
+    stray.deep && throw(ArgumentError(
+        "the argument `$(name)` of $(f) nests deeper than $(_NL_STATE_DEPTH) levels at `$(at)`, where " *
+        "nl_dispatch stops checking that its state is data. $(fix)"))
+    kind = last(_NL_NOT_DATA_KINDS[something(findfirst(p -> stray.value isa first(p), _NL_NOT_DATA_KINDS))])
+    what = "$(kind) ($(typeof(stray.value)))"
+    throw(ArgumentError(
+        "the argument `$(name)` of $(f) " * (isempty(stray.path) ? "is $(what)" : "holds $(what) at `$(at)`") *
+        ", which is not data: nl_dispatch sends its ordinary arguments as the state, and JSON.jl would " *
+        "send its name or its internals rather than fail. $(fix)"))
 end

@@ -1269,41 +1269,77 @@ function _system_one_form(wire::SystemOneWire)::HTTP.Form
     HTTP.Form(parts)
 end
 
-# The live exchange. Credentials are read here and only here, so a replay needs none. A
-# multipart request carries no JSON Content-Type: HTTP.jl sets the form's own, with its
-# boundary, and a second one would corrupt the upload.
-function _system_one_send(cfg::RequestConfig, t0::UInt64, service::ServiceEndpointSpec, wire::SystemOneWire,
-                          tok::Union{Nothing,CancelToken})::HTTP.Response
+# The connection pool of every System One exchange. HTTP.jl's default client keeps two
+# idle connections per host, so concurrent requests to one HTTP/1.1 server — a local
+# backend, a gateway — close nearly every connection they open: 64 workers in a closed
+# loop opened over 16,000 connections within seconds and ran out of ephemeral ports. This
+# pool keeps an idle connection for each request in flight (a backend that negotiates
+# HTTP/2 multiplexes them over one), for 30 s — long enough for a batch, or a loop, to
+# find its connections warm, and well under the idle timeouts of the NATs and load
+# balancers on a typical path. HTTP.jl hands a pooled connection to the next request
+# without checking that the server has not closed it meanwhile, and that is acceptable
+# here: the stale connection fails as the request is written or its reply read, a reset
+# the retry seam retries on a fresh connection like any transport failure, and a System
+# One request is safe to repeat — it asks for an evaluation, changes nothing, and was
+# never read by the server that had closed the connection. (MCP, whose tool calls may
+# act on the world, bounds idle reuse to a second instead.) The pool is created by the
+# first live request, once per process — never during precompilation, and never by a
+# replayed call.
+const _SYSTEM_ONE_CLIENT = Base.OncePerProcess{HTTP.Client{Nothing}}() do
+    HTTP.Client(; transport=HTTP.Transport(; proxy=HTTP.ProxyFromEnvironment(),
+        max_idle_per_host=256, max_idle_total=1024, idle_timeout_ns=30_000_000_000))
+end
+_system_one_client()::HTTP.Client{Nothing} = _SYSTEM_ONE_CLIENT()
+
+# A backend's transport, through internal hooks of its protocol whose fallbacks keep what
+# every backend had before it could bring its own: the RequestConfig its calls use when no
+# channel the user controls sets one (`nothing`: the field defaults), the header its
+# retries are numbered in, and the requests `ask_each` keeps in flight when the call names
+# no `ntasks` — a default, not a limit.
+_system_one_default_config(::SystemOneProtocol, service)::Union{Nothing,RequestConfig} = nothing
+_system_one_retry_header(::SystemOneProtocol)::Union{Nothing,String} = nothing
+_system_one_concurrency(::SystemOneProtocol, service)::Int = 8
+
+# The live exchange. Credentials are read here and only here, so a replay needs none, and
+# so is the connection pool, so a replay opens no connection. A multipart request carries
+# no JSON Content-Type: HTTP.jl sets the form's own, with its boundary, and a second one
+# would corrupt the upload. `hooks` are the retry seam's `hold` and `observe`, through
+# which the requests of one `ask_each` back off together.
+function _system_one_send(cfg::RequestConfig, t0::UInt64, protocol::SystemOneProtocol, service::ServiceEndpointSpec,
+                          wire::SystemOneWire, tok::Union{Nothing,CancelToken}; hooks...)::HTTP.Response
     auth = auth_header(service)
     headers = isempty(wire.headers) ? auth : [auth; wire.headers]
+    seam = (; client=_system_one_client(), retry_header=_system_one_retry_header(protocol), hooks...)
     isempty(wire.parts) &&
-        return _http_with_retries(cfg, t0, wire.method, wire.url, headers, wire.body; cancel=tok)
+        return _http_with_retries(cfg, t0, wire.method, wire.url, headers, wire.body; cancel=tok, seam...)
     _http_with_retries(cfg, t0, wire.method, wire.url,
                        filter(h -> lowercase(String(first(h))) != "content-type", headers),
-                       _BodyFactory(() -> _system_one_form(wire)); cancel=tok)
+                       _BodyFactory(() -> _system_one_form(wire)); cancel=tok, seam...)
 end
 
 # One call's exchange: through any recorded-answers scope (keyed by the protocol's
 # namespace, the wire's path, body and key_extra) to the live send, then the protocol's
 # decoding. A missing or unwritable recording and an interrupt propagate; anything else
-# that goes wrong is the call's error, with the reply's request id when one arrived.
+# that goes wrong is the call's error, with the reply's request id when one arrived. The
+# backend's own default config applies when no channel the user controls sets one.
 function _system_one_exchange(call::_SystemOneCall, config::Union{Nothing,RequestConfig},
-                              cancel::Union{Nothing,CancelToken})
+                              cancel::Union{Nothing,CancelToken}; hooks...)
     (; protocol, service, request, wire) = call
-    cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
+    cfg = _resolve_config(config, _system_one_default_config(protocol, service))
+    tok = _resolve_cancel(cancel); t0 = time_ns()
     ns = _system_one_namespace(protocol)
     local resp
     try
         resp = _recorded_exchange(wire.method, isempty(ns) ? wire.path : "/" * ns * wire.path, wire.body, t0, tok;
                                   key_extra=wire.key_extra) do
-            _system_one_send(cfg, t0, service, wire, tok)
+            _system_one_send(cfg, t0, protocol, service, wire, tok; hooks...)
         end
         decode_system_one(protocol, service, request, resp)::Union{SystemOneSuccess,SystemOneFailure}
     catch e
         # A missing recording is not a service failure: it must reach the caller. Nor
         # is a paid answer whose recording could not be written.
         e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
-        _callerr(SystemOneCallError, e;
+        _callerr(SystemOneCallError, e; error=_error_text(service, e),
                  request_id=@isdefined(resp) ? _system_one_request_id(protocol, resp) : nothing)
     end
 end

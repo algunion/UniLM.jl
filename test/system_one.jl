@@ -504,6 +504,30 @@ end
     @test !ran[]
 end
 
+@testset "System One — with_system_one sets the provider options of the calls on its backend that name none" begin
+    q = "q" => noul("Is it?")
+    long(s) = any(h -> lowercase(first(h)) == "typesafe-danger-zone-long-context" && last(h) == "true", s.headers)
+    out, seen = _s1_serve(_s1_valid) do
+        withenv(UniLM.TYPESAFE_DEFAULT_MODEL_ENV => nothing) do
+            with_system_one(_S1Mock; model="m-scope", long_context=true) do
+                [ask("s", q; config=_S1_CFG),                                    # the scope's options
+                 ask("s", q; config=_S1_CFG, long_context=false),                # a call's own options win
+                 ask("s", q; service=_S1Mock, config=_S1_CFG),                   # a named backend: not the scope's
+                 fetch(Threads.@spawn ask("s", q; config=_S1_CFG)),              # spawned tasks inherit them
+                 only(ask_each(["s"], q; config=_S1_CFG)),                       # and so do batches
+                 with_system_one(() -> ask("s", q; config=_S1_CFG), _S1Mock)]    # an inner scope without options
+            end
+        end
+    end
+    @test all(issuccess, out)
+    @test long.(seen) == [true, false, false, true, true, false]
+    # With no options the wire is what it was, byte for byte.
+    @test _s1_text(seen[6]) == """{"state":"s","model":"jev-latest","questions":{"q":{"type":"noul","instructions":"Is it?"}}}"""
+    # An option the backend does not accept is refused when the request is sent, by name.
+    e = _s1_caught(() -> with_system_one(() -> ask("s", q), _S1Mock; temperature=0))
+    @test e isa ArgumentError && contains(e.msg, "temperature")
+end
+
 _s1_route(::Val{:refund}, ticket) = :refund
 _s1_route(::Val{:bug}, ticket) = :bug
 

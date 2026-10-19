@@ -1236,10 +1236,12 @@ end
 
 # ─── Ambient backend ─────────────────────────────────────────────────────────
 
-# The backend, and the model, a System One verb uses when the call names no service.
+# The backend, the model and the provider options a System One verb uses when the call
+# names no service.
 struct _SystemOneTarget
     service::ServiceEndpointSpec
     model::Union{Nothing,String}
+    options::NamedTuple
 end
 
 const _SYSTEM_ONE_TARGET = ScopedValue{Union{Nothing,_SystemOneTarget}}(nothing)
@@ -1254,55 +1256,58 @@ function _check_system_one_service(service)::Nothing
 end
 
 """
-    with_system_one(f, service; model=nothing)
+    with_system_one(f, service; model=nothing, options...)
 
 Run `f()` with `service` as the System One backend of every verb inside it that
 names none — [`ask`](@ref), [`list_models`](@ref), [`nl_dispatch`](@ref),
-[`nl_classify`](@ref) and [`@branch`](@ref) — and `model`, when given, as the
-model of those calls that name none; return `f()`'s value. `service` must
-declare `:system_one` and `model` must not be blank, or this is an
-`ArgumentError` before `f` runs.
+[`nl_classify`](@ref) and [`@branch`](@ref) — `model`, when given, as the
+model of those calls that name none, and any other keyword as
+the provider options of those calls that name none (see [`ask`](@ref); checked
+by the backend's wrapper when each request is sent); return `f()`'s value.
+`service` must declare `:system_one` and `model` must not be blank, or this is
+an `ArgumentError` before `f` runs.
 
-A call resolves its backend and model this way:
+A call resolves its backend, model and options this way:
 
-- with `service`: that backend, and `model` if the call names one, else the
-  backend's default, read when the request is sent — the scope's model belongs
-  to the scope's backend and is never applied to another;
+- with `service`: that backend, and `model` and options if the call names them,
+  else the backend's default model and no options — the scope's model and
+  options belong to the scope's backend and are never applied to another;
 - without `service`: the scope's backend, and the call's `model` if it names
-  one, else the scope's;
+  one, else the scope's; the call's options if it names any, else the scope's;
 - outside every scope: [`TYPESAFEServiceEndpoint`](@ref) and its default model.
 
 The scope is a `ScopedValue`, so it covers the tasks started inside `f`
 (`Threads.@spawn`, `asyncmap`), and scopes nest: the innermost applies.
 
 ```julia
-with_system_one(TYPESAFEServiceEndpoint; model = "jev-1.13.0") do
-    nl_classify(ticket, INTENT)          # asks jev-1.13.0
+with_system_one(TYPESAFEServiceEndpoint; model = "jev-1.13.0", long_context = true) do
+    nl_classify(ticket, INTENT)          # asks jev-1.13.0, with TypeSafe's long context
 end
 ```
 """
-function with_system_one(f::Function, service; model::Union{Nothing,AbstractString}=nothing)
+function with_system_one(f::Function, service; model::Union{Nothing,AbstractString}=nothing, options...)
     service isa ServiceEndpointSpec || throw(ArgumentError(
         "with_system_one takes an endpoint (a ServiceEndpoint type or instance); got $(typeof(service))"))
     _check_system_one_service(service)
-    with(f, _SYSTEM_ONE_TARGET => _SystemOneTarget(service, _model_name(model)))
+    with(f, _SYSTEM_ONE_TARGET => _SystemOneTarget(service, _model_name(model), values(options)))
 end
 
-# The backend and model of a call: the call's own, then the ambient scope's — whose
-# model applies only with its own backend — then TypeSafe and its default. (No return
-# annotation: a tuple holding a type has the element type `DataType`, not `Type{T}`.)
-function _system_one_target(service::Union{Nothing,ServiceEndpointSpec}, model::Union{Nothing,String})
-    isnothing(service) || return (service, model)
+# The backend, model and options of a call: the call's own, then the ambient scope's —
+# whose model and options apply only with its own backend — then TypeSafe and its default.
+# (No return annotation: a tuple holding a type has the element type `DataType`, not `Type{T}`.)
+function _system_one_target(service::Union{Nothing,ServiceEndpointSpec}, model::Union{Nothing,String},
+                            options::NamedTuple=(;))
+    isnothing(service) || return (service, model, options)
     t = _SYSTEM_ONE_TARGET[]
-    isnothing(t) && return (TYPESAFEServiceEndpoint, model)
-    (t.service, isnothing(model) ? t.model : model)
+    isnothing(t) && return (TYPESAFEServiceEndpoint, model, options)
+    (t.service, isnothing(model) ? t.model : model, isempty(options) ? t.options : options)
 end
 
 # ─── Verbs ───────────────────────────────────────────────────────────────────
 
 # A request ready to send: its backend, that backend's protocol, the request with the
-# model the call resolved, and the exchange it encodes to. Building one sends nothing,
-# and every local refusal happens here.
+# model and options the call resolved, and the exchange it encodes to. Building one sends
+# nothing, and every local refusal happens here.
 struct _SystemOneCall
     protocol::SystemOneProtocol
     service::ServiceEndpointSpec
@@ -1310,14 +1315,26 @@ struct _SystemOneCall
     wire::SystemOneWire
 end
 
-function _system_one_call(request::SystemOneRequest, service::Union{Nothing,ServiceEndpointSpec})::_SystemOneCall
-    svc, model = _system_one_target(service, request.model)
+# The same before it is encoded: what `ask_each` keeps of each item, so a batch holds no
+# more request bodies than it has requests in flight.
+const _SystemOneResolved = @NamedTuple{protocol::SystemOneProtocol, service::ServiceEndpointSpec,
+                                       request::SystemOneRequest}
+
+function _system_one_resolve(request::SystemOneRequest,
+                             service::Union{Nothing,ServiceEndpointSpec})::_SystemOneResolved
+    svc, model, options = _system_one_target(service, request.model, request.options)
     _check_system_one_service(svc)
     p = system_one_protocol(svc)::SystemOneProtocol
-    req = model === request.model ? request :
-          SystemOneRequest(request.state, request.questions, model, request.options)
-    _SystemOneCall(p, svc, req, encode_system_one(p, svc, req)::SystemOneWire)
+    req = model === request.model && options === request.options ? request :
+          SystemOneRequest(request.state, request.questions, model, options)
+    (protocol=p, service=svc, request=req)
 end
+
+_system_one_call(r::_SystemOneResolved)::_SystemOneCall =
+    _SystemOneCall(r.protocol, r.service, r.request, encode_system_one(r.protocol, r.service, r.request)::SystemOneWire)
+
+_system_one_call(request::SystemOneRequest, service::Union{Nothing,ServiceEndpointSpec})::_SystemOneCall =
+    _system_one_call(_system_one_resolve(request, service))
 
 # A multipart body is consumed by the attempt that sends it, so each attempt builds its
 # own: the JSON part first, named `request`, then the parts in order.

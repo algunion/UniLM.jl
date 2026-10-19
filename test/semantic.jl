@@ -1687,3 +1687,54 @@ end
     end
     @test maximum(sizes) <= UniLM._NL_TABLES.limit
 end
+
+# ─── 20. The wire, byte for byte ─────────────────────────────────────────────
+
+# The documented examples, whose requests docs/recorded_answers holds, each also written
+# the other way: keys for the sentences in signatures, and sentences for the keys.
+doc_route(::nl"the customer wants a refund", msg) = :refund
+doc_route(::nl"the customer reports a bug in the app", msg) = :bug
+doc_route(::nl"anything else", msg) = :other
+doc_keyed_route(::Val{:refund}, msg) = :refund
+doc_keyed_route(::Val{:bug}, msg) = :bug
+doc_keyed_route(::Val{:other}, msg) = :other
+const DOC_ROUTE = (refund = "the customer wants a refund", bug = "the customer reports a bug in the app",
+                   other = "anything else")
+doc_handle(intent::Val, ticket) = intent
+const DOC_INTENTS = [:refund => "the customer wants their money back",
+                     :double => "the customer was charged twice or charged an amount they did not expect",
+                     :crash  => "the app crashes, freezes, or shows an error",
+                     :signin => "the customer cannot sign in to their account",
+                     :other  => "anything else"]
+doc_sentence_handle(intent::nl"the customer wants their money back", ticket) = :refund
+doc_sentence_handle(intent::nl"the customer was charged twice or charged an amount they did not expect", ticket) = :double
+doc_sentence_handle(intent::nl"the app crashes, freezes, or shows an error", ticket) = :crash
+doc_sentence_handle(intent::nl"the customer cannot sign in to their account", ticket) = :signin
+doc_sentence_handle(intent::nl"anything else", ticket) = :other
+const DOC_TEAMS = (billing   = "payments, charges, invoices or refunds",
+                   technical = "the app or the website does not work as expected",
+                   shipping  = "a parcel that is late, lost or arrived damaged",
+                   other     = "anything else")
+
+@testset "semantic — the documented calls make their recorded requests, byte for byte" begin
+    # A recording is keyed by the SHA-256 of the exact request bytes, and :replay sends
+    # nothing: a request that changed by one byte would end in a ReplayMissError. Each
+    # literal example is replayed in keys as well, and each keyed one in sentences.
+    ticket = "My package arrived crushed and the screen is cracked. I want my money back."
+    refund = "Please refund my annual plan, I cancelled on day two."
+    charged = "I was charged twice for order #4471. Please refund the duplicate payment."
+    replayed = withenv(UniLM.TYPESAFE_API_KEY => nothing, "TYPESAFE_DEFAULT_MODEL" => nothing) do
+        with_recorded_answers(joinpath(pkgdir(UniLM), "docs", "recorded_answers"); mode=:replay) do
+            branched = @branch ticket min_confidence=0.6 begin
+                "the customer wants a refund"                              => :refund
+                ("the customer reports a bug", "A defect in the software") => :bug
+                "the customer asks a pricing question"                     => :pricing
+                _                                                          => :escalate
+            end
+            [nl_dispatch(doc_route, ticket), nl_dispatch(doc_keyed_route, ticket; texts=DOC_ROUTE),
+             nl_dispatch(doc_handle, refund; texts=DOC_INTENTS), nl_dispatch(doc_sentence_handle, refund),
+             nl_classify(charged, DOC_TEAMS), branched]
+        end
+    end
+    @test replayed == [:refund, :refund, Val(:refund), :refund, :billing, :refund]
+end

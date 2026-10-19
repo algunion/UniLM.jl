@@ -147,6 +147,15 @@ end
 # The policy a `min_confidence` threshold stands for: the argmax, declined below it.
 _nl_gate(min_confidence::Real) = (a::ChoiceAnswer) -> a.confidence < min_confidence ? nothing : a.choice
 
+# A threshold is a confidence, so it lies in 0 … 1: NaN would decline nothing, leaving a
+# fallback unreachable, and a bar above 1 would decline every answer. Checked before the
+# request, like every other input of a policy.
+function _nl_check_threshold(min_confidence::Real)::Nothing
+    isfinite(min_confidence) && 0 <= min_confidence <= 1 || throw(ArgumentError(
+        "`min_confidence` must be a finite number in 0 … 1, the range of a confidence; got $(min_confidence)"))
+    nothing
+end
+
 # Checked before the request, so a `decide` that cannot take the answer fails
 # before one is billed rather than after.
 _nl_is_decider(d)::Bool = hasmethod(d, Tuple{ChoiceAnswer})
@@ -234,6 +243,7 @@ function _branch_select(state, names::Vector{String}, descriptions::Vector{Any};
                         cancel::Union{Nothing,CancelToken}=nothing,
                         on_response=nothing,
                         has_fallback::Bool=false)::Int
+    _nl_check_threshold(min_confidence)
     isempty(names) && throw(ArgumentError("a branch needs at least one option"))
     any(isempty, names) && throw(ArgumentError("branch option names must be non-empty"))
     length(unique(names)) == length(names) || throw(ArgumentError(
@@ -262,6 +272,14 @@ function _branch_select(state, names::Vector{String}, descriptions::Vector{Any};
     throw(_nl_declined("branch", a, decide, min_confidence))
 end
 
+# An option name as the wire takes it; `line` names the @branch line it was computed on.
+# `_branch_source` spells that line's left-hand side as written: a literal `'c'` as `'c'`.
+_branch_source(lhs)::String = lhs isa Union{Expr,Symbol,QuoteNode} ? string(lhs) : repr(lhs)
+_branch_option(name::Union{AbstractString,Symbol}, ::String)::String = String(name)
+_branch_option(name, line::String) = throw(ArgumentError(
+    "the @branch option $(line) is $(repr(name)) ($(typeof(name))): an option name is a String, or a " *
+    "Symbol sent as its String"))
+
 """
     @branch state begin
         "option name"                  => expression
@@ -278,7 +296,9 @@ Each line is `option => expression`. A bare left-hand side is the option **name*
 — the text the model actually reads and the text the answer returns. The
 2-tuple form `("name", "description")` attaches a longer description to that
 name; it is the only way to do so. Left-hand sides are ordinary expressions
-evaluated once, in source order, so an option name may be computed.
+evaluated once, in source order, so an option name may be computed. A name is a
+`String`, or a `Symbol` sent as its `String`; any other value is an
+`ArgumentError` naming its line, before the request.
 
 A final `_ => expression` line is the fallback taken when the decision policy
 declines: the winner's confidence is below `min_confidence`, or `decide`
@@ -293,7 +313,7 @@ Keywords go between the state and the block, written `key = value`:
 | Keyword | Meaning |
 | :--- | :--- |
 | `model` | model name; omitted, the client default applies |
-| `min_confidence` | threshold in `0 … 1`; below it, take `_` or throw [`LowConfidenceError`](@ref) |
+| `min_confidence` | a finite threshold in `0 … 1` (anything else, NaN included, is an `ArgumentError` before the request); below it, take `_` or throw [`LowConfidenceError`](@ref) |
 | `decide` | a policy called with the [`ChoiceAnswer`](@ref): return an option name — any of them, not only the winner — or `nothing` to take `_` or throw [`DecisionDeclinedError`](@ref) |
 | `instructions` | the question's instructions (default: `"Select the option that best describes the provided state."`) |
 | `service` | endpoint type (default `TYPESAFEServiceEndpoint`) |
@@ -356,7 +376,14 @@ macro branch(args...)
         "`a -> a.confidence >= τ ? a.choice : nothing`"))
 
     lines = Any[x for x in block.args if !(x isa LineNumberNode)]
+    # Where each line is written: an option name is only known at run time, and an
+    # error about it names its line.
+    place, wheres = __source__, String[]
+    for x in block.args
+        x isa LineNumberNode ? (place = x) : push!(wheres, "$(something(place.file, :unknown)):$(place.line)")
+    end
     option_names = Any[]
+    option_lines = String[]
     option_descriptions = Any[]
     bodies = Any[]
     has_fallback = false
@@ -378,10 +405,12 @@ macro branch(args...)
             length(lhs.args) == 2 || throw(ArgumentError(
                 "a tuple @branch option is `(\"name\", \"description\") => expression`; got $(repr(lhs))"))
             push!(option_names, lhs.args[1])
+            push!(option_lines, "`$(_branch_source(lhs.args[1]))` at $(wheres[i])")
             push!(option_descriptions, lhs.args[2])
             push!(bodies, rhs)
         else
             push!(option_names, lhs)
+            push!(option_lines, "`$(_branch_source(lhs))` at $(wheres[i])")
             push!(option_descriptions, nothing)
             push!(bodies, rhs)
         end
@@ -398,7 +427,7 @@ macro branch(args...)
                 :(local $namesv = String[]),
                 :(local $descv = Any[])]
     for i in eachindex(option_names)
-        push!(setup, :(push!($namesv, $(esc(option_names[i])))))
+        push!(setup, :(push!($namesv, _branch_option($(esc(option_names[i])), $(option_lines[i])))))
         d = option_descriptions[i]
         push!(setup, :(push!($descv, $(isnothing(d) ? nothing : esc(d)))))
     end
@@ -1205,7 +1234,8 @@ A decision policy turns the answers into meanings. The default is the argmax
 gated by `min_confidence`: below it, `fallback` is called with the caller's
 `args` if given, and otherwise [`LowConfidenceError`](@ref) is thrown. A
 `fallback` that cannot be called with arguments of the types of `args` is an
-`ArgumentError` before any request.
+`ArgumentError` before any request, and so is a `min_confidence` that is not a
+finite number in `0 … 1`, NaN included.
 `confidence` is computed over the options offered — `(n·p_max − 1)/(n − 1)`,
 clamped to `0 … 1`, for `n` of them
 ([Confidence](https://docs.typesafe.ai/confidence)) — so the same threshold is a
@@ -1320,6 +1350,7 @@ function nl_dispatch(f, args...;
                      state=nothing,
                      texts=nothing,
                      on_response=nothing)
+    _nl_check_threshold(min_confidence)
     _nl_check_hook(on_response)
     # `Core.Typeof` is the type dispatch sees: `Type{Int}` for the argument `Int`.
     argtypes = Any[Core.Typeof(a) for a in args]
@@ -1419,7 +1450,8 @@ decline — not both. A declined answer calls `fallback(state)` when given, and
 otherwise throws [`LowConfidenceError`](@ref) or [`DecisionDeclinedError`](@ref)
 for the question `"classify"`; any other verdict is an `ArgumentError`, and
 `fallback` does not run. A `fallback` that cannot be called with `state` is an
-`ArgumentError` before the request. A non-success call throws
+`ArgumentError` before the request, and so is a `min_confidence` that is not a
+finite number in `0 … 1`, NaN included. A non-success call throws
 [`SystemOneError`](@ref).
 `on_response` is called once with the [`SystemOneSuccess`](@ref) before the
 policy runs — audits get `request_id`, `model` and `raw` from its `response`,
@@ -1446,6 +1478,7 @@ function nl_classify(state, texts;
                      config::Union{Nothing,RequestConfig}=nothing,
                      cancel::Union{Nothing,CancelToken}=nothing,
                      on_response=nothing)
+    _nl_check_threshold(min_confidence)
     texts isa Tuple && !any(x -> x isa Pair, texts) && throw(ArgumentError(
         "nl_classify takes one table; got a tuple of $(length(texts)). A tuple of tables is for " *
         "nl_dispatch, one per keyed argument"))

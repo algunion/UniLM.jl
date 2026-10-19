@@ -1475,3 +1475,76 @@ end
     err = try nl_dispatch(step, 1, "x"; service=SemanticMock, config=_SEM_CFG); nothing catch e; e end
     @test err isa ArgumentError && contains(err.msg, "gives an order number") && contains(err.msg, "asks for a human")
 end
+
+# ─── 17. Policy inputs are checked before the request ───────────────────────
+
+@testset "semantic — min_confidence is a confidence: outside 0 … 1 it is refused before the request" begin
+    caught(f) = try f(); nothing catch e; e end
+    branch(τ) = @branch "s" min_confidence=τ service=SemanticMock config=_SEM_CFG begin
+        "alpha" => :alpha
+        _       => :fallback
+    end
+    calls = Function[]
+    for τ in (NaN, Inf, -Inf, -0.1, 1.5)
+        push!(calls,
+              () -> nl_dispatch(route, "t"; service=SemanticMock, config=_SEM_CFG, min_confidence=τ),
+              () -> nl_dispatch(route, "t"; service=SemanticMock, config=_SEM_CFG, min_confidence=τ,
+                                fallback=(a...) -> :fb),
+              () -> nl_dispatch(intent_route, "t"; service=SemanticMock, config=_SEM_CFG, texts=INTENT,
+                                min_confidence=τ),
+              () -> nl_classify("t", INTENT; service=SemanticMock, config=_SEM_CFG, min_confidence=τ,
+                                fallback=_ -> :fb),
+              () -> branch(τ))
+    end
+    # NaN beside a policy is refused as well, whichever rule names it.
+    push!(calls, () -> nl_dispatch(route, "t"; service=SemanticMock, config=_SEM_CFG, min_confidence=NaN,
+                                   decide=a -> a.choice),
+                 () -> nl_classify("t", INTENT; service=SemanticMock, config=_SEM_CFG, min_confidence=NaN,
+                                   decide=a -> a.choice))
+    errs, sent = _with_semantic_mock(() -> [caught(c) for c in calls])
+    @test isempty(sent)
+    @test all(e -> e isa ArgumentError && contains(e.msg, "min_confidence"), errs)
+    @test count(e -> contains(e.msg, "finite number in 0 … 1"), errs) == length(errs)
+
+    # Both ends are thresholds: an answer at confidence 1 clears 1, and any clears 0.
+    outs, sent = _with_semantic_mock(; confidence=1.0) do
+        [nl_dispatch(route, "t"; service=SemanticMock, config=_SEM_CFG, min_confidence=1),
+         nl_classify("t", INTENT; service=SemanticMock, config=_SEM_CFG, min_confidence=1//2),
+         branch(1), branch(0.999)]
+    end
+    @test outs == [(:refund, "t"), :refund, :alpha, :alpha] && length(sent) == 4
+    low, _ = _with_semantic_mock(; confidence=0.0) do
+        [nl_dispatch(route, "t"; service=SemanticMock, config=_SEM_CFG, min_confidence=0), branch(1)]
+    end
+    @test low == [(:refund, "t"), :fallback]
+end
+
+@testset "semantic — a @branch option name is a String or a Symbol, and any other value names its line" begin
+    option = :beta
+    out, seen = _with_semantic_mock(; pick=Dict("branch" => "beta")) do
+        @branch "s" service=SemanticMock config=_SEM_CFG begin
+            :alpha                         => :a
+            option                         => :b
+            (:gamma, "a described option") => :c
+        end
+    end
+    @test out === :b
+    criteria = seen[1]["body"]["questions"]["branch"]["criteria"]
+    @test collect(keys(criteria)) == ["alpha", "beta", "gamma"] && criteria["gamma"] == "a described option"
+
+    caught(f) = try f(); nothing catch e; e end
+    errs, sent = _with_semantic_mock() do
+        [caught(() -> @branch "s" service=SemanticMock config=_SEM_CFG begin
+             "alpha" => :a
+             1       => :b
+         end),
+         caught(() -> @branch "s" service=SemanticMock config=_SEM_CFG begin
+             ('c', "a character is not a name") => :c
+         end)]
+    end
+    @test isempty(sent)
+    @test all(e -> e isa ArgumentError && contains(e.msg, "an option name is a String, or a Symbol"), errs)
+    @test all(e -> contains(e.msg, "$(basename(@__FILE__)):"), errs)      # the line, by file and number
+    @test contains(errs[1].msg, "the @branch option `1` at ") && contains(errs[1].msg, "is 1 (Int64)")
+    @test contains(errs[2].msg, "the @branch option `'c'` at ") && contains(errs[2].msg, "(Char)")
+end

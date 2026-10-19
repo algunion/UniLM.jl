@@ -89,8 +89,8 @@
   order happened to be sorted (`with_recorded_answers` throws `ReplayMissError`),
   so record it again (`mode = :record_missing`); pass a `NamedTuple` or a vector of
   pairs to fix the order you mean. The recordings of every other request keep
-  their keys: the test suite rebuilds each of the 90 System One recordings
-  committed in this repository from typed requests, to the same key.
+  their keys: the test suite rebuilds each of the 90 System One recordings this
+  repository committed before this release from typed requests, to the same key.
 - **An attachment where no request carries media is refused.** An
   `ImageAttachment` or `AudioAttachment` written as JSON anywhere but a message's
   `attachments` or a System One request's state, instructions or criteria —

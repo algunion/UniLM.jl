@@ -93,11 +93,31 @@ TypeSafe's System One wire: `POST {base}/v1/systemone` with the JSON body
 `{"state", "model", "questions"}` in the System One JSON form, answers decoded
 from `{"model", "answers", "usage"}`, the request id read from the
 `x-typesafe-request-id` header, and failures from TypeSafe's three error-body
-shapes. Recordings are keyed under the plain path (no namespace). Before any
-I/O it refuses what TypeSafe's wire cannot carry in this version: more than 255
-options in a Choice, more than 10 levels in a Score, a Box question, an image,
-and any provider option. It sends a [`RawQuestion`](@ref) verbatim and never
-expects a refusal.
+shapes. Recordings are keyed under the plain path (no namespace). It sends a
+[`RawQuestion`](@ref) verbatim and never expects a refusal.
+
+TypeSafe marks images and Box questions experimental. Each distinct
+[`ImageAttachment`](@ref) of a request — in the state, an instruction, a
+criterion or a raw question's fields — is sent once, as a part of a
+`multipart/form-data` request whose first part, `request`, holds the JSON body;
+every place the image stood holds its reference, `"<image:…>"` with the first 32
+hex digits of the SHA-256 of its bytes, and the body lists the parts under
+`assets`. A request with an image or a [`BoxQuestion`](@ref) carries the header
+`TypeSafe-Danger-Zone-Images: true`: passing one is the opt-in. A Score level
+that is an image comes back in the answer's `legend` as that `ImageAttachment`.
+The one provider option, `long_context = true`, sends
+`TypeSafe-Danger-Zone-Long-Context: true`, which raises the context limits from
+64k tokens per request and 32k per question to 262k at the same price per token.
+
+Before any I/O it refuses what TypeSafe rejects: more than 255 options in a
+Choice or 10 levels in a Score; an image that is not a still PNG or JPEG, is
+over 16 MiB, has a side under 280 or over 1568 pixels, or whose header cannot be
+read; more than 64 levels of nested objects and arrays in the state, an
+instruction or a criterion; a body over 32 MiB; and any option but
+`long_context`. Two terse failures get a hint in their `message`: a context
+overflow (`error_type = "max_tokens_exceeded"`) names `long_context` and the
+limits, and the `"Invalid request."` a Box question draws from a Jev before 1.14
+names the models that answer one.
 
 The untyped fallback of [`system_one_protocol`](@ref UniLM.system_one_protocol)
 returns it, so [`TYPESAFEServiceEndpoint`](@ref) and every endpoint that
@@ -129,9 +149,17 @@ _allows_raw(::TypeSafeProtocol)::Bool = true
 # ─── Encoding ────────────────────────────────────────────────────────────────
 
 # TypeSafe's Choice and Score limits: 256 options or 11 levels are rejected by the
-# service, so they are refused here, before a round trip.
+# service (422), so they are refused here, before a round trip.
 const _TYPESAFE_MAX_OPTIONS = 255
 const _TYPESAFE_MAX_LEVELS = 10
+# Its request rules (https://docs.typesafe.ai/api#request-rules): a body over 32 MiB,
+# multipart framing included, is answered 413, and more than 64 levels of objects and
+# arrays in the state, an instruction or a criterion 400.
+const _TYPESAFE_MAX_BODY = 32 * 1024 * 1024
+const _TYPESAFE_MAX_NESTING = 64
+# The opt-in headers: images and Box questions, and the raised context limits.
+const _TYPESAFE_IMAGES_HEADER = "TypeSafe-Danger-Zone-Images"
+const _TYPESAFE_LONG_CONTEXT_HEADER = "TypeSafe-Danger-Zone-Long-Context"
 
 _typesafe_carries(name::String, q::ChoiceQuestion) = length(q.criteria) <= _TYPESAFE_MAX_OPTIONS ||
     throw(ArgumentError("TypeSafe accepts at most $(_TYPESAFE_MAX_OPTIONS) options per Choice question; " *
@@ -139,28 +167,88 @@ _typesafe_carries(name::String, q::ChoiceQuestion) = length(q.criteria) <= _TYPE
 _typesafe_carries(name::String, q::ScoreQuestion) = length(q.criteria) <= _TYPESAFE_MAX_LEVELS ||
     throw(ArgumentError("TypeSafe accepts at most $(_TYPESAFE_MAX_LEVELS) levels per Score question; " *
                         "$(repr(name)) has $(length(q.criteria)). Merge levels into a coarser rubric"))
-_typesafe_carries(::String, ::Union{NoulQuestion,RawQuestion}) = true
-_typesafe_carries(name::String, ::BoxQuestion) = throw(ArgumentError(
-    "Box questions are not supported by this version's TypeSafe wrapper yet; $(repr(name)) is one"))
+_typesafe_carries(::String, ::Union{NoulQuestion,BoxQuestion,RawQuestion}) = true
 _typesafe_carries(name::String, q::SystemOneQuestion) = throw(ArgumentError(
-    "TypeSafe cannot send $(repr(name)), a $(nameof(typeof(q))): its wire carries Choice, Score and Noul " *
+    "TypeSafe cannot send $(repr(name)), a $(nameof(typeof(q))): its wire carries Choice, Score, Noul and Box " *
     "questions, and a RawQuestion verbatim"))
+
+# TypeSafe's one request option. `false` is the default and sends nothing, so it is
+# keyed as no option at all.
+const _TYPESAFE_OPTIONS = (:long_context,)
+
+function _typesafe_long_context(options::NamedTuple)::Bool
+    unknown = [k for k in keys(options) if !(k in _TYPESAFE_OPTIONS)]
+    isempty(unknown) || throw(ArgumentError(
+        "TypeSafe does not accept the request option$(length(unknown) == 1 ? "" : "s") " *
+        join(("`$(k)`" for k in unknown), ", ") * " (accepted: $(join(_TYPESAFE_OPTIONS, ", ")))"))
+    v = get(options, :long_context, false)
+    v isa Bool || throw(ArgumentError("TypeSafe's `long_context` option is `true` or `false`; got $(repr(v))"))
+    v
+end
+
+# Whether `x`, written as JSON, nests objects and arrays more than `room` levels deep: the
+# walk stops at the limit, so a deep or cyclic value costs no more than 64 levels.
+_nests_deeper(_, ::Int)::Bool = false
+_nests_deeper(x::Union{AbstractDict,NamedTuple}, room::Int)::Bool =
+    room <= 0 || any(v -> _nests_deeper(v, room - 1), values(x))
+_nests_deeper(x::Union{AbstractVector,Tuple}, room::Int)::Bool =
+    room <= 0 || any(v -> _nests_deeper(v, room - 1), x)
+_nests_deeper(c::NoulCriteria, room::Int)::Bool =
+    room <= 0 || _nests_deeper(c.yes, room - 1) || _nests_deeper(c.no, room - 1)
+
+# The fields of a question TypeSafe's nesting rule counts.
+_typesafe_nested(q::Union{ChoiceQuestion,ScoreQuestion,NoulQuestion}) =
+    ("instructions" => q.instructions, "criteria" => q.criteria)
+_typesafe_nested(q::BoxQuestion) = ("instructions" => q.instructions,)
+_typesafe_nested(q::RawQuestion) =
+    ("instructions" => get(q.fields, "instructions", nothing), "criteria" => get(q.fields, "criteria", nothing))
+_typesafe_nested(::SystemOneQuestion) = ()
+
+function _typesafe_check_nesting(request::SystemOneRequest)::Nothing
+    deeper(what::String) = throw(ArgumentError(
+        "TypeSafe accepts at most $(_TYPESAFE_MAX_NESTING) levels of nested objects and arrays in each of the " *
+        "state, the instructions and the criteria; $(what) nests deeper. Flatten it"))
+    _nests_deeper(request.state, _TYPESAFE_MAX_NESTING) && deeper("the state")
+    for (name, q) in request.questions, (field, v) in _typesafe_nested(q)
+        _nests_deeper(v, _TYPESAFE_MAX_NESTING) && deeper("the $(field) of $(repr(name))")
+    end
+    nothing
+end
+
+# The bytes the body puts on the wire: the JSON, or the whole multipart form around it.
+_typesafe_body_size(wire::SystemOneWire)::Int =
+    isempty(wire.parts) ? sizeof(wire.body) : length(_system_one_form(wire))
 
 function encode_system_one(p::TypeSafeProtocol, service, request::SystemOneRequest)::SystemOneWire
     _check_request(p, service, request)
     for (name, q) in request.questions
         _typesafe_carries(name, q)
     end
-    isempty(_system_one_images(request)) || throw(ArgumentError(
-        "images in a System One request are not supported by this version's TypeSafe wrapper yet; " *
-        "send the request without them"))
-    isempty(request.options) || throw(ArgumentError(
-        "TypeSafe accepts no request options in this version (accepted: none); got " *
-        join(map(string, collect(keys(request.options))), ", ")))
-    # Exactly three top-level keys: the service rejects any other with 400, so nothing
-    # unknown is ever written even though unknown fields are ignored on read.
-    body = _system_one_body(_system_one_json(request, _system_one_model(p, service, request)))
-    SystemOneWire("POST", _api_base_url(service) * SYSTEMONE_PATH, SYSTEMONE_PATH, body)
+    long_context = _typesafe_long_context(request.options)
+    _typesafe_check_nesting(request)
+    # Only keys the service defines: it rejects any other top-level key with 400, so
+    # nothing unknown is ever written even though unknown fields are ignored on read.
+    # `assets` is written only for a request with images, so a request without them is
+    # written, and keyed, as it always was.
+    json = _system_one_json(request, _system_one_model(p, service, request))
+    images = _system_one_images(request)
+    assets = isempty(images) ? nothing : _typesafe_assets(images)
+    body = isnothing(assets) ? _system_one_body(json) : _typesafe_body(json, assets)
+    headers = Pair{String,String}[]
+    (!isnothing(assets) || any(((_, q),) -> q isa BoxQuestion, request.questions)) &&
+        push!(headers, _TYPESAFE_IMAGES_HEADER => "true")
+    long_context && push!(headers, _TYPESAFE_LONG_CONTEXT_HEADER => "true")
+    # Keyed beyond the body: the option that changes what the service does, then the
+    # digest of every image part, so a recording names the images it answered.
+    key_extra = join(filter(!isempty, [_options_key(long_context ? (long_context = true,) : (;)),
+                                       isnothing(assets) ? "" : assets.digests]), '\n')
+    wire = SystemOneWire("POST", _api_base_url(service) * SYSTEMONE_PATH, SYSTEMONE_PATH, body;
+                         parts = isnothing(assets) ? _no_parts() : assets.parts, headers, key_extra)
+    n = _typesafe_body_size(wire)
+    n <= _TYPESAFE_MAX_BODY || throw(ArgumentError(
+        "TypeSafe accepts a request body of at most 32 MiB ($(_TYPESAFE_MAX_BODY) bytes); this one is $(n) " *
+        "bytes. $(isnothing(assets) ? "Shorten the state" : "Send fewer or smaller images"), or split the request"))
+    wire
 end
 
 # ─── Decoding ────────────────────────────────────────────────────────────────
@@ -250,6 +338,16 @@ function _legend(d::AbstractDict, name::AbstractString)::Dict{Int,Any}
     out
 end
 
+function _box(d::AbstractDict, name::AbstractString)::BoxCoordinates
+    b = _answer_map(d, "box", name)
+    BoxCoordinates(_answer_number(b, "top", name), _answer_number(b, "bottom", name),
+                   _answer_number(b, "left", name), _answer_number(b, "right", name))
+end
+
+# A Box answer's `confidence` is required, and null when the model reports none.
+_box_confidence(d::AbstractDict, name::AbstractString)::Union{Nothing,Float64} =
+    isnothing(_answer_field(d, "confidence", name)) ? nothing : _answer_number(d, "confidence", name)
+
 function _decode_answer(name::AbstractString, d::AbstractDict)::SystemOneAnswer
     raw = Dict{String,Any}(string(k) => v for (k, v) in d)
     kind = _answer_string(d, "type", name)
@@ -261,6 +359,8 @@ function _decode_answer(name::AbstractString, d::AbstractDict)::SystemOneAnswer
     elseif kind == "score"
         ScoreAnswer(_answer_number(d, "score", name), _answer_number(d, "confidence", name),
                     _legend(d, name), _level_probabilities(d, name), raw)
+    elseif kind == "box"
+        BoxAnswer(_box(d, name), _box_confidence(d, name), raw)
     else
         UnknownAnswer(kind, raw)
     end
@@ -314,10 +414,10 @@ end
 
 function decode_system_one(p::TypeSafeProtocol, service, request::SystemOneRequest,
                            response::HTTP.Response)::Union{SystemOneSuccess,SystemOneFailure}
-    response.status == 200 || return _typesafe_failure(response)
+    response.status == 200 || return _typesafe_failure(response, request)
     decoded = _decode_systemone(String(response.body), _typesafe_request_id(response), service)
     _check_answers(p, request, decoded)
-    SystemOneSuccess(decoded)
+    SystemOneSuccess(_restore_images!(decoded, request))
 end
 
 # ─── Error bodies ────────────────────────────────────────────────────────────
@@ -435,6 +535,30 @@ _typesafe_failure(resp::HTTP.Response)::SystemOneFailure = begin
     SystemOneFailure(response=body, status=resp.status, request_id=_typesafe_request_id(resp),
                      error_type=_typesafe_error_type(body), message=_typesafe_error_message(body),
                      retry_after=_typesafe_retry_after(resp))
+end
+
+# Two failures say less than the request they answer explains: a request over its context
+# (a 400 that carries only `error_type`), and the bare "Invalid request." TypeSafe answers
+# a Box question with on a Jev that does not support one. Their message gets the fix.
+function _typesafe_hint(f::SystemOneFailure, request::SystemOneRequest)::Union{Nothing,String}
+    f.status == 400 || return nothing
+    if f.error_type == "max_tokens_exceeded"
+        get(request.options, :long_context, false) === true ?
+            "The request is longer than even the long context of 262k tokens per request and per question: " *
+            "shorten the state, or split the questions across requests" :
+            "The request is longer than the context of 64k tokens per request and 32k for the state with any " *
+            "one question; `long_context = true` raises both to 262k at the same price per token"
+    elseif f.message == "Invalid request." && any(((_, q),) -> q isa BoxQuestion, request.questions)
+        "Box questions need a Jev model that supports them, 1.14 or later, such as \"jev-1.14.0\" or \"jev-preview\""
+    end
+end
+
+function _typesafe_failure(resp::HTTP.Response, request::SystemOneRequest)::SystemOneFailure
+    f = _typesafe_failure(resp)
+    hint = _typesafe_hint(f, request)
+    isnothing(hint) && return f
+    SystemOneFailure(; f.response, f.status, f.request_id, f.error_type, f.retry_after,
+                     message = string(f.message, endswith(f.message, '.') ? " " : ". ", hint))
 end
 
 _typesafe_call_error(e, resp::Union{Nothing,HTTP.Response})::SystemOneCallError =

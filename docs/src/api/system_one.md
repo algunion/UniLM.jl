@@ -68,20 +68,56 @@ account ([Models](https://docs.typesafe.ai/models)).
 log it, since an alias moving is otherwise invisible, and a threshold tuned
 against one version is a claim about that version only.
 
+In October 2026 `jev-latest` answers as `jev-1.13.0` and `jev-preview` as
+`jev-1.14.0` (Jev 1.14, available from October 14, 2026). Both read images; a
+[`box`](@ref) question needs Jev 1.14 or later — `model = "jev-1.14.0"` or
+`"jev-preview"`. Jev 1.13 answers a request with one with HTTP 400 and the bare
+message `"Invalid request."`, which [`ask`](@ref) returns with a hint naming those
+models. `long_context = true` works on both ([Limits](@ref jev_limits)).
+
 ## [Limits](@id jev_limits)
 
 | Limit | Value |
 | :--- | :--- |
 | Choice options | 1–255 per question ([Choice](https://docs.typesafe.ai/primitives/choice)) |
 | Score levels | 1–10 per question, TypeSafe advises at least two ([Score](https://docs.typesafe.ai/primitives/score)) |
-| Context | 64k tokens per request; 32k for `state` plus the single longest question ([Models](https://docs.typesafe.ai/models)) |
+| Context | 64k tokens per request; 32k for `state` plus the single longest question; 262k for both with `long_context = true` ([Models](https://docs.typesafe.ai/models)) |
+| Images | PNG or JPEG, still (no animated PNG); at most 16 MiB a file; 280 to 1568 pixels on each side ([Images](https://docs.typesafe.ai/images)) |
+| Request body | 32 MiB (33,554,432 bytes), multipart framing included ([API](https://docs.typesafe.ai/api)) |
+| Nesting | 64 levels of objects and arrays in each of `state`, `instructions` and `criteria` ([API](https://docs.typesafe.ai/api)) |
 | Rate limits | 250,000 tokens/second and 1,200 requests/minute, over either → 429; TypeSafe documents these as subject to change without notice ([Models](https://docs.typesafe.ai/models)) |
 
-[`ask`](@ref) refuses a Choice of 256 options or a Score of 11 levels with an
-`ArgumentError` naming TypeSafe's limit, before the round trip. The question
-types themselves set no upper bound — other System One backends have other
-limits, which their wrappers check the same way — so [`choice`](@ref) and
+[`ask`](@ref) checks every limit but the context and the rate limits before the
+round trip, and refuses a request over one with an `ArgumentError` naming
+TypeSafe's limit and the value — a Choice of 256 options, a Score of 11 levels, a
+GIF, an image 2000 pixels wide, a file cut short, a state nested 65 levels deep.
+The question types themselves set no upper bound — other System One backends have
+other limits, which their wrappers check the same way — so [`choice`](@ref) and
 [`score`](@ref) build such questions; only sending one to TypeSafe is refused.
+
+An [`ImageAttachment`](@ref) may stand anywhere in the `state`, the instructions
+or the criteria — a Choice whose options are example pictures, a Score whose
+levels are. TypeSafe marks images and Box questions experimental: their request
+format, answers and limits may change between releases
+([Images](https://docs.typesafe.ai/images)). Each distinct image is sent once, as
+a part of a `multipart/form-data` request, and every place it stood holds its
+reference, `<image:…>` with the first 32 hex digits of the SHA-256 of its bytes;
+every use is billed, so an image several questions need belongs in the `state`.
+A request with an image or a Box question carries the header
+`TypeSafe-Danger-Zone-Images: true` TypeSafe requires: passing one is the opt-in.
+A Score level that is an image comes back in the answer's `legend` as that same
+`ImageAttachment`. Images are numbered in an error message as they first occur:
+the `state`, then each question's instructions and criteria. TypeSafe applies no
+EXIF orientation, so rotate a photo's pixels upright before sending it. A
+recording of a request with images ([`with_recorded_answers`](@ref)) is keyed on
+its JSON part and the SHA-256 of each image, and holds no image.
+
+`long_context = true` — `ask(state, questions...; long_context = true)` — sends
+`TypeSafe-Danger-Zone-Long-Context: true`, which raises both context limits to
+262k tokens at the same price per token; TypeSafe documents it as slower and less
+accurate than the default limits, and the answer does not say which ran. A
+request over its context comes back as a 400 whose `error_type` is
+`"max_tokens_exceeded"`, and its `message` names `long_context` and the limits.
 
 ## [Errors, timeouts and retries](@id jev_errors)
 
@@ -98,20 +134,23 @@ in three `detail` shapes: `message` is extracted from whichever arrived, and
 
 | Status | What it means | `error_type` / `message` |
 | :--- | :--- | :--- |
-| 400 | Unknown model, or a request the schema accepted but the service rejected (a bare noul, more than 255 Choice options, more than 10 Score levels) | `"api_usage_error"` with `"Unknown model: …"`, or `nothing` with the plain-string reason |
+| 400 | Unknown model, or a request the schema accepted but the service rejected: a bare noul; a Box question on a Jev before 1.14; an image it cannot read or whose size is out of range; nesting deeper than 64 levels | `"api_usage_error"` with `"Unknown model: …"`, `"Invalid request."` (on a Box question, with a hint naming `jev-1.14.0` and `jev-preview`), `"Invalid image request."` or `"Invalid image dimensions."`; or `nothing` with the plain-string reason |
+| 400 | The request is longer than its context | `"max_tokens_exceeded"`, and no message from the service: the `message` is that type with a hint naming `long_context = true` and the limits |
 | 401 | The API key was present but not valid | `"authentication_error"` |
 | 403 | No `Authorization` header reached the service | `"authentication_error"` |
 | 404 | Unknown path | `nothing`, message `"Not Found"` |
 | 405 | Wrong method for the path | `nothing`, message `"Method Not Allowed"` |
-| 422 | Schema validation failed | `nothing`; the message joins each validation entry as `"<field path>: <reason>"`, e.g. `questions.department.choice.criteria: Field required` |
+| 413 | Over a size limit: an image file over 16 MiB, a body over 32 MiB (after decompression too), references too long | `"api_usage_error"` with `"Request exceeds size limits."` or `"Request body of at least … bytes exceeds the hard maximum of 33554432 bytes."` |
+| 415 | An unsupported `Content-Encoding` — never one [`ask`](@ref) sends, which compresses nothing; a proxy's | `"api_usage_error"` with `"Unsupported Content-Encoding '…'; supported: gzip, zstd."` |
+| 422 | Schema validation failed, including more than 255 Choice options or 10 Score levels | `nothing`; the message joins each validation entry as `"<field path>: <reason>"`, e.g. `questions.department.choice.criteria: Field required` or `questions.pick.choice.criteria: Dictionary should have at most 255 items after validation, not 256` |
 | 429 | Rate limit — 250,000 tokens/second or 1,200 requests/minute at the time of writing | retried by the seam up to `max_attempts` honouring `Retry-After`; the final failure carries `retry_after`, the wait the service asked for in seconds |
 | 500, 502, 503, 504, 520–524, 529 | Service-side failure, including the non-standard `529 Overloaded` and the origin errors 520–524 of a service behind Cloudflare | retried by the request seam, 520–524 like 502 and 504; a captured 529 used the object shape with `error_type = "system_overloaded"` and sent no retry header |
 
 [`ask`](@ref) and [`list_models`](@ref) ride the shared retry seam, so
 [`RequestConfig`](@ref) governs them as it governs a chat call: 408, 429, 500,
 502, 503, 504, 520–524 and 529 are retried up to `max_attempts` within
-`total_deadline`, honouring `Retry-After`; 400, 401, 403, 404 and 422 come back
-as they are, because an identical retry cannot fix them.
+`total_deadline`, honouring `Retry-After`; 400, 401, 403, 404, 413, 415 and 422
+come back as they are, because an identical retry cannot fix them.
 
 ```@example jev
 state     = "Help! My payouts have been failing for 3 days."

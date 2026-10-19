@@ -372,8 +372,8 @@ box(instructions) = BoxQuestion(instructions)
 # The object form the System One wire is written in (TypeSafe's published wire, which
 # other servers of the same route speak too). `instructions` is written only when
 # present: a backend may distinguish an absent key from an explicit null, and an ordered
-# JSON.Object keeps Choice options in the order they were given. A Box question has no
-# form here: its wire is a wrapper's (one that cannot carry it refuses it first).
+# JSON.Object keeps Choice options in the order they were given. A Box question always
+# has instructions and never criteria; a backend that cannot answer one refuses it first.
 
 function JSON.lower(q::ChoiceQuestion)
     o = JSON.Object{String,Any}()
@@ -405,6 +405,8 @@ function JSON.lower(q::NoulQuestion)
     isnothing(q.criteria) || (o["criteria"] = q.criteria)
     o
 end
+
+JSON.lower(q::BoxQuestion) = JSON.Object{String,Any}("type" => "box", "instructions" => q.instructions)
 
 JSON.lower(q::RawQuestion) = q.fields
 
@@ -794,7 +796,8 @@ A System One call that reached its backend and came back non-2xx.
 # Fields
 - `response::String`: the raw body, kept verbatim.
 - `status::Int`: the HTTP status. On TypeSafe, 401 (invalid key) and 403 (no
-  key) are both auth failures; 400 and 422 are request problems; 408, 429, 500,
+  key) are both auth failures; 400, 413 (over a size limit), 415 (an unsupported
+  `Content-Encoding`) and 422 are request problems, never retried; 408, 429, 500,
   502–504, 520–524 and 529 are the retryable band.
 - `request_id::Union{Nothing,String}`: the backend's request id
   (TypeSafe: `x-typesafe-request-id`), present on error responses too.
@@ -1330,8 +1333,9 @@ scope's; else the backend's default, read when the request is sent (TypeSafe:
 pairs, a `NamedTuple` or `AbstractDict` of them, or bare questions auto-named
 `"q1"`, `"q2"`, … Any other keyword is a provider option and becomes the
 request's `options`, which the backend's wrapper checks before anything is sent:
-TypeSafe accepts none in this version, so such a keyword — a misspelt one
-included — is an `ArgumentError` that lists the options it accepts.
+TypeSafe accepts `long_context::Bool` (`true` raises its context limits to 262k
+tokens), so any other keyword — a misspelt one included — is an `ArgumentError`
+that lists the options it accepts.
 
 ```julia
 r = ask("Help! My payouts have been failing for 3 days.",
@@ -1347,8 +1351,10 @@ issuccess(r) && println(r["department"].choice, " ", r["urgency"].score)
 Malformed input is an `ArgumentError` before anything is sent: a `state` that is
 not a string, object, array or image; a value JSON cannot carry (`NaN`, `Inf`);
 a request the backend cannot carry — TypeSafe takes at most 255 options per
-Choice and 10 levels per Score, and in this version no Box question and no
-image; a `service` that does not declare `:system_one`.
+Choice and 10 levels per Score, PNG and JPEG images of at most 16 MiB with 280
+to 1568 pixels on each side, 64 levels of nesting in the state, instructions and
+criteria, and a body of at most 32 MiB; a `service` that does not declare
+`:system_one`.
 
 Every answer is checked against the request before a success is built: each
 question asked is answered once and nothing else is; each answer is of its
@@ -1364,8 +1370,8 @@ Pass `config::Union{Nothing,RequestConfig}` to override the timeout and retry
 budget for this call. The request rides the package's shared retry seam, so
 `max_attempts` applies: a retryable status (408, 429, 500, 502–504, 520–524, 529)
 or a transport failure is retried within `total_deadline`, honouring
-`Retry-After`. Other statuses — 400, 401, 403, 404, 422 — are returned as they
-came, because a second identical request cannot fix them.
+`Retry-After`. Other statuses — 400, 401, 403, 404, 413, 415, 422 — are returned
+as they came, because a second identical request cannot fix them.
 
 Pass `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref)
 token) to make the call cancellable: once the token is cancelled it returns a

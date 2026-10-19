@@ -1,0 +1,30 @@
+{
+ "tag": "D08",
+ "utc": "2026-10-19T19:00:12+00:00",
+ "request": {
+  "model": "gpt-6-luna",
+  "input": "x",
+  "questions": [
+   {
+    "type": "box",
+    "name": "b",
+    "instructions": "Locate the dog."
+   }
+  ]
+ },
+ "status": 400,
+ "headers": {
+  "content-type": "application/json",
+  "openai-processing-ms": "1",
+  "x-request-id": "req_315bc89c2afe462e81743449d6dd38ef"
+ },
+ "latency_s": 0.2408,
+ "body": {
+  "error": {
+   "message": "Invalid value: 'box'. Supported values are: 'predicate', 'choice', and 'score'.",
+   "type": "invalid_request_error",
+   "param": "questions[0].type",
+   "code": "invalid_value"
+  }
+ }
+}

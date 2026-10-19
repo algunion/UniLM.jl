@@ -1,0 +1,103 @@
+{
+ "tag": "D20",
+ "utc": "2026-10-19T19:44:24+00:00",
+ "request": {
+  "model": "gpt-6-luna",
+  "input": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "input_image",
+      "image_url": "https://raw.githubusercontent.com/github/explore/main/topics/julia/julia.png"
+     }
+    ]
+   }
+  ],
+  "questions": [
+   {
+    "type": "predicate",
+    "name": "logo",
+    "instructions": "Is this image a logo?"
+   },
+   {
+    "type": "choice",
+    "name": "colors",
+    "instructions": "How many distinct colored dots or circles are in the image?",
+    "choices": [
+     {
+      "value": "none"
+     },
+     {
+      "value": "one or two"
+     },
+     {
+      "value": "three"
+     },
+     {
+      "value": "four or more"
+     }
+    ]
+   }
+  ]
+ },
+ "status": 200,
+ "headers": {
+  "content-type": "application/json",
+  "x-ratelimit-limit-requests": "30000",
+  "x-ratelimit-limit-tokens": "180000000",
+  "x-ratelimit-remaining-requests": "29999",
+  "x-ratelimit-remaining-tokens": "179999643",
+  "x-ratelimit-reset-requests": "2ms",
+  "x-ratelimit-reset-tokens": "0s",
+  "openai-processing-ms": "932",
+  "x-request-id": "req_4428cab14ee44d8696ec41140b112c57"
+ },
+ "latency_s": 1.7039,
+ "body": {
+  "model": "gpt-6-luna",
+  "answers": [
+   {
+    "type": "predicate",
+    "name": "logo",
+    "probability": 1.0
+   },
+   {
+    "type": "choice",
+    "name": "colors",
+    "choice": "four or more",
+    "probabilities": [
+     {
+      "value": "none",
+      "probability": 0.0
+     },
+     {
+      "value": "one or two",
+      "probability": 0.01
+     },
+     {
+      "value": "three",
+      "probability": 0.28
+     },
+     {
+      "value": "four or more",
+      "probability": 0.71
+     }
+    ],
+    "confidence": 0.61
+   }
+  ],
+  "usage": {
+   "input_tokens": 358,
+   "input_tokens_details": {
+    "cached_tokens": 0,
+    "cache_write_tokens": 0
+   },
+   "output_tokens": 0,
+   "output_tokens_details": {
+    "reasoning_tokens": 0
+   },
+   "total_tokens": 358
+  }
+ }
+}

@@ -1,0 +1,148 @@
+{
+ "tag": "D02",
+ "utc": "2026-10-19T19:00:05+00:00",
+ "request": {
+  "model": "gpt-6-luna",
+  "input": "Export fails in Safari but works in Chrome. I need this fixed before Friday's board meeting.",
+  "questions": [
+   {
+    "type": "score",
+    "name": "severity",
+    "instructions": "How severe is this issue?",
+    "levels": [
+     {
+      "label": "Cosmetic",
+      "description": "Appearance only; no lost functionality."
+     },
+     {
+      "label": "Workaround available",
+      "description": "A task fails, but another way works."
+     },
+     {
+      "label": "Fully blocked",
+      "description": "A task fails with no workaround."
+     }
+    ]
+   },
+   {
+    "type": "choice",
+    "name": "department",
+    "instructions": "Which department should handle this complaint?",
+    "choices": [
+     {
+      "value": "billing",
+      "description": "Payments, invoices, and refunds."
+     },
+     {
+      "value": "technical",
+      "description": "Problems using the product."
+     },
+     {
+      "value": "shipping",
+      "description": "Delivery and tracking."
+     },
+     {
+      "value": "other",
+      "description": "Requests outside these categories."
+     }
+    ]
+   },
+   {
+    "type": "predicate",
+    "instructions": "Does the customer mention a deadline?"
+   },
+   {
+    "type": "predicate",
+    "name": "angry",
+    "instructions": "Is the customer angry?"
+   }
+  ]
+ },
+ "status": 200,
+ "headers": {
+  "content-type": "application/json",
+  "x-ratelimit-limit-requests": "30000",
+  "x-ratelimit-limit-tokens": "180000000",
+  "x-ratelimit-remaining-requests": "29998",
+  "x-ratelimit-remaining-tokens": "179999247",
+  "x-ratelimit-reset-requests": "4ms",
+  "x-ratelimit-reset-tokens": "0s",
+  "openai-processing-ms": "201",
+  "x-request-id": "req_917b1afa8d1d40c0803263f43b944d54"
+ },
+ "latency_s": 0.69,
+ "body": {
+  "model": "gpt-6-luna",
+  "answers": [
+   {
+    "type": "score",
+    "name": "severity",
+    "score": 0.97,
+    "probabilities": [
+     {
+      "value": 0,
+      "label": "Cosmetic",
+      "probability": 0.03
+     },
+     {
+      "value": 1,
+      "label": "Workaround available",
+      "probability": 0.97
+     },
+     {
+      "value": 2,
+      "label": "Fully blocked",
+      "probability": 0.0
+     }
+    ],
+    "confidence": 0.96
+   },
+   {
+    "type": "choice",
+    "name": "department",
+    "choice": "technical",
+    "probabilities": [
+     {
+      "value": "billing",
+      "probability": 0.0
+     },
+     {
+      "value": "technical",
+      "probability": 0.99
+     },
+     {
+      "value": "shipping",
+      "probability": 0.01
+     },
+     {
+      "value": "other",
+      "probability": 0.0
+     }
+    ],
+    "confidence": 0.99
+   },
+   {
+    "type": "predicate",
+    "name": null,
+    "probability": 1.0
+   },
+   {
+    "type": "predicate",
+    "name": "angry",
+    "probability": 0.44
+   }
+  ],
+  "usage": {
+   "input_tokens": 589,
+   "input_tokens_details": {
+    "cached_tokens": 0,
+    "cache_write_tokens": 0
+   },
+   "output_tokens": 0,
+   "output_tokens_details": {
+    "reasoning_tokens": 0
+   },
+   "total_tokens": 589
+  }
+ }
+}

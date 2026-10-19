@@ -1,0 +1,111 @@
+{
+ "tag": "D13",
+ "utc": "2026-10-19T19:00:31+00:00",
+ "request": {
+  "model": "gpt-6-luna",
+  "input": "{\"message\": \"If I cancel today, do I get the rest of this month refunded?\"}",
+  "questions": [
+   {
+    "type": "choice",
+    "name": "intent",
+    "instructions": "What does the customer primarily want us to do? If the customer asks for money back, choose refund even when other problems are mentioned.",
+    "choices": [
+     {
+      "value": "refund",
+      "description": "The customer asks to get money back: a refund, reimbursement, chargeback, credit or compensation."
+     },
+     {
+      "value": "cancel_subscription",
+      "description": "The customer wants to cancel, stop, pause or not renew a subscription or plan, or close the account."
+     },
+     {
+      "value": "technical_issue",
+      "description": "The product, app or website is malfunctioning: errors, crashes, features not working."
+     },
+     {
+      "value": "shipping_delivery",
+      "description": "The status, tracking, delay, location, address or condition of a physical delivery."
+     },
+     {
+      "value": "billing_question",
+      "description": "A question or problem about a charge, invoice, price, discount or payment method that does not ask for money back."
+     },
+     {
+      "value": "account_access",
+      "description": "Trouble signing in: password, verification code, locked, suspended or hacked account, login email."
+     },
+     {
+      "value": "other",
+      "description": "None of the above."
+     }
+    ]
+   }
+  ]
+ },
+ "status": 200,
+ "headers": {
+  "content-type": "application/json",
+  "x-ratelimit-limit-requests": "30000",
+  "x-ratelimit-limit-tokens": "180000000",
+  "x-ratelimit-remaining-requests": "29997",
+  "x-ratelimit-remaining-tokens": "179999115",
+  "x-ratelimit-reset-requests": "6ms",
+  "x-ratelimit-reset-tokens": "0s",
+  "openai-processing-ms": "71",
+  "x-request-id": "req_da1e4852d2414ba981752c1bff26c3ce"
+ },
+ "latency_s": 0.1987,
+ "body": {
+  "model": "gpt-6-luna",
+  "answers": [
+   {
+    "type": "choice",
+    "name": "intent",
+    "choice": "refund",
+    "probabilities": [
+     {
+      "value": "refund",
+      "probability": 0.64
+     },
+     {
+      "value": "cancel_subscription",
+      "probability": 0.29
+     },
+     {
+      "value": "technical_issue",
+      "probability": 0.01
+     },
+     {
+      "value": "shipping_delivery",
+      "probability": 0.01
+     },
+     {
+      "value": "billing_question",
+      "probability": 0.03
+     },
+     {
+      "value": "account_access",
+      "probability": 0.01
+     },
+     {
+      "value": "other",
+      "probability": 0.01
+     }
+    ],
+    "confidence": 0.58
+   }
+  ],
+  "usage": {
+   "input_tokens": 298,
+   "input_tokens_details": {
+    "cached_tokens": 0,
+    "cache_write_tokens": 0
+   },
+   "output_tokens": 0,
+   "output_tokens_details": {
+    "reasoning_tokens": 0
+   },
+   "total_tokens": 298
+  }
+ }
+}

@@ -1,0 +1,40 @@
+{
+ "tag": "D05",
+ "utc": "2026-10-19T19:00:11+00:00",
+ "request": {
+  "model": "gpt-6-luna",
+  "input": [
+   {
+    "role": "user",
+    "content": [
+     {
+      "type": "input_image",
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/4/47/PNG_transparency_demonstration_1.png"
+     }
+    ]
+   }
+  ],
+  "questions": [
+   {
+    "type": "predicate",
+    "name": "dice",
+    "instructions": "Does the image show dice?"
+   }
+  ]
+ },
+ "status": 400,
+ "headers": {
+  "content-type": "application/json",
+  "openai-processing-ms": "2010",
+  "x-request-id": "req_f6b2766524b842daa2eea7c6a4a5a4fe"
+ },
+ "latency_s": 2.5224,
+ "body": {
+  "error": {
+   "message": "Unable to download the image before the timeout. Check that its URL is publicly accessible and responds promptly, or supply a base64 image data URL.",
+   "type": "invalid_request_error",
+   "param": "input[0].content[0].image_url",
+   "code": "invalid_value"
+  }
+ }
+}

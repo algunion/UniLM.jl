@@ -1,0 +1,29 @@
+{
+ "tag": "D10",
+ "utc": "2026-10-19T19:00:12+00:00",
+ "request": {
+  "model": "gpt-6-sol",
+  "input": "x",
+  "questions": [
+   {
+    "type": "predicate",
+    "instructions": "Is this a test?"
+   }
+  ]
+ },
+ "status": 404,
+ "headers": {
+  "content-type": "application/json",
+  "openai-processing-ms": "1",
+  "x-request-id": "req_87e4612b64ce4f619bb6084180459129"
+ },
+ "latency_s": 0.4252,
+ "body": {
+  "error": {
+   "message": "The model `gpt-6-sol` does not exist or you do not have access to it.",
+   "type": "invalid_request_error",
+   "param": null,
+   "code": "model_not_found"
+  }
+ }
+}

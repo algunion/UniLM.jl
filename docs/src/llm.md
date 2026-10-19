@@ -1532,6 +1532,40 @@ Calibration differs per backend: on 129 labelled tickets with 7 options
 (`gpt-6-luna`) 0.946 / 0.080, under-confident (accuracy ≥ mean top probability
 in every bin above 0.5) — tune `min_confidence` per backend.
 
+- **TypeSafe: images, Box, long context.** An `ImageAttachment` anywhere in the
+  state, instructions or criteria (directly, or inside a `Dict`, vector, tuple or
+  `NamedTuple`; inside a struct of your own it is an `ArgumentError`) is sent as an
+  asset: a `multipart/form-data` request whose first part, `request`, is the JSON
+  body, then one part per distinct image (`asset-0`, `asset-1`, …); every place
+  the image stood holds `"<image:" * first 32 hex digits of its SHA-256 * ">"`, and
+  the body lists them under `assets`. `TypeSafe-Danger-Zone-Images: true` is sent
+  whenever a request has an image or a Box question (TypeSafe marks both
+  experimental). Each use of an image is billed. A Score `legend` entry that is an
+  image comes back as the request's `ImageAttachment`. A recording is keyed on the
+  JSON part plus one `asset-k <sha256>` line per image (`key_extra`), never on or
+  with the bytes. `box(instructions)` needs Jev 1.14+ (`"jev-1.14.0"`,
+  `"jev-preview"`; a 1.13 model's 400 `"Invalid request."` gets a hint naming
+  them) and an image in the request; an inside-out box is a `SystemOneCallError`.
+  `long_context = true` sends `TypeSafe-Danger-Zone-Long-Context: true` (32k
+  tokens per question and 64k per request → 262k, same price, slower); a 400
+  `max_tokens_exceeded` failure's message names it. A one-option Choice was
+  answered live with probability 1 and confidence 1.0.
+- **OpenAI's Decisions wire.** `POST https://api.openai.com/v1/decisions` with
+  `{model, input, questions}` plus the given options. `input` is the state string,
+  a JSON value's JSON text, or — for an `ImageAttachment` or a `Vector` of strings
+  and images — one user message of `input_text` and `input_image` (data URL)
+  parts. `questions` is an array in request order, each entry carrying its name:
+  `noul` → `predicate`, `choice` → `choice` (`choices: [{value, description?}]`),
+  `score` → `score` (`levels: [{label}]`), a `RawQuestion` verbatim with `name`
+  added. Answers are matched by name and must come in the order asked; a
+  `predicate` reads as a `NoulAnswer`, a `refusal` as a `RefusalAnswer`, and a
+  score's `legend` maps each level to its label. Usage counts input, cached, output
+  and reasoning tokens; the request id is `x-request-id`; an error body
+  `{"error": {message, type, param, code}}` gives `error_type` = `code`, else
+  `type`. `estimated_cost` bills every input token, cached ones included, at the
+  row's input rate (`gpt-6-luna`: 0.10 USD per million), twice that above 272K
+  input tokens, and no output.
+
 ```julia
 # What a piece of guidance may be: string | object | array | image (an image only where the backend sends images)
 const SystemOneEntry = Union{AbstractString, AbstractDict, AbstractVector, NamedTuple, ImageAttachment}

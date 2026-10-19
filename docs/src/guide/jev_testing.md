@@ -127,15 +127,16 @@ once and replayed from a directory.
 `with_recorded_answers(f, dir; mode)` runs `f()` with these exchanges passing
 through a directory of recordings:
 
-- **Recorded:** System One — [`ask`](@ref), and so [`nl_dispatch`](@ref),
-  [`nl_classify`](@ref) and [`@branch`](@ref), and [`list_models`](@ref) — and
-  the non-streaming LLM verbs [`chatrequest!`](@ref), [`respond`](@ref) and
+- **Recorded:** System One on every backend — [`ask`](@ref) and
+  [`ask_each`](@ref), and so [`nl_dispatch`](@ref), [`nl_classify`](@ref) and
+  [`@branch`](@ref), and TypeSafe's [`list_models`](@ref) — and the
+  non-streaming LLM verbs [`chatrequest!`](@ref), [`respond`](@ref) and
   [`embeddingrequest!`](@ref), and so the tool loops [`tool_loop!`](@ref) and
   [`tool_loop`](@ref).
-- **Not recorded:** a streamed call, images, files, audio, MCP, the Responses
-  lifecycle calls ([`get_response`](@ref), [`cancel_response`](@ref), …) and
-  every other verb. Inside a scope they behave exactly as outside it: they reach
-  the network, with their key.
+- **Not recorded:** a streamed call, image generation, files, audio, MCP, the
+  Responses lifecycle calls ([`get_response`](@ref), [`cancel_response`](@ref),
+  …), Ollama's model listing and every other verb. Inside a scope they behave
+  exactly as outside it: they reach the network, with their key.
 
 | `mode` | Behaviour |
 | :--- | :--- |
@@ -158,13 +159,27 @@ through a directory of recordings:
   own. So is a request with another model — for an unpinned System One request,
   another `TYPESAFE_DEFAULT_MODEL` ([Setup](@ref jev_setup)) — other
   instructions, or one changed byte in the state or the prompt.
+- **Each backend apart.** A System One backend other than TypeSafe files its
+  requests under a path of its own — `/ollama/v1/systemone` for an Ollama
+  server, `/openai-decisions/v1/decisions` for OpenAI's Decisions API — so the
+  same question asked of two backends is two recordings, and a replay never
+  answers one backend with another's answer ([Backends](@ref
+  backends_recordings)). A provider option such as `long_context = true` is part
+  of the key too.
+- **Images by digest, on TypeSafe.** A TypeSafe request with images is keyed on
+  its JSON part and the SHA-256 of each image, and its file holds those digests,
+  never the image's bytes: the image stays where your code reads it from.
+  OpenAI's Decisions API carries images inside the request body, as base64, so
+  its recordings hold them.
 - **A miss is loud.** In `:replay`, a request with no recording throws
   `ReplayMissError` out of the verb itself, and so out of `nl_dispatch` and the
   tool loops — never a silent call to the service, and never a call error
   ([`SystemOneCallError`](@ref), [`LLMCallError`](@ref), …) that a
   `r isa SystemOneSuccess || fallback()` path would absorb. The message names
   the directory, the start of the key, and what the request asked for: a System
-  One request's questions, any other request's model.
+  One request's questions, any other request's model. It also says what
+  recording it takes: `TYPESAFE_API_KEY` for TypeSafe, the provider's key or a
+  running Ollama server for the others.
 - **Scopes nest.** An inner scope's service is the enclosing scope, not the
   network. A scope also covers the tasks started inside it (`Threads.@spawn`,
   `asyncmap`).
@@ -230,9 +245,10 @@ nothing # hide
   ([Models](https://docs.typesafe.ai/models)). With the version pinned, moving
   the pin makes every recording miss until you record again, instead of testing
   the new version against the old one's answers. A request without `model =`
-  names the client default — `jev-latest`, or whatever `TYPESAFE_DEFAULT_MODEL`
-  holds at call time — so in code you record, pin with `model =`, or record with
-  the same environment you replay with.
+  names the backend's default — on TypeSafe `jev-latest`, or whatever
+  `TYPESAFE_DEFAULT_MODEL` holds when the request is sent — so in code you
+  record, pin with `model =`, or record with the same environment you replay
+  with.
 - **Record from a fresh session**, such as a run of the test suite. Re-evaluating
   a method whose sentence you edited defines a second method beside the first,
   which stays on offer until you restart Julia or delete it
@@ -635,7 +651,8 @@ whole [`SystemOneSuccess`](@ref) before they decide. Keep three values from its
 `response`:
 
 - `request_id` — the `x-typesafe-request-id` header, the id to quote in a
-  support report.
+  support report (on OpenAI's Decisions API the `x-request-id` header; Ollama
+  sends none, and it is `nothing`).
 - `model` — the versioned id that answered, which the alias you named does not
   tell you.
 - `raw` — the JSON body the service sent; the typed fields are read from it.
@@ -666,23 +683,23 @@ result. `nl_dispatch(f, args...; on_response)` takes it the same way, and
 
 `docs/make.jl` runs the build inside one [`with_recorded_answers`](@ref) scope
 over `docs/recorded_answers`, and picks its mode by flag, never by which API
-keys are set. The examples that call a service replay from it: System One
-([`ask`](@ref), [`list_models`](@ref)) and the non-streaming LLM verbs
-([`chatrequest!`](@ref), [`respond`](@ref), [`embeddingrequest!`](@ref), the
-tool loops).
+keys are set. The examples that call a service replay from it: System One on
+each backend ([`ask`](@ref), [`ask_each`](@ref), TypeSafe's
+[`list_models`](@ref)) and the non-streaming LLM verbs ([`chatrequest!`](@ref),
+[`respond`](@ref), [`embeddingrequest!`](@ref), the tool loops).
 
 | Flag | Scope | What the examples do |
 | :--- | :--- | :--- |
-| neither | `:replay` | Every provider key is hidden, even when the shell exports it: the build spends nothing and renders what the keyless CI build renders. An example with no recording fails the build. |
-| `UNILM_DOCS_RECORD=1` | `:record_missing` | Recorded requests replay; the rest go live, with the keys of their providers, and are recorded. |
+| neither | `:replay` | Every provider key is hidden, even when the shell exports it, and so is `OLLAMA_HOST`: the build spends nothing, contacts no server, and renders what the keyless CI build renders. An example with no recording fails the build. |
+| `UNILM_DOCS_RECORD=1` | `:record_missing` | Recorded requests replay; the rest go live, with the keys of their providers (and the local Ollama server for the Ollama examples), and are recorded. |
 | `UNILM_DOCS_LIVE=1` | none | No replay: every example calls its service live. |
 
 Each flag is `1`, `0` or unset, and at most one is `1`; anything else stops the
 build before anything runs. What the scope does not record — a streamed call,
-images, files, MCP — goes to its service in a recording or a live build. Replay
-and record ignore `TYPESAFE_DEFAULT_MODEL`: an unpinned request names the
-default model, so an exported default would change every recording's key. After
-a recording run, commit the new files in `docs/recorded_answers`.
+image generation, files, MCP — goes to its service in a recording or a live
+build. Replay and record ignore `TYPESAFE_DEFAULT_MODEL`: an unpinned request
+names the default model, so an exported default would change every recording's
+key. After a recording run, commit the new files in `docs/recorded_answers`.
 
 The output under an example is the build's own: a recorded answer in a default
 build, a fresh one in a live build, and in a recording build the committed
@@ -698,5 +715,7 @@ Evidence boxes were measured separately.
   and keyed tables, `nl_dispatch`, `decide` and `@branch`
 - [Decisions with LLMs](@ref jev_llm_guide) — the support desk tested above, step by
   step
-- [TypeSafe System One API (Jev)](@ref system_one_api) — every type and verb,
-  including [`with_recorded_answers`](@ref) and [`ReplayMissError`](@ref)
+- [Backends: Jev, OpenAI and Local Models](@ref system_one_backends) — the same
+  calls on other backends, each recorded apart
+- [System One API](@ref system_one_api) — every type and verb, including
+  [`with_recorded_answers`](@ref) and [`ReplayMissError`](@ref)

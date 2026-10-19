@@ -1,0 +1,62 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/systemone",
+    "body": {
+      "state": "<image:0aa3720196bef00c31209f8300002225>",
+      "model": "jev-1.14.0",
+      "questions": {
+        "rectangle": {
+          "type": "box",
+          "instructions": "the red rectangle"
+        },
+        "disc": {
+          "type": "box",
+          "instructions": "the blue disc"
+        }
+      },
+      "assets": {
+        "<image:0aa3720196bef00c31209f8300002225>": {
+          "type": "image",
+          "part": "asset-0"
+        }
+      }
+    },
+    "key_extra": "asset-0 0aa3720196bef00c31209f830000222507894401bf50c7e6a6fa32195bcd4cf4"
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_01a1565a01ba7cd6a9d072c23c38ab6b",
+    "request_id_header": "x-typesafe-request-id",
+    "body": {
+      "model": "jev-1.14.0",
+      "answers": {
+        "rectangle": {
+          "type": "box",
+          "box": {
+            "top": 0.3,
+            "bottom": 0.71,
+            "left": 0.18,
+            "right": 0.56
+          },
+          "confidence": 0.86
+        },
+        "disc": {
+          "type": "box",
+          "box": {
+            "top": 0.11,
+            "bottom": 0.32,
+            "left": 0.66,
+            "right": 0.87
+          },
+          "confidence": 0.83
+        }
+      },
+      "usage": {
+        "input_tokens": 1036,
+        "output_tokens": 36
+      }
+    }
+  },
+  "recorded_at": "2026-10-19T22:48:21Z"
+}

@@ -401,8 +401,8 @@ wording shown, one unrequested call in 25 got through.
 **The job:** send the LLM the few tools a request needs instead of the whole
 registry. **Without Jev**, every tool schema goes out on every turn: you pay for
 all of them, and the LLM has more to confuse. **With Jev**, one Choice ranks the
-whole registry, up to 255 tools (the Choice limit), and the LLM receives only
-the top few, in rank order.
+whole registry, up to 255 tools (TypeSafe's Choice limit), and the LLM receives
+only the top few, in rank order.
 
 ```@example jevllm
 no_args = Dict("type" => "object", "properties" => Dict{String,Any}(), "required" => String[],

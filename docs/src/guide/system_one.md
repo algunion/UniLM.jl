@@ -1,10 +1,10 @@
 # [Route and Decide](@id system_one_guide)
 
-Jev reads a piece of text and answers the questions you list about it — which
-one, how much, yes or no — with a probability for each outcome, never with
-generated text. Your code keeps the control flow: it asks, reads the answer and
-decides what to do. Setup is one variable, `export TYPESAFE_API_KEY=…`
-([Setup](@ref jev_setup) has the rest).
+Jev reads a piece of text, or a picture, and answers the questions you list
+about it — which one, how much, yes or no — with a probability for each
+outcome, never with generated text. Your code keeps the control flow: it asks,
+reads the answer and decides what to do. Setup is one variable,
+`export TYPESAFE_API_KEY=…` ([Setup](@ref jev_setup) has the rest).
 
 | I want to… | Use | You get | Section |
 | :--- | :--- | :--- | :--- |
@@ -17,6 +17,13 @@ decides what to do. Setup is one variable, `export TYPESAFE_API_KEY=…`
 | act when some mistakes cost more than others | a price for each mistake | the cheapest action, a person included | [When mistakes have different prices](@ref jev_loss_matrix) |
 | catch the messages that fit none of my options | a catch-all option | the probability that none fits | [Let Jev say none of these](@ref jev_none_of_these) |
 | act on a small chance of the worst case | the probability at the top level | an alarm that a middling score would not raise | [Act on the risk of the worst level](@ref jev_worst_level) |
+| judge what an image shows | an [`ImageAttachment`](@ref) in the state | answers about the picture, as about a text | [Images](@ref jev_images) |
+| find where something is in an image | a [`box`](@ref) question, on Jev 1.14 | the box's edges as fractions of the image, and a confidence | [Locate with Box](@ref jev_box) |
+| send a state longer than 32k tokens | `long_context = true` | 262k tokens of context, at the same price per token | [Long context](@ref jev_long_context) |
+
+The examples on this page ask Jev, the default backend; [Backends](@ref
+system_one_backends) shows how to send the same calls to OpenAI's Decisions API
+or to a local model, and what each one refuses.
 
 ## First request
 
@@ -74,8 +81,9 @@ question in the instructions even when the name looks self-explanatory
 ## [Choice, Score, Noul](@id jev_primitives)
 
 Three question types cover the judgments: pick one of a set, place on a scale,
-say whether a statement holds. A Choice takes 1–255 options and a Score 1–10
-levels, both checked before the request ([Limits](@ref jev_limits)).
+say whether a statement holds. On TypeSafe a Choice takes 1–255 options and a
+Score 1–10 levels ([Limits](@ref jev_limits)); other backends set their own
+([Backends](@ref backends_table)), and each limit is checked before the request.
 
 ### Choice — pick one of a named set
 
@@ -101,8 +109,10 @@ nothing # hide
 Option order is the order of what you pass, and it is what the model reads: on
 ambiguous inputs it moves the probabilities (answers stay keyed by name). Build
 options and state from ordered containers — a `NamedTuple`, a vector of
-`name => description` pairs or a `JSON.Object`, never a `Dict`, whose hash
-order can change between Julia versions.
+`name => description` pairs or a `JSON.Object` — to choose that order. A plain
+`Dict` has none of its own: its options, and its keys in a state, go out sorted
+by name, so `"t10"` comes before `"t2"` — the same on every Julia version, but
+not the order you wrote.
 
 !!! details "Evidence"
     Measured on jev-1.13.0 (September 2026) on our own labeled sets, changing
@@ -208,17 +218,19 @@ println("policy_allows:    ", answer(r, "policy_allows"))
 
 The backticks are a prompting convention the model reads, not a server-side
 resolver: a name that does not exist raises no error, it only leaves the
-question vaguer. The state may be a `NamedTuple`, `Dict`, `Vector`, `Tuple` or
-`String`, not `nothing` ([State](https://docs.typesafe.ai/concepts/state)), and
-its key order is read too, so prefer the ordered forms.
+question vaguer. The state may be a `NamedTuple`, `Dict`, `Vector`, `Tuple`,
+`String` or an image ([Images](@ref jev_images)), not `nothing`
+([State](https://docs.typesafe.ai/concepts/state)), and its key order is read
+too, so prefer the ordered forms.
 
 ## Reading answers
 
 Any call that reaches the service returns one of three result types. A
 malformed request — a wrong `service`, duplicate or blank question names,
-invalid criteria — is an `ArgumentError` before anything is sent, and inside a
-[`with_recorded_answers`](@ref) replay scope a request with no recording throws
-[`ReplayMissError`](@ref): a gap in the recordings is not a service failure.
+invalid criteria, anything over the backend's limits — is an `ArgumentError`
+before anything is sent, and inside a [`with_recorded_answers`](@ref) replay
+scope a request with no recording throws [`ReplayMissError`](@ref): a gap in
+the recordings is not a service failure.
 
 | Result | Meaning |
 | :--- | :--- |
@@ -256,7 +268,10 @@ println(collect(keys(r)))     # the question names that came back
 ```
 
 The service rounds every number to two decimals, as a floating-point value: a
-0.82 can arrive as 0.8200000000000001.
+0.82 can arrive as 0.8200000000000001. Rounded probabilities need not sum to
+exactly 1 — a live reply over four options summed to 0.99 on 20 October 2026 —
+so [`ask`](@ref) accepts a sum within 0.005 per outcome of 1, and returns a reply
+further off as a [`SystemOneCallError`](@ref).
 
 **Confidence describes the distribution, not correctness.** It collapses
 `probabilities` into `0 … 1`: all the mass on one outcome gives 1.0, a flat
@@ -265,11 +280,13 @@ spread a low number. For a Choice over `n` options it is
 that a uniform answer scores 0
 ([Confidence](https://docs.typesafe.ai/confidence)). The same confidence is
 therefore a different top probability for a different number of options: 0.5
-means `p_max ≥ 0.75` with 2 options, 0.6 with 5 and 0.55 with 10. A Score's
-confidence likewise measures how concentrated the probability is around the
-most likely level. Low confidence on a Choice usually means no option wins; on
-a Score, that the levels overlap for this state, the question measures more than
-one thing, or the state does not say enough.
+means `p_max ≥ 0.75` with 2 options, 0.6 with 5 and 0.55 with 10; a Choice of
+one option reports 1.0. A Score's confidence likewise measures how concentrated
+the probability is around the most likely level. Low confidence on a Choice
+usually means no option wins; on a Score, that the levels overlap for this
+state, the question measures more than one thing, or the state does not say
+enough. `confidence` is the same formula on every backend, but each model is
+calibrated its own way ([Backends](@ref backends_confidence)).
 
 !!! details "Evidence"
     The formula fits every answer we measured within 0.02, on jev-1.13.0 in
@@ -532,7 +549,9 @@ applied to every answer.
 - The bar is your policy, not the model's: a read-only action can act at a much
   lower confidence than a refund. Start conservative, measure on your own
   messages, and move it — and pin the model first, since a tuned bar is a claim
-  about one version ([Models and versions](@ref jev_models)).
+  about one version ([Models and versions](@ref jev_models)) and one backend: on
+  our labelled tickets the same 0.8 sent twice as many to a person on OpenAI's
+  Decisions API as on Jev ([Backends](@ref backends_confidence)).
 - Confidence is rescaled for the number of options, so adding a team moves the
   bar ([Reading answers](@ref)); rewording the options moves it too
   ([Fill a struct in one request](@ref jev_fill_struct)).
@@ -711,6 +730,185 @@ severity reports they never did.
 - Keep `score` for ranking and for thresholds on the middle of the scale; read
   the tail when one level carries the cost.
 
+## [Images](@id jev_images)
+
+**The job:** judge what a picture shows — the photo a customer attached, a
+screenshot of an error — with the questions you ask about a text. **Without
+Jev:** a vision LLM whose description you parse. **With Jev:** put an
+[`ImageAttachment`](@ref) in the request, and a Choice, Score or Noul is
+answered about it as about a text.
+
+The picture here is a test image of 512 × 512 pixels: a red rectangle and a
+blue disc on white.
+
+![A red rectangle and a blue disc on a white background](../assets/scene.png)
+
+```@example jev
+scene = ImageAttachment("../assets/scene.png")      # a PNG or JPEG file, or its bytes
+
+r = ask((message = "I ordered the round blue sticker. Is that what the photo shows?", photo = scene),
+        "shows_it"  => noul("Does `photo` show what `message` asks about?"),
+        "red_shape" => choice("What is the red shape in `photo`?",
+                              ["a rectangle", "a disc", "a triangle", "there is no red shape"]))
+
+println("P(the photo shows it) = ", r["shows_it"].noul)
+println("red shape: ", r["red_shape"].choice, " (confidence ", r["red_shape"].confidence, ")")
+println(token_usage(r).prompt_tokens, " input tokens")
+```
+
+The message and the picture went out in one state, and each question names its
+part in backticks. Jev puts 0.82 on the photo showing what the customer asks
+about, and names the red shape a rectangle at confidence 1.0. The picture is
+most of the 1,114 input tokens: about 720 of them, by the measurement below.
+
+An image may stand anywhere a string can: in the state, alone or among text in a
+`NamedTuple`, `Dict`, vector or tuple; in a question's instructions; in its
+criteria — a Choice whose options are example pictures, a Score whose levels
+are. A Score level that is an image comes back in the answer's `legend` as the
+same `ImageAttachment`. UniLM looks for images in those containers, not in the
+fields of a struct of your own: a request whose image only a struct holds is
+refused with an `ArgumentError` before anything is sent, rather than writing the
+image's bytes into the JSON as numbers.
+
+- **Sent once, billed per use.** Each distinct image goes out once, as a part of
+  a multipart request, and every place it stood holds a reference to it. Every
+  use is billed, so an image several questions need belongs in the state, once.
+- **The opt-in.** TypeSafe marks images experimental — their request format,
+  answers and limits may change between releases
+  ([Images](https://docs.typesafe.ai/images)) — and reads them only from a
+  request that carries the header `TypeSafe-Danger-Zone-Images: true`. UniLM
+  adds it whenever a request holds an image: passing one is the opt-in.
+- **Checked before sending.** PNG or JPEG, a still image (no animated PNG), at
+  most 16 MiB, 280 to 1568 pixels on each side; the whole request at most
+  32 MiB. TypeSafe applies no EXIF rotation, so turn a photo's pixels upright
+  before you send it.
+- **Other backends.** OpenAI's Decisions API takes images in the state only;
+  UniLM's Ollama wrapper sends none yet ([Backends](@ref backends_table)).
+
+!!! details "Evidence"
+    Observed on 19 October 2026 (`jev-1.13.0`): an image of W × H pixels was
+    billed 2·⌈W/28⌉·⌈H/28⌉ input tokens, plus about 4 for each use — 722 for a
+    512 × 512 picture, 200 at 280 × 280, 6,272 at 1568 × 1568 — and the same
+    image used twice in one request was billed twice. TypeSafe does not document
+    this formula: it is our fit to six sizes, not a contract.
+
+**Tune it**
+
+- Crop to what the question is about: a smaller image costs fewer tokens, as
+  long as each side stays between 280 and 1568 pixels.
+- Name the image's key in the question, `photo` above, as you would name any
+  part of the state.
+
+## [Locate with Box](@id jev_box)
+
+**The job:** find where something is in a picture: the dent on a parcel, the
+signature on a form. **Without Jev:** an object detector trained on your
+classes, or a vision LLM asked for coordinates as text. **With Jev:** a
+[`box`](@ref) question names what to locate, and the answer is a
+[`BoxAnswer`](@ref): the box's edges as fractions of the image, and a
+confidence.
+
+A Box needs Jev 1.14 or later — `model = "jev-1.14.0"`, or `"jev-preview"`. In
+October 2026 `jev-latest` answers as Jev 1.13, which refuses a Box question with
+HTTP 400 and `"Invalid request."`; [`ask`](@ref) returns that
+[`SystemOneFailure`](@ref) with a hint naming the models that answer one
+([Models and versions](@ref jev_models)).
+
+```@example jev
+r = ask(scene, "rectangle" => box("the red rectangle"), "disc" => box("the blue disc"); model = "jev-1.14.0")
+
+for name in ("rectangle", "disc")
+    b = r[name]
+    println(rpad(name, 10), b.box, "  confidence ", b.confidence)
+end
+# Edges are fractions: of the height for top and bottom, of the width for left and right.
+pixels(f) = round(Int, 512f)
+b = r["rectangle"].box
+println("rectangle: rows ", pixels(b.top), "–", pixels(b.bottom), ", columns ", pixels(b.left), "–", pixels(b.right))
+```
+
+The rectangle is drawn at 0.30–0.70 of the height and 0.20–0.55 of the width —
+rows 153–358 and columns 102–281 of the 512 — and the disc at 0.12–0.32 and
+0.68–0.88: every edge of both answers is within 0.02 of the drawing.
+
+A [`BoxAnswer`](@ref) holds `box`, a [`BoxCoordinates`](@ref) — `top` and
+`bottom` as fractions of the image's height from its top edge, `left` and
+`right` as fractions of its width from its left edge, so `(0, 1, 0, 1)` is the
+whole image — then `confidence`, `nothing` when the model reports none, and
+`raw`. A Box question needs an image in the request, and [`ask`](@ref) refuses
+one without before anything is sent:
+
+```@example jev
+try
+    ask("The parcel arrived with a dent on its left side.", "dent" => box("the dent"); model = "jev-1.14.0")
+catch err
+    println(sprint(showerror, err))
+end
+```
+
+Sent anyway, such a question still gets a box — at a confidence of 0.04 when we
+tried it — and no box drawn on a picture that is not there means anything. An
+answer whose box is turned inside out, its top below its bottom or its left
+right of its right, is a [`SystemOneCallError`](@ref). Only TypeSafe answers Box
+questions; the other backends' wrappers refuse them ([Backends](@ref
+backends_refusals)).
+
+!!! details "Evidence"
+    Measured on 19 October 2026 (`jev-1.14.0`) on this picture, in a run apart
+    from the answer above: every edge of both boxes came back within 0.02 of the
+    drawing then too. A Box question about a request with no image came back
+    with a box at confidence 0.04. Limits: one picture, two shapes on a plain
+    background.
+
+**Tune it**
+
+- Name the target as a person would point at it — "the red rectangle", not
+  "object 1".
+- Pin `jev-1.14.0` rather than `jev-preview`, which moves to the next preview
+  build when one ships.
+
+## [Long context](@id jev_long_context)
+
+TypeSafe reads at most 64k tokens per request, and 32k for the state with any
+one question. `long_context = true` raises both to 262k tokens, at the same
+price per token, by sending the header `TypeSafe-Danger-Zone-Long-Context: true`.
+The docs build does not run this block: a real example needs more than 32k
+tokens of text, and its recording would hold all of it.
+
+```julia
+contract = read("supplier_agreement.txt", String)     # a long document
+r = ask((contract = contract,),
+        "auto_renews" => noul("Does `contract` renew automatically unless it is cancelled?");
+        long_context = true)
+
+r isa SystemOneFailure && r.error_type == "max_tokens_exceeded" &&
+    println("too long even for long context: ", r.message)
+```
+
+TypeSafe documents long context as slower and less accurate than the default
+limits ([Models](https://docs.typesafe.ai/models)), and an answer does not say
+which ran. A request over its context comes back as a 400
+[`SystemOneFailure`](@ref) whose `error_type` is `"max_tokens_exceeded"`; its
+`message` names `long_context` and the limits. `long_context` is a TypeSafe
+option: any other backend refuses it before sending, as it refuses every option
+it does not know.
+
+!!! details "Evidence"
+    Measured on 19 October 2026 (`jev-1.13.0`): a request of about 100k tokens
+    came back 400 without the option and was answered in 1.5 s with it; one of
+    257k to 262k tokens in a single state took 4.7 to 5.3 s, against 0.25 to
+    0.42 s for a small request. The same request was billed the same number of
+    tokens with and without the option.
+
+**Tune it**
+
+- Send less before you send more: accuracy falls as unrelated text grows around
+  the decision ([Designing good questions](@ref jev_designing_questions)).
+  Retrieve the part the question needs, and keep `long_context` for a state
+  that is long all the way through.
+- Many questions about a long state belong in one request: the state is read,
+  and billed, once.
+
 ## [Designing good questions](@id jev_designing_questions)
 
 - **One narrow judgment per question.** Ask what a knowledgeable person decides
@@ -755,6 +953,8 @@ jev_llm_check_claims). [Decisions with LLMs](@ref jev_llm_guide) builds each ste
 ## See also
 
 - [Start Here: Decisions in Five Minutes](@ref jev_start) — which page answers which question
+- [Backends: Jev, OpenAI and Local Models](@ref system_one_backends) — the same
+  calls on OpenAI's Decisions API and on local models
 - [Decisions with LLMs](@ref jev_llm_guide) — Jev before and after an LLM call
 - [Dispatch on Meaning](@ref nl_dispatch_guide) — `nl_classify`,
   [`nl_dispatch`](@ref) and [`@branch`](@ref): the answer selects the code that
@@ -763,8 +963,8 @@ jev_llm_check_claims). [Decisions with LLMs](@ref jev_llm_guide) builds each ste
   over collections: routing, ranking, search and joins
 - [Test and Develop](@ref jev_testing_guide) — recorded answers and tests that
   need no key
-- [TypeSafe System One API (Jev)](@ref system_one_api) — setup, models, limits,
-  errors and cost, then every type, verb and accessor
+- [System One API](@ref system_one_api) — setup, models, limits, errors and cost
+  of each backend, then every type, verb and accessor
 - [Cost Tracking](@ref cost_guide) — token usage and USD estimates across every
   surface
 - [TypeSafe documentation](https://docs.typesafe.ai) — [System

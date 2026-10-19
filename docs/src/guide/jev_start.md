@@ -9,11 +9,13 @@ quick request billed only for the text it reads ([prices](https://docs.typesafe.
 Julia ([Setup](@ref jev_setup) lists the optional variables).
 
 !!! note "Providers"
-    Decisions run on **Jev**, TypeSafe's System One model
-    ([`TYPESAFEServiceEndpoint`](@ref), default model `jev-latest`). OpenAI
-    announced a Decisions API on 29 September 2026, in limited preview; it has no
-    public API reference yet, and UniLM does not support it yet. Support is
-    planned once that reference is published.
+    Decisions run on **Jev**, TypeSafe's System One model, unless you choose
+    another backend ([`TYPESAFEServiceEndpoint`](@ref), default model
+    `jev-latest`). The same calls run on OpenAI's Decisions API, a public beta
+    since 6 October 2026 ([`OPENAIServiceEndpoint`](@ref)), and on local decision
+    models served by Ollama ([`OllamaEndpoint`](@ref)). [Backends](@ref
+    system_one_backends) shows how to switch, what each backend takes, and why a
+    confidence threshold is tuned for each.
 
 ## Which path?
 
@@ -24,7 +26,10 @@ Julia ([Setup](@ref jev_setup) lists the optional variables).
 | act only when Jev is sure enough, or weigh what mistakes cost | `min_confidence` and `fallback`, or a `decide` policy | the answer when it clears your bar, a hand-over otherwise | [Route and Decide](@ref jev_act_on_answer) |
 | run the right function for a text | [`nl_dispatch`](@ref) with `texts = TEAM`, or `nl"…"` in the signatures | what the method of the chosen meaning returns | [Dispatch on Meaning](@ref nl_dispatch_paths) |
 | decide before an LLM call, or check its output after | a Jev question on each side of [`respond`](@ref) | the team, the model to call, a draft checked before it is sent | [Decisions with LLMs](@ref jev_llm_guide) |
-| judge a whole list at once | one [`ask`](@ref), one question per item | every item judged in one request | [Many Items at Once](@ref jev_algorithms_guide) |
+| judge many texts, each in its own request | [`ask_each`](@ref)`(texts, questions...)` | one typed result per text, in input order, the requests sent concurrently | [Many Items at Once](@ref jev_items_each) |
+| judge a whole list at once | one [`ask`](@ref), one question per item | every item judged in one request | [Many Items at Once](@ref jev_items_batch) |
+| judge what an image shows, or find where something is in it | an [`ImageAttachment`](@ref) in the state; [`box`](@ref) for a location | answers about the picture; a box's edges and a confidence | [Route and Decide](@ref jev_images) |
+| run the same calls on OpenAI's Decisions API or a local model | `service = …`, or [`with_system_one`](@ref) around the code | the same typed answers, from that backend | [Backends](@ref system_one_backends) |
 | test without the network | [`with_recorded_answers`](@ref) | real answers recorded once, replayed with no key | [Test and Develop](@ref jev_testing_recorded) |
 
 ## Your first decision
@@ -138,16 +143,21 @@ jaggedness](https://docs.typesafe.ai/model-jaggedness/jev-1.13).
 
 ## Where next
 
+- [Backends: Jev, OpenAI and Local Models](@ref system_one_backends) — the same
+  calls on OpenAI's Decisions API and on local models, what each backend
+  refuses, and a threshold tuned per backend
 - [Decisions with LLMs](@ref jev_llm_guide) — route before an LLM call, check the
   draft after it, pick the model, approve tool calls
-- [Route and Decide](@ref system_one_guide) — [`ask`](@ref) and its three
-  question types, a struct filled in one request, decision rules on the answers
+- [Route and Decide](@ref system_one_guide) — [`ask`](@ref) and its question
+  types, images and Box, a struct filled in one request, decision rules on the
+  answers
 - [Dispatch on Meaning](@ref nl_dispatch_guide) — [`nl_classify`](@ref),
   [`nl_dispatch`](@ref) with a table or with `nl"…"` in the signatures, and
   [`@branch`](@ref)
-- [Many Items at Once](@ref jev_algorithms_guide) — a batch in one request,
-  ranking, the first line where something happens, matching records
+- [Many Items at Once](@ref jev_algorithms_guide) — [`ask_each`](@ref), a batch
+  in one request, ranking, the first line where something happens, matching
+  records
 - [Test and Develop](@ref jev_testing_guide) — recorded answers for Jev and LLM
   calls, tests that need no key, an audit trail
-- [TypeSafe System One API (Jev)](@ref system_one_api) — setup, models, limits,
-  errors and cost, then every type and function
+- [System One API](@ref system_one_api) — setup, models, limits, errors and cost
+  of each backend, then every type and function

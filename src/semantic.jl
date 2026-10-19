@@ -756,7 +756,11 @@ function _nl_offer(f, argtypes::Vector{Any})::_NLOffer
     length(argtypes) == length(ordinary) || throw(ArgumentError(
         "$(f) takes $(length(ordinary)) ordinary argument(s) beside its $(length(slots)) " *
         "natural-language slot(s); got $(length(argtypes))"))
-    fits = filter(m -> _nl_accepts(f, m, slots, ordinary, argtypes), slotted)
+    # A loop rather than a closure over `f`, which would be compiled anew for every function.
+    fits = Method[]
+    for m in slotted
+        _nl_accepts(f, m, slots, ordinary, argtypes) && push!(fits, m)
+    end
     isempty(fits) && throw(ArgumentError(
         "no natural-language method of $(f) accepts ordinary arguments of types " *
         "$(Tuple{argtypes...}); its natural-language methods are " *
@@ -787,9 +791,15 @@ _nl_key(t::_NLTable, s::String) = t.keys[something(findfirst(==(s), t.texts))]
 # ambiguous call as well as a missing one, and Julia could call neither. It looks
 # in the newest world, as `methods(f)` and the final `invokelatest` do; without
 # `world` it would use the caller's, blind to a method defined after the call began.
-_nl_gaps(f, offer::Union{_NLOffer,_NLKeyedOffer}, argtypes::Vector{Any})::Vector{Vector{String}} =
-    filter(c -> !hasmethod(f, Tuple{_nl_call_types(offer, c, argtypes)...}; world = Base.get_world_counter()),
-           _nl_combinations(offer.options))
+# A loop rather than a closure over `f`, as in `_nl_offer`.
+function _nl_gaps(f, offer::Union{_NLOffer,_NLKeyedOffer}, argtypes::Vector{Any})::Vector{Vector{String}}
+    gaps = Vector{String}[]
+    for c in _nl_combinations(offer.options)
+        hasmethod(f, Tuple{_nl_call_types(offer, c, argtypes)...}; world = Base.get_world_counter()) ||
+            push!(gaps, c)
+    end
+    gaps
+end
 
 # The methods an ambiguous call of signature `sig` collides on: those that accept it
 # and that no other accepting method is more specific than. Empty when none accepts
@@ -1404,7 +1414,7 @@ cached by the tables' contents as well. [`meanings`](@ref) and
 [`meaning_gaps`](@ref) take the same `texts`, and [`nl_classify`](@ref) returns
 the chosen key without dispatching.
 """
-function nl_dispatch(f, args...;
+function nl_dispatch(@nospecialize(f), @nospecialize(args...);
                      model::Union{Nothing,AbstractString}=nothing,
                      service::ServiceEndpointSpec=TYPESAFEServiceEndpoint,
                      config::Union{Nothing,RequestConfig}=nothing,
@@ -1416,6 +1426,16 @@ function nl_dispatch(f, args...;
                      state=nothing,
                      texts=nothing,
                      on_response=nothing)
+    # A keyword body is specialized on every keyword's type, so this one is compiled again
+    # for each `decide`, `fallback` or table type a call site passes: it only hands over to
+    # a body compiled once.
+    _nl_dispatch(f, args, model, service, config, cancel, min_confidence, decide, fallback, instructions,
+                 state, texts, on_response)
+end
+
+function _nl_dispatch(f, args::Tuple, model, service, config, cancel, min_confidence::Real, decide, fallback,
+                      instructions, state, texts, on_response)
+    @nospecialize
     _nl_check_threshold(min_confidence)
     _nl_check_hook(on_response)
     # `Core.Typeof` is the type dispatch sees: `Type{Int}` for the argument `Int`.
@@ -1534,7 +1554,7 @@ nl_classify(ticket, INTENT)                                            # :refund
 nl_classify(ticket, INTENT; min_confidence = 0.7, fallback = t -> :other)
 ```
 """
-function nl_classify(state, texts;
+function nl_classify(state, @nospecialize(texts);
                      min_confidence::Real=0.0,
                      decide=nothing,
                      fallback=nothing,

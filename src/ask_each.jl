@@ -12,7 +12,9 @@
 # batch starts until the wait that response asked for has passed: `retry-after-ms`, else
 # `Retry-After` (read as `SystemOneFailure.retry_after` reads them), else the longest
 # backoff the seam draws for that attempt. Requests already in flight finish; the others
-# would otherwise go on sending to a service that has just said it is overloaded.
+# would otherwise go on sending to a service that has just said it is overloaded. The
+# retry seam waits it out before each attempt within what remains of the request's own
+# `total_deadline`, and reports a deadline that runs out while waiting as it reports any.
 mutable struct _SharedBackoff
     @atomic until::UInt64       # the time_ns() before which no attempt starts; 0 for none
 end
@@ -35,16 +37,18 @@ end
 
 const _SystemOneResult = Union{SystemOneSuccess,SystemOneFailure,SystemOneCallError}
 
-# One batch in flight: its calls, the slot each result lands in, the token that stops it,
-# its shared backoff, the next item to claim, and the first exception that must reach the
-# caller once every worker has stopped.
+# One batch in flight: its items, resolved and checked but not encoded, the slot each
+# result lands in, the token that stops it, its shared backoff, the caller's `on_result`
+# and the lock its calls take turns under, the next item to claim, and the first exception
+# that must reach the caller once every worker has stopped.
 mutable struct _EachBatch
-    const calls::Vector{_SystemOneCall}
+    const items::Vector{_SystemOneResolved}
     const results::Vector{_SystemOneResult}
     const config::RequestConfig
     const token::CancelToken
     const backoff::_SharedBackoff
-    const on_result::Union{Nothing,Function}
+    const on_result::Any
+    const reporting::ReentrantLock
     @atomic next::Int
     @atomic failure::Union{Nothing,Some{Any}}
 end
@@ -66,18 +70,25 @@ option — mean what they mean for [`ask`](@ref), and the backend and model
 resolve as they do there, an enclosing [`with_system_one`](@ref) scope included.
 Every request is built and checked by its backend's wrapper before the first one
 is sent: an item that cannot be sent is an `ArgumentError` naming its position,
-and nothing is sent.
+and nothing is sent. The checked request is not kept: the worker that sends an
+item encodes it again, so a batch holds no more request bodies — images and all —
+than it has requests in flight.
 
-At most `ntasks` requests are in flight at once; the default is the backend's —
-16 on TypeSafe, 8 on a backend that names none — a default, not a limit. The
-requests share one connection pool, and when the service answers any of them
-with 429 or 529, a retried attempt included, no attempt of the batch starts
-until the wait that response asked for (`retry-after-ms`, else `Retry-After`,
-else the retry seam's own backoff) has passed; requests already in flight
-finish.
+At most `ntasks` requests are in flight at once — any `Integer` of at least 1;
+the default is the backend's — 16 on TypeSafe and OpenAI's Decisions API, 1 on
+Ollama, 8 on a backend that names none — a default, not a limit. The requests
+share one connection pool, and when the service answers any of them with 429 or
+529, a retried attempt included, no attempt of the batch starts until the wait
+that response asked for (`retry-after-ms`, else `Retry-After`, else the retry
+seam's own backoff) has passed; requests already in flight finish. A request
+waits at most what remains of its own `total_deadline`, whose clock starts when a
+worker takes it: one whose budget runs out while it waits is not sent, and its
+result is a [`SystemOneCallError`](@ref) whose `cause` is a
+[`UniLMTimeout`](@ref) of phase `:deadline`.
 
-`on_result(i, result)`, when given, runs in the worker task as each result
-lands, in the order they complete.
+`on_result(i, result)`, when given — any callable of an index and each kind of
+result, checked before anything is sent — runs in the worker task as each result
+lands, in the order they complete, one call at a time.
 
 `cancel` (default: the ambient [`with_cancel`](@ref) token) stops the batch: the
 requests in flight end at once, the rest are not sent, and each item still
@@ -100,7 +111,7 @@ function ask_each(states::AbstractVector, question, questions...;
                   config::Union{Nothing,RequestConfig}=nothing,
                   cancel::Union{Nothing,CancelToken}=nothing,
                   ntasks::Union{Nothing,Integer}=nothing,
-                  on_result::Union{Nothing,Function}=nothing,
+                  on_result=nothing,
                   options...)
     qs = _normalize_varargs((question, questions...))
     _check_question_names(qs)
@@ -115,19 +126,41 @@ function ask_each(requests::AbstractVector{<:SystemOneRequest};
                   config::Union{Nothing,RequestConfig}=nothing,
                   cancel::Union{Nothing,CancelToken}=nothing,
                   ntasks::Union{Nothing,Integer}=nothing,
-                  on_result::Union{Nothing,Function}=nothing)
-    isnothing(ntasks) || ntasks >= 1 || throw(ArgumentError(
-        "`ntasks` is how many requests ask_each keeps in flight, at least 1; got $ntasks"))
+                  on_result=nothing)
+    width = _each_width(ntasks)
+    _each_check_on_result(on_result)
     svc = first(_system_one_target(service, nothing))
     _check_system_one_service(svc)
     n = length(requests)
-    calls = _SystemOneCall[_each_item(() -> _system_one_call(r, service), i, n) for (i, r) in enumerate(requests)]
+    items = _SystemOneResolved[_each_item(() -> _each_checked(r, service), i, n) for (i, r) in enumerate(requests)]
     results = Vector{_SystemOneResult}(undef, n)
     n == 0 && return results
     p = system_one_protocol(svc)::SystemOneProtocol
-    batch = _EachBatch(calls, results, _resolve_config(config, _system_one_default_config(p, svc)), CancelToken(),
-                       _SharedBackoff(), on_result, 0, nothing)
-    _run_each(batch, _resolve_cancel(cancel), min(something(ntasks, _system_one_concurrency(p, svc)), n))
+    batch = _EachBatch(items, results, _resolve_config(config, _system_one_default_config(p, svc)), CancelToken(),
+                       _SharedBackoff(), on_result, ReentrantLock(), 0, nothing)
+    _run_each(batch, _resolve_cancel(cancel), min(something(width, _system_one_concurrency(p, svc)), n))
+end
+
+# The batch width a call names: any Integer of at least 1, as an Int.
+_each_width(::Nothing)::Nothing = nothing
+_each_width(n::Integer)::Int = 1 <= n <= typemax(Int) ? Int(n) : throw(ArgumentError(
+    "`ntasks` is how many requests ask_each keeps in flight, an Integer of at least 1; got $n"))
+
+# `on_result` is called with an item's index and its result, whichever kind it is: one
+# that cannot take each would fail only once a result had been paid for.
+function _each_check_on_result(f)::Nothing
+    isnothing(f) || all(T -> hasmethod(f, Tuple{Int,T}), (SystemOneSuccess, SystemOneFailure, SystemOneCallError)) ||
+        throw(ArgumentError("`on_result` must be `nothing` or callable as `on_result(i, result)` with an index and " *
+                            "any result — a SystemOneSuccess, SystemOneFailure or SystemOneCallError; got $(typeof(f))"))
+    nothing
+end
+
+# An item resolved and encoded — through its backend's checks — before anything is sent,
+# and kept without its wire, which the worker that sends it encodes again.
+function _each_checked(r::SystemOneRequest, service::Union{Nothing,ServiceEndpointSpec})::_SystemOneResolved
+    resolved = _system_one_resolve(r, service)
+    _system_one_call(resolved)
+    resolved
 end
 
 # An item's request, built — and encoded, through its backend's checks — before anything
@@ -175,20 +208,20 @@ function _each_worker(b::_EachBatch)::Nothing
     on_result = b.on_result
     while isnothing(@atomic b.failure)
         i = @atomic b.next += 1
-        i > length(b.calls) && return nothing
-        # A request not yet started waits out the batch's backoff before its own budget starts.
-        while (w = _held_for(b.backoff)) > 0
-            _cancel_sleep(b.token, w) && break
-        end
+        i > length(b.items) && return nothing
+        # The item's budget runs from here, so the batch's backoff — waited out before each
+        # attempt — holds it no longer than its own total_deadline.
+        t0 = time_ns()
         r = try
-            _system_one_exchange(b.calls[i], b.config, b.token; hooks...)
+            _system_one_exchange(_system_one_call(b.items[i]), b.config, b.token; t0, hooks...)
         catch e
             return _stop!(b, e)
         end
         b.results[i] = r
-        if !isnothing(on_result) && isnothing(@atomic b.failure)
+        if !isnothing(on_result)
             try
-                on_result(i, r)
+                # One call at a time; none once the batch has stopped.
+                @lock b.reporting (isnothing(@atomic b.failure) && on_result(i, r))
             catch e
                 return _stop!(b, e)
             end

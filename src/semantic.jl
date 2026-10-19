@@ -542,11 +542,66 @@ end
 
 # The tables of a keyed call: one table, or a Tuple with one table per keyed argument.
 function _nl_tables(texts)::Vector{_NLTable}
-    texts isa Tuple || return _NLTable[_nl_table(texts)]
+    texts isa Tuple || return _NLTable[_nl_validated(texts)]
     isempty(texts) && throw(ArgumentError(
         "`texts` is an empty tuple; pass one table, or a tuple with one table per keyed argument"))
     any(x -> x isa Pair, texts) && throw(ArgumentError(_NL_TUPLE_OF_PAIRS))
-    _NLTable[_nl_table(t) for t in texts]
+    _NLTable[_nl_validated(t) for t in texts]
+end
+
+# ─── Caches ──────────────────────────────────────────────────────────────────
+
+# A dictionary read without a lock. A writer publishes a new dictionary, copied from the
+# one it replaces, and a published one is never written again, so every reader holds a
+# consistent snapshot however many tasks read at once; two writers racing retry on the
+# newer snapshot. Reaching `limit` entries starts over: that costs the next calls a
+# recomputation, never a wrong result.
+mutable struct _NLCache{K,V}
+    @atomic entries::Dict{K,V}
+    const limit::Int
+end
+_NLCache{K,V}(limit::Int) where {K,V} = _NLCache{K,V}(Dict{K,V}(), limit)
+
+const _NL_CACHE_LIMIT = 1024
+
+_nl_snapshot(cache::_NLCache) = @atomic cache.entries
+
+# A key is typed as the cache's key type, never as itself: a plan's key is a type, and
+# code specialized on it would be compiled anew for every key.
+function _nl_publish!(cache::_NLCache{K,V}, @nospecialize(key), value::V)::V where {K,V}
+    k = key::K
+    old = _nl_snapshot(cache)
+    while true
+        new = length(old) >= cache.limit && !haskey(old, k) ? Dict{K,V}() : copy(old)
+        new[k] = value
+        old, done = @atomicreplace cache.entries old => new
+        done && return value
+    end
+end
+
+# The tables validated so far. Validation is a function of exactly the keys and the text
+# of the sentences, so a table accepted once is accepted again; a table holding other
+# keys or other text — a vector mutated since, say — is another table.
+const _NL_TABLES = _NLCache{_NLTable,Nothing}(_NL_CACHE_LIMIT)
+
+# The table `t` would validate to, built without validating: `nothing` when `t` is not a
+# NamedTuple or a vector of pairs whose sentences are strings, which only `_nl_table`
+# can explain. Not specialized on the table: every NamedTuple table is a type of its own.
+function _nl_seen(@nospecialize(t::NamedTuple))::Union{Nothing,_NLTable}
+    texts = values(t)
+    all(s -> s isa AbstractString, texts) ? _NLTable(keys(t), map(String, texts)) : nothing
+end
+_nl_seen(@nospecialize(t::AbstractVector))::Union{Nothing,_NLTable} =
+    all(e -> e isa Pair && last(e) isa AbstractString, t) ?
+        _NLTable(Tuple(first(e) for e in t), Tuple(String(last(e)) for e in t)) : nothing
+_nl_seen(@nospecialize(t)) = nothing
+
+function _nl_validated(@nospecialize(t))::_NLTable
+    seen = _nl_seen(t)
+    !isnothing(seen) && haskey(_nl_snapshot(_NL_TABLES), seen) && return seen
+    table = _nl_table(t)
+    _nl_publish!(_NL_TABLES, table, nothing)
+    table
 end
 
 _nl_listed(xs::Vector{String}, n::Int, sep::String)::String =
@@ -846,26 +901,24 @@ end
 # gap check cost microseconds per offered combination, and a plan stays right for as
 # long as the method table does not change, which every method definition marks by
 # moving to a newer world. The key holds the TYPE of `f`, which owns the methods: a
-# callable struct keyed by value would add an entry per instance.
-const _NL_PLANS = Base.Lockable(Dict{Type,Tuple{UInt,_NLPlan}}())
+# callable struct keyed by value would add an entry per instance. Every new type of
+# an ordinary argument is a new key too, so the cache is capped.
+const _NL_PLANS = _NLCache{Type,Tuple{UInt,_NLPlan}}(_NL_CACHE_LIMIT)
 
-# The plan under `key` in `cache`, made by `make()` unless one made in the current
-# world is there. A cache that reaches `limit` entries starts over: that costs the
-# next calls a re-plan, never a wrong plan.
-function _nl_cached(make::Function, cache::Base.Lockable, key; limit::Int=typemax(Int))
-    world = Base.get_world_counter()   # read first: a method defined while planning makes the entry stale
-    cached = @lock cache get(cache[], key, nothing)
-    !isnothing(cached) && first(cached) == world && return last(cached)
-    plan = make()
-    @lock cache begin
-        length(cache[]) >= limit && !haskey(cache[], key) && empty!(cache[])
-        cache[][key] = (world, plan)
-    end
-    plan
+# The plan under `key` in `cache` if it was made in `world`, which the caller reads
+# before it plans: a method defined while planning makes the entry stale.
+function _nl_cached(cache::_NLCache{K,Tuple{UInt,V}}, @nospecialize(key), world::UInt)::Union{Nothing,V} where {K,V}
+    cached = get(_nl_snapshot(cache), key::K, nothing)   # typed as in `_nl_publish!`
+    isnothing(cached) || first(cached) != world ? nothing : last(cached)
 end
 
-_nl_plan(f, argtypes::Vector{Any})::_NLPlan =
-    _nl_cached(() -> _nl_plan_uncached(f, argtypes), _NL_PLANS, Tuple{Core.Typeof(f), argtypes...})
+function _nl_plan(@nospecialize(f), argtypes::Vector{Any})::_NLPlan
+    world = Base.get_world_counter()   # read before planning: see `_nl_cached`
+    key = Tuple{Core.Typeof(f), argtypes...}
+    plan = _nl_cached(_NL_PLANS, key, world)
+    isnothing(plan) || return plan
+    last(_nl_publish!(_NL_PLANS, key, (world, _nl_plan_uncached(f, argtypes))))
+end
 
 # ─── Keyed dispatch ──────────────────────────────────────────────────────────
 # With `texts`, the methods of `f` dispatch on keys, and a table maps each key to the
@@ -1035,16 +1088,18 @@ function _nl_namer(offer::_NLKeyedOffer)::Method
 end
 
 # Keyed plans depend on the tables too, so their key adds the tables' contents: each
-# `_NLTable` is an immutable copy, never the vector a caller passed and may mutate.
-# Method definitions bound the literal cache; sentences do not bound this one — a
+# `_NLTable` is an immutable copy, never the vector a caller passed and may mutate. A
 # table built per call, with a sentence templated from the input, adds an entry per
-# call — so it is capped.
-const _NL_KEYED_PLANS = Base.Lockable(Dict{Tuple{Type,Tuple{Vararg{_NLTable}}},Tuple{UInt,_NLKeyedPlan}}())
-const _NL_KEYED_PLANS_LIMIT = 1024
+# call; the cap bounds that as it bounds new argument types.
+const _NL_KEYED_PLANS = _NLCache{Tuple{Type,Tuple{Vararg{_NLTable}}},Tuple{UInt,_NLKeyedPlan}}(_NL_CACHE_LIMIT)
 
-_nl_keyed_plan(f, argtypes::Vector{Any}, tables::Vector{_NLTable})::_NLKeyedPlan =
-    _nl_cached(() -> _nl_keyed_plan_uncached(f, argtypes, tables), _NL_KEYED_PLANS,
-               (Tuple{Core.Typeof(f), argtypes...}, Tuple(tables)); limit=_NL_KEYED_PLANS_LIMIT)
+function _nl_keyed_plan(@nospecialize(f), argtypes::Vector{Any}, tables::Vector{_NLTable})::_NLKeyedPlan
+    world = Base.get_world_counter()   # read before planning, as for `_nl_plan`
+    key = (Tuple{Core.Typeof(f), argtypes...}, Tuple(tables))
+    plan = _nl_cached(_NL_KEYED_PLANS, key, world)
+    isnothing(plan) || return plan
+    last(_nl_publish!(_NL_KEYED_PLANS, key, (world, _nl_keyed_plan_uncached(f, argtypes, tables))))
+end
 
 """
     meanings(f; texts=nothing) -> Dict{Int,Vector{String}}
@@ -1493,11 +1548,11 @@ function nl_classify(state, texts;
     texts isa Tuple && !any(x -> x isa Pair, texts) && throw(ArgumentError(
         "nl_classify takes one table; got a tuple of $(length(texts)). A tuple of tables is for " *
         "nl_dispatch, one per keyed argument"))
-    table = _nl_table(texts)
+    table = _nl_validated(texts)
     policy = _nl_one_policy(decide, min_confidence)
     _nl_check_hook(on_response)
     _nl_check_fallback(fallback, Any[Core.Typeof(state)], "fallback(state)")
-    options = collect(table.texts)
+    options = collect(String, table.texts)
     question = "classify" => choice(String(something(instructions, _NL_INSTRUCTIONS)),
                                     [o => nothing for o in options])
     a = only(_nl_ask(state, [question], [options], "sentences"; model, service, config, cancel, on_response))

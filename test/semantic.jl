@@ -863,7 +863,7 @@ end
         [nl_dispatch(Router(label), "x"; service=SemanticMock, config=_SEM_CFG) for label in (:a, :b)]
     end
     @test outs == [(:a, :first), (:b, :first)]
-    @test count(k -> k <: Tuple{Router,Vararg}, @lock(UniLM._NL_PLANS, collect(keys(UniLM._NL_PLANS[])))) == 1
+    @test count(k -> k <: Tuple{Router,Vararg}, keys(UniLM._nl_snapshot(UniLM._NL_PLANS))) == 1
 end
 
 # ─── 15. Keyed dispatch: the sentences in a table, the keys in the signatures ─
@@ -1419,7 +1419,7 @@ end
     @test criteria(last(dispatch(v))) == ["the first sentence"]
     v[1] = :a => "a mutated sentence"
     @test criteria(last(dispatch(v))) == ["a mutated sentence"]
-    stored = @lock UniLM._NL_KEYED_PLANS collect(keys(UniLM._NL_KEYED_PLANS[]))
+    stored = collect(keys(UniLM._nl_snapshot(UniLM._NL_KEYED_PLANS)))
     @test all(k -> last(k) isa Tuple && all(t -> t isa UniLM._NLTable, last(k)), stored)
 
     # A method defined after a cached call is offered, and callable, on the next one.
@@ -1456,11 +1456,11 @@ end
     # every time: past the limit the cache starts over instead of growing.
     templated(::Val{:yes}, t) = :yes
     templated(::Val{:no}, t) = :no
-    limit = UniLM._NL_KEYED_PLANS_LIMIT
+    limit = UniLM._NL_KEYED_PLANS.limit
     for i in 1:limit + 10
         table = UniLM._nl_tables((yes = "the sender mentions order $i", no = "anything else"))
         UniLM._nl_keyed_plan(templated, Any[String], table)
-        @test (@lock UniLM._NL_KEYED_PLANS length(UniLM._NL_KEYED_PLANS[])) <= limit
+        @test length(UniLM._nl_snapshot(UniLM._NL_KEYED_PLANS)) <= limit
     end
 end
 
@@ -1624,4 +1624,66 @@ end
         nl_dispatch(state_route, println; service=SemanticMock, config=_SEM_CFG, state="a ticket")
     end
     @test out === :refund && seen[1]["body"]["state"] == "a ticket"
+end
+
+# ─── 19. The caches: bounded, read without a lock, validated once ───────────
+
+capped(::nl"the only meaning", x) = :capped   # every new argument type is a new plan
+
+# Equal to `Vector` without being it, as in the refusals of section 15.
+const VECTOR_S = Array{S,1} where S
+
+@testset "semantic — plans are capped like keyed plans, and read without a lock while others write" begin
+    @test UniLM._NL_PLANS.limit == UniLM._NL_KEYED_PLANS.limit == 1024
+    sizes = Int[]
+    for i in 1:UniLM._NL_PLANS.limit + 10
+        UniLM._nl_plan(capped, Any[Val{i}])
+        push!(sizes, length(UniLM._nl_snapshot(UniLM._NL_PLANS)))
+    end
+    @test maximum(sizes) <= UniLM._NL_PLANS.limit
+    @test UniLM._nl_plan(capped, Any[String]) == UniLM._nl_plan_uncached(capped, Any[String])
+
+    # Many readers while writers publish new snapshots: every plan read is the plan.
+    expected = [(f, UniLM._nl_plan_uncached(f, Any[String])) for f in (route, cached_route, kw_route, Ticket)]
+    good = fetch.([Threads.@spawn begin
+        ok = true
+        for j in 1:200
+            for (f, plan) in expected
+                ok &= UniLM._nl_plan(f, Any[String]) == plan
+            end
+            UniLM._nl_plan(capped, Any[Val{(t, j)}])      # a write: a new key
+        end
+        ok
+    end for t in 1:16])
+    @test all(good)
+end
+
+@testset "semantic — a table is validated once per contents, and again once they change" begin
+    memo() = UniLM._nl_snapshot(UniLM._NL_TABLES)
+    first_table = only(UniLM._nl_tables((yes = "the sender asks for a refund", no = "anything else")))
+    @test haskey(memo(), first_table)
+    @test only(UniLM._nl_tables((yes = "the sender asks for a refund", no = "anything else"))) === first_table
+    # The same entries as a vector are the same table.
+    v = [:yes => "the sender asks for a refund", :no => "anything else"]
+    @test only(UniLM._nl_tables(v)) === first_table
+    # Mutated in place, it is another table: validated again, never served the old result.
+    v[2] = :no => "the sender asks for a refund"
+    @test_throws ArgumentError UniLM._nl_tables(v)
+    v[2] = :no => SubString("something else entirely", 1, 14)
+    @test only(UniLM._nl_tables(v)).texts == ("the sender asks for a refund", "something else")
+    # Keys are told apart as dispatch tells them: two keys that are equal without being the
+    # same object make two tables, and each classification returns its own key.
+    @test isequal(VECTOR_S, Vector) && VECTOR_S !== Vector
+    got, _ = _with_semantic_mock(; pick=Dict("classify" => "A")) do
+        [nl_classify("s", [Vector => "A", Int => "B"]; service=SemanticMock, config=_SEM_CFG),
+         nl_classify("s", [VECTOR_S => "A", Int => "B"]; service=SemanticMock, config=_SEM_CFG)]
+    end
+    @test got[1] === Vector && got[2] === VECTOR_S
+    # Bounded, as the plans are.
+    sizes = Int[]
+    for i in 1:UniLM._NL_TABLES.limit + 10
+        UniLM._nl_tables((yes = "the sender mentions order $i", no = "anything else"))
+        push!(sizes, length(memo()))
+    end
+    @test maximum(sizes) <= UniLM._NL_TABLES.limit
 end

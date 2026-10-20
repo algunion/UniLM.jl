@@ -129,7 +129,12 @@ merges over the current default.
 
 ### 4. Defaults
 
-Do nothing and you get the table above.
+Do nothing and you get the table above — except on the System One verbs, whose
+backend may bring its own: [`ask`](@ref), [`ask_each`](@ref) and the
+natural-language verbs on TypeSafe and on OpenAI's Decisions API, and
+[`list_models`](@ref) on TypeSafe, use `request_timeout = 60` and
+`total_deadline = 150` until one of the three channels above is set
+([Request Configuration & Timeouts](@ref timeouts_api)).
 
 ## [Stream semantics](@id timeout_streams)
 

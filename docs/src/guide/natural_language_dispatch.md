@@ -307,7 +307,9 @@ One [`choice`](@ref) question per keyed or meaning position, all in one
   [`with_system_one`](@ref) scope sets one ([Backends](@ref system_one_backends)).
   The **model** is the backend's default — on TypeSafe `jev-latest`, or whatever
   `TYPESAFE_DEFAULT_MODEL` names when the request is sent — unless `model = ...`
-  or the scope pins one.
+  or the scope pins one. The backend's **options**, such as TypeSafe's long
+  context, are none unless `options = (long_context = true,)` or the scope sets
+  some.
 
 The model sees the state, the instructions and the sentences. It does **not** see
 the keys, the function's name, the method bodies, the question name, or the fact
@@ -326,8 +328,9 @@ selected method returns.
 **What the state carries.** Each argument goes into the state as JSON.jl writes
 it: a struct with every one of its fields. A value that is not data — a function,
 a type, a module, a `Ref` or `Ptr`, a `Task`, a `Channel`, a lock, a condition,
-an event, an `IO` or an `Expr` — anywhere in an argument, or a container nested
-more than 64 levels deep, is an `ArgumentError` before the request, naming the
+an event, an `IO`, an `Expr`, or a value JSON.jl cannot write, such as an
+[`AudioAttachment`](@ref) — anywhere in an argument, or a container nested more
+than 64 levels deep, is an `ArgumentError` before the request, naming the
 argument and the path to the value:
 
 ```@example nldispatch
@@ -347,7 +350,10 @@ A `String` is data, so a secret a struct holds in a field — an API key, a
 customer's address — is sent, and a `:record` scope of
 [`with_recorded_answers`](@ref) writes it to disk with the request. Pass
 `state = ...` with only what the model should read; an explicit state is sent as
-given.
+given. An [`ImageAttachment`](@ref) is data too: on TypeSafe it travels as the
+images of any state do ([Images](@ref jev_images)), and a backend that takes no
+image in such a state — OpenAI's Decisions API, Ollama — refuses it before the
+request.
 
 ## [Composing with ordinary dispatch](@id nl_dispatch_composing)
 
@@ -705,6 +711,7 @@ keywords of [`nl_dispatch`](@ref):
 | `state` | send this instead of the object built from the other arguments |
 | `model` | pin a version, e.g. `"jev-1.13.0"`, instead of the backend's default, `jev-latest` on TypeSafe |
 | `service` | endpoint; defaults to the [`with_system_one`](@ref) backend, else [`TYPESAFEServiceEndpoint`](@ref UniLM.TYPESAFEServiceEndpoint) |
+| `options` | the backend's provider options, a `NamedTuple` of what [`ask`](@ref) takes as keywords: `(long_context = true,)` on TypeSafe; none given, a call that names no `service` takes the scope's. Checked by the backend's wrapper before the request |
 | `config` | a [`RequestConfig`](@ref) governing timeouts and the retry budget for this call |
 | `cancel` | a [`CancelToken`](@ref) that can cancel the call from another task; `nothing` (the default) uses the ambient [`with_cancel`](@ref) token. A cancelled call throws `SystemOneError` like any failed call |
 
@@ -748,9 +755,9 @@ other value is an `ArgumentError` naming its line, before the request. The form
 `decide`; it runs as well when the backend declines the question itself, with a
 [`RefusalAnswer`](@ref). Keywords go between the state and the block,
 written `key = value`: `model`, `min_confidence`, `decide`, `instructions`,
-`service`, `config`, `cancel` and `on_response`, as for [`nl_dispatch`](@ref),
-except that `decide` returns an option name and excludes any `min_confidence`,
-zero included.
+`service`, `config`, `cancel`, `on_response` and `options`, as for
+[`nl_dispatch`](@ref), except that `decide` returns an option name and excludes
+any `min_confidence`, zero included.
 
 The block is a single Choice request whose question is named `branch`, with the
 options in source order; only the selected expression runs, and its value is the

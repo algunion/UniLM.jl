@@ -235,7 +235,7 @@ the recordings is not a service failure.
 | Result | Meaning |
 | :--- | :--- |
 | [`SystemOneSuccess`](@ref) | HTTP 200, decoded into answers |
-| [`SystemOneFailure`](@ref) | the service answered non-2xx ([Errors](@ref jev_errors)) |
+| [`SystemOneFailure`](@ref) | the service answered with a status other than 200 ([Errors](@ref jev_errors)) |
 | [`SystemOneCallError`](@ref) | no response at all: timeout, transport failure, missing key, or a 200 whose body was not a usable set of answers |
 
 A failed call has no answers: [`answers`](@ref), [`answer`](@ref) and
@@ -271,7 +271,11 @@ The service rounds every number to two decimals, as a floating-point value: a
 0.82 can arrive as 0.8200000000000001. Rounded probabilities need not sum to
 exactly 1 — a live reply over four options summed to 0.99 on 20 October 2026 —
 so [`ask`](@ref) accepts a sum within 0.005 per outcome of 1, and returns a reply
-further off as a [`SystemOneCallError`](@ref).
+further off as a [`SystemOneCallError`](@ref). A Score answer is held to its own
+numbers the same way: its `score` must be the expected level its probabilities
+give, within that rounding, and its `legend` must repeat each level you asked as
+a string, unchanged; a reply that breaks either, or names no model, is a
+`SystemOneCallError` too.
 
 **Confidence describes the distribution, not correctness.** It collapses
 `probabilities` into `0 … 1`: all the mass on one outcome gives 1.0, a flat
@@ -779,9 +783,9 @@ image's bytes into the JSON as numbers.
   request that carries the header `TypeSafe-Danger-Zone-Images: true`. UniLM
   adds it whenever a request holds an image: passing one is the opt-in.
 - **Checked before sending.** PNG or JPEG, a still image (no animated PNG), at
-  most 16 MiB, 280 to 1568 pixels on each side; the whole request at most
-  32 MiB. TypeSafe applies no EXIF rotation, so turn a photo's pixels upright
-  before you send it.
+  most 16 MiB, 280 to 1568 pixels on each side, and a JPEG whole, ending with its
+  end-of-image marker; the whole request at most 32 MiB. TypeSafe applies no EXIF
+  rotation, so turn a photo's pixels upright before you send it.
 - **Other backends.** OpenAI's Decisions API takes images in the state only;
   UniLM's Ollama wrapper sends none yet ([Backends](@ref backends_table)).
 
@@ -891,7 +895,10 @@ which ran. A request over its context comes back as a 400
 [`SystemOneFailure`](@ref) whose `error_type` is `"max_tokens_exceeded"`; its
 `message` names `long_context` and the limits. `long_context` is a TypeSafe
 option: any other backend refuses it before sending, as it refuses every option
-it does not know.
+it does not know. The natural-language verbs take it as
+`options = (long_context = true,)`, and
+`with_system_one(TYPESAFEServiceEndpoint; long_context = true) do … end` sets it
+for every call inside that names no backend and no options of its own.
 
 !!! details "Evidence"
     Measured on 19 October 2026 (`jev-1.13.0`): a request of about 100k tokens

@@ -18,11 +18,11 @@ rules, errors and cost, then every type and verb; [`nl_classify`](@ref),
 
 ## [Backends](@id system_one_backend_api)
 
-| Backend | `service` | Model when a call names none | Credentials | Reference |
-| :--- | :--- | :--- | :--- | :--- |
-| TypeSafe's Jev (the default) | `TYPESAFEServiceEndpoint` | `TYPESAFE_DEFAULT_MODEL`, else `jev-latest` | `TYPESAFE_API_KEY` | [TypeSafe's Jev](@ref system_one_typesafe) |
-| OpenAI's Decisions API (public beta) | `OPENAIServiceEndpoint` | `gpt-6-luna` | `OPENAI_API_KEY` | [OpenAI Decisions](@ref system_one_openai) |
-| A decision model on Ollama | `OllamaEndpoint()` | none: name an installed one, e.g. `tev1:0.8b` | none | [Ollama](@ref system_one_ollama) |
+| Backend | `service` | Model when a call names none | Credentials |
+| :--- | :--- | :--- | :--- |
+| [TypeSafe's Jev](@ref system_one_typesafe) (the default) | `TYPESAFEServiceEndpoint` | `TYPESAFE_DEFAULT_MODEL`, else `jev-latest` | `TYPESAFE_API_KEY` |
+| [OpenAI's Decisions API](@ref system_one_openai) (public beta) | `OPENAIServiceEndpoint` | `gpt-6-luna` | `OPENAI_API_KEY` |
+| [A decision model on Ollama](@ref system_one_ollama) | `OllamaEndpoint()` | none: name an installed one, e.g. `tev1:0.8b` | none |
 
 A call takes its backend from `service = …`; without one, from the enclosing
 [`with_system_one`](@ref) scope, which can also set the model of the calls that
@@ -48,7 +48,7 @@ and OpenAI report it, and the Ollama wrapper computes it from the probabilities;
 over a single option it is 1.0, as TypeSafe answers a one-option Choice. How far
 a confidence can be trusted is a property of the model, not of the formula.
 
-!!! warning "Tune `min_confidence` per backend"
+!!! warning "Tune the confidence threshold per backend"
     A threshold tuned on one backend does not carry over to another. On the same
     129 labelled support tickets with 7 options (2026-10-20), Jev (`jev-1.13.0`)
     chose the right option for 96.9% of them, with an expected calibration error
@@ -173,8 +173,9 @@ The question types themselves set no upper bound — other System One backends h
 other limits, which their wrappers check the same way — so [`choice`](@ref) and
 [`score`](@ref) build such questions; only sending one to TypeSafe is refused. A
 [`box`](@ref) question needs an image in the request to locate in, so one in a
-request without an image is refused as well: TypeSafe would answer it with a box
-at a confidence near 0.05 that means nothing. A Box answer turned inside out
+request without an image is refused as well: TypeSafe answers it anyway, with
+HTTP 200 and a box at a low confidence — 0.05 to 0.10 in probes on 2026-10-19
+and 2026-10-20 — that locates nothing. A Box answer turned inside out
 (`top > bottom` or `left > right`) is a [`SystemOneCallError`](@ref).
 
 An [`ImageAttachment`](@ref) may stand anywhere in the `state`, the instructions
@@ -300,8 +301,8 @@ the alias the request named: a `jev-X.Y.Z` id without its own row at the
 
 ## [OpenAI Decisions](@id system_one_openai)
 
-OpenAI's Decisions API (`POST /v1/decisions`, a public beta since October 6,
-2026) answers predicate, choice and score questions, and
+OpenAI's Decisions API (`POST /v1/decisions`, a public beta since
+October 6, 2026) answers predicate, choice and score questions, and
 [`OPENAIServiceEndpoint`](@ref) speaks it: name the endpoint as the `service` of
 [`ask`](@ref) or of a [`with_system_one`](@ref) scope, and set `OPENAI_API_KEY`.
 The model is `gpt-6-luna`, the only one the API serves, unless the call names
@@ -433,20 +434,20 @@ end
   0.00005 per outcome — Kev models round each to four decimals on Ollama's own
   runner — and the chosen option when it lies at most 0.0001 below the most
   probable.
-- **Speed.** Measured live on 2026-10-20 (Apple M4 Max, Ollama 0.40.6): a warm
-  request took about 17 ms on `kev:0.8b-q8_0` and 25–130 ms on `tev1:0.8b`, and
-  the first call, which loads the model, 0.9–2.6 s. The server's decision runners
-  answer one request at a time, so [`ask_each`](@ref) keeps one in flight unless
-  its `ntasks` says otherwise.
+- **Speed.** Measured live on 2026-10-20, in two runs on an Apple M4 Max with
+  Ollama 0.40.6, one request at a time: a request to a loaded model took
+  about 17 ms on `kev:0.8b-q8_0` and 25–140 ms on `tev1:0.8b`; the first call,
+  which loads the model, about 0.9 s on `kev` and 2.6–2.8 s on `tev1`. The
+  server's decision runners answer one request at a time, so [`ask_each`](@ref)
+  keeps one in flight unless its `ntasks` says otherwise.
 - **Results.** `request_id` is `nothing`, as Ollama sends none; `usage` counts
   `prompt_eval_cached_count` as cached tokens; [`estimated_cost`](@ref) is `0.0`.
   [`with_recorded_answers`](@ref) files the exchanges under
   `/ollama/v1/systemone`, apart from TypeSafe's.
 - **Known upstream issues**, open at Ollama 0.40.6: a model may score a request's
   questions one after another, so its latency grows with their number
-  ([#18750](https://github.com/ollama/ollama/issues/18750)); one over-long request
-  left a llama.cpp runner answering later ones with HTTP 200 and wrong
-  probabilities until the model was unloaded
+  ([#18750](https://github.com/ollama/ollama/issues/18750)); a runner returned
+  wrong answers with HTTP 200 until the model was unloaded
   ([#19090](https://github.com/ollama/ollama/issues/19090)); a vision decision
   runner returned repeated HTTP 500s after many sequential requests
   ([#19062](https://github.com/ollama/ollama/issues/19062)). `keep_alive = 0`
@@ -568,11 +569,12 @@ records a real answer once and replays it offline. Inside its scope, `ask` and
 `list_models` (and so `nl_dispatch`, `nl_classify` and `@branch`) and the non-streaming
 [`chatrequest!`](@ref), [`respond`](@ref) and [`embeddingrequest!`](@ref) (and
 so the tool loops) exchange through a directory of recordings keyed by the exact
-request bytes — with any credential the body carries redacted, each image it
-carries as a `data:` URL replaced by the SHA-256 of its base64 text, and a System
-One backend's options that change how a request is served left out (media sent
-another way, such as Ollama's chat `images`, is written as sent); a streamed
-call and every other verb reach the network as usual. In the default `:replay` mode no
+request bytes — with any credential the body carries redacted, every base64
+`data:` URL it carries (an image, a PDF, audio, any media) replaced by the
+SHA-256 of its base64 text, and a System One backend's options that change how
+a request is served left out (media sent as bare base64, such as Ollama's chat
+`images` or an `input_audio` clip, is written as sent); a streamed call and
+every other verb reach the network as usual. In the default `:replay` mode no
 recorded verb reaches the network and none needs a key,
 and a request with no recording, or an unreadable one, throws
 [`ReplayMissError`](@ref); `:record` and `:record_missing` call the service —

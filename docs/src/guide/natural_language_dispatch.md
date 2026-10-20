@@ -185,9 +185,10 @@ const Payments = nl"payments, charges, invoices or refunds"    # a type alias
 (Payments, Payments(), Meaning(TEAM.billing) isa Payments)
 ```
 
-The type prints as Julia prints any type, `Meaning{Symbol("…")}`, and an
-instance as `nl"…"()`. Two identical sentences are the same type, so `===`
-compares them.
+The type prints as Julia prints any type, `Meaning{Symbol("…")}` (for a
+sentence of several words; one word prints as `Meaning{:x}`), and an instance
+as `nl"…"()`. Two identical sentences are the same type, so `===` compares
+them.
 [`nl_dispatch`](@ref) collects the methods that pin at least one position to one
 concrete sentence; a wildcard `f(::Meaning, x)`, or a method with no meaning, is
 an ordinary method and is skipped. The collected methods must agree on their
@@ -290,8 +291,9 @@ One [`choice`](@ref) question per keyed or meaning position, all in one
 [`ask`](@ref):
 
 - The **question name** is the position's argument name, or `meaning_<position>`
-  when it is unnamed. Question names key the answers and are never sent to the
-  model.
+  when it is unnamed. Question names key the answers. TypeSafe never sends them
+  to the model; OpenAI's Decisions wire carries each question's `name`, and
+  Ollama's generic decision prompt includes it (tev1's does not).
 - The **options** are the sentences, with no description attached: the sentence
   you write is the whole prompt for its option. Only the options the call can
   reach are offered ([Composing with ordinary dispatch](@ref nl_dispatch_composing)),
@@ -312,9 +314,11 @@ One [`choice`](@ref) question per keyed or meaning position, all in one
   some.
 
 The model sees the state, the instructions and the sentences. It does **not** see
-the keys, the function's name, the method bodies, the question name, or the fact
-that this is dispatch at all: to Jev it is one Choice question like any other
-([Choice](https://docs.typesafe.ai/primitives/choice)).
+the keys, the function's name, the method bodies, or the fact that this is
+dispatch at all — nor, on TypeSafe, the question name: to Jev it is one Choice
+question like any other ([Choice](https://docs.typesafe.ai/primitives/choice)).
+On OpenAI each question carries its name on the wire, and Ollama's generic
+decision prompt includes it (tev1's does not).
 
 **The answer.** Each answer is a [`ChoiceAnswer`](@ref) whose `choice` is one of
 the offered sentences by construction. A decision policy picks the sentence to

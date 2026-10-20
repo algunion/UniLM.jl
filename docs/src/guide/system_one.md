@@ -851,19 +851,19 @@ catch err
 end
 ```
 
-Sent anyway, such a question still gets a box — at a confidence of 0.04 when we
-tried it — and no box drawn on a picture that is not there means anything. An
-answer whose box is turned inside out, its top below its bottom or its left
-right of its right, is a [`SystemOneCallError`](@ref). Only TypeSafe answers Box
-questions; the other backends' wrappers refuse them ([Backends](@ref
-backends_refusals)).
+Sent anyway, such a question is still answered — HTTP 200 and a box at a low
+confidence, 0.05 to 0.10 in our probes on 19 and 20 October 2026 — and no box
+drawn on a picture that is not there means anything. An answer whose box is
+turned inside out, its top below its bottom or its left right of its right, is
+a [`SystemOneCallError`](@ref). Only TypeSafe answers Box questions; the other
+backends' wrappers refuse them ([Backends](@ref backends_refusals)).
 
 !!! details "Evidence"
     Measured on 19 October 2026 (`jev-1.14.0`) on this picture, in a run apart
     from the answer above: every edge of both boxes came back within 0.02 of the
-    drawing then too. A Box question about a request with no image came back
-    with a box at confidence 0.04. Limits: one picture, two shapes on a plain
-    background.
+    drawing then too. In probes on 19 and 20 October 2026, a Box question about
+    a request with no image came back with HTTP 200 and a box at a confidence
+    of 0.05 to 0.10. Limits: one picture, two shapes on a plain background.
 
 **Tune it**
 

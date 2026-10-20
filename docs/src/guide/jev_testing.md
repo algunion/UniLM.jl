@@ -151,10 +151,11 @@ through a directory of recordings:
 - **The key is the exact request:** the SHA-256 of the method, the path of the
   URL and the exact request body — except a credential the body carries, such as
   an MCP tool's `authorization`, which reads `"<redacted>"` in the key and the
-  file, so a replay needs none, and an image the body carries as a `data:` URL,
-  which reads as its digest (below). The host is not part of it — a base URL that
-  differs only in its host files its requests under the same keys — and neither
-  is the query, which can carry a credential. The key is never a canonical form,
+  file, so a replay needs none, and every base64 `data:` URL the body carries
+  (an image, a PDF, audio, any media), which reads as its digest (below). The
+  host is not part of it — a base URL that differs only in its host files its
+  requests under the same keys — and neither is the query, which can carry a
+  credential. The key is never a canonical form,
   because the order of a Choice's options and of the state's keys moves the
   answer: a reordered request is a different request, with a recording of its
   own. So is a request with another model — for an unpinned System One request,
@@ -170,13 +171,14 @@ through a directory of recordings:
   — OpenAI's `prompt_cache_key` and `safety_identifier`, Ollama's `keep_alive` —
   are sent and left out of the key and the file, so the same question replays
   whatever they are.
-- **Images by digest.** A TypeSafe request with images is keyed on its JSON part
+- **Media by digest.** A TypeSafe request with images is keyed on its JSON part
   and the SHA-256 of each image, and its file holds those digests, never the
-  image's bytes: the image stays where your code reads it from. An image a
-  request carries inside its body as a `data:` URL — OpenAI's Decisions API, an
-  attachment on the OpenAI chat wire — reads `data:<mime>;sha256,<hex>`, the
-  SHA-256 of its base64 text, in the key and the file alike. Media sent another
-  way, such as Ollama's chat `images` or an audio clip, is written as sent.
+  image's bytes: the image stays where your code reads it from. Every base64
+  `data:` URL a request carries inside its body — an image for OpenAI's
+  Decisions API or the OpenAI chat wire, a PDF in a Responses `input_file`,
+  audio, any media — reads `data:<mime>;sha256,<hex>`, the SHA-256 of its
+  base64 text, in the key and the file alike. Media sent as bare base64, such as
+  Ollama's chat `images` or an `input_audio` clip, is written as sent.
 - **A miss is loud.** In `:replay`, a request with no recording throws
   `ReplayMissError` out of the verb itself, and so out of `nl_dispatch` and the
   tool loops — never a silent call to the service, and never a call error

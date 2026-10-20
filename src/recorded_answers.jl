@@ -47,8 +47,8 @@ it were one.
   recording.
 - `body::String`: what the key was computed over after the request line — the body
   as its backend keys it, with the credentials [`with_recorded_answers`](@ref) never
-  writes replaced by `"<redacted>"` and each image carried as a `data:` URL by its
-  digest (empty for `GET /v1/models`), followed, for a System One request whose
+  writes replaced by `"<redacted>"` and each base64 `data:` URL by its digest
+  (empty for `GET /v1/models`), followed, for a System One request whose
   backend keys more than its body (its provider options, the digests of its image
   parts), by a newline and that canonical text.
 - `reason::String`: `"no recording"`, or `"unreadable recording: …"` followed by
@@ -205,18 +205,20 @@ Responses wire), a Gemini Interactions MCP server's `headers` (`"mcp_server"`)
 and the `api_key` of a Gemini `"retrieval"` tool's `exa_ai_search_config` and
 `parallel_ai_search_config` read `"<redacted>"` in the key, the file and a
 `ReplayMissError`, so a replay needs none of them; the request sent carries them
-as given. And an image it carries as a `data:` URL whose payload is base64 — an
-OpenAI chat attachment, an OpenAI Decisions image, a Responses `input_image` —
-reads `data:<mime>;sha256,<hex>`, the SHA-256 of that base64 text, in the key,
-the file and a `ReplayMissError`: a recording names the image it answered without
-holding its bytes, and another image is another request. The file holds the
+as given. And every base64 `data:` URL it carries — an image, a PDF, audio, any
+media: an OpenAI chat attachment, an OpenAI Decisions image, a Responses
+`input_image` or `input_file` — reads `data:<mime>;sha256,<hex>`, the SHA-256 of
+that base64 text, in the key, the file and a `ReplayMissError`: a recording
+names the media it answered without holding their bytes, and other media is
+another request. The file holds the
 request (with that canonical text as `key_extra` when there is one), the response
 body with its request id and the name of the header that carried it
 (`x-typesafe-request-id`, `x-request-id` or `request-id`), and the time of
 recording, pretty-printed so a diff is readable; the API key, the headers, an
-MCP tool's `authorization` and `headers`, and the bytes of an image sent as a
-`data:` URL or as a System One image part are never written — media sent in
-another form, such as Ollama's chat `images` or a sound clip, is written as sent.
+MCP tool's `authorization` and `headers`, and the bytes of media sent as a
+base64 `data:` URL or as a System One image part are never written — media sent
+as bare base64, such as Ollama's chat `images` or an `input_audio` clip, is
+written as sent.
 A recording without that name replays its id as `x-typesafe-request-id`. Files are
 written atomically (a temporary file in `dir`, then a rename), so concurrent tasks
 can record at once. A replayed answer goes through the same decoding as a live

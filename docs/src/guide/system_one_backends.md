@@ -20,7 +20,7 @@ reaches a backend in a form that backend would read differently.
 | :--- | :--- | :--- | :--- |
 | ask Jev | nothing to choose: `export TYPESAFE_API_KEY=…` | TypeSafe's `jev-latest`, the default | [Choose per call or per scope](@ref backends_choose) |
 | ask another backend in one call | `service = …`, and `model = …` where it has no default | the same typed results, from that backend | [The same call on three backends](@ref backends_same_call) |
-| move a block of code to another backend | [`with_system_one`](@ref)`(service; model)` | every System One call inside asks it | [Choose per call or per scope](@ref backends_choose) |
+| move a block of code to another backend | [`with_system_one`](@ref)`(service; …) do … end` | every System One call inside asks it | [Choose per call or per scope](@ref backends_choose) |
 | know what a backend takes before I send | the comparison table | questions, limits, images, Box, price, status | [What each backend takes](@ref backends_table) |
 | reuse a confidence threshold on another backend | a new measurement: `min_confidence` is tuned per backend | a bar that means what you tuned it for | [One formula, calibrated per model](@ref backends_confidence) |
 | decide on my own machine | [`OllamaEndpoint`](@ref) and a decision model | no key, no cost, no network | [Local decision models with Ollama](@ref backends_ollama) |
@@ -66,22 +66,23 @@ end
 
 results = [classify(m, b) for m in MESSAGES, (_, b) in BACKENDS]     # a row per message
 
-println(rpad("", 30), join(rpad(name, 16) for (name, _) in BACKENDS))
 for (i, message) in enumerate(MESSAGES)
-    println(rpad(first(message, 28), 30),
-            join(rpad(team, 10) * rpad(round(a.confidence; digits = 2), 6) for (team, a) in results[i, :]))
+    println(first(message, 32), "…")
+    for ((name, _), (team, a)) in zip(BACKENDS, results[i, :])
+        println("  ", rpad(name, 15), rpad(team, 11), round(a.confidence; digits = 2))
+    end
 end
 ```
 
-Each column is the team a backend chose, and the confidence of its answer. The
-three agree on four of the six messages. They part on the other two: the
-question about shipping to Norway goes to `billing` on Jev, at a confidence of
-only 0.49, and to `other` on the other two; the cracked phone — a damaged parcel
-and a refund request in one message — goes to `shipping` on Jev and to
-`billing` on the other two, both times at a confidence below 0.5. The code
-around the call did not change: whichever backend answered, the result is a key
-of `TEAM`. The confidences in different columns are not the same currency ([One
-formula, calibrated per model](@ref backends_confidence)).
+Under each message, a line per backend: the team it chose, and the confidence
+of its answer. The three agree on four of the six messages. They part on the
+other two: the question about shipping to Norway goes to `billing` on Jev, at a
+confidence of only 0.49, and to `other` on the other two; the cracked phone — a
+damaged parcel and a refund request in one message — goes to `shipping` on Jev
+and to `billing` on the other two, both times at a confidence below 0.5. The
+code around the call did not change: whichever backend answered, the result is
+a key of `TEAM`. The confidences of different backends are not the same
+currency ([One formula, calibrated per model](@ref backends_confidence)).
 
 ## [Choose per call or per scope](@id backends_choose)
 
@@ -102,8 +103,8 @@ OpenAI `gpt-6-luna`; on Ollama none, so a call that names no model there is an
 rule: the call's own — keywords of [`ask`](@ref) and [`ask_each`](@ref),
 `options = (…)` on the natural-language verbs — else, when the call names no
 `service`, the scope's, set as keywords of `with_system_one`:
-`with_system_one(OllamaEndpoint(); model = "tev1:0.8b", keep_alive = 600)`. The
-backend's wrapper checks them when each request is sent.
+`with_system_one(OllamaEndpoint(); model = "tev1:0.8b", keep_alive = 600) do … end`.
+The backend's wrapper checks them when each request is sent.
 
 ```@example backends
 with_system_one(OllamaEndpoint(); model = "tev1:0.8b") do
@@ -120,7 +121,7 @@ it: a model belongs to its backend, and `tev1:0.8b` means nothing to TypeSafe.
 - Set the backend once, where a program starts its work, with
   `with_system_one`; keep `service =` for the call that must go elsewhere.
 - Pin the model a threshold was tuned on in the same place:
-  `with_system_one(TYPESAFEServiceEndpoint; model = "jev-1.13.0")`
+  `with_system_one(TYPESAFEServiceEndpoint; model = "jev-1.13.0") do … end`
   ([Models and versions](@ref jev_models)).
 - `with_system_one` checks its endpoint before running anything: one that does
   not declare `:system_one`, such as a chat-only backend, is an `ArgumentError`,
@@ -131,9 +132,9 @@ it: a model belongs to its backend, and `tev1:0.8b` means nothing to TypeSafe.
 | | Jev (TypeSafe) | OpenAI's Decisions API | Local models (Ollama) |
 | :--- | :--- | :--- | :--- |
 | `service` | [`TYPESAFEServiceEndpoint`](@ref), the default | [`OPENAIServiceEndpoint`](@ref) | [`OllamaEndpoint`](@ref)`()` |
-| Route | `POST https://api.typesafe.ai/v1/systemone` | `POST https://api.openai.com/v1/decisions` | `POST {host}/v1/systemone`, Ollama 0.35 or later |
+| Route | `POST /v1/systemone` | `POST /v1/decisions` | `POST /v1/systemone` |
 | Credentials | `TYPESAFE_API_KEY` | `OPENAI_API_KEY` | none |
-| Model | `jev-latest` unless the call names one (`TYPESAFE_DEFAULT_MODEL`); `jev-preview`, or a version such as `jev-1.13.0` | `gpt-6-luna`, the only one | no default: an installed decision model, such as `tev1:0.8b` |
+| Model when a call names none | `TYPESAFE_DEFAULT_MODEL`, else `jev-latest` | `gpt-6-luna`, the only one | none: name an installed decision model, such as `tev1:0.8b` |
 | Questions | Choice, Score, Noul, Box | Choice, Score, Noul | Choice, Score, Noul |
 | Limits | 1–255 options, 1–10 levels; 64k tokens per request | 2–255 options, 2–10 levels, 200 questions | 2–26 options, 2–10 levels, 64 questions |
 | Guidance | strings, objects, arrays and images, anywhere | strings; `instructions` on every question; no Noul `yes`/`no` | strings, objects or arrays as `instructions`, on every question; strings elsewhere |
@@ -146,8 +147,16 @@ it: a model belongs to its backend, and `tev1:0.8b` means nothing to TypeSafe.
 | Price | input tokens only ([Models](https://docs.typesafe.ai/models)) | input tokens only, \$0.10 per million, cached ones included ([Decisions guide](https://developers.openai.com/api/docs/guides/decisions)) | nothing: your machine |
 | Default timeouts | 60 s per attempt, 150 s in all | 60 s per attempt, 150 s in all | the package's: 600 s per attempt, 900 s in all |
 | [`ask_each`](@ref) in flight | 16 | 16 | 1 |
-| Recordings | `/v1/systemone` | `/openai-decisions/v1/decisions` | `/ollama/v1/systemone` |
 | Status, 20 October 2026 | `jev-latest` is Jev 1.13, `jev-preview` Jev 1.14 (14 October 2026); images and Box experimental | public beta since 6 October 2026 | verified with Ollama 0.40.6, `tev1:0.8b` and `kev:0.8b-q8_0` |
+
+- **Hosts.** Jev answers at `https://api.typesafe.ai` and OpenAI at
+  `https://api.openai.com`; Ollama, 0.35 or later, at the endpoint's host:
+  `OLLAMA_HOST`, else `http://127.0.0.1:11434`.
+- **Other models.** On Jev, a call may name `jev-preview`, or a version such as
+  `jev-1.13.0`, instead ([Models and versions](@ref jev_models)).
+- **Recordings.** Each backend's go under a path of its own: `/v1/systemone`,
+  `/openai-decisions/v1/decisions` and `/ollama/v1/systemone` ([Recordings per
+  backend](@ref backends_recordings)).
 
 A timeout you set yourself — `config =`, [`with_request_config`](@ref) or
 [`set_default_config!`](@ref) — replaces a backend's default. The [System One
@@ -272,9 +281,10 @@ own TypeSafe-compatible `POST /v1/systemone`, with no key and no cost.
    [`pull_model`](@ref)`("tev1:0.8b")` in Julia. Ollama lists the others as
    [decision models](https://ollama.com/search?c=decision).
 3. Name it: `model = "tev1:0.8b"` on the call, or
-   `with_system_one(OllamaEndpoint(); model = "tev1:0.8b")` around the code.
+   `with_system_one(OllamaEndpoint(); model = "tev1:0.8b") do … end` around the
+   code.
 
-The third column of the first example came from `tev1:0.8b` this way.
+The `tev1 (Ollama)` lines of the first example came from `tev1:0.8b` this way.
 
 - **No default model.** A call that names none is an `ArgumentError` before any
   request; a model that is not installed comes back as a 404
@@ -300,19 +310,19 @@ The third column of the first example came from `tev1:0.8b` this way.
   [`list_models`](@ref) lists the installed models.
 - **Known upstream issues**, open at Ollama 0.40.6: a model may score a
   request's questions one after another, so its latency grows with their number
-  ([#18750](https://github.com/ollama/ollama/issues/18750)); one over-long
-  request left a runner answering later ones with wrong probabilities until the
-  model was unloaded ([#19090](https://github.com/ollama/ollama/issues/19090));
+  ([#18750](https://github.com/ollama/ollama/issues/18750)); a runner returned
+  wrong answers with HTTP 200 until the model was unloaded
+  ([#19090](https://github.com/ollama/ollama/issues/19090));
   a vision decision runner returned repeated HTTP 500s after many sequential
   requests ([#19062](https://github.com/ollama/ollama/issues/19062)).
   `keep_alive = 0` unloads a model whose answers stop making sense.
 
 !!! details "Evidence"
-    Measured on 20 October 2026 on an Apple M4 Max with Ollama 0.40.6, one
-    request at a time: a request to a loaded model took about 17 ms on
-    `kev:0.8b-q8_0` and 25 to 140 ms on `tev1:0.8b`; the first request, which
-    loads the model, 0.9 s on `kev` and 2.8 s on `tev1`. Every probability
-    distribution the two models returned summed to 1 within 4.4e-16.
+    Measured on 20 October 2026 with Ollama 0.40.6 on an Apple M4 Max, in two
+    runs of one request at a time: a request to a loaded model took about 17 ms
+    on `kev:0.8b-q8_0` and 25 to 140 ms on `tev1:0.8b`; the first request, which
+    loads the model, about 0.9 s on `kev` and 2.6 to 2.8 s on `tev1`. Every
+    probability distribution the two models returned summed to 1 within 4.4e-16.
 
 **Tune it**
 
@@ -327,8 +337,8 @@ The third column of the first example came from `tev1:0.8b` this way.
 **The job:** run the same decisions on OpenAI's account and infrastructure.
 **Without a wrapper:** OpenAI's own request format — questions as an array,
 answers matched back by name, refusals to handle. **With one:**
-`service = OPENAIServiceEndpoint` and `OPENAI_API_KEY`; the second column of the
-first example came from it.
+`service = OPENAIServiceEndpoint` and `OPENAI_API_KEY`; the `OpenAI` lines of
+the first example came from it.
 
 - **Status.** A public beta since 6 October 2026, so its contract may still
   change ([Decisions guide](https://developers.openai.com/api/docs/guides/decisions)).

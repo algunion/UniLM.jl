@@ -122,7 +122,7 @@ Respond(service=OPENAIServiceEndpoint, input="Hello")
 - **Refused** (`ArgumentError` before I/O): `logit_bias`, `user`, `stream_options`, `verbosity`, `store`, `metadata`, `service_tier`, `logprobs`, `top_logprobs`, `prediction`, `modalities`, `audio`, `web_search_options`, `prompt_cache_key`, `safety_identifier`, `prompt_cache_options`, `moderation`; `tool_choice` other than `"auto"`; tools with `strict=true`; a message `name`; a tool result that answers no earlier call. `parallel_tool_calls` is not sent (the model may return several calls in a turn).
 - **Replies**: `message.thinking` → `ProviderContent(:ollama, [Dict("thinking" => …)])`; a tool call without an id gets `"unilm_call_<k>"` (never sent back); usage = `prompt_eval_count` / `eval_count` (thinking included), cached = `prompt_eval_cached_count`; `done_reason` → `finish_reason` (`"tool_calls"` when calls are present). Streams are newline-delimited JSON; an `{"error": …}` line on a 200 stream is an `LLMCallError`, an error body with another status an `LLMFailure` with that status.
 - **Embeddings** go to `/api/embed` (`truncate`, `keep_alive`, `options` from the endpoint; `user` refused). **`respond`** goes to the stateless `/v1/responses`: only `model`, `input`, `instructions`, `tools` (function tools without `strict=true`, `async`, `allowed_callers`, `defer_loading` or `output_schema`), `tool_choice="auto"`, `temperature`, `top_p`, `max_output_tokens`, `stream`, `text` (a json_schema format with its schema, no verbosity) and `reasoning` (effort only) are accepted; a json_schema format sends `reasoning.effort="none"` when unset and throws with a thinking effort; `tool_loop(::Respond)` throws. **FIM** uses `/v1/completions`.
-- **System One** (`ask` and the NL verbs) goes to `/v1/systemone` (`UniLM.OllamaSystemOneProtocol`; Ollama 0.35 or later; recordings under `/ollama/v1/systemone`). No default model: `model=` (e.g. `"tev1:0.8b"`) or `with_system_one(OllamaEndpoint(); model=…)`, else `ArgumentError`. Refused before I/O: more than 64 questions; a Choice/Score/Noul without `instructions` (a non-blank string, an object or an array); Choice options outside 2–26 or described by anything but a string or `nothing`; Score levels outside 2–10 or not strings; Noul criteria that are not strings; a blank `state`; Box questions; images; any option but `keep_alive` (seconds, `Inf` = stay loaded; unset → the endpoint's `keep_alive`; written after `questions`; left out of the recording key and file, `record_body`). A model may cap lower and says so in its 400 (`tev1:0.8b`: 24 options). Ollama caps a request's text plus schema (images excluded) at 64 KiB by its own count — not checked locally; over it → a 413 `SystemOneFailure` (`text and schema must not exceed 64 KiB`). A `RawQuestion` is sent verbatim. Choice/Score `confidence` is recomputed from the probabilities with TypeSafe's published formulas (`(n·p_max − 1)/(n − 1)` clamped to `0 … 1`; `max(0, 1 − Σ pᵢ·|i − m| / MAD_unif)`, `m` the lowest most likely level; `1` for a single outcome); the server's value stays in `raw`. Probability-sum tolerance `n·0.5e-4 + 1e-6`, and the chosen option may sit `1e-4 + 1e-6` below the most probable. `request_id` is `nothing`; usage cached = `prompt_eval_cached_count`; an `{"error": …}` body is a `SystemOneFailure` with that message, and a missing model's 404 adds `ollama pull <model>`. No default `RequestConfig` of its own (the field defaults apply: loading a model can take minutes); `ask_each` keeps 1 request in flight unless `ntasks` says otherwise.
+- **System One** (`ask` and the NL verbs) goes to `/v1/systemone` (`UniLM.OllamaSystemOneProtocol`; Ollama 0.35 or later; recordings under `/ollama/v1/systemone`). No default model: `model=` (e.g. `"tev1:0.8b"`) or `with_system_one(OllamaEndpoint(); model=…) do … end`, else `ArgumentError`. Refused before I/O: more than 64 questions; a Choice/Score/Noul without `instructions` (a non-blank string, an object or an array); Choice options outside 2–26 or described by anything but a string or `nothing`; Score levels outside 2–10 or not strings; Noul criteria that are not strings; a blank `state`; Box questions; images; any option but `keep_alive` (seconds, `Inf` = stay loaded; unset → the endpoint's `keep_alive`; written after `questions`; left out of the recording key and file, `record_body`). A model may cap lower and says so in its 400 (`tev1:0.8b`: 24 options). Ollama caps a request's text plus schema (images excluded) at 64 KiB by its own count — not checked locally; over it → a 413 `SystemOneFailure` (`text and schema must not exceed 64 KiB`). A `RawQuestion` is sent verbatim. Choice/Score `confidence` is recomputed from the probabilities with TypeSafe's published formulas (`(n·p_max − 1)/(n − 1)` clamped to `0 … 1`; `max(0, 1 − Σ pᵢ·|i − m| / MAD_unif)`, `m` the lowest most likely level; `1` for a single outcome); the server's value stays in `raw`. Probability-sum tolerance `n·0.5e-4 + 1e-6`, and the chosen option may sit `1e-4 + 1e-6` below the most probable. `request_id` is `nothing`; usage cached = `prompt_eval_cached_count`; an `{"error": …}` body is a `SystemOneFailure` with that message, and a missing model's 404 adds `ollama pull <model>`. No default `RequestConfig` of its own (the field defaults apply: loading a model can take minutes); `ask_each` keeps 1 request in flight unless `ntasks` says otherwise.
 - `estimated_cost` of an Ollama `LLMSuccess` / `EmbeddingSuccess` / `SystemOneSuccess` is `0.0` without a warning (unless `model=` is passed); `ResponseSuccess` / `FIMSuccess` do not record their endpoint and are priced by model name (an unpriced local model logs the one-time warning). A connection failure's error text ends with how to start the server.
 - `OllamaEndpoint` keywords: `keep_alive` in [0, 1e9] seconds or `Inf`; `OLLAMA_HOST` read like Ollama's clients (bare or bracketed IPv6; `0.0.0.0`/`::` → loopback; `ollama.com` → `https://ollama.com:443`).
 
@@ -1522,11 +1522,29 @@ parsing. The generic surface below works with any backend that declares
 before anything is sent what its wire cannot carry, with an `ArgumentError`
 naming the backend, the rule and the fix:
 
-| Backend | `service` | Model when a call names none | Wrapper's rules (refused before any I/O) |
-| --- | --- | --- | --- |
-| TypeSafe's Jev (default) | `TYPESAFEServiceEndpoint` (`TYPESAFE_API_KEY`) | `TYPESAFE_DEFAULT_MODEL`, else `"jev-latest"`; pin e.g. `"jev-1.13.0"` to keep tuned thresholds meaningful | ≤ 255 Choice options, ≤ 10 Score levels; images PNG/JPEG, still, ≤ 16 MiB, 280–1568 px a side, a JPEG ending with its end-of-image marker (FF D9); ≤ 64 levels of nesting in state/instructions/criteria; body ≤ 32 MiB; a Box needs an image in the request (and Jev 1.14+: `"jev-1.14.0"`/`"jev-preview"`); one option, `long_context::Bool` |
-| OpenAI's Decisions API (public beta since 2026-10-06) | `OPENAIServiceEndpoint` (`OPENAI_API_KEY`) | `"gpt-6-luna"` (the only model) | 1–200 questions; string `instructions` on every question; Choice 2–255 options, descriptions strings or `nothing`; Score 2–10 levels, each a string; Noul `yes`/`no` criteria and Box refused; images only in the state (an `ImageAttachment`, or a `Vector` of strings and images; ≤ 128); each text — the input, or each text part — ≤ 10,485,760 characters; options `prompt_cache_key::String` (≤ 64 chars), `safety_identifier::String` (≤ 128) |
-| Ollama decision models (Ollama ≥ 0.35) | `OllamaEndpoint()` (no key) | none: `model = "tev1:0.8b"` or a `with_system_one` model, else `ArgumentError` | see the Ollama bullet under Service Endpoints: 1–64 questions, `instructions` required, 2–26 options, 2–10 levels, text only, Box refused, one option `keep_alive` |
+| Backend | `service` | Model when a call names none |
+| --- | --- | --- |
+| TypeSafe's Jev (default) | `TYPESAFEServiceEndpoint` (`TYPESAFE_API_KEY`) | `TYPESAFE_DEFAULT_MODEL`, else `"jev-latest"` |
+| OpenAI's Decisions API (public beta since 2026-10-06) | `OPENAIServiceEndpoint` (`OPENAI_API_KEY`) | `"gpt-6-luna"` (the only model) |
+| Ollama decision models (Ollama ≥ 0.35) | `OllamaEndpoint()` (no key) | none: `model = "tev1:0.8b"` or a `with_system_one` model, else `ArgumentError` |
+
+Each wrapper's rules, refused before any I/O:
+
+- **TypeSafe:** ≤ 255 Choice options, ≤ 10 Score levels; images PNG/JPEG,
+  still, ≤ 16 MiB, 280–1568 px a side, a JPEG ending with its end-of-image
+  marker (FF D9); ≤ 64 levels of nesting in state/instructions/criteria; body
+  ≤ 32 MiB; a Box needs an image in the request (and Jev 1.14+:
+  `"jev-1.14.0"`/`"jev-preview"`); one option, `long_context::Bool`. Pin a
+  model, e.g. `"jev-1.13.0"`, to keep tuned thresholds meaningful.
+- **OpenAI:** 1–200 questions; string `instructions` on every question;
+  Choice 2–255 options, descriptions strings or `nothing`; Score 2–10 levels,
+  each a string; Noul `yes`/`no` criteria and Box refused; images only in the
+  state (an `ImageAttachment`, or a `Vector` of strings and images; ≤ 128); each
+  text — the input, or each text part — ≤ 10,485,760 characters; options
+  `prompt_cache_key::String` (≤ 64 chars), `safety_identifier::String` (≤ 128).
+- **Ollama:** see the Ollama bullet under Service Endpoints: 1–64 questions,
+  `instructions` required, 2–26 options, 2–10 levels, text only, Box refused,
+  one option `keep_alive`.
 
 Calibration differs per backend: on 129 labelled tickets with 7 options
 (2026-10-20) Jev (`jev-1.13.0`) scored accuracy 0.969 / ECE 0.016 and OpenAI
@@ -1917,7 +1935,8 @@ the remaining arguments still dispatch on their types.
 ```julia
 struct Meaning{S} end                     # S::Symbol IS the description
 Meaning(text::AbstractString)             # the instance; nl"..." is the TYPE
-# the type prints as Julia prints types, Meaning{Symbol("…")} (in MethodErrors and methods(f) too);
+# the type prints as Julia prints types, Meaning{Symbol("…")} (in MethodErrors and methods(f) too;
+# a one-word sentence prints as Meaning{:x});
 # an instance prints as nl"…"(); identical sentences are one type (===)
 
 struct LowConfidenceError <: Exception    # raised when confidence < min_confidence

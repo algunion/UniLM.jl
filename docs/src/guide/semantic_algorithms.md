@@ -69,8 +69,8 @@ section, the same tickets bill 1,100.
 request is built and checked by its backend's wrapper before the first goes
 out, so one item that cannot be sent stops the batch with an `ArgumentError`
 that names it, and nothing is sent. The worker that sends an item builds its
-request again, so a batch of images holds no more request bodies in memory than
-it has requests in flight:
+request again, so a batch holds no more request bodies in memory — images and
+all — than it has requests in flight:
 
 ```@example jevalgo
 with_missing = [tickets[1], nothing, tickets[3]]      # a ticket whose text was lost

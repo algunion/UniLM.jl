@@ -1781,8 +1781,8 @@ summing to 1 within the backend's rounding — `0.005n` on TypeSafe and OpenAI,
 one rounding step below the most probable (0.01, 0.01, 1e-4); a `model` string
 that is not blank); a reply that fails is a `SystemOneCallError`. A usage value
 that is not a non-negative whole number reads as 0 with a warning (on OpenAI, so
-does a usage details value that is not an object). `ask`, `ask_each` and `list_models` ride the
-shared retry seam, so `RequestConfig.max_attempts` applies to 408, 429, 500,
+does a usage details value that is not an object). `ask`, `ask_each` and
+`list_models` ride the shared retry seam, so `RequestConfig.max_attempts` applies to 408, 429, 500,
 502–504, 520–524 and 529, and the final `SystemOneFailure` carries `retry_after`
 — the wait the service asked for in seconds, or `nothing` when it sent no hint.
 With no `RequestConfig` set by the user (no `config`, no `with_request_config`

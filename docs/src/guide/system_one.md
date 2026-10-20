@@ -783,9 +783,10 @@ image's bytes into the JSON as numbers.
   request that carries the header `TypeSafe-Danger-Zone-Images: true`. UniLM
   adds it whenever a request holds an image: passing one is the opt-in.
 - **Checked before sending.** PNG or JPEG, a still image (no animated PNG), at
-  most 16 MiB, 280 to 1568 pixels on each side, and a JPEG whole, ending with its
-  end-of-image marker; the whole request at most 32 MiB. TypeSafe applies no EXIF
-  rotation, so turn a photo's pixels upright before you send it.
+  most 16 MiB, 280 to 1568 pixels on each side, a JPEG ending with its
+  end-of-image marker (one cut short is refused); the whole request at most
+  32 MiB. TypeSafe applies no EXIF rotation, so turn a photo's pixels upright
+  before you send it.
 - **Other backends.** OpenAI's Decisions API takes images in the state only;
   UniLM's Ollama wrapper sends none yet ([Backends](@ref backends_table)).
 

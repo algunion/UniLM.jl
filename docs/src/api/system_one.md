@@ -341,10 +341,11 @@ two decimals, so a distribution over `n` outcomes is accepted when it sums to 1
 within `0.005n`, and the chosen option when it lies at most 0.01 below the most
 probable. `usage` counts input, cached and output tokens; a count that is not a
 non-negative whole number, or a `…_tokens_details` value that is not an object,
-reads as 0 with a warning. A failure's `error_type` is the error's `code`, and the request
-id is the `x-request-id` header. A recording ([`with_recorded_answers`](@ref)) is
-keyed without the two options, and holds each image as the SHA-256 of its base64
-text, `data:<mime>;sha256,<hex>`, never its bytes. [`estimated_cost`](@ref) charges what the guide
+reads as 0 with a warning. A failure's `error_type` is the error's `code`, and
+the request id is the `x-request-id` header. A recording
+([`with_recorded_answers`](@ref)) is keyed without the two options, and holds
+each image as the SHA-256 of its base64 text, `data:<mime>;sha256,<hex>`, never
+its bytes. [`estimated_cost`](@ref) charges what the guide
 prices: input tokens only — \$0.10 per million, the `gpt-6-luna` row's input rate —
 cached ones at the full input rate, twice that rate for a request of more than
 272K input tokens.
@@ -570,8 +571,8 @@ so the tool loops) exchange through a directory of recordings keyed by the exact
 request bytes — with any credential the body carries redacted, each image it
 carries as a `data:` URL replaced by the SHA-256 of its base64 text, and a System
 One backend's options that change how a request is served left out (media sent
-another way, such as Ollama's chat `images`, is written as sent); a streamed call and
-every other verb reach the network as usual. In the default `:replay` mode no
+another way, such as Ollama's chat `images`, is written as sent); a streamed
+call and every other verb reach the network as usual. In the default `:replay` mode no
 recorded verb reaches the network and none needs a key,
 and a request with no recording, or an unreadable one, throws
 [`ReplayMissError`](@ref); `:record` and `:record_missing` call the service —

@@ -616,4 +616,6 @@ for _name in names(@__MODULE__)
         @eval issuccess(::$_T) = true
 end
 
+include("precompile.jl")
+
 end

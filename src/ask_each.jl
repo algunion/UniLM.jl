@@ -75,8 +75,9 @@ item encodes it again, so a batch holds no more request bodies — images and al
 than it has requests in flight.
 
 At most `ntasks` requests are in flight at once — any `Integer` of at least 1;
-the default is the backend's — 16 on TypeSafe and OpenAI's Decisions API, 1 on
-Ollama, 8 on a backend that names none — a default, not a limit. The requests
+the default is the backend's — 16 on TypeSafe's wire (a TypeSafe-compatible
+gateway included) and OpenAI's Decisions API, 1 on Ollama, 8 on a protocol of
+your own — a default, not a limit. The requests
 share one connection pool, and when the service answers any of them with 429 or
 529, a retried attempt included, no attempt of the batch starts until the wait
 that response asked for (`retry-after-ms`, else `Retry-After`, else the retry

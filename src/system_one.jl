@@ -1165,13 +1165,15 @@ _check_kind(::SystemOneProtocol, name::String, q::SystemOneQuestion, a::SystemOn
     "System One answer $(repr(name)) is $(_answer_kind(a)), but $(repr(name)) asks a $(_kind(q)) question"))
 
 function _check_kind(p::SystemOneProtocol, name::String, q::ChoiceQuestion, a::ChoiceAnswer)::Nothing
-    offered = q.criteria
-    haskey(offered, a.choice) || throw(ArgumentError(
+    # A JSON.Object finds a key by a linear scan, and the names are looked up once per
+    # answered option — quadratic over 255 options — so they go into a Set first.
+    offered = Set{String}(keys(q.criteria))
+    a.choice in offered || throw(ArgumentError(
         "System One answer $(repr(name)) chose $(repr(a.choice)), which was not one of the options offered"))
-    unoffered = String[k for k in keys(a.probabilities) if !haskey(offered, k)]
+    unoffered = String[k for k in keys(a.probabilities) if !(k in offered)]
     isempty(unoffered) || throw(ArgumentError(
         "System One answer $(repr(name)) gives probabilities to $(_listed(unoffered)), which was not offered"))
-    unscored = String[k for k in keys(offered) if !haskey(a.probabilities, k)]
+    unscored = String[k for k in offered if !haskey(a.probabilities, k)]
     isempty(unscored) || throw(ArgumentError(
         "System One answer $(repr(name)) gives no probability to the offered $(_listed(unscored))"))
     tol = _probability_tolerance(p, length(offered))

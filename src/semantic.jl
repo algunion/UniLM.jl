@@ -556,7 +556,7 @@ function _nl_entries(entries::Vector{Pair{Any,Any}})::_NLTable
                 "$(repr(last(h))) and $(repr(k)) are the same key: both dispatch as $(repr(v))"))
         end
         said[s] = k
-        push!(held, v => k)
+        push!(held, Pair{Any,Any}(v, k))   # not `v => k`: a Pair typed per key would compile per key
     end
     _NLTable(Tuple(first(e) for e in entries), Tuple(String(last(e)) for e in entries))
 end
@@ -962,7 +962,7 @@ end
 # `Tuple{Type{Refund}}` there, which the bare `Type{T}`, its `T` unbound, does not.
 _nl_at(m::Method, p::Int) = Base.rewrap_unionall(Tuple{_nl_params(m)[p]}, m.sig)
 
-_nl_takes(m::Method, p::Int, v)::Bool = Tuple{Core.Typeof(v)} <: _nl_at(m, p)
+_nl_takes(m::Method, p::Int, @nospecialize(v))::Bool = Tuple{Core.Typeof(v)} <: _nl_at(m, p)
 
 # A method pins a table at `p` when it declares a type there that the value of some key
 # has, other than a type that takes everything: `::Val{:refund}`, `::Refund`,

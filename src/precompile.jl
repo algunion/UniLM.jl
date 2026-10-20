@@ -2,8 +2,8 @@
 # Precompilation workload.
 #
 # Runs once, while the package image is built, so that a session's first System
-# One call — `ask`, `ask_each`, `list_models`, `nl_dispatch`, `nl_classify` or
-# `@branch`, on TypeSafe, OpenAI's Decisions API or Ollama — costs what the
+# One call — `ask`, `ask_each`, `nl_dispatch`, `nl_classify` or `@branch`, on
+# TypeSafe, OpenAI's Decisions API or Ollama — costs what the
 # network costs, not what compiling its path costs: building and encoding the
 # request (images and multipart parts included), the exchange and its recording
 # seam, decoding the reply or an error body, checking the answers, and planning a
@@ -26,16 +26,17 @@ _workload_keyed(::Val{:other}, msg) = :other
 const _WORKLOAD_INTENT = (refund = "the customer wants a refund", other = "anything else")
 const _WORKLOAD_TICKET = "My payouts have been failing for 3 days and nobody has replied to my emails."
 
-# Image headers of 320 × 320 pixels, a PNG (IHDR, an empty IDAT, IEND) and a JPEG (SOI,
-# then a baseline frame header): enough for the local checks, which read the size from the
-# header. Nothing decodes them, and nothing sends them.
+# Image headers of 320 × 320 pixels, a PNG (IHDR, an empty IDAT, IEND) and a JPEG (SOI, a
+# baseline frame header, EOI): enough for the local checks, which read the size from the
+# header and require a JPEG to end with its end-of-image marker. Nothing decodes them, and
+# nothing sends them.
 const _WORKLOAD_PNG = UInt8[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
                             0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x01, 0x40,
                             0x00, 0x00, 0x01, 0x40, 0x08, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                             0x00, 0x00, 0x00, 0x00, 0x49, 0x44, 0x41, 0x54, 0x00, 0x00, 0x00, 0x00,
                             0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0x00, 0x00, 0x00, 0x00]
 const _WORKLOAD_JPEG = UInt8[0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x01, 0x40, 0x01, 0x40, 0x03,
-                             0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01]
+                             0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01, 0xff, 0xd9]
 
 # ─── Synthesized replies ─────────────────────────────────────────────────────
 # Written with loops over `JSON.Object{String,Any}`, the type the wire is read and written
@@ -293,10 +294,11 @@ function _workload_verbs(dir::String, service, model::Union{Nothing,String})::No
     nothing
 end
 
-# What only TypeSafe answers, outside any scope as most calls are: its models listing, and
-# a request with images and a Box question.
+# What only TypeSafe answers, outside any scope as most calls are: a request with images and
+# a Box question. Its models listing is left out: compiled here it pushed package load past
+# its budget (+25.6% over 0.23.0, bound +25%), and a listing is no call a hot path makes
+# first — it compiles on first use instead (about 0.5 s).
 function _workload_typesafe(dir::String)::Nothing
-    _workload_replay(() -> list_models(), dir)
     image, questions = _workload_images()
     _workload_replay(() -> ask(image, questions...), dir)
     nothing

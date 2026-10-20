@@ -170,6 +170,10 @@ end
         include("semantic.jl")
     end
 
+    @testset "precompilation workload" begin
+        include("precompile.jl")
+    end
+
     @testset "anthropic" begin
         include("anthropic.jl")
     end

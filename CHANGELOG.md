@@ -55,6 +55,13 @@
   and the slowest call measured took 5.3 s. Upgrading: pass a `config`, open a
   scope or set a process default to choose other bounds; any of them replaces the
   backend's default as a whole.
+- **Two terse TypeSafe failures carry a hint after their message.** A context
+  overflow (`error_type == "max_tokens_exceeded"`), whose `message` was that
+  type alone, now goes on to name the limits and the fix; the bare
+  `"Invalid request."` a Box question draws from a Jev before 1.14 goes on to
+  name the models that answer one (`jev-1.14.0`, `jev-preview`). Upgrading:
+  code that compares a failure's `message` with `==` must test its
+  `error_type`, or match the message with `startswith` or `occursin`.
 - **`DecisionDeclinedError.answer` is a `Union{ChoiceAnswer,RefusalAnswer}`**: it
   carries the `RefusalAnswer` when the backend declined to answer the question,
   as OpenAI's Decisions API may. Upgrading: check `e.answer isa ChoiceAnswer`
@@ -78,10 +85,11 @@
   request. Before, `NaN` declined nothing, so a `_` line or a `fallback` could
   never run, and a value above 1 declined every answer. Upgrading: pass a
   threshold in `0 … 1`.
-- **A `Meaning` type prints as Julia prints any type**, `Meaning{Symbol("…")}`,
-  instead of `nl"…"`; an instance still prints as `nl"…"()`. The method that
-  printed the type extended `show(::IO, ::Type)`, and invalidated compiled code in
-  every session that loaded UniLM (see Performance). A `MethodError` and a
+- **A `Meaning` type prints as Julia prints any type**, `Meaning{Symbol("…")}`
+  (for a sentence of several words; one word prints as `Meaning{:x}`), instead
+  of `nl"…"`; an instance still prints as `nl"…"()`. The method that printed the
+  type extended `show(::IO, ::Type)`, and invalidated compiled code in every
+  session that loaded UniLM (see Performance). A `MethodError` and a
   `methods(f)` listing show the new form; the messages UniLM writes still quote
   the sentences. Upgrading: compare `Meaning` types with `===`, never their
   printed form; `meanings(f)` lists the sentences as strings.
@@ -97,17 +105,18 @@
   pairs to fix the order you mean. The recordings of every other request keep
   their keys: the test suite rebuilds each of the 90 System One recordings this
   repository committed before this release from typed requests, to the same key.
-- **An image a request carries as a `data:` URL is recorded as its digest, not
-  its bytes.** `with_recorded_answers` keys, writes and reports such an image — an
-  attachment on the OpenAI chat wire (`image_url`), an image sent to OpenAI's
-  Decisions API, a Responses `input_image` — as `data:<mime>;sha256,<hex>`, the
-  SHA-256 of its base64 text: a recording names the image it answered without
-  holding it, and the request sent is unchanged. Media sent in another form is
-  written as sent: Ollama's chat `images` and an audio clip's `input_audio`.
-  Upgrading: a recording that 0.23.0 made of a request with such an image was
-  keyed on the image's bytes and no longer replays (`with_recorded_answers`
-  throws `ReplayMissError`), so record it again (`mode = :record_missing`); a
-  recording without one keeps its key.
+- **Every base64 `data:` URL a request carries is recorded as its digest, not
+  its bytes** — an image, a PDF, audio, any media. `with_recorded_answers` keys,
+  writes and reports each one — an attachment on the OpenAI chat wire
+  (`image_url`), an image sent to OpenAI's Decisions API, a Responses
+  `input_image`, a PDF in a Responses `input_file` — as
+  `data:<mime>;sha256,<hex>`, the SHA-256 of its base64 text: a recording names
+  the media it answered without holding them, and the request sent is
+  unchanged. Media sent as bare base64 is written as sent: Ollama's chat
+  `images` and an audio clip's `input_audio`. Upgrading: a recording that 0.23.0
+  made of a request with such a URL was keyed on its base64 text and no longer
+  replays (`with_recorded_answers` throws `ReplayMissError`), so record it again
+  (`mode = :record_missing`); a recording without one keeps its key.
 - **An attachment where no request carries media is refused.** An
   `ImageAttachment` or `AudioAttachment` written as JSON anywhere but a message's
   `attachments` or a System One request's state, instructions or criteria —
@@ -150,9 +159,10 @@
     key. A model may cap lower and says so in its 400 (`tev1:0.8b`: 24 options),
     and Ollama answers 413 to a request whose text and schema exceed 64 KiB, a
     limit it counts itself. Answers cost `0.0` and carry no request id.
-    Measured on 2026-10-20 (Apple M4 Max, Ollama 0.40.6): about 17 ms per warm
-    request on `kev:0.8b-q8_0` and 25–130 ms on `tev1:0.8b`; 0.9–2.6 s for a first
-    call that loads the model.
+    Measured on 2026-10-20 in two runs (Apple M4 Max, Ollama 0.40.6, one request
+    at a time): about 17 ms per warm request on `kev:0.8b-q8_0` and 25–140 ms on
+    `tev1:0.8b`; for a first call that loads the model, about 0.9 s on `kev`
+    and 2.6–2.8 s on `tev1`.
 
   Each backend's wrapper refuses before anything is sent what its wire cannot
   carry, naming the backend, the rule and the fix. `confidence` is one measure
@@ -168,9 +178,10 @@
 - `with_system_one(f, service; model = nothing, options...)` sets the backend of
   every System One call inside `f` that names none — tasks spawned there
   included — and, for those calls, the model and the provider options when a call
-  names none of its own (`with_system_one(TYPESAFEServiceEndpoint; long_context =
-  true)`), checked by the backend's wrapper as each request is sent; scopes nest,
-  and the innermost applies.
+  names none of its own
+  (`with_system_one(TYPESAFEServiceEndpoint; long_context = true) do … end`),
+  checked by the backend's wrapper as each request is sent; scopes nest, and the
+  innermost applies.
 - `ask_each(states, questions...; …)` and `ask_each(requests; …)` send one request
   per item, concurrently, and return one typed result per item in input order:
   what `ask` returns for that item alone (nothing is packed in this release).
@@ -216,8 +227,9 @@
   `"jev-preview"`; `jev-latest` answered as 1.13 on 2026-10-20, and its bare
   400 `"Invalid request."` comes back with a hint naming those models) and an
   image in the request: one without is refused before it is sent, since TypeSafe
-  would answer it with a box at about 0.05 confidence. A box turned inside out is
-  a `SystemOneCallError`. OpenAI and Ollama refuse Box questions.
+  answers it anyway — HTTP 200 and a box at a low confidence, 0.05 to 0.10 in
+  probes on 2026-10-19 and 2026-10-20. A box turned inside out is a
+  `SystemOneCallError`. OpenAI and Ollama refuse Box questions.
 - Long context on TypeSafe: `ask(…; long_context = true)` sends
   `TypeSafe-Danger-Zone-Long-Context: true`, which raises the context limits from
   32k tokens per question and 64k per request to 262k, at the same price per
@@ -230,9 +242,10 @@
   `nl_dispatch`, `nl_classify` and `@branch` take them as
   `options = (long_context = true,)`, and a `with_system_one` scope's keywords set
   them for the calls inside that name no backend and no options. TypeSafe's
-  `long_context` is part of a recording's key only when given, so a request
-  without it keeps its key; OpenAI's and Ollama's options change how a request is
-  served, never what it is answered, and are neither keyed nor written.
+  `long_context` is part of a recording's key only when true, so a request
+  without it, or with `long_context = false`, keeps its key; OpenAI's and
+  Ollama's options change how a request is served, never what it is answered,
+  and are neither keyed nor written.
 - `RawQuestion(fields)`: a question of a kind this version has no type for, sent
   verbatim by each of the three backends (OpenAI adds its name). Its answer is
   accepted whatever its kind; one this version does not know is an
@@ -326,10 +339,11 @@
   80–90 ms: `nl_dispatch` and `nl_classify` are compiled once, not once per
   function, argument type or keyword type.
 - A table of new keys no longer compiles code for each key, nor for each pair of
-  keys in its duplicate check (which alone took 1.0 s for 50 new keys): the first
-  `nl_dispatch` with a table of 255 new `Symbol` keys takes 0.07 s and the first
-  `nl_classify` 0.014 s, where they took 1.19 s and 0.21 s with only the
-  duplicate check changed.
+  keys in its duplicate check: on 0.23.0, validating a table of 50 new keys
+  took 0.50–0.53 s. The first `nl_dispatch` with a table of 255 new `Symbol`
+  keys takes 0.12 s instead of 6.3–6.8 s, and the first `nl_classify` 0.014 s
+  instead of 2.25–2.45 s (each timed up to the request, two runs on each
+  version).
 - Plans are read without a lock, and a table is validated once per contents
   instead of on every call.
 - Checking an answer is linear in its options: a replayed Choice of 255 options
@@ -338,7 +352,7 @@
   call, over 66 connections (53,729 calls/s); HTTP.jl's default client, which
   keeps two idle connections per host, opened over 16,000 connections, ran out of
   ephemeral ports and failed 324 calls. A burst of 1,000 requests to a server that
-  answers in 300 ms took 0.44–0.54 s.
+  answers in 300 ms took 0.44–0.51 s (`ask_each`, three runs).
 
 ## 0.23.0
 

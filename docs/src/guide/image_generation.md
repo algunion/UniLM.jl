@@ -67,7 +67,7 @@ println(JSON.json(ig))
 `input_fidelity` is an image-edit parameter and belongs on [`ImageEdit`](@ref);
 `ImageGeneration` does not accept it.
 
-!!! note "`model` is a sentinel, not a resolved default"
+!!! note "The model field is a sentinel, not a resolved default"
     Unlike [`Chat`](@ref), `ImageGeneration` does not resolve its model at
     construction. The field holds `""` and resolves only when the request is
     serialized — to `"gpt-image-2"` for OpenAI — so

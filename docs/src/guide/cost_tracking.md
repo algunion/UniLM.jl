@@ -148,7 +148,7 @@ chatrequest!(chat)                     # accrues again
 cumulative_cost(chat)                  # e.g. 0.00231  (USD, summed over both calls)
 ```
 
-!!! warning "Auto-accumulation always uses `DEFAULT_PRICING`"
+!!! warning "Auto-accumulation always uses the default pricing table"
     `chatrequest!` prices each call with [`DEFAULT_PRICING`](@ref); there is no `pricing=`
     for the running total. So a `Chat` on an **unpriced** model (e.g. `gpt-4o-mini`) reports
     `cumulative_cost == 0.0` even after successful calls — unless you add its row to the

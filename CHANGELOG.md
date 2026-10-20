@@ -39,8 +39,11 @@
   is not the most probable; probabilities missing, extra, outside `0 … 1` or not
   summing to 1 within the backend's rounding (`0.005` per outcome on TypeSafe and
   OpenAI, the allowance of values rounded to two decimals; `0.00005` on Ollama);
-  Score levels other than `0` to `n − 1`; a score, confidence, Noul probability or
-  box edge out of range; a reply that names no model. `nl_dispatch`,
+  Score levels other than `0` to `n − 1`; a Score whose `score` is not the
+  expected level its probabilities give (`Σ i·pᵢ`), within that rounding, or whose
+  `legend` does not repeat, unchanged, each level asked as a string (OpenAI's
+  echoed labels likewise); a score, confidence, Noul probability or box edge out
+  of range; a reply that names no model, or a blank one. `nl_dispatch`,
   `nl_classify` and `@branch` raise `SystemOneError` for such a reply, where they
   raised a `KeyError` or an `ArgumentError` after the request was billed.
   Upgrading: handle these as failed calls; every answer recorded in this
@@ -59,11 +62,14 @@
 - **`nl_dispatch` refuses a default state that holds what is not data.** When it
   builds the state from its ordinary arguments, a function or closure, a type, a
   module, a `Ref` or `Ptr`, a `Task`, a `Channel`, a lock, a condition, an event,
-  an `IO` or an `Expr` anywhere in an argument — in its dicts, arrays, sets,
-  tuples and fields — or a container nested more than 64 levels deep is an
+  an `IO`, an `Expr` or a value JSON.jl cannot write, such as an
+  `AudioAttachment`, anywhere in an argument — in its dicts, arrays, sets, tuples
+  and fields — or a container nested more than 64 levels deep is an
   `ArgumentError` before the request, naming the argument and the path to the
   value. Before, JSON.jl wrote a function by its name and a task, lock or stream
-  field by field, and the model read that. Every other value is still sent as
+  field by field, and the model read that. An `ImageAttachment` is data: the
+  backend's wrapper sends it as it sends any image in a state (TypeSafe as an
+  asset), or refuses it before the request. Every other value is still sent as
   JSON.jl writes it, every field of a struct included — a `String` credential a
   struct holds as well. Upgrading: pass `state = …` with only what the model
   should read.
@@ -91,6 +97,17 @@
   pairs to fix the order you mean. The recordings of every other request keep
   their keys: the test suite rebuilds each of the 90 System One recordings this
   repository committed before this release from typed requests, to the same key.
+- **An image a request carries as a `data:` URL is recorded as its digest, not
+  its bytes.** `with_recorded_answers` keys, writes and reports such an image — an
+  attachment on the OpenAI chat wire (`image_url`), an image sent to OpenAI's
+  Decisions API, a Responses `input_image` — as `data:<mime>;sha256,<hex>`, the
+  SHA-256 of its base64 text: a recording names the image it answered without
+  holding it, and the request sent is unchanged. Media sent in another form is
+  written as sent: Ollama's chat `images` and an audio clip's `input_audio`.
+  Upgrading: a recording that 0.23.0 made of a request with such an image was
+  keyed on the image's bytes and no longer replays (`with_recorded_answers`
+  throws `ReplayMissError`), so record it again (`mode = :record_missing`); a
+  recording without one keeps its key.
 - **An attachment where no request carries media is refused.** An
   `ImageAttachment` or `AudioAttachment` written as JSON anywhere but a message's
   `attachments` or a System One request's state, instructions or criteria —
@@ -115,9 +132,10 @@
     `noul` is sent as a `predicate`, a `choice` as a `choice` of 2–255 options, a
     `score` as a `score` of 2–10 levels; images go in the state (an
     `ImageAttachment`, or a `Vector` of strings and images, at most 128); the
-    provider options are `prompt_cache_key` and `safety_identifier`; a question the
-    API declines comes back as a `RefusalAnswer`, which the natural-language verbs
-    take as a decline (the fallback, or `DecisionDeclinedError`). What its wire has
+    provider options are `prompt_cache_key` and `safety_identifier`, sent and left
+    out of a recording's key; a question the API declines comes back as a
+    `RefusalAnswer`, which the natural-language verbs take as a decline (the
+    fallback, or `DecisionDeclinedError`). What its wire has
     no form for — a question without string `instructions`, a Noul's `yes`/`no`
     criteria, a description or level that is not a string, a Box question, an
     image outside the state — is an `ArgumentError` before the request.
@@ -128,8 +146,10 @@
     (`service = OllamaEndpoint()`, with `model = "tev1:0.8b"` or another decision
     model: there is no default): 1–64 questions, `instructions` on every question,
     2–26 options and 2–10 levels described by strings, text only, no Box
-    questions, and one option, `keep_alive`. A model may cap lower and says so in
-    its 400 (`tev1:0.8b`: 24 options). Answers cost `0.0` and carry no request id.
+    questions, and one option, `keep_alive`, sent and left out of a recording's
+    key. A model may cap lower and says so in its 400 (`tev1:0.8b`: 24 options),
+    and Ollama answers 413 to a request whose text and schema exceed 64 KiB, a
+    limit it counts itself. Answers cost `0.0` and carry no request id.
     Measured on 2026-10-20 (Apple M4 Max, Ollama 0.40.6): about 17 ms per warm
     request on `kev:0.8b-q8_0` and 25–130 ms on `tev1:0.8b`; 0.9–2.6 s for a first
     call that loads the model.
@@ -145,23 +165,34 @@
   under-confident (its accuracy at least its mean top probability in every bin
   above 0.5); Jev answered in 0.25 s at the median and 0.33 s at the 95th
   percentile, OpenAI in 0.48 s and 2.44 s.
-- `with_system_one(f, service; model = nothing)` sets the backend, and the model,
-  of every System One call inside `f` that names none — tasks spawned there
-  included; scopes nest, and the innermost applies.
+- `with_system_one(f, service; model = nothing, options...)` sets the backend of
+  every System One call inside `f` that names none — tasks spawned there
+  included — and, for those calls, the model and the provider options when a call
+  names none of its own (`with_system_one(TYPESAFEServiceEndpoint; long_context =
+  true)`), checked by the backend's wrapper as each request is sent; scopes nest,
+  and the innermost applies.
 - `ask_each(states, questions...; …)` and `ask_each(requests; …)` send one request
   per item, concurrently, and return one typed result per item in input order:
   what `ask` returns for that item alone (nothing is packed in this release).
   Every request is built and checked before the first is sent, so an item that
-  cannot be sent is an `ArgumentError` naming its position, and nothing is sent.
-  At most `ntasks` requests are in flight — by default 16 on TypeSafe and OpenAI,
-  1 on Ollama, 8 on a protocol of your own; a 429 or 529 to any of them holds
-  every attempt not yet started until the wait the service asked for has passed;
+  cannot be sent is an `ArgumentError` naming its position, and nothing is sent;
+  the worker that sends an item builds its body again, so a batch holds no more
+  request bodies than it has requests in flight. At most `ntasks` requests are in
+  flight — any `Integer` of at least 1 (a `Bool` is refused), by default 16 on
+  TypeSafe and OpenAI, 1 on Ollama, 8 on a protocol of your own; a 429 or 529 to
+  any of them holds every attempt not yet started until the wait the service
+  asked for has passed. An item's `total_deadline` runs from when a worker takes
+  it, so a hold keeps it waiting no longer than its own budget: an item whose
+  budget runs out while held is not sent, and its result is a
+  `SystemOneCallError` whose `cause` is a `UniLMTimeout` of phase `:deadline`.
   `cancel` turns every unanswered item into a `SystemOneCallError` whose `cause`
-  is a `UniLMCancelled`; `on_result(i, result)` runs as each result lands; a
-  `ReplayMissError`, a `RecordingWriteError`, an interrupt or an exception from
-  `on_result` stops the batch and is rethrown once every worker has stopped. 50
-  support tickets took 3.28 s on TypeSafe, against 13.21 s for one `ask` after
-  another, over one HTTP/2 connection (2026-10-20).
+  is a `UniLMCancelled`; `on_result(i, result)` — any callable that takes an
+  index and each kind of result, checked before anything is sent — runs as each
+  result lands, one call at a time; a `ReplayMissError`, a `RecordingWriteError`,
+  an interrupt or an exception from `on_result` stops the batch and is rethrown
+  once every worker has stopped. 50 support tickets took 3.28 s on TypeSafe,
+  against 13.21 s for one `ask` after another, over one HTTP/2 connection
+  (2026-10-20).
 - Images on TypeSafe: an `ImageAttachment` anywhere in the state, the instructions
   or the criteria — directly, or inside a `Dict`, a vector, a tuple or a
   `NamedTuple` — is sent as a TypeSafe asset: each distinct image once, as a part
@@ -170,7 +201,8 @@
   `TypeSafe-Danger-Zone-Images: true` header TypeSafe requires. TypeSafe marks
   images experimental. Refused before the request: an image that is not a still
   PNG or JPEG, is over 16 MiB, has a side outside 280–1568 pixels or a header that
-  cannot be read; a body over 32 MiB; more than 64 levels of nesting. Each use of
+  cannot be read, or a JPEG that does not end with its end-of-image marker (cut
+  short); a body over 32 MiB; more than 64 levels of nesting. Each use of
   an image is billed; on 2026-10-19 the input tokens of a W×H image fit
   2·⌈W/28⌉·⌈H/28⌉, plus about 4 per use. A Score level that is an image comes back
   in the answer's `legend` as that `ImageAttachment`. A recording of a request
@@ -195,8 +227,12 @@
   becomes the request's `options`, which the backend's wrapper checks — TypeSafe
   `long_context`, OpenAI `prompt_cache_key` and `safety_identifier`, Ollama
   `keep_alive` — and any other is an `ArgumentError` listing the accepted ones.
-  Options are part of a recording's key only when given, so a request without
-  them keeps its key.
+  `nl_dispatch`, `nl_classify` and `@branch` take them as
+  `options = (long_context = true,)`, and a `with_system_one` scope's keywords set
+  them for the calls inside that name no backend and no options. TypeSafe's
+  `long_context` is part of a recording's key only when given, so a request
+  without it keeps its key; OpenAI's and Ollama's options change how a request is
+  served, never what it is answered, and are neither keyed nor written.
 - `RawQuestion(fields)`: a question of a kind this version has no type for, sent
   verbatim by each of the three backends (OpenAI adds its name). Its answer is
   accepted whatever its kind; one this version does not know is an
@@ -209,7 +245,8 @@
   `UniLM.system_one_protocol(service)`, a Holy trait, returns the endpoint's
   `UniLM.SystemOneProtocol` (`TypeSafeProtocol`, `OpenAIDecisionsProtocol` or
   `OllamaSystemOneProtocol`), whose `UniLM.encode_system_one` builds the
-  `UniLM.SystemOneWire` it sends and whose `UniLM.decode_system_one` reads the
+  `UniLM.SystemOneWire` it sends — and its `record_body`, the body a recording is
+  keyed on and writes — and whose `UniLM.decode_system_one` reads the
   reply. An endpoint that declares `:system_one` without a protocol speaks
   TypeSafe's wire, so a TypeSafe-compatible gateway needs no protocol code. A
   protocol other than TypeSafe's files its recordings under a namespace of its
@@ -227,12 +264,10 @@
 - An endpoint that declares no capabilities is refused by `ask`, `ask_each`,
   `with_system_one` and the natural-language verbs with an `ArgumentError` saying
   to declare `:system_one`, instead of a `MethodError`.
-- A recording holds `key_extra`, what its key covers beyond the body (provider
-  options, image digests), when there is any. A `ReplayMissError` for a backend
-  other than TypeSafe shows its namespaced path and says to record it with access
-  to that backend — its API key set, or its local server running.
-- PLACEHOLDER (confirm when its code change lands): `ask_each`: a batch held by a
-  rate limit counts the hold against each item's `total_deadline`.
+- A recording holds `key_extra`, what its key covers beyond the body (TypeSafe's
+  `long_context`, image digests), when there is any. A `ReplayMissError` for a
+  backend other than TypeSafe shows its namespaced path and says to record it with
+  access to that backend — its API key set, or its local server running.
 - The manual's decision pages form a **Decisions (Jev)** lane at the same
   addresses: *Start Here: Decisions in Five Minutes* (formerly *Start Here: Jev in
   Five Minutes*), a new *Backends: Jev, OpenAI and Local Models*, *Decisions with
@@ -264,29 +299,46 @@
   type of the ordinary arguments.
 - A `@branch` option name that is neither a `String` nor a `Symbol` is an
   `ArgumentError` naming its line, instead of a `MethodError`.
-- PLACEHOLDER (confirm when its code change lands): Recordings never hold an
-  image's bytes (data URLs are recorded as digests).
 
 ### Performance
-- Loading UniLM invalidated 1,438 compiled method instances in the session — among
-  them the code that prints any type — through the `show` method of `Meaning`
-  types; it now invalidates 13 (see Breaking).
-- A function's first natural-language call compiles in about 27 ms instead of 85
-  ms: `nl_dispatch` and `nl_classify` are compiled once, not once per function,
-  argument type or keyword type.
-- A keyed table checks its keys for duplicates by type first, so a table of new
-  keys no longer compiles an equality method for every pair of them: the first
-  call with a table of 50 new keys took 0.09 s instead of 1.0 s.
+- A session's first System One call no longer waits for the compiler. A
+  precompile workload, run once while the package image is built, compiles every
+  System One verb on each backend, replaying answers it writes and then removes,
+  so nothing leaves the machine. Measured in fresh processes, each first call
+  timed once with `@timed @eval`, interleaved with 0.23.0 (Julia 1.13.1, HTTP.jl
+  2.11, JSON.jl 1.11, an Apple M4 Max under background load; medians), against a
+  local server that answers at once: the first `ask` took 0.054 s instead of
+  2.33 s; the first `nl_dispatch` 0.048 s instead of 3.18 s with sentences in its
+  signatures, and 0.118 s instead of 3.61 s with a table; the first `nl_classify`
+  0.074 s instead of 2.64 s; the first `@branch` 0.028 s instead of 2.51 s. The
+  first live answer from TypeSafe arrived in 0.48 s instead of 2.79 s. Replayed,
+  the first `ask` on OpenAI's Decisions API or on Ollama took about 0.09 s, and
+  the first `ask_each` about 0.04 s. `list_models` is left out of the workload, to
+  keep loading short, and compiles at its first call (about 0.5 s).
+- The workload is paid for when the package loads: `using UniLM` took 0.16–0.17 s
+  instead of 0.13 s, about 25% more (+24.6%, +25.8% and +23.9% in three
+  interleaved runs); the package image grew from 7.6 MB to about 23 MB, and
+  precompiling UniLM from about 2 s to about 8 s.
+- Loading UniLM's own definitions invalidated 1,466 compiled method instances in
+  the session — among them the code that prints any type — nearly all through the
+  `show` method of `Meaning` types; they now invalidate 13 (see Breaking).
+- A function's first natural-language call compiles in about 23–35 ms instead of
+  80–90 ms: `nl_dispatch` and `nl_classify` are compiled once, not once per
+  function, argument type or keyword type.
+- A table of new keys no longer compiles code for each key, nor for each pair of
+  keys in its duplicate check (which alone took 1.0 s for 50 new keys): the first
+  `nl_dispatch` with a table of 255 new `Symbol` keys takes 0.07 s and the first
+  `nl_classify` 0.014 s, where they took 1.19 s and 0.21 s with only the
+  duplicate check changed.
 - Plans are read without a lock, and a table is validated once per contents
   instead of on every call.
+- Checking an answer is linear in its options: a replayed Choice of 255 options
+  takes about 187 µs per call.
 - 64 workers calling a local HTTP/1.1 server in a closed loop for 60 s failed no
   call, over 66 connections (53,729 calls/s); HTTP.jl's default client, which
   keeps two idle connections per host, opened over 16,000 connections, ran out of
   ephemeral ports and failed 324 calls. A burst of 1,000 requests to a server that
   answers in 300 ms took 0.44–0.54 s.
-- PLACEHOLDER (to be filled before release): the precompile workload's
-  measurements — the first `ask`, the first natural-language call and the first
-  live answer of a session, the added precompile time and package image size.
 
 ## 0.23.0
 

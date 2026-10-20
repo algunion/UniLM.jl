@@ -918,7 +918,8 @@ replaying, and crafting edge cases with a local server.
   and mock servers for tests
 - [Natural-Language Dispatch](@ref nl_dispatch_api) — the API reference of
   [`Meaning`](@ref), [`nl_classify`](@ref), [`nl_dispatch`](@ref) and
-  [`@branch`](@ref); the [System One API](@ref system_one_api) has the rest
+  [`@branch`](@ref); the [System One API (Jev, OpenAI Decisions,
+  Ollama)](@ref system_one_api) has the rest
 - [TypeSafe documentation](https://docs.typesafe.ai) — the service's own
   reference for [Choice](https://docs.typesafe.ai/primitives/choice),
   [confidence](https://docs.typesafe.ai/confidence) and

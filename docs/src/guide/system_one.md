@@ -970,8 +970,9 @@ jev_llm_check_claims). [Decisions with LLMs](@ref jev_llm_guide) builds each ste
   over collections: routing, ranking, search and joins
 - [Test and Develop](@ref jev_testing_guide) — recorded answers and tests that
   need no key
-- [System One API](@ref system_one_api) — setup, models, limits, errors and cost
-  of each backend, then every type, verb and accessor
+- [System One API (Jev, OpenAI Decisions, Ollama)](@ref system_one_api) — setup,
+  models, limits, errors and cost of each backend, then every type, verb and
+  accessor
 - [Cost Tracking](@ref cost_guide) — token usage and USD estimates across every
   surface
 - [TypeSafe documentation](https://docs.typesafe.ai) — [System

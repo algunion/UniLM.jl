@@ -723,5 +723,6 @@ Evidence boxes were measured separately.
   step
 - [Backends: Jev, OpenAI and Local Models](@ref system_one_backends) — the same
   calls on other backends, each recorded apart
-- [System One API](@ref system_one_api) — every type and verb, including
-  [`with_recorded_answers`](@ref) and [`ReplayMissError`](@ref)
+- [System One API (Jev, OpenAI Decisions, Ollama)](@ref system_one_api) — every
+  type and verb, including [`with_recorded_answers`](@ref) and
+  [`ReplayMissError`](@ref)

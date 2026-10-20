@@ -577,8 +577,8 @@ policy` line was flagged as data loss.
   `Channel`s, [`CancelToken`](@ref) and [`with_cancel`](@ref)
 - [Backends: Jev, OpenAI and Local Models](@ref system_one_backends) — how many
   requests `ask_each` keeps in flight, and the timeouts, on each backend
-- [System One API](@ref system_one_api) — [limits](@ref jev_limits) and
-  [cost](@ref jev_cost)
+- [System One API (Jev, OpenAI Decisions, Ollama)](@ref system_one_api) —
+  [limits](@ref jev_limits) and [cost](@ref jev_cost)
 - TypeSafe cookbooks: [line-by-line
   search](https://docs.typesafe.ai/cookbooks/semantic_find) and [parallel
   questions](https://docs.typesafe.ai/cookbooks/parallel_questions)

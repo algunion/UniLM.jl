@@ -4,7 +4,11 @@
 `nl_dispatch` and `@branch` each send one [`ask`](@ref) request, whose answers,
 errors and limits are documented in [System One API](@ref system_one_api). Like
 `ask`, they run on the backend a call names with `service`, else on the one of
-the enclosing [`with_system_one`](@ref) scope, else on TypeSafe's Jev.
+the enclosing [`with_system_one`](@ref) scope, else on TypeSafe's Jev. The
+provider options `ask` takes as keywords they take as `options`, a `NamedTuple`
+— `options = (long_context = true,)` on TypeSafe — checked by the backend's
+wrapper before the request; a call that names no `service` and no options takes
+the scope's.
 
 [`@branch`](@ref) is a `switch` whose cases are written in plain language. The
 option names become the criteria of one [`choice`](@ref) question about the
@@ -48,9 +52,13 @@ other value is an `ArgumentError` naming its line. How many options one question
 may offer — a table's entries, a branch's lines — is the backend's limit (255 on
 TypeSafe). And the state `nl_dispatch` builds from its ordinary arguments must be
 data: a function, a type, a module, a `Ref` or `Ptr`, a `Task`, a `Channel`, a
-lock, a condition, an event, an `IO` or an `Expr` anywhere in an argument, or a
-container nested more than 64 levels deep, is an `ArgumentError` naming the
-argument and the path to the value. Everything else is sent as JSON.jl writes
+lock, a condition, an event, an `IO`, an `Expr` or a value JSON.jl cannot write,
+such as an [`AudioAttachment`](@ref), anywhere in an argument, or a container
+nested more than 64 levels deep, is an `ArgumentError` naming the argument and
+the path to the value. An [`ImageAttachment`](@ref) is data: the backend's
+wrapper sends it as it sends any image in a state — TypeSafe as an asset — or
+refuses it before the request, as OpenAI's and Ollama's do in a state built from
+arguments. Everything else is sent as JSON.jl writes
 it — every field of a struct argument, a credential held as a `String`
 included — and a `:record` scope of [`with_recorded_answers`](@ref) writes it to
 disk: pass `state = …` to send only what the model should read. An explicit

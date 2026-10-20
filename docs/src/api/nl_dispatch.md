@@ -64,7 +64,8 @@ included — and a `:record` scope of [`with_recorded_answers`](@ref) writes it 
 disk: pass `state = …` to send only what the model should read. An explicit
 `state` is sent as given.
 
-A `Meaning` type prints as Julia prints any type, `Meaning{Symbol("…")}` — in a
+A `Meaning` type prints as Julia prints any type, `Meaning{Symbol("…")}` (for a
+sentence of several words; one word prints as `Meaning{:x}`) — in a
 `MethodError` or a `methods(f)` listing too — and an instance as `nl"…"()`. Two
 identical sentences are the same type, so `===` compares them, and
 [`meanings`](@ref) lists the sentences as strings.

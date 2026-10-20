@@ -73,7 +73,11 @@ open.
 under the request's path (`/v1/systemone`), OpenAI's under
 `/openai-decisions/v1/decisions`, Ollama's under `/ollama/v1/systemone`. A
 recording never replays for another backend; an endpoint that speaks TypeSafe's
-wire shares TypeSafe's recordings, since its requests are TypeSafe's.
+wire shares TypeSafe's recordings, since its requests are TypeSafe's. An option
+that changes how a request is served but never what it is answered — OpenAI's
+`prompt_cache_key` and `safety_identifier`, Ollama's `keep_alive` — is sent and
+left out of the recording, key and file alike, so the same question replays
+whatever it is; TypeSafe's `long_context` is part of the key.
 
 ## [TypeSafe's Jev](@id system_one_typesafe)
 
@@ -162,7 +166,9 @@ models. `long_context = true` works on both ([Limits](@ref jev_limits)).
 [`ask`](@ref) checks every limit but the context and the rate limits before the
 round trip, and refuses a request over one with an `ArgumentError` naming
 TypeSafe's limit and the value — a Choice of 256 options, a Score of 11 levels, a
-GIF, an image 2000 pixels wide, a file cut short, a state nested 65 levels deep.
+GIF, an image 2000 pixels wide, a file cut short within its header, a JPEG that
+does not end with its end-of-image marker (`FF D9`: cut short, or carrying bytes
+after the image), a state nested 65 levels deep.
 The question types themselves set no upper bound — other System One backends have
 other limits, which their wrappers check the same way — so [`choice`](@ref) and
 [`score`](@ref) build such questions; only sending one to TypeSafe is refused. A
@@ -198,13 +204,16 @@ request over its context comes back as a 400 whose `error_type` is
 ### [Errors, timeouts and retries](@id jev_errors)
 
 A call that reaches the service returns a [`SystemOneSuccess`](@ref), a
-[`SystemOneFailure`](@ref) (non-2xx) or a [`SystemOneCallError`](@ref) (no usable
-response), and `issuccess` separates them; a wrong `service` or a malformed
-request is an `ArgumentError` before anything is sent. A 200 whose answers do not
-fit the request — a question unanswered, an answer of another kind, an option
-that was not offered, probabilities that are not a distribution over the offered
-outcomes, a value outside `0 … 1` — is a `SystemOneCallError` too, carrying the
-request id: no success is built from a malformed answer. TypeSafe's probabilities
+[`SystemOneFailure`](@ref) (a status other than 200) or a
+[`SystemOneCallError`](@ref) (no usable response), and `issuccess` separates
+them; a wrong `service` or a malformed request is an `ArgumentError` before
+anything is sent. A 200 whose answers do not fit the request — a question
+unanswered, an answer of another kind, an option that was not offered,
+probabilities that are not a distribution over the offered outcomes, a value
+outside `0 … 1`, a Score whose `score` its probabilities contradict or whose
+`legend` renames a level asked as a string, no model named — is a
+`SystemOneCallError` too, carrying the request id: no success is built from a
+malformed answer. TypeSafe's probabilities
 are accepted when they sum to 1 within 0.005 per outcome, and the chosen option
 when it lies at most 0.01 below the most probable: one live reply, a Choice of
 four options, summed to 0.99 — the mark of values rounded to two decimals. The
@@ -330,8 +339,13 @@ typed as on any backend, and a question the API declined comes back as a
 [`DecisionDeclinedError`](@ref). Probabilities and confidences arrive rounded to
 two decimals, so a distribution over `n` outcomes is accepted when it sums to 1
 within `0.005n`, and the chosen option when it lies at most 0.01 below the most
-probable. A failure's `error_type` is the error's `code`, and the request id is
-the `x-request-id` header. [`estimated_cost`](@ref) charges what the guide
+probable. `usage` counts input, cached and output tokens; a count that is not a
+non-negative whole number, or a `…_tokens_details` value that is not an object,
+reads as 0 with a warning. A failure's `error_type` is the error's `code`, and
+the request id is the `x-request-id` header. A recording
+([`with_recorded_answers`](@ref)) is keyed without the two options, and holds
+each image as the SHA-256 of its base64 text, `data:<mime>;sha256,<hex>`, never
+its bytes. [`estimated_cost`](@ref) charges what the guide
 prices: input tokens only — \$0.10 per million, the `gpt-6-luna` row's input rate —
 cached ones at the full input rate, twice that rate for a request of more than
 272K input tokens.
@@ -395,12 +409,17 @@ end
 | Images | not sent yet: no vision decision model has been verified with this wrapper |
 | Options | `keep_alive` only |
 
-- **A model's own limits.** A model may cap lower than the route, and its 400
-  says so: `tev1:0.8b` takes at most 24 options (Ollama 0.40.6). A
+- **The server's own limits.** A model may cap lower than the route, and its 400
+  says so: `tev1:0.8b` takes at most 24 options (Ollama 0.40.6). Ollama caps a
+  request's text and schema, images excluded, at 64 KiB by its own count, which
+  [`ask`](@ref) does not check: a request over it comes back as a 413
+  [`SystemOneFailure`](@ref), `text and schema must not exceed 64 KiB`. A
   [`RawQuestion`](@ref) is sent verbatim, for the server to judge.
 - **`keep_alive`.** `ask(...; keep_alive = 600)` keeps the model loaded for 600
   seconds after the request, `0` unloads it at once and `Inf` keeps it loaded;
   without it the endpoint's own `keep_alive` applies, else the server's default.
+  It is left out of a recording's key and file: it changes how long the model
+  stays loaded, never an answer.
   The endpoint's other settings — `truncate`, `shift` and the
   [`OllamaOptions`](@ref) such as `num_ctx` — have no field on this route and
   are not sent.
@@ -511,8 +530,9 @@ Every System One verb reaches its backend through a protocol, a Holy trait of
 the endpoint: [`system_one_protocol`](@ref UniLM.system_one_protocol) maps an
 endpoint to a [`SystemOneProtocol`](@ref UniLM.SystemOneProtocol), whose
 [`encode_system_one`](@ref UniLM.encode_system_one) turns a request into a
-[`SystemOneWire`](@ref UniLM.SystemOneWire) — refusing, before any I/O, what its
-backend cannot carry — and whose [`decode_system_one`](@ref UniLM.decode_system_one)
+[`SystemOneWire`](@ref UniLM.SystemOneWire) — what is sent, and the
+`record_body` a recording is keyed on and writes; refusing, before any I/O, what
+its backend cannot carry — and whose [`decode_system_one`](@ref UniLM.decode_system_one)
 turns the reply into a typed result, its answers checked against the request.
 The rest is shared by every backend: the backend and model a call resolves
 (through [`with_system_one`](@ref)), recording and replay, retries and
@@ -548,8 +568,11 @@ records a real answer once and replays it offline. Inside its scope, `ask` and
 `list_models` (and so `nl_dispatch`, `nl_classify` and `@branch`) and the non-streaming
 [`chatrequest!`](@ref), [`respond`](@ref) and [`embeddingrequest!`](@ref) (and
 so the tool loops) exchange through a directory of recordings keyed by the exact
-request bytes, with any credential the body carries redacted; a streamed call and
-every other verb reach the network as usual. In the default `:replay` mode no
+request bytes — with any credential the body carries redacted, each image it
+carries as a `data:` URL replaced by the SHA-256 of its base64 text, and a System
+One backend's options that change how a request is served left out (media sent
+another way, such as Ollama's chat `images`, is written as sent); a streamed
+call and every other verb reach the network as usual. In the default `:replay` mode no
 recorded verb reaches the network and none needs a key,
 and a request with no recording, or an unreadable one, throws
 [`ReplayMissError`](@ref); `:record` and `:record_missing` call the service —

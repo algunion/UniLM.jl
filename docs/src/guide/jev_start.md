@@ -159,5 +159,5 @@ jaggedness](https://docs.typesafe.ai/model-jaggedness/jev-1.13).
   records
 - [Test and Develop](@ref jev_testing_guide) — recorded answers for Jev and LLM
   calls, tests that need no key, an audit trail
-- [System One API](@ref system_one_api) — setup, models, limits, errors and cost
-  of each backend, then every type and function
+- [System One API (Jev, OpenAI Decisions, Ollama)](@ref system_one_api) — setup,
+  models, limits, errors and cost of each backend, then every type and function

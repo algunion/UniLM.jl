@@ -68,7 +68,9 @@ section, the same tickets bill 1,100.
 [`SystemOneCallError`](@ref) — whatever order the answers arrived in. Every
 request is built and checked by its backend's wrapper before the first goes
 out, so one item that cannot be sent stops the batch with an `ArgumentError`
-that names it, and nothing is sent:
+that names it, and nothing is sent. The worker that sends an item builds its
+request again, so a batch holds no more request bodies in memory — images and
+all — than it has requests in flight:
 
 ```@example jevalgo
 with_missing = [tickets[1], nothing, tickets[3]]      # a ticket whose text was lost
@@ -80,22 +82,29 @@ catch err
 end
 ```
 
-- **How many at a time.** At most `ntasks` requests are in flight. The default is
-  the backend's: 16 on TypeSafe and on OpenAI's Decisions API, 1 on Ollama, whose
-  decision runners answer one request at a time, and 8 on any other backend — a
-  default, not a limit.
+- **How many at a time.** At most `ntasks` requests are in flight, any `Integer`
+  of at least 1 (`true` is refused, not read as 1). The default is the backend's:
+  16 on TypeSafe and on OpenAI's Decisions API, 1 on Ollama, whose decision
+  runners answer one request at a time, and 8 on any other backend — a default,
+  not a limit.
 - **One backoff for the batch.** When the service answers any request with 429
   or 529, no request of the batch starts until the wait it asked for has passed
   (`retry-after-ms`, else `Retry-After`); the requests already in flight finish.
+  Each item's `total_deadline` runs from when a worker takes it, so a hold keeps
+  it waiting no longer than its own budget: an item whose budget runs out while
+  held is not sent, and its result is a [`SystemOneCallError`](@ref) whose
+  `cause` is a [`UniLMTimeout`](@ref) of phase `:deadline`.
 - **Stopping.** `cancel` — a [`CancelToken`](@ref), by default the ambient
   [`with_cancel`](@ref) token — ends the requests in flight at once and sends no
   more; each item left unanswered becomes a [`SystemOneCallError`](@ref) whose
   `cause` is a [`UniLMCancelled`](@ref). `on_result(i, result)` runs as each
-  result lands, in the order they complete: for progress, or to cancel the
-  batch once you know enough. A [`ReplayMissError`](@ref) or
-  [`RecordingWriteError`](@ref), an interrupt, or an error thrown by `on_result`
-  stops the batch too, and the first of them is rethrown once every request has
-  stopped.
+  result lands, in the order they complete, one call at a time, so it may update
+  a counter or a progress bar without a lock of its own: for progress, or to
+  cancel the batch once you know enough. It may be any callable that takes an
+  index and each kind of result, which is checked before anything is sent. A
+  [`ReplayMissError`](@ref) or [`RecordingWriteError`](@ref), an interrupt, or
+  an error thrown by `on_result` stops the batch too, and the first of them is
+  rethrown once every request has stopped.
 - **Requests of your own.** `ask_each(requests)` sends a vector of
   [`SystemOneRequest`](@ref)s, each with its own state and questions;
   [More items than one request holds](@ref jev_items_chunks) uses it.
@@ -118,7 +127,8 @@ end
   request for many items bills fewer tokens per item, as the next section
   shows, and needs its questions pointed at keys.
 - **`config`** applies to every request of the batch: `request_timeout` to
-  each attempt, `total_deadline` to each request with its retries.
+  each attempt, `total_deadline` to each request with its retries and any wait
+  the batch's backoff imposes, from when a worker takes it.
 
 ## [Judge a batch in one request](@id jev_items_batch)
 
@@ -567,8 +577,8 @@ policy` line was flagged as data loss.
   `Channel`s, [`CancelToken`](@ref) and [`with_cancel`](@ref)
 - [Backends: Jev, OpenAI and Local Models](@ref system_one_backends) — how many
   requests `ask_each` keeps in flight, and the timeouts, on each backend
-- [System One API](@ref system_one_api) — [limits](@ref jev_limits) and
-  [cost](@ref jev_cost)
+- [System One API (Jev, OpenAI Decisions, Ollama)](@ref system_one_api) —
+  [limits](@ref jev_limits) and [cost](@ref jev_cost)
 - TypeSafe cookbooks: [line-by-line
   search](https://docs.typesafe.ai/cookbooks/semantic_find) and [parallel
   questions](https://docs.typesafe.ai/cookbooks/parallel_questions)

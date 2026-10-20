@@ -98,7 +98,12 @@ Its model is the call's own `model = …`; else, when the call names no `service
 the scope's model; else the backend's default: on TypeSafe `jev-latest`, or
 `TYPESAFE_DEFAULT_MODEL` when it is set, read when the request is sent; on
 OpenAI `gpt-6-luna`; on Ollama none, so a call that names no model there is an
-`ArgumentError` before anything is sent.
+`ArgumentError` before anything is sent. Its provider options follow the same
+rule: the call's own — keywords of [`ask`](@ref) and [`ask_each`](@ref),
+`options = (…)` on the natural-language verbs — else, when the call names no
+`service`, the scope's, set as keywords of `with_system_one`:
+`with_system_one(OllamaEndpoint(); model = "tev1:0.8b", keep_alive = 600)`. The
+backend's wrapper checks them when each request is sent.
 
 ```@example backends
 with_system_one(OllamaEndpoint(); model = "tev1:0.8b") do
@@ -146,8 +151,8 @@ it: a model belongs to its backend, and `tev1:0.8b` means nothing to TypeSafe.
 
 A timeout you set yourself — `config =`, [`with_request_config`](@ref) or
 [`set_default_config!`](@ref) — replaces a backend's default. The [System One
-API](@ref system_one_api) has each backend's details: TypeSafe's
-[limits](@ref jev_limits) and [errors](@ref jev_errors),
+API (Jev, OpenAI Decisions, Ollama)](@ref system_one_api) has each backend's
+details: TypeSafe's [limits](@ref jev_limits) and [errors](@ref jev_errors),
 [Ollama](@ref system_one_ollama) and [OpenAI Decisions](@ref system_one_openai).
 
 ### [Refused before sending](@id backends_refusals)
@@ -280,9 +285,12 @@ The third column of the first example came from `tev1:0.8b` this way.
 - **Stricter rules.** 1–64 questions per request; `instructions` on every
   question; 2–26 options per Choice, each described by a string or `nothing`;
   2–10 levels per Score, each a string. A model may cap lower, and its own 400
-  says so: `tev1:0.8b` takes at most 24 options.
+  says so: `tev1:0.8b` takes at most 24 options. Ollama caps a request's text
+  and schema at 64 KiB, images excluded, and counts it itself: a request over it
+  comes back as a 413 [`SystemOneFailure`](@ref).
 - **`keep_alive`.** `keep_alive = 600` keeps the model loaded for 600 s after
-  the request, `0` unloads it at once and `Inf` keeps it loaded.
+  the request, `0` unloads it at once and `Inf` keeps it loaded. It is not part
+  of a recording's key, since it changes no answer.
 - **One request at a time.** A decision runner answers one request at a time,
   so [`ask_each`](@ref) keeps one in flight unless `ntasks` says otherwise, and
   the timeouts are the package's own, since loading a model on a CPU can take
@@ -347,6 +355,7 @@ first example came from it.
   your end user of at most 128 characters, and `prompt_cache_key`, at most 64,
   which partitions OpenAI's prompt cache ([API
   reference](https://developers.openai.com/api/reference/resources/decisions/methods/create)).
+  Neither changes an answer, so neither is part of a recording's key.
 - **Results.** `request_id` is the `x-request-id` header, and `usage` counts
   cached input tokens.
 - **Price.** Input tokens only, \$0.10 per million on `gpt-6-luna`, cached ones
@@ -367,7 +376,12 @@ first example came from it.
 every backend, and files each backend's apart: TypeSafe's under
 `/v1/systemone`, as always; Ollama's under `/ollama/v1/systemone`; OpenAI's under
 `/openai-decisions/v1/decisions`. The same question asked of two backends is two
-recordings, and a replay never answers one backend with another's answer.
+recordings, and a replay never answers one backend with another's answer. The
+options that change how a request is served but never what it is answered —
+OpenAI's `prompt_cache_key` and `safety_identifier`, Ollama's `keep_alive` — are
+left out of the key and the file; TypeSafe's `long_context` is part of the key.
+An image is recorded by its SHA-256, never its bytes: TypeSafe's as a digest of
+each image part, OpenAI's as `data:<mime>;sha256,<hex>` in place of its base64.
 Replaying needs no key and no server. Recording needs each backend's access —
 `TYPESAFE_API_KEY`, `OPENAI_API_KEY` or a running Ollama server — and a request
 with no recording throws [`ReplayMissError`](@ref), whose message says which.
@@ -384,7 +398,7 @@ jev_testing_recorded)).
   batch width per backend
 - [Test and Develop](@ref jev_testing_guide) — recorded answers and tests that
   need no key
-- [System One API](@ref system_one_api) — setup, limits and errors of each
-  backend, then every type and verb
+- [System One API (Jev, OpenAI Decisions, Ollama)](@ref system_one_api) — setup,
+  limits and errors of each backend, then every type and verb
 - [Local Models with Ollama](@ref ollama_guide) — Ollama's chat, embedding and
   model-management verbs

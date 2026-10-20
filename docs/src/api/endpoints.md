@@ -160,8 +160,9 @@ A System One backend is reached through a protocol, a Holy trait of its endpoint
 [`UniLM.system_one_protocol`](@ref UniLM.system_one_protocol) maps the endpoint
 to a [`UniLM.SystemOneProtocol`](@ref UniLM.SystemOneProtocol), whose
 [`UniLM.encode_system_one`](@ref UniLM.encode_system_one) turns a request into a
-[`UniLM.SystemOneWire`](@ref UniLM.SystemOneWire) — refusing before any I/O what
-the backend cannot carry — and whose
+[`UniLM.SystemOneWire`](@ref UniLM.SystemOneWire) — what is sent, and the
+`record_body` a recording is keyed on — refusing before any I/O what the backend
+cannot carry — and whose
 [`UniLM.decode_system_one`](@ref UniLM.decode_system_one) turns the reply into a
 typed result. Three protocols ship:
 [`UniLM.TypeSafeProtocol`](@ref UniLM.TypeSafeProtocol) (TypeSafe's

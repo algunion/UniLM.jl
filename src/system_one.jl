@@ -1024,7 +1024,7 @@ decode_system_one(p::SystemOneProtocol, service, ::SystemOneRequest, ::HTTP.Resp
 # request names when it names none: a protocol without a default needs one named.
 _system_one_default_model(p::SystemOneProtocol, service)::String = throw(ArgumentError(
     "$(_service_name(service)) has no default System One model: pass `model = …`, or set one for a scope " *
-    "with `with_system_one(service; model = …)`"))
+    "with `with_system_one(service; model = …) do … end`"))
 # What a backend's recordings are filed under, as a first path segment of the keyed
 # path. Empty keeps the path as it is (TypeSafe's recordings); any other backend's
 # requests must never replay another's answers, so the fallback is the protocol's name.

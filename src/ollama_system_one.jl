@@ -54,7 +54,7 @@ system_one_protocol(::OllamaEndpoint) = OllamaSystemOneProtocol()
 
 _system_one_default_model(::OllamaSystemOneProtocol, service)::String = throw(ArgumentError(
     "$(_service_name(service)) has no default System One model: name an installed decision model, e.g. " *
-    "`model = \"tev1:0.8b\"`, or set one for a scope with `with_system_one(OllamaEndpoint(); model = …)`"))
+    "`model = \"tev1:0.8b\"`, or set one for a scope with `with_system_one(OllamaEndpoint(); model = …) do … end`"))
 _system_one_namespace(::OllamaSystemOneProtocol)::String = "ollama"
 _allows_refusal(::OllamaSystemOneProtocol)::Bool = false
 _allows_raw(::OllamaSystemOneProtocol)::Bool = true

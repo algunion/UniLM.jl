@@ -8,7 +8,7 @@ Anthropic and DeepSeek usage is normalized to the shared shape at decode time.
 Two accessors do the work: [`token_usage`](@ref) (raw counts) and [`estimated_cost`](@ref)
 (dollars). [`Chat`](@ref) additionally keeps a running total via [`cumulative_cost`](@ref).
 
-!!! warning "The \$0 footgun"
+!!! warning "The zero-dollar footgun"
     [`estimated_cost`](@ref) returns `0.0` — with no error, only a warning logged once per
     model id — for any model that is not a key in [`DEFAULT_PRICING`](@ref) and has no
     fallback row (a dated snapshot uses its base model's row; a versioned `jev-X.Y.Z` id

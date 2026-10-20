@@ -14,7 +14,7 @@
 # order of Choice options and of the state's keys moves the answer, so a
 # reordered request is a different request. Two things in a body are replaced
 # before anything is keyed, written or reported — a credential it carries (an MCP
-# tool's token), and an image it carries as a `data:` URL, by the digest of its
+# tool's token), and every base64 `data:` URL it carries, by the digest of its
 # payload — and a System One backend keys its request without the fields that
 # change how it is served but never what it is answered.
 # ============================================================================
@@ -322,8 +322,8 @@ function _redacted(body::String)::String
     found ? JSON.json(parsed) : body
 end
 
-# An image a body carries inline, as a `data:` URL whose payload is base64 (RFC 2397) — an
-# OpenAI chat attachment, an OpenAI Decisions `input_image`: the same URL with the payload
+# Media a body carries inline (an image, a PDF, audio), as a `data:` URL whose payload is
+# base64 (RFC 2397) — an OpenAI chat attachment, an OpenAI Decisions `input_image`: the same URL with the payload
 # replaced by the hex SHA-256 of its text, `data:<mime>;sha256,<hex>`. A recording then
 # names the image it answered, and the same image keys alike, without holding its bytes.
 function _image_digest(s::AbstractString)::Union{Nothing,String}

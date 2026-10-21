@@ -804,8 +804,8 @@ OpenAI-compatible routes ignore: the context window and the other
 - `options...`: keyword arguments of [`OllamaOptions`](@ref), e.g. `num_ctx=32_768`.
   An embeddings request for EmbeddingGemma 2 (and its [`load_model`](@ref)) carries its
   trained 8,192-token window, `num_ctx` and `num_batch` 8192, unless the endpoint sets
-  either: at Ollama's default batch its llama.cpp builds refuse an input past about
-  2,037 tokens (Ollama 0.40.6).
+  either: at Ollama's default batch the llama.cpp builds measured refuse long inputs —
+  `embeddinggemma-2:740m-q8_0` anything past about 2,037 tokens (Ollama 0.40.6).
 
 No API key is sent. Local models cost nothing: [`estimated_cost`](@ref) reports `0.0`
 for a chat, embeddings, `respond` or FIM result without a missing-price warning.
@@ -1568,7 +1568,8 @@ One item for [`Embeddings`](@ref): a text, an image, a sound clip, or a text wit
 and one clip, embedded as one vector. `title` names the document a text comes from; it is used by
 the `:document` task of models with task prompts (EmbeddingGemma) and refused with any other task or model.
 Images and audio go only to an [`OllamaEndpoint`](@ref) (Ollama's `/api/embed` takes them for models
-such as `embeddinggemma-2`); a service that embeds text only refuses them before any request.
+that see or hear, such as `embeddinggemma-2:740m-q8_0`, which embedded a text with its picture or clip
+as one item on Ollama 0.40.6); a service that embeds text only refuses them before any request.
 Two items are `==` when their texts, titles and media are. An empty text beside an image or clip is
 no text: the item holds the media alone (`text === nothing`), sent with no task prompt.
 
@@ -1723,7 +1724,8 @@ Without a task an EmbeddingGemma request is an `ArgumentError`; any other model 
 or none. EmbeddingGemma's `dimensions` are 768 (default), 512, 256 or 128. Through an
 [`OllamaEndpoint`](@ref), an EmbeddingGemma 2 request carries the model's trained 8,192-token window
 (`num_ctx` and `num_batch`) unless the endpoint sets either (EmbeddingGemma v1 reads 2,048 tokens); with
-`truncate=false`, the default, a longer input is an [`EmbeddingFailure`](@ref), never a vector of part of it.
+`truncate=false`, the default, a longer input is an [`EmbeddingFailure`](@ref), never a vector of part of it
+(measured on Ollama 0.40.6 with `740m-q8_0`, `740m-mxfp8`, `270m-q8_0-text` and v1).
 
 # Example
 ```julia

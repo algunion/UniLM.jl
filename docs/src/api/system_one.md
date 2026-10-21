@@ -22,7 +22,7 @@ rules, errors and cost, then every type and verb; [`nl_classify`](@ref),
 | :--- | :--- | :--- | :--- |
 | [TypeSafe's Jev](@ref system_one_typesafe) (the default) | `TYPESAFEServiceEndpoint` | `TYPESAFE_DEFAULT_MODEL`, else `jev-latest` | `TYPESAFE_API_KEY` |
 | [OpenAI's Decisions API](@ref system_one_openai) (public beta) | `OPENAIServiceEndpoint` | `gpt-6-luna` | `OPENAI_API_KEY` |
-| [A decision model on Ollama](@ref system_one_ollama) | `OllamaEndpoint()` | none: name an installed one, e.g. `tev1:0.8b` | none |
+| [A decision model on Ollama](@ref system_one_ollama) | `OllamaEndpoint()` | none: name an installed one, e.g. `tev1:4b` (`clef-flash:9b` for pictures) | none |
 
 A call takes its backend from `service = …`; without one, from the enclosing
 [`with_system_one`](@ref) scope, which can also set the model of the calls that
@@ -367,7 +367,9 @@ UniLM.OpenAIDecisionsProtocol
 An [`OllamaEndpoint`](@ref) answers System One requests from a local decision
 model — Tev1, Nimble, Kev, Clef and the others Ollama lists as [decision
 models](https://ollama.com/search?c=decision) — through Ollama's
-TypeSafe-compatible route `POST /v1/systemone` (Ollama 0.35 or later). The
+TypeSafe-compatible route `POST /v1/systemone`: Ollama 0.35 or later, 0.35.1 or
+later for pictures, and 0.40.0 or later for the MLX builds of Tev1 and Clef Flash
+used below; what this section reports was measured on 0.40.6. The
 verbs, the questions and the result types are the ones below; no key is sent and
 nothing is billed. Start the server and pull the decision models first: the
 example below uses `tev1:4b`, `clef-flash:9b` (a vision model, for pictures) and

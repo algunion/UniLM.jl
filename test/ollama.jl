@@ -567,6 +567,44 @@ end
     end
 end
 
+# Refuted if: a cloud model's respond or FIM result is priced 0.0 as a local call, or without the missing-price
+# warning, because its reply drops the tag. Ollama's cloud proxy sends the cloud the name without its cloud tag
+# and passes the reply through (server/cloud_proxy.go of Ollama 0.40.6), so the reply names `gpt-oss:120b`.
+@testset "a cloud model keeps its requested name on respond and FIM results, so it is priced" begin
+    obj = Dict("id" => "resp_1", "object" => "response", "status" => "completed", "model" => "gpt-oss:120b",
+        "output" => [Dict("type" => "message", "role" => "assistant",
+                          "content" => [Dict("type" => "output_text", "text" => "Bonjour")])],
+        "usage" => Dict("input_tokens" => 5, "output_tokens" => 1, "total_tokens" => 6))
+    fim = JSON.json(Dict("id" => "cmpl-1", "object" => "text_completion", "model" => "gpt-oss:120b",
+        "choices" => [Dict("text" => "a + b", "index" => 0, "finish_reason" => "stop")],
+        "usage" => Dict("prompt_tokens" => 10, "completion_tokens" => 3, "total_tokens" => 13)))
+    sse(type, d) = "event: $type\ndata: $(JSON.json(merge(Dict{String,Any}("type" => type), d)))\n\n"
+    server, url, _ = _ollama_mock((n, body) -> occursin("\"prompt\"", body) ? (200, [fim]) :
+        occursin("\"stream\":true", body) ? (200, [sse("response.completed", Dict("response" => obj))]) :
+        (200, [JSON.json(obj)]))
+    try
+        ep = OllamaEndpoint(base_url=url)
+        table = Dict("gpt-oss:120b-cloud" => UniLM._price(1.0, 0.1, 2.0))
+        r = respond(Respond(service=ep, model="gpt-oss:120b-cloud", input="Say hello in French."))
+        @test r isa ResponseSuccess && r.response.model == "gpt-oss:120b-cloud" && r.response.raw["model"] == "gpt-oss:120b"
+        @test (@test_logs (:warn, r"no price row") estimated_cost(r)) == 0.0     # unpriced: warned, never free as local
+        @test (@test_logs estimated_cost(r; pricing=table)) ≈ 5 * 1e-6 + 1 * 2e-6
+        s = fetch(respond(Respond(service=ep, model="gpt-oss:120b-cloud", input="Say hello in French.", stream=true)))
+        @test s isa ResponseSuccess && s.response.model == "gpt-oss:120b-cloud" && s.response.raw["model"] == "gpt-oss:120b"
+        @test (@test_logs estimated_cost(s; pricing=table)) ≈ 5 * 1e-6 + 1 * 2e-6
+        f = fim_complete(FIMCompletion(service=ep, model="gpt-oss:120b-cloud", prompt="def add(a, b):\n    return ",
+                                       suffix="\n", max_tokens=8))
+        @test f isa FIMSuccess && f.response.model == "gpt-oss:120b-cloud" && f.response.raw["model"] == "gpt-oss:120b"
+        @test (@test_logs (:warn, r"no price row") estimated_cost(f)) == 0.0
+        @test (@test_logs estimated_cost(f; pricing=table)) ≈ 10 * 1e-6 + 3 * 2e-6
+        # A local model answered under another name keeps the server's name, and stays free.
+        l = respond(Respond(service=ep, model="gpt-oss", input="Say hello in French."))
+        @test l isa ResponseSuccess && l.response.model == "gpt-oss:120b" && (@test_logs estimated_cost(l)) == 0.0
+    finally
+        close(server)
+    end
+end
+
 @testset "a streamed respond and a fetched response record their endpoint" begin
     obj = Dict("id" => "resp_1", "object" => "response", "status" => "completed", "model" => "gemma4:e4b",
         "output" => [Dict("type" => "message", "role" => "assistant",
@@ -628,6 +666,14 @@ end
         method, target, body = seen[]
         @test (method, target) == ("POST", "/v1/responses/compact")
         @test JSON.parse(body)["model"] == "gemma4:e4b" && only(JSON.parse(body)["input"])["content"] == "My name is Ada."
+        # Ollama has no default model: a call naming none is refused before any request, in Chat's words. Another
+        # service keeps the OpenAI default.
+        seen[] = nothing
+        e = try compact_response(input="hi", service=OllamaEndpoint(base_url="http://127.0.0.1:$port")); nothing catch x; x end
+        chat = try Chat(service=OllamaEndpoint(base_url="http://127.0.0.1:$port")); nothing catch x; x end
+        @test e isa ArgumentError && e.msg == chat.msg && occursin("list_models", e.msg) && isnothing(seen[])
+        compact_response(input="hi", service=GenericOpenAIEndpoint("http://127.0.0.1:$port", ""))
+        @test JSON.parse(seen[][3])["model"] == "gpt-5.6-sol"
     finally
         close(server)
     end
@@ -643,7 +689,8 @@ end
     for (kw, fragment) in (((temperature=0.2,), "runs at temperature 0 and takes no `temperature`"),
                            ((languages=["en"],), "takes one `language`"),
                            ((keywords=["banana"],), "takes no `keywords`"),
-                           ((response_format="srt",), "\"json\" or \"text\" (got \"srt\")"))
+                           ((response_format="text",), "read the text with transcript_text"),
+                           ((response_format="srt",), "JSON only (got \"srt\")"))
         e = refusal(() -> transcribe(wav; service=off, model="gemma4:e4b", kw...))
         @test e isa ArgumentError && occursin(fragment, e.msg)
     end
@@ -672,7 +719,7 @@ end
     # runs (as _ollama_mock does); the reply is `{"text": …}` unless response_format is "text".
     wav = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")
     reply = "{\"text\":\"The secret word is banana\"}\n"
-    server, url, _ = _ollama_mock((n, body) -> (200, [n == 3 ? "The secret word is banana" : reply]))
+    server, url, bodies = _ollama_mock((n, body) -> (200, [n == 3 ? "" : reply]))
     try
         ep = OllamaEndpoint(base_url=url)
         for fmt in (nothing, "json")
@@ -680,8 +727,13 @@ end
             @test r isa TranscriptionSuccess && transcript_text(r) == "The secret word is banana"
             @test r.raw == Dict("text" => "The secret word is banana")
         end
-        r = transcribe(wav; service=ep, model="gemma4:e4b", response_format="text")
-        @test r isa TranscriptionSuccess && transcript_text(r) == "The secret word is banana" && isnothing(r.raw)
+        # A failure after Ollama has begun its reply leaves the 200 body empty (its TranscriptionWriter writes
+        # only when the chat stream reports done): JSON reports it, so "text", which would read it as an empty
+        # transcript, is refused before any request.
+        e = try transcribe(wav; service=ep, model="gemma4:e4b", response_format="text"); nothing catch x; x end
+        @test e isa ArgumentError && occursin("transcript_text", e.msg) && length(bodies) == 2
+        r = transcribe(wav; service=ep, model="gemma4:e4b")
+        @test r isa AudioCallError && length(bodies) == 3
     finally
         close(server)
     end

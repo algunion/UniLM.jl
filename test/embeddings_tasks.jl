@@ -194,6 +194,36 @@ end
     @test JSON.parse(JSON.json(Embeddings("")))["input"] == "" && Embeddings(["", "a"]).input == ["", "a"]  # strings: as before
 end
 
+# Refuted if: an item holding both an image and a sound clip reaches Ollama, which reads an item's fields in
+# Go map order, at random: measured on Ollama 0.40.6, ten requests of one such item to
+# embeddinggemma-2:740m-q8_0 gave two different vectors (largest |Δ| 0.018), so the same input embeds
+# differently from one request to the next.
+@testset "an item holding both an image and a sound clip is refused for Ollama before any request" begin
+    both = EmbeddingInput("caption", _ET_IMG, _ET_WAV)
+    off = OllamaEndpoint(base_url="http://127.0.0.1:1")         # I/O would return a call error, not throw
+    for input in (both, [EmbeddingInput("a"), both], EmbeddingInput(; image=_ET_IMG, audio=_ET_WAV))
+        e = _et_err(() -> embeddingrequest!(Embeddings(input; service=off, model=_ET_EG, task=:document)))
+        @test e isa ArgumentError && occursin("send the image and the audio as separate items", e.msg)
+    end
+    # Each medium in an item of its own is sent.
+    @test _et_body(Embeddings([EmbeddingInput("caption", _ET_IMG), _ET_WAV]; service=_ET_EP, model=_ET_EG,
+                              task=:document))["input"][2] == Dict("audio" => UniLM.Base64.base64encode(_ET_WAV.data))
+end
+
+# Refuted if: an empty or whitespace-only title is kept, so `task = :document` sends "title:  | text: …"
+# where the model card's prompt for a document without a title is "title: none | text: …".
+@testset "a blank title is no title: the document is sent as the model card's untitled one" begin
+    for t in ("", "   ", "\t\n")
+        x = EmbeddingInput("Shipping is free."; title=t)
+        @test isnothing(x.title) && x == EmbeddingInput("Shipping is free.")
+        @test _et_body(Embeddings([x]; service=_ET_EP, model=_ET_EG, task=:document))["input"] ==
+              ["title: none | text: Shipping is free."]
+    end
+    # No title, so no title rule applies: another task takes the item, and media need no text.
+    @test Embeddings(EmbeddingInput("x"; title=" "); service=_ET_EP, model=_ET_EG, task=:search_query) isa Embeddings
+    @test isnothing(EmbeddingInput(; title="", image=_ET_IMG).title)
+end
+
 @testset "driver: a media embedding records by digest and replays offline; a 400 stays a failure" begin
     server, url, bodies = _ollama_mock((n, body) -> n == 1 ?
         (200, [JSON.json(Dict("model" => _ET_EG, "embeddings" => [[0.6, 0.8]], "prompt_eval_count" => 3))]) :

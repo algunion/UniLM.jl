@@ -670,7 +670,9 @@ omitted, so the model's own defaults apply. Options `Chat` already names
 (`temperature`, `top_p`, `seed`, `stop`, `max_tokens`, `presence_penalty`,
 `frequency_penalty`) stay on the `Chat`, so no option can be set in two places.
 
-- `num_ctx`: context window in tokens. Ollama loads the model with this window. On the
+- `num_ctx`: context window in tokens. Ollama loads the model with this window; a model with
+  vision gets at least 2,048 tokens (`embeddinggemma-2:740m-q8_0` asked for 1,024 loaded with
+  2,048 on Ollama 0.40.6 and 0.40.7; Ollama's server/sched.go). On the
   llama.cpp and ggml runners a request with another `num_ctx` reloads the model, and a
   prompt longer than the window is refused (HTTP 400) unless `truncate=true`; on the MLX
   runner (Apple Silicon) the window applies when the model is loaded, a loaded model
@@ -773,10 +775,10 @@ A local (or remote) [Ollama](https://ollama.com) server. Chat and [`Embeddings`]
 requests use Ollama's native `/api/chat` and `/api/embed`, which carry what the
 OpenAI-compatible routes ignore: the context window and the other
 [`OllamaOptions`](@ref), how long the model stays loaded (`keep_alive`), and the
-`think` and `truncate` fields. [`respond`](@ref), [`FIMCompletion`](@ref) and
-[`transcribe`](@ref) use the OpenAI-compatible routes (`/v1/responses`, `/v1/completions`,
-`/v1/audio/transcriptions`), which carry none of the endpoint's `keep_alive`,
-[`OllamaOptions`](@ref) or `runner`.
+`think` and `truncate` fields. [`respond`](@ref), [`compact_response`](@ref),
+[`FIMCompletion`](@ref) and [`transcribe`](@ref) use the OpenAI-compatible routes
+(`/v1/responses`, `/v1/responses/compact`, `/v1/completions`, `/v1/audio/transcriptions`),
+which carry none of the endpoint's `keep_alive`, [`OllamaOptions`](@ref) or `runner`.
 
 - `base_url`: server root, without `/v1` or `/api`. Defaults to the `OLLAMA_HOST`
   environment variable, read with the rules of Ollama's own clients (`"gpu-box"` →
@@ -796,11 +798,23 @@ OpenAI-compatible routes ignore: the context window and the other
 - `shift`: whether generation that fills the context window may continue by dropping
   earlier context (`nothing`: the server's default, on). `false` ends such a reply with
   finish reason `"length"`. Ollama reloads the model when this changes.
-- `runner`: which runner serves the model when the server can run it more than one way — `:mlx`
-  (Apple Silicon), `:llamacpp` or `:ggml`; `nothing` (the default) leaves the choice to the server. Sent
-  with chat, embeddings, System One, [`load_model`](@ref) and [`unload_model`](@ref) requests; the
-  OpenAI-compatible routes ([`respond`](@ref), FIM, transcription) take none. The runner changes how a
-  model is loaded and its numerics: see [Local Models with Ollama](@ref ollama_guide).
+- `runner`: the runner to serve a model with — `:mlx` (Apple Silicon), `:llamacpp` or `:ggml`;
+  `nothing` (the default) leaves the choice to the server. Ollama matches it against the runner the
+  model's manifest names, the one [`list_models`](@ref) reports as `OllamaModel.runner`. A model
+  published for several runners is served by its variant for the one pinned (by Ollama's source;
+  untested). A model published for one — every model measured — answers as if unpinned when that runner
+  is pinned, and any other is the server's error, never a fallback: HTTP 400 `no compatible manifest
+  found for runners: <runner>` (404 from [`model_info`](@ref), and so from [`load_model`](@ref)),
+  even while the model is loaded (Ollama 0.40.6: `:llamacpp` on `kev:0.8b-q8_0` answered and
+  [`running_models`](@ref) reported `:llamacpp`; `:mlx` and `:ggml` on it, and `:llamacpp` on
+  `tev1:0.8b`, were that 400). Pin the runner the listing names, not the one `running_models`
+  reports: a GGUF model listed as `:ggml` (`qwen2.5-coder:1.5b-base`, `embeddinggemma:latest`) answers
+  pinned to `:ggml`, is served by llama.cpp, and is the 400 pinned to `:llamacpp`. The pin goes with
+  every request of the endpoint, so a pinned endpoint fails for each model without a variant for its
+  runner. Sent with chat, embeddings, System One, [`model_info`](@ref), [`load_model`](@ref),
+  [`unload_model`](@ref) and [`pull_model`](@ref) requests; [`delete_model`](@ref), the listings and
+  the OpenAI-compatible routes ([`respond`](@ref), [`compact_response`](@ref), FIM, transcription)
+  take none.
 - `options...`: keyword arguments of [`OllamaOptions`](@ref), e.g. `num_ctx=32_768`.
   An embeddings request for EmbeddingGemma 2 (and its [`load_model`](@ref)) carries its
   trained 8,192-token window, `num_ctx` and `num_batch` 8192, unless the endpoint sets
@@ -810,8 +824,12 @@ OpenAI-compatible routes ignore: the context window and the other
 No API key is sent. Local models cost nothing: [`estimated_cost`](@ref) reports `0.0`
 for a chat, embeddings, `respond` or FIM result without a missing-price warning.
 A cloud model reached through the local server — a model whose tag is `cloud` or ends in
-`-cloud` (`clef:cloud`, `gpt-oss:120b-cloud`) — is billed by Ollama and is priced by its
-name like any other model.
+`-cloud` (`clef:cloud`, `gpt-oss:120b-cloud`) — is billed by Ollama and is priced by the
+name requested, never as a free local call: a result whose reply drops the tag
+(`gpt-oss:120b`) keeps the requested name, and the server's stays in its `raw`; a name
+missing from the price table logs the missing-price warning. A model is recognised as
+cloud by that tag alone, so a cloud model copied under a name without it (`ollama cp`)
+is priced as local, at `0.0`.
 
 ```julia
 ollama = OllamaEndpoint(num_ctx=32_768, keep_alive=600)
@@ -1564,14 +1582,20 @@ const GPTTextEmbedding3Small = Model("text-embedding-3-small")
     EmbeddingInput(text, media...)
     EmbeddingInput(; text=nothing, title=nothing, image=nothing, audio=nothing)
 
-One item for [`Embeddings`](@ref): a text, an image, a sound clip, or a text with at most one image
-and one clip, embedded as one vector. `title` names the document a text comes from; it is used by
-the `:document` task of models with task prompts (EmbeddingGemma) and refused with any other task or model.
-Images and audio go only to an [`OllamaEndpoint`](@ref) (Ollama's `/api/embed` takes them for models
-that see or hear, such as `embeddinggemma-2:740m-q8_0`, which embedded a text with its picture or clip
-as one item on Ollama 0.40.6); a service that embeds text only refuses them before any request.
+One item for [`Embeddings`](@ref), embedded as one vector: a text, an image, a sound clip, or a text
+with an image or a sound clip — one of them per item on an [`OllamaEndpoint`](@ref), which refuses an
+item holding both before any request; a service that embeds text only refuses media. `title` names the
+document a text comes from; it is used by the `:document` task of models with task prompts
+(EmbeddingGemma) and refused with any other task or model. Images and audio go only to an
+`OllamaEndpoint` (Ollama's `/api/embed` takes them for models that see or hear, such as
+`embeddinggemma-2:740m-q8_0`, which embedded a text with its picture or clip as one item on Ollama
+0.40.6). Ollama passes an item's image and clip to the model in a random order, which is why an item
+holding both is refused (on Ollama 0.40.6, ten requests of one such item to `embeddinggemma-2:740m-q8_0`
+gave two different vectors): send the image and the audio as separate items.
 Two items are `==` when their texts, titles and media are. An empty text beside an image or clip is
-no text: the item holds the media alone (`text === nothing`), sent with no task prompt.
+no text: the item holds the media alone (`text === nothing`), sent with no task prompt. An empty or
+whitespace-only title is no title (`title === nothing`): with `task = :document` the text is sent as
+`"title: none | text: …"`, the model card's prompt for a document without one.
 
 Throws `ArgumentError` for an item with nothing to embed (no image or clip, and no text or an empty
 one), a `title` without a non-empty text, more than one image or clip, or an attachment of any other kind.
@@ -1590,11 +1614,13 @@ struct EmbeddingInput
                             image::Union{ImageAttachment,Nothing}, audio::Union{AudioAttachment,Nothing})
         # An empty text is none: beside media the item is the media alone, sent with no bare task prompt.
         t = isnothing(text) || isempty(text) ? nothing : String(text)
+        # A blank title is none too: the document is sent as the model card's untitled one ("title: none").
+        h = isnothing(title) || isempty(strip(title)) ? nothing : String(title)
         isnothing(t) && isnothing(image) && isnothing(audio) && throw(ArgumentError(
             "an EmbeddingInput needs a non-empty text, an image or a sound clip to embed"))
-        isnothing(title) || !isnothing(t) || throw(ArgumentError(
+        isnothing(h) || !isnothing(t) || throw(ArgumentError(
             "an EmbeddingInput's title names the document its text comes from: give it a non-empty text too"))
-        new(t, isnothing(title) ? nothing : String(title), image, audio)
+        new(t, h, image, audio)
     end
 end
 EmbeddingInput(; text=nothing, title=nothing, image=nothing, audio=nothing) = EmbeddingInput(text, title, image, audio)
@@ -1824,8 +1850,12 @@ update!(emb::Embeddings, data::AbstractVector) = _fill_embeddings!(emb.embedding
 function _fill_embeddings!(dst::Vector{Float64}, data::AbstractVector)
     length(data) == 1 || throw(ArgumentError(
         "embeddings response carries $(length(data)) rows for 1 input"))
-    _store_embedding!(dst, _checked_embedding(data[1]["embedding"], 0))
+    _store_embedding!(dst, _checked_embedding(_row_field(data[1], "embedding"), 0))
 end
+
+# A field of a reply row; a row that is not a JSON object has none, so it gets the row-named refusal of
+# a missing field.
+_row_field(item, key::String) = item isa AbstractDict ? get(item, key, nothing) : nothing
 
 function _fill_embeddings!(dst::Vector{Vector{Float64}}, data::AbstractVector)
     n = length(dst)
@@ -1833,7 +1863,7 @@ function _fill_embeddings!(dst::Vector{Vector{Float64}}, data::AbstractVector)
         "embeddings response carries $(length(data)) rows for $n inputs"))
     seen = falses(n)
     for item in data
-        i = item["index"]
+        i = _row_field(item, "index")
         # A JSON true parses as a `Bool`, which is an `Integer` in Julia: it is no row index.
         i isa Integer && !(i isa Bool) || throw(ArgumentError(
             "embeddings response row index $(repr(i)) is not an integer"))
@@ -1843,7 +1873,7 @@ function _fill_embeddings!(dst::Vector{Vector{Float64}}, data::AbstractVector)
         seen[idx] && throw(ArgumentError(
             "embeddings response repeats row index $i"))
         seen[idx] = true
-        _checked_embedding(item["embedding"], i)
+        _checked_embedding(_row_field(item, "embedding"), i)
     end
     # Every row is checked before any is stored, so a refused reply leaves the buffers as they were.
     for item in data

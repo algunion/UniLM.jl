@@ -3,9 +3,10 @@
 # (`/api/chat`, `/api/embed`): it is the only one that takes the runtime `options`
 # (context window, sampling knobs), `keep_alive`, `think` and `truncate`; the
 # OpenAI-compatible routes accept and ignore them, and truncate over-long input
-# without a word. `respond`, FIM and transcription keep the OpenAI-compatible routes
-# (`/v1/responses`, `/v1/completions`, `/v1/audio/transcriptions`), which carry none of
-# the endpoint's `keep_alive`, `options` or `runner`.
+# without a word. `respond`, compaction, FIM and transcription keep the OpenAI-compatible
+# routes (`/v1/responses`, `/v1/responses/compact`, `/v1/completions`,
+# `/v1/audio/transcriptions`), which carry none of the endpoint's `keep_alive`, `options`
+# or `runner`.
 # ============================================================================
 
 get_url(s::OllamaEndpoint, ::Chat)::String = s.base_url * OLLAMA_CHAT_PATH
@@ -21,20 +22,36 @@ provider_capabilities(::OllamaEndpoint) =
 
 _model_hint(::OllamaEndpoint) =
     " (an installed model, e.g. model=\"gemma4:e4b\"; list_models(service=OllamaEndpoint()) lists them)"
+# Ollama has no default model: a compaction that names none is refused before any request, as a Chat is.
+_compaction_model(s::OllamaEndpoint)::String = _resolve_model(s, "")
 
 # A model on the caller's own machine is free. A cloud model reached through the local server
 # (a tag of `cloud`, or one ending in `-cloud`, such as `clef:cloud` or `gpt-oss:120b-cloud`) runs on
-# Ollama's servers and bills its account: it is priced by name like any other model. As in Ollama's
-# own name parser, the tag follows the last ':' only when no '/' comes after it (in
-# `localhost:5000/library/clef-cloud` that ':' starts a registry port, and the tag is the default
-# `latest`), and Ollama compares names case-insensitively (`GEMMA4:E4B` is `gemma4:e4b`).
-function _ollama_cloud_model(model::AbstractString)::Bool
+# Ollama's servers and bills its account: it is priced by the name requested, like any other model. As
+# in Ollama's own name parser, surrounding whitespace is trimmed, the tag follows the last ':' only when
+# no '/' comes after it (in `localhost:5000/library/clef-cloud` that ':' starts a registry port, and the
+# tag is the default `latest`), and Ollama compares names case-insensitively (`GEMMA4:E4B` is `gemma4:e4b`).
+function _ollama_cloud_model(name::AbstractString)::Bool
+    model = strip(name)
     i = findlast(':', model)
     (isnothing(i) || something(findlast('/', model), 0) > i) && return false
     tag = lowercase(model[nextind(model, i):end])
     tag == "cloud" || endswith(tag, "-cloud")
 end
 _is_local(::OllamaEndpoint, model::AbstractString) = !_ollama_cloud_model(model)
+
+# A cloud model may answer without its tag: Ollama's cloud proxy sends the cloud the name stripped of its
+# cloud tag (`gpt-oss:120b` for `gpt-oss:120b-cloud`) and passes the reply through. A result keeps the
+# requested name, so it is priced as the cloud model it is; the server's name stays in its `raw`. A
+# request that named no model has no name to keep.
+_ollama_billed_model(requested::Union{AbstractString,Nothing}, replied::AbstractString)::String =
+    !isnothing(requested) && _ollama_cloud_model(requested) && !_ollama_cloud_model(replied) ?
+        String(requested) : String(replied)
+_billed_response(::OllamaEndpoint, requested::AbstractString, x::ResponseObject) =
+    (m = _ollama_billed_model(requested, x.model); m == x.model ? x :
+     ResponseObject(x.id, x.status, m, x.output, x.usage, x.error, x.metadata, x.raw))
+_billed_response(::OllamaEndpoint, requested::AbstractString, x::FIMResponse) =
+    (m = _ollama_billed_model(requested, x.model); m == x.model ? x : FIMResponse(x.choices, x.usage, m, x.raw))
 
 # ─── Chat request (neutral Chat → /api/chat body) ───────────────────────────
 
@@ -364,9 +381,15 @@ end
 # ─── Embeddings (/api/embed) ────────────────────────────────────────────────
 
 # One /api/embed input item: a (prompted) text as a string; with media, an object whose image and
-# audio are bare base64 — or, for a recording's key, their digests.
+# audio are bare base64 — or, for a recording's key, their digests. Ollama reads an item's fields in Go map
+# order, which is random, and passes its media to the model in that order, so an item holding both an image
+# and a sound clip embeds differently from one request to the next (Ollama 0.40.6: two vectors in ten
+# requests to embeddinggemma-2:740m-q8_0, largest |Δ| 0.018); it is refused before any request.
 _ollama_embed_item(emb, x::String, ::Bool) = _prompted(emb.task, x, nothing)
 function _ollama_embed_item(emb, x::EmbeddingInput, digest::Bool)
+    isnothing(x.image) || isnothing(x.audio) || throw(ArgumentError(
+        "Ollama passes an item's image and sound clip to the model in a random order, so an item holding both " *
+        "embeds differently from one request to the next: send the image and the audio as separate items"))
     text = isnothing(x.text) ? nothing : _prompted(emb.task, x.text, x.title)
     _item_media(x) || return text
     d = Dict{String,Any}()

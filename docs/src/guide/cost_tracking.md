@@ -184,9 +184,10 @@ hit the same `0.0` behavior — supply `pricing=` for them too. Chat, embeddings
 `0.0` without a warning; pass `model=` to price one as if it had run elsewhere. A
 cloud model reached through Ollama — a tag of `cloud`, or one ending in `-cloud`,
 such as `gpt-oss:120b-cloud` — runs on Ollama's servers and is priced by the
-requested name, like any other model, not as a free local call. UniLM knows a cloud
-model by that name alone: one copied under a name without the tag (`ollama cp`) is
-priced as local, at `0.0` with no warning.
+requested name, like any other model, never as a free local call: its `respond` and
+FIM results too, whose reply may drop the tag ([Local Models with
+Ollama](@ref ollama_first) says how a cloud model is recognised, and where that
+fails).
 
 ## System One (TypeSafe Jev) is input-only
 

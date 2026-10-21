@@ -136,7 +136,7 @@ it: a model belongs to its backend, and `tev1:0.8b` means nothing to TypeSafe.
 | Credentials | `TYPESAFE_API_KEY` | `OPENAI_API_KEY` | none |
 | Model when a call names none | `TYPESAFE_DEFAULT_MODEL`, else `jev-latest` | `gpt-6-luna`, the only one | none: name an installed decision model, such as `tev1:4b` (`clef-flash:9b` for pictures) |
 | Questions | Choice, Score, Noul, Box | Choice, Score, Noul | Choice, Score, Noul |
-| Limits | 1–255 options, 1–10 levels; 64k tokens per request | 2–255 options, 2–10 levels, 200 questions | 2–255 options, 2–10 levels, 64 questions; a model may take fewer ([What a model takes](@ref backends_ollama_limits)) |
+| Limits | 1–255 options, 1–10 levels; 64k tokens per request | 2–255 options, 2–10 levels, 200 questions | 1–255 options, 2–10 levels, 64 questions; a model may take fewer ([What a model takes](@ref backends_ollama_limits)) |
 | Guidance | strings, objects, arrays and images, anywhere | strings; `instructions` on every question; no Noul `yes`/`no` | strings, objects or arrays as `instructions`, when given; strings elsewhere |
 | Images | anywhere in the request; experimental | in the state only | in the state, before its texts; vision models only |
 | Box | Jev 1.14 or later | refused | refused |
@@ -336,31 +336,41 @@ confidence of 0.991, and gave "Is the shape round?" a probability of 0.945.
 
 ### [What a model takes](@id backends_ollama_limits)
 
-[`ask`](@ref) checks, before sending, what Ollama's route takes from every model:
-1–64 questions; 2–255 options per Choice, each described by a string or `nothing`;
-2–10 levels per Score, each a string; Noul criteria that are strings;
-`instructions`, when given, a string, an object or an array; a text state that is
-not blank, unless images come with it. Box questions are refused: the route answers
-Choice, Score and Noul. UniLM adds one refusal of its own: blank (whitespace-only)
-`instructions`, which Ollama would read as none. A model may take less, and says
-so with its own HTTP 400, which comes back as a [`SystemOneFailure`](@ref) carrying
-Ollama's message:
+[`ask`](@ref) refuses, before sending, what Ollama's route refuses in its shared
+checks or documents as its maximum (Ollama 0.40.6): more than 64 questions; a Choice
+of more than 255 options; a Score of fewer than 2 or more than 10 levels; a blank
+text state without images; a Box question, which Ollama does not answer. It also
+refuses what Ollama's API reference does not list, though some models read it:
+`instructions` given as anything but a string, an object or an array; an option
+described by anything but a string or `nothing`; a Score level or a Noul criterion
+that is not a string (`kev:0.8b-q8_0` and `d1:3b`, on the llama.cpp path, answered
+an option described by an object, and `tev1:0.8b` refused it) — and, a rule of
+UniLM's own, blank (whitespace-only) `instructions`, which Ollama would read as
+none. By Ollama's source, a Kev model on Ollama's own runner (such as
+`kev:0.8b-mxfp8`) skips the shared checks and takes 1 to 255 levels and a blank
+state; that is untested. A model may take less, and says so with its own HTTP 400,
+which comes back as a [`SystemOneFailure`](@ref) carrying Ollama's message (each
+begins with the question's name, `question "pick": …`). A Choice of one option is
+sent too:
 
-| Model | Runner | Options per Choice | 27 options came back as |
-| :--- | :--- | :--- | :--- |
-| `tev1:0.8b`, `tev1:4b` | MLX | at most 24 | 400 `criteria must contain 2–26 candidates` (26: 400 `Tev1 supports at most 24 candidates`) |
-| `nimble:9b`, `clef-flash:9b` | MLX | at most 26 | 400 `criteria must contain 2–26 candidates` |
-| `strands-decider:2b` | MLX | 27 measured | an answer |
-| `kev:0.8b-q8_0`, `kev:9b-q4_K_M`, `d1:3b`, `d1-omni:600m` | llama.cpp | 27 measured | an answer |
+| Model | Runner | Options per Choice | One option came back as | 27 options came back as |
+| :--- | :--- | :--- | :--- | :--- |
+| `tev1:0.8b`, `tev1:4b` | MLX | 2 to 24 | 400 `criteria must contain 2–26 candidates` | 400 `criteria must contain 2–26 candidates` (26: 400 `Tev1 supports at most 24 candidates`) |
+| `nimble:9b`, `clef-flash:9b` | MLX | 2 to 26 | 400 `criteria must contain 2–26 candidates` | 400 `criteria must contain 2–26 candidates` |
+| `strands-decider:2b` | MLX | 2 to 27 measured | 400 `criteria must contain 2–255 candidates` | an answer |
+| `kev:0.8b-q8_0`, `kev:9b-q4_K_M`, `d1:3b`, `d1-omni:600m` | llama.cpp | 1 to 27 measured | an answer, `{"a": 1.0}` | an answer |
 
 The route accepts a question without `instructions`, but most models do not:
 `tev1:4b`, `nimble:9b` and `strands-decider:2b` answered 400 `instructions must be a
 nonempty string, object, or array`, `kev:0.8b-q8_0` 400 `questions.intent:
 "instructions" must be provided` (for a question named `intent`), and of the five
 tried only `clef-flash:9b` answered — so pass `instructions` with local models.
-Measured with Ollama 0.40.6 on an Apple M4 Max on 21 October 2026. Ollama also
-caps a request's text and schema, images excluded, at 64 KiB by its own count: a
-request over it comes back as a 413 [`SystemOneFailure`](@ref).
+Ollama also caps a request's text and schema, images excluded, at 64 KiB for the
+models measured: a 76,284-byte state came back as a 413 [`SystemOneFailure`](@ref),
+`text and schema must not exceed 64 KiB`, from `kev:0.8b-q8_0` (the installed GGUF
+Kev), `d1-omni:600m` and `tev1:0.8b`. By Ollama's source, a Kev model on Ollama's
+own runner gets 1 MiB instead (untested). UniLM does not check the cap. Measured
+with Ollama 0.40.6 on an Apple M4 Max on 21 October 2026.
 
 ### [Which model](@id backends_ollama_models)
 
@@ -419,9 +429,13 @@ server's reply to the same bytes, on all nine.
 - **`keep_alive`.** `keep_alive = 600` keeps the model loaded for 600 s after
   the request, `0` unloads it at once and `Inf` keeps it loaded. It is not part
   of a recording's key, since it changes no answer.
-- **`runner`.** An endpoint's `runner` (`OllamaEndpoint(runner = :llamacpp)`)
-  goes with each request, and is part of a recording's key: another runner can
-  answer with other probabilities.
+- **`runner`.** Leave it unset, or pin per model the runner its listing names
+  (`OllamaModel.runner`): `OllamaEndpoint(runner = :llamacpp)` with
+  `model = "kev:0.8b-q8_0"`. A runner the model has no variant for is the server's
+  HTTP 400 `no compatible manifest found for runners: <runner>`, never a fallback —
+  on Ollama 0.40.6, every runner but the listed one on each of the nine models
+  measured here — and the pin goes with every request of the endpoint
+  ([Runners](@ref ollama_runners)). It is part of a recording's key.
 - **One request at a time.** A decision runner answers one request at a time,
   so [`ask_each`](@ref) keeps one in flight unless `ntasks` says otherwise, and
   the timeouts are the package's own, since loading a model on a CPU can take
@@ -445,7 +459,7 @@ server's reply to the same bytes, on all nine.
 - Pick the model for the job — a small one where speed matters, `tev1:4b` where
   accuracy does, a vision model for pictures — and measure it on labelled
   messages of your own before you rely on it, as you would a hosted one.
-- Give every question `instructions` and keep a Choice to 24 options: then no
+- Give every question `instructions` and keep a Choice to 2–24 options: then no
   model measured here refuses a request for its questions (pictures need a vision
   model).
 - Tune `min_confidence` per model: the same threshold hands a different share of

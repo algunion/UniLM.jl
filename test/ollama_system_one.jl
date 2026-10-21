@@ -242,7 +242,7 @@ struct _Os1Odd <: SystemOneQuestion end
             "another scope's model" => (() -> with_system_one(() -> ask("s", q; service=ep), TYPESAFEServiceEndpoint;
                                                               model="jev-1.13.0"), "no default System One model"),
             "65 questions"          => (a("s", ["q$i" => q for i in 1:65]), "at most 64 questions"),
-            "blank instructions"    => (a("s", choice("  ", ["a", "b"])), "are blank"),
+            "blank instructions"    => (a("s", choice("  ", ["a", "b"])), "are blank: say what it asks (most local decision models require instructions)"),
             "image instructions"    => (a("s", score(img, ["low", "high"])), "as a string, object or array"),
             "object description"    => (a("s", choice("Which?", ["a" => Dict("d" => "A"), "b" => nothing])), "string or `nothing`"),
             "tuple description"     => (a("s", choice("Which?", (a=(d="A",), b="B"))), "string or `nothing`"),
@@ -264,6 +264,8 @@ struct _Os1Odd <: SystemOneQuestion end
             e = _os1_caught(f)
             @test e isa ArgumentError && contains(e.msg, needle)
         end
+        # Passing none is no fix: most local decision models answer a question without instructions with a 400.
+        @test !contains(_os1_caught(a("s", choice("  ", ["a", "b"]))).msg, "pass none")
         @test isempty(seen)                               # nothing reached the server
         # What the route leaves to the model is sent: the mock's models, like the generic MLX
         # encoder, require `instructions` and take 2–26 options, and say so in their own 400.

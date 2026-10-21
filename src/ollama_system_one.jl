@@ -117,7 +117,8 @@ const _OLLAMA_MAX_LEVELS = 10
 function _ollama_instructions(name::String, instructions)::Nothing
     isnothing(instructions) && return nothing
     instructions isa AbstractString && isempty(strip(instructions)) && throw(ArgumentError(
-        "Ollama reads blank `instructions` as none; those of $(repr(name)) are blank: say what it asks, or pass none"))
+        "Ollama reads blank `instructions` as none; those of $(repr(name)) are blank: say what it asks " *
+        "(most local decision models require instructions)"))
     instructions isa Union{AbstractString,AbstractDict,AbstractVector,NamedTuple} || throw(ArgumentError(
         "Ollama reads `instructions` as a string, object or array; $(repr(name)) has $(typeof(instructions))"))
     nothing

@@ -1,7 +1,8 @@
 # Ollama model management: list_models/model_info/running_models decoding, load and
 # unload over /api/chat, and the /api/pull NDJSON stream with its time and cancel
 # contracts. Every exchange is with a local mock server; the fixtures in
-# test/fixtures/ollama/ are live captures from Ollama 0.34.4. Offline.
+# test/fixtures/ollama/ are live captures from Ollama 0.34.4 (`tags_0406.json`,
+# `ps_0406.json` and `show_embeddinggemma2.json`: 0.40.6). Offline.
 
 using Sockets
 
@@ -376,4 +377,22 @@ end
     withenv(UniLM.TYPESAFE_API_KEY => nothing) do                                   # TypeSafe path, no network
         @test list_models() isa SystemOneCallError
     end
+end
+
+# Refuted if: a runner or format the server reports is dropped (details in /api/tags and
+# /api/show, the entry itself in /api/ps), an empty detail decodes to "" instead of
+# nothing, or a reply without a runner gets one guessed.
+@testset "runner and format (Ollama 0.40); an empty detail is not reported" begin
+    fx(f) = JSON.parse(read(joinpath(@__DIR__, "fixtures", "ollama", f), String); dicttype=Dict{String,Any})
+    ms = Dict(m.name => m for m in UniLM._decode_model.(UniLM._ollama_entries(fx("tags_0406.json"))))
+    @test ms["gemma4:e4b"].runner == "mlx" && ms["gemma4:e4b"].format == "safetensors"
+    @test isnothing(ms["gemma4:e4b"].family) && isnothing(ms["gemma4:e4b"].parameter_size)   # "" in the reply
+    @test ms["kev:0.8b-q8_0"].runner == "llamacpp" && ms["kev:0.8b-q8_0"].format == "gguf"
+    ps = UniLM._decode_running.(UniLM._ollama_entries(fx("ps_0406.json")))
+    @test Set(r.runner for r in ps) == Set(["mlx", "llamacpp"])
+    info = UniLM._decode_show("embeddinggemma-2:740m-q8_0", fx("show_embeddinggemma2.json"))
+    @test info.runner == "llamacpp" && info.format == "gguf" && :embedding in info.capabilities
+    # The Ollama 0.34 capture reports `format` ("gguf") and no `runner`: not reported is nothing, not a guess.
+    @test all(m -> isnothing(m.runner) && m.format == "gguf", UniLM._decode_model.(UniLM._ollama_entries(fx("tags.json"))))
+    @test occursin("mlx", sprint(show, ms["gemma4:e4b"]))
 end

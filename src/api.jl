@@ -796,12 +796,23 @@ which carry none of the endpoint's `keep_alive`, [`OllamaOptions`](@ref) or `run
 - `shift`: whether generation that fills the context window may continue by dropping
   earlier context (`nothing`: the server's default, on). `false` ends such a reply with
   finish reason `"length"`. Ollama reloads the model when this changes.
-- `runner`: which runner serves the model when the server can run it more than one way — `:mlx`
-  (Apple Silicon), `:llamacpp` or `:ggml`; `nothing` (the default) leaves the choice to the server. Sent
-  with chat, embeddings, System One, [`model_info`](@ref), [`load_model`](@ref), [`unload_model`](@ref)
-  and [`pull_model`](@ref) requests; [`delete_model`](@ref), the listings and the OpenAI-compatible
-  routes ([`respond`](@ref), [`compact_response`](@ref), FIM, transcription) take none. The runner changes
-  how a model is loaded and its numerics: see [Local Models with Ollama](@ref ollama_guide).
+- `runner`: the runner to serve a model with — `:mlx` (Apple Silicon), `:llamacpp` or `:ggml`;
+  `nothing` (the default) leaves the choice to the server. Ollama matches it against the runner the
+  model's manifest names, the one [`list_models`](@ref) reports as `OllamaModel.runner`. A model
+  published for several runners is served by its variant for the one pinned (by Ollama's source;
+  untested). A model published for one — every model measured — answers as if unpinned when that runner
+  is pinned, and any other is the server's error, never a fallback: HTTP 400 `no compatible manifest
+  found for runners: <runner>` (404 from [`model_info`](@ref), and so from [`load_model`](@ref)),
+  even while the model is loaded (Ollama 0.40.6: `:llamacpp` on `kev:0.8b-q8_0` answered and
+  [`running_models`](@ref) reported `:llamacpp`; `:mlx` and `:ggml` on it, and `:llamacpp` on
+  `tev1:0.8b`, were that 400). Pin the runner the listing names, not the one `running_models`
+  reports: a GGUF model listed as `:ggml` (`qwen2.5-coder:1.5b-base`, `embeddinggemma:latest`) answers
+  pinned to `:ggml`, is served by llama.cpp, and is the 400 pinned to `:llamacpp`. The pin goes with
+  every request of the endpoint, so a pinned endpoint fails for each model without a variant for its
+  runner. Sent with chat, embeddings, System One, [`model_info`](@ref), [`load_model`](@ref),
+  [`unload_model`](@ref) and [`pull_model`](@ref) requests; [`delete_model`](@ref), the listings and
+  the OpenAI-compatible routes ([`respond`](@ref), [`compact_response`](@ref), FIM, transcription)
+  take none.
 - `options...`: keyword arguments of [`OllamaOptions`](@ref), e.g. `num_ctx=32_768`.
   An embeddings request for EmbeddingGemma 2 (and its [`load_model`](@ref)) carries its
   trained 8,192-token window, `num_ctx` and `num_batch` 8192, unless the endpoint sets

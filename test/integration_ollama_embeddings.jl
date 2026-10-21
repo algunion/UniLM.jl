@@ -38,6 +38,12 @@ _oe_vec(m, x; task=:none, kw...) = embedding_vectors(embeddingrequest!(Embedding
     @test haskey(_OE_INFO, _oe_listed(m))        # refuted: a listed model is not installed
     haskey(_OE_INFO, _oe_listed(m)) || continue
     caps = _OE_INFO[_oe_listed(m)].capabilities
+    # The 740m builds see and hear (Ollama 0.40.6 lists :vision and :audio for both): their image, audio and
+    # mixed-item witnesses below are gated on those capabilities, so a listing without them is a failure, never
+    # witnesses skipped in a passing run. Other models keep the gating.
+    occursin("embeddinggemma-2:740m", lowercase(m)) && !(:vision in caps && :audio in caps) &&
+        error("EmbeddingGemma live witnesses: $m is listed with capabilities $(caps), without :vision and " *
+              ":audio, so its image, audio and mixed-item witnesses would not run")
 
     @testset "unit vectors at every Matryoshka size" begin
         v = _oe_vec(m, "a short text"; task=:search_query)

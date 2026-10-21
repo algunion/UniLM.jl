@@ -66,14 +66,17 @@ end
 
 @testset "an embedding model and a decision model load and unload" begin
     # Refuted by: a load refused for a model that cannot chat, a cold load whose /api/ps context is not the
-    # endpoint's num_ctx, a runner /api/ps does not name, or a model still loaded 10 s after its unload.
+    # endpoint's num_ctx, a runner /api/ps does not name, or a model still loaded 10 s after its unload. Ollama
+    # loads a model with vision with at least 2,048 tokens of context ("multimodal models require at least 2048
+    # context", server/sched.go of Ollama 0.40.6): embeddinggemma-2:740m-q8_0 asked for 1,024 loads with 2,048.
     tag = _omm_need(_OMM_EMBED, _OMM_EMBED_FIX)
     unload_model(_OMM_EMBED; service=_OMM_EP)                       # cold: a loaded model may keep its context
     @test timedwait(() -> !haskey(_omm_ps(), tag), 10.0) == :ok
     small = OllamaEndpoint(num_ctx=1024)
+    vision = :vision in only(m for m in list_models(; service=_OMM_EP).response if m.name == tag).capabilities
     @test load_model(_OMM_EMBED; service=small) isa OllamaSuccess{Nothing}
     loaded = only(m for m in running_models(; service=_OMM_EP).response if m.name == tag)
-    @test loaded.context_length == 1024 && loaded.runner in _OMM_RUNNERS
+    @test loaded.context_length == (vision ? 2048 : 1024) && loaded.runner in _OMM_RUNNERS
     @test unload_model(_OMM_EMBED; service=small) isa OllamaSuccess{Nothing}
     @test timedwait(() -> !haskey(_omm_ps(), tag), 10.0) == :ok
     dtag = _omm_need(_OMM_DECISION, "pull it")

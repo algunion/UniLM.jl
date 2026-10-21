@@ -258,8 +258,10 @@ an [`OllamaSuccess`](@ref) holding an [`OllamaModelInfo`](@ref) — capabilities
 length, thinking levels, Modelfile parameters — or an [`OllamaFailure`](@ref) (404 for a
 model that is not installed) or an [`OllamaCallError`](@ref). Transient statuses are
 retried under `config` (a [`RequestConfig`](@ref)); `cancel` (default: the ambient
-[`with_cancel`](@ref) token) ends the call with a [`UniLMCancelled`](@ref) in `cause`. An
-empty `name` throws `ArgumentError` before any request.
+[`with_cancel`](@ref) token) ends the call with a [`UniLMCancelled`](@ref) in `cause`. The
+endpoint's `runner` goes with it: Ollama shows the variant it would run with that runner,
+and answers a model that has none with HTTP 404 `no compatible manifest found for runners:
+<runner>` (Ollama 0.40.6). An empty `name` throws `ArgumentError` before any request.
 
 ```julia
 r = model_info("gemma4:e4b")
@@ -272,8 +274,8 @@ model_info(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint(),
 
 _ollama_show(model::String, service::OllamaEndpoint, config::Union{Nothing,RequestConfig},
              cancel::Union{Nothing,CancelToken}; t0::UInt64=time_ns()) =
-    _ollama_call(d -> _decode_show(model, d), service, "POST", "/api/show", JSON.json(Dict("model" => model)),
-                 config, cancel; t0)
+    _ollama_call(d -> _decode_show(model, d), service, "POST", "/api/show",
+                 JSON.json(_ollama_runner!(Dict{String,Any}("model" => model), service)), config, cancel; t0)
 
 """
     running_models(; service=OllamaEndpoint(), config=nothing,
@@ -465,6 +467,9 @@ One attempt, never retried. The response headers must arrive within
 that only `stream_idle_timeout` — the longest gap between bytes, time spent in `progress`
 excluded — bounds the download, however long it runs. `cancel` (default: the ambient
 [`with_cancel`](@ref) token) stops it at once, with a [`UniLMCancelled`](@ref) in `cause`.
+The endpoint's `runner` goes with it: by Ollama 0.40.6's source (untested), from a model
+published for several runners Ollama pulls the variant for that runner, and a model
+published for another one fails with `no compatible manifest found for runners: <runner>`.
 An empty `name` throws `ArgumentError` before any request.
 
 ```julia
@@ -506,7 +511,7 @@ function pull_model(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint
         resp = _http_open("POST", service.base_url * "/api/pull", [auth_header(service); "Accept-Encoding" => "identity"];
                           cfg, t0, cancel=tok, context=ctx, decompress=false) do io
             status = _with_recorded_deadline(() -> begin
-                    write(io, JSON.json(Dict("model" => model)))
+                    write(io, JSON.json(_ollama_runner!(Dict{String,Any}("model" => model), service)))
                     HTTP.closewrite(io)
                     HTTP.startread(io).status
                 end, () -> _abort_request_phase(io, ctx),

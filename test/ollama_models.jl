@@ -111,6 +111,9 @@ const _OM_PULL = [
         @test g.parameters["top_k"] isa Int && g.parameters["top_p"] isa Float64
         @test (g.family, g.parameter_size, g.quantization) == ("gemma4", "8.0B", "Q4_K_M")
         @test g.raw["requires"] == "0.20.0"
+        # The endpoint's runner goes with a show (Ollama shows the variant it would run with it); none without one.
+        @test model_info("gemma4:latest"; service=OllamaEndpoint(base_url=base, runner=:mlx), config=_OM_CFG) isa OllamaSuccess
+        @test JSON.parse(seen[end].body) == Dict("model" => "gemma4:latest", "runner" => "mlx")
         e = model_info("embeddinggemma:latest"; service=ep, config=_OM_CFG).response
         @test e.context_length == 2048 && e.capabilities == [:embedding]
         @test isempty(e.thinking_levels) && isnothing(e.thinking_default)       # cannot think
@@ -264,6 +267,9 @@ end
         @test all(p -> p.total == 7162405886 && startswith(p.digest, "sha256:4e30e2665218"), got[2:4])
         @test all(p -> isnothing(p.digest) && isnothing(p.completed) && isnothing(p.total), got[[1, 5, 6, 7]])
         @test pull_model("gemma4:e2b"; service=ep) isa OllamaSuccess{Nothing}             # no progress callback
+        # The endpoint's runner goes with a pull: Ollama pulls the variant for that runner.
+        @test pull_model("gemma4:e2b"; service=OllamaEndpoint(base_url=base, runner=:llamacpp)) isa OllamaSuccess{Nothing}
+        @test JSON.parse(seen[end].body) == Dict("model" => "gemma4:e2b", "runner" => "llamacpp")
     finally
         close(server)
     end
@@ -462,6 +468,7 @@ end
             empty!(seen); caps[] = kind
             @test load_model("m"; service=ep) isa OllamaSuccess{Nothing}
             @test [t for (t, _) in seen] == ["/api/show", "/api/embed"]
+            @test JSON.parse(seen[1][2]) == Dict("model" => "m", "runner" => "llamacpp")    # the show asks for it too
             b = JSON.parse(seen[2][2])
             @test b["input"] == [] && b["keep_alive"] == 600 && b["runner"] == "llamacpp"
             # An embedding model loads with the endpoint's options; a decision model with none, as the System One

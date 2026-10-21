@@ -798,9 +798,10 @@ which carry none of the endpoint's `keep_alive`, [`OllamaOptions`](@ref) or `run
   finish reason `"length"`. Ollama reloads the model when this changes.
 - `runner`: which runner serves the model when the server can run it more than one way — `:mlx`
   (Apple Silicon), `:llamacpp` or `:ggml`; `nothing` (the default) leaves the choice to the server. Sent
-  with chat, embeddings, System One, [`load_model`](@ref) and [`unload_model`](@ref) requests; the
-  OpenAI-compatible routes ([`respond`](@ref), FIM, transcription) take none. The runner changes how a
-  model is loaded and its numerics: see [Local Models with Ollama](@ref ollama_guide).
+  with chat, embeddings, System One, [`model_info`](@ref), [`load_model`](@ref), [`unload_model`](@ref)
+  and [`pull_model`](@ref) requests; [`delete_model`](@ref), the listings and the OpenAI-compatible
+  routes ([`respond`](@ref), [`compact_response`](@ref), FIM, transcription) take none. The runner changes
+  how a model is loaded and its numerics: see [Local Models with Ollama](@ref ollama_guide).
 - `options...`: keyword arguments of [`OllamaOptions`](@ref), e.g. `num_ctx=32_768`.
   An embeddings request for EmbeddingGemma 2 (and its [`load_model`](@ref)) carries its
   trained 8,192-token window, `num_ctx` and `num_batch` 8192, unless the endpoint sets

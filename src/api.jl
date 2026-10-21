@@ -1551,12 +1551,13 @@ const GPTTextEmbedding3Small = Model("text-embedding-3-small")
 
 One item for [`Embeddings`](@ref): a text, an image, a sound clip, or a text with at most one image
 and one clip, embedded as one vector. `title` names the document a text comes from; it is used by
-the `:document` task of models with task prompts (EmbeddingGemma) and refused with any other task.
+the `:document` task of models with task prompts (EmbeddingGemma) and refused with any other task or model.
 Images and audio go only to an [`OllamaEndpoint`](@ref) (Ollama's `/api/embed` takes them for models
 such as `embeddinggemma-2`); a service that embeds text only refuses them before any request.
+Two items are `==` when their texts, titles and media are.
 
-Throws `ArgumentError` for an item with nothing to embed, a `title` without text, or more than one
-image or clip.
+Throws `ArgumentError` for an item with nothing to embed (no image or clip, and no text or an empty
+one), a `title` without text, more than one image or clip, or an attachment of any other kind.
 
 ```julia
 EmbeddingInput("Refunds take 5 days."; title = "Refund policy")
@@ -1570,8 +1571,8 @@ struct EmbeddingInput
     audio::Union{AudioAttachment,Nothing}
     function EmbeddingInput(text::Union{AbstractString,Nothing}, title::Union{AbstractString,Nothing},
                             image::Union{ImageAttachment,Nothing}, audio::Union{AudioAttachment,Nothing})
-        isnothing(text) && isnothing(image) && isnothing(audio) && throw(ArgumentError(
-            "an EmbeddingInput needs a text, an image or a sound clip to embed"))
+        isnothing(image) && isnothing(audio) && (isnothing(text) || isempty(text)) && throw(ArgumentError(
+            "an EmbeddingInput needs a non-empty text, an image or a sound clip to embed"))
         isnothing(title) || !isnothing(text) || throw(ArgumentError(
             "an EmbeddingInput's title names the document its text comes from: give it the text too"))
         new(isnothing(text) ? nothing : String(text), isnothing(title) ? nothing : String(title), image, audio)
@@ -1582,6 +1583,9 @@ EmbeddingInput(text::AbstractString; title=nothing) = EmbeddingInput(text, title
 EmbeddingInput(image::ImageAttachment) = EmbeddingInput(nothing, nothing, image, nothing)
 EmbeddingInput(audio::AudioAttachment) = EmbeddingInput(nothing, nothing, nothing, audio)
 function EmbeddingInput(text::AbstractString, media::Attachment...)
+    other = unique(typeof(m) for m in media if !(m isa Union{ImageAttachment,AudioAttachment}))
+    isempty(other) || throw(ArgumentError(
+        "an EmbeddingInput holds an image and/or a sound clip; got $(join(other, ", "))"))
     images = ImageAttachment[m for m in media if m isa ImageAttachment]
     clips = AudioAttachment[m for m in media if m isa AudioAttachment]
     length(images) <= 1 && length(clips) <= 1 || throw(ArgumentError(
@@ -1592,6 +1596,10 @@ end
 Base.show(io::IO, x::EmbeddingInput) = print(io, "EmbeddingInput(", join(filter(!isempty, [
     isnothing(x.text) ? "" : "text=" * repr(x.text), isnothing(x.title) ? "" : "title=" * repr(x.title),
     isnothing(x.image) ? "" : sprint(show, x.image), isnothing(x.audio) ? "" : sprint(show, x.audio)]), ", "), ")")
+# Field-wise, so items holding equal media (compared by content) are equal.
+Base.:(==)(a::EmbeddingInput, b::EmbeddingInput) = all(f -> getfield(a, f) == getfield(b, f), fieldnames(EmbeddingInput))
+Base.hash(x::EmbeddingInput, h::UInt) =
+    foldl((h, f) -> hash(getfield(x, f), h), fieldnames(EmbeddingInput); init=hash(EmbeddingInput, h))
 
 # What a text is for, as the task prompts of a model that has them say it (EmbeddingGemma's model card).
 const _EMBEDDING_TASKS = (:search_query, :question_answering, :fact_checking, :code_retrieval, :document,
@@ -1625,14 +1633,19 @@ function _check_embeddings(model::String, task::Union{Symbol,Nothing}, dimension
         isnothing(dimensions) || dimensions in _EMBEDDINGGEMMA_DIMENSIONS || throw(ArgumentError(
             "$model returns $(join(_EMBEDDINGGEMMA_DIMENSIONS, ", ")) dimensions (its trained Matryoshka sizes); " *
             "got dimensions = $dimensions"))
+        task !== :document && _has_titles(input) && throw(ArgumentError(
+            "a title names the document a text comes from, which $model reads with task = :document only " *
+            "(got task = $(repr(task))): pass task = :document, or drop the title"))
     else
+        # No task sends a title here, so its error comes first: it names the only fix.
+        _has_titles(input) && throw(ArgumentError(
+            "$(repr(model)) has no task prompts, so a title has nowhere to go: drop it " *
+            "(only EmbeddingGemma's task = :document writes titles)"))
         isnothing(task) || task === :none || throw(ArgumentError(
             "UniLM knows the task prompts of EmbeddingGemma models only, so $(repr(model)) gets none: pass " *
             "task = :none and write the model's own prefix into the text, if it has one"))
     end
     isnothing(dimensions) || dimensions > 0 || throw(ArgumentError("dimensions must be positive (got $dimensions)"))
-    task !== :document && _has_titles(input) && throw(ArgumentError(
-        "a title names the document a text comes from, used by task = :document only (got task = $(repr(task)))"))
     nothing
 end
 

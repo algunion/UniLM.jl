@@ -6,6 +6,7 @@ const _ET_WAV = AudioAttachment(joinpath(_ET_FIX, "secret_word.wav"))
 const _ET_EP = OllamaEndpoint(base_url="http://box:11434")
 const _ET_EG = "embeddinggemma-2:740m"
 _et_err(f) = try f(); nothing catch e; e end
+struct _ETVideo <: Attachment; data::Vector{UInt8}; end     # media an EmbeddingInput cannot carry
 
 @testset "EmbeddingInput: one item and its invariants" begin
     @test EmbeddingInput("a").text == "a" && isnothing(EmbeddingInput("a").title)
@@ -17,6 +18,17 @@ _et_err(f) = try f(); nothing catch e; e end
     @test _et_err(() -> EmbeddingInput()) isa ArgumentError                          # nothing to embed
     @test _et_err(() -> EmbeddingInput(; title="T", image=_ET_IMG)) isa ArgumentError  # a title needs text
     @test _et_err(() -> EmbeddingInput("t", _ET_IMG, _ET_IMG)) isa ArgumentError       # one image per item
+    @test _et_err(() -> EmbeddingInput("t", _ET_WAV, _ET_WAV)) isa ArgumentError       # one clip per item
+    e = _et_err(() -> EmbeddingInput("caption", _ET_IMG, _ETVideo(UInt8[1, 2, 3])))    # never dropped silently
+    @test e isa ArgumentError && occursin("_ETVideo", e.msg) && occursin("an image and/or a sound clip", e.msg)
+    @test _et_err(() -> EmbeddingInput("")) isa ArgumentError                          # empty text, no media
+    @test _et_err(() -> EmbeddingInput(; text="", title="T")) isa ArgumentError
+    @test EmbeddingInput("", _ET_IMG).image === _ET_IMG                                  # the image is embedded
+    img2 = ImageAttachment(copy(_ET_IMG.data))                                         # equal, not identical
+    @test EmbeddingInput("x", _ET_IMG) == EmbeddingInput("x", img2) &&
+          hash(EmbeddingInput("x", _ET_IMG)) == hash(EmbeddingInput("x", img2))
+    @test length(Set([EmbeddingInput("x", _ET_IMG), EmbeddingInput("x", img2)])) == 1
+    @test EmbeddingInput("x"; title="T") != EmbeddingInput("x") != EmbeddingInput("y") != EmbeddingInput(_ET_IMG)
     shown = sprint(show, x)
     @test occursin("caption", shown) && occursin("bytes", shown) && length(shown) < 200   # no byte dump
 end
@@ -35,6 +47,19 @@ end
     @test isnothing(Embeddings("q").task)                                                    # OpenAI default unchanged
     @test _et_err(() -> Embeddings([EmbeddingInput("t"; title="T")]; service=_ET_EP, model=_ET_EG,
                                    task=:search_query)) isa ArgumentError                   # titles: :document only
+    titled = EmbeddingInput("t"; title="T")
+    for task in (:search_query, :none)              # single-item path; the message names the model and both fixes
+        e = _et_err(() -> Embeddings(titled; service=_ET_EP, model=_ET_EG, task))
+        @test e isa ArgumentError && occursin(_ET_EG, e.msg) && occursin("task = :document", e.msg) &&
+              occursin("drop the title", e.msg)
+    end
+    @test Embeddings(titled; service=_ET_EP, model=_ET_EG, task=:document).input == titled
+    for task in (nothing, :none, :document)         # no task prompts: every way out says to drop the title
+        e = _et_err(() -> Embeddings([titled]; service=_ET_EP, model="nomic-embed-text", task))
+        @test e isa ArgumentError && occursin("\"nomic-embed-text\"", e.msg) && occursin("drop it", e.msg)
+    end
+    e = _et_err(() -> Embeddings(titled))                                                   # OpenAI default model
+    @test e isa ArgumentError && occursin("text-embedding-3-small", e.msg) && occursin("drop it", e.msg)
     for d in (768, 512, 256, 128)
         @test Embeddings("q"; service=_ET_EP, model=_ET_EG, task=:none, dimensions=d).dimensions == d
     end
@@ -54,4 +79,7 @@ end
     @test s.input isa EmbeddingInput && s.embeddings isa Vector{Float64}
     @test _et_err(() -> Embeddings(Any["a", 3]; service=_ET_EP, model=_ET_EG, task=:none)) isa ArgumentError
     @test UniLM._has_media(m) && !UniLM._has_media(Embeddings(["a"]; service=_ET_EP, model=_ET_EG, task=:none))
+    @test UniLM._has_media(s) && !UniLM._has_media(Embeddings(EmbeddingInput("a"); service=_ET_EP, model=_ET_EG, task=:none))
+    @test !UniLM._has_media(Embeddings("a"; service=_ET_EP, model=_ET_EG, task=:none))
+    @test Embeddings(""; service=_ET_EP, model="nomic-embed-text").input == ""            # a plain String: as before
 end

@@ -568,7 +568,7 @@ end
     w = UniLM.encode_system_one(_OS1_P, e, SystemOneRequest("The sky is blue.", ["q" => noul("Is the sky blue?")];
                                                             model="tev1:0.8b"))
     @test JSON.parse(w.body)["runner"] == "mlx"
-    @test JSON.parse(w.record_body)["runner"] == "mlx"     # it changes the probabilities: keyed
+    @test JSON.parse(w.record_body)["runner"] == "mlx"     # the reply depends on it (another runner is the server's 400): keyed
 end
 
 @testset "route rules: what any Ollama model may take is sent; the rest is refused locally" begin

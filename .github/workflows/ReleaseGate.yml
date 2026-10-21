@@ -102,32 +102,49 @@ jobs:
       UNILM_LIVE_OLLAMA: '1'
       OLLAMA_VERSION: v0.40.7
       OLLAMA_SHA256: 7f082e625b4c334df84ed1558fe282d6d8091fe3545790aef30b3a9c50d44d41
+      # The model-management suite also needs kev:0.8b-q8_0, which it names itself: keep it in this list.
       UNILM_OLLAMA_DECISION_MODELS: kev:0.8b-q8_0,d1-omni:600m
-      UNILM_OLLAMA_EMBED_MODELS: embeddinggemma-2:270m-q8_0-text
-      UNILM_OLLAMA_EMBED_MODEL: embeddinggemma-2:270m-q8_0-text
+      # A build that sees and hears, so the embeddings suite's image, audio and mixed-item witnesses run.
+      UNILM_OLLAMA_EMBED_MODELS: embeddinggemma-2:740m-q8_0
+      UNILM_OLLAMA_EMBED_MODEL: embeddinggemma-2:740m-q8_0
       UNILM_OLLAMA_SCRATCH_MODEL: all-minilm:22m
     # Zero-spend like the other jobs: local models only, no keys, no Ollama Cloud.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: julia-actions/setup-julia@fa02766e078afaaf09b14210362cee14137e6a32 # v3.0.2
         with:
           version: '1'
           arch: x64
       - uses: julia-actions/cache@a7bed9df697e5d7309d68afe7542a87621a8b6c8 # v3.3.0
+        with:
+          # The token is read-only: deleting old caches would only fail and log the failure.
+          delete-old-caches: false
       - uses: julia-actions/julia-buildpkg@e3eb439fad4f9aba7da2667e7510e4a46ebc46e1 # v1.7.0
       - name: Install Ollama (pinned by checksum)
         run: |
-          mkdir -p ~/ollama-dist
-          f=~/ollama-dist/ollama-linux-amd64.tar.zst
-          curl -fsSL -o "$f" "https://github.com/ollama/ollama/releases/download/$OLLAMA_VERSION/ollama-linux-amd64.tar.zst"
+          f="$RUNNER_TEMP/ollama-linux-amd64.tar.zst"
+          curl -fsSL --retry 3 -o "$f" "https://github.com/ollama/ollama/releases/download/$OLLAMA_VERSION/ollama-linux-amd64.tar.zst"
           echo "$OLLAMA_SHA256  $f" | sha256sum -c -
           sudo tar --zstd -xf "$f" -C /usr/local
+          rm -f "$f"
           (ollama serve > "$RUNNER_TEMP/ollama.log" 2>&1 &)
-          for _ in $(seq 1 60); do curl -sf http://127.0.0.1:11434/api/version && break; sleep 1; done
-          curl -sf http://127.0.0.1:11434/api/version
+          for _ in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:11434/api/version && break; sleep 1; done
+          # The server answering must be the pinned one, not another process on the port.
+          test "$(curl -sf http://127.0.0.1:11434/api/version)" = "{\"version\":\"${OLLAMA_VERSION#v}\"}"
       - name: Pull the test models
         run: |
-          for m in ${UNILM_OLLAMA_DECISION_MODELS//,/ } ${UNILM_OLLAMA_EMBED_MODELS//,/ }; do ollama pull "$m"; done
+          # The model-management suite pulls and deletes the scratch model itself, and skips that witness
+          # when the model is installed already: a run that pulls it here would never witness the delete.
+          for m in ${UNILM_OLLAMA_DECISION_MODELS//,/ } ${UNILM_OLLAMA_EMBED_MODELS//,/ } "$UNILM_OLLAMA_EMBED_MODEL"; do
+            if [ "$m" = "$UNILM_OLLAMA_SCRATCH_MODEL" ]; then
+              echo "::error::$m is UNILM_OLLAMA_SCRATCH_MODEL, which the model-management suite pulls and deletes itself"
+              exit 1
+            fi
+            ollama pull "$m"
+          done
+          ollama list
       - name: Local-model live suites
         shell: julia --color=yes --startup-file=no {0}
         run: |
@@ -140,6 +157,11 @@ jobs:
               include(joinpath(pwd(), "test", "integration_ollama_embeddings.jl"))
               include(joinpath(pwd(), "test", "integration_ollama_models.jl"))
           end
+          # A suite that took its offline branch skipped every witness and still passed.
+          all(!isnothing, (_OS1L_EP, _OE_EP, _OMM_EP)) ||
+              error("local models: every suite must run live in this job; one took its offline branch (UNILM_LIVE_OLLAMA)")
       - name: Ollama server log
         if: always()
-        run: tail -n 200 "$RUNNER_TEMP/ollama.log" || true
+        run: |
+          cat "$RUNNER_TEMP/ollama.log" || true
+          pkill -f 'ollama serve' || true

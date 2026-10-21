@@ -6,13 +6,20 @@
 # models is an error, and a witness whose model is not installed fails, naming the model and
 # the fix. The pull and delete witness downloads UNILM_OLLAMA_SCRATCH_MODEL (default
 # all-minilm:22m, about 46 MB) and deletes it again; it is skipped when that model is
-# installed already, so it never deletes a model it did not pull. Local models: no spend.
-# Each witness names the outcome that would refute it.
+# installed already, so it never deletes a model it did not pull. Local models: no spend, and
+# a cloud model named in the environment is refused before any request. Each witness names
+# the outcome that would refute it.
 
 const _OMM_EMBED = get(ENV, "UNILM_OLLAMA_EMBED_MODEL", "embeddinggemma")
 const _OMM_SCRATCH = get(ENV, "UNILM_OLLAMA_SCRATCH_MODEL", "all-minilm:22m")
 const _OMM_DECISION = "kev:0.8b-q8_0"
 const _OMM_RUNNERS = (:mlx, :llamacpp, :ggml)
+# Zero spend: a cloud model (a tag of `cloud`, or one ending in `-cloud`) runs on Ollama's servers and bills
+# its account, so a name from the environment that is one is refused before any request.
+for (var, m) in ("UNILM_OLLAMA_EMBED_MODEL" => _OMM_EMBED, "UNILM_OLLAMA_SCRATCH_MODEL" => _OMM_SCRATCH)
+    UniLM._ollama_cloud_model(m) && error("Ollama model management live witnesses: $var names $m, a cloud " *
+                                          "model, which bills Ollama's account: name a local model")
+end
 
 # Built only when the witnesses run: an unusual OLLAMA_HOST must not break the offline suite.
 const _OMM_EP = get(ENV, "UNILM_LIVE_OLLAMA", "") == "1" ? OllamaEndpoint() : nothing
@@ -50,7 +57,7 @@ else
     info = model_info(_OMM_EMBED; service=_OMM_EP)
     @test info isa OllamaSuccess{OllamaModelInfo}
     @test info.response.capabilities == listed.capabilities && info.response.format == listed.format
-    @test info.response.format in ("gguf", "safetensors")
+    @test info.response.format in (:gguf, :safetensors)
     # /api/show names no runner for some models (embeddinggemma:latest on Ollama 0.40.6): nothing, never a guess.
     @test isnothing(info.response.runner) || info.response.runner in _OMM_RUNNERS
     missing_model = model_info("no-such:tag"; service=_OMM_EP)
@@ -59,23 +66,38 @@ end
 
 @testset "an embedding model and a decision model load and unload" begin
     # Refuted by: a load refused for a model that cannot chat, a cold load whose /api/ps context is not the
-    # endpoint's num_ctx, a runner /api/ps does not name, or a model still loaded 10 s after its unload.
+    # endpoint's num_ctx, a runner /api/ps does not name, or a model still loaded 10 s after its unload. Ollama
+    # loads a model with vision with at least 2,048 tokens of context ("multimodal models require at least 2048
+    # context", server/sched.go of Ollama 0.40.6): embeddinggemma-2:740m-q8_0 asked for 1,024 loads with 2,048.
     tag = _omm_need(_OMM_EMBED, _OMM_EMBED_FIX)
     unload_model(_OMM_EMBED; service=_OMM_EP)                       # cold: a loaded model may keep its context
     @test timedwait(() -> !haskey(_omm_ps(), tag), 10.0) == :ok
     small = OllamaEndpoint(num_ctx=1024)
+    vision = :vision in only(m for m in list_models(; service=_OMM_EP).response if m.name == tag).capabilities
     @test load_model(_OMM_EMBED; service=small) isa OllamaSuccess{Nothing}
     loaded = only(m for m in running_models(; service=_OMM_EP).response if m.name == tag)
-    @test loaded.context_length == 1024 && loaded.runner in _OMM_RUNNERS
+    @test loaded.context_length == (vision ? 2048 : 1024) && loaded.runner in _OMM_RUNNERS
     @test unload_model(_OMM_EMBED; service=small) isa OllamaSuccess{Nothing}
     @test timedwait(() -> !haskey(_omm_ps(), tag), 10.0) == :ok
-    _omm_need(_OMM_DECISION, "pull it")
-    unload_model(_OMM_DECISION; service=_OMM_EP)
-    @test timedwait(() -> !haskey(_omm_ps(), _OMM_DECISION), 10.0) == :ok
-    @test load_model(_OMM_DECISION; service=_OMM_EP) isa OllamaSuccess{Nothing}
-    @test haskey(_omm_ps(), _OMM_DECISION)
-    @test unload_model(_OMM_DECISION; service=_OMM_EP) isa OllamaSuccess{Nothing}
-    @test timedwait(() -> !haskey(_omm_ps(), _OMM_DECISION), 10.0) == :ok
+    dtag = _omm_need(_OMM_DECISION, "pull it")
+    unload_model(dtag; service=_OMM_EP)
+    @test timedwait(() -> !haskey(_omm_ps(), dtag), 10.0) == :ok
+    @test load_model(dtag; service=_OMM_EP) isa OllamaSuccess{Nothing}
+    @test haskey(_omm_ps(), dtag)
+    @test unload_model(dtag; service=_OMM_EP) isa OllamaSuccess{Nothing}
+    @test timedwait(() -> !haskey(_omm_ps(), dtag), 10.0) == :ok
+end
+
+@testset "a runner the model has no variant for: model_info and load_model get Ollama's 404" begin
+    # Refuted by: a show or a load through an endpoint pinned to a runner the model is not published for
+    # answering 200 (a silent fallback), or loading the model. kev:0.8b-q8_0 is published for llama.cpp only.
+    dtag = _omm_need(_OMM_DECISION, "pull it")
+    other = OllamaEndpoint(runner=:mlx)
+    i = model_info(dtag; service=other)
+    @test i isa OllamaFailure && i.status == 404 && occursin("no compatible manifest found for runners: mlx", i.response)
+    l = load_model(dtag; service=other)
+    @test l isa OllamaFailure && l.status == 404 && !haskey(_omm_ps(), dtag)
+    @test model_info(dtag; service=OllamaEndpoint(runner=:llamacpp)) isa OllamaSuccess{OllamaModelInfo}
 end
 
 @testset "pull and delete a scratch model" begin

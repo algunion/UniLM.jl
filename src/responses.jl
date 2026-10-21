@@ -916,7 +916,8 @@ Parsed response from the Responses API.
 # Accessors
 - `output_text(r)` — extract concatenated text output
 - `function_calls(r)` — extract function call outputs
-- `r.id`, `r.status`, `r.model` — basic metadata
+- `r.id`, `r.status`, `r.model` — basic metadata (through an [`OllamaEndpoint`](@ref), a cloud
+  model whose reply drops its tag keeps the requested name; the server's stays in `r.raw`)
 - `r.output` — full output array (raw dicts)
 - `r.usage` — token usage info
 - `r.raw` — the complete raw JSON dict
@@ -1383,7 +1384,7 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
                         # only `status == "failed"` is a failure on either path.
                         _flush_agentic_delta!(cb, state, ctl.close)
                         rdata = status.data["response"]
-                        result[] = ResponseObject(
+                        result[] = _billed_response(r.service, r.model, ResponseObject(
                             id=rdata["id"],
                             status=rdata["status"],
                             model=rdata["model"],
@@ -1392,7 +1393,7 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
                             error=get(rdata, "error", nothing),
                             metadata=get(rdata, "metadata", nothing),
                             raw=rdata
-                        )
+                        ))
                         done[] = true
                         isnothing(cb) || cb(result[], ctl.close)
                     elseif status.terminal in (:failed, :incomplete, :error) && !isnothing(status.data)
@@ -1611,6 +1612,10 @@ Public extension API (not exported); see the Custom Backends guide.
 """
 decode_agentic(service::OpenAIWireEndpointSpec, resp::HTTP.Response)::ResponseObject = parse_response(resp)
 
+# The response a result reports for a request that named `requested`: as decoded, unless the endpoint
+# answers under a name other than the one that bills (an Ollama cloud model; see `_ollama_billed_model`).
+_billed_response(_, ::AbstractString, x) = x
+
 """
     decode_agentic_stream(service, chunk::String, state::AgenticStreamState)
 
@@ -1696,7 +1701,7 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
             _http_with_retries(cfg, t0, "POST", url, auth_header(r.service), body; cancel=tok)
         end
         if resp.status == 200
-            decoded = decode_agentic(r.service, resp)
+            decoded = _billed_response(r.service, r.model, decode_agentic(r.service, resp))
             # A generation that came back `failed` is a failure, whichever way it was
             # requested. The streamed limb already routes `response.failed` (OpenAI)
             # and a failed interaction (Gemini) to ResponseFailure; wrapping the same
@@ -1947,7 +1952,9 @@ that can be passed as input to subsequent requests, reducing token usage in long
 - `model::String`: Model to use for compaction
 - `input::Any`: The conversation items to compact (typically the full conversation history)
 
-Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys.
+Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys. `model` left
+`nothing` is `"gpt-5.6-sol"`, except on an [`OllamaEndpoint`](@ref), which has no default
+model: a call to it that names none throws `ArgumentError` before any request.
 
 # Examples
 ```julia
@@ -1959,11 +1966,12 @@ compacted = compact_response(model="gpt-5.6-sol", input=[
 # Use compacted["output"] as input to the next request
 ```
 """
-function compact_response(; model::String="gpt-5.6-sol",
+function compact_response(; model::Union{String,Nothing}=nothing,
     input::Any,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing)
 
+    model = isnothing(model) ? _compaction_model(service) : model   # resolved before any I/O
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
@@ -1980,6 +1988,10 @@ function compact_response(; model::String="gpt-5.6-sol",
         return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
+
+
+# The model a compaction that names none is sent with.
+_compaction_model(_)::String = "gpt-5.6-sol"
 
 
 """

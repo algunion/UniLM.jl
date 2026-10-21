@@ -111,6 +111,9 @@ const _OM_PULL = [
         @test g.parameters["top_k"] isa Int && g.parameters["top_p"] isa Float64
         @test (g.family, g.parameter_size, g.quantization) == ("gemma4", "8.0B", "Q4_K_M")
         @test g.raw["requires"] == "0.20.0"
+        # The endpoint's runner goes with a show (Ollama shows the variant it would run with it); none without one.
+        @test model_info("gemma4:latest"; service=OllamaEndpoint(base_url=base, runner=:mlx), config=_OM_CFG) isa OllamaSuccess
+        @test JSON.parse(seen[end].body) == Dict("model" => "gemma4:latest", "runner" => "mlx")
         e = model_info("embeddinggemma:latest"; service=ep, config=_OM_CFG).response
         @test e.context_length == 2048 && e.capabilities == [:embedding]
         @test isempty(e.thinking_levels) && isnothing(e.thinking_default)       # cannot think
@@ -264,6 +267,9 @@ end
         @test all(p -> p.total == 7162405886 && startswith(p.digest, "sha256:4e30e2665218"), got[2:4])
         @test all(p -> isnothing(p.digest) && isnothing(p.completed) && isnothing(p.total), got[[1, 5, 6, 7]])
         @test pull_model("gemma4:e2b"; service=ep) isa OllamaSuccess{Nothing}             # no progress callback
+        # The endpoint's runner goes with a pull: Ollama pulls the variant for that runner.
+        @test pull_model("gemma4:e2b"; service=OllamaEndpoint(base_url=base, runner=:llamacpp)) isa OllamaSuccess{Nothing}
+        @test JSON.parse(seen[end].body) == Dict("model" => "gemma4:e2b", "runner" => "llamacpp")
     finally
         close(server)
     end
@@ -391,19 +397,21 @@ end
     end
 end
 
-# Refuted if: a runner or format the server reports is dropped or mistyped (a runner is a
-# Symbol; details in /api/tags and /api/show, the entry itself in /api/ps, else its
+# Refuted if: a runner or format the server reports is dropped or mistyped (a runner or a
+# format is a Symbol; details in /api/tags and /api/show, the entry itself in /api/ps, else its
 # details), an empty detail decodes to "" instead of nothing, or a reply without a runner
 # gets one guessed.
 @testset "runner and format (Ollama 0.40); an empty detail is not reported" begin
     fx(f) = JSON.parse(_om_fixture(f); dicttype=Dict{String,Any})
     ms = Dict(m.name => m for m in UniLM._decode_model.(UniLM._ollama_entries(fx("tags_0406.json"))))
-    @test ms["gemma4:e4b"].runner === :mlx && ms["gemma4:e4b"].format == "safetensors"
+    @test ms["gemma4:e4b"].runner === :mlx && ms["gemma4:e4b"].format === :safetensors
     @test isnothing(ms["gemma4:e4b"].family) && isnothing(ms["gemma4:e4b"].parameter_size)   # "" in the reply
     @test isnothing(ms["gemma4:e4b"].quantization)                      # "quantization_level": "" in the capture
-    d = deepcopy(ms["gemma4:e4b"].raw); d["details"]["runner"] = ""
-    @test isnothing(UniLM._decode_model(d).runner)
-    @test ms["kev:0.8b-q8_0"].runner === :llamacpp && ms["kev:0.8b-q8_0"].format == "gguf"
+    d = deepcopy(ms["gemma4:e4b"].raw); d["details"]["runner"] = ""; d["details"]["format"] = ""
+    @test isnothing(UniLM._decode_model(d).runner) && isnothing(UniLM._decode_model(d).format)
+    d["details"]["format"] = "GGUF"                                     # a Symbol in lower case, like the server's
+    @test UniLM._decode_model(d).format === :gguf
+    @test ms["kev:0.8b-q8_0"].runner === :llamacpp && ms["kev:0.8b-q8_0"].format === :gguf
     ps = UniLM._decode_running.(UniLM._ollama_entries(fx("ps_0406.json")))
     @test Dict(r.name => r.runner for r in ps) == Dict("tev1:0.8b" => :mlx, "kev:0.8b-q8_0" => :llamacpp)
     psent(top, det) = Dict{String,Any}("name" => "m", "size" => 1, "size_vram" => 1, "expires_at" => "t",
@@ -412,9 +420,9 @@ end
     @test UniLM._decode_running(psent("", "mlx")).runner === :mlx          # empty on the entry: details
     @test isnothing(UniLM._decode_running(psent("", "")).runner)
     info = UniLM._decode_show("embeddinggemma-2:740m-q8_0", fx("show_embeddinggemma2.json"))
-    @test info.runner === :llamacpp && info.format == "gguf" && :embedding in info.capabilities
+    @test info.runner === :llamacpp && info.format === :gguf && :embedding in info.capabilities
     # The Ollama 0.34 capture reports `format` ("gguf") and no `runner`: not reported is nothing, not a guess.
-    @test all(m -> isnothing(m.runner) && m.format == "gguf", UniLM._decode_model.(UniLM._ollama_entries(fx("tags.json"))))
+    @test all(m -> isnothing(m.runner) && m.format === :gguf, UniLM._decode_model.(UniLM._ollama_entries(fx("tags.json"))))
     @test sprint(show, ms["gemma4:e4b"]) ==
           "OllamaModel(\"gemma4:e4b\", 9.5 GB, mlx, [:completion, :vision, :audio, :tools, :thinking])"
 end
@@ -462,8 +470,12 @@ end
             empty!(seen); caps[] = kind
             @test load_model("m"; service=ep) isa OllamaSuccess{Nothing}
             @test [t for (t, _) in seen] == ["/api/show", "/api/embed"]
+            @test JSON.parse(seen[1][2]) == Dict("model" => "m", "runner" => "llamacpp")    # the show asks for it too
             b = JSON.parse(seen[2][2])
-            @test b["input"] == [] && b["keep_alive"] == 600 && b["options"]["num_ctx"] == 2048 && b["runner"] == "llamacpp"
+            @test b["input"] == [] && b["keep_alive"] == 600 && b["runner"] == "llamacpp"
+            # An embedding model loads with the endpoint's options; a decision model with none, as the System One
+            # requests that follow carry none (Ollama would load it again for the first of them otherwise).
+            @test kind == ["embedding"] ? b["options"]["num_ctx"] == 2048 : !haskey(b, "options")
             @test !haskey(b, "shift")
         end
         empty!(seen); caps[] = ["completion", "tools"]
@@ -490,7 +502,7 @@ end
         @test isnothing(load_options("embeddinggemma:300m", ["embedding"]))                 # v1: no window
         @test load_options("embeddinggemma:300m", ["embedding"]; num_ctx=2048) == Dict("num_ctx" => 2048)
         @test isnothing(load_options("kev:0.8b-q8_0", ["decision"]))
-        @test load_options("kev:0.8b-q8_0", ["decision"]; num_gpu=99) == Dict("num_gpu" => 99)
+        @test isnothing(load_options("kev:0.8b-q8_0", ["decision"]; num_gpu=99, num_ctx=4096))
         # Only the empty list an empty embeddings request is answered with reports the load.
         @test isnothing(UniLM._ollama_embed_loaded(Dict{String,Any}("embeddings" => [])))
         for reply in (Dict{String,Any}(), Dict{String,Any}("embeddings" => [[0.1]]), Dict{String,Any}("embeddings" => "[]"))

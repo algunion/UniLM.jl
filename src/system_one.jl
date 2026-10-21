@@ -1627,7 +1627,8 @@ id without its own row is priced at the `jev-latest` row (assuming a later Jev
 keeps the price TypeSafe lists for Jev 1.13); any other unpriced name returns
 `0.0`. An answer from a local model through an [`OllamaEndpoint`](@ref) costs
 `0.0`, without a missing-price warning, unless `model` is passed; a cloud model
-reached through it (a tag of `cloud` or ending in `-cloud`) is priced by its name.
+reached through it (a tag of `cloud` or ending in `-cloud`) is priced by the name
+requested, which an answer whose reply drops the tag keeps.
 A backend that bills otherwise is priced its own way: an
 answer from OpenAI's Decisions API
 ([`OpenAIDecisionsProtocol`](@ref UniLM.OpenAIDecisionsProtocol)) costs its input

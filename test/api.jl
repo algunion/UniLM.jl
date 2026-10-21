@@ -968,12 +968,24 @@ end
         two = UniLM.Embeddings(["a", "b"])
         err = refusal(() -> update!(two, [row(0, [1.0, 2.0]), row(true, [3.0, 4.0])]))
         @test err isa ArgumentError && occursin("true", err.msg) && occursin("not an integer", err.msg)
-        @test refusal(() -> update!(two, [row(0, [1.0, 2.0]), row(1.0, [3.0, 4.0])])) isa ArgumentError
+        err = refusal(() -> update!(two, [row(0, [1.0, 2.0]), row(1.0, [3.0, 4.0])]))
+        @test err isa ArgumentError && occursin("1.0", err.msg) && occursin("not an integer", err.msg)
         for bad in (nothing, 0.5, "0.5")
             err = refusal(() -> update!(UniLM.Embeddings("t"), [row(0, bad)]))
             @test err isa ArgumentError && occursin("row 0", err.msg) && occursin("not a vector", err.msg)
             err = refusal(() -> update!(two, [row(0, [1.0, 2.0]), row(1, bad)]))
             @test err isa ArgumentError && occursin("row 1", err.msg) && occursin("not a vector", err.msg)
+        end
+        # A row that is not a JSON object, or lacks its index or its vector, gets the same messages.
+        for bad in ("a row", [3.0, 4.0], nothing, Dict{String,Any}("embedding" => [3.0, 4.0]))
+            err = refusal(() -> update!(two, [row(0, [1.0, 2.0]), bad]))
+            @test err isa ArgumentError && occursin("row index nothing is not an integer", err.msg)
+        end
+        err = refusal(() -> update!(two, [row(0, [1.0, 2.0]), Dict{String,Any}("index" => 1)]))
+        @test err isa ArgumentError && occursin("row 1", err.msg) && occursin("not a vector", err.msg)
+        for bad in ("a row", [3.0, 4.0], nothing, Dict{String,Any}("index" => 0))
+            err = refusal(() -> update!(UniLM.Embeddings("t"), [bad]))
+            @test err isa ArgumentError && occursin("row 0", err.msg) && occursin("not a vector", err.msg)
         end
         @test two.embeddings == [zeros(1536), zeros(1536)]
     end

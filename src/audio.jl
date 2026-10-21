@@ -98,10 +98,12 @@ For `gpt-transcribe`, a legacy singular `language` is translated to `languages`.
 Other models retain their singular `language` field. Never set both forms.
 `response_format` is one of `json`, `text`, `srt`, `verbose_json`, `vtt`,
 `diarized_json`, and `temperature` lies in `0 … 1`; anything else is an `ArgumentError`.
-Ollama's `/v1/audio/transcriptions` reads one `language`, the `prompt`, and a
-`response_format` of `json` or `text`, and transcribes at temperature 0: a request to it
-that sets `temperature`, `languages`, `keywords`, or another `response_format` throws
-`ArgumentError` before any request.
+Ollama's `/v1/audio/transcriptions` reads one `language` and the `prompt`, transcribes at
+temperature 0, and is asked for JSON only, the one form in which it reports a failure that
+arrives after its reply has begun (as `text` that failure reads as an empty transcript): a
+request to it that sets `temperature`, `languages`, `keywords`, or a `response_format`
+other than `json` throws `ArgumentError` before any request; read the text with
+[`transcript_text`](@ref).
 Pass to [`transcribe`](@ref) or [`translate`](@ref).
 """
 @kwdef struct TranscriptionRequest
@@ -146,17 +148,27 @@ function _check_transcription(::OllamaEndpoint, t::TranscriptionRequest)
                       (:keywords, "takes no `keywords`: remove them"))
         isnothing(getfield(t, f)) || throw(ArgumentError("Ollama's transcription $rule"))
     end
-    isnothing(t.response_format) || t.response_format in ("json", "text") || throw(ArgumentError(
-        "Ollama transcribes to response_format \"json\" or \"text\" (got $(repr(t.response_format)))"))
+    # Ollama writes the transcript only when the model's chat stream ends: a failure after the reply has
+    # begun leaves a 200 with an empty body (Ollama 0.40.6, middleware/openai.go TranscriptionWriter), which
+    # its JSON form reports and "text" would read as an empty transcript. Any other format is answered as
+    # JSON too, so JSON is the one form asked for.
+    fmt = t.response_format
+    fmt == "text" && throw(ArgumentError(
+        "Ollama's transcription reports a failure that arrives after its reply has begun only as JSON, and " *
+        "\"text\" would read it as an empty transcript: leave response_format unset (JSON) and read the " *
+        "text with transcript_text"))
+    isnothing(fmt) || fmt == "json" || throw(ArgumentError(
+        "Ollama transcribes to JSON only (got $(repr(fmt))): leave response_format unset and read the text " *
+        "with transcript_text"))
     nothing
 end
 
 # Whether a 200 transcription reply is the JSON object `{"text": …}` rather than the bare text.
 _transcription_json(_, ::TranscriptionRequest, resp::HTTP.Response)::Bool =
     occursin("application/json", HTTP.header(resp, "Content-Type", ""))
-# Ollama answers JSON unless asked for "text", but under the `application/x-ndjson` header of the
-# chat stream it transcribes with: that header is sent before the JSON is written (Ollama 0.40.6).
-_transcription_json(::OllamaEndpoint, t::TranscriptionRequest, ::HTTP.Response)::Bool = t.response_format != "text"
+# Ollama is asked for JSON only, and answers it under the `application/x-ndjson` header of the chat
+# stream it transcribes with: that header is sent before the JSON is written (Ollama 0.40.6).
+_transcription_json(::OllamaEndpoint, ::TranscriptionRequest, ::HTTP.Response)::Bool = true
 
 "Successful [`transcribe`](@ref)/[`translate`](@ref) result; `text` holds the transcript (via [`transcript_text`](@ref)), `raw` the parsed JSON when the API returns it."
 @kwdef struct TranscriptionSuccess <: LLMRequestResponse
@@ -231,7 +243,8 @@ left `nothing` is the service's default (`gpt-transcribe` on OpenAI).
 On Ollama, an installed model that hears audio transcribes through Ollama's
 OpenAI-compatible `/v1/audio/transcriptions` route. There is no default model, and what
 that route cannot carry — `temperature`, `languages`, `keywords`, a `response_format`
-other than `json` or `text` — throws `ArgumentError` before any request:
+other than `json` (`text` included: a failure after the reply has begun would read as an
+empty transcript) — throws `ArgumentError` before any request:
 
 ```julia
 r = transcribe("memo.wav"; service=OllamaEndpoint(), model="gemma4:e4b", language="en")

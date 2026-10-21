@@ -1,7 +1,8 @@
 # ─── EmbeddingGemma live witnesses (Ollama) ─────────────────────────────────
 # Requires UNILM_LIVE_OLLAMA=1 and a reachable Ollama server with every model in
-# UNILM_OLLAMA_EMBED_MODELS installed (a missing one fails). Local models: no spend. Each
-# witness names the outcome that refutes it.
+# UNILM_OLLAMA_EMBED_MODELS installed (a missing one fails, and so does a server that does not
+# list its models). Local models: no spend, and a cloud model named in the environment is
+# refused before any request. Each witness names the outcome that refutes it.
 
 const _OE_EP = get(ENV, "UNILM_LIVE_OLLAMA", "") == "1" ? OllamaEndpoint() : nothing
 # The test environment has no LinearAlgebra.
@@ -14,12 +15,21 @@ const _OE_MODELS = String.(split(get(ENV, "UNILM_OLLAMA_EMBED_MODELS",
     "embeddinggemma-2:740m-q8_0,embeddinggemma-2:740m-mxfp8,embeddinggemma-2:270m-q8_0-text,embeddinggemma"), ','))
 const _OE_FIX = joinpath(@__DIR__, "fixtures", "ollama")
 _oe_v2(m) = occursin(r"embeddinggemma-?2(?!\d)"i, m)    # EmbeddingGemma 2 (trained on 8,192 tokens), not v1 (2,048)
+# Zero spend: a cloud model (a tag of `cloud`, or one ending in `-cloud`) runs on Ollama's servers and bills
+# its account, so a name from the environment that is one is refused before any request.
+for m in _OE_MODELS
+    UniLM._ollama_cloud_model(m) && error("EmbeddingGemma live witnesses: UNILM_OLLAMA_EMBED_MODELS names $m, " *
+                                          "a cloud model, which bills Ollama's account: name local models")
+end
 
 if isnothing(_OE_EP)
     @info "Skipping EmbeddingGemma live witnesses (set UNILM_LIVE_OLLAMA=1)"
 else
 
-const _OE_INFO = Dict(m.name => m for m in list_models(; service=_OE_EP).response)
+const _OE_INFO = let r = list_models(; service=_OE_EP, config=RequestConfig(max_attempts=1, request_timeout=5.0))
+    r isa OllamaSuccess || error("EmbeddingGemma live witnesses: listing the installed models failed: $(r)")
+    Dict(m.name => m for m in r.response)
+end
 # Ollama lists a model pulled without a tag under `latest` (`embeddinggemma` as `embeddinggemma:latest`).
 _oe_listed(m) = occursin(':', last(split(m, '/'))) ? m : m * ":latest"
 _oe_vec(m, x; task=:none, kw...) = embedding_vectors(embeddingrequest!(Embeddings(x; service=_OE_EP, model=m, task, kw...)))

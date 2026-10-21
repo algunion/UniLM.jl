@@ -242,14 +242,14 @@ struct _Os1Odd <: SystemOneQuestion end
             "another scope's model" => (() -> with_system_one(() -> ask("s", q; service=ep), TYPESAFEServiceEndpoint;
                                                               model="jev-1.13.0"), "no default System One model"),
             "65 questions"          => (a("s", ["q$i" => q for i in 1:65]), "at most 64 questions"),
-            "blank instructions"    => (a("s", choice("  ", ["a", "b"])), "are blank"),
+            "blank instructions"    => (a("s", choice("  ", ["a", "b"])), "are blank: say what it asks (most local decision models require instructions)"),
             "image instructions"    => (a("s", score(img, ["low", "high"])), "as a string, object or array"),
             "object description"    => (a("s", choice("Which?", ["a" => Dict("d" => "A"), "b" => nothing])), "string or `nothing`"),
             "tuple description"     => (a("s", choice("Which?", (a=(d="A",), b="B"))), "string or `nothing`"),
             "array description"     => (a("s", choice("Which?", ["a" => ["A"], "b" => "B"])), "string or `nothing`"),
             "object noul criterion" => (a("s", noul("Is it?"; no=Dict("d" => "no"))), "Noul criterion as a string"),
             "object score level"    => (a("s", score("How?", ["low", Dict("d" => "high")])), "Score level as a string"),
-            "one option"            => (a("s", choice("Which?", ["a"])), "2 to 255 options"),
+            "256 options"           => (a("s", choice("Which?", many(256))), "255 options per question"),
             "one level"             => (a("s", score("How?", ["only"])), "2 to 10 levels"),
             "11 levels"             => (a("s", score("How?", rungs(11))), "2 to 10 levels"),
             "blank state"           => (a(" \n ", q), "blank `state`"),
@@ -264,23 +264,27 @@ struct _Os1Odd <: SystemOneQuestion end
             e = _os1_caught(f)
             @test e isa ArgumentError && contains(e.msg, needle)
         end
+        # Passing none is no fix: most local decision models answer a question without instructions with a 400.
+        @test !contains(_os1_caught(a("s", choice("  ", ["a", "b"]))).msg, "pass none")
         @test isempty(seen)                               # nothing reached the server
         # What the route leaves to the model is sent: the mock's models, like the generic MLX
-        # encoder, require `instructions` and take 2–26 options, and say so in their own 400.
+        # encoder, require `instructions` and take 2–26 options, and say so in their own 400. One
+        # option is the model's call too: the llama.cpp path (kev, d1, d1-omni) answered it on Ollama 0.40.6.
         served = ["no instructions"    => (a("s", choice(["a", "b"])), "instructions must be a nonempty string"),
                   "criteria-only noul" => (a("s", noul(; yes="It is")), "instructions must be a nonempty string"),
-                  "27 options"         => (a("s", choice("Which?", many(27))), "criteria must contain 2–26 candidates")]
+                  "27 options"         => (a("s", choice("Which?", many(27))), "criteria must contain 2–26 candidates"),
+                  "one option"         => (a("s", choice("Which?", ["a"])), "criteria must contain 2–26 candidates")]
         @testset "$what reaches the server" for (what, (f, needle)) in served
             r = f()
             @test r isa SystemOneFailure && r.status == 400 && contains(r.message, needle)
         end
-        @test length(seen) == 3
+        @test length(seen) == 4
     end
     # What the wrapper refuses for its shape, the mock (above) rejects too: the local check saves
     # the round trip and does not narrow what Ollama accepts — save blank `instructions`, which
     # Ollama would read as none and the wrapper refuses deliberately. The shapes the wrapper
-    # leaves to the model (no instructions, 27 options) the mock rejects too, as the generic MLX
-    # encoder does.
+    # leaves to the model (no instructions, 27 options, one option) the mock rejects too, as the
+    # generic MLX encoder does.
     wire(qs...; state="s") = JSON.parse(JSON.json(UniLM._system_one_json(
         SystemOneRequest(state, UniLM._normalize_varargs(qs)), "tev1:0.8b")))
     for b in (wire(["q$i" => q for i in 1:65]...), wire(choice(["a", "b"])), wire(noul(; yes="It is")),
@@ -571,6 +575,7 @@ end
     e = OllamaEndpoint(base_url="http://box:11434")
     enc(qs...; state="The sky is blue.") = UniLM.encode_system_one(_OS1_P, e, SystemOneRequest(state, collect(qs); model="kev:0.8b-q8_0"))
     @test enc("q" => choice(["o$i" => "option $i" for i in 1:255])) isa UniLM.SystemOneWire          # 255: route bound
+    @test enc("q" => choice(["a" => "A"])) isa UniLM.SystemOneWire                     # one: the llama.cpp path answers it
     @test _os1_caught(() -> enc("q" => choice(["o$i" => "option $i" for i in 1:256]))) isa ArgumentError
     @test enc("q" => noul("Is it?")) isa UniLM.SystemOneWire
     @test enc("q" => choice(["a" => "A", "b" => "B"])) isa UniLM.SystemOneWire                        # no instructions: the server's call
@@ -602,6 +607,20 @@ _os1_any_reply(b; model=b["model"]) = _os1_json(200, JSON.json(Dict{String,Any}(
     end
     @test r isa SystemOneSuccess && r.response.model == "clef:cloud" && r.response.raw["model"] == "clef"
     @test (@test_logs (:warn, r"no price row") match_mode=:any estimated_cost(r)) == 0.0
+end
+
+# Refuted if: decoding a captured 200 for a request that named no model throws (Ollama has no default
+# model to fall back on), or the cloud-name rule stops keeping a requested cloud name.
+@testset "decode_system_one reads a reply to a request that named no model" begin
+    reply(model) = _os1_json(200, JSON.json(Dict{String,Any}("model" => model,
+        "answers" => Dict("q" => Dict("type" => "noul", "noul" => 0.9)), "usage" => Dict("input_tokens" => 10, "output_tokens" => 0))))
+    ep = OllamaEndpoint(base_url="http://box:11434")
+    r = UniLM.decode_system_one(_OS1_P, ep, SystemOneRequest("The sky is blue.", ["q" => noul("Is the sky blue?")]),
+                                reply("tev1:0.8b"))
+    @test r isa SystemOneSuccess && r.response.model == "tev1:0.8b" && r["q"].noul == 0.9
+    c = UniLM.decode_system_one(_OS1_P, ep, SystemOneRequest("The sky is blue.", ["q" => noul("Is the sky blue?")];
+                                                            model="clef:cloud"), reply("clef"))
+    @test c isa SystemOneSuccess && c.response.model == "clef:cloud" && c.response.raw["model"] == "clef"
 end
 
 @testset "a local model answered under another name keeps the server's name" begin

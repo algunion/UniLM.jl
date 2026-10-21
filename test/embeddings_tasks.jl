@@ -112,6 +112,14 @@ _et_body(e) = JSON.parse(UniLM._encode_embeddings(e.service, e))
     g = GenericOpenAIEndpoint("http://vllm:8000", "")
     @test JSON.parse(JSON.json(Embeddings(["a"]; service=g, model="google/embeddinggemma-2",
                                           task=:search_query)))["input"] == ["task: search result | query: a"]
+    gw(input, task) = _et_body(Embeddings(input; service=g, model="google/embeddinggemma-2", task))["input"]
+    @test gw(EmbeddingInput("a"), :search_query) == "task: search result | query: a"            # one item
+    @test gw([EmbeddingInput("a"), EmbeddingInput("b")], :none) == ["a", "b"]                    # a vector of items
+    @test gw(EmbeddingInput("Refunds take 5 days."; title="T"), :document) == "title: T | text: Refunds take 5 days."
+    ow(input, task) = _et_body(Embeddings(input; service=_ET_EP, model=_ET_EG, task))["input"]
+    for wire in (gw, ow)                                        # a title's own " | " passes verbatim on both wires
+        @test wire([EmbeddingInput("body"; title="Refunds | Returns")], :document) == ["title: Refunds | Returns | text: body"]
+    end
     @test _et_body(Embeddings(["a"]; service=_ET_EP, model="nomic-embed-text"))["input"] == ["a"]   # unchanged
     for e in (Embeddings(["", "a"]), Embeddings(["", "a"]; service=_ET_EP, model="nomic-embed-text"))
         @test _et_body(e)["input"] == ["", "a"]                         # strings stay strings, an empty one too
@@ -132,11 +140,21 @@ end
     t = Embeddings(["a"]; service=_ET_EP, model="nomic-embed-text")
     @test UniLM._record_embeddings_body(_ET_EP, t, UniLM._encode_embeddings(_ET_EP, t)) ==
           UniLM._encode_embeddings(_ET_EP, t)                                   # text bodies key as before
-    for svc in (OPENAIServiceEndpoint, GEMINIOpenAIServiceEndpoint, GenericOpenAIEndpoint("http://vllm:8000", ""))
+    dead = GenericOpenAIEndpoint("http://127.0.0.1:1", "")        # nothing listens: I/O would return a call error
+    err = _et_err(() -> embeddingrequest!(Embeddings(_ET_IMG; service=dead, model="google/embeddinggemma-2", task=:none)))
+    @test err isa ArgumentError                              # thrown before any I/O, never returned as a call error
+    @test occursin("service: GenericOpenAIEndpoint", err.msg)                            # the backend is named
+    for (svc, name) in ((OPENAIServiceEndpoint, "OPENAIServiceEndpoint"),
+                        (GEMINIOpenAIServiceEndpoint, "GEMINIOpenAIServiceEndpoint"),
+                        (GenericOpenAIEndpoint("http://vllm:8000", ""), "GenericOpenAIEndpoint"))
         err = _et_err(() -> UniLM._encode_embeddings(svc, Embeddings([_ET_IMG]; service=svc,
                                                                      model="google/embeddinggemma-2", task=:none)))
-        @test err isa ArgumentError && occursin("text only", err.msg)
+        @test err isa ArgumentError && startswith(err.msg, "the OpenAI Embeddings API takes text only") &&
+              occursin("service: $name", err.msg)                        # the wire refuses; the backend is named
     end
+    err = _et_err(() -> JSON.json(Embeddings([_ET_IMG]; service=_ET_EP, model=_ET_EG, task=:none)))
+    @test err isa ArgumentError && startswith(err.msg, "the OpenAI Embeddings API takes text only") &&
+          occursin("service: OllamaEndpoint", err.msg) && occursin("embeddingrequest!", err.msg)  # lowered for the wrong wire
 end
 
 @testset "an empty text beside media is no text: the media alone are sent, with no bare prompt" begin

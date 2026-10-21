@@ -1772,8 +1772,9 @@ end
 _wire_text(emb, x::String) = _prompted(emb.task, x, nothing)
 function _wire_text(emb, x::EmbeddingInput)
     _item_media(x) && throw(ArgumentError(
-        "$(_service_name(emb.service)) embeds text only: send images and sound clips through an OllamaEndpoint " *
-        "(a model such as embeddinggemma-2), or leave them out"))
+        "the OpenAI Embeddings API takes text only (service: $(_service_name(emb.service))): send images and " *
+        "sound clips with embeddingrequest! to an OllamaEndpoint, on Ollama's /api/embed (a model such as " *
+        "embeddinggemma-2), or leave them out"))
     _prompted(emb.task, x.text::String, x.title)
 end
 _wire_texts(emb) = emb.input isa AbstractVector ? String[_wire_text(emb, x) for x in emb.input] : _wire_text(emb, emb.input)

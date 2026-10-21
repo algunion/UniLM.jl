@@ -241,8 +241,6 @@ struct _Os1Odd <: SystemOneQuestion end
             "another scope's model" => (() -> with_system_one(() -> ask("s", q; service=ep), TYPESAFEServiceEndpoint;
                                                               model="jev-1.13.0"), "no default System One model"),
             "65 questions"          => (a("s", ["q$i" => q for i in 1:65]), "at most 64 questions"),
-            "no instructions"       => (a("s", choice(["a", "b"])), "requires `instructions`"),
-            "criteria-only noul"    => (a("s", noul(; yes="It is")), "requires `instructions`"),
             "blank instructions"    => (a("s", choice("  ", ["a", "b"])), "are blank"),
             "image instructions"    => (a("s", score(img, ["low", "high"])), "as a string, object or array"),
             "object description"    => (a("s", choice("Which?", ["a" => Dict("d" => "A"), "b" => nothing])), "string or `nothing`"),
@@ -250,8 +248,7 @@ struct _Os1Odd <: SystemOneQuestion end
             "array description"     => (a("s", choice("Which?", ["a" => ["A"], "b" => "B"])), "string or `nothing`"),
             "object noul criterion" => (a("s", noul("Is it?"; no=Dict("d" => "no"))), "Noul criterion as a string"),
             "object score level"    => (a("s", score("How?", ["low", Dict("d" => "high")])), "Score level as a string"),
-            "one option"            => (a("s", choice("Which?", ["a"])), "2 to 26 options"),
-            "27 options"            => (a("s", choice("Which?", many(27))), "2 to 26 options"),
+            "one option"            => (a("s", choice("Which?", ["a"])), "2 to 255 options"),
             "one level"             => (a("s", score("How?", ["only"])), "2 to 10 levels"),
             "11 levels"             => (a("s", score("How?", rungs(11))), "2 to 10 levels"),
             "blank state"           => (a(" \n ", q), "blank `state`"),
@@ -267,9 +264,21 @@ struct _Os1Odd <: SystemOneQuestion end
             @test e isa ArgumentError && contains(e.msg, needle)
         end
         @test isempty(seen)                               # nothing reached the server
+        # What the route leaves to the model is sent: the mock's models, like the generic MLX
+        # encoder, require `instructions` and take 2–26 options, and say so in their own 400.
+        served = ["no instructions"    => (a("s", choice(["a", "b"])), "instructions must be a nonempty string"),
+                  "criteria-only noul" => (a("s", noul(; yes="It is")), "instructions must be a nonempty string"),
+                  "27 options"         => (a("s", choice("Which?", many(27))), "criteria must contain 2–26 candidates")]
+        @testset "$what reaches the server" for (what, (f, needle)) in served
+            r = f()
+            @test r isa SystemOneFailure && r.status == 400 && contains(r.message, needle)
+        end
+        @test length(seen) == 3
     end
     # What the wrapper refuses for its shape, the route rejects too (its own rules, above):
-    # the local check saves the round trip, it does not narrow what Ollama accepts.
+    # the local check saves the round trip, it does not narrow what Ollama accepts. The shapes
+    # the wrapper leaves to the model (no instructions, 27 options) the mock rejects too, as
+    # the generic MLX encoder does.
     wire(qs...; state="s") = JSON.parse(JSON.json(UniLM._system_one_json(
         SystemOneRequest(state, UniLM._normalize_varargs(qs)), "tev1:0.8b")))
     for b in (wire(["q$i" => q for i in 1:65]...), wire(choice(["a", "b"])), wire(noul(; yes="It is")),
@@ -451,7 +460,9 @@ end
                                     (404, "404 page not found", "404 page not found"),       # a server without the route
                                     (413, "{\"error\":\"text and schema must not exceed 64 KiB\"}", "text and schema must not exceed 64 KiB"))
         f = _os1_serve(; respond=(_, _) -> HTTP.Response(status, body)) do ep, _
-            ask("s", noul("Is it?"); service=ep, model="tev1:0.8b", config=_OS1_CFG)
+            call() = ask("s", noul("Is it?"); service=ep, model="tev1:0.8b", config=_OS1_CFG)
+            # A 500 is retryable: the one attempt `_OS1_CFG` allows ends with the driver's warning.
+            status == 500 ? (@test_logs (:warn, r"exhausting max_attempts") match_mode=:any call()) : call()
         end
         @test f isa SystemOneFailure && f.status == status && f.message == message && f.response == body
     end
@@ -552,4 +563,41 @@ end
                                                             model="tev1:0.8b"))
     @test JSON.parse(w.body)["runner"] == "mlx"
     @test JSON.parse(w.record_body)["runner"] == "mlx"     # it changes the probabilities: keyed
+end
+
+@testset "route rules: what any Ollama model may take is sent; the rest is refused locally" begin
+    e = OllamaEndpoint(base_url="http://box:11434")
+    enc(qs...; state="The sky is blue.") = UniLM.encode_system_one(_OS1_P, e, SystemOneRequest(state, collect(qs); model="kev:0.8b-q8_0"))
+    @test enc("q" => choice(["o$i" => "option $i" for i in 1:255])) isa UniLM.SystemOneWire          # 255: route bound
+    @test _os1_caught(() -> enc("q" => choice(["o$i" => "option $i" for i in 1:256]))) isa ArgumentError
+    @test enc("q" => noul("Is it?")) isa UniLM.SystemOneWire
+    @test enc("q" => choice(["a" => "A", "b" => "B"])) isa UniLM.SystemOneWire                        # no instructions: the server's call
+    @test _os1_caught(() -> enc("q" => choice("   ", ["a" => "A", "b" => "B"]))) isa ArgumentError  # blank instructions
+    @test _os1_caught(() -> enc("q" => score("How?", ["l$i" for i in 1:11]))) isa ArgumentError       # 2–10 levels
+    @test _os1_caught(() -> enc("q" => noul("Is it?"); state="   ")) isa ArgumentError                # blank text state
+    @test _os1_caught(() -> enc([("q$i" => noul("Is it?")) for i in 1:65]...)) isa ArgumentError
+end
+
+@testset "a model's own lower cap comes back as its 400, typed" begin
+    # The mock's route (`_os1_route` → `_os1_invalid`) applies the generic MLX encoder's rules of
+    # Ollama 0.40.6 — 2–26 candidates, instructions required — as tev1 and nimble do there.
+    r = _os1_serve() do ep, seen
+        ask("Option 7 is the right one.", "pick" => choice("Which option?", ["o$i" => "option $i" for i in 1:27]);
+            service=ep, model="tev1:0.8b", config=_OS1_CFG)
+    end
+    @test r isa SystemOneFailure && r.status == 400 && occursin("2–26 candidates", r.message)
+end
+
+# A reply to any model, computed like the mock route's own (no limits, no fixture).
+_os1_any_reply(b; model=b["model"]) = _os1_json(200, JSON.json(Dict{String,Any}("model" => model,
+    "answers" => Dict{String,Any}(name => _os1_answer(q) for (name, q) in b["questions"]),
+    "usage" => Dict("input_tokens" => 10, "output_tokens" => 0))))
+
+@testset "a cloud model keeps its tag in the result, so it is not priced as local" begin
+    # Ollama's cloud answered "clef" for a "clef:cloud" request in its published example.
+    r = _os1_serve(; respond=(n, req) -> _os1_any_reply(JSON.parse(_os1_text(req)); model="clef")) do ep, seen
+        ask("The sky is blue.", "q" => noul("Is the sky blue?"); service=ep, model="clef:cloud", config=_OS1_CFG)
+    end
+    @test r isa SystemOneSuccess && r.response.model == "clef:cloud"
+    @test (@test_logs (:warn, r"no price row") match_mode=:any estimated_cost(r)) == 0.0
 end

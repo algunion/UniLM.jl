@@ -376,13 +376,13 @@ results = ask_each(tickets, "team" => choice("Which team should handle this tick
 [issuccess(r) ? r["team"].choice : "no answer" for r in results]
 ```
 
-**Other backends.** The same calls run on OpenAI's Decisions API (a public beta; `OPENAI_API_KEY`) and on local decision models through Ollama (`ollama pull tev1:0.8b`; no key, no cost) — per call, or for a scope:
+**Other backends.** The same calls run on OpenAI's Decisions API (a public beta; `OPENAI_API_KEY`) and on local decision models through Ollama (`ollama pull tev1:4b`, or `clef-flash:9b` for pictures; no key, no cost) — per call, or for a scope:
 
 ```julia
 message = "I was charged twice for order #4471. Please refund the duplicate payment."
 nl_classify(message, TEAM; service = OPENAIServiceEndpoint)   # OpenAI's Decisions API
 
-with_system_one(OllamaEndpoint(); model = "tev1:0.8b") do     # every call inside asks Ollama
+with_system_one(OllamaEndpoint(); model = "tev1:4b") do       # every call inside asks Ollama
     nl_classify(message, TEAM)
 end
 ```

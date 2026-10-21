@@ -27,7 +27,7 @@ It also has one **System One** surface, which answers enumerated questions about
 - 🖼️ **Image Generation & Edits** — create and edit images with `gpt-image-2`
 - 🔧 **Tool/Function Calling** — first-class function tools in both APIs, with an automated `tool_loop`
 - 🔌 **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool-loop integration
-- ⚖️ **Decisions (System One)** — decisions about a text instead of generated text, from one surface over TypeSafe's Jev, OpenAI's Decisions API (beta) and local decision models through Ollama ([Backends](@ref system_one_backends)): `nl_classify` returns one of your own keys, `ask` answers `choice` / `score` / `noul` questions with calibrated probabilities, many questions in one request — about images too (Jev and OpenAI), and `box` locates what you name in one (Jev) — and `ask_each` asks the same questions about many texts at once
+- ⚖️ **Decisions (System One)** — decisions about a text instead of generated text, from one surface over TypeSafe's Jev, OpenAI's Decisions API (beta) and local decision models through Ollama ([Backends](@ref system_one_backends)): `nl_classify` returns one of your own keys, `ask` answers `choice` / `score` / `noul` questions with calibrated probabilities, many questions in one request — about images too (Jev, OpenAI and local vision models), and `box` locates what you name in one (Jev) — and `ask_each` asks the same questions about many texts at once
 - 🔀 **Dispatch on Meaning** — `nl_dispatch` runs the method whose sentence fits the text: short keys with a table of sentences (`texts = TEAM`, methods on `Val{:billing}`), or `nl"..."` in the signature; `@branch` is the same decision inline
 - 🤝 **Decisions with LLMs** — route a message before an LLM call and check the draft after it; `with_recorded_answers` records Jev's answers and the non-streaming LLM calls once and replays them, so tests run without keys
 - 📊 **Embeddings** — text embedding generation
@@ -35,7 +35,7 @@ It also has one **System One** surface, which answers enumerated questions about
 - 🌊 **Streaming** — real-time token streaming with `do`-block syntax
 - 📐 **Structured Output** — JSON Schema–constrained generation
 - ☁️ **Multi-Backend** — native OpenAI/Anthropic/Gemini plus Azure, DeepSeek, Mistral, vLLM, LM Studio, and any OpenAI-compatible provider
-- 🖥️ **Local models** — [Ollama](@ref ollama_guide)'s native API with Gemma 4: thinking, tools, structured output, images, audio, embeddings and model management, at no cost
+- 🖥️ **Local models** — [Ollama](@ref ollama_guide)'s native API: Gemma 4's thinking, tools, structured output, images, audio and transcription; EmbeddingGemma 2 embeddings of text, images and audio, with its task prompts; local decision models, pictures included ([Backends](@ref backends_ollama)); model management — at no cost
 - ✅ **Type Safety & Capability Introspection** — invalid states are unrepresentable and unsupported requests fail fast via `provider_capabilities`; tested with [JET.jl](https://github.com/aviatesk/JET.jl) and [Aqua.jl](https://github.com/JuliaTesting/Aqua.jl)
 
 ### Chat Completions vs Responses (OpenAI)

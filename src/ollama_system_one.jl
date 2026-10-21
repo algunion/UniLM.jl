@@ -1,29 +1,31 @@
 # ============================================================================
 # Ollama's System One route (https://docs.ollama.com/api/systemone): POST
-# {host}/v1/systemone, served by local decision models (Ollama 0.35 and later) in
-# TypeSafe's wire format. The body is the System One JSON form TypeSafe's wrapper
-# writes and the reply is read by TypeSafe's decoder; what lives here is what
-# differs — Ollama's stricter rules for a question, the top-level `images` (the
-# state's images, raw base64) and `runner`, its one option `keep_alive`, its error
-# bodies, and `confidence`, which Ollama's generic decision encodings report as
-# 1 − H(p)/ln n and this wrapper recomputes from the probabilities with TypeSafe's
-# published formulas, so a threshold means the same on every backend.
+# {host}/v1/systemone, served by local decision models (Ollama 0.35 or later, 0.35.1 or
+# later for images; measured on 0.40.6) in TypeSafe's wire format. The body is the
+# System One JSON form TypeSafe's wrapper writes and the reply is read by TypeSafe's
+# decoder; what lives here is what differs — Ollama's stricter rules for a question, the
+# top-level `images` (the state's images, raw base64) and `runner`, its one option
+# `keep_alive`, its error bodies, and `confidence`, which the MLX decision models report
+# as 1 − H(p)/ln n (Kev and the models on the llama.cpp path report TypeSafe's) and this
+# wrapper recomputes from the probabilities with TypeSafe's published formulas, so a
+# threshold means the same on every backend.
 # ============================================================================
 
 """
     OllamaSystemOneProtocol <: SystemOneProtocol
 
 Ollama's System One wire, the protocol [`OllamaEndpoint`](@ref) speaks:
-`POST {base_url}/v1/systemone` (Ollama 0.35 and later) with the System One JSON
-form TypeSafe's wrapper writes — `state`, `model`, `questions`, then `runner`
-when the endpoint sets one (part of a recording's key: it can change an answer),
-`images` when the state holds any, and `keep_alive` when one is set — answered
-by a local decision model such as `tev1:0.8b` and decoded as a TypeSafe reply
-is. No key is sent, no request id comes back, and recordings are filed under the
-namespace `"ollama"`, keyed without `keep_alive`, which changes how long the
-model stays loaded but never an answer.
+`POST {base_url}/v1/systemone` (Ollama 0.35 or later, pictures 0.35.1 or later;
+measured on 0.40.6, `tev1:4b` and `clef-flash:9b` arriving in 0.40.0) with the
+System One JSON form TypeSafe's wrapper writes — `state`, `model`, `questions`,
+then `runner` when the endpoint sets one (part of a recording's key: it can change
+an answer), `images` when the state holds any, and `keep_alive` when one is set —
+answered by a local decision model such as `tev1:4b` (`clef-flash:9b` for
+pictures) and decoded as a TypeSafe reply is. No key is sent, no request id comes
+back, and recordings are filed under the namespace `"ollama"`, keyed without
+`keep_alive`, which changes how long the model stays loaded but never an answer.
 
-There is no default model: the call names one (`model = "tev1:0.8b"`), or a
+There is no default model: the call names one (`model = "tev1:4b"`), or a
 [`with_system_one`](@ref) scope does. Before any I/O it refuses what Ollama's
 route refuses in its shared checks or documents as its maximum (Ollama 0.40.6):
 more than 64 questions; a Choice of more than 255 options; a Score of fewer than 2

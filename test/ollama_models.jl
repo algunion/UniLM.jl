@@ -506,9 +506,10 @@ end
 # is anything but a typed timeout inside an OllamaCallError.
 @testset "load_model: total_deadline bounds the verb, both requests together" begin
     seen = String[]
+    slow = Ref(false)                                       # the warm-up's load is answered at once
     handler = req -> begin
         push!(seen, String(req.target))
-        sleep(1.2)
+        sleep(req.target == "/api/show" ? 0.5 : slow[] ? 5.0 : 0.0)
         req.target == "/api/show" ?
             HTTP.Response(200, ["Content-Type" => "application/json"], Vector{UInt8}(JSON.json(Dict("capabilities" => ["completion"])))) :
             HTTP.Response(200, ["Content-Type" => "application/json"], Vector{UInt8}(JSON.json(Dict("model" => "m",
@@ -518,14 +519,16 @@ end
     server = HTTP.serve!(handler, "127.0.0.1", port; verbose=false)
     try
         ep = OllamaEndpoint(base_url="http://127.0.0.1:$port")
-        cfg = RequestConfig(max_attempts=1, total_deadline=2.0, request_timeout=2.0)
-        load_model("m"; service=ep, config=cfg)       # unmeasured: compiles the timeout path on both sides
-        empty!(seen)
+        # Unmeasured, under a budget both requests fit in: compiles the whole path to a load, so no compilation
+        # delays the measured call's lookup (in a cold process a warm-up under the tight budget is cut short).
+        @test load_model("m"; service=ep, config=RequestConfig(max_attempts=1, total_deadline=60.0)) isa OllamaSuccess{Nothing}
+        empty!(seen); slow[] = true
+        cfg = RequestConfig(max_attempts=1, total_deadline=3.0, request_timeout=3.0)
         t = @elapsed r = load_model("m"; service=ep, config=cfg)
         @test seen == ["/api/show", "/api/chat"]
-        # The load request had only what the lookup left of the 2.0 s, not a budget of its own.
-        @test r isa OllamaCallError && r.cause isa UniLMTimeout && r.cause.limit <= 0.8
-        @test t < 2.6
+        # The load request had what the 0.5 s lookup left of the 3.0 s, not a budget of its own (3.0 s).
+        @test r isa OllamaCallError && r.cause isa UniLMTimeout && r.cause.limit <= 2.5
+        @test t < 4.5                                       # cut near 3.0 s; the load would be answered at 5.5 s
     finally
         close(server)
     end

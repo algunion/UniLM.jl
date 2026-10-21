@@ -5,16 +5,20 @@
 # installed fails. Local models: no spend. Every request goes through an in-process relay
 # that counts the System One requests reaching the server and the requests in flight at
 # once, so a witness can say how many were sent. The models have 0.6B to 9B parameters:
-# states are clear-cut, and assertions are on shapes, ranges and those routes only. Each
-# witness names the outcome that would refute it.
+# states are clear-cut, and assertions are on shapes, ranges and those routes only; the caps
+# and messages asserted were measured on Ollama 0.40.6. Each witness names the outcome that
+# would refute it.
 
 using Sockets
 
-const _OS1L_MODELS = String.(split(get(ENV, "UNILM_OLLAMA_DECISION_MODELS",
-    "tev1:0.8b,tev1:4b,kev:0.8b-q8_0,kev:9b-q4_K_M,strands-decider:2b,nimble:9b,d1-omni:600m,d1:3b,clef-flash:9b"), ','))
+const _OS1L_MODELS = String.(strip.(split(get(ENV, "UNILM_OLLAMA_DECISION_MODELS",
+    "tev1:0.8b,tev1:4b,kev:0.8b-q8_0,kev:9b-q4_K_M,strands-decider:2b,nimble:9b,d1-omni:600m,d1:3b,clef-flash:9b"), ',')))
 const _OS1L_EP = get(ENV, "UNILM_LIVE_OLLAMA", "") == "1" ? OllamaEndpoint() : nothing
 const _OS1L_INFO = isnothing(_OS1L_EP) ? nothing :
-    Dict(m.name => m for m in list_models(; service=_OS1L_EP, config=RequestConfig(max_attempts=1, request_timeout=5.0)).response)
+    let r = list_models(; service=_OS1L_EP, config=RequestConfig(max_attempts=1, request_timeout=5.0))
+        r isa OllamaSuccess || error("Ollama System One live witnesses: listing the installed models failed: $(r)")
+        Dict(m.name => m for m in r.response)
+    end
 
 if isnothing(_OS1L_EP)
     @info "Skipping Ollama System One live witnesses (set UNILM_LIVE_OLLAMA=1 and run an Ollama server with " *
@@ -23,9 +27,13 @@ else
 
 const _OS1L_INFLIGHT = Threads.Atomic{Int}(0)                 # requests inside the relay now
 const _OS1L_PEAK = Threads.Atomic{Int}(0)                     # the most at once since the last reset
+# The last /v1/systemone exchange through the relay: the bytes received, the status and the reply.
+const _OS1L_LAST = Ref((request=UInt8[], status=0, response=UInt8[]))
+const _OS1L_LAST_LOCK = ReentrantLock()
+_os1l_last() = @lock _OS1L_LAST_LOCK _OS1L_LAST[]
 
 # The relay: forwards every request to the server through the package's own request seam,
-# counts those to /v1/systemone, and keeps the peak of requests in flight at once.
+# counts those to /v1/systemone, keeps the last of them, and the peak of requests in flight.
 function _os1l_relay(f::Function, upstream::String)
     sent = Threads.Atomic{Int}(0)
     cfg = RequestConfig(request_timeout=120.0, total_deadline=120.0, max_attempts=1)
@@ -35,7 +43,10 @@ function _os1l_relay(f::Function, upstream::String)
             target = String(req.target)
             target == "/v1/systemone" && Threads.atomic_add!(sent, 1)
             body = applicable(copy, req.body) ? Vector{UInt8}(copy(req.body)) : UInt8[]
+            received = copy(body)
             r = UniLM._http(String(req.method), upstream * target, ["Content-Type" => "application/json"], body; cfg)
+            target == "/v1/systemone" &&
+                @lock _OS1L_LAST_LOCK (_OS1L_LAST[] = (request=received, status=Int(r.status), response=copy(r.body)))
             HTTP.Response(r.status, ["Content-Type" => "application/json"], r.body)
         finally
             Threads.atomic_sub!(_OS1L_INFLIGHT, 1)
@@ -102,12 +113,18 @@ _os1l_outcome(r) = r isa SystemOneSuccess ? "answered, $(length(r["pick"].probab
 const _OS1L_TICKETS = JSON.parse(read(joinpath(@__DIR__, "fixtures", "ollama", "parity_tickets.json"), String))
 const _OS1L_IMAGE = joinpath(@__DIR__, "fixtures", "ollama", "red_circle.png")
 
-# Vision models whose yes/no answer about an image is a model-quality claim this suite does not
-# assert; their Noul is still sent, and its value reported. Observed with Ollama 0.40.6 on an Apple
-# M4 Max: d1-omni:600m answers noul 5.97e-7 to "Is there a red shape in the image?" for the
-# red-circle image while its own colour choice on the same request says red 0.996; d1:3b and
-# clef-flash:9b answer the noul correctly.
+const _OS1L_BLUE = joinpath(@__DIR__, "fixtures", "ollama", "blue_square.png")   # a blue square on white
+
+# Vision models whose answers about what an image shows — a yes/no about it, its colour — are
+# model-quality claims this suite does not assert for them: their questions are still sent, the
+# wiring is asserted, and the values are reported. Observed with Ollama 0.40.6 on an Apple M4 Max:
+# d1-omni:600m answers noul 5.97e-7 to "Is there a red shape in the image?" for the red-circle image
+# while its own colour choice on the same request says red 0.996; for a 300-pixel red square its
+# colour choice says blue 0.954 (red 0.0396, green 0.00661) while that noul says 0.999; for a
+# 300-pixel blue square, blue 0.51 against green 0.42 (red 0.0695), and "Is there a blue shape in the
+# image?" 0.00125. d1:3b and clef-flash:9b answer the noul and the colours of all three correctly.
 const _OS1L_NOUL_ON_IMAGE_EXCEPT = ("d1-omni:600m",)
+const _OS1L_COLOUR_ON_IMAGE_EXCEPT = ("d1-omni:600m",)
 
 @testset "Ollama System One live — $model" for model in _OS1L_MODELS
 @test haskey(_OS1L_INFO, model)                               # listed, so it must be installed
@@ -179,7 +196,7 @@ end
     end
 end
 
-@testset "what Ollama rejects is refused here, with no request" begin
+@testset "route bounds: refused locally, or the model's own answer" begin
     # Refuted by: a request reaching the server, or anything but an ArgumentError naming Ollama.
     for (witness, call) in (
             "256-option Choice" => () -> ask("s", "pick" => choice("Which?", ["o$i" => "option $i" for i in 1:256]); service=ep, model),
@@ -221,47 +238,63 @@ end
     @test f isa SystemOneFailure && f.status == 404 && contains(f.message, "ollama pull no-such-decision-model:0b")
 end
 
-@testset "wrapper parity: the answer to the byte-identical body" begin
-    # Refuted by: any difference between UniLM's answer and the raw HTTP answer to the same bytes.
+@testset "wrapper parity: the encoder's bytes are sent, and the answer is the server's reply" begin
+    # Refuted by: request bytes other than encode_system_one's reaching the server, or a decoded
+    # answer that differs in any way from the reply the relay captured for that request.
     set = _OS1L_TICKETS
     q = choice(set["instructions"], [k => set["descriptions"][k] for k in set["order"]])
     differ, spread = 0, 0.0
     for t in set["items"]
         req = SystemOneRequest(t["text"], ["intent" => q]; model)
         wire = UniLM.encode_system_one(UniLM.OllamaSystemOneProtocol(), ep, req)
-        raw = UniLM._http("POST", wire.url, ["Content-Type" => "application/json"], wire.body;
-                          cfg=RequestConfig(max_attempts=1, request_timeout=120.0))
-        a = JSON.parse(String(raw.body))["answers"]["intent"]
         r = ask(req; service=ep)
+        x = _os1l_last()
+        @test String(copy(x.request)) == wire.body && x.status == 200
+        a = JSON.parse(String(copy(x.response)))["answers"]["intent"]
         @test r isa SystemOneSuccess && r["intent"].choice == a["choice"]
         r isa SystemOneSuccess || continue
-        gap = maximum(abs(r["intent"].probabilities[k] - a["probabilities"][k]) for k in keys(a["probabilities"]))
-        @test gap <= 1e-9
+        ps, want = r["intent"].probabilities, a["probabilities"]
+        @test Set(keys(ps)) == Set(keys(want)) && all(ps[k] == want[k] for k in keys(want))
         differ += r["intent"].choice != a["choice"]
-        spread = max(spread, gap)
+        spread = max(spread, maximum(abs(ps[k] - want[k]) for k in keys(want)))
     end
     push!(_OS1L_PARITY, (model, differ, spread))
 end
 
 if :vision in info.capabilities
     @testset "vision: an image state answers; an image after text is refused locally" begin
-        # Refuted by: a non-success, a model that does not see the red circle (its colour choice),
-        # a yes/no on the image that misses it (outside the documented exceptions), or an image
-        # after a text reaching the server.
+        # Refuted by: a non-success or a malformed answer to an image (any vision model); outside the
+        # documented exceptions, a colour choice that does not tell the red circle from the blue
+        # square, or a yes/no that misses the red shape; or an image after a text reaching the server.
         img = ImageAttachment(_OS1L_IMAGE)
-        r = _os1l_timed(model, "image: noul + choice", sent) do
-            ask(img, "red" => noul("Is there a red shape in the image?"),
-                "colour" => choice("Which colour is the shape?", ["red" => "red", "green" => "green", "blue" => "blue"]);
-                service=ep, model)
-        end
-        @test r isa SystemOneSuccess && last(_OS1L_LOG)[3] == 1
-        # The wiring: the image reaches the model, and the model uses it.
-        @test r["colour"].choice == "red" && r["colour"].probabilities["red"] > 0.5   # refuted: the model does not see red
-        if model in _OS1L_NOUL_ON_IMAGE_EXCEPT
-            r isa SystemOneSuccess && @info "$model on the red-circle image (noul not asserted): " *
-                "noul = $(r["red"].noul), colour = $(r["colour"].choice), p(red) = $(r["colour"].probabilities["red"])"
-        else
-            @test r["red"].noul > 0.5                                     # refuted: its yes/no misses the red shape
+        colours = ["red" => "red", "green" => "green", "blue" => "blue"]
+        for (file, colour) in (_OS1L_IMAGE => "red", _OS1L_BLUE => "blue")
+            qs = colour == "red" ? ("red" => noul("Is there a red shape in the image?"),
+                                    "colour" => choice("Which colour is the shape?", colours)) :
+                                   ("colour" => choice("Which colour is the shape?", colours),)
+            r = _os1l_timed(model, "image ($colour): $(join(first.(qs), " + "))", sent) do
+                ask(ImageAttachment(file), qs...; service=ep, model)
+            end
+            # The wiring, for any vision model: one request, answered (HTTP 200), in shape and range.
+            @test r isa SystemOneSuccess && last(_OS1L_LOG)[3] == 1 && _os1l_last().status == 200
+            r isa SystemOneSuccess || continue
+            c = r["colour"]
+            @test c isa ChoiceAnswer && c.choice in first.(colours) && Set(keys(c.probabilities)) == Set(first.(colours)) &&
+                  all(p -> 0 <= p <= 1, values(c.probabilities)) && 0 <= c.confidence <= 1
+            _os1l_drift!(collect(values(c.probabilities)))
+            colour == "red" && @test r["red"] isa NoulAnswer && 0 <= r["red"].noul <= 1
+            if model in _OS1L_COLOUR_ON_IMAGE_EXCEPT
+                @info "$model on the $colour image (colour not asserted): colour = $(c.choice), " *
+                      "probabilities = $(c.probabilities)"
+            else
+                @test c.choice == colour && c.probabilities[colour] > 0.5     # refuted: the model does not see the colour
+            end
+            colour == "red" || continue
+            if model in _OS1L_NOUL_ON_IMAGE_EXCEPT
+                @info "$model on the red-circle image (noul not asserted): noul = $(r["red"].noul)"
+            else
+                @test r["red"].noul > 0.5                                 # refuted: its yes/no misses the red shape
+            end
         end
         r2 = ask([img, "A product photo from a customer."], "red" => noul("Is there a red shape?"); service=ep, model)
         @test r2 isa SystemOneSuccess
@@ -277,25 +310,33 @@ else
         r = _os1l_timed(model, "image to a text-only model", sent) do
             ask(ImageAttachment(_OS1L_IMAGE), "red" => noul("Is it red?"); service=ep, model)
         end
-        @test r isa SystemOneFailure && r.status == 400 && last(_OS1L_LOG)[3] == 1
+        @test r isa SystemOneFailure && r.status == 400 && contains(r.message, r"vision|image"i) && last(_OS1L_LOG)[3] == 1
     end
 end
 
 if model == "kev:0.8b-q8_0"
-    @testset "ask_each: six tickets answered in input order, one request at a time" begin
-        # Refuted by: a non-success, a refund ticket not routed to refund in its own slot, or
-        # more than one request in flight (Ollama's default width is 1).
+    @testset "ask_each: each slot is its own text's answer; one request in flight, two with ntasks=2" begin
+        # Refuted by: a non-success, a slot whose choice is not that of its own text asked alone (a
+        # reversal included), more than one request in flight by default (Ollama's width is 1), or
+        # never two with ntasks = 2.
         set = _OS1L_TICKETS
         q = choice(set["instructions"], [k => set["descriptions"][k] for k in set["order"]])
         items = set["items"][1:6]
+        texts = String[t["text"] for t in items]
         refunds = findall(t -> t["kind"] == "refund", items)
-        Threads.atomic_xchg!(_OS1L_PEAK, 0)
-        rs = _os1l_timed(model, "ask_each: 6 tickets", sent) do
-            ask_each([t["text"] for t in items], "intent" => q; service=ep, model)
+        choices(rs) = [r isa SystemOneSuccess ? r["intent"].choice : nothing for r in rs]
+        want = choices([ask(x, "intent" => q; service=ep, model) for x in texts])
+        @test length(refunds) == 2 && all(i -> want[i] == "refund", refunds)
+        @test !any(isnothing, want) && want != reverse(want)            # the slots tell a reversal apart
+        for (ntasks, peak) in ((nothing, 1), (2, 2))
+            Threads.atomic_xchg!(_OS1L_PEAK, 0)
+            rs = _os1l_timed(model, "ask_each: 6 tickets, ntasks=$(something(ntasks, "default"))", sent) do
+                ask_each(texts, "intent" => q; service=ep, model, ntasks)
+            end
+            @test length(rs) == 6 && all(r -> r isa SystemOneSuccess, rs) && last(_OS1L_LOG)[3] == 6
+            @test choices(rs) == want
+            @test _OS1L_PEAK[] == peak
         end
-        @test length(rs) == 6 && all(r -> r isa SystemOneSuccess, rs) && last(_OS1L_LOG)[3] == 6
-        @test length(refunds) == 2 && all(i -> rs[i] isa SystemOneSuccess && rs[i]["intent"].choice == "refund", refunds)
-        @test _OS1L_PEAK[] == 1
     end
 end
 

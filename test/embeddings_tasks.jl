@@ -194,6 +194,20 @@ end
     @test JSON.parse(JSON.json(Embeddings("")))["input"] == "" && Embeddings(["", "a"]).input == ["", "a"]  # strings: as before
 end
 
+# Refuted if: an empty or whitespace-only title is kept, so `task = :document` sends "title:  | text: …"
+# where the model card's prompt for a document without a title is "title: none | text: …".
+@testset "a blank title is no title: the document is sent as the model card's untitled one" begin
+    for t in ("", "   ", "\t\n")
+        x = EmbeddingInput("Shipping is free."; title=t)
+        @test isnothing(x.title) && x == EmbeddingInput("Shipping is free.")
+        @test _et_body(Embeddings([x]; service=_ET_EP, model=_ET_EG, task=:document))["input"] ==
+              ["title: none | text: Shipping is free."]
+    end
+    # No title, so no title rule applies: another task takes the item, and media need no text.
+    @test Embeddings(EmbeddingInput("x"; title=" "); service=_ET_EP, model=_ET_EG, task=:search_query) isa Embeddings
+    @test isnothing(EmbeddingInput(; title="", image=_ET_IMG).title)
+end
+
 @testset "driver: a media embedding records by digest and replays offline; a 400 stays a failure" begin
     server, url, bodies = _ollama_mock((n, body) -> n == 1 ?
         (200, [JSON.json(Dict("model" => _ET_EG, "embeddings" => [[0.6, 0.8]], "prompt_eval_count" => 3))]) :

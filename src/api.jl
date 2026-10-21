@@ -1575,7 +1575,9 @@ Images and audio go only to an [`OllamaEndpoint`](@ref) (Ollama's `/api/embed` t
 that see or hear, such as `embeddinggemma-2:740m-q8_0`, which embedded a text with its picture or clip
 as one item on Ollama 0.40.6); a service that embeds text only refuses them before any request.
 Two items are `==` when their texts, titles and media are. An empty text beside an image or clip is
-no text: the item holds the media alone (`text === nothing`), sent with no task prompt.
+no text: the item holds the media alone (`text === nothing`), sent with no task prompt. An empty or
+whitespace-only title is no title (`title === nothing`): with `task = :document` the text is sent as
+`"title: none | text: …"`, the model card's prompt for a document without one.
 
 Throws `ArgumentError` for an item with nothing to embed (no image or clip, and no text or an empty
 one), a `title` without a non-empty text, more than one image or clip, or an attachment of any other kind.
@@ -1594,11 +1596,13 @@ struct EmbeddingInput
                             image::Union{ImageAttachment,Nothing}, audio::Union{AudioAttachment,Nothing})
         # An empty text is none: beside media the item is the media alone, sent with no bare task prompt.
         t = isnothing(text) || isempty(text) ? nothing : String(text)
+        # A blank title is none too: the document is sent as the model card's untitled one ("title: none").
+        h = isnothing(title) || isempty(strip(title)) ? nothing : String(title)
         isnothing(t) && isnothing(image) && isnothing(audio) && throw(ArgumentError(
             "an EmbeddingInput needs a non-empty text, an image or a sound clip to embed"))
-        isnothing(title) || !isnothing(t) || throw(ArgumentError(
+        isnothing(h) || !isnothing(t) || throw(ArgumentError(
             "an EmbeddingInput's title names the document its text comes from: give it a non-empty text too"))
-        new(t, isnothing(title) ? nothing : String(title), image, audio)
+        new(t, h, image, audio)
     end
 end
 EmbeddingInput(; text=nothing, title=nothing, image=nothing, audio=nothing) = EmbeddingInput(text, title, image, audio)

@@ -13,9 +13,11 @@ One model installed on an Ollama server, as [`list_models`](@ref) reports it
 (`/api/tags`): `name` (e.g. `"gemma4:e4b"`), `size` on disk in bytes, content `digest`,
 `modified_at` (the server's RFC 3339 text), and from its details `family`,
 `parameter_size` (e.g. `"8.0B"`), `quantization` (e.g. `"Q4_K_M"`) and
-`context_length`, the longest context the model supports. `runner` — the runner that
-serves it (`:mlx`, `:llamacpp`, `:ggml`) and `format` (`"gguf"`, `"safetensors"`), as
-Ollama 0.40 and later report them; `nothing` when not reported. `capabilities` holds what
+`context_length`, the longest context the model supports. `runner` — the runner the
+server's listing names for the model (`:mlx`, `:llamacpp`, `:ggml`), which can differ from
+the one that serves it once loaded: [`OllamaRunningModel`](@ref)`.runner` (`/api/ps`)
+reports that — and `format` (`"gguf"`, `"safetensors"`), as Ollama 0.40 and later report
+them; `nothing` when not reported. `capabilities` holds what
 the server reports, e.g. `:completion`, `:tools`, `:insert`, `:vision`, `:embedding`,
 `:thinking`, `:image` and `:audio`. A detail the server does not report, or reports empty
 (`""`), is `nothing`; `raw` holds the unparsed entry.
@@ -46,9 +48,11 @@ for one with levels, empty for a model that cannot think — and `thinking_defau
 `parameters` are its Modelfile defaults with numbers parsed (`"top_k" => 64`); a
 parameter set more than once, such as `stop`, collects a `Vector{String}`. `family`,
 `parameter_size` and `quantization` come from its details, `nothing` when not reported
-or empty (`""`). `runner` — the runner that serves it (`:mlx`, `:llamacpp`, `:ggml`) and
-`format` (`"gguf"`, `"safetensors"`), as Ollama 0.40 and later report them; `nothing` when
-not reported or empty (`""`). `raw` holds the whole reply (template, license,
+or empty (`""`). `runner` — the runner the server's listing names for the model (`:mlx`,
+`:llamacpp`, `:ggml`), which can differ from the one that serves it once loaded:
+[`OllamaRunningModel`](@ref)`.runner` (`/api/ps`) reports that — and `format` (`"gguf"`,
+`"safetensors"`), as Ollama 0.40 and later report them; `nothing` when not reported or
+empty (`""`). `raw` holds the whole reply (template, license,
 `model_info`, …).
 """
 struct OllamaModelInfo
@@ -72,7 +76,7 @@ end
 A model loaded in an Ollama server's memory, as [`running_models`](@ref) reports it
 (`/api/ps`): `name`, `size` (bytes of memory it takes), `size_vram` (the part in GPU
 memory), the `context_length` it was loaded with, and `expires_at`, when it unloads
-unless used again (RFC 3339 text). `runner` — the runner that serves it (`:mlx`,
+unless used again (RFC 3339 text). `runner` — the runner serving it now (`:mlx`,
 `:llamacpp`, `:ggml`), as Ollama 0.40 and later report it; `nothing` when not reported
 or empty (`""`). `raw` holds the unparsed entry.
 """

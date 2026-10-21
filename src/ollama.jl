@@ -3,8 +3,9 @@
 # (`/api/chat`, `/api/embed`): it is the only one that takes the runtime `options`
 # (context window, sampling knobs), `keep_alive`, `think` and `truncate`; the
 # OpenAI-compatible routes accept and ignore them, and truncate over-long input
-# without a word. `respond` and FIM keep the OpenAI-compatible routes
-# (`/v1/responses`, `/v1/completions`).
+# without a word. `respond`, FIM and transcription keep the OpenAI-compatible routes
+# (`/v1/responses`, `/v1/completions`, `/v1/audio/transcriptions`), which carry none of
+# the endpoint's `keep_alive`, `options` or `runner`.
 # ============================================================================
 
 get_url(s::OllamaEndpoint, ::Chat)::String = s.base_url * OLLAMA_CHAT_PATH

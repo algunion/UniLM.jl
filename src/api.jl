@@ -681,8 +681,8 @@ omitted, so the model's own defaults apply. Options `Chat` already names
 - `num_keep`: tokens of the prompt kept when the context is shifted.
 - `top_k`, `min_p`, `repeat_last_n`, `repeat_penalty`: sampling.
 
-The options other than `num_ctx` are passed through unchanged; their effect on the MLX
-runner is not verified.
+Every option is passed through unchanged; the effect of those other than `num_ctx` on the
+MLX runner is not verified.
 
 The constructor throws `ArgumentError` for a value out of range: `num_ctx`,
 `num_batch` and `num_thread` must be positive, `top_k` non-negative (0 turns top-k off), `min_p` in
@@ -773,8 +773,10 @@ A local (or remote) [Ollama](https://ollama.com) server. Chat and [`Embeddings`]
 requests use Ollama's native `/api/chat` and `/api/embed`, which carry what the
 OpenAI-compatible routes ignore: the context window and the other
 [`OllamaOptions`](@ref), how long the model stays loaded (`keep_alive`), and the
-`think` and `truncate` fields. [`respond`](@ref) and [`FIMCompletion`](@ref) use the
-OpenAI-compatible routes.
+`think` and `truncate` fields. [`respond`](@ref), [`FIMCompletion`](@ref) and
+[`transcribe`](@ref) use the OpenAI-compatible routes (`/v1/responses`, `/v1/completions`,
+`/v1/audio/transcriptions`), which carry none of the endpoint's `keep_alive`,
+[`OllamaOptions`](@ref) or `runner`.
 
 - `base_url`: server root, without `/v1` or `/api`. Defaults to the `OLLAMA_HOST`
   environment variable, read with the rules of Ollama's own clients (`"gpu-box"` →
@@ -782,8 +784,11 @@ OpenAI-compatible routes.
 - `keep_alive`: seconds the model stays loaded after each request (`0` unloads it at
   once, `Inf` keeps it loaded); `nothing` leaves the server's default (5 minutes
   unless `OLLAMA_KEEP_ALIVE` says otherwise).
-- `truncate`: whether Ollama may drop the oldest messages (chat) or the end of an input
-  (embeddings) to fit the context window. `false` (the default) makes an input that does
+- `truncate`: whether Ollama may shorten an input to fit the context window. In chat it
+  can cut inside a single over-long message, keeping its first tokens and its tail
+  (Ollama 0.40.6: a 5,407-token message cut to 2,050 tokens, the first 4 kept), so the
+  start of a long document is lost without a word, not only the oldest messages; in
+  embeddings it drops the end of an input. `false` (the default) makes an input that does
   not fit a failure — HTTP 400 "exceeds the available context size" — instead of an
   answer to a silently shortened prompt; raise `num_ctx`, or set `true` for Ollama's
   own behaviour. On the MLX runner (Apple Silicon) the window does not bound a chat
@@ -799,8 +804,7 @@ OpenAI-compatible routes.
 - `options...`: keyword arguments of [`OllamaOptions`](@ref), e.g. `num_ctx=32_768`.
 
 No API key is sent. Local models cost nothing: [`estimated_cost`](@ref) reports `0.0`
-for a chat or embeddings result without a missing-price warning (a `respond` or FIM
-result does not record its endpoint, so it is priced by its model name like any other).
+for a chat, embeddings, `respond` or FIM result without a missing-price warning.
 A cloud model reached through the local server — a model whose tag is `cloud` or ends in
 `-cloud` (`clef:cloud`, `gpt-oss:120b-cloud`) — is billed by Ollama and is priced by its
 name like any other model.

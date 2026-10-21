@@ -1818,9 +1818,15 @@ function _fill_embeddings!(dst::Vector{Vector{Float64}}, data::AbstractVector)
     return dst
 end
 
-# Copy an API-returned embedding into the preallocated buffer, resizing when the model's
-# actual dimension differs from the 1536 default (e.g. text-embedding-3-large = 3072).
+# Copy an API-returned embedding into the preallocated buffer, resizing when the model's actual
+# dimension differs from the 1536 default. A vector that is empty, all zeros, or holds a value that
+# is not a finite number is no embedding (Ollama has answered all-zero vectors with HTTP 200): it is
+# a malformed reply, reported as one, never stored as a vector that still compares and indexes.
 function _store_embedding!(dst::Vector{Float64}, src::AbstractVector)
+    all(x -> x isa Real && isfinite(x), src) || throw(ArgumentError(
+        "the embeddings reply holds a value that is not a finite number"))
+    !isempty(src) && any(!iszero, src) || throw(ArgumentError(
+        "the embeddings reply holds an empty or all-zero vector, which no model returns for real input"))
     length(dst) == length(src) || resize!(dst, length(src))
     @inbounds for i in eachindex(src)
         dst[i] = src[i]

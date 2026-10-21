@@ -937,6 +937,15 @@ end
         @test all(v -> length(v) == 4, ok.embeddings)
     end
 
+    @testset "update! refuses a vector no model returns for real input" begin
+        row(v) = [Dict{String,Any}("index" => 0, "embedding" => v)]
+        @test_throws ArgumentError update!(UniLM.Embeddings("t"), row(zeros(8)))            # all zeros (HTTP 200 bug)
+        @test_throws ArgumentError update!(UniLM.Embeddings("t"), row(Any[0.1, nothing]))   # a null
+        @test_throws ArgumentError update!(UniLM.Embeddings("t"), row(Float64[]))           # empty
+        @test_throws ArgumentError update!(UniLM.Embeddings("t"), row([0.1, NaN]))
+        @test update!(UniLM.Embeddings("t"), row([0.0, 0.5])) == [0.0, 0.5]                # a zero component is fine
+    end
+
 end
 
 @testset "Chat JSON serialization - all optional fields" begin

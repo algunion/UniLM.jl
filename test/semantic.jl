@@ -1649,7 +1649,7 @@ photo_route(photo, ::nl"a blue square") = :blue
     # A backend that cannot carry it there refuses it in its own words, before any request.
     for (service, model, needle) in ((OPENAIServiceEndpoint, nothing, "OpenAI's Decisions API takes images in the state only"),
                                      (OllamaEndpoint(base_url="http://127.0.0.1:1"), "tev1:0.8b",
-                                      "not supported by UniLM's Ollama wrapper yet"))
+                                      "Ollama takes images as the state"))
         e = caught(() -> nl_dispatch(photo_route, img; service, model))
         @test e isa ArgumentError && contains(e.msg, needle)
     end

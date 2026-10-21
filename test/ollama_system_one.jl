@@ -29,8 +29,8 @@ _os1_json(status::Int, body::AbstractString) =
     HTTP.Response(status, ["Content-Type" => "application/json; charset=utf-8"], Vector{UInt8}(body))
 _os1_error(status::Int, msg::AbstractString) = _os1_json(status, JSON.json(Dict("error" => msg)))
 
-# The route's own validation (Ollama 0.40.6, generic encodings), as the message it answers
-# with; `nothing` for a request it compiles.
+# The generic MLX encoder's validation (Ollama 0.40.6), as the route answers with it — stricter
+# than the route's own rules; `nothing` for a request it compiles.
 function _os1_invalid(b::AbstractDict)::Union{Nothing,String}
     qs = get(b, "questions", nothing)
     qs isa AbstractDict && 1 <= length(qs) <= 64 || return "questions must contain 1–64 fields"
@@ -252,9 +252,9 @@ struct _Os1Odd <: SystemOneQuestion end
             "one level"             => (a("s", score("How?", ["only"])), "2 to 10 levels"),
             "11 levels"             => (a("s", score("How?", rungs(11))), "2 to 10 levels"),
             "blank state"           => (a(" \n ", q), "blank `state`"),
-            "image state"           => (a(img, q), "not supported by UniLM's Ollama wrapper yet"),
-            "image in instructions" => (a("s", noul(["Is this", img, "a circle?"])), "not supported by UniLM's Ollama wrapper yet"),
-            "image in a raw field"  => (a("s", RawQuestion(Dict("type" => "noul", "instructions" => img))), "not supported by UniLM's Ollama wrapper yet"),
+            "image after a text"    => (a(["Photo:", img], q), "an image after a text"),
+            "image in instructions" => (a("s", noul(["Is this", img, "a circle?"])), "images in the state only"),
+            "image in a raw field"  => (a("s", RawQuestion(Dict("type" => "noul", "instructions" => img))), "images in the state only"),
             "Box"                   => (a(img, box("the circle")), "Box questions are not supported by Ollama"),
             "unknown kind"          => (a("s", "odd" => _Os1Odd()), "Ollama cannot send \"odd\""),
             "unknown option"        => (a("s", q; num_ctx=4096), "one System One option, `keep_alive`"),
@@ -275,10 +275,11 @@ struct _Os1Odd <: SystemOneQuestion end
         end
         @test length(seen) == 3
     end
-    # What the wrapper refuses for its shape, the route rejects too (its own rules, above):
-    # the local check saves the round trip, it does not narrow what Ollama accepts. The shapes
-    # the wrapper leaves to the model (no instructions, 27 options) the mock rejects too, as
-    # the generic MLX encoder does.
+    # What the wrapper refuses for its shape, the mock (above) rejects too: the local check saves
+    # the round trip and does not narrow what Ollama accepts — save blank `instructions`, which
+    # Ollama would read as none and the wrapper refuses deliberately. The shapes the wrapper
+    # leaves to the model (no instructions, 27 options) the mock rejects too, as the generic MLX
+    # encoder does.
     wire(qs...; state="s") = JSON.parse(JSON.json(UniLM._system_one_json(
         SystemOneRequest(state, UniLM._normalize_varargs(qs)), "tev1:0.8b")))
     for b in (wire(["q$i" => q for i in 1:65]...), wire(choice(["a", "b"])), wire(noul(; yes="It is")),
@@ -600,4 +601,63 @@ _os1_any_reply(b; model=b["model"]) = _os1_json(200, JSON.json(Dict{String,Any}(
     end
     @test r isa SystemOneSuccess && r.response.model == "clef:cloud"
     @test (@test_logs (:warn, r"no price row") match_mode=:any estimated_cost(r)) == 0.0
+end
+
+@testset "a local model answered under another name keeps the server's name" begin
+    r = _os1_serve(; respond=(n, req) -> _os1_any_reply(JSON.parse(_os1_text(req)); model="tev1:latest")) do ep, seen
+        ask("The sky is blue.", "q" => noul("Is the sky blue?"); service=ep, model="tev1", config=_OS1_CFG)
+    end
+    @test r isa SystemOneSuccess && r.response.model == "tev1:latest"
+end
+
+@testset "runner and keep_alive are both sent; only the runner is keyed" begin
+    e = OllamaEndpoint(base_url="http://box:11434", runner=:mlx, keep_alive=300)
+    enc(state) = UniLM.encode_system_one(_OS1_P, e, SystemOneRequest(state, ["q" => noul("Is it red?")]; model="d1-omni:600m"))
+    w = enc("A red circle.")
+    b, k = JSON.parse(w.body), JSON.parse(w.record_body)
+    @test b["runner"] == k["runner"] == "mlx" && b["keep_alive"] == 300 && !haskey(k, "keep_alive")
+    # With an image, every field in its place.
+    w = enc(ImageAttachment(joinpath(_OS1_FIXTURES, "red_circle.png")))
+    @test collect(keys(JSON.parse(w.body))) == ["state", "model", "questions", "runner", "images", "keep_alive"]
+    @test collect(keys(JSON.parse(w.record_body))) == ["state", "model", "questions", "runner", "images"]
+end
+
+@testset "images: sent first, shared by all questions; forms Ollama cannot keep are refused" begin
+    img = ImageAttachment(joinpath(_OS1_FIXTURES, "red_circle.png"))
+    e = OllamaEndpoint(base_url="http://box:11434")
+    enc(state) = UniLM.encode_system_one(_OS1_P, e, SystemOneRequest(state, ["red" => noul("Is there a red shape?")];
+                                                                     model="d1-omni:600m"))
+    b64 = UniLM.Base64.base64encode(img.data)
+    w = enc(img)
+    @test JSON.parse(w.body)["images"] == [b64] && JSON.parse(w.body)["state"] == ""
+    @test JSON.parse(w.record_body)["images"] == [UniLM._media_digest(img)]        # recordings: digests
+    w = enc([img, img, "Describe the photo."])
+    @test JSON.parse(w.body)["images"] == [b64, b64] && JSON.parse(w.body)["state"] == "Describe the photo."
+    @test JSON.parse(enc([img, "a", "b"]).body)["state"] == ["a", "b"]
+    @test JSON.parse(enc([img, ""]).body)["state"] == ""                           # blank text, with images: allowed
+    e1 = _os1_caught(() -> enc(["Photo:", img]))
+    @test e1 isa ArgumentError && occursin("before", e1.msg)
+    @test _os1_caught(() -> enc(["", img])) isa ArgumentError                       # any text before an image
+    @test _os1_caught(() -> enc(Dict("photo" => img, "note" => "x"))) isa ArgumentError     # nested in JSON
+    @test _os1_caught(() -> enc([img, Dict("k" => 1)])) isa ArgumentError                   # mixed with non-strings
+    q = UniLM.encode_system_one
+    @test _os1_caught(() -> q(_OS1_P, e, SystemOneRequest("s", ["c" => choice(["a" => img, "b" => "B"])];
+                                                          model="d1-omni:600m"))) isa ArgumentError   # in a question
+    @test !haskey(JSON.parse(enc("plain text").body), "images")                              # none: no field
+end
+
+@testset "images reach a vision model; a model without vision answers its own 400, typed" begin
+    img = ImageAttachment(joinpath(_OS1_FIXTURES, "red_circle.png"))
+    # As Ollama 0.40.6 answers (decision/systemone.go): images only for a vision encoding.
+    vision(n, req) = (b = JSON.parse(_os1_text(req));
+        haskey(b, "images") && b["model"] != "d1-omni:600m" ?
+            _os1_error(400, "image inputs are not supported by this decision model") : _os1_any_reply(b))
+    ok, sent = _os1_serve(; respond=vision) do ep, seen
+        (ask(img, "red" => noul("Is there a red shape?"); service=ep, model="d1-omni:600m", config=_OS1_CFG), seen)
+    end
+    @test ok isa SystemOneSuccess && JSON.parse(only(sent).body)["images"] == [UniLM.Base64.base64encode(img.data)]
+    r = _os1_serve(; respond=vision) do ep, seen
+        ask(img, "red" => noul("Is there a red shape?"); service=ep, model="kev:0.8b-q8_0", config=_OS1_CFG)
+    end
+    @test r isa SystemOneFailure && r.status == 400 && occursin("image inputs are not supported", r.message)
 end

@@ -136,18 +136,18 @@ it: a model belongs to its backend, and `tev1:0.8b` means nothing to TypeSafe.
 | Credentials | `TYPESAFE_API_KEY` | `OPENAI_API_KEY` | none |
 | Model when a call names none | `TYPESAFE_DEFAULT_MODEL`, else `jev-latest` | `gpt-6-luna`, the only one | none: name an installed decision model, such as `tev1:0.8b` |
 | Questions | Choice, Score, Noul, Box | Choice, Score, Noul | Choice, Score, Noul |
-| Limits | 1–255 options, 1–10 levels; 64k tokens per request | 2–255 options, 2–10 levels, 200 questions | 2–26 options, 2–10 levels, 64 questions |
-| Guidance | strings, objects, arrays and images, anywhere | strings; `instructions` on every question; no Noul `yes`/`no` | strings, objects or arrays as `instructions`, on every question; strings elsewhere |
-| Images | anywhere in the request; experimental | in the state only | not sent |
+| Limits | 1–255 options, 1–10 levels; 64k tokens per request | 2–255 options, 2–10 levels, 200 questions | 2–255 options, 2–10 levels, 64 questions; a model may take fewer ([What a model takes](@ref backends_ollama_limits)) |
+| Guidance | strings, objects, arrays and images, anywhere | strings; `instructions` on every question; no Noul `yes`/`no` | strings, objects or arrays as `instructions`, when given; strings elsewhere |
+| Images | anywhere in the request; experimental | in the state only | in the state, before its texts; vision models only |
 | Box | Jev 1.14 or later | refused | refused |
 | Refusals | none | per question, a [`RefusalAnswer`](@ref) | none |
 | `confidence` | TypeSafe's, as sent | OpenAI's, as sent, to two decimals | computed by UniLM; Ollama's own value in `raw` |
 | Request id | `x-typesafe-request-id` | `x-request-id` | none |
 | Options | `long_context` | `prompt_cache_key`, `safety_identifier` | `keep_alive` |
-| Price | input tokens only ([Models](https://docs.typesafe.ai/models)) | input tokens only, \$0.10 per million, cached ones included ([Decisions guide](https://developers.openai.com/api/docs/guides/decisions)) | nothing: your machine |
+| Price | input tokens only ([Models](https://docs.typesafe.ai/models)) | input tokens only, \$0.10 per million, cached ones included ([Decisions guide](https://developers.openai.com/api/docs/guides/decisions)) | nothing: your machine (a cloud model, `…:cloud`, is priced by its name) |
 | Default timeouts | 60 s per attempt, 150 s in all | 60 s per attempt, 150 s in all | the package's: 600 s per attempt, 900 s in all |
 | [`ask_each`](@ref) in flight | 16 | 16 | 1 |
-| Status, 20 October 2026 | `jev-latest` is Jev 1.13, `jev-preview` Jev 1.14 (14 October 2026); images and Box experimental | public beta since 6 October 2026 | verified with Ollama 0.40.6, `tev1:0.8b` and `kev:0.8b-q8_0` |
+| Status, 20 October 2026 | `jev-latest` is Jev 1.13, `jev-preview` Jev 1.14 (14 October 2026); images and Box experimental | public beta since 6 October 2026 | verified with Ollama 0.40.6 on nine decision models, three of them with vision (21 October 2026) |
 
 - **Hosts.** Jev answers at `https://api.typesafe.ai` and OpenAI at
   `https://api.openai.com`; Ollama, 0.35 or later, at the endpoint's host:
@@ -181,8 +181,8 @@ for (what, call) in [
         "a Noul's yes/no, to OpenAI" => () -> ask(MESSAGES[1], "refund" => noul("Does the customer want a refund?";
                                                       yes = "They ask for their money back");
                                                   service = OPENAIServiceEndpoint),
-        "an image, to Ollama"        => () -> ask(scene, "red" => noul("Is there a red shape?");
-                                                  service = OllamaEndpoint(), model = "tev1:0.8b"),
+        "an image after a text, to Ollama" => () -> ask(["A customer photo:", scene], "red" => noul("Is there a red shape?");
+                                                        service = OllamaEndpoint(), model = "clef-flash:9b"),
         "no model, to Ollama"        => () -> nl_classify(MESSAGES[1], TEAM; service = OllamaEndpoint()),
         "256 options, to TypeSafe"   => () -> ask(MESSAGES[1], "pick" => choice("Pick one.", ["option $i" for i in 1:256]))]
     try
@@ -268,47 +268,152 @@ does not carry over to another.
 
 ## [Local decision models with Ollama](@id backends_ollama)
 
-**The job:** decide without the text leaving the machine — offline, in a test,
-or where data must stay put. **Without a local decision route:** a hosted
-service, or an LLM prompted for a label whose reply you parse. **With it:** a
-small decision model served by Ollama answers the same questions, over Ollama's
-own TypeSafe-compatible `POST /v1/systemone`, with no key and no cost.
+**The job:** decide without the text — or the picture — leaving the machine:
+offline, in a test, or where data must stay put. **Without a local decision
+route:** a hosted service, or an LLM prompted for a label whose reply you parse.
+**With it:** a decision model served by Ollama answers the same questions, over
+Ollama's own TypeSafe-compatible `POST /v1/systemone`, with no key and no cost.
 
 1. Run Ollama 0.35 or later (`ollama serve`, or the desktop app).
    [`OllamaEndpoint`](@ref)`()` reads `OLLAMA_HOST`, else
    `http://127.0.0.1:11434`.
-2. Pull a decision model: `ollama pull tev1:0.8b` in a shell, or
-   [`pull_model`](@ref)`("tev1:0.8b")` in Julia. Ollama lists the others as
-   [decision models](https://ollama.com/search?c=decision).
-3. Name it: `model = "tev1:0.8b"` on the call, or
-   `with_system_one(OllamaEndpoint(); model = "tev1:0.8b") do … end` around the
+2. Pull a decision model: `ollama pull tev1:4b` in a shell, or
+   [`pull_model`](@ref)`("tev1:4b")` in Julia ([Which model](@ref
+   backends_ollama_models) compares nine). Ollama lists them as [decision
+   models](https://ollama.com/search?c=decision).
+3. Name it: `model = "tev1:4b"` on the call, or
+   `with_system_one(OllamaEndpoint(); model = "tev1:4b") do … end` around the
    code.
 
 The `tev1 (Ollama)` lines of the first example came from `tev1:0.8b` this way.
 
+### [Pictures](@id backends_ollama_images)
+
+A vision decision model — Clef, Clef Flash, pplx-decider, d1, d1-omni — answers
+questions about pictures. The pictures go first in the state, then its texts, and
+every question of the request sees them:
+
+```@example backends
+photo = ImageAttachment("../assets/red_circle.png")
+r = ask([photo, "A photo sent in with a return."],
+        "colour" => choice("What colour is the shape?", ["red", "green", "blue"]),
+        "round"  => noul("Is the shape round?");
+        service = OllamaEndpoint(), model = "clef-flash:9b")
+(r["colour"].choice, round(r["colour"].confidence; digits = 3), round(r["round"].noul; digits = 3))
+```
+
+One request asked both questions about the picture: `clef-flash:9b` saw red, at a
+confidence of 0.991, and gave "Is the shape round?" a probability of 0.945.
+
+- **Forms.** The state is an image, or a vector of images followed by texts. The
+  texts become the state — none: an empty string, one: that string, several: an
+  array — and a blank text beside images is allowed.
+- **Refused before sending:** an image after a text, which Ollama would show
+  first; an image inside a JSON object or array (to [`nl_dispatch`](@ref), which
+  sends its arguments inside an object, pass `state = [image, …texts]`); images
+  beside values that are not texts; an image inside a question.
+- **A model without vision** answers with its own HTTP 400, a
+  [`SystemOneFailure`](@ref) whose message is `image inputs are not supported by
+  this decision model`.
+- **Recordings** key and store each image by its SHA-256, never its bytes.
+- **`d1-omni:600m`** takes pictures but read them unreliably: it called a red
+  square "blue" (probability 0.954), and gave "Is there a red shape?" about the red
+  circle a probability of 0.0000006. For pictures, prefer `clef-flash:9b`, or
+  `d1:3b` where MLX does not run.
+
+### [What a model takes](@id backends_ollama_limits)
+
+[`ask`](@ref) checks, before sending, what Ollama's route takes from every model:
+1–64 questions; 2–255 options per Choice, each described by a string or `nothing`;
+2–10 levels per Score, each a string; Noul criteria that are strings;
+`instructions`, when given, a string that is not blank, an object or an array; a
+text state that is not blank, unless images come with it. Box questions are
+refused: the route answers Choice, Score and Noul. A model may take less, and says
+so with its own HTTP 400, which comes back as a [`SystemOneFailure`](@ref) carrying
+Ollama's message:
+
+| Model | Runner | Options per Choice | 27 options came back as |
+| :--- | :--- | :--- | :--- |
+| `tev1:0.8b`, `tev1:4b` | MLX | at most 24 | 400 `criteria must contain 2–26 candidates` (26: 400 `Tev1 supports at most 24 candidates`) |
+| `nimble:9b`, `clef-flash:9b` | MLX | at most 26 | 400 `criteria must contain 2–26 candidates` |
+| `strands-decider:2b` | MLX | 27 measured | an answer |
+| `kev:0.8b-q8_0`, `kev:9b-q4_K_M`, `d1:3b`, `d1-omni:600m` | llama.cpp | 27 measured | an answer |
+
+Most models want `instructions` too: asked a question without them, `tev1:4b`,
+`nimble:9b`, `strands-decider:2b` and `kev:0.8b-q8_0` answered 400 (`instructions
+must be a nonempty string, object, or array`; Kev: `"instructions" must be
+provided`), and of the five tried only `clef-flash:9b` answered. Measured with
+Ollama 0.40.6 on an Apple M4 Max on 21 October 2026. Ollama also caps a request's
+text and schema, images excluded, at 64 KiB by its own count: a request over it
+comes back as a 413 [`SystemOneFailure`](@ref).
+
+### [Which model](@id backends_ollama_models)
+
+Nine decision models answered the 129 labelled support tickets of [One formula,
+calibrated per model](@ref backends_confidence) — the same Choice of seven intents
+— through UniLM on one machine:
+
+- **Most accurate:** `tev1:4b`, right on 0.938 of the tickets and the best
+  calibrated of the nine (expected calibration error 0.038), in about 0.24 s a
+  ticket.
+- **Small and fast:** `d1-omni:600m`, 0.868 in 0.025 s, and `strands-decider:2b`,
+  0.899 in 0.084 s.
+- **Pictures:** `clef-flash:9b`, 0.915 on these text tickets in 0.64 s, or
+  `d1:3b`, 0.845 in 0.14 s on llama.cpp.
+- `kev:9b-q4_K_M` is nearly as accurate (0.922), but its probabilities are
+  poorly calibrated (0.145); `kev:0.8b-q8_0` was right on 0.690.
+
+Jev and OpenAI's Decisions API scored 0.969 and 0.946 on the same tickets. Each
+model's answer was the one Ollama sent: UniLM's probabilities equalled the
+server's reply to the same bytes, on all nine.
+
+!!! details "Evidence"
+    Measured on 21 October 2026 with Ollama 0.40.6 on an Apple M4 Max with 64 GB,
+    through UniLM: one Choice of seven intents per ticket (60 clear, 32 borderline,
+    22 out of scope, 15 adversarial), one call at a time, `keep_alive = Inf`.
+    Latency is the client's wall clock per warm call, measured again on a quiet
+    machine; the first call loads the model. Jev and OpenAI: the 20 October run
+    above.
+
+    | Model | Runner | Accuracy | ECE (10 bins) | p50 / p95 | First call |
+    | :--- | :--- | :--- | :--- | :--- | :--- |
+    | `tev1:4b` | MLX | 0.938 | 0.038 | 0.241 s / 0.265 s | 1.37 s |
+    | `kev:9b-q4_K_M` | llama.cpp | 0.922 | 0.145 | 0.413 s / 0.417 s | 3.44 s |
+    | `clef-flash:9b` | MLX | 0.915 | 0.075 | 0.636 s / 0.718 s | 3.19 s |
+    | `strands-decider:2b` | MLX | 0.899 | 0.090 | 0.084 s / 0.090 s | 1.01 s |
+    | `nimble:9b` | MLX | 0.884 | 0.064 | 0.547 s / 0.608 s | 2.67 s |
+    | `d1-omni:600m` | llama.cpp | 0.868 | 0.055 | 0.025 s / 0.036 s | 0.80 s |
+    | `d1:3b` | llama.cpp | 0.845 | 0.047 | 0.139 s / 0.147 s | 2.42 s |
+    | `tev1:0.8b` | MLX | 0.806 | 0.059 | 0.041 s / 0.045 s | 0.69 s |
+    | `kev:0.8b-q8_0` | llama.cpp | 0.690 | 0.167 | 0.046 s / 0.048 s | 1.12 s |
+    | Jev (hosted) | — | 0.969 | 0.016 | 0.254 s / 0.328 s | — |
+    | OpenAI Decisions (hosted) | — | 0.946 | 0.080 | 0.475 s / 2.437 s | — |
+
+    The refutation we wrote down before the run — a model of 2B parameters or more
+    right on fewer than half of the 60 clear tickets — did not occur (0.850 to
+    0.983). Repeated runs gave the same answers to every ticket; under other load on
+    the machine, latencies rose up to about twofold. Limits: one labelled set, one machine,
+    one way of writing the options; n = 129, so an accuracy near 0.95 is known to
+    about ±0.04. Every probability distribution summed to 1 within 4.4e-16.
+
 - **No default model.** A call that names none is an `ArgumentError` before any
   request; a model that is not installed comes back as a 404
   [`SystemOneFailure`](@ref) whose message says to pull it.
-- **Text only.** Images are refused: no vision decision model has been verified
-  with this wrapper yet. Box questions are refused: the route answers Choice,
-  Score and Noul.
-- **Stricter rules.** 1–64 questions per request; `instructions` on every
-  question; 2–26 options per Choice, each described by a string or `nothing`;
-  2–10 levels per Score, each a string. A model may cap lower, and its own 400
-  says so: `tev1:0.8b` takes at most 24 options. Ollama caps a request's text
-  and schema at 64 KiB, images excluded, and counts it itself: a request over it
-  comes back as a 413 [`SystemOneFailure`](@ref).
 - **`keep_alive`.** `keep_alive = 600` keeps the model loaded for 600 s after
   the request, `0` unloads it at once and `Inf` keeps it loaded. It is not part
   of a recording's key, since it changes no answer.
+- **`runner`.** An endpoint's `runner` (`OllamaEndpoint(runner = :llamacpp)`)
+  goes with each request, and is part of a recording's key: another runner can
+  answer with other probabilities.
 - **One request at a time.** A decision runner answers one request at a time,
   so [`ask_each`](@ref) keeps one in flight unless `ntasks` says otherwise, and
   the timeouts are the package's own, since loading a model on a CPU can take
   minutes.
 - **Results.** `request_id` is `nothing`, as Ollama sends none, and
-  [`estimated_cost`](@ref) is `0.0`. With `service = OllamaEndpoint()`,
-  [`list_models`](@ref) lists the installed models.
-- **Known upstream issues**, open at Ollama 0.40.6: a model may score a
+  [`estimated_cost`](@ref) is `0.0` — for a cloud model reached through the
+  server, a tag of `cloud` or one ending in `-cloud`, the price of its name. With
+  `service = OllamaEndpoint()`, [`list_models`](@ref) lists the installed models.
+- **Known upstream issues**, still open on 21 October 2026: a model may score a
   request's questions one after another, so its latency grows with their number
   ([#18750](https://github.com/ollama/ollama/issues/18750)); a runner returned
   wrong answers with HTTP 200 until the model was unloaded
@@ -317,18 +422,16 @@ The `tev1 (Ollama)` lines of the first example came from `tev1:0.8b` this way.
   requests ([#19062](https://github.com/ollama/ollama/issues/19062)).
   `keep_alive = 0` unloads a model whose answers stop making sense.
 
-!!! details "Evidence"
-    Measured on 20 October 2026 with Ollama 0.40.6 on an Apple M4 Max, in two
-    runs of one request at a time: a request to a loaded model took about 17 ms
-    on `kev:0.8b-q8_0` and 25 to 140 ms on `tev1:0.8b`; the first request, which
-    loads the model, about 0.9 s on `kev` and 2.6 to 2.8 s on `tev1`. Every
-    probability distribution the two models returned summed to 1 within 4.4e-16.
-
 **Tune it**
 
-- Measure a local model on labelled messages of your own before you rely on
-  it, as you would a hosted one: six messages, as above, are a demonstration,
-  not a measurement.
+- Pick the model for the job — a small one where speed matters, `tev1:4b` where
+  accuracy does, a vision model for pictures — and measure it on labelled
+  messages of your own before you rely on it, as you would a hosted one.
+- Give every question `instructions` and keep a Choice to 24 options: then no
+  model measured here refuses a request for its questions (pictures need a vision
+  model).
+- Tune `min_confidence` per model: the same threshold hands a different share of
+  the work to a person on each.
 - Keep the model loaded while a batch runs (`keep_alive`), and unload it when
   the batch is done.
 
@@ -389,9 +492,10 @@ every backend, and files each backend's apart: TypeSafe's under
 recordings, and a replay never answers one backend with another's answer. The
 options that change how a request is served but never what it is answered —
 OpenAI's `prompt_cache_key` and `safety_identifier`, Ollama's `keep_alive` — are
-left out of the key and the file; TypeSafe's `long_context` is part of the key.
-An image is recorded by its SHA-256, never its bytes: TypeSafe's as a digest of
-each image part, OpenAI's as `data:<mime>;sha256,<hex>` in place of its base64.
+left out of the key and the file; TypeSafe's `long_context` and the runner an
+`OllamaEndpoint` names are part of the key. An image is recorded by its SHA-256,
+never its bytes: TypeSafe's as a digest of each image part, OpenAI's and Ollama's
+as `data:<mime>;sha256,<hex>` in place of its base64.
 Replaying needs no key and no server. Recording needs each backend's access —
 `TYPESAFE_API_KEY`, `OPENAI_API_KEY` or a running Ollama server — and a request
 with no recording throws [`ReplayMissError`](@ref), whose message says which.

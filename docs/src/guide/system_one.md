@@ -787,8 +787,9 @@ image's bytes into the JSON as numbers.
   end-of-image marker (one cut short is refused); the whole request at most
   32 MiB. TypeSafe applies no EXIF rotation, so turn a photo's pixels upright
   before you send it.
-- **Other backends.** OpenAI's Decisions API takes images in the state only;
-  UniLM's Ollama wrapper sends none yet ([Backends](@ref backends_table)).
+- **Other backends.** OpenAI's Decisions API takes images in the state only, and
+  so do Ollama's vision decision models, the images before the texts
+  ([Pictures](@ref backends_ollama_images)).
 
 !!! details "Evidence"
     Observed on 19 October 2026 (`jev-1.13.0`): an image of W × H pixels was

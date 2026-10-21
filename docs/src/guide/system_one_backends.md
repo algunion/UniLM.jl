@@ -144,7 +144,7 @@ it: a model belongs to its backend, and `tev1:0.8b` means nothing to TypeSafe.
 | `confidence` | TypeSafe's, as sent | OpenAI's, as sent, to two decimals | computed by UniLM; Ollama's own value in `raw` |
 | Request id | `x-typesafe-request-id` | `x-request-id` | none |
 | Options | `long_context` | `prompt_cache_key`, `safety_identifier` | `keep_alive` |
-| Price | input tokens only ([Models](https://docs.typesafe.ai/models)) | input tokens only, \$0.10 per million, cached ones included ([Decisions guide](https://developers.openai.com/api/docs/guides/decisions)) | nothing: your machine (a cloud model, `…:cloud`, is priced by its name) |
+| Price | input tokens only ([Models](https://docs.typesafe.ai/models)) | input tokens only, \$0.10 per million, cached ones included ([Decisions guide](https://developers.openai.com/api/docs/guides/decisions)) | nothing: your machine (a cloud model — a tag of `cloud`, or one ending in `-cloud` — is priced by its name) |
 | Default timeouts | 60 s per attempt, 150 s in all | 60 s per attempt, 150 s in all | the package's: 600 s per attempt, 900 s in all |
 | [`ask_each`](@ref) in flight | 16 | 16 | 1 |
 | Status, 20 October 2026 | `jev-latest` is Jev 1.13, `jev-preview` Jev 1.14 (14 October 2026); images and Box experimental | public beta since 6 October 2026 | verified with Ollama 0.40.6 on nine decision models, three of them with vision (21 October 2026) |
@@ -279,8 +279,9 @@ Ollama's own TypeSafe-compatible `POST /v1/systemone`, with no key and no cost.
    `http://127.0.0.1:11434`.
 2. Pull a decision model: `ollama pull tev1:4b` in a shell, or
    [`pull_model`](@ref)`("tev1:4b")` in Julia ([Which model](@ref
-   backends_ollama_models) compares nine). Ollama lists them as [decision
-   models](https://ollama.com/search?c=decision).
+   backends_ollama_models) compares nine; this page's examples ran on
+   `tev1:0.8b`, and on `clef-flash:9b` for pictures). Ollama lists them as
+   [decision models](https://ollama.com/search?c=decision).
 3. Name it: `model = "tev1:4b"` on the call, or
    `with_system_one(OllamaEndpoint(); model = "tev1:4b") do … end` around the
    code.
@@ -289,8 +290,10 @@ The `tev1 (Ollama)` lines of the first example came from `tev1:0.8b` this way.
 
 ### [Pictures](@id backends_ollama_images)
 
-A vision decision model — Clef, Clef Flash, pplx-decider, d1, d1-omni — answers
-questions about pictures. The pictures go first in the state, then its texts, and
+A vision decision model answers questions about pictures: measured here,
+`clef-flash:9b` (`ollama pull clef-flash:9b`), `d1:3b` and `d1-omni:600m`. Other
+decision models whose [`model_info`](@ref) capabilities include `:vision` take the
+same request, untested. The pictures go first in the state, then its texts, and
 every question of the request sees them:
 
 ```@example backends
@@ -313,8 +316,10 @@ confidence of 0.991, and gave "Is the shape round?" a probability of 0.945.
   sends its arguments inside an object, pass `state = [image, …texts]`); images
   beside values that are not texts; an image inside a question.
 - **A model without vision** answers with its own HTTP 400, a
-  [`SystemOneFailure`](@ref) whose message is `image inputs are not supported by
-  this decision model`.
+  [`SystemOneFailure`](@ref) carrying the model's own words: `image inputs are not
+  supported by this decision model` from `tev1:0.8b`,
+  `registry.ollama.ai/library/kev:0.8b-q8_0 does not support vision` from
+  `kev:0.8b-q8_0`. Check `status == 400`, not the text.
 - **Recordings** key and store each image by its SHA-256, never its bytes.
 - **`d1-omni:600m`** takes pictures but read them unreliably: it called a red
   square "blue" (probability 0.954), and gave "Is there a red shape?" about the red
@@ -326,9 +331,10 @@ confidence of 0.991, and gave "Is the shape round?" a probability of 0.945.
 [`ask`](@ref) checks, before sending, what Ollama's route takes from every model:
 1–64 questions; 2–255 options per Choice, each described by a string or `nothing`;
 2–10 levels per Score, each a string; Noul criteria that are strings;
-`instructions`, when given, a string that is not blank, an object or an array; a
-text state that is not blank, unless images come with it. Box questions are
-refused: the route answers Choice, Score and Noul. A model may take less, and says
+`instructions`, when given, a string, an object or an array; a text state that is
+not blank, unless images come with it. Box questions are refused: the route answers
+Choice, Score and Noul. UniLM adds one refusal of its own: blank (whitespace-only)
+`instructions`, which Ollama would read as none. A model may take less, and says
 so with its own HTTP 400, which comes back as a [`SystemOneFailure`](@ref) carrying
 Ollama's message:
 
@@ -339,13 +345,14 @@ Ollama's message:
 | `strands-decider:2b` | MLX | 27 measured | an answer |
 | `kev:0.8b-q8_0`, `kev:9b-q4_K_M`, `d1:3b`, `d1-omni:600m` | llama.cpp | 27 measured | an answer |
 
-Most models want `instructions` too: asked a question without them, `tev1:4b`,
-`nimble:9b`, `strands-decider:2b` and `kev:0.8b-q8_0` answered 400 (`instructions
-must be a nonempty string, object, or array`; Kev: `"instructions" must be
-provided`), and of the five tried only `clef-flash:9b` answered. Measured with
-Ollama 0.40.6 on an Apple M4 Max on 21 October 2026. Ollama also caps a request's
-text and schema, images excluded, at 64 KiB by its own count: a request over it
-comes back as a 413 [`SystemOneFailure`](@ref).
+The route accepts a question without `instructions`, but most models do not:
+`tev1:4b`, `nimble:9b` and `strands-decider:2b` answered 400 `instructions must be a
+nonempty string, object, or array`, `kev:0.8b-q8_0` 400 `questions.intent:
+"instructions" must be provided` (for a question named `intent`), and of the five
+tried only `clef-flash:9b` answered — so pass `instructions` with local models.
+Measured with Ollama 0.40.6 on an Apple M4 Max on 21 October 2026. Ollama also
+caps a request's text and schema, images excluded, at 64 KiB by its own count: a
+request over it comes back as a 413 [`SystemOneFailure`](@ref).
 
 ### [Which model](@id backends_ollama_models)
 
@@ -392,9 +399,11 @@ server's reply to the same bytes, on all nine.
     The refutation we wrote down before the run — a model of 2B parameters or more
     right on fewer than half of the 60 clear tickets — did not occur (0.850 to
     0.983). Repeated runs gave the same answers to every ticket; under other load on
-    the machine, latencies rose up to about twofold. Limits: one labelled set, one machine,
-    one way of writing the options; n = 129, so an accuracy near 0.95 is known to
-    about ±0.04. Every probability distribution summed to 1 within 4.4e-16.
+    the machine, latencies rose up to about twofold. Limits: one labelled set, one
+    machine, one way of writing the options; n = 129, so an accuracy near 0.95 is
+    known to about ±0.04. Separately, in UniLM's live test suite on the same nine
+    models (Ollama 0.40.6), every probability distribution summed to 1 within
+    4.4e-16.
 
 - **No default model.** A call that names none is an `ArgumentError` before any
   request; a model that is not installed comes back as a 404

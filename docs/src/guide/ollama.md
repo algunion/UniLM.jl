@@ -17,6 +17,9 @@ ollama pull embeddinggemma-2:740m-q8_0  # embeddings of text, images and audio (
 ollama pull tev1:4b                     # decisions: System One questions (4.4 GB)
 ```
 
+The examples name the tags they ran on: `embeddinggemma-2` alone pulls its
+`latest` tag, a different 740m build, which was not measured here.
+
 `OllamaEndpoint()` finds the server at `OLLAMA_HOST` when that is set (the same
 rules as Ollama's own clients, so `gpu-box` means `http://gpu-box:11434`), else at
 `http://127.0.0.1:11434`.
@@ -31,7 +34,7 @@ rules as Ollama's own clients, so `gpu-box` means `http://gpu-box:11434`), else 
 | [get JSON that matches a schema](@ref ollama_json) | `response_format=UniLM.json_schema(…)` | JSON that follows the schema |
 | [ask about an image or a recording](@ref ollama_media) | [`ImageAttachment`](@ref), [`AudioAttachment`](@ref) | an answer about what the model saw or heard |
 | [transcribe a recording](@ref ollama_transcription) | [`transcribe`](@ref)`(path; service=OllamaEndpoint(), model="gemma4:e4b")` | the words it heard |
-| [decide about a text or a picture](@ref backends_ollama) | [`ask`](@ref)`(…; service=OllamaEndpoint(), model="tev1:4b")` | typed answers with probabilities, as on Jev |
+| [decide about a text](@ref backends_ollama), or a picture with a [vision model](@ref backends_ollama_images) | [`ask`](@ref)`(…; service=OllamaEndpoint(), model="tev1:4b")` | typed answers with probabilities, as on Jev |
 | [embed texts, images and sound for search](@ref ollama_embeddings) | `Embeddings(…; service=OllamaEndpoint(), model="embeddinggemma-2:740m-q8_0", task=:document)` | one vector per item, written for its task |
 | [give the model more context, keep it loaded, or pick its runner](@ref ollama_options) | `OllamaEndpoint(num_ctx=…, keep_alive=…, runner=…)` | the model run the way you asked |
 | [install, inspect, unload or delete models](@ref ollama_models) | [`list_models`](@ref), [`pull_model`](@ref), [`model_info`](@ref), [`delete_model`](@ref), … | typed model cards |
@@ -302,10 +305,12 @@ end
 
 The picture lies nearest to "a red circle" and the recording — *"The secret word is
 banana"* — nearest to "banana". Media take no prompt; the text of a mixed item
-does. The tags say what each EmbeddingGemma 2 build takes: `270m-…-text` text,
-`440m-…-text-vision` images too, `570m-…-text-audio` sound too, and the 740m builds
-all three (only the 740m builds were measured here). Images and sound go only to
-Ollama: every other service embeds text, and refuses media before the request.
+does, and both of its parts shape its vector (Evidence below). The tags say what
+each EmbeddingGemma 2 build takes: `270m-…-text` text, `440m-…-text-vision` images
+too and `570m-…-text-audio` sound too — these two untested here — and the 740m
+builds all three: images and sound were measured on `740m-q8_0` and `740m-mxfp8`.
+Images and sound go only to Ollama: every other service embeds text, and refuses
+media before the request.
 
 **Long inputs.** EmbeddingGemma 2 was trained on 8,192 tokens, and UniLM asks Ollama
 for that window with each of its requests. An input longer than the window is an
@@ -314,17 +319,19 @@ documents into chunks.
 
 | Model | Window | Measured on Ollama 0.40.6 |
 | :--- | :--- | :--- |
-| EmbeddingGemma 2, every build | 8,192 tokens | 5,991 tokens embedded whole; 8,331 refused (HTTP 400) on `740m-q8_0`, `740m-mxfp8` and `270m-q8_0-text` |
+| EmbeddingGemma 2: `740m-q8_0`, `740m-mxfp8`, `270m-q8_0-text` | 8,192 tokens | 5,991 tokens embedded whole; 8,331 refused (HTTP 400) |
 | EmbeddingGemma (v1) | 2,048 tokens | 3,203 tokens refused (HTTP 400) |
+
+The 440m and 570m builds were not measured.
 
 !!! details "How the window is sent"
     Ollama reports a 262,144-token context for EmbeddingGemma 2, and at its default
-    batch the llama.cpp builds refused any input over about 2,037 tokens (HTTP 413):
-    their limit follows `num_batch`. So an embeddings request — and a
-    [`load_model`](@ref) — for an EmbeddingGemma 2 model carries `num_ctx` and
-    `num_batch` of 8192 unless the endpoint sets either; the window is part of a
-    recording's key. `truncate=true` lets Ollama cut the end of an input that does
-    not fit instead.
+    batch the llama.cpp builds measured refused long inputs with HTTP 413 —
+    `740m-q8_0` anything over about 2,037 tokens: their limit follows `num_batch`.
+    So an embeddings request — and a [`load_model`](@ref) — for an EmbeddingGemma 2
+    model carries `num_ctx` and `num_batch` of 8192 unless the endpoint sets either;
+    the window is part of a recording's key. `truncate=true` lets Ollama cut the end
+    of an input that does not fit instead.
 
 !!! details "Evidence"
     Measured on 21 October 2026 with Ollama 0.40.6 on an Apple M4 Max, through
@@ -341,11 +348,16 @@ documents into chunks.
     | `embeddinggemma-2:270m-q8_0-text` | 0.8536 | 0.8207 | +0.033 [+0.014, +0.053] |
     | `embeddinggemma` (v1) | 0.7921 | 0.7727 | +0.019 [+0.003, +0.037] |
 
-    One public dataset, one run per condition; on a 24-document, 12-query set of our
-    own, prompted and raw differed by at most one query, too small a set to tell
-    them apart. **Images and sound**, `740m-q8_0`: the red-circle picture scored 0.754
-    against "a red circle" and 0.633 against "a blue square"; the recording 0.792
-    against "banana" and 0.626 against "apple". For text, `740m-q8_0` and
+    One public dataset, one run per condition. On a 24-document, 12-query set of our
+    own, the raw texts came out ahead by about one query on every model — for v1
+    refuting the comparison written down before that run — a set too small to tell
+    the two apart. **Images and sound**, `740m-q8_0`: the red-circle picture scored
+    0.754 against "a red circle" and 0.633 against "a blue square"; the recording
+    0.792 against "banana" and 0.626 against "apple". **A text with its media as one
+    item**: "a red circle" with the picture gave a vector of its own, cosine 0.870
+    with the text alone and 0.903 with the picture alone (0.752 between the two);
+    "banana" with the recording 0.847 and 0.957 (0.794) — on `740m-mxfp8` 0.857 and
+    0.907, 0.845 and 0.958 — so neither part was dropped. For text, `740m-q8_0` and
     `270m-q8_0-text` returned identical vectors: the 0.3 GB build embeds text as the
     1.3 GB one does.
 
@@ -392,7 +404,7 @@ served by llama.cpp. The runner decides what the window does:
 | | MLX | llama.cpp |
 | :--- | :--- | :--- |
 | The model loads with | `num_ctx` | `num_ctx` |
-| A later request with another `num_ctx` | keeps the loaded window | loads the model again with it |
+| A later request for a larger `num_ctx` | keeps the loaded window | loads the model again with it |
 | A chat prompt longer than the window | is answered | is an HTTP 400, unless `truncate=true` |
 | With `truncate=true` | not measured | a 5,407-token message cut to 2,050 tokens: the first 4 and the tail kept |
 
@@ -479,7 +491,7 @@ such as `qwen2.5-coder` (Gemma 4 does not).
 | `LLMFailure` 400 after a pause, for an image or a sound | the model sees or hears nothing | use a model with `:vision` / `:audio` |
 | `ArgumentError` "expects a task prompt" | an EmbeddingGemma request without `task` | pass the [task](@ref ollama_embeddings) the text is for |
 | `EmbeddingFailure` 400 "exceeds the context length" | the input is longer than the model's window | split it into chunks |
-| `SystemOneFailure` 400 from a decision model | the model takes less than the route: fewer options, no images | see [what each model takes](@ref backends_ollama) |
+| `SystemOneFailure` 400 from a decision model | the model takes less than the route: a question without `instructions`, more options than it takes, a picture it cannot see | give every question `instructions`; see [what each model takes](@ref backends_ollama_limits) |
 | `ArgumentError` before any request | an option Ollama would ignore | the message names it |
 | an empty answer with finish reason `"length"` | thinking used the whole `max_tokens` budget | raise `max_tokens`, or `reasoning_effort="none"` |
 | a slow first call | the model is loading | [`load_model`](@ref) first, or a longer `keep_alive` |

@@ -70,12 +70,13 @@ println("Cosine similarity (Julia vs Fortran): ", round(sim, digits=4))
 
 Some embedding models read a short prompt that says what a text is for: a query to
 search with, or a document to be found. EmbeddingGemma does — v1 and v2, on any
-service — and neither Ollama nor an OpenAI-compatible server adds it, so `task`
-writes it:
+service. Ollama does not add the prompt, and the OpenAI-compatible request has no
+field for it, so `task` writes it:
 
 ```julia
-Embeddings(documents; service=OllamaEndpoint(), model="embeddinggemma-2", task=:document)
-Embeddings("How long do refunds take?"; service=OllamaEndpoint(), model="embeddinggemma-2",
+gemma = "embeddinggemma-2:740m-q8_0"    # the tag the Ollama guide's setup pulls
+Embeddings(documents; service=OllamaEndpoint(), model=gemma, task=:document)
+Embeddings("How long do refunds take?"; service=OllamaEndpoint(), model=gemma,
            task=:search_query)
 ```
 
@@ -139,14 +140,15 @@ item; texts, images and sounds land in one space, so a word can find a picture:
 
 ```julia
 pictures = Embeddings([ImageAttachment("label.png"), ImageAttachment("box.png")];
-                      service=OllamaEndpoint(), model="embeddinggemma-2", task=:document)
+                      service=OllamaEndpoint(), model="embeddinggemma-2:740m-q8_0", task=:document)
 ```
 
 Only a model that sees or hears embeds media — among EmbeddingGemma 2's builds the
-440m ones take images, the 570m ones sound and the 740m ones both, as their tags say
-(the 740m ones were measured). Every other service embeds text, and refuses media
-before the request. [Local Models with Ollama](@ref ollama_embeddings) shows a
-picture and a recording found by words.
+440m ones take images, the 570m ones sound and the 740m ones both, as their tags say;
+the 740m ones were measured, with media alone and with a text and its media as one
+item, and the 440m and 570m ones are untested. Every other service embeds text, and
+refuses media before the request. [Local Models with Ollama](@ref ollama_embeddings)
+shows a picture and a recording found by words.
 
 ## Available Models
 
@@ -154,7 +156,7 @@ picture and a recording found by words.
 | :----------------------- | :--------- | :------------------------------ |
 | `text-embedding-3-small` | 1536       | Default, good balance           |
 | `text-embedding-3-large` | 3072       | Higher quality, more dimensions |
-| `embeddinggemma-2` (Ollama) | 768, 512, 256 or 128 | Local; 8,192 tokens; text, and images or sound by build; needs a `task` |
+| `embeddinggemma-2:740m-q8_0` (Ollama) | 768, 512, 256 or 128 | Local; 8,192 tokens; text, images and sound; needs a `task` |
 | `embeddinggemma` (Ollama) | 768, 512, 256 or 128 | Local; 2,048 tokens; text; needs a `task` |
 
 !!! note
@@ -168,7 +170,7 @@ Pass `service` and `model` to embed with a different backend:
 
 ```julia
 # Ollama (local): native /api/embed; an input longer than the model's window fails
-emb = Embeddings("test"; service=OllamaEndpoint(), model="embeddinggemma-2", task=:search_query)
+emb = Embeddings("test"; service=OllamaEndpoint(), model="embeddinggemma-2:740m-q8_0", task=:search_query)
 embeddingrequest!(emb)
 
 # Gemini (OpenAI-compatible endpoint; the native generateContent API has no embeddings)

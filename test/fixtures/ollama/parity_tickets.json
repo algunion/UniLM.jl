@@ -1,0 +1,63 @@
+{
+  "instructions": "What does the customer primarily want us to do? If the customer asks for money back, choose refund even when other problems are mentioned.",
+  "order": [
+    "refund",
+    "cancel_subscription",
+    "technical_issue",
+    "shipping_delivery",
+    "billing_question",
+    "account_access",
+    "other"
+  ],
+  "descriptions": {
+    "refund": "The customer asks to get money back: a refund, reimbursement, chargeback, credit or compensation.",
+    "cancel_subscription": "The customer wants to cancel, stop, pause or not renew a subscription or plan, or close the account.",
+    "technical_issue": "The product, app or website is malfunctioning: errors, crashes, features not working.",
+    "shipping_delivery": "The status, tracking, delay, location, address or condition of a physical delivery.",
+    "billing_question": "A question or problem about a charge, invoice, price, discount or payment method that does not ask for money back.",
+    "account_access": "Trouble signing in: password, verification code, locked, suspended or hacked account, login email.",
+    "other": "None of the above."
+  },
+  "items": [
+    {
+      "kind": "refund",
+      "text": "I returned the headphones last week. Please refund the full amount to my card."
+    },
+    {
+      "kind": "cancel_subscription",
+      "text": "Please cancel my subscription before it renews next month."
+    },
+    {
+      "kind": "technical_issue",
+      "text": "The app crashes as soon as I open the settings page."
+    },
+    {
+      "kind": "shipping_delivery",
+      "text": "My parcel has been stuck in transit for nine days. Where is it?"
+    },
+    {
+      "kind": "account_access",
+      "text": "I reset my password twice and still cannot sign in."
+    },
+    {
+      "kind": "refund",
+      "text": "The lamp I bought does not suit me. I would like a refund, please."
+    },
+    {
+      "kind": "cancel_subscription",
+      "text": "I no longer need the premium plan. Please stop it from renewing."
+    },
+    {
+      "kind": "technical_issue",
+      "text": "Your website shows an error whenever I try to upload a file."
+    },
+    {
+      "kind": "shipping_delivery",
+      "text": "The courier says my package was delivered, but it is not at my door."
+    },
+    {
+      "kind": "account_access",
+      "text": "The verification code never arrives, so I am locked out of my account."
+    }
+  ]
+}

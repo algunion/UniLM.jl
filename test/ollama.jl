@@ -126,7 +126,7 @@ end
 @testset "URL routing" begin
     e = OllamaEndpoint(base_url="http://box:11434")
     @test UniLM.get_url(e, Chat(service=e, model="m")) == "http://box:11434/api/chat"
-    @test UniLM.get_url(e, Embeddings("x"; service=e, model="embeddinggemma")) == "http://box:11434/api/embed"
+    @test UniLM.get_url(e, Embeddings("x"; service=e, model="embeddinggemma", task=:none)) == "http://box:11434/api/embed"
     @test UniLM.get_url(e, FIMCompletion(service=e, model="qwen2.5-coder:1.5b-base", prompt="x")) ==
           "http://box:11434/v1/completions"
     @test UniLM._agentic_url(e) == "http://box:11434/v1/responses"
@@ -383,7 +383,7 @@ end
     e = OllamaEndpoint(base_url="http://127.0.0.1:$port")
     cfg = RequestConfig(max_attempts=1)
     for r in (chatrequest!(_ochat(e); config=cfg), fetch(chatrequest!(_ochat(e; stream=true); config=cfg)),
-              embeddingrequest!(Embeddings("x"; service=e, model="embeddinggemma"); config=cfg))
+              embeddingrequest!(Embeddings("x"; service=e, model="embeddinggemma", task=:none); config=cfg))
         @test occursin("no Ollama server answered at http://127.0.0.1:$port", r.error)
         @test occursin("ollama serve", r.error)
     end
@@ -399,7 +399,7 @@ end
     @test (@test_logs estimated_cost(r)) == 0.0
     # An explicit model still prices: what would this have cost elsewhere?
     @test estimated_cost(r; model="gpt-5.4-mini") > 0.0
-    emb = EmbeddingSuccess(embeddings=Embeddings("x"; service=e, model="embeddinggemma"),
+    emb = EmbeddingSuccess(embeddings=Embeddings("x"; service=e, model="embeddinggemma", task=:none),
                            usage=TokenUsage(prompt_tokens=100, total_tokens=100), raw=Dict{String,Any}())
     @test (@test_logs estimated_cost(emb)) == 0.0
 end
@@ -457,7 +457,7 @@ end
 
 @testset "embeddings: native /api/embed, over-long input is an error" begin
     e = OllamaEndpoint(keep_alive=60, num_ctx=2048)
-    body = JSON.parse(UniLM._encode_embeddings(e, Embeddings(["a", "b"]; service=e, model="embeddinggemma", dimensions=256)))
+    body = JSON.parse(UniLM._encode_embeddings(e, Embeddings(["a", "b"]; service=e, model="embeddinggemma", dimensions=256, task=:none)))
     @test body == Dict("model" => "embeddinggemma", "input" => ["a", "b"], "truncate" => false, "dimensions" => 256,
                        "keep_alive" => 60, "options" => Dict("num_ctx" => 2048))
     @test JSON.parse(UniLM._encode_embeddings(OllamaEndpoint(truncate=true), Embeddings("a"; service=e, model="m")))["truncate"] === true
@@ -472,14 +472,14 @@ end
     end
     try
         ep = OllamaEndpoint(base_url=base)
-        r = embeddingrequest!(Embeddings(["a", "b"]; service=ep, model="embeddinggemma"))
+        r = embeddingrequest!(Embeddings(["a", "b"]; service=ep, model="embeddinggemma", task=:none))
         @test r isa EmbeddingSuccess
         @test embedding_vectors(r) == [[0.1, 0.2], [0.3, 0.4]]
         @test r.usage == TokenUsage(prompt_tokens=4, total_tokens=4)
         @test (@test_logs estimated_cost(r)) == 0.0
-        r1 = embeddingrequest!(Embeddings("a"; service=ep, model="embeddinggemma"))
+        r1 = embeddingrequest!(Embeddings("a"; service=ep, model="embeddinggemma", task=:none))
         @test embedding_vectors(r1) == [1.0, 0.0, 0.0]                      # the model's own dimension
-        f = embeddingrequest!(Embeddings("x"^10_000; service=ep, model="embeddinggemma"); config=RequestConfig(max_attempts=1))
+        f = embeddingrequest!(Embeddings("x"^10_000; service=ep, model="embeddinggemma", task=:none); config=RequestConfig(max_attempts=1))
         @test f isa EmbeddingFailure && f.status == 400 && occursin("exceeds the context length", f.response)
         @test all(b -> JSON.parse(b)["truncate"] === false, bodies)
     finally

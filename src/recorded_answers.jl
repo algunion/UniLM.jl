@@ -216,9 +216,11 @@ body with its request id and the name of the header that carried it
 (`x-typesafe-request-id`, `x-request-id` or `request-id`), and the time of
 recording, pretty-printed so a diff is readable; the API key, the headers, an
 MCP tool's `authorization` and `headers`, and the bytes of media sent as a
-base64 `data:` URL or as a System One image part are never written — media sent
-as bare base64, such as Ollama's chat `images` or an `input_audio` clip, is
-written as sent.
+base64 `data:` URL or as a System One image part are never written. Media sent
+as bare base64 is written as sent — Ollama's chat `images`, an `input_audio`
+clip — except the images and sound clips of an [`Embeddings`](@ref) request to
+an [`OllamaEndpoint`](@ref): they are keyed and written as their digests,
+`data:<mime>;sha256,<hex>`, as the same media sent as a data URL would be.
 A recording without that name replays its id as `x-typesafe-request-id`. Files are
 written atomically (a temporary file in `dir`, then a rename), so concurrent tasks
 can record at once. A replayed answer goes through the same decoding as a live
@@ -332,7 +334,7 @@ function _image_digest(s::AbstractString)::Union{Nothing,String}
     isnothing(comma) && return nothing
     head = SubString(s, 6, prevind(s, comma))            # `<mime>;base64`
     endswith(head, ";base64") || return nothing
-    string("data:", chop(head; tail=7), ";sha256,", bytes2hex(sha256(SubString(s, nextind(s, comma)))))
+    _media_digest(chop(head; tail=7), SubString(s, nextind(s, comma)))
 end
 
 # Media sent as bare base64 (an Ollama `images` entry, an /api/embed image or audio clip), named
@@ -341,8 +343,11 @@ end
 _media_digest(mime::AbstractString, b64::AbstractString)::String =
     string("data:", mime, ";sha256,", bytes2hex(sha256(b64)))
 _media_digest(a::ImageAttachment)::String = _media_digest(a.mime, base64encode(a.data))
-_audio_mime(a::AudioAttachment)::String = a.format == "mp3" ? "audio/mpeg" : "audio/wav"
-_media_digest(a::AudioAttachment)::String = _media_digest(_audio_mime(a), base64encode(a.data))
+# A clip's media type by its format; one without a known type is an error, never filed as another.
+_audio_mime(format::AbstractString)::String =
+    format == "wav" ? "audio/wav" : format == "mp3" ? "audio/mpeg" : throw(ArgumentError(
+        "no media type is known for audio in format $(repr(format)) (known: \"wav\", \"mp3\")"))
+_media_digest(a::AudioAttachment)::String = _media_digest(_audio_mime(a.format), base64encode(a.data))
 
 # Every data-URL image in a parsed body replaced by its digest, in place; whether there was one.
 _digest_images!(x::Union{AbstractDict,AbstractVector})::Bool =

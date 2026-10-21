@@ -59,6 +59,10 @@ end
         include("ollama_models.jl")
     end
 
+    @testset "embedding tasks and items" begin
+        include("embeddings_tasks.jl")
+    end
+
     @testset "config.jl" begin
         include("config.jl")
     end
@@ -279,6 +283,10 @@ end
 
     @testset "integration — ollama" begin
         include("integration_ollama.jl")
+    end
+
+    @testset "integration — ollama embeddings" begin
+        include("integration_ollama_embeddings.jl")
     end
 
     @testset "integration — ollama System One" begin

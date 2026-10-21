@@ -1543,10 +1543,131 @@ Base.firstindex(chat::Chat) = firstindex(chat.messages)
 const GPTTextEmbedding3Small = Model("text-embedding-3-small")
 
 """
-    Embeddings(input::String; service=OPENAIServiceEndpoint, model="", dimensions=nothing,
-               encoding_format=nothing, user=nothing)
-    Embeddings(input::Vector{String}; service=OPENAIServiceEndpoint, model="", dimensions=nothing,
-               encoding_format=nothing, user=nothing)
+    EmbeddingInput(text; title=nothing)
+    EmbeddingInput(image::ImageAttachment)
+    EmbeddingInput(audio::AudioAttachment)
+    EmbeddingInput(text, media...)
+    EmbeddingInput(; text=nothing, title=nothing, image=nothing, audio=nothing)
+
+One item for [`Embeddings`](@ref): a text, an image, a sound clip, or a text with at most one image
+and one clip, embedded as one vector. `title` names the document a text comes from; it is used by
+the `:document` task of models with task prompts (EmbeddingGemma) and refused with any other task or model.
+Images and audio go only to an [`OllamaEndpoint`](@ref) (Ollama's `/api/embed` takes them for models
+such as `embeddinggemma-2`); a service that embeds text only refuses them before any request.
+Two items are `==` when their texts, titles and media are. An empty text beside an image or clip is
+no text: the item holds the media alone (`text === nothing`), sent with no task prompt.
+
+Throws `ArgumentError` for an item with nothing to embed (no image or clip, and no text or an empty
+one), a `title` without a non-empty text, more than one image or clip, or an attachment of any other kind.
+
+```julia
+EmbeddingInput("Refunds take 5 days."; title = "Refund policy")
+EmbeddingInput("a red circle", ImageAttachment("red_circle.png"))
+```
+"""
+struct EmbeddingInput
+    text::Union{String,Nothing}
+    title::Union{String,Nothing}
+    image::Union{ImageAttachment,Nothing}
+    audio::Union{AudioAttachment,Nothing}
+    function EmbeddingInput(text::Union{AbstractString,Nothing}, title::Union{AbstractString,Nothing},
+                            image::Union{ImageAttachment,Nothing}, audio::Union{AudioAttachment,Nothing})
+        # An empty text is none: beside media the item is the media alone, sent with no bare task prompt.
+        t = isnothing(text) || isempty(text) ? nothing : String(text)
+        isnothing(t) && isnothing(image) && isnothing(audio) && throw(ArgumentError(
+            "an EmbeddingInput needs a non-empty text, an image or a sound clip to embed"))
+        isnothing(title) || !isnothing(t) || throw(ArgumentError(
+            "an EmbeddingInput's title names the document its text comes from: give it a non-empty text too"))
+        new(t, isnothing(title) ? nothing : String(title), image, audio)
+    end
+end
+EmbeddingInput(; text=nothing, title=nothing, image=nothing, audio=nothing) = EmbeddingInput(text, title, image, audio)
+EmbeddingInput(text::AbstractString; title=nothing) = EmbeddingInput(text, title, nothing, nothing)
+EmbeddingInput(image::ImageAttachment) = EmbeddingInput(nothing, nothing, image, nothing)
+EmbeddingInput(audio::AudioAttachment) = EmbeddingInput(nothing, nothing, nothing, audio)
+function EmbeddingInput(text::AbstractString, media::Attachment...)
+    other = unique(typeof(m) for m in media if !(m isa Union{ImageAttachment,AudioAttachment}))
+    isempty(other) || throw(ArgumentError(
+        "an EmbeddingInput holds an image and/or a sound clip; got $(join(other, ", "))"))
+    images = ImageAttachment[m for m in media if m isa ImageAttachment]
+    clips = AudioAttachment[m for m in media if m isa AudioAttachment]
+    length(images) <= 1 && length(clips) <= 1 || throw(ArgumentError(
+        "an EmbeddingInput holds at most one image and one sound clip; embed the others as items of their own"))
+    EmbeddingInput(text, nothing, isempty(images) ? nothing : only(images), isempty(clips) ? nothing : only(clips))
+end
+
+Base.show(io::IO, x::EmbeddingInput) = print(io, "EmbeddingInput(", join(filter(!isempty, [
+    isnothing(x.text) ? "" : "text=" * repr(x.text), isnothing(x.title) ? "" : "title=" * repr(x.title),
+    isnothing(x.image) ? "" : sprint(show, x.image), isnothing(x.audio) ? "" : sprint(show, x.audio)]), ", "), ")")
+# Field-wise, so items holding equal media (compared by content) are equal.
+Base.:(==)(a::EmbeddingInput, b::EmbeddingInput) = all(f -> getfield(a, f) == getfield(b, f), fieldnames(EmbeddingInput))
+Base.hash(x::EmbeddingInput, h::UInt) =
+    foldl((h, f) -> hash(getfield(x, f), h), fieldnames(EmbeddingInput); init=hash(EmbeddingInput, h))
+
+# What a text is for, as the task prompts of a model that has them say it (EmbeddingGemma's model card).
+const _EMBEDDING_TASKS = (:search_query, :question_answering, :fact_checking, :code_retrieval, :document,
+                          :classification, :clustering, :sentence_similarity, :none)
+const _EMBEDDINGGEMMA_TASK_NAMES = Dict{Symbol,String}(:search_query => "search result",
+    :question_answering => "question answering", :fact_checking => "fact checking",
+    :code_retrieval => "code retrieval", :classification => "classification", :clustering => "clustering",
+    :sentence_similarity => "sentence similarity")
+const _EMBEDDINGGEMMA_DIMENSIONS = (768, 512, 256, 128)
+
+# The task-prompt family of a model, from its name: EmbeddingGemma (v1 and v2, any tag or namespace).
+_embedding_prompt_family(model::AbstractString)::Union{Symbol,Nothing} =
+    occursin("embeddinggemma", lowercase(model)) ? :embeddinggemma : nothing
+
+_embedding_titles(x::EmbeddingInput) = !isnothing(x.title)
+_embedding_titles(::String) = false
+_has_titles(input) = input isa AbstractVector ? any(_embedding_titles, input) : _embedding_titles(input)
+_item_media(x::EmbeddingInput) = !isnothing(x.image) || !isnothing(x.audio)
+_item_media(::String) = false
+_has_media(emb) = emb.input isa AbstractVector ? any(_item_media, emb.input) : _item_media(emb.input)
+
+function _check_embeddings(model::String, task::Union{Symbol,Nothing}, dimensions::Union{Int,Nothing}, input)::Nothing
+    isnothing(task) || task in _EMBEDDING_TASKS || throw(ArgumentError(
+        "embedding task must be one of $(join(repr.(_EMBEDDING_TASKS), ", ")) (got $(repr(task)))"))
+    family = _embedding_prompt_family(model)
+    if family === :embeddinggemma
+        isnothing(task) && throw(ArgumentError(
+            "$model expects a task prompt for what the text is for: pass task = " *
+            join(repr.(filter(!=(:none), _EMBEDDING_TASKS)), ", ") *
+            " — or task = :none to send the text as is (EmbeddingGemma then works with lower precision)"))
+        isnothing(dimensions) || dimensions in _EMBEDDINGGEMMA_DIMENSIONS || throw(ArgumentError(
+            "$model returns $(join(_EMBEDDINGGEMMA_DIMENSIONS, ", ")) dimensions (its trained Matryoshka sizes); " *
+            "got dimensions = $dimensions"))
+        task !== :document && _has_titles(input) && throw(ArgumentError(
+            "a title names the document a text comes from, which $model reads with task = :document only " *
+            "(got task = $(repr(task))): pass task = :document, or drop the title"))
+    else
+        # No task sends a title here, so its error comes first: it names the only fix.
+        _has_titles(input) && throw(ArgumentError(
+            "$(repr(model)) has no task prompts, so a title has nowhere to go: drop it " *
+            "(only EmbeddingGemma's task = :document writes titles)"))
+        isnothing(task) || task === :none || throw(ArgumentError(
+            "UniLM knows the task prompts of EmbeddingGemma models only, so $(repr(model)) gets none: pass " *
+            "task = :none and write the model's own prefix into the text, if it has one"))
+    end
+    isnothing(dimensions) || dimensions > 0 || throw(ArgumentError("dimensions must be positive (got $dimensions)"))
+    nothing
+end
+
+_embedding_item(x::AbstractString) = String(x)
+_embedding_item(x::EmbeddingInput) = x
+_embedding_item(x::Union{ImageAttachment,AudioAttachment}) = EmbeddingInput(x)
+_embedding_item(x) = throw(ArgumentError(
+    "an embedding input is a String, an EmbeddingInput, an ImageAttachment or an AudioAttachment (got $(typeof(x)))"))
+# A vector of strings stays one; any other item makes every item an EmbeddingInput.
+function _embedding_items(xs::AbstractVector)
+    all(x -> x isa AbstractString, xs) && return String[x for x in xs]
+    EmbeddingInput[(i = _embedding_item(x); i isa String ? EmbeddingInput(i) : i) for x in xs]
+end
+
+"""
+    Embeddings(input::Union{AbstractString,EmbeddingInput,Attachment}; service=OPENAIServiceEndpoint,
+               model="", dimensions=nothing, encoding_format=nothing, user=nothing, task=nothing)
+    Embeddings(input::AbstractVector; service=OPENAIServiceEndpoint, model="", dimensions=nothing,
+               encoding_format=nothing, user=nothing, task=nothing)
 
 Create an embedding request for one or more texts. `model=""` resolves to the service's
 default embedding model — OpenAI's `text-embedding-3-small` (1536 dimensions),
@@ -1555,6 +1676,12 @@ default embedding model — OpenAI's `text-embedding-3-small` (1536 dimensions),
 with any provider via the `service` parameter — Ollama, Gemini, Mistral, or any
 OpenAI-compatible server.
 
+An input is a text, an [`EmbeddingInput`](@ref), or an [`ImageAttachment`](@ref) or
+[`AudioAttachment`](@ref) on its own; a vector of them embeds each item as a vector of its own.
+A vector of strings is stored as a `Vector{String}` and sent as is, an empty string included. In a
+vector holding any other item, every item becomes an `EmbeddingInput`, so an empty string there is
+refused (`ArgumentError`: an item needs a non-empty text, an image or a sound clip).
+
 The `embeddings` field is **pre-allocated** (`something(dimensions, 1536)` zeros per input),
 filled in place by [`embeddingrequest!`](@ref), and resized to the length the model returns.
 The result aliases this struct, so use one `Embeddings` per concurrent call.
@@ -1562,12 +1689,22 @@ The result aliases this struct, so use one `Embeddings` per concurrent call.
 # Fields
 - `service::ServiceEndpointSpec`: LLM provider (default: `OPENAIServiceEndpoint`).
 - `model::String`: The embedding model name.
-- `input::Union{String,Vector{String}}`: Text(s) to embed.
+- `input::Union{String,Vector{String},EmbeddingInput,Vector{EmbeddingInput}}`: Text(s) or item(s) to embed.
 - `embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}`: Pre-allocated embedding vector(s).
 - `user::Union{String,Nothing}`: Optional end-user identifier.
 - `dimensions::Union{Int,Nothing}`: Requested vector size, where the model supports it.
 - `encoding_format::Union{String,Nothing}`: `"float"` or unset; any other format
   (e.g. `"base64"`) throws `ArgumentError`, since the result stores `Float64` vectors.
+- `task::Union{Symbol,Nothing}`: What the texts are for, as a task prompt (see below); `nothing` for none.
+
+# Task prompts (EmbeddingGemma)
+EmbeddingGemma models (`embeddinggemma`, `embeddinggemma-2`, on any service) read a short prompt that
+says what a text is for, and Ollama does not add it: pass `task` and UniLM writes the model card's
+prompt in front of each text — `:search_query`, `:question_answering`, `:fact_checking`,
+`:code_retrieval` (the query side), `:document` (the corpus side, with each item's `title`),
+`:classification`, `:clustering`, `:sentence_similarity` — or `task = :none` to send the text as is.
+Without a task an EmbeddingGemma request is an `ArgumentError`; any other model takes `task = :none`
+or none. EmbeddingGemma's `dimensions` are 768 (default), 512, 256 or 128.
 
 # Example
 ```julia
@@ -1582,26 +1719,33 @@ emb = Embeddings("test"; service=OllamaEndpoint(), model="nomic-embed-text")
 struct Embeddings
     service::ServiceEndpointSpec
     model::String
-    input::Union{String,Vector{String}}
+    input::Union{String,Vector{String},EmbeddingInput,Vector{EmbeddingInput}}
     embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}
     user::Union{String,Nothing}
     dimensions::Union{Int,Nothing}
     encoding_format::Union{String,Nothing}
-    function Embeddings(input::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint, model::String="",
-        dimensions::Union{Int,Nothing}=nothing, encoding_format::Union{String,Nothing}=nothing,
-        user::Union{String,Nothing}=nothing)
-        return new(service, _embedding_model(service, model), input, zeros(Float64, something(dimensions, 1536)),
-                   user, dimensions, _float_encoding(encoding_format))
-    end
-    function Embeddings(input::Vector{String}; service::ServiceEndpointSpec=OPENAIServiceEndpoint, model::String="",
-        dimensions::Union{Int,Nothing}=nothing, encoding_format::Union{String,Nothing}=nothing,
-        user::Union{String,Nothing}=nothing)
-        isempty(input) && throw(ArgumentError("input must not be empty"))
-        return new(service, _embedding_model(service, model), input,
-                   [zeros(Float64, something(dimensions, 1536)) for _ in 1:length(input)], user, dimensions,
-                   _float_encoding(encoding_format))
+    task::Union{Symbol,Nothing}
+    function Embeddings(input::Union{String,Vector{String},EmbeddingInput,Vector{EmbeddingInput}},
+                        service::ServiceEndpointSpec, model::String, dimensions::Union{Int,Nothing},
+                        encoding_format::Union{String,Nothing}, user::Union{String,Nothing},
+                        task::Union{Symbol,Nothing})
+        input isa AbstractVector && isempty(input) && throw(ArgumentError("input must not be empty"))
+        m = _embedding_model(service, model)
+        _check_embeddings(m, task, dimensions, input)
+        n = something(dimensions, 1536)
+        buf = input isa AbstractVector ? [zeros(Float64, n) for _ in input] : zeros(Float64, n)
+        new(service, m, input, buf, user, dimensions, _float_encoding(encoding_format), task)
     end
 end
+
+Embeddings(input::Union{AbstractString,EmbeddingInput,Attachment}; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
+           model::String="", dimensions::Union{Int,Nothing}=nothing, encoding_format::Union{String,Nothing}=nothing,
+           user::Union{String,Nothing}=nothing, task::Union{Symbol,Nothing}=nothing) =
+    Embeddings(_embedding_item(input), service, model, dimensions, encoding_format, user, task)
+Embeddings(input::AbstractVector; service::ServiceEndpointSpec=OPENAIServiceEndpoint, model::String="",
+           dimensions::Union{Int,Nothing}=nothing, encoding_format::Union{String,Nothing}=nothing,
+           user::Union{String,Nothing}=nothing, task::Union{Symbol,Nothing}=nothing) =
+    Embeddings(_embedding_items(input), service, model, dimensions, encoding_format, user, task)
 
 # The embedding model: the given one, else the service's default.
 function _embedding_model(service::ServiceEndpointSpec, model::String)::String
@@ -1617,8 +1761,27 @@ _float_encoding(format::Union{String,Nothing}) =
     isnothing(format) || format == "float" ? format : throw(ArgumentError(
         "encoding_format must be \"float\" (got $(repr(format))): embeddings are stored as Float64 vectors"))
 
+# The text a model is sent for `text` under `task`: the model card's prompt, or the text itself.
+# Construction has checked that the model's family knows the task.
+function _prompted(task::Union{Symbol,Nothing}, text::String, title::Union{String,Nothing})::String
+    (isnothing(task) || task === :none) && return text
+    task === :document && return string("title: ", something(title, "none"), " | text: ", text)
+    string("task: ", _EMBEDDINGGEMMA_TASK_NAMES[task], " | query: ", text)
+end
+
+# The input on a text-only wire (the OpenAI Embeddings API and its compatibles): texts, prompted.
+_wire_text(emb, x::String) = _prompted(emb.task, x, nothing)
+function _wire_text(emb, x::EmbeddingInput)
+    _item_media(x) && throw(ArgumentError(
+        "the OpenAI Embeddings API takes text only (service: $(_service_name(emb.service))): send images and " *
+        "sound clips with embeddingrequest! to an OllamaEndpoint, on Ollama's /api/embed (a model such as " *
+        "embeddinggemma-2), or leave them out"))
+    _prompted(emb.task, x.text::String, x.title)
+end
+_wire_texts(emb) = emb.input isa AbstractVector ? String[_wire_text(emb, x) for x in emb.input] : _wire_text(emb, emb.input)
+
 function JSON.lower(emb::Embeddings)
-    d = Dict{Symbol,Any}(:model => emb.model, :input => emb.input)
+    d = Dict{Symbol,Any}(:model => emb.model, :input => _wire_texts(emb))
     !isnothing(emb.user) && (d[:user] = emb.user)
     !isnothing(emb.dimensions) && (d[:dimensions] = emb.dimensions)
     !isnothing(emb.encoding_format) && (d[:encoding_format] = emb.encoding_format)
@@ -1626,8 +1789,8 @@ function JSON.lower(emb::Embeddings)
 end
 
 # Dispatch on the concrete buffer shape rather than branching on `emb.input isa String`.
-# The two inner constructors pair a String input with a `Vector{Float64}` buffer and a
-# `Vector{String}` input with a `Vector{Vector{Float64}}` buffer, so the buffer type alone
+# The inner constructor pairs a single input with a `Vector{Float64}` buffer and a vector
+# input with a `Vector{Vector{Float64}}` buffer, so the buffer type alone
 # selects the fill strategy — and each buffer limb has a matching method (no phantom
 # `_store_embedding!(::Vector{Vector{Float64}}, …)` split on the `input`-typed branch).
 update!(emb::Embeddings, data::AbstractVector) = _fill_embeddings!(emb.embeddings, data)
@@ -1640,7 +1803,7 @@ update!(emb::Embeddings, data::AbstractVector) = _fill_embeddings!(emb.embedding
 function _fill_embeddings!(dst::Vector{Float64}, data::AbstractVector)
     length(data) == 1 || throw(ArgumentError(
         "embeddings response carries $(length(data)) rows for 1 input"))
-    _store_embedding!(dst, data[1]["embedding"])
+    _store_embedding!(dst, _checked_embedding(data[1]["embedding"], 0))
 end
 
 function _fill_embeddings!(dst::Vector{Vector{Float64}}, data::AbstractVector)
@@ -1649,19 +1812,42 @@ function _fill_embeddings!(dst::Vector{Vector{Float64}}, data::AbstractVector)
         "embeddings response carries $(length(data)) rows for $n inputs"))
     seen = falses(n)
     for item in data
-        idx = item["index"] + 1  # API uses 0-based indexing
+        i = item["index"]
+        # A JSON true parses as a `Bool`, which is an `Integer` in Julia: it is no row index.
+        i isa Integer && !(i isa Bool) || throw(ArgumentError(
+            "embeddings response row index $(repr(i)) is not an integer"))
+        idx = i + 1  # API uses 0-based indexing
         checkbounds(Bool, dst, idx) || throw(ArgumentError(
-            "embeddings response row index $(item["index"]) is out of range for $n inputs"))
+            "embeddings response row index $i is out of range for $n inputs"))
         seen[idx] && throw(ArgumentError(
-            "embeddings response repeats row index $(item["index"])"))
+            "embeddings response repeats row index $i"))
         seen[idx] = true
-        _store_embedding!(dst[idx], item["embedding"])
+        _checked_embedding(item["embedding"], i)
+    end
+    # Every row is checked before any is stored, so a refused reply leaves the buffers as they were.
+    for item in data
+        _store_embedding!(dst[item["index"] + 1], item["embedding"])
     end
     return dst
 end
 
-# Copy an API-returned embedding into the preallocated buffer, resizing when the model's
-# actual dimension differs from the 1536 default (e.g. text-embedding-3-large = 3072).
+# A vector that is empty, all zeros, or holds a value that is not a finite number is no embedding
+# (Ollama has answered all-zero vectors with HTTP 200; a JSON `true` parses as a `Bool`, which is a
+# `Real` in Julia): it is a malformed reply, refused with its row (the API's 0-based `index`), never
+# stored as a vector that still compares and indexes.
+function _checked_embedding(src::AbstractVector, row)
+    all(x -> x isa Real && !(x isa Bool) && isfinite(x), src) || throw(ArgumentError(
+        "the embeddings reply's row $row holds a value that is not a finite number"))
+    !isempty(src) && any(!iszero, src) || throw(ArgumentError(
+        "the embeddings reply's row $row is an empty or all-zero vector, which no model returns for real input"))
+    src
+end
+# A row holding null, a number or a string has no vector at all.
+_checked_embedding(src, row) = throw(ArgumentError(
+    "the embeddings reply's row $row is not a vector (got $(isnothing(src) ? "null" : typeof(src)))"))
+
+# Copy a checked embedding into the preallocated buffer, resizing when the model's actual
+# dimension differs from the 1536 default.
 function _store_embedding!(dst::Vector{Float64}, src::AbstractVector)
     length(dst) == length(src) || resize!(dst, length(src))
     @inbounds for i in eachindex(src)

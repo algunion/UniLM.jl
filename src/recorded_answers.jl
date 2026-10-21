@@ -332,7 +332,7 @@ function _image_digest(s::AbstractString)::Union{Nothing,String}
     isnothing(comma) && return nothing
     head = SubString(s, 6, prevind(s, comma))            # `<mime>;base64`
     endswith(head, ";base64") || return nothing
-    string("data:", chop(head; tail=7), ";sha256,", bytes2hex(sha256(SubString(s, nextind(s, comma)))))
+    _media_digest(chop(head; tail=7), SubString(s, nextind(s, comma)))
 end
 
 # Media sent as bare base64 (an Ollama `images` entry, an /api/embed image or audio clip), named
@@ -341,7 +341,10 @@ end
 _media_digest(mime::AbstractString, b64::AbstractString)::String =
     string("data:", mime, ";sha256,", bytes2hex(sha256(b64)))
 _media_digest(a::ImageAttachment)::String = _media_digest(a.mime, base64encode(a.data))
-_audio_mime(a::AudioAttachment)::String = a.format == "mp3" ? "audio/mpeg" : "audio/wav"
+# A clip's media type by its format; one without a known type is an error, never filed as another.
+_audio_mime(a::AudioAttachment)::String =
+    a.format == "wav" ? "audio/wav" : a.format == "mp3" ? "audio/mpeg" : throw(ArgumentError(
+        "no media type is known for audio in format $(repr(a.format)) (known: \"wav\", \"mp3\")"))
 _media_digest(a::AudioAttachment)::String = _media_digest(_audio_mime(a), base64encode(a.data))
 
 # Every data-URL image in a parsed body replaced by its digest, in place; whether there was one.

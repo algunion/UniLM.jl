@@ -46,14 +46,14 @@
     "request_id": null,
     "body": {
       "model": "gemma4:e4b",
-      "created_at": "2026-09-29T07:35:27.317126Z",
+      "created_at": "2026-10-21T17:58:12.576856Z",
       "message": {
         "role": "assistant",
         "content": "",
-        "thinking": "The user wants to know the weather in Lyon.\nI have a tool `get_weather` that takes a `city` name.\nI need to call this tool with `city=\"Lyon\"`.\nAfter getting the result, I must answer in exactly one sentence.",
+        "thinking": "The user wants to know the weather in Lyon.\nI have a tool `get_weather` that takes a `city` as input.\nI should call this tool with `city=\"Lyon\"`.\nAfter getting the result, I must answer in exactly one sentence.",
         "tool_calls": [
           {
-            "id": "call_xskqncx9",
+            "id": "call_mb4i6gbs",
             "function": {
               "index": 0,
               "name": "get_weather",
@@ -66,14 +66,14 @@
       },
       "done": true,
       "done_reason": "stop",
-      "total_duration": 1593466000,
-      "load_duration": 1755875,
+      "total_duration": 489587458,
+      "load_duration": 2403750,
       "prompt_eval_count": 80,
-      "prompt_eval_cached_count": 0,
-      "prompt_eval_duration": 191247000,
-      "eval_count": 75,
-      "eval_duration": 1395861000
+      "prompt_eval_cached_count": 10,
+      "prompt_eval_duration": 73723292,
+      "eval_count": 74,
+      "eval_duration": 411447958
     }
   },
-  "recorded_at": "2026-09-29T07:35:27Z"
+  "recorded_at": "2026-10-21T17:58:12Z"
 }

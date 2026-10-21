@@ -26,33 +26,32 @@
   ([ollama#17878](https://github.com/ollama/ollama/issues/17878)); a zero vector
   compared and ranked like a real one. Upgrading: a mock that answers zero
   placeholder vectors must answer non-zero ones.
-- **Ollama System One takes what Ollama's route takes, not what its strictest
-  model takes.** Before the request, `ask` on an `OllamaEndpoint` now refuses what
-  Ollama's route refuses in its shared checks or documents as its maximum (Ollama
-  0.40.6): more than 64 questions; a Choice of more than 255 options (was 26; one
-  option is now sent); a Score of fewer than 2 or more than 10 levels; a blank
-  text state without images; Box questions. It also refuses what Ollama's API
-  reference does not list, though some models read it: `instructions` that are
-  not a string, an object or an array, and descriptions, levels and Noul criteria
-  that are not strings — plus one refusal of UniLM's own: blank
-  (whitespace-only) `instructions`, which Ollama would read as none.
-  `instructions` are optional on the route. A model that takes less answers with
-  its own HTTP 400, a `SystemOneFailure` carrying Ollama's message. Measured on
-  Ollama 0.40.6 (Apple M4 Max, 21 October 2026): tev1 takes at most 24 options
-  and answers 27 with `criteria must contain 2–26 candidates`; nimble and
-  clef-flash take 26; kev, strands-decider, d1 and d1-omni answered 27; a Choice
-  of one option was answered by `kev:0.8b-q8_0`, `kev:9b-q4_K_M`, `d1-omni:600m`
-  and `d1:3b` (the llama.cpp path), while `tev1:0.8b`, `tev1:4b`, `nimble:9b` and
-  `clef-flash:9b` answered 400 `criteria must contain 2–26 candidates` and
-  `strands-decider:2b` 400 `criteria must contain 2–255 candidates`; and asked a
-  question without `instructions`, `tev1:4b`, `nimble:9b` and
-  `strands-decider:2b` answered 400 `instructions must be a nonempty string,
-  object, or array`, `kev:0.8b-q8_0` 400 `questions.<name>: "instructions" must
-  be provided`, and `clef-flash:9b` answered the question: pass `instructions`
-  with local models. Upgrading: a request the wrapper used to refuse — one
-  option, 27 to 255 options, a question without `instructions` — now reaches the
-  server; handle its 400 as a `SystemOneFailure`, or keep to 2–24 options and
-  give every question `instructions`.
+- **Ollama System One refuses locally what Ollama's route checks or documents; a
+  model's own limits come back as its 400.** Before the request, `ask` on an
+  `OllamaEndpoint` now refuses what Ollama's route refuses in its shared checks or
+  documents as its maximum (Ollama 0.40.6): more than 64 questions; a Choice of more
+  than 255 options (was 26; one option is now sent); a Score of fewer than 2 or more
+  than 10 levels; a blank text state without images; Box questions. It also refuses
+  what Ollama's API reference does not list, though some models read it:
+  `instructions` that are not a string, an object or an array, and descriptions,
+  levels and Noul criteria that are not strings — plus one refusal of UniLM's own:
+  blank (whitespace-only) `instructions`, which Ollama would read as none.
+  `instructions` are optional on the route. A model that takes less answers with its
+  own HTTP 400, a `SystemOneFailure` carrying Ollama's message. Measured on Ollama
+  0.40.6 (Apple M4 Max, 21 October 2026): tev1 takes at most 24 options and answers
+  27 with `criteria must contain 2–26 candidates`; nimble and clef-flash take 26;
+  kev, strands-decider, d1 and d1-omni answered 27; a Choice of one option was
+  answered by `kev:0.8b-q8_0`, `kev:9b-q4_K_M`, `d1-omni:600m` and `d1:3b` (the
+  llama.cpp path), while `tev1:0.8b`, `tev1:4b`, `nimble:9b` and `clef-flash:9b`
+  answered 400 `criteria must contain 2–26 candidates` and `strands-decider:2b` 400
+  `criteria must contain 2–255 candidates`; and asked a question without
+  `instructions`, `tev1:4b`, `nimble:9b` and `strands-decider:2b` answered 400
+  `instructions must be a nonempty string, object, or array`, `kev:0.8b-q8_0` 400
+  `questions.<name>: "instructions" must be provided`, and `clef-flash:9b` answered
+  the question: pass `instructions` with local models. Upgrading: a request the
+  wrapper used to refuse — one option, 27 to 255 options, a question without
+  `instructions` — now reaches the server; handle its 400 as a `SystemOneFailure`,
+  or keep to 2–24 options and give every question `instructions`.
 - **New fields.** `OllamaEndpoint.runner` (before `options`);
   `OllamaModel.runner::Union{Symbol,Nothing}` and `.format::Union{Symbol,Nothing}`
   (before `capabilities`); `OllamaModelInfo.runner` and `.format` (before `raw`);

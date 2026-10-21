@@ -6,6 +6,7 @@ Types and functions for the **Embeddings API**.
 
 ```@docs
 Embeddings
+EmbeddingInput
 ```
 
 ### Construction

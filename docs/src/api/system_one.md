@@ -365,12 +365,12 @@ UniLM.OpenAIDecisionsProtocol
 ## [Ollama](@id system_one_ollama)
 
 An [`OllamaEndpoint`](@ref) answers System One requests from a local decision
-model — Tev1, Nimble, Kev and the others Ollama lists as [decision
+model — Tev1, Nimble, Kev, Clef and the others Ollama lists as [decision
 models](https://ollama.com/search?c=decision) — through Ollama's
 TypeSafe-compatible route `POST /v1/systemone` (Ollama 0.35 or later). The
 verbs, the questions and the result types are the ones below; no key is sent and
 nothing is billed. Start the server and pull a decision model first, such as
-`ollama pull tev1:0.8b`.
+`ollama pull tev1:4b`.
 
 ```julia
 ollama = OllamaEndpoint()                     # OLLAMA_HOST, else http://127.0.0.1:11434
@@ -380,7 +380,11 @@ r = ask("Help! My payouts have been failing for 3 days.",
                                (billing = "Payments, invoicing, payouts, refunds",
                                 technical = "Bugs, outages, integrations")),
         "is_frustrated" => noul("Is the customer frustrated?");
-        service = ollama, model = "tev1:0.8b")
+        service = ollama, model = "tev1:4b")
+
+photo = ImageAttachment("parcel.jpg")         # a vision decision model sees the state's images
+ask([photo, "A photo sent in with a return."], "damaged" => noul("Is the item damaged?");
+    service = ollama, model = "clef-flash:9b")
 
 INTENT = (refund = "the customer wants a refund", bug = "the customer reports a software bug")
 with_system_one(ollama; model = "kev:0.8b-q8_0") do     # every verb inside asks Kev
@@ -394,58 +398,71 @@ end
   installed comes back as a 404 [`SystemOneFailure`](@ref) whose message says to
   `ollama pull` it, and a server that does not answer as a
   [`SystemOneCallError`](@ref) that says how to start one.
-- **Refused before any request.** Ollama's decision encodings are stricter than
-  TypeSafe's wire; [`ask`](@ref) checks their rules first and throws an
-  `ArgumentError` naming Ollama and the rule.
+- **Refused before any request.** [`ask`](@ref) checks what Ollama's route
+  refuses for every model and runner (Ollama 0.40.6), and throws an
+  `ArgumentError` naming Ollama, the rule and the fix.
 
 | Rule | Ollama |
 | :--- | :--- |
 | Questions per request | 1–64 |
-| `instructions` | required on every Choice, Score and Noul question: a string that is not blank, an object or an array |
-| Choice options | 2–26, each described by a string or `nothing` |
+| `instructions` | optional; when given, a string that is not blank, an object or an array |
+| Choice options | 2–255, each described by a string or `nothing` |
 | Score levels | 2–10, each a string |
 | Noul criteria | strings |
-| `state` | not a blank string |
+| `state` | a text that is not blank, unless images come with it |
+| Images | in the state: an image, or a vector of images then texts; refused after a text, inside a JSON object or array, beside values that are not texts, and in a question |
 | Box questions | refused: the route answers Choice, Score and Noul |
-| Images | not sent yet: no vision decision model has been verified with this wrapper |
 | Options | `keep_alive` only |
 
-- **The server's own limits.** A model may cap lower than the route, and its 400
-  says so: `tev1:0.8b` takes at most 24 options (Ollama 0.40.6). Ollama caps a
-  request's text and schema, images excluded, at 64 KiB by its own count, which
-  [`ask`](@ref) does not check: a request over it comes back as a 413
+- **A model's own limits.** A model may take less than the route, and its HTTP 400
+  says so, as a [`SystemOneFailure`](@ref) carrying Ollama's message. Measured on
+  Ollama 0.40.6: Tev1 takes at most 24 options, Nimble and Clef Flash 26; Tev1,
+  Nimble, Strands and Kev answered a question without `instructions` with 400; a
+  model without vision answers an image with `image inputs are not supported by
+  this decision model` ([What a model takes](@ref backends_ollama_limits)). Ollama
+  caps a request's text and schema, images excluded, at 64 KiB by its own count,
+  which [`ask`](@ref) does not check: a request over it comes back as a 413
   [`SystemOneFailure`](@ref), `text and schema must not exceed 64 KiB`. A
   [`RawQuestion`](@ref) is sent verbatim, for the server to judge.
+- **Images.** The state's images go in Ollama's `images` (raw base64), which the
+  model sees before the text and every question shares; the state's texts become
+  its `state` — none: `""`, one: that string, several: an array — and a blank text
+  is allowed beside images. A recording keys and stores each image as
+  `data:<mime>;sha256,<hex>`, never its bytes.
 - **`keep_alive`.** `ask(...; keep_alive = 600)` keeps the model loaded for 600
   seconds after the request, `0` unloads it at once and `Inf` keeps it loaded;
   without it the endpoint's own `keep_alive` applies, else the server's default.
   It is left out of a recording's key and file: it changes how long the model
-  stays loaded, never an answer.
-  The endpoint's other settings — `truncate`, `shift` and the
+  stays loaded, never an answer. The endpoint's `runner` is sent, and is part of
+  the key; its other settings — `truncate`, `shift` and the
   [`OllamaOptions`](@ref) such as `num_ctx` — have no field on this route and
   are not sent.
 - **Confidence.** `confidence` is TypeSafe's published measure, computed from the
   returned probabilities — `(n·p_max − 1)/(n − 1)` for a Choice and
   `1 − Σᵢ pᵢ·|i − m| / MAD_unif`, floored at 0, for a Score
   ([Confidence](https://docs.typesafe.ai/confidence)) — so a threshold means the
-  same on every backend. Ollama's generic decision models report
-  `1 − H(p)/ln n` instead (Kev models report TypeSafe's); the server's value stays
-  in each answer's `raw`. Probabilities are accepted when they sum to 1 within
-  0.00005 per outcome — Kev models round each to four decimals on Ollama's own
-  runner — and the chosen option when it lies at most 0.0001 below the most
-  probable.
-- **Speed.** Measured live on 2026-10-20, in two runs on an Apple M4 Max with
-  Ollama 0.40.6, one request at a time: a request to a loaded model took
-  about 17 ms on `kev:0.8b-q8_0` and 25–140 ms on `tev1:0.8b`; the first call,
-  which loads the model, about 0.9 s on `kev` and 2.6–2.8 s on `tev1`. The
-  server's decision runners answer one request at a time, so [`ask_each`](@ref)
-  keeps one in flight unless its `ntasks` says otherwise.
+  same on every backend. Ollama's generic MLX encoders report `1 − H(p)/ln n`
+  instead, while Kev, PPLX and the models on the llama.cpp path report TypeSafe's;
+  the server's value stays in each answer's `raw`. Probabilities are accepted when
+  they sum to 1 within 0.00005 per outcome — Kev models round each to four
+  decimals on Ollama's own runner — and the chosen option when it lies at most
+  0.0001 below the most probable.
+- **Speed.** On 129 labelled tickets (21 October 2026, Ollama 0.40.6, an Apple M4
+  Max, one request at a time), a warm call took from 0.025 s (`d1-omni:600m`) to
+  0.64 s (`clef-flash:9b`) at the median, and a first call, which loads the model,
+  0.69 s to 3.44 s; [Which model](@ref backends_ollama_models) has each model's
+  accuracy, calibration and latency. The server's decision runners answer one
+  request at a time, so [`ask_each`](@ref) keeps one in flight unless its
+  `ntasks` says otherwise.
 - **Results.** `request_id` is `nothing`, as Ollama sends none; `usage` counts
-  `prompt_eval_cached_count` as cached tokens; [`estimated_cost`](@ref) is `0.0`.
+  `prompt_eval_cached_count` as cached tokens where the server reports it (the
+  MLX path; on llama.cpp it reads 0); [`estimated_cost`](@ref) is `0.0`, or the
+  price of its name for a cloud model (a tag of `cloud`, or one ending in
+  `-cloud`), whose answer keeps the requested name when the reply drops the tag.
   [`with_recorded_answers`](@ref) files the exchanges under
   `/ollama/v1/systemone`, apart from TypeSafe's.
-- **Known upstream issues**, open at Ollama 0.40.6: a model may score a request's
-  questions one after another, so its latency grows with their number
+- **Known upstream issues**, still open on 21 October 2026: a model may score a
+  request's questions one after another, so its latency grows with their number
   ([#18750](https://github.com/ollama/ollama/issues/18750)); a runner returned
   wrong answers with HTTP 200 until the model was unloaded
   ([#19090](https://github.com/ollama/ollama/issues/19090)); a vision decision
@@ -572,8 +589,10 @@ so the tool loops) exchange through a directory of recordings keyed by the exact
 request bytes — with any credential the body carries redacted, every base64
 `data:` URL it carries (an image, a PDF, audio, any media) replaced by the
 SHA-256 of its base64 text, and a System One backend's options that change how
-a request is served left out (media sent as bare base64, such as Ollama's chat
-`images` or an `input_audio` clip, is written as sent); a streamed call and
+a request is served left out (media sent as bare base64 are written as sent, such
+as Ollama's chat `images` or an `input_audio` clip, except the images of an Ollama
+System One request and the media of an Ollama embeddings request, keyed and written
+by digest too); a streamed call and
 every other verb reach the network as usual. In the default `:replay` mode no
 recorded verb reaches the network and none needs a key,
 and a request with no recording, or an unreadable one, throws

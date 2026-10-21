@@ -955,3 +955,12 @@ end
 end
 
 close(_RL_MOCK.server)
+
+@testset "raw base64 media digests like a data URL" begin
+    img = ImageAttachment(joinpath(@__DIR__, "fixtures", "ollama", "red_circle.png"))
+    wav = AudioAttachment(joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav"))
+    b64 = UniLM.Base64.base64encode(img.data)
+    @test UniLM._media_digest(img) == UniLM._image_digest("data:image/png;base64," * b64)
+    @test startswith(UniLM._media_digest(wav), "data:audio/wav;sha256,")
+    @test length(UniLM._media_digest(img)) == length("data:image/png;sha256,") + 64
+end

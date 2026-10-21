@@ -475,6 +475,22 @@ end
         @test load_model("m"; service=shifted) isa OllamaSuccess{Nothing} && !haskey(JSON.parse(seen[2][2]), "shift")
         empty!(seen); caps[] = ["completion"]
         @test load_model("m"; service=shifted) isa OllamaSuccess{Nothing} && JSON.parse(seen[2][2])["shift"] === false
+        # An embeddings load sends the options an embeddings request for the model sends (Ollama loads a model
+        # again when they change): EmbeddingGemma 2's window unless the endpoint sets num_ctx or num_batch.
+        function load_options(name, kind; kw...)
+            empty!(seen); caps[] = kind
+            r = load_model(name; service=OllamaEndpoint(; base_url="http://127.0.0.1:$port", kw...))
+            r isa OllamaSuccess{Nothing} && [t for (t, _) in seen] == ["/api/show", "/api/embed"] || return r
+            get(JSON.parse(seen[2][2]), "options", nothing)
+        end
+        window = Dict("num_ctx" => 8192, "num_batch" => 8192)
+        @test load_options("embeddinggemma-2:740m", ["embedding"]) == window
+        @test load_options("embeddinggemma-2:740m", ["embedding"]; num_gpu=99) == merge(window, Dict("num_gpu" => 99))
+        @test load_options("embeddinggemma-2:740m", ["embedding"]; num_ctx=2048) == Dict("num_ctx" => 2048)
+        @test isnothing(load_options("embeddinggemma:300m", ["embedding"]))                 # v1: no window
+        @test load_options("embeddinggemma:300m", ["embedding"]; num_ctx=2048) == Dict("num_ctx" => 2048)
+        @test isnothing(load_options("kev:0.8b-q8_0", ["decision"]))
+        @test load_options("kev:0.8b-q8_0", ["decision"]; num_gpu=99) == Dict("num_gpu" => 99)
         # Only the empty list an empty embeddings request is answered with reports the load.
         @test isnothing(UniLM._ollama_embed_loaded(Dict{String,Any}("embeddings" => [])))
         for reply in (Dict{String,Any}(), Dict{String,Any}("embeddings" => [[0.1]]), Dict{String,Any}("embeddings" => "[]"))

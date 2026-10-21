@@ -343,7 +343,10 @@ function load_model(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint
     body = Dict{String,Any}("model" => model)
     chat ? (body["messages"] = []; body["stream"] = false) : (body["input"] = [])
     isnothing(ka) || (body["keep_alive"] = _ollama_keep_alive(ka))
-    opts = _ollama_options(service.options)
+    # An embeddings load sends the options an embeddings request for the model sends (EmbeddingGemma 2's
+    # window included): on the llama.cpp runner a request whose num_ctx or num_batch differs from the
+    # load's loads the model again.
+    opts = chat ? _ollama_options(service.options) : _ollama_embed_options(service, model)
     isempty(opts) || (body["options"] = opts)
     chat && !isnothing(service.shift) && (body["shift"] = service.shift)
     _ollama_runner!(body, service)

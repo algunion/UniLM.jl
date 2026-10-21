@@ -139,6 +139,22 @@ end
     end
 end
 
+@testset "an empty text beside media is no text: the media alone are sent, with no bare prompt" begin
+    x = EmbeddingInput("", _ET_IMG)
+    @test isnothing(x.text) && x.image === _ET_IMG && x == EmbeddingInput(_ET_IMG)
+    @test isnothing(EmbeddingInput(; text="", audio=_ET_WAV).text) && isnothing(EmbeddingInput("", _ET_IMG, _ET_WAV).text)
+    img = UniLM.Base64.base64encode(_ET_IMG.data)
+    for task in (:document, :search_query, :none)
+        @test _et_body(Embeddings(x; service=_ET_EP, model=_ET_EG, task))["input"] == Dict("image" => img)
+    end
+    @test _et_body(Embeddings(["a", x]; service=_ET_EP, model=_ET_EG, task=:document))["input"] ==
+          ["title: none | text: a", Dict("image" => img)]
+    e = _et_err(() -> EmbeddingInput(; text="", title="T", image=_ET_IMG))        # a title needs a text
+    @test e isa ArgumentError && occursin("title names the document its text comes from", e.msg)
+    @test _et_err(() -> EmbeddingInput("")) isa ArgumentError                     # alone: nothing to embed
+    @test JSON.parse(JSON.json(Embeddings("")))["input"] == "" && Embeddings(["", "a"]).input == ["", "a"]  # strings: as before
+end
+
 @testset "driver: a media embedding records by digest and replays offline; a 400 stays a failure" begin
     server, url, bodies = _ollama_mock((n, body) -> n == 1 ?
         (200, [JSON.json(Dict("model" => _ET_EG, "embeddings" => [[0.6, 0.8]], "prompt_eval_count" => 3))]) :

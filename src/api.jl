@@ -1554,10 +1554,11 @@ and one clip, embedded as one vector. `title` names the document a text comes fr
 the `:document` task of models with task prompts (EmbeddingGemma) and refused with any other task or model.
 Images and audio go only to an [`OllamaEndpoint`](@ref) (Ollama's `/api/embed` takes them for models
 such as `embeddinggemma-2`); a service that embeds text only refuses them before any request.
-Two items are `==` when their texts, titles and media are.
+Two items are `==` when their texts, titles and media are. An empty text beside an image or clip is
+no text: the item holds the media alone (`text === nothing`), sent with no task prompt.
 
 Throws `ArgumentError` for an item with nothing to embed (no image or clip, and no text or an empty
-one), a `title` without text, more than one image or clip, or an attachment of any other kind.
+one), a `title` without a non-empty text, more than one image or clip, or an attachment of any other kind.
 
 ```julia
 EmbeddingInput("Refunds take 5 days."; title = "Refund policy")
@@ -1571,11 +1572,13 @@ struct EmbeddingInput
     audio::Union{AudioAttachment,Nothing}
     function EmbeddingInput(text::Union{AbstractString,Nothing}, title::Union{AbstractString,Nothing},
                             image::Union{ImageAttachment,Nothing}, audio::Union{AudioAttachment,Nothing})
-        isnothing(image) && isnothing(audio) && (isnothing(text) || isempty(text)) && throw(ArgumentError(
+        # An empty text is none: beside media the item is the media alone, sent with no bare task prompt.
+        t = isnothing(text) || isempty(text) ? nothing : String(text)
+        isnothing(t) && isnothing(image) && isnothing(audio) && throw(ArgumentError(
             "an EmbeddingInput needs a non-empty text, an image or a sound clip to embed"))
-        isnothing(title) || !isnothing(text) || throw(ArgumentError(
-            "an EmbeddingInput's title names the document its text comes from: give it the text too"))
-        new(isnothing(text) ? nothing : String(text), isnothing(title) ? nothing : String(title), image, audio)
+        isnothing(title) || !isnothing(t) || throw(ArgumentError(
+            "an EmbeddingInput's title names the document its text comes from: give it a non-empty text too"))
+        new(t, isnothing(title) ? nothing : String(title), image, audio)
     end
 end
 EmbeddingInput(; text=nothing, title=nothing, image=nothing, audio=nothing) = EmbeddingInput(text, title, image, audio)

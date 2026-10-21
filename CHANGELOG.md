@@ -5,9 +5,10 @@
 ### Breaking
 - **An EmbeddingGemma request needs a `task`.** EmbeddingGemma — v1 and v2, any
   model whose name contains `embeddinggemma`, on any service — reads a short
-  prompt that says what a text is for, which neither Ollama nor an
-  OpenAI-compatible server adds. `Embeddings(…; model = "embeddinggemma-2")`
-  without `task` is an `ArgumentError` before the request, naming the tasks;
+  prompt that says what a text is for: Ollama does not add it, and the
+  OpenAI-compatible request has no field for it.
+  `Embeddings(…; model = "embeddinggemma-2:740m-q8_0")` without `task` is an
+  `ArgumentError` before the request, naming the tasks;
   `task = :none` sends the text as it is. A task other than `:none` for a model
   whose prompts UniLM does not know is refused, a `title` goes only with
   `task = :document`, EmbeddingGemma's `dimensions` must be 768, 512, 256 or 128,
@@ -30,14 +31,18 @@
   what `/v1/systemone` refuses for every model and runner (Ollama 0.40.6): more
   than 64 questions; a Choice of fewer than 2 or more than 255 options (was 26);
   a Score of fewer than 2 or more than 10 levels; descriptions, levels and Noul
-  criteria that are not strings; blank `instructions`; a blank text state without
-  images; Box questions. `instructions` are optional. A model that takes less
-  answers with its own HTTP 400, a `SystemOneFailure` carrying Ollama's message.
-  Measured on Ollama 0.40.6: tev1 takes at most 24 options and answers 27 with
-  `criteria must contain 2–26 candidates`; nimble and clef-flash take 26;
-  kev, strands-decider, d1 and d1-omni answered 27; and of five models asked a
-  question without `instructions`, tev1, nimble, strands-decider and kev answered
-  400 and clef-flash answered the question. Upgrading: a request the wrapper used
+  criteria that are not strings; a blank text state without images; Box
+  questions — plus one refusal of UniLM's own: blank (whitespace-only)
+  `instructions`, which Ollama would read as none. `instructions` are optional on
+  the route. A model that takes less answers with its own HTTP 400, a
+  `SystemOneFailure` carrying Ollama's message. Measured on Ollama 0.40.6: tev1
+  takes at most 24 options and answers 27 with `criteria must contain 2–26
+  candidates`; nimble and clef-flash take 26; kev, strands-decider, d1 and d1-omni
+  answered 27; and asked a question without `instructions`, `tev1:4b`,
+  `nimble:9b` and `strands-decider:2b` answered 400 `instructions must be a
+  nonempty string, object, or array`, `kev:0.8b-q8_0` 400 `questions.<name>:
+  "instructions" must be provided`, and `clef-flash:9b` answered the question:
+  pass `instructions` with local models. Upgrading: a request the wrapper used
   to refuse — 27 to 255 options, a question without `instructions` — now reaches
   the server; handle its 400 as a `SystemOneFailure`, or keep to 24 options and
   give every question `instructions`.
@@ -97,27 +102,35 @@
 - **Images and sound in embeddings, through Ollama.** An `ImageAttachment` or
   `AudioAttachment` is an item of its own, and `EmbeddingInput(text, image)` — or
   `EmbeddingInput(; text, title, image, audio)` — embeds a text with its media as
-  one item, for the models that see or hear (`embeddinggemma-2`: as its tags say,
-  the 440m builds take images, 570m sound, 740m both; the 740m builds were
-  measured). Texts, images and sounds share one space:
-  on `embeddinggemma-2:740m-q8_0` a red circle scored 0.754 against "a red
-  circle" and 0.633 against "a blue square", a spoken "banana" 0.792 against
-  "banana" and 0.626 against "apple". Every other service embeds text only and
-  refuses media before the request.
+  one item, for the models that see or hear. Measured on Ollama 0.40.6 (Apple M4
+  Max, 21 October 2026) with `embeddinggemma-2:740m-q8_0` and `:740m-mxfp8`; the
+  440m (text and images) and 570m (text and audio) builds are described from
+  their tags, untested. Texts, images and sounds share one space: on `740m-q8_0`
+  a red circle scored 0.754 against "a red circle" and 0.633 against "a blue
+  square", a spoken "banana" 0.792 against "banana" and 0.626 against "apple"; "a
+  red circle" sent with its picture as one item gave a vector of its own, cosine
+  0.870 with the text alone and 0.903 with the picture alone (both 740m builds:
+  0.85–0.96 with each part, pictures and clips alike). Every other service embeds
+  text only and refuses media before the request.
 - **EmbeddingGemma 2 gets its trained 8,192-token window.** Ollama reports a
   262,144-token context for it, and at its default batch the llama.cpp builds
-  refused any input over about 2,037 tokens (HTTP 413). An embeddings request — and
-  `load_model` — for an EmbeddingGemma 2 model now carries `num_ctx` and
-  `num_batch` of 8192 unless the endpoint sets either: on Ollama 0.40.6 every
-  build embedded 5,991 tokens whole and refused 8,331 with HTTP 400.
+  measured refused long inputs with HTTP 413 (`740m-q8_0` anything over about
+  2,037 tokens). An embeddings request — and `load_model` — for an EmbeddingGemma
+  2 model now carries `num_ctx` and `num_batch` of 8192 unless the endpoint sets
+  either: on Ollama 0.40.6 every build measured (`740m-q8_0`, `740m-mxfp8`,
+  `270m-q8_0-text`) embedded 5,991 tokens whole and refused 8,331 with HTTP 400.
 - **Pictures for local decision models.** `ask` on an `OllamaEndpoint` sends the
-  images of the state to a vision decision model (Clef, Clef Flash, pplx-decider,
-  d1, d1-omni): the state is an `ImageAttachment`, or a vector of images followed
-  by texts (`[photo, "Is the item damaged?"]`, a blank text allowed); the images go
-  in Ollama's `images`, before the text, shared by every question. Refused before
+  images of the state to a vision decision model — measured on Ollama 0.40.6:
+  `clef-flash:9b`, `d1:3b` and `d1-omni:600m`; other decision models whose
+  `/api/show` capabilities include vision take the same request, untested. The
+  state is an `ImageAttachment`, or a vector of images followed by texts
+  (`[photo, "Is the item damaged?"]`, a blank text allowed); the images go in
+  Ollama's `images`, before the text, shared by every question. Refused before
   the request: an image after a text, inside a JSON object or array, beside values
-  that are not texts, or inside a question. A model without vision answers 400,
-  `image inputs are not supported by this decision model`.
+  that are not texts, or inside a question. A model without vision answers with
+  its own 400, in its own words: `image inputs are not supported by this decision
+  model` from `tev1:0.8b`, `registry.ollama.ai/library/kev:0.8b-q8_0 does not
+  support vision` from `kev:0.8b-q8_0`.
 - **`OllamaEndpoint(runner = :mlx | :llamacpp | :ggml)`** asks the server for a
   runner when it can run a model more than one way; it goes with chat,
   embeddings, System One, `load_model` and `unload_model` requests, and is part of

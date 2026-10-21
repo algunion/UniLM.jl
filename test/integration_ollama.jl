@@ -1,8 +1,9 @@
 # ─── Ollama + Gemma 4 live witnesses ─────────────────────────────────────────
 # Requires UNILM_LIVE_OLLAMA=1 and a reachable Ollama server (OLLAMA_HOST, else
-# 127.0.0.1:11434) with the chat model UNILM_OLLAMA_MODEL (default gemma4:e4b) and the
-# embedding model UNILM_OLLAMA_EMBED_MODEL (default embeddinggemma); the FIM witness also
-# needs UNILM_OLLAMA_FIM_MODEL (default qwen2.5-coder:1.5b-base) and skips without it.
+# 127.0.0.1:11434) with the chat model UNILM_OLLAMA_MODEL (default gemma4:e4b), the
+# embedding model UNILM_OLLAMA_EMBED_MODEL (default embeddinggemma) and the GGUF chat model
+# UNILM_OLLAMA_GGUF_MODEL (default qwen2.5-coder:1.5b-base); the FIM witness also needs
+# UNILM_OLLAMA_FIM_MODEL (default qwen2.5-coder:1.5b-base) and skips without it.
 # Local models: no spend. Each witness names the outcome that would refute it. Sampling
 # witnesses run at temperature 0 (greedy, so repeatable on one machine) unless they
 # measure the model's own default behaviour.
@@ -12,6 +13,7 @@ using Sockets
 const _OLLAMA_MODEL = get(ENV, "UNILM_OLLAMA_MODEL", "gemma4:e4b")
 const _OLLAMA_EMBED = get(ENV, "UNILM_OLLAMA_EMBED_MODEL", "embeddinggemma")
 const _OLLAMA_FIM = get(ENV, "UNILM_OLLAMA_FIM_MODEL", "qwen2.5-coder:1.5b-base")
+const _OLLAMA_GGUF = get(ENV, "UNILM_OLLAMA_GGUF_MODEL", "qwen2.5-coder:1.5b-base")
 const _OLLAMA_MEDIA = joinpath(@__DIR__, "fixtures", "ollama")
 
 # The server's installed tags, or `nothing` when it does not answer.
@@ -28,9 +30,10 @@ _ollama_ps(ep::OllamaEndpoint) = Dict(m.name => m.context_length for m in runnin
 const _OLLAMA_EP = get(ENV, "UNILM_LIVE_OLLAMA", "") == "1" ? OllamaEndpoint() : nothing
 const _OLLAMA_TAGS = isnothing(_OLLAMA_EP) ? nothing : _ollama_installed(_OLLAMA_EP)
 
-if isnothing(_OLLAMA_TAGS) || !_has(_OLLAMA_TAGS, _OLLAMA_MODEL) || !_has(_OLLAMA_TAGS, _OLLAMA_EMBED)
+if isnothing(_OLLAMA_TAGS) || !_has(_OLLAMA_TAGS, _OLLAMA_MODEL) || !_has(_OLLAMA_TAGS, _OLLAMA_EMBED) ||
+   !_has(_OLLAMA_TAGS, _OLLAMA_GGUF)
     @info "Skipping Ollama live witnesses (set UNILM_LIVE_OLLAMA=1, run an Ollama server and pull " *
-          "$_OLLAMA_MODEL and $_OLLAMA_EMBED)"
+          "$_OLLAMA_MODEL, $_OLLAMA_EMBED and $_OLLAMA_GGUF)"
 else
 
 _lchat(; ep=_OLLAMA_EP, system="You are concise.", kw...) =
@@ -149,18 +152,44 @@ end
     end
 end
 
-@testset "context window: num_ctx loads the model with it; a prompt that does not fit fails" begin
-    # Refuted by: a runner context other than the one asked for, or a 200 for an over-long prompt.
-    small = OllamaEndpoint(num_ctx=4096)
-    @test _ask(_lchat(ep=small, temperature=0.0, reasoning_effort="none"), "Say OK.") isa LLMSuccess
-    @test _ollama_ps(small)[_OLLAMA_MODEL] == 4096
+@testset "context window, per runner" begin
+    # Refuted by: a cold load whose /api/ps context is not num_ctx, a runner other than MLX, llama.cpp or ggml, or
+    # a GGUF model served by neither llama.cpp nor ggml; on MLX a reload, a refused over-long prompt or a missed
+    # needle; on llama.cpp/ggml no reload, a 200 for the over-long prompt, or with truncate=true a failure or a
+    # prompt that was not shortened.
     long = repeat("The logistics report covered warehouses, fleets and suppliers in detail. ", 450)  # > 4096 tokens
-    f = _ask(_lchat(ep=small, reasoning_effort="none"), long * "\nWhat was the report about?";
-             config=RequestConfig(max_attempts=1))
-    @test f isa LLMFailure && f.status == 400 && occursin("exceeds the available context size", f.response)
-    # truncate=true is Ollama's own behaviour: the prompt is shortened and the call succeeds.
-    lossy = OllamaEndpoint(num_ctx=4096, truncate=true)
-    @test _ask(_lchat(ep=lossy, reasoning_effort="none"), long * "\nWhat was the report about?") isa LLMSuccess
+    once = RequestConfig(max_attempts=1)
+    for m in (_OLLAMA_MODEL, _OLLAMA_GGUF)
+        unload_model(m; service=_OLLAMA_EP)
+        @test timedwait(() -> !haskey(_ollama_ps(_OLLAMA_EP), m), 10.0) == :ok
+        small = OllamaEndpoint(num_ctx=4096)
+        mchat(ep; kw...) =
+            (c = Chat(; service=ep, model=m, kw...); push!(c, Message(Val(:system), "You are concise.")); c)
+        say(ep) = _ask(mchat(ep; temperature=0.0, max_tokens=8), "Say OK.")  # a base model continues raw text
+        @test say(small) isa LLMSuccess
+        cold = only(x for x in running_models(; service=_OLLAMA_EP).response if x.name == m)
+        @test cold.context_length == 4096                             # every runner: a cold load takes num_ctx
+        @test cold.runner in (:mlx, :llamacpp, :ggml)
+        m == _OLLAMA_GGUF && @test cold.runner in (:llamacpp, :ggml)  # so the llama.cpp/ggml branch always runs
+        @test say(OllamaEndpoint(num_ctx=8192)) isa LLMSuccess
+        after = _ollama_ps(_OLLAMA_EP)[m]                             # read before the next request can reload it
+        r = _ask(mchat(small), long * "\nWhat was the report about?"; config=once)
+        if cold.runner === :mlx
+            @test after == 4096                                       # MLX: a loaded model is not reloaded
+            @test r isa LLMSuccess && r.usage.prompt_tokens > 4096    # …a longer prompt is not refused
+            needle = _ask(mchat(small; temperature=0.0), "The code word is 7319. " * repeat(long, 2) *
+                          "\nWhat is the code word? Digits only."; config=once)
+            @test needle isa LLMSuccess && needle.usage.prompt_tokens > 8192  # …past every num_ctx asked for
+            @test occursin("7319", text(needle))                      # …and its start is still read
+        else
+            @test after == 8192                                       # llama.cpp/ggml: another num_ctx reloads
+            @test r isa LLMFailure && r.status == 400 &&              # …an over-long prompt is refused
+                  occursin("exceeds the available context size", r.response)
+            lossy = _ask(mchat(OllamaEndpoint(num_ctx=4096, truncate=true); max_tokens=8),
+                         long * "\nWhat was the report about?"; config=once)
+            @test lossy isa LLMSuccess && lossy.usage.prompt_tokens <= 4096  # …unless truncate=true: shortened
+        end
+    end
 end
 
 @testset "keep_alive: 0 unloads the model after the call" begin
@@ -238,25 +267,21 @@ end
     @test all(t -> fetch(t) isa LLMSuccess, streams)
 end
 
-@testset "model management" begin
-    # Refuted by: a listing without the chat model's capabilities, a load that does not use the endpoint's
-    # context window, an unload that leaves the model loaded, or a pull of an installed tag that fails.
+@testset "the chat model: metadata and a cold load" begin
+    # Refuted by: the chat model without its capabilities or thinking levels, a cold load (an empty chat: the
+    # model completes text) that does not use the endpoint's context window, or an unload that leaves the model
+    # loaded. Model management that needs no chat model is witnessed in integration_ollama_models.jl.
     info = model_info(_OLLAMA_MODEL; service=_OLLAMA_EP)
     @test info isa OllamaSuccess
     @test issubset([:completion, :tools, :thinking], info.response.capabilities)
     @test info.response.thinking_levels == [false, true] && (info.response.context_length::Int) >= 32_768
-    @test only(m for m in list_models(service=_OLLAMA_EP).response if m.name == _OLLAMA_MODEL).capabilities ==
-          info.response.capabilities
-    @test model_info("gemma4:no-such-tag"; service=_OLLAMA_EP) isa OllamaFailure
     ep = OllamaEndpoint(num_ctx=8192)
+    unload_model(_OLLAMA_MODEL; service=_OLLAMA_EP)                  # cold: a loaded MLX model keeps its context
+    @test timedwait(() -> !haskey(_ollama_ps(ep), _OLLAMA_MODEL), 10.0) == :ok
     @test load_model(_OLLAMA_MODEL; service=ep) isa OllamaSuccess
     @test _ollama_ps(ep)[_OLLAMA_MODEL] == 8192
     @test unload_model(_OLLAMA_MODEL; service=ep) isa OllamaSuccess
     @test timedwait(() -> !haskey(_ollama_ps(ep), _OLLAMA_MODEL), 10.0) == :ok
-    seen = OllamaPullProgress[]
-    @test pull_model(_OLLAMA_EMBED; service=_OLLAMA_EP, progress=p -> push!(seen, p)) isa OllamaSuccess
-    @test first(seen).status == "pulling manifest" && last(seen).status == "success"
-    @test pull_model("gemma4:no-such-tag"; service=_OLLAMA_EP) isa OllamaCallError
 end
 
 @testset "record once, replay offline" begin
@@ -274,6 +299,14 @@ end
     end
     @test text(replayed) == text(recorded)
     @test reasoning_text(replayed) == reasoning_text(recorded)
+end
+
+@testset "transcription of a recording" begin
+    # Refuted by: a transcript without the spoken word.
+    r = transcribe(joinpath(_OLLAMA_MEDIA, "secret_word.wav"); service=_OLLAMA_EP, model=_OLLAMA_MODEL)
+    @test r isa TranscriptionSuccess && occursin("banana", lowercase(transcript_text(r)))
+    # …or by the JSON reply itself returned as the transcript (Ollama labels it application/x-ndjson).
+    @test r.raw isa AbstractDict && !occursin('{', transcript_text(r))
 end
 
 end # Ollama live

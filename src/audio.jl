@@ -87,20 +87,27 @@ save_audio(r::SpeechSuccess, path::String) = _atomic_write(path, r.audio)
 const _TRANSCRIPTION_FORMATS = ("json", "text", "srt", "verbose_json", "vtt", "diarized_json")
 
 """
-    TranscriptionRequest(; file, model="gpt-transcribe", service=OPENAIServiceEndpoint)
+    TranscriptionRequest(; file, model=nothing, service=OPENAIServiceEndpoint)
 
-An audio transcription/translation request. `file` is a path on disk; optional
+An audio transcription/translation request. `file` is a path on disk. `model` left
+`nothing` is the service's default: `gpt-transcribe` for OpenAI; Ollama has none, so a
+request to it names an installed model that hears audio (e.g. `model="gemma4:e4b"`) or
+throws `ArgumentError` before any request. Optional
 `languages`, `keywords`, `prompt`, `response_format`, and `temperature` refine decoding.
 For `gpt-transcribe`, a legacy singular `language` is translated to `languages`.
 Other models retain their singular `language` field. Never set both forms.
 `response_format` is one of `json`, `text`, `srt`, `verbose_json`, `vtt`,
 `diarized_json`, and `temperature` lies in `0 … 1`; anything else is an `ArgumentError`.
+Ollama's `/v1/audio/transcriptions` reads one `language`, the `prompt`, and a
+`response_format` of `json` or `text`, and transcribes at temperature 0: a request to it
+that sets `temperature`, `languages`, `keywords`, or another `response_format` throws
+`ArgumentError` before any request.
 Pass to [`transcribe`](@ref) or [`translate`](@ref).
 """
 @kwdef struct TranscriptionRequest
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
     file::String
-    model::String = "gpt-transcribe"
+    model::Union{String,Nothing} = nothing
     language::Union{String,Nothing} = nothing
     prompt::Union{String,Nothing} = nothing
     response_format::Union{String,Nothing} = nothing
@@ -122,6 +129,35 @@ Pass to [`transcribe`](@ref) or [`translate`](@ref).
     end
 end
 
+# The model a transcription names, else the service's default: `gpt-transcribe` for OpenAI and the
+# OpenAI-compatible services; none for Ollama, whose models are the caller's to name.
+_default_transcription_model(_) = "gpt-transcribe"
+_default_transcription_model(::OllamaEndpoint) = throw(ArgumentError(
+    "Ollama has no default transcription model: name an installed model that hears audio, e.g. " *
+    "model = \"gemma4:e4b\""))
+# `@something` evaluates the default only when no model is named.
+_transcription_model(t::TranscriptionRequest)::String = @something(t.model, _default_transcription_model(t.service))
+
+# What a service's transcription route cannot carry, refused before any request.
+_check_transcription(_, ::TranscriptionRequest) = nothing
+function _check_transcription(::OllamaEndpoint, t::TranscriptionRequest)
+    for (f, rule) in ((:temperature, "runs at temperature 0 and takes no `temperature`: remove it"),
+                      (:languages, "takes one `language`: remove `languages`"),
+                      (:keywords, "takes no `keywords`: remove them"))
+        isnothing(getfield(t, f)) || throw(ArgumentError("Ollama's transcription $rule"))
+    end
+    isnothing(t.response_format) || t.response_format in ("json", "text") || throw(ArgumentError(
+        "Ollama transcribes to response_format \"json\" or \"text\" (got $(repr(t.response_format)))"))
+    nothing
+end
+
+# Whether a 200 transcription reply is the JSON object `{"text": …}` rather than the bare text.
+_transcription_json(_, ::TranscriptionRequest, resp::HTTP.Response)::Bool =
+    occursin("application/json", HTTP.header(resp, "Content-Type", ""))
+# Ollama answers JSON unless asked for "text", but under the `application/x-ndjson` header of the
+# chat stream it transcribes with: that header is sent before the JSON is written (Ollama 0.40.6).
+_transcription_json(::OllamaEndpoint, t::TranscriptionRequest, ::HTTP.Response)::Bool = t.response_format != "text"
+
 "Successful [`transcribe`](@ref)/[`translate`](@ref) result; `text` holds the transcript (via [`transcript_text`](@ref)), `raw` the parsed JSON when the API returns it."
 @kwdef struct TranscriptionSuccess <: LLMRequestResponse
     text::String
@@ -136,12 +172,13 @@ The transcript text from a [`transcribe`](@ref) or [`translate`](@ref) result.
 transcript_text(r::TranscriptionSuccess) = r.text
 
 function _transcription_parts(t::TranscriptionRequest)::Vector{Pair{String,Any}}
+    model = _transcription_model(t)
     parts = Pair{String,Any}[
         "file" => HTTP.Multipart(basename(t.file), IOBuffer(read(t.file)), _mime_for(t.file)),
-        "model" => t.model]
+        "model" => model]
     languages = t.languages
     if !isnothing(t.language)
-        if _model_family(t.model, "gpt-transcribe")
+        if _model_family(model, "gpt-transcribe")
             languages = [t.language]
         else
             push!(parts, "language" => t.language)
@@ -155,15 +192,21 @@ function _transcription_parts(t::TranscriptionRequest)::Vector{Pair{String,Any}}
     parts
 end
 
-function _transcribe(t::TranscriptionRequest, path::String; config::Union{Nothing,RequestConfig}=nothing)
-    validate_capability(t.service, :audio, "Audio API")
+function _transcribe(t::TranscriptionRequest, path::String, cap::Symbol;
+                     config::Union{Nothing,RequestConfig}=nothing)
+    # An endpoint that declares `:audio` transcribes too (`has_capability`), while one that declares
+    # only `:transcription` (Ollama) neither speaks nor translates.
+    validate_capability(t.service, cap, "Audio API")
+    # Local validation throws before the request (inside the `try` it would become an AudioCallError).
+    _check_transcription(t.service, t)
+    _transcription_model(t)
     cfg = _resolve_config(config); t0 = time_ns()
     try
         parts = _transcription_parts(t)
         resp = _http("POST", _api_base_url(t.service) * path, auth_header_multipart(t.service),
             HTTP.Form(parts); cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
-            if occursin("application/json", HTTP.header(resp, "Content-Type", ""))
+            if _transcription_json(t.service, t, resp)
                 d = JSON.parse(resp.body; dicttype=Dict{String,Any})
                 TranscriptionSuccess(text=get(d, "text", ""), raw=d)
             else
@@ -179,15 +222,27 @@ function _transcribe(t::TranscriptionRequest, path::String; config::Union{Nothin
 end
 
 """
-    transcribe(t::TranscriptionRequest) / transcribe(path; model="gpt-transcribe", kwargs...)
+    transcribe(t::TranscriptionRequest) / transcribe(path; model=nothing, kwargs...)
 
 Transcribe audio to text in the source language. Returns `TranscriptionSuccess`
-(`.text`, via [`transcript_text`](@ref)), `AudioFailure`, or `AudioCallError`.
+(`.text`, via [`transcript_text`](@ref)), `AudioFailure`, or `AudioCallError`. `model`
+left `nothing` is the service's default (`gpt-transcribe` on OpenAI).
+
+On Ollama, an installed model that hears audio transcribes through Ollama's
+OpenAI-compatible `/v1/audio/transcriptions` route. There is no default model, and what
+that route cannot carry — `temperature`, `languages`, `keywords`, a `response_format`
+other than `json` or `text` — throws `ArgumentError` before any request:
+
+```julia
+r = transcribe("memo.wav"; service=OllamaEndpoint(), model="gemma4:e4b", language="en")
+r isa TranscriptionSuccess && println(transcript_text(r))
+```
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout budget for this call (a single bounded attempt; `max_attempts` does not apply).
 """
-transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}=nothing) = _transcribe(t, AUDIO_TRANSCRIPTIONS_PATH; config=config)
-transcribe(path::String; model::String="gpt-transcribe", service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing, kwargs...) =
+transcribe(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}=nothing) =
+    _transcribe(t, AUDIO_TRANSCRIPTIONS_PATH, :transcription; config=config)
+transcribe(path::String; model::Union{String,Nothing}=nothing, service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing, kwargs...) =
     transcribe(TranscriptionRequest(; service=service, file=path, model=model, kwargs...); config=config)
 
 """
@@ -204,7 +259,7 @@ function translate(t::TranscriptionRequest; config::Union{Nothing,RequestConfig}
         throw(ArgumentError("translations take no `languages` or `keywords`; the output is always English"))
     t.response_format == "diarized_json" &&
         throw(ArgumentError("translations do not offer response_format \"diarized_json\""))
-    _transcribe(t, AUDIO_TRANSLATIONS_PATH; config=config)
+    _transcribe(t, AUDIO_TRANSLATIONS_PATH, :audio; config=config)
 end
 translate(path::String; model::String="whisper-1", service::ServiceEndpointSpec=OPENAIServiceEndpoint, config::Union{Nothing,RequestConfig}=nothing, kwargs...) =
     translate(TranscriptionRequest(; service=service, file=path, model=model, kwargs...); config=config)

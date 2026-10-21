@@ -206,6 +206,8 @@ end
 # at 0.0 (`_is_local`, defined with the endpoint).
 _result_service(r::LLMSuccess) = r.self.service
 _result_service(r::EmbeddingSuccess) = r.embeddings.service
+_result_service(r::ResponseSuccess) = r.service
+_result_service(r::FIMSuccess) = r.service
 _result_service(_) = nothing
 _is_local(_, ::AbstractString) = false
 

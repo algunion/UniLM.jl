@@ -939,12 +939,19 @@ end
     ResponseSuccess <: LLMRequestResponse
 
 Successful response from the Responses API. Access the parsed response via `.response`.
+
+- `response`: the parsed response ([`ResponseObject`](@ref))
+- `sse_dropped`: undecodable SSE `data:` payloads dropped while assembling a streamed turn;
+  0 for a non-streamed call and for a clean stream
+- `service`: the endpoint that answered, used to price the call (a local model costs 0.0);
+  `nothing` for a result built by hand, priced by its model name
 """
 @kwdef struct ResponseSuccess <: LLMRequestResponse
     response::ResponseObject
     # Undecodable SSE `data:` payloads dropped while assembling this streamed
     # turn — 0 for a non-streamed call, and for a clean stream.
     sse_dropped::Int = 0
+    service::Union{Nothing,ServiceEndpointSpec} = nothing
 end
 
 """
@@ -1422,7 +1429,8 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
                 end
             end
             if resp.status == 200 && !isnothing(result[])
-                return ResponseSuccess(response=result[]::ResponseObject, sse_dropped=state.sse_dropped)
+                return ResponseSuccess(response=result[]::ResponseObject, sse_dropped=state.sse_dropped,
+                                       service=r.service)
             elseif (te = terminal_error[]) !== nothing
                 return _agentic_terminal_result(te, resp.status, io_ref[], state.sse_dropped)
             elseif _is_retryable(resp.status) && !ctl.fired && attempt < cfg.max_attempts
@@ -1469,7 +1477,8 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
             # in `_stream_attempt`.
             if stopped || _stream_teardown_noise(e, breach)
                 !isnothing(result[]) &&
-                    return ResponseSuccess(response=result[]::ResponseObject, sse_dropped=state.sse_dropped)
+                    return ResponseSuccess(response=result[]::ResponseObject, sse_dropped=state.sse_dropped,
+                                           service=r.service)
                 te = terminal_error[]
                 !isnothing(te) && return _agentic_terminal_result(te, nothing, io_ref[], state.sse_dropped)
             end
@@ -1581,6 +1590,15 @@ encode_agentic(service::OpenAIWireEndpointSpec, r::Respond)::String = JSON.json(
 # no conversation): a Respond tool loop cannot chain turns there.
 _stateless_responses(_) = false
 
+# The verbs that work on a stored response (fetch, cancel, delete, list its input) would reach a
+# server that stores none only to fail there: they are refused before any request.
+function _check_stored_responses(service, verb::String, fix::String)
+    _stateless_responses(service) && throw(ArgumentError(
+        "$verb works on a stored response, and $(_service_name(service))'s Responses API stores none " *
+        "(each call is answered and forgotten); $fix"))
+    nothing
+end
+
 """
     decode_agentic(service, resp::HTTP.Response) -> ResponseObject
 
@@ -1689,7 +1707,7 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
             # partial output, and says so in `status`/`incomplete_details`.
             decoded.status == "failed" && return ResponseFailure(
                 response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
-            return ResponseSuccess(response=decoded)
+            return ResponseSuccess(response=decoded, service=r.service)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
@@ -1772,7 +1790,8 @@ end
 """
     get_response(response_id::String; service=OPENAIServiceEndpoint)
 
-Retrieve an existing response by its ID.
+Retrieve an existing response by its ID. An endpoint whose Responses API stores no
+responses ([`OllamaEndpoint`](@ref)) throws `ArgumentError` before any request.
 
 # Examples
 ```julia
@@ -1784,13 +1803,14 @@ end
 """
 function get_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
         config::Union{Nothing,RequestConfig}=nothing)
+    _check_stored_responses(service, "get_response", "keep the ResponseSuccess that respond returns")
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
         url = _agentic_url(service) * "/" * _uripart(response_id)
         resp = _http("GET", url, auth_header(service); cfg=cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
-            return ResponseSuccess(response=decode_agentic(service, resp))
+            return ResponseSuccess(response=decode_agentic(service, resp), service=service)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
@@ -1804,6 +1824,8 @@ end
     delete_response(response_id::String; service=OPENAIServiceEndpoint)
 
 Delete a stored response by its ID. Returns a Dict with `"id"`, `"object"`, `"deleted"` keys.
+An endpoint whose Responses API stores no responses ([`OllamaEndpoint`](@ref)) throws
+`ArgumentError` before any request.
 
 # Examples
 ```julia
@@ -1813,6 +1835,7 @@ result["deleted"]  # => true
 """
 function delete_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
         config::Union{Nothing,RequestConfig}=nothing)
+    _check_stored_responses(service, "delete_response", "nothing stays on the server to delete")
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
@@ -1833,6 +1856,8 @@ end
     list_input_items(response_id::String; limit=20, order="desc", after=nothing, service=OPENAIServiceEndpoint)
 
 List input items for a stored response. Returns a Dict with `"data"`, `"first_id"`, `"last_id"`, `"has_more"`.
+An endpoint whose Responses API stores no responses ([`OllamaEndpoint`](@ref)) throws
+`ArgumentError` before any request.
 
 # Examples
 ```julia
@@ -1849,6 +1874,7 @@ function list_input_items(response_id::String;
     service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing)
 
+    _check_stored_responses(service, "list_input_items", "the input is the `input` you sent")
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
@@ -1876,7 +1902,9 @@ end
 """
     cancel_response(response_id::String; service=OPENAIServiceEndpoint)
 
-Cancel an in-progress response by its ID. Returns `ResponseSuccess` on success.
+Cancel an in-progress response by its ID. Returns `ResponseSuccess` on success. An endpoint
+whose Responses API stores no responses ([`OllamaEndpoint`](@ref)) throws `ArgumentError`
+before any request.
 
 # Examples
 ```julia
@@ -1890,13 +1918,15 @@ end
 """
 function cancel_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
         config::Union{Nothing,RequestConfig}=nothing)
+    _check_stored_responses(service, "cancel_response",
+                            "stop a call in flight with a CancelToken passed to respond (`cancel=`)")
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
         url = _agentic_url(service) * "/" * _uripart(response_id) * "/cancel"
         resp = _http("POST", url, auth_header(service); cfg=cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
-            return ResponseSuccess(response=decode_agentic(service, resp))
+            return ResponseSuccess(response=decode_agentic(service, resp), service=service)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end

@@ -117,7 +117,7 @@ const _WEATHER = Tool(func=FunctionSignature(name="get_weather", description="We
     end
     @test OllamaEndpoint() == OllamaEndpoint()                       # plain immutable value
     @test provider_capabilities(e) == Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses, :models,
-                                           :system_one])
+                                           :system_one, :transcription])
     @test !occursin("redacted", sprint(show, e))                     # no key to hide
     @test_throws ArgumentError Chat(service=e)                       # no default model
     @test occursin("list_models(service=OllamaEndpoint())", try Chat(service=e); "" catch x; x.msg end)
@@ -533,4 +533,156 @@ end
     @test !haskey(_wire(_ochat(OllamaEndpoint(base_url="http://box:11434"))), "runner")
     b = JSON.parse(UniLM._encode_embeddings(e, Embeddings("x"; service=e, model="nomic-embed-text")))
     @test b["runner"] == "llamacpp"
+end
+
+@testset "a local respond or FIM result is free, without a price warning" begin
+    resp = JSON.json(Dict("id" => "resp_1", "object" => "response", "status" => "completed", "model" => "gemma4:e4b",
+        "output" => [Dict("type" => "message", "role" => "assistant",
+                          "content" => [Dict("type" => "output_text", "text" => "Bonjour")])],
+        "usage" => Dict("input_tokens" => 5, "output_tokens" => 1, "total_tokens" => 6)))
+    fim = JSON.json(Dict("id" => "cmpl-1", "object" => "text_completion", "model" => "qwen2.5-coder:1.5b-base",
+        "choices" => [Dict("text" => "a + b", "index" => 0, "finish_reason" => "stop")],
+        "usage" => Dict("prompt_tokens" => 10, "completion_tokens" => 3, "total_tokens" => 13)))
+    server, url, bodies = _ollama_mock((n, body) -> (200, [occursin("\"prompt\"", body) ? fim : resp]))
+    try
+        ep = OllamaEndpoint(base_url=url)
+        r = respond(Respond(service=ep, model="gemma4:e4b", input="Say hello in French.", reasoning=Reasoning(effort="none")))
+        @test r isa ResponseSuccess && r.service === ep
+        @test (@test_logs estimated_cost(r)) == 0.0
+        f = fim_complete(FIMCompletion(service=ep, model="qwen2.5-coder:1.5b-base", prompt="def add(a, b):\n    return ",
+                                       suffix="\n", max_tokens=8))
+        @test f isa FIMSuccess && f.service === ep && (@test_logs estimated_cost(f)) == 0.0
+        # The OpenAI-compatible routes take no runner: it rides only on the native ones.
+        er = OllamaEndpoint(base_url=url, runner=:llamacpp)
+        n = length(bodies)
+        @test respond(Respond(service=er, model="gemma4:e4b", input="Say hello in French.",
+                              reasoning=Reasoning(effort="none"))) isa ResponseSuccess
+        @test fim_complete(FIMCompletion(service=er, model="qwen2.5-coder:1.5b-base", prompt="def add(a, b):\n    return ",
+                                         suffix="\n", max_tokens=8)) isa FIMSuccess
+        sent = [JSON.parse(b) for b in bodies[n+1:end]]
+        @test length(sent) == 2 && haskey(sent[1], "input") && haskey(sent[2], "prompt")
+        @test !any(b -> haskey(b, "runner"), sent)
+    finally
+        close(server)
+    end
+end
+
+@testset "a streamed respond and a fetched response record their endpoint" begin
+    obj = Dict("id" => "resp_1", "object" => "response", "status" => "completed", "model" => "gemma4:e4b",
+        "output" => [Dict("type" => "message", "role" => "assistant",
+                          "content" => [Dict("type" => "output_text", "text" => "Bonjour")])],
+        "usage" => Dict("input_tokens" => 5, "output_tokens" => 1, "total_tokens" => 6))
+    sse(type, d) = "event: $type\ndata: $(JSON.json(merge(Dict{String,Any}("type" => type), d)))\n\n"
+    # A GET carries no body: it fetches the stored response; a POST streams the events.
+    server, url, _ = _ollama_mock((n, body) -> isempty(body) ? (200, [JSON.json(obj)]) :
+        (200, [sse("response.output_text.delta", Dict("delta" => "Bonjour")),
+               sse("response.completed", Dict("response" => obj))]))
+    try
+        ep = OllamaEndpoint(base_url=url)
+        s = fetch(respond(Respond(service=ep, model="gemma4:e4b", input="Say hello in French.", stream=true,
+                                  reasoning=Reasoning(effort="none"))))
+        @test s isa ResponseSuccess && s.service === ep && output_text(s) == "Bonjour"
+        @test (@test_logs estimated_cost(s)) == 0.0
+        # Ollama stores no responses (get_response is refused there): a fetched response records the
+        # endpoint of a server that stores them.
+        gen = GenericOpenAIEndpoint(url, "")
+        g = get_response("resp_1"; service=gen)
+        @test g isa ResponseSuccess && g.service === gen && output_text(g) == "Bonjour"
+    finally
+        close(server)
+    end
+end
+
+# Refuted if: a verb that works on a stored response reaches an Ollama server, which stores none (an
+# unreachable one would answer with a call error, not an ArgumentError), or its refusal does not name
+# the verb, the endpoint and what to do instead.
+@testset "verbs on a stored response are refused before any request: Ollama stores none" begin
+    off = OllamaEndpoint(base_url="http://127.0.0.1:1")
+    refusal(call) = try call(); nothing catch e; e end
+    for (verb, call, fix) in (("get_response", () -> get_response("resp_1"; service=off), "keep the ResponseSuccess"),
+                              ("cancel_response", () -> cancel_response("resp_1"; service=off), "CancelToken"),
+                              ("delete_response", () -> delete_response("resp_1"; service=off), "nothing stays"),
+                              ("list_input_items", () -> list_input_items("resp_1"; service=off), "`input` you sent"))
+        e = refusal(call)
+        @test e isa ArgumentError && startswith(e.msg, "$verb works on a stored response, and OllamaEndpoint's") &&
+              occursin(fix, e.msg)
+    end
+end
+
+# Refuted if: compaction is refused on Ollama, or does not reach its /v1/responses/compact route with the
+# model and the conversation. Ollama compacts the conversation sent with the request: nothing is stored.
+@testset "compact_response reaches Ollama's compaction route" begin
+    compacted = JSON.json(Dict("id" => "resp_compact_1", "object" => "response.compaction",
+        "output" => [Dict("type" => "compaction", "encrypted_content" => "{\"type\":\"ollama_compaction\"}")],
+        "usage" => Dict("input_tokens" => 285, "output_tokens" => 67, "total_tokens" => 352)))
+    seen = Ref{Any}(nothing)
+    handler = req -> (seen[] = (String(req.method), String(req.target),
+                                applicable(copy, req.body) ? String(copy(req.body)) : "");
+                      HTTP.Response(200, ["Content-Type" => "application/json"], Vector{UInt8}(compacted)))
+    tcp = Sockets.listen(Sockets.localhost, 0); port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+    server = HTTP.serve!(handler, "127.0.0.1", port; verbose=false)
+    try
+        r = compact_response(model="gemma4:e4b", input=[InputMessage(role="user", content="My name is Ada.")],
+                             service=OllamaEndpoint(base_url="http://127.0.0.1:$port"))
+        @test r isa AbstractDict && r["object"] == "response.compaction" && only(r["output"])["type"] == "compaction"
+        method, target, body = seen[]
+        @test (method, target) == ("POST", "/v1/responses/compact")
+        @test JSON.parse(body)["model"] == "gemma4:e4b" && only(JSON.parse(body)["input"])["content"] == "My name is Ada."
+    finally
+        close(server)
+    end
+end
+
+@testset "transcription on Ollama: its OpenAI-compatible route and its rules" begin
+    wav = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")
+    off = OllamaEndpoint(base_url="http://127.0.0.1:1")
+    refusal(f) = try f(); nothing catch x; x end
+    e = refusal(() -> transcribe(wav; service=off))
+    @test e isa ArgumentError && occursin("no default transcription model", e.msg)
+    # Each refusal comes from its own rule: one distinctive fragment per message.
+    for (kw, fragment) in (((temperature=0.2,), "runs at temperature 0 and takes no `temperature`"),
+                           ((languages=["en"],), "takes one `language`"),
+                           ((keywords=["banana"],), "takes no `keywords`"),
+                           ((response_format="srt",), "\"json\" or \"text\" (got \"srt\")"))
+        e = refusal(() -> transcribe(wav; service=off, model="gemma4:e4b", kw...))
+        @test e isa ArgumentError && occursin(fragment, e.msg)
+    end
+    @test_throws ArgumentError speak(SpeechRequest(service=off, input="hi"))          # speech stays refused
+    @test_throws ArgumentError translate(wav; service=off, model="gemma4:e4b")       # translation too
+    seen = Ref{Any}(nothing)
+    handler = req -> (seen[] = (String(req.target), applicable(copy, req.body) ? String(copy(req.body)) : "");
+        HTTP.Response(200, ["Content-Type" => "application/json"], Vector{UInt8}("{\"text\":\"The secret word is banana.\"}")))
+    tcp = Sockets.listen(Sockets.localhost, 0); port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+    server = HTTP.serve!(handler, "127.0.0.1", port; verbose=false)
+    try
+        url = "http://127.0.0.1:$port"
+        r = transcribe(wav; service=OllamaEndpoint(base_url=url), model="gemma4:e4b", language="en", prompt="a fruit")
+        @test r isa TranscriptionSuccess && transcript_text(r) == "The secret word is banana."
+        target, body = seen[]
+        @test target == "/v1/audio/transcriptions"
+        @test occursin("name=\"model\"", body) && occursin("gemma4:e4b", body) && occursin("name=\"language\"", body)
+        @test occursin("name=\"prompt\"", body) && occursin("name=\"file\"", body) && !occursin("temperature", body)
+    finally
+        close(server)
+    end
+end
+
+@testset "transcription on Ollama: its JSON reply under its chat stream's content type" begin
+    # Ollama labels every transcription reply application/x-ndjson, the header of the chat stream it
+    # runs (as _ollama_mock does); the reply is `{"text": …}` unless response_format is "text".
+    wav = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")
+    reply = "{\"text\":\"The secret word is banana\"}\n"
+    server, url, _ = _ollama_mock((n, body) -> (200, [n == 3 ? "The secret word is banana" : reply]))
+    try
+        ep = OllamaEndpoint(base_url=url)
+        for fmt in (nothing, "json")
+            r = transcribe(wav; service=ep, model="gemma4:e4b", response_format=fmt)
+            @test r isa TranscriptionSuccess && transcript_text(r) == "The secret word is banana"
+            @test r.raw == Dict("text" => "The secret word is banana")
+        end
+        r = transcribe(wav; service=ep, model="gemma4:e4b", response_format="text")
+        @test r isa TranscriptionSuccess && transcript_text(r) == "The secret word is banana" && isnothing(r.raw)
+    finally
+        close(server)
+    end
 end

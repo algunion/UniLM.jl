@@ -433,7 +433,8 @@ export
     pull_model,
     running_models,
     load_model,
-    unload_model
+    unload_model,
+    delete_model
 
 # ─── Audio API ────────────────────────────────────────────────────────────────
 export

@@ -289,6 +289,10 @@ end
         include("integration_ollama_embeddings.jl")
     end
 
+    @testset "integration — ollama models" begin
+        include("integration_ollama_models.jl")
+    end
+
     @testset "integration — ollama System One" begin
         include("integration_ollama_system_one.jl")
     end

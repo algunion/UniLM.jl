@@ -3,8 +3,9 @@
 # (`/api/chat`, `/api/embed`): it is the only one that takes the runtime `options`
 # (context window, sampling knobs), `keep_alive`, `think` and `truncate`; the
 # OpenAI-compatible routes accept and ignore them, and truncate over-long input
-# without a word. `respond` and FIM keep the OpenAI-compatible routes
-# (`/v1/responses`, `/v1/completions`).
+# without a word. `respond`, FIM and transcription keep the OpenAI-compatible routes
+# (`/v1/responses`, `/v1/completions`, `/v1/audio/transcriptions`), which carry none of
+# the endpoint's `keep_alive`, `options` or `runner`.
 # ============================================================================
 
 get_url(s::OllamaEndpoint, ::Chat)::String = s.base_url * OLLAMA_CHAT_PATH
@@ -16,7 +17,7 @@ _resolve_base_url(s::OllamaEndpoint) = s.base_url
 auth_header(::OllamaEndpoint)::Vector{Pair{String,String}} = ["Content-Type" => "application/json"]
 
 provider_capabilities(::OllamaEndpoint) =
-    Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses, :models, :system_one])
+    Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses, :models, :system_one, :transcription])
 
 _model_hint(::OllamaEndpoint) =
     " (an installed model, e.g. model=\"gemma4:e4b\"; list_models(service=OllamaEndpoint()) lists them)"

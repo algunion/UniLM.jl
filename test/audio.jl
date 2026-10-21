@@ -57,3 +57,41 @@ end
     r = _answered(() -> speak("hi"; service=URLProbe, model="tts"), 401; headers=["x-request-id" => "req_audio"])
     @test r isa UniLM.AudioFailure && r.request_id == "req_audio"
 end
+
+@testset "the transcription model is resolved per service" begin
+    wav = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")
+    @test TranscriptionRequest(file=wav).model === nothing
+    @test UniLM._transcription_model(TranscriptionRequest(file=wav)) == "gpt-transcribe"     # OpenAI: unchanged
+    @test UniLM._transcription_model(TranscriptionRequest(file=wav, model="whisper-1")) == "whisper-1"
+end
+
+# Custom endpoints served by _with_scripted: one written against the audio API (`:audio` alone, as a
+# backend written before `:transcription` existed declares it) and one that declares neither.
+struct AudioOnlyProbe <: UniLM.ServiceEndpoint end
+UniLM._resolve_base_url(::Type{AudioOnlyProbe}) = _url_probe_base[]
+UniLM.auth_header(::Type{AudioOnlyProbe}) = ["Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{AudioOnlyProbe}) = Set([:audio])
+struct NoAudioProbe <: UniLM.ServiceEndpoint end
+UniLM._resolve_base_url(::Type{NoAudioProbe}) = _url_probe_base[]
+UniLM.auth_header(::Type{NoAudioProbe}) = ["Content-Type" => "application/json"]
+UniLM.provider_capabilities(::Type{NoAudioProbe}) = Set([:chat])
+
+@testset "an endpoint that declares the audio API keeps transcription" begin
+    wav = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")
+    r, seen = _with_scripted((_, _) -> _json(200, "{\"text\":\"The secret word is banana.\"}")) do
+        transcribe(wav; service=AudioOnlyProbe, model="stt")
+    end
+    @test r isa TranscriptionSuccess && transcript_text(r) == "The secret word is banana."
+    @test only(seen).method == "POST" && only(seen).target == "/v1/audio/transcriptions"
+    @test has_capability(AudioOnlyProbe, :transcription)                 # the predicate says what the gate does
+end
+
+@testset "an endpoint that declares neither audio capability is refused before any request" begin
+    wav = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")
+    e, seen = _with_scripted((_, _) -> _json(200, "{\"text\":\"x\"}")) do
+        try transcribe(wav; service=NoAudioProbe, model="stt"); nothing catch x; x end
+    end
+    @test e isa ArgumentError && occursin("Audio API is not supported by NoAudioProbe", e.msg)
+    @test isempty(seen)
+    @test !has_capability(NoAudioProbe, :transcription)
+end

@@ -36,6 +36,10 @@ end
     @test !has_capability(OPENAIServiceEndpoint, :fim)
     @test has_capability(DeepSeekEndpoint("k"), :fim)
     @test has_capability(DeepSeekEndpoint("k"), :prefix_completion)
+    # OpenAI declares transcription; Ollama declares it alone, which grants no rest of the audio API.
+    @test :transcription in UniLM.provider_capabilities(OPENAIServiceEndpoint)
+    ollama = OllamaEndpoint(base_url="http://127.0.0.1:1")
+    @test has_capability(ollama, :transcription) && !has_capability(ollama, :audio)
 end
 
 @testset "validate_capability" begin

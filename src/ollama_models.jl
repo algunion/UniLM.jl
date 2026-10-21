@@ -49,10 +49,12 @@ for one with levels, empty for a model that cannot think — and `thinking_defau
 `parameters` are its Modelfile defaults with numbers parsed (`"top_k" => 64`); a
 parameter set more than once, such as `stop`, collects a `Vector{String}`. `family`,
 `parameter_size` and `quantization` come from its details, `nothing` when not reported
-or empty (`""`). `runner` — the runner `/api/show`'s details name (`:mlx`, `:llamacpp`,
-`:ggml`; `nothing` when none — e.g. `embeddinggemma:latest` on Ollama 0.40.6), which can
-differ from [`OllamaModel`](@ref)`.runner` (`/api/tags`) and from the runner that serves it
-once loaded ([`OllamaRunningModel`](@ref)`.runner`, `/api/ps`) — and `format` (`:gguf`,
+or empty (`""`). `runner` — the runner `/api/show`'s details name: `:llamacpp` or `:mlx` on
+Ollama 0.40.6, else `nothing` (a legacy GGUF model names none: `embeddinggemma:latest`, and
+`qwen2.5-coder:1.5b-base` even shown through an endpoint pinned to `:ggml`, while
+[`list_models`](@ref) reports `:ggml` for both), which can differ from
+[`OllamaModel`](@ref)`.runner` (`/api/tags`) and from the runner that serves it once loaded
+([`OllamaRunningModel`](@ref)`.runner`, `/api/ps`) — and `format` (`:gguf`,
 `:safetensors`), as Ollama 0.40 and later report them; `nothing` when not reported or
 empty (`""`). `raw` holds the whole reply (template, license, `model_info`, …).
 """

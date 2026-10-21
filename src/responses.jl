@@ -1952,7 +1952,9 @@ that can be passed as input to subsequent requests, reducing token usage in long
 - `model::String`: Model to use for compaction
 - `input::Any`: The conversation items to compact (typically the full conversation history)
 
-Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys.
+Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys. `model` left
+`nothing` is `"gpt-5.6-sol"`, except on an [`OllamaEndpoint`](@ref), which has no default
+model: a call to it that names none throws `ArgumentError` before any request.
 
 # Examples
 ```julia
@@ -1964,11 +1966,12 @@ compacted = compact_response(model="gpt-5.6-sol", input=[
 # Use compacted["output"] as input to the next request
 ```
 """
-function compact_response(; model::String="gpt-5.6-sol",
+function compact_response(; model::Union{String,Nothing}=nothing,
     input::Any,
     service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing)
 
+    model = isnothing(model) ? _compaction_model(service) : model   # resolved before any I/O
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
@@ -1985,6 +1988,10 @@ function compact_response(; model::String="gpt-5.6-sol",
         return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
+
+
+# The model a compaction that names none is sent with.
+_compaction_model(_)::String = "gpt-5.6-sol"
 
 
 """

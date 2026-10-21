@@ -666,6 +666,14 @@ end
         method, target, body = seen[]
         @test (method, target) == ("POST", "/v1/responses/compact")
         @test JSON.parse(body)["model"] == "gemma4:e4b" && only(JSON.parse(body)["input"])["content"] == "My name is Ada."
+        # Ollama has no default model: a call naming none is refused before any request, in Chat's words. Another
+        # service keeps the OpenAI default.
+        seen[] = nothing
+        e = try compact_response(input="hi", service=OllamaEndpoint(base_url="http://127.0.0.1:$port")); nothing catch x; x end
+        chat = try Chat(service=OllamaEndpoint(base_url="http://127.0.0.1:$port")); nothing catch x; x end
+        @test e isa ArgumentError && e.msg == chat.msg && occursin("list_models", e.msg) && isnothing(seen[])
+        compact_response(input="hi", service=GenericOpenAIEndpoint("http://127.0.0.1:$port", ""))
+        @test JSON.parse(seen[][3])["model"] == "gpt-5.6-sol"
     finally
         close(server)
     end

@@ -3,9 +3,10 @@
 # (`/api/chat`, `/api/embed`): it is the only one that takes the runtime `options`
 # (context window, sampling knobs), `keep_alive`, `think` and `truncate`; the
 # OpenAI-compatible routes accept and ignore them, and truncate over-long input
-# without a word. `respond`, FIM and transcription keep the OpenAI-compatible routes
-# (`/v1/responses`, `/v1/completions`, `/v1/audio/transcriptions`), which carry none of
-# the endpoint's `keep_alive`, `options` or `runner`.
+# without a word. `respond`, compaction, FIM and transcription keep the OpenAI-compatible
+# routes (`/v1/responses`, `/v1/responses/compact`, `/v1/completions`,
+# `/v1/audio/transcriptions`), which carry none of the endpoint's `keep_alive`, `options`
+# or `runner`.
 # ============================================================================
 
 get_url(s::OllamaEndpoint, ::Chat)::String = s.base_url * OLLAMA_CHAT_PATH
@@ -21,6 +22,8 @@ provider_capabilities(::OllamaEndpoint) =
 
 _model_hint(::OllamaEndpoint) =
     " (an installed model, e.g. model=\"gemma4:e4b\"; list_models(service=OllamaEndpoint()) lists them)"
+# Ollama has no default model: a compaction that names none is refused before any request, as a Chat is.
+_compaction_model(s::OllamaEndpoint)::String = _resolve_model(s, "")
 
 # A model on the caller's own machine is free. A cloud model reached through the local server
 # (a tag of `cloud`, or one ending in `-cloud`, such as `clef:cloud` or `gpt-oss:120b-cloud`) runs on

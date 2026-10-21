@@ -773,10 +773,10 @@ A local (or remote) [Ollama](https://ollama.com) server. Chat and [`Embeddings`]
 requests use Ollama's native `/api/chat` and `/api/embed`, which carry what the
 OpenAI-compatible routes ignore: the context window and the other
 [`OllamaOptions`](@ref), how long the model stays loaded (`keep_alive`), and the
-`think` and `truncate` fields. [`respond`](@ref), [`FIMCompletion`](@ref) and
-[`transcribe`](@ref) use the OpenAI-compatible routes (`/v1/responses`, `/v1/completions`,
-`/v1/audio/transcriptions`), which carry none of the endpoint's `keep_alive`,
-[`OllamaOptions`](@ref) or `runner`.
+`think` and `truncate` fields. [`respond`](@ref), [`compact_response`](@ref),
+[`FIMCompletion`](@ref) and [`transcribe`](@ref) use the OpenAI-compatible routes
+(`/v1/responses`, `/v1/responses/compact`, `/v1/completions`, `/v1/audio/transcriptions`),
+which carry none of the endpoint's `keep_alive`, [`OllamaOptions`](@ref) or `runner`.
 
 - `base_url`: server root, without `/v1` or `/api`. Defaults to the `OLLAMA_HOST`
   environment variable, read with the rules of Ollama's own clients (`"gpu-box"` →

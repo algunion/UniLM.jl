@@ -545,3 +545,11 @@ _os1_keyed(::Val{:bug}, t) = (:bug, t)
         @test e isa ArgumentError && contains(e.msg, "`model = \"tev1:0.8b\"`") && length(seen) == 8
     end
 end
+
+@testset "runner goes on the wire and into the recording key" begin
+    e = OllamaEndpoint(base_url="http://box:11434", runner=:mlx)
+    w = UniLM.encode_system_one(_OS1_P, e, SystemOneRequest("The sky is blue.", ["q" => noul("Is the sky blue?")];
+                                                            model="tev1:0.8b"))
+    @test JSON.parse(w.body)["runner"] == "mlx"
+    @test JSON.parse(w.record_body)["runner"] == "mlx"     # it changes the probabilities: keyed
+end

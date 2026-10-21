@@ -165,6 +165,9 @@ function encode_system_one(p::OllamaSystemOneProtocol, service, request::SystemO
         "Ollama refuses a blank `state`: it must hold the content the questions are about"))
     keep_alive = _ollama_system_one_keep_alive(request.options, service)
     o = _system_one_json(request, _system_one_model(p, service, request))
+    # The runner can change an answer (each has its own numerics): it is sent, and part of
+    # what a recording is keyed on.
+    service isa OllamaEndpoint && _ollama_runner!(o, service)
     url, keyed = _api_base_url(service) * SYSTEMONE_PATH, _system_one_body(o)
     isnothing(keep_alive) && return SystemOneWire("POST", url, SYSTEMONE_PATH, keyed)
     # How long the model stays loaded afterwards changes no answer: it is sent, and left out

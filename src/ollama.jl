@@ -59,6 +59,9 @@ end
 # keep_alive on the wire: seconds, or -1 for "stay loaded".
 _ollama_keep_alive(ka::Float64) = isinf(ka) ? -1 : (isinteger(ka) ? Int(ka) : ka)
 
+# The runner the endpoint pins, on a native request body.
+_ollama_runner!(body::AbstractDict, s::OllamaEndpoint) = (isnothing(s.runner) || (body["runner"] = String(s.runner)); body)
+
 function _ollama_validate(chat::Chat)::Nothing
     fields = Symbol[f for f in _OLLAMA_CHAT_UNMAPPED_FIELDS if !isnothing(getfield(chat, f))]
     isempty(fields) || throw(ArgumentError(
@@ -161,6 +164,7 @@ function encode_request(service::OllamaEndpoint, chat::Chat)::String
     isnothing(service.keep_alive) || (body["keep_alive"] = _ollama_keep_alive(service.keep_alive))
     body["truncate"] = service.truncate
     isnothing(service.shift) || (body["shift"] = service.shift)
+    _ollama_runner!(body, service)
     JSON.json(body)
 end
 
@@ -355,6 +359,7 @@ function _encode_embeddings(s::OllamaEndpoint, emb::Embeddings)::String
     isnothing(s.keep_alive) || (body["keep_alive"] = _ollama_keep_alive(s.keep_alive))
     opts = _ollama_options(s.options)
     isempty(opts) || (body["options"] = opts)
+    _ollama_runner!(body, s)
     JSON.json(body)
 end
 

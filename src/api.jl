@@ -754,11 +754,14 @@ function _ollama_host_url(host::AbstractString)::String
     string(scheme, "://", name, ":", port, path)
 end
 
+# The runners an Ollama server picks between for a model it can run more than one way.
+const _OLLAMA_RUNNERS = (:mlx, :llamacpp, :ggml)
+
 """
     OllamaEndpoint <: OpenAIWireEndpoint
     OllamaEndpoint(; base_url=<OLLAMA_HOST or http://127.0.0.1:11434>,
                    keep_alive=nothing, truncate=false, shift=nothing,
-                   options...)
+                   runner=nothing, options...)
 
 A local (or remote) [Ollama](https://ollama.com) server. Chat and [`Embeddings`](@ref)
 requests use Ollama's native `/api/chat` and `/api/embed`, which carry what the
@@ -781,6 +784,11 @@ OpenAI-compatible routes.
 - `shift`: whether generation that fills the context window may continue by dropping
   earlier context (`nothing`: the server's default, on). `false` ends such a reply with
   finish reason `"length"`. Ollama reloads the model when this changes.
+- `runner`: which runner serves the model when the server can run it more than one way — `:mlx`
+  (Apple Silicon), `:llamacpp` or `:ggml`; `nothing` (the default) leaves the choice to the server. Sent
+  with chat, embeddings, System One, [`load_model`](@ref) and [`unload_model`](@ref) requests; the
+  OpenAI-compatible routes ([`respond`](@ref), FIM, transcription) take none. The runner changes how a
+  model is loaded and its numerics: see [Local Models with Ollama](@ref ollama_guide).
 - `options...`: keyword arguments of [`OllamaOptions`](@ref), e.g. `num_ctx=32_768`.
 
 No API key is sent. Local models cost nothing: [`estimated_cost`](@ref) reports `0.0`
@@ -797,27 +805,31 @@ struct OllamaEndpoint <: OpenAIWireEndpoint
     keep_alive::Union{Float64,Nothing}
     truncate::Bool
     shift::Union{Bool,Nothing}
+    runner::Union{Symbol,Nothing}
     options::OllamaOptions
     function OllamaEndpoint(base_url::AbstractString, keep_alive::Union{Real,Nothing}, truncate::Bool,
-                            shift::Union{Bool,Nothing}, options::OllamaOptions)
+                            shift::Union{Bool,Nothing}, runner::Union{Symbol,Nothing}, options::OllamaOptions)
         url = String(rstrip(base_url, '/'))
         occursin(r"^https?://[^/]", url) || throw(ArgumentError(
             "Ollama base_url must start with http:// or https:// (got $(repr(String(base_url))))"))
         isnothing(keep_alive) || (!isnan(keep_alive) && 0 <= keep_alive && (isinf(keep_alive) || keep_alive <= 1e9)) ||
             throw(ArgumentError("keep_alive must be a number of seconds from 0 to 1e9, or Inf to keep " *
                                 "the model loaded (got $keep_alive)"))
-        new(url, isnothing(keep_alive) ? nothing : Float64(keep_alive), truncate, shift, options)
+        isnothing(runner) || runner in _OLLAMA_RUNNERS || throw(ArgumentError(
+            "Ollama runner must be one of $(join(repr.(_OLLAMA_RUNNERS), ", ")), or nothing for the server's choice " *
+            "(got $(repr(runner)))"))
+        new(url, isnothing(keep_alive) ? nothing : Float64(keep_alive), truncate, shift, runner, options)
     end
 end
 
 function OllamaEndpoint(; base_url::AbstractString=_ollama_host_url(get(ENV, "OLLAMA_HOST", "")),
                         keep_alive::Union{Real,Nothing}=nothing, truncate::Bool=false,
-                        shift::Union{Bool,Nothing}=nothing, options...)
+                        shift::Union{Bool,Nothing}=nothing, runner::Union{Symbol,Nothing}=nothing, options...)
     unknown = setdiff(keys(options), fieldnames(OllamaOptions))
     isempty(unknown) || throw(ArgumentError("unknown OllamaEndpoint keyword(s) $(join(unknown, ", ")); " *
-        "expected base_url, keep_alive, truncate, shift or an OllamaOptions field: " *
+        "expected base_url, keep_alive, truncate, shift, runner or an OllamaOptions field: " *
         join(fieldnames(OllamaOptions), ", ")))
-    OllamaEndpoint(base_url, keep_alive, truncate, shift, OllamaOptions(; options...))
+    OllamaEndpoint(base_url, keep_alive, truncate, shift, runner, OllamaOptions(; options...))
 end
 
 function Base.show(io::IO, e::OllamaEndpoint)
@@ -825,6 +837,7 @@ function Base.show(io::IO, e::OllamaEndpoint)
     show(io, e.base_url)
     set = Tuple{Symbol,Any}[(f, getfield(e.options, f)) for f in fieldnames(OllamaOptions)
                             if !isnothing(getfield(e.options, f))]
+    isnothing(e.runner) || pushfirst!(set, (:runner, e.runner))
     isnothing(e.shift) || pushfirst!(set, (:shift, e.shift))
     e.truncate && pushfirst!(set, (:truncate, true))
     isnothing(e.keep_alive) || pushfirst!(set, (:keep_alive, e.keep_alive))

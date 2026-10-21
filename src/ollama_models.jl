@@ -301,6 +301,7 @@ function load_model(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint
     opts = _ollama_options(service.options)
     isempty(opts) || (body["options"] = opts)
     isnothing(service.shift) || (body["shift"] = service.shift)
+    _ollama_runner!(body, service)
     _ollama_call(d -> _ollama_done(d, "load"), service, "POST", OLLAMA_CHAT_PATH, JSON.json(body), config, cancel)
 end
 
@@ -321,6 +322,7 @@ unload_model("gemma4:e4b")
 function unload_model(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint(),
                       config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
     body = Dict{String,Any}("model" => _ollama_model_name(name), "messages" => [], "stream" => false, "keep_alive" => 0)
+    _ollama_runner!(body, service)
     _ollama_call(d -> _ollama_done(d, "unload"), service, "POST", OLLAMA_CHAT_PATH, JSON.json(body), config, cancel)
 end
 

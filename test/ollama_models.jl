@@ -191,11 +191,12 @@ end
     end
 end
 
-# Refuted if: a load drops the endpoint's keep_alive/options (or sends them in the wrong
-# wire form), an unload carries anything but keep_alive 0, a reply that is not the one
-# asked for (done_reason) reads as success, or local misuse reaches the network.
+# Refuted if: a load drops the endpoint's keep_alive/options/runner (or sends them in the
+# wrong wire form), an unload carries anything but keep_alive 0 and the endpoint's runner,
+# a reply that is not the one asked for (done_reason) reads as success, or local misuse
+# reaches the network.
 @testset "load and unload: request bodies and the reply each expects" begin
-    reasons = ["load", "load", "load", "unload", "stop", "load"]
+    reasons = ["load", "load", "load", "unload", "stop", "load", "load", "unload"]
     server, base, seen = _om_mock((n, _, http) -> _om_send(http, 200, JSON.json(Dict(
         "model" => "gemma4:e2b", "created_at" => "2026-09-29T10:00:00Z",
         "message" => Dict("role" => "assistant", "content" => ""), "done" => true, "done_reason" => reasons[n]))))
@@ -218,6 +219,12 @@ end
         @test bad isa OllamaCallError && occursin("done_reason \"stop\"", bad.error) && bad.cause isa ArgumentError
         bad = unload_model("gemma4:e2b"; service=ep, config=_OM_CFG)                    # answered "load"
         @test bad isa OllamaCallError && occursin("\"unload\" was expected", bad.error)
+        # The endpoint's runner goes with a load and an unload; without one, none is sent.
+        pinned = OllamaEndpoint(base_url=base, runner=:ggml)
+        @test load_model("gemma4:e2b"; service=pinned, config=_OM_CFG) isa OllamaSuccess
+        @test unload_model("gemma4:e2b"; service=pinned, config=_OM_CFG) isa OllamaSuccess
+        @test JSON.parse(seen[7].body)["runner"] == "ggml" && JSON.parse(seen[8].body)["runner"] == "ggml"
+        @test !haskey(JSON.parse(seen[2].body), "runner") && !haskey(JSON.parse(seen[4].body), "runner")
         # Local misuse throws before any request.
         n = length(seen)
         @test_throws ArgumentError load_model("gemma4:e2b"; service=OllamaEndpoint(base_url=base, keep_alive=0))

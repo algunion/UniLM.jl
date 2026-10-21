@@ -521,3 +521,16 @@ end
     @test_throws ArgumentError Message(role=RoleUser)                                  # nothing at all
     @test_throws ArgumentError Message(role=RoleUser, attachments=Attachment[])        # an empty list is nothing
 end
+
+@testset "runner: validated, shown, sent on the native routes" begin
+    @test OllamaEndpoint().runner === nothing
+    e = OllamaEndpoint(base_url="http://box:11434", runner=:llamacpp)
+    @test e.runner === :llamacpp
+    @test occursin("runner=:llamacpp", sprint(show, e))
+    err = try OllamaEndpoint(runner=:cuda); nothing catch x; x end
+    @test err isa ArgumentError && occursin(":mlx", err.msg) && occursin(":cuda", err.msg)
+    @test _wire(_ochat(e))["runner"] == "llamacpp"
+    @test !haskey(_wire(_ochat(OllamaEndpoint(base_url="http://box:11434"))), "runner")
+    b = JSON.parse(UniLM._encode_embeddings(e, Embeddings("x"; service=e, model="nomic-embed-text")))
+    @test b["runner"] == "llamacpp"
+end

@@ -1,12 +1,14 @@
 # ─── Ollama + Gemma 4 live witnesses ─────────────────────────────────────────
 # Requires UNILM_LIVE_OLLAMA=1 and a reachable Ollama server (OLLAMA_HOST, else
 # 127.0.0.1:11434) with the chat model UNILM_OLLAMA_MODEL (default gemma4:e4b), the
-# embedding model UNILM_OLLAMA_EMBED_MODEL (default embeddinggemma) and the GGUF chat model
-# UNILM_OLLAMA_GGUF_MODEL (default qwen2.5-coder:1.5b-base); the FIM witness also needs
-# UNILM_OLLAMA_FIM_MODEL (default qwen2.5-coder:1.5b-base) and skips without it.
-# Local models: no spend. Each witness names the outcome that would refute it. Sampling
-# witnesses run at temperature 0 (greedy, so repeatable on one machine) unless they
-# measure the model's own default behaviour.
+# embedding model UNILM_OLLAMA_EMBED_MODEL (default embeddinggemma), the GGUF chat model
+# UNILM_OLLAMA_GGUF_MODEL (default qwen2.5-coder:1.5b-base) and the FIM model
+# UNILM_OLLAMA_FIM_MODEL (default qwen2.5-coder:1.5b-base) installed. Live, nothing is
+# skipped for want of a model: a server that does not list its models is an error, and so is
+# a named model that is not installed, naming the variable to change. Local models: no
+# spend, and a cloud model named in the environment is refused before any request. Each
+# witness names the outcome that would refute it. Sampling witnesses run at temperature 0
+# (greedy, so repeatable on one machine) unless they measure the model's own default behaviour.
 
 using Sockets
 
@@ -14,12 +16,22 @@ const _OLLAMA_MODEL = get(ENV, "UNILM_OLLAMA_MODEL", "gemma4:e4b")
 const _OLLAMA_EMBED = get(ENV, "UNILM_OLLAMA_EMBED_MODEL", "embeddinggemma")
 const _OLLAMA_FIM = get(ENV, "UNILM_OLLAMA_FIM_MODEL", "qwen2.5-coder:1.5b-base")
 const _OLLAMA_GGUF = get(ENV, "UNILM_OLLAMA_GGUF_MODEL", "qwen2.5-coder:1.5b-base")
+const _OLLAMA_NAMED = ("UNILM_OLLAMA_MODEL" => _OLLAMA_MODEL, "UNILM_OLLAMA_EMBED_MODEL" => _OLLAMA_EMBED,
+                       "UNILM_OLLAMA_GGUF_MODEL" => _OLLAMA_GGUF, "UNILM_OLLAMA_FIM_MODEL" => _OLLAMA_FIM)
 const _OLLAMA_MEDIA = joinpath(@__DIR__, "fixtures", "ollama")
 
-# The server's installed tags, or `nothing` when it does not answer.
+# Zero spend: a cloud model (a tag of `cloud`, or one ending in `-cloud`) runs on Ollama's servers and bills
+# its account, so a name from the environment that is one is refused before any request.
+for (var, m) in _OLLAMA_NAMED
+    UniLM._ollama_cloud_model(m) &&
+        error("Ollama live witnesses: $var names $m, a cloud model, which bills Ollama's account: name a local model")
+end
+
+# The server's installed tags; a server that does not list them is an error.
 function _ollama_installed(ep::OllamaEndpoint)
     r = list_models(; service=ep, config=RequestConfig(max_attempts=1, request_timeout=5.0))
-    r isa OllamaSuccess ? Set(m.name for m in r.response) : nothing
+    r isa OllamaSuccess || error("Ollama live witnesses: listing the installed models failed: $(r)")
+    Set(m.name for m in r.response)
 end
 _has(tags, m) = m in tags || (m * ":latest") in tags
 
@@ -29,9 +41,14 @@ _ollama_ps(ep::OllamaEndpoint) = Dict(m.name => m.context_length for m in runnin
 # Built only when the witnesses run: an unusual OLLAMA_HOST must not break the offline suite.
 const _OLLAMA_EP = get(ENV, "UNILM_LIVE_OLLAMA", "") == "1" ? OllamaEndpoint() : nothing
 const _OLLAMA_TAGS = isnothing(_OLLAMA_EP) ? nothing : _ollama_installed(_OLLAMA_EP)
+if !isnothing(_OLLAMA_TAGS)
+    for (var, m) in _OLLAMA_NAMED
+        _has(_OLLAMA_TAGS, m) ||
+            error("Ollama live witnesses: $m is not installed; pull it, or set $var to an installed model")
+    end
+end
 
-if isnothing(_OLLAMA_TAGS) || !_has(_OLLAMA_TAGS, _OLLAMA_MODEL) || !_has(_OLLAMA_TAGS, _OLLAMA_EMBED) ||
-   !_has(_OLLAMA_TAGS, _OLLAMA_GGUF)
+if isnothing(_OLLAMA_EP)
     @info "Skipping Ollama live witnesses (set UNILM_LIVE_OLLAMA=1, run an Ollama server and pull " *
           "$_OLLAMA_MODEL, $_OLLAMA_EMBED and $_OLLAMA_GGUF)"
 else
@@ -237,14 +254,10 @@ end
 end
 
 @testset "fill-in-the-middle with a code model" begin
-    if !_has(_OLLAMA_TAGS, _OLLAMA_FIM)
-        @info "Skipping the Ollama FIM witness: $_OLLAMA_FIM is not installed"
-    else
-        # Refuted by: a non-success or an empty completion.
-        r = fim_complete(FIMCompletion(service=_OLLAMA_EP, model=_OLLAMA_FIM, prompt="def add(a, b):\n    return ",
-                                       suffix="\n\nprint(add(1, 2))\n", max_tokens=16, temperature=0.0))
-        @test r isa FIMSuccess && !isempty(strip(fim_text(r)))
-    end
+    # Refuted by: a non-success or an empty completion.
+    r = fim_complete(FIMCompletion(service=_OLLAMA_EP, model=_OLLAMA_FIM, prompt="def add(a, b):\n    return ",
+                                   suffix="\n\nprint(add(1, 2))\n", max_tokens=16, temperature=0.0))
+    @test r isa FIMSuccess && !isempty(strip(fim_text(r)))
 end
 
 @testset "failures are typed and say what to do" begin

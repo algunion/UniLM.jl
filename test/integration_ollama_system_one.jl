@@ -1,8 +1,10 @@
 # ─── Ollama System One live witnesses ────────────────────────────────────────
-# Requires UNILM_LIVE_OLLAMA=1 and a reachable Ollama server, 0.35 or later (OLLAMA_HOST,
-# else 127.0.0.1:11434), with the decision models UNILM_OLLAMA_DECISION_MODELS lists
+# Requires UNILM_LIVE_OLLAMA=1 and a reachable Ollama server (OLLAMA_HOST, else 127.0.0.1:11434;
+# the route needs Ollama 0.35 or later, its pictures 0.35.1 or later, and the messages asserted
+# are pinned to Ollama 0.40.6), with the decision models UNILM_OLLAMA_DECISION_MODELS lists
 # (comma-separated; by default the nine below) installed: a listed model that is not
-# installed fails. Local models: no spend. Every request goes through an in-process relay
+# installed fails. Local models: no spend, and a cloud model named in the environment is
+# refused before any request. Every request goes through an in-process relay
 # that counts the System One requests reaching the server and the requests in flight at
 # once, so a witness can say how many were sent. The models have 0.6B to 9B parameters:
 # states are clear-cut, and assertions are on shapes, ranges and those routes only; the caps
@@ -13,6 +15,12 @@ using Sockets
 
 const _OS1L_MODELS = String.(strip.(split(get(ENV, "UNILM_OLLAMA_DECISION_MODELS",
     "tev1:0.8b,tev1:4b,kev:0.8b-q8_0,kev:9b-q4_K_M,strands-decider:2b,nimble:9b,d1-omni:600m,d1:3b,clef-flash:9b"), ',')))
+# Zero spend: a cloud model (a tag of `cloud`, or one ending in `-cloud`) runs on Ollama's servers and bills
+# its account, so a name from the environment that is one is refused before any request.
+for m in _OS1L_MODELS
+    UniLM._ollama_cloud_model(m) && error("Ollama System One live witnesses: UNILM_OLLAMA_DECISION_MODELS names " *
+                                          "$m, a cloud model, which bills Ollama's account: name local models")
+end
 const _OS1L_EP = get(ENV, "UNILM_LIVE_OLLAMA", "") == "1" ? OllamaEndpoint() : nothing
 const _OS1L_INFO = isnothing(_OS1L_EP) ? nothing :
     let r = list_models(; service=_OS1L_EP, config=RequestConfig(max_attempts=1, request_timeout=5.0))

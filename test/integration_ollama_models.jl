@@ -6,13 +6,20 @@
 # models is an error, and a witness whose model is not installed fails, naming the model and
 # the fix. The pull and delete witness downloads UNILM_OLLAMA_SCRATCH_MODEL (default
 # all-minilm:22m, about 46 MB) and deletes it again; it is skipped when that model is
-# installed already, so it never deletes a model it did not pull. Local models: no spend.
-# Each witness names the outcome that would refute it.
+# installed already, so it never deletes a model it did not pull. Local models: no spend, and
+# a cloud model named in the environment is refused before any request. Each witness names
+# the outcome that would refute it.
 
 const _OMM_EMBED = get(ENV, "UNILM_OLLAMA_EMBED_MODEL", "embeddinggemma")
 const _OMM_SCRATCH = get(ENV, "UNILM_OLLAMA_SCRATCH_MODEL", "all-minilm:22m")
 const _OMM_DECISION = "kev:0.8b-q8_0"
 const _OMM_RUNNERS = (:mlx, :llamacpp, :ggml)
+# Zero spend: a cloud model (a tag of `cloud`, or one ending in `-cloud`) runs on Ollama's servers and bills
+# its account, so a name from the environment that is one is refused before any request.
+for (var, m) in ("UNILM_OLLAMA_EMBED_MODEL" => _OMM_EMBED, "UNILM_OLLAMA_SCRATCH_MODEL" => _OMM_SCRATCH)
+    UniLM._ollama_cloud_model(m) && error("Ollama model management live witnesses: $var names $m, a cloud " *
+                                          "model, which bills Ollama's account: name a local model")
+end
 
 # Built only when the witnesses run: an unusual OLLAMA_HOST must not break the offline suite.
 const _OMM_EP = get(ENV, "UNILM_LIVE_OLLAMA", "") == "1" ? OllamaEndpoint() : nothing

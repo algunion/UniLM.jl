@@ -2,10 +2,10 @@
 # Requires UNILM_LIVE_OLLAMA=1 and a reachable Ollama server (OLLAMA_HOST, else
 # 127.0.0.1:11434) with the embedding model UNILM_OLLAMA_EMBED_MODEL (default
 # embeddinggemma); no chat model is needed. The pull and delete witness downloads
-# UNILM_OLLAMA_SCRATCH_MODEL (default all-minilm:22m, about 46 MB) and deletes it again; a
-# scratch model that was already installed is pulled back afterwards. The decision-model
-# load witness runs when kev:0.8b-q8_0 is installed. Local models: no spend. Each witness
-# names the outcome that would refute it.
+# UNILM_OLLAMA_SCRATCH_MODEL (default all-minilm:22m, about 46 MB) and deletes it again; it
+# is skipped when that model is installed already, so it never deletes a model it did not
+# pull. The decision-model load witness runs when kev:0.8b-q8_0 is installed. Local models:
+# no spend. Each witness names the outcome that would refute it.
 
 const _OMM_EMBED = get(ENV, "UNILM_OLLAMA_EMBED_MODEL", "embeddinggemma")
 const _OMM_SCRATCH = get(ENV, "UNILM_OLLAMA_SCRATCH_MODEL", "all-minilm:22m")
@@ -73,15 +73,22 @@ end
 @testset "pull and delete a scratch model" begin
     # Refuted by: a pull whose progress does not run from "pulling manifest" to "success", a delete that fails or
     # leaves the model listed, a second delete that is not a 404, or an unknown tag pulled as a success.
-    preinstalled = !isnothing(_omm_tag(_OMM_TAGS, _OMM_SCRATCH))
-    seen = OllamaPullProgress[]
-    @test pull_model(_OMM_SCRATCH; service=_OMM_EP, progress=p -> push!(seen, p)) isa OllamaSuccess{Nothing}
-    @test !isempty(seen) && first(seen).status == "pulling manifest" && last(seen).status == "success"
-    @test delete_model(_OMM_SCRATCH; service=_OMM_EP) isa OllamaSuccess{Nothing}
-    @test isnothing(_omm_tag(_omm_installed(), _OMM_SCRATCH))
-    again = delete_model(_OMM_SCRATCH; service=_OMM_EP)
-    @test again isa OllamaFailure && again.status == 404
-    preinstalled && pull_model(_OMM_SCRATCH; service=_OMM_EP)        # leave the server as it was found
+    installed = _omm_installed()
+    if isnothing(installed) || !isnothing(_omm_tag(installed, _OMM_SCRATCH))
+        @info "Skipping the pull and delete witness: $_OMM_SCRATCH is installed already (or the server did not " *
+              "list its models), and the witness deletes only a model it pulled"
+    else
+        seen = OllamaPullProgress[]
+        pulled = pull_model(_OMM_SCRATCH; service=_OMM_EP, progress=p -> push!(seen, p))
+        # Deleted at once, and only after its own successful pull: no failed check below can leave it installed.
+        deleted = pulled isa OllamaSuccess ? delete_model(_OMM_SCRATCH; service=_OMM_EP) : nothing
+        @test pulled isa OllamaSuccess{Nothing}
+        @test !isempty(seen) && first(seen).status == "pulling manifest" && last(seen).status == "success"
+        @test deleted isa OllamaSuccess{Nothing}
+        @test isnothing(_omm_tag(_omm_installed(), _OMM_SCRATCH))
+        again = delete_model(_OMM_SCRATCH; service=_OMM_EP)
+        @test again isa OllamaFailure && again.status == 404
+    end
     @test pull_model("gemma4:no-such-tag"; service=_OMM_EP) isa OllamaCallError
 end
 

@@ -484,3 +484,37 @@ end
         close(server)
     end
 end
+
+# Refuted if: load_model outlives its total_deadline because each of its two requests gets the whole budget
+# (measured before the fix: a success after 3.0 s under total_deadline=2.0 with 1.2 s per request), or a breach
+# is anything but a typed timeout inside an OllamaCallError.
+@testset "load_model: total_deadline bounds the verb, both requests together" begin
+    seen = String[]
+    handler = req -> begin
+        push!(seen, String(req.target))
+        sleep(1.2)
+        req.target == "/api/show" ?
+            HTTP.Response(200, ["Content-Type" => "application/json"], Vector{UInt8}(JSON.json(Dict("capabilities" => ["completion"])))) :
+            HTTP.Response(200, ["Content-Type" => "application/json"], Vector{UInt8}(JSON.json(Dict("model" => "m",
+                "done" => true, "done_reason" => "load", "message" => Dict("role" => "assistant", "content" => "")))))
+    end
+    tcp = Sockets.listen(Sockets.localhost, 0); port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+    server = HTTP.serve!(handler, "127.0.0.1", port; verbose=false)
+    try
+        ep = OllamaEndpoint(base_url="http://127.0.0.1:$port")
+        cfg = RequestConfig(max_attempts=1, total_deadline=2.0, request_timeout=2.0)
+        load_model("m"; service=ep, config=cfg)       # unmeasured: compiles the timeout path on both sides
+        empty!(seen)
+        t = @elapsed r = load_model("m"; service=ep, config=cfg)
+        @test seen == ["/api/show", "/api/chat"]
+        # The load request had only what the lookup left of the 2.0 s, not a budget of its own.
+        @test r isa OllamaCallError && r.cause isa UniLMTimeout && r.cause.limit <= 0.8
+        @test t < 2.6
+    finally
+        close(server)
+    end
+    # Nothing left when a request would start: it is not sent, and the call error carries the deadline breach.
+    late = UniLM._ollama_call(nothing, OllamaEndpoint(base_url="http://127.0.0.1:1"), "POST", "/api/chat", "{}",
+                              RequestConfig(total_deadline=1.0), nothing; t0=time_ns() - UInt64(2_000_000_000))
+    @test late isa OllamaCallError && late.cause isa UniLMTimeout && late.cause.phase === :deadline
+end

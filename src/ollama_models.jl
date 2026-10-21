@@ -48,12 +48,12 @@ for one with levels, empty for a model that cannot think — and `thinking_defau
 `parameters` are its Modelfile defaults with numbers parsed (`"top_k" => 64`); a
 parameter set more than once, such as `stop`, collects a `Vector{String}`. `family`,
 `parameter_size` and `quantization` come from its details, `nothing` when not reported
-or empty (`""`). `runner` — the runner the server's listing names for the model (`:mlx`,
-`:llamacpp`, `:ggml`), which can differ from the one that serves it once loaded:
-[`OllamaRunningModel`](@ref)`.runner` (`/api/ps`) reports that — and `format` (`"gguf"`,
+or empty (`""`). `runner` — the runner `/api/show`'s details name (`:mlx`, `:llamacpp`,
+`:ggml`; `nothing` when none — e.g. `embeddinggemma:latest` on Ollama 0.40.6), which can
+differ from [`OllamaModel`](@ref)`.runner` (`/api/tags`) and from the runner that serves it
+once loaded ([`OllamaRunningModel`](@ref)`.runner`, `/api/ps`) — and `format` (`"gguf"`,
 `"safetensors"`), as Ollama 0.40 and later report them; `nothing` when not reported or
-empty (`""`). `raw` holds the whole reply (template, license,
-`model_info`, …).
+empty (`""`). `raw` holds the whole reply (template, license, `model_info`, …).
 """
 struct OllamaModelInfo
     name::String
@@ -227,10 +227,11 @@ _ollama_callerr(service::OllamaEndpoint, e) = _callerr(OllamaCallError, e; error
 
 # One idempotent exchange through the shared retry loop: a 200 is decoded by `decode` (a throw there
 # makes the malformed reply a call error); `decode === nothing` for a verb whose 200 carries no body.
-# Any other status is the failure.
+# Any other status is the failure. `t0` is the verb's start: a verb that sends more than one request
+# passes its own, so `total_deadline` bounds the verb rather than each request.
 function _ollama_call(decode::Union{Function,Nothing}, service::OllamaEndpoint, method::String, path::String, body,
-                      config::Union{Nothing,RequestConfig}, cancel::Union{Nothing,CancelToken})
-    cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
+                      config::Union{Nothing,RequestConfig}, cancel::Union{Nothing,CancelToken}; t0::UInt64=time_ns())
+    cfg = _resolve_config(config); tok = _resolve_cancel(cancel)
     try
         resp = _http_with_retries(cfg, t0, method, service.base_url * path, auth_header(service), body; cancel=tok)
         resp.status == 200 || return _failure(OllamaFailure, resp)
@@ -265,12 +266,14 @@ r = model_info("gemma4:e4b")
 issuccess(r) && r.response.thinking_levels   # [false, true]
 ```
 """
-function model_info(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint(),
-                    config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
-    model = _ollama_model_name(name)
-    _ollama_call(d -> _decode_show(model, d), service, "POST", "/api/show",
-                 JSON.json(Dict("model" => model)), config, cancel)
-end
+model_info(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint(),
+           config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing) =
+    _ollama_show(_ollama_model_name(name), service, config, cancel)
+
+_ollama_show(model::String, service::OllamaEndpoint, config::Union{Nothing,RequestConfig},
+             cancel::Union{Nothing,CancelToken}; t0::UInt64=time_ns()) =
+    _ollama_call(d -> _decode_show(model, d), service, "POST", "/api/show", JSON.json(Dict("model" => model)),
+                 config, cancel; t0)
 
 """
     running_models(; service=OllamaEndpoint(), config=nothing,
@@ -318,8 +321,8 @@ MLX runner a loaded model keeps its context when a later request asks for more:
 [`unload_model`](@ref) first to load it with another `num_ctx`. Returns
 `OllamaSuccess{Nothing}`, an [`OllamaFailure`](@ref) (404 for a model that is not
 installed), or an [`OllamaCallError`](@ref), also for a reply that does not report the
-load. `config` and `cancel` work as for [`model_info`](@ref), for each of the two
-requests. An empty `name` throws `ArgumentError` before any request, and so does an
+load. `config` and `cancel` work as for [`model_info`](@ref); `total_deadline` bounds the
+whole call. An empty `name` throws `ArgumentError` before any request, and so does an
 endpoint with `keep_alive=0`: Ollama reads that request as an unload.
 
 ```julia
@@ -333,7 +336,8 @@ function load_model(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint
     ka = service.keep_alive
     isnothing(ka) || !iszero(ka) || throw(ArgumentError(
         "load_model with keep_alive=0 would unload the model; leave keep_alive unset or give it seconds"))
-    info = model_info(model; service, config, cancel)
+    cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()   # one budget, both requests
+    info = _ollama_show(model, service, cfg, tok; t0)
     info isa OllamaSuccess || return info
     chat = :completion in info.response.capabilities
     body = Dict{String,Any}("model" => model)
@@ -343,8 +347,8 @@ function load_model(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint
     isempty(opts) || (body["options"] = opts)
     chat && !isnothing(service.shift) && (body["shift"] = service.shift)
     _ollama_runner!(body, service)
-    chat ? _ollama_call(d -> _ollama_done(d, "load"), service, "POST", OLLAMA_CHAT_PATH, JSON.json(body), config, cancel) :
-           _ollama_call(_ollama_embed_loaded, service, "POST", OLLAMA_EMBED_PATH, JSON.json(body), config, cancel)
+    chat ? _ollama_call(d -> _ollama_done(d, "load"), service, "POST", OLLAMA_CHAT_PATH, JSON.json(body), cfg, tok; t0) :
+           _ollama_call(_ollama_embed_loaded, service, "POST", OLLAMA_EMBED_PATH, JSON.json(body), cfg, tok; t0)
 end
 
 # An empty embeddings request answers an empty list once the model is loaded.

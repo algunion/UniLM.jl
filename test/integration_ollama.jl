@@ -267,16 +267,14 @@ end
     @test all(t -> fetch(t) isa LLMSuccess, streams)
 end
 
-@testset "model management" begin
-    # Refuted by: a listing without the chat model's capabilities, a cold load that does not use the endpoint's
-    # context window, an unload that leaves the model loaded, or a pull of an installed tag that fails.
+@testset "the chat model: metadata and a cold load" begin
+    # Refuted by: the chat model without its capabilities or thinking levels, a cold load (an empty chat: the
+    # model completes text) that does not use the endpoint's context window, or an unload that leaves the model
+    # loaded. Model management that needs no chat model is witnessed in integration_ollama_models.jl.
     info = model_info(_OLLAMA_MODEL; service=_OLLAMA_EP)
     @test info isa OllamaSuccess
     @test issubset([:completion, :tools, :thinking], info.response.capabilities)
     @test info.response.thinking_levels == [false, true] && (info.response.context_length::Int) >= 32_768
-    @test only(m for m in list_models(service=_OLLAMA_EP).response if m.name == _OLLAMA_MODEL).capabilities ==
-          info.response.capabilities
-    @test model_info("gemma4:no-such-tag"; service=_OLLAMA_EP) isa OllamaFailure
     ep = OllamaEndpoint(num_ctx=8192)
     unload_model(_OLLAMA_MODEL; service=_OLLAMA_EP)                  # cold: a loaded MLX model keeps its context
     @test timedwait(() -> !haskey(_ollama_ps(ep), _OLLAMA_MODEL), 10.0) == :ok
@@ -284,10 +282,6 @@ end
     @test _ollama_ps(ep)[_OLLAMA_MODEL] == 8192
     @test unload_model(_OLLAMA_MODEL; service=ep) isa OllamaSuccess
     @test timedwait(() -> !haskey(_ollama_ps(ep), _OLLAMA_MODEL), 10.0) == :ok
-    seen = OllamaPullProgress[]
-    @test pull_model(_OLLAMA_EMBED; service=_OLLAMA_EP, progress=p -> push!(seen, p)) isa OllamaSuccess
-    @test first(seen).status == "pulling manifest" && last(seen).status == "success"
-    @test pull_model("gemma4:no-such-tag"; service=_OLLAMA_EP) isa OllamaCallError
 end
 
 @testset "record once, replay offline" begin

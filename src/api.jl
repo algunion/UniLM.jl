@@ -1828,8 +1828,12 @@ update!(emb::Embeddings, data::AbstractVector) = _fill_embeddings!(emb.embedding
 function _fill_embeddings!(dst::Vector{Float64}, data::AbstractVector)
     length(data) == 1 || throw(ArgumentError(
         "embeddings response carries $(length(data)) rows for 1 input"))
-    _store_embedding!(dst, _checked_embedding(data[1]["embedding"], 0))
+    _store_embedding!(dst, _checked_embedding(_row_field(data[1], "embedding"), 0))
 end
+
+# A field of a reply row; a row that is not a JSON object has none, so it gets the row-named refusal of
+# a missing field.
+_row_field(item, key::String) = item isa AbstractDict ? get(item, key, nothing) : nothing
 
 function _fill_embeddings!(dst::Vector{Vector{Float64}}, data::AbstractVector)
     n = length(dst)
@@ -1837,7 +1841,7 @@ function _fill_embeddings!(dst::Vector{Vector{Float64}}, data::AbstractVector)
         "embeddings response carries $(length(data)) rows for $n inputs"))
     seen = falses(n)
     for item in data
-        i = item["index"]
+        i = _row_field(item, "index")
         # A JSON true parses as a `Bool`, which is an `Integer` in Julia: it is no row index.
         i isa Integer && !(i isa Bool) || throw(ArgumentError(
             "embeddings response row index $(repr(i)) is not an integer"))
@@ -1847,7 +1851,7 @@ function _fill_embeddings!(dst::Vector{Vector{Float64}}, data::AbstractVector)
         seen[idx] && throw(ArgumentError(
             "embeddings response repeats row index $i"))
         seen[idx] = true
-        _checked_embedding(item["embedding"], i)
+        _checked_embedding(_row_field(item, "embedding"), i)
     end
     # Every row is checked before any is stored, so a refused reply leaves the buffers as they were.
     for item in data

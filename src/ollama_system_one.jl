@@ -206,7 +206,8 @@ function encode_system_one(p::OllamaSystemOneProtocol, service, request::SystemO
     for (name, q) in request.questions
         _ollama_carries(name, q)
         isempty(_question_images!(ImageAttachment[], q)) || throw(ArgumentError(
-            "Ollama takes images in the state only, shared by all questions; $(repr(name)) holds one"))
+            "Ollama takes images in the state only, shared by all questions; $(repr(name)) holds one. " *
+            "Move it into the state, e.g. [image, \"…\"]"))
     end
     state, images = _ollama_state_images(request.state)
     isempty(images) && state isa AbstractString && isempty(strip(state)) && throw(ArgumentError(

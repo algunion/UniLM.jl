@@ -647,22 +647,26 @@ end
               contains(e3.msg, "`[image, …texts]` as the state")
     end
     e4 = _os1_caught(() -> enc([img, Dict("k" => 1)]))                              # beside a non-string
-    @test e4 isa ArgumentError && contains(e4.msg, "mixes images with Dict{String, Int64}") &&
+    @test e4 isa ArgumentError && contains(e4.msg, "mixes images with $(Dict{String,Int})") &&
           contains(e4.msg, "write the other values as text")
     q = UniLM.encode_system_one
     e5 = _os1_caught(() -> q(_OS1_P, e, SystemOneRequest("s", ["c" => noul(["Is this", img])]; model="d1-omni:600m")))
-    @test e5 isa ArgumentError && contains(e5.msg, "images in the state only")      # in a question
+    @test e5 isa ArgumentError && contains(e5.msg, "images in the state only") &&   # in a question
+          contains(e5.msg, "Move it into the state, e.g. [image, \"…\"]")
     @test !haskey(JSON.parse(enc("plain text").body), "images")                              # none: no field
 end
 
 @testset "images: nl_dispatch sends an image as its `state`, refused inside its arguments with that fix" begin
     img = ImageAttachment(joinpath(_OS1_FIXTURES, "red_circle.png"))
-    _os1_serve() do ep, seen
+    # The mock route's rules, for a vision model: a blank text state is allowed beside images.
+    route(n, req) = (b = JSON.parse(_os1_text(req)); bad = _os1_invalid(b);
+                     isnothing(bad) ? _os1_any_reply(b) : _os1_error(400, bad))
+    _os1_serve(; respond=route) do ep, seen
         # A blank text state beside images is sent, as Ollama 0.40.6 answers it (and the mock route).
-        @test nl_dispatch(_os1_intent, img; state=img, service=ep, model="tev1:0.8b", config=_OS1_CFG) == (:refund, img)
+        @test nl_dispatch(_os1_intent, img; state=img, service=ep, model="d1-omni:600m", config=_OS1_CFG) == (:refund, img)
         b = JSON.parse(only(seen).body)
         @test b["state"] == "" && b["images"] == [UniLM.Base64.base64encode(img.data)]
-        e = _os1_caught(() -> nl_dispatch(_os1_intent, img; service=ep, model="tev1:0.8b", config=_OS1_CFG))
+        e = _os1_caught(() -> nl_dispatch(_os1_intent, img; service=ep, model="d1-omni:600m", config=_OS1_CFG))
         @test e isa ArgumentError && contains(e.msg, "`state = [image, …texts]` to nl_dispatch")
         @test length(seen) == 1                                                     # the refusal sent nothing
     end

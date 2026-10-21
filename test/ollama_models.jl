@@ -195,27 +195,31 @@ end
 # Refuted if: a load drops the endpoint's keep_alive/options/runner (or sends them in the
 # wrong wire form), an unload carries anything but keep_alive 0 and the endpoint's runner,
 # a reply that is not the one asked for (done_reason) reads as success, or local misuse
-# reaches the network.
+# reaches the network. /api/show reports a chat model, so every load is an empty chat.
 @testset "load and unload: request bodies and the reply each expects" begin
     reasons = ["load", "load", "load", "unload", "stop", "load", "load", "unload"]
-    server, base, seen = _om_mock((n, _, http) -> _om_send(http, 200, JSON.json(Dict(
+    chats = Ref(0)
+    server, base, seen = _om_mock((_, req, http) -> req.target == "/api/show" ?
+        _om_send(http, 200, JSON.json(Dict("capabilities" => ["completion"]))) :
+        _om_send(http, 200, JSON.json(Dict(
         "model" => "gemma4:e2b", "created_at" => "2026-09-29T10:00:00Z",
-        "message" => Dict("role" => "assistant", "content" => ""), "done" => true, "done_reason" => reasons[n]))))
+        "message" => Dict("role" => "assistant", "content" => ""), "done" => true, "done_reason" => reasons[chats[] += 1]))))
+    chat(k) = filter(r -> r.target == "/api/chat", seen)[k]                          # the k-th load or unload
     try
         ep = OllamaEndpoint(base_url=base, keep_alive=Inf, num_ctx=8192, num_gpu=99)
         r = load_model("gemma4:e2b"; service=ep, config=_OM_CFG)
         @test r isa OllamaSuccess{Nothing} && isnothing(r.response)
-        @test seen[1].method == "POST" && seen[1].target == "/api/chat"
-        @test JSON.parse(seen[1].body) == Dict("model" => "gemma4:e2b", "messages" => [], "stream" => false,
+        @test [(x.method, x.target) for x in seen] == [("POST", "/api/show"), ("POST", "/api/chat")]
+        @test JSON.parse(chat(1).body) == Dict("model" => "gemma4:e2b", "messages" => [], "stream" => false,
                                                "keep_alive" => -1, "options" => Dict("num_ctx" => 8192, "num_gpu" => 99))
         @test load_model("gemma4:e2b"; service=OllamaEndpoint(base_url=base), config=_OM_CFG) isa OllamaSuccess
-        @test JSON.parse(seen[2].body) == Dict("model" => "gemma4:e2b", "messages" => [], "stream" => false)
+        @test JSON.parse(chat(2).body) == Dict("model" => "gemma4:e2b", "messages" => [], "stream" => false)
         @test load_model("gemma4:e2b"; service=OllamaEndpoint(base_url=base, keep_alive=600, shift=false), config=_OM_CFG) isa OllamaSuccess
-        @test JSON.parse(seen[3].body)["keep_alive"] == 600
-        @test JSON.parse(seen[3].body)["shift"] === false    # a runner setting: the chat that follows must not reload
+        @test JSON.parse(chat(3).body)["keep_alive"] == 600
+        @test JSON.parse(chat(3).body)["shift"] === false    # a runner setting: the chat that follows must not reload
         u = unload_model("gemma4:e2b"; service=ep, config=_OM_CFG)
         @test u isa OllamaSuccess{Nothing}
-        @test JSON.parse(seen[4].body) == Dict("model" => "gemma4:e2b", "messages" => [], "stream" => false, "keep_alive" => 0)
+        @test JSON.parse(chat(4).body) == Dict("model" => "gemma4:e2b", "messages" => [], "stream" => false, "keep_alive" => 0)
         bad = load_model("gemma4:e2b"; service=ep, config=_OM_CFG)                      # answered "stop"
         @test bad isa OllamaCallError && occursin("done_reason \"stop\"", bad.error) && bad.cause isa ArgumentError
         bad = unload_model("gemma4:e2b"; service=ep, config=_OM_CFG)                    # answered "load"
@@ -224,8 +228,9 @@ end
         pinned = OllamaEndpoint(base_url=base, runner=:ggml)
         @test load_model("gemma4:e2b"; service=pinned, config=_OM_CFG) isa OllamaSuccess
         @test unload_model("gemma4:e2b"; service=pinned, config=_OM_CFG) isa OllamaSuccess
-        @test JSON.parse(seen[7].body)["runner"] == "ggml" && JSON.parse(seen[8].body)["runner"] == "ggml"
-        @test !haskey(JSON.parse(seen[2].body), "runner") && !haskey(JSON.parse(seen[4].body), "runner")
+        @test JSON.parse(chat(7).body)["runner"] == "ggml" && JSON.parse(chat(8).body)["runner"] == "ggml"
+        @test !haskey(JSON.parse(chat(2).body), "runner") && !haskey(JSON.parse(chat(4).body), "runner")
+        @test count(x -> x.target == "/api/show", seen) == 5                             # one per load, none per unload
         # Local misuse throws before any request.
         n = length(seen)
         @test_throws ArgumentError load_model("gemma4:e2b"; service=OllamaEndpoint(base_url=base, keep_alive=0))
@@ -430,6 +435,51 @@ end
         @test f isa OllamaFailure && f.status == 404
         @test_throws ArgumentError delete_model("  "; service=ep)
         @test length(seen) == 2
+    finally
+        close(server)
+    end
+end
+
+@testset "load_model: a chat model with an empty chat, any other model with an empty embeddings request" begin
+    show_reply(caps) = JSON.json(Dict("capabilities" => caps, "details" => Dict("format" => "gguf"),
+                                      "model_info" => Dict{String,Any}(), "parameters" => ""))
+    seen = Tuple{String,String}[]
+    caps = Ref(["embedding"])
+    handler = req -> begin
+        body = applicable(copy, req.body) ? String(copy(req.body)) : ""
+        push!(seen, (String(req.target), body))
+        req.target == "/api/show" && return HTTP.Response(200, ["Content-Type" => "application/json"], Vector{UInt8}(show_reply(caps[])))
+        req.target == "/api/embed" && return HTTP.Response(200, ["Content-Type" => "application/json"],
+                                                           Vector{UInt8}("{\"model\":\"m\",\"embeddings\":[]}"))
+        HTTP.Response(200, ["Content-Type" => "application/json"],
+                      Vector{UInt8}("{\"model\":\"m\",\"done\":true,\"done_reason\":\"load\",\"message\":{\"role\":\"assistant\",\"content\":\"\"}}"))
+    end
+    tcp = Sockets.listen(Sockets.localhost, 0); port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+    server = HTTP.serve!(handler, "127.0.0.1", port; verbose=false)
+    try
+        ep = OllamaEndpoint(base_url="http://127.0.0.1:$port", keep_alive=600, num_ctx=2048, runner=:llamacpp)
+        for kind in (["embedding"], ["decision"])
+            empty!(seen); caps[] = kind
+            @test load_model("m"; service=ep) isa OllamaSuccess{Nothing}
+            @test [t for (t, _) in seen] == ["/api/show", "/api/embed"]
+            b = JSON.parse(seen[2][2])
+            @test b["input"] == [] && b["keep_alive"] == 600 && b["options"]["num_ctx"] == 2048 && b["runner"] == "llamacpp"
+            @test !haskey(b, "shift")
+        end
+        empty!(seen); caps[] = ["completion", "tools"]
+        @test load_model("m"; service=ep) isa OllamaSuccess{Nothing}
+        @test [t for (t, _) in seen] == ["/api/show", "/api/chat"]                       # chat models unchanged
+        # `shift` is a chat setting: an endpoint's shift goes with a chat load only.
+        shifted = OllamaEndpoint(base_url="http://127.0.0.1:$port", shift=false)
+        empty!(seen); caps[] = ["embedding"]
+        @test load_model("m"; service=shifted) isa OllamaSuccess{Nothing} && !haskey(JSON.parse(seen[2][2]), "shift")
+        empty!(seen); caps[] = ["completion"]
+        @test load_model("m"; service=shifted) isa OllamaSuccess{Nothing} && JSON.parse(seen[2][2])["shift"] === false
+        # Only the empty list an empty embeddings request is answered with reports the load.
+        @test isnothing(UniLM._ollama_embed_loaded(Dict{String,Any}("embeddings" => [])))
+        for reply in (Dict{String,Any}(), Dict{String,Any}("embeddings" => [[0.1]]), Dict{String,Any}("embeddings" => "[]"))
+            @test_throws ArgumentError UniLM._ollama_embed_loaded(reply)
+        end
     finally
         close(server)
     end

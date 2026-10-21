@@ -1,9 +1,9 @@
 # ============================================================================
 # Ollama model management (https://docs.ollama.com/api): the installed models
 # (`/api/tags`), one model's metadata (`/api/show`), the loaded ones (`/api/ps`),
-# loading and unloading through an empty `/api/chat` request, pulling from the
-# registry (`/api/pull`, a newline-delimited JSON progress stream), and deleting
-# (`/api/delete`).
+# loading through an empty `/api/chat` or `/api/embed` request (by the model's kind)
+# and unloading through an empty `/api/chat` request, pulling from the registry
+# (`/api/pull`, a newline-delimited JSON progress stream), and deleting (`/api/delete`).
 # ============================================================================
 
 """
@@ -296,21 +296,27 @@ function _ollama_done(d::Dict{String,Any}, expected::String)::Nothing
     nothing
 end
 
+# A model that completes text loads with an empty chat request; any other (an embedding or a
+# decision model) is refused by /api/chat and /api/generate, and loads with an empty
+# /api/embed request, which every model answers once it is loaded.
 """
     load_model(name; service=OllamaEndpoint(), config=nothing,
                      cancel=nothing)
 
-Load `name` into memory now, so the first request does not wait for it (an empty chat
-request, answered once the model is loaded). The endpoint's `keep_alive`, `shift` and
-[`OllamaOptions`](@ref) go with it: Ollama loads the model with those settings, and a
-later chat with a different `num_ctx`, `num_batch`, `num_gpu` or `shift` loads it again —
-load through the endpoint you will chat with. On the MLX runner a loaded model keeps its
-context: [`unload_model`](@ref) first to load it with another `num_ctx`. Returns
+Load `name` into memory now, so the first request does not wait for it. Loads `name` the
+way its kind allows (read from [`model_info`](@ref)): a chat model with an empty chat
+request, an embedding or decision model with an empty embeddings request; the reply comes
+once the model is loaded. The endpoint's `keep_alive`, `runner` and
+[`OllamaOptions`](@ref) go with it, and its `shift`, which applies to chat models only:
+Ollama loads the model with those settings, so load through the endpoint you will use. On
+the llama.cpp runner a later request with another `num_ctx` loads the model again; on the
+MLX runner a loaded model keeps its context when a later request asks for more:
+[`unload_model`](@ref) first to load it with another `num_ctx`. Returns
 `OllamaSuccess{Nothing}`, an [`OllamaFailure`](@ref) (404 for a model that is not
 installed), or an [`OllamaCallError`](@ref), also for a reply that does not report the
-load. `config` and `cancel` work as for [`model_info`](@ref). An empty `name` throws
-`ArgumentError` before any request, and so does an endpoint with `keep_alive=0`: Ollama
-reads that request as an unload.
+load. `config` and `cancel` work as for [`model_info`](@ref), for each of the two
+requests. An empty `name` throws `ArgumentError` before any request, and so does an
+endpoint with `keep_alive=0`: Ollama reads that request as an unload.
 
 ```julia
 ollama = OllamaEndpoint(num_ctx=32_768, keep_alive=Inf)
@@ -319,18 +325,30 @@ load_model("gemma4:e4b"; service=ollama)  # 32k context, stays loaded
 """
 function load_model(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint(),
                     config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing)
-    body = Dict{String,Any}("model" => _ollama_model_name(name), "messages" => [], "stream" => false)
+    model = _ollama_model_name(name)
     ka = service.keep_alive
-    if !isnothing(ka)
-        iszero(ka) && throw(ArgumentError(
-            "load_model with keep_alive=0 would unload the model; leave keep_alive unset or give it seconds"))
-        body["keep_alive"] = _ollama_keep_alive(ka)
-    end
+    isnothing(ka) || !iszero(ka) || throw(ArgumentError(
+        "load_model with keep_alive=0 would unload the model; leave keep_alive unset or give it seconds"))
+    info = model_info(model; service, config, cancel)
+    info isa OllamaSuccess || return info
+    chat = :completion in info.response.capabilities
+    body = Dict{String,Any}("model" => model)
+    chat ? (body["messages"] = []; body["stream"] = false) : (body["input"] = [])
+    isnothing(ka) || (body["keep_alive"] = _ollama_keep_alive(ka))
     opts = _ollama_options(service.options)
     isempty(opts) || (body["options"] = opts)
-    isnothing(service.shift) || (body["shift"] = service.shift)
+    chat && !isnothing(service.shift) && (body["shift"] = service.shift)
     _ollama_runner!(body, service)
-    _ollama_call(d -> _ollama_done(d, "load"), service, "POST", OLLAMA_CHAT_PATH, JSON.json(body), config, cancel)
+    chat ? _ollama_call(d -> _ollama_done(d, "load"), service, "POST", OLLAMA_CHAT_PATH, JSON.json(body), config, cancel) :
+           _ollama_call(_ollama_embed_loaded, service, "POST", OLLAMA_EMBED_PATH, JSON.json(body), config, cancel)
+end
+
+# An empty embeddings request answers an empty list once the model is loaded.
+function _ollama_embed_loaded(d::Dict{String,Any})::Nothing
+    v = get(d, "embeddings", nothing)
+    v isa AbstractVector && isempty(v) || throw(ArgumentError(
+        "unexpected Ollama reply to an empty embeddings request: $(repr(v)) where [] was expected"))
+    nothing
 end
 
 """
@@ -338,7 +356,8 @@ end
                        cancel=nothing)
 
 Free the memory `name` holds now rather than when its keep-alive runs out (an empty
-chat request with `keep_alive` 0). Returns `OllamaSuccess{Nothing}`, an
+chat request with `keep_alive` 0, which works for every kind of model; the endpoint's
+`runner` goes with it). Returns `OllamaSuccess{Nothing}`, an
 [`OllamaFailure`](@ref), or an [`OllamaCallError`](@ref), also for a reply that does not
 report the unload. `config` and `cancel` work as for [`model_info`](@ref); an empty
 `name` throws `ArgumentError` before any request.

@@ -52,7 +52,7 @@
   `OllamaRunningModel.runner` (before `raw`); `ResponseSuccess.service` and
   `FIMSuccess.service`, the endpoint that answered (last; `nothing` for a result
   built by hand); `Embeddings.task`, and `Embeddings.input` also holds
-  `EmbeddingInput`s. A detail an Ollama listing reports as `""` — MLX models
+  `EmbeddingInput`s. A detail an Ollama listing reports as `""` — some MLX models
   leave `family`, `parameter_size` and `quantization` empty — reads as `nothing`.
   Upgrading: positional constructors take the new fields; build `ResponseSuccess`
   and `FIMSuccess` by keyword; compare a runner with a `Symbol`
@@ -61,6 +61,10 @@
   when the request is sent: `gpt-transcribe` on OpenAI, while Ollama has no
   default and a request to it names a model. Upgrading: a default request's
   `model` field is `nothing`, not `"gpt-transcribe"`.
+- **`:transcription` joins `provider_capabilities`** of `OPENAIServiceEndpoint`
+  and of an `OllamaEndpoint` (see Added), so code that compares those sets with a
+  fixed set of its own no longer matches them. Upgrading: test one capability with
+  `has_capability(s, cap)`, or add `:transcription` to the expected set.
 - **`get_response`, `cancel_response`, `delete_response` and `list_input_items`
   refuse an `OllamaEndpoint`** with an `ArgumentError` before any request, naming
   what to do instead: Ollama's Responses API stores no response, so each failed
@@ -110,14 +114,15 @@
   square", a spoken "banana" 0.792 against "banana" and 0.626 against "apple"; "a
   red circle" sent with its picture as one item gave a vector of its own, cosine
   0.870 with the text alone and 0.903 with the picture alone (both 740m builds:
-  0.85–0.96 with each part, pictures and clips alike). Every other service embeds
+  0.845–0.958 with each part, pictures and clips alike). Every other service embeds
   text only and refuses media before the request.
 - **EmbeddingGemma 2 gets its trained 8,192-token window.** Ollama reports a
-  262,144-token context for it, and at its default batch the llama.cpp builds
-  measured refused long inputs with HTTP 413 (`740m-q8_0` anything over about
-  2,037 tokens). An embeddings request — and `load_model` — for an EmbeddingGemma
-  2 model now carries `num_ctx` and `num_batch` of 8192 unless the endpoint sets
-  either: on Ollama 0.40.6 every build measured (`740m-q8_0`, `740m-mxfp8`,
+  262,144-token context for its llama.cpp builds (the MLX build, `740m-mxfp8`,
+  loads at 8,192), and at its default batch the llama.cpp builds measured refused
+  long inputs with HTTP 413 (`740m-q8_0` anything over about 2,037 tokens). An
+  embeddings request — and `load_model` — for an EmbeddingGemma 2 model now
+  carries `num_ctx` and `num_batch` of 8192 unless the endpoint sets either: on
+  Ollama 0.40.6 every build measured (`740m-q8_0`, `740m-mxfp8`,
   `270m-q8_0-text`) embedded 5,991 tokens whole and refused 8,331 with HTTP 400.
 - **Pictures for local decision models.** `ask` on an `OllamaEndpoint` sends the
   images of the state to a vision decision model — measured on Ollama 0.40.6:
@@ -171,10 +176,10 @@
   over-long message: 5,407 tokens became 2,050, the first 4 and the tail kept.
   The docstrings and the guide said, for every runner, that another window reloads
   the model and that a prompt that does not fit is refused.
-- **Ollama cloud models are priced by their name**, not as free local calls: a
-  model whose tag is `cloud` or ends in `-cloud` (`gpt-oss:120b-cloud`) runs on
-  Ollama's servers and bills its account. A System One answer from one whose reply
-  drops the tag keeps the requested name.
+- **Ollama cloud models are priced by the requested name**, not as free local
+  calls: a model whose tag is `cloud` or ends in `-cloud` (`gpt-oss:120b-cloud`)
+  runs on Ollama's servers and bills its account. A System One answer from one
+  whose reply drops the tag keeps the requested name.
 - **Local `respond` and FIM results cost `0.0`** without the missing-price warning,
   as chat and embeddings did: the results now record the endpoint that answered.
 

@@ -369,8 +369,9 @@ model — Tev1, Nimble, Kev, Clef and the others Ollama lists as [decision
 models](https://ollama.com/search?c=decision) — through Ollama's
 TypeSafe-compatible route `POST /v1/systemone` (Ollama 0.35 or later). The
 verbs, the questions and the result types are the ones below; no key is sent and
-nothing is billed. Start the server and pull a decision model first, such as
-`ollama pull tev1:4b`.
+nothing is billed. Start the server and pull the decision models first: the
+example below uses `tev1:4b`, `clef-flash:9b` (a vision model, for pictures) and
+`kev:0.8b-q8_0` (`ollama pull tev1:4b`, and so on).
 
 ```julia
 ollama = OllamaEndpoint()                     # OLLAMA_HOST, else http://127.0.0.1:11434
@@ -399,13 +400,14 @@ end
   `ollama pull` it, and a server that does not answer as a
   [`SystemOneCallError`](@ref) that says how to start one.
 - **Refused before any request.** [`ask`](@ref) checks what Ollama's route
-  refuses for every model and runner (Ollama 0.40.6), and throws an
-  `ArgumentError` naming Ollama, the rule and the fix.
+  refuses for every model and runner (Ollama 0.40.6), plus one rule of UniLM's
+  own — blank `instructions` — and throws an `ArgumentError` naming Ollama, the
+  rule and the fix.
 
 | Rule | Ollama |
 | :--- | :--- |
 | Questions per request | 1–64 |
-| `instructions` | optional; when given, a string that is not blank, an object or an array |
+| `instructions` | optional on the route; when given, a string, an object or an array — and not blank, a refusal of UniLM's own, as Ollama would read blank `instructions` as none |
 | Choice options | 2–255, each described by a string or `nothing` |
 | Score levels | 2–10, each a string |
 | Noul criteria | strings |
@@ -415,11 +417,17 @@ end
 | Options | `keep_alive` only |
 
 - **A model's own limits.** A model may take less than the route, and its HTTP 400
-  says so, as a [`SystemOneFailure`](@ref) carrying Ollama's message. Measured on
-  Ollama 0.40.6: Tev1 takes at most 24 options, Nimble and Clef Flash 26; Tev1,
-  Nimble, Strands and Kev answered a question without `instructions` with 400; a
-  model without vision answers an image with `image inputs are not supported by
-  this decision model` ([What a model takes](@ref backends_ollama_limits)). Ollama
+  says so, in its own words, as a [`SystemOneFailure`](@ref) carrying Ollama's
+  message. Measured on Ollama 0.40.6: Tev1 takes at most 24 options, Nimble and
+  Clef Flash 26. The route accepts a question without `instructions`, but
+  `tev1:4b`, `nimble:9b` and `strands-decider:2b` answered it with 400
+  `instructions must be a nonempty string, object, or array` and `kev:0.8b-q8_0`
+  with 400 `questions.intent: "instructions" must be provided` (for a question
+  named `intent`), while `clef-flash:9b` answered it: pass `instructions` with
+  local models. A model without vision answers an image with its own 400:
+  `image inputs are not supported by this decision model` from `tev1:0.8b`,
+  `registry.ollama.ai/library/kev:0.8b-q8_0 does not support vision` from
+  `kev:0.8b-q8_0` ([What a model takes](@ref backends_ollama_limits)). Ollama
   caps a request's text and schema, images excluded, at 64 KiB by its own count,
   which [`ask`](@ref) does not check: a request over it comes back as a 413
   [`SystemOneFailure`](@ref), `text and schema must not exceed 64 KiB`. A
@@ -441,12 +449,13 @@ end
   returned probabilities — `(n·p_max − 1)/(n − 1)` for a Choice and
   `1 − Σᵢ pᵢ·|i − m| / MAD_unif`, floored at 0, for a Score
   ([Confidence](https://docs.typesafe.ai/confidence)) — so a threshold means the
-  same on every backend. Ollama's generic MLX encoders report `1 − H(p)/ln n`
-  instead, while Kev, PPLX and the models on the llama.cpp path report TypeSafe's;
-  the server's value stays in each answer's `raw`. Probabilities are accepted when
-  they sum to 1 within 0.00005 per outcome — Kev models round each to four
-  decimals on Ollama's own runner — and the chosen option when it lies at most
-  0.0001 below the most probable.
+  same on every backend. Measured on Ollama 0.40.6, the five MLX models
+  (`tev1:0.8b`, `tev1:4b`, `nimble:9b`, `strands-decider:2b`, `clef-flash:9b`)
+  report `1 − H(p)/ln n` instead, while Kev and the models on the llama.cpp path
+  (`kev`, `d1`, `d1-omni`) report TypeSafe's; the server's value stays in each
+  answer's `raw`. Probabilities are accepted when they sum to 1 within 0.00005 per
+  outcome — Kev models round each to four decimals on Ollama's own runner — and
+  the chosen option when it lies at most 0.0001 below the most probable.
 - **Speed.** On 129 labelled tickets (21 October 2026, Ollama 0.40.6, an Apple M4
   Max, one request at a time), a warm call took from 0.025 s (`d1-omni:600m`) to
   0.64 s (`clef-flash:9b`) at the median, and a first call, which loads the model,

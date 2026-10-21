@@ -381,9 +381,15 @@ end
 # ─── Embeddings (/api/embed) ────────────────────────────────────────────────
 
 # One /api/embed input item: a (prompted) text as a string; with media, an object whose image and
-# audio are bare base64 — or, for a recording's key, their digests.
+# audio are bare base64 — or, for a recording's key, their digests. Ollama reads an item's fields in Go map
+# order, which is random, and passes its media to the model in that order, so an item holding both an image
+# and a sound clip embeds differently from one request to the next (Ollama 0.40.6: two vectors in ten
+# requests to embeddinggemma-2:740m-q8_0, largest |Δ| 0.018); it is refused before any request.
 _ollama_embed_item(emb, x::String, ::Bool) = _prompted(emb.task, x, nothing)
 function _ollama_embed_item(emb, x::EmbeddingInput, digest::Bool)
+    isnothing(x.image) || isnothing(x.audio) || throw(ArgumentError(
+        "Ollama passes an item's image and sound clip to the model in a random order, so an item holding both " *
+        "embeds differently from one request to the next: send the image and the audio as separate items"))
     text = isnothing(x.text) ? nothing : _prompted(emb.task, x.text, x.title)
     _item_media(x) || return text
     d = Dict{String,Any}()

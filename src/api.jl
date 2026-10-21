@@ -1574,7 +1574,10 @@ and one clip, embedded as one vector. `title` names the document a text comes fr
 the `:document` task of models with task prompts (EmbeddingGemma) and refused with any other task or model.
 Images and audio go only to an [`OllamaEndpoint`](@ref) (Ollama's `/api/embed` takes them for models
 that see or hear, such as `embeddinggemma-2:740m-q8_0`, which embedded a text with its picture or clip
-as one item on Ollama 0.40.6); a service that embeds text only refuses them before any request.
+as one item on Ollama 0.40.6); a service that embeds text only refuses them before any request. Ollama
+passes an item's image and clip to the model in a random order, so an item holding both is refused for
+it before any request (on Ollama 0.40.6, ten requests of one such item to `embeddinggemma-2:740m-q8_0`
+gave two different vectors): send the image and the audio as separate items.
 Two items are `==` when their texts, titles and media are. An empty text beside an image or clip is
 no text: the item holds the media alone (`text === nothing`), sent with no task prompt. An empty or
 whitespace-only title is no title (`title === nothing`): with `task = :document` the text is sent as

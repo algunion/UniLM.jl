@@ -13,12 +13,13 @@ Standard capability symbols include:
 - Core: `:chat`, `:responses`, `:agentic`, `:tools`, `:streaming`, `:json_output`
 - Embeddings & images: `:embeddings`, `:images`, `:image_edits`
 - Completions: `:fim`, `:prefix_completion`
-- Platform APIs: `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`,
-  `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`
+- Platform APIs: `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`
+  (speech and translation), `:transcription` (OpenAI, Ollama), `:batch`, `:fine_tuning`,
+  `:containers`, `:uploads`, `:realtime`
 - System One ([`ask`](@ref)): `:system_one` (TypeSafe; OpenAI, through its Decisions API; Ollama)
 - Model listing ([`list_models`](@ref)): `:models` (TypeSafe System One, Ollama)
 """
-provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :streaming, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime, :system_one])
+provider_capabilities(::Type{OPENAIServiceEndpoint})  = Set([:chat, :responses, :agentic, :embeddings, :images, :tools, :streaming, :json_output, :files, :vector_stores, :conversations, :moderation, :audio, :transcription, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime, :system_one])
 provider_capabilities(::Type{AZUREServiceEndpoint})   = Set([:chat, :tools, :streaming, :json_output])
 provider_capabilities(::Type{GEMINIOpenAIServiceEndpoint})  = Set([:chat, :embeddings, :tools, :streaming, :json_output])
 provider_capabilities(::DeepSeekEndpoint)              = Set([:chat, :tools, :streaming, :fim, :prefix_completion, :json_output])

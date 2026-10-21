@@ -57,3 +57,10 @@ end
     r = _answered(() -> speak("hi"; service=URLProbe, model="tts"), 401; headers=["x-request-id" => "req_audio"])
     @test r isa UniLM.AudioFailure && r.request_id == "req_audio"
 end
+
+@testset "the transcription model is resolved per service" begin
+    wav = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")
+    @test TranscriptionRequest(file=wav).model === nothing
+    @test UniLM._transcription_model(TranscriptionRequest(file=wav)) == "gpt-transcribe"     # OpenAI: unchanged
+    @test UniLM._transcription_model(TranscriptionRequest(file=wav, model="whisper-1")) == "whisper-1"
+end

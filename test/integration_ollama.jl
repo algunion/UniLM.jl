@@ -307,5 +307,13 @@ end
     @test reasoning_text(replayed) == reasoning_text(recorded)
 end
 
+@testset "transcription of a recording" begin
+    # Refuted by: a transcript without the spoken word.
+    r = transcribe(joinpath(_OLLAMA_MEDIA, "secret_word.wav"); service=_OLLAMA_EP, model=_OLLAMA_MODEL)
+    @test r isa TranscriptionSuccess && occursin("banana", lowercase(transcript_text(r)))
+    # …or by the JSON reply itself returned as the transcript (Ollama labels it application/x-ndjson).
+    @test r.raw isa AbstractDict && !occursin('{', transcript_text(r))
+end
+
 end # Ollama live
 end # guard

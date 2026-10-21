@@ -117,7 +117,7 @@ const _WEATHER = Tool(func=FunctionSignature(name="get_weather", description="We
     end
     @test OllamaEndpoint() == OllamaEndpoint()                       # plain immutable value
     @test provider_capabilities(e) == Set([:chat, :embeddings, :fim, :tools, :streaming, :json_output, :responses, :models,
-                                           :system_one])
+                                           :system_one, :transcription])
     @test !occursin("redacted", sprint(show, e))                     # no key to hide
     @test_throws ArgumentError Chat(service=e)                       # no default model
     @test occursin("list_models(service=OllamaEndpoint())", try Chat(service=e); "" catch x; x.msg end)
@@ -586,6 +586,54 @@ end
         g = get_response("resp_1"; service=ep)
         @test g isa ResponseSuccess && g.service === ep
         @test (@test_logs estimated_cost(g)) == 0.0
+    finally
+        close(server)
+    end
+end
+
+@testset "transcription on Ollama: its OpenAI-compatible route and its rules" begin
+    wav = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")
+    off = OllamaEndpoint(base_url="http://127.0.0.1:1")
+    e = try transcribe(wav; service=off); nothing catch x; x end
+    @test e isa ArgumentError && occursin("model", e.msg)                  # no default model on Ollama
+    for kw in ((temperature=0.2,), (languages=["en"],), (keywords=["banana"],), (response_format="srt",))
+        @test_throws ArgumentError transcribe(wav; service=off, model="gemma4:e4b", kw...)
+    end
+    @test_throws ArgumentError speak(SpeechRequest(service=off, input="hi"))          # speech stays refused
+    @test_throws ArgumentError translate(wav; service=off, model="gemma4:e4b")       # translation too
+    seen = Ref{Any}(nothing)
+    handler = req -> (seen[] = (String(req.target), applicable(copy, req.body) ? String(copy(req.body)) : "");
+        HTTP.Response(200, ["Content-Type" => "application/json"], Vector{UInt8}("{\"text\":\"The secret word is banana.\"}")))
+    tcp = Sockets.listen(Sockets.localhost, 0); port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+    server = HTTP.serve!(handler, "127.0.0.1", port; verbose=false)
+    try
+        url = "http://127.0.0.1:$port"
+        r = transcribe(wav; service=OllamaEndpoint(base_url=url), model="gemma4:e4b", language="en", prompt="a fruit")
+        @test r isa TranscriptionSuccess && transcript_text(r) == "The secret word is banana."
+        target, body = seen[]
+        @test target == "/v1/audio/transcriptions"
+        @test occursin("name=\"model\"", body) && occursin("gemma4:e4b", body) && occursin("name=\"language\"", body)
+        @test occursin("name=\"prompt\"", body) && occursin("name=\"file\"", body) && !occursin("temperature", body)
+    finally
+        close(server)
+    end
+end
+
+@testset "transcription on Ollama: its JSON reply under its chat stream's content type" begin
+    # Ollama labels every transcription reply application/x-ndjson, the header of the chat stream it
+    # runs (as _ollama_mock does); the reply is `{"text": …}` unless response_format is "text".
+    wav = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")
+    reply = "{\"text\":\"The secret word is banana\"}\n"
+    server, url, _ = _ollama_mock((n, body) -> (200, [n == 3 ? "The secret word is banana" : reply]))
+    try
+        ep = OllamaEndpoint(base_url=url)
+        for fmt in (nothing, "json")
+            r = transcribe(wav; service=ep, model="gemma4:e4b", response_format=fmt)
+            @test r isa TranscriptionSuccess && transcript_text(r) == "The secret word is banana"
+            @test r.raw == Dict("text" => "The secret word is banana")
+        end
+        r = transcribe(wav; service=ep, model="gemma4:e4b", response_format="text")
+        @test r isa TranscriptionSuccess && transcript_text(r) == "The secret word is banana" && isnothing(r.raw)
     finally
         close(server)
     end

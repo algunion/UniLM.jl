@@ -386,7 +386,7 @@ end
         write(io, "synthetic audio fixture")
         flush(io)
         request = TranscriptionRequest(file=path, languages=["en", "fr"], keywords=["Julia", "UniLM"])
-        @test request.model == "gpt-transcribe"
+        @test isnothing(request.model) && UniLM._transcription_model(request) == "gpt-transcribe"
         parts = UniLM._transcription_parts(request)
         @test [v for (k,v) in parts if k == "languages[]"] == ["en", "fr"]
         @test [v for (k,v) in parts if k == "keywords[]"] == ["Julia", "UniLM"]

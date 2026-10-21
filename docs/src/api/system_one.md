@@ -401,16 +401,26 @@ end
   installed comes back as a 404 [`SystemOneFailure`](@ref) whose message says to
   `ollama pull` it, and a server that does not answer as a
   [`SystemOneCallError`](@ref) that says how to start one.
-- **Refused before any request.** [`ask`](@ref) checks what Ollama's route
-  refuses for every model and runner (Ollama 0.40.6), plus one rule of UniLM's
-  own — blank `instructions` — and throws an `ArgumentError` naming Ollama, the
-  rule and the fix.
+- **Refused before any request.** [`ask`](@ref) throws an `ArgumentError`
+  naming Ollama, the rule and the fix for what Ollama's route refuses in its shared
+  checks or documents as its maximum (Ollama 0.40.6): more than 64 questions; a
+  Choice of more than 255 options; a Score of fewer than 2 or more than 10 levels;
+  a blank text `state` without images; a Box question, which Ollama does not
+  answer. By Ollama's source, a Kev model on Ollama's own runner (such as
+  `kev:0.8b-mxfp8`) skips the shared checks and takes 1 to 255 levels and a blank
+  state; that is untested. It also refuses what Ollama's API reference does not
+  list, though some models read it: `instructions` given as anything but a string,
+  an object or an array; an option described by anything but a string or
+  `nothing`; a Score level or a Noul criterion that is not a string (on Ollama
+  0.40.6, `kev:0.8b-q8_0` and `d1:3b`, on the llama.cpp path, answered an option
+  described by an object, and `tev1:0.8b` refused it) — and, a rule of UniLM's
+  own, blank (whitespace-only) `instructions`, which Ollama would read as none.
 
 | Rule | Ollama |
 | :--- | :--- |
 | Questions per request | 1–64 |
 | `instructions` | optional on the route; when given, a string, an object or an array — and not blank, a refusal of UniLM's own, as Ollama would read blank `instructions` as none |
-| Choice options | 2–255, each described by a string or `nothing` |
+| Choice options | at most 255 (one is sent), each described by a string or `nothing` |
 | Score levels | 2–10, each a string |
 | Noul criteria | strings |
 | `state` | a text that is not blank, unless images come with it |
@@ -420,9 +430,15 @@ end
 
 - **A model's own limits.** A model may take less than the route, and its HTTP 400
   says so, in its own words, as a [`SystemOneFailure`](@ref) carrying Ollama's
-  message. Measured on Ollama 0.40.6: Tev1 takes at most 24 options, Nimble and
-  Clef Flash 26. The route accepts a question without `instructions`, but
-  `tev1:4b`, `nimble:9b` and `strands-decider:2b` answered it with 400
+  message. Measured on Ollama 0.40.6 (an Apple M4 Max, 21 October 2026): Tev1
+  takes at most 24 options, Nimble and Clef Flash 26. A Choice of one option is
+  sent: the models on the llama.cpp path (`kev:0.8b-q8_0`, `kev:9b-q4_K_M`,
+  `d1-omni:600m`, `d1:3b`) answered it, and `tev1:0.8b`, `tev1:4b`, `nimble:9b`
+  and `clef-flash:9b` answered 400
+  `question "pick": criteria must contain 2–26 candidates`, `strands-decider:2b`
+  `question "pick": criteria must contain 2–255 candidates` (for a question named
+  `pick`). The route accepts a question without `instructions`, but `tev1:4b`,
+  `nimble:9b` and `strands-decider:2b` answered it with 400
   `instructions must be a nonempty string, object, or array` and `kev:0.8b-q8_0`
   with 400 `questions.intent: "instructions" must be provided` (for a question
   named `intent`), while `clef-flash:9b` answered it: pass `instructions` with
@@ -430,10 +446,12 @@ end
   `image inputs are not supported by this decision model` from `tev1:0.8b`,
   `registry.ollama.ai/library/kev:0.8b-q8_0 does not support vision` from
   `kev:0.8b-q8_0` ([What a model takes](@ref backends_ollama_limits)). Ollama
-  caps a request's text and schema, images excluded, at 64 KiB by its own count,
-  which [`ask`](@ref) does not check: a request over it comes back as a 413
-  [`SystemOneFailure`](@ref), `text and schema must not exceed 64 KiB`. A
-  [`RawQuestion`](@ref) is sent verbatim, for the server to judge.
+  caps a request's text and schema, images excluded, at 64 KiB for the models
+  measured, which [`ask`](@ref) does not check: a 76,284-byte state came back as a
+  413 [`SystemOneFailure`](@ref), `text and schema must not exceed 64 KiB`, from
+  `kev:0.8b-q8_0` (the installed GGUF Kev), `d1-omni:600m` and `tev1:0.8b`; by
+  Ollama's source, a Kev model on Ollama's own runner gets 1 MiB instead
+  (untested). A [`RawQuestion`](@ref) is sent verbatim, for the server to judge.
 - **Images.** The state's images go in Ollama's `images` (raw base64), which the
   model sees before the text and every question shares; the state's texts become
   its `state` — none: `""`, one: that string, several: an array — and a blank text
@@ -444,9 +462,10 @@ end
   without it the endpoint's own `keep_alive` applies, else the server's default.
   It is left out of a recording's key and file: it changes how long the model
   stays loaded, never an answer. The endpoint's `runner` is sent, and is part of
-  the key; its other settings — `truncate`, `shift` and the
-  [`OllamaOptions`](@ref) such as `num_ctx` — have no field on this route and
-  are not sent.
+  the key: a runner the model has no variant for is the server's 400
+  ([Runners](@ref ollama_runners)). Its other settings — `truncate`, `shift` and
+  the [`OllamaOptions`](@ref) such as `num_ctx` — have no field on this route and
+  are not sent, and [`load_model`](@ref) loads a decision model without them.
 - **Confidence.** `confidence` is TypeSafe's published measure, computed from the
   returned probabilities — `(n·p_max − 1)/(n − 1)` for a Choice and
   `1 − Σᵢ pᵢ·|i − m| / MAD_unif`, floored at 0, for a Score

@@ -62,14 +62,16 @@ is translated to a one-element `languages` list for this model; older models kee
 their singular field. Setting both forms raises `ArgumentError`.
 
 Ollama has no default: name a model that hears audio, such as `gemma4:e4b`. Its
-`/v1/audio/transcriptions` transcribes at temperature 0 and reads one `language`,
-a `prompt` and a `response_format` of `"json"` or `"text"`; `temperature`,
-`languages`, `keywords` and any other format throw `ArgumentError` before the
-request. Ollama labels its replies `application/x-ndjson`, so they are read by the
-format asked for. With `"text"`, a failure after Ollama has begun its reply comes
-back as an empty transcript (by Ollama 0.40.6's source; untested here); JSON, the
-default, reports it as an [`AudioCallError`](@ref). An endpoint declares
-transcription with the capability `:transcription`, which `:audio` implies.
+`/v1/audio/transcriptions` transcribes at temperature 0 and reads one `language`
+and a `prompt`, and UniLM asks it for JSON only, the one form in which Ollama
+reports a failure that arrives after its reply has begun, as an
+[`AudioCallError`](@ref) (by Ollama 0.40.6's source; untested here).
+`response_format = "text"` throws `ArgumentError` before the request — such a
+failure would read as an empty transcript — and so do `temperature`, `languages`,
+`keywords` and any other format: leave `response_format` unset and read the text
+with [`transcript_text`](@ref). Ollama labels its replies `application/x-ndjson`, so
+they are read as JSON whatever the label. An endpoint declares transcription with
+the capability `:transcription`, which `:audio` implies.
 
 OpenAI deprecated `gpt-4o-transcribe`, `gpt-4o-mini-transcribe`,
 `gpt-4o-transcribe-diarize`, and `whisper-1` on August 26, 2026, with shutdown

@@ -13,7 +13,7 @@ _oe_norm(v) = sqrt(sum(abs2, v))
 const _OE_MODELS = String.(split(get(ENV, "UNILM_OLLAMA_EMBED_MODELS",
     "embeddinggemma-2:740m-q8_0,embeddinggemma-2:740m-mxfp8,embeddinggemma-2:270m-q8_0-text,embeddinggemma"), ','))
 const _OE_FIX = joinpath(@__DIR__, "fixtures", "ollama")
-_oe_v2(m) = occursin(r"embeddinggemma-?2"i, m)      # EmbeddingGemma 2 (trained on 8,192 tokens), not v1 (2,048)
+_oe_v2(m) = occursin(r"embeddinggemma-?2(?!\d)"i, m)    # EmbeddingGemma 2 (trained on 8,192 tokens), not v1 (2,048)
 
 if isnothing(_OE_EP)
     @info "Skipping EmbeddingGemma live witnesses (set UNILM_LIVE_OLLAMA=1)"
@@ -53,8 +53,11 @@ _oe_vec(m, x; task=:none, kw...) = embedding_vectors(embeddingrequest!(Embedding
     #   embeddinggemma-2:270m-q8_0-text   0.5    / 0.7222  vs  0.5    / 0.7361   tie on top-1
     #   embeddinggemma                    0.5833 / 0.7917  vs  0.6667 / 0.8333   refuted, by one query
     # At 12 queries a one-query difference cannot separate the hypotheses: whether the task prompts help
-    # is measured by a separate, powered evaluation, not by this fixture. Here the prompted run is a wiring
-    # floor (chance is 1/24 ≈ 0.04, so a broken prompt or payload falls far below it); both runs are logged.
+    # needs a separate, powered evaluation, not this fixture. Here the prompted run is a floor: a scrambled,
+    # degenerate or mis-ordered batch ranks near chance (1/24 ≈ 0.04), far below 0.4. It does not detect a
+    # wrong or missing prompt: on EmbeddingGemma 2 a missing query prompt or title scores 0.4167, unprompted
+    # documents or the question-answering query task 0.5 (Ollama 0.40.6); the byte-exact offline tests pin
+    # the prompts. Both runs are logged.
     @testset "prompted retrieval clears a wiring floor on the labelled set" begin
         set = JSON.parse(read(joinpath(_OE_FIX, "retrieval_set.json"), String))
         docs, qs = set["documents"], set["queries"]

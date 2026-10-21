@@ -463,7 +463,10 @@ end
             @test load_model("m"; service=ep) isa OllamaSuccess{Nothing}
             @test [t for (t, _) in seen] == ["/api/show", "/api/embed"]
             b = JSON.parse(seen[2][2])
-            @test b["input"] == [] && b["keep_alive"] == 600 && b["options"]["num_ctx"] == 2048 && b["runner"] == "llamacpp"
+            @test b["input"] == [] && b["keep_alive"] == 600 && b["runner"] == "llamacpp"
+            # An embedding model loads with the endpoint's options; a decision model with none, as the System One
+            # requests that follow carry none (Ollama would load it again for the first of them otherwise).
+            @test kind == ["embedding"] ? b["options"]["num_ctx"] == 2048 : !haskey(b, "options")
             @test !haskey(b, "shift")
         end
         empty!(seen); caps[] = ["completion", "tools"]
@@ -490,7 +493,7 @@ end
         @test isnothing(load_options("embeddinggemma:300m", ["embedding"]))                 # v1: no window
         @test load_options("embeddinggemma:300m", ["embedding"]; num_ctx=2048) == Dict("num_ctx" => 2048)
         @test isnothing(load_options("kev:0.8b-q8_0", ["decision"]))
-        @test load_options("kev:0.8b-q8_0", ["decision"]; num_gpu=99) == Dict("num_gpu" => 99)
+        @test isnothing(load_options("kev:0.8b-q8_0", ["decision"]; num_gpu=99, num_ctx=4096))
         # Only the empty list an empty embeddings request is answered with reports the load.
         @test isnothing(UniLM._ollama_embed_loaded(Dict{String,Any}("embeddings" => [])))
         for reply in (Dict{String,Any}(), Dict{String,Any}("embeddings" => [[0.1]]), Dict{String,Any}("embeddings" => "[]"))

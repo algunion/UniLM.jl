@@ -314,17 +314,18 @@ Load `name` into memory now, so the first request does not wait for it. Loads `n
 way its kind allows (read from [`model_info`](@ref)): a chat model with an empty chat
 request, an embedding or decision model with an empty embeddings request (EmbeddingGemma 2
 with the 8,192-token window its embeddings requests carry); the reply comes once the model
-is loaded. The endpoint's `keep_alive`, `runner` and
-[`OllamaOptions`](@ref) go with it, and its `shift`, which applies to chat models only:
-Ollama loads the model with those settings, so load through the endpoint you will use. On
-the llama.cpp runner a later request with another `num_ctx` loads the model again; on the
-MLX runner a loaded model keeps its context when a later request asks for more:
-[`unload_model`](@ref) first to load it with another `num_ctx`. Returns
-`OllamaSuccess{Nothing}`, an [`OllamaFailure`](@ref) (404 for a model that is not
-installed), or an [`OllamaCallError`](@ref), also for a reply that does not report the
-load. `config` and `cancel` work as for [`model_info`](@ref); `total_deadline` bounds the
-whole call. An empty `name` throws `ArgumentError` before any request, and so does an
-endpoint with `keep_alive=0`: Ollama reads that request as an unload.
+is loaded. The endpoint's `keep_alive` and `runner` go with it, and so does what the
+model's own requests carry: a chat model's load the endpoint's [`OllamaOptions`](@ref) and
+`shift`, an embedding model's those options, and a decision model's no options at all, as
+System One requests carry none. Ollama loads the model with those settings, so load
+through the endpoint you will use. On the llama.cpp runner a later request with other
+options loads the model again; on the MLX runner a loaded model keeps its context when a
+later request asks for more: [`unload_model`](@ref) first to load it with another
+`num_ctx`. Returns `OllamaSuccess{Nothing}`, an [`OllamaFailure`](@ref) (404 for a model
+that is not installed), or an [`OllamaCallError`](@ref), also for a reply that does not
+report the load. `config` and `cancel` work as for [`model_info`](@ref); `total_deadline`
+bounds the whole call. An empty `name` throws `ArgumentError` before any request, and so
+does an endpoint with `keep_alive=0`: Ollama reads that request as an unload.
 
 ```julia
 ollama = OllamaEndpoint(num_ctx=32_768, keep_alive=Inf)
@@ -340,14 +341,17 @@ function load_model(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint
     cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()   # one budget, both requests
     info = _ollama_show(model, service, cfg, tok; t0)
     info isa OllamaSuccess || return info
-    chat = :completion in info.response.capabilities
+    caps = info.response.capabilities
+    chat = :completion in caps
     body = Dict{String,Any}("model" => model)
     chat ? (body["messages"] = []; body["stream"] = false) : (body["input"] = [])
     isnothing(ka) || (body["keep_alive"] = _ollama_keep_alive(ka))
-    # An embeddings load sends the options an embeddings request for the model sends (EmbeddingGemma 2's
-    # window included): on the llama.cpp runner a request whose num_ctx or num_batch differs from the
-    # load's loads the model again.
-    opts = chat ? _ollama_options(service.options) : _ollama_embed_options(service, model)
+    # A load sends the options the model's own requests send, since on the llama.cpp runner a request whose
+    # options differ from the load's loads the model again (Ollama 0.40.6): an embeddings load those of an
+    # embeddings request for the model (EmbeddingGemma 2's window included), and a decision model's none, as
+    # System One requests carry none.
+    opts = chat ? _ollama_options(service.options) :
+           :embedding in caps ? _ollama_embed_options(service, model) : Dict{String,Any}()
     isempty(opts) || (body["options"] = opts)
     chat && !isnothing(service.shift) && (body["shift"] = service.shift)
     _ollama_runner!(body, service)

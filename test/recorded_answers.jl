@@ -967,8 +967,13 @@ close(_RL_MOCK.server)
     for (clip, mime) in ((wav, "audio/wav"), (mp3, "audio/mpeg"))
         @test UniLM._media_digest(clip) == UniLM._image_digest("data:$mime;base64," * UniLM.Base64.base64encode(clip.data))
     end
-    # A format with no media type of its own is an error, never filed as another format. The
-    # constructor admits only wav and mp3, so the clip is built around it.
-    flac = Core.eval(@__MODULE__, Expr(:new, AudioAttachment, Vector{UInt8}("fLaC"), "flac"))
-    @test_throws ArgumentError UniLM._media_digest(flac)
+    # A format with no media type of its own is an error, never filed as another format.
+    @test_throws ArgumentError UniLM._audio_mime("flac")
+    # Every format the sniffer can return (each `return "<format>"` in its source) has a media type.
+    file, line = functionloc(only(methods(UniLM._sniff_audio_format)))
+    returned(ex) = ex isa Expr ? (ex.head === :return && length(ex.args) == 1 && ex.args[1] isa String ?
+        String[ex.args[1]] : mapreduce(returned, vcat, ex.args; init=String[])) : String[]
+    formats = unique(returned(Meta.parse(join(readlines(file)[line:end], '\n'), 1)[1]))
+    @test "wav" in formats && "mp3" in formats                                  # the source was read
+    @test all(f -> startswith(UniLM._audio_mime(f), "audio/"), formats)
 end

@@ -794,6 +794,9 @@ OpenAI-compatible routes.
 No API key is sent. Local models cost nothing: [`estimated_cost`](@ref) reports `0.0`
 for a chat or embeddings result without a missing-price warning (a `respond` or FIM
 result does not record its endpoint, so it is priced by its model name like any other).
+A cloud model reached through the local server — a model whose tag is `cloud` or ends in
+`-cloud` (`clef:cloud`, `gpt-oss:120b-cloud`) — is billed by Ollama and is priced by its
+name like any other model.
 
 ```julia
 ollama = OllamaEndpoint(num_ctx=32_768, keep_alive=600)

@@ -1625,9 +1625,10 @@ free, which the shipped `jev-*` price rows encode as an output rate of `0.0`. An
 id with a dated snapshot suffix uses its base id's row; a versioned `jev-X.Y.Z`
 id without its own row is priced at the `jev-latest` row (assuming a later Jev
 keeps the price TypeSafe lists for Jev 1.13); any other unpriced name returns
-`0.0`. An answer from a model on the caller's own machine — through an
-[`OllamaEndpoint`](@ref) — costs `0.0`, without a missing-price warning, unless
-`model` is passed. A backend that bills otherwise is priced its own way: an
+`0.0`. An answer from a local model through an [`OllamaEndpoint`](@ref) costs
+`0.0`, without a missing-price warning, unless `model` is passed; a cloud model
+reached through it (a tag of `cloud` or ending in `-cloud`) is priced by its name.
+A backend that bills otherwise is priced its own way: an
 answer from OpenAI's Decisions API
 ([`OpenAIDecisionsProtocol`](@ref UniLM.OpenAIDecisionsProtocol)) costs its input
 tokens alone, cached ones included, at the row's input rate — twice that rate
@@ -1636,7 +1637,7 @@ above 272K input tokens.
 function estimated_cost(result::SystemOneSuccess; model::Union{String,Nothing}=nothing,
                         pricing::AbstractDict{String,PriceRow}=DEFAULT_PRICING)::Float64
     service = result.response.service
-    isnothing(model) && _is_local(service) && return 0.0
+    isnothing(model) && _is_local(service, result.response.model) && return 0.0
     _system_one_cost(isnothing(service) ? nothing : system_one_protocol(service)::SystemOneProtocol,
                      result, model, pricing)
 end

@@ -141,8 +141,10 @@ _transcription_model(t::TranscriptionRequest)::String = @something(t.model, _def
 # What a service's transcription route cannot carry, refused before any request.
 _check_transcription(_, ::TranscriptionRequest) = nothing
 function _check_transcription(::OllamaEndpoint, t::TranscriptionRequest)
-    for (f, why) in ((:temperature, "fixes it at 0"), (:languages, "takes one `language`"), (:keywords, "takes none"))
-        isnothing(getfield(t, f)) || throw(ArgumentError("Ollama's transcription $(why): remove `$f`"))
+    for (f, rule) in ((:temperature, "runs at temperature 0 and takes no `temperature`: remove it"),
+                      (:languages, "takes one `language`: remove `languages`"),
+                      (:keywords, "takes no `keywords`: remove them"))
+        isnothing(getfield(t, f)) || throw(ArgumentError("Ollama's transcription $rule"))
     end
     isnothing(t.response_format) || t.response_format in ("json", "text") || throw(ArgumentError(
         "Ollama transcribes to response_format \"json\" or \"text\" (got $(repr(t.response_format)))"))
@@ -192,9 +194,9 @@ end
 
 function _transcribe(t::TranscriptionRequest, path::String, cap::Symbol;
                      config::Union{Nothing,RequestConfig}=nothing)
-    # Transcription is part of the audio API: an endpoint that declares `:audio` transcribes too,
-    # while one that declares only `:transcription` (Ollama) neither speaks nor translates.
-    cap === :transcription && has_capability(t.service, :audio) || validate_capability(t.service, cap, "Audio API")
+    # An endpoint that declares `:audio` transcribes too (`has_capability`), while one that declares
+    # only `:transcription` (Ollama) neither speaks nor translates.
+    validate_capability(t.service, cap, "Audio API")
     # Local validation throws before the request (inside the `try` it would become an AudioCallError).
     _check_transcription(t.service, t)
     _transcription_model(t)

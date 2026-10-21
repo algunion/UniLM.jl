@@ -29,9 +29,11 @@ provider_capabilities(::GenericOpenAIEndpoint)          = Set([:chat, :embedding
 """
     has_capability(service, cap::Symbol) -> Bool
 
-Check whether the service endpoint supports a given capability.
+Check whether the service endpoint supports a given capability. An endpoint that declares
+`:audio` has `:transcription` too: transcription is part of the audio API.
 """
-has_capability(service, cap::Symbol)::Bool = cap in provider_capabilities(service)
+has_capability(service, cap::Symbol)::Bool =
+    (caps = provider_capabilities(service); cap in caps || (cap === :transcription && :audio in caps))
 
 # An endpoint's name in messages: marker types are passed as the type itself, whose
 # `typeof` is only `DataType`.

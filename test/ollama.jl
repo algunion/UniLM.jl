@@ -636,10 +636,16 @@ end
 @testset "transcription on Ollama: its OpenAI-compatible route and its rules" begin
     wav = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")
     off = OllamaEndpoint(base_url="http://127.0.0.1:1")
-    e = try transcribe(wav; service=off); nothing catch x; x end
-    @test e isa ArgumentError && occursin("model", e.msg)                  # no default model on Ollama
-    for kw in ((temperature=0.2,), (languages=["en"],), (keywords=["banana"],), (response_format="srt",))
-        @test_throws ArgumentError transcribe(wav; service=off, model="gemma4:e4b", kw...)
+    refusal(f) = try f(); nothing catch x; x end
+    e = refusal(() -> transcribe(wav; service=off))
+    @test e isa ArgumentError && occursin("no default transcription model", e.msg)
+    # Each refusal comes from its own rule: one distinctive fragment per message.
+    for (kw, fragment) in (((temperature=0.2,), "runs at temperature 0 and takes no `temperature`"),
+                           ((languages=["en"],), "takes one `language`"),
+                           ((keywords=["banana"],), "takes no `keywords`"),
+                           ((response_format="srt",), "\"json\" or \"text\" (got \"srt\")"))
+        e = refusal(() -> transcribe(wav; service=off, model="gemma4:e4b", kw...))
+        @test e isa ArgumentError && occursin(fragment, e.msg)
     end
     @test_throws ArgumentError speak(SpeechRequest(service=off, input="hi"))          # speech stays refused
     @test_throws ArgumentError translate(wav; service=off, model="gemma4:e4b")       # translation too

@@ -83,6 +83,7 @@ UniLM.provider_capabilities(::Type{NoAudioProbe}) = Set([:chat])
     end
     @test r isa TranscriptionSuccess && transcript_text(r) == "The secret word is banana."
     @test only(seen).method == "POST" && only(seen).target == "/v1/audio/transcriptions"
+    @test has_capability(AudioOnlyProbe, :transcription)                 # the predicate says what the gate does
 end
 
 @testset "an endpoint that declares neither audio capability is refused before any request" begin
@@ -92,4 +93,5 @@ end
     end
     @test e isa ArgumentError && occursin("Audio API is not supported by NoAudioProbe", e.msg)
     @test isempty(seen)
+    @test !has_capability(NoAudioProbe, :transcription)
 end

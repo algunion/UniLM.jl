@@ -97,6 +97,8 @@ _os1l_keyed(::Val{:pricing}, t) = :pricing
 const _OS1L_LOG = Tuple{String,String,Int,Float64}[]          # model, witness, requests, seconds
 const _OS1L_DRIFT = Ref(0.0)                                  # largest |Σp − 1| seen
 const _OS1L_27 = Pair{String,String}[]                        # model => what a 27-option Choice got
+const _OS1L_1 = Pair{String,String}[]                         # model => what a 1-option Choice got
+const _OS1L_RUNNER = Tuple{String,Symbol,String}[]            # model, a runner it has no variant for, the answer
 const _OS1L_PARITY = Tuple{String,Int,Float64}[]              # model, choices that differ, largest |Δp|
 
 function _os1l_timed(f::Function, model::String, witness::String, sent::Threads.Atomic{Int})
@@ -228,6 +230,19 @@ end
                   contains(r.message, n > 26 ? "2–26 candidates" : "at most 24 candidates")
         end
     end
+    # One option is sent too, and is the model's call (Ollama 0.40.6): the llama.cpp path (kev, d1, d1-omni)
+    # answers it, the MLX encoders answer their own 400 ("criteria must contain 2–26 candidates", Strands 2–255).
+    r = _os1l_timed(model, "1-option Choice", sent) do
+        ask("Option a is the right one.", "pick" => choice("Which option is the right one?", ["a" => "option a"]);
+            service=ep, model)
+    end
+    @test last(_OS1L_LOG)[3] == 1
+    push!(_OS1L_1, model => _os1l_outcome(r))
+    if info.runner === :llamacpp
+        @test r isa SystemOneSuccess && r["pick"].choice == "a" && r["pick"].probabilities == Dict("a" => 1.0)
+    else
+        @test r isa SystemOneFailure && r.status == 400 && contains(r.message, "criteria must contain 2–")
+    end
 end
 
 @testset "a model that is not installed says to pull it" begin
@@ -340,6 +355,25 @@ if model == "kev:0.8b-q8_0"
     end
 end
 
+@testset "runner: the listed runner answers and serves the model; another is the server's 400" begin
+    # Refuted by: the runner the listing names refused, /api/ps naming another runner than the one pinned, or a
+    # runner the model has no variant for answering instead of Ollama's 400 (a silent fallback). Every model
+    # here is published for one runner; Ollama 0.40.6 answers any other with the text asserted.
+    @test info.runner in (:mlx, :llamacpp, :ggml)
+    q = "q" => noul("Is the sky blue?")
+    pinned(rn) = OllamaEndpoint(base_url=ep.base_url, runner=rn)
+    r = _os1l_timed(() -> ask("The sky is blue.", q; service=pinned(info.runner), model), model, "runner = :$(info.runner)", sent)
+    @test r isa SystemOneSuccess && last(_OS1L_LOG)[3] == 1
+    serving = Dict(m.name => m.runner for m in running_models(; service=_OS1L_EP).response)
+    @test get(serving, model, nothing) === info.runner
+    for other in filter(!=(info.runner), (:mlx, :llamacpp, :ggml))
+        f = _os1l_timed(() -> ask("The sky is blue.", q; service=pinned(other), model), model, "runner = :$other", sent)
+        push!(_OS1L_RUNNER, (model, other, f isa SystemOneFailure ? "HTTP $(f.status): $(f.message)" : string(typeof(f))))
+        @test f isa SystemOneFailure && f.status == 400 && f.message == "no compatible manifest found for runners: $other"
+        @test last(_OS1L_LOG)[3] == 1
+    end
+end
+
 @testset "keep_alive reaches the server" begin
     # Refuted by: the model still loaded after keep_alive = 0, or not kept after keep_alive = Inf.
     loaded() = Dict(m.name => m.expires_at for m in running_models(; service=_OS1L_EP).response)
@@ -365,6 +399,9 @@ end # model testset
       join(("\n  $(rpad(m, 18)) $(rpad(w, 36)) requests=$(n)  $(round(t; digits=3)) s" for (m, w, n, t) in _OS1L_LOG)) *
       "\n  largest |Σp − 1| over the answers: $(_OS1L_DRIFT[])" *
       "\n  27-option Choice, per model:" * join(("\n  $(rpad(m, 18)) $(o)" for (m, o) in _OS1L_27)) *
+      "\n  1-option Choice, per model:" * join(("\n  $(rpad(m, 18)) $(o)" for (m, o) in _OS1L_1)) *
+      "\n  a runner the model has no variant for:" *
+      join(("\n  $(rpad(m, 18)) :$(rpad(rn, 9)) $(o)" for (m, rn, o) in _OS1L_RUNNER)) *
       "\n  wrapper parity, per model (choices that differ, largest |Δp|):" *
       join(("\n  $(rpad(m, 18)) $(d)  $(g)" for (m, d, g) in _OS1L_PARITY))
 

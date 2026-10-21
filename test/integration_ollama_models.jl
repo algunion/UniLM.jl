@@ -69,13 +69,25 @@ end
     @test loaded.context_length == 1024 && loaded.runner in _OMM_RUNNERS
     @test unload_model(_OMM_EMBED; service=small) isa OllamaSuccess{Nothing}
     @test timedwait(() -> !haskey(_omm_ps(), tag), 10.0) == :ok
-    _omm_need(_OMM_DECISION, "pull it")
-    unload_model(_OMM_DECISION; service=_OMM_EP)
-    @test timedwait(() -> !haskey(_omm_ps(), _OMM_DECISION), 10.0) == :ok
-    @test load_model(_OMM_DECISION; service=_OMM_EP) isa OllamaSuccess{Nothing}
-    @test haskey(_omm_ps(), _OMM_DECISION)
-    @test unload_model(_OMM_DECISION; service=_OMM_EP) isa OllamaSuccess{Nothing}
-    @test timedwait(() -> !haskey(_omm_ps(), _OMM_DECISION), 10.0) == :ok
+    dtag = _omm_need(_OMM_DECISION, "pull it")
+    unload_model(dtag; service=_OMM_EP)
+    @test timedwait(() -> !haskey(_omm_ps(), dtag), 10.0) == :ok
+    @test load_model(dtag; service=_OMM_EP) isa OllamaSuccess{Nothing}
+    @test haskey(_omm_ps(), dtag)
+    @test unload_model(dtag; service=_OMM_EP) isa OllamaSuccess{Nothing}
+    @test timedwait(() -> !haskey(_omm_ps(), dtag), 10.0) == :ok
+end
+
+@testset "a runner the model has no variant for: model_info and load_model get Ollama's 404" begin
+    # Refuted by: a show or a load through an endpoint pinned to a runner the model is not published for
+    # answering 200 (a silent fallback), or loading the model. kev:0.8b-q8_0 is published for llama.cpp only.
+    dtag = _omm_need(_OMM_DECISION, "pull it")
+    other = OllamaEndpoint(runner=:mlx)
+    i = model_info(dtag; service=other)
+    @test i isa OllamaFailure && i.status == 404 && occursin("no compatible manifest found for runners: mlx", i.response)
+    l = load_model(dtag; service=other)
+    @test l isa OllamaFailure && l.status == 404 && !haskey(_omm_ps(), dtag)
+    @test model_info(dtag; service=OllamaEndpoint(runner=:llamacpp)) isa OllamaSuccess{OllamaModelInfo}
 end
 
 @testset "pull and delete a scratch model" begin

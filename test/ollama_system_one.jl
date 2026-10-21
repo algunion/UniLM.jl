@@ -497,8 +497,8 @@ end
         ask("s", noul("Is it?"); service=ep, model="tev1:0.8b", config=_OS1_CFG)
     end
     @test (@test_logs estimated_cost(r)) == 0.0
-    # The rule is the answering endpoint's locality, not the model's name: an id no price row
-    # knows warns from elsewhere and stays silent from Ollama.
+    # The rule is the answering endpoint's locality and the model's tag: an id no price row knows
+    # (and no cloud tag marks) warns from elsewhere and stays silent from Ollama.
     hand(service) = SystemOneSuccess(SystemOneResponse("unpriced-local-witness", Dict{String,SystemOneAnswer}(),
                                                        TokenUsage(prompt_tokens=10, total_tokens=10), nothing,
                                                        Dict{String,Any}(), service))

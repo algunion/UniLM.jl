@@ -23,11 +23,14 @@ _model_hint(::OllamaEndpoint) =
 
 # A model on the caller's own machine is free. A cloud model reached through the local server
 # (a tag of `cloud`, or one ending in `-cloud`, such as `clef:cloud` or `gpt-oss:120b-cloud`) runs on
-# Ollama's servers and bills its account: it is priced by name like any other model.
+# Ollama's servers and bills its account: it is priced by name like any other model. As in Ollama's
+# own name parser, the tag follows the last ':' only when no '/' comes after it (in
+# `localhost:5000/library/clef-cloud` that ':' starts a registry port, and the tag is the default
+# `latest`), and Ollama compares names case-insensitively (`GEMMA4:E4B` is `gemma4:e4b`).
 function _ollama_cloud_model(model::AbstractString)::Bool
     i = findlast(':', model)
-    isnothing(i) && return false
-    tag = model[nextind(model, i):end]
+    (isnothing(i) || something(findlast('/', model), 0) > i) && return false
+    tag = lowercase(model[nextind(model, i):end])
     tag == "cloud" || endswith(tag, "-cloud")
 end
 _is_local(::OllamaEndpoint, model::AbstractString) = !_ollama_cloud_model(model)

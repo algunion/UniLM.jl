@@ -39,9 +39,11 @@ _is_local(::OllamaEndpoint, model::AbstractString) = !_ollama_cloud_model(model)
 
 # A cloud model may answer without its tag: Ollama's cloud proxy sends the cloud the name stripped of its
 # cloud tag (`gpt-oss:120b` for `gpt-oss:120b-cloud`) and passes the reply through. A result keeps the
-# requested name, so it is priced as the cloud model it is; the server's name stays in its `raw`.
-_ollama_billed_model(requested::AbstractString, replied::AbstractString)::String =
-    _ollama_cloud_model(requested) && !_ollama_cloud_model(replied) ? String(requested) : String(replied)
+# requested name, so it is priced as the cloud model it is; the server's name stays in its `raw`. A
+# request that named no model has no name to keep.
+_ollama_billed_model(requested::Union{AbstractString,Nothing}, replied::AbstractString)::String =
+    !isnothing(requested) && _ollama_cloud_model(requested) && !_ollama_cloud_model(replied) ?
+        String(requested) : String(replied)
 _billed_response(::OllamaEndpoint, requested::AbstractString, x::ResponseObject) =
     (m = _ollama_billed_model(requested, x.model); m == x.model ? x :
      ResponseObject(x.id, x.status, m, x.output, x.usage, x.error, x.metadata, x.raw))

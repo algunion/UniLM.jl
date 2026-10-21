@@ -604,6 +604,20 @@ _os1_any_reply(b; model=b["model"]) = _os1_json(200, JSON.json(Dict{String,Any}(
     @test (@test_logs (:warn, r"no price row") match_mode=:any estimated_cost(r)) == 0.0
 end
 
+# Refuted if: decoding a captured 200 for a request that named no model throws (Ollama has no default
+# model to fall back on), or the cloud-name rule stops keeping a requested cloud name.
+@testset "decode_system_one reads a reply to a request that named no model" begin
+    reply(model) = _os1_json(200, JSON.json(Dict{String,Any}("model" => model,
+        "answers" => Dict("q" => Dict("type" => "noul", "noul" => 0.9)), "usage" => Dict("input_tokens" => 10, "output_tokens" => 0))))
+    ep = OllamaEndpoint(base_url="http://box:11434")
+    r = UniLM.decode_system_one(_OS1_P, ep, SystemOneRequest("The sky is blue.", ["q" => noul("Is the sky blue?")]),
+                                reply("tev1:0.8b"))
+    @test r isa SystemOneSuccess && r.response.model == "tev1:0.8b" && r["q"].noul == 0.9
+    c = UniLM.decode_system_one(_OS1_P, ep, SystemOneRequest("The sky is blue.", ["q" => noul("Is the sky blue?")];
+                                                            model="clef:cloud"), reply("clef"))
+    @test c isa SystemOneSuccess && c.response.model == "clef:cloud" && c.response.raw["model"] == "clef"
+end
+
 @testset "a local model answered under another name keeps the server's name" begin
     r = _os1_serve(; respond=(n, req) -> _os1_any_reply(JSON.parse(_os1_text(req)); model="tev1:latest")) do ep, seen
         ask("The sky is blue.", "q" => noul("Is the sky blue?"); service=ep, model="tev1", config=_OS1_CFG)

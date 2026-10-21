@@ -301,12 +301,13 @@ Load `name` into memory now, so the first request does not wait for it (an empty
 request, answered once the model is loaded). The endpoint's `keep_alive`, `shift` and
 [`OllamaOptions`](@ref) go with it: Ollama loads the model with those settings, and a
 later chat with a different `num_ctx`, `num_batch`, `num_gpu` or `shift` loads it again —
-load through the endpoint you will chat with. Returns `OllamaSuccess{Nothing}`, an
-[`OllamaFailure`](@ref) (404 for a model that is not installed), or an
-[`OllamaCallError`](@ref), also for a reply that does not report the load. `config` and
-`cancel` work as for [`model_info`](@ref). An empty `name` throws `ArgumentError` before
-any request, and so does an endpoint with `keep_alive=0`: Ollama reads that request as
-an unload.
+load through the endpoint you will chat with. On the MLX runner a loaded model keeps its
+context: [`unload_model`](@ref) first to load it with another `num_ctx`. Returns
+`OllamaSuccess{Nothing}`, an [`OllamaFailure`](@ref) (404 for a model that is not
+installed), or an [`OllamaCallError`](@ref), also for a reply that does not report the
+load. `config` and `cancel` work as for [`model_info`](@ref). An empty `name` throws
+`ArgumentError` before any request, and so does an endpoint with `keep_alive=0`: Ollama
+reads that request as an unload.
 
 ```julia
 ollama = OllamaEndpoint(num_ctx=32_768, keep_alive=Inf)

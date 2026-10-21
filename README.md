@@ -38,7 +38,7 @@ UniLM speaks each provider's own wire API, not just the OpenAI-compatible protoc
 - **Streaming** — real-time token streaming with `do`-block syntax
 - **Structured Output** — JSON Schema–constrained generation
 - **Multi-Backend** — OpenAI, Azure, Gemini, Anthropic, DeepSeek, Mistral, vLLM, LM Studio, and any OpenAI-compatible provider
-- **Local models** — Ollama's native API: Gemma 4's thinking, tools, structured output, images, audio and transcription; EmbeddingGemma 2 embeddings of text, images and audio, with its task prompts; local decision models, pictures included; a context window and a runner of your choosing; model management — at no cost
+- **Local models** — Ollama's native API: Gemma 4's thinking, tools, structured output, images, audio and transcription; EmbeddingGemma 2 embeddings of text, images and audio, with its task prompts; local decision models, pictures included; a context window of your choosing and a runner pinned per model; model management — at no cost
 - **Type Safety** — invalid states are unrepresentable; tested with [JET.jl](https://github.com/aviatesk/JET.jl) and [Aqua.jl](https://github.com/JuliaTesting/Aqua.jl)
 
 ## Installation

@@ -674,13 +674,15 @@ omitted, so the model's own defaults apply. Options `Chat` already names
   llama.cpp and ggml runners a request with another `num_ctx` reloads the model, and a
   prompt longer than the window is refused (HTTP 400) unless `truncate=true`; on the MLX
   runner (Apple Silicon) the window applies when the model is loaded, a loaded model
-  keeps it whatever a later request asks, and it does not bound the prompt (verified
-  with Ollama 0.40.6). The other options are passed through unchanged; their effect on
-  the MLX runner is not verified.
+  keeps it when a later request asks for more, and it does not bound a chat prompt
+  (verified with Ollama 0.40.6 on the llama.cpp and MLX runners; ggml untested).
 - `num_batch`, `num_gpu` (layers offloaded to the GPU), `main_gpu`, `num_thread`,
   `use_mmap`: how the model runs on this machine.
 - `num_keep`: tokens of the prompt kept when the context is shifted.
 - `top_k`, `min_p`, `repeat_last_n`, `repeat_penalty`: sampling.
+
+The options other than `num_ctx` are passed through unchanged; their effect on the MLX
+runner is not verified.
 
 The constructor throws `ArgumentError` for a value out of range: `num_ctx`,
 `num_batch` and `num_thread` must be positive, `top_k` non-negative (0 turns top-k off), `min_p` in
@@ -784,8 +786,8 @@ OpenAI-compatible routes.
   (embeddings) to fit the context window. `false` (the default) makes an input that does
   not fit a failure — HTTP 400 "exceeds the available context size" — instead of an
   answer to a silently shortened prompt; raise `num_ctx`, or set `true` for Ollama's
-  own behaviour. On the MLX runner (Apple Silicon) the window does not bound the
-  prompt, so a prompt longer than it is not refused (verified with Ollama 0.40.6).
+  own behaviour. On the MLX runner (Apple Silicon) the window does not bound a chat
+  prompt: a longer one is not refused (verified with Ollama 0.40.6).
 - `shift`: whether generation that fills the context window may continue by dropping
   earlier context (`nothing`: the server's default, on). `false` ends such a reply with
   finish reason `"length"`. Ollama reloads the model when this changes.

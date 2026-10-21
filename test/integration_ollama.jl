@@ -153,28 +153,41 @@ end
 end
 
 @testset "context window, per runner" begin
-    runner_of(m) = only(x for x in list_models(service=_OLLAMA_EP).response if x.name == m).runner
-    ps() = Dict(m.name => m.context_length for m in running_models(; service=_OLLAMA_EP).response)
+    # Refuted by: a cold load whose /api/ps context is not num_ctx, a runner other than MLX, llama.cpp or ggml, or
+    # a GGUF model served by neither llama.cpp nor ggml; on MLX a reload, a refused over-long prompt or a missed
+    # needle; on llama.cpp/ggml no reload, a 200 for the over-long prompt, or with truncate=true a failure or a
+    # prompt that was not shortened.
     long = repeat("The logistics report covered warehouses, fleets and suppliers in detail. ", 450)  # > 4096 tokens
+    once = RequestConfig(max_attempts=1)
     for m in (_OLLAMA_MODEL, _OLLAMA_GGUF)
         unload_model(m; service=_OLLAMA_EP)
-        @test timedwait(() -> !haskey(ps(), m), 10.0) == :ok
+        @test timedwait(() -> !haskey(_ollama_ps(_OLLAMA_EP), m), 10.0) == :ok
         small = OllamaEndpoint(num_ctx=4096)
-        say(ep) = (c = Chat(service=ep, model=m, temperature=0.0); push!(c, Message(Val(:system), "You are concise."));
-                   push!(c, Message(Val(:user), "Say OK.")); chatrequest!(c))
+        mchat(ep; kw...) =
+            (c = Chat(; service=ep, model=m, kw...); push!(c, Message(Val(:system), "You are concise.")); c)
+        say(ep) = _ask(mchat(ep; temperature=0.0, max_tokens=8), "Say OK.")  # a base model continues raw text
         @test say(small) isa LLMSuccess
-        @test ps()[m] == 4096                                         # every runner: a cold load takes num_ctx
+        cold = only(x for x in running_models(; service=_OLLAMA_EP).response if x.name == m)
+        @test cold.context_length == 4096                             # every runner: a cold load takes num_ctx
+        @test cold.runner in (:mlx, :llamacpp, :ggml)
+        m == _OLLAMA_GGUF && @test cold.runner in (:llamacpp, :ggml)  # so the llama.cpp/ggml branch always runs
         @test say(OllamaEndpoint(num_ctx=8192)) isa LLMSuccess
-        after = ps()[m]                                               # read before the next request can reload it
-        c = Chat(service=small, model=m); push!(c, Message(Val(:system), "You are concise."))
-        push!(c, Message(Val(:user), long * "\nWhat was the report about?"))
-        r = chatrequest!(c; config=RequestConfig(max_attempts=1))
-        if runner_of(m) === :mlx
+        after = _ollama_ps(_OLLAMA_EP)[m]                             # read before the next request can reload it
+        r = _ask(mchat(small), long * "\nWhat was the report about?"; config=once)
+        if cold.runner === :mlx
             @test after == 4096                                       # MLX: a loaded model is not reloaded
-            @test r isa LLMSuccess && r.usage.prompt_tokens > 4096    # …and its context does not bound the prompt
+            @test r isa LLMSuccess && r.usage.prompt_tokens > 4096    # …a longer prompt is not refused
+            needle = _ask(mchat(small; temperature=0.0), "The code word is 7319. " * repeat(long, 2) *
+                          "\nWhat is the code word? Digits only."; config=once)
+            @test needle isa LLMSuccess && needle.usage.prompt_tokens > 8192  # …past every num_ctx asked for
+            @test occursin("7319", text(needle))                      # …and its start is still read
         else
             @test after == 8192                                       # llama.cpp/ggml: another num_ctx reloads
-            @test r isa LLMFailure && r.status == 400                 # …and an over-long prompt is refused
+            @test r isa LLMFailure && r.status == 400 &&              # …an over-long prompt is refused
+                  occursin("exceeds the available context size", r.response)
+            lossy = _ask(mchat(OllamaEndpoint(num_ctx=4096, truncate=true); max_tokens=8),
+                         long * "\nWhat was the report about?"; config=once)
+            @test lossy isa LLMSuccess && lossy.usage.prompt_tokens <= 4096  # …unless truncate=true: shortened
         end
     end
 end

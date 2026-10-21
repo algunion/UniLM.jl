@@ -1590,6 +1590,15 @@ encode_agentic(service::OpenAIWireEndpointSpec, r::Respond)::String = JSON.json(
 # no conversation): a Respond tool loop cannot chain turns there.
 _stateless_responses(_) = false
 
+# The verbs that work on a stored response (fetch, cancel, delete, list its input) would reach a
+# server that stores none only to fail there: they are refused before any request.
+function _check_stored_responses(service, verb::String, fix::String)
+    _stateless_responses(service) && throw(ArgumentError(
+        "$verb works on a stored response, and $(_service_name(service))'s Responses API stores none " *
+        "(each call is answered and forgotten); $fix"))
+    nothing
+end
+
 """
     decode_agentic(service, resp::HTTP.Response) -> ResponseObject
 
@@ -1781,7 +1790,8 @@ end
 """
     get_response(response_id::String; service=OPENAIServiceEndpoint)
 
-Retrieve an existing response by its ID.
+Retrieve an existing response by its ID. An endpoint whose Responses API stores no
+responses ([`OllamaEndpoint`](@ref)) throws `ArgumentError` before any request.
 
 # Examples
 ```julia
@@ -1793,6 +1803,7 @@ end
 """
 function get_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
         config::Union{Nothing,RequestConfig}=nothing)
+    _check_stored_responses(service, "get_response", "keep the ResponseSuccess that respond returns")
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
@@ -1813,6 +1824,8 @@ end
     delete_response(response_id::String; service=OPENAIServiceEndpoint)
 
 Delete a stored response by its ID. Returns a Dict with `"id"`, `"object"`, `"deleted"` keys.
+An endpoint whose Responses API stores no responses ([`OllamaEndpoint`](@ref)) throws
+`ArgumentError` before any request.
 
 # Examples
 ```julia
@@ -1822,6 +1835,7 @@ result["deleted"]  # => true
 """
 function delete_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
         config::Union{Nothing,RequestConfig}=nothing)
+    _check_stored_responses(service, "delete_response", "nothing stays on the server to delete")
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
@@ -1842,6 +1856,8 @@ end
     list_input_items(response_id::String; limit=20, order="desc", after=nothing, service=OPENAIServiceEndpoint)
 
 List input items for a stored response. Returns a Dict with `"data"`, `"first_id"`, `"last_id"`, `"has_more"`.
+An endpoint whose Responses API stores no responses ([`OllamaEndpoint`](@ref)) throws
+`ArgumentError` before any request.
 
 # Examples
 ```julia
@@ -1858,6 +1874,7 @@ function list_input_items(response_id::String;
     service::ServiceEndpointSpec=OPENAIServiceEndpoint,
     config::Union{Nothing,RequestConfig}=nothing)
 
+    _check_stored_responses(service, "list_input_items", "the input is the `input` you sent")
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try
@@ -1885,7 +1902,9 @@ end
 """
     cancel_response(response_id::String; service=OPENAIServiceEndpoint)
 
-Cancel an in-progress response by its ID. Returns `ResponseSuccess` on success.
+Cancel an in-progress response by its ID. Returns `ResponseSuccess` on success. An endpoint
+whose Responses API stores no responses ([`OllamaEndpoint`](@ref)) throws `ArgumentError`
+before any request.
 
 # Examples
 ```julia
@@ -1899,6 +1918,8 @@ end
 """
 function cancel_response(response_id::String; service::ServiceEndpointSpec=OPENAIServiceEndpoint,
         config::Union{Nothing,RequestConfig}=nothing)
+    _check_stored_responses(service, "cancel_response",
+                            "stop a call in flight with a CancelToken passed to respond (`cancel=`)")
     cfg = _resolve_config(config); t0 = time_ns()
     local resp
     try

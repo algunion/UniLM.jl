@@ -583,9 +583,51 @@ end
                                   reasoning=Reasoning(effort="none"))))
         @test s isa ResponseSuccess && s.service === ep && output_text(s) == "Bonjour"
         @test (@test_logs estimated_cost(s)) == 0.0
-        g = get_response("resp_1"; service=ep)
-        @test g isa ResponseSuccess && g.service === ep
-        @test (@test_logs estimated_cost(g)) == 0.0
+        # Ollama stores no responses (get_response is refused there): a fetched response records the
+        # endpoint of a server that stores them.
+        gen = GenericOpenAIEndpoint(url, "")
+        g = get_response("resp_1"; service=gen)
+        @test g isa ResponseSuccess && g.service === gen && output_text(g) == "Bonjour"
+    finally
+        close(server)
+    end
+end
+
+# Refuted if: a verb that works on a stored response reaches an Ollama server, which stores none (an
+# unreachable one would answer with a call error, not an ArgumentError), or its refusal does not name
+# the verb, the endpoint and what to do instead.
+@testset "verbs on a stored response are refused before any request: Ollama stores none" begin
+    off = OllamaEndpoint(base_url="http://127.0.0.1:1")
+    refusal(call) = try call(); nothing catch e; e end
+    for (verb, call, fix) in (("get_response", () -> get_response("resp_1"; service=off), "keep the ResponseSuccess"),
+                              ("cancel_response", () -> cancel_response("resp_1"; service=off), "CancelToken"),
+                              ("delete_response", () -> delete_response("resp_1"; service=off), "nothing stays"),
+                              ("list_input_items", () -> list_input_items("resp_1"; service=off), "`input` you sent"))
+        e = refusal(call)
+        @test e isa ArgumentError && startswith(e.msg, "$verb works on a stored response, and OllamaEndpoint's") &&
+              occursin(fix, e.msg)
+    end
+end
+
+# Refuted if: compaction is refused on Ollama, or does not reach its /v1/responses/compact route with the
+# model and the conversation. Ollama compacts the conversation sent with the request: nothing is stored.
+@testset "compact_response reaches Ollama's compaction route" begin
+    compacted = JSON.json(Dict("id" => "resp_compact_1", "object" => "response.compaction",
+        "output" => [Dict("type" => "compaction", "encrypted_content" => "{\"type\":\"ollama_compaction\"}")],
+        "usage" => Dict("input_tokens" => 285, "output_tokens" => 67, "total_tokens" => 352)))
+    seen = Ref{Any}(nothing)
+    handler = req -> (seen[] = (String(req.method), String(req.target),
+                                applicable(copy, req.body) ? String(copy(req.body)) : "");
+                      HTTP.Response(200, ["Content-Type" => "application/json"], Vector{UInt8}(compacted)))
+    tcp = Sockets.listen(Sockets.localhost, 0); port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+    server = HTTP.serve!(handler, "127.0.0.1", port; verbose=false)
+    try
+        r = compact_response(model="gemma4:e4b", input=[InputMessage(role="user", content="My name is Ada.")],
+                             service=OllamaEndpoint(base_url="http://127.0.0.1:$port"))
+        @test r isa AbstractDict && r["object"] == "response.compaction" && only(r["output"])["type"] == "compaction"
+        method, target, body = seen[]
+        @test (method, target) == ("POST", "/v1/responses/compact")
+        @test JSON.parse(body)["model"] == "gemma4:e4b" && only(JSON.parse(body)["input"])["content"] == "My name is Ada."
     finally
         close(server)
     end

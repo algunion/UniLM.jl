@@ -13,9 +13,10 @@ Standard capability symbols include:
 - Core: `:chat`, `:responses`, `:agentic`, `:tools`, `:streaming`, `:json_output`
 - Embeddings & images: `:embeddings`, `:images`, `:image_edits`
 - Completions: `:fim`, `:prefix_completion`
-- Platform APIs: `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`
-  (speech and translation), `:transcription` (OpenAI, Ollama), `:batch`, `:fine_tuning`,
-  `:containers`, `:uploads`, `:realtime`
+- Platform APIs: `:files`, `:vector_stores`, `:conversations`, `:moderation`, `:audio`,
+  `:batch`, `:fine_tuning`, `:containers`, `:uploads`, `:realtime`
+- Transcription ([`transcribe`](@ref)): `:transcription` — implied by `:audio`; declared alone
+  (Ollama), it allows transcription without speech or translation
 - System One ([`ask`](@ref)): `:system_one` (TypeSafe; OpenAI, through its Decisions API; Ollama)
 - Model listing ([`list_models`](@ref)): `:models` (TypeSafe System One, Ollama)
 """

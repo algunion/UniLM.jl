@@ -45,7 +45,7 @@ UniLM.get_url(::Type{MockServiceEndpoint}, ::Chat) = mock_base_url * UniLM.CHAT_
 UniLM.get_url(::Type{MockServiceEndpoint}, ::Embeddings) = mock_base_url * UniLM.EMBEDDINGS_PATH
 UniLM.get_url(::Type{MockServiceEndpoint}, ::FIMCompletion) = mock_base_url * UniLM.COMPLETIONS_PATH
 UniLM.auth_header(::Type{MockServiceEndpoint}) = ["Content-Type" => "application/json"]
-UniLM.provider_capabilities(::Type{MockServiceEndpoint}) = Set([:chat, :responses, :embeddings, :images, :tools, :fim, :prefix_completion, :files, :vector_stores, :conversations, :moderation, :audio, :transcription, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime])
+UniLM.provider_capabilities(::Type{MockServiceEndpoint}) = Set([:chat, :responses, :embeddings, :images, :tools, :fim, :prefix_completion, :files, :vector_stores, :conversations, :moderation, :audio, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime])
 UniLM.default_model(::Type{MockServiceEndpoint}) = "mock-model"
 UniLM.default_embedding_model(::Type{MockServiceEndpoint}) = "mock-embedding"
 UniLM.default_image_model(::Type{MockServiceEndpoint}) = "mock-image"
@@ -57,7 +57,7 @@ struct DeadEndpoint <: UniLM.ServiceEndpoint end
 UniLM._api_base_url(::Type{DeadEndpoint}) = "http://127.0.0.1:1"
 UniLM.auth_header(::Type{DeadEndpoint}) = ["Content-Type" => "application/json"]
 UniLM.provider_capabilities(::Type{DeadEndpoint}) = Set([:files, :vector_stores, :conversations,
-    :moderation, :audio, :transcription, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime])
+    :moderation, :audio, :batch, :image_edits, :fine_tuning, :containers, :uploads, :realtime])
 
 # Local-echo endpoint for exercising the Realtime WebSocket transport.
 struct WSMockEndpoint <: UniLM.ServiceEndpoint end

@@ -192,7 +192,9 @@ end
 
 function _transcribe(t::TranscriptionRequest, path::String, cap::Symbol;
                      config::Union{Nothing,RequestConfig}=nothing)
-    validate_capability(t.service, cap, "Audio API")
+    # Transcription is part of the audio API: an endpoint that declares `:audio` transcribes too,
+    # while one that declares only `:transcription` (Ollama) neither speaks nor translates.
+    cap === :transcription && has_capability(t.service, :audio) || validate_capability(t.service, cap, "Audio API")
     # Local validation throws before the request (inside the `try` it would become an AudioCallError).
     _check_transcription(t.service, t)
     _transcription_model(t)

@@ -75,6 +75,9 @@ field for it, so `task` writes it:
 
 ```julia
 gemma = "embeddinggemma-2:740m-q8_0"    # the tag the Ollama guide's setup pulls
+documents = [EmbeddingInput("Refunds reach the original payment method within 5 working days.";
+                            title="Refunds"),
+             EmbeddingInput("Orders over 50 EUR ship free within the EU."; title="Shipping")]
 Embeddings(documents; service=OllamaEndpoint(), model=gemma, task=:document)
 Embeddings("How long do refunds take?"; service=OllamaEndpoint(), model=gemma,
            task=:search_query)
@@ -82,7 +85,8 @@ Embeddings("How long do refunds take?"; service=OllamaEndpoint(), model=gemma,
 
 The query side takes `:search_query`, `:question_answering`, `:fact_checking` or
 `:code_retrieval`; the corpus `:document`, with an [`EmbeddingInput`](@ref)'s `title`
-when a text has one; and a text compared with others of its kind `:classification`,
+when a text has one (an empty or whitespace-only title is none, sent as the model
+card's `title: none`); and a text compared with others of its kind `:classification`,
 `:clustering` or `:sentence_similarity`. An EmbeddingGemma request without a task is
 an `ArgumentError` before anything is sent; `task = :none` sends the text as it is,
 for a server that writes the prompts itself. Any other model takes `task = :none`
@@ -136,7 +140,8 @@ replays its recorded answers.
 
 Through Ollama, an [`ImageAttachment`](@ref) or [`AudioAttachment`](@ref) is an item
 of its own, and `EmbeddingInput(text, image)` embeds a text with its picture as one
-item; texts, images and sounds land in one space, so a word can find a picture:
+item (`EmbeddingInput(text, clip)` with its sound); texts, images and sounds land in
+one space, so a word can find a picture:
 
 ```julia
 pictures = Embeddings([ImageAttachment("label.png"), ImageAttachment("box.png")];
@@ -146,9 +151,14 @@ pictures = Embeddings([ImageAttachment("label.png"), ImageAttachment("box.png")]
 Only a model that sees or hears embeds media — among EmbeddingGemma 2's builds the
 440m ones take images, the 570m ones sound and the 740m ones both, as their tags say;
 the 740m ones were measured, with media alone and with a text and its media as one
-item, and the 440m and 570m ones are untested. Every other service embeds text, and
-refuses media before the request. [Local Models with Ollama](@ref ollama_embeddings)
-shows a picture and a recording found by words.
+item, and the 440m and 570m ones are untested. An item holds an image or a sound
+clip, not both: Ollama passes an item's media to the model in a random order, so an
+item holding both is refused before any request (ten requests of one gave
+`embeddinggemma-2:740m-q8_0` two different vectors on Ollama 0.40.6, an Apple M4
+Max, 21 October 2026) — send the image and the audio as separate items. Every other
+service embeds text, and refuses media before the request.
+[Local Models with Ollama](@ref ollama_embeddings) shows a picture and a recording
+found by words.
 
 ## Available Models
 

@@ -5,7 +5,7 @@ tools, streaming, and [cost accounting](@ref cost_guide) — run unchanged acros
 you only change the `service`. Cost accounting needs a price row for the model: the built-in
 table covers the OpenAI, Anthropic, Gemini, DeepSeek and TypeSafe models it lists, a local
 Ollama model costs `0.0` (a cloud model reached through Ollama, tagged `cloud` or `…-cloud`,
-is priced by its name), and any other model (Mistral, custom) is estimated at `0.0` with a
+is priced by the requested name), and any other model (Mistral, custom) is estimated at `0.0` with a
 one-time warning unless you supply `pricing=`. The agentic [`respond`](@ref) verb is neutral the same way
 across OpenAI (Responses) and Gemini (Interactions); see [Agentic Workflows](@ref agentic_guide).
 Native OpenAI, Anthropic, and Gemini are first-class backends with their own wire formats (each

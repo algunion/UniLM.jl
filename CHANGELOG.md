@@ -27,44 +27,58 @@
   compared and ranked like a real one. Upgrading: a mock that answers zero
   placeholder vectors must answer non-zero ones.
 - **Ollama System One takes what Ollama's route takes, not what its strictest
-  model takes.** Before the request, `ask` on an `OllamaEndpoint` now refuses only
-  what `/v1/systemone` refuses for every model and runner (Ollama 0.40.6): more
-  than 64 questions; a Choice of fewer than 2 or more than 255 options (was 26);
-  a Score of fewer than 2 or more than 10 levels; descriptions, levels and Noul
-  criteria that are not strings; a blank text state without images; Box
-  questions — plus one refusal of UniLM's own: blank (whitespace-only)
-  `instructions`, which Ollama would read as none. `instructions` are optional on
-  the route. A model that takes less answers with its own HTTP 400, a
-  `SystemOneFailure` carrying Ollama's message. Measured on Ollama 0.40.6: tev1
-  takes at most 24 options and answers 27 with `criteria must contain 2–26
-  candidates`; nimble and clef-flash take 26; kev, strands-decider, d1 and d1-omni
-  answered 27; and asked a question without `instructions`, `tev1:4b`,
-  `nimble:9b` and `strands-decider:2b` answered 400 `instructions must be a
-  nonempty string, object, or array`, `kev:0.8b-q8_0` 400 `questions.<name>:
-  "instructions" must be provided`, and `clef-flash:9b` answered the question:
-  pass `instructions` with local models. Upgrading: a request the wrapper used
-  to refuse — 27 to 255 options, a question without `instructions` — now reaches
-  the server; handle its 400 as a `SystemOneFailure`, or keep to 24 options and
+  model takes.** Before the request, `ask` on an `OllamaEndpoint` now refuses what
+  Ollama's route refuses in its shared checks or documents as its maximum (Ollama
+  0.40.6): more than 64 questions; a Choice of more than 255 options (was 26; one
+  option is now sent); a Score of fewer than 2 or more than 10 levels; a blank
+  text state without images; Box questions. It also refuses what Ollama's API
+  reference does not list, though some models read it: `instructions` that are
+  not a string, an object or an array, and descriptions, levels and Noul criteria
+  that are not strings — plus one refusal of UniLM's own: blank
+  (whitespace-only) `instructions`, which Ollama would read as none.
+  `instructions` are optional on the route. A model that takes less answers with
+  its own HTTP 400, a `SystemOneFailure` carrying Ollama's message. Measured on
+  Ollama 0.40.6 (Apple M4 Max, 21 October 2026): tev1 takes at most 24 options
+  and answers 27 with `criteria must contain 2–26 candidates`; nimble and
+  clef-flash take 26; kev, strands-decider, d1 and d1-omni answered 27; a Choice
+  of one option was answered by `kev:0.8b-q8_0`, `kev:9b-q4_K_M`, `d1-omni:600m`
+  and `d1:3b` (the llama.cpp path), while `tev1:0.8b`, `tev1:4b`, `nimble:9b` and
+  `clef-flash:9b` answered 400 `criteria must contain 2–26 candidates` and
+  `strands-decider:2b` 400 `criteria must contain 2–255 candidates`; and asked a
+  question without `instructions`, `tev1:4b`, `nimble:9b` and
+  `strands-decider:2b` answered 400 `instructions must be a nonempty string,
+  object, or array`, `kev:0.8b-q8_0` 400 `questions.<name>: "instructions" must
+  be provided`, and `clef-flash:9b` answered the question: pass `instructions`
+  with local models. Upgrading: a request the wrapper used to refuse — one
+  option, 27 to 255 options, a question without `instructions` — now reaches the
+  server; handle its 400 as a `SystemOneFailure`, or keep to 2–24 options and
   give every question `instructions`.
 - **New fields.** `OllamaEndpoint.runner` (before `options`);
-  `OllamaModel.runner::Union{Symbol,Nothing}` and `.format::Union{String,Nothing}`
+  `OllamaModel.runner::Union{Symbol,Nothing}` and `.format::Union{Symbol,Nothing}`
   (before `capabilities`); `OllamaModelInfo.runner` and `.format` (before `raw`);
   `OllamaRunningModel.runner` (before `raw`); `ResponseSuccess.service` and
   `FIMSuccess.service`, the endpoint that answered (last; `nothing` for a result
   built by hand); `Embeddings.task`, and `Embeddings.input` also holds
-  `EmbeddingInput`s. A detail an Ollama listing reports as `""` — MLX models
+  `EmbeddingInput`s. A detail an Ollama listing reports as `""` — some MLX models
   leave `family`, `parameter_size` and `quantization` empty — reads as `nothing`.
   Upgrading: positional constructors take the new fields; build `ResponseSuccess`
-  and `FIMSuccess` by keyword; compare a runner with a `Symbol`
-  (`m.runner === :mlx`).
+  and `FIMSuccess` by keyword; compare a runner or a format with a `Symbol`
+  (`m.runner === :mlx`, `m.format === :gguf`).
 - **`TranscriptionRequest.model` defaults to `nothing`,** resolved per service
   when the request is sent: `gpt-transcribe` on OpenAI, while Ollama has no
   default and a request to it names a model. Upgrading: a default request's
   `model` field is `nothing`, not `"gpt-transcribe"`.
+- **`:transcription` joins `provider_capabilities`** of `OPENAIServiceEndpoint`
+  and of an `OllamaEndpoint` (see Added), so code that compares those sets with a
+  fixed set of its own no longer matches them. Upgrading: test one capability with
+  `has_capability(s, cap)`, or add `:transcription` to the expected set.
 - **`get_response`, `cancel_response`, `delete_response` and `list_input_items`
   refuse an `OllamaEndpoint`** with an `ArgumentError` before any request, naming
   what to do instead: Ollama's Responses API stores no response, so each failed
-  at the server. `compact_response` works on Ollama and stays allowed.
+  at the server. `compact_response` stays allowed on Ollama with a `model` named:
+  Ollama has no default model, so a call there that names none is now the
+  `ArgumentError` a `Chat` gives, before any request (it sent OpenAI's default
+  model, which Ollama answered with a 404).
 - **`load_model` asks `/api/show` first:** two requests, both bounded by one
   `total_deadline`. A chat model loads with an empty chat request as before; an
   embedding or decision model, which Ollama's chat route refuses, loads with an
@@ -73,9 +87,10 @@
 - **Refusal messages changed.** An image in an Ollama System One request is sent
   now, and `transcribe` on an `OllamaEndpoint` goes through (see Added), so their
   old refusals are gone; the new refusals — an image out of place, blank
-  `instructions`, what Ollama's transcription cannot carry — name the rule and the
-  fix. Upgrading: match an `ArgumentError` by its type, or a fragment with
-  `occursin`, not a whole message.
+  `instructions`, what Ollama's transcription cannot carry, an embeddings item
+  holding both an image and a sound clip for Ollama, a `compact_response` to
+  Ollama without a model — name the rule and the fix. Upgrading: match an
+  `ArgumentError` by its type, or a fragment with `occursin`, not a whole message.
 - **Recordings: media sent to Ollama are keyed and written by digest.** The
   images and sound clips of an embeddings request to an `OllamaEndpoint` and the
   images of an Ollama System One request read `data:<mime>;sha256,<hex>` (the
@@ -93,31 +108,38 @@
   query: "` and the like), `:document` for the corpus (`"title: <title, else
   none> | text: "`), `:classification`, `:clustering`, `:sentence_similarity`, and
   `:none` for the text as it is. `EmbeddingInput(text; title)` gives a document
-  its title. On SciFact (BEIR: 300 claims, 5,183 abstracts; Ollama 0.40.6, Apple
-  M4 Max, 21 October 2026) the prompts raised nDCG@10 on every build measured:
+  its title; an empty or whitespace-only title is none, sent as the model card's
+  `title: none`. On SciFact (BEIR: 300 claims, 5,183 abstracts; Ollama 0.40.6,
+  Apple M4 Max, 21 October 2026) the prompts raised nDCG@10 on every build
+  measured:
   `embeddinggemma-2:740m-mxfp8` 0.8515 against 0.8245 without them (+0.027, 95%
   interval +0.009 to +0.046), `embeddinggemma-2:270m-q8_0-text` 0.8536 against
   0.8207 (+0.033, +0.014 to +0.053), `embeddinggemma` 0.7921 against 0.7727
   (+0.019, +0.003 to +0.037).
 - **Images and sound in embeddings, through Ollama.** An `ImageAttachment` or
   `AudioAttachment` is an item of its own, and `EmbeddingInput(text, image)` — or
-  `EmbeddingInput(; text, title, image, audio)` — embeds a text with its media as
-  one item, for the models that see or hear. Measured on Ollama 0.40.6 (Apple M4
-  Max, 21 October 2026) with `embeddinggemma-2:740m-q8_0` and `:740m-mxfp8`; the
-  440m (text and images) and 570m (text and audio) builds are described from
-  their tags, untested. Texts, images and sounds share one space: on `740m-q8_0`
-  a red circle scored 0.754 against "a red circle" and 0.633 against "a blue
-  square", a spoken "banana" 0.792 against "banana" and 0.626 against "apple"; "a
-  red circle" sent with its picture as one item gave a vector of its own, cosine
-  0.870 with the text alone and 0.903 with the picture alone (both 740m builds:
-  0.85–0.96 with each part, pictures and clips alike). Every other service embeds
-  text only and refuses media before the request.
+  `EmbeddingInput(; text, title, image, audio)` — embeds a text with its picture
+  or its sound clip as one item, for the models that see or hear. Measured on
+  Ollama 0.40.6 (Apple M4 Max, 21 October 2026) with `embeddinggemma-2:740m-q8_0`
+  and `:740m-mxfp8`; the 440m (text and images) and 570m (text and audio) builds
+  are described from their tags, untested. Texts, images and sounds share one
+  space: on `740m-q8_0` a red circle scored 0.754 against "a red circle" and 0.633
+  against "a blue square", a spoken "banana" 0.792 against "banana" and 0.626
+  against "apple"; "a red circle" sent with its picture as one item gave a vector
+  of its own, cosine 0.870 with the text alone and 0.903 with the picture alone
+  (both 740m builds: 0.845–0.958 with each part, pictures and clips alike). An
+  item holds an image or a clip, not both: Ollama passes an item's media to the
+  model in a random order, and ten requests of one item holding both gave
+  `embeddinggemma-2:740m-q8_0` two different vectors, so such an item is refused
+  before any request — send the image and the audio as separate items. Every
+  other service embeds text only and refuses media before the request.
 - **EmbeddingGemma 2 gets its trained 8,192-token window.** Ollama reports a
-  262,144-token context for it, and at its default batch the llama.cpp builds
-  measured refused long inputs with HTTP 413 (`740m-q8_0` anything over about
-  2,037 tokens). An embeddings request — and `load_model` — for an EmbeddingGemma
-  2 model now carries `num_ctx` and `num_batch` of 8192 unless the endpoint sets
-  either: on Ollama 0.40.6 every build measured (`740m-q8_0`, `740m-mxfp8`,
+  262,144-token context for its llama.cpp builds (the MLX build, `740m-mxfp8`,
+  loads at 8,192), and at its default batch the llama.cpp builds measured refused
+  long inputs with HTTP 413 (`740m-q8_0` anything over about 2,037 tokens). An
+  embeddings request — and `load_model` — for an EmbeddingGemma 2 model now
+  carries `num_ctx` and `num_batch` of 8192 unless the endpoint sets either: on
+  Ollama 0.40.6 every build measured (`740m-q8_0`, `740m-mxfp8`,
   `270m-q8_0-text`) embedded 5,991 tokens whole and refused 8,331 with HTTP 400.
 - **Pictures for local decision models.** `ask` on an `OllamaEndpoint` sends the
   images of the state to a vision decision model — measured on Ollama 0.40.6:
@@ -131,24 +153,42 @@
   its own 400, in its own words: `image inputs are not supported by this decision
   model` from `tev1:0.8b`, `registry.ollama.ai/library/kev:0.8b-q8_0 does not
   support vision` from `kev:0.8b-q8_0`.
-- **`OllamaEndpoint(runner = :mlx | :llamacpp | :ggml)`** asks the server for a
-  runner when it can run a model more than one way; it goes with chat,
-  embeddings, System One, `load_model` and `unload_model` requests, and is part of
-  a recording's key. `OllamaModel`, `OllamaModelInfo` and
+- **`OllamaEndpoint(runner = :mlx | :llamacpp | :ggml)`** pins the runner that
+  serves a model. Ollama matches it against the runner the model's manifest names,
+  the one `list_models` reports as `OllamaModel.runner`: a model published for one
+  runner — every model measured on Ollama 0.40.6 — answers as if unpinned when
+  that runner is pinned, and any other is the server's error, never a fallback:
+  HTTP 400 `no compatible manifest found for runners: <runner>` (404 from
+  `model_info`, and so from `load_model`), even while the model is loaded; a model
+  published for several runners is served by its variant for the one pinned (by
+  Ollama's source; untested). Pin the runner the listing names, not the one
+  `running_models` reports: a GGUF model listed as `:ggml` is served by llama.cpp
+  and is the 400 pinned to `:llamacpp`. The pin goes with chat, embeddings, System
+  One, `model_info`, `load_model`, `unload_model` and `pull_model` requests, so a
+  pinned endpoint fails for each model without a variant for its runner, and it is
+  part of a recording's key. `OllamaModel`, `OllamaModelInfo` and
   `OllamaRunningModel` report a model's `runner` (a `Symbol`) and the first two its
-  `format` (`"gguf"`, `"safetensors"`); the runner a listing names can differ from
-  the one serving the model, which `running_models` reports.
+  `format` (`:gguf`, `:safetensors`).
 - **`delete_model(name)`** removes an installed model from the server's disk
-  (`DELETE /api/delete`). `load_model` loads embedding and decision models too.
+  (`DELETE /api/delete`). `load_model` loads embedding and decision models too,
+  each with what its own requests carry: an embedding model the options of its
+  embeddings requests, a decision model no options, as System One requests carry
+  none — so an endpoint's `num_ctx`, or any other option, does not apply to a
+  decision model, neither when it is loaded nor when it is asked. Measured on
+  Ollama 0.40.6 (Apple M4 Max, 21 October 2026), `kev:0.8b-q8_0` through
+  `OllamaEndpoint(num_ctx=4096)`: the first ask after `load_model` took
+  0.036–0.049 s, an ask without it, which loads the model, 0.81–1.36 s.
 - **Local transcription:** `transcribe(path; service = OllamaEndpoint(), model =
   "gemma4:e4b")` goes to Ollama's `/v1/audio/transcriptions` (Ollama 0.40.6:
   "The secret word is banana" for the manual's recording). There is no default
-  model; `language`, `prompt` and a `response_format` of `"json"` or `"text"` are
-  sent, and `temperature`, `languages`, `keywords` and other formats are refused
-  before the request. Ollama labels these replies `application/x-ndjson`, so they
-  are read by the format asked for. With `"text"`, a failure after Ollama has begun
-  its reply arrives as an empty transcript (by Ollama's source; not reproduced);
-  JSON reports it as an `AudioCallError`. A new capability, `:transcription`, is
+  model; `language` and `prompt` are sent, and the transcript is asked for as JSON
+  only, the one form in which Ollama reports a failure that arrives after its
+  reply has begun (an `AudioCallError`; by Ollama 0.40.6's source, not
+  reproduced): `response_format = "text"`, which would read such a failure as an
+  empty transcript, is refused before the request — leave it unset and read the
+  text with `transcript_text` — and so are `temperature`, `languages`, `keywords`
+  and other formats. Ollama labels these replies `application/x-ndjson`, so they
+  are read as JSON whatever the label. A new capability, `:transcription`, is
   declared by OpenAI and Ollama, and `has_capability(s, :transcription)` is true
   for any endpoint that declares `:audio`, so an endpoint of your own keeps
   transcribing; `speak` and `translate` still need `:audio`.
@@ -168,13 +208,25 @@
   of a 10,842-token prompt was read on a 4,096-token load; on llama.cpp another
   `num_ctx` loads the model again, and a prompt that does not fit is an HTTP 400
   with `truncate = false`. `truncate = true` on chat can cut inside a single
-  over-long message: 5,407 tokens became 2,050, the first 4 and the tail kept.
+  over-long message: 5,407 tokens became 2,050, the first 4 and the tail kept. A
+  model with vision loads with at least 2,048 tokens whatever `num_ctx` asks
+  (`embeddinggemma-2:740m-q8_0` asked for 1,024 loaded with 2,048 on an Apple M4
+  Max on 22 October 2026, and on Ollama 0.40.7 on Linux).
   The docstrings and the guide said, for every runner, that another window reloads
   the model and that a prompt that does not fit is refused.
-- **Ollama cloud models are priced by their name**, not as free local calls: a
-  model whose tag is `cloud` or ends in `-cloud` (`gpt-oss:120b-cloud`) runs on
-  Ollama's servers and bills its account. A System One answer from one whose reply
-  drops the tag keeps the requested name.
+- **Ollama cloud models are priced by the requested name**, not as free local
+  calls: a model whose tag is `cloud` or ends in `-cloud` (`gpt-oss:120b-cloud`)
+  runs on Ollama's servers and bills its account. Its chat, embeddings and System
+  One results were priced at 0.0 as local, and its `respond` and FIM results by
+  the reply's name, which drops the tag (`gpt-oss:120b`), so a price row for the
+  cloud model never applied. A System One answer, or a `respond` (streamed or
+  not) or FIM result, whose reply drops the tag now keeps the requested name, and
+  the server's stays in its `raw`; a name missing from the price table logs the
+  missing-price warning. That the reply drops the tag is inferred from Ollama
+  0.40.6's source (its cloud proxy sends the name without the tag and passes the
+  reply through), not observed. A model is recognised as cloud by its tag alone,
+  surrounding whitespace trimmed: a cloud model copied under a name without it
+  (`ollama cp`) is priced as local, at 0.0, with no warning.
 - **Local `respond` and FIM results cost `0.0`** without the missing-price warning,
   as chat and embeddings did: the results now record the endpoint that answered.
 

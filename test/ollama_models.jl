@@ -413,3 +413,24 @@ end
     @test sprint(show, ms["gemma4:e4b"]) ==
           "OllamaModel(\"gemma4:e4b\", 9.5 GB, mlx, [:completion, :vision, :audio, :tools, :thinking])"
 end
+
+@testset "delete_model: DELETE /api/delete with the name; 404 when absent; a blank name sends nothing" begin
+    seen = Tuple{String,String,String}[]
+    handler = req -> (push!(seen, (String(req.method), String(req.target),
+                                   applicable(copy, req.body) ? String(copy(req.body)) : ""));
+        length(seen) == 1 ? HTTP.Response(200, UInt8[]) :      # Ollama answers a delete with an empty 200
+        HTTP.Response(404, ["Content-Type" => "application/json"], Vector{UInt8}("{\"error\":\"model 'x' not found\"}")))
+    tcp = Sockets.listen(Sockets.localhost, 0); port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+    server = HTTP.serve!(handler, "127.0.0.1", port; verbose=false)
+    try
+        ep = OllamaEndpoint(base_url="http://127.0.0.1:$port")
+        @test delete_model("all-minilm:22m"; service=ep) isa OllamaSuccess{Nothing}
+        @test seen[1][1:2] == ("DELETE", "/api/delete") && JSON.parse(seen[1][3]) == Dict("model" => "all-minilm:22m")
+        f = delete_model("x"; service=ep, config=RequestConfig(max_attempts=1))
+        @test f isa OllamaFailure && f.status == 404
+        @test_throws ArgumentError delete_model("  "; service=ep)
+        @test length(seen) == 2
+    finally
+        close(server)
+    end
+end

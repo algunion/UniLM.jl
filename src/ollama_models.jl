@@ -1,8 +1,9 @@
 # ============================================================================
 # Ollama model management (https://docs.ollama.com/api): the installed models
 # (`/api/tags`), one model's metadata (`/api/show`), the loaded ones (`/api/ps`),
-# loading and unloading through an empty `/api/chat` request, and pulling from the
-# registry (`/api/pull`, a newline-delimited JSON progress stream).
+# loading and unloading through an empty `/api/chat` request, pulling from the
+# registry (`/api/pull`, a newline-delimited JSON progress stream), and deleting
+# (`/api/delete`).
 # ============================================================================
 
 """
@@ -101,7 +102,7 @@ struct OllamaPullProgress
     total::Union{Int,Nothing}
 end
 
-"Successful Ollama model-management result: `response` holds what the verb reports (`nothing` for [`pull_model`](@ref), [`load_model`](@ref) and [`unload_model`](@ref))."
+"Successful Ollama model-management result: `response` holds what the verb reports (`nothing` for [`pull_model`](@ref), [`load_model`](@ref), [`unload_model`](@ref) and [`delete_model`](@ref))."
 @kwdef struct OllamaSuccess{T} <: LLMRequestResponse; response::T; end
 "Ollama error result: HTTP `status`, the raw `response` body (Ollama's `{\"error\": …}`), and the `request_id` the server sent (`x-request-id`/`request-id` header), if any."
 @kwdef struct OllamaFailure <: LLMRequestResponse; response::String; status::Int; request_id::Union{String,Nothing} = nothing; end
@@ -220,14 +221,16 @@ end
 # `ollama serve` hint.
 _ollama_callerr(service::OllamaEndpoint, e) = _callerr(OllamaCallError, e; error=_error_text(service, e))
 
-# One idempotent exchange through the shared retry loop: a 200 is decoded by `decode`
-# (a throw there makes the malformed reply a call error), any other status is the failure.
-function _ollama_call(decode::Function, service::OllamaEndpoint, method::String, path::String, body,
+# One idempotent exchange through the shared retry loop: a 200 is decoded by `decode` (a throw there
+# makes the malformed reply a call error); `decode === nothing` for a verb whose 200 carries no body.
+# Any other status is the failure.
+function _ollama_call(decode::Union{Function,Nothing}, service::OllamaEndpoint, method::String, path::String, body,
                       config::Union{Nothing,RequestConfig}, cancel::Union{Nothing,CancelToken})
     cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
     try
         resp = _http_with_retries(cfg, t0, method, service.base_url * path, auth_header(service), body; cancel=tok)
         resp.status == 200 || return _failure(OllamaFailure, resp)
+        isnothing(decode) && return OllamaSuccess(response=nothing)
         d = JSON.parse(resp.body; dicttype=Dict{String,Any})
         d isa Dict{String,Any} || throw(ArgumentError("the Ollama reply is not a JSON object"))
         OllamaSuccess(response=decode(d))
@@ -350,6 +353,23 @@ function unload_model(name::AbstractString; service::OllamaEndpoint=OllamaEndpoi
     _ollama_runner!(body, service)
     _ollama_call(d -> _ollama_done(d, "unload"), service, "POST", OLLAMA_CHAT_PATH, JSON.json(body), config, cancel)
 end
+
+"""
+    delete_model(name; service=OllamaEndpoint(), config=nothing, cancel=nothing)
+
+Remove the installed model `name` from an Ollama server's disk (`DELETE /api/delete`). Returns
+`OllamaSuccess{Nothing}`, an [`OllamaFailure`](@ref) (404 for a model that is not installed), or an
+[`OllamaCallError`](@ref). `config` and `cancel` work as for [`model_info`](@ref). An empty `name`
+throws `ArgumentError` before any request. There is no undo: [`pull_model`](@ref) downloads it again.
+
+```julia
+delete_model("all-minilm:22m")
+```
+"""
+delete_model(name::AbstractString; service::OllamaEndpoint=OllamaEndpoint(),
+             config::Union{Nothing,RequestConfig}=nothing, cancel::Union{Nothing,CancelToken}=nothing) =
+    _ollama_call(nothing, service, "DELETE", "/api/delete", JSON.json(Dict("model" => _ollama_model_name(name))),
+                 config, cancel)
 
 # ─── Pull (newline-delimited JSON progress stream) ──────────────────────────
 

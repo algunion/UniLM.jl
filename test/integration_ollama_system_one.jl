@@ -1,36 +1,56 @@
 # ─── Ollama System One live witnesses ────────────────────────────────────────
 # Requires UNILM_LIVE_OLLAMA=1 and a reachable Ollama server, 0.35 or later (OLLAMA_HOST,
-# else 127.0.0.1:11434), with the decision models tev1:0.8b and kev:0.8b-q8_0 installed.
-# Local models: no spend. Every request goes through an in-process relay that counts the
-# System One requests reaching the server, so a witness can say how many were sent. The
-# models are 0.8B: states are clear-cut, and assertions are on shapes, ranges and those
-# routes only. Each witness names the outcome that would refute it.
+# else 127.0.0.1:11434), with the decision models UNILM_OLLAMA_DECISION_MODELS lists
+# (comma-separated; by default the nine below) installed: a listed model that is not
+# installed fails. Local models: no spend. Every request goes through an in-process relay
+# that counts the System One requests reaching the server and the requests in flight at
+# once, so a witness can say how many were sent. The models have 0.6B to 9B parameters:
+# states are clear-cut, and assertions are on shapes, ranges and those routes only; the caps
+# and messages asserted were measured on Ollama 0.40.6. Each witness names the outcome that
+# would refute it.
 
 using Sockets
 
-const _OS1L_MODELS = ("tev1:0.8b", "kev:0.8b-q8_0")
+const _OS1L_MODELS = String.(strip.(split(get(ENV, "UNILM_OLLAMA_DECISION_MODELS",
+    "tev1:0.8b,tev1:4b,kev:0.8b-q8_0,kev:9b-q4_K_M,strands-decider:2b,nimble:9b,d1-omni:600m,d1:3b,clef-flash:9b"), ',')))
 const _OS1L_EP = get(ENV, "UNILM_LIVE_OLLAMA", "") == "1" ? OllamaEndpoint() : nothing
-const _OS1L_TAGS = isnothing(_OS1L_EP) ? nothing : let r = list_models(; service=_OS1L_EP,
-                                                                        config=RequestConfig(max_attempts=1, request_timeout=5.0))
-    r isa OllamaSuccess ? Set(m.name for m in r.response) : nothing
-end
+const _OS1L_INFO = isnothing(_OS1L_EP) ? nothing :
+    let r = list_models(; service=_OS1L_EP, config=RequestConfig(max_attempts=1, request_timeout=5.0))
+        r isa OllamaSuccess || error("Ollama System One live witnesses: listing the installed models failed: $(r)")
+        Dict(m.name => m for m in r.response)
+    end
 
-if isnothing(_OS1L_TAGS) || !all(in(_OS1L_TAGS), _OS1L_MODELS)
-    @info "Skipping Ollama System One live witnesses (set UNILM_LIVE_OLLAMA=1, run an Ollama server and pull " *
-          join(_OS1L_MODELS, " and ") * ")"
+if isnothing(_OS1L_EP)
+    @info "Skipping Ollama System One live witnesses (set UNILM_LIVE_OLLAMA=1 and run an Ollama server with " *
+          join(_OS1L_MODELS, ", ") * " installed)"
 else
 
-# The relay: forwards every request to the server through the package's own request seam
-# and counts those to /v1/systemone.
+const _OS1L_INFLIGHT = Threads.Atomic{Int}(0)                 # requests inside the relay now
+const _OS1L_PEAK = Threads.Atomic{Int}(0)                     # the most at once since the last reset
+# The last /v1/systemone exchange through the relay: the bytes received, the status and the reply.
+const _OS1L_LAST = Ref((request=UInt8[], status=0, response=UInt8[]))
+const _OS1L_LAST_LOCK = ReentrantLock()
+_os1l_last() = @lock _OS1L_LAST_LOCK _OS1L_LAST[]
+
+# The relay: forwards every request to the server through the package's own request seam,
+# counts those to /v1/systemone, keeps the last of them, and the peak of requests in flight.
 function _os1l_relay(f::Function, upstream::String)
     sent = Threads.Atomic{Int}(0)
     cfg = RequestConfig(request_timeout=120.0, total_deadline=120.0, max_attempts=1)
     handler = function (req)
-        target = String(req.target)
-        target == "/v1/systemone" && Threads.atomic_add!(sent, 1)
-        body = applicable(copy, req.body) ? Vector{UInt8}(copy(req.body)) : UInt8[]
-        r = UniLM._http(String(req.method), upstream * target, ["Content-Type" => "application/json"], body; cfg)
-        HTTP.Response(r.status, ["Content-Type" => "application/json"], r.body)
+        Threads.atomic_max!(_OS1L_PEAK, Threads.atomic_add!(_OS1L_INFLIGHT, 1) + 1)
+        try
+            target = String(req.target)
+            target == "/v1/systemone" && Threads.atomic_add!(sent, 1)
+            body = applicable(copy, req.body) ? Vector{UInt8}(copy(req.body)) : UInt8[]
+            received = copy(body)
+            r = UniLM._http(String(req.method), upstream * target, ["Content-Type" => "application/json"], body; cfg)
+            target == "/v1/systemone" &&
+                @lock _OS1L_LAST_LOCK (_OS1L_LAST[] = (request=received, status=Int(r.status), response=copy(r.body)))
+            HTTP.Response(r.status, ["Content-Type" => "application/json"], r.body)
+        finally
+            Threads.atomic_sub!(_OS1L_INFLIGHT, 1)
+        end
     end
     for _ in 1:5
         tcp = Sockets.listen(Sockets.localhost, 0)
@@ -76,6 +96,8 @@ _os1l_keyed(::Val{:pricing}, t) = :pricing
 
 const _OS1L_LOG = Tuple{String,String,Int,Float64}[]          # model, witness, requests, seconds
 const _OS1L_DRIFT = Ref(0.0)                                  # largest |Σp − 1| seen
+const _OS1L_27 = Pair{String,String}[]                        # model => what a 27-option Choice got
+const _OS1L_PARITY = Tuple{String,Int,Float64}[]              # model, choices that differ, largest |Δp|
 
 function _os1l_timed(f::Function, model::String, witness::String, sent::Threads.Atomic{Int})
     before = sent[]
@@ -85,8 +107,29 @@ function _os1l_timed(f::Function, model::String, witness::String, sent::Threads.
 end
 
 _os1l_drift!(ps) = (_OS1L_DRIFT[] = max(_OS1L_DRIFT[], abs(sum(ps) - 1)); ps)
+_os1l_outcome(r) = r isa SystemOneSuccess ? "answered, $(length(r["pick"].probabilities)) probabilities" :
+                   r isa SystemOneFailure ? "HTTP $(r.status): $(r.message)" : "call error: $(r.error)"
+
+const _OS1L_TICKETS = JSON.parse(read(joinpath(@__DIR__, "fixtures", "ollama", "parity_tickets.json"), String))
+const _OS1L_IMAGE = joinpath(@__DIR__, "fixtures", "ollama", "red_circle.png")
+
+const _OS1L_BLUE = joinpath(@__DIR__, "fixtures", "ollama", "blue_square.png")   # a blue square on white
+
+# Vision models whose answers about what an image shows — a yes/no about it, its colour — are
+# model-quality claims this suite does not assert for them: their questions are still sent, the
+# wiring is asserted, and the values are reported. Observed with Ollama 0.40.6 on an Apple M4 Max:
+# d1-omni:600m answers noul 5.97e-7 to "Is there a red shape in the image?" for the red-circle image
+# while its own colour choice on the same request says red 0.996; for a 300-pixel red square its
+# colour choice says blue 0.954 (red 0.0396, green 0.00661) while that noul says 0.999; for a
+# 300-pixel blue square, blue 0.51 against green 0.42 (red 0.0695), and "Is there a blue shape in the
+# image?" 0.00125. d1:3b and clef-flash:9b answer the noul and the colours of all three correctly.
+const _OS1L_NOUL_ON_IMAGE_EXCEPT = ("d1-omni:600m",)
+const _OS1L_COLOUR_ON_IMAGE_EXCEPT = ("d1-omni:600m",)
 
 @testset "Ollama System One live — $model" for model in _OS1L_MODELS
+@test haskey(_OS1L_INFO, model)                               # listed, so it must be installed
+haskey(_OS1L_INFO, model) || continue
+info = _OS1L_INFO[model]
 _os1l_relay(_OS1L_EP.base_url) do ep, sent
 
 @testset "choice, score and noul in one call; the confidence is the published one" begin
@@ -112,12 +155,13 @@ _os1l_relay(_OS1L_EP.base_url) do ep, sent
     @test 0 <= u.score <= 2 && 0 <= f.noul <= 1 && all(p -> 0 <= p <= 1, [ps; ls])
     @test d.confidence ≈ _os1l_choice(ps) atol = 1e-12
     @test u.confidence ≈ _os1l_score(ls) atol = 1e-12
-    if model == "tev1:0.8b"
-        # tev1 reports 1 − H(p)/ln n; the surface's confidence replaces it, the raw keeps it.
+    if info.runner === :mlx
+        # Ollama's MLX decision encodings report 1 − H(p)/ln n; the surface's confidence
+        # replaces it, the raw keeps it (for tev1:0.8b's split on this ticket, measurably).
         @test d.raw["confidence"] ≈ _os1l_entropy(ps) atol = 1e-9
-        @test abs(d.confidence - d.raw["confidence"]) > 1e-3
+        model == "tev1:0.8b" && @test abs(d.confidence - d.raw["confidence"]) > 1e-3
     else
-        # Kev reports TypeSafe's formula itself.
+        # Kev and the models on the llama.cpp path report TypeSafe's formula themselves.
         @test abs(d.confidence - d.raw["confidence"]) <= 1e-6
         @test abs(u.confidence - u.raw["confidence"]) <= 1e-6
     end
@@ -152,30 +196,37 @@ end
     end
 end
 
-@testset "what Ollama rejects is refused here, with no request" begin
+@testset "route bounds: refused locally, or the model's own answer" begin
     # Refuted by: a request reaching the server, or anything but an ArgumentError naming Ollama.
     for (witness, call) in (
-            "27-option Choice" => () -> ask("s", "pick" => choice("Which?", ["o$i" => "option $i" for i in 1:27]); service=ep, model),
-            "object criterion" => () -> ask("s", "pick" => choice("Which?", ["a" => Dict("d" => "A"), "b" => nothing]); service=ep, model),
-            "no model"         => () -> ask("s", noul("Is it?"); service=ep))
+            "256-option Choice" => () -> ask("s", "pick" => choice("Which?", ["o$i" => "option $i" for i in 1:256]); service=ep, model),
+            "object criterion"  => () -> ask("s", "pick" => choice("Which?", ["a" => Dict("d" => "A"), "b" => nothing]); service=ep, model),
+            "no model"          => () -> ask("s", noul("Is it?"); service=ep))
         e = _os1l_timed(model, witness, sent) do
             try call(); nothing catch x; x end
         end
         @test e isa ArgumentError && contains(e.msg, "Ollama")
         @test last(_OS1L_LOG)[3] == 0
     end
-    # 26 options, the route's bound, are sent. A model may cap lower and says so itself:
-    # tev1 answers 400 "Tev1 supports at most 24 candidates" (Ollama 0.40.6), kev answers.
-    r = _os1l_timed(model, "26-option Choice", sent) do
-        ask("Option 7 is the right one.", "pick" => choice("Which option is the right one?",
-                                                            ["o$i" => "option $i" for i in 1:26]); service=ep, model)
-    end
-    @test last(_OS1L_LOG)[3] == 1
-    if model == "tev1:0.8b"
-        @test r isa SystemOneFailure && r.status == 400 && contains(r.message, "at most 24 candidates")
-    else
-        @test r isa SystemOneSuccess && length(r["pick"].probabilities) == 26
-        r isa SystemOneSuccess && _os1l_drift!(collect(values(r["pick"].probabilities)))
+    # Up to 255 options, the route's bound, are sent. A model may cap lower and says so itself, as
+    # measured on Ollama 0.40.6: on MLX, the generic encoder (tev1, nimble) and Clef's answer 400
+    # "criteria must contain 2–26 candidates", and Tev1's prompt, built after that check, 400 "Tev1
+    # supports at most 24 candidates"; Strands' encoder and the llama.cpp path (kev, d1) take 27.
+    cap = startswith(model, "tev1:") ? 24 : startswith(model, "nimble:") || startswith(model, "clef-flash:") ? 26 : 255
+    for n in (26, 27)
+        r = _os1l_timed(model, "$n-option Choice", sent) do
+            ask("Option 7 is the right one.", "pick" => choice("Which option is the right one?",
+                                                                ["o$i" => "option $i" for i in 1:n]); service=ep, model)
+        end
+        @test last(_OS1L_LOG)[3] == 1
+        n == 27 && push!(_OS1L_27, model => _os1l_outcome(r))
+        if n <= cap
+            @test r isa SystemOneSuccess && length(r["pick"].probabilities) == n
+            r isa SystemOneSuccess && _os1l_drift!(collect(values(r["pick"].probabilities)))
+        else
+            @test r isa SystemOneFailure && r.status == 400 &&
+                  contains(r.message, n > 26 ? "2–26 candidates" : "at most 24 candidates")
+        end
     end
 end
 
@@ -185,6 +236,108 @@ end
         ask("s", noul("Is it?"); service=ep, model="no-such-decision-model:0b")
     end
     @test f isa SystemOneFailure && f.status == 404 && contains(f.message, "ollama pull no-such-decision-model:0b")
+end
+
+@testset "wrapper parity: the encoder's bytes are sent, and the answer is the server's reply" begin
+    # Refuted by: request bytes other than encode_system_one's reaching the server, or a decoded
+    # answer that differs in any way from the reply the relay captured for that request.
+    set = _OS1L_TICKETS
+    q = choice(set["instructions"], [k => set["descriptions"][k] for k in set["order"]])
+    differ, spread = 0, 0.0
+    for t in set["items"]
+        req = SystemOneRequest(t["text"], ["intent" => q]; model)
+        wire = UniLM.encode_system_one(UniLM.OllamaSystemOneProtocol(), ep, req)
+        r = ask(req; service=ep)
+        x = _os1l_last()
+        @test String(copy(x.request)) == wire.body && x.status == 200
+        a = JSON.parse(String(copy(x.response)))["answers"]["intent"]
+        @test r isa SystemOneSuccess && r["intent"].choice == a["choice"]
+        r isa SystemOneSuccess || continue
+        ps, want = r["intent"].probabilities, a["probabilities"]
+        @test Set(keys(ps)) == Set(keys(want)) && all(ps[k] == want[k] for k in keys(want))
+        differ += r["intent"].choice != a["choice"]
+        spread = max(spread, maximum(abs(ps[k] - want[k]) for k in keys(want)))
+    end
+    push!(_OS1L_PARITY, (model, differ, spread))
+end
+
+if :vision in info.capabilities
+    @testset "vision: an image state answers; an image after text is refused locally" begin
+        # Refuted by: a non-success or a malformed answer to an image (any vision model); outside the
+        # documented exceptions, a colour choice that does not tell the red circle from the blue
+        # square, or a yes/no that misses the red shape; or an image after a text reaching the server.
+        img = ImageAttachment(_OS1L_IMAGE)
+        colours = ["red" => "red", "green" => "green", "blue" => "blue"]
+        for (file, colour) in (_OS1L_IMAGE => "red", _OS1L_BLUE => "blue")
+            qs = colour == "red" ? ("red" => noul("Is there a red shape in the image?"),
+                                    "colour" => choice("Which colour is the shape?", colours)) :
+                                   ("colour" => choice("Which colour is the shape?", colours),)
+            r = _os1l_timed(model, "image ($colour): $(join(first.(qs), " + "))", sent) do
+                ask(ImageAttachment(file), qs...; service=ep, model)
+            end
+            # The wiring, for any vision model: one request, answered (HTTP 200), in shape and range.
+            @test r isa SystemOneSuccess && last(_OS1L_LOG)[3] == 1 && _os1l_last().status == 200
+            r isa SystemOneSuccess || continue
+            c = r["colour"]
+            @test c isa ChoiceAnswer && c.choice in first.(colours) && Set(keys(c.probabilities)) == Set(first.(colours)) &&
+                  all(p -> 0 <= p <= 1, values(c.probabilities)) && 0 <= c.confidence <= 1
+            _os1l_drift!(collect(values(c.probabilities)))
+            colour == "red" && @test r["red"] isa NoulAnswer && 0 <= r["red"].noul <= 1
+            if model in _OS1L_COLOUR_ON_IMAGE_EXCEPT
+                @info "$model on the $colour image (colour not asserted): colour = $(c.choice), " *
+                      "probabilities = $(c.probabilities)"
+            else
+                @test c.choice == colour && c.probabilities[colour] > 0.5     # refuted: the model does not see the colour
+            end
+            colour == "red" || continue
+            if model in _OS1L_NOUL_ON_IMAGE_EXCEPT
+                @info "$model on the red-circle image (noul not asserted): noul = $(r["red"].noul)"
+            else
+                @test r["red"].noul > 0.5                                 # refuted: its yes/no misses the red shape
+            end
+        end
+        r2 = ask([img, "A product photo from a customer."], "red" => noul("Is there a red shape?"); service=ep, model)
+        @test r2 isa SystemOneSuccess
+        e = _os1l_timed(model, "image after text", sent) do
+            try ask(["Photo:", img], "red" => noul("Is it red?"); service=ep, model); nothing catch x; x end
+        end
+        @test e isa ArgumentError && last(_OS1L_LOG)[3] == 0
+    end
+else
+    @testset "no vision: an image is the model's own 400" begin
+        # Refuted by: a model without vision answering an image, or a refusal sent as anything
+        # but its HTTP 400.
+        r = _os1l_timed(model, "image to a text-only model", sent) do
+            ask(ImageAttachment(_OS1L_IMAGE), "red" => noul("Is it red?"); service=ep, model)
+        end
+        @test r isa SystemOneFailure && r.status == 400 && contains(r.message, r"vision|image"i) && last(_OS1L_LOG)[3] == 1
+    end
+end
+
+if model == "kev:0.8b-q8_0"
+    @testset "ask_each: each slot is its own text's answer; one request in flight, two with ntasks=2" begin
+        # Refuted by: a non-success, a slot whose choice is not that of its own text asked alone (a
+        # reversal included), more than one request in flight by default (Ollama's width is 1), or
+        # never two with ntasks = 2.
+        set = _OS1L_TICKETS
+        q = choice(set["instructions"], [k => set["descriptions"][k] for k in set["order"]])
+        items = set["items"][1:6]
+        texts = String[t["text"] for t in items]
+        refunds = findall(t -> t["kind"] == "refund", items)
+        choices(rs) = [r isa SystemOneSuccess ? r["intent"].choice : nothing for r in rs]
+        want = choices([ask(x, "intent" => q; service=ep, model) for x in texts])
+        @test length(refunds) == 2 && all(i -> want[i] == "refund", refunds)
+        @test !any(isnothing, want) && want != reverse(want)            # the slots tell a reversal apart
+        for (ntasks, peak) in ((nothing, 1), (2, 2))
+            Threads.atomic_xchg!(_OS1L_PEAK, 0)
+            rs = _os1l_timed(model, "ask_each: 6 tickets, ntasks=$(something(ntasks, "default"))", sent) do
+                ask_each(texts, "intent" => q; service=ep, model, ntasks)
+            end
+            @test length(rs) == 6 && all(r -> r isa SystemOneSuccess, rs) && last(_OS1L_LOG)[3] == 6
+            @test choices(rs) == want
+            @test _OS1L_PEAK[] == peak
+        end
+    end
 end
 
 @testset "keep_alive reaches the server" begin
@@ -209,7 +362,10 @@ end # relay
 end # model testset
 
 @info "Ollama System One live witnesses: requests and latency (relay included)" *
-      join(("\n  $(rpad(m, 14)) $(rpad(w, 36)) requests=$(n)  $(round(t; digits=3)) s" for (m, w, n, t) in _OS1L_LOG)) *
-      "\n  largest |Σp − 1| over the answers: $(_OS1L_DRIFT[])"
+      join(("\n  $(rpad(m, 18)) $(rpad(w, 36)) requests=$(n)  $(round(t; digits=3)) s" for (m, w, n, t) in _OS1L_LOG)) *
+      "\n  largest |Σp − 1| over the answers: $(_OS1L_DRIFT[])" *
+      "\n  27-option Choice, per model:" * join(("\n  $(rpad(m, 18)) $(o)" for (m, o) in _OS1L_27)) *
+      "\n  wrapper parity, per model (choices that differ, largest |Δp|):" *
+      join(("\n  $(rpad(m, 18)) $(d)  $(g)" for (m, d, g) in _OS1L_PARITY))
 
 end # live guard

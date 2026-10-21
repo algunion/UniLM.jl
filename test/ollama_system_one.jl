@@ -29,13 +29,14 @@ _os1_json(status::Int, body::AbstractString) =
     HTTP.Response(status, ["Content-Type" => "application/json; charset=utf-8"], Vector{UInt8}(body))
 _os1_error(status::Int, msg::AbstractString) = _os1_json(status, JSON.json(Dict("error" => msg)))
 
-# The route's own validation (Ollama 0.40.6, generic encodings), as the message it answers
-# with; `nothing` for a request it compiles.
+# The generic MLX encoder's validation (Ollama 0.40.6), as the route answers with it — stricter
+# than the route's own rules; `nothing` for a request it compiles. A blank state is refused only
+# without images: Ollama 0.40.6 answers `"state": ""` sent with images.
 function _os1_invalid(b::AbstractDict)::Union{Nothing,String}
     qs = get(b, "questions", nothing)
     qs isa AbstractDict && 1 <= length(qs) <= 64 || return "questions must contain 1–64 fields"
     st = get(b, "state", nothing)
-    st isa AbstractString && isempty(strip(st)) && return "state must not be empty"
+    st isa AbstractString && isempty(strip(st)) && isempty(get(b, "images", [])) && return "state must not be empty"
     for (name, q) in qs
         c = get(q, "criteria", nothing)
         q["type"] == "score" && !(c isa AbstractVector && 2 <= length(c) <= 10) &&
@@ -241,8 +242,6 @@ struct _Os1Odd <: SystemOneQuestion end
             "another scope's model" => (() -> with_system_one(() -> ask("s", q; service=ep), TYPESAFEServiceEndpoint;
                                                               model="jev-1.13.0"), "no default System One model"),
             "65 questions"          => (a("s", ["q$i" => q for i in 1:65]), "at most 64 questions"),
-            "no instructions"       => (a("s", choice(["a", "b"])), "requires `instructions`"),
-            "criteria-only noul"    => (a("s", noul(; yes="It is")), "requires `instructions`"),
             "blank instructions"    => (a("s", choice("  ", ["a", "b"])), "are blank"),
             "image instructions"    => (a("s", score(img, ["low", "high"])), "as a string, object or array"),
             "object description"    => (a("s", choice("Which?", ["a" => Dict("d" => "A"), "b" => nothing])), "string or `nothing`"),
@@ -250,14 +249,13 @@ struct _Os1Odd <: SystemOneQuestion end
             "array description"     => (a("s", choice("Which?", ["a" => ["A"], "b" => "B"])), "string or `nothing`"),
             "object noul criterion" => (a("s", noul("Is it?"; no=Dict("d" => "no"))), "Noul criterion as a string"),
             "object score level"    => (a("s", score("How?", ["low", Dict("d" => "high")])), "Score level as a string"),
-            "one option"            => (a("s", choice("Which?", ["a"])), "2 to 26 options"),
-            "27 options"            => (a("s", choice("Which?", many(27))), "2 to 26 options"),
+            "one option"            => (a("s", choice("Which?", ["a"])), "2 to 255 options"),
             "one level"             => (a("s", score("How?", ["only"])), "2 to 10 levels"),
             "11 levels"             => (a("s", score("How?", rungs(11))), "2 to 10 levels"),
             "blank state"           => (a(" \n ", q), "blank `state`"),
-            "image state"           => (a(img, q), "not supported by UniLM's Ollama wrapper yet"),
-            "image in instructions" => (a("s", noul(["Is this", img, "a circle?"])), "not supported by UniLM's Ollama wrapper yet"),
-            "image in a raw field"  => (a("s", RawQuestion(Dict("type" => "noul", "instructions" => img))), "not supported by UniLM's Ollama wrapper yet"),
+            "image after a text"    => (a(["Photo:", img], q), "an image after a text"),
+            "image in instructions" => (a("s", noul(["Is this", img, "a circle?"])), "images in the state only"),
+            "image in a raw field"  => (a("s", RawQuestion(Dict("type" => "noul", "instructions" => img))), "images in the state only"),
             "Box"                   => (a(img, box("the circle")), "Box questions are not supported by Ollama"),
             "unknown kind"          => (a("s", "odd" => _Os1Odd()), "Ollama cannot send \"odd\""),
             "unknown option"        => (a("s", q; num_ctx=4096), "one System One option, `keep_alive`"),
@@ -267,9 +265,22 @@ struct _Os1Odd <: SystemOneQuestion end
             @test e isa ArgumentError && contains(e.msg, needle)
         end
         @test isempty(seen)                               # nothing reached the server
+        # What the route leaves to the model is sent: the mock's models, like the generic MLX
+        # encoder, require `instructions` and take 2–26 options, and say so in their own 400.
+        served = ["no instructions"    => (a("s", choice(["a", "b"])), "instructions must be a nonempty string"),
+                  "criteria-only noul" => (a("s", noul(; yes="It is")), "instructions must be a nonempty string"),
+                  "27 options"         => (a("s", choice("Which?", many(27))), "criteria must contain 2–26 candidates")]
+        @testset "$what reaches the server" for (what, (f, needle)) in served
+            r = f()
+            @test r isa SystemOneFailure && r.status == 400 && contains(r.message, needle)
+        end
+        @test length(seen) == 3
     end
-    # What the wrapper refuses for its shape, the route rejects too (its own rules, above):
-    # the local check saves the round trip, it does not narrow what Ollama accepts.
+    # What the wrapper refuses for its shape, the mock (above) rejects too: the local check saves
+    # the round trip and does not narrow what Ollama accepts — save blank `instructions`, which
+    # Ollama would read as none and the wrapper refuses deliberately. The shapes the wrapper
+    # leaves to the model (no instructions, 27 options) the mock rejects too, as the generic MLX
+    # encoder does.
     wire(qs...; state="s") = JSON.parse(JSON.json(UniLM._system_one_json(
         SystemOneRequest(state, UniLM._normalize_varargs(qs)), "tev1:0.8b")))
     for b in (wire(["q$i" => q for i in 1:65]...), wire(choice(["a", "b"])), wire(noul(; yes="It is")),
@@ -451,7 +462,9 @@ end
                                     (404, "404 page not found", "404 page not found"),       # a server without the route
                                     (413, "{\"error\":\"text and schema must not exceed 64 KiB\"}", "text and schema must not exceed 64 KiB"))
         f = _os1_serve(; respond=(_, _) -> HTTP.Response(status, body)) do ep, _
-            ask("s", noul("Is it?"); service=ep, model="tev1:0.8b", config=_OS1_CFG)
+            call() = ask("s", noul("Is it?"); service=ep, model="tev1:0.8b", config=_OS1_CFG)
+            # A 500 is retryable: the one attempt `_OS1_CFG` allows ends with the driver's warning.
+            status == 500 ? (@test_logs (:warn, r"exhausting max_attempts") match_mode=:any call()) : call()
         end
         @test f isa SystemOneFailure && f.status == status && f.message == message && f.response == body
     end
@@ -552,4 +565,125 @@ end
                                                             model="tev1:0.8b"))
     @test JSON.parse(w.body)["runner"] == "mlx"
     @test JSON.parse(w.record_body)["runner"] == "mlx"     # it changes the probabilities: keyed
+end
+
+@testset "route rules: what any Ollama model may take is sent; the rest is refused locally" begin
+    e = OllamaEndpoint(base_url="http://box:11434")
+    enc(qs...; state="The sky is blue.") = UniLM.encode_system_one(_OS1_P, e, SystemOneRequest(state, collect(qs); model="kev:0.8b-q8_0"))
+    @test enc("q" => choice(["o$i" => "option $i" for i in 1:255])) isa UniLM.SystemOneWire          # 255: route bound
+    @test _os1_caught(() -> enc("q" => choice(["o$i" => "option $i" for i in 1:256]))) isa ArgumentError
+    @test enc("q" => noul("Is it?")) isa UniLM.SystemOneWire
+    @test enc("q" => choice(["a" => "A", "b" => "B"])) isa UniLM.SystemOneWire                        # no instructions: the server's call
+    @test _os1_caught(() -> enc("q" => choice("   ", ["a" => "A", "b" => "B"]))) isa ArgumentError  # blank instructions
+    @test _os1_caught(() -> enc("q" => score("How?", ["l$i" for i in 1:11]))) isa ArgumentError       # 2–10 levels
+    @test _os1_caught(() -> enc("q" => noul("Is it?"); state="   ")) isa ArgumentError                # blank text state
+    @test _os1_caught(() -> enc([("q$i" => noul("Is it?")) for i in 1:65]...)) isa ArgumentError
+end
+
+@testset "a model's own lower cap comes back as its 400, typed" begin
+    # The mock's route (`_os1_route` → `_os1_invalid`) applies the generic MLX encoder's rules of
+    # Ollama 0.40.6 — 2–26 candidates, instructions required — as tev1 and nimble do there.
+    r = _os1_serve() do ep, seen
+        ask("Option 7 is the right one.", "pick" => choice("Which option?", ["o$i" => "option $i" for i in 1:27]);
+            service=ep, model="tev1:0.8b", config=_OS1_CFG)
+    end
+    @test r isa SystemOneFailure && r.status == 400 && occursin("2–26 candidates", r.message)
+end
+
+# A reply to any model, computed like the mock route's own (no limits, no fixture).
+_os1_any_reply(b; model=b["model"]) = _os1_json(200, JSON.json(Dict{String,Any}("model" => model,
+    "answers" => Dict{String,Any}(name => _os1_answer(q) for (name, q) in b["questions"]),
+    "usage" => Dict("input_tokens" => 10, "output_tokens" => 0))))
+
+@testset "a cloud model keeps its tag in the result, so it is not priced as local" begin
+    # Ollama's cloud answered "clef" for a "clef:cloud" request in its published example.
+    r = _os1_serve(; respond=(n, req) -> _os1_any_reply(JSON.parse(_os1_text(req)); model="clef")) do ep, seen
+        ask("The sky is blue.", "q" => noul("Is the sky blue?"); service=ep, model="clef:cloud", config=_OS1_CFG)
+    end
+    @test r isa SystemOneSuccess && r.response.model == "clef:cloud" && r.response.raw["model"] == "clef"
+    @test (@test_logs (:warn, r"no price row") match_mode=:any estimated_cost(r)) == 0.0
+end
+
+@testset "a local model answered under another name keeps the server's name" begin
+    r = _os1_serve(; respond=(n, req) -> _os1_any_reply(JSON.parse(_os1_text(req)); model="tev1:latest")) do ep, seen
+        ask("The sky is blue.", "q" => noul("Is the sky blue?"); service=ep, model="tev1", config=_OS1_CFG)
+    end
+    @test r isa SystemOneSuccess && r.response.model == "tev1:latest"
+end
+
+@testset "runner and keep_alive are both sent; only the runner is keyed" begin
+    e = OllamaEndpoint(base_url="http://box:11434", runner=:mlx, keep_alive=300)
+    enc(state) = UniLM.encode_system_one(_OS1_P, e, SystemOneRequest(state, ["q" => noul("Is it red?")]; model="d1-omni:600m"))
+    w = enc("A red circle.")
+    b, k = JSON.parse(w.body), JSON.parse(w.record_body)
+    @test b["runner"] == k["runner"] == "mlx" && b["keep_alive"] == 300 && !haskey(k, "keep_alive")
+    # With an image, every field in its place.
+    w = enc(ImageAttachment(joinpath(_OS1_FIXTURES, "red_circle.png")))
+    @test collect(keys(JSON.parse(w.body))) == ["state", "model", "questions", "runner", "images", "keep_alive"]
+    @test collect(keys(JSON.parse(w.record_body))) == ["state", "model", "questions", "runner", "images"]
+end
+
+@testset "images: sent first, shared by all questions; forms Ollama cannot keep are refused" begin
+    img = ImageAttachment(joinpath(_OS1_FIXTURES, "red_circle.png"))
+    e = OllamaEndpoint(base_url="http://box:11434")
+    enc(state) = UniLM.encode_system_one(_OS1_P, e, SystemOneRequest(state, ["red" => noul("Is there a red shape?")];
+                                                                     model="d1-omni:600m"))
+    b64 = UniLM.Base64.base64encode(img.data)
+    w = enc(img)
+    @test JSON.parse(w.body)["images"] == [b64] && JSON.parse(w.body)["state"] == ""
+    @test JSON.parse(w.record_body)["images"] == [UniLM._media_digest(img)]        # recordings: digests
+    w = enc([img, img, "Describe the photo."])
+    @test JSON.parse(w.body)["images"] == [b64, b64] && JSON.parse(w.body)["state"] == "Describe the photo."
+    @test JSON.parse(enc([img, "a", "b"]).body)["state"] == ["a", "b"]
+    @test JSON.parse(enc([img, ""]).body)["state"] == ""                           # blank text, with images: allowed
+    @test JSON.parse(enc((img, "Describe the photo.")).body)["state"] == "Describe the photo."   # a tuple, too
+    e1 = _os1_caught(() -> enc(["Photo:", img]))
+    @test e1 isa ArgumentError && occursin("before", e1.msg)
+    e2 = _os1_caught(() -> enc(["", img]))                                          # any text before an image
+    @test e2 isa ArgumentError && contains(e2.msg, "an image after a text")
+    for nested in (Dict("photo" => img, "note" => "x"), [[img, "x"]])                # inside JSON
+        e3 = _os1_caught(() -> enc(nested))
+        @test e3 isa ArgumentError && contains(e3.msg, "not inside a JSON object or array") &&
+              contains(e3.msg, "`[image, …texts]` as the state")
+    end
+    e4 = _os1_caught(() -> enc([img, Dict("k" => 1)]))                              # beside a non-string
+    @test e4 isa ArgumentError && contains(e4.msg, "mixes images with $(Dict{String,Int})") &&
+          contains(e4.msg, "write the other values as text")
+    q = UniLM.encode_system_one
+    e5 = _os1_caught(() -> q(_OS1_P, e, SystemOneRequest("s", ["c" => noul(["Is this", img])]; model="d1-omni:600m")))
+    @test e5 isa ArgumentError && contains(e5.msg, "images in the state only") &&   # in a question
+          contains(e5.msg, "Move it into the state, e.g. [image, \"…\"]")
+    @test !haskey(JSON.parse(enc("plain text").body), "images")                              # none: no field
+end
+
+@testset "images: nl_dispatch sends an image as its `state`, refused inside its arguments with that fix" begin
+    img = ImageAttachment(joinpath(_OS1_FIXTURES, "red_circle.png"))
+    # The mock route's rules, for a vision model: a blank text state is allowed beside images.
+    route(n, req) = (b = JSON.parse(_os1_text(req)); bad = _os1_invalid(b);
+                     isnothing(bad) ? _os1_any_reply(b) : _os1_error(400, bad))
+    _os1_serve(; respond=route) do ep, seen
+        # A blank text state beside images is sent, as Ollama 0.40.6 answers it (and the mock route).
+        @test nl_dispatch(_os1_intent, img; state=img, service=ep, model="d1-omni:600m", config=_OS1_CFG) == (:refund, img)
+        b = JSON.parse(only(seen).body)
+        @test b["state"] == "" && b["images"] == [UniLM.Base64.base64encode(img.data)]
+        e = _os1_caught(() -> nl_dispatch(_os1_intent, img; service=ep, model="d1-omni:600m", config=_OS1_CFG))
+        @test e isa ArgumentError && contains(e.msg, "`state = [image, …texts]` to nl_dispatch")
+        @test length(seen) == 1                                                     # the refusal sent nothing
+    end
+end
+
+@testset "images reach a vision model; a model without vision answers its own 400, typed" begin
+    img = ImageAttachment(joinpath(_OS1_FIXTURES, "red_circle.png"))
+    # As Ollama 0.40.6 answers (decision/systemone.go): images only for a vision encoding.
+    vision(n, req) = (b = JSON.parse(_os1_text(req));
+        haskey(b, "images") && b["model"] != "d1-omni:600m" ?
+            _os1_error(400, "image inputs are not supported by this decision model") : _os1_any_reply(b))
+    ok, sent = _os1_serve(; respond=vision) do ep, seen
+        (ask(img, "red" => noul("Is there a red shape?"); service=ep, model="d1-omni:600m", config=_OS1_CFG), seen)
+    end
+    @test ok isa SystemOneSuccess && JSON.parse(only(sent).body)["images"] == [UniLM.Base64.base64encode(img.data)]
+    r = _os1_serve(; respond=vision) do ep, seen
+        ask(img, "red" => noul("Is there a red shape?"); service=ep, model="kev:0.8b-q8_0", config=_OS1_CFG)
+    end
+    @test r isa SystemOneFailure && r.status == 400 && occursin("image inputs are not supported", r.message)
 end

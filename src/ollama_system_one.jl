@@ -3,10 +3,11 @@
 # {host}/v1/systemone, served by local decision models (Ollama 0.35 and later) in
 # TypeSafe's wire format. The body is the System One JSON form TypeSafe's wrapper
 # writes and the reply is read by TypeSafe's decoder; what lives here is what
-# differs — Ollama's stricter rules for a question, its one option `keep_alive`,
-# its error bodies, and `confidence`, which Ollama's generic decision encodings
-# report as 1 − H(p)/ln n and this wrapper recomputes from the probabilities with
-# TypeSafe's published formulas, so a threshold means the same on every backend.
+# differs — Ollama's stricter rules for a question, the top-level `images` (the
+# state's images, raw base64) and `runner`, its one option `keep_alive`, its error
+# bodies, and `confidence`, which Ollama's generic decision encodings report as
+# 1 − H(p)/ln n and this wrapper recomputes from the probabilities with TypeSafe's
+# published formulas, so a threshold means the same on every backend.
 # ============================================================================
 
 """
@@ -14,37 +15,58 @@
 
 Ollama's System One wire, the protocol [`OllamaEndpoint`](@ref) speaks:
 `POST {base_url}/v1/systemone` (Ollama 0.35 and later) with the System One JSON
-form TypeSafe's wrapper writes — `state`, `model`, `questions`, then
-`keep_alive` when one is set — answered by a local decision model such as
-`tev1:0.8b` and decoded as a TypeSafe reply is. No key is sent, no request id
-comes back, and recordings are filed under the namespace `"ollama"`, keyed
-without `keep_alive`, which changes how long the model stays loaded but never an
-answer.
+form TypeSafe's wrapper writes — `state`, `model`, `questions`, then `runner`
+when the endpoint sets one (part of a recording's key: it can change an answer),
+`images` when the state holds any, and `keep_alive` when one is set — answered
+by a local decision model such as `tev1:0.8b` and decoded as a TypeSafe reply
+is. No key is sent, no request id comes back, and recordings are filed under the
+namespace `"ollama"`, keyed without `keep_alive`, which changes how long the
+model stays loaded but never an answer.
 
 There is no default model: the call names one (`model = "tev1:0.8b"`), or a
 [`with_system_one`](@ref) scope does. Before any I/O it refuses what Ollama's
-decision encodings reject — more than 64 questions; a Choice, Score or Noul
-question without `instructions` (a string that is not blank, an object or an
-array); a Choice of fewer than 2 or more than 26 options, or an option described
-by anything but a string or `nothing`; a Score of fewer than 2 or more than 10
-levels, or a level that is not a string; a Noul criterion that is not a string;
-a blank `state` — and a Box question, which Ollama does not answer, and images,
-which this wrapper does not send yet. A model may cap lower than these bounds and
-says so in its own 400 (`tev1:0.8b` takes at most 24 options on Ollama 0.40.6).
-Ollama also caps a local request's text and schema, images excluded, at 64 KiB:
-that limit is the server's to count, by its own measure, and is not checked here;
-a request over it comes back as a [`SystemOneFailure`](@ref) carrying Ollama's
-413, `text and schema must not exceed 64 KiB`. A
-[`RawQuestion`](@ref) is sent verbatim, for the server to judge. Its
-one option is `keep_alive`: the seconds the model stays loaded after the request
-(`0` unloads it at once, `Inf` keeps it loaded), by default the endpoint's own.
+System One route rejects for every model and runner (Ollama 0.40.6) — more than
+64 questions; `instructions` (optional) given as anything but a string, an
+object or an array; a Choice of fewer than 2 or more than 255 options, or an
+option described by anything but a string or `nothing`; a Score of fewer than 2
+or more than 10 levels, or a level that is not a string; a Noul criterion that
+is not a string; a blank text `state` without images; a Box question, which
+Ollama does not answer — and, deliberately, blank `instructions`, which Ollama
+would read as none. A model or runner that takes less (Tev1 on MLX: at most 24
+options; the generic MLX encoder: 26, with `instructions` required) says so in
+its own HTTP 400, which comes back as a [`SystemOneFailure`](@ref). Ollama also
+caps a local request's text and schema, images excluded, at 64 KiB: that limit
+is the server's to count, by its own measure, and is not checked here; a request
+over it comes back as a [`SystemOneFailure`](@ref) carrying Ollama's 413,
+`text and schema must not exceed 64 KiB`. A [`RawQuestion`](@ref) is sent
+verbatim, for the server to judge. Its one option is `keep_alive`: the seconds
+the model stays loaded after the request (`0` unloads it at once, `Inf` keeps it
+loaded), by default the endpoint's own.
+
+Images go in the state. Ollama takes a request's images as one list, `images`
+(raw base64), shared by all its questions and shown to the model before the
+text, so the state is an image, or a vector or tuple of images then texts
+(`[image, "What is in it?"]`). With images, the state's other entries must be
+texts; they become `state` — none: `""`, one: that string, several: an array —
+and a blank one is allowed, as Ollama 0.40.6 answers a blank `state` sent with
+images. An image after a text, inside a JSON object or array, or in a question
+could only be moved, never sent where it was put, and is refused before any
+I/O, as is a state of images and anything but texts. A model without vision
+answers its own 400, which comes back as a [`SystemOneFailure`](@ref).
+Recordings key an image by its digest, `data:<mime>;sha256,<hex>` (the SHA-256
+of its base64 text), never its bytes.
 
 `confidence` is TypeSafe's published measure, computed here from the returned
 probabilities: `(n·p_max − 1)/(n − 1)` clamped to `0 … 1` for a Choice, and
 `1 − Σᵢ pᵢ·|i − m| / MAD_unif` floored at `0` for a Score, `m` its most likely
-level ([Confidence](https://docs.typesafe.ai/confidence)). Ollama's generic
-decision models report `1 − H(p)/ln n` instead; that value stays in each
-answer's `raw`. Usage counts `prompt_eval_cached_count` as cached tokens.
+level ([Confidence](https://docs.typesafe.ai/confidence)). Ollama's generic MLX
+encoders report `1 − H(p)/ln n`; Kev, PPLX and models on the llama.cpp path
+report TypeSafe's formulas; the server's value stays in each answer's `raw`.
+Usage counts `prompt_eval_cached_count` as cached tokens where the server
+reports it (the MLX path); on the llama.cpp path the count is not reported and
+reads as 0. A cloud model whose reply drops its tag (Ollama's cloud answers
+`clef` for `clef:cloud`) is reported under the requested name, so it is priced
+as the cloud model; the server's `model` stays in `raw`.
 
 Public extension API (not exported).
 """
@@ -73,20 +95,18 @@ _probability_slack(::OllamaSystemOneProtocol)::Float64 = 1.0e-4 + _FLOAT_PROBABI
 
 # ─── Encoding ────────────────────────────────────────────────────────────────
 
-# The rules of Ollama's decision encodings (decision/systemone.go in Ollama 0.40.6):
-# ValidateLimits caps the questions and Score levels and refuses a blank state, and every
-# question is compiled into a prompt whose candidates are the letters A to Z. A model's
-# own lower cap (tev1: 24 options) is the server's to report.
+# The rules of Ollama's System One route, for every model and runner (Ollama 0.40.6: 1–64 questions,
+# score levels 2–10, Choice options up to 255 — the documented maximum). A model or runner that takes
+# fewer (Tev1 on MLX: 24 options; the generic MLX encoder: 26, with `instructions` required) says so in
+# its own HTTP 400, which reaches the caller as a SystemOneFailure.
 const _OLLAMA_MAX_QUESTIONS = 64
-const _OLLAMA_MAX_OPTIONS = 26
+const _OLLAMA_MAX_OPTIONS = 255
 const _OLLAMA_MAX_LEVELS = 10
 
 function _ollama_instructions(name::String, instructions)::Nothing
-    isnothing(instructions) && throw(ArgumentError(
-        "Ollama requires `instructions` on every question; $(repr(name)) has none. Say what it asks, " *
-        "e.g. choice(\"Which team should handle this ticket?\", …)"))
+    isnothing(instructions) && return nothing
     instructions isa AbstractString && isempty(strip(instructions)) && throw(ArgumentError(
-        "Ollama requires `instructions` on every question; those of $(repr(name)) are blank"))
+        "Ollama reads blank `instructions` as none; those of $(repr(name)) are blank: say what it asks, or pass none"))
     instructions isa Union{AbstractString,AbstractDict,AbstractVector,NamedTuple} || throw(ArgumentError(
         "Ollama reads `instructions` as a string, object or array; $(repr(name)) has $(typeof(instructions))"))
     nothing
@@ -149,6 +169,34 @@ function _ollama_system_one_keep_alive(options::NamedTuple, service)::Union{Noth
     Float64(ka)
 end
 
+# The text state and the images an Ollama System One request sends. Ollama takes images as a list
+# shared by all questions and shows them before the text, so the forms that keep that order are an
+# image, or a vector or tuple whose images all come before its texts; the texts become the state
+# (none: "", one: that string, several: an array). An image anywhere else could only be moved, never
+# sent where the caller put it, and is refused. nl_dispatch sends its arguments inside an object, so
+# the fix it is given is its `state` keyword.
+function _ollama_state_images(state)::Tuple{Any,Vector{ImageAttachment}}
+    state isa ImageAttachment && return ("", ImageAttachment[state])
+    if state isa Union{AbstractVector,Tuple} && any(x -> x isa ImageAttachment, state)
+        all(x -> x isa Union{ImageAttachment,AbstractString}, state) || throw(ArgumentError(
+            "Ollama takes a state of images then texts, and this one mixes images with " *
+            "$(join(unique(string(typeof(x)) for x in state if !(x isa Union{ImageAttachment,AbstractString})), ", ")): " *
+            "write the other values as text, after the images"))
+        first_text = findfirst(x -> x isa AbstractString, collect(state))
+        isnothing(first_text) || all(x -> x isa AbstractString, collect(state)[first_text:end]) || throw(ArgumentError(
+            "Ollama shows a request's images before its text, so an image after a text cannot be sent where it is: " *
+            "put the images first, e.g. [image, \"What is in it?\"]"))
+        texts = String[x for x in state if x isa AbstractString]
+        return (isempty(texts) ? "" : length(texts) == 1 ? only(texts) : texts,
+                ImageAttachment[x for x in state if x isa ImageAttachment])
+    end
+    isempty(_collect_images!(ImageAttachment[], state)) || throw(ArgumentError(
+        "Ollama takes images as the state itself (an image, or a vector of images then texts), not inside a " *
+        "JSON object or array. Pass them so: `[image, …texts]` as the state, or `state = [image, …texts]` to " *
+        "nl_dispatch, which sends its arguments inside an object"))
+    (state, ImageAttachment[])
+end
+
 function encode_system_one(p::OllamaSystemOneProtocol, service, request::SystemOneRequest)::SystemOneWire
     _check_request(p, service, request)
     n = length(request.questions)
@@ -157,22 +205,25 @@ function encode_system_one(p::OllamaSystemOneProtocol, service, request::SystemO
         "Split them across requests"))
     for (name, q) in request.questions
         _ollama_carries(name, q)
+        isempty(_question_images!(ImageAttachment[], q)) || throw(ArgumentError(
+            "Ollama takes images in the state only, shared by all questions; $(repr(name)) holds one. " *
+            "Move it into the state, e.g. [image, \"…\"]"))
     end
-    isempty(_system_one_images(request)) || throw(ArgumentError(
-        "images in a System One request are not supported by UniLM's Ollama wrapper yet; send the request " *
-        "without them"))
-    request.state isa AbstractString && isempty(strip(request.state)) && throw(ArgumentError(
-        "Ollama refuses a blank `state`: it must hold the content the questions are about"))
+    state, images = _ollama_state_images(request.state)
+    isempty(images) && state isa AbstractString && isempty(strip(state)) && throw(ArgumentError(
+        "Ollama refuses a blank `state` without images: it must hold the content the questions are about"))
     keep_alive = _ollama_system_one_keep_alive(request.options, service)
     o = _system_one_json(request, _system_one_model(p, service, request))
-    # The runner can change an answer (each has its own numerics): it is sent, and part of
-    # what a recording is keyed on.
+    o["state"] = state
     service isa OllamaEndpoint && _ollama_runner!(o, service)
-    url, keyed = _api_base_url(service) * SYSTEMONE_PATH, _system_one_body(o)
-    isnothing(keep_alive) && return SystemOneWire("POST", url, SYSTEMONE_PATH, keyed)
-    # How long the model stays loaded afterwards changes no answer: it is sent, and left out
-    # of what a recording is keyed on.
-    o["keep_alive"] = _ollama_keep_alive(keep_alive)
+    url = _api_base_url(service) * SYSTEMONE_PATH
+    b64 = base64encode.(i.data for i in images)
+    # The recording's key: images as digests, without keep_alive (it changes no answer).
+    isempty(images) || (o["images"] = [_media_digest(i.mime, b) for (i, b) in zip(images, b64)])
+    keyed = _system_one_body(o)
+    isempty(images) && isnothing(keep_alive) && return SystemOneWire("POST", url, SYSTEMONE_PATH, keyed)
+    isempty(images) || (o["images"] = b64)
+    isnothing(keep_alive) || (o["keep_alive"] = _ollama_keep_alive(keep_alive))
     SystemOneWire("POST", url, SYSTEMONE_PATH, _system_one_body(o); record_body=keyed)
 end
 
@@ -230,8 +281,12 @@ function decode_system_one(p::OllamaSystemOneProtocol, service, request::SystemO
     decoded = _decode_systemone(String(response.body), nothing, service)
     _check_answers(p, request, decoded)
     answers = Dict{String,SystemOneAnswer}(name => _surface_confidence(name, a) for (name, a) in decoded.answers)
-    SystemOneSuccess(SystemOneResponse(decoded.model, answers, _ollama_system_one_usage(decoded), nothing,
-                                       decoded.raw, service))
+    # The route documents the reply's `model` as the request's, but a cloud model may answer
+    # without its tag (Ollama's published example: "clef" for "clef:cloud"); the requested name
+    # is kept, so the answer is priced as the cloud model it is.
+    requested = _system_one_model(p, service, request)
+    model = _ollama_cloud_model(requested) && !_ollama_cloud_model(decoded.model) ? requested : decoded.model
+    SystemOneSuccess(SystemOneResponse(model, answers, _ollama_system_one_usage(decoded), nothing, decoded.raw, service))
 end
 
 # Ollama's error body is `{"error": "…"}`. A model that is not installed is a 404 that

@@ -380,21 +380,30 @@ _ollama_embed_input(emb, digest::Bool) = emb.input isa AbstractVector ?
 # EmbeddingGemma 2 was trained on 8,192 tokens, but at Ollama's default batch its llama.cpp builds
 # refuse any input longer than about 2,037 tokens (HTTP 413): the longest input they take follows
 # `num_batch`, not the 262,144-token context the server reports for them. Unless the endpoint sets
-# `num_ctx` or `num_batch`, both are sent as the trained window, so every build takes inputs up to it
-# and refuses longer ones.
+# `num_ctx` or `num_batch`, both are sent as the trained window; with it, every build embedded inputs
+# measured up to 6,251 tokens and refused one of 8,331 (Ollama 0.40.6).
 const _EMBEDDINGGEMMA2_WINDOW = 8192
-_embeddinggemma2(model::AbstractString) = occursin(r"embeddinggemma-?2"i, model)
+# `embeddinggemma-2`, `EmbeddingGemma2`, but not a v1-derived name whose number only starts with 2
+# (`embeddinggemma-256d`, `embeddinggemma-2048ctx`).
+_embeddinggemma2(model::AbstractString) = occursin(r"embeddinggemma-?2(?!\d)"i, model)
+
+# The options an /api/embed request for `model` carries: the endpoint's, plus EmbeddingGemma 2's
+# trained window when the endpoint sets neither `num_ctx` nor `num_batch`.
+function _ollama_embed_options(s::OllamaEndpoint, model::AbstractString)::Dict{String,Any}
+    opts = _ollama_options(s.options)
+    if _embeddinggemma2(model) && !haskey(opts, "num_ctx") && !haskey(opts, "num_batch")
+        opts["num_ctx"] = _EMBEDDINGGEMMA2_WINDOW
+        opts["num_batch"] = _EMBEDDINGGEMMA2_WINDOW
+    end
+    opts
+end
 
 function _ollama_embed_body(s::OllamaEndpoint, emb::Embeddings, digest::Bool)::String
     isnothing(emb.user) || throw(ArgumentError("Ollama embeddings take no user field"))
     body = Dict{String,Any}("model" => emb.model, "input" => _ollama_embed_input(emb, digest), "truncate" => s.truncate)
     isnothing(emb.dimensions) || (body["dimensions"] = emb.dimensions)
     isnothing(s.keep_alive) || (body["keep_alive"] = _ollama_keep_alive(s.keep_alive))
-    opts = _ollama_options(s.options)
-    if _embeddinggemma2(emb.model) && !haskey(opts, "num_ctx") && !haskey(opts, "num_batch")
-        opts["num_ctx"] = _EMBEDDINGGEMMA2_WINDOW
-        opts["num_batch"] = _EMBEDDINGGEMMA2_WINDOW
-    end
+    opts = _ollama_embed_options(s, emb.model)
     isempty(opts) || (body["options"] = opts)
     _ollama_runner!(body, s)
     JSON.json(body)

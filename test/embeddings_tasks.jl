@@ -128,13 +128,23 @@ _et_body(e) = JSON.parse(UniLM._encode_embeddings(e.service, e))
 end
 
 @testset "EmbeddingGemma 2 on Ollama: its trained window and a batch that holds it, unless the endpoint sets either" begin
-    opts(ep, model) = get(_et_body(Embeddings("q"; service=ep, model, task=:none)), "options", nothing)
+    for name in ("embeddinggemma-2:740m", "EmbeddingGemma2-GGUF", "hf.co/ggml-org/embeddinggemma-2-GGUF:Q8_0")
+        @test UniLM._embeddinggemma2(name)                                    # any case, with or without the hyphen
+    end
+    for name in ("embeddinggemma", "embeddinggemma-256d", "my-embeddinggemma-2048ctx", "embeddinggemma20")
+        @test !UniLM._embeddinggemma2(name)                                   # v1, and v1-derived names
+    end
     window = Dict("num_ctx" => 8192, "num_batch" => 8192)
-    @test opts(_ET_EP, _ET_EG) == window
-    @test opts(_ET_EP, "hf.co/ggml-org/EmbeddingGemma2-GGUF:Q8_0") == window          # any case, with or without the hyphen
-    @test isnothing(opts(_ET_EP, "embeddinggemma"))                                   # v1: unchanged
-    @test opts(OllamaEndpoint(base_url="http://box:11434", num_ctx=4096), _ET_EG) == Dict("num_ctx" => 4096)
-    @test opts(OllamaEndpoint(base_url="http://box:11434", num_batch=512), _ET_EG) == Dict("num_batch" => 512)
+    eo(model; kw...) = UniLM._ollama_embed_options(OllamaEndpoint(; base_url="http://box:11434", kw...), model)
+    @test eo(_ET_EG) == window
+    @test isempty(eo("embeddinggemma"))                                       # v1: unchanged
+    @test eo(_ET_EG; num_ctx=4096) == Dict("num_ctx" => 4096)                 # the endpoint's own window wins
+    @test eo(_ET_EG; num_batch=512) == Dict("num_batch" => 512)
+    @test eo(_ET_EG; num_thread=4) == Dict("num_thread" => 4, "num_ctx" => 8192, "num_batch" => 8192)   # merged
+    # The /api/embed body sends exactly these options.
+    opts(ep, model) = get(_et_body(Embeddings("q"; service=ep, model, task=:none)), "options", nothing)
+    @test opts(_ET_EP, _ET_EG) == window && isnothing(opts(_ET_EP, "embeddinggemma"))
+    @test opts(OllamaEndpoint(base_url="http://box:11434", num_thread=4), _ET_EG) == eo(_ET_EG; num_thread=4)
 end
 
 @testset "media: Ollama items; text-only wires refuse them; recordings hold digests" begin

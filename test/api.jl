@@ -943,7 +943,27 @@ end
         @test_throws ArgumentError update!(UniLM.Embeddings("t"), row(Any[0.1, nothing]))   # a null
         @test_throws ArgumentError update!(UniLM.Embeddings("t"), row(Float64[]))           # empty
         @test_throws ArgumentError update!(UniLM.Embeddings("t"), row([0.1, NaN]))
+        @test_throws ArgumentError update!(UniLM.Embeddings("t"), row(Any[0.5, true]))     # a JSON true is no number
         @test update!(UniLM.Embeddings("t"), row([0.0, 0.5])) == [0.0, 0.5]                # a zero component is fine
+    end
+
+    @testset "a refused reply names its row and stores none of it" begin
+        row(i, v) = Dict{String,Any}("index" => i, "embedding" => v)
+        refusal(f) = try; f(); nothing; catch e; e; end
+        emb = UniLM.Embeddings(["a", "b", "c"])
+        update!(emb, [row(0, [1.0, 2.0]), row(1, [3.0, 4.0]), row(2, [5.0, 6.0])])
+        before = deepcopy(emb.embeddings)
+        # Row 2 comes first in the reply and is valid; row 0 is all zeros.
+        err = refusal(() -> update!(emb, [row(2, [7.0, 8.0, 9.0]), row(0, [0.0, 0.0]), row(1, [1.0, 1.0])]))
+        @test err isa ArgumentError && occursin("row 0", err.msg) && occursin("all-zero", err.msg)  # the API's index
+        @test emb.embeddings == before
+        err = refusal(() -> update!(emb, [row(0, [1.0, 1.0]), row(1, [1.0, 1.0]), row(2, Any[0.5, NaN])]))
+        @test err isa ArgumentError && occursin("row 2", err.msg) && occursin("not a finite number", err.msg)
+        @test emb.embeddings == before
+        single = UniLM.Embeddings("t")
+        err = refusal(() -> update!(single, [row(0, Any[0.5, true])]))
+        @test err isa ArgumentError && occursin("row 0", err.msg) && occursin("not a finite number", err.msg)
+        @test single.embeddings == zeros(1536)
     end
 
 end

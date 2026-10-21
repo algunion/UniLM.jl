@@ -88,6 +88,7 @@ end
     @test UniLM._has_media(s) && !UniLM._has_media(Embeddings(EmbeddingInput("a"); service=_ET_EP, model=_ET_EG, task=:none))
     @test !UniLM._has_media(Embeddings("a"; service=_ET_EP, model=_ET_EG, task=:none))
     @test Embeddings(""; service=_ET_EP, model="nomic-embed-text").input == ""            # a plain String: as before
+    @test _et_err(() -> Embeddings(["", _ET_IMG]; service=_ET_EP, model=_ET_EG, task=:none)) isa ArgumentError  # "" as an item
 end
 
 const _ET_PROMPTS = (search_query = "task: search result | query: ",
@@ -192,6 +193,24 @@ end
         f = embeddingrequest!(Embeddings("x"; service=OllamaEndpoint(base_url=url), model="nomic-embed-text",
                                          dimensions=300); config=RequestConfig(max_attempts=1))
         @test f isa EmbeddingFailure && f.status == 400 && occursin("not supported", f.response)
+    finally
+        close(server)
+    end
+end
+
+@testset "driver: an all-zero vector with HTTP 200 is a call error, and the request keeps its buffers" begin
+    reply(rows) = (200, [JSON.json(Dict("model" => _ET_EG, "embeddings" => rows, "prompt_eval_count" => 3))])
+    server, url, _ = _ollama_mock((n, body) -> n == 1 ? reply([[0.0, 0.0]]) : reply([[0.6, 0.8], [0.0, 0.0]]))
+    try
+        ep = OllamaEndpoint(base_url=url)
+        one = Embeddings("x"; service=ep, model=_ET_EG, task=:none)
+        r = embeddingrequest!(one; config=RequestConfig(max_attempts=1))
+        @test r isa EmbeddingCallError && occursin("all-zero", r.error) && occursin("row 0", r.error)
+        @test one.embeddings == zeros(1536)
+        two = Embeddings(["x", "y"]; service=ep, model=_ET_EG, task=:none)
+        r = embeddingrequest!(two; config=RequestConfig(max_attempts=1))
+        @test r isa EmbeddingCallError && occursin("all-zero", r.error) && occursin("row 1", r.error)
+        @test two.embeddings == [zeros(1536), zeros(1536)]              # row 0 was valid, and is not stored either
     finally
         close(server)
     end

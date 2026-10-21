@@ -1678,8 +1678,9 @@ OpenAI-compatible server.
 
 An input is a text, an [`EmbeddingInput`](@ref), or an [`ImageAttachment`](@ref) or
 [`AudioAttachment`](@ref) on its own; a vector of them embeds each item as a vector of its own.
-A vector of strings is stored as a `Vector{String}`; a vector with any other item stores every
-item as an `EmbeddingInput`.
+A vector of strings is stored as a `Vector{String}` and sent as is, an empty string included. In a
+vector holding any other item, every item becomes an `EmbeddingInput`, so an empty string there is
+refused (`ArgumentError`: an item needs a non-empty text, an image or a sound clip).
 
 The `embeddings` field is **pre-allocated** (`something(dimensions, 1536)` zeros per input),
 filled in place by [`embeddingrequest!`](@ref), and resized to the length the model returns.
@@ -1802,7 +1803,7 @@ update!(emb::Embeddings, data::AbstractVector) = _fill_embeddings!(emb.embedding
 function _fill_embeddings!(dst::Vector{Float64}, data::AbstractVector)
     length(data) == 1 || throw(ArgumentError(
         "embeddings response carries $(length(data)) rows for 1 input"))
-    _store_embedding!(dst, data[1]["embedding"])
+    _store_embedding!(dst, _checked_embedding(data[1]["embedding"], 0))
 end
 
 function _fill_embeddings!(dst::Vector{Vector{Float64}}, data::AbstractVector)
@@ -1817,20 +1818,30 @@ function _fill_embeddings!(dst::Vector{Vector{Float64}}, data::AbstractVector)
         seen[idx] && throw(ArgumentError(
             "embeddings response repeats row index $(item["index"])"))
         seen[idx] = true
-        _store_embedding!(dst[idx], item["embedding"])
+        _checked_embedding(item["embedding"], item["index"])
+    end
+    # Every row is checked before any is stored, so a refused reply leaves the buffers as they were.
+    for item in data
+        _store_embedding!(dst[item["index"] + 1], item["embedding"])
     end
     return dst
 end
 
-# Copy an API-returned embedding into the preallocated buffer, resizing when the model's actual
-# dimension differs from the 1536 default. A vector that is empty, all zeros, or holds a value that
-# is not a finite number is no embedding (Ollama has answered all-zero vectors with HTTP 200): it is
-# a malformed reply, reported as one, never stored as a vector that still compares and indexes.
-function _store_embedding!(dst::Vector{Float64}, src::AbstractVector)
-    all(x -> x isa Real && isfinite(x), src) || throw(ArgumentError(
-        "the embeddings reply holds a value that is not a finite number"))
+# A vector that is empty, all zeros, or holds a value that is not a finite number is no embedding
+# (Ollama has answered all-zero vectors with HTTP 200; a JSON `true` parses as a `Bool`, which is a
+# `Real` in Julia): it is a malformed reply, refused with its row (the API's 0-based `index`), never
+# stored as a vector that still compares and indexes.
+function _checked_embedding(src::AbstractVector, row)
+    all(x -> x isa Real && !(x isa Bool) && isfinite(x), src) || throw(ArgumentError(
+        "the embeddings reply's row $row holds a value that is not a finite number"))
     !isempty(src) && any(!iszero, src) || throw(ArgumentError(
-        "the embeddings reply holds an empty or all-zero vector, which no model returns for real input"))
+        "the embeddings reply's row $row is an empty or all-zero vector, which no model returns for real input"))
+    src
+end
+
+# Copy a checked embedding into the preallocated buffer, resizing when the model's actual
+# dimension differs from the 1536 default.
+function _store_embedding!(dst::Vector{Float64}, src::AbstractVector)
     length(dst) == length(src) || resize!(dst, length(src))
     @inbounds for i in eachindex(src)
         dst[i] = src[i]

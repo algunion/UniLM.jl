@@ -170,7 +170,7 @@ end
 
 ### Platform APIs
 
-Beyond chat and generation, UniLM wraps most of the OpenAI platform surface (OpenAI-only) — each has an API-reference page:
+Beyond chat and generation, UniLM wraps most of the OpenAI platform surface (OpenAI-only, except Audio: OpenAI and Ollama) — each has an API-reference page:
 
 - **Storage & retrieval** — [Files](api/files.md), [Vector Stores](api/vector_stores.md), [Conversations](api/conversations.md), [Uploads](api/uploads.md), [Containers](api/containers.md)
 - **Generation & media** — [Audio](api/audio.md), [Images](api/images.md)

@@ -12,7 +12,7 @@ server fails come back as typed results that say what to do.
 pull a model:
 
 ```bash
-ollama pull gemma4:e4b                  # text, images, audio, tools (9.6 GB)
+ollama pull gemma4:e4b                  # text, images, audio, tools (9.5 GB)
 ollama pull embeddinggemma-2:740m-q8_0  # embeddings of text, images and audio (1.3 GB)
 ollama pull tev1:4b                     # decisions: System One questions (4.4 GB)
 ```
@@ -68,10 +68,12 @@ A local model has no price, so its cost is 0.0 — without the missing-price war
 other unlisted models get — and so is the cost of a `respond` or FIM result from it.
 A cloud model reached through the same server, one whose tag is `cloud` or ends in
 `-cloud` (`gpt-oss:120b-cloud`), runs on Ollama's machines and bills your Ollama
-account: UniLM prices it by its name, like any other model. The first request to a
-model also loads it into memory: about 1.7 s for Gemma 4 E4B on the machine above,
-after which a short answer took about 0.1 s. [`load_model`](@ref) loads it ahead of
-time.
+account: UniLM prices it by the requested name, like any other model, not as a free
+local call. It knows a cloud model by that name alone, so one copied under a name
+without the tag (`ollama cp`) is priced as local: at 0.0, with no warning. The first
+request to a model also loads it into memory: about 1.7 s for Gemma 4 E4B on the
+machine above, after which a short answer took about 0.1 s. [`load_model`](@ref)
+loads it ahead of time.
 
 ## [Thinking](@id ollama_thinking)
 
@@ -313,9 +315,10 @@ Images and sound go only to Ollama: every other service embeds text, and refuses
 media before the request.
 
 **Long inputs.** EmbeddingGemma 2 was trained on 8,192 tokens, and UniLM asks Ollama
-for that window with each of its requests. An input longer than the window is an
-[`EmbeddingFailure`](@ref) with HTTP 400, not a vector of part of it: split long
-documents into chunks.
+for that window with each of its requests unless the endpoint sets `num_ctx` or
+`num_batch` itself ([Runtime options](@ref ollama_options)). An input longer than
+the window is an [`EmbeddingFailure`](@ref) with HTTP 400, not a vector of part of
+it: split long documents into chunks.
 
 | Model | Window | Measured on Ollama 0.40.6 |
 | :--- | :--- | :--- |
@@ -325,9 +328,10 @@ documents into chunks.
 The 440m and 570m builds were not measured.
 
 !!! details "How the window is sent"
-    Ollama reports a 262,144-token context for EmbeddingGemma 2, and at its default
-    batch the llama.cpp builds measured refused long inputs with HTTP 413 —
-    `740m-q8_0` anything over about 2,037 tokens: their limit follows `num_batch`.
+    Ollama reports a 262,144-token context for the llama.cpp builds of EmbeddingGemma
+    2 (the MLX build, `740m-mxfp8`, loads at 8,192), and at its default batch the
+    llama.cpp builds measured refused long inputs with HTTP 413 — `740m-q8_0`
+    anything over about 2,037 tokens: their limit follows `num_batch`.
     So an embeddings request — and a [`load_model`](@ref) — for an EmbeddingGemma 2
     model carries `num_ctx` and `num_batch` of 8192 unless the endpoint sets either;
     the window is part of a recording's key. `truncate=true` lets Ollama cut the end
@@ -372,6 +376,14 @@ ollama = OllamaEndpoint(num_ctx=32_768,  # context window, in tokens
                         top_k=64, min_p=0.05)
 chat = Chat(service=ollama, model="gemma4:e4b")
 ```
+
+This endpoint sets `num_ctx`, so its embeddings requests carry that instead of the
+8,192-token window UniLM asks for EmbeddingGemma 2
+([Long inputs](@ref ollama_embeddings)), and its llama.cpp builds keep Ollama's
+default batch: measured with `num_ctx` alone, they still refused long inputs with
+HTTP 413 (`740m-q8_0`: over about 2,037 tokens at the defaults; Ollama 0.40.6, the
+machine above, 21 October 2026). Embed through an endpoint that sets neither
+`num_ctx` nor `num_batch`.
 
 - **Context window.** Ollama picks a default from the GPU memory it finds — 4096
   tokens under 23 GiB, 32768 from 23 GiB, 262144 from 47 GiB — capped at what the
@@ -441,13 +453,15 @@ pull_model("gemma4:e2b"; service=ollama,
 load_model("gemma4:e4b"; service=ollama)  # with the endpoint's settings
 running_models(service=ollama).response    # context, memory, runner, expiry
 unload_model("gemma4:e4b"; service=ollama)
-delete_model("gemma4:e2b"; service=ollama) # off the disk; pull_model brings it back
+delete_model("all-minilm:22m"; service=ollama)  # off the disk; pull_model brings it back
 ```
 
-[`load_model`](@ref) loads any kind of model: a chat model with an empty chat
-request, an embedding or decision model with an empty embeddings request —
-EmbeddingGemma 2 with its 8,192-token window — so the first real request finds it
-in memory.
+[`load_model`](@ref) loads a model that completes text with an empty chat request,
+and any other with an empty embeddings request — EmbeddingGemma 2 with its
+8,192-token window — so the first real request finds it in memory. Witnessed on
+Ollama 0.40.6 on the machine above (21 October 2026) for a chat model
+(`gemma4:e4b`), embedding models (EmbeddingGemma) and one decision model
+(`kev:0.8b-q8_0`); other decision models and other kinds of model are untested.
 
 !!! details "Choosing a small Gemma 4"
     Measured on Ollama 0.34.4 (Apple M4 Max, 64 GB; 10 runs per text cell, 6 for the

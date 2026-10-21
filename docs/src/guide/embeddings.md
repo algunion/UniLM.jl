@@ -75,6 +75,9 @@ field for it, so `task` writes it:
 
 ```julia
 gemma = "embeddinggemma-2:740m-q8_0"    # the tag the Ollama guide's setup pulls
+documents = [EmbeddingInput("Refunds reach the original payment method within 5 working days.";
+                            title="Refunds"),
+             EmbeddingInput("Orders over 50 EUR ship free within the EU."; title="Shipping")]
 Embeddings(documents; service=OllamaEndpoint(), model=gemma, task=:document)
 Embeddings("How long do refunds take?"; service=OllamaEndpoint(), model=gemma,
            task=:search_query)

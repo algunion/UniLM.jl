@@ -1636,7 +1636,7 @@ above 272K input tokens.
 function estimated_cost(result::SystemOneSuccess; model::Union{String,Nothing}=nothing,
                         pricing::AbstractDict{String,PriceRow}=DEFAULT_PRICING)::Float64
     service = result.response.service
-    isnothing(model) && _is_local(service) && return 0.0
+    isnothing(model) && _is_local(service, result.response.model) && return 0.0
     _system_one_cost(isnothing(service) ? nothing : system_one_protocol(service)::SystemOneProtocol,
                      result, model, pricing)
 end

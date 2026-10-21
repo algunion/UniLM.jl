@@ -472,3 +472,19 @@ end
         @test estimated_cost(failure) == 0.0
     end
 end
+
+@testset "an Ollama cloud model is priced by name, a local one is free" begin
+    cloud = UniLM._ollama_cloud_model
+    @test cloud("clef:cloud") && cloud("gpt-oss:120b-cloud") && cloud("registry.ollama.ai/library/clef:cloud")
+    @test !cloud("gemma4:e4b") && !cloud("clef-cloud") && !cloud("cloudy:7b") && !cloud("kev")
+    ep = OllamaEndpoint(base_url="http://box:11434")
+    succ(model) = (c = Chat(service=ep, model=model); push!(c, Message(Val(:system), "s"));
+                   push!(c, Message(Val(:user), "hi"));
+                   LLMSuccess(message=Message(role=RoleAssistant, content="ok"), self=c,
+                              usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)))
+    @test (@test_logs estimated_cost(succ("gemma4:e4b"))) == 0.0          # local: free, no warning
+    @test (@test_logs (:warn, r"no price row") estimated_cost(succ("zz-unpriced:7b-cloud"))) == 0.0
+    s1 = SystemOneSuccess(SystemOneResponse("zz-unpriced-s1:cloud", Dict{String,SystemOneAnswer}(),
+                          TokenUsage(prompt_tokens=10, total_tokens=10), nothing, Dict{String,Any}(), ep))
+    @test (@test_logs (:warn, r"no price row") estimated_cost(s1)) == 0.0
+end

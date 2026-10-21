@@ -30,12 +30,13 @@ _os1_json(status::Int, body::AbstractString) =
 _os1_error(status::Int, msg::AbstractString) = _os1_json(status, JSON.json(Dict("error" => msg)))
 
 # The generic MLX encoder's validation (Ollama 0.40.6), as the route answers with it — stricter
-# than the route's own rules; `nothing` for a request it compiles.
+# than the route's own rules; `nothing` for a request it compiles. A blank state is refused only
+# without images: Ollama 0.40.6 answers `"state": ""` sent with images.
 function _os1_invalid(b::AbstractDict)::Union{Nothing,String}
     qs = get(b, "questions", nothing)
     qs isa AbstractDict && 1 <= length(qs) <= 64 || return "questions must contain 1–64 fields"
     st = get(b, "state", nothing)
-    st isa AbstractString && isempty(strip(st)) && return "state must not be empty"
+    st isa AbstractString && isempty(strip(st)) && isempty(get(b, "images", [])) && return "state must not be empty"
     for (name, q) in qs
         c = get(q, "criteria", nothing)
         q["type"] == "score" && !(c isa AbstractVector && 2 <= length(c) <= 10) &&
@@ -599,7 +600,7 @@ _os1_any_reply(b; model=b["model"]) = _os1_json(200, JSON.json(Dict{String,Any}(
     r = _os1_serve(; respond=(n, req) -> _os1_any_reply(JSON.parse(_os1_text(req)); model="clef")) do ep, seen
         ask("The sky is blue.", "q" => noul("Is the sky blue?"); service=ep, model="clef:cloud", config=_OS1_CFG)
     end
-    @test r isa SystemOneSuccess && r.response.model == "clef:cloud"
+    @test r isa SystemOneSuccess && r.response.model == "clef:cloud" && r.response.raw["model"] == "clef"
     @test (@test_logs (:warn, r"no price row") match_mode=:any estimated_cost(r)) == 0.0
 end
 
@@ -635,15 +636,36 @@ end
     @test JSON.parse(w.body)["images"] == [b64, b64] && JSON.parse(w.body)["state"] == "Describe the photo."
     @test JSON.parse(enc([img, "a", "b"]).body)["state"] == ["a", "b"]
     @test JSON.parse(enc([img, ""]).body)["state"] == ""                           # blank text, with images: allowed
+    @test JSON.parse(enc((img, "Describe the photo.")).body)["state"] == "Describe the photo."   # a tuple, too
     e1 = _os1_caught(() -> enc(["Photo:", img]))
     @test e1 isa ArgumentError && occursin("before", e1.msg)
-    @test _os1_caught(() -> enc(["", img])) isa ArgumentError                       # any text before an image
-    @test _os1_caught(() -> enc(Dict("photo" => img, "note" => "x"))) isa ArgumentError     # nested in JSON
-    @test _os1_caught(() -> enc([img, Dict("k" => 1)])) isa ArgumentError                   # mixed with non-strings
+    e2 = _os1_caught(() -> enc(["", img]))                                          # any text before an image
+    @test e2 isa ArgumentError && contains(e2.msg, "an image after a text")
+    for nested in (Dict("photo" => img, "note" => "x"), [[img, "x"]])                # inside JSON
+        e3 = _os1_caught(() -> enc(nested))
+        @test e3 isa ArgumentError && contains(e3.msg, "not inside a JSON object or array") &&
+              contains(e3.msg, "`[image, …texts]` as the state")
+    end
+    e4 = _os1_caught(() -> enc([img, Dict("k" => 1)]))                              # beside a non-string
+    @test e4 isa ArgumentError && contains(e4.msg, "mixes images with Dict{String, Int64}") &&
+          contains(e4.msg, "write the other values as text")
     q = UniLM.encode_system_one
-    @test _os1_caught(() -> q(_OS1_P, e, SystemOneRequest("s", ["c" => choice(["a" => img, "b" => "B"])];
-                                                          model="d1-omni:600m"))) isa ArgumentError   # in a question
+    e5 = _os1_caught(() -> q(_OS1_P, e, SystemOneRequest("s", ["c" => noul(["Is this", img])]; model="d1-omni:600m")))
+    @test e5 isa ArgumentError && contains(e5.msg, "images in the state only")      # in a question
     @test !haskey(JSON.parse(enc("plain text").body), "images")                              # none: no field
+end
+
+@testset "images: nl_dispatch sends an image as its `state`, refused inside its arguments with that fix" begin
+    img = ImageAttachment(joinpath(_OS1_FIXTURES, "red_circle.png"))
+    _os1_serve() do ep, seen
+        # A blank text state beside images is sent, as Ollama 0.40.6 answers it (and the mock route).
+        @test nl_dispatch(_os1_intent, img; state=img, service=ep, model="tev1:0.8b", config=_OS1_CFG) == (:refund, img)
+        b = JSON.parse(only(seen).body)
+        @test b["state"] == "" && b["images"] == [UniLM.Base64.base64encode(img.data)]
+        e = _os1_caught(() -> nl_dispatch(_os1_intent, img; service=ep, model="tev1:0.8b", config=_OS1_CFG))
+        @test e isa ArgumentError && contains(e.msg, "`state = [image, …texts]` to nl_dispatch")
+        @test length(seen) == 1                                                     # the refusal sent nothing
+    end
 end
 
 @testset "images reach a vision model; a model without vision answers its own 400, typed" begin

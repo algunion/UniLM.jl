@@ -3,10 +3,11 @@
 # {host}/v1/systemone, served by local decision models (Ollama 0.35 and later) in
 # TypeSafe's wire format. The body is the System One JSON form TypeSafe's wrapper
 # writes and the reply is read by TypeSafe's decoder; what lives here is what
-# differs — Ollama's stricter rules for a question, its one option `keep_alive`,
-# its error bodies, and `confidence`, which Ollama's generic decision encodings
-# report as 1 − H(p)/ln n and this wrapper recomputes from the probabilities with
-# TypeSafe's published formulas, so a threshold means the same on every backend.
+# differs — Ollama's stricter rules for a question, the top-level `images` (the
+# state's images, raw base64) and `runner`, its one option `keep_alive`, its error
+# bodies, and `confidence`, which Ollama's generic decision encodings report as
+# 1 − H(p)/ln n and this wrapper recomputes from the probabilities with TypeSafe's
+# published formulas, so a threshold means the same on every backend.
 # ============================================================================
 
 """
@@ -44,14 +45,16 @@ loaded), by default the endpoint's own.
 
 Images go in the state. Ollama takes a request's images as one list, `images`
 (raw base64), shared by all its questions and shown to the model before the
-text, so the state is an image, or a vector of images then texts
-(`[image, "What is in it?"]`) whose texts become `state` — none: `""`, one: that
-string, several: an array; with images, a blank text is allowed. An image after
-a text, inside a JSON object, beside a value that is not a string, or in a
-question could only be moved, never sent where it was put, and is refused
-before any I/O. A model without vision answers its own 400, which comes back as
-a [`SystemOneFailure`](@ref). Recordings key an image by its digest,
-`data:<mime>;sha256,<hex>` (the SHA-256 of its base64 text), never its bytes.
+text, so the state is an image, or a vector or tuple of images then texts
+(`[image, "What is in it?"]`). With images, the state's other entries must be
+texts; they become `state` — none: `""`, one: that string, several: an array —
+and a blank one is allowed, as Ollama 0.40.6 answers a blank `state` sent with
+images. An image after a text, inside a JSON object or array, or in a question
+could only be moved, never sent where it was put, and is refused before any
+I/O, as is a state of images and anything but texts. A model without vision
+answers its own 400, which comes back as a [`SystemOneFailure`](@ref).
+Recordings key an image by its digest, `data:<mime>;sha256,<hex>` (the SHA-256
+of its base64 text), never its bytes.
 
 `confidence` is TypeSafe's published measure, computed here from the returned
 probabilities: `(n·p_max − 1)/(n − 1)` clamped to `0 … 1` for a Choice, and
@@ -168,15 +171,17 @@ end
 
 # The text state and the images an Ollama System One request sends. Ollama takes images as a list
 # shared by all questions and shows them before the text, so the forms that keep that order are an
-# image, or a vector whose images all come before its texts; the texts become the state (none: "",
-# one: that string, several: an array). An image anywhere else could only be moved, never sent where
-# the caller put it, and is refused.
+# image, or a vector or tuple whose images all come before its texts; the texts become the state
+# (none: "", one: that string, several: an array). An image anywhere else could only be moved, never
+# sent where the caller put it, and is refused. nl_dispatch sends its arguments inside an object, so
+# the fix it is given is its `state` keyword.
 function _ollama_state_images(state)::Tuple{Any,Vector{ImageAttachment}}
     state isa ImageAttachment && return ("", ImageAttachment[state])
     if state isa Union{AbstractVector,Tuple} && any(x -> x isa ImageAttachment, state)
         all(x -> x isa Union{ImageAttachment,AbstractString}, state) || throw(ArgumentError(
-            "Ollama takes a state of images and texts, with the images first; this one mixes images with " *
-            "$(join(unique(string(typeof(x)) for x in state if !(x isa Union{ImageAttachment,AbstractString})), ", "))"))
+            "Ollama takes a state of images then texts, and this one mixes images with " *
+            "$(join(unique(string(typeof(x)) for x in state if !(x isa Union{ImageAttachment,AbstractString})), ", ")): " *
+            "write the other values as text, after the images"))
         first_text = findfirst(x -> x isa AbstractString, collect(state))
         isnothing(first_text) || all(x -> x isa AbstractString, collect(state)[first_text:end]) || throw(ArgumentError(
             "Ollama shows a request's images before its text, so an image after a text cannot be sent where it is: " *
@@ -186,8 +191,9 @@ function _ollama_state_images(state)::Tuple{Any,Vector{ImageAttachment}}
                 ImageAttachment[x for x in state if x isa ImageAttachment])
     end
     isempty(_collect_images!(ImageAttachment[], state)) || throw(ArgumentError(
-        "Ollama takes images as the state (an image, or a vector of images then texts), not inside a JSON " *
-        "object; pass [image, …texts] instead"))
+        "Ollama takes images as the state itself (an image, or a vector of images then texts), not inside a " *
+        "JSON object or array. Pass them so: `[image, …texts]` as the state, or `state = [image, …texts]` to " *
+        "nl_dispatch, which sends its arguments inside an object"))
     (state, ImageAttachment[])
 end
 
@@ -210,12 +216,14 @@ function encode_system_one(p::OllamaSystemOneProtocol, service, request::SystemO
     o["state"] = state
     service isa OllamaEndpoint && _ollama_runner!(o, service)
     url = _api_base_url(service) * SYSTEMONE_PATH
+    b64 = base64encode.(i.data for i in images)
     # The recording's key: images as digests, without keep_alive (it changes no answer).
-    isempty(images) || (o["images"] = [_media_digest(i) for i in images])
-    rec = _system_one_body(o)
-    isempty(images) || (o["images"] = [base64encode(i.data) for i in images])
+    isempty(images) || (o["images"] = [_media_digest(i.mime, b) for (i, b) in zip(images, b64)])
+    keyed = _system_one_body(o)
+    isempty(images) && isnothing(keep_alive) && return SystemOneWire("POST", url, SYSTEMONE_PATH, keyed)
+    isempty(images) || (o["images"] = b64)
     isnothing(keep_alive) || (o["keep_alive"] = _ollama_keep_alive(keep_alive))
-    SystemOneWire("POST", url, SYSTEMONE_PATH, _system_one_body(o); record_body=rec)
+    SystemOneWire("POST", url, SYSTEMONE_PATH, _system_one_body(o); record_body=keyed)
 end
 
 # ─── Decoding ────────────────────────────────────────────────────────────────

@@ -1651,7 +1651,7 @@ end
 
 _embedding_item(x::AbstractString) = String(x)
 _embedding_item(x::EmbeddingInput) = x
-_embedding_item(x::Attachment) = EmbeddingInput(x)
+_embedding_item(x::Union{ImageAttachment,AudioAttachment}) = EmbeddingInput(x)
 _embedding_item(x) = throw(ArgumentError(
     "an embedding input is a String, an EmbeddingInput, an ImageAttachment or an AudioAttachment (got $(typeof(x)))"))
 # A vector of strings stays one; any other item makes every item an EmbeddingInput.
@@ -1757,8 +1757,26 @@ _float_encoding(format::Union{String,Nothing}) =
     isnothing(format) || format == "float" ? format : throw(ArgumentError(
         "encoding_format must be \"float\" (got $(repr(format))): embeddings are stored as Float64 vectors"))
 
+# The text a model is sent for `text` under `task`: the model card's prompt, or the text itself.
+# Construction has checked that the model's family knows the task.
+function _prompted(task::Union{Symbol,Nothing}, text::String, title::Union{String,Nothing})::String
+    (isnothing(task) || task === :none) && return text
+    task === :document && return string("title: ", something(title, "none"), " | text: ", text)
+    string("task: ", _EMBEDDINGGEMMA_TASK_NAMES[task], " | query: ", text)
+end
+
+# The input on a text-only wire (the OpenAI Embeddings API and its compatibles): texts, prompted.
+_wire_text(emb, x::String) = _prompted(emb.task, x, nothing)
+function _wire_text(emb, x::EmbeddingInput)
+    _item_media(x) && throw(ArgumentError(
+        "$(_service_name(emb.service)) embeds text only: send images and sound clips through an OllamaEndpoint " *
+        "(a model such as embeddinggemma-2), or leave them out"))
+    _prompted(emb.task, x.text::String, x.title)
+end
+_wire_texts(emb) = emb.input isa AbstractVector ? String[_wire_text(emb, x) for x in emb.input] : _wire_text(emb, emb.input)
+
 function JSON.lower(emb::Embeddings)
-    d = Dict{Symbol,Any}(:model => emb.model, :input => emb.input)
+    d = Dict{Symbol,Any}(:model => emb.model, :input => _wire_texts(emb))
     !isnothing(emb.user) && (d[:user] = emb.user)
     !isnothing(emb.dimensions) && (d[:dimensions] = emb.dimensions)
     !isnothing(emb.encoding_format) && (d[:encoding_format] = emb.encoding_format)

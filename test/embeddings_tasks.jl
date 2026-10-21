@@ -29,6 +29,7 @@ struct _ETVideo <: Attachment; data::Vector{UInt8}; end     # media an Embedding
           hash(EmbeddingInput("x", _ET_IMG)) == hash(EmbeddingInput("x", img2))
     @test length(Set([EmbeddingInput("x", _ET_IMG), EmbeddingInput("x", img2)])) == 1
     @test EmbeddingInput("x"; title="T") != EmbeddingInput("x") != EmbeddingInput("y") != EmbeddingInput(_ET_IMG)
+    @test EmbeddingInput("x", _ET_IMG) != EmbeddingInput("x", _ET_WAV)                  # the media alone differ
     shown = sprint(show, x)
     @test occursin("caption", shown) && occursin("bytes", shown) && length(shown) < 200   # no byte dump
 end
@@ -78,8 +79,86 @@ end
     s = Embeddings(_ET_IMG; service=_ET_EP, model=_ET_EG, task=:none)
     @test s.input isa EmbeddingInput && s.embeddings isa Vector{Float64}
     @test _et_err(() -> Embeddings(Any["a", 3]; service=_ET_EP, model=_ET_EG, task=:none)) isa ArgumentError
+    video = _ETVideo(UInt8[1, 2, 3])                 # an attachment no item holds: refused by name, alone or listed
+    for input in (video, ["a", video])
+        e = _et_err(() -> Embeddings(input; service=_ET_EP, model=_ET_EG, task=:none))
+        @test e isa ArgumentError && occursin("_ETVideo", e.msg)
+    end
     @test UniLM._has_media(m) && !UniLM._has_media(Embeddings(["a"]; service=_ET_EP, model=_ET_EG, task=:none))
     @test UniLM._has_media(s) && !UniLM._has_media(Embeddings(EmbeddingInput("a"); service=_ET_EP, model=_ET_EG, task=:none))
     @test !UniLM._has_media(Embeddings("a"; service=_ET_EP, model=_ET_EG, task=:none))
     @test Embeddings(""; service=_ET_EP, model="nomic-embed-text").input == ""            # a plain String: as before
+end
+
+const _ET_PROMPTS = (search_query = "task: search result | query: ",
+                     question_answering = "task: question answering | query: ",
+                     fact_checking = "task: fact checking | query: ", code_retrieval = "task: code retrieval | query: ",
+                     classification = "task: classification | query: ", clustering = "task: clustering | query: ",
+                     sentence_similarity = "task: sentence similarity | query: ")
+_et_body(e) = JSON.parse(UniLM._encode_embeddings(e.service, e))
+
+@testset "EmbeddingGemma prompts, byte for byte, on every wire" begin
+    for (task, prefix) in pairs(_ET_PROMPTS)
+        @test _et_body(Embeddings("How long do refunds take?"; service=_ET_EP, model=_ET_EG, task))["input"] ==
+              prefix * "How long do refunds take?"
+    end
+    docs = Embeddings([EmbeddingInput("Refunds take 5 days."; title="Refund policy"), "Shipping is free."];
+                      service=_ET_EP, model=_ET_EG, task=:document)
+    @test _et_body(docs)["input"] == ["title: Refund policy | text: Refunds take 5 days.",
+                                      "title: none | text: Shipping is free."]
+    @test _et_body(Embeddings("raw"; service=_ET_EP, model=_ET_EG, task=:none))["input"] == "raw"
+    @test _et_body(Embeddings("x | y"; service=_ET_EP, model="embeddinggemma", task=:clustering))["input"] ==
+          "task: clustering | query: x | y"                        # v1 too; the separator in a text passes verbatim
+    g = GenericOpenAIEndpoint("http://vllm:8000", "")
+    @test JSON.parse(JSON.json(Embeddings(["a"]; service=g, model="google/embeddinggemma-2",
+                                          task=:search_query)))["input"] == ["task: search result | query: a"]
+    @test _et_body(Embeddings(["a"]; service=_ET_EP, model="nomic-embed-text"))["input"] == ["a"]   # unchanged
+    for e in (Embeddings(["", "a"]), Embeddings(["", "a"]; service=_ET_EP, model="nomic-embed-text"))
+        @test _et_body(e)["input"] == ["", "a"]                         # strings stay strings, an empty one too
+    end
+end
+
+@testset "media: Ollama items; text-only wires refuse them; recordings hold digests" begin
+    e = Embeddings(["a red circle", _ET_IMG, EmbeddingInput("caption", _ET_IMG), _ET_WAV];
+                   service=_ET_EP, model=_ET_EG, task=:document)
+    b = _et_body(e)["input"]
+    b64 = UniLM.Base64.base64encode
+    @test b[1] == "title: none | text: a red circle"
+    @test b[2] == Dict("image" => b64(_ET_IMG.data))                       # media take no prefix
+    @test b[3] == Dict("text" => "title: none | text: caption", "image" => b64(_ET_IMG.data))
+    @test b[4] == Dict("audio" => b64(_ET_WAV.data))
+    k = JSON.parse(UniLM._record_embeddings_body(_ET_EP, e, UniLM._encode_embeddings(_ET_EP, e)))["input"]
+    @test k[2]["image"] == UniLM._media_digest(_ET_IMG) && k[4]["audio"] == UniLM._media_digest(_ET_WAV)
+    t = Embeddings(["a"]; service=_ET_EP, model="nomic-embed-text")
+    @test UniLM._record_embeddings_body(_ET_EP, t, UniLM._encode_embeddings(_ET_EP, t)) ==
+          UniLM._encode_embeddings(_ET_EP, t)                                   # text bodies key as before
+    for svc in (OPENAIServiceEndpoint, GEMINIOpenAIServiceEndpoint, GenericOpenAIEndpoint("http://vllm:8000", ""))
+        err = _et_err(() -> UniLM._encode_embeddings(svc, Embeddings([_ET_IMG]; service=svc,
+                                                                     model="google/embeddinggemma-2", task=:none)))
+        @test err isa ArgumentError && occursin("text only", err.msg)
+    end
+end
+
+@testset "driver: a media embedding records by digest and replays offline; a 400 stays a failure" begin
+    server, url, bodies = _ollama_mock((n, body) -> n == 1 ?
+        (200, [JSON.json(Dict("model" => _ET_EG, "embeddings" => [[0.6, 0.8]], "prompt_eval_count" => 3))]) :
+        (400, [JSON.json(Dict("error" => "dimensions 300 not supported by this model; valid values are [128 256 512 768]"))]))
+    try
+        dir = mktempdir()
+        r = with_recorded_answers(dir; mode=:record) do
+            embeddingrequest!(Embeddings(_ET_IMG; service=OllamaEndpoint(base_url=url), model=_ET_EG, task=:none))
+        end
+        @test r isa EmbeddingSuccess
+        sent = only(bodies)                                       # the server gets the bytes; only the file the digest
+        @test occursin(UniLM.Base64.base64encode(_ET_IMG.data), sent) && !occursin(UniLM._media_digest(_ET_IMG), sent)
+        rec = read(only(readdir(dir; join=true)), String)
+        @test !occursin(UniLM.Base64.base64encode(_ET_IMG.data), rec) && occursin(UniLM._media_digest(_ET_IMG), rec)
+        off = Embeddings(_ET_IMG; service=OllamaEndpoint(base_url="http://127.0.0.1:1"), model=_ET_EG, task=:none)
+        @test embedding_vectors(with_recorded_answers(() -> embeddingrequest!(off), dir; mode=:replay)) == [0.6, 0.8]
+        f = embeddingrequest!(Embeddings("x"; service=OllamaEndpoint(base_url=url), model="nomic-embed-text",
+                                         dimensions=300); config=RequestConfig(max_attempts=1))
+        @test f isa EmbeddingFailure && f.status == 400 && occursin("not supported", f.response)
+    finally
+        close(server)
+    end
 end

@@ -1615,8 +1615,10 @@ _prompt_message(::String, prompt::Message)::Message = prompt
 # The embeddings wire: the OpenAI Embeddings API unless the endpoint speaks its own.
 # Encoding runs before any I/O, so a request the endpoint cannot express throws.
 # Decoding yields the OpenAI-shaped rows (`{"embedding", "index"}`) and the usage.
-_encode_embeddings(_, emb::Embeddings)::String = JSON.json(emb)
+_encode_embeddings(_, emb::Embeddings)::String = (_wire_texts(emb); JSON.json(emb))
 _decode_embeddings(_, data::Dict{String,Any}) = (data["data"], _parse_usage(data))
+# The body a recording keys and stores: the one sent, unless the endpoint names its media otherwise.
+_record_embeddings_body(_, _, body::String)::String = body
 
 """
     embeddingrequest!(emb::Embeddings; config=nothing, cancel=nothing) -> LLMRequestResponse
@@ -1649,9 +1651,10 @@ function embeddingrequest!(emb::Embeddings; config::Union{Nothing,RequestConfig}
     tok = _resolve_cancel(cancel)
     t0 = time_ns()
     body = _encode_embeddings(emb.service, emb)
+    keyed = _record_embeddings_body(emb.service, emb, body)
     try
         url = get_url(emb)
-        resp = _recorded_exchange("POST", url, body, t0, tok) do
+        resp = _recorded_exchange("POST", url, keyed, t0, tok) do
             _http_with_retries(cfg, t0, "POST", url, auth_header(emb.service), body; cancel=tok)
         end
         if resp.status == 200

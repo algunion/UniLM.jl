@@ -362,9 +362,24 @@ end
 
 # ─── Embeddings (/api/embed) ────────────────────────────────────────────────
 
-function _encode_embeddings(s::OllamaEndpoint, emb::Embeddings)::String
+# One /api/embed input item: a (prompted) text as a string; with media, an object whose image and
+# audio are bare base64 — or, for a recording's key, their digests.
+_ollama_embed_item(emb, x::String, ::Bool) = _prompted(emb.task, x, nothing)
+function _ollama_embed_item(emb, x::EmbeddingInput, digest::Bool)
+    text = isnothing(x.text) ? nothing : _prompted(emb.task, x.text, x.title)
+    _item_media(x) || return text
+    d = Dict{String,Any}()
+    isnothing(text) || (d["text"] = text)
+    isnothing(x.image) || (d["image"] = digest ? _media_digest(x.image) : base64encode(x.image.data))
+    isnothing(x.audio) || (d["audio"] = digest ? _media_digest(x.audio) : base64encode(x.audio.data))
+    d
+end
+_ollama_embed_input(emb, digest::Bool) = emb.input isa AbstractVector ?
+    Any[_ollama_embed_item(emb, x, digest) for x in emb.input] : _ollama_embed_item(emb, emb.input, digest)
+
+function _ollama_embed_body(s::OllamaEndpoint, emb::Embeddings, digest::Bool)::String
     isnothing(emb.user) || throw(ArgumentError("Ollama embeddings take no user field"))
-    body = Dict{String,Any}("model" => emb.model, "input" => emb.input, "truncate" => s.truncate)
+    body = Dict{String,Any}("model" => emb.model, "input" => _ollama_embed_input(emb, digest), "truncate" => s.truncate)
     isnothing(emb.dimensions) || (body["dimensions"] = emb.dimensions)
     isnothing(s.keep_alive) || (body["keep_alive"] = _ollama_keep_alive(s.keep_alive))
     opts = _ollama_options(s.options)
@@ -372,6 +387,10 @@ function _encode_embeddings(s::OllamaEndpoint, emb::Embeddings)::String
     _ollama_runner!(body, s)
     JSON.json(body)
 end
+_encode_embeddings(s::OllamaEndpoint, emb::Embeddings)::String = _ollama_embed_body(s, emb, false)
+# A recording keys and stores media by digest; a text-only body is keyed as sent.
+_record_embeddings_body(s::OllamaEndpoint, emb::Embeddings, body::String)::String =
+    _has_media(emb) ? _ollama_embed_body(s, emb, true) : body
 
 # `{"embeddings": [[…], …], "prompt_eval_count": n}` → the OpenAI-shaped rows, in input order.
 function _decode_embeddings(::OllamaEndpoint, data::Dict{String,Any})

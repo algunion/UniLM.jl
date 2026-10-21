@@ -534,3 +534,35 @@ end
     b = JSON.parse(UniLM._encode_embeddings(e, Embeddings("x"; service=e, model="nomic-embed-text")))
     @test b["runner"] == "llamacpp"
 end
+
+@testset "a local respond or FIM result is free, without a price warning" begin
+    resp = JSON.json(Dict("id" => "resp_1", "object" => "response", "status" => "completed", "model" => "gemma4:e4b",
+        "output" => [Dict("type" => "message", "role" => "assistant",
+                          "content" => [Dict("type" => "output_text", "text" => "Bonjour")])],
+        "usage" => Dict("input_tokens" => 5, "output_tokens" => 1, "total_tokens" => 6)))
+    fim = JSON.json(Dict("id" => "cmpl-1", "object" => "text_completion", "model" => "qwen2.5-coder:1.5b-base",
+        "choices" => [Dict("text" => "a + b", "index" => 0, "finish_reason" => "stop")],
+        "usage" => Dict("prompt_tokens" => 10, "completion_tokens" => 3, "total_tokens" => 13)))
+    server, url, bodies = _ollama_mock((n, body) -> (200, [occursin("\"prompt\"", body) ? fim : resp]))
+    try
+        ep = OllamaEndpoint(base_url=url)
+        r = respond(Respond(service=ep, model="gemma4:e4b", input="Say hello in French.", reasoning=Reasoning(effort="none")))
+        @test r isa ResponseSuccess && r.service === ep
+        @test (@test_logs estimated_cost(r)) == 0.0
+        f = fim_complete(FIMCompletion(service=ep, model="qwen2.5-coder:1.5b-base", prompt="def add(a, b):\n    return ",
+                                       suffix="\n", max_tokens=8))
+        @test f isa FIMSuccess && f.service === ep && (@test_logs estimated_cost(f)) == 0.0
+        # The OpenAI-compatible routes take no runner: it rides only on the native ones.
+        er = OllamaEndpoint(base_url=url, runner=:llamacpp)
+        n = length(bodies)
+        @test respond(Respond(service=er, model="gemma4:e4b", input="Say hello in French.",
+                              reasoning=Reasoning(effort="none"))) isa ResponseSuccess
+        @test fim_complete(FIMCompletion(service=er, model="qwen2.5-coder:1.5b-base", prompt="def add(a, b):\n    return ",
+                                         suffix="\n", max_tokens=8)) isa FIMSuccess
+        sent = [JSON.parse(b) for b in bodies[n+1:end]]
+        @test length(sent) == 2 && haskey(sent[1], "input") && haskey(sent[2], "prompt")
+        @test !any(b -> haskey(b, "runner"), sent)
+    finally
+        close(server)
+    end
+end

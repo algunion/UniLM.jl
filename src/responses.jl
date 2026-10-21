@@ -939,12 +939,15 @@ end
     ResponseSuccess <: LLMRequestResponse
 
 Successful response from the Responses API. Access the parsed response via `.response`.
+
+- `service`: the endpoint that answered, used to price the call (a local model costs 0.0)
 """
 @kwdef struct ResponseSuccess <: LLMRequestResponse
     response::ResponseObject
     # Undecodable SSE `data:` payloads dropped while assembling this streamed
     # turn — 0 for a non-streamed call, and for a clean stream.
     sse_dropped::Int = 0
+    service::Union{Nothing,ServiceEndpointSpec} = nothing
 end
 
 """
@@ -1422,7 +1425,8 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
                 end
             end
             if resp.status == 200 && !isnothing(result[])
-                return ResponseSuccess(response=result[]::ResponseObject, sse_dropped=state.sse_dropped)
+                return ResponseSuccess(response=result[]::ResponseObject, sse_dropped=state.sse_dropped,
+                                       service=r.service)
             elseif (te = terminal_error[]) !== nothing
                 return _agentic_terminal_result(te, resp.status, io_ref[], state.sse_dropped)
             elseif _is_retryable(resp.status) && !ctl.fired && attempt < cfg.max_attempts
@@ -1469,7 +1473,8 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
             # in `_stream_attempt`.
             if stopped || _stream_teardown_noise(e, breach)
                 !isnothing(result[]) &&
-                    return ResponseSuccess(response=result[]::ResponseObject, sse_dropped=state.sse_dropped)
+                    return ResponseSuccess(response=result[]::ResponseObject, sse_dropped=state.sse_dropped,
+                                           service=r.service)
                 te = terminal_error[]
                 !isnothing(te) && return _agentic_terminal_result(te, nothing, io_ref[], state.sse_dropped)
             end
@@ -1689,7 +1694,7 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
             # partial output, and says so in `status`/`incomplete_details`.
             decoded.status == "failed" && return ResponseFailure(
                 response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
-            return ResponseSuccess(response=decoded)
+            return ResponseSuccess(response=decoded, service=r.service)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
@@ -1790,7 +1795,7 @@ function get_response(response_id::String; service::ServiceEndpointSpec=OPENAISe
         url = _agentic_url(service) * "/" * _uripart(response_id)
         resp = _http("GET", url, auth_header(service); cfg=cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
-            return ResponseSuccess(response=decode_agentic(service, resp))
+            return ResponseSuccess(response=decode_agentic(service, resp), service=service)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
@@ -1896,7 +1901,7 @@ function cancel_response(response_id::String; service::ServiceEndpointSpec=OPENA
         url = _agentic_url(service) * "/" * _uripart(response_id) * "/cancel"
         resp = _http("POST", url, auth_header(service); cfg=cfg, remaining=_remaining_s(cfg, t0))
         if resp.status == 200
-            return ResponseSuccess(response=decode_agentic(service, resp))
+            return ResponseSuccess(response=decode_agentic(service, resp), service=service)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end

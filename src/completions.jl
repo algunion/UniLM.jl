@@ -101,9 +101,14 @@ Parsed FIM completion response containing choices, usage, and raw data.
     raw::Dict{String,Any} = Dict{String,Any}()
 end
 
-"""Successful FIM completion result."""
+"""
+Successful FIM completion result.
+
+- `service`: the endpoint that answered, used to price the call (a local model costs 0.0)
+"""
 @kwdef struct FIMSuccess <: LLMRequestResponse
     response::FIMResponse
+    service::Union{Nothing,ServiceEndpointSpec} = nothing
 end
 
 """HTTP-level failure from FIM completion."""
@@ -220,7 +225,7 @@ function fim_complete(fim::FIMCompletion; config::Union{Nothing,RequestConfig}=n
     try
         resp = _http_with_retries(cfg, t0, "POST", url, auth_header(fim.service), body; cancel=tok)
         if resp.status == 200
-            return FIMSuccess(response=_parse_fim_response(resp))
+            return FIMSuccess(response=_parse_fim_response(resp), service=fim.service)
         else
             # Retry/backoff already ran inside the shared loop; the last real
             # response is the truthful outcome (a budget-exhausted 429 is a 429,

@@ -964,6 +964,18 @@ end
         err = refusal(() -> update!(single, [row(0, Any[0.5, true])]))
         @test err isa ArgumentError && occursin("row 0", err.msg) && occursin("not a finite number", err.msg)
         @test single.embeddings == zeros(1536)
+        # A JSON true or 1.0 is no row index; a row holding null, a number or a string has no vector.
+        two = UniLM.Embeddings(["a", "b"])
+        err = refusal(() -> update!(two, [row(0, [1.0, 2.0]), row(true, [3.0, 4.0])]))
+        @test err isa ArgumentError && occursin("true", err.msg) && occursin("not an integer", err.msg)
+        @test refusal(() -> update!(two, [row(0, [1.0, 2.0]), row(1.0, [3.0, 4.0])])) isa ArgumentError
+        for bad in (nothing, 0.5, "0.5")
+            err = refusal(() -> update!(UniLM.Embeddings("t"), [row(0, bad)]))
+            @test err isa ArgumentError && occursin("row 0", err.msg) && occursin("not a vector", err.msg)
+            err = refusal(() -> update!(two, [row(0, [1.0, 2.0]), row(1, bad)]))
+            @test err isa ArgumentError && occursin("row 1", err.msg) && occursin("not a vector", err.msg)
+        end
+        @test two.embeddings == [zeros(1536), zeros(1536)]
     end
 
 end

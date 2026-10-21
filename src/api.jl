@@ -1812,13 +1812,17 @@ function _fill_embeddings!(dst::Vector{Vector{Float64}}, data::AbstractVector)
         "embeddings response carries $(length(data)) rows for $n inputs"))
     seen = falses(n)
     for item in data
-        idx = item["index"] + 1  # API uses 0-based indexing
+        i = item["index"]
+        # A JSON true parses as a `Bool`, which is an `Integer` in Julia: it is no row index.
+        i isa Integer && !(i isa Bool) || throw(ArgumentError(
+            "embeddings response row index $(repr(i)) is not an integer"))
+        idx = i + 1  # API uses 0-based indexing
         checkbounds(Bool, dst, idx) || throw(ArgumentError(
-            "embeddings response row index $(item["index"]) is out of range for $n inputs"))
+            "embeddings response row index $i is out of range for $n inputs"))
         seen[idx] && throw(ArgumentError(
-            "embeddings response repeats row index $(item["index"])"))
+            "embeddings response repeats row index $i"))
         seen[idx] = true
-        _checked_embedding(item["embedding"], item["index"])
+        _checked_embedding(item["embedding"], i)
     end
     # Every row is checked before any is stored, so a refused reply leaves the buffers as they were.
     for item in data
@@ -1838,6 +1842,9 @@ function _checked_embedding(src::AbstractVector, row)
         "the embeddings reply's row $row is an empty or all-zero vector, which no model returns for real input"))
     src
 end
+# A row holding null, a number or a string has no vector at all.
+_checked_embedding(src, row) = throw(ArgumentError(
+    "the embeddings reply's row $row is not a vector (got $(isnothing(src) ? "null" : typeof(src)))"))
 
 # Copy a checked embedding into the preallocated buffer, resizing when the model's actual
 # dimension differs from the 1536 default.

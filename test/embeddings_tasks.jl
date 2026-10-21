@@ -127,6 +127,16 @@ _et_body(e) = JSON.parse(UniLM._encode_embeddings(e.service, e))
     end
 end
 
+@testset "EmbeddingGemma 2 on Ollama: its trained window and a batch that holds it, unless the endpoint sets either" begin
+    opts(ep, model) = get(_et_body(Embeddings("q"; service=ep, model, task=:none)), "options", nothing)
+    window = Dict("num_ctx" => 8192, "num_batch" => 8192)
+    @test opts(_ET_EP, _ET_EG) == window
+    @test opts(_ET_EP, "hf.co/ggml-org/EmbeddingGemma2-GGUF:Q8_0") == window          # any case, with or without the hyphen
+    @test isnothing(opts(_ET_EP, "embeddinggemma"))                                   # v1: unchanged
+    @test opts(OllamaEndpoint(base_url="http://box:11434", num_ctx=4096), _ET_EG) == Dict("num_ctx" => 4096)
+    @test opts(OllamaEndpoint(base_url="http://box:11434", num_batch=512), _ET_EG) == Dict("num_batch" => 512)
+end
+
 @testset "media: Ollama items; text-only wires refuse them; recordings hold digests" begin
     e = Embeddings(["a red circle", _ET_IMG, EmbeddingInput("caption", _ET_IMG), _ET_WAV];
                    service=_ET_EP, model=_ET_EG, task=:document)

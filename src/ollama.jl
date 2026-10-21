@@ -377,12 +377,24 @@ end
 _ollama_embed_input(emb, digest::Bool) = emb.input isa AbstractVector ?
     Any[_ollama_embed_item(emb, x, digest) for x in emb.input] : _ollama_embed_item(emb, emb.input, digest)
 
+# EmbeddingGemma 2 was trained on 8,192 tokens, but at Ollama's default batch its llama.cpp builds
+# refuse any input longer than about 2,037 tokens (HTTP 413): the longest input they take follows
+# `num_batch`, not the 262,144-token context the server reports for them. Unless the endpoint sets
+# `num_ctx` or `num_batch`, both are sent as the trained window, so every build takes inputs up to it
+# and refuses longer ones.
+const _EMBEDDINGGEMMA2_WINDOW = 8192
+_embeddinggemma2(model::AbstractString) = occursin(r"embeddinggemma-?2"i, model)
+
 function _ollama_embed_body(s::OllamaEndpoint, emb::Embeddings, digest::Bool)::String
     isnothing(emb.user) || throw(ArgumentError("Ollama embeddings take no user field"))
     body = Dict{String,Any}("model" => emb.model, "input" => _ollama_embed_input(emb, digest), "truncate" => s.truncate)
     isnothing(emb.dimensions) || (body["dimensions"] = emb.dimensions)
     isnothing(s.keep_alive) || (body["keep_alive"] = _ollama_keep_alive(s.keep_alive))
     opts = _ollama_options(s.options)
+    if _embeddinggemma2(emb.model) && !haskey(opts, "num_ctx") && !haskey(opts, "num_batch")
+        opts["num_ctx"] = _EMBEDDINGGEMMA2_WINDOW
+        opts["num_batch"] = _EMBEDDINGGEMMA2_WINDOW
+    end
     isempty(opts) || (body["options"] = opts)
     _ollama_runner!(body, s)
     JSON.json(body)

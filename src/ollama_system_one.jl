@@ -25,14 +25,21 @@ model stays loaded but never an answer.
 
 There is no default model: the call names one (`model = "tev1:0.8b"`), or a
 [`with_system_one`](@ref) scope does. Before any I/O it refuses what Ollama's
-System One route rejects for every model and runner (Ollama 0.40.6) — more than
-64 questions; `instructions` given as anything but a string, an object or an
-array; a Choice of fewer than 2 or more than 255 options, or an option described
-by anything but a string or `nothing`; a Score of fewer than 2 or more than 10
-levels, or a level that is not a string; a Noul criterion that is not a string;
-a blank text `state` without images; a Box question, which Ollama does not
-answer — and, a refusal of UniLM's own, blank (whitespace-only) `instructions`,
-which Ollama would read as none. The route accepts a question without
+route refuses in its shared checks or documents as its maximum (Ollama 0.40.6):
+more than 64 questions; a Choice of more than 255 options; a Score of fewer than 2
+or more than 10 levels; a blank text `state` without images; a Box question, which
+Ollama does not answer. By Ollama's source, a Kev model on Ollama's own runner (such
+as `kev:0.8b-mxfp8`) skips the shared checks and takes 1 to 255 levels and a blank
+state; that is untested. It also refuses what Ollama's API reference does not list,
+though some models read it: `instructions` given as anything but a string, an object
+or an array; an option described by anything but a string or `nothing`; a Score level
+or a Noul criterion that is not a string (on Ollama 0.40.6, `kev:0.8b-q8_0` and
+`d1:3b`, on the llama.cpp path, answered an option described by an object, and
+`tev1:0.8b` refused it) — and, a rule of UniLM's own, blank (whitespace-only)
+`instructions`, which Ollama would read as none. A Choice of one option is sent: the
+models on the llama.cpp path (`kev`, `d1`, `d1-omni`) answered it, and the MLX models
+answer their own 400 (`criteria must contain 2–26 candidates`; `strands-decider:2b`
+2–255). The route accepts a question without
 `instructions`, but most models do not (measured on Ollama 0.40.6): `tev1:4b`,
 `nimble:9b` and `strands-decider:2b` answer HTTP 400 `instructions must be a
 nonempty string, object, or array`, `kev:0.8b-q8_0` answers 400
@@ -41,10 +48,11 @@ nonempty string, object, or array`, `kev:0.8b-q8_0` answers 400
 local models. A model that takes fewer options (Tev1: at most 24; Nimble and Clef
 Flash: 26) says so in its own HTTP 400 too, which comes back as a
 [`SystemOneFailure`](@ref). Ollama also caps a local request's text and schema,
-images excluded, at 64 KiB: that limit is the server's to count, by its own
-measure, and is not checked here; a request over it comes back as a
-[`SystemOneFailure`](@ref) carrying Ollama's 413, `text and schema must not exceed
-64 KiB`. A [`RawQuestion`](@ref) is sent verbatim, for the server to judge. Its
+images excluded, at 64 KiB (measured on Ollama 0.40.6 with `kev:0.8b-q8_0`,
+`d1-omni:600m` and `tev1:0.8b`; by its source, 1 MiB for a Kev model on Ollama's own
+runner, untested): that limit is the server's to count, by its own measure, and is
+not checked here; a request over it comes back as a [`SystemOneFailure`](@ref)
+carrying Ollama's 413, `text and schema must not exceed 64 KiB`. A [`RawQuestion`](@ref) is sent verbatim, for the server to judge. Its
 one option is `keep_alive`: the seconds the model stays loaded after the request
 (`0` unloads it at once, `Inf` keeps it loaded), by default the endpoint's own.
 
@@ -105,11 +113,12 @@ _probability_slack(::OllamaSystemOneProtocol)::Float64 = 1.0e-4 + _FLOAT_PROBABI
 
 # ─── Encoding ────────────────────────────────────────────────────────────────
 
-# The rules of Ollama's System One route, for every model and runner (Ollama 0.40.6: 1–64 questions,
-# score levels 2–10, Choice options up to 255 — the documented maximum; `instructions` optional). A model
-# that takes less says so in its own HTTP 400, which reaches the caller as a SystemOneFailure — measured on
-# Ollama 0.40.6: Tev1 takes 24 options, Nimble and Clef Flash 26; tev1, nimble, strands-decider and kev
-# refuse a question without `instructions`, clef-flash answers it.
+# The bounds of Ollama's System One route (Ollama 0.40.6): 1–64 questions; Choice options up to 255, the
+# documented maximum, and as few as one (the decision models on the llama.cpp path answered a single option;
+# the generic surface already requires one); score levels 2–10, its shared check (decision ValidateLimits);
+# `instructions` optional. A model that takes less says so in its own HTTP 400, which reaches the caller as a
+# SystemOneFailure — measured on Ollama 0.40.6: Tev1 takes 24 options, Nimble and Clef Flash 2–26, Strands
+# 2–255; tev1, nimble, strands-decider and kev refuse a question without `instructions`, clef-flash answers it.
 const _OLLAMA_MAX_QUESTIONS = 64
 const _OLLAMA_MAX_OPTIONS = 255
 const _OLLAMA_MAX_LEVELS = 10
@@ -124,10 +133,6 @@ function _ollama_instructions(name::String, instructions)::Nothing
     nothing
 end
 
-_ollama_candidates(name::String, n::Int, hi::Int, what::String, fix::String)::Nothing = 2 <= n <= hi ? nothing :
-    throw(ArgumentError("Ollama accepts 2 to $(hi) $(what) per question; $(repr(name)) has $(n). " *
-                        (n < 2 ? "Offer at least two" : fix)))
-
 function _ollama_carries(name::String, q::ChoiceQuestion)::Nothing
     _ollama_instructions(name, q.instructions)
     for (option, d) in q.criteria
@@ -135,7 +140,11 @@ function _ollama_carries(name::String, q::ChoiceQuestion)::Nothing
             "Ollama reads a Choice option's description as a string or `nothing`; option $(repr(option)) of " *
             "$(repr(name)) has $(typeof(d)). Describe it in words, or pass `nothing`"))
     end
-    _ollama_candidates(name, length(q.criteria), _OLLAMA_MAX_OPTIONS, "options", "Split it, or narrow the options")
+    n = length(q.criteria)
+    n <= _OLLAMA_MAX_OPTIONS || throw(ArgumentError(
+        "Ollama accepts at most $(_OLLAMA_MAX_OPTIONS) options per question; $(repr(name)) has $(n). " *
+        "Split it, or narrow the options"))
+    nothing
 end
 
 function _ollama_carries(name::String, q::ScoreQuestion)::Nothing
@@ -144,7 +153,11 @@ function _ollama_carries(name::String, q::ScoreQuestion)::Nothing
         level isa AbstractString || throw(ArgumentError(
             "Ollama reads a Score level as a string; level $(i - 1) of $(repr(name)) is $(typeof(level))"))
     end
-    _ollama_candidates(name, length(q.criteria), _OLLAMA_MAX_LEVELS, "levels", "Merge levels into a coarser rubric")
+    n = length(q.criteria)
+    2 <= n <= _OLLAMA_MAX_LEVELS || throw(ArgumentError(
+        "Ollama accepts 2 to $(_OLLAMA_MAX_LEVELS) levels per question; $(repr(name)) has $(n). " *
+        (n < 2 ? "Offer at least two" : "Merge levels into a coarser rubric")))
+    nothing
 end
 
 function _ollama_carries(name::String, q::NoulQuestion)::Nothing

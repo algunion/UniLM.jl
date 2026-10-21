@@ -335,6 +335,15 @@ function _image_digest(s::AbstractString)::Union{Nothing,String}
     string("data:", chop(head; tail=7), ";sha256,", bytes2hex(sha256(SubString(s, nextind(s, comma)))))
 end
 
+# Media sent as bare base64 (an Ollama `images` entry, an /api/embed image or audio clip), named
+# in a recording as a data URL would be: `data:<mime>;sha256,<hex>`, the SHA-256 of its base64
+# text — the same image keys alike on every wire, and no recording holds its bytes.
+_media_digest(mime::AbstractString, b64::AbstractString)::String =
+    string("data:", mime, ";sha256,", bytes2hex(sha256(b64)))
+_media_digest(a::ImageAttachment)::String = _media_digest(a.mime, base64encode(a.data))
+_audio_mime(a::AudioAttachment)::String = a.format == "mp3" ? "audio/mpeg" : "audio/wav"
+_media_digest(a::AudioAttachment)::String = _media_digest(_audio_mime(a), base64encode(a.data))
+
 # Every data-URL image in a parsed body replaced by its digest, in place; whether there was one.
 _digest_images!(x::Union{AbstractDict,AbstractVector})::Bool =
     foldl((found, k) -> _digest_image_at!(x, k) | found, collect(keys(x)); init=false)

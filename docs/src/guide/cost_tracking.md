@@ -179,9 +179,12 @@ embeddings_cost = estimated_cost(res)                       # USD for this batch
 ```
 
 Note that embedding models missing from the default table (e.g. `gemini-embedding-001`)
-hit the same `0.0` behavior — supply `pricing=` for them too. Chat and embeddings
-results from an [`OllamaEndpoint`](@ref) are local and cost `0.0` without a warning;
-pass `model=` to price one as if it had run elsewhere.
+hit the same `0.0` behavior — supply `pricing=` for them too. Chat, embeddings,
+`respond` and FIM results from a local model on an [`OllamaEndpoint`](@ref) cost
+`0.0` without a warning; pass `model=` to price one as if it had run elsewhere. A
+cloud model reached through Ollama — a tag of `cloud`, or one ending in `-cloud`,
+such as `gpt-oss:120b-cloud` — runs on Ollama's servers and is priced by its name,
+like any other model.
 
 ## System One (TypeSafe Jev) is input-only
 

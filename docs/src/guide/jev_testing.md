@@ -177,8 +177,10 @@ through a directory of recordings:
   `data:` URL a request carries inside its body — an image for OpenAI's
   Decisions API or the OpenAI chat wire, a PDF in a Responses `input_file`,
   audio, any media — reads `data:<mime>;sha256,<hex>`, the SHA-256 of its
-  base64 text, in the key and the file alike. Media sent as bare base64, such as
-  Ollama's chat `images` or an `input_audio` clip, is written as sent.
+  base64 text, in the key and the file alike, and so do the images of an Ollama
+  System One request and the images and sound clips of an Ollama embeddings
+  request. Other media sent as bare base64, such as Ollama's chat `images` or an
+  `input_audio` clip, is written as sent.
 - **A miss is loud.** In `:replay`, a request with no recording throws
   `ReplayMissError` out of the verb itself, and so out of `nl_dispatch` and the
   tool loops — never a silent call to the service, and never a call error

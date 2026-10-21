@@ -1,8 +1,9 @@
 # Embeddings
 
-UniLM.jl supports text embeddings across multiple providers. The default is
-OpenAI's `text-embedding-3-small` (1536 dimensions), but you can target Ollama,
-Gemini, Mistral, or any OpenAI-compatible server via the `service` parameter.
+UniLM.jl embeds text with OpenAI, Gemini, local EmbeddingGemma through Ollama, or any
+OpenAI-compatible server, chosen by the `service` parameter — and, through Ollama,
+images and sound too. The default is OpenAI's `text-embedding-3-small` (1536
+dimensions).
 
 ## Basic Usage
 
@@ -65,12 +66,98 @@ sim = dot(emb.embeddings[1], emb.embeddings[4]) /
 println("Cosine similarity (Julia vs Fortran): ", round(sim, digits=4))
 ```
 
+## Task prompts
+
+Some embedding models read a short prompt that says what a text is for: a query to
+search with, or a document to be found. EmbeddingGemma does — v1 and v2, on any
+service. Ollama does not add the prompt, and the OpenAI-compatible request has no
+field for it, so `task` writes it:
+
+```julia
+gemma = "embeddinggemma-2:740m-q8_0"    # the tag the Ollama guide's setup pulls
+Embeddings(documents; service=OllamaEndpoint(), model=gemma, task=:document)
+Embeddings("How long do refunds take?"; service=OllamaEndpoint(), model=gemma,
+           task=:search_query)
+```
+
+The query side takes `:search_query`, `:question_answering`, `:fact_checking` or
+`:code_retrieval`; the corpus `:document`, with an [`EmbeddingInput`](@ref)'s `title`
+when a text has one; and a text compared with others of its kind `:classification`,
+`:clustering` or `:sentence_similarity`. An EmbeddingGemma request without a task is
+an `ArgumentError` before anything is sent; `task = :none` sends the text as it is,
+for a server that writes the prompts itself. Any other model takes `task = :none`
+or no task: UniLM knows EmbeddingGemma's prompts only, so write another model's own
+prefix into the text. [Local Models with Ollama](@ref ollama_embeddings) lists the
+prompt each task writes, and measures what the prompts are worth.
+
+## Local retrieval
+
+Find the passages that answer a question, on your own machine: embed the documents
+once with `task = :document`, each question with `task = :search_query`, and rank by
+the dot product — EmbeddingGemma's vectors have unit length, so it is the cosine:
+
+```@example local
+using UniLM, LinearAlgebra
+
+ollama = OllamaEndpoint()
+gemma = "embeddinggemma-2:740m-q8_0"
+
+faq = ["Refunds"  => "Refunds reach the original payment method within 5 working days of approval.",
+       "Shipping" => "Orders over 50 EUR ship free within the EU; other orders pay a flat 4.90 EUR.",
+       "Returns"  => "Unused items can be returned within 30 days in their original packaging.",
+       "Accounts" => "Reset a forgotten password from the sign-in page; the link expires after an hour.",
+       "Warranty" => "Electronics carry a two-year warranty against manufacturing defects.",
+       "Payments" => "We accept cards, bank transfer and PayPal; invoices arrive by email."]
+
+D = embedding_vectors(embeddingrequest!(Embeddings(
+    [EmbeddingInput(text; title) for (title, text) in faq];
+    service=ollama, model=gemma, task=:document)))
+
+function search(question; k=2)
+    q = embedding_vectors(embeddingrequest!(Embeddings(question;
+            service=ollama, model=gemma, task=:search_query)))
+    scores = [dot(q, d) for d in D]
+    [first(faq[i]) => round(scores[i]; digits=3) for i in partialsortperm(scores, 1:k; rev=true)]
+end
+
+search("When will I get my money back?")
+```
+
+```@example local
+search("Can I send back shoes I never wore?")
+```
+
+The first question finds the refund policy, the second the returns policy. The
+documents are embedded once; each search embeds only its question. This example ran
+on Ollama 0.40.6 with `embeddinggemma-2:740m-q8_0` on 21 October 2026, and the manual
+replays its recorded answers.
+
+## Images and audio
+
+Through Ollama, an [`ImageAttachment`](@ref) or [`AudioAttachment`](@ref) is an item
+of its own, and `EmbeddingInput(text, image)` embeds a text with its picture as one
+item; texts, images and sounds land in one space, so a word can find a picture:
+
+```julia
+pictures = Embeddings([ImageAttachment("label.png"), ImageAttachment("box.png")];
+                      service=OllamaEndpoint(), model="embeddinggemma-2:740m-q8_0", task=:document)
+```
+
+Only a model that sees or hears embeds media — among EmbeddingGemma 2's builds the
+440m ones take images, the 570m ones sound and the 740m ones both, as their tags say;
+the 740m ones were measured, with media alone and with a text and its media as one
+item, and the 440m and 570m ones are untested. Every other service embeds text, and
+refuses media before the request. [Local Models with Ollama](@ref ollama_embeddings)
+shows a picture and a recording found by words.
+
 ## Available Models
 
 | Model                    | Dimensions | Notes                           |
 | :----------------------- | :--------- | :------------------------------ |
 | `text-embedding-3-small` | 1536       | Default, good balance           |
 | `text-embedding-3-large` | 3072       | Higher quality, more dimensions |
+| `embeddinggemma-2:740m-q8_0` (Ollama) | 768, 512, 256 or 128 | Local; 8,192 tokens; text, images and sound; needs a `task` |
+| `embeddinggemma` (Ollama) | 768, 512, 256 or 128 | Local; 2,048 tokens; text; needs a `task` |
 
 !!! note
     The buffers start at `something(dimensions, 1536)` zeros per input and are resized to
@@ -83,7 +170,7 @@ Pass `service` and `model` to embed with a different backend:
 
 ```julia
 # Ollama (local): native /api/embed; an input longer than the model's window fails
-emb = Embeddings("test"; service=OllamaEndpoint(), model="embeddinggemma")
+emb = Embeddings("test"; service=OllamaEndpoint(), model="embeddinggemma-2:740m-q8_0", task=:search_query)
 embeddingrequest!(emb)
 
 # Gemini (OpenAI-compatible endpoint; the native generateContent API has no embeddings)

@@ -66,6 +66,7 @@ has_capability
 | `:conversations` | Conversations API |
 | `:moderation` | Moderations API |
 | `:audio` | Audio (TTS / transcription / translation) |
+| `:transcription` | Transcription alone ([`transcribe`](@ref)): OpenAI and Ollama; implied by `:audio` |
 | `:batch` | Batch API |
 | `:fine_tuning` | Fine-tuning API |
 | `:containers` | Containers API |

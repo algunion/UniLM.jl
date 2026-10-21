@@ -378,11 +378,12 @@ end
 _ollama_embed_input(emb, digest::Bool) = emb.input isa AbstractVector ?
     Any[_ollama_embed_item(emb, x, digest) for x in emb.input] : _ollama_embed_item(emb, emb.input, digest)
 
-# EmbeddingGemma 2 was trained on 8,192 tokens, but at Ollama's default batch its llama.cpp builds
-# refuse any input longer than about 2,037 tokens (HTTP 413): the longest input they take follows
-# `num_batch`, not the 262,144-token context the server reports for them. Unless the endpoint sets
-# `num_ctx` or `num_batch`, both are sent as the trained window; with it, every build embedded inputs
-# measured up to 6,251 tokens and refused one of 8,331 (Ollama 0.40.6).
+# EmbeddingGemma 2 was trained on 8,192 tokens, but at Ollama's default batch the llama.cpp builds measured
+# (740m-q8_0, 270m-q8_0-text) refuse long inputs with HTTP 413 — 740m-q8_0 any longer than about 2,037
+# tokens: the longest input they take follows `num_batch`, not the 262,144-token context the server
+# reports for them. Unless the endpoint sets `num_ctx` or `num_batch`, both are sent as the trained
+# window; with it, the builds measured (740m-q8_0, 740m-mxfp8, 270m-q8_0-text) embedded inputs of up to
+# 6,251 tokens and refused one of 8,331 (Ollama 0.40.6).
 const _EMBEDDINGGEMMA2_WINDOW = 8192
 # `embeddinggemma-2`, `EmbeddingGemma2`, but not a v1-derived name whose number only starts with 2
 # (`embeddinggemma-256d`, `embeddinggemma-2048ctx`).

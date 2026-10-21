@@ -3,17 +3,22 @@
 [Ollama](https://ollama.com) runs open models on your own machine: no API key, no
 bill, and nothing leaves the computer. [`OllamaEndpoint`](@ref) speaks Ollama's
 native API, so what a local model offers is reachable from Julia — Gemma 4's
-thinking, tool calls, structured output, images and audio, embeddings, a context
-window of your choosing — and the ways a local server fails come back as typed
-results that say what to do.
+thinking, tool calls, structured output, images, audio and transcription;
+EmbeddingGemma 2's embeddings of text, images and sound; decisions from local
+System One models; a context window of your choosing — and the ways a local
+server fails come back as typed results that say what to do.
 
 **Setup:** install Ollama and start it (the desktop app, or `ollama serve`), then
 pull a model:
 
 ```bash
-ollama pull gemma4:e4b      # text, images, audio, tools (9.6 GB)
-ollama pull embeddinggemma  # embeddings (0.6 GB)
+ollama pull gemma4:e4b                  # text, images, audio, tools (9.6 GB)
+ollama pull embeddinggemma-2:740m-q8_0  # embeddings of text, images and audio (1.3 GB)
+ollama pull tev1:4b                     # decisions: System One questions (4.4 GB)
 ```
+
+The examples name the tags they ran on: `embeddinggemma-2` alone pulls its
+`latest` tag, a different 740m build, which was not measured here.
 
 `OllamaEndpoint()` finds the server at `OLLAMA_HOST` when that is set (the same
 rules as Ollama's own clients, so `gpu-box` means `http://gpu-box:11434`), else at
@@ -28,15 +33,17 @@ rules as Ollama's own clients, so `gpu-box` means `http://gpu-box:11434`), else 
 | [let the model call Julia functions](@ref ollama_tools) | `tools`, [`tool_loop!`](@ref) | the calls run, then a final answer |
 | [get JSON that matches a schema](@ref ollama_json) | `response_format=UniLM.json_schema(…)` | JSON that follows the schema |
 | [ask about an image or a recording](@ref ollama_media) | [`ImageAttachment`](@ref), [`AudioAttachment`](@ref) | an answer about what the model saw or heard |
-| [embed texts for search](@ref ollama_embeddings) | `Embeddings(…; service=OllamaEndpoint(), model="embeddinggemma")` | one vector per text |
-| [give the model more context, or keep it loaded](@ref ollama_options) | `OllamaEndpoint(num_ctx=…, keep_alive=…)` | the model run the way you asked |
-| [install, inspect or unload models](@ref ollama_models) | [`list_models`](@ref), [`pull_model`](@ref), [`model_info`](@ref), … | typed model cards |
+| [transcribe a recording](@ref ollama_transcription) | [`transcribe`](@ref)`(path; service=OllamaEndpoint(), model="gemma4:e4b")` | the words it heard |
+| [decide about a text](@ref backends_ollama), or a picture with a [vision model](@ref backends_ollama_images) | [`ask`](@ref)`(…; service=OllamaEndpoint(), model="tev1:4b")` | typed answers with probabilities, as on Jev |
+| [embed texts, images and sound for search](@ref ollama_embeddings) | `Embeddings(…; service=OllamaEndpoint(), model="embeddinggemma-2:740m-q8_0", task=:document)` | one vector per item, written for its task |
+| [give the model more context, keep it loaded, or pick its runner](@ref ollama_options) | `OllamaEndpoint(num_ctx=…, keep_alive=…, runner=…)` | the model run the way you asked |
+| [install, inspect, unload or delete models](@ref ollama_models) | [`list_models`](@ref), [`pull_model`](@ref), [`model_info`](@ref), [`delete_model`](@ref), … | typed model cards |
 | [know what went wrong](@ref ollama_failures) | the result's status and message | the fix for each failure |
 
-Every executed example on this page ran on Ollama 0.34.4 on an Apple M4 Max with
-64 GB, against `gemma4:e4b` (the embeddings one against `embeddinggemma`); the manual
-replays those recorded answers ([Test and Develop](@ref jev_testing_recorded)), so
-its build needs no Ollama server.
+Every executed example on this page ran on Ollama 0.40.6 on an Apple M4 Max with
+64 GB, on 21 October 2026, against `gemma4:e4b` (the embeddings ones against
+`embeddinggemma-2:740m-q8_0`); the manual replays those recorded answers ([Test
+and Develop](@ref jev_testing_recorded)), so its build needs no Ollama server.
 
 ## [First chat](@id ollama_first)
 
@@ -58,9 +65,13 @@ result.usage, estimated_cost(result)
 ```
 
 A local model has no price, so its cost is 0.0 — without the missing-price warning
-other unlisted models get. The first request to a model also loads it into memory:
-about 1.7 s for Gemma 4 E4B on the machine above, then about 0.04 s to the first token.
-[`load_model`](@ref) loads it ahead of time.
+other unlisted models get — and so is the cost of a `respond` or FIM result from it.
+A cloud model reached through the same server, one whose tag is `cloud` or ends in
+`-cloud` (`gpt-oss:120b-cloud`), runs on Ollama's machines and bills your Ollama
+account: UniLM prices it by its name, like any other model. The first request to a
+model also loads it into memory: about 1.7 s for Gemma 4 E4B on the machine above,
+after which a short answer took about 0.1 s. [`load_model`](@ref) loads it ahead of
+time.
 
 ## [Thinking](@id ollama_thinking)
 
@@ -88,15 +99,17 @@ print(first(reasoning_text(result), 300), "…")
 The thinking stays on its turn in `chat`, and goes back to Ollama with the next
 request. Ollama's Gemma 4 template shows the model the thinking of the turns since
 the last user message (the current tool loop) and leaves older thinking out, as
-Gemma 4's own guidance asks; in a tool round trip measured with `gemma4:e2b`, the
-turn succeeded 10 of 10 times with the thinking sent back and 8 of 10 without it.
+Gemma 4's own guidance asks; in a tool round trip measured with `gemma4:e2b` on
+Ollama 0.34.4, the turn succeeded 10 of 10 times with the thinking sent back and 8
+of 10 without it.
 
 !!! note "A thinking model decides when to think"
     With thinking on, Gemma 4 E4B still answers easy prompts without thinking:
-    [`reasoning_text`](@ref) is then `nothing`. On the bat-and-ball prompt above it
-    thought in 2 to 5 of 6 runs at the default temperature, and in every run at
-    `temperature=0.0`. Thinking spends the reply's token budget first: a small
-    `max_tokens` can end a reply at finish reason `"length"` with no answer text.
+    [`reasoning_text`](@ref) is then `nothing`. On the bat-and-ball prompt above
+    (Ollama 0.34.4) it thought in 2 to 5 of 6 runs at the default temperature, and
+    in every run at `temperature=0.0`. Thinking spends the reply's token budget
+    first: a small `max_tokens` can end a reply at finish reason `"length"` with no
+    answer text.
 
 ## [Tools](@id ollama_tools)
 
@@ -196,21 +209,157 @@ images but do not hear. A model without the capability answers HTTP 400 — afte
 has been loaded. [`model_info`](@ref) lists what a model can do. Images are sent as
 bytes: Ollama does not fetch image URLs.
 
-## [Embeddings](@id ollama_embeddings)
+## [Transcription](@id ollama_transcription)
 
-```@example ollama
-texts = ["The cat purrs on the sofa.", "A kitten is sleeping.",
-         "Stock markets fell sharply."]
-emb = Embeddings(texts; service=OllamaEndpoint(), model="embeddinggemma")
-v = embedding_vectors(embeddingrequest!(emb))
-cosine(a, b) = sum(a .* b) / sqrt(sum(abs2, a) * sum(abs2, b))
-near, far = cosine(v[1], v[2]), cosine(v[1], v[3])
-length(v[1]), round(near; digits=2), round(far; digits=2)
+A model that hears audio also transcribes it:
+
+```julia
+r = transcribe("secret_word.wav"; service=OllamaEndpoint(), model="gemma4:e4b")
+transcript_text(r)    # "The secret word is banana" (Ollama 0.40.6, the recording above)
 ```
 
-An input longer than the model's context window (2048 tokens for EmbeddingGemma) is
-an [`EmbeddingFailure`](@ref) with HTTP 400, not a vector of its first 2048 tokens:
-split long documents into chunks.
+The call goes to Ollama's OpenAI-compatible `/v1/audio/transcriptions`, and there is
+no default model: name one that hears. Ollama transcribes at temperature 0 and reads
+one `language`, a `prompt` and a `response_format` of `"json"` (the default) or
+`"text"`; `temperature`, `languages`, `keywords` and any other format are refused
+before the request. With `"text"`, a failure after Ollama has begun its reply comes
+back as an empty transcript (read from Ollama 0.40.6's source, not reproduced here),
+where JSON reports it as an [`AudioCallError`](@ref). Transcription calls are not recorded
+by [`with_recorded_answers`](@ref), so this example does not run when the manual is
+built.
+
+## [Embeddings with EmbeddingGemma 2](@id ollama_embeddings)
+
+EmbeddingGemma reads a short prompt that says what a text is for, and Ollama does
+not add it: `task` writes it. Documents take `task = :document`, with a `title`
+each when they have one; a search takes `task = :search_query`:
+
+```@example ollama
+ollama = OllamaEndpoint()
+gemma = "embeddinggemma-2:740m-q8_0"
+
+docs = [EmbeddingInput("Refunds reach the original payment method within 5 working days.";
+                       title="Refund policy"),
+        EmbeddingInput("Orders over 50 EUR ship free within the EU."; title="Shipping"),
+        EmbeddingInput("Reset a forgotten password from the sign-in page."; title="Account help")]
+D = embedding_vectors(embeddingrequest!(
+    Embeddings(docs; service=ollama, model=gemma, task=:document)))
+
+q = embedding_vectors(embeddingrequest!(
+    Embeddings("When do I get my money back?"; service=ollama, model=gemma, task=:search_query)))
+
+# The vectors have unit length, so the dot product is the cosine.
+[(d.title, round(sum(q .* v); digits=3)) for (d, v) in zip(docs, D)]
+```
+
+An EmbeddingGemma request without a `task` is an `ArgumentError` before anything is
+sent; `task = :none` sends the text as it is. A `title` goes only with `:document`.
+The text the model reads, for each task — the model card's prompts, written in
+front of the text:
+
+| `task` | Use it for | The model reads |
+| :--- | :--- | :--- |
+| `:search_query` | a search | `task: search result \| query: …` |
+| `:question_answering` | a question a document answers | `task: question answering \| query: …` |
+| `:fact_checking` | a claim to check | `task: fact checking \| query: …` |
+| `:code_retrieval` | a request for code | `task: code retrieval \| query: …` |
+| `:document` | a document to be found | `title: <its title, else none> \| text: …` |
+| `:classification` | a text to classify | `task: classification \| query: …` |
+| `:clustering` | a text to group | `task: clustering \| query: …` |
+| `:sentence_similarity` | a text to compare | `task: sentence similarity \| query: …` |
+| `:none` | your own prompt, or none | `…` |
+
+The same prompts hold for EmbeddingGemma v1 (`embeddinggemma`) and on any other
+service that serves EmbeddingGemma; a server that writes the prompts itself takes
+`task = :none`. A model whose prompts UniLM does not know takes `task = :none` or
+no task, and a title is refused for it.
+
+**Smaller vectors.** EmbeddingGemma returns 768 numbers; `dimensions` asks for one
+of its trained shorter (Matryoshka) sizes, 512, 256 or 128 (any other is refused),
+still of unit length:
+
+```@example ollama
+v = embedding_vectors(embeddingrequest!(Embeddings("Orders over 50 EUR ship free.";
+        service=ollama, model=gemma, task=:document, dimensions=256)))
+length(v), round(sqrt(sum(abs2, v)); digits=3)
+```
+
+**Images and sound.** An [`ImageAttachment`](@ref) or [`AudioAttachment`](@ref) is
+an item of its own, and `EmbeddingInput(text, image)` embeds a text with its
+picture as one item. Texts, images and sounds land in one space, so a word can
+find a picture:
+
+```@example ollama
+P, C = embedding_vectors(embeddingrequest!(Embeddings(
+    [ImageAttachment("../assets/red_circle.png"), AudioAttachment("../assets/secret_word.wav")];
+    service=ollama, model=gemma, task=:document)))
+
+words = ["a red circle", "a blue square", "banana", "apple"]
+W = embedding_vectors(embeddingrequest!(
+    Embeddings(words; service=ollama, model=gemma, task=:search_query)))
+
+for (name, item) in ("the picture" => P, "the recording" => C)
+    println(rpad(name, 14), join(("$w $(round(sum(item .* v); digits=3))" for (w, v) in zip(words, W)), ", "))
+end
+```
+
+The picture lies nearest to "a red circle" and the recording — *"The secret word is
+banana"* — nearest to "banana". Media take no prompt; the text of a mixed item
+does, and both of its parts shape its vector (Evidence below). The tags say what
+each EmbeddingGemma 2 build takes: `270m-…-text` text, `440m-…-text-vision` images
+too and `570m-…-text-audio` sound too — these two untested here — and the 740m
+builds all three: images and sound were measured on `740m-q8_0` and `740m-mxfp8`.
+Images and sound go only to Ollama: every other service embeds text, and refuses
+media before the request.
+
+**Long inputs.** EmbeddingGemma 2 was trained on 8,192 tokens, and UniLM asks Ollama
+for that window with each of its requests. An input longer than the window is an
+[`EmbeddingFailure`](@ref) with HTTP 400, not a vector of part of it: split long
+documents into chunks.
+
+| Model | Window | Measured on Ollama 0.40.6 |
+| :--- | :--- | :--- |
+| EmbeddingGemma 2: `740m-q8_0`, `740m-mxfp8`, `270m-q8_0-text` | 8,192 tokens | 5,991 tokens embedded whole; 8,331 refused (HTTP 400) |
+| EmbeddingGemma (v1) | 2,048 tokens | 3,203 tokens refused (HTTP 400) |
+
+The 440m and 570m builds were not measured.
+
+!!! details "How the window is sent"
+    Ollama reports a 262,144-token context for EmbeddingGemma 2, and at its default
+    batch the llama.cpp builds measured refused long inputs with HTTP 413 —
+    `740m-q8_0` anything over about 2,037 tokens: their limit follows `num_batch`.
+    So an embeddings request — and a [`load_model`](@ref) — for an EmbeddingGemma 2
+    model carries `num_ctx` and `num_batch` of 8192 unless the endpoint sets either;
+    the window is part of a recording's key. `truncate=true` lets Ollama cut the end
+    of an input that does not fit instead.
+
+!!! details "Evidence"
+    Measured on 21 October 2026 with Ollama 0.40.6 on an Apple M4 Max, through
+    UniLM. **Do the task prompts help?** On SciFact (BEIR: 300 claims searched
+    against 5,183 abstracts), claims embedded with `:search_query` and abstracts
+    with `:document` and their titles, against the raw texts (`task = :none`),
+    768 dimensions; paired bootstrap over the claims, 10,000 resamples, 95%
+    intervals. The question was written down before the run: the prompts help
+    where the interval lies above 0.
+
+    | Model | nDCG@10 with prompts | without | Difference |
+    | :--- | :--- | :--- | :--- |
+    | `embeddinggemma-2:740m-mxfp8` | 0.8515 | 0.8245 | +0.027 [+0.009, +0.046] |
+    | `embeddinggemma-2:270m-q8_0-text` | 0.8536 | 0.8207 | +0.033 [+0.014, +0.053] |
+    | `embeddinggemma` (v1) | 0.7921 | 0.7727 | +0.019 [+0.003, +0.037] |
+
+    One public dataset, one run per condition. On a 24-document, 12-query set of our
+    own, the raw texts came out ahead by about one query on every model — for v1
+    refuting the comparison written down before that run — a set too small to tell
+    the two apart. **Images and sound**, `740m-q8_0`: the red-circle picture scored
+    0.754 against "a red circle" and 0.633 against "a blue square"; the recording
+    0.792 against "banana" and 0.626 against "apple". **A text with its media as one
+    item**: "a red circle" with the picture gave a vector of its own, cosine 0.870
+    with the text alone and 0.903 with the picture alone (0.752 between the two);
+    "banana" with the recording 0.847 and 0.957 (0.794) — on `740m-mxfp8` 0.857 and
+    0.907, 0.845 and 0.958 — so neither part was dropped. For text, `740m-q8_0` and
+    `270m-q8_0-text` returned identical vectors: the 0.3 GB build embeds text as the
+    1.3 GB one does.
 
 ## [Runtime options](@id ollama_options)
 
@@ -226,19 +375,50 @@ chat = Chat(service=ollama, model="gemma4:e4b")
 
 - **Context window.** Ollama picks a default from the GPU memory it finds — 4096
   tokens under 23 GiB, 32768 from 23 GiB, 262144 from 47 GiB — capped at what the
-  model was trained for (128K for Gemma 4 E2B and E4B). `num_ctx` sets it (a vision
-  model gets at least 2048: `num_ctx=512` loaded Gemma 4 with 2048); Ollama reloads
-  the model when it changes, so keep one value per model.
-- **Input that does not fit.** By default (`truncate=false`), a prompt longer than the window is an
-  [`LLMFailure`](@ref) with HTTP 400 — `"request (… tokens) exceeds the available
-  context size (… tokens), try increasing it"` — instead of an answer to a prompt
-  Ollama shortened by dropping the oldest messages. `truncate=true` restores
-  Ollama's own behaviour. `shift=false` also stops a reply that fills the window
+  model was trained for (128K for Gemma 4 E2B and E4B). `num_ctx` sets it when the
+  model loads; what a later request with another `num_ctx` does depends on the
+  runner ([below](@ref ollama_runners)).
+- **Input that does not fit.** By default (`truncate=false`), a prompt longer than
+  the window is an [`LLMFailure`](@ref) with HTTP 400 — `"request (… tokens) exceeds
+  the available context size (… tokens), try increasing it"` — on the llama.cpp
+  runner, instead of an answer to a prompt Ollama shortened. `truncate=true` restores
+  Ollama's own behaviour, which can cut inside a single over-long message, keeping its
+  first tokens and its tail: the start of a long document is lost without a word, not
+  only the oldest messages. `shift=false` also stops a reply that fills the window
   (finish reason `"length"`) instead of letting it continue on shortened context.
 - **Sampling.** [`OllamaOptions`](@ref) lists the knobs `Chat` has no field for
   (`top_k`, `min_p`, `repeat_penalty`, …); `temperature`, `top_p`, `seed`, `stop`
   and `max_tokens` stay on the `Chat`. Unset options keep the model's own defaults
   — Gemma 4 ships temperature 1.0, top-k 64, top-p 0.95.
+
+### [Runners](@id ollama_runners)
+
+Ollama runs a model on one of its runners: MLX on Apple Silicon, for models stored
+as safetensors, or llama.cpp or ggml, for GGUF models. `OllamaEndpoint(runner=:mlx)`
+— or `:llamacpp`, `:ggml` — asks for one when the server can run a model more than
+one way; unset, the server chooses. [`running_models`](@ref) reports the runner
+serving each loaded model, and [`list_models`](@ref) and [`model_info`](@ref) the
+one the server's listing names, which can differ: a GGUF model listed as `ggml` was
+served by llama.cpp. The runner decides what the window does:
+
+| | MLX | llama.cpp |
+| :--- | :--- | :--- |
+| The model loads with | `num_ctx` | `num_ctx` |
+| A later request for a larger `num_ctx` | keeps the loaded window | loads the model again with it |
+| A chat prompt longer than the window | is answered | is an HTTP 400, unless `truncate=true` |
+| With `truncate=true` | not measured | a 5,407-token message cut to 2,050 tokens: the first 4 and the tail kept |
+
+To give a loaded MLX model another window, [`unload_model`](@ref) it first. The other
+[`OllamaOptions`](@ref) are passed through unchanged; their effect on MLX is not
+verified.
+
+!!! details "Evidence"
+    Measured with Ollama 0.40.6 on an Apple M4 Max: `gemma4:e4b` on MLX, loaded
+    with `num_ctx=4096`, kept 4,096 after a request for 8,192 and answered a
+    10,842-token prompt, reading a code word from its first sentence;
+    `qwen2.5-coder:1.5b-base` on llama.cpp (listed as `ggml`) loaded again for 8,192
+    and refused a 5,407-token prompt on 4,096 with HTTP 400. No model ran on the
+    ggml runner.
 
 ## [Models](@id ollama_models)
 
@@ -247,7 +427,7 @@ The model-management verbs return typed results like every other call:
 ```julia
 ollama = OllamaEndpoint()
 
-models = list_models(service=ollama).response  # Vector{OllamaModel}
+models = list_models(service=ollama).response  # Vector{OllamaModel}: size, runner, format, capabilities
 info = model_info("gemma4:e4b"; service=ollama).response
 info.capabilities     # [:completion, :vision, :audio, :tools, :thinking]
 info.context_length   # 131072
@@ -259,9 +439,15 @@ pull_model("gemma4:e2b"; service=ollama,
            progress = p -> print("\r", p.status, " ", percent(p)))
 
 load_model("gemma4:e4b"; service=ollama)  # with the endpoint's settings
-running_models(service=ollama).response    # context, memory, expiry
+running_models(service=ollama).response    # context, memory, runner, expiry
 unload_model("gemma4:e4b"; service=ollama)
+delete_model("gemma4:e2b"; service=ollama) # off the disk; pull_model brings it back
 ```
+
+[`load_model`](@ref) loads any kind of model: a chat model with an empty chat
+request, an embedding or decision model with an empty embeddings request —
+EmbeddingGemma 2 with its 8,192-token window — so the first real request finds it
+in memory.
 
 !!! details "Choosing a small Gemma 4"
     Measured on Ollama 0.34.4 (Apple M4 Max, 64 GB; 10 runs per text cell, 6 for the
@@ -287,9 +473,12 @@ result = fetch(chatrequest!(chat;
 [`respond`](@ref) reaches Ollama's OpenAI-compatible Responses API, which keeps no
 state between calls: `previous_response_id`, `store`, `conversation` and the other
 fields it would ignore are refused, and a [`Respond`](@ref) tool loop is refused in
-favour of `tool_loop!` on a `Chat`. The structured-output rule holds there too: a
-`json_schema` text format turns thinking off, and only function tools are accepted. [`fim_complete`](@ref) works with models that
-fill in the middle, such as `qwen2.5-coder` (Gemma 4 does not).
+favour of `tool_loop!` on a `Chat`. So are [`get_response`](@ref),
+[`cancel_response`](@ref), [`delete_response`](@ref) and [`list_input_items`](@ref),
+before any request: Ollama stores no response. The structured-output rule holds
+there too: a `json_schema` text format turns thinking off, and only function tools
+are accepted. [`fim_complete`](@ref) works with models that fill in the middle,
+such as `qwen2.5-coder` (Gemma 4 does not).
 
 ## [When something fails](@id ollama_failures)
 
@@ -297,9 +486,12 @@ fill in the middle, such as `qwen2.5-coder` (Gemma 4 does not).
 | :--- | :--- | :--- |
 | `LLMCallError` "no Ollama server answered at http://127.0.0.1:11434" | the server is not running, or runs elsewhere | start it (`ollama serve` or the app), or set `OLLAMA_HOST` / `base_url` |
 | `LLMFailure` 404 "model 'gemma4:e2b' not found" | the model is not installed | [`pull_model`](@ref) or `ollama pull` |
-| `LLMFailure` 400 "exceeds the available context size" | the prompt does not fit the window | raise `num_ctx`, or shorten the conversation |
+| `LLMFailure` 400 "exceeds the available context size" | the prompt does not fit the window (llama.cpp) | raise `num_ctx`, or shorten the conversation |
 | `LLMFailure` 400 "does not support tools" / "does not support thinking" | the model lacks the capability | check [`model_info`](@ref); pick a model that has it |
 | `LLMFailure` 400 after a pause, for an image or a sound | the model sees or hears nothing | use a model with `:vision` / `:audio` |
+| `ArgumentError` "expects a task prompt" | an EmbeddingGemma request without `task` | pass the [task](@ref ollama_embeddings) the text is for |
+| `EmbeddingFailure` 400 "exceeds the context length" | the input is longer than the model's window | split it into chunks |
+| `SystemOneFailure` 400 from a decision model | the model takes less than the route: a question without `instructions`, more options than it takes, a picture it cannot see | give every question `instructions`; see [what each model takes](@ref backends_ollama_limits) |
 | `ArgumentError` before any request | an option Ollama would ignore | the message names it |
 | an empty answer with finish reason `"length"` | thinking used the whole `max_tokens` budget | raise `max_tokens`, or `reasoning_effort="none"` |
 | a slow first call | the model is loading | [`load_model`](@ref) first, or a longer `keep_alive` |

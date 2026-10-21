@@ -219,8 +219,9 @@ MCP tool's `authorization` and `headers`, and the bytes of media sent as a
 base64 `data:` URL or as a System One image part are never written. Media sent
 as bare base64 is written as sent — Ollama's chat `images`, an `input_audio`
 clip — except the images and sound clips of an [`Embeddings`](@ref) request to
-an [`OllamaEndpoint`](@ref): they are keyed and written as their digests,
-`data:<mime>;sha256,<hex>`, as the same media sent as a data URL would be.
+an [`OllamaEndpoint`](@ref) and the images of a System One request to one: they
+are keyed and written as their digests, `data:<mime>;sha256,<hex>`, as the same
+media sent as a data URL would be.
 A recording without that name replays its id as `x-typesafe-request-id`. Files are
 written atomically (a temporary file in `dir`, then a rename), so concurrent tasks
 can record at once. A replayed answer goes through the same decoding as a live

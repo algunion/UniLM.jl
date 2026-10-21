@@ -26,22 +26,27 @@ model stays loaded but never an answer.
 There is no default model: the call names one (`model = "tev1:0.8b"`), or a
 [`with_system_one`](@ref) scope does. Before any I/O it refuses what Ollama's
 System One route rejects for every model and runner (Ollama 0.40.6) — more than
-64 questions; `instructions` (optional) given as anything but a string, an
-object or an array; a Choice of fewer than 2 or more than 255 options, or an
-option described by anything but a string or `nothing`; a Score of fewer than 2
-or more than 10 levels, or a level that is not a string; a Noul criterion that
-is not a string; a blank text `state` without images; a Box question, which
-Ollama does not answer — and, deliberately, blank `instructions`, which Ollama
-would read as none. A model or runner that takes less (Tev1 on MLX: at most 24
-options; the generic MLX encoder: 26, with `instructions` required) says so in
-its own HTTP 400, which comes back as a [`SystemOneFailure`](@ref). Ollama also
-caps a local request's text and schema, images excluded, at 64 KiB: that limit
-is the server's to count, by its own measure, and is not checked here; a request
-over it comes back as a [`SystemOneFailure`](@ref) carrying Ollama's 413,
-`text and schema must not exceed 64 KiB`. A [`RawQuestion`](@ref) is sent
-verbatim, for the server to judge. Its one option is `keep_alive`: the seconds
-the model stays loaded after the request (`0` unloads it at once, `Inf` keeps it
-loaded), by default the endpoint's own.
+64 questions; `instructions` given as anything but a string, an object or an
+array; a Choice of fewer than 2 or more than 255 options, or an option described
+by anything but a string or `nothing`; a Score of fewer than 2 or more than 10
+levels, or a level that is not a string; a Noul criterion that is not a string;
+a blank text `state` without images; a Box question, which Ollama does not
+answer — and, a refusal of UniLM's own, blank (whitespace-only) `instructions`,
+which Ollama would read as none. The route accepts a question without
+`instructions`, but most models do not (measured on Ollama 0.40.6): `tev1:4b`,
+`nimble:9b` and `strands-decider:2b` answer HTTP 400 `instructions must be a
+nonempty string, object, or array`, `kev:0.8b-q8_0` answers 400
+`questions.intent: "instructions" must be provided` (for a question named
+`intent`), and `clef-flash:9b` answers the question — so pass `instructions` with
+local models. A model that takes fewer options (Tev1: at most 24; Nimble and Clef
+Flash: 26) says so in its own HTTP 400 too, which comes back as a
+[`SystemOneFailure`](@ref). Ollama also caps a local request's text and schema,
+images excluded, at 64 KiB: that limit is the server's to count, by its own
+measure, and is not checked here; a request over it comes back as a
+[`SystemOneFailure`](@ref) carrying Ollama's 413, `text and schema must not exceed
+64 KiB`. A [`RawQuestion`](@ref) is sent verbatim, for the server to judge. Its
+one option is `keep_alive`: the seconds the model stays loaded after the request
+(`0` unloads it at once, `Inf` keeps it loaded), by default the endpoint's own.
 
 Images go in the state. Ollama takes a request's images as one list, `images`
 (raw base64), shared by all its questions and shown to the model before the
@@ -52,16 +57,21 @@ and a blank one is allowed, as Ollama 0.40.6 answers a blank `state` sent with
 images. An image after a text, inside a JSON object or array, or in a question
 could only be moved, never sent where it was put, and is refused before any
 I/O, as is a state of images and anything but texts. A model without vision
-answers its own 400, which comes back as a [`SystemOneFailure`](@ref).
+answers its own 400, in its own words (Ollama 0.40.6: `tev1:0.8b` `image inputs
+are not supported by this decision model`, `kev:0.8b-q8_0`
+`registry.ollama.ai/library/kev:0.8b-q8_0 does not support vision`), which comes
+back as a [`SystemOneFailure`](@ref).
 Recordings key an image by its digest, `data:<mime>;sha256,<hex>` (the SHA-256
 of its base64 text), never its bytes.
 
 `confidence` is TypeSafe's published measure, computed here from the returned
 probabilities: `(n·p_max − 1)/(n − 1)` clamped to `0 … 1` for a Choice, and
 `1 − Σᵢ pᵢ·|i − m| / MAD_unif` floored at `0` for a Score, `m` its most likely
-level ([Confidence](https://docs.typesafe.ai/confidence)). Ollama's generic MLX
-encoders report `1 − H(p)/ln n`; Kev, PPLX and models on the llama.cpp path
-report TypeSafe's formulas; the server's value stays in each answer's `raw`.
+level ([Confidence](https://docs.typesafe.ai/confidence)). Measured on Ollama
+0.40.6, the five MLX models (`tev1:0.8b`, `tev1:4b`, `nimble:9b`,
+`strands-decider:2b`, `clef-flash:9b`) report `1 − H(p)/ln n`, and Kev and the
+models on the llama.cpp path (`kev`, `d1`, `d1-omni`) TypeSafe's formulas; the
+server's value stays in each answer's `raw`.
 Usage counts `prompt_eval_cached_count` as cached tokens where the server
 reports it (the MLX path); on the llama.cpp path the count is not reported and
 reads as 0. A cloud model whose reply drops its tag (Ollama's cloud answers
@@ -96,9 +106,10 @@ _probability_slack(::OllamaSystemOneProtocol)::Float64 = 1.0e-4 + _FLOAT_PROBABI
 # ─── Encoding ────────────────────────────────────────────────────────────────
 
 # The rules of Ollama's System One route, for every model and runner (Ollama 0.40.6: 1–64 questions,
-# score levels 2–10, Choice options up to 255 — the documented maximum). A model or runner that takes
-# fewer (Tev1 on MLX: 24 options; the generic MLX encoder: 26, with `instructions` required) says so in
-# its own HTTP 400, which reaches the caller as a SystemOneFailure.
+# score levels 2–10, Choice options up to 255 — the documented maximum; `instructions` optional). A model
+# that takes less says so in its own HTTP 400, which reaches the caller as a SystemOneFailure — measured on
+# Ollama 0.40.6: Tev1 takes 24 options, Nimble and Clef Flash 26; tev1, nimble, strands-decider and kev
+# refuse a question without `instructions`, clef-flash answers it.
 const _OLLAMA_MAX_QUESTIONS = 64
 const _OLLAMA_MAX_OPTIONS = 255
 const _OLLAMA_MAX_LEVELS = 10

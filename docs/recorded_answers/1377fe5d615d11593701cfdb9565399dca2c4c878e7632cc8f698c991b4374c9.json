@@ -1,0 +1,57 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/ollama/v1/systemone",
+    "body": {
+      "state": "A photo sent in with a return.",
+      "model": "clef-flash:9b",
+      "questions": {
+        "colour": {
+          "type": "choice",
+          "instructions": "What colour is the shape?",
+          "criteria": {
+            "red": null,
+            "green": null,
+            "blue": null
+          }
+        },
+        "round": {
+          "type": "noul",
+          "instructions": "Is the shape round?"
+        }
+      },
+      "images": [
+        "data:image/png;sha256,1fc94bcf05f63a163b0b16ab018a310299cf3d9c14eb2e6429259c9e5b71787f"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": null,
+    "body": {
+      "model": "clef-flash:9b",
+      "answers": {
+        "colour": {
+          "type": "choice",
+          "choice": "red",
+          "probabilities": {
+            "red": 0.9943256331003788,
+            "green": 0.002792856065720249,
+            "blue": 0.0028815108339007474
+          },
+          "confidence": 0.9645576642414191
+        },
+        "round": {
+          "type": "noul",
+          "noul": 0.9449947117065459
+        }
+      },
+      "usage": {
+        "input_tokens": 284,
+        "output_tokens": 0
+      },
+      "prompt_eval_cached_count": 0
+    }
+  },
+  "recorded_at": "2026-10-21T17:59:18Z"
+}

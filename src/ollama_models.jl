@@ -312,8 +312,9 @@ end
 
 Load `name` into memory now, so the first request does not wait for it. Loads `name` the
 way its kind allows (read from [`model_info`](@ref)): a chat model with an empty chat
-request, an embedding or decision model with an empty embeddings request; the reply comes
-once the model is loaded. The endpoint's `keep_alive`, `runner` and
+request, an embedding or decision model with an empty embeddings request (EmbeddingGemma 2
+with the 8,192-token window its embeddings requests carry); the reply comes once the model
+is loaded. The endpoint's `keep_alive`, `runner` and
 [`OllamaOptions`](@ref) go with it, and its `shift`, which applies to chat models only:
 Ollama loads the model with those settings, so load through the endpoint you will use. On
 the llama.cpp runner a later request with another `num_ctx` loads the model again; on the

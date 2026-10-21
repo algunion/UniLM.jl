@@ -802,6 +802,10 @@ OpenAI-compatible routes ignore: the context window and the other
   OpenAI-compatible routes ([`respond`](@ref), FIM, transcription) take none. The runner changes how a
   model is loaded and its numerics: see [Local Models with Ollama](@ref ollama_guide).
 - `options...`: keyword arguments of [`OllamaOptions`](@ref), e.g. `num_ctx=32_768`.
+  An embeddings request for EmbeddingGemma 2 (and its [`load_model`](@ref)) carries its
+  trained 8,192-token window, `num_ctx` and `num_batch` 8192, unless the endpoint sets
+  either: at Ollama's default batch the llama.cpp builds measured refuse long inputs —
+  `embeddinggemma-2:740m-q8_0` anything past about 2,037 tokens (Ollama 0.40.6).
 
 No API key is sent. Local models cost nothing: [`estimated_cost`](@ref) reports `0.0`
 for a chat, embeddings, `respond` or FIM result without a missing-price warning.
@@ -1564,7 +1568,8 @@ One item for [`Embeddings`](@ref): a text, an image, a sound clip, or a text wit
 and one clip, embedded as one vector. `title` names the document a text comes from; it is used by
 the `:document` task of models with task prompts (EmbeddingGemma) and refused with any other task or model.
 Images and audio go only to an [`OllamaEndpoint`](@ref) (Ollama's `/api/embed` takes them for models
-such as `embeddinggemma-2`); a service that embeds text only refuses them before any request.
+that see or hear, such as `embeddinggemma-2:740m-q8_0`, which embedded a text with its picture or clip
+as one item on Ollama 0.40.6); a service that embeds text only refuses them before any request.
 Two items are `==` when their texts, titles and media are. An empty text beside an image or clip is
 no text: the item holds the media alone (`text === nothing`), sent with no task prompt.
 
@@ -1689,7 +1694,7 @@ OpenAI-compatible server.
 
 An input is a text, an [`EmbeddingInput`](@ref), or an [`ImageAttachment`](@ref) or
 [`AudioAttachment`](@ref) on its own; a vector of them embeds each item as a vector of its own.
-A vector of strings is stored as a `Vector{String}` and sent as is, an empty string included. In a
+A vector of strings is copied into a `Vector{String}` and sent as is, an empty string included. In a
 vector holding any other item, every item becomes an `EmbeddingInput`, so an empty string there is
 refused (`ArgumentError`: an item needs a non-empty text, an image or a sound clip).
 
@@ -1703,7 +1708,8 @@ The result aliases this struct, so use one `Embeddings` per concurrent call.
 - `input::Union{String,Vector{String},EmbeddingInput,Vector{EmbeddingInput}}`: Text(s) or item(s) to embed.
 - `embeddings::Union{Vector{Float64},Vector{Vector{Float64}}}`: Pre-allocated embedding vector(s).
 - `user::Union{String,Nothing}`: Optional end-user identifier.
-- `dimensions::Union{Int,Nothing}`: Requested vector size, where the model supports it.
+- `dimensions::Union{Int,Nothing}`: Requested vector size, where the model supports it; a value
+  that is not positive throws `ArgumentError`.
 - `encoding_format::Union{String,Nothing}`: `"float"` or unset; any other format
   (e.g. `"base64"`) throws `ArgumentError`, since the result stores `Float64` vectors.
 - `task::Union{Symbol,Nothing}`: What the texts are for, as a task prompt (see below); `nothing` for none.
@@ -1715,7 +1721,11 @@ prompt in front of each text — `:search_query`, `:question_answering`, `:fact_
 `:code_retrieval` (the query side), `:document` (the corpus side, with each item's `title`),
 `:classification`, `:clustering`, `:sentence_similarity` — or `task = :none` to send the text as is.
 Without a task an EmbeddingGemma request is an `ArgumentError`; any other model takes `task = :none`
-or none. EmbeddingGemma's `dimensions` are 768 (default), 512, 256 or 128.
+or none. EmbeddingGemma's `dimensions` are 768 (default), 512, 256 or 128. Through an
+[`OllamaEndpoint`](@ref), an EmbeddingGemma 2 request carries the model's trained 8,192-token window
+(`num_ctx` and `num_batch`) unless the endpoint sets either (EmbeddingGemma v1 reads 2,048 tokens); with
+`truncate=false`, the default, a longer input is an [`EmbeddingFailure`](@ref), never a vector of part of it
+(measured on Ollama 0.40.6 with `740m-q8_0`, `740m-mxfp8`, `270m-q8_0-text` and v1).
 
 # Example
 ```julia

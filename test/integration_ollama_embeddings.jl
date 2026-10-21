@@ -95,6 +95,30 @@ _oe_vec(m, x; task=:none, kw...) = embedding_vectors(embeddingrequest!(Embedding
         end
     end
 
+    # A text and its media sent as one /api/embed item ({"text", "image"} or {"text", "audio"}). Refuted by: a
+    # failure (Ollama's 400), a vector that is not finite or not unit-length, or a vector equal (max |Δ| < 1e-6)
+    # to the text-only or the media-only embedding of the same parts — the server dropped a part. The same text
+    # and task go into all three requests, so a dropped part reproduces the other request exactly.
+    for (cap, label, media, words) in ((:vision, "picture", () -> ImageAttachment(joinpath(_OE_FIX, "red_circle.png")), "a red circle"),
+                                       (:audio, "sound clip", () -> AudioAttachment(joinpath(_OE_FIX, "secret_word.wav")), "banana"))
+        cap in caps || continue
+        @testset "a text and its $label as one item: both parts reach the vector" begin
+            x = media()
+            item = x isa ImageAttachment ? EmbeddingInput(; text=words, image=x) : EmbeddingInput(; text=words, audio=x)
+            r = embeddingrequest!(Embeddings(item; service=_OE_EP, model=m, task=:document);
+                                  config=RequestConfig(max_attempts=1))
+            @test r isa EmbeddingSuccess                                   # refuted: a 400 (or any failure)
+            if r isa EmbeddingSuccess
+                vm = embedding_vectors(r)
+                vt, vx = _oe_vec(m, words; task=:document), _oe_vec(m, x; task=:document)
+                @test all(isfinite, vm) && abs(_oe_norm(vm) - 1) <= 1e-3     # refuted: not finite or not unit-length
+                @test maximum(abs, vm .- vt) >= 1e-6                         # refuted: the media part was dropped
+                @test maximum(abs, vm .- vx) >= 1e-6                         # refuted: the text part was dropped
+                @info "text + $label item on $m" mixed_text = _oe_dot(vm, vt) mixed_media = _oe_dot(vm, vx) text_media = _oe_dot(vt, vx) max_diff_text = maximum(abs, vm .- vt) max_diff_media = maximum(abs, vm .- vx)
+            end
+        end
+    end
+
     # Token counts measured with prompt_eval_count on Ollama 0.40.6: 240 reports are 5,991 tokens on all
     # three EmbeddingGemma 2 builds; 330 reports are 8,331 (counted on the 740m GGUF with a 16,384-token
     # window). v1's 400 repeats are 3,203 tokens at the measured 8 a repeat (200 repeats are 1,603).

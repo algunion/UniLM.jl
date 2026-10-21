@@ -670,7 +670,9 @@ omitted, so the model's own defaults apply. Options `Chat` already names
 (`temperature`, `top_p`, `seed`, `stop`, `max_tokens`, `presence_penalty`,
 `frequency_penalty`) stay on the `Chat`, so no option can be set in two places.
 
-- `num_ctx`: context window in tokens. Ollama loads the model with this window. On the
+- `num_ctx`: context window in tokens. Ollama loads the model with this window; a model with
+  vision gets at least 2,048 tokens (`embeddinggemma-2:740m-q8_0` asked for 1,024 loaded with
+  2,048 on Ollama 0.40.6 and 0.40.7; Ollama's server/sched.go). On the
   llama.cpp and ggml runners a request with another `num_ctx` reloads the model, and a
   prompt longer than the window is refused (HTTP 400) unless `truncate=true`; on the MLX
   runner (Apple Silicon) the window applies when the model is loaded, a loaded model
@@ -1580,14 +1582,15 @@ const GPTTextEmbedding3Small = Model("text-embedding-3-small")
     EmbeddingInput(text, media...)
     EmbeddingInput(; text=nothing, title=nothing, image=nothing, audio=nothing)
 
-One item for [`Embeddings`](@ref): a text, an image, a sound clip, or a text with at most one image
-and one clip, embedded as one vector. `title` names the document a text comes from; it is used by
-the `:document` task of models with task prompts (EmbeddingGemma) and refused with any other task or model.
-Images and audio go only to an [`OllamaEndpoint`](@ref) (Ollama's `/api/embed` takes them for models
-that see or hear, such as `embeddinggemma-2:740m-q8_0`, which embedded a text with its picture or clip
-as one item on Ollama 0.40.6); a service that embeds text only refuses them before any request. Ollama
-passes an item's image and clip to the model in a random order, so an item holding both is refused for
-it before any request (on Ollama 0.40.6, ten requests of one such item to `embeddinggemma-2:740m-q8_0`
+One item for [`Embeddings`](@ref), embedded as one vector: a text, an image, a sound clip, or a text
+with an image or a sound clip — one of them per item on an [`OllamaEndpoint`](@ref), which refuses an
+item holding both before any request; a service that embeds text only refuses media. `title` names the
+document a text comes from; it is used by the `:document` task of models with task prompts
+(EmbeddingGemma) and refused with any other task or model. Images and audio go only to an
+`OllamaEndpoint` (Ollama's `/api/embed` takes them for models that see or hear, such as
+`embeddinggemma-2:740m-q8_0`, which embedded a text with its picture or clip as one item on Ollama
+0.40.6). Ollama passes an item's image and clip to the model in a random order, which is why an item
+holding both is refused (on Ollama 0.40.6, ten requests of one such item to `embeddinggemma-2:740m-q8_0`
 gave two different vectors): send the image and the audio as separate items.
 Two items are `==` when their texts, titles and media are. An empty text beside an image or clip is
 no text: the item holds the media alone (`text === nothing`), sent with no task prompt. An empty or

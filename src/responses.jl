@@ -1949,12 +1949,12 @@ Compact a conversation by running a compaction pass. Returns opaque, encrypted i
 that can be passed as input to subsequent requests, reducing token usage in long conversations.
 
 # Fields
-- `model::String`: Model to use for compaction
+- `model::Union{String,Nothing}`: Model to use for compaction; `nothing` (the default) is
+  `"gpt-5.6-sol"` on every service but an [`OllamaEndpoint`](@ref), which has no default model
+  and needs one named: a call to it without one throws `ArgumentError` before any request
 - `input::Any`: The conversation items to compact (typically the full conversation history)
 
-Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys. `model` left
-`nothing` is `"gpt-5.6-sol"`, except on an [`OllamaEndpoint`](@ref), which has no default
-model: a call to it that names none throws `ArgumentError` before any request.
+Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys.
 
 # Examples
 ```julia

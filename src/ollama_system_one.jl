@@ -18,8 +18,10 @@ Ollama's System One wire, the protocol [`OllamaEndpoint`](@ref) speaks:
 `POST {base_url}/v1/systemone` (Ollama 0.35 or later, pictures 0.35.1 or later;
 measured on 0.40.6, `tev1:4b` and `clef-flash:9b` arriving in 0.40.0) with the
 System One JSON form TypeSafe's wrapper writes — `state`, `model`, `questions`,
-then `runner` when the endpoint sets one (part of a recording's key: it can change
-an answer), `images` when the state holds any, and `keep_alive` when one is set —
+then `runner` when the endpoint sets one (part of a recording's key: the runner the
+model's listing names answers as if unpinned, and any other is the server's 400,
+`no compatible manifest found for runners: <runner>`, never another answer, on Ollama
+0.40.6), `images` when the state holds any, and `keep_alive` when one is set —
 answered by a local decision model such as `tev1:4b` (`clef-flash:9b` for
 pictures) and decoded as a TypeSafe reply is. No key is sent, no request id comes
 back, and recordings are filed under the namespace `"ollama"`, keyed without

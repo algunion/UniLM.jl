@@ -295,8 +295,7 @@ function decode_system_one(p::OllamaSystemOneProtocol, service, request::SystemO
     # The route documents the reply's `model` as the request's, but a cloud model may answer
     # without its tag (Ollama's published example: "clef" for "clef:cloud"); the requested name
     # is kept, so the answer is priced as the cloud model it is.
-    requested = _system_one_model(p, service, request)
-    model = _ollama_cloud_model(requested) && !_ollama_cloud_model(decoded.model) ? requested : decoded.model
+    model = _ollama_billed_model(_system_one_model(p, service, request), decoded.model)
     SystemOneSuccess(SystemOneResponse(model, answers, _ollama_system_one_usage(decoded), nothing, decoded.raw, service))
 end
 

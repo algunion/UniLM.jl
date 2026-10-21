@@ -91,7 +91,8 @@ Parsed FIM completion response containing choices, usage, and raw data.
 # Fields
 - `choices::Vector{FIMChoice}`: Generated completions
 - `usage::Union{TokenUsage,Nothing}`: Token usage statistics
-- `model::String`: Model that generated the response
+- `model::String`: Model that generated the response (through an [`OllamaEndpoint`](@ref), a
+  cloud model whose reply drops its tag keeps the requested name; the server's stays in `raw`)
 - `raw::Dict{String,Any}`: Complete raw JSON response
 """
 @kwdef struct FIMResponse
@@ -227,7 +228,8 @@ function fim_complete(fim::FIMCompletion; config::Union{Nothing,RequestConfig}=n
     try
         resp = _http_with_retries(cfg, t0, "POST", url, auth_header(fim.service), body; cancel=tok)
         if resp.status == 200
-            return FIMSuccess(response=_parse_fim_response(resp), service=fim.service)
+            return FIMSuccess(response=_billed_response(fim.service, fim.model, _parse_fim_response(resp)),
+                              service=fim.service)
         else
             # Retry/backoff already ran inside the shared loop; the last real
             # response is the truthful outcome (a budget-exhausted 429 is a 429,

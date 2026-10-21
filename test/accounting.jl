@@ -481,6 +481,8 @@ end
     @test !cloud("localhost:5000/library/clef-cloud") && cloud("localhost:5000/library/clef:cloud")
     @test cloud("clef:CLOUD") && cloud("gpt-oss:120B-CLOUD")                 # names resolve in any case
     @test !cloud("x:mycloud") && !cloud("x:cloudy") && !cloud("x:7b-cloudless")
+    # Ollama trims a name before it parses it (internal/modelref): surrounding whitespace hides no cloud tag.
+    @test cloud("clef:cloud ") && cloud(" gpt-oss:120b-cloud\n") && !cloud(" gemma4:e4b ")
     ep = OllamaEndpoint(base_url="http://box:11434")
     succ(model) = (c = Chat(service=ep, model=model); push!(c, Message(Val(:system), "s"));
                    push!(c, Message(Val(:user), "hi"));

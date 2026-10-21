@@ -810,8 +810,12 @@ OpenAI-compatible routes ignore: the context window and the other
 No API key is sent. Local models cost nothing: [`estimated_cost`](@ref) reports `0.0`
 for a chat, embeddings, `respond` or FIM result without a missing-price warning.
 A cloud model reached through the local server — a model whose tag is `cloud` or ends in
-`-cloud` (`clef:cloud`, `gpt-oss:120b-cloud`) — is billed by Ollama and is priced by its
-name like any other model.
+`-cloud` (`clef:cloud`, `gpt-oss:120b-cloud`) — is billed by Ollama and is priced by the
+name requested, never as a free local call: a result whose reply drops the tag
+(`gpt-oss:120b`) keeps the requested name, and the server's stays in its `raw`; a name
+missing from the price table logs the missing-price warning. A model is recognised as
+cloud by that tag alone, so a cloud model copied under a name without it (`ollama cp`)
+is priced as local, at `0.0`.
 
 ```julia
 ollama = OllamaEndpoint(num_ctx=32_768, keep_alive=600)

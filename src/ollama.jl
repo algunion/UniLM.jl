@@ -24,17 +24,29 @@ _model_hint(::OllamaEndpoint) =
 
 # A model on the caller's own machine is free. A cloud model reached through the local server
 # (a tag of `cloud`, or one ending in `-cloud`, such as `clef:cloud` or `gpt-oss:120b-cloud`) runs on
-# Ollama's servers and bills its account: it is priced by name like any other model. As in Ollama's
-# own name parser, the tag follows the last ':' only when no '/' comes after it (in
-# `localhost:5000/library/clef-cloud` that ':' starts a registry port, and the tag is the default
-# `latest`), and Ollama compares names case-insensitively (`GEMMA4:E4B` is `gemma4:e4b`).
-function _ollama_cloud_model(model::AbstractString)::Bool
+# Ollama's servers and bills its account: it is priced by the name requested, like any other model. As
+# in Ollama's own name parser, surrounding whitespace is trimmed, the tag follows the last ':' only when
+# no '/' comes after it (in `localhost:5000/library/clef-cloud` that ':' starts a registry port, and the
+# tag is the default `latest`), and Ollama compares names case-insensitively (`GEMMA4:E4B` is `gemma4:e4b`).
+function _ollama_cloud_model(name::AbstractString)::Bool
+    model = strip(name)
     i = findlast(':', model)
     (isnothing(i) || something(findlast('/', model), 0) > i) && return false
     tag = lowercase(model[nextind(model, i):end])
     tag == "cloud" || endswith(tag, "-cloud")
 end
 _is_local(::OllamaEndpoint, model::AbstractString) = !_ollama_cloud_model(model)
+
+# A cloud model may answer without its tag: Ollama's cloud proxy sends the cloud the name stripped of its
+# cloud tag (`gpt-oss:120b` for `gpt-oss:120b-cloud`) and passes the reply through. A result keeps the
+# requested name, so it is priced as the cloud model it is; the server's name stays in its `raw`.
+_ollama_billed_model(requested::AbstractString, replied::AbstractString)::String =
+    _ollama_cloud_model(requested) && !_ollama_cloud_model(replied) ? String(requested) : String(replied)
+_billed_response(::OllamaEndpoint, requested::AbstractString, x::ResponseObject) =
+    (m = _ollama_billed_model(requested, x.model); m == x.model ? x :
+     ResponseObject(x.id, x.status, m, x.output, x.usage, x.error, x.metadata, x.raw))
+_billed_response(::OllamaEndpoint, requested::AbstractString, x::FIMResponse) =
+    (m = _ollama_billed_model(requested, x.model); m == x.model ? x : FIMResponse(x.choices, x.usage, m, x.raw))
 
 # ─── Chat request (neutral Chat → /api/chat body) ───────────────────────────
 

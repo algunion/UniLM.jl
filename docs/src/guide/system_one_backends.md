@@ -349,9 +349,9 @@ UniLM's own, blank (whitespace-only) `instructions`, which Ollama would read as
 none. By Ollama's source, a Kev model on Ollama's own runner (such as
 `kev:0.8b-mxfp8`) skips the shared checks and takes 1 to 255 levels and a blank
 state; that is untested. A model may take less, and says so with its own HTTP 400,
-which comes back as a [`SystemOneFailure`](@ref) carrying Ollama's message (each
-begins with the question's name, `question "pick": …`). A Choice of one option is
-sent too:
+which comes back as a [`SystemOneFailure`](@ref) carrying Ollama's message (the
+messages in the table below begin with the question's name, `question "pick": …`).
+A Choice of one option is sent too:
 
 | Model | Runner | Options per Choice | One option came back as | 27 options came back as |
 | :--- | :--- | :--- | :--- | :--- |

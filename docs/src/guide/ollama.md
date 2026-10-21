@@ -72,8 +72,9 @@ account: UniLM prices each of its results — chat, embeddings, System One, `res
 and FIM — by the requested name, like any other model, never as a free local call; a
 name missing from the price table gets the missing-price warning. Ollama sends the
 cloud the name without its tag and passes the reply through, so a reply may name
-`gpt-oss:120b`: the result keeps the requested name, and the server's stays in its
-`raw` (read from Ollama 0.40.6's source; no cloud call was made). A cloud model is
+`gpt-oss:120b`: a System One, `respond` or FIM result keeps the requested name, and
+the server's stays in its `raw` (read from Ollama 0.40.6's source; no cloud call was
+made), while a chat or embeddings result is priced by the model its request names. A cloud model is
 recognised by its tag alone, so one copied under a name without it (`ollama cp`) is
 priced as local, at 0.0, with no warning. The first request to a model also loads it
 into memory: about 1.7 s for Gemma 4 E4B on the machine above, after which a short
@@ -381,7 +382,8 @@ The 440m and 570m builds were not measured.
 
 What would be a command-line flag or a Modelfile line in Ollama is an argument of
 [`OllamaEndpoint`](@ref), sent with every chat and embeddings request (System One
-requests take none: [Models](@ref ollama_models)):
+requests take none of its [`OllamaOptions`](@ref), only its `keep_alive` and
+`runner`: [Models](@ref ollama_models)):
 
 ```julia
 ollama = OllamaEndpoint(num_ctx=32_768,  # context window, in tokens
@@ -420,9 +422,11 @@ machine above, 21 October 2026). Embed through an endpoint that sets neither
 
 Ollama runs a model on one of its runners: MLX on Apple Silicon, for models stored
 as safetensors, or llama.cpp or ggml, for GGUF models. [`running_models`](@ref)
-reports the runner serving each loaded model, and [`list_models`](@ref) and
-[`model_info`](@ref) the one the model's listing names, which can differ: a GGUF
-model listed as `ggml` is served by llama.cpp. Unset, the server chooses the runner.
+reports the runner serving each loaded model, and [`list_models`](@ref) the one the
+model's listing names — the runner to pin — which can differ: a GGUF model listed as
+`ggml` is served by llama.cpp. [`model_info`](@ref) reports `:llamacpp` or `:mlx`, and
+`nothing` for such a legacy GGUF model (Ollama 0.40.6). Unset, the server chooses the
+runner.
 `OllamaEndpoint(runner=:mlx)` — or `:llamacpp`, `:ggml` — pins one, and Ollama
 matches it against the runner the model's manifest names, the one `list_models`
 reports as `OllamaModel.runner`:

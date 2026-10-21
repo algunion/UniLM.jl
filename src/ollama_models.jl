@@ -12,10 +12,12 @@ One model installed on an Ollama server, as [`list_models`](@ref) reports it
 (`/api/tags`): `name` (e.g. `"gemma4:e4b"`), `size` on disk in bytes, content `digest`,
 `modified_at` (the server's RFC 3339 text), and from its details `family`,
 `parameter_size` (e.g. `"8.0B"`), `quantization` (e.g. `"Q4_K_M"`) and
-`context_length`, the longest context the model supports. `capabilities` holds what
+`context_length`, the longest context the model supports. `runner` — the runner that
+serves it (`:mlx`, `:llamacpp`, `:ggml`) and `format` (`"gguf"`, `"safetensors"`), as
+Ollama 0.40 and later report them; `nothing` when not reported. `capabilities` holds what
 the server reports, e.g. `:completion`, `:tools`, `:insert`, `:vision`, `:embedding`,
-`:thinking`, `:image` and `:audio`. A detail the server does not report is `nothing`; `raw` holds the
-unparsed entry.
+`:thinking`, `:image` and `:audio`. A detail the server does not report, or reports empty
+(`""`), is `nothing`; `raw` holds the unparsed entry.
 """
 struct OllamaModel
     name::String
@@ -26,6 +28,8 @@ struct OllamaModel
     parameter_size::Union{String,Nothing}
     quantization::Union{String,Nothing}
     context_length::Union{Int,Nothing}
+    runner::Union{Symbol,Nothing}
+    format::Union{String,Nothing}
     capabilities::Vector{Symbol}
     raw::Dict{String,Any}
 end
@@ -40,8 +44,11 @@ true]` for a model that thinks or not, names such as `"low"`, `"medium"`, `"high
 for one with levels, empty for a model that cannot think — and `thinking_default`.
 `parameters` are its Modelfile defaults with numbers parsed (`"top_k" => 64`); a
 parameter set more than once, such as `stop`, collects a `Vector{String}`. `family`,
-`parameter_size` and `quantization` come from its details; `raw` holds the whole
-reply (template, license, `model_info`, …).
+`parameter_size` and `quantization` come from its details, `nothing` when not reported
+or empty (`""`). `runner` — the runner that serves it (`:mlx`, `:llamacpp`, `:ggml`) and
+`format` (`"gguf"`, `"safetensors"`), as Ollama 0.40 and later report them; `nothing` when
+not reported or empty (`""`). `raw` holds the whole reply (template, license,
+`model_info`, …).
 """
 struct OllamaModelInfo
     name::String
@@ -53,6 +60,8 @@ struct OllamaModelInfo
     family::Union{String,Nothing}
     parameter_size::Union{String,Nothing}
     quantization::Union{String,Nothing}
+    runner::Union{Symbol,Nothing}
+    format::Union{String,Nothing}
     raw::Dict{String,Any}
 end
 
@@ -62,7 +71,9 @@ end
 A model loaded in an Ollama server's memory, as [`running_models`](@ref) reports it
 (`/api/ps`): `name`, `size` (bytes of memory it takes), `size_vram` (the part in GPU
 memory), the `context_length` it was loaded with, and `expires_at`, when it unloads
-unless used again (RFC 3339 text). `raw` holds the unparsed entry.
+unless used again (RFC 3339 text). `runner` — the runner that serves it (`:mlx`,
+`:llamacpp`, `:ggml`), as Ollama 0.40 and later report it; `nothing` when not reported
+or empty (`""`). `raw` holds the unparsed entry.
 """
 struct OllamaRunningModel
     name::String
@@ -70,6 +81,7 @@ struct OllamaRunningModel
     size_vram::Int
     context_length::Union{Int,Nothing}
     expires_at::String
+    runner::Union{Symbol,Nothing}
     raw::Dict{String,Any}
 end
 
@@ -99,7 +111,8 @@ end
 _gigabytes(bytes::Int)::String = string(round(bytes / 1e9; digits=1), " GB")
 
 Base.show(io::IO, m::OllamaModel) =
-    print(io, "OllamaModel(", repr(m.name), ", ", _gigabytes(m.size), ", ", m.capabilities, ")")
+    print(io, "OllamaModel(", repr(m.name), ", ", _gigabytes(m.size), isnothing(m.runner) ? "" : ", $(m.runner)",
+          ", ", m.capabilities, ")")
 Base.show(io::IO, m::OllamaRunningModel) =
     print(io, "OllamaRunningModel(", repr(m.name), ", ", _gigabytes(m.size), ", ", _gigabytes(m.size_vram),
           " in VRAM", isnothing(m.context_length) ? "" : ", context $(m.context_length)", ")")
@@ -120,6 +133,14 @@ function _req_field(d::AbstractDict, key::String, ::Type{T})::T where {T}
     v
 end
 
+# A detail the server writes as "" (MLX models leave family and sizes empty) is not reported.
+_opt_text(d::AbstractDict, key::String)::Union{String,Nothing} =
+    (v = _opt_field(d, key, String); isnothing(v) || isempty(v) ? nothing : v)
+
+# A name the server reports as text reads as a Symbol, as capabilities do ("mlx" → :mlx).
+_opt_symbol(d::AbstractDict, key::String)::Union{Symbol,Nothing} =
+    (v = _opt_text(d, key); isnothing(v) ? nothing : Symbol(v))
+
 _ollama_details(d::AbstractDict) = something(_opt_field(d, "details", AbstractDict), Dict{String,Any}())
 
 function _ollama_capabilities(d::AbstractDict)::Vector{Symbol}
@@ -138,14 +159,17 @@ end
 function _decode_model(d::Dict{String,Any})::OllamaModel
     det = _ollama_details(d)
     OllamaModel(_req_field(d, "name", String), _req_field(d, "size", Int), _req_field(d, "digest", String),
-                _req_field(d, "modified_at", String), _opt_field(det, "family", String),
-                _opt_field(det, "parameter_size", String), _opt_field(det, "quantization_level", String),
-                _opt_field(det, "context_length", Int), _ollama_capabilities(d), d)
+                _req_field(d, "modified_at", String), _opt_text(det, "family"), _opt_text(det, "parameter_size"),
+                _opt_text(det, "quantization_level"), _opt_field(det, "context_length", Int),
+                _opt_symbol(det, "runner"), _opt_text(det, "format"), _ollama_capabilities(d), d)
 end
 
+# /api/ps reports the runner on the entry itself, /api/tags in its details; the details
+# are read only when the entry has none.
 _decode_running(d::Dict{String,Any})::OllamaRunningModel =
     OllamaRunningModel(_req_field(d, "name", String), _req_field(d, "size", Int), _req_field(d, "size_vram", Int),
-                       _opt_field(d, "context_length", Int), _req_field(d, "expires_at", String), d)
+                       _opt_field(d, "context_length", Int), _req_field(d, "expires_at", String),
+                       @something(_opt_symbol(d, "runner"), _opt_symbol(_ollama_details(d), "runner"), Some(nothing)), d)
 
 function _decode_show(name::String, d::Dict{String,Any})::OllamaModelInfo
     det = _ollama_details(d)
@@ -158,8 +182,8 @@ function _decode_show(name::String, d::Dict{String,Any})::OllamaModelInfo
     OllamaModelInfo(name, _ollama_capabilities(d), isnothing(arch) ? nothing : _opt_field(meta, arch * ".context_length", Int),
                     Vector{Union{Bool,String}}(levels), _opt_field(thinking, "default", Union{Bool,String}),
                     _decode_parameters(something(_opt_field(d, "parameters", String), "")),
-                    _opt_field(det, "family", String), _opt_field(det, "parameter_size", String),
-                    _opt_field(det, "quantization_level", String), d)
+                    _opt_text(det, "family"), _opt_text(det, "parameter_size"), _opt_text(det, "quantization_level"),
+                    _opt_symbol(det, "runner"), _opt_text(det, "format"), d)
 end
 
 # The `parameters` text of /api/show: one `key value` line per Modelfile default, a

@@ -1,0 +1,44 @@
+{
+ "models": [
+  {
+   "context_length": 2048,
+   "details": {
+    "families": [
+     "qwen3_5"
+    ],
+    "family": "qwen3_5",
+    "format": "safetensors",
+    "parameter_size": "752M",
+    "parent_model": "",
+    "quantization_level": "BF16"
+   },
+   "digest": "b661d56508169d2b6c4cab5a047409f50bd9694a215bc232469d44291f4bdbf1",
+   "expires_at": "2026-10-21T15:33:55.37879+03:00",
+   "model": "tev1:0.8b",
+   "name": "tev1:0.8b",
+   "runner": "mlx",
+   "size": 1727809769,
+   "size_vram": 1727809769
+  },
+  {
+   "context_length": 73728,
+   "details": {
+    "families": [
+     "qwen35"
+    ],
+    "family": "qwen35",
+    "format": "gguf",
+    "parameter_size": "752.92M",
+    "parent_model": "",
+    "quantization_level": "Q8_0"
+   },
+   "digest": "a2f47e09befbeaf7548572310d46f794b05c010a20ea5e64e9947eb479c23b31",
+   "expires_at": "2026-10-21T15:33:54.202711+03:00",
+   "model": "kev:0.8b-q8_0",
+   "name": "kev:0.8b-q8_0",
+   "runner": "llamacpp",
+   "size": 2623096749,
+   "size_vram": 2623096749
+  }
+ ]
+}

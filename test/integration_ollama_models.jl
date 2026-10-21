@@ -50,7 +50,7 @@ else
     info = model_info(_OMM_EMBED; service=_OMM_EP)
     @test info isa OllamaSuccess{OllamaModelInfo}
     @test info.response.capabilities == listed.capabilities && info.response.format == listed.format
-    @test info.response.format in ("gguf", "safetensors")
+    @test info.response.format in (:gguf, :safetensors)
     # /api/show names no runner for some models (embeddinggemma:latest on Ollama 0.40.6): nothing, never a guess.
     @test isnothing(info.response.runner) || info.response.runner in _OMM_RUNNERS
     missing_model = model_info("no-such:tag"; service=_OMM_EP)

@@ -16,7 +16,7 @@ One model installed on an Ollama server, as [`list_models`](@ref) reports it
 `context_length`, the longest context the model supports. `runner` — the runner the
 server's listing names for the model (`:mlx`, `:llamacpp`, `:ggml`), which can differ from
 the one that serves it once loaded: [`OllamaRunningModel`](@ref)`.runner` (`/api/ps`)
-reports that — and `format` (`"gguf"`, `"safetensors"`), as Ollama 0.40 and later report
+reports that — and `format` (`:gguf`, `:safetensors`), as Ollama 0.40 and later report
 them; `nothing` when not reported. `capabilities` holds what
 the server reports, e.g. `:completion`, `:tools`, `:insert`, `:vision`, `:embedding`,
 `:thinking`, `:image` and `:audio`. A detail the server does not report, or reports empty
@@ -32,7 +32,7 @@ struct OllamaModel
     quantization::Union{String,Nothing}
     context_length::Union{Int,Nothing}
     runner::Union{Symbol,Nothing}
-    format::Union{String,Nothing}
+    format::Union{Symbol,Nothing}
     capabilities::Vector{Symbol}
     raw::Dict{String,Any}
 end
@@ -51,8 +51,8 @@ parameter set more than once, such as `stop`, collects a `Vector{String}`. `fami
 or empty (`""`). `runner` — the runner `/api/show`'s details name (`:mlx`, `:llamacpp`,
 `:ggml`; `nothing` when none — e.g. `embeddinggemma:latest` on Ollama 0.40.6), which can
 differ from [`OllamaModel`](@ref)`.runner` (`/api/tags`) and from the runner that serves it
-once loaded ([`OllamaRunningModel`](@ref)`.runner`, `/api/ps`) — and `format` (`"gguf"`,
-`"safetensors"`), as Ollama 0.40 and later report them; `nothing` when not reported or
+once loaded ([`OllamaRunningModel`](@ref)`.runner`, `/api/ps`) — and `format` (`:gguf`,
+`:safetensors`), as Ollama 0.40 and later report them; `nothing` when not reported or
 empty (`""`). `raw` holds the whole reply (template, license, `model_info`, …).
 """
 struct OllamaModelInfo
@@ -66,7 +66,7 @@ struct OllamaModelInfo
     parameter_size::Union{String,Nothing}
     quantization::Union{String,Nothing}
     runner::Union{Symbol,Nothing}
-    format::Union{String,Nothing}
+    format::Union{Symbol,Nothing}
     raw::Dict{String,Any}
 end
 
@@ -145,6 +145,9 @@ _opt_text(d::AbstractDict, key::String)::Union{String,Nothing} =
 # A name the server reports as text reads as a Symbol, as capabilities do ("mlx" → :mlx).
 _opt_symbol(d::AbstractDict, key::String)::Union{Symbol,Nothing} =
     (v = _opt_text(d, key); isnothing(v) ? nothing : Symbol(v))
+# A model's weight format, in lower case as Ollama names it in its manifests ("gguf" → :gguf).
+_opt_format(d::AbstractDict)::Union{Symbol,Nothing} =
+    (v = _opt_text(d, "format"); isnothing(v) ? nothing : Symbol(lowercase(v)))
 
 _ollama_details(d::AbstractDict) = something(_opt_field(d, "details", AbstractDict), Dict{String,Any}())
 
@@ -166,7 +169,7 @@ function _decode_model(d::Dict{String,Any})::OllamaModel
     OllamaModel(_req_field(d, "name", String), _req_field(d, "size", Int), _req_field(d, "digest", String),
                 _req_field(d, "modified_at", String), _opt_text(det, "family"), _opt_text(det, "parameter_size"),
                 _opt_text(det, "quantization_level"), _opt_field(det, "context_length", Int),
-                _opt_symbol(det, "runner"), _opt_text(det, "format"), _ollama_capabilities(d), d)
+                _opt_symbol(det, "runner"), _opt_format(det), _ollama_capabilities(d), d)
 end
 
 # /api/ps reports the runner on the entry itself, /api/tags in its details; the details
@@ -188,7 +191,7 @@ function _decode_show(name::String, d::Dict{String,Any})::OllamaModelInfo
                     Vector{Union{Bool,String}}(levels), _opt_field(thinking, "default", Union{Bool,String}),
                     _decode_parameters(something(_opt_field(d, "parameters", String), "")),
                     _opt_text(det, "family"), _opt_text(det, "parameter_size"), _opt_text(det, "quantization_level"),
-                    _opt_symbol(det, "runner"), _opt_text(det, "format"), d)
+                    _opt_symbol(det, "runner"), _opt_format(det), d)
 end
 
 # The `parameters` text of /api/show: one `key value` line per Modelfile default, a

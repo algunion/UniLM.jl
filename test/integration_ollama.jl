@@ -173,17 +173,17 @@ end
 @testset "embeddings: native vectors, over-long input fails" begin
     # Refuted by: wrong dimension, similar texts not closer than unrelated ones, or silent truncation.
     e = embeddingrequest!(Embeddings(["cats purr", "kittens meow", "stock markets fell"];
-                                     service=_OLLAMA_EP, model=_OLLAMA_EMBED))
+                                     service=_OLLAMA_EP, model=_OLLAMA_EMBED, task=:none))
     @test e isa EmbeddingSuccess
     v = embedding_vectors(e)
     cosine(a, b) = sum(a .* b) / sqrt(sum(abs2, a) * sum(abs2, b))
     @test length(v) == 3 && all(x -> length(x) == length(v[1]) > 100, v)
     @test cosine(v[1], v[2]) > cosine(v[1], v[3])
     @test estimated_cost(e) == 0.0
-    f = embeddingrequest!(Embeddings(repeat("word ", 5000); service=_OLLAMA_EP, model=_OLLAMA_EMBED);
+    f = embeddingrequest!(Embeddings(repeat("word ", 5000); service=_OLLAMA_EP, model=_OLLAMA_EMBED, task=:none);
                           config=RequestConfig(max_attempts=1))
     @test f isa EmbeddingFailure && f.status == 400
-    ok = embeddingrequest!(Embeddings(repeat("word ", 5000); service=OllamaEndpoint(truncate=true), model=_OLLAMA_EMBED))
+    ok = embeddingrequest!(Embeddings(repeat("word ", 5000); service=OllamaEndpoint(truncate=true), model=_OLLAMA_EMBED, task=:none))
     @test ok isa EmbeddingSuccess
 end
 

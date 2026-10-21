@@ -59,6 +59,10 @@ end
         include("ollama_models.jl")
     end
 
+    @testset "embedding tasks and items" begin
+        include("embeddings_tasks.jl")
+    end
+
     @testset "config.jl" begin
         include("config.jl")
     end

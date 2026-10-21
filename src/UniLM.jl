@@ -148,6 +148,7 @@ export
     issendvalid,
     chatrequest!,
     Embeddings,
+    EmbeddingInput,
     embeddingrequest!,
     EmbeddingSuccess,
     EmbeddingFailure,

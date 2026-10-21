@@ -115,30 +115,19 @@ jobs:
           arch: x64
       - uses: julia-actions/cache@a7bed9df697e5d7309d68afe7542a87621a8b6c8 # v3.3.0
       - uses: julia-actions/julia-buildpkg@e3eb439fad4f9aba7da2667e7510e4a46ebc46e1 # v1.7.0
-      # actions/cache refuses a key that contains a comma, and the model lists are
-      # comma-separated: the key spells them with '+' instead.
-      - name: Cache key (Ollama version and models)
-        id: ollama-cache-key
-        run: echo "key=ollama-$OLLAMA_VERSION-${UNILM_OLLAMA_DECISION_MODELS//,/+}-${UNILM_OLLAMA_EMBED_MODELS//,/+}" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/ollama-dist
-            ~/.ollama/models
-          key: ${{ steps.ollama-cache-key.outputs.key }}
       - name: Install Ollama (pinned by checksum)
         run: |
           mkdir -p ~/ollama-dist
           f=~/ollama-dist/ollama-linux-amd64.tar.zst
-          [ -f "$f" ] || curl -fsSL -o "$f" "https://github.com/ollama/ollama/releases/download/$OLLAMA_VERSION/ollama-linux-amd64.tar.zst"
+          curl -fsSL -o "$f" "https://github.com/ollama/ollama/releases/download/$OLLAMA_VERSION/ollama-linux-amd64.tar.zst"
           echo "$OLLAMA_SHA256  $f" | sha256sum -c -
           sudo tar --zstd -xf "$f" -C /usr/local
           (ollama serve > "$RUNNER_TEMP/ollama.log" 2>&1 &)
-          for i in $(seq 1 60); do curl -sf http://127.0.0.1:11434/api/version && break; sleep 1; done
+          for _ in $(seq 1 60); do curl -sf http://127.0.0.1:11434/api/version && break; sleep 1; done
           curl -sf http://127.0.0.1:11434/api/version
       - name: Pull the test models
         run: |
-          for m in kev:0.8b-q8_0 d1-omni:600m embeddinggemma-2:270m-q8_0-text; do ollama pull "$m"; done
+          for m in ${UNILM_OLLAMA_DECISION_MODELS//,/ } ${UNILM_OLLAMA_EMBED_MODELS//,/ }; do ollama pull "$m"; done
       - name: Local-model live suites
         shell: julia --color=yes --startup-file=no {0}
         run: |

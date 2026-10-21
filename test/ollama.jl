@@ -566,3 +566,27 @@ end
         close(server)
     end
 end
+
+@testset "a streamed respond and a fetched response record their endpoint" begin
+    obj = Dict("id" => "resp_1", "object" => "response", "status" => "completed", "model" => "gemma4:e4b",
+        "output" => [Dict("type" => "message", "role" => "assistant",
+                          "content" => [Dict("type" => "output_text", "text" => "Bonjour")])],
+        "usage" => Dict("input_tokens" => 5, "output_tokens" => 1, "total_tokens" => 6))
+    sse(type, d) = "event: $type\ndata: $(JSON.json(merge(Dict{String,Any}("type" => type), d)))\n\n"
+    # A GET carries no body: it fetches the stored response; a POST streams the events.
+    server, url, _ = _ollama_mock((n, body) -> isempty(body) ? (200, [JSON.json(obj)]) :
+        (200, [sse("response.output_text.delta", Dict("delta" => "Bonjour")),
+               sse("response.completed", Dict("response" => obj))]))
+    try
+        ep = OllamaEndpoint(base_url=url)
+        s = fetch(respond(Respond(service=ep, model="gemma4:e4b", input="Say hello in French.", stream=true,
+                                  reasoning=Reasoning(effort="none"))))
+        @test s isa ResponseSuccess && s.service === ep && output_text(s) == "Bonjour"
+        @test (@test_logs estimated_cost(s)) == 0.0
+        g = get_response("resp_1"; service=ep)
+        @test g isa ResponseSuccess && g.service === ep
+        @test (@test_logs estimated_cost(g)) == 0.0
+    finally
+        close(server)
+    end
+end

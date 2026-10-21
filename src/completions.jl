@@ -104,7 +104,9 @@ end
 """
 Successful FIM completion result.
 
-- `service`: the endpoint that answered, used to price the call (a local model costs 0.0)
+- `response`: the parsed completion ([`FIMResponse`](@ref)): its choices, token usage and model
+- `service`: the endpoint that answered, used to price the call (a local model costs 0.0);
+  `nothing` for a result built by hand, priced by its model name
 """
 @kwdef struct FIMSuccess <: LLMRequestResponse
     response::FIMResponse

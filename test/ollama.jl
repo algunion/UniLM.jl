@@ -689,7 +689,8 @@ end
     for (kw, fragment) in (((temperature=0.2,), "runs at temperature 0 and takes no `temperature`"),
                            ((languages=["en"],), "takes one `language`"),
                            ((keywords=["banana"],), "takes no `keywords`"),
-                           ((response_format="srt",), "\"json\" or \"text\" (got \"srt\")"))
+                           ((response_format="text",), "read the text with transcript_text"),
+                           ((response_format="srt",), "JSON only (got \"srt\")"))
         e = refusal(() -> transcribe(wav; service=off, model="gemma4:e4b", kw...))
         @test e isa ArgumentError && occursin(fragment, e.msg)
     end
@@ -718,7 +719,7 @@ end
     # runs (as _ollama_mock does); the reply is `{"text": …}` unless response_format is "text".
     wav = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")
     reply = "{\"text\":\"The secret word is banana\"}\n"
-    server, url, _ = _ollama_mock((n, body) -> (200, [n == 3 ? "The secret word is banana" : reply]))
+    server, url, bodies = _ollama_mock((n, body) -> (200, [n == 3 ? "" : reply]))
     try
         ep = OllamaEndpoint(base_url=url)
         for fmt in (nothing, "json")
@@ -726,8 +727,13 @@ end
             @test r isa TranscriptionSuccess && transcript_text(r) == "The secret word is banana"
             @test r.raw == Dict("text" => "The secret word is banana")
         end
-        r = transcribe(wav; service=ep, model="gemma4:e4b", response_format="text")
-        @test r isa TranscriptionSuccess && transcript_text(r) == "The secret word is banana" && isnothing(r.raw)
+        # A failure after Ollama has begun its reply leaves the 200 body empty (its TranscriptionWriter writes
+        # only when the chat stream reports done): JSON reports it, so "text", which would read it as an empty
+        # transcript, is refused before any request.
+        e = try transcribe(wav; service=ep, model="gemma4:e4b", response_format="text"); nothing catch x; x end
+        @test e isa ArgumentError && occursin("transcript_text", e.msg) && length(bodies) == 2
+        r = transcribe(wav; service=ep, model="gemma4:e4b")
+        @test r isa AudioCallError && length(bodies) == 3
     finally
         close(server)
     end

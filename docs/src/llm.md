@@ -1,7 +1,7 @@
 # UniLM.jl — LLM Reference
 
 > **Single-file reference for LLM code-generation systems.** This is a **Julia** package.
-> Julia ≥ 1.13 · Deps: `HTTP.jl` (≥ 2.7.1), `JSON.jl`, `PrecompileTools.jl`, `Base64`, `SHA`
+> Julia ≥ 1.13 · Deps: `HTTP.jl` (≥ 2.11.2), `JSON.jl`, `PrecompileTools.jl`, `Base64`, `SHA`
 > Repo: <https://github.com/algunion/UniLM.jl>
 
 ## Installation

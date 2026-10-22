@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **A request no longer goes out on a connection its server has closed.** HTTP.jl
+  before 2.11.2 reused an idle keep-alive connection without checking it, so after a
+  server closed one (on shutdown, or after its own idle timeout) the next request
+  could be written on it and fail without reaching the server — a broken pipe, a
+  reset or an unexpected end of stream. HTTP.jl does not retry a POST, so with the
+  default three attempts the call spent one of them; with `max_attempts = 1` it
+  failed. UniLM now requires HTTP.jl 2.11.2, which checks an idle connection before
+  reusing it.
+
 ## 0.25.0
 
 ### Breaking

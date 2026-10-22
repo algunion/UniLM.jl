@@ -558,7 +558,7 @@ end
     end
 end
 
-@testset "System One's pool — a connection the server closed while idle costs a retry, never a failure" begin
+@testset "System One's pool — a connection the server closed while idle carries no request" begin
     q = "q" => noul("x")
     srv = _ae_idle_server(2.0)
     saved = _AE_BASE[]
@@ -568,15 +568,16 @@ end
         quick = [ask("s$i", q; service=_AEMock) for i in 1:3]
         @test all(issuccess, quick)
         @test srv.accepted[] == 1
-        # Three seconds apart, the server has closed it each time: the request written on
-        # it fails, the seam retries it on a fresh connection, and the call succeeds.
+        # Three seconds apart, the server has closed it each time: the pool sees the close
+        # before reusing it (HTTP.jl checks an idle connection from 2.11.2 on), so each call
+        # goes out once, on a fresh connection, and no attempt is spent on the closed one.
         spaced = map(1:3) do i
             sleep(3.0)
             ask("t$i", q; service=_AEMock)
         end
         @test all(issuccess, spaced)
         @test srv.accepted[] == 4
-        @test @lock(srv.lock, copy(srv.retries)) == [nothing, nothing, nothing, "1", "1", "1"]
+        @test @lock(srv.lock, copy(srv.retries)) == [nothing, nothing, nothing, nothing, nothing, nothing]
     finally
         _AE_BASE[] = saved
         close(srv.listener)

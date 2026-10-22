@@ -512,6 +512,58 @@ end
     end
 end
 
+@testset "a pooled connection its server has closed carries no new request" begin
+    # FIXED contract: a keep-alive connection left idle in the client pool by a server
+    # that has since closed it never carries a new request. A POST written on it fails
+    # outright — the write meets a reset, or the read meets the old end-of-stream — and
+    # is not retried (a POST is not idempotent), so the call would end as a transport
+    # error without reaching whichever server listens on that port now. The suite's
+    # bind-0 probes can hand a closed server's port to a new mock server by chance (the
+    # testset above once got a dead connection as its first request); here it happens on
+    # purpose, and the request must reach the new, mute server and end in a typed
+    # timeout. HTTP.jl checks an idle connection before reusing it from 2.11.2 on.
+    body = JSON.json(Dict{String,Any}(
+        "id" => "c", "object" => "chat.completion",
+        "choices" => [Dict{String,Any}("index" => 0, "finish_reason" => "stop",
+            "message" => Dict{String,Any}("role" => "assistant", "content" => "pong"))],
+        "usage" => Dict{String,Any}("prompt_tokens" => 1, "completion_tokens" => 1, "total_tokens" => 2)))
+    hsrv, url, _ = _hm_healthy_oai_server(body)
+    port = parse(Int, rsplit(url, ':'; limit = 2)[2])
+    mock_chat() = (c = Chat(service = GenericOpenAIEndpoint(url, ""), model = "mock");
+                   push!(c, Message(Val(:system), "s")); push!(c, Message(Val(:user), "u")); c)
+    warm = chatrequest!(mock_chat(); config = UniLM.RequestConfig(request_timeout = 5.0, max_attempts = 1))
+    close(hsrv)   # returns once the server has closed its idle keep-alive connection
+    seen = Ref(0)
+    msrv = nothing
+    for attempt in 1:5
+        try
+            msrv = HTTP.listen!("127.0.0.1", port; verbose = false) do http::HTTP.Stream
+                read(http)
+                seen[] += 1
+                sleep(3.0)   # outlast the 0.5 s request_timeout below, then reap
+            end
+            break
+        catch
+            attempt == 5 && rethrow()
+            sleep(0.2)
+        end
+    end
+    try
+        outcome = _hm_bounded(bound = 30.0) do
+            chatrequest!(mock_chat();
+                config = UniLM.RequestConfig(request_timeout = 0.5, total_deadline = 1.0, max_attempts = 1))
+        end
+        @test warm isa LLMSuccess
+        # the request reached the server now on the port: a typed timeout, not a transport error
+        @test outcome[1] === :ok && outcome[2] isa LLMCallError && outcome[2].cause isa UniLM.UniLMTimeout
+        # ... and its handler got it; in a cold process the handler's first call can start
+        # after the client's 0.5 s deadline, so wait for it (a dead connection never arrives)
+        @test timedwait(() -> seen[] == 1, 5.0) === :ok
+    finally
+        HTTP.forceclose(msrv)
+    end
+end
+
 # ─── Streaming SSE mock servers (raw-byte dribble; idle is a BYTE-gap) ────────
 
 # Write `s` to an HTTP.Stream in small byte-chunks separated by `gap` seconds,

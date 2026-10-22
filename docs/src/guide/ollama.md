@@ -176,12 +176,19 @@ thinking would not be constrained at all; for the same reason a `response_format
 together with a thinking effort (`"low"`, `"medium"`, `"high"`) is refused before
 the request is sent.
 
+A format limits which tokens the model may emit, not how many, so a reply can run on
+without closing the object. Give a structured-output request a `max_tokens` (sent as
+Ollama's `num_predict`): a reply that reaches it stops with `finish_reason` `"length"`
+and is not complete JSON, instead of generating until the request times out.
+
 !!! details "Evidence"
     The extraction request above, sent to `/api/chat` 10 times per setting on
     Ollama 0.34.4: `gemma4:e4b` returned valid JSON in 0 of 10 runs with thinking at
     its default (it answered plain text), 1 of 10 with thinking on, and 10 of 10 with
     it off; `gemma4:e2b` in 10, 8 and 10 of 10. Every failure was a run in which the
-    model did not think.
+    model did not think. Without `max_tokens`, the same request on Ollama 0.40.6
+    twice generated until the 600 s default request timeout (more than 60,000 tokens
+    in one run); the retry answered in under a second.
 
 ## [Images and audio](@id ollama_media)
 
@@ -548,7 +555,10 @@ favour of `tool_loop!` on a `Chat`. So are [`get_response`](@ref),
 [`cancel_response`](@ref), [`delete_response`](@ref) and [`list_input_items`](@ref),
 before any request: Ollama stores no response. The structured-output rule holds
 there too: a `json_schema` text format turns thinking off, and only function tools
-are accepted. [`compact_response`](@ref) reaches Ollama's `/v1/responses/compact`
+are accepted. Cap such a request with `max_output_tokens`; Ollama reports a reply
+cut at that limit as `"completed"`, with no `incomplete_details` (Ollama 0.40.8), so
+a reply whose output tokens ([`token_usage`](@ref)) reach the limit is the cut one.
+[`compact_response`](@ref) reaches Ollama's `/v1/responses/compact`
 and needs a `model`: Ollama has no default model, so a call that names none is an
 `ArgumentError` before any request, as a `Chat`'s is. [`fim_complete`](@ref) works
 with models that fill in the middle, such as `qwen2.5-coder` (Gemma 4 does not).

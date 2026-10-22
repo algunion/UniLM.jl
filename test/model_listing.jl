@@ -265,19 +265,21 @@ UniLM._models_url(::_AnthropicListingAt) = _url_probe_base[] * "/v1/models"
 UniLM.auth_header(s::_AnthropicListingAt) = UniLM.auth_header(s.endpoint)
 UniLM._models_headers(s::_AnthropicListingAt) = UniLM._models_headers(s.endpoint)
 
-# https://platform.claude.com/docs/en/api/models/list (Headers): `anthropic-beta` is deprecated on
-# GET /v1/models. Refuted if: an Anthropic listing sends the endpoint's betas, or leaves out its key,
-# its API version, its user profile or its workspace — from the type or from an instance.
-@testset "an Anthropic listing sends the key, the version, the user profile and the workspace, never the betas" begin
+# https://platform.claude.com/docs/en/api/models/list (Headers) names `anthropic-version`,
+# `anthropic-workspace-id` and `anthropic-beta`, deprecated on GET /v1/models, and no user-profile
+# header. Refuted if: an Anthropic listing sends the endpoint's betas or its user profile, or
+# leaves out its key, its API version or its workspace — from the type or from an instance.
+@testset "an Anthropic listing sends the key, the version and the workspace, never the user profile or the betas" begin
     withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
         base = ["x-api-key" => "sk-ant-local-0000", "anthropic-version" => "2026-10-21"]
         every = ANTHROPICServiceEndpoint(betas=["fast-mode-2026-02-01", "compact-2026-09-04"],
                                          user_profile_id="uprof_011CZkZCu8hGbp5mYRQgUmz9",
                                          workspace_id="wrkspc_011CZkZaBF1tNoB5wlCeusgy", inference_geo="us")
-        options = ["anthropic-user-profile-id" => "uprof_011CZkZCu8hGbp5mYRQgUmz9",
-                   "anthropic-workspace-id" => "wrkspc_011CZkZaBF1tNoB5wlCeusgy"]
+        options = ["anthropic-workspace-id" => "wrkspc_011CZkZaBF1tNoB5wlCeusgy"]
+        profile = ANTHROPICServiceEndpoint(user_profile_id="uprof_011CZkZCu8hGbp5mYRQgUmz9")
         for (service, want) in ((ANTHROPICServiceEndpoint, base), (ANTHROPICServiceEndpoint(), base),
-                                (ANTHROPICServiceEndpoint(betas=["fast-mode-2026-02-01"]), base), (every, [base; options]))
+                                (ANTHROPICServiceEndpoint(betas=["fast-mode-2026-02-01"]), base), (profile, base),
+                                (every, [base; options]))
             @test (@inferred UniLM._models_headers(service)) == want
             # On the wire, beside the headers HTTP.jl adds (Host, User-Agent, …): exactly these x- and
             # anthropic- headers, and no Content-Type.
@@ -289,8 +291,9 @@ UniLM._models_headers(s::_AnthropicListingAt) = UniLM._models_headers(s.endpoint
             @test filter(((k, _),) -> startswith(k, "x-") || startswith(k, "anthropic-"), sent[]) == Dict(want)
             @test !haskey(sent[], "content-type")
         end
-        # The endpoint's other requests keep its betas.
+        # The endpoint's other requests keep its betas and its user profile.
         @test Dict(UniLM.auth_header(every))["anthropic-beta"] == "fast-mode-2026-02-01,compact-2026-09-04"
+        @test Dict(UniLM.auth_header(every))["anthropic-user-profile-id"] == "uprof_011CZkZCu8hGbp5mYRQgUmz9"
     end
 end
 

@@ -908,6 +908,29 @@ end
     @test isnothing(_anthropic_decode(Dict("stop_reason" => "end_turn", "content" => Any[])).model)
 end
 
+# https://platform.claude.com/docs/en/about-claude/pricing.md (Data residency pricing): "For
+# Claude 4.6 and later models, specifying US-only inference through the inference_geo parameter
+# incurs a 1.1x multiplier on all token pricing categories ... Earlier models do not support the
+# inference_geo parameter and always use standard pricing". Refuted if: a 4.5 model's usage that
+# reports "us" bills more than its "global" twin, or a 4.6-and-later model's does not bill 1.1×.
+@testset "US-only inference bills 1.1× on Claude 4.6 and later, the standard rates on the 4.5 models" begin
+    m = Message(role=RoleAssistant, content="x")
+    usage(geo) = TokenUsage(prompt_tokens=10_000, completion_tokens=500, total_tokens=10_500, cached_tokens=2_000,
+                            cache_write_tokens=1_000, inference_geo=geo)
+    cost(model, geo) =
+        estimated_cost(LLMSuccess(message=m, self=Chat(service=ANTHROPICServiceEndpoint, model=model), usage=usage(geo)))
+    for model in ("claude-haiku-5-5", "claude-opus-5-5", "claude-opus-4-6", "claude-sonnet-4-6")
+        @test isapprox(cost(model, "us"), 1.1 * cost(model, "global"); rtol=1e-12)
+    end
+    # Haiku 4.5 usage reporting "us" bills 1.0×, as do the other 4.5 models, dated snapshots included.
+    for model in ("claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-opus-4-5-20251101", "claude-sonnet-4-5")
+        @test cost(model, "us") == cost(model, "global") > 0
+    end
+    # An id no row names keeps the multiplier: a newer model takes inference_geo.
+    @test @inferred(UniLM._anthropic_rate_multiplier("claude-nova-6", usage("us"))) == 1.1
+    @test UniLM._anthropic_rate_multiplier("claude-nova-6", usage("global")) == 1.0
+end
+
 # The real Anthropic headers, encoder, decoder, stream handler and pricing — of the bare type or
 # of an endpoint instance — against a local server that records each request (the production
 # endpoint's base URL is a constant).

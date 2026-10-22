@@ -292,11 +292,26 @@ end
     wire = JSON.parse(UniLM.encode_request(OllamaEndpoint(),
                                            chat(OllamaEndpoint(), ImageAttachment(_PNG), AudioAttachment(_WAV))))
     @test wire["messages"][2]["images"] == [UniLM.Base64.base64encode(_PNG), UniLM.Base64.base64encode(_WAV)]
+    # Its Responses API documents no file inputs: an input_file part is refused, by data, URL or
+    # file id, in an InputMessage or a plain input item.
+    asking(ep, items) = Respond(service=ep, model="gemma4:e4b", input=items)
+    message(part) = [InputMessage(role="user", content=[input_text("Read this."), part])]
+    for items in (message(input_file(doc)), message(input_file(url="https://example.com/report.pdf")),
+                  message(input_file(id="file-1")),
+                  [Dict("role" => "user", "content" => [input_text("Read this."), input_file(doc)])])
+        e = _att_caught(() -> UniLM.encode_agentic(OllamaEndpoint(), asking(OllamaEndpoint(), items)))
+        @test e isa ArgumentError && occursin("Ollama", e.msg) && occursin("input_file", e.msg) &&
+              occursin("input_text", e.msg)
+    end
+    @test JSON.parse(UniLM.encode_agentic(OllamaEndpoint(), asking(OllamaEndpoint(), message(input_text("No file.")))))["input"][1]["content"] ==
+          [Dict("type" => "input_text", "text" => "Read this."), Dict("type" => "input_text", "text" => "No file.")]
     seen = _att_count() do url
         for att in (doc, img)
             @test_throws ArgumentError chatrequest!(chat(OllamaEndpoint(base_url=url), att);
                                                     config=RequestConfig(max_attempts=1))
         end
+        @test_throws ArgumentError respond(asking(OllamaEndpoint(base_url=url), message(input_file(doc)));
+                                           config=RequestConfig(max_attempts=1))
     end
     @test seen == 0
 end

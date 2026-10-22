@@ -193,9 +193,11 @@ result = chatrequest!(chat)
 | OpenAI, Azure, the Gemini OpenAI-compatible endpoint, DeepSeek, generic endpoints | `image_url` part (`detail` when set) | `input_audio` part | `file` part (its `filename` and a data URL) |
 | [`OllamaEndpoint`](@ref) | `images` entry; a detail level is refused | `images` entry | refused |
 
-A compatible server that does not read a kind answers with its own error. The native
-Anthropic and Gemini encoders do not send attachments yet. For the Responses API,
-`input_file(DocumentAttachment("report.pdf"))` is the document's `input_file` part. A
+On the OpenAI Chat Completions wire (the first row), UniLM sends every kind as a content
+part, and the server decides what to do with it. The native Anthropic and Gemini encoders
+do not send attachments yet. For the Responses API,
+`input_file(DocumentAttachment("report.pdf"))` is the document's `input_file` part;
+[`OllamaEndpoint`](@ref)'s Responses API, which documents no file inputs, refuses it. A
 refusal is an `ArgumentError` before any request.
 
 ## Models

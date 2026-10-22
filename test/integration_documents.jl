@@ -1,8 +1,10 @@
 # Live witnesses that a PDF document reaches the model: the one-page fixture whose only text is
 # "The secret word is PELICAN." (Helvetica), asked for the word. A model that answers it has read
-# the document; without the document there is nothing to answer from.
+# the document; without the document there is nothing to answer from. And one that an image sent
+# with a detail level is accepted and read: a red disc, asked for its colour.
 const _DOC_PDF = joinpath(@__DIR__, "fixtures", "documents", "secret_word.pdf")
 const _DOC_QUESTION = "What is the secret word? Answer with the word only."
+const _DOC_RED_CIRCLE = joinpath(@__DIR__, "fixtures", "ollama", "red_circle.png")
 
 if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "OPENAI_API_KEY")
     @testset "OpenAI Chat reads a PDF document (file content part)" begin
@@ -22,6 +24,16 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "OPENAI_API_KEY")
         @test result isa ResponseSuccess
         @test occursin("PELICAN", uppercase(output_text(result)))
     end
+
+    @testset "OpenAI Chat takes an image's original detail level (image_url.detail)" begin
+        chat = Chat(model="gpt-6-luna", reasoning_effort="none", max_completion_tokens=16,
+            messages=[Message(Val(:user), "What colour is the circle? Answer with one word.",
+                ImageAttachment(_DOC_RED_CIRCLE; detail="original"))])
+        result = chatrequest!(chat)
+        @info "OpenAI Chat image detail witness" result_type = typeof(result) usage = token_usage(result) cost = estimated_cost(result)
+        @test result isa LLMSuccess
+        @test occursin("red", lowercase(something(text(result), "")))
+    end
 else
-    @info "Skipping the OpenAI document witnesses (set UNILM_LIVE=1 and OPENAI_API_KEY)"
+    @info "Skipping the OpenAI document and image detail witnesses (set UNILM_LIVE=1 and OPENAI_API_KEY)"
 end

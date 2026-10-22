@@ -43,25 +43,6 @@ FunctionSignature(name, description, parameters) =
 
 JSON.omit_null(::Type{FunctionSignature}) = true
 
-"""
-    GPTImageContent(text, images)
-
-Message content combining text with images. `text` is the prompt and `images`
-is a vector of image URLs or base64-encoded image data.
-"""
-struct GPTImageContent
-    text::String
-    images::Vector{String}
-end
-
-function JSON.lower(x::GPTImageContent)
-    d = Dict{Symbol,Any}[Dict{Symbol,Any}(:type => "text", :text => x.text)]
-    for i in x.images
-        push!(d, Dict{Symbol,Any}(:type => "image_url", :image_url => Dict(:url => i, :detail => "auto")))
-    end
-    return d
-end
-
 struct GPTFunction
     name::String
     arguments::AbstractDict
@@ -290,13 +271,14 @@ file signature), never from a file name, so its declared format always matches i
 Endpoints on the OpenAI Chat Completions wire (OpenAI, Azure, the Gemini OpenAI-compatible
 endpoint, DeepSeek, generic endpoints) send an image as an `image_url` part, with its
 `detail` level when it sets one, a sound clip as an `input_audio` part and a document as a
-`file` part, all base64; a compatible server that does not read a kind answers with its own
-error. For the Responses API, [`input_file`](@ref) turns a document into an `input_file`
-part. [`OllamaEndpoint`](@ref) sends images and clips in the message's `images` list and
-refuses a document or an image's detail level. The native Anthropic and Gemini encoders do
-not map attachments yet. A System One request carries images without a detail level and no
-documents, and an embedding input an image or a clip without a level. Each refusal is an
-`ArgumentError` before any network I/O.
+`file` part, all base64: UniLM sends every kind as a content part on this wire, and the
+server decides what to do with it. For the Responses API, [`input_file`](@ref) turns a
+document into an `input_file` part. [`OllamaEndpoint`](@ref) sends images and clips in the
+message's `images` list and refuses a document — a chat attachment, or an `input_file` part
+for its Responses API, which documents no file inputs — and an image's detail level. The
+native Anthropic and Gemini encoders do not map attachments yet. A System One request
+carries images without a detail level and no documents, and an embedding input an image or
+a clip without a level. Each refusal is an `ArgumentError` before any network I/O.
 """
 abstract type Attachment end
 

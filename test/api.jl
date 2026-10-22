@@ -91,21 +91,6 @@ end
     end
 end
 
-@testset "GPTImageContent" begin
-    ic = UniLM.GPTImageContent("hello", ["http://img1.png", "http://img2.png"])
-    @test ic.text == "hello"
-    @test length(ic.images) == 2
-
-    lowered = JSON.lower(ic)
-    @test length(lowered) == 3
-    @test lowered[1][:type] == "text"
-    @test lowered[1][:text] == "hello"
-    @test lowered[2][:type] == "image_url"
-    @test lowered[2][:image_url][:url] == "http://img1.png"
-    @test lowered[2][:image_url][:detail] == "auto"
-    @test lowered[3][:image_url][:url] == "http://img2.png"
-end
-
 @testset "GPTFunction" begin
     args = Dict("location" => "NYC", "count" => 3)
     f = UniLM.GPTFunction("get_weather", args)

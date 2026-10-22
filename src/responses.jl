@@ -96,7 +96,8 @@ The `input_file` content part of a [`DocumentAttachment`](@ref): `file_data` is 
 as a base64 data URL (`"data:application/pdf;base64,…"`, the form OpenAI's
 [file inputs](https://developers.openai.com/api/docs/guides/file-inputs) guide sends) and
 `filename` the document's name — the same `Dict` as
-`input_file(; file_data=…, filename=document.filename)`.
+`input_file(; file_data=…, filename=document.filename)`. [`OllamaEndpoint`](@ref)'s
+Responses API documents no file inputs and refuses an `input_file` part before any request.
 """
 input_file(a::DocumentAttachment) = input_file(; file_data=_data_url(a), filename=a.filename)
 

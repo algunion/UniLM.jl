@@ -22,7 +22,7 @@ _agentic_url(::Type{GEMINIServiceEndpoint})::String = GEMINI_NATIVE_BASE * INTER
 # here until it is deliberately mapped — new surfaces fail loud by default.
 const _INTERACTIONS_MAPPED_FIELDS = (:service, :model, :input, :instructions, :tools, :tool_choice,
     :temperature, :top_p, :max_output_tokens, :stream, :text, :store, :previous_response_id,
-    :background, :reasoning)
+    :background, :reasoning, :service_tier, :safety_identifier, :seed)
 const _INTERACTIONS_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Respond), _INTERACTIONS_MAPPED_FIELDS))
 
 # A set field the body never carries would vanish between the caller's request and
@@ -54,7 +54,7 @@ function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
     _interactions_reject_unmapped(r)
     _gemini_validate_sampling(r.model, r.temperature, r.top_p)
     _interactions_validate_output_limit(r)
-    body = Dict{Symbol,Any}(:model => r.model, :input => _interactions_input(r.input))
+    body = Dict{Symbol,Any}(:model => r.model, :input => _interactions_input(r.input, r.model))
     isnothing(r.instructions) || (body[:system_instruction] = r.instructions)
     isnothing(r.tools) || (body[:tools] = [_interactions_tool(t) for t in r.tools])
     (fmt = _interactions_response_format(r.text)) === nothing || (body[:response_format] = fmt)
@@ -66,6 +66,7 @@ function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
     isnothing(r.temperature)       || (gen[:temperature] = r.temperature)
     isnothing(r.top_p)             || (gen[:top_p] = r.top_p)
     isnothing(r.max_output_tokens)  || (gen[:max_output_tokens] = r.max_output_tokens)
+    isnothing(r.seed)               || (gen[:seed] = _gemini_seed(r.seed))
     isnothing(r.tool_choice)        || (gen[:tool_choice] = _interactions_tool_choice(r.tool_choice))
     if (reasoning = r.reasoning) !== nothing
         isnothing(reasoning.context) && isnothing(reasoning.mode) || throw(ArgumentError(
@@ -83,6 +84,11 @@ function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
     isnothing(r.store)      || (body[:store] = r.store)
     isnothing(r.background) || (body[:background] = r.background)
     isnothing(r.stream)     || (body[:stream] = r.stream)
+    tier = _gemini_service_tier(r.service_tier, _INTERACTIONS_SERVICE_TIERS, "Gemini Interactions")
+    isnothing(tier) || (body[:service_tier] = tier)
+    # Request labels carry an aggregator's end-user id under the key generateContent documents.
+    isnothing(r.safety_identifier) ||
+        (body[:labels] = Dict(:safety_identifier => _gemini_safety_label(r.safety_identifier, "Gemini Interactions")))
     JSON.json(body)
 end
 
@@ -150,21 +156,106 @@ Hosted URL-context tool for the Gemini Interactions API. Pass in
 """
 gemini_url_context()    = Dict{String,Any}("type" => "url_context")
 
-# Neutral input items → Interactions input. A `function_call_output` tool-result item
-# (OpenAI-shaped neutral, from tool_result/tool_loop) → Gemini `function_result{call_id,
-# name, result}`; a String input and any other item pass through unchanged.
-_interactions_input(input::AbstractString) = input
-_interactions_input(input::AbstractVector) = Any[_interactions_input_item(x) for x in input]
+# Neutral input items → Interactions input, a list of steps: the API refuses a list of
+# conversation turns ("use step_list input format instead of turn_list", HTTP 400 on
+# 2026-10-22). A message — an InputMessage, or a Dict with a `role` — is a `user_input` step
+# (a user's) or a `model_output` step (an assistant's), its content Interactions content parts
+# (`_interactions_part`). A `function_call_output` tool-result item (OpenAI-shaped neutral, from
+# tool_result/tool_loop) → Gemini `function_result{call_id, name, result}`. A String input and any
+# other item, such as a step already in the Interactions shape, pass through unchanged.
+_interactions_input(input::AbstractString, ::String) = input
+_interactions_input(input::AbstractVector, model::String) = Any[_interactions_input_item(x, model) for x in input]
 
-function _interactions_input_item(x)
-    (x isa AbstractDict && get(x, "type", "") == "function_call_output") || return x
-    haskey(x, "name") || throw(ArgumentError(
+_interactions_input_item(x, ::String) = x
+_interactions_input_item(m::InputMessage, model::String) = _interactions_message(m.role, m.content, m.phase, model)
+function _interactions_input_item(x::AbstractDict, model::String)
+    kind = _member(x, "type")
+    kind == "function_call_output" && return _interactions_function_result(x)
+    (isnothing(kind) || kind == "message") && !isnothing(_member(x, "role")) &&
+        return _interactions_message(_member(x, "role"), _member(x, "content"), _member(x, "phase"), model)
+    x
+end
+
+# A member of a part or item, whichever key type built it: the input helpers write Symbol keys,
+# a parsed body String keys.
+_member(d::AbstractDict, key::String) = haskey(d, key) ? d[key] : get(d, Symbol(key), nothing)
+
+function _interactions_function_result(x::AbstractDict)::Dict{String,Any}
+    name = _member(x, "name")
+    isnothing(name) && throw(ArgumentError(
         "Gemini function_result requires a name; build the item with tool_result(call_id, name, output)"))
     Dict{String,Any}(
         "type" => "function_result",
-        "call_id" => get(x, "call_id", ""),
-        "name" => x["name"],
-        "result" => _gemini_tool_response(get(x, "output", "")))
+        "call_id" => something(_member(x, "call_id"), ""),
+        "name" => name,
+        "result" => _gemini_tool_response(something(_member(x, "output"), "")))
+end
+
+function _interactions_message(role, content, phase, model::String)::Dict{String,Any}
+    isnothing(phase) || throw(ArgumentError("Gemini Interactions has no message phase: unset " *
+        "InputMessage phase, or send the request to an OpenAI Responses service"))
+    step = role == "user" ? "user_input" : role == "assistant" ? "model_output" : throw(ArgumentError(
+        "Gemini Interactions takes user and assistant messages as input (got a $(repr(role)) message): " *
+        "send system and developer guidance as the request's `instructions`"))
+    Dict{String,Any}("type" => step, "content" => _interactions_content(content, model))
+end
+
+_interactions_content(text::AbstractString, ::String)::Vector{Any} = Any[_interactions_text(text)]
+_interactions_content(parts::AbstractVector, model::String)::Vector{Any} = Any[_interactions_part(p, model) for p in parts]
+_interactions_content(x, ::String) = throw(ArgumentError(
+    "a Gemini Interactions message's content is text or a vector of content parts (got $(typeof(x)))"))
+
+_interactions_text(text::AbstractString)::Dict{String,Any} = Dict{String,Any}("type" => "text", "text" => String(text))
+
+# Content parts (https://ai.google.dev/api/interactions-api, Content): an attachment is an image,
+# audio or document part holding its bytes in base64; the neutral Responses parts are translated
+# — `input_text` and a replayed `output_text` to text, `input_image` and `input_file` with a base64
+# data URL to an image and a document part — and a part already in the Interactions shape passes
+# through. An image's detail level is its `resolution` (`_gemini_part_resolution`).
+_interactions_part(a::ImageAttachment, model::String) =
+    _interactions_image(_gemini_mime(a), base64encode(a.data), a.detail, model)
+_interactions_part(a::AudioAttachment, ::String)::Dict{String,Any} =
+    Dict{String,Any}("type" => "audio", "mime_type" => _gemini_mime(a), "data" => base64encode(a.data))
+_interactions_part(a::DocumentAttachment, ::String)::Dict{String,Any} =
+    _interactions_document(_gemini_mime(a), base64encode(a.data))
+function _interactions_part(p::AbstractDict, model::String)
+    kind = _member(p, "type")
+    kind in ("input_text", "output_text") && return _interactions_text_part(p)
+    kind == "input_image" && return _interactions_image(_interactions_media(_member(p, "image_url"), "an image")...,
+                                                        _member(p, "detail"), model)
+    kind == "input_file" && return _interactions_document(_interactions_media(_member(p, "file_data"), "a file")...)
+    p
+end
+_interactions_part(x, ::String) = throw(ArgumentError(
+    "a Gemini Interactions message holds text, content parts and attachments (got a $(typeof(x)))"))
+
+function _interactions_text_part(p::AbstractDict)::Dict{String,Any}
+    isnothing(_member(p, "prompt_cache_breakpoint")) || throw(ArgumentError(
+        "Gemini Interactions caches repeated prompt prefixes implicitly, with no breakpoint to mark " *
+        "(https://ai.google.dev/gemini-api/docs/caching): build the part with input_text(text), without cache_breakpoint"))
+    text = _member(p, "text")
+    text isa AbstractString || throw(ArgumentError("a text part holds its text as a string (got $(repr(text)))"))
+    _interactions_text(text)
+end
+
+function _interactions_image(mime::String, data::String, detail, model::String)::Dict{String,Any}
+    part = Dict{String,Any}("type" => "image", "mime_type" => mime, "data" => data)
+    level = _gemini_part_resolution(detail, model)
+    isnothing(level) || (part["resolution"] = level)
+    part
+end
+
+_interactions_document(mime::String, data::String)::Dict{String,Any} =
+    Dict{String,Any}("type" => "document", "mime_type" => mime, "data" => data)
+
+# A base64 data URL's MIME type and payload. UniLM sends media to Gemini Interactions as bytes:
+# a web URL or an OpenAI file id is refused.
+function _interactions_media(url, what::String)::NTuple{2,String}
+    m = url isa AbstractString ? match(r"\Adata:([^;,]+);base64,(.*)\z"s, url) : nothing
+    isnothing(m) && throw(ArgumentError("Gemini Interactions takes $what as bytes: attach an " *
+        "ImageAttachment, AudioAttachment or DocumentAttachment, or give a base64 data URL; a web URL or " *
+        "an OpenAI file id is not sent"))
+    (String(m[1]), String(m[2]))
 end
 
 # Neutral tool_choice → generation_config.tool_choice.allowed_tools.{mode, tools}

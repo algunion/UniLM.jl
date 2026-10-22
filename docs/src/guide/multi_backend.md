@@ -123,6 +123,29 @@ and features on the Interactions API, which [`respond`](@ref) speaks with the sa
 `service=GEMINIServiceEndpoint` (see [Agentic Workflows](@ref agentic_guide) and Google's
 [Interactions overview](https://ai.google.dev/gemini-api/docs/interactions-overview)).
 
+### Images, audio and documents
+
+Native Gemini sends a user message's [`ImageAttachment`](@ref), [`AudioAttachment`](@ref) and
+[`DocumentAttachment`](@ref) as `inlineData` parts — the bytes in base64, under the MIME type read
+from them — ahead of the message's text, as Google advises for an image with a prompt:
+
+```julia
+chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", reasoning_effort="low",
+            messages=[Message(Val(:user), "What colour is the circle, and what is the note's secret word?",
+                              ImageAttachment("circle.png"), DocumentAttachment("note.pdf"))])
+result = chatrequest!(chat)
+```
+
+An image's `detail` is its per-part media resolution
+([media resolution](https://ai.google.dev/gemini-api/docs/generate-content/media-resolution)): `"low"`
+and `"high"` are Gemini's `MEDIA_RESOLUTION_LOW` and `MEDIA_RESOLUTION_HIGH` (on `gemini-3.8-flash`,
+`"low"` took a 1,089-token image to 256 tokens), `"auto"` leaves the model's default, and
+`"original"`, an OpenAI level, throws `ArgumentError`. Google documents a per-part resolution for
+Gemini 4 and Gemini 3 models, so any level on the earlier Gemini 2.5 and Gemma 4 models throws too
+(inferred from that list; not probed on those models). Inline media has no file name on this API,
+so a document's `filename` is not sent. On [`respond`](@ref) the same attachments go in an
+`InputMessage`'s content (see [Agentic Workflows](@ref agentic_guide)).
+
 ### Current model controls
 
 `reasoning_effort` maps to `thinkingConfig.thinkingLevel` on native Chat (and a
@@ -158,14 +181,54 @@ JSON Schema constraints such as `additionalProperties`.
 
 `response_format` is mapped natively: JSON object and JSON Schema output become
 `generationConfig.responseFormat` (see [Structured Output](@ref structured_guide)).
-`safety_identifier` is mapped natively to the request label `safety_identifier`;
-label values allow at most 63 characters of lowercase letters (international characters
-allowed), numeric characters, underscores, and dashes, so a value such as an email address
-or a 64-character SHA-256 hex digest throws `ArgumentError` at encode time.
-Native Chat returns one candidate and does not implement OpenAI-specific options
-such as `seed`, `metadata`, and `stream_options`; those options fail explicitly.
+`safety_identifier` is mapped natively, on Chat and on `respond`, to the request label
+`safety_identifier`; label values allow at most 63 characters of lowercase letters
+(international characters allowed), numeric characters, underscores, and dashes, so a value
+such as an email address or a 64-character SHA-256 hex digest throws `ArgumentError` at encode
+time. `seed` is `generationConfig.seed` (and `generation_config.seed` on `respond`), an int32,
+so a seed outside -2,147,483,648 to 2,147,483,647 throws `ArgumentError` before any request; `store`
+is the request's `store`, which sets whether Google logs it over the project's setting.
+Native Chat returns one candidate; options `generateContent` has no equivalent for, such as
+`metadata`, `presence_penalty` and `stream_options`, fail explicitly.
 Gemini determines parallel tool use; the inherited `parallel_tool_calls` setting
 does not constrain native Gemini.
+
+`service_tier` is Gemini's ([optimization](https://ai.google.dev/gemini-api/docs/optimization)):
+`"standard"`, `"flex"` (half the standard rates, answers in minutes) or `"priority"` (1.8 times
+the rates) on native Chat, sent as `serviceTier`, and on `respond` also `"deferred"`, sent as
+`service_tier`; any other value throws `ArgumentError`. The tier that billed the call is
+`usage.service_tier` — the reply's `usageMetadata.serviceTier`, else its `x-gemini-service-tier`
+header (the only place Gemini 4 Argon names it), and an interaction's `service_tier` — so a
+Priority request Google downgrades reports and is priced as standard. [`estimated_cost`](@ref)
+bills input and output at half the standard rates on Flex and at 1.8 times on Priority, as the
+[pricing page](https://ai.google.dev/gemini-api/docs/pricing) lists them, and a cache hit at the
+same multiple except where a model's table lists another cache-hit price: on Flex the standard
+one for 3.1 Pro Preview, 3 Flash Preview and the 2.5 models, and \$0.02 (Flex) and \$0.05
+(Priority) per 1M tokens for 3.5 Flash-Lite, whose standard rate is \$0.03; `"deferred"` has no
+price there, so it is estimated at the standard rates with a warning. A Flex request can wait
+in a queue for minutes — Google advises client timeouts of 10 minutes or more
+([Flex inference](https://ai.google.dev/gemini-api/docs/flex-inference)) — and a stream's
+wait for its headers counts against `stream_idle_timeout` (120 s by default), so give a Flex
+call a longer bound, such as `config=RequestConfig(request_timeout=900, stream_idle_timeout=900)`.
+
+Gemini 4 Argon writes past one request's output cap — 32,768 tokens on a non-streamed call and
+65,536 on a stream, Google documents — in hops ([long decode](https://ai.google.dev/gemini-api/docs/generate-content/long-decode)):
+a reply that ends with `CONTINUATION` is continued inside [`chatrequest!`](@ref) — the same request
+again with the latest `continuationToken`, up to 8 requests — and the result is one assistant
+turn, its usage the hops' summed (Google bills every hop; each hop's prompt includes the output
+so far, most of it as cache hits) and priced at the tier the last hop reported. Each request has
+the whole `RequestConfig` budget. A turn still unfinished after 8 requests returns with
+`finish_reason == "continuation"`; a hop that fails ends the call with nothing committed, as does
+a stop or cancel before the last hop's finish reason (a `CONTINUATION` is not the turn's
+completion marker), and the hops already answered — one whose `CONTINUATION` chunk a stop landed
+on included — are added to `cumulative_cost`. A streamed turn streams every hop into the same
+callback. Continuation is exercised against a local mock; a live CONTINUATION reply was not
+observed.
+`GEMINIOpenAIServiceEndpoint` has no long decode.
+A Gemini 4 call (a `gemini-4-…` model) with no `RequestConfig` of yours in any channel waits up to
+20 minutes per attempt, between stream bytes and in all, since Google ends such a call after 10
+minutes, a stream after 20, and advises a 20-minute read timeout (see
+[Timeouts & Retries](@ref timeouts_guide)).
 See Google's [Gemini 4 Argon guide](https://ai.google.dev/gemini-api/docs/latest-model) for the
 current model.
 

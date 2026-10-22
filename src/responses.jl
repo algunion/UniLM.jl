@@ -811,21 +811,31 @@ Configuration struct for an OpenAI Responses API request.
 - `user::String`: End-user identifier for other OpenAI-compatible servers; native OpenAI
   replaces it with `safety_identifier` and `prompt_cache_key`, so there it throws
   `ArgumentError`
-- `service_tier::String`: `"auto"`, `"default"`, `"flex"`, `"scale"`, `"fast"` (or its
-  former name `"priority"`), or `"ultrafast"`, which OpenAI serves for `gpt-6-astra` and
-  `gpt-6.1-sol` only; another value, or `"ultrafast"` on another OpenAI model, throws
-  `ArgumentError`. [`token_usage`](@ref) reports the tier that billed the call
+- `service_tier::String`: on `OPENAIServiceEndpoint`, `"auto"`, `"default"`, `"flex"`,
+  `"scale"`, `"fast"` (or its former name `"priority"`), or `"ultrafast"`, which OpenAI serves
+  for `gpt-6-astra` and `gpt-6.1-sol` only; another value, or `"ultrafast"` on another OpenAI
+  model, throws `ArgumentError`. On Gemini Interactions (`GEMINIServiceEndpoint`),
+  `"standard"`, `"flex"`, `"priority"` or `"deferred"` (`"deferred"` is an Interactions tier
+  only: native Gemini Chat takes the other three); another value throws `ArgumentError`.
+  [`token_usage`](@ref) reports the tier that billed the call
 - `prompt_cache_retention::String`: `"in_memory"` or `"24h"` for models before GPT-5.6.
   OpenAI deprecates it: on `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`,
   `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots), whose cache
   lifetime `prompt_cache_options` sets, the native endpoint throws `ArgumentError` for it
 - `moderation::ModerationConfig`: Moderated completions — see [`ModerationConfig`](@ref)
+- `seed::Int64`: decoding seed, for repeatable output. Gemini Interactions
+  (`GEMINIServiceEndpoint`) sends it as `generation_config.seed`, an int32: a seed outside
+  -2,147,483,648 to 2,147,483,647 throws `ArgumentError` before any request. OpenAI's Responses API
+  has no seed (Chat Completions has one), so `OPENAIServiceEndpoint` and every other
+  endpoint on the OpenAI Responses wire (Azure, `GEMINIOpenAIServiceEndpoint`, generic
+  endpoints) throw `ArgumentError` for it before any request, as does
+  [`OllamaEndpoint`](@ref), whose Responses API reads no seed
 
 On `OPENAIServiceEndpoint` the encoder also applies OpenAI's per-model rules (reasoning
 efforts, sampling controls, Ultrafast, `prompt_cache_retention`) to those models, by exact
 id or a dated snapshot, before any request; other models are checked by the server. See
 [OpenAI's GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model).
-Build a `Respond` with keywords: the positional form takes all 31 fields in declaration
+Build a `Respond` with keywords: the positional form takes all 32 fields in declaration
 order.
 
 # Examples
@@ -881,7 +891,8 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
     stream_options::Union{AbstractDict,Nothing} = nothing
     prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing
     moderation::Union{ModerationConfig,Nothing} = nothing
-    # The positional form takes all 31 fields in declaration order; keyword construction,
+    seed::Union{Int64,Nothing} = nothing               # Gemini Interactions only
+    # The positional form takes all 32 fields in declaration order; keyword construction,
     # which names each field, is the supported way to build a Respond.
     function Respond(service, model, input, instructions, tools, tool_choice,
         parallel_tool_calls, temperature, top_p, max_output_tokens,
@@ -889,7 +900,7 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
         previous_response_id, user, background, include, max_tool_calls,
         service_tier, top_logprobs, prompt_cache_key,
         prompt_cache_retention, safety_identifier, conversation,
-        context_management, stream_options, prompt_cache_options, moderation)
+        context_management, stream_options, prompt_cache_options, moderation, seed)
         model = _resolve_model(service, model)
         tools = _respond_tools(tools)
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
@@ -907,10 +918,21 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
             previous_response_id, user, background, include, max_tool_calls,
             service_tier, top_logprobs, prompt_cache_key,
             prompt_cache_retention, safety_identifier, conversation,
-            context_management, stream_options, prompt_cache_options, moderation)
+            context_management, stream_options, prompt_cache_options, moderation, seed)
     end
 end
 
+# OpenAI's Responses API has no seed (its Chat Completions API has one), so no request on that
+# wire carries one: a set seed would vanish between the caller and the wire.
+function _refuse_responses_seed(service, r::Respond)::Nothing
+    isnothing(r.seed) || throw(ArgumentError(
+        "$(_service_name(service))'s Responses API takes no seed — the OpenAI Responses wire has none " *
+        "(Chat Completions takes one): unset seed, or send the request to Gemini Interactions " *
+        "(GEMINIServiceEndpoint)"))
+    nothing
+end
+
+# The OpenAI Responses JSON. `seed` has no place in it: the OpenAI-wire encoders refuse a set one.
 function JSON.lower(r::Respond)
     d = Dict{Symbol,Any}(:model => r.model, :input => r.input)
     for f in (:instructions, :tools, :tool_choice, :parallel_tool_calls,
@@ -1321,7 +1343,7 @@ end
 function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig, t0::UInt64,
                          token::Union{Nothing,CancelToken})
     Threads.@spawn begin
-        ctl = _StreamCtl(token)
+        ctl = _StreamCtl(token, t0)
         link = _on_cancel(() -> cancel!(ctl.stop), token)   # the caller's token stops the call
         try
             _respond_drive(r, body, callback, cfg, t0, ctl)
@@ -1610,7 +1632,7 @@ wire overrides it (the Gemini Interactions backend is the in-repo reference). An
 
 Public extension API (not exported); see the Custom Backends guide.
 """
-encode_agentic(service::OpenAIWireEndpointSpec, r::Respond)::String = JSON.json(r)
+encode_agentic(service::OpenAIWireEndpointSpec, r::Respond)::String = (_refuse_responses_seed(service, r); JSON.json(r))
 
 # Whether the endpoint's Responses API forgets every call (no previous_response_id,
 # no conversation): a Respond tool loop cannot chain turns there.
@@ -1714,7 +1736,7 @@ function respond(r::Respond; config::Union{Nothing,RequestConfig}=nothing, callb
         throw(ArgumentError("callback requires stream=true"))
     _validate_agentic_capability(r.service)
     body = encode_agentic(r.service, r)
-    cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
+    cfg = _resolve_config(config, _model_default_config(r.service, r.model)); tok = _resolve_cancel(cancel); t0 = time_ns()
     # Streaming path. cfg/t0 are resolved above so both paths share one budget
     # origin: the stream driver bounds the first byte, guards the byte gap, and
     # retries pre-first-callback on the same budget.

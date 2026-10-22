@@ -631,15 +631,13 @@ _image_payload(::Type{GEMINIServiceEndpoint}, ig::ImageGeneration) =
 _image_request(::Type{GEMINIServiceEndpoint}, ig::ImageGeneration) =
     (_gemini_image_url(ig), auth_header(GEMINIServiceEndpoint), JSON.json(_image_payload(GEMINIServiceEndpoint, ig)))
 
-# Each input image is an inline part, its format read from its bytes, ahead of the prompt.
+# Each input image is an inline part (`_gemini_inline_data`, the part a chat attachment is), its
+# format read from its bytes, ahead of the prompt.
 function _image_request(::Type{GEMINIServiceEndpoint}, e::ImageEdit)
-    parts = Dict{Symbol,Any}[_gemini_inline_image(ImageAttachment(read(file))) for file in _edit_images(e)]
+    parts = Dict{Symbol,Any}[_gemini_inline_data(ImageAttachment(read(file))) for file in _edit_images(e)]
     push!(parts, Dict{Symbol,Any}(:text => e.prompt))
     (_gemini_image_url(e), auth_header(GEMINIServiceEndpoint), JSON.json(_gemini_image_body(parts, e)))
 end
-
-_gemini_inline_image(a::ImageAttachment) =
-    Dict{Symbol,Any}(:inlineData => Dict{Symbol,Any}(:mimeType => a.mime, :data => base64encode(a.data)))
 
 # A generateContent reply → ImageResponse. Every image part of the first candidate, in
 # order, is an ImageObject carrying the candidate's text, if any, as its revised prompt;

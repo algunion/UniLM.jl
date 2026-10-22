@@ -96,38 +96,34 @@ end
     end
 end
 
-@testset "encoders that cannot send attachments refuse them before any I/O" begin
-    # Anthropic sends images and documents as content blocks, and refuses what it has no block for.
+@testset "native Gemini sends every kind as an inlineData part, ahead of the text" begin
+    # The wire goldens, the detail levels and the Interactions content parts live in test/gemini.jl
+    # and test/interactions.jl.
+    c = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash")
+    push!(c, Message(Val(:system), "sys"))
+    push!(c, Message(Val(:user), "Read this.", DocumentAttachment(_PDF_PATH), ImageAttachment(_PNG; detail="high"),
+                     AudioAttachment(_WAV)))
+    b64 = UniLM.Base64.base64encode
+    @test JSON.parse(UniLM.encode_request(GEMINIServiceEndpoint, c))["contents"][1]["parts"] == [
+        Dict("inlineData" => Dict("mimeType" => "application/pdf", "data" => b64(_PDF))),
+        Dict("inlineData" => Dict("mimeType" => "image/png", "data" => b64(_PNG)),
+             "mediaResolution" => Dict("level" => "MEDIA_RESOLUTION_HIGH")),
+        Dict("inlineData" => Dict("mimeType" => "audio/wav", "data" => b64(_WAV))),
+        Dict("text" => "Read this.")]
+end
+
+@testset "Anthropic sends images and documents, and refuses what it has no block for before any I/O" begin
     claude(att) = (c = Chat(service=ANTHROPICServiceEndpoint, model="claude-opus-5-5");
                    push!(c, Message(Val(:system), "sys")); push!(c, Message(Val(:user), "Read this.", att)); c)
     for (att, word) in ((AudioAttachment(_WAV), "audio"), (ImageAttachment(_PNG; detail="high"), "detail"))
         e = _att_caught(() -> UniLM.encode_request(ANTHROPICServiceEndpoint, claude(att)))
         @test e isa ArgumentError && occursin("Anthropic", e.msg) && occursin(word, e.msg)
+        # chatrequest! encodes before any network I/O, so the refusal surfaces as a throw.
         @test_throws ArgumentError chatrequest!(claude(att))
     end
     for (att, block) in ((ImageAttachment(_PNG), "image"), (DocumentAttachment(_PDF_PATH), "document"))
         wire = JSON.parse(UniLM.encode_request(ANTHROPICServiceEndpoint, claude(att)))
         @test [b["type"] for b in wire["messages"][1]["content"]] == [block, "text"]
-    end
-    for (ep, model) in ((GEMINIServiceEndpoint, "gemini-3.8-flash"),)
-        err = try
-            UniLM.encode_request(ep, _att_chat(ep; model))
-            nothing
-        catch e
-            e
-        end
-        @test err isa ArgumentError
-        @test occursin("attachments", err.msg)
-        # chatrequest! encodes before any network I/O, so the refusal surfaces as a throw.
-        @test_throws ArgumentError chatrequest!(_att_chat(ep; model))
-        # Every kind is refused, a document or an image with a detail level alone included.
-        for att in (DocumentAttachment(_PDF_PATH), ImageAttachment(_PNG; detail="high"))
-            c = Chat(; service=ep, model)
-            push!(c, Message(Val(:system), "sys"))
-            push!(c, Message(Val(:user), "Read this.", att))
-            e = _att_caught(() -> UniLM.encode_request(ep, c))
-            @test e isa ArgumentError && occursin("(images, audio and documents)", e.msg)
-        end
     end
 end
 

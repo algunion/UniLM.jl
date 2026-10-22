@@ -134,7 +134,15 @@ backend may bring its own: [`ask`](@ref), [`ask_each`](@ref) and the
 natural-language verbs on TypeSafe and on OpenAI's Decisions API, and
 [`list_models`](@ref) on TypeSafe, use `request_timeout = 60` and
 `total_deadline = 150` until one of the three channels above is set
-([Request Configuration & Timeouts](@ref timeouts_api)).
+([Request Configuration & Timeouts](@ref timeouts_api)) — and except a
+[`chatrequest!`](@ref) or [`respond`](@ref) call to a Gemini 4 model (an id starting
+`gemini-4-`, on `GEMINIServiceEndpoint` or `GEMINIOpenAIServiceEndpoint`), which uses
+`request_timeout`, `stream_idle_timeout` and `total_deadline` of `1200` s until one of
+the channels is set. Gemini 4 Argon thinks for minutes on hard problems: Google ends a
+non-streamed call after 10 minutes and a stream after 20, and advises "Set your HTTP
+read timeout to 20 minutes"
+([long decode](https://ai.google.dev/gemini-api/docs/generate-content/long-decode)).
+A config you set in any channel replaces either default as a whole.
 
 ## [Stream semantics](@id timeout_streams)
 
@@ -285,7 +293,9 @@ helpers [`poll_batch`](@ref) and [`poll_file_batch`](@ref) instead poll through
 retryable statuses and per-attempt timeouts until their own wall-clock `timeout`.
 
 `max_attempts` (default 3) caps the total attempts. All attempts share the single
-`total_deadline`:
+`total_deadline` — per request: a long generation Gemini continues in several requests
+(see [Multi-Backend Support](@ref backend_guide)) gives each request the whole budget,
+timeouts and retries alike:
 
 - A retryable outcome (HTTP `408`/`429`/`500`/`502`–`504`/`520`–`524`/`529`, a
   per-attempt connect/request timeout, or a transport-level IO error) is retried

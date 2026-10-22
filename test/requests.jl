@@ -1733,7 +1733,7 @@ end
             for chat in (Chat(model="gpt-6-astra", tools=[tool], stream=stream, messages=sys_user()),
                          Chat(service=ANTHROPICServiceEndpoint, stream=stream, messages=sys_user(),
                               moderation=ModerationConfig(model="omni-moderation-latest")),
-                         Chat(service=GEMINIServiceEndpoint, seed=7, stream=stream, messages=sys_user()))
+                         Chat(service=GEMINIServiceEndpoint, presence_penalty=0.5, stream=stream, messages=sys_user()))
                 @test_throws ArgumentError chatrequest!(chat)
             end
         end

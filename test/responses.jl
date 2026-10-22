@@ -437,13 +437,13 @@ end
                       prompt_cache_options=PromptCacheOptions(mode="implicit"),
                       moderation=ModerationConfig(model="omni-moderation-latest"))
         vals = Any[getfield(ref, f) for f in fieldnames(Respond)]
-        @test length(vals) == 31
+        @test length(vals) == 32
         r = Respond(vals...)
         @test (r.model, r.input, r.instructions, r.safety_identifier) == ("gpt-5.4-mini", "hi", "be brief", "u1")
         @test r.prompt_cache_options == ref.prompt_cache_options && r.moderation == ref.moderation
-        # The positional form takes exactly the 31 fields; fewer is a MethodError.
+        # The positional form takes exactly the 32 fields; fewer is a MethodError.
+        @test_throws MethodError Respond(vals[1:31]...)
         @test_throws MethodError Respond(vals[1:30]...)
-        @test_throws MethodError Respond(vals[1:29]...)
     end
 
     @testset "no prompt field: OpenAI shuts reusable prompts down on 2026-11-30" begin

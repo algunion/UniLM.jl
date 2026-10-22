@@ -1243,6 +1243,33 @@ end
           (510 * 0.25 + 500 * 0.025 + 1 * 1.50) / 1_000_000
 end
 
+@testset "compat — a sound clip sent to a model with its own audio price warns that its estimate is a lower bound" begin
+    # Google's OpenAI-compatible endpoint answered a WAV on gemini-3.1-flash-lite with 54 prompt tokens and
+    # no token details (2026-10-23), where the native endpoint counts 38 of them as audio: the clip is
+    # priced at the text rate. Refuted if: such a request is silent, warns more than once per model, or a
+    # model whose one input price is its audio price warns.
+    wav = AudioAttachment(joinpath(_GEMINI_FIXTURES, "ollama", "secret_word.wav"))
+    asking(model, parts...) = Chat(service=GEMINIOpenAIServiceEndpoint, model=model,
+                                   messages=[Message(Val(:user), "What is the secret word?", parts...)])
+    says = "Gemini's OpenAI-compatible endpoint reports no audio token count, so this model's audio input is " *
+           "estimated at its text rate, a lower bound of its audio rate; send audio through GEMINIServiceEndpoint " *
+           "for an exact estimate"
+    logs, _ = Test.collect_test_logs() do
+        encode_request(GEMINIOpenAIServiceEndpoint, asking("gemini-3.1-flash-lite", wav))
+        encode_request(GEMINIOpenAIServiceEndpoint, asking("gemini-3.1-flash-lite", wav))
+        encode_request(GEMINIOpenAIServiceEndpoint, asking("gemini-2.5-flash", wav))
+    end
+    @test [(l.level, l.message, l.kwargs[:model]) for l in logs] ==
+          [(Base.CoreLogging.Warn, says, "gemini-3.1-flash-lite"), (Base.CoreLogging.Warn, says, "gemini-2.5-flash")]
+    # No warning where the text rate is the audio rate, without a clip, or on the native endpoint, which
+    # counts the audio.
+    @test_logs encode_request(GEMINIOpenAIServiceEndpoint, asking("gemini-3.5-flash-lite", wav))
+    @test_logs encode_request(GEMINIOpenAIServiceEndpoint, asking("gemini-robotics-er-2-preview", wav))
+    @test_logs encode_request(GEMINIOpenAIServiceEndpoint, asking("gemini-3.1-flash-lite"))
+    @test_logs encode_request(GEMINIServiceEndpoint, Chat(service=GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+                                                          messages=[Message(Val(:user), "What is the secret word?", wav)]))
+end
+
 @testset "cost — 3.1 Pro Preview and 2.5 Pro bill a prompt over 200K tokens at their long-context rates" begin
     # The pricing page (2026-10-22), per 1M tokens: input "$2.00, prompts <= 200k tokens $4.00, prompts >
     # 200k tokens", output $12.00 / $18.00, cache hits $0.20 / $0.40; Priority $3.60 / $7.20, $21.60 /

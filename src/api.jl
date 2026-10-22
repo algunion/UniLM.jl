@@ -1539,8 +1539,10 @@ retention (OpenAI `"12h"`, Anthropic `"1h"`). `reasoning_tokens` is the part of
 `completion_tokens` spent on hidden reasoning. `prompt_audio_tokens` is the part of
 `prompt_tokens` that is audio input and `completion_audio_tokens` the part of
 `completion_tokens` that is audio output, as OpenAI Chat Completions reports them for a
-model that hears or speaks; `prompt_audio_tokens` also counts Gemini's audio input. The
-counts are 0 when the provider omits them. `service_tier` is the tier the provider reports
+model that hears or speaks; `prompt_audio_tokens` also counts Gemini's audio input on the
+native endpoint and Gemini Interactions. The counts are 0 when the provider omits them, as
+`GEMINIOpenAIServiceEndpoint` does: its audio input is in `prompt_tokens` alone.
+`service_tier` is the tier the provider reports
 billing the call at (OpenAI's `service_tier`, for example) and `inference_geo` the inference
 region it reports; each is `nothing` when the provider reports none. One exception: on
 `GEMINIOpenAIServiceEndpoint`, whose replies name no billed tier, a Chat result's
@@ -1552,7 +1554,8 @@ request at Standard and this endpoint does not report the downgrade.
 rest at the standard rates, unless the provider's own pricing applies (see
 [`DEFAULT_PRICING`](@ref)): OpenAI bills the audio tokens at the model's audio-token rates and
 Gemini audio input at the rate its pricing page states for the model; any other audio leaves
-the estimate at `0.0`.
+the estimate at `0.0`. Audio a provider does not count apart (`GEMINIOpenAIServiceEndpoint`'s)
+is priced with the text in `prompt_tokens`.
 Positionally the fields go in the order listed, the five counts first; the fields left out
 take their defaults.
 """

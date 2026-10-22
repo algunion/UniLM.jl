@@ -297,8 +297,27 @@ end
 function encode_request(::Type{GEMINIOpenAIServiceEndpoint}, chat::Chat)::String
     _gemini_validate_sampling(chat.model, chat.temperature, chat.top_p)
     _gemini_service_tier(chat.service_tier, _GEMINI_SERVICE_TIERS, "Gemini's OpenAI-compatible endpoint")
+    _compat_audio_estimate(chat)
     invoke(encode_request, Tuple{OpenAIWireEndpointSpec,Chat}, GEMINIOpenAIServiceEndpoint, chat)
 end
+
+# The compatible endpoint answers a sound clip but reports no audio token count: a WAV sent to
+# gemini-3.1-flash-lite came back with 54 prompt tokens and no token details (observed 2026-10-23),
+# where the native endpoint counts 38 of them as audio. So the clip is priced at the model's text
+# rate, a lower bound on a model whose table states an audio rate of its own (each is higher than
+# its text rate): a request that sends one to such a model says so, once per model.
+function _compat_audio_estimate(chat::Chat)::Nothing
+    _gemini_own_audio_rate(chat.model) && any(_holds_clip, chat.messages) || return nothing
+    @warn "Gemini's OpenAI-compatible endpoint reports no audio token count, so this model's audio input is " *
+          "estimated at its text rate, a lower bound of its audio rate; send audio through GEMINIServiceEndpoint " *
+          "for an exact estimate" model = chat.model _id = Symbol("unilm_compat_audio_", chat.model) maxlog = 1
+    nothing
+end
+_holds_clip(m::Message)::Bool = _holds_clip(m.attachments)
+_holds_clip(::Nothing)::Bool = false
+_holds_clip(attachments::Vector{Attachment})::Bool = any(_is_clip, attachments)
+_is_clip(::AudioAttachment) = true
+_is_clip(::Attachment) = false
 
 # Neutral response_format → generationConfig.responseFormat = {text: TextResponseFormat}.
 # TextResponseFormat.mimeType is an enum on this wire: the API answers 400 to

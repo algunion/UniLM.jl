@@ -273,6 +273,10 @@ end
         include("integration_documents.jl")
     end
 
+    @testset "integration — audio" begin
+        include("integration_audio.jl")
+    end
+
     @testset "integration — tool loop" begin
         include("integration_tool_loop.jl")
     end

@@ -42,9 +42,10 @@ cancelled, and every later request that sees it stops before any network I/O —
 so use a fresh token per unit of work you may want to abandon.
 
 A token reaches what goes through the package's HTTP layer: every HTTP verb,
-streams included, and the pauses between retries and polls. The Realtime WebSocket
-([`realtime_connect`](@ref), [`realtime_receive`](@ref)) and MCP stdio exchanges do
-not observe it.
+streams included, and the pauses between retries and polls; [`speak`](@ref) and
+[`translate`](@ref) observe it on their Realtime sessions too. A session opened with
+[`realtime_connect`](@ref) ([`realtime_receive`](@ref)) and MCP stdio exchanges do not
+observe it.
 
 The Julia 1.14 development branch adds task cancellation built on scoped cancellation
 tokens (`Base.CancellationTokenSource` / `Base.CANCEL_TOKEN`) with a `cancel` keyword
@@ -118,8 +119,8 @@ Run `f()` with `tok` as the ambient cancellation token and return `f()`'s value.
 What `f` sends through the package's HTTP layer observes `tok` — every HTTP verb,
 streams included, and the pauses between retries and polls — including requests made
 in tasks spawned inside `f` (scoped values propagate into `Threads.@spawn`); the
-innermost scope wins. The Realtime WebSocket and MCP stdio exchanges do not observe
-it. The Julia 1.14 development branch adds task cancellation built on scoped
+innermost scope wins. `speak` and `translate` observe it on their Realtime sessions;
+a session opened with `realtime_connect` and MCP stdio exchanges do not. The Julia 1.14 development branch adds task cancellation built on scoped
 cancellation tokens (`Base.CancellationTokenSource` / `Base.CANCEL_TOKEN`) with a
 `cancel` keyword on blocking operations; this API has the same shape so a later
 version can bridge to it.

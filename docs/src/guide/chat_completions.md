@@ -200,6 +200,36 @@ do not send attachments yet. For the Responses API,
 [`OllamaEndpoint`](@ref)'s Responses API, which documents no file inputs, refuses it. A
 refusal is an `ArgumentError` before any request.
 
+## [Audio replies](@id chat_audio_output)
+
+A model that speaks, such as `gpt-audio-1.5`, answers in audio when the `Chat` asks for
+it with `modalities=["text", "audio"]` and an `audio` voice and format
+([Audio in Chat Completions](https://developers.openai.com/api/docs/guides/audio-chat-completions)).
+The reply's `audio_output` is an [`AudioOutput`](@ref): the audio's bytes in `data`,
+OpenAI's `id` for it, `expires_at` — the Unix time until which OpenAI keeps it for later
+turns — and its `transcript`, which is also the reply's `content`.
+
+```julia
+chat = Chat(model="gpt-audio-1.5", modalities=["text", "audio"],
+            audio=Dict("voice" => "alloy", "format" => "wav"))
+push!(chat, Message(Val(:system), "Answer in one short sentence."))
+push!(chat, Message(Val(:user), "Say hi."))
+result = chatrequest!(chat)
+spoken = result.message.audio_output
+write("hi.wav", spoken.data)            # a WAV file, the format asked for
+println(spoken.transcript)              # the text of result.message.content
+
+push!(chat, Message(Val(:user), "Now say it in French."))
+chatrequest!(chat)                      # the earlier reply goes back by its id
+```
+
+The next request sends the audio turn back to OpenAI as its transcript and
+`"audio": {"id": …}`; every other endpoint receives the transcript as the turn's text. A
+streamed reply assembles the same `audio_output` from its chunks, and its transcript
+reaches the callback as text. UniLM prices text tokens only: an audio model has no
+[`DEFAULT_PRICING`](@ref) row, so `estimated_cost` returns `0.0` for its calls and warns
+once.
+
 ## Models
 
 UniLM.jl works with any model name string. Common choices:

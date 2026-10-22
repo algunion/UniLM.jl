@@ -424,11 +424,76 @@ Base.show(io::IO, a::DocumentAttachment) =
 Base.:(==)(a::A, b::A) where {A<:Attachment} = all(f -> getfield(a, f) == getfield(b, f), fieldnames(A))
 Base.hash(a::Attachment, h::UInt) = foldl((h, f) -> hash(getfield(a, f), h), fieldnames(typeof(a)); init=hash(typeof(a), h))
 
+# The format of an audio reply by the file signature its bytes begin with: those an
+# `AudioAttachment` is read by (WAV, MP3), FLAC's `fLaC` stream marker, an Ogg page whose
+# first packet is the Opus ID header `OpusHead` (RFC 3533, RFC 7845), or an AAC ADTS frame
+# header (sync word 0xFFF, layer 0). Raw samples, such as `pcm16`'s, begin with none.
+function _audio_output_format(data::AbstractVector{UInt8})::Union{String,Nothing}
+    known = _sniff_audio_format(data)
+    isnothing(known) || return known
+    n = length(data)
+    n >= 4 && view(data, 1:4) == b"fLaC" && return "flac"
+    if n >= 28 && view(data, 1:4) == b"OggS"
+        packet = 28 + Int(data[27])          # after the 27-byte page header and its lacing values
+        n >= packet + 7 && view(data, packet:packet + 7) == b"OpusHead" && return "opus"
+    end
+    n >= 2 && data[1] == 0xff && data[2] & 0xf6 == 0xf0 && return "aac"
+    nothing
+end
+
+"""
+    AudioOutput(; id, data, expires_at, transcript)
+
+The audio an OpenAI model answers a Chat Completions turn with, on the assistant
+[`Message`](@ref)'s `audio_output`. A [`Chat`](@ref) asks for it with
+`modalities=["text", "audio"]` and `audio=Dict("voice" => …, "format" => …)` on a model
+that speaks, such as `gpt-audio-1.5`
+([Audio in Chat Completions](https://developers.openai.com/api/docs/guides/audio-chat-completions)).
+
+- `id::String`: OpenAI's id for the audio, by which a later turn refers to it.
+- `data::Vector{UInt8}`: the audio, decoded from base64, in the format the request asked for.
+- `format::Union{String,Nothing}`: that format as the bytes' file signature shows it —
+  `"wav"`, `"mp3"`, `"flac"`, `"opus"` (Ogg Opus) or `"aac"` (ADTS) — or `nothing` for
+  bytes that begin with none, such as `"pcm16"`'s raw samples.
+- `expires_at::Int`: the Unix time, in seconds, until which OpenAI keeps the audio for
+  later turns.
+- `transcript::String`: what the audio says; the turn's `content` too.
+
+The OpenAI-wire decoders read it from a reply's `message.audio`; a streamed reply
+assembles it from its `delta.audio` chunks, and the transcript reaches the streaming
+callback as text. When the conversation goes on, the OpenAI Chat encoder
+(`OPENAIServiceEndpoint`) sends the turn back as
+`{"role": "assistant", "content": transcript, "audio": {"id": id}}`. Every other encoder —
+Azure, the Gemini OpenAI-compatible endpoint, DeepSeek, generic endpoints,
+[`OllamaEndpoint`](@ref), native Anthropic and Gemini — sends the transcript as the turn's
+text, the neutral form it also sends for another provider's [`ProviderContent`](@ref).
+Throws `ArgumentError` for an empty `id`.
+"""
+struct AudioOutput
+    id::String
+    data::Vector{UInt8}
+    format::Union{String,Nothing}
+    expires_at::Int
+    transcript::String
+    function AudioOutput(id::AbstractString, data::AbstractVector{UInt8}, expires_at::Integer,
+                         transcript::AbstractString)
+        isempty(id) && throw(ArgumentError("an audio reply's id names it to OpenAI in later turns and cannot be empty"))
+        new(String(id), Vector{UInt8}(data), _audio_output_format(data), Int(expires_at), String(transcript))
+    end
+end
+AudioOutput(; id::AbstractString, data::AbstractVector{UInt8}, expires_at::Integer, transcript::AbstractString) =
+    AudioOutput(id, data, expires_at, transcript)
+
+Base.show(io::IO, a::AudioOutput) = print(io, "AudioOutput(", repr(a.id), ", ", something(a.format, "no file signature"),
+    ", ", length(a.data), " bytes, expires_at=", a.expires_at, ", transcript=", repr(a.transcript), ")")
+Base.:(==)(a::AudioOutput, b::AudioOutput) = all(f -> getfield(a, f) == getfield(b, f), fieldnames(AudioOutput))
+Base.hash(a::AudioOutput, h::UInt) = foldl((h, f) -> hash(getfield(a, f), h), fieldnames(AudioOutput); init=hash(AudioOutput, h))
+
 """
     Message(; role, content=nothing, name=nothing,
               finish_reason=nothing, refusal_message=nothing,
               tool_calls=nothing, tool_call_id=nothing,
-              provider_content=nothing, attachments=nothing)
+              provider_content=nothing, attachments=nothing, audio_output=nothing)
 
 Represents a single message in a Chat Completions conversation.
 
@@ -442,12 +507,14 @@ Represents a single message in a Chat Completions conversation.
 - `tool_call_id::Union{String,Nothing}`: Required when `role` is `"tool"` — the ID of the tool call being responded to.
 - `provider_content::Union{Nothing,ProviderContent}`: Provider-native content blocks captured for verbatim round-trip (see [`ProviderContent`](@ref)); set by the Anthropic, Gemini, DeepSeek and Ollama decoders (tags `:anthropic`, `:gemini`, `:deepseek`, `:ollama`), `nothing` otherwise. Never serialized on the OpenAI wire.
 - `attachments::Union{Nothing,Vector{Attachment}}`: Images, sound clips and PDF documents sent with a user message ([`ImageAttachment`](@ref), [`AudioAttachment`](@ref), [`DocumentAttachment`](@ref)); `nothing` for none. See [`Attachment`](@ref) for how each endpoint sends or refuses them.
+- `audio_output::Union{Nothing,AudioOutput}`: The audio an OpenAI model answered with ([`AudioOutput`](@ref)), set by the OpenAI-wire decoders; `nothing` otherwise. Its docstring says how each encoder sends the turn back.
 
 # Validation
 - `role` must be one of `"system"`, `"user"`, `"assistant"`, `"tool"`.
-- At least one of `content`, `tool_calls`, `refusal_message` or `attachments` must be given.
+- At least one of `content`, `tool_calls`, `refusal_message`, `attachments` or `audio_output` must be given.
 - `tool_call_id` is required when `role == "tool"`.
 - `attachments` are accepted on user messages only; an empty vector is stored as `nothing`.
+- `audio_output` is accepted on assistant messages only; without `content`, the turn's content is its transcript.
 
 # Convenience Constructors
 ```julia
@@ -467,19 +534,24 @@ Message(Val(:user), "What colour is the shape?",
     tool_call_id::Union{String,Nothing} = nothing
     provider_content::Union{Nothing,ProviderContent} = nothing
     attachments::Union{Nothing,Vector{Attachment}} = nothing
+    audio_output::Union{Nothing,AudioOutput} = nothing
     function Message(role, content, name, finish_reason, refusal_message, tool_calls,
-                     tool_call_id, provider_content=nothing, attachments=nothing)
+                     tool_call_id, provider_content=nothing, attachments=nothing, audio_output=nothing)
         role in _MESSAGE_ROLES || throw(ArgumentError(
             "message role must be one of $(join(_MESSAGE_ROLES, ", ")) (got $(repr(role)))"))
+        isnothing(audio_output) || role == RoleAssistant || throw(ArgumentError(
+            "audio_output is accepted on assistant messages only (got a :$role message)"))
+        # An audio reply's text is its transcript, so the turn reads the same on every wire.
+        isnothing(audio_output) || !isnothing(content) || (content = audio_output.transcript)
         isnothing(content) && isnothing(tool_calls) && isnothing(refusal_message) &&
             (isnothing(attachments) || isempty(attachments)) && throw(ArgumentError(
-                "`content`, `tool_calls`, `refusal_message` and `attachments` cannot all be empty"))
+                "`content`, `tool_calls`, `refusal_message`, `attachments` and `audio_output` cannot all be empty"))
         role == RoleTool && isnothing(tool_call_id) && throw(ArgumentError("`tool_call_id` cannot be empty when role is `tool`"))
         isnothing(attachments) || !isempty(attachments) || (attachments = nothing)   # no media is no media list
         isnothing(attachments) || role == RoleUser || throw(ArgumentError(
             "attachments are accepted on user messages only (got a :$role message with $(length(attachments)))"))
         return new(role, content, name, finish_reason, refusal_message, tool_calls,
-                   tool_call_id, provider_content, attachments)
+                   tool_call_id, provider_content, attachments, audio_output)
     end
 end
 
@@ -494,7 +566,8 @@ JSON.omit_null(::Type{Message}) = true
 
 # The request wire form. provider_content is a decode-side round-trip cache for
 # provider-native blocks (same precedent as ToolCall.thought_signature) and
-# finish_reason is a response-only field: neither is sent. A refusal travels under
+# finish_reason is a response-only field: neither is sent; audio_output goes back by
+# its id on OpenAI's own wire only (`_wire_messages`). A refusal travels under
 # its wire name, `refusal`; an assistant message needs `content` unless it carries
 # tool calls, so a refusal turn sends it as null — the shape the API returns it in.
 # Attachments turn `content` into an array of parts: the text (when there is any),
@@ -1260,7 +1333,7 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
 end
 
 function JSON.lower(chat::Chat)
-    d = Dict{Symbol,Any}(:model => chat.model, :messages => chat.messages)
+    d = Dict{Symbol,Any}(:model => chat.model, :messages => _wire_messages(chat.service, chat.messages))
     for f in (:tools, :tool_choice, :parallel_tool_calls, :temperature, :top_p,
         :n, :stream, :stop, :max_tokens, :max_completion_tokens, :presence_penalty, :response_format,
         :frequency_penalty, :logit_bias, :user, :seed,
@@ -1282,6 +1355,23 @@ end
 _asks_stream_usage(::Type{OPENAIServiceEndpoint}) = true
 _asks_stream_usage(::DeepSeekEndpoint) = true
 _asks_stream_usage(_) = false
+
+# The conversation as an endpoint's Chat Completions wire carries it. OpenAI keeps the
+# audio of an audio reply and takes it back by id, `"audio": {"id": …}` beside the turn's
+# content (the assistant message of the Chat Completions reference); every other endpoint
+# gets the transcript, which is the turn's content. A conversation without an audio reply
+# goes out as it is.
+_wire_messages(_, messages::Conversation) = messages
+_wire_messages(::Type{OPENAIServiceEndpoint}, messages::Conversation) =
+    any(m -> !isnothing(m.audio_output), messages) ? Any[_audio_turn(m) for m in messages] : messages
+
+function _audio_turn(m::Message)
+    audio = m.audio_output
+    isnothing(audio) && return m
+    d = JSON.lower(m)
+    d[:audio] = Dict(:id => audio.id)
+    d
+end
 
 # An encoder that cannot map `Message.attachments` refuses the request: dropping the
 # media would ask the model about an image or a sound it never receives.

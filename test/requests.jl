@@ -568,6 +568,94 @@ end
     @test isnothing(UniLM._build_stream_message(st5).provider_content)
 end
 
+@testset "Chat audio replies" begin
+    wav = UniLM._wav_bytes(UInt8[0x00, 0x00, 0x10, 0x00])
+    wire_audio = Dict{String,Any}("id" => "audio_abc123", "data" => UniLM.base64encode(wav),
+                                  "expires_at" => 1792669190, "transcript" => "Hi there!")
+    reply(message) = HTTP.Response(200, [], Vector{UInt8}(JSON.json(Dict("model" => "gpt-audio-1.5",
+        "choices" => [Dict("index" => 0, "finish_reason" => "stop", "message" => message)]))))
+    spoken = AudioOutput(id="audio_abc123", data=wav, expires_at=1792669190, transcript="Hi there!")
+
+    @testset "message.audio decodes into audio_output, and its transcript is the content" begin
+        m = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => nothing, "refusal" => nothing,
+                                             "audio" => wire_audio))).message
+        @test m.audio_output == spoken
+        @test m.audio_output.data == wav && m.audio_output.format == "wav" && m.audio_output.expires_at === 1792669190
+        @test m.content == "Hi there!" && m.role == RoleAssistant && m.finish_reason == "stop"
+        # Text beside the audio stays the content; the transcript stays on the audio.
+        both = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => "Hello.", "audio" => wire_audio))).message
+        @test both.content == "Hello." && both.audio_output == spoken
+        for message in (Dict("role" => "assistant", "content" => "x"), Dict("role" => "assistant", "content" => "x", "audio" => nothing))
+            @test isnothing(UniLM.extract_message(reply(message)).message.audio_output)
+        end
+    end
+
+    @testset "an audio object without its id, data, expiry or transcript is no reply" begin
+        for broken in (delete!(copy(wire_audio), "id"), merge(wire_audio, Dict("id" => 7)), delete!(copy(wire_audio), "data"),
+                       merge(wire_audio, Dict("expires_at" => "soon")), merge(wire_audio, Dict("expires_at" => true)),
+                       delete!(copy(wire_audio), "transcript"), "audio")
+            @test_throws ArgumentError UniLM.extract_message(reply(Dict("role" => "assistant", "content" => nothing,
+                                                                        "audio" => broken)))
+        end
+    end
+
+    @testset "AudioOutput: an id is required; the format is read from the leading bytes" begin
+        @test_throws ArgumentError AudioOutput(id="", data=wav, expires_at=1, transcript="")
+        format(bytes) = AudioOutput(id="a", data=bytes, expires_at=1, transcript="").format
+        @test format(wav) == "wav"
+        @test format(UInt8[b"ID3"..., 0x04, 0x00]) == format(UInt8[0xff, 0xfb, 0x90, 0x00]) == "mp3"
+        @test format(UInt8[b"fLaC"..., 0x00, 0x00, 0x00, 0x22]) == "flac"
+        # An Ogg page (27-byte header, one lacing value) whose first packet is Opus's ID header.
+        @test format(UInt8[b"OggS"..., 0x00, 0x02, zeros(UInt8, 20)..., 0x01, 0x13, b"OpusHead"..., 0x01]) == "opus"
+        @test format(UInt8[b"OggS"..., 0x00, 0x02, zeros(UInt8, 20)..., 0x01, 0x1e, b"\x01vorbis"..., 0x00]) === nothing
+        @test format(UInt8[0xff, 0xf1, 0x50, 0x80]) == "aac"                       # an ADTS frame header
+        @test format(UInt8[0x00, 0x00, 0x10, 0x00]) === nothing                    # pcm16: raw samples
+        @test format(UInt8[]) === nothing
+        @test @inferred(Union{Nothing,String}, UniLM._audio_output_format(wav)) == "wav"
+        @test @inferred(Union{Nothing,String}, UniLM._audio_output_format(UInt8[0x00])) === nothing
+        @test sprint(show, spoken) == "AudioOutput(\"audio_abc123\", wav, 48 bytes, expires_at=1792669190, transcript=\"Hi there!\")"
+    end
+
+    @testset "Message: audio on assistant turns only; an audio-only turn reads as its transcript" begin
+        m = Message(role=RoleAssistant, audio_output=spoken)
+        @test m.content == "Hi there!" && m.audio_output === spoken
+        @test Message(role=RoleAssistant, content="Hello.", audio_output=spoken).content == "Hello."
+        @test_throws ArgumentError Message(role=RoleUser, content="x", audio_output=spoken)
+        @test_throws ArgumentError Message(role=RoleSystem, content="x", audio_output=spoken)
+        @test_throws ArgumentError Message(role="tool", content="x", tool_call_id="call_1", audio_output=spoken)
+    end
+
+    @testset "the next request sends the turn back: by id to OpenAI, as its transcript elsewhere" begin
+        conversation() = [Message(Val(:system), "Be brief."), Message(Val(:user), "Say hi."),
+                          Message(role=RoleAssistant, audio_output=spoken), Message(Val(:user), "Again, in French.")]
+        # The decoded reply, appended as chatrequest! appends it, goes back to OpenAI by its id.
+        chat = Chat(model="gpt-audio-1.5", modalities=["text", "audio"], audio=Dict("voice" => "alloy", "format" => "wav"))
+        push!(chat, Message(Val(:system), "Be brief."))
+        push!(chat, Message(Val(:user), "Say hi."))
+        update!(chat, UniLM.extract_message(reply(Dict("role" => "assistant", "content" => nothing, "audio" => wire_audio))).message)
+        push!(chat, Message(Val(:user), "Again, in French."))
+        sent = JSON.parse(UniLM.encode_request(OPENAIServiceEndpoint, chat))
+        @test sent["messages"] == [Dict("role" => "system", "content" => "Be brief."), Dict("role" => "user", "content" => "Say hi."),
+            Dict("role" => "assistant", "content" => "Hi there!", "audio" => Dict("id" => "audio_abc123")),
+            Dict("role" => "user", "content" => "Again, in French.")]
+        # A conversation without an audio turn goes out as it is, byte for byte.
+        plain = conversation()[[1, 2, 4]]
+        @test UniLM._wire_messages(OPENAIServiceEndpoint, plain) === plain
+        # Every other OpenAI-wire endpoint gets the transcript as the turn's text, and no id.
+        for service in (AZUREServiceEndpoint, GEMINIOpenAIServiceEndpoint, DeepSeekEndpoint(api_key="k"),
+                        GenericOpenAIEndpoint("http://127.0.0.1:1", ""))
+            body = JSON.parse(UniLM.encode_request(service, Chat(service=service, model="m", messages=conversation())))
+            @test body["messages"][3] == Dict("role" => "assistant", "content" => "Hi there!")
+        end
+        # So do the native encoders.
+        for (service, model) in ((ANTHROPICServiceEndpoint, "claude-haiku-5-5"), (GEMINIServiceEndpoint, "gemini-3.8-flash"),
+                                 (OllamaEndpoint(), "gemma4:e4b"))
+            body = UniLM.encode_request(service, Chat(service=service, model=model, messages=conversation()))
+            @test contains(body, "\"Hi there!\"") && !contains(body, "audio_abc123") && !contains(body, "\"audio\"")
+        end
+    end
+end
+
 @testset "chatrequest! kwargs" begin
     # The conversation is EITHER `messages` OR `systemprompt` + `userprompt`. Anything
     # else is a local error raised before any request — it used to come back as a

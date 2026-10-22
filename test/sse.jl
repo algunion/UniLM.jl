@@ -184,6 +184,76 @@ end
     end
 end
 
+@testset "handle_sse_event! (OpenAI wire) — delta.audio assembles the audio reply" begin
+    S = OPENAIServiceEndpoint
+    wav = UniLM._wav_bytes(UInt8[0x00, 0x00, 0x10, 0x00])
+    b64 = UniLM.base64encode(wav)
+    spoken = AudioOutput(id="audio_abc123", data=wav, expires_at=1792669190, transcript="Hi there!")
+    feed!(st, delta) = UniLM.handle_sse_event!(S, "", JSON.json(Dict("choices" => [Dict("index" => 0, "delta" => delta)])), st)
+
+    @testset "id, data and transcript accumulate; the transcript is the turn's text" begin
+        st = StreamState()
+        feed!(st, Dict("role" => "assistant", "content" => nothing, "audio" => Dict("id" => "audio_abc123", "transcript" => "Hi ")))
+        feed!(st, Dict("audio" => Dict("data" => b64[1:15])))                  # a split inside a 4-character group
+        feed!(st, Dict("audio" => Dict("data" => b64[16:end], "transcript" => "there!")))
+        feed!(st, Dict("audio" => Dict("expires_at" => 1792669190)))           # the last update: its expiry alone
+        @test String(take!(st.pending_delta)) == "Hi there!" && position(st.content) == 0
+        st.finish_reason = "stop"
+        m = _build_stream_message(st)
+        @test m.audio_output == spoken && m.content == "Hi there!" && m.finish_reason == "stop"
+    end
+
+    @testset "chunks encoded one by one, each padded, assemble the same bytes" begin
+        st = StreamState()
+        for audio in (Dict("id" => "audio_1"), Dict("data" => UniLM.base64encode(UInt8[0x01, 0x00, 0x02])),
+                      Dict("data" => UniLM.base64encode(UInt8[0x00])), Dict("expires_at" => 7, "transcript" => ""))
+            feed!(st, Dict("audio" => audio))
+        end
+        @test _build_stream_message(st).audio_output ==
+              AudioOutput(id="audio_1", data=UInt8[0x01, 0x00, 0x02, 0x00], expires_at=7, transcript="")
+    end
+
+    @testset "an audio reply that never named itself, or ended before its expiry, is no reply" begin
+        for partial in (Dict("data" => b64, "expires_at" => 7), Dict("id" => "audio_1", "data" => b64))
+            st = StreamState()
+            feed!(st, Dict("audio" => partial))
+            @test_throws ArgumentError _build_stream_message(st)
+        end
+        st = StreamState()
+        print(st.content, "plain")
+        @test isnothing(_build_stream_message(st).audio_output)              # no audio: none
+    end
+
+    @testset "driver: the callback hears the transcript; the result holds the audio" begin
+        chunk(delta; finish=nothing) = "data: " * JSON.json(Dict("id" => "chatcmpl-1", "model" => "mock",
+            "choices" => [Dict("index" => 0, "delta" => delta, "finish_reason" => finish)])) * "\n\n"
+        chunks = [chunk(Dict("role" => "assistant", "content" => nothing,
+                             "audio" => Dict("id" => "audio_abc123", "transcript" => "Hi "))),
+                  chunk(Dict("audio" => Dict("data" => b64[1:30]))),
+                  chunk(Dict("audio" => Dict("data" => b64[31:end], "transcript" => "there!"))),
+                  chunk(Dict(); finish="stop"),
+                  chunk(Dict("audio" => Dict("expires_at" => 1792669190))),
+                  "data: " * JSON.json(Dict("choices" => [], "usage" => Dict("prompt_tokens" => 9,
+                      "completion_tokens" => 21, "total_tokens" => 30))) * "\n\ndata: [DONE]\n\n"]
+        server, base = fragmented_sse_server(chunks; gap=0.05)
+        try
+            chat = Chat(service=GenericOpenAIEndpoint(base, ""), model="mock", stream=true,
+                        modalities=["text", "audio"], audio=Dict("voice" => "alloy", "format" => "wav"))
+            push!(chat, Message(Val(:system), "Be brief.")); push!(chat, Message(Val(:user), "Say hi."))
+            received = Any[]
+            res = fetch(chatrequest!(chat; callback=(c, _) -> push!(received, c)))
+            @test res isa LLMSuccess
+            @test res.message.audio_output == spoken && res.message.content == "Hi there!"
+            @test join(x for x in received if x isa String) == "Hi there!"
+            @test received[end] isa Message && received[end].audio_output == spoken
+            @test last(res.self.messages).audio_output == spoken                # appended with its audio
+            @test res.usage.completion_tokens == 21 && res.model == "mock"
+        finally
+            close(server)
+        end
+    end
+end
+
 @testset "SSE machine cost is linear in what the wire carries" begin
     # Minimum of three runs: @allocated counts every thread's allocations.
     min_alloc(f) = minimum(_ -> (f(); @allocated f()), 1:3)

@@ -182,7 +182,8 @@ end
 # be empty (usage-only chunks, Azure prompt-filter preambles) — iterate, never
 # index [1]; `usage` is captured from any chunk. OpenAI names the served `model` and
 # the billed `service_tier` on every chunk; the usage takes the tier the stream reported
-# last, so a usage chunk without one still carries it. A `{"error": …}` payload is
+# last, so a usage chunk without one still carries it. `delta.audio` updates assemble an
+# audio reply (`_audio_delta!`). A `{"error": …}` payload is
 # terminal (`:error`): vLLM and OpenAI-compatible proxies report a mid-stream
 # failure that way on the HTTP-200 stream, usually followed by `[DONE]`, so the
 # partial text must not finalize. An error object is recorded as is — its numeric
@@ -218,6 +219,8 @@ function handle_sse_event!(service::OpenAIWireEndpointSpec, event::AbstractStrin
         end
         r = get(delta, "refusal", nothing)
         r isa AbstractString && print(state.refusal, r)
+        audio = get(delta, "audio", nothing)
+        audio isa AbstractDict && _audio_delta!(state, audio)
         tcs = get(delta, "tool_calls", nothing)
         tcs isa AbstractVector || continue
         for tc_delta in tcs
@@ -241,3 +244,26 @@ function handle_sse_event!(service::OpenAIWireEndpointSpec, event::AbstractStrin
     end
     :continue
 end
+
+# One update of a streamed audio reply: "Audio chunks may carry an ID, base64 data, or
+# transcript text; the final audio update contains only its expiry timestamp" (Chat
+# Completions reference, the chunk's `delta.audio`). The transcript is the turn's text, so
+# it also goes to the streaming callback.
+function _audio_delta!(state::StreamState, a::AbstractDict)::Nothing
+    s = _streamed_audio!(state)
+    id = get(a, "id", nothing)
+    id isa AbstractString && !isempty(id) && (s.id = String(id))
+    data = get(a, "data", nothing)
+    data isa AbstractString && print(s.base64, data)
+    t = get(a, "transcript", nothing)
+    if t isa AbstractString
+        print(s.transcript, t)
+        print(state.pending_delta, t)
+    end
+    e = get(a, "expires_at", nothing)
+    e isa Int64 && (s.expires_at = Int(e))
+    nothing
+end
+
+_streamed_audio!(state::StreamState)::_StreamedAudio =
+    (s = state.audio; s isa _StreamedAudio ? s : (state.audio = _StreamedAudio()))

@@ -1,7 +1,8 @@
 # ─── Anthropic Integration Tests (live) ──────────────────────────────────────
 # Requires UNILM_LIVE=1 and ANTHROPIC_API_KEY. Minimal tokens on claude-haiku-5-5, the cheapest
 # current Claude model ($0.10 input / $0.50 output per 1M tokens); one short call on
-# claude-sonnet-5-5 for the rule that is its own.
+# claude-sonnet-5-5 for the rule that is its own, and a thinking tool round-trip on
+# claude-sonnet-5, which thinks before the tool call it chooses.
 
 if !haskey(ENV, "ANTHROPIC_API_KEY") || get(ENV, "UNILM_LIVE", "") != "1"
     @info "Skipping Anthropic integration tests (set UNILM_LIVE=1 and ANTHROPIC_API_KEY to run live)"
@@ -73,6 +74,24 @@ end
     m = r.message
     @test m.finish_reason == UniLM.TOOL_CALLS && _block_types(m) == ["tool_use"]
     push!(chat, Message(role=UniLM.RoleTool, tool_call_id=m.tool_calls[1].id, content="4C and cloudy"))
+    body = JSON.parse(UniLM.encode_request(ANTHROPICServiceEndpoint, chat))
+    @test body["messages"][2]["content"] == m.provider_content.blocks
+    @test _billed(chatrequest!(chat)) isa LLMSuccess
+end
+
+@testset "Anthropic Chat — signed thinking blocks survive a tool round-trip (claude-sonnet-5)" begin
+    # A thinking model that chooses the tool: Claude Haiku 5.5 called it without thinking in
+    # three of three tries at effort "high" (2026-10-22); Claude Sonnet 5 thinks, then calls it.
+    chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-sonnet-5", max_tokens=1024, reasoning_effort="high",
+                tools=[_LIVE_WEATHER], tool_choice="auto")
+    push!(chat, Message(Val(:system), "Always call the weather tool for a weather question; think first."))
+    push!(chat, Message(Val(:user), "Is it colder in Paris right now than the October average? Use the tool."))
+    r = _billed(chatrequest!(chat))
+    @test r isa LLMSuccess
+    m = r.message
+    @test m.finish_reason == UniLM.TOOL_CALLS && _block_types(m) == ["thinking", "tool_use"]
+    @test !isempty(m.provider_content.blocks[1]["signature"])
+    push!(chat, Message(role=UniLM.RoleTool, tool_call_id=m.tool_calls[1].id, content="9C, light rain"))
     body = JSON.parse(UniLM.encode_request(ANTHROPICServiceEndpoint, chat))
     @test body["messages"][2]["content"] == m.provider_content.blocks
     @test _billed(chatrequest!(chat)) isa LLMSuccess

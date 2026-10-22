@@ -282,8 +282,9 @@ every kind as an `inlineData` part ahead of the text, an image's detail level as
 media resolution (`"low"`, `"high"`; `"auto"` sends none; `"original"` is refused, as is any
 level on the Gemini 2.5 and Gemma 4 models), and Gemini Interactions sends each as an `image`,
 `audio` or `document` part of an [`InputMessage`](@ref)'s content. A System One request
-carries images without a detail level and no documents, and an embedding input an image or
-a clip without a level. Each refusal is an `ArgumentError` before any network I/O.
+carries images without a detail level, and refuses a document and a sound clip; an embedding
+input carries an image or a clip without a level. Each refusal is an `ArgumentError` before
+any network I/O.
 """
 abstract type Attachment end
 
@@ -315,12 +316,10 @@ _sniff_document_mime(data::AbstractVector{UInt8})::Union{String,Nothing} =
 # (https://developers.openai.com/api/reference/resources/chat).
 const _IMAGE_DETAILS = ("auto", "low", "high", "original")
 _image_detail(::Nothing)::Nothing = nothing
-function _image_detail(level)::String
-    level isa AbstractString && level in _IMAGE_DETAILS || throw(ArgumentError(
-        "an image's detail level is one of $(join(repr.(_IMAGE_DETAILS), ", ")), or nothing for none " *
-        "(got $(repr(level)))"))
-    String(level)
-end
+_image_detail(level::AbstractString)::String = level in _IMAGE_DETAILS ? String(level) : _no_image_detail(level)
+_image_detail(level) = _no_image_detail(level)
+_no_image_detail(level) = throw(ArgumentError(
+    "an image's detail level is one of $(join(repr.(_IMAGE_DETAILS), ", ")), or nothing for none (got $(repr(level)))"))
 
 """
     ImageAttachment(path::AbstractString; detail=nothing)
@@ -329,7 +328,8 @@ end
 An image for a user [`Message`](@ref): PNG, JPEG, GIF or WebP, recognised from its
 leading bytes. `mime` holds the media type (`"image/png"`, …). `detail` is the
 level of detail an OpenAI model receives the image at — `"auto"`, `"low"`, `"high"`
-or `"original"`, its own dimensions on models that take them
+or `"original"`, the image at its original dimensions, on the models that accept that
+level, such as GPT-5.6
 ([image inputs](https://developers.openai.com/api/docs/guides/images-vision)) — or
 `nothing`, which sends none and leaves the model's default. The OpenAI Chat
 Completions wire sends it as the part's `detail`; an endpoint without an equivalent
@@ -417,9 +417,18 @@ DocumentAttachment(path::AbstractString) = DocumentAttachment(read(_attachment_f
 
 # Attachments hold bytes, and not every provider fetches URLs (Ollama does not): a URL
 # given where a file path is expected is named as such instead of failing as a missing file.
-_attachment_file(path::AbstractString) = occursin(r"^[A-Za-z][A-Za-z0-9+.-]*://", path) ? throw(ArgumentError(
-    "attachments are read from a file or from bytes, not a URL ($(repr(String(path)))); download it " *
-    "first (e.g. with Downloads.download) and pass the file or its bytes")) : path
+# A data URL (RFC 2397; URL schemes are case-insensitive) holds the bytes themselves, so it is
+# named by its media type, not its payload.
+function _attachment_file(path::AbstractString)
+    data = match(r"^data:[^,]*"i, path)
+    isnothing(data) || throw(ArgumentError(
+        "attachments are read from a file or from bytes, not a data URL ($(repr(data.match * ",…"))): pass the " *
+        "bytes it holds (for a `;base64` URL, `base64decode` of the text after its comma)"))
+    occursin(r"^[A-Za-z][A-Za-z0-9+.-]*://", path) && throw(ArgumentError(
+        "attachments are read from a file or from bytes, not a URL ($(repr(String(path)))); download it " *
+        "first (e.g. with Downloads.download) and pass the file or its bytes"))
+    path
+end
 
 # The bytes stay reachable through the fields; printing them would flood the REPL.
 Base.show(io::IO, a::ImageAttachment) = print(io, "ImageAttachment(", a.mime, ", ", length(a.data), " bytes",
@@ -614,17 +623,22 @@ _wire_part(a::DocumentAttachment) = Dict{Symbol,Any}(:type => "file",
     :file => Dict(:filename => a.filename, :file_data => _data_url(a)))
 
 # An attachment goes out only in the shape its wire gives it — an `image_url`, `input_audio`
-# or `file` part, an Ollama `images` entry, a System One asset — and every path that
-# carries one maps it explicitly. Written by JSON.jl's struct lowering, its bytes would go
-# out as an array of numbers that no service reads as media; reaching this method means
-# the attachment sits where nothing maps it, such as inside a struct of the caller's own.
-JSON.lower(a::Attachment) = throw(ArgumentError(
-    "an $(nameof(typeof(a))) cannot be written as JSON: put it where the request carries media — a message's " *
-    "`attachments`, or a System One request's state, instructions or criteria (directly, or inside a Dict, " *
-    "vector, tuple or NamedTuple; not inside a struct of your own)"))
-# A document travels in a user message's attachments or a Responses `input_file` part only:
-# no System One wire carries one.
-JSON.lower(a::DocumentAttachment) = throw(ArgumentError(
+# or `file` part, an Ollama `images` entry, a Gemini part, a System One asset — and every path
+# that carries one maps it explicitly. Written by JSON.jl's struct lowering, its bytes would go
+# out as an array of numbers that no service reads as media; reaching these methods means
+# the attachment sits where nothing maps it — an OpenAI Responses input, a System One request
+# that cannot carry its kind, a struct of the caller's own — so each names where its kind goes.
+JSON.lower(a::ImageAttachment) = throw(ArgumentError(
+    "an ImageAttachment cannot be written as JSON: send it in a user message's `attachments`, in an " *
+    "`InputMessage`'s content on Gemini Interactions (`respond` on `GEMINIServiceEndpoint`), or in a System One " *
+    "request's state, instructions or criteria (directly, or inside a Dict, vector, tuple or NamedTuple; not " *
+    "inside a struct of your own). An OpenAI Responses input takes an image as " *
+    "`input_image(\"data:$(a.mime);base64,…\")`, its bytes as a base64 data URL"))
+JSON.lower(::AudioAttachment) = throw(ArgumentError(
+    "an AudioAttachment cannot be written as JSON: send it in a user message's `attachments`, or in an " *
+    "`InputMessage`'s content on Gemini Interactions (`respond` on `GEMINIServiceEndpoint`); a System One " *
+    "request carries no audio"))
+JSON.lower(::DocumentAttachment) = throw(ArgumentError(
     "a DocumentAttachment cannot be written as JSON: send it in a user message's `attachments`, or as " *
     "`input_file(document)` in a Responses input; a System One request carries no documents"))
 
@@ -2013,6 +2027,12 @@ EmbeddingInput(; text=nothing, title=nothing, image=nothing, audio=nothing) = Em
 EmbeddingInput(text::AbstractString; title=nothing) = EmbeddingInput(text, title, nothing, nothing)
 EmbeddingInput(image::ImageAttachment) = EmbeddingInput(nothing, nothing, image, nothing)
 EmbeddingInput(audio::AudioAttachment) = EmbeddingInput(nothing, nothing, nothing, audio)
+EmbeddingInput(a::Attachment) = EmbeddingInput("", a)   # another kind: refused by name below
+# Any other value in a slot — a document as the image, a clip as the image — is refused by kind.
+EmbeddingInput(text::Union{AbstractString,Nothing}, title::Union{AbstractString,Nothing}, image, audio) =
+    throw(ArgumentError("an EmbeddingInput holds a text and a title (strings), an image (an ImageAttachment) and " *
+        "a sound clip (an AudioAttachment), each optional; got text::$(typeof(text)), title::$(typeof(title)), " *
+        "image::$(typeof(image)), audio::$(typeof(audio))"))
 function EmbeddingInput(text::AbstractString, media::Attachment...)
     other = unique(typeof(m) for m in media if !(m isa Union{ImageAttachment,AudioAttachment}))
     isempty(other) || throw(ArgumentError(

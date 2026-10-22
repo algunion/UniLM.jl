@@ -23,7 +23,12 @@ A structured input message for the Responses API.
 
 # Fields
 - `role::String`: `"user"`, `"assistant"`, `"system"`, or `"developer"`
-- `content::Any`: String or a vector of content parts (see `input_text`, `input_image`, `input_file`)
+- `content::Any`: String or a vector of content parts (see `input_text`, `input_image`, `input_file`).
+  Gemini Interactions (`respond` on `GEMINIServiceEndpoint`) also takes an
+  [`ImageAttachment`](@ref), [`AudioAttachment`](@ref) or [`DocumentAttachment`](@ref) as a
+  part, sent as an Interactions `image`, `audio` or `document` part; the OpenAI Responses
+  wire takes no attachment (an image goes as `input_image` with a data URL, a document as
+  `input_file(document)`)
 - `phase::Union{String,Nothing}`: on an assistant message you replay, the phase the model
   gave it in `r.response.output`: `"commentary"` for an intermediate update (such as a
   preamble before a tool call) or `"final_answer"`. OpenAI asks callers to "preserve and

@@ -53,6 +53,17 @@ end
         @test err isa ArgumentError && occursin("not a URL", err.msg)
         @test_throws ArgumentError AudioAttachment(url)
     end
+    # A data URL (RFC 2397, its scheme case-insensitive) holds the bytes: the error says to decode
+    # them, and names the URL by its media type, not its payload.
+    for (make, url) in ((ImageAttachment, "data:image/png;base64," * UniLM.Base64.base64encode(_PNG)),
+                        (AudioAttachment, "DATA:audio/wav;base64," * UniLM.Base64.base64encode(_WAV)),
+                        (DocumentAttachment, _PDF_URL))
+        err = _att_caught(() -> make(url))
+        mediatype = first(split(url, ','))
+        @test err isa ArgumentError && err.msg == "attachments are read from a file or from bytes, not a data URL " *
+            "($(repr(mediatype * ",…"))): pass the bytes it holds (for a `;base64` URL, `base64decode` of the " *
+            "text after its comma)"
+    end
 end
 
 @testset "show and equality" begin
@@ -207,6 +218,33 @@ end
     @test e isa ArgumentError && occursin("attachments", e.msg) && occursin("input_file", e.msg)
 end
 
+@testset "an attachment where nothing maps it is refused, naming where its kind goes" begin
+    # An OpenAI Responses input carries an image as an input_image data URL, not an attachment; a
+    # System One request carries no audio; Gemini Interactions reads each kind from an
+    # InputMessage's content.
+    openai(a) = UniLM.encode_agentic(OPENAIServiceEndpoint,
+        Respond(model="gpt-6-luna", input=[InputMessage(role="user", content=[input_text("What is it?"), a])]))
+    e = _att_caught(() -> openai(ImageAttachment(_PNG)))
+    @test e isa ArgumentError && e.msg == "an ImageAttachment cannot be written as JSON: send it in a user " *
+        "message's `attachments`, in an `InputMessage`'s content on Gemini Interactions (`respond` on " *
+        "`GEMINIServiceEndpoint`), or in a System One request's state, instructions or criteria (directly, or " *
+        "inside a Dict, vector, tuple or NamedTuple; not inside a struct of your own). An OpenAI Responses input " *
+        "takes an image as `input_image(\"data:image/png;base64,…\")`, its bytes as a base64 data URL"
+    clip = AudioAttachment(_WAV)
+    says = "an AudioAttachment cannot be written as JSON: send it in a user message's `attachments`, or in an " *
+           "`InputMessage`'s content on Gemini Interactions (`respond` on `GEMINIServiceEndpoint`); a System One " *
+           "request carries no audio"
+    e = _att_caught(() -> openai(clip))
+    @test e isa ArgumentError && e.msg == says
+    e = _att_caught(() -> UniLM._system_one_call(SystemOneRequest(["hello", clip], "q" => noul("Is it?"); model="m"),
+                                                 TYPESAFEServiceEndpoint))
+    @test e isa ArgumentError && endswith(e.msg, says)
+    # Where the kind is carried, it goes out: Interactions parts from an InputMessage's content.
+    gemini = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint, Respond(service=GEMINIServiceEndpoint,
+        input=[InputMessage(role="user", content=[input_text("What is it?"), ImageAttachment(_PNG), clip])])))
+    @test [p["type"] for p in only(gemini["input"])["content"]] == ["text", "image", "audio"]
+end
+
 @testset "an image's detail level" begin
     @test isnothing(ImageAttachment(_PNG).detail) && fieldnames(ImageAttachment) == (:data, :mime, :detail)
     for level in ("auto", "low", "high", "original")
@@ -332,10 +370,17 @@ end
         e = _att_caught(f)
         @test e isa ArgumentError && occursin("detail", e.msg)
     end
-    for f in (() -> EmbeddingInput("a report", doc), () -> Embeddings(doc; ollama...), () -> Embeddings(["a", doc]; ollama...))
+    for f in (() -> EmbeddingInput("a report", doc), () -> EmbeddingInput(doc), () -> EmbeddingInput(; image=doc),
+              () -> EmbeddingInput(; audio=doc), () -> Embeddings(doc; ollama...), () -> Embeddings(["a", doc]; ollama...))
         e = _att_caught(f)
         @test e isa ArgumentError && occursin("DocumentAttachment", e.msg)
     end
+    # Each slot takes its own kind: a clip is no image, an image no clip.
+    e = _att_caught(() -> EmbeddingInput(; image=AudioAttachment(_WAV)))
+    @test e isa ArgumentError && e.msg == "an EmbeddingInput holds a text and a title (strings), an image (an " *
+        "ImageAttachment) and a sound clip (an AudioAttachment), each optional; got text::Nothing, title::Nothing, " *
+        "image::AudioAttachment, audio::Nothing"
+    @test _att_caught(() -> EmbeddingInput(; audio=ImageAttachment(_PNG))) isa ArgumentError
     @test EmbeddingInput(ImageAttachment(_PNG)).image == ImageAttachment(_PNG)   # without a level: an item
 end
 

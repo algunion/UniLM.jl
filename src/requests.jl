@@ -846,15 +846,22 @@ function extract_message(resp::HTTP.Response)
 end
 
 # A reply's `message.audio` (the Chat Completions reference's `ChatCompletionAudio`): its
-# id, base64 data, the Unix time it expires at, and its transcript, every one required.
+# id, base64 data and transcript, every one required, and the Unix time it expires at.
 function _audio_output(a::AbstractDict)::AudioOutput
     field(key, T, what) = (v = get(a, key, nothing); v isa T ? v : throw(ArgumentError(
         "the reply's audio has no $what \"$key\" (got $(repr(v)))")))
     AudioOutput(field("id", AbstractString, "string"), base64decode(field("data", AbstractString, "base64 string")),
-                field("expires_at", Int64, "integer"), field("transcript", AbstractString, "string"))
+                _audio_expiry(get(a, "expires_at", nothing)), field("transcript", AbstractString, "string"))
 end
 _audio_output(::Nothing)::Nothing = nothing
 _audio_output(a) = throw(ArgumentError("the reply's audio is not a JSON object (got $(typeof(a)))"))
+
+# An audio reply's expiry, streamed or not: its Unix time, or `nothing` where the reply names
+# none — the turn is kept with its expiry unknown, as a stream cut before its last update
+# leaves it. Any other value is a malformed reply.
+_audio_expiry(::Nothing)::Nothing = nothing
+_audio_expiry(t::Int64)::Int64 = t
+_audio_expiry(t) = throw(ArgumentError("the reply's audio expiry \"expires_at\" is no integer (got $(repr(t)))"))
 
 # Message content as text: a string as is; an array of content parts (the form
 # requests use, which OpenAI-compatible servers may echo) joined from its text parts.

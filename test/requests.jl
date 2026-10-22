@@ -590,12 +590,20 @@ end
         end
     end
 
-    @testset "an audio object without its id, data, expiry or transcript is no reply" begin
+    @testset "an audio object without its id, data or transcript, or with an expiry that is no integer, is no reply" begin
         for broken in (delete!(copy(wire_audio), "id"), merge(wire_audio, Dict("id" => 7)), delete!(copy(wire_audio), "data"),
                        merge(wire_audio, Dict("expires_at" => "soon")), merge(wire_audio, Dict("expires_at" => true)),
-                       delete!(copy(wire_audio), "transcript"), "audio")
+                       merge(wire_audio, Dict("expires_at" => 1.7926e9)), delete!(copy(wire_audio), "transcript"), "audio")
             @test_throws ArgumentError UniLM.extract_message(reply(Dict("role" => "assistant", "content" => nothing,
                                                                         "audio" => broken)))
+        end
+    end
+
+    @testset "an audio reply without its expiry is kept, its expiry unknown, as a stream keeps it" begin
+        for unexpiring in (delete!(copy(wire_audio), "expires_at"), merge(wire_audio, Dict("expires_at" => nothing)))
+            m = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => nothing, "audio" => unexpiring))).message
+            @test m.audio_output == AudioOutput(id="audio_abc123", data=wav, expires_at=nothing, transcript="Hi there!")
+            @test m.content == "Hi there!"
         end
     end
 

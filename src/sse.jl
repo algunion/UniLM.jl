@@ -248,7 +248,8 @@ end
 # One update of a streamed audio reply: "Audio chunks may carry an ID, base64 data, or
 # transcript text; the final audio update contains only its expiry timestamp" (Chat
 # Completions reference, the chunk's `delta.audio`). The transcript is the turn's text, so
-# it also goes to the streaming callback.
+# it also goes to the streaming callback; an expiry that is no integer is a malformed
+# update, as it is unstreamed (`_audio_expiry`).
 function _audio_delta!(state::StreamState, a::AbstractDict)::Nothing
     s = _streamed_audio!(state)
     id = get(a, "id", nothing)
@@ -261,7 +262,7 @@ function _audio_delta!(state::StreamState, a::AbstractDict)::Nothing
         print(state.pending_delta, t)
     end
     e = get(a, "expires_at", nothing)
-    e isa Int64 && (s.expires_at = Int(e))
+    isnothing(e) || (s.expires_at = _audio_expiry(e))
     nothing
 end
 

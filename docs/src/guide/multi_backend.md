@@ -158,10 +158,14 @@ Responses API: GPT-5.6, GPT-6 Sol, and GPT-6 Luna take Chat Completions tools on
 explicit `reasoning_effort="none"`, and GPT-6 Astra and GPT-6.1 Sol take tools only through
 `Respond`. GPT-6 Sol and Luna also reject `temperature`, `top_p`, and log probabilities
 unless reasoning effort is `"none"` (an omitted effort is the provider default,
-`"medium"`), and refuse `"minimal"` reasoning effort; use `"low"` instead. GPT-6 Astra and
-GPT-6.1 Sol reason at `"low"` or more, so they reject sampling controls and log
-probabilities at every effort. These rules hold on the native OpenAI endpoint for the exact
-model id or a dated snapshot of it (`gpt-6-sol-2026-09-14`), and are checked before any request.
+`"medium"`). GPT-6 Sol, GPT-6 Luna and the GPT-5.6 models refuse `"minimal"` reasoning effort;
+use `"low"` instead. GPT-6 Astra and GPT-6.1 Sol reason at `"low"` or more, so they reject
+sampling controls and log probabilities at every effort. Chat Completions takes effort up to
+`"xhigh"` on all of them — it answered `"max"` with HTTP 400 (2026-10-22), though its reference
+lists it — while Responses takes `"max"`. These rules hold on the native OpenAI endpoint for
+`gpt-6-sol`, `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-luna`, `gpt-5.6` and
+`gpt-5.6-sol`/`-terra`/`-luna`, by exact id or a dated snapshot (`gpt-6-sol-2026-09-14`), and are
+checked before any request.
 For inexpensive testing, use `gpt-6-luna` with `reasoning_effort="none"`.
 `service_tier` takes `"fast"` (OpenAI still accepts `"priority"` as an alias), `"flex"`,
 `"scale"`, `"default"` and `"auto"`; `"ultrafast"` is a Responses tier of `gpt-6-astra` and

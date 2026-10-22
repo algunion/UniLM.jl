@@ -189,8 +189,13 @@ UniLM.jl works with any model name string. Common choices:
 GPT-6 Sol, GPT-6 Luna and the GPT-5.6 models take Chat tools only with
 `reasoning_effort="none"`, and GPT-6 Sol and Luna take sampling controls and log
 probabilities only at that effort; OpenAI's tool path is the Responses API
-([`Respond`](@ref)). These rules apply to `OPENAIServiceEndpoint`, to the exact model id
-or a dated snapshot of it (`gpt-6-sol-2026-09-14`), and are checked before any request.
+([`Respond`](@ref)). On Chat Completions these models take reasoning effort up to `"xhigh"`:
+the API answered `"max"` with HTTP 400 on every one of them (2026-10-22), though its reference
+lists it, so `"max"` goes through `Respond`. None of them takes `"minimal"` (use `"low"`), and
+GPT-6 Astra and GPT-6.1 Sol start at `"low"`. These rules apply to `OPENAIServiceEndpoint`, to
+`gpt-6-sol`, `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-luna`, `gpt-5.6` and
+`gpt-5.6-sol`/`-terra`/`-luna` by exact id or a dated snapshot (`gpt-6-sol-2026-09-14`), and
+are checked before any request; other models are checked by the server.
 
 All eight are keys in [`DEFAULT_PRICING`](@ref), so cost accounting works out of
 the box. Any other model name is accepted — it is just a string on the wire — but

@@ -121,15 +121,18 @@ const _OA_NO_ULTRAFAST = "has no ultrafast tier: OpenAI serves service_tier=\"ul
 
 @testset "OpenAI model rules: the exact id or a dated snapshot, never another generation" begin
     rules = UniLM._OPENAI_MODEL_RULES
-    @test sort!(collect(keys(rules))) == ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra",
+    @test sort!(collect(keys(rules))) == ["gpt-5.6", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra",
                                           "gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol"]
     row(model) = UniLM._openai_row(rules, model)
     @test row("gpt-6-sol-2026-09-14") === rules["gpt-6-sol"]
     @test row("gpt-6.1-sol") === rules["gpt-6.1-sol"]
     @test row("gpt-6.1-sol-2026-10-01") === rules["gpt-6.1-sol"]
+    # The documented gpt-5.6 alias "routes requests to GPT-5.6 Sol" (its model page; the API
+    # answered it as gpt-5.6-sol on 2026-10-22): an exact id with Sol's rules.
+    @test row("gpt-5.6") === rules["gpt-5.6-sol"]
     # Near misses and future ids have no row: a family prefix, another date form, another generation.
-    for model in ("gpt-7-x", "gpt-6", "gpt-6.1", "gpt-5.6", "gpt-6-sol-mini", "gpt-6-sol-20260914",
-                  "gpt-6-sol-2026-09", "gpt-6.2-sol", "gpt-6-sol-2026-09-14-preview")
+    for model in ("gpt-7-x", "gpt-6", "gpt-6.1", "gpt-5", "gpt-6-sol-mini", "gpt-6-sol-20260914",
+                  "gpt-6-sol-2026-09", "gpt-6.2-sol", "gpt-6-sol-2026-09-14-preview", "gpt-5.6-mini")
         @test isnothing(row(model))
     end
     @test (@inferred Nothing UniLM._openai_row(rules, "gpt-6-luna")) === rules["gpt-6-luna"]
@@ -143,27 +146,18 @@ const _OA_NO_ULTRAFAST = "has no ultrafast tier: OpenAI serves service_tier=\"ul
 end
 
 @testset "GPT-6 Astra and GPT-6.1 Sol: effort low and up, no sampling, tools through Responses, Ultrafast" begin
-    accepts = "it accepts \"low\", \"medium\", \"high\", \"xhigh\", \"max\""
     for model in ("gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-sol-2026-10-01")
-        # gpt-6.1-sol effort "none" was answered "Supported values are: 'low', 'medium', 'high', 'xhigh', and 'max'".
-        for effort in ("none", "minimal")
-            want = "$model does not support reasoning effort $(repr(effort)) ($accepts); use \"low\""
-            @test _oa_chat_err(; model, reasoning_effort=effort).msg == want
-            @test _oa_respond_err(; model, reasoning=Reasoning(; effort)).msg == want
-        end
-        for effort in ("low", "medium", "high", "xhigh", "max")
-            @test _oa_chat(; model, reasoning_effort=effort)["reasoning_effort"] == effort
-            @test _oa_respond(; model, reasoning=Reasoning(; effort))["reasoning"] == Dict("effort" => effort)
-        end
         # No effort reaches "none", so no sampling control or log probability is ever taken
         # (gpt-6.1-sol: "'temperature' is not supported with this model").
-        for effort in (nothing, "low", "max")
-            reasoning = isnothing(effort) ? nothing : Reasoning(; effort)
+        for effort in (nothing, "low", "xhigh")
             for (kw, name) in ((temperature=0.2,) => "temperature", (top_p=0.5,) => "top_p",
                                (logprobs=true,) => "logprobs", (top_logprobs=2,) => "top_logprobs")
                 @test _oa_chat_err(; model, reasoning_effort=effort, kw...).msg ==
                       "$model does not support sampling controls or log probabilities ($name)"
             end
+        end
+        for effort in (nothing, "low", "max")
+            reasoning = isnothing(effort) ? nothing : Reasoning(; effort)
             for (kw, name) in ((temperature=0.2,) => "temperature", (top_p=0.5,) => "top_p",
                                (top_logprobs=2,) => "top_logprobs", (include=["message.output_text.logprobs"],) => "include")
                 @test _oa_respond_err(; model, reasoning, kw...).msg ==
@@ -192,7 +186,7 @@ end
 end
 
 @testset "GPT-5.6: Chat tools only at effort none" begin
-    for model in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
+    for model in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6", "gpt-5.6-luna-2026-07-01")
         for effort in (nothing, "low")
             @test _oa_chat_err(; model, tools=_OA_PING, reasoning_effort=effort).msg ==
                   "$model Chat tools require reasoning_effort=\"none\"; use Respond for reasoning with tools"
@@ -205,6 +199,42 @@ end
         @test _oa_respond_err(; model, service_tier="ultrafast").msg == "$model $_OA_NO_ULTRAFAST"
         @test occursin("prompt_cache_options", _oa_respond_err(; model, prompt_cache_retention="24h").msg)
     end
+end
+
+@testset "OpenAI reasoning efforts per API: Chat Completions stops at xhigh, Responses takes max" begin
+    # The API's answers on 2026-10-22, which win over the Chat Completions reference (it lists
+    # "max"): Chat Completions refused "max" on every model below — "Supported values are:
+    # 'none', 'low', 'medium', 'high', and 'xhigh'", from 'low' on Astra and 6.1 Sol — and
+    # "minimal" on GPT-5.6; the Responses API took "max" (gpt-5.6-luna) and refused "minimal"
+    # ("…'xhigh', and 'max'") and, on gpt-6.1-sol, "none".
+    listed(efforts) = join(repr.(efforts), ", ")
+    from_low, from_none = ["low", "medium", "high", "xhigh"], ["none", "low", "medium", "high", "xhigh"]
+    for (models, chat) in ((("gpt-6-astra", "gpt-6.1-sol", "gpt-6.1-sol-2026-10-01"), from_low),
+                           (("gpt-6-sol", "gpt-6-luna", "gpt-6-sol-2026-09-14", "gpt-5.6-sol", "gpt-5.6-terra",
+                             "gpt-5.6-luna", "gpt-5.6", "gpt-5.6-terra-2026-07-01"), from_none))
+        responses = [chat; "max"]
+        for model in models, effort in ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+            if effort in chat
+                @test _oa_chat(; model, reasoning_effort=effort)["reasoning_effort"] == effort
+            else
+                hint = effort == "max" ? "the Responses API takes it: send the request with Respond" : "use \"low\""
+                @test _oa_chat_err(; model, reasoning_effort=effort).msg == "$model on OpenAI Chat Completions " *
+                      "does not take reasoning effort $(repr(effort)) (it takes $(listed(chat))); $hint"
+            end
+            if effort in responses
+                @test _oa_respond(; model, reasoning=Reasoning(; effort))["reasoning"] == Dict("effort" => effort)
+            else
+                @test _oa_respond_err(; model, reasoning=Reasoning(; effort)).msg == "$model on OpenAI Responses " *
+                      "does not take reasoning effort $(repr(effort)) (it takes $(listed(responses))); use \"low\""
+            end
+        end
+    end
+    # Refused before any request is sent.
+    @test_throws ArgumentError chatrequest!(Chat(model="gpt-6-luna", reasoning_effort="max",
+                                                 messages=[Message(Val(:user), "hi")]))
+    # A compatible server keeps its own contract: the effort goes out as set.
+    generic = Chat(service=GenericOpenAIEndpoint("http://localhost:9999", ""), model="gpt-6-luna", reasoning_effort="max")
+    @test JSON.parse(UniLM.encode_request(generic.service, generic))["reasoning_effort"] == "max"
 end
 
 @testset "an unknown OpenAI model gets no per-model rule; the provider-wide ones still apply" begin
@@ -330,10 +360,8 @@ end
                 Respond(; model, input="hi", prompt_cache_retention="24h")); nothing catch e; e end
         @test err isa ArgumentError && occursin("prompt_cache_options", err.msg)
         # Neither model lists a "minimal" reasoning effort; OpenAI's guide moves such a request to "low".
-        want = "$model does not support reasoning effort \"minimal\" (it accepts \"none\", \"low\", " *
-               "\"medium\", \"high\", \"xhigh\", \"max\"); use \"low\""
-        @test _oa_chat_err(; model, reasoning_effort="minimal").msg == want
-        @test _oa_respond_err(; model, reasoning=Reasoning(effort="minimal")).msg == want
+        @test endswith(_oa_chat_err(; model, reasoning_effort="minimal").msg, "; use \"low\"")
+        @test endswith(_oa_respond_err(; model, reasoning=Reasoning(effort="minimal")).msg, "; use \"low\"")
         # gpt-6-luna was answered "Invalid service_tier argument" for "ultrafast".
         @test _oa_respond_err(; model, service_tier="ultrafast").msg == "$model $_OA_NO_ULTRAFAST"
     end
@@ -607,8 +635,12 @@ end
                   "gpt-6-luna", "gemini-3.8-flash")
         @test haskey(DEFAULT_PRICING, model)
     end
-    # Every model with an OpenAI rule row is priced, so its spend is never a silent 0.0.
-    @test all(m -> haskey(DEFAULT_PRICING, m), keys(UniLM._OPENAI_MODEL_RULES))
+    # Every model with an OpenAI rule row is priced, so its spend is never a silent 0.0. The
+    # gpt-5.6 alias was answered as gpt-5.6-sol on both APIs (2026-10-22): the model served prices it.
+    @test all(m -> haskey(DEFAULT_PRICING, m), setdiff(keys(UniLM._OPENAI_MODEL_RULES), ["gpt-5.6"]))
+    alias = LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=Chat(model="gpt-5.6"),
+                       usage=TokenUsage(prompt_tokens=16, completion_tokens=5, total_tokens=21), model="gpt-5.6-sol")
+    @test estimated_cost(alias) ≈ (16 * 4.0 + 5 * 20.0) / 1e6
     object(model) = ResponseSuccess(response=ResponseObject(id="r", status="completed", model=model,
         output=Any[], usage=Dict("input_tokens"=>100, "output_tokens"=>10, "total_tokens"=>110), raw=Dict()),
         service=OPENAIServiceEndpoint)

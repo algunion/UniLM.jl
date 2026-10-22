@@ -804,6 +804,8 @@ end
                                 cache_write_extended_tokens=400, completion_tokens=3, total_tokens=1003))
     @test estimated_cost(written) ≈ 1000 * rate
     @test @inferred(UniLM._system_one_cost(_OD, written, nothing, DEFAULT_PRICING)) ≈ 1000 * rate
+    # Decisions has rates of its own: a tier a reply names prices nothing differently.
+    @test estimated_cost(result(TokenUsage(prompt_tokens=1000, total_tokens=1000, service_tier="flex"))) ≈ 1000 * rate
     @test estimated_cost(result(TokenUsage(prompt_tokens=272_000))) ≈ 272_000 * rate
     @test estimated_cost(result(TokenUsage(prompt_tokens=272_001))) ≈ 2 * 272_001 * rate   # long context: twice
     # `model` and `pricing` keep their meaning.

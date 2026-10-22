@@ -1,7 +1,7 @@
 # ─── OpenAI Decisions API Integration Tests ──────────────────────────────────
 # Requires UNILM_LIVE=1 and OPENAI_API_KEY (both, or the suite skips). Spend is capped
-# at exactly nine calls of a few hundred input tokens each, at $0.10 per 1M input
-# tokens: a fraction of a cent. Every state is unambiguous, so a correct client is the
+# at exactly ten calls, nine of a few hundred input tokens and one of about two thousand,
+# at $0.10 per 1M input tokens: a fraction of a cent. Every state is unambiguous, so a correct client is the
 # only thing standing between the input and the asserted answer.
 
 # Defined in a module of its own, as the System One suite's live routes are, so these
@@ -107,6 +107,21 @@ end
     @test u.prompt_tokens > 0 && u.cached_tokens == 0 && u.cache_write_tokens == 0
     @test estimated_cost(r) ≈ u.prompt_tokens * 0.10 / 1_000_000
     @info "Decisions live prompt_cache_options" request_id = r.response.request_id input = u.prompt_tokens cost = estimated_cost(r)
+end
+
+@testset "OpenAI Decisions — a 12-hour prompt-cache write is honoured and reported" begin
+    # Above the 1,024-token caching minimum, and with a first line no earlier request shares,
+    # the request writes its prompt to the cache at the 12-hour lifetime it asks for.
+    ticket = "Ticket $(string(rand(UInt64); base=16)).\n" * repeat("The customer reports that the export button " *
+        "of the reporting dashboard fails in Safari but works in Chrome, and asks for a fix before the review. ", 60)
+    r = ask(ticket, "browser" => noul("Does the problem depend on the browser?");
+            service=OPENAIServiceEndpoint, config=_DECISIONS_LIVE_CFG, prompt_cache_options=PromptCacheOptions(ttl="12h"))
+    @test r isa SystemOneSuccess
+    u = token_usage(r)
+    @test u.prompt_tokens >= 1024
+    @test u.cache_write_tokens > 0 && u.cache_write_extended_tokens > 0
+    @test estimated_cost(r) ≈ u.prompt_tokens * 0.10 / 1_000_000          # a write costs the input rate
+    @info "Decisions live 12-hour cache write" request_id = r.response.request_id input = u.prompt_tokens cached = u.cached_tokens writes = u.cache_write_tokens writes_12h = u.cache_write_extended_tokens raw_usage = get(r.response.raw, "usage", nothing) cost = estimated_cost(r)
 end
 
 @testset "OpenAI Decisions — the natural-language verbs on OPENAIServiceEndpoint" begin

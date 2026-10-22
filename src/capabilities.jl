@@ -181,10 +181,11 @@ const _NO_REASONING_CHAT_TOOLS = ("gpt-5.6" => "GPT-5.6", "gpt-6-sol" => "GPT-6 
 # The prompt-cache retentions each OpenAI API accepts
 # (https://developers.openai.com/api/docs/guides/prompt-caching): Chat Completions answers
 # any other ttl with HTTP 400 "Supported values are: '30m'."; the Responses API also
-# keeps a prefix for 12 hours.
+# keeps a prefix for 12 hours; the Decisions API answered a "12h" request with HTTP 200.
 const _OPENAI_CACHE_TTLS = (
     chat=(name="Chat Completions", ttls=("30m",), fix="; the Responses API (Respond) also takes \"12h\""),
-    responses=(name="Responses", ttls=("30m", "12h"), fix=""))
+    responses=(name="Responses", ttls=("30m", "12h"), fix=""),
+    decisions=(name="Decisions API", ttls=("30m", "12h"), fix=""))
 
 function _check_openai_cache_ttl(options::Union{PromptCacheOptions,Nothing}, api::NamedTuple)::Nothing
     ttl = isnothing(options) ? nothing : options.ttl

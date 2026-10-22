@@ -27,3 +27,7 @@ if verify_webhook(payload, headers, ENV["OPENAI_WEBHOOK_SECRET"])
     event.type in WEBHOOK_EVENTS && println("Event: ", event.type, " (", event.id, ")")
 end
 ```
+
+`WEBHOOK_EVENTS` leaves out the `eval.run.*` events, which OpenAI sends until its Evals API
+shuts down on November 30, 2026: the filter above drops them, so match `event.type` yourself if
+you still run evals.

@@ -49,6 +49,9 @@ HTTP.close_idle_connections!()
     @test f isa LLMSuccess
     @test !isempty(strip(something(f.message.content, ""))) && isnothing(f.message.audio_output)
     @info "Chat audio live follow-up" text = f.message.content usage = f.usage
+    # The answer names the word the spoken reply said.
+    said = [m.match for m in eachmatch(r"\p{L}+", a.transcript)]
+    @test !isempty(said) && all(w -> occursin(Regex("\\b$w\\b", "i"), something(f.message.content, "")), said)
     # The audio sent back by its id is audio input; the text answer has no audio output.
     @test 0 < f.usage.prompt_audio_tokens <= f.usage.prompt_tokens && f.usage.completion_audio_tokens == 0
     @test estimated_cost(f) > 0 && isapprox(estimated_cost(f), _audio_live_bill(f.usage); rtol=1e-12)

@@ -134,7 +134,7 @@ end
 | `model`              | both     | String | `""`              | Sentinel; resolves on serialization to `"gpt-image-2.5-sunburst"` (OpenAI) or `"gemini-nano-banana-2.1"` (Gemini) |
 | `prompt`             | both     | String | *(required)*      | Text description of the image      |
 | `n`                  | both     | Int    | `1`               | Number of images (1–10); Gemini takes only 1 |
-| `safety_identifier`  | both     | String | —                 | Stable end-user id for abuse monitoring: 1–128 characters on OpenAI; on Gemini the request label, at most 63 lowercase letters, digits, `_` or `-` |
+| `safety_identifier`  | both     | String | —                 | Stable end-user id for abuse monitoring: 1–128 characters on OpenAI; on Gemini the request label, at most 63 lowercase letters, numerals, `_` or `-`, international ones included |
 | `size`               | OpenAI   | String | `"auto"`          | `"1024x1024"`, `"1536x1024"`, etc.; on `gpt-image-2` and later any `WIDTHxHEIGHT` with multiples of 16, up to `3840x2160` |
 | `quality`            | OpenAI   | String | `"auto"`          | `"low"`, `"medium"`, `"high"`; `"xhigh"` and `"max"` on `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` |
 | `background`         | OpenAI   | String | `"auto"`          | `"transparent"`, `"opaque"`        |

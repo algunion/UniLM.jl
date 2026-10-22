@@ -40,10 +40,12 @@ UniLM.provider_capabilities(::Type{SpeechWSProbe}) = Set([:realtime])
 
 _sp_event(type; kw...) = Dict{String,Any}("type" => type, "event_id" => "event_$(type)", (String(k) => v for (k, v) in kw)...)
 
-# Sends each item: an event dict, or `:close` to close the socket (which ends the script).
+# Sends each item: an event dict, or `:close` (a normal close) or a CloseFrameBody (a close with that
+# status and reason) to close the socket, which ends the script.
 function _sp_emit(ws, items)::Bool
     for it in items
         it === :close && (close(ws); return false)
+        it isa HTTP.WebSockets.CloseFrameBody && (close(ws, it); return false)
         HTTP.WebSockets.send(ws, JSON.json(it))
     end
     true
@@ -525,6 +527,40 @@ end
         speak("Hi."; service=SpeechWSProbe)
     end
     @test r2 isa UniLM.AudioCallError && occursin("closed before", r2.error)
+    # The server's close status and reason are kept, in the message and as the cause.
+    overloaded = HTTP.WebSockets.CloseFrameBody(1011, "overloaded")
+    r3, _ = _sp_with_realtime(_sp_speech_reply(UInt8[]; on_response=Any[_sp_delta(UInt8[0x01, 0x00]), overloaded])) do
+        speak("Hi."; service=SpeechWSProbe)
+    end
+    @test r3 isa UniLM.AudioCallError &&
+          r3.error == "the Realtime session closed before response.done (websocket closed with status 1011: overloaded)"
+    @test r3.cause isa HTTP.WebSockets.WebSocketError && r3.cause.message == overloaded
+end
+
+@testset "speak and translate on OpenAI: a server that closes the session while UniLM sends is still heard" begin
+    # The server acknowledges the update and closes at once, so UniLM's next send fails: the events
+    # the server sent before its close are read before the close is reported.
+    err = _sp_event("error"; error=Dict("type" => "invalid_request_error", "code" => "test_code",
+                                        "message" => "The test peer ends this session.", "param" => nothing))
+    closing = HTTP.WebSockets.CloseFrameBody(1011, "test peer closing")
+    mktempdir() do dir
+        long = joinpath(dir, "long.wav")
+        write(long, _sp_wav(zeros(UInt8, 2 * 24_000 * 60)))   # 60 s of audio: still sending when the close lands
+        for (call, awaited) in ((() -> speak("Hi."; service=SpeechWSProbe), "response.done"),
+                                (() -> translate(long; service=SpeechWSProbe), "session.closed"))
+            # An error event before the close is the provider's refusal.
+            r, _ = _sp_with_realtime(call, ev -> ev["type"] == "session.update" ?
+                                         Any[_sp_event("session.updated"), err, closing] : Any[])
+            @test r isa UniLM.AudioFailure && isnothing(r.status) &&
+                  JSON.parse(r.response; dicttype=Dict{String,Any}) == err
+            # Without one, the close is the call's error, with its status and reason.
+            r2, _ = _sp_with_realtime(call, ev -> ev["type"] == "session.update" ?
+                                          Any[_sp_event("session.updated"), closing] : Any[])
+            @test r2 isa UniLM.AudioCallError && r2.error ==
+                  "the Realtime session closed before $awaited (websocket closed with status 1011: test peer closing)"
+            @test r2.cause isa HTTP.WebSockets.WebSocketError && r2.cause.message == closing
+        end
+    end
 end
 
 @testset "speak on OpenAI: a silent peer ends the call at its idle bound or its deadline" begin
@@ -553,9 +589,16 @@ end
          refusal(() -> speak("Hi."; service=SpeechWSProbe, voice="Kore")))
     end
     @test all(e -> e isa ArgumentError, (e1, e2, e3, e4)) && isempty(seen.targets)
+    # Google's OpenAI-compatible endpoint has no speech route: its refusals name the endpoint that
+    # speaks Gemini, for a Gemini voice too.
+    for f in (() -> speak("Hi."; service=GEMINIOpenAIServiceEndpoint),
+              () -> SpeechRequest(input="Hi.", service=GEMINIOpenAIServiceEndpoint, voice="Kore"))
+        e5 = refusal(f)
+        @test e5 isa ArgumentError && e5.msg == "GEMINIOpenAIServiceEndpoint has no speech route (Google's " *
+              "OpenAI-compatible API documents none): Gemini TTS is on the native Gemini API, so pass " *
+              "service=GEMINIServiceEndpoint (https://ai.google.dev/gemini-api/docs/speech-generation)"
+    end
     # Endpoints without a Realtime WebSocket: never sent another endpoint's credentials.
-    e5 = refusal(() -> speak("Hi."; service=GEMINIOpenAIServiceEndpoint))
-    @test e5 isa ArgumentError && occursin("speak (OpenAI Realtime API) is not supported by GEMINIOpenAIServiceEndpoint", e5.msg)
     e6 = refusal(() -> speak("Hi."; service=SeamProbe))
     @test e6 isa ArgumentError && occursin("supports only OPENAIServiceEndpoint", e6.msg)
 end
@@ -757,5 +800,35 @@ end
             @test r2 isa UniLM.AudioCallError && r2.cause isa UniLMTimeout && r2.cause.phase === :stream_idle &&
                   r2.cause.limit == 2.0
         end
+    end
+end
+
+@testset "realtime_receive: a send parked on a peer that stopped reading cannot hold its idle bound open" begin
+    # A send parked on full socket buffers holds HTTP.jl's send lock, which closing the WebSocket
+    # waits for: the bound holds only if the read is ended without that lock.
+    cfg = RequestConfig(connect_timeout=10.0, stream_idle_timeout=1.0, total_deadline=Inf)
+    outcome, took = Ref{Any}(nothing), Ref(NaN)
+    _sp_with_stall_peer() do
+        call = Threads.@spawn realtime_connect(; service=SpeechWSProbe, config=cfg) do s
+            realtime_receive(s); realtime_receive(s)          # session.created, session.updated
+            big = input_audio_append(repeat("A", 1_000_000))
+            sender = Threads.@spawn try
+                while true
+                    realtime_send(s, big)                     # parks once the socket buffers fill
+                end
+            catch e
+                e
+            end
+            sleep(2.0)                                        # 1 MB per event: parked long before this
+            t = time()
+            outcome[] = try realtime_receive(s) catch e; e end
+            took[] = time() - t
+            fetch(sender)
+        end
+        @test timedwait(() -> !isnothing(outcome[]), 15.0) === :ok
+        @test outcome[] isa UniLMTimeout && outcome[].phase === :stream_idle && outcome[].limit == 1.0
+        @test took[] < 4.0
+        # Ending the connection also unblocked the parked send, so the handler returned.
+        @test timedwait(() -> istaskdone(call), 15.0) === :ok
     end
 end

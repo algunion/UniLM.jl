@@ -578,7 +578,7 @@ result = fetch(task)  # LLMSuccess when complete, else a typed failure
     service_tier::Union{String,Nothing} = nothing           # OpenAI "auto","default","flex","scale","priority","fast"; "ultrafast" on gpt-6-astra/gpt-6.1-sol
     top_logprobs::Union{Int64,Nothing} = nothing            # 0–20
     prompt_cache_key::Union{String,Nothing} = nothing
-    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory","24h" (models before GPT-5.6; refused on the gpt-6*/gpt-5.6* rule models)
+    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory","24h" ("24h" only on gpt-5.5/gpt-5.5-pro, server-checked; refused on the gpt-6*/gpt-5.6* rule models)
     safety_identifier::Union{String,Nothing} = nothing
     conversation::Union{Any,Nothing} = nothing              # String or Dict (not with previous_response_id); the declared type collapses to Any
     context_management::Union{Vector,Nothing} = nothing
@@ -800,7 +800,8 @@ endpoints send the object unchanged, the server's answer being the check.
 On OpenAI, `prompt_cache_retention` throws `ArgumentError` for `gpt-6-astra`, `gpt-6.1-sol`,
 `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated
 snapshots), whose cache lifetime `prompt_cache_options` sets; on other models it is sent and
-may be combined with `prompt_cache_options`. Explicit mode requires cache breakpoints in input
+may be combined with `prompt_cache_options`; on `gpt-5.5` and `gpt-5.5-pro` it takes only
+`"24h"` (OpenAI's reference; the server checks it). Explicit mode requires cache breakpoints in input
 content to create cache writes — mark them with `input_text(text; cache_breakpoint=true)`, a
 Responses input part; `Chat` messages cannot carry one, so explicit mode on a `Chat` means no
 prompt caching. Chat Completions takes only `mode` and `ttl` (a native OpenAI `Chat` with
@@ -1003,7 +1004,7 @@ println(tokens["input_tokens"])
     background::Union{String,Nothing} = nothing             # OpenAI: "transparent","opaque","auto"
     output_format::Union{String,Nothing} = nothing          # OpenAI: "png","webp","jpeg"
     output_compression::Union{Int,Nothing} = nothing        # OpenAI: 0–100 (webp/jpeg only)
-    safety_identifier::Union{String,Nothing} = nothing      # both: OpenAI 1–128 chars; Gemini the request label (≤ 63 of a-z 0-9 _ -)
+    safety_identifier::Union{String,Nothing} = nothing      # both: OpenAI 1–128 chars; Gemini the request label (≤ 63 lowercase letters, numerals, _ or -, any script)
     moderation::Union{String,Nothing} = nothing             # OpenAI: "auto","low"
     aspect_ratio::Union{String,Nothing} = nothing           # Gemini: "1:1","1:4","4:1","1:8","8:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9"
     resolution::Union{String,Nothing} = nothing             # Gemini: "512","1K","2K","4K"; gemini-nano-banana-2.1 renders 1K, 2K or 4K
@@ -1014,7 +1015,7 @@ end
     image::Union{String,Vector{String}}                     # input file path(s); an empty vector throws in edit_image
     prompt::String
     mask::Union{String,Nothing} = nothing                   # OpenAI: transparent area = what to edit
-    model::String = ""                                      # sentinel, as on ImageGeneration
+    model::String = ""                                      # "" → the service's default image model, resolved when sent
     n::Union{Int,Nothing} = nothing
     size::Union{String,Nothing} = nothing                   # OpenAI
     quality::Union{String,Nothing} = nothing                # OpenAI
@@ -2403,7 +2404,8 @@ models are conversational; OpenAI notes instructions are not guaranteed to be fo
 prebuilt voices, `instructions` as the speech style), which reads the text verbatim. An empty
 `input`, a voice the service lacks, a `response_format` other than `"wav"`/`"pcm"` (mp3, opus, aac and
 flac are refused), a `speed` out of range and any `speed` on Gemini throw `ArgumentError` before any
-request. **`translate`** streams a 16-bit PCM WAV file (any rate and channel count: mixed down to mono
+request, as does `GEMINIOpenAIServiceEndpoint` (no speech route there: the error points to
+`GEMINIServiceEndpoint`). **`translate`** streams a 16-bit PCM WAV file (any rate and channel count: mixed down to mono
 and resampled to 24 kHz) through an OpenAI Realtime translation session
 (`wss://api.openai.com/v1/realtime/translations`; OpenAI shuts `/v1/audio/translations` down on
 2027-02-26) into `language` (English unless named) and returns the translated text as a
@@ -2411,9 +2413,12 @@ and resampled to 24 kHz) through an OpenAI Realtime translation session
 an empty one, a blank `language` and a service without the Realtime API throw `ArgumentError` before
 I/O. A failure the provider reports is an `AudioFailure` — an HTTP error status, a refused WebSocket
 upgrade (a bad key is a 401), a Gemini candidate that did not finish (`finishReason` other than
-`STOP`), or a Realtime `error` event or unfinished `response.done` (`status = nothing`, the event's
-JSON as `response`); a session that closes before its result, a timeout, a cancel and a reply without
-usable audio are an `AudioCallError`, and audio received before a failure is never returned. Both
+`STOP`) or a reply without one (a blocked prompt), both with `status` 200, or a Realtime `error`
+event — read even when the server closes the session while UniLM sends — or unfinished
+`response.done` (`status = nothing`, the event's JSON as `response`); a session that closes before
+its result (the close's status and reason in `error`, the `HTTP.WebSockets.WebSocketError` in
+`cause`), a timeout, a cancel and a reply without usable audio are an `AudioCallError`, and audio
+received before a failure is never returned. Both
 make a single bounded attempt (`total_deadline` the whole call, `connect_timeout` the WebSocket open,
 `stream_idle_timeout` every send and every wait for the next event) and observe the ambient
 `CancelToken` (`with_cancel`): a token already cancelled sends nothing, and a cancel ends the call at
@@ -2586,8 +2591,9 @@ the Concurrency, Tasks and Cancellation guide.
   `ArgumentError` before any I/O; it opens `gpt-realtime-2.1` unless `model` names another) bounds the open phase with `connect_timeout`, surfaces
   an open that failed for another reason as that error, and closes an upgrade that
   completes after the timeout without running the handler; `realtime_receive` bounds
-  the read with `stream_idle_timeout` and surfaces a breach within
-  `[limit, limit + ~5 s]` (the WebSocket close waits for the peer's acknowledgement).
+  the read with `stream_idle_timeout` and surfaces a breach just after the limit: it ends
+  the connection without the send lock, so a `realtime_send` parked on a peer that stopped
+  reading cannot hold it open (that send throws too).
   An open session's lifetime is deliberately unbounded. `mint_realtime_secret` returns
   `RealtimeCallError` for a 200 without a non-empty secret.
 

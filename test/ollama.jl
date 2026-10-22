@@ -453,8 +453,14 @@ end
                          InputMessage(role="assistant", content="a", phase="commentary")]); nothing catch x; x end
     @test err isa ArgumentError && occursin("phase", err.msg) && occursin("Ollama", err.msg)
     @test haskey(enc(input=[InputMessage(role="user", content="q"), InputMessage(role="assistant", content="a")]), "model")
+    # A seed is refused for what it is, not as state: /v1/responses reads none, Ollama's chat API does.
+    err = try enc(seed=7); nothing catch x; x end
+    @test err isa ArgumentError && err.msg == "Ollama's Responses API reads no seed — its OpenAI-compatibility " *
+        "page lists none for /v1/responses — so the seed would be dropped: unset seed, or send the request as a " *
+        "Chat, whose seed Ollama reads"
     # respond validates before any I/O: the refusal is a throw, not a result.
     @test_throws ArgumentError respond(Respond(service=e, model="m", input="x", store=true))
+    @test_throws ArgumentError respond(Respond(service=e, model="m", input="x", seed=7))
     # A Respond tool loop cannot chain turns without server-side state.
     err = try tool_loop(Respond(service=e, model="m", input="x"), (n, a) -> "r"); nothing catch x; x end
     @test err isa ArgumentError && occursin("tool_loop!", err.msg)

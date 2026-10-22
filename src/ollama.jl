@@ -331,10 +331,11 @@ _failure_hint(s::OllamaEndpoint, e) = _unwrap_exception(e) isa HTTP.ConnectError
 # Ollama serves the Responses API statelessly and reads only the fields below
 # (https://docs.ollama.com/api/openai-compatibility); anything else it ignores
 # without an error — a previous_response_id would silently lose the conversation.
-# Those fields are refused here instead.
+# Those fields are refused here instead. A seed is refused on its own: that page lists
+# none for /v1/responses, while Ollama's chat API reads one, so its fix is a Chat.
 const _OLLAMA_RESPOND_MAPPED_FIELDS = (:service, :model, :input, :instructions, :tools, :tool_choice,
     :temperature, :top_p, :max_output_tokens, :stream, :text, :reasoning)
-const _OLLAMA_RESPOND_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Respond), _OLLAMA_RESPOND_MAPPED_FIELDS))
+const _OLLAMA_RESPOND_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Respond), _OLLAMA_RESPOND_MAPPED_FIELDS, (:seed,)))
 
 _stateless_responses(::OllamaEndpoint) = true
 
@@ -368,6 +369,9 @@ function encode_agentic(service::OllamaEndpoint, r::Respond)::String
         "Ollama's Responses API ignores $(join(fields, ", ")): it keeps no state between calls" *
         (isempty(intersect(fields, (:previous_response_id, :conversation))) ? "" :
          "; send the whole conversation in `input`, or use a Chat")))
+    isnothing(r.seed) || throw(ArgumentError(
+        "Ollama's Responses API reads no seed — its OpenAI-compatibility page lists none for /v1/responses — " *
+        "so the seed would be dropped: unset seed, or send the request as a Chat, whose seed Ollama reads"))
     isnothing(r.tool_choice) || r.tool_choice == "auto" || throw(ArgumentError(
         "Ollama has no tool_choice: the model decides whether to call a tool (\"auto\")"))
     rs = r.reasoning

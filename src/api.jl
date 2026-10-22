@@ -1322,7 +1322,10 @@ Creates a new `Chat` object with default settings:
 On the native OpenAI endpoint, `max_tokens` is sent as `max_completion_tokens` (setting
 both throws `ArgumentError`), `user` throws (use `safety_identifier` or
 `prompt_cache_key`), and `service_tier` must be one of `"auto"`, `"default"`, `"flex"`,
-`"scale"`, `"priority"` or `"fast"`.
+`"scale"`, `"priority"` or `"fast"`. Native Gemini and `GEMINIOpenAIServiceEndpoint` take
+`service_tier` `"standard"`, `"flex"` or `"priority"`, and native Gemini sends `seed` (an
+int32) and `store`; `ANTHROPICServiceEndpoint` takes `"auto"`, `"standard_only"` or
+`"fast"` (fast mode). Each refuses another value with `ArgumentError` before any request.
 
 OpenAI options, omitted from the request when unset:
 - `prompt_cache_options::Union{PromptCacheOptions,Nothing}`: prompt-cache `mode` and
@@ -1357,7 +1360,7 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
     stream::Union{Bool,Nothing} = nothing
     stop::Union{Vector{String},String,Nothing} = nothing # max 4 sequences
     max_tokens::Union{Int64,Nothing} = nothing
-    max_completion_tokens::Union{Int64,Nothing} = nothing # preferred over max_tokens; reasoning models reject max_tokens
+    max_completion_tokens::Union{Int64,Nothing} = nothing # OpenAI's current name for max_tokens; other wires' encoders take it over max_tokens
     presence_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
     response_format::Union{ResponseFormat,Nothing} = nothing
     frequency_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
@@ -1369,7 +1372,7 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
     verbosity::Union{String,Nothing} = nothing             # low|medium|high
     store::Union{Bool,Nothing} = nothing
     metadata::Union{AbstractDict,Nothing} = nothing
-    service_tier::Union{String,Nothing} = nothing          # auto|default|flex|scale|priority|fast
+    service_tier::Union{String,Nothing} = nothing          # per provider: see the docstring
     logprobs::Union{Bool,Nothing} = nothing
     top_logprobs::Union{Int64,Nothing} = nothing
     prediction::Union{AbstractDict,Nothing} = nothing
@@ -1638,7 +1641,9 @@ Successful Chat Completions API response.
   Non-zero means the turn was built from an incomplete wire.
 - `model::Union{String,Nothing}`: The model id the provider reports having served the turn
   (the reply's `model`; it differs from `self.model` when the provider routes the request to
-  another model); `nothing` where the endpoint does not report it, and from an
+  another model, or names the dated snapshot behind an alias, such as an id ending
+  `-YYYY-MM-DD`, which is priced at the alias's row); `nothing` where the endpoint does not
+  report it, and from an
   [`OllamaEndpoint`](@ref), whose cloud models are priced by the name requested.
   [`estimated_cost`](@ref) prices the call at this model when it is set, else at `self.model`.
 """

@@ -825,11 +825,11 @@ Configuration struct for an OpenAI Responses API request.
   [`token_usage`](@ref) reports the tier that billed the call
 - `prompt_cache_retention::String`: `"in_memory"` or `"24h"`; OpenAI's
   [reference](https://developers.openai.com/api/reference/resources/responses/methods/create)
-  says "for `gpt-5.5`, `gpt-5.5-pro`, and future models, only `24h` is supported", which the
-  server checks on those two. OpenAI deprecates the field: on `gpt-6-astra`, `gpt-6.1-sol`,
-  `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated
-  snapshots), whose cache lifetime `prompt_cache_options` sets, the native endpoint throws
-  `ArgumentError` for any value
+  says "for `gpt-5.5`, `gpt-5.5-pro`, and future models, only `24h` is supported". UniLM
+  sends the field unchecked on those two and on any model without a rule row. OpenAI
+  deprecates the field: on `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6`
+  and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots), whose cache lifetime
+  `prompt_cache_options` sets, the native endpoint throws `ArgumentError` for any value
 - `moderation::ModerationConfig`: Moderated completions — see [`ModerationConfig`](@ref)
 - `seed::Int64`: decoding seed, for repeatable output. Gemini Interactions
   (`GEMINIServiceEndpoint`) sends it as `generation_config.seed`, an int32: a seed outside
@@ -894,7 +894,7 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
     service_tier::Union{String,Nothing} = nothing      # "auto", "default", "flex", "scale", "priority", "fast", "ultrafast"
     top_logprobs::Union{Int64,Nothing} = nothing       # 0-20
     prompt_cache_key::Union{String,Nothing} = nothing
-    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory", "24h" ("24h" only on gpt-5.5 and later)
+    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory", "24h"; the GPT-6/GPT-5.6 rows refuse any value
     safety_identifier::Union{String,Nothing} = nothing
     conversation::Union{Any,Nothing} = nothing         # String or Dict
     context_management::Union{Vector,Nothing} = nothing

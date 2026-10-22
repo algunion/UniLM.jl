@@ -35,7 +35,7 @@ are seconds (`Float64`); `Inf` disables that bound.
 - `connect_timeout::Float64 = 10.0`: per-attempt connection-establishment bound.
 - `request_timeout::Float64 = 600.0`: per-attempt bound on a whole non-streaming exchange, and on a stream's exchange up to its first byte (its response headers).
 - `stream_idle_timeout::Float64 = 120.0`: maximum byte-gap between raw chunks of a stream; HTTP.jl also applies it to the wait for a stream's response headers.
-- `total_deadline::Float64 = 900.0`: bound across ALL attempts including backoff; for streams it applies until the first byte. A stream attempt's headers must therefore arrive within `min(request_timeout, remaining total_deadline, stream_idle_timeout)`.
+- `total_deadline::Float64 = 900.0`: bound across ALL attempts of a request including backoff; for streams it applies until the first byte. A stream attempt's headers must therefore arrive within `min(request_timeout, remaining total_deadline, stream_idle_timeout)`. A turn Gemini continues in several requests (see [`chatrequest!`](@ref)) gives each request the whole budget, so the call as a whole can run longer.
 - `max_attempts::Int = 3`: maximum wire attempts (`1` disables retries).
 - `mcp_connect_timeout::Float64 = 120.0`: MCP spawn → `initialize` handshake bound.
 - `mcp_request_timeout::Float64 = 120.0`: per MCP exchange bound.

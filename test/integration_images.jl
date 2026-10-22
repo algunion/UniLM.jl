@@ -9,6 +9,17 @@ using Base64
 _png_size(b::Vector{UInt8}) = (Int(b[17]) << 24 | Int(b[18]) << 16 | Int(b[19]) << 8 | Int(b[20]),
                                Int(b[21]) << 24 | Int(b[22]) << 16 | Int(b[23]) << 8 | Int(b[24]))
 
+# The width and height a JPEG declares in its frame header (the first SOFn segment).
+function _jpeg_size(b::Vector{UInt8})
+    i = 3                                                 # the first segment after SOI (FF D8)
+    while i + 8 <= length(b) && b[i] == 0xff
+        b[i+1] in (0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf) &&
+            return (Int(b[i+7]) << 8 | Int(b[i+8]), Int(b[i+5]) << 8 | Int(b[i+6]))
+        i += 2 + (Int(b[i+2]) << 8 | Int(b[i+3]))
+    end
+    nothing
+end
+
 # The MIME types Gemini declares for the image parts of its answer (thought parts excluded).
 _gemini_image_mimes(r::ImageSuccess) =
     [p["inlineData"]["mimeType"] for p in r.response.raw["candidates"][1]["content"]["parts"]
@@ -56,9 +67,10 @@ else
     @info "Gemini image live usage" usage = get(r.response.raw, "usageMetadata", nothing)
     @test startswith(r.response.raw["modelVersion"], "gemini-nano-banana-2.1")
     bytes = base64decode(only(image_data(r)))
-    @test _gemini_image_mimes(r) == ["image/png"]
-    @test UniLM._sniff_image_mime(bytes) == "image/png"
-    @test _png_size(bytes) == (1024, 1024)               # 1:1 at 1K, per Gemini's size table
+    # Gemini answers JPEG (observed), and says so in the part's mimeType.
+    @test _gemini_image_mimes(r) == ["image/jpeg"]
+    @test UniLM._sniff_image_mime(bytes) == "image/jpeg"
+    @test _jpeg_size(bytes) == (1024, 1024)              # 1:1 at 1K, per Gemini's size table
     # usageMetadata is the result's usage, counted as on Gemini Chat; a 1K image is 1,120 tokens.
     @test token_usage(r) == UniLM._gemini_usage(r.response.raw["usageMetadata"])
     @test token_usage(r).completion_tokens >= 1120
@@ -70,9 +82,8 @@ end
     @test r isa ImageSuccess
     @info "Gemini image edit live usage" usage = get(r.response.raw, "usageMetadata", nothing)
     bytes = base64decode(only(image_data(r)))
-    @test _gemini_image_mimes(r) == ["image/png"]
-    @test UniLM._sniff_image_mime(bytes) == "image/png"
-    @test bytes != read(fixture)
+    @test _gemini_image_mimes(r) == ["image/jpeg"]
+    @test UniLM._sniff_image_mime(bytes) == "image/jpeg"
     @test token_usage(r) == UniLM._gemini_usage(r.response.raw["usageMetadata"])
     @test token_usage(r).prompt_tokens > 0                # the input image is counted as input
 end

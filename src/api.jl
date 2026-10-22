@@ -808,6 +808,8 @@ instance adds options that every request through it carries
 - `user_profile_id`: the `anthropic-user-profile-id` header, the `uprof_` id of the end
   customer the requests are made for
   ([user profiles](https://platform.claude.com/docs/en/manage-claude/user-profiles)).
+  [`list_models`](@ref) does not send it: Anthropic's Models API reference names no such
+  header for `GET /v1/models`.
 - `workspace_id`: the `anthropic-workspace-id` header, the workspace of a credential that
   can act on more than one.
 - `inference_geo`: `"global"` or `"us"`, the request's `inference_geo`, where inference

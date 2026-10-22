@@ -17,9 +17,10 @@ get_url(::_AnthropicEndpoint, ::Chat)::String = ANTHROPIC_BASE_URL * ANTHROPIC_M
 
 # What every request through the endpoint sends: the key and the API version, then its user
 # profile and its workspace (https://platform.claude.com/docs/en/api/messages, Headers).
-function _anthropic_base_headers(e::ANTHROPICServiceEndpoint)::Vector{Pair{String,String}}
+# `profile=false` leaves the user profile out, for an API whose reference names no such header.
+function _anthropic_base_headers(e::ANTHROPICServiceEndpoint; profile::Bool=true)::Vector{Pair{String,String}}
     headers = ["x-api-key" => ENV[ANTHROPIC_API_KEY], "anthropic-version" => ANTHROPIC_VERSION]
-    isnothing(e.user_profile_id) || push!(headers, "anthropic-user-profile-id" => e.user_profile_id)
+    profile && !isnothing(e.user_profile_id) && push!(headers, "anthropic-user-profile-id" => e.user_profile_id)
     isnothing(e.workspace_id) || push!(headers, "anthropic-workspace-id" => e.workspace_id)
     headers
 end

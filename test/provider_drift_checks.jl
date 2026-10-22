@@ -13,7 +13,7 @@ module ProviderDriftChecks
 using Dates
 using UniLM
 
-export _drift_provider, _drift_defaults, _drift_suite_ids, _drift_named_models,
+export _drift_provider, _drift_defaults, _drift_suite_ids, _drift_docs_ids, _drift_named_models,
        _openai_drift, _anthropic_drift, _gemini_drift
 
 # The id prefixes of each provider's models. An id UniLM names is checked against the listing of
@@ -28,6 +28,10 @@ _drift_provider(id::AbstractString)::Union{Symbol,Nothing} =
 
 # A model id as source quotes it: lower-case words joined by single dots or hyphens.
 const _DRIFT_QUOTED_ID = r"\"([a-z0-9]+(?:[.\-][a-z0-9]+)*)\""
+
+# The ids of a provider's models that `text` quotes.
+_drift_quoted_ids(text::AbstractString)::Vector{String} =
+    String[id for id in (something(m[1]) for m in eachmatch(_DRIFT_QUOTED_ID, text)) if !isnothing(_drift_provider(id))]
 
 # The models UniLM uses when a call names none: the default-model functions, the speech and
 # Decisions defaults, and the keyword defaults its source writes as `model::String="…"`.
@@ -51,9 +55,23 @@ end
 function _drift_suite_ids()::Vector{String}
     ids = String[]
     for f in readdir(@__DIR__; join=true)
-        isfile(f) && occursin(r"^integration_.*\.jl$", basename(f)) || continue
-        for m in eachmatch(_DRIFT_QUOTED_ID, read(f, String))
-            _drift_provider(m[1]) === nothing || push!(ids, m[1])
+        isfile(f) && occursin(r"^integration_.*\.jl$", basename(f)) && append!(ids, _drift_quoted_ids(read(f, String)))
+    end
+    unique!(ids)
+end
+
+# A fenced block of Julia code on a docs page — ```julia, ```@example and ```@repl, which a
+# reader runs or the docs build does — and its code. Prose, where migration notes name retired
+# models on purpose, and the other blocks (```@docs, ```@setup, ```bash, …) are not read.
+const _DRIFT_DOCS_CODE = r"^```(?:julia|@example|@repl)(?:[ \t][^\n]*)?\n(.*?)^```"ms
+
+# The model ids the Julia code blocks of the docs pages under `dir` quote.
+function _drift_docs_ids(dir::AbstractString=joinpath(pkgdir(UniLM), "docs", "src"))::Vector{String}
+    ids = String[]
+    for (root, _, files) in walkdir(dir), f in files
+        endswith(f, ".md") || continue
+        for block in eachmatch(_DRIFT_DOCS_CODE, read(joinpath(root, f), String))
+            append!(ids, _drift_quoted_ids(something(block[1])))
         end
     end
     unique!(ids)
@@ -62,7 +80,7 @@ end
 # The models of `provider` among those UniLM names, the ones `models` does not list, and the
 # listed ones whose retirement date has come.
 function _drift_named_models(models::Vector{ProviderModel}, provider::Symbol;
-                             named::Vector{String}=[_drift_defaults(); _drift_suite_ids()])
+                             named::Vector{String}=[_drift_defaults(); _drift_suite_ids(); _drift_docs_ids()])
     listed = Dict(m.id => m for m in models)
     ids = unique!(filter(id -> _drift_provider(id) === provider, named))
     retired = [id => listed[id].retires for id in ids

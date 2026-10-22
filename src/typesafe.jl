@@ -113,7 +113,8 @@ Before any I/O it refuses what TypeSafe rejects: more than 255 options in a
 Choice or 10 levels in a Score; an image that is not a still PNG or JPEG, is
 over 16 MiB, has a side under 280 or over 1568 pixels, whose header cannot be
 read, or a JPEG that does not end with its end-of-image marker; more than 64 levels of nested objects and arrays in the state, an
-instruction or a criterion; a body over 32 MiB; and any option but
+instruction or a criterion; a body over 32 MiB; a [`DocumentAttachment`](@ref) or an
+image's detail level anywhere, as on every System One backend; and any option but
 `long_context`. Two terse failures get a hint in their `message`: a context
 overflow (`error_type = "max_tokens_exceeded"`) names `long_context` and the
 limits, and the `"Invalid request."` a Box question draws from a Jev before 1.14

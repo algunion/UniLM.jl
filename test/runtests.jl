@@ -269,6 +269,10 @@ end
         include("integration_cost.jl")
     end
 
+    @testset "integration — documents" begin
+        include("integration_documents.jl")
+    end
+
     @testset "integration — tool loop" begin
         include("integration_tool_loop.jl")
     end

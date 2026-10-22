@@ -2,7 +2,7 @@
 # Anthropic (Claude) native Messages API
 # Plugs into the wire-translation seam (encode_request / decode_response /
 # handle_sse_event! from sse.jl) so all chat orchestration is shared.
-# Wire shape and model contracts verified against the Anthropic docs on 2026-09-24.
+# Wire shape and model contracts verified against the Anthropic docs on 2026-10-22.
 # ============================================================================
 
 # ─── Routing & auth ──────────────────────────────────────────────────────────
@@ -33,69 +33,84 @@ field; OpenAI does not. Returns a moderate, overridable default (see
 """
 default_max_tokens(::Type{ANTHROPICServiceEndpoint}, ::AbstractString) = _ANTHROPIC_DEFAULT_MAX_TOKENS
 
-# ─── Claude model families ───────────────────────────────────────────────────
-# Request contract per family, transcribed on 2026-09-24 from
+# ─── Claude models ───────────────────────────────────────────────────────────
+# Request contract per model, transcribed on 2026-10-22 from
 #   thinking modes and rejected configs: https://platform.claude.com/docs/en/build-with-claude/thinking.md
 #   effort levels per model:             https://platform.claude.com/docs/en/build-with-claude/effort.md
-#   sampling, prefill, forced tools:     thinking.md "Limits and feature compatibility",
-#                                        https://platform.claude.com/docs/en/models/sonnet-5/migration-guide.md
+#   prefill, forced tools:               thinking.md "Limits and feature compatibility",
+#                                        https://platform.claude.com/docs/en/models/sonnet-5-5/migration-guide.md,
+#                                        https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide.md
 #   mid-conversation system messages:    https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages.md
-# `thinking`: :always = adaptive, cannot be disabled; :on = adaptive by default, can be
-# disabled; :off = adaptive on request; :manual = extended thinking (budget_tokens) only.
+#   the thinking-block prefix check:     https://platform.claude.com/docs/en/build-with-claude/preserved-thinking.md
+# `thinking`: :always = adaptive, cannot be disabled; :on = adaptive by default, "disabled"
+# turns it off; :between = adaptive by default and cannot be disabled, "between_tools" turns
+# up-front thinking off; :off = adaptive on request; :manual = extended thinking
+# (budget_tokens) only.
 # `efforts`: accepted output_config.effort levels (empty = no effort parameter).
-# `sampling`: non-default temperature/top_p accepted. `forced`: tool_choice any/tool
-# accepted. `prefill`: a trailing assistant turn accepted. `system`: role "system"
-# messages after the conversation starts accepted.
+# `forced`: tool_choice any/tool accepted. `prefill`: a trailing assistant turn accepted.
+# `system`: role "system" messages after the conversation starts accepted.
+# `prefix_checked`: a thinking block is valid only while the top-level system prompt, the
+# tools and the messages before it are unchanged (see `_anthropic_messages`); such a model
+# accepts mid-conversation system messages, which is how its instructions change.
 const _CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 const _CLAUDE_EFFORTS_NO_XHIGH = ["low", "medium", "high", "max"]
+const _CLAUDE_THINKING = (:always, :on, :between, :off, :manual)
 
 @kwdef struct _ClaudeFamily
     thinking::Symbol
     efforts::Vector{String} = _CLAUDE_EFFORTS
-    sampling::Bool = false
     forced::Bool = true
     prefill::Bool = false
     system::Bool = false
+    prefix_checked::Bool = false
+    function _ClaudeFamily(thinking, efforts, forced, prefill, system, prefix_checked)
+        thinking in _CLAUDE_THINKING || throw(ArgumentError(
+            "Claude thinking mode must be one of $(join(_CLAUDE_THINKING, ", ")) (got $(repr(thinking)))"))
+        !prefix_checked || system || throw(ArgumentError(
+            "a prefix-checked Claude model must accept mid-conversation system messages (system=true)"))
+        new(thinking, efforts, forced, prefill, system, prefix_checked)
+    end
 end
 
-const _CLAUDE_LEGACY = _ClaudeFamily(thinking=:manual, efforts=String[], sampling=true, prefill=true)
+const _CLAUDE_LEGACY = _ClaudeFamily(thinking=:manual, efforts=String[], prefill=true)
 
-const _CLAUDE_FAMILIES = (
-    "claude-fable-5-1"         => _ClaudeFamily(thinking=:always, forced=false, system=true),
-    "claude-mythos-5-1"        => _ClaudeFamily(thinking=:always, forced=false, system=true),
-    "claude-fable-5"           => _ClaudeFamily(thinking=:always, system=true),
-    "claude-mythos-5"          => _ClaudeFamily(thinking=:always, system=true),
-    "claude-mythos-preview"    => _ClaudeFamily(thinking=:always, efforts=_CLAUDE_EFFORTS_NO_XHIGH),
-    "claude-opus-5-5"          => _ClaudeFamily(thinking=:always, forced=false, system=true),
-    "claude-opus-5"            => _ClaudeFamily(thinking=:on, system=true),
-    "claude-sonnet-5"          => _ClaudeFamily(thinking=:on),
-    "claude-opus-4-8"          => _ClaudeFamily(thinking=:off, system=true),
-    "claude-opus-4-7"          => _ClaudeFamily(thinking=:off),
-    "claude-opus-4-6"          => _ClaudeFamily(thinking=:off, efforts=_CLAUDE_EFFORTS_NO_XHIGH, sampling=true),
-    "claude-sonnet-4-6"        => _ClaudeFamily(thinking=:off, efforts=_CLAUDE_EFFORTS_NO_XHIGH, sampling=true),
-    "claude-opus-4-5"          => _ClaudeFamily(thinking=:manual, efforts=["low", "medium", "high"],
-                                                sampling=true, prefill=true),
-    "claude-sonnet-4-5"        => _CLAUDE_LEGACY,
-    "claude-haiku-4-5"         => _CLAUDE_LEGACY,
-    "claude-opus-4-1"          => _CLAUDE_LEGACY,
-    "claude-opus-4-0"          => _CLAUDE_LEGACY,
-    "claude-opus-4-20250514"   => _CLAUDE_LEGACY,
-    "claude-sonnet-4-0"        => _CLAUDE_LEGACY,
-    "claude-sonnet-4-20250514" => _CLAUDE_LEGACY,
-    "claude-3"                 => _CLAUDE_LEGACY,
+# Dates: https://platform.claude.com/docs/en/about-claude/model-deprecations.md
+const _CLAUDE_FAMILIES = Dict{String,_ClaudeFamily}(
+    "claude-fable-5-1"      => _ClaudeFamily(thinking=:always, forced=false, system=true, prefix_checked=true),
+    "claude-mythos-5-1"     => _ClaudeFamily(thinking=:always, forced=false, system=true),
+    "claude-fable-5"        => _ClaudeFamily(thinking=:always, system=true),
+    "claude-mythos-5"       => _ClaudeFamily(thinking=:always, system=true),
+    "claude-opus-5-5"       => _ClaudeFamily(thinking=:always, forced=false, system=true, prefix_checked=true),
+    "claude-sonnet-5-5"     => _ClaudeFamily(thinking=:between, forced=false, system=true, prefix_checked=true),
+    "claude-haiku-5-5"      => _ClaudeFamily(thinking=:on, system=true, prefix_checked=true),
+    "claude-opus-5"         => _ClaudeFamily(thinking=:on, system=true),
+    "claude-sonnet-5"       => _ClaudeFamily(thinking=:on),
+    "claude-opus-4-8"       => _ClaudeFamily(thinking=:off, system=true),
+    "claude-opus-4-7"       => _ClaudeFamily(thinking=:off),
+    "claude-opus-4-6"       => _ClaudeFamily(thinking=:off, efforts=_CLAUDE_EFFORTS_NO_XHIGH),
+    "claude-sonnet-4-6"     => _ClaudeFamily(thinking=:off, efforts=_CLAUDE_EFFORTS_NO_XHIGH),
+    # Retire not sooner than 2026-11-24 (Opus 4.5) and 2026-10-15 (Haiku 4.5).
+    "claude-opus-4-5"       => _ClaudeFamily(thinking=:manual, efforts=["low", "medium", "high"], prefill=true),
+    "claude-haiku-4-5"      => _CLAUDE_LEGACY,
+    # Deprecated 2026-06-09, retirement to be announced.
+    "claude-mythos-preview" => _ClaudeFamily(thinking=:always, efforts=_CLAUDE_EFFORTS_NO_XHIGH),
+    # Deprecated 2026-09-30, retires 2026-11-30.
+    "claude-sonnet-4-5"     => _CLAUDE_LEGACY,
 )
 
-# Longest matching family (claude-opus-5-5 is also in the claude-opus-5 family);
-# `nothing` for an id no row covers, e.g. a newer model, which the API validates alone.
-function _claude_family(model::AbstractString)::Union{_ClaudeFamily,Nothing}
-    rows = filter(row -> _model_family(model, first(row)), _CLAUDE_FAMILIES)
-    isempty(rows) ? nothing : last(argmax(row -> length(first(row)), rows))
-end
+# The row for `model` in a per-model table: the exact id, else the id without a dated
+# snapshot suffix (-YYYYMMDD: claude-haiku-4-5-20251001 → claude-haiku-4-5), else `nothing`.
+# No id inherits another's row through a shared prefix (claude-sonnet-5-5 is not
+# claude-sonnet-5), and an id no row names — a newer model, a near miss — gets no
+# per-model rule: the API answers for it.
+_claude_row(table::Dict{String,T}, model::AbstractString) where {T} =
+    get(() -> get(table, replace(model, r"-\d{8}$" => ""), nothing), table, model)
+
+_claude_family(model::AbstractString)::Union{_ClaudeFamily,Nothing} = _claude_row(_CLAUDE_FAMILIES, model)
 
 # reasoning_effort → (thinking, output_config.effort). A level also turns adaptive
-# thinking on where the family has it, so an explicit request reasons on the models
-# that run without thinking by default; "none" disables thinking only where it is on
-# by default and can be turned off, and sends nothing where it is off by default.
+# thinking on where the model has it, so an explicit request reasons on the models that
+# run without thinking by default; "none" turns thinking off and sends no effort.
 function _anthropic_reasoning(model::String, effort::Union{String,Nothing},
                               fam::Union{_ClaudeFamily,Nothing})
     isnothing(effort) && return (nothing, nothing)
@@ -110,17 +125,25 @@ function _anthropic_reasoning(model::String, effort::Union{String,Nothing},
         effort == "none" || effort in fam.efforts || throw(ArgumentError(
             "$model supports reasoning_effort $(join(fam.efforts, ", ")) (got $(repr(effort)))"))
     end
-    effort == "none" &&
-        return ((isnothing(fam) || fam.thinking === :on) ? Dict(:type => "disabled") : nothing, nothing)
+    effort == "none" && return (_anthropic_thinking_off(fam), nothing)
     ((isnothing(fam) || fam.thinking !== :manual) ? Dict(:type => "adaptive") : nothing, effort)
 end
+
+# The thinking value for reasoning_effort "none": "disabled" where thinking is on by
+# default (and for an id no row names); "between_tools", the lowest setting, where
+# "disabled" is a 400 — accepted at the default effort, hence no effort with it; nothing
+# where thinking is off by default.
+_anthropic_thinking_off(::Nothing) = Dict(:type => "disabled")
+_anthropic_thinking_off(fam::_ClaudeFamily) =
+    fam.thinking === :on      ? Dict(:type => "disabled") :
+    fam.thinking === :between ? Dict(:type => "between_tools") : nothing
 
 # ─── Request encoding (neutral Chat → Anthropic Messages body) ───────────────
 
 # Fail closed when a neutral option has no Messages API counterpart: dropping it
 # would send a request the caller did not ask for.
 const _ANTHROPIC_CHAT_MAPPED_FIELDS = (:service, :model, :messages, :history, :tools,
-    :tool_choice, :parallel_tool_calls, :temperature, :top_p, :n, :stream, :stop,
+    :tool_choice, :parallel_tool_calls, :n, :stream, :stop,
     :max_tokens, :max_completion_tokens, :response_format, :user, :reasoning_effort,
     :metadata, :service_tier, :safety_identifier, :_cumulative_cost)
 const _ANTHROPIC_CHAT_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Chat), _ANTHROPIC_CHAT_MAPPED_FIELDS))
@@ -129,6 +152,14 @@ function _anthropic_validate_fields(chat::Chat)
     for f in (:moderation, :prompt_cache_options)
         isnothing(getfield(chat, f)) || throw(ArgumentError(
             "Anthropic Messages does not support $f; it is an OpenAI-only option"))
+    end
+    # API version 2026-10-21 removed the sampling parameters: the API answers HTTP 400 for
+    # one on every model, even at its default value ("Sampling parameters are removed",
+    # https://platform.claude.com/docs/en/api/migration-2026-10-21#sampling-parameters).
+    for f in (:temperature, :top_p)
+        isnothing(getfield(chat, f)) || throw(ArgumentError(
+            "Anthropic API version $ANTHROPIC_VERSION has no $f: the Messages API answers HTTP 400 " *
+            "for it on every model, even at its default value; remove $f"))
     end
     isnothing(chat.n) || chat.n == 1 || throw(ArgumentError(
         "Anthropic Messages returns one completion; n must be 1"))
@@ -162,22 +193,33 @@ function _anthropic_user_id(chat::Chat)::Union{String,Nothing}
 end
 
 # Requests a Claude model answers with HTTP 400, rejected before the round trip (the
-# per-family limits are in the table above). The Messages API temperature range is 0..1.
+# per-model limits are in the table above).
 function _anthropic_validate_model(chat::Chat, fam::Union{_ClaudeFamily,Nothing})
-    m, t = chat.model, chat.temperature
-    isnothing(t) || 0.0 <= t <= 1.0 || throw(ArgumentError(
-        "Anthropic temperature must be in [0, 1] (got $t)"))
-    isnothing(fam) && return nothing
-    if !fam.sampling
-        isnothing(t) || t == 1.0 || throw(ArgumentError(
-            "$m accepts only the default temperature (1.0); remove temperature"))
-        isnothing(chat.top_p) || throw(ArgumentError("$m does not accept top_p; remove it"))
-    end
-    fam.forced || !(chat.tool_choice isa GPTToolChoice || chat.tool_choice == "required") ||
-        throw(ArgumentError("$m rejects forced tool_choice; use tool_choice=\"auto\" with strict " *
+    isnothing(fam) || fam.forced || !(chat.tool_choice isa GPTToolChoice || chat.tool_choice == "required") ||
+        throw(ArgumentError("$(chat.model) rejects forced tool_choice; use tool_choice=\"auto\" with strict " *
                             "tools (FunctionSignature(strict=true)) or a json_schema response_format"))
     nothing
 end
+
+# Where a system message after the conversation starts goes (see `_anthropic_messages`):
+# _HOIST joins every one into the top-level `system`; _IN_PLACE keeps one where the API
+# accepts it and hoists the rest; _APPEND_ONLY never edits the top-level `system` once an
+# assistant turn is sent. An id no row names is placed append-only: Anthropic asks every
+# integration to be append-only whatever the account
+# (https://platform.claude.com/docs/en/build-with-claude/preserved-thinking.md), and a
+# newer model may check thinking blocks.
+@enum _SystemPlacement _HOIST _IN_PLACE _APPEND_ONLY
+_system_placement(::Nothing) = _APPEND_ONLY
+_system_placement(fam::_ClaudeFamily) = fam.prefix_checked ? _APPEND_ONLY : fam.system ? _IN_PLACE : _HOIST
+
+# A system message after an assistant turn with no user turn after it has no place: the
+# Messages API takes one only right after a user turn, and joined into the top-level
+# `system` it would end the request with the assistant turn — a response prefill.
+_system_after_reply(model::AbstractString) = ArgumentError(
+    "$model takes a system message after an assistant turn only once a user turn follows it: " *
+    "the Messages API accepts one only right after a user turn, and in the top-level system prompt " *
+    "it would leave the request ending with the assistant turn, a response prefill; push a user " *
+    "message after the system message")
 
 function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
     _anthropic_validate_fields(chat)
@@ -188,7 +230,10 @@ function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
     # max_tokens is REQUIRED by Anthropic; fall back to the moderate default.
     body[:max_tokens] = something(chat.max_completion_tokens, chat.max_tokens,
                                   default_max_tokens(ANTHROPICServiceEndpoint, chat.model))
-    system, msgs = _anthropic_messages(chat.messages; mid_system=isnothing(fam) || fam.system)
+    system, msgs = _anthropic_messages(chat.messages; placement=_system_placement(fam), model=chat.model)
+    # A conversation that ends with a system message after a reply is not a prefill request.
+    !isempty(chat.messages) && chat.messages[end].role == RoleSystem && !isempty(msgs) &&
+        msgs[end][:role] == "assistant" && throw(_system_after_reply(chat.model))
     isnothing(fam) || fam.prefill || isempty(msgs) || msgs[end][:role] != "assistant" ||
         throw(ArgumentError("$(chat.model) rejects messages that end with an assistant turn " *
                             "(response prefill); end with a user turn or use a json_schema response_format"))
@@ -199,8 +244,6 @@ function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
     (!isnothing(chat.tool_choice) || disable_parallel) &&
         (body[:tool_choice] = _anthropic_tool_choice(something(chat.tool_choice, "auto"), disable_parallel))
     isnothing(chat.stop)        || (body[:stop_sequences] = chat.stop isa String ? [chat.stop] : chat.stop)
-    isnothing(chat.temperature) || (body[:temperature] = chat.temperature)
-    isnothing(chat.top_p)       || (body[:top_p] = chat.top_p)
     (uid = _anthropic_user_id(chat)) === nothing || (body[:metadata] = Dict(:user_id => uid))
     isnothing(chat.service_tier) || (body[:service_tier] = chat.service_tier)
     thinking, effort = _anthropic_reasoning(chat.model, chat.reasoning_effort, fam)
@@ -214,28 +257,36 @@ function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
 end
 
 # Split neutral messages into (system::Union{String,Nothing}, Anthropic messages).
-# - a system message stays in place as role "system" where the model accepts
-#   mid-conversation system messages (`mid_system`) and where the API accepts one
-#   (see `_mid_system_fits`); hoisting it edits the top-level prompt, which invalidates
-#   the thinking blocks of every later turn on the newest models. Every other one —
-#   leading ones included — is joined into the top-level `system`, which every model
-#   accepts
+# - leading system messages join the top-level `system`. A later one goes where
+#   `placement` says (`_system_placement`): in place as role "system" where the API
+#   accepts one (`_mid_system_fits`), unless the model has none (_HOIST); else into the
+#   top-level `system` — except under _APPEND_ONLY once an assistant turn is sent, where
+#   editing that prompt invalidates the thinking blocks of every later turn (an HTTP 400):
+#   there it moves forward to right after the next user turn, so each request extends the
+#   one before, and with no user turn after it the request is refused
 # - consecutive `tool` messages → collapsed into ONE user message of tool_result blocks
 # - assistant tool_calls → tool_use blocks; a tool_result referencing an id no
 #   preceding assistant emitted → loud ArgumentError
-# - an assistant turn with neither text nor tool calls (a refusal, an empty reply) is
-#   skipped: the API rejects empty assistant content.
-function _anthropic_messages(messages; mid_system::Bool=true)
+# - an assistant turn with nothing to send — no text, tool call or Anthropic block (a
+#   refusal, an empty reply) — is skipped: the API rejects empty assistant content.
+function _anthropic_messages(messages; placement::_SystemPlacement=_IN_PLACE, model::AbstractString="")
     system = nothing
     out = Vector{Dict{Symbol,Any}}()
     seen_tool_use_ids = Set{String}()
     pending = Vector{Dict{Symbol,Any}}()
+    held = Message[]          # later system messages waiting for the next user turn
+    answered = false          # an assistant turn has been sent
     flush!() = (isempty(pending) ||
         (push!(out, Dict{Symbol,Any}(:role => "user", :content => copy(pending))); empty!(pending)))
+    place!(m) = push!(out, Dict{Symbol,Any}(:role => "system", :content => something(m.content, "")))
+    release!() = (foreach(place!, held); empty!(held))
     for (i, m) in pairs(messages)
-        if m.role == RoleSystem && mid_system && _mid_system_fits(messages, i, out, pending)
+        if m.role == RoleSystem && placement != _HOIST && _mid_system_fits(messages, i, out, pending)
             flush!()
-            push!(out, Dict{Symbol,Any}(:role => "system", :content => something(m.content, "")))
+            release!()
+            place!(m)
+        elseif m.role == RoleSystem && placement == _APPEND_ONLY && answered
+            push!(held, m)
         elseif m.role == RoleSystem
             system = isnothing(system) ? m.content : string(system, "\n\n", something(m.content, ""))
         elseif m.role == RoleTool
@@ -247,19 +298,41 @@ function _anthropic_messages(messages; mid_system::Bool=true)
         elseif m.role == RoleAssistant
             flush!()
             _skipped_turn(m) && continue
+            isempty(held) || out[end][:role] != "user" || release!()
             isnothing(m.tool_calls) || foreach(tc -> push!(seen_tool_use_ids, tc.id), m.tool_calls)
             push!(out, Dict{Symbol,Any}(:role => "assistant", :content => _anthropic_assistant_content(m)))
+            answered = true
         else  # RoleUser
             flush!()
             push!(out, Dict{Symbol,Any}(:role => "user", :content => something(m.content, "")))
         end
     end
     flush!()
+    isempty(held) || out[end][:role] == "user" || throw(_system_after_reply(model))
+    release!()
     (system, out)
 end
 
 _skipped_turn(m::Message)::Bool = m.role == RoleAssistant &&
-    isempty(something(m.content, "")) && (isnothing(m.tool_calls) || isempty(m.tool_calls))
+    isempty(something(m.content, "")) && (isnothing(m.tool_calls) || isempty(m.tool_calls)) &&
+    isnothing(_anthropic_blocks(m))
+
+# The provider-native blocks of an assistant turn this provider produced, echoed as
+# returned (see `_anthropic_assistant_content`), else `nothing`. A turn cut at max_tokens
+# that holds only thinking blocks goes back too: to continue it, "pass the assistant turn
+# back unchanged and append a new user message"
+# (https://platform.claude.com/docs/en/build-with-claude/thinking.md). An empty text block
+# (a streamed one that got no delta) is never sent — the API rejects empty text content —
+# so a turn of nothing else has nothing to send.
+function _anthropic_blocks(m::Message)::Union{Vector{Any},Nothing}
+    pc = m.provider_content
+    pc isa ProviderContent || return nothing
+    pc.provider === :anthropic || return nothing
+    blocks = any(_empty_text_block, pc.blocks) ? filter(!_empty_text_block, pc.blocks) : pc.blocks
+    isempty(blocks) ? nothing : blocks
+end
+
+_empty_text_block(b)::Bool = b isa AbstractDict && get(b, "type", nothing) == "text" && get(b, "text", "") == ""
 
 # Whether `messages[i]`, a system message, may stay in place: the API accepts a
 # mid-conversation system message right after a user turn (tool results are one) that is
@@ -276,9 +349,8 @@ end
 # verbatim when this provider produced them (signatures intact, thinking
 # first); otherwise reconstruct optional text block + tool_use blocks.
 function _anthropic_assistant_content(m::Message)
-    pc = m.provider_content
-    pc isa ProviderContent && pc.provider === :anthropic && !isempty(pc.blocks) &&
-        return pc.blocks
+    blocks = _anthropic_blocks(m)
+    isnothing(blocks) || return blocks
     isnothing(m.tool_calls) && return something(m.content, "")
     blocks = Vector{Dict{Symbol,Any}}()
     (isnothing(m.content) || isempty(m.content)) ||
@@ -350,28 +422,72 @@ function _anthropic_refusal_text(stop_details)::String
     x isa AbstractString && !isempty(x) ? x : "Model refused to respond."
 end
 
-# Anthropic usage → neutral TokenUsage. `input_tokens` is the uncached remainder;
-# cache reads and cache writes are reported beside it. The neutral model counts all
-# input in `prompt_tokens` with `cached_tokens` the cache-read subset, so estimated_cost
-# bills reads at the cached rate and writes at the base input rate (the cache-write
-# premium is not modeled). `output_tokens_details.thinking_tokens` is the reasoning
-# share of `output_tokens`. `prev` is the running stream total: message_delta counts
-# are cumulative and carry the input side only on some streams, so a usage object
-# without `input_tokens` keeps the message_start input counts.
+# Anthropic usage → neutral TokenUsage (https://platform.claude.com/docs/en/api/messages.md,
+# Usage). `input_tokens` is the uncached remainder; cache reads and cache writes are
+# reported beside it, and `cache_creation` splits the writes by retention. The neutral
+# counts put all input in `prompt_tokens`, the reads in `cached_tokens`, the writes in
+# `cache_write_tokens` and the 1-hour ones in `cache_write_extended_tokens`.
+# `output_tokens_details.thinking_tokens` is the reasoning share of `output_tokens`. The
+# tier is "fast" for a call that ran in fast mode (`speed`), which bills its own rates,
+# else the reported `service_tier`; `inference_geo` is the region inference ran in.
+# `prev` is the running stream total: message_delta counts are cumulative and carry the
+# input side only on some streams, and never the write breakdown, tier or region, so a
+# usage object keeps the earlier value of whatever it does not report.
 function _anthropic_usage(u, prev::Union{TokenUsage,Nothing}=nothing)::Union{TokenUsage,Nothing}
     u isa AbstractDict || return prev
     has(k) = get(u, k, nothing) isa Integer
     n(k) = has(k) ? Int(u[k]) : 0
     base = something(prev, TokenUsage())
-    input, cached = has("input_tokens") || isnothing(prev) ?
+    input, cached, writes = has("input_tokens") || isnothing(prev) ?
         (n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens"),
-         n("cache_read_input_tokens")) : (base.prompt_tokens, base.cached_tokens)
+         n("cache_read_input_tokens"), n("cache_creation_input_tokens")) :
+        (base.prompt_tokens, base.cached_tokens, base.cache_write_tokens)
     out = has("output_tokens") ? n("output_tokens") : base.completion_tokens
     details = get(u, "output_tokens_details", nothing)
     thinking = details isa AbstractDict && get(details, "thinking_tokens", nothing) isa Integer ?
                Int(details["thinking_tokens"]) : base.reasoning_tokens
+    creation = get(u, "cache_creation", nothing)
+    extended = creation isa AbstractDict && get(creation, "ephemeral_1h_input_tokens", nothing) isa Integer ?
+               Int(creation["ephemeral_1h_input_tokens"]) : base.cache_write_extended_tokens
+    tier = _wire_string(u, "speed") == "fast" ? "fast" : _wire_string(u, "service_tier")
+    geo = _wire_string(u, "inference_geo")
     TokenUsage(prompt_tokens=input, completion_tokens=out, total_tokens=input + out,
-               cached_tokens=cached, reasoning_tokens=thinking)
+               cached_tokens=cached, reasoning_tokens=thinking, cache_write_tokens=writes,
+               cache_write_extended_tokens=extended,
+               service_tier=isnothing(tier) ? base.service_tier : tier,
+               inference_geo=isnothing(geo) ? base.inference_geo : geo)
+end
+
+# ─── Pricing ─────────────────────────────────────────────────────────────────
+# What Anthropic bills on top of a model's price row
+# (https://platform.claude.com/docs/en/about-claude/pricing.md): cache writes at the input
+# rate × 1.25 (5-minute) or × 2 (1-hour); fast mode at every rate × 2 (Opus 5.5 $8/$40 for
+# $4/$20, Opus 5 and Opus 4.8 $10/$50 for $5/$25); US-only inference at every rate × 1.1;
+# a prompt over a model's long-prompt threshold — every input token, cache reads and writes
+# included — at every rate × its multiplier. The multipliers stack.
+const _ANTHROPIC_CACHE_WRITE = 1.25
+const _ANTHROPIC_CACHE_WRITE_1H = 2.0
+const _ANTHROPIC_FAST = 2.0
+const _ANTHROPIC_US_INFERENCE = 1.1
+const _CLAUDE_LONG_PROMPT_TIERS = Dict{String,@NamedTuple{threshold::Int, multiplier::Float64}}(
+    "claude-haiku-5-5" => (threshold=100_000, multiplier=5.0),
+)
+
+function _billed_cost(::Type{ANTHROPICServiceEndpoint}, model::String, u::TokenUsage, rates::PriceRow)::Float64
+    cached = min(u.cached_tokens, u.prompt_tokens)        # cache reads, at the discounted rate
+    fresh = u.prompt_tokens - cached - u.cache_write_tokens
+    writes = (u.cache_write_tokens - u.cache_write_extended_tokens) * _ANTHROPIC_CACHE_WRITE +
+             u.cache_write_extended_tokens * _ANTHROPIC_CACHE_WRITE_1H
+    standard = fresh * rates.input + cached * rates.cached_input + writes * rates.input +
+               u.completion_tokens * rates.output
+    standard * _anthropic_rate_multiplier(model, u)
+end
+
+# The multiplier on every rate of the call `u` reports.
+function _anthropic_rate_multiplier(model::String, u::TokenUsage)::Float64
+    tier = _claude_row(_CLAUDE_LONG_PROMPT_TIERS, model)
+    long = isnothing(tier) ? 1.0 : u.prompt_tokens > tier.threshold ? tier.multiplier : 1.0
+    (u.service_tier == "fast" ? _ANTHROPIC_FAST : 1.0) * (u.inference_geo == "us" ? _ANTHROPIC_US_INFERENCE : 1.0) * long
 end
 
 function decode_response(::Type{ANTHROPICServiceEndpoint}, resp::HTTP.Response)
@@ -385,10 +501,11 @@ function decode_response(::Type{ANTHROPICServiceEndpoint}, resp::HTTP.Response)
     blocks = data["content"]
     finish = _anthropic_finish_reason(data["stop_reason"])
     usage = _anthropic_usage(get(data, "usage", nothing))
+    model = _wire_string(data, "model")
     # Output before a refusal is incomplete and is discarded (Anthropic's guidance), so
     # the turn carries only the explanation — the same turn the stream handler builds.
     finish == CONTENT_FILTER && return (; message=Message(role=RoleAssistant, finish_reason=finish,
-        refusal_message=_anthropic_refusal_text(get(data, "stop_details", nothing))), usage)
+        refusal_message=_anthropic_refusal_text(get(data, "stop_details", nothing))), usage, model)
     # Verbatim capture for round-trip: thinking/redacted_thinking signatures
     # must be echoed unmodified on the next turn (thinking models reject
     # modified blocks). Empty arrays are not captured — echoing [] back is a 400.
@@ -420,7 +537,7 @@ function decode_response(::Type{ANTHROPICServiceEndpoint}, resp::HTTP.Response)
         # verbatim in provider_content).
         Message(role=RoleAssistant, content=txt, finish_reason=finish, provider_content=pc)
     end
-    (; message=msg, usage)
+    (; message=msg, usage, model)
 end
 
 # ─── Streaming event handler for the shared SSE machine (src/sse.jl) —
@@ -477,8 +594,13 @@ function handle_sse_event!(::Type{ANTHROPICServiceEndpoint}, event::AbstractStri
         state.error = ev
         return :error
     elseif t == "message_start"
-        u = get(get(ev, "message", Dict{String,Any}()), "usage", nothing)
-        u isa AbstractDict && (state.usage = _anthropic_usage(u))
+        msg = get(ev, "message", nothing)
+        if msg isa AbstractDict
+            u = get(msg, "usage", nothing)
+            u isa AbstractDict && (state.usage = _anthropic_usage(u))
+            model = _wire_string(msg, "model")      # the model serving this stream
+            isnothing(model) || (state.model = model)
+        end
     elseif t == "content_block_start"
         cb = get(ev, "content_block", nothing)   # no {} default: a missing block must not fabricate a raw entry
         idx = get(ev, "index", nothing)

@@ -178,7 +178,7 @@ pricing page's rates. On `OPENAIServiceEndpoint`, `max_tokens` goes out as
 ## Anthropic (native Messages API)
 
 `ANTHROPICServiceEndpoint` calls Anthropic's native `/v1/messages` API
-(`x-api-key` + `anthropic-version` headers). Default model `claude-opus-5-5`;
+(`x-api-key` header, `anthropic-version: 2026-10-21`). Default model `claude-opus-5-5`;
 `max_tokens` is required on the wire and defaults to 16000 when you omit it (it caps
 thinking plus text, and current Claude models think by default — raise it for long
 generations or `xhigh`/`max` effort). The endpoint declares `:chat`, `:tools`,
@@ -189,38 +189,65 @@ How a neutral `Chat` maps onto the Messages API:
 | `Chat` field | Messages API |
 |---|---|
 | leading system messages | the top-level `system` prompt (joined with blank lines) |
-| later system messages | kept in place as `role: "system"` on models that accept mid-conversation system messages, where the placement is valid (after a user turn, and last or followed by an assistant turn); hoisted into the top-level `system` prompt otherwise |
-| `tool` messages / assistant `tool_calls` | `tool_result` blocks (consecutive results in one user turn) / `tool_use` blocks; an assistant turn with neither text nor tool calls is left out |
+| later system messages | kept in place as `role: "system"` on models that accept mid-conversation system messages, where the placement is valid (after a user turn, and last or followed by an assistant turn); otherwise joined into the top-level `system` prompt — except after an assistant turn on Claude Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5 and any id no row names (below) |
+| `tool` messages / assistant `tool_calls` | `tool_result` blocks (consecutive results in one user turn) / `tool_use` blocks; an assistant turn with no text, no tool calls and no Claude content blocks is left out |
 | `max_completion_tokens`, else `max_tokens` | `max_tokens` (default 16000) |
 | `tools` (`FunctionSignature.strict`) | `tools` with `input_schema` (and a top-level `strict`) |
 | `tool_choice` | `"auto"` → `auto`, `"none"` → `none`, `"required"` → `any`, a `GPTToolChoice` → `tool`; any other string throws |
 | `parallel_tool_calls = false` (the `Chat` default when `tools` is set) | `tool_choice.disable_parallel_tool_use = true` — so a tool request allows one tool call per turn unless you set `parallel_tool_calls = true` |
 | `response_format` JSON Schema | `output_config.format = {type: "json_schema", schema}` (structured outputs; the schema `name`, `description` and `strict` have no counterpart); `json_object` throws — there is no schema-less JSON mode |
-| `reasoning_effort` | `output_config.effort` plus adaptive `thinking`, per model family (below) |
+| `reasoning_effort` | `output_config.effort` plus adaptive `thinking`, per model (below) |
 | `safety_identifier`, `user`, `metadata["user_id"]` | `metadata.user_id` — set one, or set them equal; `metadata` may carry only `user_id` |
 | `service_tier` | `"auto"` or `"standard_only"` |
-| `stop`, `temperature`, `top_p`, `stream` | `stop_sequences`, `temperature` (0–1), `top_p`, `stream` |
+| `stop`, `stream` | `stop_sequences`, `stream` |
 | `n` | must be `1` |
+| `temperature`, `top_p` | none: API version `2026-10-21` removed them, and answers HTTP 400 for either on every model, even at its default value — setting one throws `ArgumentError` |
 | `moderation`, `prompt_cache_options` (OpenAI-only), `seed`, `logprobs`, `top_logprobs`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `verbosity`, `store`, `prompt_cache_key`, `stream_options`, `prediction`, `modalities`, `audio`, `web_search_options` | no counterpart: setting any of them throws `ArgumentError` naming the fields |
 
-`reasoning_effort` per family (the longest matching model-id prefix decides):
+`reasoning_effort` per model — the model id decides, or the id with a dated snapshot
+suffix (`claude-haiku-4-5-20251001` takes the Haiku 4.5 row); no model takes another's
+row by a shared prefix (`claude-sonnet-5-5` is not `claude-sonnet-5`):
 
 | Models | `"low"` … `"max"` | `"none"` |
 |---|---|---|
-| Opus 5.5, Fable 5.x, Mythos 5.x, Mythos Preview (thinking always on) | effort + adaptive thinking; Mythos Preview has no `xhigh` | throws: thinking cannot be disabled |
-| Opus 5, Sonnet 5 (adaptive thinking on by default) | effort + adaptive thinking | `thinking = {type: "disabled"}` |
+| Opus 5.5, Fable 5.1, Fable 5, Mythos 5.1, Mythos 5 (thinking always on) | effort + adaptive thinking | throws: thinking cannot be disabled |
+| Sonnet 5.5 (adaptive thinking on by default; `"disabled"` is a 400) | effort + adaptive thinking | `thinking = {type: "between_tools"}` (up-front thinking off), no effort |
+| Haiku 5.5, Opus 5, Sonnet 5 (adaptive thinking on by default) | effort + adaptive thinking | `thinking = {type: "disabled"}` |
 | Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 4.6 (thinking off by default) | effort + adaptive thinking (so the request reasons); the 4.6 models have no `xhigh` | nothing sent |
 | Opus 4.5 | effort `low`/`medium`/`high` only, no adaptive thinking | nothing sent |
-| Sonnet 4.5, Haiku 4.5 and older | throws: no effort parameter | throws |
-| an id no row covers (a newer model) | effort + adaptive thinking, unvalidated | `thinking = {type: "disabled"}` |
+| Haiku 4.5 | throws: no effort parameter | throws |
+| an id no row names (a newer model) | effort + adaptive thinking, unvalidated | `thinking = {type: "disabled"}` |
 
 `"minimal"` throws on every Claude model (use `"low"`). Other requests Claude answers
-with HTTP 400 are refused locally, before the round trip: `temperature` outside
-[0, 1] on every model; any `top_p`, or a `temperature` other than the default 1.0, on
-Opus 4.7 and later (Opus 4.8, Sonnet 5, Opus 5, Opus 5.5, Fable, Mythos); a forced
-`tool_choice` (`"required"` or a named function) on Opus 5.5, Fable 5.1 and Mythos 5.1;
-and a conversation that ends with an assistant turn (response prefill) from the 4.6
-generation on.
+with HTTP 400 are refused locally, before the round trip: `temperature` or `top_p` on
+every model; a forced `tool_choice` (`"required"` or a named function) on Opus 5.5,
+Sonnet 5.5, Fable 5.1 and Mythos 5.1 (use `"auto"` with strict tools, or a JSON Schema
+`response_format`); and a conversation that ends with an assistant turn (response
+prefill) from the 4.6 generation on, Sonnet 5.5 and Haiku 5.5 included. An id no row
+names gets only the rules that hold for every model, and append-only system placement.
+
+Claude Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 accept a thinking block only while
+everything before it — the top-level `system` prompt, the `tools` and the earlier
+messages — is unchanged
+([preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking)).
+On these models, and on a Claude model UniLM has no row for (Anthropic asks every
+integration to be append-only), UniLM never edits the top-level `system` prompt once an
+assistant turn is in the conversation: a system message pushed after a reply that cannot
+stay in place is sent right after the next user turn, so each request extends the one
+before it. On every model, a system message pushed after a reply needs a user message
+after it: until one follows, the request throws `ArgumentError` (sent as it stands, it
+would be a response prefill). Push your own messages and send the replies back as they
+came; editing earlier turns in `chat.messages` breaks the same check.
+
+```julia
+chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-5-5")
+push!(chat, Message(Val(:system), "You are a helpful assistant."))
+push!(chat, Message(Val(:user), "Is 391 prime?"))
+chatrequest!(chat)                                         # reply appended
+push!(chat, Message(Val(:system), "From now on, answer in French."))
+push!(chat, Message(Val(:user), "And 397?"))
+chatrequest!(chat)   # system: "You are a helpful assistant."; the new instruction follows "And 397?"
+```
 
 Decoding: `stop_reason` maps to `finish_reason` — `end_turn`/`stop_sequence` →
 `"stop"`, `tool_use` → `"tool_calls"`, `max_tokens` and
@@ -228,13 +255,23 @@ Decoding: `stop_reason` maps to `finish_reason` — `end_turn`/`stop_sequence` �
 refusal carries no content or tool calls (partial output before it is discarded;
 deltas already streamed to your callback cannot be recalled), and `refusal_message`
 holds `stop_details.explanation` or a default text. A `200` without a content array or
-a `stop_reason` is an `LLMCallError`. `usage.prompt_tokens` counts cache reads and
-writes with the uncached input (`cached_tokens` is the cache-read share), and
-`reasoning_tokens` comes from `output_tokens_details.thinking_tokens`. The request id
-is read from the `request-id` header.
+a `stop_reason` is an `LLMCallError`. `result.model` is the model that served the
+reply. In `usage`, `prompt_tokens` counts cache reads and writes with the uncached
+input (`cached_tokens` is the cache-read share, `cache_write_tokens` the writes and
+`cache_write_extended_tokens` the 1-hour ones), `reasoning_tokens` comes from
+`output_tokens_details.thinking_tokens`, `service_tier` is the reported tier —
+`"fast"` for a request served in fast mode — and `inference_geo` the region inference
+ran in; a stream reports the same usage. The request id is read from the `request-id`
+header.
+
+[`estimated_cost`](@ref) bills Anthropic's surcharges on the model's price row: cache
+writes at 1.25× the input rate (5-minute) or 2× (1-hour), every rate 2× in fast mode
+and 1.1× for US-only inference (`inference_geo == "us"`), and every rate 5× for a
+Claude Haiku 5.5 prompt over 100,000 tokens (cache reads and writes included); the
+multipliers stack.
 
 ```julia
-claude_chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-4-5")  # native Messages API
+claude_chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-5-5")  # native Messages API
 push!(claude_chat, Message(Val(:system), "You are a helpful assistant."))
 push!(claude_chat, Message(Val(:user), "Say hello in one short sentence."))
 result = chatrequest!(claude_chat)
@@ -251,7 +288,10 @@ end
     request of a tool-calling turn. UniLM captures the provider-native content
     on `Message.provider_content` at decode time (non-streaming and streaming)
     and echoes it automatically when the same provider encodes the
-    conversation again, so multi-turn tool use works out of the box. Moving a
+    conversation again, so multi-turn tool use works out of the box; a turn cut
+    at `max_tokens` that holds only thinking blocks goes back too. A
+    conversation moved to another Claude model keeps the blocks: the API reads
+    the ones that model can and drops the others without an error. Moving a
     conversation to a different provider falls back to the neutral
     text+tool_calls form (thinking is dropped, as other providers cannot
     verify another vendor's signatures).

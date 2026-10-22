@@ -1627,18 +1627,31 @@ Add a message to the conversation, refusing any mutation that would make it inva
 
 Throws [`InvalidConversationError`](@ref) when the mutation would produce an
 invalid conversation: a non-system message pushed onto an empty conversation
-(it must start with a system message), a system message pushed once the
-conversation has already started, or a message whose role repeats the last
+(it must start with a system message), or a message whose role repeats the last
 message's role (consecutive tool-result messages are the one exception).
 `chat[i] = msg` and direct edits to `chat.messages` are not validated.
+
+A system message pushed once the conversation has started changes the instructions
+from that point on. Where it reaches the provider depends on the encoder:
+- the OpenAI wire (OpenAI, Azure, DeepSeek and other OpenAI-compatible endpoints) and
+  [`OllamaEndpoint`](@ref) send it in place;
+- native Gemini joins it into `systemInstruction`;
+- native Anthropic sends it in place on the models that accept
+  [mid-conversation system messages](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages),
+  where the Messages API allows one (right after a user turn, and last or before an
+  assistant turn), and elsewhere joins it into the top-level `system` prompt. Claude
+  Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 refuse an earlier turn's thinking blocks
+  once the `system` prompt has changed, so on them — and on a Claude model UniLM has no
+  rules for — one pushed after an assistant turn that cannot stay in place is sent right
+  after the next user turn instead.
+
+On native Anthropic a system message pushed after an assistant turn needs a user message
+after it: until one follows, the request throws `ArgumentError`.
 """
 function Base.push!(chat::Chat, msg::Message)
-    if msg.role == RoleSystem
-        isempty(chat) ||
-            throw(InvalidConversationError("a system message is only valid as the first message; got :$(msg.role) after the conversation started"))
-    elseif isempty(chat)
+    if msg.role != RoleSystem && isempty(chat)
         throw(InvalidConversationError("conversation must start with a system message; got :$(msg.role)"))
-    elseif chat.messages[end].role == msg.role && msg.role != RoleTool
+    elseif !isempty(chat) && chat.messages[end].role == msg.role && msg.role != RoleTool
         throw(InvalidConversationError("conversation cannot contain consecutive messages from the same role; got two :$(msg.role) in a row"))
     end
     push!(chat.messages, msg)

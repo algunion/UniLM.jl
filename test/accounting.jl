@@ -360,15 +360,16 @@ end
 end
 
 @testset "Anthropic and DeepSeek price rows" begin
-    # https://platform.claude.com/docs/en/about-claude/pricing.md (2026-09-24), USD per 1M tokens:
+    # https://platform.claude.com/docs/en/about-claude/pricing.md (2026-10-22), USD per 1M tokens:
     # input, cache hit, output. https://api-docs.deepseek.com/quick_start/pricing: peak rates.
     for (model, i, c, o) in (("claude-fable-5-1", 10.0, 0.25, 50.0), ("claude-mythos-5-1", 10.0, 0.25, 50.0),
                              ("claude-fable-5", 10.0, 1.0, 50.0), ("claude-mythos-5", 10.0, 1.0, 50.0),
-                             ("claude-opus-5-5", 4.0, 0.20, 20.0), ("claude-opus-5", 5.0, 0.50, 25.0),
+                             ("claude-opus-5-5", 4.0, 0.20, 20.0), ("claude-sonnet-5-5", 2.0, 0.10, 10.0),
+                             ("claude-haiku-5-5", 0.10, 0.01, 0.50), ("claude-opus-5", 5.0, 0.50, 25.0),
                              ("claude-opus-4-8", 5.0, 0.50, 25.0), ("claude-opus-4-7", 5.0, 0.50, 25.0),
                              ("claude-opus-4-6", 5.0, 0.50, 25.0), ("claude-opus-4-5", 5.0, 0.50, 25.0),
                              ("claude-sonnet-5", 2.0, 0.20, 10.0), ("claude-sonnet-4-6", 3.0, 0.30, 15.0),
-                             ("claude-sonnet-4-5", 3.0, 0.30, 15.0), ("claude-haiku-4-5", 1.0, 0.10, 5.0),
+                             ("claude-haiku-4-5", 1.0, 0.10, 5.0),
                              ("deepseek-flash", 0.30, 0.006, 1.20), ("deepseek-v4-flash", 0.30, 0.006, 1.20),
                              ("deepseek-v4-flash-vision-exp", 0.30, 0.006, 1.20), ("deepseek-v4-pro", 1.32, 0.044, 3.96))
         @test DEFAULT_PRICING[model] == UniLM._price(i, c, o)
@@ -379,8 +380,52 @@ end
     cost(model) = estimated_cost(LLMSuccess(message=m, self=Chat(service=ANTHROPICServiceEndpoint, model=model), usage=u))
     @test cost("claude-haiku-4-5-20251001") == cost("claude-haiku-4-5") ≈ 6.0
     @test cost("claude-opus-4-5-20251101") ≈ 30.0
-    @test cost("claude-sonnet-4-5-20250929") ≈ 18.0
     @test (@test_logs (:warn, r"no price row") cost("claude-haiku-4-5-2025100")) == 0.0   # seven digits are not a date suffix
+end
+
+@testset "Anthropic billed cost: cache writes by retention, fast mode, US inference, Haiku 5.5 long prompts" begin
+    # https://platform.claude.com/docs/en/about-claude/pricing.md: cache writes bill the input rate
+    # × 1.25 (5-minute) or × 2 (1-hour); fast mode bills every rate × 2 (Opus 5.5: $8/$40 for
+    # $4/$20); US-only inference every rate × 1.1; a Haiku 5.5 prompt over 100,000 tokens, cache
+    # reads and writes counted, every rate × 5. The multipliers stack.
+    m = Message(role=UniLM.RoleAssistant, content="x")
+    cost(model, u) = estimated_cost(LLMSuccess(message=m, self=Chat(service=ANTHROPICServiceEndpoint, model=model), usage=u))
+    usage(prompt; cached=0, writes=0, extended=0, out=0, tier=nothing, geo=nothing) =
+        TokenUsage(prompt, out, prompt + out, cached, 0, writes, extended, tier, geo)
+    # Opus 5.5 ($4 input, $0.20 cache hit, $20 output per 1M): 5,000 fresh, 2,000 reads, 2,000
+    # 5-minute and 1,000 1-hour writes, 500 out.
+    u = usage(10_000; cached=2_000, writes=3_000, extended=1_000, out=500)
+    standard = (5_000 * 4.0 + 2_000 * 0.20 + 2_000 * 4.0 * 1.25 + 1_000 * 4.0 * 2.0 + 500 * 20.0) / 1e6
+    @test isapprox(cost("claude-opus-5-5", u), standard; rtol=1e-12)
+    for (tier, geo, factor) in (("standard", "global", 1.0), ("fast", nothing, 2.0), ("standard", "us", 1.1),
+                                ("fast", "us", 2.2), (nothing, "us", 1.1))
+        tagged = usage(10_000; cached=2_000, writes=3_000, extended=1_000, out=500, tier, geo)
+        @test isapprox(cost("claude-opus-5-5", tagged), standard * factor; rtol=1e-12)
+    end
+    # A cache write the provider reports only in total is a 5-minute write.
+    @test isapprox(cost("claude-sonnet-5-5", usage(1_000; writes=1_000)), 1_000 * 2.0 * 1.25 / 1e6; rtol=1e-12)
+    # Haiku 5.5 ($0.10 / $0.01 / $0.50 per 1M): the prompt is every input token, reads and writes included.
+    haiku(fresh, cached, w5, w1h, out) = (fresh * 0.10 + cached * 0.01 + w5 * 0.10 * 1.25 + w1h * 0.10 * 2.0 + out * 0.50) / 1e6
+    at_threshold = usage(100_000; cached=30_000, writes=10_000, extended=4_000, out=1_000)
+    @test isapprox(cost("claude-haiku-5-5", at_threshold), haiku(60_000, 30_000, 6_000, 4_000, 1_000); rtol=1e-12)
+    over = usage(100_001; cached=30_000, writes=10_000, extended=4_000, out=1_000)
+    @test isapprox(cost("claude-haiku-5-5", over), 5 * haiku(60_001, 30_000, 6_000, 4_000, 1_000); rtol=1e-12)
+    # Cache reads alone can carry the prompt over the threshold.
+    reads = usage(100_001; cached=90_001, out=10)
+    @test isapprox(cost("claude-haiku-5-5", reads), 5 * haiku(10_000, 90_001, 0, 0, 10); rtol=1e-12)
+    us_over = usage(100_001; cached=30_000, writes=10_000, extended=4_000, out=1_000, geo="us")
+    @test isapprox(cost("claude-haiku-5-5", us_over), 5 * 1.1 * haiku(60_001, 30_000, 6_000, 4_000, 1_000); rtol=1e-12)
+    # No other model has a prompt-length tier.
+    long = usage(900_000; out=100)
+    @test isapprox(cost("claude-opus-5-5", long), (900_000 * 4.0 + 100 * 20.0) / 1e6; rtol=1e-12)
+    @test isapprox(cost("claude-haiku-4-5-20251001", long), (900_000 * 1.0 + 100 * 5.0) / 1e6; rtol=1e-12)
+    # The served model decides the tier: a Haiku 5.5 reply to a request named otherwise.
+    served = LLMSuccess(message=m, self=Chat(service=ANTHROPICServiceEndpoint, model="claude-opus-5-5"),
+                        usage=over, model="claude-haiku-5-5")
+    @test estimated_cost(served) == cost("claude-haiku-5-5", over)
+    rates = DEFAULT_PRICING["claude-haiku-5-5"]
+    @test (@inferred UniLM._billed_cost(ANTHROPICServiceEndpoint, "claude-haiku-5-5", over, rates)) ==
+          cost("claude-haiku-5-5", over)
 end
 
 @testset "an unpriced model costs 0.0 and warns once per model id" begin

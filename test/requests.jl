@@ -1737,7 +1737,7 @@ UniLM.encode_request(::_RefusingEncoder, ::Chat) = throw(ArgumentError("option n
     srv = _json_reply_server(_REPLY)
     try
         msgs = [Message(Val(:system), "s"), Message(Val(:user), "u")]
-        r = chatrequest!(; messages=msgs, service=GenericOpenAIEndpoint(srv.url, ""), model="m")
+        r = chatrequest!(; messages=msgs, service=GenericOpenAIEndpoint(srv.url, ""), model="gpt-6-luna")   # a priced id
         @test r isa LLMSuccess && length(r.self.messages) == 3   # the reply went to the result's chat
         @test length(msgs) == 2
     finally
@@ -1813,7 +1813,7 @@ end
         end
         @test srv.hits[] == 0
         # History off: nothing is appended, so a trailing assistant turn (a prefill) is sent.
-        prefill = Chat(service=GenericOpenAIEndpoint(srv.url, ""), model="m", history=false,
+        prefill = Chat(service=GenericOpenAIEndpoint(srv.url, ""), model="gpt-6-luna", history=false,   # a priced id
                        messages=[sys_user(); Message(role=UniLM.RoleAssistant, content="a")])
         @test chatrequest!(prefill) isa LLMSuccess
         @test srv.hits[] == 1

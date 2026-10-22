@@ -260,7 +260,7 @@ end
     end
     try
         ep = _UndeclaredEndpoint("http://127.0.0.1:$port")
-        chat = Chat(service=ep, model="m", messages=[Message(Val(:user), "ping")])
+        chat = Chat(service=ep, model="gpt-6-luna", messages=[Message(Val(:user), "ping")])   # a priced id
         r = chatrequest!(chat; config=RequestConfig(max_attempts=1, total_deadline=10.0))
         @test r isa LLMSuccess
         @test text(r) == "pong"

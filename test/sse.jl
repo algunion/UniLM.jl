@@ -556,7 +556,7 @@ end
         ]
         server, base = fragmented_sse_server(chunks)
         try
-            chat = Chat(service=AnthropicWireEndpoint(base), model="claude-mock", stream=true)
+            chat = Chat(service=AnthropicWireEndpoint(base), model="claude-haiku-5-5", stream=true)
             push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
             res = fetch(chatrequest!(chat))
             @test res isa LLMFailure
@@ -571,7 +571,7 @@ end
         chunks = ["event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"bad\"}}\n\n"]
         server, base = fragmented_sse_server(chunks)
         try
-            chat = Chat(service=AnthropicWireEndpoint(base), model="claude-mock", stream=true)
+            chat = Chat(service=AnthropicWireEndpoint(base), model="claude-haiku-5-5", stream=true)
             push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
             res = fetch(chatrequest!(chat))
             @test res isa LLMCallError
@@ -613,7 +613,7 @@ end
         ]
         server, base = fragmented_sse_server(chunks)
         try
-            chat = Chat(service=AnthropicWireEndpoint(base), model="claude-mock", stream=true)
+            chat = Chat(service=AnthropicWireEndpoint(base), model="claude-haiku-5-5", stream=true)
             push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
             res = fetch(chatrequest!(chat))
             @test res isa LLMSuccess && res.message.content == "hello"

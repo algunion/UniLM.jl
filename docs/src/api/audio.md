@@ -93,10 +93,13 @@ where the pace goes (`"speaking slowly"`): Gemini TTS has no speed parameter
 An error the provider reports is an [`AudioFailure`](@ref): an HTTP error status (a
 WebSocket upgrade the server refuses included: a bad key is a 401), a Gemini reply whose
 candidate did not finish (a `finishReason` other than `STOP`, such as `MAX_TOKENS` or
-`SAFETY`), or, on a Realtime session, the `error` event or a `response.done` that did not
-complete, with `status = nothing` and the event's JSON as `response`. A session that
-closes before its response is done, a timeout, a cancel and a reply without usable audio
-are an [`AudioCallError`](@ref). Audio received before a failure is never returned. On
+`SAFETY`) or that has no candidate (a blocked prompt), with `status` 200 and the reply as
+`response`, or, on a Realtime session, the `error` event or a `response.done` that did not
+complete, with `status = nothing` and the event's JSON as `response`. An `error` event the
+server sends before it closes the session is that failure even when the close interrupts
+UniLM's sending. A session that closes before its response is done (its close status and
+reason in `error`, the close itself in `cause`), a timeout, a cancel and a reply without
+usable audio are an [`AudioCallError`](@ref). Audio received before a failure is never returned. On
 OpenAI, `total_deadline` bounds the whole call whatever the socket does, `connect_timeout`
 the WebSocket open, and `stream_idle_timeout` every send and every wait for the next
 event. Both services observe the ambient [`CancelToken`](@ref): a token already

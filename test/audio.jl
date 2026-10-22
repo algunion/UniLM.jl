@@ -40,10 +40,12 @@ UniLM.provider_capabilities(::Type{SpeechWSProbe}) = Set([:realtime])
 
 _sp_event(type; kw...) = Dict{String,Any}("type" => type, "event_id" => "event_$(type)", (String(k) => v for (k, v) in kw)...)
 
-# Sends each item: an event dict, or `:close` to close the socket (which ends the script).
+# Sends each item: an event dict, or `:close` (a normal close) or a CloseFrameBody (a close with that
+# status and reason) to close the socket, which ends the script.
 function _sp_emit(ws, items)::Bool
     for it in items
         it === :close && (close(ws); return false)
+        it isa HTTP.WebSockets.CloseFrameBody && (close(ws, it); return false)
         HTTP.WebSockets.send(ws, JSON.json(it))
     end
     true
@@ -525,6 +527,40 @@ end
         speak("Hi."; service=SpeechWSProbe)
     end
     @test r2 isa UniLM.AudioCallError && occursin("closed before", r2.error)
+    # The server's close status and reason are kept, in the message and as the cause.
+    overloaded = HTTP.WebSockets.CloseFrameBody(1011, "overloaded")
+    r3, _ = _sp_with_realtime(_sp_speech_reply(UInt8[]; on_response=Any[_sp_delta(UInt8[0x01, 0x00]), overloaded])) do
+        speak("Hi."; service=SpeechWSProbe)
+    end
+    @test r3 isa UniLM.AudioCallError &&
+          r3.error == "the Realtime session closed before response.done (websocket closed with status 1011: overloaded)"
+    @test r3.cause isa HTTP.WebSockets.WebSocketError && r3.cause.message == overloaded
+end
+
+@testset "speak and translate on OpenAI: a server that closes the session while UniLM sends is still heard" begin
+    # The server acknowledges the update and closes at once, so UniLM's next send fails: the events
+    # the server sent before its close are read before the close is reported.
+    err = _sp_event("error"; error=Dict("type" => "invalid_request_error", "code" => "test_code",
+                                        "message" => "The test peer ends this session.", "param" => nothing))
+    closing = HTTP.WebSockets.CloseFrameBody(1011, "test peer closing")
+    mktempdir() do dir
+        long = joinpath(dir, "long.wav")
+        write(long, _sp_wav(zeros(UInt8, 2 * 24_000 * 60)))   # 60 s of audio: still sending when the close lands
+        for (call, awaited) in ((() -> speak("Hi."; service=SpeechWSProbe), "response.done"),
+                                (() -> translate(long; service=SpeechWSProbe), "session.closed"))
+            # An error event before the close is the provider's refusal.
+            r, _ = _sp_with_realtime(call, ev -> ev["type"] == "session.update" ?
+                                         Any[_sp_event("session.updated"), err, closing] : Any[])
+            @test r isa UniLM.AudioFailure && isnothing(r.status) &&
+                  JSON.parse(r.response; dicttype=Dict{String,Any}) == err
+            # Without one, the close is the call's error, with its status and reason.
+            r2, _ = _sp_with_realtime(call, ev -> ev["type"] == "session.update" ?
+                                          Any[_sp_event("session.updated"), closing] : Any[])
+            @test r2 isa UniLM.AudioCallError && r2.error ==
+                  "the Realtime session closed before $awaited (websocket closed with status 1011: test peer closing)"
+            @test r2.cause isa HTTP.WebSockets.WebSocketError && r2.cause.message == closing
+        end
+    end
 end
 
 @testset "speak on OpenAI: a silent peer ends the call at its idle bound or its deadline" begin

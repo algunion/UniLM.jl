@@ -296,14 +296,15 @@ function _realtime_call(driver, url::String, model::String, service, cfg::Reques
 end
 
 # The next server event of a driven session, waiting at most stream_idle_timeout: a breach drops the
-# connection, which unblocks the read, and throws the typed timeout. `nothing` when the peer closed.
-function _realtime_next(s::RealtimeSession)::Union{Dict{String,Any},Nothing}
+# connection, which unblocks the read, and throws the typed timeout. Once the peer closed the session
+# and every event it sent first was read: the WebSocketError carrying its close status and reason.
+function _realtime_next(s::RealtimeSession)::Union{Dict{String,Any},HTTP.WebSockets.WebSocketError}
     limit = s.config.stream_idle_timeout
     r0 = time_ns()
     raw, fired = try
         _with_deadline_reported(() -> HTTP.WebSockets.receive(s.ws), () -> _realtime_drop!(s.ws), limit, :stream_idle)
     catch e
-        e isa HTTP.WebSockets.WebSocketError && return nothing
+        e isa HTTP.WebSockets.WebSocketError && return e
         rethrow()
     end
     # Our own drop ended the read: what it handed back is not a server event.
@@ -331,16 +332,31 @@ end
 function _realtime_await(s::RealtimeSession, type::String)::Union{Dict{String,Any},AudioFailure,AudioCallError}
     while true
         ev = _realtime_next(s)
-        ev === nothing && return _realtime_closed(type)
+        ev isa Dict{String,Any} || return _realtime_closed(type, ev)
         kind = get(ev, "type", nothing)
         kind == "error" && return _realtime_refusal(ev)
         kind == type && return ev
     end
 end
 
+# After a send failed because the peer closed the session: the events it sent before closing are still
+# buffered, and an `error` among them is the provider's reason. Reads them up to the close, within the
+# call's deadline; that refusal, else the close.
+function _realtime_drain(s::RealtimeSession, awaited::String)::Union{AudioFailure,AudioCallError}
+    while true
+        ev = _realtime_next(s)
+        ev isa Dict{String,Any} || return _realtime_closed(awaited, ev)
+        get(ev, "type", nothing) == "error" && return _realtime_refusal(ev)
+    end
+end
+
 # A failure the provider reported as an event: there is no HTTP status, and the event is the response.
 _realtime_refusal(ev::AbstractDict)::AudioFailure = AudioFailure(response=JSON.json(ev), status=nothing)
+# A session that ended before `awaited`; when the peer closed it, the close's status and reason are part
+# of the message and the close is the cause.
 _realtime_closed(awaited::String)::AudioCallError = AudioCallError(error="the Realtime session closed before $awaited")
+_realtime_closed(awaited::String, e::HTTP.WebSockets.WebSocketError)::AudioCallError =
+    AudioCallError(error="the Realtime session closed before $awaited ($(sprint(showerror, e)))", cause=e)
 
 # A string field of a server event; anything else is a malformed event.
 function _event_string(ev::AbstractDict, key::String)::String
@@ -371,14 +387,14 @@ _speech_item(req::SpeechRequest)::Dict{Symbol,Any} = realtime_event("conversatio
 # the session and wait until it took the update, add the text, ask for a response, and collect its
 # audio deltas until response.done.
 function _realtime_speak(s::RealtimeSession, req::SpeechRequest)::LLMRequestResponse
-    _realtime_post(s, _speech_session(req)) || return _realtime_closed("session.updated")
+    _realtime_post(s, _speech_session(req)) || return _realtime_drain(s, "session.updated")
     (ev = _realtime_await(s, "session.updated")) isa AbstractDict || return ev
     (_realtime_post(s, _speech_item(req)) && _realtime_post(s, response_create())) ||
-        return _realtime_closed("response.done")
+        return _realtime_drain(s, "response.done")
     pcm = IOBuffer()
     while true
         ev = _realtime_next(s)
-        ev === nothing && return _realtime_closed("response.done")
+        ev isa Dict{String,Any} || return _realtime_closed("response.done", ev)
         kind = get(ev, "type", nothing)
         if kind == "error"
             return _realtime_refusal(ev)
@@ -408,17 +424,17 @@ const _TRANSLATION_FRAME_BYTES = 9_600
 # the translated transcript until session.closed. The translated audio deltas are not kept.
 function _realtime_translate(s::RealtimeSession, pcm::Vector{UInt8}, language::String)::LLMRequestResponse
     update = session_update(Dict{Symbol,Any}(:audio => Dict(:output => Dict(:language => language))))
-    _realtime_post(s, update) || return _realtime_closed("session.updated")
+    _realtime_post(s, update) || return _realtime_drain(s, "session.updated")
     (ev = _realtime_await(s, "session.updated")) isa AbstractDict || return ev
     for frame in Iterators.partition(pcm, _TRANSLATION_FRAME_BYTES)
         _realtime_post(s, realtime_event("session.input_audio_buffer.append"; audio=base64encode(frame))) ||
-            return _realtime_closed("session.closed")
+            return _realtime_drain(s, "session.closed")
     end
-    _realtime_post(s, realtime_event("session.close")) || return _realtime_closed("session.closed")
+    _realtime_post(s, realtime_event("session.close")) || return _realtime_drain(s, "session.closed")
     text = IOBuffer()
     while true
         ev = _realtime_next(s)
-        ev === nothing && return _realtime_closed("session.closed")
+        ev isa Dict{String,Any} || return _realtime_closed("session.closed", ev)
         kind = get(ev, "type", nothing)
         if kind == "error"
             return _realtime_refusal(ev)

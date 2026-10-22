@@ -2411,9 +2411,12 @@ and resampled to 24 kHz) through an OpenAI Realtime translation session
 an empty one, a blank `language` and a service without the Realtime API throw `ArgumentError` before
 I/O. A failure the provider reports is an `AudioFailure` — an HTTP error status, a refused WebSocket
 upgrade (a bad key is a 401), a Gemini candidate that did not finish (`finishReason` other than
-`STOP`), or a Realtime `error` event or unfinished `response.done` (`status = nothing`, the event's
-JSON as `response`); a session that closes before its result, a timeout, a cancel and a reply without
-usable audio are an `AudioCallError`, and audio received before a failure is never returned. Both
+`STOP`) or a reply without one (a blocked prompt), both with `status` 200, or a Realtime `error`
+event — read even when the server closes the session while UniLM sends — or unfinished
+`response.done` (`status = nothing`, the event's JSON as `response`); a session that closes before
+its result (the close's status and reason in `error`, the `HTTP.WebSockets.WebSocketError` in
+`cause`), a timeout, a cancel and a reply without usable audio are an `AudioCallError`, and audio
+received before a failure is never returned. Both
 make a single bounded attempt (`total_deadline` the whole call, `connect_timeout` the WebSocket open,
 `stream_idle_timeout` every send and every wait for the next event) and observe the ambient
 `CancelToken` (`with_cancel`): a token already cancelled sends nothing, and a cancel ends the call at

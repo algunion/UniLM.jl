@@ -6,7 +6,7 @@
 
 "Audio error result: the HTTP `status` (`nothing` when a Realtime session reported the failure as an event, which carries no HTTP status), the raw `response` (the reply body, the Realtime event's JSON, or for a refused WebSocket upgrade HTTP.jl's report of its status) and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
 @kwdef struct AudioFailure <: LLMRequestResponse; response::String; status::Union{Int,Nothing}; request_id::Union{String,Nothing} = nothing; end
-"Audio call that produced no usable reply (transport failure, timeout, a session that closed before its result, or a reply that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout."
+"Audio call that produced no usable reply (transport failure, timeout, cancel, a session that closed before its result, or a reply that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout, a [`UniLMCancelled`](@ref) for a cancel, and for a Realtime session the server closed the `HTTP.WebSockets.WebSocketError` carrying the close's status and reason, which `error` names too."
 @kwdef struct AudioCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
 
 # ─── Speech ──────────────────────────────────────────────────────────────────
@@ -144,11 +144,13 @@ Returns [`SpeechSuccess`](@ref): a WAV file (`response_format = "wav"`) or the r
 A failure the provider reports is an [`AudioFailure`](@ref): an HTTP error status, a WebSocket upgrade
 the server refuses included (a bad key is a 401; `response` is then HTTP.jl's report of the status,
 since it does not keep the reply); a Gemini reply whose candidate did not finish (a `finishReason`
-other than `STOP`, such as `MAX_TOKENS` or `SAFETY`; `response` is the reply); or on a Realtime session
-the `error` event or a `response.done` that did not complete (`status` is then `nothing` and
-`response` the event's JSON). A session that closes before its response is done, a timeout, a cancel
-and a reply without usable audio are an [`AudioCallError`](@ref). Audio received before a failure is
-never returned.
+other than `STOP`, such as `MAX_TOKENS` or `SAFETY`) or that has no candidate (a blocked prompt, its
+reason in `promptFeedback`), with `status` 200 and the reply as `response`; or on a Realtime session
+the `error` event, read even when the server closes the session while UniLM is still sending, or a
+`response.done` that did not complete (`status` is then `nothing` and `response` the event's JSON). A
+session that closes before its response is done (`error` names the close's status and reason, and
+`cause` is the close), a timeout, a cancel and a reply without usable audio are an
+[`AudioCallError`](@ref). Audio received before a failure is never returned.
 
 Pass `config::Union{Nothing,RequestConfig}` to bound the call (a single attempt; `max_attempts` does
 not apply). On OpenAI, `total_deadline` bounds the whole call whatever the socket does,
@@ -573,9 +575,10 @@ I/O, naming the conversion; so do an empty file, a blank `language` and a servic
 Realtime API.
 
 A failure the provider reports is an [`AudioFailure`](@ref): a Realtime `error` event, for example
-for a language it does not translate into (`status = nothing`, the event's JSON as `response`), or a
-WebSocket upgrade the server refuses (a bad key is a 401). A session that closes before
-`session.closed`, a timeout and a cancel are an [`AudioCallError`](@ref).
+for a language it does not translate into (`status = nothing`, the event's JSON as `response`), read
+even when the server closes the session during the upload, or a WebSocket upgrade the server refuses
+(a bad key is a 401). A session that closes before `session.closed` (`error` names the close's status
+and reason), a timeout and a cancel are an [`AudioCallError`](@ref).
 `config::Union{Nothing,RequestConfig}` bounds the call as for [`speak`](@ref): `total_deadline` the
 whole call whatever the socket does, `connect_timeout` the open, `stream_idle_timeout` every send and
 every wait for the next event; a single attempt. The ambient [`CancelToken`](@ref)

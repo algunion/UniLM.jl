@@ -129,7 +129,7 @@ const _CLAUDE_FAMILIES = Dict{String,_ClaudeFamily}(
 )
 
 # The row for `model` in a per-model table: the exact id, else the id without a dated
-# snapshot suffix (-YYYYMMDD: claude-haiku-4-5-20251001 → claude-haiku-4-5), else `nothing`.
+# snapshot suffix (-YYYYMMDD: claude-opus-4-5-20251101 → claude-opus-4-5), else `nothing`.
 # No id inherits another's row through a shared prefix (claude-sonnet-5-5 is not
 # claude-sonnet-5), and an id no row names — a newer model, a near miss — gets no
 # per-model rule: the API answers for it.

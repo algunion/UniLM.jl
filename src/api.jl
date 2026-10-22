@@ -1313,8 +1313,9 @@ OpenAI options, omitted from the request when unset:
 - `prompt_cache_options::Union{PromptCacheOptions,Nothing}`: prompt-cache `mode` and
   `ttl` ([`PromptCacheOptions`](@ref)); supported for gpt-5.6 and later (gpt-5.4-mini
   answered HTTP 400 "prompt_cache_options is not supported on this model" on
-  2026-09-22). Chat messages cannot carry cache breakpoints, so `mode="explicit"` means
-  the request does not use prompt caching.
+  2026-09-22). A `Chat` sets no cache breakpoints (the API's `prompt_cache_breakpoint` on
+  a message content part), so `mode="explicit"` means the request does not use prompt
+  caching.
 - `moderation::Union{ModerationConfig,Nothing}`: moderated completions
   ([`ModerationConfig`](@ref)).
 - `stream_options::Union{AbstractDict,Nothing}`: streaming options; when unset, an

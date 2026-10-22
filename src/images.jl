@@ -58,10 +58,13 @@ provider takes it.
 - `resolution::Union{String,Nothing}`: `"512"`, `"1K"`, `"2K"` or `"4K"`; unset, `"1K"`.
   `gemini-nano-banana-2.1` renders at `"1K"`, `"2K"` or `"4K"`.
 
-A field the request's provider does not take, or a value outside the lists above,
-throws `ArgumentError` naming the provider and the field — when the request is
-serialized, and in [`generate_image`](@ref) before any request. `input_fidelity` is an
-image-edit parameter: set it on [`ImageEdit`](@ref), not here.
+A field the request's provider does not take (an OpenAI-only field on Gemini;
+`aspect_ratio` or `resolution` on OpenAI), `n` other than 1 on Gemini, a Gemini
+`aspect_ratio` or `resolution` outside the lists above, and a `safety_identifier` outside
+its provider's rule throw `ArgumentError` naming the provider and the field — when the
+request is serialized, and in [`generate_image`](@ref) before any request. Other OpenAI
+values are sent as given, for OpenAI to judge. `input_fidelity` is an image-edit
+parameter: set it on [`ImageEdit`](@ref), not here.
 
 # Examples
 ```julia
@@ -317,8 +320,9 @@ naming Gemini's finish reason (such as `IMAGE_SAFETY` or `NO_IMAGE`).
 
 Throws `ArgumentError` before any network I/O when `ig.service` is an endpoint type
 that declares its capabilities and does not list `:images`, and when the request sets
-a field its provider does not take or a value outside that field's list (see
-[`ImageGeneration`](@ref)).
+a field its provider does not take, `n` other than 1 on Gemini, a Gemini `aspect_ratio`
+or `resolution` outside its list, or a `safety_identifier` outside its provider's rule
+(see [`ImageGeneration`](@ref)). Other OpenAI values are sent as given.
 
 # Examples
 ```julia
@@ -404,8 +408,11 @@ JPEG, GIF or WebP). `model` resolves as on [`ImageGeneration`](@ref).
 `aspect_ratio` and `resolution`, as on [`ImageGeneration`](@ref); unset, the edited
 image follows the input's aspect ratio.
 
-A field the request's provider does not take, or a value outside its list, throws
-`ArgumentError` naming the provider and the field before any request.
+`image` names at least one file: an empty vector throws `ArgumentError`. So do a field
+the request's provider does not take, `n` other than 1 on Gemini, a Gemini
+`aspect_ratio` or `resolution` outside its list, and a `safety_identifier` outside its
+provider's rule, each naming the provider and the field, before any request. Other
+OpenAI values are sent as given, for OpenAI to judge.
 """
 @kwdef struct ImageEdit
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
@@ -435,8 +442,10 @@ Gemini reply decodes the same way. An input image or mask that is not a readable
 an `ImageCallError`.
 
 Throws `ArgumentError` before any network I/O when `e.service` declares its capabilities
-without `:image_edits`, and when the request sets a field its provider does not take or
-a value outside that field's list (see [`ImageEdit`](@ref)).
+without `:image_edits`, when `e.image` is an empty vector, and when the request sets a
+field its provider does not take, `n` other than 1 on Gemini, a Gemini `aspect_ratio` or
+`resolution` outside its list, or a `safety_identifier` outside its provider's rule (see
+[`ImageEdit`](@ref)). Other OpenAI values are sent as given.
 
 Pass `config::Union{Nothing,RequestConfig}` to override the timeout/retry budget for this
 call, and `cancel::Union{Nothing,CancelToken}` to make it cancellable exactly as for
@@ -446,6 +455,9 @@ call, and `cancel::Union{Nothing,CancelToken}` to make it cancellable exactly as
 function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing,
                     cancel::Union{Nothing,CancelToken}=nothing)
     _validate_declared_capability(e.service, :image_edits, "Image Edits API")
+    # Without an input image the request would be a text-to-image generation, not an edit.
+    e.image isa Vector && isempty(e.image) && throw(ArgumentError(
+        "an image edit needs at least one input image, and `image` is an empty vector: pass a path or a vector of paths"))
     _check_image_request(e.service, e)
     _image_call(e.service, e, config, cancel)
 end

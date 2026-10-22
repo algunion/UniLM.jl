@@ -797,3 +797,17 @@ UniLM._image_reply(::Type{GeminiImagesHere}, resp::HTTP.Response) = UniLM._image
         rm(path; force=true)
     end
 end
+
+@testset "an image edit with no input image is refused before any request, on both wires" begin
+    # Sent anyway, Gemini would read the prompt alone as a text-to-image request.
+    for service in (URLProbe, GeminiImagesHere)
+        thrown, seen = withenv("GEMINI_API_KEY" => "test-key") do
+            _with_scripted((_, _) -> _json(200, "{}")) do
+                map(_refusal, (() -> edit_image(ImageEdit(service=service, image=String[], prompt="make it blue")),
+                               () -> edit_image(String[], "make it blue"; service=service, model="m")))
+            end
+        end
+        @test all(e -> e isa ArgumentError && occursin("at least one input image", e.msg), thrown)
+        @test isempty(seen)
+    end
+end

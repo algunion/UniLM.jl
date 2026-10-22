@@ -863,7 +863,8 @@ Configuration struct for an OpenAI Responses API request.
   lifetime `prompt_cache_options` sets, the native endpoint throws `ArgumentError` for it
 - `moderation::ModerationConfig`: Moderated completions — see [`ModerationConfig`](@ref)
 - `seed::Int64`: decoding seed, for repeatable output. Gemini Interactions
-  (`GEMINIServiceEndpoint`) sends it as `generation_config.seed`. OpenAI's Responses API
+  (`GEMINIServiceEndpoint`) sends it as `generation_config.seed`, an int32: a seed outside
+  -2,147,483,648 to 2,147,483,647 throws `ArgumentError` before any request. OpenAI's Responses API
   has no seed (Chat Completions has one), so `OPENAIServiceEndpoint` and every other
   endpoint on the OpenAI Responses wire (Azure, `GEMINIOpenAIServiceEndpoint`, generic
   endpoints) throw `ArgumentError` for it before any request, as does

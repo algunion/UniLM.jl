@@ -1701,10 +1701,12 @@ still unfinished after the 8th request is returned as it stands, with
 `finish_reason == "continuation"`. A request that fails ends the call with its failure and
 commits nothing, and the replies already received are added to
 [`cumulative_cost`](@ref). A streamed turn streams every reply into the same `callback`,
-which receives one final message. A stop or cancel before the turn's last reply ends the
-call as any stop does, nothing committed, and the replies already received are added to
-`cumulative_cost` too. Continuation is exercised against a local mock; a live
-CONTINUATION reply was not observed.
+which receives one final message. The turn's completion marker is its last reply's finish
+reason, not a reply's `CONTINUATION`: a stop or cancel before it ends the call with
+`UniLMCancelled` in `cause` and nothing committed, and the replies already answered — one
+whose `CONTINUATION` chunk the stop landed on included — are added to `cumulative_cost`
+too. Continuation is exercised against a local mock; a live CONTINUATION reply was not
+observed.
 
 `cancel::Union{Nothing,CancelToken}`: a [`CancelToken`](@ref); `nothing` resolves the
 ambient token of [`with_cancel`](@ref), at call entry. A cancel at any point — before

@@ -16,6 +16,15 @@ ProviderContent
 reasoning_text
 ```
 
+### Audio replies
+
+The audio an OpenAI model answers with, on an assistant [`Message`](@ref); see
+[Audio replies](@ref chat_audio_output) for how to ask for it and how later turns send it.
+
+```@docs
+AudioOutput
+```
+
 ### Attachments
 
 Images, sound clips and PDF documents sent with a user message; see

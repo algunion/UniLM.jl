@@ -99,9 +99,17 @@ end
     @test WebSearchTool <: UniLM.ResponseTool
     @test FileSearchTool <: UniLM.ResponseTool
     @test MCPTool <: UniLM.ResponseTool
-    @test ComputerUseTool <: UniLM.ResponseTool
     @test ImageGenerationTool <: UniLM.ResponseTool
     @test CodeInterpreterTool <: UniLM.ResponseTool
+end
+
+@testset "the retired local_shell and computer_use_preview tools are gone" begin
+    # OpenAI no longer supports the legacy local shell tool, and computer-use-preview was
+    # shut down on 2026-07-23: ShellTool and ComputerTool are their successors.
+    for name in (:LocalShellTool, :local_shell, :ComputerUseTool, :computer_use)
+        @test !isdefined(UniLM, name)
+    end
+    @test JSON.lower(shell())[:type] == "shell" && JSON.lower(computer_tool())[:type] == "computer"
 end
 
 @testset "MCPTool" begin
@@ -143,36 +151,6 @@ end
         @test t isa MCPTool
         @test t.server_label == "my-server"
         @test t.allowed_tools == ["fn1"]
-    end
-end
-
-@testset "ComputerUseTool" begin
-    @testset "defaults" begin
-        t = ComputerUseTool()
-        @test t.display_width == 1024
-        @test t.display_height == 768
-        @test isnothing(t.environment)
-    end
-
-    @testset "custom" begin
-        t = ComputerUseTool(display_width=1920, display_height=1080, environment="browser")
-        @test t.display_width == 1920
-        @test t.environment == "browser"
-    end
-
-    @testset "JSON serialization" begin
-        t = ComputerUseTool()
-        lowered = JSON.lower(t)
-        @test lowered[:type] == "computer_use_preview"
-        @test lowered[:display_width] == 1024
-        @test lowered[:display_height] == 768
-        @test !haskey(lowered, :environment)
-    end
-
-    @testset "computer_use convenience" begin
-        t = computer_use(display_width=800, display_height=600)
-        @test t isa ComputerUseTool
-        @test t.display_width == 800
     end
 end
 
@@ -2062,14 +2040,13 @@ end
     end
 
     @testset "new tool types lower to correct type strings" begin
-        @test JSON.lower(local_shell())[:type] == "local_shell"
         @test JSON.lower(shell())[:type] == "shell"
         @test JSON.lower(apply_patch_tool())[:type] == "apply_patch"
         @test JSON.lower(computer_tool())[:type] == "computer"
         ct = custom_tool("grammar_tool"; format=Dict("type" => "grammar", "syntax" => "lark", "definition" => "start: x"))
         cl = JSON.lower(ct)
         @test cl[:type] == "custom" && cl[:name] == "grammar_tool" && cl[:format]["syntax"] == "lark"
-        @test all(T -> T <: UniLM.ResponseTool, (LocalShellTool, ShellTool, ApplyPatchTool, ComputerTool, CustomTool))
+        @test all(T -> T <: UniLM.ResponseTool, (ShellTool, ApplyPatchTool, ComputerTool, CustomTool))
     end
 
     @testset "typed output accessors" begin

@@ -427,7 +427,7 @@ end
 @testset "Responses: a pending client-side call the loop cannot run ends it incomplete" begin
     # A local shell_call is the client's to run; an mcp_approval_request waits for an
     # mcp_approval_response. Either one left pending makes the next request a 400.
-    for typ in ("custom_tool_call", "apply_patch_call", "local_shell_call", "computer_call",
+    for typ in ("custom_tool_call", "apply_patch_call", "computer_call",
                 "shell_call", "mcp_approval_request")
         ran = Ref(0)
         item = Dict("type" => typ, "id" => "item_1", "call_id" => "call_1", "status" => "completed")

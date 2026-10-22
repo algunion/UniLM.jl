@@ -9,7 +9,9 @@ end
 @testset "create_upload accepts only the Files purposes" begin
     @test_throws ArgumentError create_upload(filename="a.bin", purpose="bogus", bytes=4,
         mime_type="application/octet-stream", service=SeamProbe)
-    for p in ("assistants", "batch", "fine-tune", "vision", "user_data", "evals")
+    @test_throws ArgumentError create_upload(filename="a.bin", purpose="evals", bytes=4,
+        mime_type="application/octet-stream", service=SeamProbe)
+    for p in ("assistants", "batch", "fine-tune", "vision", "user_data")
         @test _seam_timeout(create_upload(filename="a.bin", purpose=p, bytes=4,
             mime_type="application/octet-stream", service=SeamProbe, config=_TINY_DEADLINE), UniLM.UploadCallError)
     end

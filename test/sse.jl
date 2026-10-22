@@ -184,6 +184,147 @@ end
     end
 end
 
+# Reads one HTTP request off `sock` — its headers, then a chunked or Content-Length body —
+# so a raw-socket server answers only once the client has sent all of it.
+function _sse_drain_request!(sock)
+    req = ""
+    while (he = findfirst("\r\n\r\n", req)) === nothing
+        bytes = readavailable(sock)
+        isempty(bytes) && return
+        req *= String(bytes)
+    end
+    headers = SubString(req, 1, last(he))
+    length_match = match(r"(?i)content-length:\s*(\d+)", headers)
+    complete() = occursin(r"(?i)transfer-encoding:\s*chunked", headers) ? occursin("0\r\n\r\n", req) :
+                 isnothing(length_match) || sizeof(req) >= last(he) + parse(Int, length_match.captures[1])
+    while !complete()
+        bytes = readavailable(sock)
+        isempty(bytes) && return
+        req *= String(bytes)
+    end
+end
+
+@testset "handle_sse_event! (OpenAI wire) — delta.audio assembles the audio reply" begin
+    S = OPENAIServiceEndpoint
+    wav = UniLM._wav_bytes(UInt8[0x00, 0x00, 0x10, 0x00])
+    b64 = UniLM.base64encode(wav)
+    spoken = AudioOutput(id="audio_abc123", data=wav, expires_at=1792669190, transcript="Hi there!")
+    feed!(st, delta) = UniLM.handle_sse_event!(S, "", JSON.json(Dict("choices" => [Dict("index" => 0, "delta" => delta)])), st)
+    chunk(delta; finish=nothing) = "data: " * JSON.json(Dict("id" => "chatcmpl-1", "model" => "mock",
+        "choices" => [Dict("index" => 0, "delta" => delta, "finish_reason" => finish)])) * "\n\n"
+
+    @testset "id, data and transcript accumulate; the transcript is the turn's text" begin
+        st = StreamState()
+        feed!(st, Dict("role" => "assistant", "content" => nothing, "audio" => Dict("id" => "audio_abc123", "transcript" => "Hi ")))
+        feed!(st, Dict("audio" => Dict("data" => b64[1:15])))                  # a split inside a 4-character group
+        feed!(st, Dict("audio" => Dict("data" => b64[16:end], "transcript" => "there!")))
+        feed!(st, Dict("audio" => Dict("expires_at" => 1792669190)))           # the last update: its expiry alone
+        @test String(take!(st.pending_delta)) == "Hi there!" && position(st.content) == 0
+        st.finish_reason = "stop"
+        m = _build_stream_message(st)
+        @test m.audio_output == spoken && m.content == "Hi there!" && m.finish_reason == "stop"
+    end
+
+    @testset "chunks encoded one by one, padding mid-stream, assemble the same bytes" begin
+        st = StreamState()
+        # The 1-byte chunk is "AA==": its padding sits inside the joined base64, not at its end.
+        for audio in (Dict("id" => "audio_1"), Dict("data" => UniLM.base64encode(UInt8[0x00])),
+                      Dict("data" => UniLM.base64encode(UInt8[0x01, 0x00, 0x02])), Dict("expires_at" => 7, "transcript" => ""))
+            feed!(st, Dict("audio" => audio))
+        end
+        @test _build_stream_message(st).audio_output ==
+              AudioOutput(id="audio_1", data=UInt8[0x00, 0x01, 0x00, 0x02], expires_at=7, transcript="")
+    end
+
+    @testset "an audio reply without its id is no reply; one without its expiry is kept, expiry unknown" begin
+        st = StreamState()
+        feed!(st, Dict("audio" => Dict("data" => b64, "expires_at" => 7)))
+        @test_throws ArgumentError _build_stream_message(st)
+        st = StreamState()
+        feed!(st, Dict("audio" => Dict("id" => "audio_abc123", "data" => b64, "transcript" => "Hi there!")))
+        st.finish_reason = "stop"
+        @test _build_stream_message(st).audio_output ==
+              AudioOutput(id="audio_abc123", data=wav, expires_at=nothing, transcript="Hi there!")
+        st = StreamState()
+        print(st.content, "plain")
+        @test isnothing(_build_stream_message(st).audio_output)              # no audio: none
+    end
+
+    @testset "driver: the callback hears the transcript; the result holds the audio" begin
+        chunks = [chunk(Dict("role" => "assistant", "content" => nothing,
+                             "audio" => Dict("id" => "audio_abc123", "transcript" => "Hi "))),
+                  chunk(Dict("audio" => Dict("data" => b64[1:30]))),
+                  chunk(Dict("audio" => Dict("data" => b64[31:end], "transcript" => "there!"))),
+                  chunk(Dict(); finish="stop"),
+                  chunk(Dict("audio" => Dict("expires_at" => 1792669190))),
+                  "data: " * JSON.json(Dict("choices" => [], "usage" => Dict("prompt_tokens" => 9,
+                      "completion_tokens" => 21, "total_tokens" => 30))) * "\n\ndata: [DONE]\n\n"]
+        server, base = fragmented_sse_server(chunks; gap=0.05)
+        try
+            chat = Chat(service=GenericOpenAIEndpoint(base, ""), model="mock", stream=true,
+                        modalities=["text", "audio"], audio=Dict("voice" => "alloy", "format" => "wav"))
+            push!(chat, Message(Val(:system), "Be brief.")); push!(chat, Message(Val(:user), "Say hi."))
+            received = Any[]
+            res = fetch(chatrequest!(chat; callback=(c, _) -> push!(received, c)))
+            @test res isa LLMSuccess
+            @test res.message.audio_output == spoken && res.message.content == "Hi there!"
+            @test join(x for x in received if x isa String) == "Hi there!"
+            @test received[end] isa Message && received[end].audio_output == spoken
+            @test last(res.self.messages).audio_output == spoken                # appended with its audio
+            @test res.usage.completion_tokens == 21 && res.model == "mock"
+        finally
+            close(server)
+        end
+    end
+
+    @testset "driver: a connection dropped after the finish, before the expiry, keeps the turn" begin
+        # OpenAI sends the expires_at-only update after the finish_reason chunk. This body
+        # ends at the finish, and its chunked framing is cut there (the terminating chunk
+        # without its trailer section), so the read that would carry the expiry fails. The
+        # turn arrived whole and is billed: it is kept, once, with its expiry unknown, and
+        # nothing is sent again.
+        body = chunk(Dict("role" => "assistant", "content" => nothing,
+                          "audio" => Dict("id" => "audio_abc123", "transcript" => "Hi "))) *
+               chunk(Dict("audio" => Dict("data" => b64, "transcript" => "there!"))) *
+               chunk(Dict(); finish="stop")
+        listener = Sockets.listen(Sockets.localhost, 0)
+        url = "http://127.0.0.1:$(Int(Sockets.getsockname(listener)[2]))"
+        posts = Threads.Atomic{Int}(0)
+        Threads.@spawn try
+            while true
+                sock = Sockets.accept(listener)
+                Threads.atomic_add!(posts, 1)
+                try
+                    _sse_drain_request!(sock)
+                    write(sock, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n")
+                    write(sock, string(string(sizeof(body); base=16), "\r\n", body, "\r\n", "0\r\n"))
+                finally
+                    close(sock)
+                end
+            end
+        catch                                            # the listener closed: the test is over
+        end
+        try
+            chat = Chat(service=GenericOpenAIEndpoint(url, ""), model="mock", stream=true,
+                        modalities=["text", "audio"], audio=Dict("voice" => "alloy", "format" => "pcm16"))
+            push!(chat, Message(Val(:system), "Be brief.")); push!(chat, Message(Val(:user), "Say hi."))
+            terminals = Message[]
+            cfg = RequestConfig(request_timeout=5.0, total_deadline=30.0, stream_idle_timeout=5.0, max_attempts=3)
+            task = chatrequest!(chat; config=cfg, callback=(x, _) -> x isa Message && push!(terminals, x))
+            bounded = timedwait(() -> istaskdone(task), 20.0) === :ok
+            @test bounded
+            res = bounded ? fetch(task) : nothing
+            @test res isa LLMSuccess
+            @test res.message.audio_output == AudioOutput(id="audio_abc123", data=wav, expires_at=nothing, transcript="Hi there!")
+            @test res.message.content == "Hi there!" && res.message.finish_reason == "stop"
+            @test length(terminals) == 1 && terminals[1].audio_output == res.message.audio_output
+            @test last(chat.messages).audio_output.expires_at === nothing && posts[] == 1
+        finally
+            close(listener)
+        end
+    end
+end
+
 @testset "SSE machine cost is linear in what the wire carries" begin
     # Minimum of three runs: @allocated counts every thread's allocations.
     min_alloc(f) = minimum(_ -> (f(); @allocated f()), 1:3)

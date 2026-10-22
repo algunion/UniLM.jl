@@ -75,7 +75,7 @@ under the request's path (`/v1/systemone`), OpenAI's under
 recording never replays for another backend; an endpoint that speaks TypeSafe's
 wire shares TypeSafe's recordings, since its requests are TypeSafe's. An option
 that changes how a request is served but never what it is answered — OpenAI's
-`prompt_cache_key` and `safety_identifier`, Ollama's `keep_alive` — is sent and
+`prompt_cache_key`, `safety_identifier` and `prompt_cache_options`, Ollama's `keep_alive` — is sent and
 left out of the recording, key and file alike, so the same question replays
 whatever it is; TypeSafe's `long_context` is part of the key.
 
@@ -328,28 +328,34 @@ end
 | [`choice`](@ref) | `choice` of 2–255 options: the name is the `value`, a string description the `description` |
 | [`score`](@ref) | `score` of 2–10 levels, each a string: its `label` |
 | [`RawQuestion`](@ref) | sent verbatim, with the question's name added as `name` |
-| keywords of [`ask`](@ref) | `prompt_cache_key` (at most 64 characters), `safety_identifier` (at most 128) |
+| keywords of [`ask`](@ref) | `prompt_cache_key` (at most 64 characters), `safety_identifier` (at most 128), `prompt_cache_options` (a [`PromptCacheOptions`](@ref) of `mode` and `ttl`) |
 
 Every question needs string `instructions`, and at most 200 go in one request.
-What has no form on this wire — a Box question, a description or level that is
-not a string, a Noul's `yes`/`no` criteria, an image outside the state, any other
-keyword — is an `ArgumentError` before anything is sent. The answers come back
+`prompt_cache_options` takes a `ttl` of `"30m"` or `"12h"` — OpenAI's prompt-caching
+guide names `"12h"` for the Responses API, and the Decisions API answered a `"12h"`
+request with HTTP 200 — and a `mode`; with `mode="explicit"` the request marks no
+breakpoint, so OpenAI caches none of it. What has no form on this wire — a Box
+question, a description or level that is not a string, a Noul's `yes`/`no`
+criteria, an image outside the state, another `ttl`, `prewarm` or
+`comparison_response_id`, any other keyword — is an `ArgumentError` before
+anything is sent. The answers come back
 typed as on any backend, and a question the API declined comes back as a
 [`RefusalAnswer`](@ref): [`nl_dispatch`](@ref), [`nl_classify`](@ref) and
 [`@branch`](@ref) take it as a decline — the fallback, or
 [`DecisionDeclinedError`](@ref). Probabilities and confidences arrive rounded to
 two decimals, so a distribution over `n` outcomes is accepted when it sums to 1
 within `0.005n`, and the chosen option when it lies at most 0.01 below the most
-probable. `usage` counts input, cached and output tokens; a count that is not a
+probable. `usage` counts input, cached, cache-write (the 12-hour ones apart) and
+output tokens, and holds the service tier when the reply names one; a count that is not a
 non-negative whole number, or a `…_tokens_details` value that is not an object,
 reads as 0 with a warning. A failure's `error_type` is the error's `code`, and
 the request id is the `x-request-id` header. A recording
-([`with_recorded_answers`](@ref)) is keyed without the two options, and holds
+([`with_recorded_answers`](@ref)) is keyed without the three options, and holds
 each image as the SHA-256 of its base64 text, `data:<mime>;sha256,<hex>`, never
 its bytes. [`estimated_cost`](@ref) charges what the guide
 prices: input tokens only — \$0.10 per million, the `gpt-6-luna` row's input rate —
-cached ones at the full input rate, twice that rate for a request of more than
-272K input tokens.
+cached and cache-written ones at the full input rate, twice that rate for a
+request of more than 272K input tokens.
 
 The calls are bounded as TypeSafe's are (60 s per attempt, 150 s in all, while
 you set no `RequestConfig` of your own), [`ask_each`](@ref) keeps 16 of them in

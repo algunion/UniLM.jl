@@ -803,7 +803,9 @@ Decode the first choice of an OpenAI-wire Chat Completions reply, its usage and 
 model the reply names (`nothing` when it names none). No part of the
 choice is dropped for its shape: tool calls are decoded whenever present, with any
 text kept alongside; content given as an array of parts is joined from its text
-parts; a refusal is kept; `""` tool arguments decode as an empty object. A choice
+parts; a refusal is kept; `""` tool arguments decode as an empty object; the audio of
+an audio reply becomes the message's [`AudioOutput`](@ref), and its transcript the
+content when the reply has no text. A choice
 that carries nothing is the empty turn it is (`content = ""` — a reasoning model can
 spend the whole budget on thought tokens). The finish reason is the wire's, except
 that a tool-call turn finished with `"stop"` or none reads `"tool_calls"`.
@@ -821,6 +823,9 @@ function extract_message(resp::HTTP.Response)
     message = choice["message"]
     finish = get(choice, "finish_reason", nothing)
     text = _content_text(get(message, "content", nothing))
+    audio = _audio_output(get(message, "audio", nothing))
+    # An audio reply's content is null beside its audio: its text is the transcript.
+    !isnothing(audio) && (isnothing(text) || isempty(text)) && (text = audio.transcript)
     refusal = get(message, "refusal", nothing)
     refusal isa AbstractString || (refusal = nothing)
     raw_calls = get(message, "tool_calls", nothing)
@@ -829,13 +834,24 @@ function extract_message(resp::HTTP.Response)
     msg = if !isempty(calls)
         Message(role=RoleAssistant, content=(isnothing(text) || isempty(text) ? nothing : text),
                 tool_calls=calls, refusal_message=refusal,
-                finish_reason=_tool_finish_reason(finish))
+                finish_reason=_tool_finish_reason(finish), audio_output=audio)
     else
         Message(role=RoleAssistant, content=(isnothing(text) && !isnothing(refusal) ? nothing : something(text, "")),
-                refusal_message=refusal, finish_reason=finish)
+                refusal_message=refusal, finish_reason=finish, audio_output=audio)
     end
     (; message=msg, usage=_parse_usage(received), model=_wire_string(received, "model"))
 end
+
+# A reply's `message.audio` (the Chat Completions reference's `ChatCompletionAudio`): its
+# id, base64 data, the Unix time it expires at, and its transcript, every one required.
+function _audio_output(a::AbstractDict)::AudioOutput
+    field(key, T, what) = (v = get(a, key, nothing); v isa T ? v : throw(ArgumentError(
+        "the reply's audio has no $what \"$key\" (got $(repr(v)))")))
+    AudioOutput(field("id", AbstractString, "string"), base64decode(field("data", AbstractString, "base64 string")),
+                field("expires_at", Int64, "integer"), field("transcript", AbstractString, "string"))
+end
+_audio_output(::Nothing)::Nothing = nothing
+_audio_output(a) = throw(ArgumentError("the reply's audio is not a JSON object (got $(typeof(a)))"))
 
 # Message content as text: a string as is; an array of content parts (the form
 # requests use, which OpenAI-compatible servers may echo) joined from its text parts.
@@ -876,6 +892,17 @@ function _decode_tool_calls(raw::AbstractVector, finish::String)::Vector{ToolCal
     calls
 end
 
+# A streamed audio reply as its updates arrive (the chunk's `delta.audio` in the Chat
+# Completions reference): its id, its base64 text — the chunks joined, decoded once at the
+# end, so a chunk may end inside a 4-character group — its transcript, and its expiry,
+# which the last update carries alone (`nothing` until it arrives).
+@kwdef mutable struct _StreamedAudio
+    id::Union{String,Nothing} = nothing
+    base64::IOBuffer = IOBuffer()
+    transcript::IOBuffer = IOBuffer()
+    expires_at::Union{Int,Nothing} = nothing
+end
+
 """
     StreamState()
 
@@ -886,7 +913,9 @@ callback), refusal text to `refusal`, and records `finish_reason`, `usage`
 (a [`TokenUsage`](@ref)), the `model` the provider reports having served (the result's
 `model`; `nothing` when it reports none) and, for an in-band error, the decoded payload
 in `error`. `service_tier` holds the billed tier a chunk reported, for a handler whose
-provider reports it apart from the usage.
+provider reports it apart from the usage. `audio` is filled by the OpenAI-wire handler
+only, from a streamed audio reply's `delta.audio` updates, and becomes the message's
+[`AudioOutput`](@ref); a handler of another wire leaves it `nothing`.
 Tool calls live in `tool_calls` by index as
 `Dict("id" => …, "type" => "function", "function" => Dict("name" => …, "arguments" => …))`;
 `"complete" => true` on an entry tells the driver the call has finished streaming.
@@ -933,6 +962,18 @@ Public extension API (not exported); see the Custom Backends guide.
     # The served model and the billed tier, as the stream's chunks report them.
     model::Union{String,Nothing} = nothing
     service_tier::Union{String,Nothing} = nothing
+    # A streamed audio reply as it arrives; the OpenAI-wire handler alone fills it.
+    audio::Union{_StreamedAudio,Nothing} = nothing
+end
+
+# The audio reply a stream assembled. Its id comes with its first update, so a reply
+# without one is no audio reply; its expiry comes alone in the last update, after the
+# turn's finish, so a connection that closes between the two leaves the turn whole and
+# its expiry unknown (`nothing`).
+function _audio_output(s::_StreamedAudio)::AudioOutput
+    id = s.id
+    isnothing(id) && throw(ArgumentError("the streamed audio reply carried no id"))
+    AudioOutput(id, base64decode(takestring!(s.base64)), s.expires_at, takestring!(s.transcript))
 end
 
 # The (name, arguments) fragment buffers of streamed tool call `idx`.
@@ -954,6 +995,9 @@ end
 function _build_stream_message(state::StreamState)::Message
     content = takestring!(state.content)
     refusal = takestring!(state.refusal)
+    # An audio reply streams no content: its text is the transcript, as unstreamed.
+    audio = _audio_output(state.audio)
+    !isnothing(audio) && isempty(content) && (content = audio.transcript)
     # Echo complete captures only: a block still pending (its stop line was
     # dropped as malformed) means the capture is incomplete — fall back to
     # neutral reconstruction rather than echo a partial turn.
@@ -980,13 +1024,13 @@ function _build_stream_message(state::StreamState)::Message
         # Keep accumulated text ALONGSIDE the tool calls: providers emit
         # both in one turn and the non-streaming decoders already preserve both.
         Message(role=RoleAssistant, content=(isempty(content) ? nothing : content),
-                tool_calls=tcalls, finish_reason=finish, provider_content=pc)
+                tool_calls=tcalls, finish_reason=finish, provider_content=pc, audio_output=audio)
     elseif isempty(content) && !isempty(refusal)
         Message(role=RoleAssistant, refusal_message=refusal,
-                finish_reason=state.finish_reason, provider_content=pc)
+                finish_reason=state.finish_reason, provider_content=pc, audio_output=audio)
     else
         Message(role=RoleAssistant, content=content,
-                finish_reason=state.finish_reason, provider_content=pc)
+                finish_reason=state.finish_reason, provider_content=pc, audio_output=audio)
     end
 end
 

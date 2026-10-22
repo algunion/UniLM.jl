@@ -4,7 +4,21 @@
 # the Responses file_search & code_interpreter tools, the Batch API, and fine-tuning.
 # ============================================================================
 
-const _FILE_PURPOSES = ("assistants", "batch", "fine-tune", "vision", "user_data", "evals")
+# The purposes an upload takes
+# (https://developers.openai.com/api/reference/resources/files/methods/create).
+const _FILE_PURPOSES = ("assistants", "batch", "fine-tune", "vision", "user_data")
+
+# An `ArgumentError` naming the purposes the Files API takes, unless it takes `purpose`.
+# "evals" fed OpenAI's Evals API, read-only from 2026-10-31 and shut down on 2026-11-30
+# (https://developers.openai.com/api/docs/deprecations).
+function _check_file_purpose(purpose)::Nothing
+    accepted = join(repr.(_FILE_PURPOSES), ", ", " or ")
+    purpose == "evals" && throw(ArgumentError(
+        "purpose \"evals\" is for OpenAI's Evals API, which is read-only from 2026-10-31 and shuts down on " *
+        "2026-11-30 (https://developers.openai.com/api/docs/deprecations); the Files API takes $accepted"))
+    purpose in _FILE_PURPOSES || throw(ArgumentError("the Files API takes $accepted (got $(repr(purpose)))"))
+    nothing
+end
 
 function _mime_for(path::AbstractString)
     ext = lowercase(splitext(path)[2])
@@ -145,7 +159,8 @@ _last_status(seen)::String =
     FileUpload(; file, purpose, service=OPENAIServiceEndpoint)
 
 A file-upload request. `file` is a path on disk; `purpose` is one of
-`"assistants"`, `"batch"`, `"fine-tune"`, `"vision"`, `"user_data"`, `"evals"`.
+`"assistants"`, `"batch"`, `"fine-tune"`, `"vision"`, `"user_data"`. Any other purpose
+throws `ArgumentError`, `"evals"` naming the Evals API's shutdown on 2026-11-30.
 """
 @kwdef struct FileUpload
     service::ServiceEndpointSpec = OPENAIServiceEndpoint
@@ -153,7 +168,7 @@ A file-upload request. `file` is a path on disk; `purpose` is one of
     purpose::String
     function FileUpload(service, file, purpose)
         isfile(file) || throw(ArgumentError("file not found: $file"))
-        purpose in _FILE_PURPOSES || throw(ArgumentError("invalid purpose '$purpose'; expected one of $(_FILE_PURPOSES)"))
+        _check_file_purpose(purpose)
         new(service, file, purpose)
     end
 end

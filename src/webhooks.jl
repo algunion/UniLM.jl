@@ -4,12 +4,20 @@
 # there is no capability symbol. HMAC is built on the `SHA` stdlib to avoid a TLS dep.
 # ============================================================================
 
-"""Known OpenAI webhook event types."""
+"""
+The event types of OpenAI's webhooks
+([reference](https://developers.openai.com/api/reference/resources/webhooks)): background
+responses, batches and fine-tuning jobs that end, incoming SIP calls for the Realtime and
+Live APIs, safety warnings and deactivations for a safety identifier, and safety alerts.
+`live.call.incoming` is deprecated in favour of `live.transport.incoming` and retained for
+existing subscriptions.
+"""
 const WEBHOOK_EVENTS = (
     "response.completed", "response.cancelled", "response.failed", "response.incomplete",
     "batch.completed", "batch.cancelled", "batch.expired", "batch.failed",
     "fine_tuning.job.succeeded", "fine_tuning.job.failed", "fine_tuning.job.cancelled",
-    "eval.run.succeeded", "eval.run.failed", "eval.run.canceled", "realtime.call.incoming",
+    "realtime.call.incoming", "live.call.incoming", "live.transport.incoming",
+    "safety.warning_issued", "safety.deactivation_issued", "safety.alert.created", "safety.org_alert.created",
 )
 
 # HMAC-SHA256 via the SHA stdlib: H((K⊕opad) ‖ H((K⊕ipad) ‖ msg)), K padded to 64 bytes.

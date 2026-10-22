@@ -221,8 +221,9 @@ const ANTHROPIC_BASE_URL::String = "https://api.anthropic.com"
 """Anthropic Messages API path."""
 const ANTHROPIC_MESSAGES_PATH::String = "/v1/messages"
 
-"""Required `anthropic-version` request header value (stable since 2024)."""
-const ANTHROPIC_VERSION::String = "2023-06-01"
+"""Required `anthropic-version` request header value: the current API version, which has no
+`temperature`, `top_p` or `top_k` (https://platform.claude.com/docs/en/api/versioning)."""
+const ANTHROPIC_VERSION::String = "2026-10-21"
 
 """Overridable default for Anthropic's REQUIRED `max_tokens` when the caller leaves
 it unset. `max_tokens` caps thinking plus response text, and current Claude models

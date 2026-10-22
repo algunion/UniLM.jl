@@ -59,13 +59,18 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "o3"            => _price(2.0,  0.50,  8.0),
     "o4-mini"       => _price(1.1,  0.275, 4.4),
     # Anthropic Claude (https://platform.claude.com/docs/en/about-claude/pricing.md,
-    # 2026-09-24). Cache reads are 0.1x input, except 0.025x on Fable 5.1 and Mythos 5.1
-    # and 0.05x on Opus 5.5. Dated snapshot ids (-YYYYMMDD) resolve to these rows.
+    # 2026-10-22). Cache reads are 0.1x input, except 0.025x on Fable 5.1 and Mythos 5.1
+    # and 0.05x on Opus 5.5 and Sonnet 5.5; Haiku 5.5's row is its rate for prompts up to
+    # 100,000 tokens. Cache writes, fast mode, US-only inference and Haiku 5.5's longer
+    # prompts are billed by the Anthropic `_billed_cost`. Dated snapshot ids (-YYYYMMDD)
+    # resolve to these rows.
     "claude-fable-5-1"  => _price(10.0, 0.25, 50.0),
     "claude-mythos-5-1" => _price(10.0, 0.25, 50.0),
     "claude-fable-5"    => _price(10.0, 1.0,  50.0),
     "claude-mythos-5"   => _price(10.0, 1.0,  50.0),
     "claude-opus-5-5"   => _price(4.0,  0.20, 20.0),
+    "claude-sonnet-5-5" => _price(2.0,  0.10, 10.0),
+    "claude-haiku-5-5"  => _price(0.10, 0.01, 0.50),
     "claude-opus-5"     => _price(5.0,  0.50, 25.0),
     "claude-opus-4-8"   => _price(5.0,  0.50, 25.0),
     "claude-opus-4-7"   => _price(5.0,  0.50, 25.0),
@@ -73,7 +78,7 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "claude-opus-4-5"   => _price(5.0,  0.50, 25.0),
     "claude-sonnet-5"   => _price(2.0,  0.20, 10.0),
     "claude-sonnet-4-6" => _price(3.0,  0.30, 15.0),
-    "claude-sonnet-4-5" => _price(3.0,  0.30, 15.0),
+    "claude-sonnet-4-5" => _price(3.0,  0.30, 15.0),   # deprecated, retires 2026-11-30
     "claude-haiku-4-5"  => _price(1.0,  0.10, 5.0),
     # DeepSeek (https://api-docs.deepseek.com/quick_start/pricing, 2026-09-24): peak rates
     # (01:00-04:00 and 06:00-10:00 UTC, Monday-Friday); off-peak hours bill half. The

@@ -68,6 +68,41 @@ UniLM.handle_sse_event!(::AnthropicWireMock, event::AbstractString, payload::Abs
                         state::UniLM.StreamState) =
     UniLM.handle_sse_event!(ANTHROPICServiceEndpoint, event, payload, state)
 
+# The native Anthropic encoder and decoder against a local URL (the production endpoint's
+# base URL is a constant), for pins on what the Messages wire carries across requests.
+struct AnthropicMessagesMock <: UniLM.ServiceEndpoint
+    url::String
+end
+UniLM.get_url(s::AnthropicMessagesMock, ::Chat) = s.url
+UniLM.auth_header(::AnthropicMessagesMock) = ["Content-Type" => "application/json"]
+UniLM.encode_request(::AnthropicMessagesMock, chat::Chat) = UniLM.encode_request(ANTHROPICServiceEndpoint, chat)
+UniLM.decode_response(::AnthropicMessagesMock, resp::HTTP.Response) =
+    UniLM.decode_response(ANTHROPICServiceEndpoint, resp)
+
+# Answers the n-th POST with `responder(n)` and keeps every request body, parsed.
+function anthropic_messages_server(responder)
+    bodies = Dict{String,Any}[]
+    lk = ReentrantLock()
+    server, port = nothing, 0
+    for attempt in 1:5
+        port = _free_port()
+        try
+            server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
+                b = JSON.parse(String(read(http)); dicttype=Dict{String,Any})
+                n = @lock lk (push!(bodies, b); length(bodies))
+                HTTP.setstatus(http, 200)
+                HTTP.setheader(http, "Content-Type" => "application/json")
+                HTTP.startwrite(http)
+                write(http, responder(n))
+            end
+            break
+        catch
+            attempt == 5 && rethrow()
+        end
+    end
+    server, "http://127.0.0.1:$port/v1/messages", bodies
+end
+
 # Non-streaming OpenAI-wire mock: the n-th POST (1-based) gets the JSON body
 # `responder(n)` returns, so a tool-call turn can be followed by a final
 # assistant turn. `calls` counts requests. Same ephemeral-port probe+retry as
@@ -460,6 +495,43 @@ end
             @test occursin("overloaded_error", res.response)
             # The truncated partial text must not have been pushed into history.
             @test all(m -> m.role != UniLM.RoleAssistant, chat.messages)
+        finally
+            close(server)
+        end
+    end
+
+    @testset "Anthropic: a system message pushed after a reply never rewrites the system prompt (driver-level)" begin
+        # On claude-opus-5-5 a thinking block is valid only while the prompt before it is
+        # unchanged: joining a later system message into the top-level `system` makes the
+        # request after the reply a 400 ("The `system` prompt differs from the one this
+        # block was created with"). Three requests through the real encoder: each one's
+        # system prompt and messages are the previous one's, extended.
+        reply(n) = JSON.json(Dict("id" => "msg_$n", "type" => "message", "role" => "assistant",
+            "model" => "claude-opus-5-5", "stop_reason" => "end_turn",
+            "content" => [Dict("type" => "thinking", "thinking" => "", "signature" => "sig$n"),
+                          Dict("type" => "text", "text" => "a$n")],
+            "usage" => Dict("input_tokens" => 10, "output_tokens" => 5)))
+        server, url, bodies = anthropic_messages_server(reply)
+        try
+            cfg = UniLM.RequestConfig(max_attempts=1, total_deadline=30.0)
+            chat = Chat(service=AnthropicMessagesMock(url), model="claude-opus-5-5")
+            push!(chat, Message(Val(:system), "s0"))
+            push!(chat, Message(Val(:user), "u1"))
+            @test chatrequest!(chat; config=cfg) isa LLMSuccess
+            push!(chat, Message(Val(:system), "From now on, answer in French."))
+            push!(chat, Message(Val(:user), "u2"))
+            @test chatrequest!(chat; config=cfg) isa LLMSuccess
+            push!(chat, Message(Val(:user), "u3"))
+            @test chatrequest!(chat; config=cfg) isa LLMSuccess
+            @test length(bodies) == 3
+            @test [b["system"] for b in bodies] == ["s0", "s0", "s0"]
+            @test [m["role"] for m in bodies[3]["messages"]] ==
+                  ["user", "assistant", "user", "system", "assistant", "user"]
+            for i in 2:3
+                @test bodies[i]["messages"][1:length(bodies[i-1]["messages"])] == bodies[i-1]["messages"]
+            end
+            @test bodies[3]["messages"][2]["content"][1] ==
+                  Dict("type" => "thinking", "thinking" => "", "signature" => "sig1")
         finally
             close(server)
         end

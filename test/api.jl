@@ -627,14 +627,16 @@ end
         @test_throws InvalidConversationError push!(chat, usr)
         @test length(chat) == 2  # unchanged
 
-        # System not allowed after conversation started — throws, unchanged
-        @test_throws InvalidConversationError push!(chat, sys)
-        @test length(chat) == 2  # unchanged
-
         # Assistant after user
         asst = Message(role=UniLM.RoleAssistant, content="response")
         push!(chat, asst)
         @test length(chat) == 3
+
+        # A later system message is appended; a second one in a row repeats the role
+        push!(chat, sys)
+        @test length(chat) == 4 && chat.messages[end] == sys
+        @test_throws InvalidConversationError push!(chat, sys)
+        @test length(chat) == 4  # unchanged
     end
 
     @testset "push! allows consecutive tool messages" begin
@@ -1232,11 +1234,13 @@ end
         @test isempty(chat)                     # refused inputs never mutate the chat
     end
 
-    @testset "a system message is only valid as the first message" begin
+    @testset "a later system message is appended, never two in a row" begin
         chat = Chat()
-        push!(chat, sys); push!(chat, usr)
+        push!(chat, sys); push!(chat, usr); push!(chat, asst); push!(chat, sys)
         @test_throws InvalidConversationError push!(chat, sys)
-        @test length(chat) == 2
+        push!(chat, usr)
+        @test [m.role for m in chat.messages] ==
+              [UniLM.RoleSystem, UniLM.RoleUser, UniLM.RoleAssistant, UniLM.RoleSystem, UniLM.RoleUser]
     end
 
     @testset "no consecutive same-role (non-tool) messages" begin

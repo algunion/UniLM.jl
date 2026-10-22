@@ -103,7 +103,7 @@ function run_anthropic()
         "messages" => [Dict("role" => "user", "content" => HARD_PROMPT)],
     ))
     measure("Anthropic (thinking)", model, "https://api.anthropic.com/v1/messages",
-        ["x-api-key" => key, "anthropic-version" => "2023-06-01",
+        ["x-api-key" => key, "anthropic-version" => "2026-10-21",
          "Content-Type" => "application/json"], body)
 end
 

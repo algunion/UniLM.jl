@@ -187,10 +187,12 @@ The model priced is `model` when given; else the one the provider reports having
 Responses or FIM result; else the one requested — `result.self.model` for Chat,
 `result.embeddings.model` for Embeddings.
 
-Returns `0.0` for failures, which carry no billable usage, for an unpriced model, and for audio
-tokens UniLM has no rate for (see [`DEFAULT_PRICING`](@ref) for the audio it prices); the last
-two also log one warning per model id. A billed service tier the provider's pricing page lists
-no price for is estimated at the standard rates, with one warning per model and tier. Throws
+Returns `0.0` for failures, which carry no billable usage, for an unpriced model, for audio
+tokens UniLM has no rate for (see [`DEFAULT_PRICING`](@ref) for the audio it prices) and for an
+embeddings reply that reported no usage (Gemini's OpenAI-compatible endpoint reports none);
+the last three also log a warning, once per model id (for audio, per model and endpoint). A
+billed service tier the provider's pricing page lists no price for is estimated at the standard
+rates, with one warning per model and tier. Throws
 `ArgumentError` for result types
 outside the token-billed APIs — see [`token_usage`](@ref) — and, unless `model` is given,
 for an [`ImageSuccess`](@ref): the Images API bills image tokens at rates a price row does
@@ -218,9 +220,20 @@ function estimated_cost(result::LLMRequestResponse;
     isnothing(mdl) && return 0.0                   # a failure: nothing was billed
     service = _result_service(result)
     isnothing(model) && _is_local(service, mdl) && return 0.0
+    _unreported_usage(result, mdl)
     rates = _price_row(pricing, mdl)
     isnothing(rates) && return 0.0
     _billed_cost(service, mdl, u, rates)
+end
+
+# A reply that reported no usage leaves nothing to price, and a silent 0.0 would read as a free
+# call, so an embeddings reply without usage says so once per model (Gemini's OpenAI-compatible
+# endpoint returns embeddings without `usage`).
+_unreported_usage(::LLMRequestResponse, ::String)::Nothing = nothing
+function _unreported_usage(r::EmbeddingSuccess, model::String)::Nothing
+    isnothing(r.usage) && @warn "the embeddings reply reported no token usage; its estimated cost is 0.0" model _id = Symbol(
+        "unilm_unreported_usage_", model) maxlog = 1
+    nothing
 end
 
 # The model a result is priced at when the caller names none: the one the provider reports

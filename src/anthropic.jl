@@ -50,9 +50,11 @@ default_max_tokens(::Type{ANTHROPICServiceEndpoint}, ::AbstractString) = _ANTHRO
 # `forced`: tool_choice any/tool accepted. `prefill`: a trailing assistant turn accepted.
 # `system`: role "system" messages after the conversation starts accepted.
 # `prefix_checked`: a thinking block is valid only while the top-level system prompt, the
-# tools and the messages before it are unchanged (see `_anthropic_messages`).
+# tools and the messages before it are unchanged (see `_anthropic_messages`); such a model
+# accepts mid-conversation system messages, which is how its instructions change.
 const _CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 const _CLAUDE_EFFORTS_NO_XHIGH = ["low", "medium", "high", "max"]
+const _CLAUDE_THINKING = (:always, :on, :between, :off, :manual)
 
 @kwdef struct _ClaudeFamily
     thinking::Symbol
@@ -61,6 +63,13 @@ const _CLAUDE_EFFORTS_NO_XHIGH = ["low", "medium", "high", "max"]
     prefill::Bool = false
     system::Bool = false
     prefix_checked::Bool = false
+    function _ClaudeFamily(thinking, efforts, forced, prefill, system, prefix_checked)
+        thinking in _CLAUDE_THINKING || throw(ArgumentError(
+            "Claude thinking mode must be one of $(join(_CLAUDE_THINKING, ", ")) (got $(repr(thinking)))"))
+        !prefix_checked || system || throw(ArgumentError(
+            "a prefix-checked Claude model must accept mid-conversation system messages (system=true)"))
+        new(thinking, efforts, forced, prefill, system, prefix_checked)
+    end
 end
 
 const _CLAUDE_LEGACY = _ClaudeFamily(thinking=:manual, efforts=String[], prefill=true)
@@ -145,8 +154,8 @@ function _anthropic_validate_fields(chat::Chat)
             "Anthropic Messages does not support $f; it is an OpenAI-only option"))
     end
     # API version 2026-10-21 removed the sampling parameters: the API answers HTTP 400 for
-    # one on every model, even at its default value
-    # (https://platform.claude.com/docs/en/api/migration-2026-10-21.md#sampling-parameters).
+    # one on every model, even at its default value ("Sampling parameters are removed",
+    # https://platform.claude.com/docs/en/api/migration-2026-10-21#sampling-parameters).
     for f in (:temperature, :top_p)
         isnothing(getfield(chat, f)) || throw(ArgumentError(
             "Anthropic API version $ANTHROPIC_VERSION has no $f: the Messages API answers HTTP 400 " *
@@ -193,11 +202,24 @@ function _anthropic_validate_model(chat::Chat, fam::Union{_ClaudeFamily,Nothing}
 end
 
 # Where a system message after the conversation starts goes (see `_anthropic_messages`):
-# :hoist joins every one into the top-level `system`; :in_place keeps one where the API
-# accepts it and hoists the rest; :append_only never edits the top-level `system` once an
-# assistant turn is sent. An id no row names keeps :in_place.
-_system_placement(::Nothing) = :in_place
-_system_placement(fam::_ClaudeFamily) = fam.prefix_checked ? :append_only : fam.system ? :in_place : :hoist
+# _HOIST joins every one into the top-level `system`; _IN_PLACE keeps one where the API
+# accepts it and hoists the rest; _APPEND_ONLY never edits the top-level `system` once an
+# assistant turn is sent. An id no row names is placed append-only: Anthropic asks every
+# integration to be append-only whatever the account
+# (https://platform.claude.com/docs/en/build-with-claude/preserved-thinking.md), and a
+# newer model may check thinking blocks.
+@enum _SystemPlacement _HOIST _IN_PLACE _APPEND_ONLY
+_system_placement(::Nothing) = _APPEND_ONLY
+_system_placement(fam::_ClaudeFamily) = fam.prefix_checked ? _APPEND_ONLY : fam.system ? _IN_PLACE : _HOIST
+
+# A system message after an assistant turn with no user turn after it has no place: the
+# Messages API takes one only right after a user turn, and joined into the top-level
+# `system` it would end the request with the assistant turn — a response prefill.
+_system_after_reply(model::AbstractString) = ArgumentError(
+    "$model takes a system message after an assistant turn only once a user turn follows it: " *
+    "the Messages API accepts one only right after a user turn, and in the top-level system prompt " *
+    "it would leave the request ending with the assistant turn, a response prefill; push a user " *
+    "message after the system message")
 
 function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
     _anthropic_validate_fields(chat)
@@ -209,6 +231,9 @@ function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
     body[:max_tokens] = something(chat.max_completion_tokens, chat.max_tokens,
                                   default_max_tokens(ANTHROPICServiceEndpoint, chat.model))
     system, msgs = _anthropic_messages(chat.messages; placement=_system_placement(fam), model=chat.model)
+    # A conversation that ends with a system message after a reply is not a prefill request.
+    !isempty(chat.messages) && chat.messages[end].role == RoleSystem && !isempty(msgs) &&
+        msgs[end][:role] == "assistant" && throw(_system_after_reply(chat.model))
     isnothing(fam) || fam.prefill || isempty(msgs) || msgs[end][:role] != "assistant" ||
         throw(ArgumentError("$(chat.model) rejects messages that end with an assistant turn " *
                             "(response prefill); end with a user turn or use a json_schema response_format"))
@@ -234,8 +259,8 @@ end
 # Split neutral messages into (system::Union{String,Nothing}, Anthropic messages).
 # - leading system messages join the top-level `system`. A later one goes where
 #   `placement` says (`_system_placement`): in place as role "system" where the API
-#   accepts one (`_mid_system_fits`), unless the model has none (:hoist); else into the
-#   top-level `system` — except under :append_only once an assistant turn is sent, where
+#   accepts one (`_mid_system_fits`), unless the model has none (_HOIST); else into the
+#   top-level `system` — except under _APPEND_ONLY once an assistant turn is sent, where
 #   editing that prompt invalidates the thinking blocks of every later turn (an HTTP 400):
 #   there it moves forward to right after the next user turn, so each request extends the
 #   one before, and with no user turn after it the request is refused
@@ -244,7 +269,7 @@ end
 #   preceding assistant emitted → loud ArgumentError
 # - an assistant turn with nothing to send — no text, tool call or Anthropic block (a
 #   refusal, an empty reply) — is skipped: the API rejects empty assistant content.
-function _anthropic_messages(messages; placement::Symbol=:in_place, model::AbstractString="")
+function _anthropic_messages(messages; placement::_SystemPlacement=_IN_PLACE, model::AbstractString="")
     system = nothing
     out = Vector{Dict{Symbol,Any}}()
     seen_tool_use_ids = Set{String}()
@@ -256,11 +281,11 @@ function _anthropic_messages(messages; placement::Symbol=:in_place, model::Abstr
     place!(m) = push!(out, Dict{Symbol,Any}(:role => "system", :content => something(m.content, "")))
     release!() = (foreach(place!, held); empty!(held))
     for (i, m) in pairs(messages)
-        if m.role == RoleSystem && placement !== :hoist && _mid_system_fits(messages, i, out, pending)
+        if m.role == RoleSystem && placement != _HOIST && _mid_system_fits(messages, i, out, pending)
             flush!()
             release!()
             place!(m)
-        elseif m.role == RoleSystem && placement === :append_only && answered
+        elseif m.role == RoleSystem && placement == _APPEND_ONLY && answered
             push!(held, m)
         elseif m.role == RoleSystem
             system = isnothing(system) ? m.content : string(system, "\n\n", something(m.content, ""))
@@ -283,10 +308,7 @@ function _anthropic_messages(messages; placement::Symbol=:in_place, model::Abstr
         end
     end
     flush!()
-    isempty(held) || out[end][:role] == "user" || throw(ArgumentError(
-        "$model refuses an earlier turn's thinking blocks once the top-level system prompt changes, " *
-        "so a system message after an assistant turn is sent after the next user turn, and this " *
-        "conversation has none after it; push a user message after the system message"))
+    isempty(held) || out[end][:role] == "user" || throw(_system_after_reply(model))
     release!()
     (system, out)
 end
@@ -296,13 +318,21 @@ _skipped_turn(m::Message)::Bool = m.role == RoleAssistant &&
     isnothing(_anthropic_blocks(m))
 
 # The provider-native blocks of an assistant turn this provider produced, echoed as
-# returned (see `_anthropic_assistant_content`), else `nothing`. A turn that holds only
-# thinking blocks (cut at max_tokens) goes back too: dropping it leaves a gap in the
-# thinking-block sequence, which invalidates every later block on the models that check it.
+# returned (see `_anthropic_assistant_content`), else `nothing`. A turn cut at max_tokens
+# that holds only thinking blocks goes back too: to continue it, "pass the assistant turn
+# back unchanged and append a new user message"
+# (https://platform.claude.com/docs/en/build-with-claude/thinking.md). An empty text block
+# (a streamed one that got no delta) is never sent — the API rejects empty text content —
+# so a turn of nothing else has nothing to send.
 function _anthropic_blocks(m::Message)::Union{Vector{Any},Nothing}
     pc = m.provider_content
-    pc isa ProviderContent && pc.provider === :anthropic && !isempty(pc.blocks) ? pc.blocks : nothing
+    pc isa ProviderContent || return nothing
+    pc.provider === :anthropic || return nothing
+    blocks = any(_empty_text_block, pc.blocks) ? filter(!_empty_text_block, pc.blocks) : pc.blocks
+    isempty(blocks) ? nothing : blocks
 end
+
+_empty_text_block(b)::Bool = b isa AbstractDict && get(b, "type", nothing) == "text" && get(b, "text", "") == ""
 
 # Whether `messages[i]`, a system message, may stay in place: the API accepts a
 # mid-conversation system message right after a user turn (tool results are one) that is

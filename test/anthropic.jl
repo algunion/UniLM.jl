@@ -987,6 +987,11 @@ end
                 chat = Chat(; service=_AnthropicCapture(srv.url), model="claude-haiku-5-5", messages=conversation(), kw...)
                 @test_throws ArgumentError chatrequest!(chat; config=cfg)
             end
+            # So does a system message after the reply with no user turn after it, even where
+            # the model takes a prefill: it is not one.
+            after_reply = [conversation(); Message(role=RoleAssistant, content="a"); Message(Val(:system), "s2")]
+            chat = Chat(service=_AnthropicCapture(srv.url), model="claude-haiku-4-5", messages=after_reply)
+            @test_throws ArgumentError chatrequest!(chat; config=cfg)
             @test length(srv.seen) == 2
         end
         @test Dict(withenv(() -> UniLM.auth_header(ANTHROPICServiceEndpoint), "ANTHROPIC_API_KEY" => "k")) ==
@@ -1010,11 +1015,13 @@ const _MID_SYSTEM_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haik
                             "claude-mythos-5", "claude-opus-9")
 const _NO_MID_SYSTEM_MODELS = ("claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-6", "claude-haiku-4-5")
 # The models that check each thinking block's prefix (the top-level system prompt, the tools and
-# the earlier messages), https://platform.claude.com/docs/en/build-with-claude/preserved-thinking.md,
-# and those that accept mid-conversation system messages without that check.
+# the earlier messages), https://platform.claude.com/docs/en/build-with-claude/preserved-thinking.md;
+# they and an id no row names are placed append-only. The rest accept mid-conversation system
+# messages without that check.
 const _PREFIX_CHECKED_MODELS = ("claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")
+const _APPEND_ONLY_MODELS = (_PREFIX_CHECKED_MODELS..., "claude-opus-9")
 const _UNCHECKED_MID_SYSTEM_MODELS = ("claude-mythos-5-1", "claude-fable-5", "claude-mythos-5", "claude-opus-5",
-                                      "claude-opus-4-8", "claude-opus-9")
+                                      "claude-opus-4-8")
 
 @testset "encode — a later system message stays in place where the model accepts it" begin
     tc = ToolCall(id="toolu_1", func=GPTFunction("f", Dict{String,Any}()))
@@ -1084,16 +1091,17 @@ _thinking_reply(text, sig) = Message(role=RoleAssistant, content=text, finish_re
     provider_content=ProviderContent(:anthropic, Any[Dict{String,Any}("type" => "thinking", "thinking" => "", "signature" => sig),
                                                      Dict{String,Any}("type" => "text", "text" => text)]))
 
-@testset "encode — prefix-checked models never move a later system message into the top-level prompt" begin
-    # On these models a thinking block is valid only while the top-level system prompt, the tools
-    # and the messages before it are unchanged. A system message after an assistant turn that
-    # cannot stay in place therefore moves forward to right after the next user turn; one before
-    # the first assistant turn may join the top-level prompt (no thinking block precedes it).
+@testset "encode — append-only placement never moves a later system message into the top-level prompt" begin
+    # On the prefix-checked models a thinking block is valid only while the top-level system
+    # prompt, the tools and the messages before it are unchanged; an id no row names is treated
+    # the same. A system message after an assistant turn that cannot stay in place therefore
+    # moves forward to right after the next user turn; one before the first assistant turn may
+    # join the top-level prompt (no thinking block precedes it).
     s(x) = Message(Val(:system), x)
     u(x) = Message(Val(:user), x)
     a1 = _thinking_reply("a1", "sig1")
     blocks1 = a1.provider_content.blocks
-    for model in _PREFIX_CHECKED_MODELS
+    for model in _APPEND_ONLY_MODELS
         body = _anthropic_body(; model, messages=[s("s0"), u("u1"), a1, s("s2"), u("u2")])
         @test body["system"] == "s0"
         @test body["messages"] == [_wire("user", "u1"), _wire("assistant", blocks1), _wire("user", "u2"),
@@ -1108,7 +1116,7 @@ _thinking_reply(text, sig) = Message(role=RoleAssistant, content=text, finish_re
     end
 end
 
-@testset "encode — on prefix-checked models every later request extends the earlier one (append-only)" begin
+@testset "encode — under append-only placement every later request extends the earlier one" begin
     s(x) = Message(Val(:system), x)
     u(x) = Message(Val(:user), x)
     call(id) = ToolCall(id=id, func=GPTFunction("f", Dict{String,Any}()))
@@ -1130,7 +1138,7 @@ end
         ([s("s0"), u("u1"), s("s1"), a1, s("s2"), u("u2")], ["user", "system", "assistant", "user", "system"]),
         ([s("s0"), u("u1"), s("s1"), u("u2"), a1, s("s2"), u("u3")], ["user", "user", "assistant", "user", "system"]),
     ]
-    for model in _PREFIX_CHECKED_MODELS, (msgs, roles) in shapes
+    for model in _APPEND_ONLY_MODELS, (msgs, roles) in shapes
         sent = copy(msgs)
         earlier = _anthropic_body(; model, messages=sent)
         @test _roles(earlier) == roles
@@ -1146,7 +1154,7 @@ end
         end
     end
     # A later system message with no user turn after it has nowhere to go: the encoder refuses.
-    for model in _PREFIX_CHECKED_MODELS,
+    for model in _APPEND_ONLY_MODELS,
         msgs in ([s("s0"), u("u1"), a1, s("s2")], [s("s0"), u("u1"), tool_turn("t1"), s("s2")],
                  [s("s0"), u("u1"), a1, s("s2"), _thinking_reply("a2", "sig2")])
         x = _anthropic_err(; model, messages=msgs)
@@ -1174,9 +1182,9 @@ end
 end
 
 @testset "encode — an assistant turn holding only thinking blocks is echoed verbatim" begin
-    # A turn cut at max_tokens can carry thinking blocks and no text; dropping it would leave a
-    # gap in the thinking-block sequence, which invalidates every later block on the models that
-    # check it (https://platform.claude.com/docs/en/build-with-claude/preserved-thinking.md).
+    # A turn cut at max_tokens can carry thinking blocks and no text; to continue it, "pass the
+    # assistant turn back unchanged and append a new user message"
+    # (https://platform.claude.com/docs/en/build-with-claude/thinking.md).
     thinking = JSON.json(Dict("stop_reason" => "max_tokens", "model" => "claude-haiku-5-5",
         "content" => [Dict("type" => "thinking", "thinking" => "", "signature" => "sig==")],
         "usage" => Dict("input_tokens" => 5, "output_tokens" => 16)))
@@ -1215,4 +1223,72 @@ end
         @test body["messages"] == [_wire("user", "q"), _wire("assistant", blocks),
             _wire("user", [Dict("type" => "tool_result", "tool_use_id" => "toolu_s5", "content" => "ok")])]
     end
+end
+
+@testset "encode — a system message after the last reply, with no user turn after it, is refused" begin
+    # The Messages API takes a mid-conversation system message only right after a user turn
+    # (https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages.md),
+    # and joined into the top-level prompt it would turn the request into a response prefill.
+    s(x) = Message(Val(:system), x)
+    u(x) = Message(Val(:user), x)
+    a1 = Message(role=RoleAssistant, content="a1")
+    # Prefill accepted (Haiku 4.5, Opus 4.5) or refused (Sonnet 5, Opus 5), append-only (Opus 5.5, an unknown id).
+    for model in ("claude-haiku-4-5", "claude-opus-4-5", "claude-sonnet-5", "claude-opus-5", "claude-opus-5-5", "claude-opus-9"),
+        msgs in ([s("s0"), u("u1"), a1, s("s2")], [s("s0"), u("u1"), a1, s("s2"), s("s3")])
+        x = _anthropic_err(; model, messages=msgs)
+        @test x isa ArgumentError && occursin(model, x.msg) && occursin("push a user message", x.msg)
+    end
+    # A prefill the caller writes stays one where the model takes it, and a reply with nothing to
+    # send leaves the system message after the user turn.
+    @test _anthropic_body(; model="claude-haiku-4-5", messages=[s("s0"), u("u1"), a1])["messages"][end] ==
+          _wire("assistant", "a1")
+    refusal = Message(role=RoleAssistant, refusal_message="Model refused to respond.", finish_reason=CONTENT_FILTER)
+    body = _anthropic_body(; model="claude-haiku-4-5", messages=[s("s0"), u("u1"), refusal, s("s2")])
+    @test body["system"] == "s0\n\ns2" && body["messages"] == [_wire("user", "u1")]
+end
+
+@testset "encode — an empty text block is never sent; a turn of nothing else is left out" begin
+    # A streamed text block that got no delta stays {"type": "text", "text": ""}, and the Messages
+    # API rejects empty text content.
+    ev(d) = "data: " * JSON.json(d) * "\n"
+    stream = ev(Dict("type" => "message_start", "message" => Dict("usage" => Dict("input_tokens" => 5, "output_tokens" => 1)))) *
+             ev(Dict("type" => "content_block_start", "index" => 0, "content_block" => Dict("type" => "text", "text" => ""))) *
+             ev(Dict("type" => "content_block_stop", "index" => 0)) *
+             ev(Dict("type" => "message_delta", "delta" => Dict("stop_reason" => "end_turn"), "usage" => Dict("output_tokens" => 1))) *
+             ev(Dict("type" => "message_stop"))
+    st = StreamState()
+    @test UniLM._sse_dispatch!(ANTHROPICServiceEndpoint, IOBuffer(), Ref(""), stream, st) === :done
+    empty_turn = _build_stream_message(st)
+    @test empty_turn.content == "" && empty_turn.provider_content.blocks == [Dict("type" => "text", "text" => "")]
+    q1, q2 = Message(Val(:user), "q1"), Message(Val(:user), "q2")
+    for model in ("claude-haiku-5-5", "claude-opus-5-5", "claude-haiku-4-5")
+        @test _anthropic_body(; model, messages=[q1, empty_turn, q2])["messages"] == [_wire("user", "q1"), _wire("user", "q2")]
+    end
+    # Beside other blocks an empty text block is dropped, and the rest goes back as returned.
+    thinking = Dict{String,Any}("type" => "thinking", "thinking" => "", "signature" => "sig==")
+    tool_use = Dict{String,Any}("type" => "tool_use", "id" => "toolu_e", "name" => "f", "input" => Dict{String,Any}())
+    empty = Dict{String,Any}("type" => "text", "text" => "")
+    cut = Message(role=RoleAssistant, content="", finish_reason="length",
+                  provider_content=ProviderContent(:anthropic, Any[thinking, empty]))
+    @test _anthropic_body(; model="claude-haiku-5-5", messages=[q1, cut, q2])["messages"][2] == _wire("assistant", [thinking])
+    calls = [ToolCall(id="toolu_e", func=GPTFunction("f", Dict{String,Any}()))]
+    call = Message(role=RoleAssistant, finish_reason=TOOL_CALLS, tool_calls=calls,
+                   provider_content=ProviderContent(:anthropic, Any[empty, tool_use]))
+    body = _anthropic_body(; model="claude-haiku-5-5",
+                           messages=[q1, call, Message(role=RoleTool, tool_call_id="toolu_e", content="ok")])
+    @test body["messages"][2] == _wire("assistant", [tool_use])
+    # With no empty text block the captured blocks go back as the same array.
+    whole = Any[thinking, tool_use]
+    @test UniLM._anthropic_assistant_content(Message(role=RoleAssistant, tool_calls=calls,
+              provider_content=ProviderContent(:anthropic, whole))) === whole
+end
+
+@testset "a Claude rule row and a placement are valid by construction" begin
+    @test_throws ArgumentError UniLM._ClaudeFamily(thinking=:sometimes)
+    @test_throws ArgumentError UniLM._ClaudeFamily(thinking=:on, prefix_checked=true)     # needs system=true
+    @test UniLM._ClaudeFamily(thinking=:between, system=true, prefix_checked=true).prefix_checked
+    @test all(row -> row.thinking in UniLM._CLAUDE_THINKING && (!row.prefix_checked || row.system),
+              values(UniLM._CLAUDE_FAMILIES))
+    @test_throws TypeError UniLM._anthropic_messages([Message(Val(:user), "q")]; placement=:hoist)
+    @test UniLM._system_placement(nothing) == UniLM._APPEND_ONLY
 end

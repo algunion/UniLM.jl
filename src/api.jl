@@ -1572,9 +1572,12 @@ from that point on. Where it reaches the provider depends on the encoder:
   where the Messages API allows one (right after a user turn, and last or before an
   assistant turn), and elsewhere joins it into the top-level `system` prompt. Claude
   Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 refuse an earlier turn's thinking blocks
-  once the `system` prompt has changed, so there one pushed after an assistant turn that
-  cannot stay in place is sent right after the next user turn; until a user message
-  follows it, the request throws `ArgumentError`.
+  once the `system` prompt has changed, so on them — and on a Claude model UniLM has no
+  rules for — one pushed after an assistant turn that cannot stay in place is sent right
+  after the next user turn instead.
+
+On native Anthropic a system message pushed after an assistant turn needs a user message
+after it: until one follows, the request throws `ArgumentError`.
 """
 function Base.push!(chat::Chat, msg::Message)
     if msg.role != RoleSystem && isempty(chat)

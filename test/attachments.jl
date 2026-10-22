@@ -416,8 +416,10 @@ UniLM.provider_capabilities(::Type{_AttDecisionsMock}) = Set([:system_one])
         end
     end
     @test seen == 0
-    # A state that holds itself is walked once: its document is still found, on every backend.
-    cyclic = Dict{String,Any}("report" => doc); cyclic["self"] = cyclic
+    # A state that holds itself is walked once: its document, keyed after the self-reference (keys
+    # are walked in sorted order), is still found, on every backend, where an unguarded walk would
+    # recurse into the cycle first and never reach it.
+    cyclic = Dict{String,Any}("zreport" => doc); cyclic["self"] = cyclic
     for ep in (_AttTypeSafeMock, _AttDecisionsMock, OllamaEndpoint())
         e = _att_caught(() -> UniLM._system_one_call(SystemOneRequest(cyclic, "q" => noul("Is it signed?"); model="m"), ep))
         @test e isa ArgumentError && occursin("documents", e.msg)

@@ -120,10 +120,10 @@ end
         @test cost2 ≈ 5.25
     end
 
-    @testset "unknown model returns 0" begin
+    @testset "unknown model returns 0, with a warning" begin
         chat2 = Chat(model="unknown-model")
         s2 = LLMSuccess(message=m, self=chat2, usage=u)
-        @test estimated_cost(s2) == 0.0
+        @test (@test_logs (:warn, "no price row for this model; its estimated cost is 0.0") estimated_cost(s2)) == 0.0
     end
 
     @testset "failure returns 0" begin
@@ -142,11 +142,12 @@ end
         @test estimated_cost(s1("jev-1.14.0")) == estimated_cost(s1("jev-latest")) == estimated_cost(s1("jev-1.13.0"))
         @test estimated_cost(s1("jev-latest"); model="jev-2.0.10") ≈ 0.042
         @test estimated_cost(LLMSuccess(message=m, self=Chat(model="jev-2.0.10"), usage=ju)) ≈ 0.042
+        unpriced = (:warn, "no price row for this model; its estimated cost is 0.0")
         for other in ("jev-9", "jev-1.14", "jev-1.14.0-rc1", "xjev-1.14.0")
-            @test estimated_cost(s1(other)) == 0.0
+            @test (@test_logs unpriced estimated_cost(s1(other))) == 0.0
         end
         # A caller-supplied table without a jev-latest row has no family rate to fall back to.
-        @test estimated_cost(s1("jev-1.14.0"); pricing=Dict("gpt-5.4" => DEFAULT_PRICING["gpt-5.4"])) == 0.0
+        @test (@test_logs unpriced estimated_cost(s1("jev-1.14.0"); pricing=Dict("gpt-5.4" => DEFAULT_PRICING["gpt-5.4"]))) == 0.0
         # A dated snapshot suffix is stripped before the lookup: the base version's row applies.
         @test estimated_cost(s1("jev-1.13.0-2026-09-22")) == estimated_cost(s1("jev-1.13.0")) > 0
     end
@@ -276,10 +277,10 @@ end
     es_lg = EmbeddingSuccess(embeddings=emb_lg, usage=u, raw=Dict{String,Any}())
     @test estimated_cost(es_lg) ≈ 500_000 * DEFAULT_PRICING["text-embedding-3-large"].input
 
-    # An unpriced embedding model (resolved from embeddings.model, not in DEFAULT_PRICING) → 0.
+    # An unpriced embedding model (resolved from embeddings.model, not in DEFAULT_PRICING) → 0, with a warning.
     emb_unk = Embeddings("hello"; model="text-embedding-unknown")
     es_unk = EmbeddingSuccess(embeddings=emb_unk, usage=u, raw=Dict{String,Any}())
-    @test estimated_cost(es_unk) == 0.0
+    @test (@test_logs (:warn, "no price row for this model; its estimated cost is 0.0") estimated_cost(es_unk)) == 0.0
 end
 
 @testset "_price per-token conversion" begin

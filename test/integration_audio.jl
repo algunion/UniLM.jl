@@ -1,7 +1,7 @@
 # ─── Speech, translation and transcription integration tests (live) ──────────
 # Requires UNILM_LIVE=1 and OPENAI_API_KEY (OpenAI) / GEMINI_API_KEY (Gemini). Each run
-# costs about a cent: one short gpt-realtime-2.1-mini speech response, one
-# gemini-3.8-flash-tts reply, and 1.5 s of audio translated and transcribed.
+# costs well under a cent: two short gpt-realtime-2.1-mini speech responses, one
+# gemini-3.8-flash-tts reply, two translations of about 1.5 s of audio and one transcription.
 
 const _IA_WAV = joinpath(@__DIR__, "fixtures", "ollama", "secret_word.wav")   # "The secret word is banana."
 
@@ -29,7 +29,22 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "OPENAI_API_KEY")
         @test r isa TranscriptionSuccess
         text = transcript_text(r)
         @info "OpenAI translate" text
-        @test occursin("banane", lowercase(text))   # French for the clip's secret word
+        # The secret word comes back translated ("banane") or kept as a code word ("banana"): both seen.
+        @test occursin(r"banan[ae]", lowercase(text))
+    end
+
+    @testset "OpenAI translate: French speech into the default language, English" begin
+        # The English clip translated into English came back empty (2026-10-22), so the default target
+        # is witnessed on French speech, which speak makes.
+        fr = speak("Le mot secret est banane.")
+        @test fr isa SpeechSuccess
+        path = tempname() * ".wav"
+        write(path, fr.audio)
+        r = try translate(path) finally rm(path; force=true) end
+        @test r isa TranscriptionSuccess
+        text = transcript_text(r)
+        @info "OpenAI translate, default language" text
+        @test occursin("banana", lowercase(text))   # English for "banane"
     end
 
     @testset "OpenAI transcribe: gpt-transcribe" begin

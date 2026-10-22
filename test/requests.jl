@@ -868,6 +868,10 @@ end
         s = fetch(chatrequest!(chat(srv.url; stream=true); config=RequestConfig(max_attempts=3)))
         @test s isa LLMFailure && s.status == 429
         @test srv.hits[] == 2                                  # one request more: the stream was sent once
+        sr = fetch(respond(Respond(service=GenericOpenAIEndpoint(srv.url, ""), model="m", input="hi", stream=true);
+                           config=RequestConfig(max_attempts=3)))
+        @test sr isa ResponseFailure && sr.status == 429
+        @test srv.hits[] == 3                                  # a streamed respond is sent once too
     finally
         close(srv.server)
     end

@@ -448,6 +448,11 @@ end
     @test_throws ArgumentError enc(text=TextConfig(format=TextFormatSpec(type="json_object")))
     @test_throws ArgumentError enc(text=TextConfig(verbosity="low"))
     @test_throws ArgumentError enc(input=[InputMessage(role="user", content=[input_image(file_id="file_1")])])
+    # A replayed message's phase has no field on Ollama's Responses API.
+    err = try enc(input=[InputMessage(role="user", content="q"),
+                         InputMessage(role="assistant", content="a", phase="commentary")]); nothing catch x; x end
+    @test err isa ArgumentError && occursin("phase", err.msg) && occursin("Ollama", err.msg)
+    @test haskey(enc(input=[InputMessage(role="user", content="q"), InputMessage(role="assistant", content="a")]), "model")
     # respond validates before any I/O: the refusal is a throw, not a result.
     @test_throws ArgumentError respond(Respond(service=e, model="m", input="x", store=true))
     # A Respond tool loop cannot chain turns without server-side state.

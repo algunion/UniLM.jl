@@ -81,7 +81,7 @@ end
 "Vector Stores API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout. `last_observed` is set only when [`poll_file_batch`](@ref) runs out of time or is cancelled: the last [`VectorStoreFileBatch`](@ref) it saw, if any."
 @kwdef struct VectorStoreCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; last_observed::Union{Nothing,VectorStoreFileBatch} = nothing; end
 
-_transient(r::VectorStoreFailure) = _is_retryable(r.status)
+_transient(r::VectorStoreFailure) = _is_retryable(r.status, r.response)
 _transient(r::VectorStoreCallError) = _per_attempt_timeout(r.cause)
 
 _parse_vector_store(d::AbstractDict) = VectorStoreObject(id=d["id"], name=get(d, "name", nothing),

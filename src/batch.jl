@@ -43,7 +43,7 @@ end
 "Batch API call that produced no usable reply (transport failure, timeout, or a 200 that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout. `last_observed` is set only when [`poll_batch`](@ref) runs out of time or is cancelled: the last [`BatchObject`](@ref) it saw, if any."
 @kwdef struct BatchCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; last_observed::Union{Nothing,BatchObject} = nothing; end
 
-_transient(r::BatchFailure) = _is_retryable(r.status)
+_transient(r::BatchFailure) = _is_retryable(r.status, r.response)
 _transient(r::BatchCallError) = _per_attempt_timeout(r.cause)
 
 _parse_batch(d::AbstractDict) = BatchObject(id=d["id"], status=get(d, "status", nothing),

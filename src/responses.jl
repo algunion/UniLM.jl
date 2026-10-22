@@ -1498,7 +1498,7 @@ function _respond_drive(r::Respond, body::String, callback, cfg::RequestConfig, 
                                        service=r.service)
             elseif (te = terminal_error[]) !== nothing
                 return _agentic_terminal_result(te, resp.status, io_ref[], state.sse_dropped)
-            elseif _is_retryable(resp.status) && !ctl.fired && attempt < cfg.max_attempts
+            elseif _is_retryable(resp.status, raw_buffer) && !ctl.fired && attempt < cfg.max_attempts
                 action, delay = _retry_pause(cfg, t0, attempt, resp)
                 if action === :budget
                     # Never sleep past the deadline; return the last real response.

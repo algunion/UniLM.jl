@@ -1100,9 +1100,14 @@ end
     chat = Chat()
 
 Creates a new `Chat` object with default settings:
-- `model` is set to `gpt-5.6-sol`
+- `model` is set to `gpt-6-sol` (the OpenAI default)
 - `messages` is set to an empty `Vector{Message}`
 - `history` is set to `true`
+
+On the native OpenAI endpoint, `max_tokens` is sent as `max_completion_tokens` (setting
+both throws `ArgumentError`), `user` throws (use `safety_identifier` or
+`prompt_cache_key`), and `service_tier` must be one of `"auto"`, `"default"`, `"flex"`,
+`"scale"`, `"priority"` or `"fast"`.
 
 OpenAI options, omitted from the request when unset:
 - `prompt_cache_options::Union{PromptCacheOptions,Nothing}`: prompt-cache `mode` and

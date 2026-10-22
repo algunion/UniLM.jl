@@ -354,6 +354,11 @@ _input_file(v::AbstractVector) = any(_input_file, v)
 _input_file(m::InputMessage) = _input_file(m.content)
 _input_file(d::AbstractDict) = get(d, "type", get(d, :type, nothing)) == "input_file" || _input_file(collect(values(d)))
 
+# A replayed assistant message's phase: only OpenAI's Responses API reads it.
+_input_phase(x) = false
+_input_phase(v::AbstractVector) = any(_input_phase, v)
+_input_phase(m::InputMessage) = !isnothing(m.phase)
+
 # Keys of a function tool that Ollama's Responses tools do not have (OpenAI-only).
 const _OLLAMA_RESPOND_TOOL_KEYS = ("async", "allowed_callers", "defer_loading", "output_schema")
 
@@ -388,6 +393,9 @@ function encode_agentic(service::OllamaEndpoint, r::Respond)::String
     _input_file(r.input) && throw(ArgumentError(
         "Ollama's Responses API documents no input_file parts, so the file might never reach the model: put " *
         "the document's text in an input_text part, or send the file to OPENAIServiceEndpoint"))
+    _input_phase(r.input) && throw(ArgumentError(
+        "Ollama's Responses API has no message phase: unset the InputMessage phase, or send the " *
+        "request to OPENAIServiceEndpoint"))
     body = JSON.parse(invoke(encode_agentic, Tuple{OpenAIWireEndpointSpec,Respond}, service, r))
     think === false && isnothing(effort) && (body["reasoning"] = Dict("effort" => "none"))
     for tool in something(get(body, "tools", nothing), Any[])

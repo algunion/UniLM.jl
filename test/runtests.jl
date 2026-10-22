@@ -265,6 +265,10 @@ end
         include("integration_provider_compat.jl")
     end
 
+    @testset "integration — usage and cost" begin
+        include("integration_cost.jl")
+    end
+
     @testset "integration — tool loop" begin
         include("integration_tool_loop.jl")
     end

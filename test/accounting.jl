@@ -651,13 +651,14 @@ end
 
 @testset "OpenAI price rows" begin
     # https://developers.openai.com/api/docs/pricing (2026-10-22), USD per 1M tokens: input,
-    # cached input, output. The pro models list no cached-input rate: a cache read bills as input.
+    # cached input, output. The pro models list no cached-input rate: a cache read bills as input;
+    # so does gpt-audio-1.5, whose row is its text rates.
     for (model, i, c, o) in (("gpt-6-astra", 10.0, 1.0, 50.0), ("gpt-6.1-sol", 2.0, 0.10, 10.0),
             ("gpt-6-sol", 2.0, 0.20, 10.0), ("gpt-6-luna", 0.10, 0.01, 0.50),
             ("gpt-5.6-sol", 4.0, 0.40, 20.0), ("gpt-5.6-terra", 2.0, 0.20, 12.0), ("gpt-5.6-luna", 0.20, 0.02, 1.20),
             ("gpt-5.5", 5.0, 0.50, 30.0), ("gpt-5.5-pro", 30.0, 30.0, 180.0), ("gpt-5.4", 2.5, 0.25, 15.0),
             ("gpt-5.4-pro", 30.0, 30.0, 180.0), ("gpt-5.4-mini", 0.75, 0.075, 4.5), ("gpt-5.2", 1.75, 0.175, 14.0),
-            ("chat-latest", 5.0, 0.50, 30.0), ("text-embedding-3-small", 0.02, 0.02, 0.0),
+            ("chat-latest", 5.0, 0.50, 30.0), ("gpt-audio-1.5", 2.5, 2.5, 10.0), ("text-embedding-3-small", 0.02, 0.02, 0.0),
             ("text-embedding-3-large", 0.13, 0.13, 0.0), ("text-embedding-ada-002", 0.10, 0.10, 0.0))
         @test DEFAULT_PRICING[model] == UniLM._price(i, c, o)
     end
@@ -753,4 +754,80 @@ end
     flex = TokenUsage(1_000, 100, 1_100, 0, 0, 0, 0, "flex", nothing)
     @test (@test_logs (:warn, r"service tier") estimated_cost(_oa_result("gpt-7-x", flex); pricing)) ≈
           (1_000 * 1.0 + 100 * 4.0) / 1e6
+end
+
+# A Chat usage of `prompt` input tokens, `heard` of them audio, and `completion` output tokens,
+# `spoken` of them audio, billed at the default tier.
+_oa_audio(prompt, heard, completion, spoken; cached=0) =
+    TokenUsage(prompt_tokens=prompt, completion_tokens=completion, total_tokens=prompt + completion,
+               cached_tokens=cached, service_tier="default", prompt_audio_tokens=heard,
+               completion_audio_tokens=spoken)
+
+@testset "OpenAI cost: Chat audio tokens bill at the model's audio rates, the rest at its text rates" begin
+    # https://developers.openai.com/api/docs/pricing (2026-10-22), gpt-audio-1.5 per 1M tokens: text
+    # $2.50 input and $10 output, audio $32 input and $64 output; no cached-input rate for either.
+    u = _oa_audio(1_000, 600, 500, 420)
+    # The audio subsets follow every other field, so the five positional counts alone build a usage.
+    @test u == TokenUsage(1_000, 500, 1_500, 0, 0, 0, 0, "default", nothing, 600, 420)
+    @test TokenUsage(10, 2, 12, 3, 1) == TokenUsage(10, 2, 12, 3, 1, 0, 0, nothing, nothing, 0, 0)
+    want = (400 * 2.5 + 600 * 32.0 + 80 * 10.0 + 420 * 64.0) / 1e6
+    @test isapprox((@test_logs estimated_cost(_oa_result("gpt-audio-1.5", u))), want; rtol=1e-12)   # priced: no warning
+    # A cache read bills as input: the page gives this model no cached-input rate.
+    @test isapprox(estimated_cost(_oa_result("gpt-audio-1.5", _oa_audio(1_000, 600, 500, 420; cached=300))), want;
+                   rtol=1e-12)
+    # Audio on one side only: a text reply to a spoken prompt, a spoken reply to a text prompt.
+    @test isapprox(estimated_cost(_oa_result("gpt-audio-1.5", _oa_audio(1_000, 600, 500, 0))),
+                   (400 * 2.5 + 600 * 32.0 + 500 * 10.0) / 1e6; rtol=1e-12)
+    @test isapprox(estimated_cost(_oa_result("gpt-audio-1.5", _oa_audio(1_000, 0, 500, 420))),
+                   (1_000 * 2.5 + 80 * 10.0 + 420 * 64.0) / 1e6; rtol=1e-12)
+    # A dated snapshot, served or requested, bills its base model's text and audio rates.
+    snapshot = "gpt-audio-1.5-2026-08-28"
+    @test estimated_cost(_oa_result(snapshot, u)) == estimated_cost(_oa_result("gpt-audio-1.5", u))
+    served = LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=Chat(model="gpt-audio-1.5"),
+                        usage=u, model=snapshot)
+    @test estimated_cost(served) == estimated_cost(_oa_result("gpt-audio-1.5", u))
+    @test (@inferred UniLM._billed_cost(OPENAIServiceEndpoint, "gpt-audio-1.5", u, DEFAULT_PRICING["gpt-audio-1.5"])) ==
+          estimated_cost(_oa_result("gpt-audio-1.5", u))
+end
+
+@testset "OpenAI cost: audio tokens of a model without audio rates are unpriced, never billed as text" begin
+    # As for a model without a price row: the estimate is 0.0, and a warning names the model once.
+    u = _oa_audio(1_000, 600, 500, 420)
+    custom = Dict("gpt-audio-2" => UniLM._price(2.5, 2.5, 10.0), "gpt-audio-1.5-mini" => UniLM._price(0.6, 0.6, 2.4))
+    logs, total = Test.collect_test_logs() do
+        estimated_cost(_oa_result("gpt-audio-1.5", u); model="gpt-6-luna") +       # a text model's row
+        estimated_cost(_oa_result("gpt-audio-1.5", u); model="gpt-6-luna") +
+        estimated_cost(_oa_result("gpt-audio-2", u); pricing=custom) +             # an unknown later id
+        estimated_cost(_oa_result("gpt-audio-1.5-mini", _oa_audio(1_000, 600, 500, 0)); pricing=custom)  # a near miss
+    end
+    @test total == 0.0
+    warned = [l for l in logs if l.level == Base.CoreLogging.Warn]
+    @test [l.kwargs[:model] for l in warned] == ["gpt-6-luna", "gpt-audio-2", "gpt-audio-1.5-mini"]
+    @test all(l -> occursin("no audio-token rates", l.message), warned)
+    # Without audio tokens the same models bill their text rates, silently.
+    text = TokenUsage(prompt_tokens=1_000, completion_tokens=500, total_tokens=1_500)
+    @test isapprox((@test_logs estimated_cost(_oa_result("gpt-audio-2", text); pricing=custom)),
+                   (1_000 * 2.5 + 500 * 10.0) / 1e6; rtol=1e-12)
+    @test isapprox((@test_logs estimated_cost(_oa_result("gpt-6-luna", text))), (1_000 * 0.10 + 500 * 0.50) / 1e6;
+                   rtol=1e-12)
+end
+
+@testset "OpenAI cost: a usage without audio tokens is billed by the text formula alone, to the last bit" begin
+    # Each pinned value is the one the text formula gives in floating point: `isapprox` shows the
+    # formula, `===` holds the bits, so the audio terms leave every text-only estimate unchanged.
+    for (model, u, formula, pinned) in (
+            ("gpt-6-luna", TokenUsage(10_000, 100, 10_100, 1_000, 0, 4_000, 1_500, "flex", nothing),
+             0.5 * (5_000 * 0.10 + 2_500 * 0.125 + 1_500 * 0.25 + 1_000 * 0.01 + 100 * 0.50) / 1e6, 0.0006237500000000001),
+            ("gpt-6-sol", TokenUsage(300_000, 1_000, 301_000, 100_000, 0, 50_000, 20_000, "default", nothing),
+             (2 * (150_000 * 2.0 + 30_000 * 2.5 + 20_000 * 5.0 + 100_000 * 0.20) + 1.5 * 1_000 * 10.0) / 1e6, 1.005),
+            ("gpt-6-astra", TokenUsage(5_000, 700, 5_700, 0, 0, 0, 0, "ultrafast", nothing),
+             6 * (5_000 * 10.0 + 700 * 50.0) / 1e6, 0.51),
+            ("gpt-5.5", TokenUsage(12_345, 678, 13_023, 2_345, 0, 0, 0, "priority", nothing),
+             2.5 * (10_000 * 5.0 + 2_345 * 0.50 + 678 * 30.0) / 1e6, 0.17878125),
+            ("chat-latest", TokenUsage(999, 111, 1_110, 99, 0, 0, 0, nothing, nothing),
+             (900 * 5.0 + 99 * 0.50 + 111 * 30.0) / 1e6, 0.007879500000000001))
+        cost = estimated_cost(_oa_result(model, u))
+        @test isapprox(cost, formula; rtol=1e-12)
+        @test cost === pinned
+    end
 end

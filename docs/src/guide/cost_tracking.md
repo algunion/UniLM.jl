@@ -51,7 +51,7 @@ and System One — else the one requested: `result.self.model` for Chat,
 estimated_cost(result; model="gpt-5.4")   # price as if it were gpt-5.4
 ```
 
-## How the estimate is computed
+## [How the estimate is computed](@id cost_estimate)
 
 `estimated_cost` splits the prompt into fresh, cache-read and cache-written tokens and bills
 each at its own rate:
@@ -67,6 +67,14 @@ premium on cache writes (`cache_write_extended_tokens` counts the writes at the 
 retention), a long-context tier, a multiplier for the `service_tier` or `inference_geo` the
 provider reports in [`TokenUsage`](@ref) — they apply to that provider's results; every
 other result is billed at the standard rates.
+
+OpenAI bills the audio of a Chat audio reply ([Audio replies](@ref chat_audio_output)) at
+the model's audio-token rates: `prompt_audio_tokens` and `completion_audio_tokens`, the
+audio parts of `prompt_tokens` and `completion_tokens`, bill at those rates, and the rest of
+the call at the row's text rates. UniLM has the audio-token rates of `gpt-audio-1.5`. An
+`OPENAIServiceEndpoint` result whose usage counts audio tokens of any other model is not
+priced — `0.0`, with one warning per model, as for a model without a row — rather than
+billed at its text rates.
 
 Reasoning tokens are already counted inside `completion_tokens`, so they carry no separate
 charge. Failures and call errors report zero usage and `0.0` cost. Image results report the

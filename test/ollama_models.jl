@@ -391,7 +391,7 @@ end
 # Ollama path (or the reverse).
 @testset "list_models routes by service" begin
     @test UniLM.provider_capabilities(OllamaEndpoint()) ⊇ Set([:models])
-    @test_throws ArgumentError list_models(; service=OPENAIServiceEndpoint)       # no models listing
+    @test_throws ArgumentError list_models(; service=AZUREServiceEndpoint)        # no models listing
     withenv(UniLM.TYPESAFE_API_KEY => nothing) do                                   # TypeSafe path, no network
         @test list_models() isa SystemOneCallError
     end

@@ -502,6 +502,44 @@ println("DeepSeek FIM: ", has_capability(DeepSeekEndpoint("k"), :fim))
 println("OpenAI FIM: ", has_capability(OPENAIServiceEndpoint, :fim))
 ```
 
+## [Keep up with provider models](@id backends_provider_models)
+
+Providers add models, deprecate them and shut them down on their own schedules.
+[`list_models`](@ref) shows what OpenAI, Anthropic and Gemini serve your key today, with each
+model's token limits, capabilities and lifecycle dates ([Model Listings](@ref models_api)):
+
+```julia
+using Dates
+
+r = list_models(service=ANTHROPICServiceEndpoint)
+r isa ModelListSuccess || error("the listing failed: $r")
+for m in r.models
+    !isnothing(m.retires) && m.retires <= today() + Day(90) && println(m.id, " retires on ", m.retires)
+end
+```
+
+UniLM checks a request against its rules for the model it names and prices the result at the
+model's [`DEFAULT_PRICING`](@ref) row. A request for a model with no rule row of its own is
+still held to the provider-wide rules — no Claude request sets `temperature`, for one — and the
+provider's answer checks the rest; a model with no price row costs \$0 ([Unpriced models cost
+\$0](@ref unpriced-zero)). Before you adopt a newly listed model, look for its price row as the
+cost code does — the id, else the id without its dated snapshot suffix (`-YYYY-MM-DD` on OpenAI,
+`-YYYYMMDD` on Anthropic) — or add one:
+
+```julia
+priced(id) = haskey(DEFAULT_PRICING, id) ||
+             haskey(DEFAULT_PRICING, replace(id, r"-(\d{4}-\d{2}-\d{2}|\d{8})$" => ""))
+[m.id for m in r.models if !priced(m.id)]
+```
+
+UniLM's release gate runs the same listings against its tables
+(`test/integration_provider_drift.jl`): every listed model of the families UniLM documents —
+GPT-6, GPT-5.6 and GPT-5.4 mini; Claude 4.5 and later, and every Claude model UniLM has rules
+for; Gemini 3.5 and later text models — must have a price row, and a rule row too unless it is
+GPT-5.4 mini or a Gemini model that does not think; every model UniLM uses by default or in its
+live tests must be listed and not past its retirement date; and each Claude rule row must agree
+with the thinking types and effort levels Anthropic lists for the model.
+
 ## See Also
 
 - [`ServiceEndpoint`](@ref), [`GenericOpenAIEndpoint`](@ref) — endpoint types

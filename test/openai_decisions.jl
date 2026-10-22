@@ -144,9 +144,10 @@ _od_sent(request::SystemOneRequest; service=_ODMock) =
         r = ask(req; service=OPENAIServiceEndpoint, config=_OD_CFG)
         @test r isa SystemOneCallError && contains(r.error, "OPENAI_API_KEY") && r.request_id === nothing
     end
-    # No models listing on this protocol: refused by name, before any request.
-    e = _od_caught(() -> list_models(; service=OPENAIServiceEndpoint))
-    @test e isa ArgumentError && contains(e.msg, "OpenAIDecisionsProtocol")
+    # The endpoint's listing is OpenAI's models listing, not this protocol's: with no key, a call
+    # error that names it.
+    r = withenv(() -> list_models(; service=OPENAIServiceEndpoint, config=_OD_CFG), "OPENAI_API_KEY" => nothing)
+    @test r isa ModelListCallError && contains(r.error, "OPENAI_API_KEY")
 end
 
 # ─── Encoding ────────────────────────────────────────────────────────────────

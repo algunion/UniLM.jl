@@ -48,6 +48,7 @@ module UniLM
 using HTTP
 using JSON
 using Base64
+using Dates: Dates, Date, DateTime
 using SHA
 
 include("constants.jl")
@@ -79,6 +80,7 @@ include("recorded_answers.jl")
 include("semantic.jl")
 include("files.jl")
 include("ollama_models.jl")
+include("model_listing.jl")
 include("vector_stores.jl")
 include("conversations.jl")
 include("moderations.jl")
@@ -418,6 +420,13 @@ export
     meaning_gaps,
     LowConfidenceError,
     DecisionDeclinedError
+
+# ─── Provider model listings ───
+export
+    ProviderModel,
+    ModelListSuccess,
+    ModelListFailure,
+    ModelListCallError
 
 # ─── Ollama model management ───
 export

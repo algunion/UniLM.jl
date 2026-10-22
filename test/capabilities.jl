@@ -8,7 +8,7 @@ import Sockets
     @test :tools in UniLM.provider_capabilities(OPENAIServiceEndpoint)
     @test !(:fim in UniLM.provider_capabilities(OPENAIServiceEndpoint))
     @test :system_one in UniLM.provider_capabilities(OPENAIServiceEndpoint)     # the Decisions API
-    @test !(:models in UniLM.provider_capabilities(OPENAIServiceEndpoint))
+    @test :models in UniLM.provider_capabilities(OPENAIServiceEndpoint)          # its models listing
 
     @test :chat in UniLM.provider_capabilities(AZUREServiceEndpoint)
     @test :tools in UniLM.provider_capabilities(AZUREServiceEndpoint)

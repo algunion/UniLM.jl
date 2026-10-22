@@ -136,14 +136,18 @@ The completion cap includes thinking tokens, so a very small cap can produce an 
 
 Gemini ignores `temperature` and `top_p` on Gemini 3.6 Flash, 3.5 Flash-Lite and every later
 model ([what changed in Gemini 3.6](https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.6)),
-so both APIs throw `ArgumentError` for them on every model except the earlier ones that honour
-them, such as `gemini-2.5-flash`, `gemini-3-flash-preview` and `gemini-3.1-pro-preview`.
-From the same models on, a request may not end with a model turn: a native `Chat` whose last
-message is the assistant's throws `ArgumentError` there, since the API answers it with HTTP 400.
-On `respond`, Gemini 4 Argon takes a `max_output_tokens` above 65,536 only with
-`background=true` ([long decode](https://ai.google.dev/gemini-api/docs/long-decode)), and
-`prompt_cache_options` throws on both APIs: Gemini caches repeated prompt prefixes
-[implicitly](https://ai.google.dev/gemini-api/docs/caching), with nothing to set.
+so native Chat, `respond` (Interactions) and `GEMINIOpenAIServiceEndpoint` throw `ArgumentError`
+for them on every model except the earlier ones that honour them, such as `gemini-2.5-flash`,
+`gemini-3-flash-preview` and `gemini-3.1-pro-preview`. From the same models on, a request may not
+end with a model turn: a prefilled answer (a `Chat` whose last message is the assistant's, sent with
+`history=false`) throws `ArgumentError` on native Chat, since the API answers it with HTTP 400, and
+`GEMINIOpenAIServiceEndpoint` returns that 400 as an `LLMFailure`. On `respond`, Gemini 4 Argon
+takes a `max_output_tokens` above 65,536 only with `background=true`
+([long decode](https://ai.google.dev/gemini-api/docs/long-decode)).
+`prompt_cache_options` throws on native Chat and `respond`: Gemini caches repeated prompt
+prefixes [implicitly](https://ai.google.dev/gemini-api/docs/caching), and UniLM does not wrap the
+explicit caching (cached contents) that `generateContent` also offers on Gemini 3 and 2.5 models;
+`GEMINIOpenAIServiceEndpoint` answers the field with HTTP 400.
 
 Google routes the deprecated `gemini-3.7-flash` to `gemini-3.8-flash` and `gemini-3.5-flash` to
 `gemini-3.6-flash`. Such a request takes the rules of the model that serves it, and the reply names

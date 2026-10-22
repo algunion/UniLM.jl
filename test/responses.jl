@@ -1727,6 +1727,16 @@ end
     @test lowered[:model] == "gpt-6.1-sol"
 end
 
+@testset "the Respond docstring states OpenAI's rules as the encoder applies them" begin
+    doc = string(@doc Respond)
+    # The Responses reference on prompt_cache_retention.
+    @test occursin("`gpt-5.5-pro`, and future models, only `24h` is supported", doc)
+    # Ultrafast is served by two models only, so it is not among the rules left to the server.
+    @test occursin("Ultrafast is served by `gpt-6-astra` and `gpt-6.1-sol` alone", doc) &&
+          occursin("on every other model, an unknown one included", doc)
+    @test !occursin("Ultrafast, `prompt_cache_retention`", doc)
+end
+
 @testset "Respond convenience with new kwargs" begin
     withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
         result = respond("Hello",

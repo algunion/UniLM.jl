@@ -578,7 +578,7 @@ result = fetch(task)  # LLMSuccess when complete, else a typed failure
     service_tier::Union{String,Nothing} = nothing           # OpenAI "auto","default","flex","scale","priority","fast"; "ultrafast" on gpt-6-astra/gpt-6.1-sol
     top_logprobs::Union{Int64,Nothing} = nothing            # 0–20
     prompt_cache_key::Union{String,Nothing} = nothing
-    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory","24h" (models before GPT-5.6; refused on the gpt-6*/gpt-5.6* rule models)
+    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory","24h" ("24h" only on gpt-5.5/gpt-5.5-pro, server-checked; refused on the gpt-6*/gpt-5.6* rule models)
     safety_identifier::Union{String,Nothing} = nothing
     conversation::Union{Any,Nothing} = nothing              # String or Dict (not with previous_response_id); the declared type collapses to Any
     context_management::Union{Vector,Nothing} = nothing
@@ -800,7 +800,8 @@ endpoints send the object unchanged, the server's answer being the check.
 On OpenAI, `prompt_cache_retention` throws `ArgumentError` for `gpt-6-astra`, `gpt-6.1-sol`,
 `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated
 snapshots), whose cache lifetime `prompt_cache_options` sets; on other models it is sent and
-may be combined with `prompt_cache_options`. Explicit mode requires cache breakpoints in input
+may be combined with `prompt_cache_options`; on `gpt-5.5` and `gpt-5.5-pro` it takes only
+`"24h"` (OpenAI's reference; the server checks it). Explicit mode requires cache breakpoints in input
 content to create cache writes — mark them with `input_text(text; cache_breakpoint=true)`, a
 Responses input part; `Chat` messages cannot carry one, so explicit mode on a `Chat` means no
 prompt caching. Chat Completions takes only `mode` and `ttl` (a native OpenAI `Chat` with

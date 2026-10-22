@@ -818,10 +818,13 @@ Configuration struct for an OpenAI Responses API request.
   `"standard"`, `"flex"`, `"priority"` or `"deferred"` (`"deferred"` is an Interactions tier
   only: native Gemini Chat takes the other three); another value throws `ArgumentError`.
   [`token_usage`](@ref) reports the tier that billed the call
-- `prompt_cache_retention::String`: `"in_memory"` or `"24h"` for models before GPT-5.6.
-  OpenAI deprecates it: on `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`,
-  `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots), whose cache
-  lifetime `prompt_cache_options` sets, the native endpoint throws `ArgumentError` for it
+- `prompt_cache_retention::String`: `"in_memory"` or `"24h"`; OpenAI's
+  [reference](https://developers.openai.com/api/reference/resources/responses/methods/create)
+  says "for `gpt-5.5`, `gpt-5.5-pro`, and future models, only `24h` is supported", which the
+  server checks on those two. OpenAI deprecates the field: on `gpt-6-astra`, `gpt-6.1-sol`,
+  `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated
+  snapshots), whose cache lifetime `prompt_cache_options` sets, the native endpoint throws
+  `ArgumentError` for any value
 - `moderation::ModerationConfig`: Moderated completions — see [`ModerationConfig`](@ref)
 - `seed::Int64`: decoding seed, for repeatable output. Gemini Interactions
   (`GEMINIServiceEndpoint`) sends it as `generation_config.seed`, an int32: a seed outside
@@ -832,8 +835,10 @@ Configuration struct for an OpenAI Responses API request.
   [`OllamaEndpoint`](@ref), whose Responses API reads no seed
 
 On `OPENAIServiceEndpoint` the encoder also applies OpenAI's per-model rules (reasoning
-efforts, sampling controls, Ultrafast, `prompt_cache_retention`) to those models, by exact
-id or a dated snapshot, before any request; other models are checked by the server. See
+efforts, sampling controls, `prompt_cache_retention`) to those GPT-6 and GPT-5.6 models, by
+exact id or a dated snapshot, before any request; other models are checked by the server.
+Ultrafast is served by `gpt-6-astra` and `gpt-6.1-sol` alone, so `"ultrafast"` throws
+`ArgumentError` on every other model, an unknown one included. See
 [OpenAI's GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model).
 Build a `Respond` with keywords: the positional form takes all 32 fields in declaration
 order.
@@ -884,7 +889,7 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
     service_tier::Union{String,Nothing} = nothing      # "auto", "default", "flex", "scale", "priority", "fast", "ultrafast"
     top_logprobs::Union{Int64,Nothing} = nothing       # 0-20
     prompt_cache_key::Union{String,Nothing} = nothing
-    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory", "24h" (models before GPT-5.6)
+    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory", "24h" ("24h" only on gpt-5.5 and later)
     safety_identifier::Union{String,Nothing} = nothing
     conversation::Union{Any,Nothing} = nothing         # String or Dict
     context_management::Union{Vector,Nothing} = nothing

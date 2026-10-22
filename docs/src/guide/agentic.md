@@ -34,6 +34,32 @@ end
 Google shuts down `gemini-3.1-flash-lite` on May 7, 2027 and names
 `gemini-3.5-flash-lite` as its replacement.
 
+## Messages, images, audio and documents (Gemini)
+
+The Interactions API takes its input as a list of steps, so `respond` sends each
+[`InputMessage`](@ref) as one: a user message as a `user_input` step and an assistant
+message as a `model_output` step (a Dict with a `role` is read the same way). A system or
+developer message throws `ArgumentError` — send that guidance as `instructions` — and so
+does a message `phase`, which only OpenAI's Responses API reads. A message's content is
+text, or a vector of parts: [`input_text`](@ref) parts, and media as
+[`ImageAttachment`](@ref), [`AudioAttachment`](@ref) and [`DocumentAttachment`](@ref)
+values, each sent as an Interactions `image`, `audio` or `document` part holding its bytes;
+[`input_file`](@ref)`(document)` and an [`input_image`](@ref) with a base64 data URL are sent
+the same way. An image's `detail` is its `resolution` (`"low"` or `"high"`; `"auto"` leaves
+the model's default; `"original"` throws). A web URL, an OpenAI file id and a cache
+breakpoint have no equivalent here, and throw `ArgumentError` before any request.
+
+```julia
+r = respond(Respond(service=GEMINIServiceEndpoint, model="gemini-3.8-flash",
+    input=[InputMessage(role="user", content=[input_text("What colour is the circle? One word."),
+                                              ImageAttachment("circle.png")])]))
+```
+
+`service_tier` takes `"standard"`, `"flex"`, `"priority"` or `"deferred"`
+([optimization](https://ai.google.dev/gemini-api/docs/optimization)), `seed` is sent as
+`generation_config.seed`, and `safety_identifier` as the request label `safety_identifier`
+(at most 63 lowercase letters, digits, underscores and dashes).
+
 ## Hosted tools (Gemini)
 
 Control Gemini thinking with the same typed configuration used by OpenAI:
@@ -139,7 +165,9 @@ Interactions decoder normalizes usage into the shared shape, counting tool-use p
 tokens as input, and [`DEFAULT_PRICING`](@ref) includes `gemini-4-argon` and
 `gemini-3.8-flash` (hosted-tool per-call fees are not modeled). An interaction is priced
 as the model that served it, `response.model`, so an alias or a routed id is billed at
-its target's rates.
+its target's rates, and at the tier it reports in `service_tier` (`token_usage(r).service_tier`):
+Flex at half the standard rates, Priority at 1.8 times (see
+[Multi-Backend Support](@ref backend_guide)).
 
 ```@example agentic
 r = respond("What is 2+2?"; service=GEMINIServiceEndpoint, model="gemini-3.8-flash")

@@ -795,3 +795,33 @@ end
         end
     end
 end
+
+@testset "realtime_receive: a send parked on a peer that stopped reading cannot hold its idle bound open" begin
+    # A send parked on full socket buffers holds HTTP.jl's send lock, which closing the WebSocket
+    # waits for: the bound holds only if the read is ended without that lock.
+    cfg = RequestConfig(connect_timeout=10.0, stream_idle_timeout=1.0, total_deadline=Inf)
+    outcome, took = Ref{Any}(nothing), Ref(NaN)
+    _sp_with_stall_peer() do
+        call = Threads.@spawn realtime_connect(; service=SpeechWSProbe, config=cfg) do s
+            realtime_receive(s); realtime_receive(s)          # session.created, session.updated
+            big = input_audio_append(repeat("A", 1_000_000))
+            sender = Threads.@spawn try
+                while true
+                    realtime_send(s, big)                     # parks once the socket buffers fill
+                end
+            catch e
+                e
+            end
+            sleep(2.0)                                        # 1 MB per event: parked long before this
+            t = time()
+            outcome[] = try realtime_receive(s) catch e; e end
+            took[] = time() - t
+            fetch(sender)
+        end
+        @test timedwait(() -> !isnothing(outcome[]), 15.0) === :ok
+        @test outcome[] isa UniLMTimeout && outcome[].phase === :stream_idle && outcome[].limit == 1.0
+        @test took[] < 4.0
+        # Ending the connection also unblocked the parked send, so the handler returned.
+        @test timedwait(() -> istaskdone(call), 15.0) === :ok
+    end
+end

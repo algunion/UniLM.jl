@@ -213,16 +213,18 @@ realtime_send(s::RealtimeSession, event::AbstractDict) = HTTP.WebSockets.send(s.
     realtime_receive(session) -> Dict
 
 Block for the next server event, bounded by the session's `stream_idle_timeout`.
-A parked read cannot be polled out of, so a breach closes the socket — the
-universal unblocker — and throws `UniLMTimeout(:stream_idle, …)`.
+A parked read cannot be polled out of, so a breach ends the connection and throws
+`UniLMTimeout(:stream_idle, …)`; the session is closed after it. Ending the connection
+needs no lock, so a [`realtime_send`](@ref) parked on a peer that stopped reading cannot
+hold the bound open (that send then throws too).
 """
 function realtime_receive(s::RealtimeSession)
     limit = s.config.stream_idle_timeout
     t0 = time_ns()
     raw, fired = _with_deadline_reported(() -> HTTP.WebSockets.receive(s.ws),
-                                         () -> close(s.ws), limit, :stream_idle)
-    # A fired guard means our own close is what ended the read: anything it handed
-    # back is the echo of that close on a dead socket, never a server event.
+                                         () -> _realtime_drop!(s.ws), limit, :stream_idle)
+    # A fired guard means our own drop is what ended the read: anything it handed
+    # back is the echo of that drop on a dead socket, never a server event.
     fired && throw(UniLMTimeout(:stream_idle, _elapsed_s(t0), limit))
     return JSON.parse(String(raw); dicttype=Dict{String,Any})
 end

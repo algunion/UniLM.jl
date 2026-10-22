@@ -2589,8 +2589,9 @@ the Concurrency, Tasks and Cancellation guide.
   `ArgumentError` before any I/O; it opens `gpt-realtime-2.1` unless `model` names another) bounds the open phase with `connect_timeout`, surfaces
   an open that failed for another reason as that error, and closes an upgrade that
   completes after the timeout without running the handler; `realtime_receive` bounds
-  the read with `stream_idle_timeout` and surfaces a breach within
-  `[limit, limit + ~5 s]` (the WebSocket close waits for the peer's acknowledgement).
+  the read with `stream_idle_timeout` and surfaces a breach just after the limit: it ends
+  the connection without the send lock, so a `realtime_send` parked on a peer that stopped
+  reading cannot hold it open (that send throws too).
   An open session's lifetime is deliberately unbounded. `mint_realtime_secret` returns
   `RealtimeCallError` for a 200 without a non-empty secret.
 

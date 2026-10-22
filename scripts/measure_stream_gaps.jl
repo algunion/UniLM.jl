@@ -92,13 +92,16 @@ end
 
 function run_anthropic()
     key = envkey("ANTHROPIC_API_KEY"); isempty(key) && return nothing
-    model = get(ENV, "UNILM_ANTHROPIC_MODEL", "claude-opus-4-8")
-    # Extended thinking streams thinking_delta bytes punctuated by `ping` events;
-    # the ping cadence is what must keep the raw byte gap under the idle bound.
+    model = get(ENV, "UNILM_ANTHROPIC_MODEL", "claude-opus-5-5")
+    # Adaptive thinking with display "summarized" streams thinking_delta text punctuated by
+    # `ping` events; the ping cadence is what must keep the raw byte gap under the idle bound.
+    # "omitted", the display default on the current models, streams no thinking text
+    # (https://platform.claude.com/docs/en/build-with-claude/thinking.md#controlling-thinking-display).
     body = JSON.json(Dict(
         "model" => model,
         "max_tokens" => 16000,
-        "thinking" => Dict("type" => "enabled", "budget_tokens" => 8000),
+        "thinking" => Dict("type" => "adaptive", "display" => "summarized"),
+        "output_config" => Dict("effort" => "high"),
         "stream" => true,
         "messages" => [Dict("role" => "user", "content" => HARD_PROMPT)],
     ))

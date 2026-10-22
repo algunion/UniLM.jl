@@ -43,7 +43,8 @@ println("cost USD = ", round(estimated_cost(result), digits=6))
 
 By default the model is the one the provider reports having served the call —
 `result.model` for Chat ([`LLMSuccess`](@ref); it differs from the model requested when the
-provider routes the request to another model), `result.response.model` for Responses, FIM
+provider routes the request to another model, or names the dated snapshot behind an alias,
+which is priced at the alias's row), `result.response.model` for Responses, FIM
 and System One — else the one requested: `result.self.model` for Chat,
 `result.embeddings.model` for Embeddings. Override it explicitly when needed:
 
@@ -79,30 +80,37 @@ audio-token rates: `prompt_audio_tokens` and `completion_audio_tokens`, the audi
 row's text rates. UniLM has the audio-token rates of `gpt-audio-1.5` on
 `OPENAIServiceEndpoint`, and a price row has none, so audio tokens are not priced for any
 other model on `OPENAIServiceEndpoint`, nor for any model on an endpoint billed at the standard
-rates (Azure, DeepSeek, generic endpoints, your own): such a result costs `0.0`, with one
-warning per model, as for a model without a row, rather than its audio billed at text rates.
+rates (Azure, DeepSeek, generic endpoints, your own): such a result is estimated at `0.0`,
+with one warning per model and endpoint, as for a model without a row, rather than its audio
+billed at text rates.
 
-Gemini bills the audio input of a call — an [`AudioAttachment`](@ref) on native Chat,
-[`respond`](@ref) or `GEMINIOpenAIServiceEndpoint` — at the audio rate its
+Gemini bills the audio input of a call — an [`AudioAttachment`](@ref) on native Chat or
+[`respond`](@ref) — at the audio rate its
 [pricing page](https://ai.google.dev/gemini-api/docs/pricing) states for the model, scaled by the
 billed tier as the text rates are: per 1M tokens, \$0.50 on `gemini-3.1-flash-lite`, \$1.00 on
-`gemini-3-flash-preview` and `gemini-2.5-flash`, \$0.30 on `gemini-2.5-flash-lite`, and the one
-input price the page lists for text, image, video and audio on `gemini-3.5-flash-lite` and
-`gemini-robotics-er-2-preview`. The other Gemini tables state no audio rate (Gemini 4 Argon, 3.8
-and 3.6 Flash, 3.1 Pro Preview and 2.5 Pro list one input price that names no modality), so audio
-on those models costs `0.0`, with one warning per model, and so does a Gemini call that counts
-audio and cache hits: its usage does not say how many cached tokens are audio, whose cache price
-the page lists apart or not at all.
+`gemini-3-flash-preview` and `gemini-2.5-flash`, \$0.30 on `gemini-2.5-flash-lite`, and, on
+`gemini-3.5-flash-lite` and `gemini-robotics-er-2-preview`, whose page lists one input price for
+text, image, video and audio, the row's input rate. The other Gemini tables state no audio rate
+(Gemini 4 Argon, 3.8 and 3.6 Flash, 3.1 Pro Preview and 2.5 Pro list one input price that names no
+modality), so audio on those models is estimated at `0.0`, with one warning per model and
+endpoint, and so is a Gemini call that counts audio and cache hits: its usage does not say how
+many cached tokens are audio, whose cache price the page lists apart or not at all.
+`GEMINIOpenAIServiceEndpoint` reports no audio count — a clip's tokens are in `prompt_tokens`
+alone — so its audio input is priced at the text rate: a lower bound on the four models with an
+audio price of their own, for which such a request warns once per model. Send audio through
+`GEMINIServiceEndpoint` for an exact estimate.
 
 Reasoning tokens are already counted inside `completion_tokens`, so they carry no separate
 charge. Failures and call errors report zero usage and `0.0` cost. Image results report the
 usage the Images API returned, but that API bills image tokens at rates a price row does not
-model: `estimated_cost` on an image result throws `ArgumentError` unless you pass `model=`
-together with a `pricing=` row for it. A streamed Chat turn is costed like a non-streamed
-one when the stream reports usage: `OPENAIServiceEndpoint` and `DeepSeekEndpoint` streams
-request it automatically, native Anthropic and Gemini streams report it on their own, and other
-OpenAI-compatible servers need `stream_options=Dict("include_usage" => true)` (without it a
-streamed turn reports no usage and accrues `\$0`).
+model: `estimated_cost` on an image result throws `ArgumentError` unless you pass `model=`,
+and a `model=` without a row is estimated at `0.0`, with the no-row warning, so pass a
+`pricing=` row for it too. A streamed Chat turn is costed like a non-streamed one when the stream
+reports usage: `OPENAIServiceEndpoint`, `DeepSeekEndpoint` and `GEMINIOpenAIServiceEndpoint`
+streams request it automatically, native Anthropic and Gemini streams report it on their own, and
+other OpenAI-compatible servers need `stream_options=Dict("include_usage" => true)` (without it a
+streamed turn reports no usage and accrues `\$0`). An embeddings reply that reports no usage —
+`GEMINIOpenAIServiceEndpoint`'s never does — is estimated at `0.0`, with one warning per model.
 
 ## The pricing table
 
@@ -170,7 +178,8 @@ println("cost USD = ", round(estimated_cost(unpriced; pricing), digits=6))
 A row cannot price audio: a `PriceRow` has no audio-token rates. Whatever `pricing=` holds, a
 result whose usage counts audio tokens stays at `0.0` unless UniLM has that model's audio-token
 rates (`gpt-audio-1.5` on `OPENAIServiceEndpoint`, and the Gemini models above, whose text
-tokens your row then prices).
+tokens your row then prices; on the two Gemini models with one input price, your row's input
+rate prices their audio too).
 
 ## Cumulative cost is Chat-only
 
@@ -189,6 +198,15 @@ chatrequest!(chat)                     # accrues again
 
 cumulative_cost(chat)                  # e.g. 0.00231  (USD, summed over both calls)
 ```
+
+A call that ends without committing a turn adds what its provider reported billing it, as a
+lower bound. A stream stopped, cancelled, timed out or cut off, or ended by an exception from its
+`callback` or `on_tool_call`, adds the usage the provider had reported by then: Anthropic reports
+a request's input when its stream starts, and Gemini the usage so far on every chunk, while
+OpenAI reports it after the finish reason, so a stopped OpenAI stream adds nothing. A continued
+Gemini turn that fails or is stopped adds the replies it had received. A request stopped before
+any usage arrived adds nothing, though the provider bills it; so does an attempt UniLM retried,
+and a stream the provider ended with an error event.
 
 !!! warning "Auto-accumulation always uses the default pricing table"
     `chatrequest!` prices each call with [`DEFAULT_PRICING`](@ref); there is no `pricing=`

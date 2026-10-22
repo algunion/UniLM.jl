@@ -238,7 +238,8 @@ output token (thinking included), returns with `finish_reason == "continuation"`
 ends the call with nothing committed, as does a stop or cancel before the last hop's finish reason
 (a `CONTINUATION` is not the turn's completion marker), and the hops already answered — one whose
 `CONTINUATION` chunk a stop or a throwing callback landed on included — are added to
-`cumulative_cost`. A streamed turn streams every hop into the same callback. Continuation is
+`cumulative_cost`, with the usage the hop in flight had reported. A streamed turn streams every
+hop into the same callback. Continuation is
 exercised against a local mock; a live CONTINUATION reply was not observed.
 `GEMINIOpenAIServiceEndpoint` has no long decode.
 A Gemini 4 call (a `gemini-4-…` model) with no `RequestConfig` of yours in any channel waits up to
@@ -295,11 +296,12 @@ generations or `xhigh`/`max` effort). The endpoint declares `:chat`, `:tools`,
 
 The bare type is the endpoint with no options. An instance,
 `ANTHROPICServiceEndpoint(; betas, user_profile_id, workspace_id, inference_geo)`, adds
-them to every request made through it: `betas` comma-joined in the `anthropic-beta` header
-(except on [`list_models`](@ref): Anthropic's Models API reference marks it deprecated on
-`GET /v1/models`), `user_profile_id` (the `uprof_` id of the end customer the requests are
-for) in `anthropic-user-profile-id`, `workspace_id` in `anthropic-workspace-id`, and
-`inference_geo` (`"global"` or `"us"`) in the request body. A blank value, a control character, a comma in
+them to every request made through it: `betas` comma-joined in the `anthropic-beta` header,
+`user_profile_id` (the `uprof_` id of the end customer the requests are for) in
+`anthropic-user-profile-id`, `workspace_id` in `anthropic-workspace-id`, and `inference_geo`
+(`"global"` or `"us"`) in the request body. [`list_models`](@ref) sends only the workspace
+of these, the one header besides `anthropic-version` that Anthropic's Models API reference
+names (it marks `anthropic-beta` deprecated on `GET /v1/models`). A blank value, a control character, a comma in
 a beta name or another region throws `ArgumentError`. UniLM sends a beta's name only: the
 request fields and response blocks of beta features are not modelled. Either form goes
 wherever a `service` goes, and instances with the same options are equal. The options are
@@ -408,8 +410,9 @@ header.
 
 [`estimated_cost`](@ref) bills Anthropic's surcharges on the model's price row: cache
 writes at 1.25× the input rate (5-minute) or 2× (1-hour), every rate 2× in fast mode
-and 1.1× for US-only inference (`inference_geo == "us"`), and every rate 5× for a
-Claude Haiku 5.5 prompt over 100,000 tokens (cache reads and writes included); the
+and 1.1× for US-only inference (`inference_geo == "us"`) on Claude 4.6 and later models
+(the 4.5 models take no `inference_geo` and bill at the standard rates), and every rate 5×
+for a Claude Haiku 5.5 prompt over 100,000 tokens (cache reads and writes included); the
 multipliers stack.
 
 ```@example backends
@@ -429,6 +432,7 @@ A PDF, a prompt cached for an hour, and the summarized thinking:
 ```julia
 chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-5-5", reasoning_effort="low",
             prompt_cache_options=PromptCacheOptions(ttl="1h"))
+push!(chat, Message(Val(:system), "You summarize reports."))
 push!(chat, Message(Val(:user), "What does the report conclude?", DocumentAttachment("report.pdf")))
 result = chatrequest!(chat)
 reasoning_text(result)                       # the thinking, summarized

@@ -220,11 +220,14 @@ end
 - **`realtime_receive`** is bounded by `stream_idle_timeout`, taken from the
   config the session captured at connect time. A breach throws
   `UniLMTimeout(:stream_idle, …)`. A parked socket read cannot be polled out of,
-  so the guard ends the connection to unblock it, without a close handshake and
-  without HTTP.jl's send lock: the breach surfaces just after the limit, even while
-  a `realtime_send` on another task is parked on a peer that stopped reading (that
-  send throws too), and the session is closed afterwards. `Inf` disables the bound
-  and parks indefinitely.
+  so the guard ends the read and the connection to unblock it, without a close
+  handshake and without HTTP.jl's send lock: the breach surfaces just after the limit
+  on `ws://` (on `wss://` up to about 5 s later, the time the TLS close may wait to
+  send its close notice), even while a `realtime_send` on another task is parked on a
+  peer that stopped reading (that send throws too), and the session is closed
+  afterwards. On a WebSocket opened over your own stream (`HTTP.WebSockets.open(io)`)
+  the stream stays yours: the breach ends the read, and a parked send waits until you
+  close the stream. `Inf` disables the bound and parks indefinitely.
 - **The session's lifetime is not bounded.** Once your handler is running, how
   long it stays connected is your decision, not a timeout's — a Realtime session
   is *meant* to sit idle waiting for the user to speak. Bound the conversation

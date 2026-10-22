@@ -10,7 +10,10 @@ The event types of OpenAI's webhooks
 responses, batches and fine-tuning jobs that end, incoming SIP calls for the Realtime and
 Live APIs, safety warnings and deactivations for a safety identifier, and safety alerts.
 `live.call.incoming` is deprecated in favour of `live.transport.incoming` and retained for
-existing subscriptions.
+existing subscriptions. The reference also lists `eval.run.succeeded`, `eval.run.failed` and
+`eval.run.canceled`, which OpenAI sends until its Evals API shuts down on November 30, 2026
+([deprecations](https://developers.openai.com/api/docs/deprecations)): they are left out, so a
+filter on this list drops them.
 """
 const WEBHOOK_EVENTS = (
     "response.completed", "response.cancelled", "response.failed", "response.incomplete",

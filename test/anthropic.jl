@@ -936,7 +936,7 @@ end
 # endpoint's base URL is a constant).
 struct _AnthropicCapture <: UniLM.ServiceEndpoint
     url::String
-    real::Union{Type{ANTHROPICServiceEndpoint},ANTHROPICServiceEndpoint}
+    real::UniLM._AnthropicEndpoint
 end
 _AnthropicCapture(url::String) = _AnthropicCapture(url, ANTHROPICServiceEndpoint)
 UniLM.get_url(s::_AnthropicCapture, ::Chat) = s.url

@@ -259,7 +259,7 @@ end
 # An Anthropic endpoint, the type or an instance, whose listing `_with_scripted` serves: its
 # requests carry the headers that endpoint sends, on its listing and on its other requests.
 struct _AnthropicListingAt <: UniLM.ServiceEndpoint
-    endpoint::Union{Type{ANTHROPICServiceEndpoint},ANTHROPICServiceEndpoint}
+    endpoint::UniLM._AnthropicEndpoint
 end
 UniLM._model_listing(::_AnthropicListingAt) = UniLM._AnthropicModels()
 UniLM._models_url(::_AnthropicListingAt) = _url_probe_base[] * "/v1/models"

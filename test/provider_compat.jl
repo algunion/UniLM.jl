@@ -170,6 +170,39 @@ end
     @test copy.reasoning == r.reasoning
 end
 
+@testset "OpenAI cache TTLs per API" begin
+    # https://developers.openai.com/api/docs/guides/prompt-caching: the Responses API takes
+    # "30m" and "12h"; Chat Completions answered "12h" with HTTP 400 "Supported values are:
+    # '30m'." (2026-10-22).
+    chat(ttl) = Chat(model="gpt-6-luna", prompt_cache_options=PromptCacheOptions(; ttl))
+    respond_(ttl) = Respond(model="gpt-6-luna", input="hi", prompt_cache_options=PromptCacheOptions(; ttl))
+    failure(f) = try f(); nothing catch e; e end
+    err = failure(() -> UniLM.encode_request(OPENAIServiceEndpoint, chat("12h")))
+    @test err isa ArgumentError && occursin("\"30m\"", err.msg) && occursin("Chat Completions", err.msg)
+    @test JSON.parse(UniLM.encode_request(OPENAIServiceEndpoint, chat("30m")))["prompt_cache_options"] ==
+          Dict("ttl" => "30m")
+    for ttl in ("30m", "12h")
+        @test JSON.parse(UniLM.encode_agentic(OPENAIServiceEndpoint, respond_(ttl)))["prompt_cache_options"] ==
+              Dict("ttl" => ttl)
+    end
+    # Another provider's retention is refused on both APIs, naming OpenAI's.
+    for ttl in ("5m", "1h")
+        err = failure(() -> UniLM.encode_request(OPENAIServiceEndpoint, chat(ttl)))
+        @test err isa ArgumentError && occursin("OpenAI", err.msg) && occursin("\"30m\"", err.msg) &&
+              occursin(repr(ttl), err.msg)
+        err = failure(() -> UniLM.encode_agentic(OPENAIServiceEndpoint, respond_(ttl)))
+        @test err isa ArgumentError && occursin("OpenAI", err.msg) &&
+              occursin("\"30m\"", err.msg) && occursin("\"12h\"", err.msg) && occursin(repr(ttl), err.msg)
+    end
+    # Refused before any request is sent.
+    @test_throws ArgumentError chatrequest!(Chat(model="gpt-6-luna", messages=[Message(Val(:user), "hi")],
+        prompt_cache_options=PromptCacheOptions(ttl="12h")))
+    # A compatible server keeps its own contract: the object goes out unchanged.
+    generic = Chat(service=GenericOpenAIEndpoint("http://localhost:9999", ""), model="gpt-6-luna",
+                   prompt_cache_options=PromptCacheOptions(ttl="12h"))
+    @test JSON.parse(UniLM.encode_request(generic.service, generic))["prompt_cache_options"] == Dict("ttl" => "12h")
+end
+
 @testset "GPT-6 Sol and Luna: Chat tools and sampling need reasoning effort none" begin
     tools = [Tool(func=FunctionSignature(name="ping"))]
     for (model, family) in ("gpt-6-sol" => "GPT-6 Sol", "gpt-6-luna" => "GPT-6 Luna")

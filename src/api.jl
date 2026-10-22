@@ -938,13 +938,26 @@ end
 # stays `Union{Vector{Tool},Nothing}`.
 _chat_tools(tools) = tools
 
+# The cache retentions providers document: Anthropic "5m" and "1h", OpenAI "30m" and "12h".
+const _PROMPT_CACHE_TTLS = ("5m", "1h", "30m", "12h")
+
 """
     PromptCacheOptions(; mode=nothing, ttl=nothing, prewarm=nothing, comparison_response_id=nothing)
 
-OpenAI prompt-cache controls for GPT-5.6 and later. `mode` is `"implicit"` or
-`"explicit"`; the supported `ttl` is `"30m"`. Explicit mode caches only prefixes
-marked with `prompt_cache_breakpoint` in input content blocks (see
-[`input_text`](@ref) with `cache_breakpoint=true`).
+Prompt-cache controls (OpenAI: GPT-5.6 and later). `mode` is `"implicit"` or
+`"explicit"`; `ttl`, how long a cached prefix is kept, is one of `"5m"`, `"1h"`,
+`"30m"` or `"12h"` — any other value throws `ArgumentError`. Each endpoint accepts its
+own subset and throws `ArgumentError` naming it, before any request:
+
+- `OPENAIServiceEndpoint`: Chat Completions takes `"30m"` (the API answers HTTP 400 for
+  any other ttl), the Responses API ([`Respond`](@ref)) `"30m"` and `"12h"`.
+- Azure, the Gemini OpenAI-compatible endpoint, DeepSeek and other OpenAI-compatible
+  endpoints send the object unchanged: the server's answer is the check.
+- Anthropic, native Gemini (Chat and Interactions) and [`OllamaEndpoint`](@ref) refuse
+  `prompt_cache_options`.
+
+Explicit mode caches only prefixes marked with `prompt_cache_breakpoint` in input content
+blocks (see [`input_text`](@ref) with `cache_breakpoint=true`).
 
 Responses API only:
 - `prewarm=true` prepares the prompt cache without generating output; send the
@@ -968,7 +981,8 @@ omitted from the request. See
     function PromptCacheOptions(mode, ttl, prewarm=nothing, comparison_response_id=nothing)
         isnothing(mode) || mode in ("implicit", "explicit") ||
             throw(ArgumentError("prompt cache mode must be implicit or explicit"))
-        isnothing(ttl) || ttl == "30m" || throw(ArgumentError("prompt cache ttl must be 30m"))
+        isnothing(ttl) || ttl in _PROMPT_CACHE_TTLS || throw(ArgumentError(
+            "prompt cache ttl must be one of $(join(repr.(_PROMPT_CACHE_TTLS), ", ")) (got $(repr(ttl)))"))
         new(mode, ttl, prewarm, comparison_response_id)
     end
 end
@@ -1232,15 +1246,25 @@ Abstract supertype for all API call results. Pattern-match on subtypes to handle
 abstract type LLMRequestResponse end
 
 """
-    TokenUsage(; prompt_tokens=0, completion_tokens=0, total_tokens=0, cached_tokens=0, reasoning_tokens=0)
+    TokenUsage(; prompt_tokens=0, completion_tokens=0, total_tokens=0, cached_tokens=0, reasoning_tokens=0,
+               cache_write_tokens=0, cache_write_extended_tokens=0, service_tier=nothing, inference_geo=nothing)
+    TokenUsage(prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens)
 
-Token usage statistics returned by the API.
+Token usage statistics returned by the API, in one shape for every provider.
 
-`cached_tokens` (a subset of `prompt_tokens` served from the prompt cache) and
-`reasoning_tokens` (a subset of `completion_tokens` spent on hidden reasoning) are
-reported by newer models via the `*_tokens_details` objects; they default to 0 when
-the provider omits those details. `estimated_cost` bills `cached_tokens` at the
-discounted cached-input rate.
+`prompt_tokens` counts every input token, cache reads and cache writes included. Of them,
+`cached_tokens` were read from the prompt cache and `cache_write_tokens` written to it;
+`cache_write_extended_tokens` is the part of `cache_write_tokens` written at the extended
+retention (OpenAI `"12h"`, Anthropic `"1h"`). `reasoning_tokens` is the part of
+`completion_tokens` spent on hidden reasoning. The counts are 0 when the provider omits
+them. `service_tier` is the tier the provider reports billing the call at (OpenAI's
+`service_tier`, for example) and `inference_geo` the inference region it reports; each is
+`nothing` when the provider reports none.
+
+[`estimated_cost`](@ref) bills `cached_tokens` at the discounted cached-input rate and the
+rest at the standard rates, unless the provider's own pricing applies (see
+[`DEFAULT_PRICING`](@ref)). Positionally the fields go in the order listed, the five counts
+first; the fields left out take their defaults.
 """
 @kwdef struct TokenUsage
     prompt_tokens::Int = 0
@@ -1248,10 +1272,46 @@ discounted cached-input rate.
     total_tokens::Int = 0
     cached_tokens::Int = 0
     reasoning_tokens::Int = 0
+    cache_write_tokens::Int = 0
+    cache_write_extended_tokens::Int = 0
+    service_tier::Union{String,Nothing} = nothing
+    inference_geo::Union{String,Nothing} = nothing
+    function TokenUsage(prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens,
+                        cache_write_tokens=0, cache_write_extended_tokens=0, service_tier=nothing,
+                        inference_geo=nothing)
+        new(prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens,
+            cache_write_tokens, cache_write_extended_tokens, service_tier, inference_geo)
+    end
 end
 
+"""A per-token pricing row: `input` / `cached_input` / `output` USD per token. A provider's
+surcharges (on cache writes, a service tier, long prompts) are not stored in the row: its
+[`_billed_cost`](@ref) method applies them to these rates."""
+const PriceRow = @NamedTuple{input::Float64, cached_input::Float64, output::Float64}
+
+"""Build a [`PriceRow`](@ref) from per-1M-token USD figures (input, cached-input, output)."""
+_price(i, c, o) = (input = i / 1_000_000, cached_input = c / 1_000_000, output = o / 1_000_000)
+
 """
-    LLMSuccess(; message, self, usage=nothing, sse_dropped=0)
+    _billed_cost(service, model::String, u::TokenUsage, rates::PriceRow) -> Float64
+
+The USD a provider bills for the usage `u` of `model`, whose price row is `rates`;
+[`estimated_cost`](@ref) calls it once it has found the row. `service` is the endpoint the
+result came from: a marker type such as `OPENAIServiceEndpoint`, an endpoint instance, or
+`nothing` when the result records none.
+
+The default method bills the row's standard rates: `(prompt_tokens - cached_tokens -
+cache_write_tokens) * input + cached_tokens * cached_input + cache_write_tokens * input +
+completion_tokens * output`. A provider whose bill differs adds a method for its endpoint
+type in its own file, beside the pricing page it follows: a premium on cache writes
+(`cache_write_tokens`, `cache_write_extended_tokens`), a multiplier for the reported
+`service_tier` or `inference_geo`, a long-context tier. Such a method returns the whole
+cost of the call, not a surcharge.
+"""
+function _billed_cost end
+
+"""
+    LLMSuccess(; message, self, usage=nothing, sse_dropped=0, model=nothing)
 
 Successful Chat Completions API response.
 
@@ -1262,12 +1322,18 @@ Successful Chat Completions API response.
 - `sse_dropped::Int`: Undecodable SSE `data:` payloads dropped while assembling
   this streamed turn — `0` for a non-streamed call, and for a clean stream.
   Non-zero means the turn was built from an incomplete wire.
+- `model::Union{String,Nothing}`: The model id the provider reports having served the turn
+  (the reply's `model`; it differs from `self.model` when the provider routes the request to
+  another model); `nothing` where the endpoint does not report it, and from an
+  [`OllamaEndpoint`](@ref), whose cloud models are priced by the name requested.
+  [`estimated_cost`](@ref) prices the call at this model when it is set, else at `self.model`.
 """
 @kwdef struct LLMSuccess <: LLMRequestResponse
     message::Message
     self::Chat
     usage::Union{TokenUsage, Nothing} = nothing
     sse_dropped::Int = 0
+    model::Union{String,Nothing} = nothing
 end
 
 # The provider's id for the request: `x-request-id` (OpenAI and most compatible

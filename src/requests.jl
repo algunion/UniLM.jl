@@ -724,39 +724,58 @@ auth_header_multipart(s) = filter(p -> lowercase(String(first(p))) != "content-t
 _accumulate_cost!(::Chat, ::LLMRequestResponse) = nothing
 
 """
-    _token_usage_from(u::AbstractDict; prompt_key, completion_key, prompt_details, completion_details)
+    _token_usage_from(u::AbstractDict; prompt_key, completion_key, prompt_details, completion_details,
+                      service_tier=nothing)
 
 Build a [`TokenUsage`](@ref) from a raw `usage` dict, pulling the cached/reasoning
-subtotals from the detail objects when present. Chat Completions and the Responses API
-name these differently (`prompt_tokens`/`input_tokens`, `prompt_tokens_details`/
-`input_tokens_details`, …), so the keys are parameterized.
+subtotals and the cache writes from the detail objects when present. Chat Completions and
+the Responses API name these differently (`prompt_tokens`/`input_tokens`,
+`prompt_tokens_details`/`input_tokens_details`, …), so the keys are parameterized. The
+writes at the 12-hour retention are `cache_write_tokens_details.ttl_12h_tokens`, which only
+the Responses API reports
+([prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)). The billed
+`service_tier` is reported beside the usage, not in it, so the caller passes it.
 """
 function _token_usage_from(u::AbstractDict;
     prompt_key::String="prompt_tokens", completion_key::String="completion_tokens",
-    prompt_details::String="prompt_tokens_details", completion_details::String="completion_tokens_details")
+    prompt_details::String="prompt_tokens_details", completion_details::String="completion_tokens_details",
+    service_tier::Union{String,Nothing}=nothing)
     pd = get(u, prompt_details, nothing)
     cd = get(u, completion_details, nothing)
+    wd = pd isa AbstractDict ? get(pd, "cache_write_tokens_details", nothing) : nothing
     _i(x) = x isa Integer ? Int(x) : 0   # tolerate JSON null / missing / non-int → 0
+    _n(d, key) = d isa AbstractDict ? _i(get(d, key, 0)) : 0
     TokenUsage(
         prompt_tokens=_i(get(u, prompt_key, 0)),
         completion_tokens=_i(get(u, completion_key, 0)),
         total_tokens=_i(get(u, "total_tokens", 0)),
-        cached_tokens=(pd isa AbstractDict ? _i(get(pd, "cached_tokens", 0)) : 0),
-        reasoning_tokens=(cd isa AbstractDict ? _i(get(cd, "reasoning_tokens", 0)) : 0),
+        cached_tokens=_n(pd, "cached_tokens"),
+        reasoning_tokens=_n(cd, "reasoning_tokens"),
+        cache_write_tokens=_n(pd, "cache_write_tokens"),
+        cache_write_extended_tokens=_n(wd, "ttl_12h_tokens"),
+        service_tier=service_tier,
     )
 end
 
+# A string member of a reply object, else `nothing` (absent, null or empty).
+function _wire_string(d::AbstractDict, key::String)::Union{String,Nothing}
+    v = get(d, key, nothing)
+    v isa AbstractString && !isempty(v) ? String(v) : nothing
+end
+
+# A Chat Completions reply reports the tier that served it beside the usage, not in it.
 function _parse_usage(data::Dict{String,Any})::Union{TokenUsage, Nothing}
     haskey(data, "usage") || return nothing
     u = data["usage"]
     u isa AbstractDict || return nothing
-    _token_usage_from(u)
+    _token_usage_from(u; service_tier=_wire_string(data, "service_tier"))
 end
 
 """
-    extract_message(resp::HTTP.Response) -> (; message::Message, usage)
+    extract_message(resp::HTTP.Response) -> (; message::Message, usage, model)
 
-Decode the first choice of an OpenAI-wire Chat Completions reply. No part of the
+Decode the first choice of an OpenAI-wire Chat Completions reply, its usage and the
+model the reply names (`nothing` when it names none). No part of the
 choice is dropped for its shape: tool calls are decoded whenever present, with any
 text kept alongside; content given as an array of parts is joined from its text
 parts; a refusal is kept; `""` tool arguments decode as an empty object. A choice
@@ -790,7 +809,7 @@ function extract_message(resp::HTTP.Response)
         Message(role=RoleAssistant, content=(isnothing(text) && !isnothing(refusal) ? nothing : something(text, "")),
                 refusal_message=refusal, finish_reason=finish)
     end
-    (; message=msg, usage=_parse_usage(received))
+    (; message=msg, usage=_parse_usage(received), model=_wire_string(received, "model"))
 end
 
 # Message content as text: a string as is; an array of content parts (the form
@@ -839,7 +858,10 @@ Mutable accumulator for one streamed chat attempt, filled by
 [`handle_sse_event!`](@ref) and read by the stream driver. A handler appends text to
 both `content` and `pending_delta` (the driver forwards the latter to the streaming
 callback), refusal text to `refusal`, and records `finish_reason`, `usage`
-(a [`TokenUsage`](@ref)) and, for an in-band error, the decoded payload in `error`.
+(a [`TokenUsage`](@ref)), the `model` the provider reports having served (the result's
+`model`; `nothing` when it reports none) and, for an in-band error, the decoded payload
+in `error`. `service_tier` holds the billed tier a chunk reported, for a handler whose
+provider reports it apart from the usage.
 Tool calls live in `tool_calls` by index as
 `Dict("id" => …, "type" => "function", "function" => Dict("name" => …, "arguments" => …))`;
 `"complete" => true` on an entry tells the driver the call has finished streaming.
@@ -883,6 +905,9 @@ Public extension API (not exported); see the Custom Backends guide.
     # O(fragment) and joined onto `tool_calls` once, by `_tool_function!` —
     # re-concatenating a String per fragment is quadratic in the argument length.
     tool_fragments::Dict{Int,NTuple{2,IOBuffer}} = Dict{Int,NTuple{2,IOBuffer}}()
+    # The served model and the billed tier, as the stream's chunks report them.
+    model::Union{String,Nothing} = nothing
+    service_tier::Union{String,Nothing} = nothing
 end
 
 # The (name, arguments) fragment buffers of streamed tool call `idx`.
@@ -967,14 +992,22 @@ encode_request(service::OpenAIWireEndpointSpec, chat::Chat) = JSON.json(chat)
 """
     decode_response(service, resp::HTTP.Response)
 
-Parse a provider's 200 response into `(; message::Message, usage::Union{TokenUsage,Nothing})`.
-The `OpenAIWireEndpoint` default reads OpenAI Chat Completions (`extract_message`). A
-body that is not a valid reply should throw: [`chatrequest!`](@ref) reports the
-exception as an `LLMCallError` carrying it in `cause`, never as an empty success.
+Parse a provider's 200 response into `(; message::Message, usage::Union{TokenUsage,Nothing},
+model::Union{String,Nothing})`: the reply, its token usage, and the model id the provider
+reports having served it (`nothing` when it reports none), which becomes the result's
+`model` and prices the call. `model` is optional: a decoder that returns
+`(; message, usage)` reports no model. The `OpenAIWireEndpoint` default reads OpenAI Chat
+Completions (`extract_message`). A body that is not a valid reply should throw:
+[`chatrequest!`](@ref) reports the exception as an `LLMCallError` carrying it in `cause`,
+never as an empty success.
 
 Public extension API (not exported); see the Custom Backends guide.
 """
 decode_response(service::OpenAIWireEndpointSpec, resp::HTTP.Response) = extract_message(resp)
+
+# The served model a decoder reported; optional in the seam's contract, so a decoder that
+# returns only the message and usage reports none.
+_decoded_model(decoded)::Union{String,Nothing} = hasproperty(decoded, :model) ? decoded.model : nothing
 
 # ─── Streaming driver helpers ────────────────────────────────────────────────
 
@@ -1166,9 +1199,9 @@ end
 # Shared by the clean end-of-stream path and the teardown-recovery path, so a
 # turn recovered from teardown noise is committed exactly like a clean one.
 function _stream_success(chat::Chat, msg::Message, usage::Union{TokenUsage,Nothing},
-                         sse_dropped::Int)
+                         sse_dropped::Int, model::Union{String,Nothing})
     update!(chat, msg)
-    result = LLMSuccess(message=msg, self=chat, usage=usage, sse_dropped=sse_dropped)
+    result = LLMSuccess(; message=msg, self=chat, usage, sse_dropped, model)
     _accumulate_cost!(chat, result)
     return result
 end
@@ -1290,7 +1323,7 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
                                                   state.sse_dropped), resp)
         elseif resp.status == 200 && !isnothing(m[])
             return (; result=_stream_success(chat, m[]::Message, state.usage,
-                                             state.sse_dropped), resp)
+                                             state.sse_dropped, state.model), resp)
         else
             return (; result=LLMFailure(status=resp.status, response=takestring!(raw_buffer),
                                         self=chat, request_id=_get_request_id(resp),
@@ -1324,7 +1357,8 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
         if isnothing(state.error) && (!isnothing(m[]) || !isnothing(state.finish_reason)) &&
            (stopped || _stream_teardown_noise(e, breach))
             fin = _finalize_stream_message!(state, cb, otc, ctl.close, m)
-            return (; result=_stream_success(chat, fin.msg, fin.usage, state.sse_dropped), resp=nothing)
+            return (; result=_stream_success(chat, fin.msg, fin.usage, state.sse_dropped, state.model),
+                    resp=nothing)
         end
         # Stopped before the turn completed: whatever surfaced (HTTP.jl's rendering
         # of the aborted exchange, a racing bound) is the stop's echo.
@@ -1537,7 +1571,8 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
         if resp.status == 200
             extracted = decode_response(chat.service, resp)
             update!(chat, extracted.message)
-            result = LLMSuccess(message=extracted.message, self=chat, usage=extracted.usage)
+            result = LLMSuccess(message=extracted.message, self=chat, usage=extracted.usage,
+                                model=_decoded_model(extracted))
             _accumulate_cost!(chat, result)
             return result
         else

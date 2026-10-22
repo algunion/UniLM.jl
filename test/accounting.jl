@@ -381,7 +381,7 @@ end
     @test cost("claude-haiku-4-5-20251001") == cost("claude-haiku-4-5") ≈ 6.0
     @test cost("claude-opus-4-5-20251101") ≈ 30.0
     @test cost("claude-sonnet-4-5-20250929") ≈ 18.0
-    @test cost("claude-haiku-4-5-2025100") == 0.0          # seven digits are not a date suffix
+    @test (@test_logs (:warn, r"no price row") cost("claude-haiku-4-5-2025100")) == 0.0   # seven digits are not a date suffix
 end
 
 @testset "an unpriced model costs 0.0 and warns once per model id" begin
@@ -498,4 +498,82 @@ end
     s1 = SystemOneSuccess(SystemOneResponse("zz-unpriced-s1:cloud", Dict{String,SystemOneAnswer}(),
                           TokenUsage(prompt_tokens=10, total_tokens=10), nothing, Dict{String,Any}(), ep))
     @test (@test_logs (:warn, r"no price row") estimated_cost(s1)) == 0.0
+end
+
+@testset "Responses usage reads cache-write details" begin
+    # https://developers.openai.com/api/docs/guides/prompt-caching: input_tokens counts every
+    # input token; cache_write_tokens_details splits the writes by lifetime (ttl_30m_tokens +
+    # ttl_12h_tokens == cache_write_tokens). The billed tier is the response's service_tier.
+    usage(details) = JSON.parse("""{"input_tokens":2224,"output_tokens":4,""" *
+        """"input_tokens_details":$details,"output_tokens_details":{"reasoning_tokens":0}}"""; dicttype=Dict{String,Any})
+    result(details, raw) = ResponseSuccess(response=UniLM.ResponseObject(id="resp_1", status="completed",
+        model="gpt-6-luna", output=Any[], usage=usage(details), raw=raw))
+    u = token_usage(result("""{"cached_tokens":0,"cache_write_tokens":2221,""" *
+        """"cache_write_tokens_details":{"ttl_30m_tokens":0,"ttl_12h_tokens":2221}}""",
+        Dict{String,Any}("service_tier" => "default")))
+    @test u.cache_write_tokens == 2221
+    @test u.cache_write_extended_tokens == 2221
+    @test u.service_tier == "default"
+    @test u == TokenUsage(prompt_tokens=2224, completion_tokens=4, cache_write_tokens=2221,
+                          cache_write_extended_tokens=2221, service_tier="default")
+    # 30-minute writes are not extended; a reply without details or a tier reports none.
+    u30 = token_usage(result("""{"cached_tokens":3,"cache_write_tokens":300,""" *
+        """"cache_write_tokens_details":{"ttl_30m_tokens":300,"ttl_12h_tokens":0}}""", Dict{String,Any}()))
+    @test (u30.cached_tokens, u30.cache_write_tokens, u30.cache_write_extended_tokens, u30.service_tier) ==
+          (3, 300, 0, nothing)
+    bare = token_usage(result("""{"cached_tokens":0}""", Dict{String,Any}("service_tier" => nothing)))
+    @test (bare.cache_write_tokens, bare.cache_write_extended_tokens, bare.service_tier) == (0, 0, nothing)
+end
+
+@testset "default billed cost" begin
+    # An endpoint whose provider defines no pricing of its own is billed the standard rates:
+    # fresh input and cache writes at the input rate, cache reads at the cached rate.
+    pricing = Dict("m" => UniLM._price(1.0, 0.1, 4.0))
+    u = TokenUsage(prompt_tokens=1000, cached_tokens=200, cache_write_tokens=300, completion_tokens=50,
+                   total_tokens=1050)
+    chat = Chat(service=GenericOpenAIEndpoint("http://localhost:9", ""), model="m")
+    r = LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=chat, usage=u)
+    @test isapprox(estimated_cost(r; pricing), (500 * 1.0 + 200 * 0.1 + 300 * 1.0 + 50 * 4.0) / 1e6; rtol=1e-12)
+    # The retention of a write, the tier and the region change nothing at the standard rates.
+    tagged = TokenUsage(1000, 50, 1050, 200, 0, 300, 300, "flex", "us")
+    @test isapprox(estimated_cost(LLMSuccess(message=r.message, self=chat, usage=tagged); pricing),
+                   estimated_cost(r; pricing); rtol=1e-12)
+    @test (@inferred UniLM._billed_cost(nothing, "m", u, pricing["m"])) ≈ estimated_cost(r; pricing)
+    @test (@inferred UniLM._billed_cost(chat.service, "m", u, pricing["m"])) ≈ estimated_cost(r; pricing)
+end
+
+@testset "served model prices the call" begin
+    pricing = Dict("m-served" => UniLM._price(1.0, 0.1, 4.0), "m-asked" => UniLM._price(2.0, 0.2, 8.0))
+    u = TokenUsage(prompt_tokens=1000, completion_tokens=50, total_tokens=1050)
+    chat = Chat(service=GenericOpenAIEndpoint("http://localhost:9", ""), model="m-asked")
+    m = Message(role=RoleAssistant, content="x")
+    served = LLMSuccess(message=m, self=chat, usage=u, model="m-served")
+    asked = LLMSuccess(message=m, self=chat, usage=u)
+    @test isapprox(estimated_cost(served; pricing), (1000 * 1.0 + 50 * 4.0) / 1e6; rtol=1e-12)
+    @test isapprox(estimated_cost(asked; pricing), (1000 * 2.0 + 50 * 8.0) / 1e6; rtol=1e-12)
+    @test estimated_cost(served; pricing, model="m-asked") == estimated_cost(asked; pricing)   # explicit wins
+    # A served model without a row is not priced as the one requested: it costs 0.0 and warns.
+    unlisted = LLMSuccess(message=m, self=chat, usage=u, model="m-served-unlisted")
+    @test (@test_logs (:warn, r"no price row") estimated_cost(unlisted; pricing)) == 0.0
+    # A dated snapshot of the served model uses its base row.
+    @test estimated_cost(LLMSuccess(message=m, self=chat, usage=u, model="m-served-2026-09-14"); pricing) ==
+          estimated_cost(served; pricing)
+end
+
+@testset "an image result has no priced model; a failure costs 0.0" begin
+    # The Images API bills text and image tokens at their own rates, which a price row does not
+    # model: without `model=` the estimate throws instead of returning a zero.
+    usage = Dict{String,Any}("input_tokens" => 50, "output_tokens" => 200, "total_tokens" => 250)
+    img = ImageSuccess(response=UniLM.ImageResponse(created=1, data=UniLM.ImageObject[], usage=usage,
+                                                    raw=Dict{String,Any}()))
+    err = try estimated_cost(img); nothing catch e; e end
+    @test err isa ArgumentError && occursin("ImageSuccess", err.msg) && occursin("model=", err.msg)
+    row = Dict("my-image-rates" => UniLM._price(5.0, 1.25, 40.0))
+    @test isapprox(estimated_cost(img; model="my-image-rates", pricing=row), (50 * 5.0 + 200 * 40.0) / 1e6;
+                   rtol=1e-12)
+    # A failure of any token-billed API is still a priced zero, a System One one included.
+    for failure in (ImageFailure(response="e", status=400), ImageCallError(error="e"),
+                    SystemOneFailure(response="{}", status=500), SystemOneCallError(error="e"))
+        @test estimated_cost(failure) == 0.0
+    end
 end

@@ -1,9 +1,3 @@
-"""A per-token pricing row: `input` / `cached_input` / `output` USD per token."""
-const PriceRow = @NamedTuple{input::Float64, cached_input::Float64, output::Float64}
-
-"""Build a [`PriceRow`](@ref) from per-1M-token USD figures (input, cached-input, output)."""
-_price(i, c, o) = (input = i / 1_000_000, cached_input = c / 1_000_000, output = o / 1_000_000)
-
 """
     _PricingTable <: AbstractDict{String,PriceRow}
 
@@ -36,9 +30,11 @@ Base.IteratorSize(::Type{_PricingTable}) = Base.SizeUnknown()
 """Default per-token pricing; current OpenAI, Gemini, and TypeSafe rows verified on 2026-09-22,
 Anthropic and DeepSeek rows on 2026-09-24 (prices drift — re-verify before relying on them).
 Cached input is billed at the discounted `cached_input` rate; reasoning tokens are already
-counted within output tokens. These are standard short-context text rates: cache-write
-premiums, long-context surcharges, service-tier and off-peak adjustments, multimodal rates,
-and hosted-tool fees are not included.
+counted within output tokens. The rows are standard short-context text rates. Where UniLM
+models a provider's surcharges — cache-write premiums, long-context tiers, service-tier,
+speed or region multipliers — [`estimated_cost`](@ref) applies them to these rates for that
+provider's results; every other result is billed at the standard rates. Off-peak discounts,
+multimodal rates and hosted-tool fees are not included.
 
 A lock-guarded `AbstractDict{String,PriceRow}`: add or replace rows with
 `DEFAULT_PRICING[model] = row` from any task while requests are running."""
@@ -123,11 +119,15 @@ indistinguishable from a genuinely free call and would quietly under-count spend
 token_usage(r::LLMRequestResponse)::TokenUsage = throw(ArgumentError(
     "$(typeof(r)) carries no token usage or pricing information"))
 token_usage(r::LLMSuccess)::TokenUsage = something(r.usage, TokenUsage())
-# The Responses and Images APIs name usage input/output tokens.
-_input_output_usage(::Nothing)::TokenUsage = TokenUsage()
-_input_output_usage(u::AbstractDict)::TokenUsage = _token_usage_from(u; prompt_key="input_tokens",
-    completion_key="output_tokens", prompt_details="input_tokens_details", completion_details="output_tokens_details")
-token_usage(r::ResponseSuccess)::TokenUsage = _input_output_usage(r.response.usage)
+# The Responses and Images APIs name usage input/output tokens; a response reports the
+# tier it was billed at beside its usage, as `service_tier`.
+_input_output_usage(::Nothing, _=nothing)::TokenUsage = TokenUsage()
+_input_output_usage(u::AbstractDict, tier::Union{String,Nothing}=nothing)::TokenUsage =
+    _token_usage_from(u; prompt_key="input_tokens", completion_key="output_tokens",
+                      prompt_details="input_tokens_details", completion_details="output_tokens_details",
+                      service_tier=tier)
+token_usage(r::ResponseSuccess)::TokenUsage =
+    _input_output_usage(r.response.usage, _wire_string(r.response.raw, "service_tier"))
 token_usage(::LLMFailure)::TokenUsage = TokenUsage()
 token_usage(::LLMCallError)::TokenUsage = TokenUsage()
 token_usage(::ResponseFailure)::TokenUsage = TokenUsage()
@@ -145,13 +145,19 @@ token_usage(::FIMCallError)::TokenUsage = TokenUsage()
 """
     estimated_cost(result::LLMRequestResponse; model=nothing, pricing=DEFAULT_PRICING) -> Float64
 
-Estimate the cost in USD for a single API call result.
-If `model` is not provided, it is inferred from the result when possible.
+Estimate the cost in USD of a single API call from the token usage its result carries.
 
-Returns `0.0` for results that carry no billable usage (failures) or an unpriced
-model; an unpriced model id also logs one warning per id. Throws `ArgumentError` for
-result types outside the token-billed APIs — see [`token_usage`](@ref); their price is
-not a zero this function can report. `pricing` is any `AbstractDict{String,PriceRow}`.
+The model priced is `model` when given; else the one the provider reports having served —
+`result.model` of a Chat result ([`LLMSuccess`](@ref)), `result.response.model` of a
+Responses or FIM result; else the one requested — `result.self.model` for Chat,
+`result.embeddings.model` for Embeddings.
+
+Returns `0.0` for failures, which carry no billable usage, and for an unpriced model; an
+unpriced model id also logs one warning per id. Throws `ArgumentError` for result types
+outside the token-billed APIs — see [`token_usage`](@ref) — and, unless `model` is given,
+for an [`ImageSuccess`](@ref): the Images API bills image tokens at rates a price row does
+not model, and a price this function cannot compute is not a zero it can report.
+`pricing` is any `AbstractDict{String,PriceRow}`.
 
 Model lookup: the exact id first, then the id without a dated snapshot suffix
 (`gpt-5.4-mini-2026-03-17` → `gpt-5.4-mini`, `claude-haiku-4-5-20251001` →
@@ -160,31 +166,43 @@ own (`jev-X.Y.Z`, e.g. a release newer than this table) is priced at the `jev-la
 row. That is an assumption: TypeSafe lists one price, for Jev 1.13; a later version is
 assumed to keep it until the pricing page says otherwise. The same lookup prices
 [`SystemOneSuccess`](@ref) results.
+
+The row's rates bill fresh input tokens and cache writes at `input`, cache reads at
+`cached_input` and completion tokens at `output`, except where UniLM models a provider's
+surcharges, which apply to that provider's results (see [`DEFAULT_PRICING`](@ref)).
 """
 function estimated_cost(result::LLMRequestResponse;
     model::Union{String,Nothing}=nothing,
     pricing::AbstractDict{String, PriceRow}=DEFAULT_PRICING)::Float64
 
     u = token_usage(result)
-    mdl = if !isnothing(model)
-        model
-    elseif result isa LLMSuccess
-        result.self.model
-    elseif result isa ResponseSuccess
-        result.response.model
-    elseif result isa EmbeddingSuccess
-        result.embeddings.model
-    elseif result isa FIMSuccess
-        result.response.model
-    else
-        return 0.0
-    end
-    isnothing(model) && _is_local(_result_service(result), mdl) && return 0.0
+    mdl = isnothing(model) ? _priced_model(result) : model
+    isnothing(mdl) && return 0.0                   # a failure: nothing was billed
+    service = _result_service(result)
+    isnothing(model) && _is_local(service, mdl) && return 0.0
     rates = _price_row(pricing, mdl)
     isnothing(rates) && return 0.0
-    cached = min(u.cached_tokens, u.prompt_tokens)        # cached input billed at the discounted rate
-    fresh = u.prompt_tokens - cached
-    fresh * rates.input + cached * rates.cached_input + u.completion_tokens * rates.output
+    _billed_cost(service, mdl, u, rates)
+end
+
+# The model a result is priced at when the caller names none: the one the provider reports
+# having served, else the one requested. A failure has none: it carries no billed usage. A
+# success with no method here throws — UniLM does not model its token rates (image
+# generation), and a zero would read as a free call.
+_priced_model(r::LLMSuccess)::String = something(r.model, r.self.model)
+_priced_model(r::ResponseSuccess)::String = r.response.model
+_priced_model(r::FIMSuccess)::String = r.response.model
+_priced_model(r::EmbeddingSuccess)::String = r.embeddings.model
+_priced_model(r::LLMRequestResponse)::Nothing = issuccess(r) ? throw(ArgumentError(
+    "$(nameof(typeof(r))) results have no model their usage is priced at: UniLM does not model " *
+    "their token rates; pass model= with a pricing= row of your own to price the usage they report")) : nothing
+
+# The standard rates, billed for every provider without a `_billed_cost` method of its own.
+function _billed_cost(_, ::String, u::TokenUsage, rates::PriceRow)::Float64
+    cached = min(u.cached_tokens, u.prompt_tokens)        # cache reads, at the discounted rate
+    fresh = u.prompt_tokens - cached - u.cache_write_tokens
+    fresh * rates.input + cached * rates.cached_input + u.cache_write_tokens * rates.input +
+        u.completion_tokens * rates.output
 end
 
 # Exact id, then the dated-snapshot alias (OpenAI answers an alias with a

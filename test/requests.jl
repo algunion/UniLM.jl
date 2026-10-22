@@ -1335,6 +1335,68 @@ end
 const _REPLY = JSON.json(Dict("choices" => [Dict("index" => 0, "finish_reason" => "stop",
     "message" => Dict("role" => "assistant", "content" => "hi"))]))
 
+# A server on an OS-assigned port that answers every request with the SSE stream `body`.
+function _sse_reply_server(body::String)
+    server = HTTP.listen!("127.0.0.1", 0; verbose=false) do http::HTTP.Stream
+        read(http)
+        HTTP.setstatus(http, 200)
+        HTTP.setheader(http, "Content-Type" => "text/event-stream")
+        HTTP.startwrite(http)
+        write(http, body)
+    end
+    (; server, url="http://127.0.0.1:$(HTTP.port(server))")
+end
+
+@testset "OpenAI Chat usage: cache writes, tier, served model" begin
+    # Chat Completions reports cache writes in usage.prompt_tokens_details.cache_write_tokens,
+    # the tier that served the request in service_tier and the model that answered in model,
+    # top-level on the reply and on every streamed chunk.
+    usage = """{"prompt_tokens":1000,"completion_tokens":5,"total_tokens":1005,""" *
+            """"prompt_tokens_details":{"cached_tokens":200,"cache_write_tokens":300},""" *
+            """"completion_tokens_details":{"reasoning_tokens":0}}"""
+    body = """{"id":"x","object":"chat.completion","model":"gpt-6-sol-2026-09-14","service_tier":"flex",""" *
+           """"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],""" *
+           """"usage":$usage}"""
+    head = """{"id":"x","object":"chat.completion.chunk","model":"gpt-6-sol-2026-09-14","service_tier":"flex","""
+    stream = "data: $head\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":null}]}\n\n" *
+             "data: $head\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" *
+             "data: $head\"choices\":[],\"usage\":$usage}\n\ndata: [DONE]\n\n"
+    want = TokenUsage(prompt_tokens=1000, completion_tokens=5, total_tokens=1005, cached_tokens=200,
+                      cache_write_tokens=300, service_tier="flex")
+    rates = DEFAULT_PRICING["gpt-6-sol"]
+    billed = 500 * rates.input + 200 * rates.cached_input + 300 * rates.input + 5 * rates.output
+    plain, sse = _json_reply_server(body), _sse_reply_server(stream)
+    try
+        mk(url; kw...) = Chat(service=GenericOpenAIEndpoint(url, ""), model="gpt-6-sol",
+                              messages=[Message(Val(:system), "s"), Message(Val(:user), "u")]; kw...)
+        cfg = RequestConfig(max_attempts=1)
+        chat = mk(plain.url)
+        r = chatrequest!(chat; config=cfg)
+        @test r isa LLMSuccess && r.message.content == "ok"
+        @test r.usage.cache_write_tokens == 300
+        @test r.usage.service_tier == "flex"
+        @test r.model == "gpt-6-sol-2026-09-14"
+        @test r.usage == want
+        @test isapprox(cumulative_cost(chat), billed; rtol=1e-12)
+        streamed = mk(sse.url; stream=true)
+        rs = fetch(chatrequest!(streamed; config=cfg))
+        @test rs isa LLMSuccess && rs.message.content == "ok"
+        @test rs.usage == r.usage                       # cache writes and tier, as when not streamed
+        @test rs.model == r.model
+        @test cumulative_cost(streamed) == cumulative_cost(chat)
+    finally
+        close(plain.server); close(sse.server)
+    end
+    # A reply that names no model or tier reports none; a tier carried by an earlier chunk
+    # still reaches the usage of a final chunk that omits it.
+    @test UniLM.extract_message(HTTP.Response(200, [], Vector{UInt8}(_REPLY))).model === nothing
+    @test isnothing(UniLM._parse_usage(JSON.parse("""{"usage":$usage}"""; dicttype=Dict{String,Any})).service_tier)
+    state = UniLM.StreamState()
+    UniLM._sse_dispatch!(OPENAIServiceEndpoint, IOBuffer(), Ref(""),
+        "data: $head\"choices\":[]}\n\ndata: {\"choices\":[],\"usage\":$usage}\n\n", state)
+    @test state.usage == want && state.model == "gpt-6-sol-2026-09-14"
+end
+
 # An OpenAI-wire endpoint whose encoder refuses every request.
 struct _RefusingEncoder <: UniLM.OpenAIWireEndpoint
     url::String

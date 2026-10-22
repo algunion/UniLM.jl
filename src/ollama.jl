@@ -150,13 +150,27 @@ function _ollama_wire_call(tc::ToolCall)::Dict{String,Any}
     d
 end
 
+# A message's `images` entry: the raw base64 of an image or a sound clip
+# (https://docs.ollama.com/api/chat). The list has no field for an image's detail level and
+# none for a document, so either is refused rather than dropped.
+_ollama_media(a::AudioAttachment)::String = base64encode(a.data)
+function _ollama_media(a::ImageAttachment)::String
+    isnothing(a.detail) || throw(ArgumentError(
+        "Ollama's /api/chat takes an image's bytes alone and no detail level: build the ImageAttachment " *
+        "without `detail` (got $(repr(a.detail)))"))
+    base64encode(a.data)
+end
+_ollama_media(a::DocumentAttachment) = throw(ArgumentError(
+    "Ollama's /api/chat takes images and sound clips, not documents ($(a)): send the document through an " *
+    "OpenAI-compatible endpoint, or its text in the message"))
+
 function _ollama_messages(msgs::Vector{Message})::Vector{Dict{String,Any}}
     names = Dict{String,String}()          # tool-call id → function name, for the results
     out = Dict{String,Any}[]
     for (i, m) in pairs(msgs)
         isnothing(m.name) || throw(ArgumentError("Ollama messages have no name field (message $i sets one)"))
         d = Dict{String,Any}("role" => m.role, "content" => something(m.content, m.refusal_message, ""))
-        isnothing(m.attachments) || (d["images"] = [base64encode(a.data) for a in m.attachments])
+        isnothing(m.attachments) || (d["images"] = String[_ollama_media(a) for a in m.attachments])
         if m.role == RoleAssistant
             thinking = _ollama_thinking(m)
             isnothing(thinking) || (d["thinking"] = thinking)
@@ -332,6 +346,14 @@ _file_image(d::AbstractDict) =
     (get(d, "type", get(d, :type, nothing)) == "input_image" && (haskey(d, "file_id") || haskey(d, :file_id))) ||
     _file_image(collect(values(d)))
 
+# An input file (a document, by data, URL or file id): Ollama's OpenAI-compatibility page lists
+# no file inputs for /v1/responses (https://docs.ollama.com/api/openai-compatibility), so the
+# file might never reach the model.
+_input_file(x) = false
+_input_file(v::AbstractVector) = any(_input_file, v)
+_input_file(m::InputMessage) = _input_file(m.content)
+_input_file(d::AbstractDict) = get(d, "type", get(d, :type, nothing)) == "input_file" || _input_file(collect(values(d)))
+
 # Keys of a function tool that Ollama's Responses tools do not have (OpenAI-only).
 const _OLLAMA_RESPOND_TOOL_KEYS = ("async", "allowed_callers", "defer_loading", "output_schema")
 
@@ -363,6 +385,9 @@ function encode_agentic(service::OllamaEndpoint, r::Respond)::String
     think = _ollama_think(effort, constrained)
     _file_image(r.input) && throw(ArgumentError(
         "Ollama reads input images from data URLs only; an input_image with a file_id would be skipped"))
+    _input_file(r.input) && throw(ArgumentError(
+        "Ollama's Responses API documents no input_file parts, so the file might never reach the model: put " *
+        "the document's text in an input_text part, or send the file to OPENAIServiceEndpoint"))
     body = JSON.parse(invoke(encode_agentic, Tuple{OpenAIWireEndpointSpec,Respond}, service, r))
     think === false && isnothing(effort) && (body["reasoning"] = Dict("effort" => "none"))
     for tool in something(get(body, "tools", nothing), Any[])

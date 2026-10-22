@@ -171,6 +171,35 @@ This checks:
 - Last message is `user`
 - No consecutive same-role messages
 
+## [Images, audio and documents](@id chat_attachments)
+
+A user message carries media besides its text: an [`ImageAttachment`](@ref) (PNG, JPEG,
+GIF or WebP), an [`AudioAttachment`](@ref) (WAV or MP3) or a [`DocumentAttachment`](@ref)
+(PDF), each read from a file or from bytes and recognised by its leading bytes, never by
+its name. An image may set the `detail` level an OpenAI model reads it at: `"auto"`,
+`"low"`, `"high"` or `"original"`.
+
+```julia
+chat = Chat(model="gpt-6-luna")
+push!(chat, Message(Val(:system), "You are concise."))
+push!(chat, Message(Val(:user), "Does the chart agree with the report's conclusion?",
+                    DocumentAttachment("report.pdf"),
+                    ImageAttachment("chart.png"; detail="high")))
+result = chatrequest!(chat)
+```
+
+| Endpoint | Image | Sound clip | Document |
+| :------- | :---- | :--------- | :------- |
+| OpenAI, Azure, the Gemini OpenAI-compatible endpoint, DeepSeek, generic endpoints | `image_url` part (`detail` when set) | `input_audio` part | `file` part (its `filename` and a data URL) |
+| [`OllamaEndpoint`](@ref) | `images` entry; a detail level is refused | `images` entry | refused |
+
+On the OpenAI Chat Completions wire (the first row), UniLM sends every kind as a content
+part, and the server decides what to do with it. The native Anthropic and Gemini encoders
+do not send attachments yet. For the Responses API,
+`input_file(DocumentAttachment("report.pdf"))` is the document's `input_file` part;
+[`OllamaEndpoint`](@ref)'s Responses API, which documents no file inputs, refuses it. A
+refusal is an `ArgumentError` before any request.
+
 ## Models
 
 UniLM.jl works with any model name string. Common choices:

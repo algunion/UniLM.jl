@@ -59,7 +59,7 @@ input_text(text::String; cache_breakpoint::Bool=false) = cache_breakpoint ?
     input_image(url=nothing; detail=nothing, file_id=nothing)
 
 Create an `input_image` content part. Provide either an image `url` or a `file_id`.
-`detail` can be `"auto"`, `"low"`, or `"high"`.
+`detail` can be `"auto"` (the API's default), `"low"`, `"high"` or `"original"`.
 """
 function input_image(url::Union{String,Nothing}=nothing; detail::Union{String,Nothing}=nothing,
         file_id::Union{String,Nothing}=nothing)
@@ -88,6 +88,18 @@ function input_file(; url::Union{String,Nothing}=nothing, id::Union{String,Nothi
     !isnothing(filename) && (d[:filename] = filename)
     return d
 end
+
+"""
+    input_file(document::DocumentAttachment)
+
+The `input_file` content part of a [`DocumentAttachment`](@ref): `file_data` is the PDF
+as a base64 data URL (`"data:application/pdf;base64,…"`, the form OpenAI's
+[file inputs](https://developers.openai.com/api/docs/guides/file-inputs) guide sends) and
+`filename` the document's name — the same `Dict` as
+`input_file(; file_data=…, filename=document.filename)`. [`OllamaEndpoint`](@ref)'s
+Responses API documents no file inputs and refuses an `input_file` part before any request.
+"""
+input_file(a::DocumentAttachment) = input_file(; file_data=_data_url(a), filename=a.filename)
 
 """
     configuration_update(; effort::String)

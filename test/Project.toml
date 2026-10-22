@@ -1,6 +1,7 @@
 [deps]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
 InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 JET = "c3a54625-cd67-489e-a8e7-0a5a0ff4e31b"
@@ -17,6 +18,7 @@ UniLM = {path = ".."}
 [compat]
 Aqua = "0.8"
 Base64 = "1.11"
+Dates = "1.11"
 HTTP = "2.11.2"
 InteractiveUtils = "1.11"
 JET = "0.12"

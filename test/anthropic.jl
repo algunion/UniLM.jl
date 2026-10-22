@@ -1564,7 +1564,7 @@ end
         @test chat.model == "claude-opus-5-5" == UniLM.default_model(service)       # Chat default and model resolution
         @test UniLM.default_max_tokens(service, "claude-haiku-5-5") == 16000
         @test UniLM.get_url(chat) == UniLM.get_url(service, chat) == "https://api.anthropic.com/v1/messages"
-        @test provider_capabilities(service) == Set([:chat, :tools, :json_output, :streaming])
+        @test provider_capabilities(service) == Set([:chat, :tools, :json_output, :streaming, :models])
         @test has_capability(service, :chat) && !has_capability(service, :embeddings)
         @test_throws ArgumentError UniLM.validate_capability(service, :embeddings, "Embeddings API")
         @test UniLM._service_name(service) === :ANTHROPICServiceEndpoint

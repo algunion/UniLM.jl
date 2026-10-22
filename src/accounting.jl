@@ -33,11 +33,13 @@ Cached input is billed at the discounted `cached_input` rate; reasoning tokens a
 counted within output tokens. The rows are standard short-context text rates. Where UniLM
 models a provider's surcharges — cache-write premiums, long-context tiers, service-tier,
 speed or region multipliers — [`estimated_cost`](@ref) applies them to these rates for that
-provider's results; every other result is billed at the standard rates. An
-`OPENAIServiceEndpoint` result bills its audio tokens (`prompt_audio_tokens`,
-`completion_audio_tokens`) at the model's audio-token rates, which UniLM has for
-`gpt-audio-1.5`; audio tokens of another model leave the estimate at `0.0`, with one warning
-per model. Off-peak discounts, other multimodal rates and hosted-tool fees are not included.
+provider's results; every other result is billed at the standard rates.
+[`estimated_cost`](@ref) bills the audio tokens (`prompt_audio_tokens`,
+`completion_audio_tokens`) of an `OPENAIServiceEndpoint` result at the model's audio-token
+rates, which UniLM has for `gpt-audio-1.5`. A row has no audio-token rates, so the audio tokens
+of any other `OPENAIServiceEndpoint` model, and of every result billed at the standard rates,
+leave the estimate at `0.0`, with one warning per model. Off-peak discounts, other multimodal
+rates and hosted-tool fees are not included.
 
 A lock-guarded `AbstractDict{String,PriceRow}`: add or replace rows with
 `DEFAULT_PRICING[model] = row` from any task while requests are running."""
@@ -168,8 +170,9 @@ The model priced is `model` when given; else the one the provider reports having
 Responses or FIM result; else the one requested — `result.self.model` for Chat,
 `result.embeddings.model` for Embeddings.
 
-Returns `0.0` for failures, which carry no billable usage, and for an unpriced model; an
-unpriced model id also logs one warning per id. Throws `ArgumentError` for result types
+Returns `0.0` for failures, which carry no billable usage, for an unpriced model, and for audio
+tokens without audio-token rates (see [`DEFAULT_PRICING`](@ref)); the last two also log one
+warning per model id. Throws `ArgumentError` for result types
 outside the token-billed APIs — see [`token_usage`](@ref) — and, unless `model` is given,
 for an [`ImageSuccess`](@ref): the Images API bills image tokens at rates a price row does
 not model, and a price this function cannot compute is not a zero it can report.
@@ -213,8 +216,10 @@ _priced_model(r::LLMRequestResponse)::Nothing = issuccess(r) ? throw(ArgumentErr
     "$(nameof(typeof(r))) results have no model their usage is priced at: UniLM does not model " *
     "their token rates; pass model= with a pricing= row of your own to price the usage they report")) : nothing
 
-# The standard rates, billed for every provider without a `_billed_cost` method of its own.
-function _billed_cost(_, ::String, u::TokenUsage, rates::PriceRow)::Float64
+# The standard rates, billed for every provider without a `_billed_cost` method of its own. A
+# price row has no audio-token rates, so audio tokens leave the call unpriced.
+function _billed_cost(_, model::String, u::TokenUsage, rates::PriceRow)::Float64
+    _counts_audio(u) && return _unpriced_audio(model)
     cached = min(u.cached_tokens, u.prompt_tokens)        # cache reads, at the discounted rate
     fresh = u.prompt_tokens - cached - u.cache_write_tokens
     fresh * rates.input + cached * rates.cached_input + u.cache_write_tokens * rates.input +

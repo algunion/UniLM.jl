@@ -213,18 +213,19 @@ end
     end
 end
 
-# Refuted if: a provider endpoint lists from another provider's URL or through another wire, or a
-# missing key surfaces as anything but a call error that names it.
+# Refuted if: a provider endpoint lists from another provider's URL or through another wire, does
+# not declare its listing, or a missing key surfaces as anything but a call error that names it.
+# The Anthropic type and an instance are one endpoint.
 @testset "OpenAI, Anthropic and Gemini: their listing URLs and wires, and a missing key named" begin
-    @test UniLM._models_url(OPENAIServiceEndpoint) == "https://api.openai.com/v1/models"
-    @test UniLM._models_url(ANTHROPICServiceEndpoint) == "https://api.anthropic.com/v1/models"
-    @test UniLM._models_url(GEMINIServiceEndpoint) == "https://generativelanguage.googleapis.com/v1beta/models"
-    @test UniLM._model_listing(OPENAIServiceEndpoint) === UniLM._OpenAIModels()
-    @test UniLM._model_listing(ANTHROPICServiceEndpoint) === UniLM._AnthropicModels()
-    @test UniLM._model_listing(GEMINIServiceEndpoint) === UniLM._GeminiModels()
-    @test has_capability(OPENAIServiceEndpoint, :models)
-    for (service, key) in ((OPENAIServiceEndpoint, "OPENAI_API_KEY"), (ANTHROPICServiceEndpoint, "ANTHROPIC_API_KEY"),
-                           (GEMINIServiceEndpoint, "GEMINI_API_KEY"))
+    anthropic = ("https://api.anthropic.com/v1/models", UniLM._AnthropicModels(), "ANTHROPIC_API_KEY")
+    for (service, (url, wire, key)) in (
+            OPENAIServiceEndpoint => ("https://api.openai.com/v1/models", UniLM._OpenAIModels(), "OPENAI_API_KEY"),
+            ANTHROPICServiceEndpoint => anthropic, ANTHROPICServiceEndpoint() => anthropic,
+            GEMINIServiceEndpoint => ("https://generativelanguage.googleapis.com/v1beta/models", UniLM._GeminiModels(),
+                                      "GEMINI_API_KEY"))
+        @test UniLM._models_url(service) == url
+        @test UniLM._model_listing(service) === wire
+        @test has_capability(service, :models)
         r = withenv(() -> list_models(; service, config=_ML_CFG), key => nothing)
         @test r isa ModelListCallError && r.cause isa KeyError && occursin(key, r.error)
     end
@@ -252,6 +253,45 @@ end
     @test r isa ModelListCallError && r.cause isa UniLMCancelled && isempty(seen)
     r, seen = _ml_list(_ML_GEMINI, _ml_serving("{}"); config=_TINY_DEADLINE)
     @test _seam_timeout(r, ModelListCallError) && isempty(seen)
+end
+
+# An Anthropic endpoint, the type or an instance, whose listing `_with_scripted` serves: its
+# requests carry the headers that endpoint sends, on its listing and on its other requests.
+struct _AnthropicListingAt <: UniLM.ServiceEndpoint
+    endpoint::Union{Type{ANTHROPICServiceEndpoint},ANTHROPICServiceEndpoint}
+end
+UniLM._model_listing(::_AnthropicListingAt) = UniLM._AnthropicModels()
+UniLM._models_url(::_AnthropicListingAt) = _url_probe_base[] * "/v1/models"
+UniLM.auth_header(s::_AnthropicListingAt) = UniLM.auth_header(s.endpoint)
+UniLM._models_headers(s::_AnthropicListingAt) = UniLM._models_headers(s.endpoint)
+
+# https://platform.claude.com/docs/en/api/models/list (Headers): `anthropic-beta` is deprecated on
+# GET /v1/models. Refuted if: an Anthropic listing sends the endpoint's betas, or leaves out its key,
+# its API version, its user profile or its workspace — from the type or from an instance.
+@testset "an Anthropic listing sends the key, the version, the user profile and the workspace, never the betas" begin
+    withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
+        base = ["x-api-key" => "sk-ant-local-0000", "anthropic-version" => "2026-10-21"]
+        every = ANTHROPICServiceEndpoint(betas=["fast-mode-2026-02-01", "compact-2026-09-04"],
+                                         user_profile_id="uprof_011CZkZCu8hGbp5mYRQgUmz9",
+                                         workspace_id="wrkspc_011CZkZaBF1tNoB5wlCeusgy", inference_geo="us")
+        options = ["anthropic-user-profile-id" => "uprof_011CZkZCu8hGbp5mYRQgUmz9",
+                   "anthropic-workspace-id" => "wrkspc_011CZkZaBF1tNoB5wlCeusgy"]
+        for (service, want) in ((ANTHROPICServiceEndpoint, base), (ANTHROPICServiceEndpoint(), base),
+                                (ANTHROPICServiceEndpoint(betas=["fast-mode-2026-02-01"]), base), (every, [base; options]))
+            @test (@inferred UniLM._models_headers(service)) == want
+            # On the wire, beside the headers HTTP.jl adds (Host, User-Agent, …): exactly these x- and
+            # anthropic- headers, and no Content-Type.
+            sent = Ref(Dict{String,String}())
+            r, seen = _ml_list(_AnthropicListingAt(service), (_, req) -> (
+                sent[] = Dict(lowercase(String(k)) => String(v) for (k, v) in req.headers);
+                _json(200, _ml_fixture("anthropic.json"))))
+            @test r isa ModelListSuccess && length(r.models) == 13 && length(seen) == 1
+            @test filter(((k, _),) -> startswith(k, "x-") || startswith(k, "anthropic-"), sent[]) == Dict(want)
+            @test !haskey(sent[], "content-type")
+        end
+        # The endpoint's other requests keep its betas.
+        @test Dict(UniLM.auth_header(every))["anthropic-beta"] == "fast-mode-2026-02-01,compact-2026-09-04"
+    end
 end
 
 # ─── The drift checks (provider_drift_checks.jl) ─────────────────────────────

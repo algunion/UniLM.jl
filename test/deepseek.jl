@@ -160,8 +160,17 @@ end
               Dict("model" => "deepseek-flash", "choices" => Any[], "usage" => _DS_CACHE_USAGE)]
     @test UniLM._sse_dispatch!(_DS, IOBuffer(), Ref(""), _ds_stream(chunks), st) === :done
     @test st.model == dec.model && st.usage == dec.usage
-    # The cache-hit count replaces only cached_tokens: every other field of the usage is kept.
-    wire = TokenUsage(1000, 50, 1050, 0, 7, 300, 100, "flex", "us")
-    @test UniLM._deepseek_usage(wire, _DS_CACHE_USAGE) == TokenUsage(1000, 50, 1050, 768, 7, 300, 100, "flex", "us")
+    # The cache-hit count replaces only cached_tokens: every other field of the usage is kept, the
+    # audio counts included.
+    wire = TokenUsage(1000, 50, 1050, 0, 7, 300, 100, "flex", "us", 12, 17)
+    hit = @inferred UniLM._deepseek_usage(wire, _DS_CACHE_USAGE)
+    @test hit == TokenUsage(1000, 50, 1050, 768, 7, 300, 100, "flex", "us", 12, 17)
+    @test all(f -> f === :cached_tokens || getfield(hit, f) === getfield(wire, f), fieldnames(TokenUsage))
     @test UniLM._deepseek_usage(wire, Dict("prompt_tokens" => 1000)) === wire
+    # So does a reply whose detail objects count audio beside the cache hits.
+    voiced = merge(_DS_CACHE_USAGE, Dict("prompt_tokens_details" => Dict("audio_tokens" => 12),
+                                         "completion_tokens_details" => Dict("audio_tokens" => 17)))
+    u = decode_response(_DS, _ds_resp(merge(turn, Dict("usage" => voiced)))).usage
+    @test u == TokenUsage(prompt_tokens=1000, completion_tokens=50, total_tokens=1050, cached_tokens=768,
+                          prompt_audio_tokens=12, completion_audio_tokens=17)
 end

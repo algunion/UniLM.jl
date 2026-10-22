@@ -37,7 +37,7 @@ verbs hold it to that declaration like any built-in.
 A rejection of a declared endpoint throws `ArgumentError` before any request,
 naming the feature and the endpoint and listing what it does support (for example
 `Files API is not supported by ANTHROPICServiceEndpoint. Supported: chat,
-json_output, streaming, tools`).
+json_output, models, streaming, tools`).
 
 ## Functions
 
@@ -73,7 +73,7 @@ has_capability
 | `:uploads` | Resumable Uploads API |
 | `:realtime` | Realtime API |
 | `:system_one` | System One evaluation ([`ask`](@ref)): TypeSafe, OpenAI (its Decisions API) and Ollama |
-| `:models` | Model listing ([`list_models`](@ref)) |
+| `:models` | Model listing ([`list_models`](@ref)): TypeSafe, OpenAI, Anthropic, Gemini and Ollama |
 
 ## Capabilities by Provider
 

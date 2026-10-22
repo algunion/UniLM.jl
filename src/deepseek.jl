@@ -30,12 +30,12 @@ end
 # https://api-docs.deepseek.com/guides/kv_cache). The OpenAI-wire builder reads only
 # `prompt_tokens_details.cached_tokens`; without this, a usage carrying just the
 # native count prices every cached token at the miss rate. `t` is that builder's usage
-# of the raw usage `u`; only its cached count is replaced.
+# of the raw usage `u`; only its cached count is replaced, field by field, so every other
+# field, one added to TokenUsage later included, is carried over.
 function _deepseek_usage(t::TokenUsage, u::AbstractDict)::TokenUsage
     hit = get(u, "prompt_cache_hit_tokens", nothing)
     hit isa Integer || return t
-    TokenUsage(t.prompt_tokens, t.completion_tokens, t.total_tokens, Int(hit), t.reasoning_tokens,
-               t.cache_write_tokens, t.cache_write_extended_tokens, t.service_tier, t.inference_geo)
+    TokenUsage((f === :cached_tokens ? Int(hit) : getfield(t, f) for f in fieldnames(TokenUsage))...)
 end
 _deepseek_usage(t, _) = t
 

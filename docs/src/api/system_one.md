@@ -358,8 +358,9 @@ cached and cache-written ones at the full input rate, twice that rate for a
 request of more than 272K input tokens.
 
 The calls are bounded as TypeSafe's are (60 s per attempt, 150 s in all, while
-you set no `RequestConfig` of your own), [`ask_each`](@ref) keeps 16 of them in
-flight, and [`list_models`](@ref) has no listing here: it is an `ArgumentError`.
+you set no `RequestConfig` of your own), and [`ask_each`](@ref) keeps 16 of them in
+flight. [`list_models`](@ref) on this endpoint lists every model OpenAI serves the key
+([Model Listings](@ref models_api)).
 On the 129 support tickets of the [Backends](@ref system_one_backend_api) section,
 OpenAI answered in 0.48 s at the median and 2.44 s at the 95th percentile (Jev:
 0.25 s and 0.33 s), at \$0.0000296 a ticket (Jev: \$0.0000225).

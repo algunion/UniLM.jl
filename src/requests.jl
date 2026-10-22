@@ -48,8 +48,6 @@ const _IMF_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
                      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 # Unix seconds for a UTC civil date-time (days-from-civil, era-based Gregorian).
-# Written out rather than pulled from `Dates` — that stdlib is not a dependency
-# of this package and one header form does not justify making it one.
 function _utc_epoch_seconds(y::Int, mo::Int, d::Int, h::Int, mi::Int, s::Int)::Float64
     yr = y - (mo <= 2)
     era = fld(yr, 400)

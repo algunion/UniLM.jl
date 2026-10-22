@@ -145,6 +145,10 @@ end
         include("capabilities.jl")
     end
 
+    @testset "provider model listings" begin
+        include("model_listing.jl")
+    end
+
     @testset "typesafe" begin
         include("typesafe.jl")
         include("typesafe_assets.jl")
@@ -263,6 +267,10 @@ end
 
     @testset "integration — current provider contracts" begin
         include("integration_provider_compat.jl")
+    end
+
+    @testset "integration — provider drift" begin
+        include("integration_provider_drift.jl")
     end
 
     @testset "integration — usage and cost" begin

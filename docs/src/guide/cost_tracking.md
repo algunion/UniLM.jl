@@ -68,13 +68,15 @@ retention), a long-context tier, a multiplier for the `service_tier` or `inferen
 provider reports in [`TokenUsage`](@ref) — they apply to that provider's results; every
 other result is billed at the standard rates.
 
-OpenAI bills the audio of a Chat audio reply ([Audio replies](@ref chat_audio_output)) at
-the model's audio-token rates: `prompt_audio_tokens` and `completion_audio_tokens`, the
-audio parts of `prompt_tokens` and `completion_tokens`, bill at those rates, and the rest of
-the call at the row's text rates. UniLM has the audio-token rates of `gpt-audio-1.5`. An
-`OPENAIServiceEndpoint` result whose usage counts audio tokens of any other model is not
-priced — `0.0`, with one warning per model, as for a model without a row — rather than
-billed at its text rates.
+OpenAI bills every audio token of a Chat call — an [`AudioAttachment`](@ref) clip, an audio
+reply ([Audio replies](@ref chat_audio_output)), a reply sent back by its id — at the model's
+audio-token rates: `prompt_audio_tokens` and `completion_audio_tokens`, the audio parts of
+`prompt_tokens` and `completion_tokens`, bill at those rates, and the rest of the call at the
+row's text rates. UniLM has the audio-token rates of `gpt-audio-1.5` on
+`OPENAIServiceEndpoint`, and a price row has none, so audio tokens are not priced for any
+other model on `OPENAIServiceEndpoint`, nor for any model on an endpoint billed at the standard
+rates (Azure, DeepSeek, generic endpoints, your own): such a result costs `0.0`, with one
+warning per model, as for a model without a row, rather than its audio billed at text rates.
 
 Reasoning tokens are already counted inside `completion_tokens`, so they carry no separate
 charge. Failures and call errors report zero usage and `0.0` cost. Image results report the
@@ -147,6 +149,10 @@ pricing = merge(DEFAULT_PRICING, Dict(
 println("now priced? ", haskey(pricing, "gpt-4o-mini"))
 println("cost USD = ", round(estimated_cost(unpriced; pricing), digits=6))
 ```
+
+A row cannot price audio: a `PriceRow` has no audio-token rates. Whatever `pricing=` holds, a
+result whose usage counts audio tokens stays at `0.0` unless UniLM has that model's audio-token
+rates (`gpt-audio-1.5` on `OPENAIServiceEndpoint`, whose text tokens your row then prices).
 
 ## Cumulative cost is Chat-only
 

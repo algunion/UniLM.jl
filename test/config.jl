@@ -277,3 +277,69 @@ end
         close(server)
     end
 end
+
+# ─── A model's own default (Gemini 4) ───────────────────────────────────────
+
+@testset "a Gemini 4 call defaults to 20-minute bounds, below every channel the user sets" begin
+    # Google: "Set your HTTP read timeout to 20 minutes" for Gemini 4 Argon, whose non-streaming
+    # calls the server closes after 10 minutes and streams after 20.
+    long = RequestConfig(request_timeout=1200.0, stream_idle_timeout=1200.0, total_deadline=1200.0)
+    for svc in (GEMINIServiceEndpoint, GEMINIOpenAIServiceEndpoint), model in ("gemini-4-argon", "gemini-4-flash")
+        @test UniLM._model_default_config(svc, model) == long
+    end
+    # A Gemini 3 model, a near-miss id or another provider's endpoint brings no default of its own.
+    for (svc, model) in ((GEMINIServiceEndpoint, "gemini-3.8-flash"), (GEMINIServiceEndpoint, "gemini-40-flash"),
+                         (GEMINIServiceEndpoint, "gemini-4"), (OPENAIServiceEndpoint, "gemini-4-argon"),
+                         (ANTHROPICServiceEndpoint, "claude-opus-5-5"))
+        @test isnothing(UniLM._model_default_config(svc, model))
+    end
+    initial = _saved_default()
+    try
+        _restore_default!(nothing)
+        model_default = UniLM._model_default_config(GEMINIServiceEndpoint, "gemini-4-argon")
+        @test UniLM._resolve_config(nothing, model_default) == long
+        percall = RequestConfig(request_timeout=7.0)
+        @test UniLM._resolve_config(percall, model_default) === percall
+        # A scope or a process default the user sets replaces it as a whole, as for a System One backend.
+        with_request_config(max_attempts=1) do
+            @test UniLM._resolve_config(nothing, model_default) == RequestConfig(max_attempts=1)
+        end
+        set_default_config!(RequestConfig())
+        @test UniLM._resolve_config(nothing, model_default) == RequestConfig()
+    finally
+        _restore_default!(initial)
+    end
+end
+
+# An OpenAI-wire endpoint whose model "slow-thinker" brings a bound of its own, answered by the
+# slow server above.
+struct _ModelCfgProbe <: UniLM.OpenAIWireEndpoint end
+UniLM.get_url(::Type{_ModelCfgProbe}, ::Chat) = _CFG_BASE[] * "/v1/chat/completions"
+UniLM._agentic_url(::Type{_ModelCfgProbe}) = _CFG_BASE[] * "/v1/responses"
+UniLM.auth_header(::Type{_ModelCfgProbe}) = ["Authorization" => "Bearer c", "Content-Type" => "application/json"]
+UniLM._model_default_config(::Type{_ModelCfgProbe}, model::AbstractString) =
+    model == "slow-thinker" ? RequestConfig(request_timeout=0.4, max_attempts=1) : nothing
+
+@testset "end to end: chatrequest! and respond take a model's own default, below the user's channels" begin
+    server = _cfg_slow_server()
+    _CFG_BASE[] = "http://127.0.0.1:$(HTTP.port(server))"
+    limit(r) = r isa Union{LLMCallError,ResponseCallError} && r.cause isa UniLMTimeout ? r.cause.limit : nothing
+    chat(model; kw...) = Chat(; service=_ModelCfgProbe, model, messages=[Message(Val(:system), "s"), Message(Val(:user), "u")], kw...)
+    asked(model) = Respond(service=_ModelCfgProbe, model=model, input="u")
+    initial = _saved_default()
+    try
+        _restore_default!(nothing)
+        @test limit(chatrequest!(chat("slow-thinker"))) == 0.4
+        @test limit(fetch(chatrequest!(chat("slow-thinker"; stream=true)))) == 0.4
+        @test limit(respond(asked("slow-thinker"))) == 0.4
+        @test chatrequest!(chat("gpt-6-luna")) isa LLMSuccess            # no default of its own: answered
+        @test limit(chatrequest!(chat("slow-thinker"); config=RequestConfig(request_timeout=0.3, max_attempts=1))) == 0.3
+        @test with_request_config(() -> limit(respond(asked("slow-thinker"))); request_timeout=0.2, max_attempts=1) == 0.2
+        set_default_config!(RequestConfig(request_timeout=0.25, max_attempts=1))
+        @test limit(chatrequest!(chat("slow-thinker"))) == 0.25
+        @test limit(respond(asked("slow-thinker"))) == 0.25
+    finally
+        _restore_default!(initial)
+        close(server)
+    end
+end

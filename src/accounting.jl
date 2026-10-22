@@ -101,6 +101,7 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "gemini-3.5-flash"      => _price(0.75, 0.075, 3.75),
     "gemini-3.5-flash-lite" => _price(0.30, 0.03,  2.50),
     "gemini-3.1-pro-preview" => _price(2.0, 0.20,  12.0),  # prompts up to 200K tokens; longer ones bill more
+    "gemini-3.1-pro-preview-customtools" => _price(2.0, 0.20, 12.0),  # priced with 3.1 Pro Preview; up to 200K too
     "gemini-3.1-flash-lite" => _price(0.25, 0.025, 1.5),   # shuts down 2027-05-07
     "gemini-2.5-flash"      => _price(0.3,  0.03,  2.5),
     "gemini-2.5-flash-lite" => _price(0.1,  0.01,  0.4),

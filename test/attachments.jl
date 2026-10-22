@@ -96,8 +96,24 @@ end
     end
 end
 
+@testset "native Gemini sends every kind as an inlineData part, ahead of the text" begin
+    # The wire goldens, the detail levels and the Interactions content parts live in test/gemini.jl
+    # and test/interactions.jl.
+    c = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash")
+    push!(c, Message(Val(:system), "sys"))
+    push!(c, Message(Val(:user), "Read this.", DocumentAttachment(_PDF_PATH), ImageAttachment(_PNG; detail="high"),
+                     AudioAttachment(_WAV)))
+    b64 = UniLM.Base64.base64encode
+    @test JSON.parse(UniLM.encode_request(GEMINIServiceEndpoint, c))["contents"][1]["parts"] == [
+        Dict("inlineData" => Dict("mimeType" => "application/pdf", "data" => b64(_PDF))),
+        Dict("inlineData" => Dict("mimeType" => "image/png", "data" => b64(_PNG)),
+             "mediaResolution" => Dict("level" => "MEDIA_RESOLUTION_HIGH")),
+        Dict("inlineData" => Dict("mimeType" => "audio/wav", "data" => b64(_WAV))),
+        Dict("text" => "Read this.")]
+end
+
 @testset "encoders that cannot send attachments refuse them before any I/O" begin
-    for (ep, model) in ((ANTHROPICServiceEndpoint, "claude-opus-5-5"), (GEMINIServiceEndpoint, "gemini-3.8-flash"))
+    for (ep, model) in ((ANTHROPICServiceEndpoint, "claude-opus-5-5"),)
         err = try
             UniLM.encode_request(ep, _att_chat(ep; model))
             nothing

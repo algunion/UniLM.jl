@@ -82,6 +82,77 @@ _gemini_refuse_cache_options(::PromptCacheOptions) = throw(ArgumentError(
     "to set, and UniLM does not wrap its explicit caching (cached contents) " *
     "(https://ai.google.dev/gemini-api/docs/caching); unset prompt_cache_options"))
 
+# The service tiers a request names (https://ai.google.dev/gemini-api/docs/optimization):
+# generateContent takes standard, flex and priority (GenerateContentRequest.serviceTier, whose
+# "unspecified" is standard), and the Interactions API also takes deferred
+# (https://ai.google.dev/api/interactions-api). A reply reports the tier that billed it.
+const _GEMINI_SERVICE_TIERS = ("standard", "flex", "priority")
+const _INTERACTIONS_SERVICE_TIERS = ("standard", "flex", "priority", "deferred")
+
+_gemini_service_tier(::Nothing, ::Tuple, ::String)::Nothing = nothing
+function _gemini_service_tier(tier::String, tiers::Tuple, api::String)::String
+    tier in tiers || throw(ArgumentError("$api takes service_tier $(join(repr.(tiers), ", ", " or ")) " *
+        "(got $(repr(tier)))" *
+        (tier == "deferred" ? ": \"deferred\" is a Gemini Interactions tier, so send the request with respond" : "")))
+    tier
+end
+
+# An image's detail level as Gemini's per-part media resolution
+# (https://ai.google.dev/gemini-api/docs/media-resolution): "low" and "high" are its LOW and HIGH
+# (LOW took a 1,089-token image to 256 tokens on gemini-3.8-flash, observed 2026-10-22); "auto",
+# the model's default, sets none; "original", an image at its own dimensions on OpenAI, has no
+# Gemini level.
+function _gemini_detail_level(detail)::Union{String,Nothing}
+    (isnothing(detail) || detail == "auto") && return nothing
+    detail == "original" && throw(ArgumentError(
+        "Gemini has no media resolution for an image at its own dimensions (detail=\"original\", an " *
+        "OpenAI level): use detail=\"high\", \"low\" or \"auto\""))
+    detail in ("low", "high") || throw(ArgumentError(
+        "an image's detail level on Gemini is \"auto\", \"low\" or \"high\" (got $(repr(detail)))"))
+    String(detail)
+end
+
+# Setting a media resolution per part "is exclusive to Gemini 3 models" (same page), so the
+# earlier models still served refuse a level, by exact id; any other id is left to the server.
+const _GEMINI_NO_PART_RESOLUTION = ("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+                                    "gemini-2.5-flash-image", "gemma-4-31b-it", "gemma-4-26b-a4b-it")
+
+function _gemini_part_resolution(detail, model::String)::Union{String,Nothing}
+    level = _gemini_detail_level(detail)
+    isnothing(level) || !(model in _GEMINI_NO_PART_RESOLUTION) || throw(ArgumentError(
+        "$model takes no per-image media resolution: Gemini sets one per part on Gemini 3 and later " *
+        "models only; unset the image's detail"))
+    level
+end
+
+# An attachment as a generateContent part (Part.inlineData, a Blob,
+# https://ai.google.dev/api/caching#Blob): its bytes inline, base64, under the MIME type its file
+# signature gave (images image/png, image/jpeg, image/gif or image/webp; clips audio/wav or
+# audio/mp3; documents application/pdf). The image-edit request builds its input images with it.
+_gemini_mime(a::Union{ImageAttachment,DocumentAttachment})::String = a.mime
+_gemini_mime(a::AudioAttachment)::String = "audio/" * a.format
+_gemini_inline_data(a::Attachment)::Dict{Symbol,Any} =
+    Dict{Symbol,Any}(:inlineData => Dict{Symbol,Any}(:mimeType => _gemini_mime(a), :data => base64encode(a.data)))
+
+_gemini_media_part(a::Attachment)::Dict{Symbol,Any} = _gemini_inline_data(a)
+function _gemini_media_part(a::ImageAttachment)::Dict{Symbol,Any}
+    part = _gemini_inline_data(a)
+    level = _gemini_detail_level(a.detail)
+    isnothing(level) || (part[:mediaResolution] = Dict{Symbol,Any}(:level => "MEDIA_RESOLUTION_" * uppercase(level)))
+    part
+end
+
+# A user turn's parts: its media, then its text, as Google advises for an image with a prompt
+# ("place the text prompt after the image part"). A message without media is its text alone.
+function _gemini_user_parts(m::Message)::Vector{Dict{Symbol,Any}}
+    text = Dict{Symbol,Any}(:text => something(m.content, ""))
+    attachments = m.attachments
+    isnothing(attachments) && return Dict{Symbol,Any}[text]
+    parts = Dict{Symbol,Any}[_gemini_media_part(a) for a in attachments]
+    isnothing(m.content) || isempty(m.content) || push!(parts, text)
+    parts
+end
+
 # Thinking levels per model, by exact id, transcribed from the "Controlling thinking" table
 # (https://ai.google.dev/gemini-api/docs/thinking, 2026-10-22). Google's ids carry no dated
 # snapshots, and distinct models share prefixes (gemini-3.8-flash-tts, gemini-3.8-live), so a
@@ -126,7 +197,7 @@ end
 const _GEMINI_CHAT_MAPPED_FIELDS = (:service, :model, :messages, :history, :tools,
     :tool_choice, :parallel_tool_calls, :temperature, :top_p, :n, :stream, :stop,
     :max_tokens, :max_completion_tokens, :response_format, :reasoning_effort,
-    :safety_identifier, :_cumulative_cost)
+    :safety_identifier, :seed, :store, :service_tier, :_cumulative_cost)
 const _GEMINI_CHAT_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Chat), _GEMINI_CHAT_MAPPED_FIELDS))
 
 function _gemini_validate_chat(chat::Chat)
@@ -136,6 +207,9 @@ function _gemini_validate_chat(chat::Chat)
     fields = Symbol[f for f in _GEMINI_CHAT_UNMAPPED_FIELDS if !isnothing(getfield(chat, f))]
     isempty(fields) || throw(ArgumentError(
         "Native Gemini Chat does not support field(s) $(join(fields, ", ")); use a supported option or GEMINIOpenAIServiceEndpoint"))
+    for m in chat.messages, a in something(m.attachments, Attachment[])
+        a isa ImageAttachment && _gemini_part_resolution(a.detail, chat.model)
+    end
     nothing
 end
 
@@ -144,9 +218,9 @@ end
 # numeric characters, underscores, and dashes; international characters are allowed.
 const _GEMINI_LABEL_VALUE = r"\A[\p{Ll}\p{Lo}\p{N}_-]{0,63}\z"
 
-function _gemini_safety_label(id::String)::String
+function _gemini_safety_label(id::String, api::String="Native Gemini")::String
     occursin(_GEMINI_LABEL_VALUE, id) || throw(ArgumentError(
-        "Native Gemini sends safety_identifier as a request label; label values allow at most " *
+        "$api sends safety_identifier as a request label; label values allow at most " *
         "63 characters, only lowercase letters (international characters allowed), numeric " *
         "characters, underscores, and dashes (got $(length(id)) characters). A 64-character " *
         "hex hash such as a SHA-256 digest is one character too long for a Gemini label."))
@@ -157,7 +231,6 @@ end
 
 function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
     _gemini_validate_chat(chat)
-    _reject_attachments(chat, "Gemini generateContent")
     body = Dict{Symbol,Any}()
     sysinstr, contents = _gemini_contents(chat.messages)
     _gemini_validate_last_turn(chat.model, contents)
@@ -176,6 +249,7 @@ function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
     isnothing(chat.temperature) || (gen[:temperature] = chat.temperature)
     isnothing(chat.top_p)       || (gen[:topP] = chat.top_p)
     isnothing(chat.stop)        || (gen[:stopSequences] = chat.stop isa String ? [chat.stop] : chat.stop)
+    isnothing(chat.seed)        || (gen[:seed] = chat.seed)
     if (effort = chat.reasoning_effort) !== nothing
         gen[:thinkingConfig] = Dict(:thinkingLevel => uppercase(_gemini_thinking_level(chat.model, effort; native=true)))
     end
@@ -184,15 +258,21 @@ function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
     # Request labels carry an aggregator's end-user id under Google's documented key.
     isnothing(chat.safety_identifier) ||
         (body[:labels] = Dict(:safety_identifier => _gemini_safety_label(chat.safety_identifier)))
+    # `store` sets whether Google logs the request, over the project's logging setting.
+    isnothing(chat.store) || (body[:store] = chat.store)
+    tier = _gemini_service_tier(chat.service_tier, _GEMINI_SERVICE_TIERS, "Gemini generateContent")
+    isnothing(tier) || (body[:serviceTier] = tier)
     # NB: `stream` is expressed in the URL method (get_url), never in the body.
     JSON.json(body)
 end
 
-# GEMINIOpenAIServiceEndpoint serves the same models on the OpenAI wire, and they ignore the
-# sampling parameters there too, so the same models take them. Its other refusals are the
-# server's: it answers HTTP 400 to `prompt_cache_options` ("Unknown name") and to a request
-# ending with an assistant turn ("Requests ending with a model turn are not supported."),
-# observed on gemini-3.8-flash on 2026-10-22.
+# GEMINIOpenAIServiceEndpoint serves the same models on the OpenAI wire, so the same models take
+# the sampling parameters: Google's page on Gemini 3.6 says the models ignore them, without
+# naming an endpoint, and that they are ignored on this wire too is inferred from that page,
+# not measured on it. Its other refusals are the server's: it answers HTTP 400 to
+# `prompt_cache_options` ("Unknown name") and to a request ending with an assistant turn
+# ("Requests ending with a model turn are not supported."), observed on gemini-3.8-flash on
+# 2026-10-22.
 function encode_request(::Type{GEMINIOpenAIServiceEndpoint}, chat::Chat)::String
     _gemini_validate_sampling(chat.model, chat.temperature, chat.top_p)
     invoke(encode_request, Tuple{OpenAIWireEndpointSpec,Chat}, GEMINIOpenAIServiceEndpoint, chat)
@@ -219,7 +299,7 @@ end
 
 # Split neutral messages into (systemInstruction::Union{String,Nothing}, contents).
 # - system → concatenated top-level systemInstruction text
-# - user   → {role:"user", parts:[{text}]}
+# - user   → {role:"user", parts:[{inlineData}..., {text}]} (`_gemini_user_parts`)
 # - assistant → {role:"model", parts:[{text}?, {functionCall,thoughtSignature?}...]};
 #   a turn with no part to send (a refusal, a turn spent on thinking) is left out,
 #   because an empty-parts model turn breaks the follow-up request
@@ -253,8 +333,7 @@ function _gemini_contents(messages)
             push!(out, Dict{Symbol,Any}(:role => "model", :parts => parts))
         else  # RoleUser
             flush!()
-            push!(out, Dict{Symbol,Any}(:role => "user",
-                :parts => [Dict{Symbol,Any}(:text => something(m.content, ""))]))
+            push!(out, Dict{Symbol,Any}(:role => "user", :parts => _gemini_user_parts(m)))
         end
     end
     flush!()
@@ -346,8 +425,10 @@ _gemini_finish_reason(fr::AbstractString, has_calls::Bool)::String =
 # promptTokenCount already counts a cached prefix (cachedContentTokenCount is a subset of it), and
 # totalTokenCount is prompt + tool-use prompt + thoughts + candidates. The tool-use prompt
 # (toolUsePromptTokenCount) is input the model read, so it is billed as prompt; thoughts bill at
-# the output rate → completion = candidates + thoughts.
-function _gemini_usage(u)::Union{TokenUsage,Nothing}
+# the output rate → completion = candidates + thoughts. The billed tier is usageMetadata's
+# serviceTier, else the reply's x-gemini-service-tier header (`header_tier`), the only place
+# Gemini 4 Argon names it (observed 2026-10-22).
+function _gemini_usage(u, header_tier::Union{String,Nothing}=nothing)::Union{TokenUsage,Nothing}
     u isa AbstractDict || return nothing
     _i(x) = x isa Integer ? Int(x) : 0
     prompt   = _i(get(u, "promptTokenCount", 0)) + _i(get(u, "toolUsePromptTokenCount", 0))
@@ -356,7 +437,24 @@ function _gemini_usage(u)::Union{TokenUsage,Nothing}
     cached   = _i(get(u, "cachedContentTokenCount", 0))
     total    = _i(get(u, "totalTokenCount", prompt + cand + thoughts))
     TokenUsage(prompt_tokens = prompt, completion_tokens = cand + thoughts,
-        total_tokens = total, cached_tokens = cached, reasoning_tokens = thoughts)
+        total_tokens = total, cached_tokens = cached, reasoning_tokens = thoughts,
+        service_tier = something(_wire_string(u, "serviceTier"), header_tier, Some(nothing)))
+end
+
+# The tier a reply's head names (https://ai.google.dev/gemini-api/docs/priority-inference: "monitor
+# the x-gemini-service-tier header ... to detect if requests are being frequently downgraded").
+function _gemini_header_tier(resp::HTTP.Response)::Union{String,Nothing}
+    v = HTTP.header(resp, "x-gemini-service-tier", "")
+    isempty(v) ? nothing : String(v)
+end
+
+# A usage written back as the usageMetadata `_gemini_usage` reads it as.
+function _gemini_usage_metadata(u::TokenUsage)::Dict{String,Any}
+    d = Dict{String,Any}("promptTokenCount" => u.prompt_tokens, "cachedContentTokenCount" => u.cached_tokens,
+                         "candidatesTokenCount" => u.completion_tokens - u.reasoning_tokens,
+                         "thoughtsTokenCount" => u.reasoning_tokens, "totalTokenCount" => u.total_tokens)
+    isnothing(u.service_tier) || (d["serviceTier"] = u.service_tier)
+    d
 end
 
 # The refusal of a filtered candidate: its finishMessage, Google's own account of why generation
@@ -365,7 +463,8 @@ _gemini_refusal(cand)::String = something(cand isa AbstractDict ? _wire_string(c
                                           "Model response blocked by safety filter.")
 
 # The reply names the model that served it in modelVersion: a deprecated id Google routes to its
-# successor answers as that successor, which is the model priced.
+# successor answers as that successor, which is the model priced. A reply that ends at the
+# per-request cap of a long generation carries the token that continues it (`continuation_token`).
 function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
     data = JSON.parse(resp.body; dicttype=Dict{String,Any})
     cands = get(data, "candidates", [])
@@ -400,7 +499,7 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
     end
     # A candidate without a finishReason reports none, so none is invented for it.
     finish = fr_raw isa AbstractString ? _gemini_finish_reason(fr_raw, !isempty(tool_calls)) : nothing
-    usage = _gemini_usage(get(data, "usageMetadata", nothing))
+    usage = _gemini_usage(get(data, "usageMetadata", nothing), _gemini_header_tier(resp))
     txt = takestring!(text)
     msg = if !isempty(tool_calls)
         Message(role=RoleAssistant, content=(isempty(txt) ? nothing : txt),
@@ -415,7 +514,8 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
         # content nobody generated into the reply and into the next request.
         Message(role=RoleAssistant, content=txt, finish_reason=finish, provider_content=pc)
     end
-    (; message=msg, usage, model=_wire_string(data, "modelVersion"))
+    (; message=msg, usage, model=_wire_string(data, "modelVersion"),
+       continuation_token=_wire_string(cand, "continuationToken"))
 end
 
 # ─── Streaming event handler for the shared SSE machine (src/sse.jl) —
@@ -476,6 +576,9 @@ function handle_sse_event!(::Type{GEMINIServiceEndpoint}, event::AbstractString,
             fr = get(cand, "finishReason", nothing)
             fr isa AbstractString &&
                 (state.finish_reason = _gemini_finish_reason(fr, !isempty(state.tool_calls)))
+            # The latest token wins: a long stream also sends checkpoint tokens on its way.
+            token = _wire_string(cand, "continuationToken")
+            isnothing(token) || (state.continuation_token = token)
             # A filter stop with no answer text is a refusal, recorded once: the chunks
             # after the filtered one (trailing usage, a repeated candidate) add nothing.
             if state.finish_reason == CONTENT_FILTER && position(state.content) == 0 &&
@@ -485,20 +588,119 @@ function handle_sse_event!(::Type{GEMINIServiceEndpoint}, event::AbstractString,
         end
     end
     u = get(ev, "usageMetadata", nothing)
-    u isa AbstractDict && (state.usage = _gemini_usage(u))
+    u isa AbstractDict && (state.usage = _gemini_usage(u, state.service_tier))
     :continue
 end
 
+# A stream's tier is also in its response head, read before the first chunk (`state.service_tier`),
+# so the streamed usage names the tier the reply not streamed names.
+_stream_head!(::Type{GEMINIServiceEndpoint}, state::StreamState, head::HTTP.Response)::Nothing =
+    (state.service_tier = _gemini_header_tier(head); nothing)
+
+# ─── Long decode: one turn in several requests ───────────────────────────────
+# Gemini 4 Argon generates past one request's output cap in hops: a reply that reaches the cap
+# with tokens left ends with finishReason CONTINUATION and a continuationToken, and the next hop
+# is "the same request again with the token" — the same contents, system instruction, tools and
+# generation config, with no partial output added — sending "only the latest token"
+# (https://ai.google.dev/gemini-api/docs/generate-content/long-decode). A reply that stops at
+# MAX_TOKENS carries a token too, but continuing it needs a larger max_output_tokens: that turn
+# ends. Continuation is exercised against a local mock; a live CONTINUATION reply was not observed.
+function _continuation_body(::Type{GEMINIServiceEndpoint}, body::AbstractString,
+                            finish::Union{String,Nothing}, token::Union{String,Nothing})::Union{String,Nothing}
+    (finish == "continuation" && !isnothing(token)) || return nothing
+    request = JSON.parse(body; dicttype=Dict{String,Any})
+    request["continuationToken"] = token
+    JSON.json(request)
+end
+
+function _gemini_first_candidate(reply)::Union{Dict{String,Any},Nothing}
+    candidates = reply isa AbstractDict ? get(reply, "candidates", nothing) : nothing
+    candidates isa AbstractVector && !isempty(candidates) || return nothing
+    c = first(candidates)
+    c isa Dict{String,Any} ? c : nothing
+end
+
+function _gemini_candidate_parts(cand::AbstractDict)::Vector{Any}
+    content = get(cand, "content", nothing)
+    parts = content isa AbstractDict ? get(content, "parts", nothing) : nothing
+    parts isa AbstractVector ? Vector{Any}(parts) : Any[]
+end
+
+_gemini_reply_usage(d::AbstractDict, resp::HTTP.Response) =
+    _gemini_usage(get(d, "usageMetadata", nothing), _gemini_header_tier(resp))
+
+# One reply for a turn sent in hops, joined as Google's REST loop joins it — "Combine the parts
+# from all hops into one model turn" — and billed as it says: "Add each field across hops". The
+# later reply's candidate gives the finish reason, refusal text and next token, the latest reply
+# names the served model, and the usage is the hops' summed as a streamed turn's is
+# (`_add_usage`). A later reply without a candidate is its own answer: decoding it reports why.
+function _join_hops(::Type{GEMINIServiceEndpoint}, earlier::HTTP.Response, later::HTTP.Response)::HTTP.Response
+    parsed_a = JSON.parse(earlier.body; dicttype=Dict{String,Any})
+    parsed_b = JSON.parse(later.body; dicttype=Dict{String,Any})
+    first_a, first_b = _gemini_first_candidate(parsed_a), _gemini_first_candidate(parsed_b)
+    (isnothing(first_a) || isnothing(first_b)) && return later
+    a, b = parsed_a::Dict{String,Any}, parsed_b::Dict{String,Any}      # each holds a candidate
+    candidate = copy(first_b)
+    candidate["content"] = Dict{String,Any}("role" => "model",
+        "parts" => vcat(_gemini_candidate_parts(first_a), _gemini_candidate_parts(first_b)))
+    joined = copy(b)
+    joined["candidates"] = Any[candidate]
+    usage = _add_usage(_gemini_reply_usage(a, earlier), _gemini_reply_usage(b, later))
+    isnothing(usage) ? delete!(joined, "usageMetadata") : (joined["usageMetadata"] = _gemini_usage_metadata(usage))
+    model = something(_wire_string(b, "modelVersion"), _wire_string(a, "modelVersion"), Some(nothing))
+    isnothing(model) || (joined["modelVersion"] = model)
+    HTTP.Response(200, later.headers, Vector{UInt8}(JSON.json(joined)))
+end
+
+# ─── Long thinking: longer default bounds ─────────────────────────────────────
+# Gemini 4 Argon thinks for minutes on hard problems: the server ends a non-streaming call after
+# 10 minutes and a stream after 20, and Google advises "Set your HTTP read timeout to 20 minutes.
+# A 3-minute or 5-minute timeout stops the request early."
+# (https://ai.google.dev/gemini-api/docs/generate-content/long-decode). A Gemini 4 call (a model
+# id starting `gemini-4-`) whose caller set no RequestConfig in any channel takes those 20
+# minutes per attempt, between stream bytes and in all.
+const _GEMINI_LONG_THINKING_CONFIG = RequestConfig(request_timeout=1200.0, stream_idle_timeout=1200.0,
+                                                   total_deadline=1200.0)
+_model_default_config(::Union{Type{GEMINIServiceEndpoint},Type{GEMINIOpenAIServiceEndpoint}},
+                      model::AbstractString)::Union{RequestConfig,Nothing} =
+    startswith(model, "gemini-4-") ? _GEMINI_LONG_THINKING_CONFIG : nothing
+
 # ─── Cost ─────────────────────────────────────────────────────────────────────
+
+# The billed tier's multiples of a model's standard rates, from the Flex and Priority tables of
+# https://ai.google.dev/gemini-api/docs/pricing (2026-10-22): Flex bills every rate at half the
+# standard one and Priority at 1.8 times (Gemini 3.8 Flash $1.35/$6.75 for $0.75/$3.75, Gemini 4
+# Argon $3.60/$18.00 for $2.00/$10.00). The models whose Flex table lists the context-caching
+# price "Same as Standard" (or the standard figure) bill a cache hit on Flex at the standard rate.
+const _GEMINI_TIER_MULTIPLES = Dict{String,Float64}("flex" => 0.5, "priority" => 1.8)
+const _GEMINI_FLEX_STANDARD_CACHE = ("gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools",
+    "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite")
+
+# The multiples of the standard rates that the tier a reply reports costs: of every rate, and of
+# the cache-hit rate. "standard" (or "unspecified", its default) or no tier is the standard rates;
+# a tier the page gives no price for (Interactions' "deferred") is estimated at them, and says
+# so once per model and tier.
+function _gemini_tier_multiples(model::String, tier::Union{String,Nothing})::NTuple{2,Float64}
+    (isnothing(tier) || tier in ("standard", "unspecified")) && return (1.0, 1.0)
+    multiple = get(_GEMINI_TIER_MULTIPLES, tier, nothing)
+    if isnothing(multiple)
+        @warn "Gemini's pricing page lists no price for this service tier; its cost is estimated at the " *
+              "standard rates" model tier _id = Symbol("unilm_unpriced_tier_", model, "_", tier) maxlog = 1
+        return (1.0, 1.0)
+    end
+    (multiple, tier == "flex" && model in _GEMINI_FLEX_STANDARD_CACHE ? 1.0 : multiple)
+end
 
 # What Gemini bills a call, on the native and the OpenAI-compatible endpoint alike
 # (https://ai.google.dev/gemini-api/docs/pricing): prompts are cached implicitly, so a cache hit
 # bills at the context-caching rate and every other prompt token, a tool-use prompt included, at
 # the input rate, with no premium for writing the cache; output, thinking included, bills at the
-# output rate.
+# output rate; and every rate at the billed tier's multiple.
 function _billed_cost(::Union{Type{GEMINIServiceEndpoint},GEMINIServiceEndpoint,
                               Type{GEMINIOpenAIServiceEndpoint},GEMINIOpenAIServiceEndpoint},
-                      ::String, u::TokenUsage, rates::PriceRow)::Float64
+                      model::String, u::TokenUsage, rates::PriceRow)::Float64
     cached = min(u.cached_tokens, u.prompt_tokens)
-    (u.prompt_tokens - cached) * rates.input + cached * rates.cached_input + u.completion_tokens * rates.output
+    rate, cache = _gemini_tier_multiples(model, u.service_tier)
+    rate * ((u.prompt_tokens - cached) * rates.input + u.completion_tokens * rates.output) +
+        cache * cached * rates.cached_input
 end

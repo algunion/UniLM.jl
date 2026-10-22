@@ -25,6 +25,11 @@ _gemini_image_mimes(r::ImageSuccess) =
     [p["inlineData"]["mimeType"] for p in r.response.raw["candidates"][1]["content"]["parts"]
      if haskey(p, "inlineData") && get(p, "thought", false) !== true]
 
+# The token counts of a usage: an image result's usage has the Images API shape, which carries
+# no billed tier (the reply's own tier stays in `raw`).
+_gemini_image_counts(u::TokenUsage) = (u.prompt_tokens, u.completion_tokens, u.total_tokens, u.cached_tokens,
+                                       u.reasoning_tokens)
+
 if get(ENV, "UNILM_RUN_IMAGE_TESTS", "false") != "true" || get(ENV, "UNILM_LIVE", "") != "1"
     @info "Skipping image generation integration tests (set UNILM_LIVE=1 and UNILM_RUN_IMAGE_TESTS=true to enable — these make paid image API calls)"
 else
@@ -72,7 +77,7 @@ else
     @test UniLM._sniff_image_mime(bytes) == "image/jpeg"
     @test _jpeg_size(bytes) == (1024, 1024)              # 1:1 at 1K, per Gemini's size table
     # usageMetadata is the result's usage, counted as on Gemini Chat; a 1K image is 1,120 tokens.
-    @test token_usage(r) == UniLM._gemini_usage(r.response.raw["usageMetadata"])
+    @test _gemini_image_counts(token_usage(r)) == _gemini_image_counts(UniLM._gemini_usage(r.response.raw["usageMetadata"]))
     @test token_usage(r).completion_tokens >= 1120
 end
 
@@ -84,7 +89,7 @@ end
     bytes = base64decode(only(image_data(r)))
     @test _gemini_image_mimes(r) == ["image/jpeg"]
     @test UniLM._sniff_image_mime(bytes) == "image/jpeg"
-    @test token_usage(r) == UniLM._gemini_usage(r.response.raw["usageMetadata"])
+    @test _gemini_image_counts(token_usage(r)) == _gemini_image_counts(UniLM._gemini_usage(r.response.raw["usageMetadata"]))
     @test token_usage(r).prompt_tokens > 0                # the input image is counted as input
 end
 

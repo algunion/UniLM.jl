@@ -363,6 +363,7 @@ function encode_agentic(::Type{OPENAIServiceEndpoint}, r::Respond)::String
     _check_openai_retention(r.model, rules, r.prompt_cache_retention)
     _check_openai_user(r.user)
     _check_openai_cache_ttl(r.prompt_cache_options, _OPENAI_CACHE_TTLS.responses)
+    _refuse_responses_seed(OPENAIServiceEndpoint, r)
     JSON.json(r)
 end
 

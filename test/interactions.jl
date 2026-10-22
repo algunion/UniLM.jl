@@ -632,8 +632,8 @@ end
     # A field this wire has no mapping for must not vanish from the request.
     cases = (:metadata => Dict("k" => "v"), :truncation => "auto",
              :parallel_tool_calls => true, :user => "u1", :include => ["a"],
-             :max_tool_calls => 2, :service_tier => "flex", :top_logprobs => 3,
-             :prompt_cache_key => "k", :prompt_cache_retention => "24h", :safety_identifier => "s",
+             :max_tool_calls => 2, :top_logprobs => 3,
+             :prompt_cache_key => "k", :prompt_cache_retention => "24h",
              :conversation => "conv_1", :context_management => [Dict("type" => "x")],
              :stream_options => Dict("include_usage" => true),
              :prompt_cache_options => PromptCacheOptions(mode="explicit"),
@@ -906,4 +906,164 @@ end
     @test streamed.response.model == plain.response.model == "gemini-3.8-flash"
     @test streamed.response.output == plain.response.output
     @test estimated_cost(streamed) == estimated_cost(plain) > 0
+end
+
+# ─── Input: messages as steps, media as content parts ─────────────────────────
+
+const _IX_FIXTURES = joinpath(@__DIR__, "fixtures")
+_ix_b64(bytes) = UniLM.Base64.base64encode(bytes)
+_ix_caught(f) = try f(); nothing catch e; e end
+_ix_input(input; model="gemini-3.8-flash", kw...) = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+    Respond(; service=GEMINIServiceEndpoint, model, input, kw...)); dicttype=Dict{String,Any})["input"]
+_ix_text(t) = Dict("type" => "text", "text" => t)
+
+@testset "Interactions encode — messages are steps (the API refuses a list of turns)" begin
+    # A list of {role, content} turns is HTTP 400 "use step_list input format instead of turn_list"
+    # (observed 2026-10-22): a user message is a user_input step, an assistant message a model_output step.
+    @test _ix_input([InputMessage(role="user", content="Hi"), InputMessage(role="assistant", content="Hello."),
+                     InputMessage(role="user", content="Again")]) ==
+        [Dict("type" => "user_input", "content" => [_ix_text("Hi")]),
+         Dict("type" => "model_output", "content" => [_ix_text("Hello.")]),
+         Dict("type" => "user_input", "content" => [_ix_text("Again")])]
+    # A message given as a Dict, typed "message" or not, is the same step.
+    for item in (Dict("role" => "user", "content" => "Hi"), Dict("type" => "message", "role" => "user", "content" => "Hi"),
+                 Dict(:role => "user", :content => "Hi"))
+        @test _ix_input([item]) == [Dict("type" => "user_input", "content" => [_ix_text("Hi")])]
+    end
+    # The neutral Responses text parts of a replayed turn become Interactions text parts.
+    @test _ix_input([InputMessage(role="user", content=[input_text("Hi")]),
+                     Dict("role" => "assistant", "content" => [Dict("type" => "output_text", "text" => "Hello.")])]) ==
+        [Dict("type" => "user_input", "content" => [_ix_text("Hi")]),
+         Dict("type" => "model_output", "content" => [_ix_text("Hello.")])]
+    # A String input, a tool result and a step already in the Interactions shape pass as given.
+    @test _ix_input("Hi") == "Hi"
+    step = Dict("type" => "user_input", "content" => [_ix_text("Hi")])
+    @test _ix_input([step, tool_result("c1", "f", "ok")]) == [step, Dict("type" => "function_result",
+        "call_id" => "c1", "name" => "f", "result" => Dict("result" => "ok"))]
+    # System and developer guidance has no step: it is the request's instructions.
+    for role in ("system", "developer")
+        e = _ix_caught(() -> _ix_input([InputMessage(; role, content="Be brief.")]))
+        @test e isa ArgumentError && occursin(repr(role), e.msg) && occursin("instructions", e.msg)
+    end
+end
+
+@testset "Interactions encode — a message phase is refused before any request" begin
+    msg = "Gemini Interactions has no message phase: unset InputMessage phase, or send the request to an OpenAI Responses service"
+    hits = Threads.Atomic{Int}(0)
+    srv = HTTP.serve!("127.0.0.1", 0; listenany=true, verbose=false) do req
+        Threads.atomic_add!(hits, 1); HTTP.Response(500, [], Vector{UInt8}("{}"))
+    end
+    _IX_NONSTREAM_URL[] = "http://127.0.0.1:$(HTTP.port(srv))/v1beta/interactions"
+    try
+        for item in (InputMessage(role="assistant", content="Checking.", phase="commentary"),
+                     Dict("role" => "assistant", "content" => "Done.", "phase" => "final_answer"))
+            input = [InputMessage(role="user", content="Hi"), item]
+            e = _ix_caught(() -> _ix_input(input))
+            @test e isa ArgumentError && e.msg == msg
+            @test_throws ArgumentError respond(Respond(service=_IxNonStreamMock, input=input))
+        end
+    finally
+        close(srv)
+    end
+    @test hits[] == 0
+end
+
+@testset "Interactions encode — images, audio and PDF documents are content parts" begin
+    png = read(joinpath(_IX_FIXTURES, "ollama", "red_circle.png"))
+    wav = read(joinpath(_IX_FIXTURES, "ollama", "secret_word.wav"))
+    pdf = DocumentAttachment(joinpath(_IX_FIXTURES, "documents", "secret_word.pdf"))
+    @test _ix_input([InputMessage(role="user", content=[input_text("What is in these?"),
+                                                        ImageAttachment(png), AudioAttachment(wav), pdf])])[1]["content"] ==
+        [_ix_text("What is in these?"),
+         Dict("type" => "image", "mime_type" => "image/png", "data" => _ix_b64(png)),
+         Dict("type" => "audio", "mime_type" => "audio/wav", "data" => _ix_b64(wav)),
+         Dict("type" => "document", "mime_type" => "application/pdf", "data" => _ix_b64(pdf.data))]
+    # The neutral Responses parts: input_file(document), a PDF data URL, and a data-URL input_image.
+    png_url = "data:image/png;base64," * _ix_b64(png)
+    @test _ix_input([InputMessage(role="user", content=[input_file(pdf), input_image(png_url; detail="low")])])[1]["content"] ==
+        [Dict("type" => "document", "mime_type" => "application/pdf", "data" => _ix_b64(pdf.data)),
+         Dict("type" => "image", "mime_type" => "image/png", "data" => _ix_b64(png), "resolution" => "low")]
+    # An image's detail level is its resolution: low and high; auto is the model's default; original has no level.
+    res(detail; model="gemini-3.8-flash") = get(_ix_input([InputMessage(role="user",
+        content=[ImageAttachment(png; detail)])]; model)[1]["content"][1], "resolution", nothing)
+    @test res("low") == "low" && res("high") == "high" && isnothing(res("auto")) && isnothing(res(nothing))
+    e = _ix_caught(() -> res("original"))
+    @test e isa ArgumentError && occursin("\"original\"", e.msg)
+    e = _ix_caught(() -> res("low"; model="gemini-2.5-flash"))
+    @test e isa ArgumentError && occursin("gemini-2.5-flash", e.msg)
+    # Media by URL or by an OpenAI file id is refused: UniLM sends media as bytes.
+    for part in (input_image("https://example.com/cat.png"), input_image(; file_id="file-1"),
+                 input_file(url="https://example.com/report.pdf"), input_file(id="file-1"))
+        e = _ix_caught(() -> _ix_input([InputMessage(role="user", content=[input_text("Read."), part])]))
+        @test e isa ArgumentError && occursin("Gemini Interactions", e.msg)
+    end
+    # A cache breakpoint has nowhere to go: Gemini caches prompts implicitly.
+    e = _ix_caught(() -> _ix_input([InputMessage(role="user", content=[input_text("x"; cache_breakpoint=true)])]))
+    @test e isa ArgumentError && occursin("cache_breakpoint", e.msg)
+    # A value that is no content part at all.
+    e = _ix_caught(() -> _ix_input([InputMessage(role="user", content=[42])]))
+    @test e isa ArgumentError && occursin("Int64", e.msg)
+end
+
+@testset "Interactions encode — service_tier, seed and the safety label" begin
+    body(; kw...) = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(; service=GEMINIServiceEndpoint, model="gemini-3.8-flash", input="hi", kw...)); dicttype=Dict{String,Any})
+    # flex, standard, priority and — on this API only — deferred (https://ai.google.dev/api/interactions-api).
+    for tier in ("standard", "flex", "priority", "deferred")
+        @test body(service_tier=tier) == Dict("model" => "gemini-3.8-flash", "input" => "hi", "service_tier" => tier)
+    end
+    for bad in ("auto", "default", "fast", "scale", "ultrafast")
+        e = _ix_caught(() -> body(service_tier=bad))
+        @test e isa ArgumentError && occursin("\"deferred\"", e.msg) && occursin(repr(bad), e.msg)
+    end
+    @test body(seed=7) == Dict("model" => "gemini-3.8-flash", "input" => "hi", "generation_config" => Dict("seed" => 7))
+    # safety_identifier is the request label Google documents for an aggregator's end-user id.
+    @test body(safety_identifier="user-42")["labels"] == Dict("safety_identifier" => "user-42")
+    e = _ix_caught(() -> body(safety_identifier=repeat("0123456789abcdef", 4)))
+    @test e isa ArgumentError && occursin("Gemini Interactions", e.msg) && occursin("one character too long", e.msg)
+    for f in (:service_tier, :safety_identifier, :seed)
+        @test f ∉ UniLM._INTERACTIONS_UNMAPPED_FIELDS
+    end
+end
+
+@testset "Interactions — the billed tier is the interaction's service_tier, priced at its rates" begin
+    usage = Dict("total_input_tokens" => 1_000, "total_output_tokens" => 100, "total_thought_tokens" => 0,
+                 "total_tokens" => 1_100)
+    success(tier) = ResponseSuccess(response=UniLM._interaction_response_object(Dict("id" => "v1_t",
+        "status" => "completed", "model" => "gemini-3.8-flash", "steps" => [], "usage" => usage,
+        "service_tier" => tier)), service=GEMINIServiceEndpoint)
+    @test token_usage(success("priority")).service_tier == "priority"
+    # Gemini 3.8 Flash: Priority $1.35 / $6.75 and Flex $0.375 / $1.875 per 1M tokens.
+    @test estimated_cost(success("priority")) ≈ (1_000 * 1.35 + 100 * 6.75) / 1e6
+    @test estimated_cost(success("flex")) ≈ (1_000 * 0.375 + 100 * 1.875) / 1e6
+    @test estimated_cost(success("standard")) ≈ (1_000 * 0.75 + 100 * 3.75) / 1e6
+end
+
+@testset "seed — Gemini Interactions sends it; every OpenAI-wire Responses encoder refuses it" begin
+    # OpenAI's Responses API takes no seed (Chat Completions does): on that wire a set seed would vanish.
+    for (svc, model) in ((OPENAIServiceEndpoint, "gpt-6-luna"), (UniLM.AZUREServiceEndpoint, "m"),
+                         (GEMINIOpenAIServiceEndpoint, "gemini-3.8-flash"), (GenericOpenAIEndpoint("http://127.0.0.1:1", ""), "m"))
+        e = _ix_caught(() -> UniLM.encode_agentic(svc, Respond(; service=svc, model, input="x", seed=7)))
+        @test e isa ArgumentError && occursin("seed", e.msg) && occursin(string(UniLM._service_name(svc)), e.msg)
+        @test UniLM.encode_agentic(svc, Respond(; service=svc, model, input="x")) isa String
+    end
+    # Ollama's Responses API reads a fixed set of fields; it refuses every other one, seed among them.
+    e = _ix_caught(() -> UniLM.encode_agentic(OllamaEndpoint(), Respond(service=OllamaEndpoint(), model="m", input="x", seed=7)))
+    @test e isa ArgumentError && occursin("seed", e.msg) && occursin("Ollama", e.msg)
+    # Gemini Interactions sends it as generation_config.seed.
+    @test JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint, Respond(service=GEMINIServiceEndpoint, input="x",
+        seed=7)))["generation_config"] == Dict("seed" => 7)
+    # The OpenAI Responses JSON never carries it, and the refusal comes before any request.
+    @test !haskey(JSON.lower(Respond(input="x", seed=7)), :seed)
+    hits = Threads.Atomic{Int}(0)
+    srv = HTTP.serve!("127.0.0.1", 0; listenany=true, verbose=false) do req
+        Threads.atomic_add!(hits, 1); HTTP.Response(500, [], Vector{UInt8}("{}"))
+    end
+    try
+        url = "http://127.0.0.1:$(HTTP.port(srv))"
+        @test_throws ArgumentError respond(Respond(service=GenericOpenAIEndpoint(url, ""), model="m", input="x", seed=7))
+    finally
+        close(srv)
+    end
+    @test hits[] == 0
 end

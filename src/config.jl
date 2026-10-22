@@ -89,7 +89,8 @@ end
 # 3. process default — REPL/notebook sessions cannot hold a dynamic scope
 #    across cells, so they set the process default instead;
 # 4. a backend's own default, for the verbs whose backends have one (System
-#    One: a service that answers in a second needs no ten-minute bound);
+#    One: a service that answers in a second needs no ten-minute bound), or a
+#    model's own default (Gemini 4: a model that thinks for minutes needs more);
 # 5. the @kwdef field defaults.
 
 const _REQUEST_CONFIG = ScopedValue{Union{Nothing,RequestConfig}}(nothing)
@@ -112,8 +113,9 @@ const _PROCESS_DEFAULT_CONFIG = _ConfigHolder(nothing)
 The ambient [`RequestConfig`](@ref): the innermost active
 [`with_request_config`](@ref) scope if any, otherwise the process default set
 by [`set_default_config!`](@ref), otherwise the field defaults. A System One
-call with no scope and no process default set uses its backend's own default
-instead of the field defaults (see [`set_default_config!`](@ref)).
+call, or a Chat or Responses call to a Gemini 4 model, with no scope and no
+process default set uses its backend's or its model's own default instead of the
+field defaults (see [`set_default_config!`](@ref)).
 """
 current_config()::RequestConfig =
     @something(_REQUEST_CONFIG[], @atomic(_PROCESS_DEFAULT_CONFIG.cfg), _BUILTIN_CONFIG)
@@ -148,14 +150,18 @@ for REPL/notebook sessions, which cannot hold a dynamic scope across cells;
 prefer [`with_request_config`](@ref) in programs.
 
 A process default you set — even one equal to the field defaults — also
-replaces the default a System One backend brings. Until one is set,
+replaces the default a System One backend or a model brings. Until one is set,
 [`ask`](@ref), [`ask_each`](@ref) and the natural-language verbs on TypeSafe and
 OpenAI's Decisions API, and [`list_models`](@ref) on TypeSafe, use
 `request_timeout = 60` and `total_deadline = 150` (both services typically answer
 in under a second; the field defaults' ten minutes per attempt would only delay
-reporting a stalled call), while every other verb uses the field defaults. A
-[`with_request_config`](@ref) scope or a per-call `config` replaces it too, as a
-whole.
+reporting a stalled call); [`chatrequest!`](@ref) and [`respond`](@ref) to a Gemini 4
+model (an id starting `gemini-4-`, on `GEMINIServiceEndpoint` or
+`GEMINIOpenAIServiceEndpoint`) use `request_timeout`, `stream_idle_timeout` and
+`total_deadline` of 1200 seconds (Google ends such a call after 10 minutes, a stream after
+20, and advises a 20-minute read timeout); every other call uses the field defaults. A
+[`with_request_config`](@ref) scope or a per-call `config` replaces either default too,
+as a whole.
 
 The keyword form is a read-modify-write and retries on a compare-and-swap miss:
 a plain read-then-write loses one of two concurrent calls, because the loser
@@ -183,3 +189,8 @@ _resolve_config(c::Union{Nothing,RequestConfig})::RequestConfig =
 # above the field defaults, which apply when the backend brings none (`nothing`).
 _resolve_config(c::Union{Nothing,RequestConfig}, backend::Union{Nothing,RequestConfig})::RequestConfig =
     @something(c, _REQUEST_CONFIG[], @atomic(_PROCESS_DEFAULT_CONFIG.cfg), backend, _BUILTIN_CONFIG)
+
+# A model's own default, for a model its provider documents as answering more slowly than the
+# field defaults allow (Gemini 4, in gemini.jl). `chatrequest!` and `respond` resolve with it in
+# a backend default's place; the fallback brings none.
+_model_default_config(_, ::AbstractString)::Nothing = nothing

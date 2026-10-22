@@ -512,16 +512,16 @@ end
 
 # ── OpenAI: safety_identifier replaces the deprecated user field ────────────────
 
-_wire(x) = JSON.parse(JSON.json(x); dicttype=Dict{String,Any})
+_image_json(x) = JSON.parse(JSON.json(x); dicttype=Dict{String,Any})
 _refusal(f) = try f(); nothing catch e; e end
 
 @testset "OpenAI images — safety_identifier replaces the deprecated user field" begin
-    @test _wire(ImageGeneration(prompt="p", safety_identifier="u1")) ==
+    @test _image_json(ImageGeneration(prompt="p", safety_identifier="u1")) ==
           Dict{String,Any}("model" => "gpt-image-2.5-sunburst", "prompt" => "p", "safety_identifier" => "u1")
     @test !hasfield(ImageGeneration, :user) && !hasfield(ImageEdit, :user)
     @test_throws MethodError ImageGeneration(prompt="p", user="u1")
     # OpenAI's safety guide: at most 128 characters, counted as characters, not bytes.
-    @test _wire(ImageGeneration(prompt="p", safety_identifier="é"^128))["safety_identifier"] == "é"^128
+    @test _image_json(ImageGeneration(prompt="p", safety_identifier="é"^128))["safety_identifier"] == "é"^128
     # Longer is refused; so is "", which the API reads as no identifier at all.
     for bad in ("a"^129, "é"^129, "")
         err = _refusal(() -> JSON.json(ImageGeneration(prompt="p", safety_identifier=bad)))
@@ -600,11 +600,11 @@ _gemini_plain(prompt) = Dict{String,Any}(
     @test url == "$(UniLM.GEMINI_NATIVE_BASE)/models/gemini-nano-banana-2.1:generateContent"
     @test Dict(headers) == Dict("x-goog-api-key" => "test-key", "Content-Type" => "application/json")
     @test JSON.parse(body; dicttype=Dict{String,Any}) == _gemini_plain("p")
-    @test _wire(ig) == _gemini_plain("p")             # JSON.json shows the body that is sent
+    @test _image_json(ig) == _gemini_plain("p")       # JSON.json shows the body that is sent
     # Gemini's image controls, and the end-user id under Google's documented request label.
     sized = ImageGeneration(service=GEMINIServiceEndpoint, prompt="p", n=1, aspect_ratio="16:9",
                             resolution="2K", safety_identifier="user_42")
-    @test _wire(sized) == Dict{String,Any}(
+    @test _image_json(sized) == Dict{String,Any}(
         "contents" => _gemini_plain("p")["contents"],
         "generationConfig" => Dict{String,Any}("responseModalities" => Any["IMAGE"],
             "imageConfig" => Dict{String,Any}("aspectRatio" => "16:9", "imageSize" => "2K")),
@@ -641,7 +641,7 @@ end
 end
 
 @testset "Gemini images — aspect_ratio and resolution take Gemini's documented values" begin
-    config(; kw...) = _wire(ImageGeneration(; service=GEMINIServiceEndpoint, prompt="p", kw...))["generationConfig"]["imageConfig"]
+    config(; kw...) = _image_json(ImageGeneration(; service=GEMINIServiceEndpoint, prompt="p", kw...))["generationConfig"]["imageConfig"]
     for ratio in ("1:1", "1:4", "4:1", "1:8", "8:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9")
         @test config(aspect_ratio=ratio) == Dict{String,Any}("aspectRatio" => ratio)
     end
@@ -680,7 +680,7 @@ end
         "modelVersion" => "gemini-nano-banana-2.1")
     ir = UniLM._image_reply(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(reply))))
     @test ir.data == [ImageObject(b64_json=png, revised_prompt="A red circle on white.")]
-    @test ir.raw == _wire(reply)
+    @test ir.raw == _image_json(reply)
     @test abs(ir.created - time()) < 60          # Gemini reports no creation time: when it arrived
     s = ImageSuccess(response=ir)
     @test base64decode(only(image_data(s))) == _PNG_SIGNATURE

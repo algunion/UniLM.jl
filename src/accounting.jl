@@ -235,12 +235,24 @@ _priced_model(r::LLMRequestResponse)::Nothing = issuccess(r) ? throw(ArgumentErr
 
 # The standard rates, billed for every provider without a `_billed_cost` method of its own. A
 # price row has no audio-token rates, so audio tokens leave the call unpriced.
-function _billed_cost(_, model::String, u::TokenUsage, rates::PriceRow)::Float64
-    _counts_audio(u) && return _unpriced_audio(model)
+function _billed_cost(service, model::String, u::TokenUsage, rates::PriceRow)::Float64
+    _counts_audio(u) && return _unpriced_audio(service, model)
     cached = min(u.cached_tokens, u.prompt_tokens)        # cache reads, at the discounted rate
     fresh = u.prompt_tokens - cached - u.cache_write_tokens
     fresh * rates.input + cached * rates.cached_input + u.cache_write_tokens * rates.input +
         u.completion_tokens * rates.output
+end
+
+_counts_audio(u::TokenUsage)::Bool = u.prompt_audio_tokens > 0 || u.completion_audio_tokens > 0
+
+# Audio tokens that no audio-token rate covers leave the call unpriced, as a model without a price
+# row is: `0.0`, and a warning that names the model and the endpoint, once for each pair, so the
+# warning of one endpoint does not hide another's.
+function _unpriced_audio(service, model::String)::Float64
+    endpoint = _service_name(service)
+    @warn "no audio-token rates for this model on this endpoint; its estimated cost is 0.0" model endpoint _id = Symbol(
+        "unilm_unpriced_audio_", endpoint, "_", model) maxlog = 1
+    0.0
 end
 
 # Exact id, then the dated-snapshot alias (OpenAI answers an alias with a

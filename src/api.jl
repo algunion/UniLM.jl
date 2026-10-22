@@ -1596,8 +1596,8 @@ result came from: a marker type such as `OPENAIServiceEndpoint`, an endpoint ins
 The default method bills the row's standard rates: `(prompt_tokens - cached_tokens -
 cache_write_tokens) * input + cached_tokens * cached_input + cache_write_tokens * input +
 completion_tokens * output`. It leaves a usage that counts audio tokens (`prompt_audio_tokens`,
-`completion_audio_tokens`) unpriced — `0.0`, with one warning per model — since a row has no
-audio-token rates. A provider whose bill differs adds a method for its endpoint
+`completion_audio_tokens`) unpriced — `0.0`, with one warning per model and endpoint — since a
+row has no audio-token rates. A provider whose bill differs adds a method for its endpoint
 type in its own file, beside the pricing page it follows: a premium on cache writes
 (`cache_write_tokens`, `cache_write_extended_tokens`), a multiplier for the reported
 `service_tier` or `inference_geo`, a long-context tier. Such a method returns the whole

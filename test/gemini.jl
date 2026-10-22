@@ -1204,12 +1204,22 @@ end
                 "gemini-robotics-er-2-preview" => UniLM._price(1.00, 0.10, 5.00))
     @test cost("gemini-3-flash-preview", heard(); pricing=rows) ≈ bill(1.00, 0.50, 3.00)
     @test cost("gemini-robotics-er-2-preview", heard(); pricing=rows) ≈ bill(1.00, 1.00, 5.00)
+    # A one-price model's audio is its row's input rate, so a row that moves the price — a caller's own,
+    # or Robotics-ER 2 Preview's doubling on 2027-01-01 — moves both; a model with its own audio price
+    # keeps that one.
+    moved = Dict("gemini-3.5-flash-lite" => UniLM._price(0.60, 0.06, 5.00),
+                 "gemini-robotics-er-2-preview" => UniLM._price(2.00, 0.20, 10.00),
+                 "gemini-3.1-flash-lite" => UniLM._price(0.40, 0.04, 2.00))
+    @test cost("gemini-3.5-flash-lite", heard(); pricing=moved) ≈ bill(0.60, 0.60, 5.00)
+    @test cost("gemini-robotics-er-2-preview", heard(); pricing=moved) ≈ bill(2.00, 2.00, 10.00)
+    @test cost("gemini-3.1-flash-lite", heard(); pricing=moved) ≈ bill(0.50, 0.40, 2.00)
     # A billed tier scales the audio rate as it scales the text ones: 3.1 Flash-Lite lists audio at
     # $0.25 on Flex and $0.90 on Priority, 2.5 Flash at $1.80 on Priority.
     @test cost("gemini-3.1-flash-lite", heard(tier="flex")) ≈ bill(0.25, 0.125, 0.75)
     @test cost("gemini-3.1-flash-lite", heard(tier="priority")) ≈ bill(0.90, 0.45, 2.70)
     @test cost("gemini-2.5-flash", heard(tier="priority")) ≈ bill(1.80, 0.54, 4.50)
-    # The OpenAI-compatible endpoint bills the same.
+    # A usage of the OpenAI-compatible endpoint that counted audio would bill the same; its replies count
+    # none (the next testset).
     @test cost("gemini-3.1-flash-lite", heard(); service=GEMINIOpenAIServiceEndpoint) ≈ bill(0.50, 0.25, 1.50)
     @test (@inferred UniLM._billed_cost(GEMINIServiceEndpoint, "gemini-3.1-flash-lite", heard(),
                                         DEFAULT_PRICING["gemini-3.1-flash-lite"])) ≈ bill(0.50, 0.25, 1.50)

@@ -623,22 +623,25 @@ end
     heard = TokenUsage(prompt_tokens=1000, completion_tokens=50, total_tokens=1050, prompt_audio_tokens=600)
     spoken = TokenUsage(prompt_tokens=1000, completion_tokens=50, total_tokens=1050, completion_audio_tokens=40)
     says = "no audio-token rates for this model on this endpoint; its estimated cost is 0.0"
-    warned(logs) = [(l.level, l.message, l.kwargs[:model]) for l in logs]
-    # Audio input or audio output: unpriced, with one warning per model.
+    warned(logs) = [(l.level, l.message, l.kwargs[:model], l.kwargs[:endpoint]) for l in logs]
+    # Audio input or audio output: unpriced, with one warning per model and endpoint.
     logs, total = Test.collect_test_logs() do
         estimated_cost(result(generic, "m-hears", heard); pricing) +
             estimated_cost(result(generic, "m-hears", spoken); pricing) +
             estimated_cost(result(generic, "m-speaks", spoken); pricing)
     end
     @test total == 0.0
-    @test warned(logs) == [(Base.CoreLogging.Warn, says, "m-hears"), (Base.CoreLogging.Warn, says, "m-speaks")]
-    # gpt-audio-1.5's audio-token rates are OpenAI's: on Azure and DeepSeek its text row prices no audio.
+    @test warned(logs) == [(Base.CoreLogging.Warn, says, "m-hears", :GenericOpenAIEndpoint),
+                           (Base.CoreLogging.Warn, says, "m-speaks", :GenericOpenAIEndpoint)]
+    # gpt-audio-1.5's audio-token rates are OpenAI's: on Azure and DeepSeek its text row prices no audio,
+    # and the warning of the one endpoint does not hide the other's.
     logs, total = Test.collect_test_logs() do
         estimated_cost(result(AZUREServiceEndpoint, "gpt-audio-1.5", spoken)) +
             estimated_cost(result(DeepSeekEndpoint("k"), "gpt-audio-1.5", heard))
     end
     @test total == 0.0
-    @test warned(logs) == [(Base.CoreLogging.Warn, says, "gpt-audio-1.5")]
+    @test warned(logs) == [(Base.CoreLogging.Warn, says, "gpt-audio-1.5", :AZUREServiceEndpoint),
+                           (Base.CoreLogging.Warn, says, "gpt-audio-1.5", :DeepSeekEndpoint)]
     @test isapprox((@test_logs estimated_cost(result(OPENAIServiceEndpoint, "gpt-audio-1.5", spoken))),
                    (1000 * 2.5 + 10 * 10.0 + 40 * 64.0) / 1e6; rtol=1e-12)
     # Without audio tokens the same result bills the standard rates, silently.

@@ -764,27 +764,35 @@ function _gemini_tier_multiples(model::String, tier::Union{String,Nothing})::NTu
     (prices.multiple, get(prices.cache, model, prices.multiple))
 end
 
-# The audio input rates, USD per token at the standard tier, of the models whose table on
-# https://ai.google.dev/gemini-api/docs/pricing (2026-10-22) states one for audio: a price of its
-# own ("$0.25 (text / image / video) $0.50 (audio)" on 3.1 Flash-Lite), or one input price for
-# "text / image / video / audio". Each such table scales it on Flex and Priority as it scales the
-# text rates. The other tables state no audio rate — Gemini 4 Argon's, 3.8 and 3.6 Flash's, 3.1
-# Pro Preview's and 2.5 Pro's input price names no modality — so audio on those models leaves the
-# call unpriced, as a model without a price row is.
-const _GEMINI_AUDIO_INPUT_RATES = Dict{String,Float64}(
-    "gemini-3.5-flash-lite"        => 0.30 / 1_000_000,   # its one input price
+# The audio input rates of the models whose table on https://ai.google.dev/gemini-api/docs/pricing
+# (2026-10-22) states one for audio, each scaled on Flex and Priority as the table scales its text
+# rates: a price of its own ("$0.25 (text / image / video) $0.50 (audio)" on 3.1 Flash-Lite), in
+# USD per token at the standard tier, or `nothing` where the table lists one input price for
+# "text / image / video / audio" — audio bills at the price row's input rate, so a `pricing=` row,
+# or a price change such as Robotics-ER 2 Preview's on 2027-01-01, moves both. The other tables
+# state no audio rate — Gemini 4 Argon's, 3.8 and 3.6 Flash's, 3.1 Pro Preview's and 2.5 Pro's input
+# price names no modality — so audio on those models leaves the call unpriced, as a model without a
+# price row is.
+const _GEMINI_AUDIO_INPUT_RATES = Dict{String,Union{Float64,Nothing}}(
+    "gemini-3.5-flash-lite"        => nothing,            # its one input price
     "gemini-3.1-flash-lite"        => 0.50 / 1_000_000,   # shuts down 2027-05-07
     "gemini-3-flash-preview"       => 1.00 / 1_000_000,
     "gemini-2.5-flash"             => 1.00 / 1_000_000,
     "gemini-2.5-flash-lite"        => 0.30 / 1_000_000,
-    "gemini-robotics-er-2-preview" => 1.00 / 1_000_000)   # its one input price; $2.00 from 2027-01-01
+    "gemini-robotics-er-2-preview" => nothing)            # its one input price
 
-# The audio rate a usage's audio input bills at, or `nothing` where the page states none for it:
-# the model has no rate above; the reply also counts audio output, which no table here prices; or
-# the call also read the cache, since the cached-audio prices the page lists differ from the
-# cached-text ones (or it lists none) and a usage does not say how many cached tokens are audio.
-_gemini_audio_rate(model::String, u::TokenUsage)::Union{Float64,Nothing} =
-    u.completion_audio_tokens > 0 || u.cached_tokens > 0 ? nothing : get(_GEMINI_AUDIO_INPUT_RATES, model, nothing)
+# Whether `model`'s table states an audio rate of its own, which may differ from its text rate.
+_gemini_own_audio_rate(model::AbstractString)::Bool = !isnothing(get(_GEMINI_AUDIO_INPUT_RATES, model, nothing))
+
+# The audio rate a usage's audio input bills at, `rates` being the model's price row, or `nothing`
+# where the page states none for it: the model has no entry above; the reply also counts audio
+# output, which no table here prices; or the call also read the cache, since the cached-audio
+# prices the page lists differ from the cached-text ones (or it lists none) and a usage does not
+# say how many cached tokens are audio.
+function _gemini_audio_rate(model::String, u::TokenUsage, rates::PriceRow)::Union{Float64,Nothing}
+    (u.completion_audio_tokens > 0 || u.cached_tokens > 0 || !haskey(_GEMINI_AUDIO_INPUT_RATES, model)) && return nothing
+    something(_GEMINI_AUDIO_INPUT_RATES[model], rates.input)
+end
 
 # The models whose table bills a prompt over 200K tokens at long-context rates, the whole request:
 # twice the input and cache-hit rates and 1.5 times the output rate, on every tier (pricing page,
@@ -796,7 +804,10 @@ const _GEMINI_LONG_CONTEXT_MODELS = ("gemini-3.1-pro-preview", "gemini-3.1-pro-p
 const _GEMINI_SHORT_CONTEXT = 200_000
 
 # The multiples of the input and cache-hit rates, and of the output rate, that a prompt of
-# `prompt_tokens` costs on `model`.
+# `prompt_tokens` costs on `model`. A turn Gemini continues in several requests is priced from
+# its summed usage, so its prompt is the requests' prompts summed, not one request's: that is
+# right only while no model that continues has long-context rates — today only Gemini 4 Argon
+# continues, and its table has none.
 _gemini_context_multiples(model::String, prompt_tokens::Int)::NTuple{2,Float64} =
     prompt_tokens > _GEMINI_SHORT_CONTEXT && model in _GEMINI_LONG_CONTEXT_MODELS ? (2.0, 1.5) : (1.0, 1.0)
 
@@ -808,11 +819,11 @@ _gemini_context_multiples(model::String, prompt_tokens::Int)::NTuple{2,Float64} 
 # included, bills at the output rate; a long prompt at its long-context multiples
 # (`_gemini_context_multiples`); and each rate at the billed tier's multiple of it
 # (`_gemini_tier_multiples`).
-function _billed_cost(::Union{Type{GEMINIServiceEndpoint},GEMINIServiceEndpoint,
-                              Type{GEMINIOpenAIServiceEndpoint},GEMINIOpenAIServiceEndpoint},
+function _billed_cost(service::Union{Type{GEMINIServiceEndpoint},GEMINIServiceEndpoint,
+                                     Type{GEMINIOpenAIServiceEndpoint},GEMINIOpenAIServiceEndpoint},
                       model::String, u::TokenUsage, rates::PriceRow)::Float64
-    audio_rate = _gemini_audio_rate(model, u)
-    _counts_audio(u) && isnothing(audio_rate) && return _unpriced_audio(model)
+    audio_rate = _gemini_audio_rate(model, u, rates)
+    _counts_audio(u) && isnothing(audio_rate) && return _unpriced_audio(service, model)
     audio = min(u.prompt_audio_tokens, u.prompt_tokens)
     cached = min(u.cached_tokens, u.prompt_tokens)
     rate, cache = _gemini_tier_multiples(model, u.service_tier)

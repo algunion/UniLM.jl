@@ -109,7 +109,7 @@ end
 
 function run_gemini()
     key = envkey("GEMINI_API_KEY"); isempty(key) && return nothing
-    model = get(ENV, "UNILM_GEMINI_MODEL", "gemini-3.5-flash")
+    model = get(ENV, "UNILM_GEMINI_MODEL", "gemini-3.8-flash")
     url = "https://generativelanguage.googleapis.com/v1beta/models/$model:streamGenerateContent?alt=sse"
     body = JSON.json(Dict(
         "contents" => [Dict("role" => "user", "parts" => [Dict("text" => HARD_PROMPT)])],

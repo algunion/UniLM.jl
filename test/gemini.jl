@@ -1168,7 +1168,7 @@ end
 @testset "continuation — function calls of every hop, numbered across the turn, on both paths" begin
     call(q) = Dict("functionCall" => Dict("name" => "lookup", "args" => Dict("q" => q)))
     u = Dict("promptTokenCount" => 10, "candidatesTokenCount" => 2, "totalTokenCount" => 12)
-    replies = [(200, _hop([call("a")], "CONTINUATION"; token="T1", usage=u)), (200, _hop([call("b")], "STOP"; usage=u))]
+    replies = [(200, _hop([call("a")], "CONTINUATION"; token="token-a", usage=u)), (200, _hop([call("b")], "STOP"; usage=u))]
     tool = Tool(func=FunctionSignature(name="lookup", parameters=Dict("type" => "object")))
     plain = _with_hops(seen -> chatrequest!(_hops_chat(tools=[tool]); config=_HOPS_CFG), replies)
     fired = ToolCall[]
@@ -1185,14 +1185,14 @@ end
 
 @testset "continuation — at most 8 requests; then the turn so far, finish_reason \"continuation\"" begin
     u = Dict("promptTokenCount" => 10, "candidatesTokenCount" => 1, "totalTokenCount" => 11)
-    replies = [(200, _hop([Dict("text" => "part $k. ")], "CONTINUATION"; token="T$k", usage=u)) for k in 1:9]
+    replies = [(200, _hop([Dict("text" => "part $k. ")], "CONTINUATION"; token="token-$k", usage=u)) for k in 1:9]
     for stream in (false, true)
         _with_hops(replies) do seen
             chat = _hops_chat(; stream)
             out = chatrequest!(chat; config=_HOPS_CFG)
             r = stream ? fetch(out) : out
             @test length(seen) == 8
-            @test [get(JSON.parse(b), "continuationToken", nothing) for b in seen] == [nothing; ["T$k" for k in 1:7]]
+            @test [get(JSON.parse(b), "continuationToken", nothing) for b in seen] == [nothing; ["token-$k" for k in 1:7]]
             @test r.message.finish_reason == "continuation"
             @test r.message.content == join(["part $k. " for k in 1:8])
             @test r.usage == TokenUsage(prompt_tokens=80, completion_tokens=8, total_tokens=88, service_tier="priority")
@@ -1203,7 +1203,7 @@ end
 
 @testset "continuation — a reply that does not continue ends the turn" begin
     u = Dict("promptTokenCount" => 10, "candidatesTokenCount" => 1, "totalTokenCount" => 11)
-    for (finish, token, want) in (("MAX_TOKENS", "T1", "length"), ("CONTINUATION", nothing, "continuation"), ("STOP", nothing, STOP))
+    for (finish, token, want) in (("MAX_TOKENS", "token-a", "length"), ("CONTINUATION", nothing, "continuation"), ("STOP", nothing, STOP))
         for stream in (false, true)
             _with_hops([(200, _hop([Dict("text" => "x")], finish; token, usage=u))]) do seen
                 out = chatrequest!(_hops_chat(; stream); config=_HOPS_CFG)

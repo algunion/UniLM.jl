@@ -37,10 +37,9 @@ its own `raw`.
 
 A listing is the provider's view for the key that asks, so two accounts can see different
 models. Anthropic lists active and deprecated models, not retired ones — its `lifecycle`
-field, in `raw`, says which — and may still revise a `retires_at` it lists. OpenAI's
-listing showed models whose `shutdown_date` had passed on 22 October 2026, so a listed
-model is not always one that still answers: compare `retires` with today's date before
-relying on it.
+field, in `raw`, says which — and may still revise a `retires_at` it lists. OpenAI keeps
+listing a model after its `shutdown_date`, so a listed model is not always one that still
+answers: compare `retires` with today's date before relying on it.
 
 The Anthropic capabilities are the ones UniLM's request checks encode for each Claude
 model — the thinking types it accepts (`adaptive`, `disabled`, `between_tools`) and its

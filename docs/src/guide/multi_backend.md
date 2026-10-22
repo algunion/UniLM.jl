@@ -476,19 +476,26 @@ end
 ```
 
 UniLM checks a request against its rules for the model it names and prices the result at the
-model's [`DEFAULT_PRICING`](@ref) row. A model with no rule row is sent as asked, the provider's
-answer being the check, and a model with no price row costs \$0 ([Unpriced models cost
-\$0](@ref unpriced-zero)): before you adopt a newly listed model, look for its row
-(`haskey(DEFAULT_PRICING, m.id)`; a dated snapshot such as `gpt-5.4-mini-2026-03-17` is priced
-at the row of `gpt-5.4-mini`), or add one.
+model's [`DEFAULT_PRICING`](@ref) row. A request for a model with no rule row of its own is
+still held to the provider-wide rules — no Claude request sets `temperature`, for one — and the
+provider's answer checks the rest; a model with no price row costs \$0 ([Unpriced models cost
+\$0](@ref unpriced-zero)). Before you adopt a newly listed model, look for its price row as the
+cost code does — the id, else the id without its dated snapshot suffix (`-YYYY-MM-DD` on OpenAI,
+`-YYYYMMDD` on Anthropic) — or add one:
+
+```julia
+priced(id) = haskey(DEFAULT_PRICING, id) ||
+             haskey(DEFAULT_PRICING, replace(id, r"-(\d{4}-\d{2}-\d{2}|\d{8})$" => ""))
+[m.id for m in r.models if !priced(m.id)]
+```
 
 UniLM's release gate runs the same listings against its tables
 (`test/integration_provider_drift.jl`): every listed model of the families UniLM documents —
-GPT-6, GPT-5.6 and GPT-5.4 mini; Claude 4.5 and later; Gemini 3.5 and later text models —
-must have a price row and, except GPT-5.4 mini, a rule row; every model UniLM uses
-by default or in its live tests must be listed and not past its retirement date; and each
-Claude rule row must agree with the thinking types and effort levels Anthropic lists for
-the model.
+GPT-6, GPT-5.6 and GPT-5.4 mini; Claude 4.5 and later, and every Claude model UniLM has rules
+for; Gemini 3.5 and later text models — must have a price row, and a rule row too unless it is
+GPT-5.4 mini or a Gemini model that does not think; every model UniLM uses by default or in its
+live tests must be listed and not past its retirement date; and each Claude rule row must agree
+with the thinking types and effort levels Anthropic lists for the model.
 
 ## See Also
 

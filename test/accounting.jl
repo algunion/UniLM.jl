@@ -613,6 +613,41 @@ end
     @test (@inferred UniLM._billed_cost(chat.service, "m", u, pricing["m"])) ≈ estimated_cost(r; pricing)
 end
 
+# A price row has no audio-token rates. Refuted if: a result billed at the standard rates bills its
+# audio tokens at a row's text rates, or prices them without a warning.
+@testset "default billed cost: audio tokens leave the call unpriced, never billed at text rates" begin
+    pricing = Dict("m-hears" => UniLM._price(1.0, 0.1, 4.0), "m-speaks" => UniLM._price(1.0, 0.1, 4.0))
+    generic = GenericOpenAIEndpoint("http://localhost:9", "")
+    result(service, model, u) = LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=Chat(; service, model),
+                                           usage=u)
+    heard = TokenUsage(prompt_tokens=1000, completion_tokens=50, total_tokens=1050, prompt_audio_tokens=600)
+    spoken = TokenUsage(prompt_tokens=1000, completion_tokens=50, total_tokens=1050, completion_audio_tokens=40)
+    says = "no audio-token rates for this model on this endpoint; its estimated cost is 0.0"
+    warned(logs) = [(l.level, l.message, l.kwargs[:model]) for l in logs]
+    # Audio input or audio output: unpriced, with one warning per model.
+    logs, total = Test.collect_test_logs() do
+        estimated_cost(result(generic, "m-hears", heard); pricing) +
+            estimated_cost(result(generic, "m-hears", spoken); pricing) +
+            estimated_cost(result(generic, "m-speaks", spoken); pricing)
+    end
+    @test total == 0.0
+    @test warned(logs) == [(Base.CoreLogging.Warn, says, "m-hears"), (Base.CoreLogging.Warn, says, "m-speaks")]
+    # gpt-audio-1.5's audio-token rates are OpenAI's: on Azure and DeepSeek its text row prices no audio.
+    logs, total = Test.collect_test_logs() do
+        estimated_cost(result(AZUREServiceEndpoint, "gpt-audio-1.5", spoken)) +
+            estimated_cost(result(DeepSeekEndpoint("k"), "gpt-audio-1.5", heard))
+    end
+    @test total == 0.0
+    @test warned(logs) == [(Base.CoreLogging.Warn, says, "gpt-audio-1.5")]
+    @test isapprox((@test_logs estimated_cost(result(OPENAIServiceEndpoint, "gpt-audio-1.5", spoken))),
+                   (1000 * 2.5 + 10 * 10.0 + 40 * 64.0) / 1e6; rtol=1e-12)
+    # Without audio tokens the same result bills the standard rates, silently.
+    text = TokenUsage(prompt_tokens=1000, completion_tokens=50, total_tokens=1050)
+    @test isapprox((@test_logs estimated_cost(result(generic, "m-hears", text); pricing)), (1000 * 1.0 + 50 * 4.0) / 1e6;
+                   rtol=1e-12)
+    @test (@test_logs (:warn, says) @inferred UniLM._billed_cost(nothing, "m-hears", heard, pricing["m-hears"])) === 0.0
+end
+
 @testset "served model prices the call" begin
     pricing = Dict("m-served" => UniLM._price(1.0, 0.1, 4.0), "m-asked" => UniLM._price(2.0, 0.2, 8.0))
     u = TokenUsage(prompt_tokens=1000, completion_tokens=50, total_tokens=1050)

@@ -141,23 +141,29 @@ end
 # Live API's models (gemini-3.8-live).
 const _GEMINI_NOT_TEXT = ("tts", "transcribe", "image", "live")
 
-# Gemini 3.5 and later text models: a versioned id (gemini-<major>[.<minor>]-…) of no other kind
-# that serves generateContent. Each has a price row; the ones that think also a row of thinking
-# levels, which UniLM checks a reasoning effort against.
-function _gemini_text_model(m::ProviderModel)::Bool
-    v = match(r"^gemini-(\d+)(?:\.(\d+))?-", m.id)
-    isnothing(v) && return false
-    VersionNumber(parse(Int, something(v[1])), parse(Int, something(v[2], "0"))) >= v"3.5" &&
-        !any(in(_GEMINI_NOT_TEXT), split(m.id, '-')) &&
-        "generateContent" in something(get(m.capabilities, "supportedGenerationMethods", nothing), String[])
+# The generation a Gemini id names, gemini-<major>[.<minor>]-…; `nothing` for an id of another
+# form (gemini-flash-latest, gemini-robotics-er-2-preview).
+function _gemini_generation(id::AbstractString)::Union{VersionNumber,Nothing}
+    v = match(r"^gemini-(\d+)(?:\.(\d+))?-", id)
+    isnothing(v) ? nothing : VersionNumber(parse(Int, something(v[1])), parse(Int, something(v[2], "0")))
 end
 
+# A Gemini text model: a gemini-… id of no other kind that serves generateContent.
+_gemini_text_model(m::ProviderModel)::Bool =
+    startswith(m.id, "gemini-") && !any(in(_GEMINI_NOT_TEXT), split(m.id, '-')) &&
+    "generateContent" in something(get(m.capabilities, "supportedGenerationMethods", nothing), String[])
+
+# Gemini: the text models of 3.5 and later, by the generation the id names, and every text model
+# UniLM keeps thinking levels for, whatever its name says — but the -latest aliases, which are
+# priced at the model that served them. Each needs a price row, and the ones that think a row of
+# thinking levels too, which UniLM checks a reasoning effort against.
 function _gemini_drift(models::Vector{ProviderModel})
-    text = filter(_gemini_text_model, models)
-    family = [m.id for m in text]
-    thinking = [m.id for m in text if get(m.capabilities, "thinking", false) === true]
-    (; family, thinking, unpriced=_unpriced(family),
-     unruled=[id for id in thinking if isnothing(UniLM._gemini_thinking_levels(id))])
+    ruled(id) = !isnothing(UniLM._gemini_thinking_levels(id))
+    text = [m for m in models if _gemini_text_model(m) && !endswith(m.id, "-latest")]
+    members = [m for m in text if ruled(m.id) || something(_gemini_generation(m.id), v"0") >= v"3.5"]
+    family = [m.id for m in members]
+    thinking = [m.id for m in members if get(m.capabilities, "thinking", false) === true]
+    (; family, thinking, unpriced=_unpriced(family), unruled=[id for id in thinking if !ruled(id)])
 end
 
 end

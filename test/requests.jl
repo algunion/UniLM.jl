@@ -1383,6 +1383,15 @@ end
     end
 end
 
+@testset "cut-off tool arguments with an invalid escape are dropped, not parsed" begin
+    # `\x` is not a JSON escape: the validity check must agree with the parser,
+    # or the whole truncated turn fails instead of losing only the partial call.
+    args = "{\"city\": \"Par\\x\"}"
+    @test !UniLM._is_json_object(args)
+    @test isnothing(UniLM._call_arguments(args, "length"))
+    @test UniLM._call_arguments("{\"city\": \"Paris\"}", "length") == Dict{String,Any}("city" => "Paris")
+end
+
 @testset "local validation throws before any network I/O" begin
     srv = _json_reply_server(_REPLY)
     try

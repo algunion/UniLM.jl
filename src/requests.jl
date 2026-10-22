@@ -1475,16 +1475,16 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
         # callback.
         if isnothing(state.error) && (!isnothing(m[]) || !isnothing(state.finish_reason)) &&
            (stopped || _stream_teardown_noise(e, breach))
-            # A reply that continues the turn is not the turn's end: teardown noise hands it on
-            # to the next request, and a stop ends the call below, as before any turn's end.
+            # A reply that continues the turn is not the turn's end, yet it was answered and
+            # billed: it is handed on to the next request, stop or not. After a stop the next
+            # request meets the stop before sending anything, so the call ends as a stop
+            # does, with this reply's cost in the turn the driver bills.
             hop = isnothing(m[]) ? (isnothing(next[]) ? _next_hop(chat, turn, state) : next[]) : nothing
-            if isnothing(hop)
-                fin = _finalize_stream_message!(state, cb, otc, ctl.close, m)
-                return (; result=_stream_success(chat, fin.msg, _add_usage(turn.usage, fin.usage),
-                                                 turn.sse_dropped + state.sse_dropped, state.model),
-                        resp=nothing)
-            end
-            stopped || return (; result=_StreamHop(state, hop), resp=nothing)
+            isnothing(hop) || return (; result=_StreamHop(state, hop), resp=nothing)
+            fin = _finalize_stream_message!(state, cb, otc, ctl.close, m)
+            return (; result=_stream_success(chat, fin.msg, _add_usage(turn.usage, fin.usage),
+                                             turn.sse_dropped + state.sse_dropped, state.model),
+                    resp=nothing)
         end
         # Stopped before the turn completed: whatever surfaced (HTTP.jl's rendering
         # of the aborted exchange, a racing bound) is the stop's echo.
@@ -1534,11 +1534,12 @@ function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestCon
         while true
             result = _stream_hop(chat, request, callback, on_tool_call, cfg, start, io_ref, ctl, turn)
             result isa _StreamHop || return _settled(chat, turn, result)
-            # The next request starts with the whole budget, and a retry of it replays nothing
-            # that an earlier reply delivered.
+            # The next request starts with the whole budget, a retry of it replays nothing
+            # that an earlier reply delivered, and a failure of it names its own request id.
             turn = _next_turn(turn, result.state)
             request, start = result.body, time_ns()
             ctl.fired = false
+            io_ref[] = nothing
         end
     catch e
         _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
@@ -1688,14 +1689,16 @@ A long generation the provider stops at its per-request cap and returns a token 
 continue (Gemini 4 Argon's long decode on `GEMINIServiceEndpoint`) is continued inside
 the call: the same request is sent again with the latest token, up to 8 requests in all,
 and the result is one assistant turn — the replies' parts joined, their usage summed
-field by field, since every reply is billed. Each request has the whole `config` budget,
-timeouts and retries alike. A turn still unfinished after the 8th request is returned as
-it stands, with `finish_reason == "continuation"`. A request that fails ends the call with
-its failure and commits nothing, and the replies already received are added to
+field by field, since every reply is billed, and priced at the tier the last reply
+reported. Each request has the whole `config` budget, timeouts and retries alike. A turn
+still unfinished after the 8th request is returned as it stands, with
+`finish_reason == "continuation"`. A request that fails ends the call with its failure and
+commits nothing, and the replies already received are added to
 [`cumulative_cost`](@ref). A streamed turn streams every reply into the same `callback`,
-which receives one final message; a stop before the turn's last reply ends the call as
-any stop does. Continuation is exercised against a local mock; a live CONTINUATION reply
-was not observed.
+which receives one final message. A stop or cancel before the turn's last reply ends the
+call as any stop does, nothing committed, and the replies already received are added to
+`cumulative_cost` too. Continuation is exercised against a local mock; a live
+CONTINUATION reply was not observed.
 
 `cancel::Union{Nothing,CancelToken}`: a [`CancelToken`](@ref); `nothing` resolves the
 ambient token of [`with_cancel`](@ref), at call entry. A cancel at any point — before
@@ -1729,14 +1732,14 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
     tok = _resolve_cancel(cancel)
     t0 = time_ns()
     chat.stream === true && return _chatrequeststream(chat, body, callback; on_tool_call, cfg, t0, cancel=tok)
-    local resp
     billed = nothing   # the turn so far, while the provider continues it in another request
+    latest = nothing   # the reply to the request sent last, whose id a failure names
     try
         url = get_url(chat)
         send(request, start::UInt64) = _recorded_exchange("POST", url, request, start, tok) do
             _http_with_retries(cfg, start, "POST", url, auth_header(chat.service), request; cancel=tok)
         end
-        resp = send(body, t0)
+        resp = latest = send(body, t0)
         # Retry/backoff already happened inside the shared loop; the last real response is
         # the truthful outcome (a budget-exhausted 429 is a 429, not a fabricated timeout).
         resp.status == 200 || return LLMFailure(status=resp.status, response=String(resp.body),
@@ -1747,8 +1750,8 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
                                       _decoded_continuation(extracted))
             isnothing(next) && break
             # Each request of the turn starts with the whole budget.
-            billed = extracted
-            later = send(next, time_ns())
+            billed, latest = extracted, nothing
+            later = latest = send(next, time_ns())
             if later.status != 200
                 _accrue_hops!(chat, billed.message, billed.usage, _decoded_model(billed))
                 return LLMFailure(status=later.status, response=String(later.body),
@@ -1772,7 +1775,7 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
         e isa UniLMTimeout && return LLMCallError(error=sprint(showerror, e), self=chat,
                                                   status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
-        req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
+        req_id = isnothing(latest) ? _get_request_id(e) : _get_request_id(latest)
         return LLMCallError(error=_error_text(chat.service, e), self=chat, status=statuserror,
                             request_id=req_id, cause=e isa Exception ? e : nothing)
     end

@@ -1016,6 +1016,16 @@ end
     @test cost("gemini-3.1-pro-preview", "priority") ≈ bill(3.6, 0.36, 21.6)
     @test cost("gemini-2.5-flash", "flex") ≈ bill(0.15, 0.03, 1.25)
     @test cost("gemini-2.5-flash-lite", "priority") ≈ bill(0.18, 0.018, 0.72)
+    # Gemini 3.5 Flash-Lite lists its cache hits at $0.02 on Flex and $0.05 on Priority, for the
+    # standard $0.03 (and $0.15 / $1.25, $0.54 / $4.50 for input and output).
+    @test cost("gemini-3.5-flash-lite", "flex") ≈ bill(0.15, 0.02, 1.25)
+    @test cost("gemini-3.5-flash-lite", "priority") ≈ bill(0.54, 0.05, 4.50)
+    @test cost("gemini-3.5-flash-lite", nothing) ≈ bill(0.30, 0.03, 2.50)
+    # Every other Gemini row's cache hit costs the tier's multiple of its standard rate, as its
+    # tables list: Gemini 3.1 Flash-Lite $0.0125 (Flex) and $0.045 (Priority) for $0.025.
+    @test cost("gemini-3.1-flash-lite", "flex") ≈ bill(0.125, 0.0125, 0.75)
+    @test cost("gemini-3.1-flash-lite", "priority") ≈ bill(0.45, 0.045, 2.70)
+    @test cost("gemini-3.6-flash", "priority") ≈ bill(1.35, 0.135, 6.75)
     # gemini-3.1-pro-preview-customtools is priced on 3.1 Pro Preview's row of the page.
     @test cost("gemini-3.1-pro-preview-customtools", nothing) ≈ bill(2.0, 0.20, 12.0)
     @test cost("gemini-3.1-pro-preview-customtools", "flex") ≈ bill(1.0, 0.20, 6.0)
@@ -1057,8 +1067,11 @@ UniLM.encode_request(::Type{_GeminiHops}, c::Chat) = encode_request(GEMINIServic
 UniLM.decode_response(::Type{_GeminiHops}, r::HTTP.Response) = decode_response(GEMINIServiceEndpoint, r)
 UniLM.handle_sse_event!(::Type{_GeminiHops}, e::AbstractString, p::AbstractString, s::StreamState) =
     UniLM.handle_sse_event!(GEMINIServiceEndpoint, e, p, s)
+# Runs when the driver asks whether a reply continues the turn: after the reply was received,
+# before the next request is sent.
+const _HOPS_BETWEEN = Ref{Function}(() -> nothing)
 UniLM._continuation_body(::Type{_GeminiHops}, b::AbstractString, f, t) =
-    UniLM._continuation_body(GEMINIServiceEndpoint, b, f, t)
+    (_HOPS_BETWEEN[](); UniLM._continuation_body(GEMINIServiceEndpoint, b, f, t))
 UniLM._join_hops(::Type{_GeminiHops}, a::HTTP.Response, b::HTTP.Response) = UniLM._join_hops(GEMINIServiceEndpoint, a, b)
 UniLM._stream_head!(::Type{_GeminiHops}, s::StreamState, h::HTTP.Response) = UniLM._stream_head!(GEMINIServiceEndpoint, s, h)
 UniLM._billed_cost(::Type{_GeminiHops}, m::String, u::TokenUsage, r::UniLM.PriceRow) =
@@ -1076,7 +1089,7 @@ function _with_hops(f, replies; tier="priority")
         payload = !streamed ? JSON.json(reply) :
             join(("data: " * JSON.json(c) * "\r\n\r\n" for c in get(reply, "chunks", [reply])))
         HTTP.Response(status, ["Content-Type" => streamed ? "text/event-stream" : "application/json",
-                               "x-gemini-service-tier" => tier], Vector{UInt8}(payload))
+                               "x-gemini-service-tier" => tier, "x-request-id" => "req-$k"], Vector{UInt8}(payload))
     end
     _HOPS_URL[] = "http://127.0.0.1:$(HTTP.port(server))"
     try
@@ -1233,11 +1246,69 @@ end
             stream && @test filter(x -> x isa String, got) == ["The proof begins. "] && !any(x -> x isa Message, got)
         end
     end
-    # A later hop whose 200 cannot be read is a call error; the hops before it stay billed too.
+    # A later hop whose 200 cannot be read is a call error naming that hop's request id; the hops
+    # before it stay billed too.
     _with_hops([first(_hops_two()), (200, Dict("candidates" => "not a list"))]) do seen
         chat = _hops_chat()
         r = chatrequest!(chat; config=_HOPS_CFG)
         @test r isa LLMCallError && length(seen) == 2
+        @test r.request_id == "req-2"
         @test cumulative_cost(chat) ≈ _HOP1_COST
+    end
+end
+
+@testset "continuation — a stop on the reply that continues ends the call; that reply stays billed" begin
+    # The caller stops on the text of hop 1's last chunk, the one that carries CONTINUATION and
+    # hop 1's whole usage: by the close flag or by a cancel of its token.
+    for by_token in (false, true)
+        _with_hops(_hops_two()) do seen
+            chat = _hops_chat(stream=true)
+            tok = CancelToken()
+            got = Any[]
+            stop!(close) = by_token ? cancel!(tok) : (close[] = true)
+            r = fetch(chatrequest!(chat; config=_HOPS_CFG, cancel=tok,
+                                   callback=(c, close) -> (push!(got, c); c == "The proof begins. " && stop!(close))))
+            @test r isa LLMCallError && r.cause isa UniLMCancelled
+            @test r.cause.source === (by_token ? :token : :callback)
+            @test length(seen) == 1                                              # hop 2 never sent
+            @test [m.role for m in chat.messages] == [RoleSystem, RoleUser]      # nothing committed
+            @test !any(x -> x isa Message, got)                                  # no final message
+            @test cumulative_cost(chat) ≈ _HOP1_COST                             # hop 1 was answered: billed
+        end
+    end
+end
+
+@testset "continuation — a cancel between hops ends the call before the next request; earlier hops stay billed" begin
+    for stream in (false, true)
+        _with_hops(_hops_two()) do seen
+            chat = _hops_chat(; stream)
+            tok = CancelToken()
+            _HOPS_BETWEEN[] = () -> cancel!(tok)          # once hop 1 is received, before hop 2 is sent
+            try
+                out = chatrequest!(chat; config=_HOPS_CFG, cancel=tok)
+                r = stream ? fetch(out) : out
+                @test r isa LLMCallError && r.cause isa UniLMCancelled && r.cause.source === :token
+                @test length(seen) == 1
+                @test isnothing(r.request_id)              # not hop 1's id: no request of hop 2 was sent
+                @test [m.role for m in chat.messages] == [RoleSystem, RoleUser]
+                @test cumulative_cost(chat) ≈ _HOP1_COST
+            finally
+                _HOPS_BETWEEN[] = () -> nothing
+            end
+        end
+    end
+end
+
+@testset "seed — an int32 on both Gemini wires, refused outside it before any request" begin
+    native(seed) = JSON.parse(encode_request(GEMINIServiceEndpoint, Chat(service=GEMINIServiceEndpoint, seed=seed,
+        messages=[Message(Val(:user), "hi")])))["generationConfig"]["seed"]
+    interaction(seed) = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(service=GEMINIServiceEndpoint, input="hi", seed=seed)))["generation_config"]["seed"]
+    for wire in (native, interaction)
+        @test wire(typemax(Int32)) == 2_147_483_647 && wire(typemin(Int32)) == -2_147_483_648 && wire(0) == 0
+        for bad in (Int64(typemax(Int32)) + 1, Int64(typemin(Int32)) - 1, typemax(Int64))
+            e = _gemini_caught(() -> wire(bad))
+            @test e isa ArgumentError && occursin("-2147483648 to 2147483647", e.msg) && occursin(string(bad), e.msg)
+        end
     end
 end

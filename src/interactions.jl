@@ -66,7 +66,7 @@ function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
     isnothing(r.temperature)       || (gen[:temperature] = r.temperature)
     isnothing(r.top_p)             || (gen[:top_p] = r.top_p)
     isnothing(r.max_output_tokens)  || (gen[:max_output_tokens] = r.max_output_tokens)
-    isnothing(r.seed)               || (gen[:seed] = r.seed)
+    isnothing(r.seed)               || (gen[:seed] = _gemini_seed(r.seed))
     isnothing(r.tool_choice)        || (gen[:tool_choice] = _interactions_tool_choice(r.tool_choice))
     if (reasoning = r.reasoning) !== nothing
         isnothing(reasoning.context) && isnothing(reasoning.mode) || throw(ArgumentError(
@@ -212,11 +212,12 @@ _interactions_text(text::AbstractString)::Dict{String,Any} = Dict{String,Any}("t
 # — `input_text` and a replayed `output_text` to text, `input_image` and `input_file` with a base64
 # data URL to an image and a document part — and a part already in the Interactions shape passes
 # through. An image's detail level is its `resolution` (`_gemini_part_resolution`).
-_interactions_part(a::ImageAttachment, model::String) = _interactions_image(a.mime, base64encode(a.data), a.detail, model)
+_interactions_part(a::ImageAttachment, model::String) =
+    _interactions_image(_gemini_mime(a), base64encode(a.data), a.detail, model)
 _interactions_part(a::AudioAttachment, ::String)::Dict{String,Any} =
-    Dict{String,Any}("type" => "audio", "mime_type" => "audio/" * a.format, "data" => base64encode(a.data))
+    Dict{String,Any}("type" => "audio", "mime_type" => _gemini_mime(a), "data" => base64encode(a.data))
 _interactions_part(a::DocumentAttachment, ::String)::Dict{String,Any} =
-    Dict{String,Any}("type" => "document", "mime_type" => a.mime, "data" => base64encode(a.data))
+    _interactions_document(_gemini_mime(a), base64encode(a.data))
 function _interactions_part(p::AbstractDict, model::String)
     kind = _member(p, "type")
     kind in ("input_text", "output_text") && return _interactions_text_part(p)

@@ -89,6 +89,15 @@ _gemini_refuse_cache_options(::PromptCacheOptions) = throw(ArgumentError(
 const _GEMINI_SERVICE_TIERS = ("standard", "flex", "priority")
 const _INTERACTIONS_SERVICE_TIERS = ("standard", "flex", "priority", "deferred")
 
+# GenerationConfig.seed is an int32 (its format in the API's discovery document,
+# https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta), so a seed outside
+# that range has no Gemini value.
+function _gemini_seed(seed::Integer)::Int64
+    typemin(Int32) <= seed <= typemax(Int32) || throw(ArgumentError(
+        "Gemini takes a seed from $(typemin(Int32)) to $(typemax(Int32)), an int32 (got $seed)"))
+    Int64(seed)
+end
+
 _gemini_service_tier(::Nothing, ::Tuple, ::String)::Nothing = nothing
 function _gemini_service_tier(tier::String, tiers::Tuple, api::String)::String
     tier in tiers || throw(ArgumentError("$api takes service_tier $(join(repr.(tiers), ", ", " or ")) " *
@@ -97,11 +106,12 @@ function _gemini_service_tier(tier::String, tiers::Tuple, api::String)::String
     tier
 end
 
-# An image's detail level as Gemini's per-part media resolution
-# (https://ai.google.dev/gemini-api/docs/media-resolution): "low" and "high" are its LOW and HIGH
-# (LOW took a 1,089-token image to 256 tokens on gemini-3.8-flash, observed 2026-10-22); "auto",
-# the model's default, sets none; "original", an image at its own dimensions on OpenAI, has no
-# Gemini level.
+# An image's detail level as Gemini's per-part media resolution — a generateContent part's
+# `mediaResolution` (https://ai.google.dev/gemini-api/docs/generate-content/media-resolution), an
+# Interactions content item's `resolution` (https://ai.google.dev/gemini-api/docs/media-resolution):
+# "low" and "high" are its low and high levels (low took a 1,089-token image to 256 tokens on
+# gemini-3.8-flash, observed 2026-10-22); "auto", the model's default, sets none; "original", an
+# image at its own dimensions on OpenAI, has no Gemini level.
 function _gemini_detail_level(detail)::Union{String,Nothing}
     (isnothing(detail) || detail == "auto") && return nothing
     detail == "original" && throw(ArgumentError(
@@ -112,8 +122,9 @@ function _gemini_detail_level(detail)::Union{String,Nothing}
     String(detail)
 end
 
-# Setting a media resolution per part "is exclusive to Gemini 3 models" (same page), so the
-# earlier models still served refuse a level, by exact id; any other id is left to the server.
+# Both pages: setting it on an individual part or content item "is exclusive to Gemini 3
+# models", so the earlier models still served refuse a level, by exact id; any other id is left
+# to the server.
 const _GEMINI_NO_PART_RESOLUTION = ("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
                                     "gemini-2.5-flash-image", "gemma-4-31b-it", "gemma-4-26b-a4b-it")
 
@@ -249,7 +260,7 @@ function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
     isnothing(chat.temperature) || (gen[:temperature] = chat.temperature)
     isnothing(chat.top_p)       || (gen[:topP] = chat.top_p)
     isnothing(chat.stop)        || (gen[:stopSequences] = chat.stop isa String ? [chat.stop] : chat.stop)
-    isnothing(chat.seed)        || (gen[:seed] = chat.seed)
+    isnothing(chat.seed)        || (gen[:seed] = _gemini_seed(chat.seed))
     if (effort = chat.reasoning_effort) !== nothing
         gen[:thinkingConfig] = Dict(:thinkingLevel => uppercase(_gemini_thinking_level(chat.model, effort; native=true)))
     end
@@ -667,35 +678,42 @@ _model_default_config(::Union{Type{GEMINIServiceEndpoint},Type{GEMINIOpenAIServi
 
 # ─── Cost ─────────────────────────────────────────────────────────────────────
 
-# The billed tier's multiples of a model's standard rates, from the Flex and Priority tables of
-# https://ai.google.dev/gemini-api/docs/pricing (2026-10-22): Flex bills every rate at half the
-# standard one and Priority at 1.8 times (Gemini 3.8 Flash $1.35/$6.75 for $0.75/$3.75, Gemini 4
-# Argon $3.60/$18.00 for $2.00/$10.00). The models whose Flex table lists the context-caching
-# price "Same as Standard" (or the standard figure) bill a cache hit on Flex at the standard rate.
-const _GEMINI_TIER_MULTIPLES = Dict{String,Float64}("flex" => 0.5, "priority" => 1.8)
-const _GEMINI_FLEX_STANDARD_CACHE = ("gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools",
-    "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite")
+# A billed tier's prices as multiples of a model's standard rates, from the Flex and Priority
+# tables of https://ai.google.dev/gemini-api/docs/pricing (2026-10-22): input and output bill at
+# half the standard rates on Flex and at 1.8 times on Priority (Gemini 3.8 Flash $1.35/$6.75 for
+# $0.75/$3.75, Gemini 4 Argon $3.60/$18.00 for $2.00/$10.00), and so does a cache hit, except on
+# the models whose table lists another cache-hit price: `cache` holds those, as multiples of the
+# model's standard cache-hit rate.
+const _GEMINI_TIER_PRICES = Dict{String,@NamedTuple{multiple::Float64, cache::Dict{String,Float64}}}(
+    "flex" => (multiple=0.5, cache=Dict{String,Float64}(
+        # "Same as Standard", or the standard figure
+        "gemini-3.1-pro-preview" => 1.0, "gemini-3.1-pro-preview-customtools" => 1.0,
+        "gemini-3-flash-preview" => 1.0,
+        "gemini-2.5-pro" => 1.0, "gemini-2.5-flash" => 1.0, "gemini-2.5-flash-lite" => 1.0,
+        "gemini-3.5-flash-lite" => 0.02 / 0.03)),          # $0.02 for the standard $0.03
+    "priority" => (multiple=1.8, cache=Dict{String,Float64}(
+        "gemini-3.5-flash-lite" => 0.05 / 0.03)))          # $0.05 for the standard $0.03
 
-# The multiples of the standard rates that the tier a reply reports costs: of every rate, and of
-# the cache-hit rate. "standard" (or "unspecified", its default) or no tier is the standard rates;
-# a tier the page gives no price for (Interactions' "deferred") is estimated at them, and says
-# so once per model and tier.
+# The multiples of the standard rates that the tier a reply reports costs: of the input and
+# output rates, and of the cache-hit rate. "standard" (or "unspecified", its default) or no tier
+# is the standard rates; a tier the page gives no price for (Interactions' "deferred") is
+# estimated at them, and says so once per model and tier.
 function _gemini_tier_multiples(model::String, tier::Union{String,Nothing})::NTuple{2,Float64}
     (isnothing(tier) || tier in ("standard", "unspecified")) && return (1.0, 1.0)
-    multiple = get(_GEMINI_TIER_MULTIPLES, tier, nothing)
-    if isnothing(multiple)
+    prices = get(_GEMINI_TIER_PRICES, tier, nothing)
+    if isnothing(prices)
         @warn "Gemini's pricing page lists no price for this service tier; its cost is estimated at the " *
               "standard rates" model tier _id = Symbol("unilm_unpriced_tier_", model, "_", tier) maxlog = 1
         return (1.0, 1.0)
     end
-    (multiple, tier == "flex" && model in _GEMINI_FLEX_STANDARD_CACHE ? 1.0 : multiple)
+    (prices.multiple, get(prices.cache, model, prices.multiple))
 end
 
 # What Gemini bills a call, on the native and the OpenAI-compatible endpoint alike
 # (https://ai.google.dev/gemini-api/docs/pricing): prompts are cached implicitly, so a cache hit
 # bills at the context-caching rate and every other prompt token, a tool-use prompt included, at
 # the input rate, with no premium for writing the cache; output, thinking included, bills at the
-# output rate; and every rate at the billed tier's multiple.
+# output rate; and each rate at the billed tier's multiple of it (`_gemini_tier_multiples`).
 function _billed_cost(::Union{Type{GEMINIServiceEndpoint},GEMINIServiceEndpoint,
                               Type{GEMINIOpenAIServiceEndpoint},GEMINIOpenAIServiceEndpoint},
                       model::String, u::TokenUsage, rates::PriceRow)::Float64

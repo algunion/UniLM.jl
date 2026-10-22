@@ -148,7 +148,7 @@ end
     @test UniLM.default_embedding_model(ds) === nothing
 
     # default_image_model — OPENAI Type method (line 69)
-    @test UniLM.default_image_model(OPENAIServiceEndpoint) == "gpt-image-2"
+    @test UniLM.default_image_model(OPENAIServiceEndpoint) == "gpt-image-2.5-sunburst"
 
     # default_fim_model — DeepSeek instance method (line 73)
     @test UniLM.default_fim_model(ds) == "deepseek-flash"

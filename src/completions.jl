@@ -317,7 +317,7 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
             # The API returns only the continuation: keep the whole turn in history.
             chat.history && (chat.messages[end] = _message_with(continuation, :content,
                 something(last(chat).content, "") * something(continuation.content, "")))
-            return LLMSuccess(message=continuation, self=chat, usage=extracted.usage)
+            return LLMSuccess(message=continuation, self=chat, usage=extracted.usage, model=extracted.model)
         else
             # Retry/backoff already ran inside the shared loop; the last real
             # response is the truthful outcome.

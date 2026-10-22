@@ -786,6 +786,8 @@ end
         @test s.message == m
         @test s.self === chat
         @test isnothing(s.usage)
+        @test isnothing(s.model)                     # the served model, when the endpoint reports one
+        @test LLMSuccess(message=m, self=chat, model="gpt-6-sol-2026-09-14").model == "gpt-6-sol-2026-09-14"
     end
 
     @testset "LLMSuccess with usage" begin
@@ -824,6 +826,30 @@ end
         @test ec.cause === root
         @test isnothing(EmbeddingCallError(error="net").cause)
     end
+end
+
+@testset "TokenUsage carries cache writes, tier and region" begin
+    u = TokenUsage()
+    @test (u.cache_write_tokens, u.cache_write_extended_tokens, u.service_tier, u.inference_geo) ==
+          (0, 0, nothing, nothing)
+    # The four fields are appended: the five positional counts keep their order.
+    @test fieldnames(TokenUsage) == (:prompt_tokens, :completion_tokens, :total_tokens, :cached_tokens,
+        :reasoning_tokens, :cache_write_tokens, :cache_write_extended_tokens, :service_tier, :inference_geo)
+    @test TokenUsage(10, 2, 12, 3, 1).cached_tokens == 3
+    @test TokenUsage(10, 2, 12, 3, 1) == TokenUsage(prompt_tokens=10, completion_tokens=2, total_tokens=12,
+                                                    cached_tokens=3, reasoning_tokens=1)
+    full = TokenUsage(prompt_tokens=1000, cache_write_tokens=300, cache_write_extended_tokens=100,
+                      service_tier="flex", inference_geo="us")
+    @test (full.cache_write_tokens, full.cache_write_extended_tokens, full.service_tier, full.inference_geo) ==
+          (300, 100, "flex", "us")
+    @test TokenUsage(1000, 0, 0, 0, 0, 300, 100, "flex", "us") == full
+    # Every retention a provider documents builds; each encoder accepts its own subset.
+    for ttl in ("5m", "1h", "30m", "12h")
+        @test PromptCacheOptions(; ttl).ttl == ttl
+    end
+    err = try PromptCacheOptions(ttl="2h"); nothing catch e; e end
+    @test err isa ArgumentError && all(t -> occursin("\"$t\"", err.msg), ("5m", "1h", "30m", "12h"))
+    @test occursin("\"2h\"", err.msg)
 end
 
 @testset "Embeddings" begin

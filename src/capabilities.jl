@@ -177,6 +177,21 @@ end
 # Chat Completions function calling on these families requires reasoning effort "none".
 const _NO_REASONING_CHAT_TOOLS = ("gpt-5.6" => "GPT-5.6", "gpt-6-sol" => "GPT-6 Sol", "gpt-6-luna" => "GPT-6 Luna")
 
+# The prompt-cache retentions each OpenAI API accepts
+# (https://developers.openai.com/api/docs/guides/prompt-caching): Chat Completions answers
+# any other ttl with HTTP 400 "Supported values are: '30m'."; the Responses API also
+# keeps a prefix for 12 hours.
+const _OPENAI_CACHE_TTLS = (
+    chat=(name="Chat Completions", ttls=("30m",), fix="; the Responses API (Respond) also takes \"12h\""),
+    responses=(name="Responses", ttls=("30m", "12h"), fix=""))
+
+function _check_openai_cache_ttl(options::Union{PromptCacheOptions,Nothing}, api::NamedTuple)::Nothing
+    ttl = isnothing(options) ? nothing : options.ttl
+    isnothing(ttl) || ttl in api.ttls || throw(ArgumentError("OpenAI $(api.name) accepts prompt_cache_options " *
+        "ttl $(join(repr.(api.ttls), " or ")) (got $(repr(ttl)))$(api.fix)"))
+    nothing
+end
+
 function encode_request(::Type{OPENAIServiceEndpoint}, chat::Chat)::String
     sampling = _set_fields("temperature" => !isnothing(chat.temperature), "top_p" => !isnothing(chat.top_p),
                            "logprobs" => chat.logprobs === true, "top_logprobs" => !isnothing(chat.top_logprobs))
@@ -195,6 +210,7 @@ function encode_request(::Type{OPENAIServiceEndpoint}, chat::Chat)::String
     if !isnothing(pco) && (!isnothing(pco.prewarm) || !isnothing(pco.comparison_response_id))
         throw(ArgumentError("Chat Completions prompt_cache_options accepts only mode and ttl; prewarm and comparison_response_id are Responses-only"))
     end
+    _check_openai_cache_ttl(pco, _OPENAI_CACHE_TTLS.chat)
     JSON.json(chat)
 end
 
@@ -213,5 +229,6 @@ function encode_agentic(::Type{OPENAIServiceEndpoint}, r::Respond)::String
     if _model_family(r.model, "gpt-6-astra") && !isnothing(r.include) && "message.output_text.logprobs" in r.include
         throw(ArgumentError("GPT-6 Astra does not support log probabilities"))
     end
+    _check_openai_cache_ttl(r.prompt_cache_options, _OPENAI_CACHE_TTLS.responses)
     JSON.json(r)
 end

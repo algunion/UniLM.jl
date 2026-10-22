@@ -41,9 +41,11 @@ println("prompt=$(u.prompt_tokens)  cached=$(u.cached_tokens)  completion=$(u.co
 println("cost USD = ", round(estimated_cost(result), digits=6))
 ```
 
-By default the model is inferred from the result (`result.self.model` for Chat,
-`result.response.model` for Responses, FIM and System One, `result.embeddings.model` for
-Embeddings). Override it explicitly when needed:
+By default the model is the one the provider reports having served the call —
+`result.model` for Chat ([`LLMSuccess`](@ref); it differs from the model requested when the
+provider routes the request to another model), `result.response.model` for Responses, FIM
+and System One — else the one requested: `result.self.model` for Chat,
+`result.embeddings.model` for Embeddings. Override it explicitly when needed:
 
 ```julia
 estimated_cost(result; model="gpt-5.4")   # price as if it were gpt-5.4
@@ -51,17 +53,25 @@ estimated_cost(result; model="gpt-5.4")   # price as if it were gpt-5.4
 
 ## How the estimate is computed
 
-`estimated_cost` splits the prompt into fresh vs. cached tokens and bills each stream at its
-own rate:
+`estimated_cost` splits the prompt into fresh, cache-read and cache-written tokens and bills
+each at its own rate:
 
 - fresh input tokens × `input`
-- cached input tokens × `cached_input` (the discounted prompt-cache rate; `cached_tokens` is a subset of `prompt_tokens`)
+- cache reads (`cached_tokens`) × `cached_input`, the discounted prompt-cache rate
+- cache writes (`cache_write_tokens`) × `input`
 - completion tokens × `output`
+
+`prompt_tokens` counts every input token: `cached_tokens` and `cache_write_tokens` are
+subsets of it. These are the standard rates. Where UniLM models a provider's surcharges — a
+premium on cache writes (`cache_write_extended_tokens` counts the writes at the longer
+retention), a long-context tier, a multiplier for the `service_tier` or `inference_geo` the
+provider reports in [`TokenUsage`](@ref) — they apply to that provider's results; every
+other result is billed at the standard rates.
 
 Reasoning tokens are already counted inside `completion_tokens`, so they carry no separate
 charge. Failures and call errors report zero usage and `0.0` cost. Image results report the
-usage the Images API returned, but `estimated_cost` does not infer a model for them and the
-table carries no image-model rows, so an image result costs `0.0` unless you pass `model=`
+usage the Images API returned, but that API bills image tokens at rates a price row does not
+model: `estimated_cost` on an image result throws `ArgumentError` unless you pass `model=`
 together with a `pricing=` row for it. A streamed Chat turn is costed like a non-streamed
 one when the stream reports usage: `OPENAIServiceEndpoint` and `DeepSeekEndpoint` streams
 request it automatically, native Anthropic and Gemini streams report it on their own, and other

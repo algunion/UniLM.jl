@@ -88,12 +88,16 @@ provider's wire:
 | Method | Signature | Return contract |
 | :-- | :-- | :-- |
 | `encode_request` | `encode_request(service, chat::Chat)` | `String` — the request body to POST |
-| `decode_response` | `decode_response(service, resp::HTTP.Response)` | `(; message::Message, usage::Union{TokenUsage,Nothing})` — the parsed 200 response |
+| `decode_response` | `decode_response(service, resp::HTTP.Response)` | `(; message::Message, usage::Union{TokenUsage,Nothing}, model::Union{String,Nothing})` — the parsed 200 response; `model`, the model the provider reports having served, is optional |
 | `handle_sse_event!` | `handle_sse_event!(service, event, payload, state::StreamState)` | `Symbol` — `:continue` \| `:done` \| `:error`; mutates `state` in place |
 
 `handle_sse_event!` is called once per streamed SSE event (`event`/`payload` are strings):
-it appends text and tool-call deltas onto `state`, and returns `:done` at the provider's
-end-of-stream sentinel, `:error` on an in-band error event, or `:continue` otherwise.
+it appends text and tool-call deltas onto `state`, records the usage and the served model
+when the provider reports them (`state.usage`, `state.model`), and returns `:done` at the
+provider's end-of-stream sentinel, `:error` on an in-band error event, or `:continue`
+otherwise. The served model becomes the result's `model`, which [`estimated_cost`](@ref)
+prices before the model requested; a decoder that returns only `(; message, usage)` and a
+handler that leaves `state.model` unset report none.
 
 The in-repo reference implementation is the **Anthropic backend** (`src/anthropic.jl`):
 `ANTHROPICServiceEndpoint` subtypes `ServiceEndpoint` and implements all three methods

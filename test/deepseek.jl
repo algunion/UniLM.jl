@@ -146,3 +146,22 @@ const _DS_CACHE_USAGE = Dict("prompt_tokens" => 1000, "completion_tokens" => 50,
     @test UniLM._sse_dispatch!(_DS, IOBuffer(), Ref(""), _ds_stream(chunks), st) === :done
     @test (st.usage.prompt_tokens, st.usage.cached_tokens) == (1000, 768)
 end
+
+@testset "served model and usage details survive the DeepSeek decode, streamed and not" begin
+    turn = Dict("model" => "deepseek-flash", "choices" => [Dict("index" => 0, "finish_reason" => "stop",
+        "message" => Dict("role" => "assistant", "content" => "hi"))], "usage" => _DS_CACHE_USAGE)
+    dec = decode_response(_DS, _ds_resp(turn))
+    @test dec.model == "deepseek-flash"
+    @test dec.usage == TokenUsage(prompt_tokens=1000, completion_tokens=50, total_tokens=1050, cached_tokens=768)
+    @test isnothing(decode_response(_DS, _ds_resp(delete!(copy(turn), "model"))).model)
+    st = StreamState()
+    chunks = [Dict("model" => "deepseek-flash", "choices" => [Dict("index" => 0,
+                   "delta" => Dict("role" => "assistant", "content" => "hi"), "finish_reason" => "stop")]),
+              Dict("model" => "deepseek-flash", "choices" => Any[], "usage" => _DS_CACHE_USAGE)]
+    @test UniLM._sse_dispatch!(_DS, IOBuffer(), Ref(""), _ds_stream(chunks), st) === :done
+    @test st.model == dec.model && st.usage == dec.usage
+    # The cache-hit count replaces only cached_tokens: every other field of the usage is kept.
+    wire = TokenUsage(1000, 50, 1050, 0, 7, 300, 100, "flex", "us")
+    @test UniLM._deepseek_usage(wire, _DS_CACHE_USAGE) == TokenUsage(1000, 50, 1050, 768, 7, 300, 100, "flex", "us")
+    @test UniLM._deepseek_usage(wire, Dict("prompt_tokens" => 1000)) === wire
+end

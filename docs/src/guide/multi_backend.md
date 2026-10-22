@@ -367,8 +367,8 @@ Sonnet 5.5, Fable 5.1 and Mythos 5.1 (use `"auto"` with strict tools, or a JSON 
 prefill) from the 4.6 generation on, Sonnet 5.5 and Haiku 5.5 included; `service_tier="fast"`
 on a model without fast mode (Opus 4.6, which would run the request at standard speed,
 included), or on Opus 5 and Opus 4.8 without the `fast-mode-2026-02-01` beta; and an
-endpoint's `inference_geo` on the Claude 4.5 models (Opus 4.5, Haiku 4.5). An id no row names gets
-only the rules that hold for every model, and append-only system placement.
+endpoint's `inference_geo` on the Claude 4.5 models (Opus 4.5, Sonnet 4.5, Haiku 4.5). An id no
+row names gets only the rules that hold for every model, and append-only system placement.
 
 Claude Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 accept a thinking block only while
 everything before it — the top-level `system` prompt, the `tools` and the earlier

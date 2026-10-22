@@ -829,8 +829,9 @@ instance adds options that every request through it carries
   can act on more than one.
 - `inference_geo`: `"global"` or `"us"`, the request's `inference_geo`, where inference
   runs ([data residency](https://platform.claude.com/docs/en/manage-claude/data-residency));
-  `nothing` leaves the workspace default. The Claude 4.5 models (Opus 4.5, Haiku 4.5) and
-  earlier answer it with HTTP 400, so a request for one of them throws `ArgumentError`.
+  `nothing` leaves the workspace default. The Claude 4.5 models
+  (Opus 4.5, Sonnet 4.5, Haiku 4.5) and earlier answer it with HTTP 400, so a request for one
+  of them throws `ArgumentError`.
 
 [`estimated_cost`](@ref) bills US-only inference (a usage that reports `inference_geo` `"us"`)
 at 1.1× every rate on Claude 4.6 and later; an earlier model is billed at the standard rates,

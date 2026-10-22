@@ -1534,11 +1534,14 @@ end
     for service in (ANTHROPICServiceEndpoint, ANTHROPICServiceEndpoint(), ANTHROPICServiceEndpoint(betas=["a"], user_profile_id="uprof_1"))
         @test !haskey(_ant_body(service), "inference_geo")
     end
-    for model in ("claude-opus-4-5", "claude-opus-4-5-20251101", "claude-haiku-4-5", "claude-haiku-4-5-20251001")
+    for model in ("claude-opus-4-5", "claude-opus-4-5-20251101", "claude-haiku-4-5", "claude-haiku-4-5-20251001",
+                  "claude-sonnet-4-5")
         e = _ant_err(ANTHROPICServiceEndpoint(inference_geo="us"); model)
         @test e isa ArgumentError && occursin(model, e.msg) && occursin("inference_geo", e.msg)
         @test !haskey(_ant_body(ANTHROPICServiceEndpoint(); model), "inference_geo")
     end
+    # The endpoint's docstring names the three 4.5 models the encoder refuses it for.
+    @test occursin("(Opus 4.5, Sonnet 4.5, Haiku 4.5)", string(@doc ANTHROPICServiceEndpoint))
 end
 
 @testset "ANTHROPICServiceEndpoint refuses a header value it cannot send and copies its betas" begin

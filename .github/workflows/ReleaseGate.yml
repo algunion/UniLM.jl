@@ -171,8 +171,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # Spend bounds: the job starts only once the JET gate and the keyless test suite have
-    # passed (a release that fails either cannot ship, so its live calls would be wasted), and
-    # a newer push to the same branch cancels a run still in progress.
+    # passed (a release that fails either cannot ship, so its live calls would be wasted). A
+    # newer push to the same branch cancels a run still in progress once its own job starts,
+    # after its gates pass: a job joins its concurrency group only when its `needs` are met.
     needs: [release-gate, release-tests]
     concurrency:
       group: hosted-providers-${{ github.ref }}

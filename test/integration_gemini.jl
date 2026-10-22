@@ -76,6 +76,9 @@ _gemini_cost(u, input, cached, output) =
     @test r isa LLMSuccess
     @info "gemini-4-argon" usage = r.usage cost = estimated_cost(r)
     @test r.model == "gemini-4-argon"
+    # Argon names its billed tier in the x-gemini-service-tier header only (its usageMetadata
+    # carried none on 2026-10-22).
+    @test r.usage.service_tier == "standard"
     @test estimated_cost(r) > 0
     @test estimated_cost(r) ≈ _gemini_cost(r.usage, 2.0, 0.10, 10.0)
 end
@@ -88,6 +91,48 @@ end
     @test r.model == "gemini-3.8-flash"
     @test estimated_cost(r) ≈ _gemini_cost(r.usage, 0.75, 0.075, 3.75)
     @test estimated_cost(r) == estimated_cost(r; model="gemini-3.8-flash")
+end
+
+const _GEMINI_LIVE_MEDIA = joinpath(@__DIR__, "fixtures")
+
+# One user message with one attachment on gemini-3.8-flash, at its lowest thinking level.
+_gemini_ask(prompt, attachment) = chatrequest!(Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash",
+    reasoning_effort="low", max_tokens=256, messages=[Message(Val(:user), prompt, attachment)]))
+
+@testset "Gemini Chat — an image, a PDF and a sound clip are read" begin
+    # Refuted by: an answer without the circle's colour, the document's secret word or the clip's.
+    circle = joinpath(_GEMINI_LIVE_MEDIA, "ollama", "red_circle.png")
+    img = _gemini_ask("What colour is the circle? Answer with one word.", ImageAttachment(circle))
+    @test img isa LLMSuccess && occursin(r"\bred\b"i, img.message.content)
+    pdf = _gemini_ask("What is the secret word in this document? Answer with the word only.",
+                      DocumentAttachment(joinpath(_GEMINI_LIVE_MEDIA, "documents", "secret_word.pdf")))
+    @test pdf isa LLMSuccess && occursin("PELICAN", uppercase(pdf.message.content))
+    wav = _gemini_ask("What is the secret word in this recording? Answer with the word only.",
+                      AudioAttachment(joinpath(_GEMINI_LIVE_MEDIA, "ollama", "secret_word.wav")))
+    @test wav isa LLMSuccess && occursin("banana", lowercase(wav.message.content))
+    # detail="low" is the LOW media resolution: the image costs 256 prompt tokens, not ~1,089.
+    low = _gemini_ask("What colour is the circle? Answer with one word.", ImageAttachment(circle; detail="low"))
+    @info "Gemini media" image = img.usage low_detail = low.usage
+    @test low isa LLMSuccess && low.usage.prompt_tokens < 400 < img.usage.prompt_tokens
+end
+
+@testset "Gemini Chat — service_tier priority is the billed tier, priced at 1.8 times" begin
+    for stream in (false, true)
+        chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", reasoning_effort="low", max_tokens=64,
+                    service_tier="priority", stream=stream, messages=[Message(Val(:user), "Reply with the single word OK.")])
+        out = chatrequest!(chat)
+        r = stream ? fetch(out) : out
+        @test r isa LLMSuccess
+        @info "Gemini priority" stream usage = r.usage cost = estimated_cost(r)
+        @test r.usage.service_tier == "priority"
+        @test estimated_cost(r) ≈ 1.8 * _gemini_cost(r.usage, 0.75, 0.075, 3.75)
+    end
+end
+
+@testset "Gemini Chat — seed and store are accepted" begin
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", reasoning_effort="low", max_tokens=64,
+                seed=7, store=false, messages=[Message(Val(:user), "Reply with the single word OK.")])
+    @test chatrequest!(chat) isa LLMSuccess
 end
 
 end  # if GEMINI_API_KEY

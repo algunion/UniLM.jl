@@ -144,4 +144,32 @@ end
     @test haskey(JSON.parse(calls[1]["arguments"]; dicttype=Dict{String,Any}), "city")
 end
 
+# A gemini-3.8-flash interaction at its lowest thinking level.
+_ix_live(input; kw...) = respond(Respond(; service=GEMINIServiceEndpoint, model="gemini-3.8-flash",
+                                         reasoning=Reasoning(effort="low"), max_output_tokens=256, input, kw...))
+
+@testset "Interactions — messages are steps: a user's image is read, an earlier turn remembered" begin
+    # Refuted by: an HTTP 400 for the input (the API takes steps, not turns) or an answer without
+    # the circle's colour or the name the earlier turn gave.
+    circle = joinpath(@__DIR__, "fixtures", "ollama", "red_circle.png")
+    img = _ix_live([InputMessage(role="user", content=[input_text("What colour is the circle? Answer with one word."),
+                                                       ImageAttachment(circle)])])
+    @test img isa ResponseSuccess && occursin(r"\bred\b"i, output_text(img))
+    turns = _ix_live([InputMessage(role="user", content="My name is Ada."),
+                      InputMessage(role="assistant", content="Hello, Ada."),
+                      InputMessage(role="user", content="What is my name? Answer with the name only.")])
+    @test turns isa ResponseSuccess && occursin("ada", lowercase(output_text(turns)))
+end
+
+@testset "Interactions — service_tier priority, seed and the safety label are accepted; the tier prices the call" begin
+    r = _ix_live("Reply with the single word OK."; max_output_tokens=64, service_tier="priority", seed=7,
+                 safety_identifier="unilm-test")
+    @test r isa ResponseSuccess
+    u = token_usage(r)
+    @info "Interactions priority" usage = u cost = estimated_cost(r)
+    @test u.service_tier == "priority"
+    @test estimated_cost(r) ≈ 1.8 * ((u.prompt_tokens - u.cached_tokens) * 0.75 + u.cached_tokens * 0.075 +
+                                     u.completion_tokens * 3.75) / 1e6
+end
+
 end  # if GEMINI_API_KEY

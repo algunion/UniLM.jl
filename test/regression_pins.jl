@@ -85,7 +85,7 @@ function anthropic_messages_server(responder)
     lk = ReentrantLock()
     server, port = nothing, 0
     for attempt in 1:5
-        port = _free_port()
+        port = _pins_free_port()
         try
             server = HTTP.listen!("127.0.0.1", port; verbose=false) do http::HTTP.Stream
                 b = JSON.parse(String(read(http)); dicttype=Dict{String,Any})
@@ -221,8 +221,9 @@ const AGENTIC_DELTA = "event: response.output_text.delta\ndata: {\"type\":\"resp
 agentic_completed(id) = "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"$id\",\"status\":\"completed\",\"model\":\"m\",\"output\":[]}}"
 
 # Probe and release an ephemeral port. The bind window is why callers that then
-# start a server on it retry a failed bind.
-function _free_port()
+# start a server on it retry a failed bind. Named apart from mcp_client.jl's `_free_port`,
+# which the same suite defines.
+function _pins_free_port()
     tcp = Sockets.listen(Sockets.localhost, 0)
     port = Int(Sockets.getsockname(tcp)[2])
     close(tcp)
@@ -830,7 +831,7 @@ end
         mcp_handle = nothing
         mcp_port = 0
         for attempt in 1:3
-            mcp_port = _free_port()
+            mcp_port = _pins_free_port()
             try
                 mcp_handle = serve(mcp_srv; transport=:http, port=mcp_port, block=false)
                 break

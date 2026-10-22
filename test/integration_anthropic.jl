@@ -1,8 +1,9 @@
 # ─── Anthropic Integration Tests (live) ──────────────────────────────────────
 # Requires UNILM_LIVE=1 and ANTHROPIC_API_KEY. Minimal tokens on claude-haiku-5-5, the cheapest
 # current Claude model ($0.10 input / $0.50 output per 1M tokens); one short call on
-# claude-sonnet-5-5 for the rule that is its own, and a thinking tool round-trip on
-# claude-sonnet-5, which thinks before the tool call it chooses.
+# claude-sonnet-5-5 for the rule that is its own, a thinking tool round-trip on
+# claude-sonnet-5, which thinks before the tool call it chooses, and a 16-token fast-mode call
+# on claude-opus-5-5, the model that serves it.
 
 if !haskey(ENV, "ANTHROPIC_API_KEY") || get(ENV, "UNILM_LIVE", "") != "1"
     @info "Skipping Anthropic integration tests (set UNILM_LIVE=1 and ANTHROPIC_API_KEY to run live)"
@@ -138,12 +139,95 @@ end
 
 @testset "Anthropic Chat — refused locally, before any request" begin
     for (model, kw) in ((_LIVE_CLAUDE, (temperature=0.2,)),
-                        ("claude-sonnet-5-5", (tools=[_LIVE_WEATHER], tool_choice="required")))
+                        ("claude-sonnet-5-5", (tools=[_LIVE_WEATHER], tool_choice="required")),
+                        (_LIVE_CLAUDE, (service_tier="fast",)),
+                        (_LIVE_CLAUDE, (prompt_cache_options=PromptCacheOptions(ttl="30m"),)))
         chat = Chat(; service=ANTHROPICServiceEndpoint, model, max_tokens=16, kw...)
         push!(chat, Message(Val(:system), "You are terse."))
         push!(chat, Message(Val(:user), "Reply with exactly: hello"))
         @test_throws ArgumentError chatrequest!(chat)
         @test length(chat) == 2 && cumulative_cost(chat) == 0.0
+    end
+end
+
+const _LIVE_FIXTURES = joinpath(@__DIR__, "fixtures")
+_live_media(question, attachment; kw...) = Chat(; service=ANTHROPICServiceEndpoint, model=_LIVE_CLAUDE, max_tokens=16,
+    reasoning_effort="none", messages=[Message(Val(:user), question, attachment)], kw...)
+
+@testset "Anthropic Chat — reads an image sent as a base64 image block" begin
+    r = _billed(chatrequest!(_live_media("What colour is the circle? One word.",
+                                         ImageAttachment(joinpath(_LIVE_FIXTURES, "ollama", "red_circle.png")))))
+    @test r isa LLMSuccess
+    @test occursin("red", lowercase(r.message.content))
+end
+
+@testset "Anthropic Chat — reads a PDF sent as a base64 document block" begin
+    # The fixture's only text is "The secret word is PELICAN.": nothing else answers the question.
+    r = _billed(chatrequest!(_live_media("What is the secret word? Answer with the word only.",
+                                         DocumentAttachment(joinpath(_LIVE_FIXTURES, "documents", "secret_word.pdf")))))
+    @test r isa LLMSuccess
+    @test occursin("PELICAN", uppercase(r.message.content))
+end
+
+@testset "Anthropic Chat — automatic caching writes a 5-minute prefix, then reads it, at Anthropic's rates" begin
+    # Claude Haiku 5.5 caches prompts of 512 tokens or more; this system prompt is longer than
+    # 1,200, and the nonce in front makes it a prefix no earlier request wrote.
+    filler = join(("The quick brown fox number $i jumps over the lazy dog near the river bank." for i in 1:100), " ")
+    system = "Request $(time_ns())-$(rand(UInt32)).\n$filler\nReply with the single word OK."
+    call() = _billed(chatrequest!(_live_claude("Ready?"; system, max_tokens=16, reasoning_effort="none",
+                                               prompt_cache_options=PromptCacheOptions(ttl="5m"))))
+    first = call()
+    second = call()
+    @test first isa LLMSuccess && second isa LLMSuccess
+    w, r = first.usage, second.usage
+    @test w.prompt_tokens >= 1_200
+    @test w.cache_write_tokens > 0 && w.cache_write_extended_tokens == 0 && w.cached_tokens == 0
+    @test r.cached_tokens == w.cache_write_tokens && r.cache_write_tokens == 0
+    @test (w.inference_geo, r.inference_geo) == ("global", "global")
+    # claude-haiku-5-5: $0.10 input, $0.01 cache read, $0.50 output per 1M tokens; a 5-minute write at 1.25x input.
+    cost(u) = ((u.prompt_tokens - u.cached_tokens - u.cache_write_tokens) * 0.10 + u.cached_tokens * 0.01 +
+               u.cache_write_tokens * 0.10 * 1.25 + u.completion_tokens * 0.50) / 1e6
+    @test isapprox(estimated_cost(first), cost(w); rtol=1e-12)
+    @test isapprox(estimated_cost(second), cost(r); rtol=1e-12)
+end
+
+@testset "Anthropic Chat — an explicit reasoning_effort returns the summarized thinking" begin
+    chat = _live_claude("Is 1009 prime? Check the candidate divisors, then answer yes or no."; system="You are terse.",
+                        max_tokens=1024, reasoning_effort="low")
+    @test JSON.parse(UniLM.encode_request(ANTHROPICServiceEndpoint, chat))["thinking"] ==
+          Dict("type" => "adaptive", "display" => "summarized")
+    r = _billed(chatrequest!(chat))
+    @test r isa LLMSuccess
+    @test "thinking" in _block_types(r.message)
+    @test !isempty(something(reasoning_text(r), ""))
+end
+
+@testset "Anthropic Chat — fast mode on claude-opus-5-5 is reported and billed at twice the rates" begin
+    chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-opus-5-5", max_tokens=16, service_tier="fast",
+                messages=[Message(Val(:user), "Reply with exactly: hello")])
+    body = JSON.parse(UniLM.encode_request(ANTHROPICServiceEndpoint, chat))
+    @test body["speed"] == "fast" && !haskey(body, "service_tier")
+    r = _billed(chatrequest!(chat))
+    @test r isa LLMSuccess
+    u = r.usage
+    @test u.service_tier == "fast" && u.inference_geo == "global" && u.cached_tokens == 0 && u.cache_write_tokens == 0
+    # claude-opus-5-5: $4 input, $20 output per 1M tokens; fast mode bills every rate at 2x.
+    @test isapprox(estimated_cost(r), 2 * (u.prompt_tokens * 4.0 + u.completion_tokens * 20.0) / 1e6; rtol=1e-12)
+end
+
+@testset "Anthropic Chat — an endpoint's beta, user-profile and workspace headers reach the API" begin
+    ask(ep) = chatrequest!(Chat(service=ep, model=_LIVE_CLAUDE, max_tokens=8, reasoning_effort="none",
+                                messages=[Message(Val(:user), "Reply with exactly: hello")]);
+                           config=RequestConfig(max_attempts=1))
+    # A documented beta that needs no request field is accepted...
+    @test _billed(ask(ANTHROPICServiceEndpoint(betas=["thinking-binding-controls-2026-08-01"]))) isa LLMSuccess
+    # ...and a value the API does not take is its HTTP 400 naming the header, before any inference:
+    # proof the header was sent (2026-10-22).
+    for (ep, says) in ((ANTHROPICServiceEndpoint(betas=["unilm-no-such-beta-2026-01-01"]), "`anthropic-beta` header"),
+                       (ANTHROPICServiceEndpoint(user_profile_id="uprof_011UniLMWitness0000000000"), "anthropic-user-profile-id"),
+                       (ANTHROPICServiceEndpoint(workspace_id="wrkspc_011UniLMWitness000000000"), "anthropic-workspace-id"))
+        r = ask(ep)
+        @test r isa LLMFailure && r.status == 400 && occursin(says, r.response)
     end
 end
 

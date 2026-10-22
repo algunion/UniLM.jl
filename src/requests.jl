@@ -18,28 +18,30 @@ _is_retryable(status::Integer)::Bool =
     status in (408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 529)
 
 # A 429 also answers what no retry can serve: OpenAI names spent prepaid credit and a reached
-# spend or usage limit in `error.code` ("Retrying billing, spend, or quota errors won't
-# restore API access", https://developers.openai.com/api/docs/guides/error-codes), while a
-# rate limit — code `slow_down`, or none — clears with time.
+# spend or usage limit in `error.code`, and "The broader `error.type` can still be
+# `insufficient_quota`", the code older replies give too ("Retrying billing, spend, or quota
+# errors won't restore API access", https://developers.openai.com/api/docs/guides/error-codes),
+# while a rate limit — code `slow_down`, or none — clears with time.
 const _FINAL_429_CODES = ("credit_balance_exhausted", "organization_spend_limit_exceeded",
-                          "project_spend_limit_exceeded", "organization_usage_limit_exceeded")
+                          "project_spend_limit_exceeded", "organization_usage_limit_exceeded",
+                          "insufficient_quota")
 
 # Whether a failed exchange is worth another attempt: its status and, for a 429, its body.
 _is_retryable(status::Integer, body)::Bool =
-    _is_retryable(status) && !(status == 429 && _error_code(body) in _FINAL_429_CODES)
+    _is_retryable(status) && !(status == 429 && any(in(_FINAL_429_CODES), _error_names(body)))
 _is_retryable(resp::HTTP.Response)::Bool = _is_retryable(resp.status, resp.body)
 
-# The `error.code` string of a JSON error body (`{"error": {"code": …}}`), else `nothing`:
-# a body of another kind (HTTP.jl's empty body) names no code. A stream driver's body
-# buffer is read without consuming it.
-_error_code(_)::Nothing = nothing
-_error_code(body::IOBuffer)::Union{String,Nothing} = _error_code(take!(copy(body)))
-function _error_code(body::Union{AbstractString,AbstractVector{UInt8}})::Union{String,Nothing}
-    JSON.isvalidjson(body) || return nothing
+# The `error.code` and `error.type` strings of a JSON error body (`{"error": {"code": …,
+# "type": …}}`), each `nothing` where the body names none; a body of another kind (HTTP.jl's
+# empty body) names neither. A stream driver's body buffer is read without consuming it.
+_error_names(_)::NTuple{2,Nothing} = (nothing, nothing)
+_error_names(body::IOBuffer) = _error_names(take!(copy(body)))
+function _error_names(body::Union{AbstractString,AbstractVector{UInt8}})::NTuple{2,Union{String,Nothing}}
+    JSON.isvalidjson(body) || return (nothing, nothing)
     parsed = JSON.parse(body)
     err = parsed isa AbstractDict ? get(parsed, "error", nothing) : nothing
-    code = err isa AbstractDict ? get(err, "code", nothing) : nothing
-    code isa AbstractString ? String(code) : nothing
+    name(key) = (v = err isa AbstractDict ? get(err, key, nothing) : nothing; v isa AbstractString ? String(v) : nothing)
+    (name("code"), name("type"))
 end
 
 # RFC 7231 IMF-fixdate, the one HTTP-date form every sender must emit. Always GMT.

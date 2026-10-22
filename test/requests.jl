@@ -921,6 +921,14 @@ _error_body(type, code) = JSON.json(Dict("error" => Dict("message" => "m", "type
     @test takestring!(buf) == _error_body("insufficient_quota", "credit_balance_exhausted")
     @test UniLM._is_retryable(400, _error_body("rate_limit_error", "slow_down")) == false
     @test (@inferred UniLM._is_retryable(429, _error_body("rate_limit_error", "slow_down"))) === true
+    # "The broader error.type can still be insufficient_quota", whatever the code, and older replies
+    # name it as the code: final too.
+    for body in (_error_body("insufficient_quota", nothing), _error_body("insufficient_quota", "a_new_billing_code"),
+                 _error_body(nothing, "insufficient_quota"), _error_body("insufficient_quota", "insufficient_quota"))
+        @test UniLM._is_retryable(429, body) == false
+    end
+    @test UniLM._is_retryable(429, _error_body("tokens", "rate_limit_exceeded")) == true
+    @test UniLM._is_retryable(503, _error_body("insufficient_quota", nothing)) == true
 end
 
 # A server on an OS-assigned port that answers every request with HTTP 429, `body` and a zero
@@ -947,6 +955,15 @@ end
             r = chatrequest!(chat(srv.url); config=RequestConfig(max_attempts=3))
             @test r isa LLMFailure && r.status == 429 && occursin(code, r.response)
             @test srv.hits[] == 1
+        finally
+            close(srv.server)
+        end
+    end
+    for body in (_error_body("insufficient_quota", nothing), _error_body(nothing, "insufficient_quota"))
+        srv = _status_429_server(body)
+        try
+            r = chatrequest!(chat(srv.url); config=RequestConfig(max_attempts=3))
+            @test r isa LLMFailure && r.status == 429 && srv.hits[] == 1
         finally
             close(srv.server)
         end

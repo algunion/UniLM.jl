@@ -6,7 +6,8 @@
 
 using Dates
 using Logging: with_logger, NullLogger
-include("provider_drift_checks.jl")
+isdefined(@__MODULE__, :ProviderDriftChecks) || include("provider_drift_checks.jl")
+using .ProviderDriftChecks
 
 _ml_fixture(name::AbstractString) = read(joinpath(@__DIR__, "fixtures", "models", name), String)
 _ml_page(name::AbstractString) = JSON.parse(_ml_fixture(name); dicttype=Dict{String,Any})

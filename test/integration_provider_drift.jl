@@ -7,7 +7,8 @@
 # UNILM_LIVE=1 and each provider's key. The checks are in provider_drift_checks.jl, which the
 # keyless suite runs on the listings of 2026-10-22.
 
-include("provider_drift_checks.jl")
+isdefined(@__MODULE__, :ProviderDriftChecks) || include("provider_drift_checks.jl")
+using .ProviderDriftChecks
 
 # Every model of `provider` that UniLM names is listed and not past its retirement date.
 function _test_named_models(models::Vector{ProviderModel}, provider::Symbol)

@@ -1,9 +1,20 @@
 # The provider drift checks: UniLM's model tables against a provider's model listing, as
 # functions of the listed models that return what the tables lack. The live suite
 # (integration_provider_drift.jl) runs them on today's listings, the keyless suite
-# (model_listing.jl) on the listings of 2026-10-22 and on broken facts. Definitions only.
+# (model_listing.jl) on the listings of 2026-10-22 and on broken facts. Definitions only, in a
+# module that each of those files loads once per session, so a run that includes both defines
+# every method once:
+#
+#     isdefined(@__MODULE__, :ProviderDriftChecks) || include("provider_drift_checks.jl")
+#     using .ProviderDriftChecks
+
+module ProviderDriftChecks
 
 using Dates
+using UniLM
+
+export _drift_provider, _drift_defaults, _drift_suite_ids, _drift_named_models,
+       _openai_drift, _anthropic_drift, _gemini_drift
 
 # The id prefixes of each provider's models. An id UniLM names is checked against the listing of
 # the provider whose prefix it carries; an id with none of them — a local Ollama model such as
@@ -147,4 +158,6 @@ function _gemini_drift(models::Vector{ProviderModel})
     thinking = [m.id for m in text if get(m.capabilities, "thinking", false) === true]
     (; family, thinking, unpriced=_unpriced(family),
      unruled=[id for id in thinking if isnothing(UniLM._gemini_thinking_levels(id))])
+end
+
 end

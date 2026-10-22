@@ -1145,10 +1145,15 @@ _add_usage(a::TokenUsage, b::TokenUsage)::TokenUsage = TokenUsage(; map(_add_fie
 _add_field(a::Int, b::Int)::Int = a + b
 _add_field(a::Union{String,Nothing}, b::Union{String,Nothing})::Union{String,Nothing} = something(b, a, Some(nothing))
 
+# The usage a Chat result records for its turn: the replies' own. An endpoint whose replies leave
+# out something that billed them, which the request names, adds a method.
+_result_usage(_, ::Chat, usage::Union{TokenUsage,Nothing}) = usage
+
 # The replies a turn already received were billed, so their cost joins the chat's total when the
 # call fails, although nothing is committed. Only the usage and the served model price them.
 _accrue_hops!(chat::Chat, usage::Union{TokenUsage,Nothing}, model::Union{String,Nothing}) =
-    _accumulate_cost!(chat, LLMSuccess(; message=Message(role=RoleAssistant, content=""), self=chat, usage, model))
+    _accumulate_cost!(chat, LLMSuccess(; message=Message(role=RoleAssistant, content=""), self=chat,
+                                       usage=_result_usage(chat.service, chat, usage), model))
 
 # ─── Streaming driver helpers ────────────────────────────────────────────────
 
@@ -1349,7 +1354,7 @@ end
 function _stream_success(chat::Chat, msg::Message, usage::Union{TokenUsage,Nothing},
                          sse_dropped::Int, model::Union{String,Nothing})
     update!(chat, msg)
-    result = LLMSuccess(; message=msg, self=chat, usage, sse_dropped, model)
+    result = LLMSuccess(; message=msg, self=chat, usage=_result_usage(chat.service, chat, usage), sse_dropped, model)
     _accumulate_cost!(chat, result)
     return result
 end
@@ -1862,7 +1867,7 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
             billed, hop = nothing, hop + 1
         end
         update!(chat, extracted.message)
-        result = LLMSuccess(message=extracted.message, self=chat, usage=extracted.usage,
+        result = LLMSuccess(message=extracted.message, self=chat, usage=_result_usage(chat.service, chat, extracted.usage),
                             model=_decoded_model(extracted))
         _accumulate_cost!(chat, result)
         return result

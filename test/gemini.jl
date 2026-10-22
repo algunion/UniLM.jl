@@ -1048,6 +1048,78 @@ end
     @test estimated_cost(r) ≈ (8 * 0.375 + 1 * 1.875) / 1_000_000
 end
 
+# The compatible wire to a local server, with that endpoint's own encoding, decoding, tiers and prices.
+const _COMPAT_URL = Ref("")
+struct _CompatHere <: UniLM.OpenAIWireEndpoint end
+UniLM.get_url(::Type{_CompatHere}, ::Chat) = _COMPAT_URL[]
+UniLM.auth_header(::Type{_CompatHere}) = ["Content-Type" => "application/json"]
+UniLM.encode_request(::Type{_CompatHere}, c::Chat) = encode_request(GEMINIOpenAIServiceEndpoint, c)
+UniLM.decode_response(::Type{_CompatHere}, r::HTTP.Response) = decode_response(GEMINIOpenAIServiceEndpoint, r)
+UniLM.handle_sse_event!(::Type{_CompatHere}, e::AbstractString, p::AbstractString, s::StreamState) =
+    UniLM.handle_sse_event!(GEMINIOpenAIServiceEndpoint, e, p, s)
+UniLM._stream_head!(::Type{_CompatHere}, s::StreamState, h::HTTP.Response) = UniLM._stream_head!(GEMINIOpenAIServiceEndpoint, s, h)
+UniLM._result_usage(::Type{_CompatHere}, c::Chat, u::TokenUsage) = UniLM._result_usage(GEMINIOpenAIServiceEndpoint, c, u)
+UniLM._billed_cost(::Type{_CompatHere}, m::String, u::TokenUsage, r::UniLM.PriceRow) =
+    UniLM._billed_cost(GEMINIOpenAIServiceEndpoint, m, u, r)
+
+# Replies as Google's compatible endpoint sent them on 2026-10-22: no tier in the head or the body.
+function _with_compat(f)
+    usage = Dict("prompt_tokens" => 1_000, "completion_tokens" => 500, "total_tokens" => 1_500)
+    server = HTTP.serve!("127.0.0.1", 0; listenany=true, verbose=false) do req
+        if get(JSON.parse(String(copy(req.body))), "stream", false) === true
+            chunks = [Dict("model" => "gemini-3.8-flash", "choices" => [Dict("index" => 0, "delta" => Dict("content" => "OK"),
+                                                                           "finish_reason" => "stop")]),
+                      Dict("model" => "gemini-3.8-flash", "choices" => [], "usage" => usage)]
+            HTTP.Response(200, ["Content-Type" => "text/event-stream"],
+                          Vector{UInt8}(join("data: " * JSON.json(c) * "\n\n" for c in chunks) * "data: [DONE]\n\n"))
+        else
+            HTTP.Response(200, ["Content-Type" => "application/json"], Vector{UInt8}(JSON.json(Dict("model" => "gemini-3.8-flash",
+                "usage" => usage, "choices" => [Dict("index" => 0, "finish_reason" => "stop",
+                                                     "message" => Dict("role" => "assistant", "content" => "OK"))]))))
+        end
+    end
+    _COMPAT_URL[] = "http://127.0.0.1:$(HTTP.port(server))"
+    try
+        f()
+    finally
+        close(server)
+    end
+end
+
+@testset "compat — a result records the tier its request asked for, which the reply does not name" begin
+    # gemini-3.8-flash, 1,000 input and 500 output tokens: Flex $0.375 / $1.875, Priority $1.35 / $6.75
+    # (an upper bound: Google bills a downgraded Priority request at Standard, which this endpoint does not
+    # report), Standard $0.75 / $3.75 per 1M tokens.
+    bill(input, output) = (1_000 * input + 500 * output) / 1_000_000
+    chat(tier, stream) = Chat(service=_CompatHere, model="gemini-3.8-flash", service_tier=tier, messages=[Message(Val(:user), "hi")],
+                              stream=(stream ? true : nothing), stream_options=(stream ? Dict("include_usage" => true) : nothing))
+    cfg = RequestConfig(max_attempts=1, request_timeout=10.0, stream_idle_timeout=10.0, total_deadline=20.0)
+    _with_compat() do
+        for stream in (false, true), (tier, want) in (("flex", bill(0.375, 1.875)), ("priority", bill(1.35, 6.75)),
+                                                      ("standard", bill(0.75, 3.75)), (nothing, bill(0.75, 3.75)))
+            c = chat(tier, stream)
+            out = chatrequest!(c; config=cfg)
+            r = stream ? fetch(out) : out
+            @test r isa LLMSuccess && r.usage.service_tier == tier && token_usage(r).prompt_tokens == 1_000
+            @test estimated_cost(r) ≈ want && cumulative_cost(c) ≈ want
+        end
+        # A streamed reply a callback throws on after its finish is billed at the requested tier too.
+        c = chat("priority", true)
+        r = fetch(chatrequest!(c; config=cfg, callback=(x, _) -> x isa Message && error("callback failed")))
+        @test r isa LLMCallError && cumulative_cost(c) ≈ bill(1.35, 6.75)
+    end
+    # A tier the reply names is kept; with no usage there is nothing to record.
+    named = TokenUsage(prompt_tokens=1, service_tier="standard")
+    compat = Chat(service=GEMINIOpenAIServiceEndpoint, service_tier="priority")
+    @test UniLM._result_usage(GEMINIOpenAIServiceEndpoint, compat, named) === named
+    @test isnothing(UniLM._result_usage(GEMINIOpenAIServiceEndpoint, compat, nothing))
+    # Every other endpoint records the tier its reply reports, here none.
+    u = TokenUsage(prompt_tokens=1)
+    for service in (OPENAIServiceEndpoint, GEMINIServiceEndpoint, GenericOpenAIEndpoint("http://localhost:9", ""))
+        @test UniLM._result_usage(service, Chat(; service, model="m", service_tier="flex"), u) === u
+    end
+end
+
 @testset "cost — Flex bills half the standard rates and Priority 1.8 times (pricing page, 2026-10-22)" begin
     usage(tier) = TokenUsage(prompt_tokens=1000, completion_tokens=500, cached_tokens=200, service_tier=tier)
     cost(model, tier) = estimated_cost(LLMSuccess(message=Message(role=RoleAssistant, content="x"),

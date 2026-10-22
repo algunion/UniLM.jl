@@ -642,7 +642,7 @@ _stream_head!(::Union{Type{GEMINIServiceEndpoint},Type{GEMINIOpenAIServiceEndpoi
 # The compatible endpoint's reply reads as the OpenAI wire's, its billed tier header first, as on
 # the native wire: the response head's x-gemini-service-tier, else the reply's service_tier — a
 # stream's head outranks every chunk's (`_chunk_tier!`). Neither named a tier in replies to flex
-# and priority requests on 2026-10-22, so such a reply reports none.
+# and priority requests on 2026-10-22, streamed or not, so such a reply reports none.
 function decode_response(::Type{GEMINIOpenAIServiceEndpoint}, resp::HTTP.Response)
     d = extract_message(resp)
     tier = _gemini_header_tier(resp)
@@ -651,6 +651,13 @@ function decode_response(::Type{GEMINIOpenAIServiceEndpoint}, resp::HTTP.Respons
 end
 _chunk_tier!(::Type{GEMINIOpenAIServiceEndpoint}, state::StreamState, tier::String)::Nothing =
     (isnothing(state.service_tier) && (state.service_tier = tier); nothing)
+
+# A reply that names no tier was billed at the one its request asked for, so the result records
+# that one: "flex" prices at the Flex rates, and "priority" at the Priority rates — an upper bound,
+# since Google bills a downgraded Priority request at Standard and this endpoint does not report
+# the downgrade. A tier the reply names is kept.
+_result_usage(::Type{GEMINIOpenAIServiceEndpoint}, chat::Chat, u::TokenUsage)::TokenUsage =
+    isnothing(u.service_tier) ? TokenUsage(; _usage_fields(u)..., service_tier=chat.service_tier) : u
 
 # ─── Long decode: one turn in several requests ───────────────────────────────
 # Gemini 4 Argon generates past one request's output cap in hops: a reply that reaches the cap

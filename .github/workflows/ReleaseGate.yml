@@ -170,13 +170,19 @@ jobs:
     name: Hosted providers (real OpenAI, Anthropic and Gemini APIs)
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Spend bounds: the job starts only once the keyless test suite has passed, and a newer
+    # push to the same branch cancels a run still in progress.
+    needs: release-tests
+    concurrency:
+      group: hosted-providers-${{ github.ref }}
+      cancel-in-progress: true
     env:
       JULIA_NUM_THREADS: '4,2'
       UNILM_LIVE: '1'
       UNILM_RUN_IMAGE_TESTS: 'true'
     # The only billed job: every hosted-provider live suite (listed in test/live_hosted.jl)
-    # calls the real APIs with the repository's keys, and the job fails when a suite skipped
-    # itself instead of running.
+    # calls the real APIs with the repository's keys, and the job fails when a key or flag is
+    # missing or a suite skipped itself instead of running.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -190,8 +196,9 @@ jobs:
           # The token is read-only: deleting old caches would only fail and log the failure.
           delete-old-caches: false
       - uses: julia-actions/julia-buildpkg@e3eb439fad4f9aba7da2667e7510e4a46ebc46e1 # v1.7.0
-      # Installed and precompiled before any key is set, so the keys reach only the step
-      # that makes the calls.
+      # Installed and precompiled before any key is set. The step that makes the calls only
+      # loads those caches and writes none, so nothing the Actions cache keeps is compiled
+      # with a key in the environment.
       - name: Test environment
         run: julia --color=yes --startup-file=no --project=test -e 'using Pkg; Pkg.instantiate()'
       - name: Hosted-provider live suites
@@ -199,4 +206,4 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: julia --color=yes --startup-file=no --project=test -e 'include("test/live_hosted.jl")'
+        run: julia --color=yes --startup-file=no --compiled-modules=existing --pkgimages=existing --project=test -e 'include("test/live_hosted.jl")'

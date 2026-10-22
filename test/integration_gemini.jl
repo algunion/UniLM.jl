@@ -152,10 +152,12 @@ end
     end
 end
 
-@testset "Gemini OpenAI-compatible endpoint — a priority reply names no billed tier, so it is priced at standard" begin
+@testset "Gemini OpenAI-compatible endpoint — a priority reply names no tier; the result records the requested one" begin
     # Observed 2026-10-22: replies to flex and priority requests on this endpoint name their tier in
-    # neither the body (service_tier) nor the head (x-gemini-service-tier), streamed or not. Refuted by
-    # a reply that names one, which then prices the call.
+    # neither the body (service_tier) nor the head (x-gemini-service-tier), streamed or not, so a Chat
+    # result records the tier its request asked for, priced at Priority: 1.8 times $0.75 / $0.075 /
+    # $3.75 per 1M tokens, an upper bound (Google bills a downgraded Priority request at Standard).
+    # Refuted by a reply that names a tier, or a result that records another tier or price.
     svc = GEMINIOpenAIServiceEndpoint
     for stream in (false, true)
         chat = Chat(service=svc, model="gemini-3.8-flash", reasoning_effort="low", max_completion_tokens=64,
@@ -169,17 +171,13 @@ end
         head = HTTP.header(resp, "x-gemini-service-tier", "")
         @info "Gemini compat priority" stream header = head body_tiers = [get(d, "service_tier", nothing) for d in replies]
         @test isempty(head) && !any(d -> haskey(d, "service_tier"), replies)
-        usage = if stream
-            state = UniLM.StreamState()
-            UniLM._stream_head!(svc, state, resp)
-            foreach(p -> UniLM.handle_sse_event!(svc, "", p, state), payloads)
-            state.usage
-        else
-            UniLM.decode_response(svc, resp).usage
-        end
-        @test usage.prompt_tokens > 0 && isnothing(usage.service_tier)
-        r = LLMSuccess(message=Message(role=UniLM.RoleAssistant, content="OK"), self=chat, usage=usage)
-        @test isapprox(estimated_cost(r), _gemini_cost(usage, 0.75, 0.075, 3.75); rtol=1e-12)
+        out = chatrequest!(chat)
+        r = stream ? fetch(out) : out
+        @test r isa LLMSuccess
+        @info "Gemini compat priority result" stream usage = r.usage cost = estimated_cost(r)
+        @test r.usage.prompt_tokens > 0 && r.usage.service_tier == "priority"
+        @test isapprox(estimated_cost(r), 1.8 * _gemini_cost(r.usage, 0.75, 0.075, 3.75); rtol=1e-12)
+        @test cumulative_cost(chat) == estimated_cost(r)
     end
 end
 

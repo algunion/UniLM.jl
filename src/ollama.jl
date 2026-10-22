@@ -331,11 +331,15 @@ _failure_hint(s::OllamaEndpoint, e) = _unwrap_exception(e) isa HTTP.ConnectError
 # Ollama serves the Responses API statelessly and reads only the fields below
 # (https://docs.ollama.com/api/openai-compatibility); anything else it ignores
 # without an error — a previous_response_id would silently lose the conversation.
-# Those fields are refused here instead. A seed is refused on its own: that page lists
-# none for /v1/responses, while Ollama's chat API reads one, so its fix is a Chat.
+# Those fields are refused here instead, each with its reason: a field that relies on a
+# stored response because Ollama keeps none, any other because it reads none. A seed is
+# refused on its own: that page lists none for /v1/responses, while Ollama's chat API
+# reads one, so its fix is a Chat.
 const _OLLAMA_RESPOND_MAPPED_FIELDS = (:service, :model, :input, :instructions, :tools, :tool_choice,
     :temperature, :top_p, :max_output_tokens, :stream, :text, :reasoning)
 const _OLLAMA_RESPOND_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Respond), _OLLAMA_RESPOND_MAPPED_FIELDS, (:seed,)))
+# Of those, the fields that ask the server to keep a response, or to read one it kept.
+const _OLLAMA_RESPOND_STATE_FIELDS = (:store, :previous_response_id, :background, :conversation)
 
 _stateless_responses(::OllamaEndpoint) = true
 
@@ -365,10 +369,16 @@ const _OLLAMA_RESPOND_TOOL_KEYS = ("async", "allowed_callers", "defer_loading", 
 
 function encode_agentic(service::OllamaEndpoint, r::Respond)::String
     fields = Symbol[f for f in _OLLAMA_RESPOND_UNMAPPED_FIELDS if !isnothing(getfield(r, f))]
-    isempty(fields) || throw(ArgumentError(
-        "Ollama's Responses API ignores $(join(fields, ", ")): it keeps no state between calls" *
-        (isempty(intersect(fields, (:previous_response_id, :conversation))) ? "" :
+    state = filter(in(_OLLAMA_RESPOND_STATE_FIELDS), fields)
+    isempty(state) || throw(ArgumentError(
+        "Ollama's Responses API ignores $(join(state, ", ")): it keeps no state between calls" *
+        (isempty(intersect(state, (:previous_response_id, :conversation))) ? "" :
          "; send the whole conversation in `input`, or use a Chat")))
+    isempty(fields) || throw(ArgumentError(length(fields) == 1 ?
+        "Ollama's Responses API reads no $(only(fields)) (its OpenAI-compatibility page does not list it for " *
+        "/v1/responses), so it would be dropped: unset it" :
+        "Ollama's Responses API reads none of $(join(fields, ", ")) (its OpenAI-compatibility page does not list " *
+        "them for /v1/responses), so they would be dropped: unset them"))
     isnothing(r.seed) || throw(ArgumentError(
         "Ollama's Responses API reads no seed — its OpenAI-compatibility page lists none for /v1/responses — " *
         "so the seed would be dropped: unset seed, or send the request as a Chat, whose seed Ollama reads"))

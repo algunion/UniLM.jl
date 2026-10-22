@@ -1,6 +1,14 @@
 # test/platform_seam_fixtures.jl
 using UniLM
 
+# Test rows, not prices: the suite's mock servers reply with these model ids, and a Chat success
+# prices the model its reply names, so without a row each id printed the unpriced-model warning.
+# A zero rate keeps the suite's output to the warnings a test asserts; the tests of that warning
+# use ids of their own.
+for id in ("mock", "mock-model")
+    DEFAULT_PRICING[id] = UniLM._price(0, 0, 0)
+end
+
 # A capability-complete endpoint at a dead port (127.0.0.1:1). With a real config it is
 # never reached — a total_deadline of 1e-300 makes _remaining_s resolve to 0.0, so the
 # seam throws UniLMTimeout(:deadline) before any connect. If a verb ignores its config,

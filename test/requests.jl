@@ -1571,6 +1571,23 @@ function _sse_reply_server(body::String)
     (; server, url="http://127.0.0.1:$(HTTP.port(server))")
 end
 
+@testset "_add_usage: the usage of a turn in several replies sums every count, and keeps the latest tier and region" begin
+    a = TokenUsage(prompt_tokens=1, completion_tokens=2, total_tokens=3, cached_tokens=4, reasoning_tokens=5,
+                   cache_write_tokens=6, cache_write_extended_tokens=7, service_tier="flex", inference_geo="us",
+                   prompt_audio_tokens=8, completion_audio_tokens=9)
+    b = TokenUsage(prompt_tokens=10, completion_tokens=20, total_tokens=30, cached_tokens=40, reasoning_tokens=50,
+                   cache_write_tokens=60, cache_write_extended_tokens=70, inference_geo="global",
+                   prompt_audio_tokens=80, completion_audio_tokens=90)
+    @test UniLM._add_usage(a, b) == TokenUsage(prompt_tokens=11, completion_tokens=22, total_tokens=33, cached_tokens=44,
+        reasoning_tokens=55, cache_write_tokens=66, cache_write_extended_tokens=77, service_tier="flex",
+        inference_geo="global", prompt_audio_tokens=88, completion_audio_tokens=99)
+    # Every field, by name: each count of a usage added to itself doubles, each label stays.
+    twice = UniLM._add_usage(a, a)
+    @test all(getfield(twice, f) == (getfield(a, f) isa Int ? 2 * getfield(a, f) : getfield(a, f)) for f in fieldnames(TokenUsage))
+    @test UniLM._add_usage(nothing, b) === b && UniLM._add_usage(a, nothing) === a && isnothing(UniLM._add_usage(nothing, nothing))
+    @test (@inferred UniLM._add_usage(a, b)) isa TokenUsage
+end
+
 @testset "OpenAI Chat usage: cache writes, tier, served model" begin
     # Chat Completions reports cache writes in usage.prompt_tokens_details.cache_write_tokens,
     # the tier that served the request in service_tier and the model that answered in model,

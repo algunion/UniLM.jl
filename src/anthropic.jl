@@ -214,12 +214,28 @@ _system_placement(fam::_ClaudeFamily) = fam.prefix_checked ? _APPEND_ONLY : fam.
 
 # A system message after an assistant turn with no user turn after it has no place: the
 # Messages API takes one only right after a user turn, and joined into the top-level
-# `system` it would end the request with the assistant turn — a response prefill.
-_system_after_reply(model::AbstractString) = ArgumentError(
-    "$model takes a system message after an assistant turn only once a user turn follows it: " *
-    "the Messages API accepts one only right after a user turn, and in the top-level system prompt " *
-    "it would leave the request ending with the assistant turn, a response prefill; push a user " *
-    "message after the system message")
+# `system` it would end the request with the assistant turn — a response prefill. The user
+# turn that comes next is a user message, or the results of the reply's tool calls.
+function _system_after_reply(model::AbstractString, reply::Message)
+    fix = isnothing(reply.tool_calls) || isempty(reply.tool_calls) ? "push a user message after the system message" :
+        "push the results of its tool calls (role \"tool\" messages, which the API takes as a user turn) after " *
+        "the system message"
+    ArgumentError("$model takes a system message after an assistant turn only once a user turn follows it: " *
+        "the Messages API accepts one only right after a user turn, and in the top-level system prompt " *
+        "it would leave the request ending with the assistant turn, a response prefill; $fix")
+end
+
+# A request that ends with an assistant turn: no prefill when the last message it sends is a
+# system message after that reply — turns left out after the system message (a refusal, an
+# empty reply) do not make it one — and refused on a model that takes no prefill.
+function _anthropic_check_prefill(chat::Chat, fam::Union{_ClaudeFamily,Nothing})::Nothing
+    sent(m) = !_skipped_turn(m)
+    chat.messages[something(findlast(sent, chat.messages))].role == RoleSystem && throw(_system_after_reply(
+        chat.model, chat.messages[something(findlast(m -> m.role == RoleAssistant && sent(m), chat.messages))]))
+    isnothing(fam) || fam.prefill || throw(ArgumentError("$(chat.model) rejects messages that end with an " *
+        "assistant turn (response prefill); end with a user turn or use a json_schema response_format"))
+    nothing
+end
 
 function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
     _anthropic_validate_fields(chat)
@@ -231,12 +247,7 @@ function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
     body[:max_tokens] = something(chat.max_completion_tokens, chat.max_tokens,
                                   default_max_tokens(ANTHROPICServiceEndpoint, chat.model))
     system, msgs = _anthropic_messages(chat.messages; placement=_system_placement(fam), model=chat.model)
-    # A conversation that ends with a system message after a reply is not a prefill request.
-    !isempty(chat.messages) && chat.messages[end].role == RoleSystem && !isempty(msgs) &&
-        msgs[end][:role] == "assistant" && throw(_system_after_reply(chat.model))
-    isnothing(fam) || fam.prefill || isempty(msgs) || msgs[end][:role] != "assistant" ||
-        throw(ArgumentError("$(chat.model) rejects messages that end with an assistant turn " *
-                            "(response prefill); end with a user turn or use a json_schema response_format"))
+    !isempty(msgs) && msgs[end][:role] == "assistant" && _anthropic_check_prefill(chat, fam)
     isnothing(system) || (body[:system] = system)
     body[:messages] = msgs
     isnothing(chat.tools)       || (body[:tools] = [_anthropic_tool(t) for t in chat.tools])
@@ -275,7 +286,7 @@ function _anthropic_messages(messages; placement::_SystemPlacement=_IN_PLACE, mo
     seen_tool_use_ids = Set{String}()
     pending = Vector{Dict{Symbol,Any}}()
     held = Message[]          # later system messages waiting for the next user turn
-    answered = false          # an assistant turn has been sent
+    reply = nothing           # the last assistant turn sent
     flush!() = (isempty(pending) ||
         (push!(out, Dict{Symbol,Any}(:role => "user", :content => copy(pending))); empty!(pending)))
     place!(m) = push!(out, Dict{Symbol,Any}(:role => "system", :content => something(m.content, "")))
@@ -285,7 +296,7 @@ function _anthropic_messages(messages; placement::_SystemPlacement=_IN_PLACE, mo
             flush!()
             release!()
             place!(m)
-        elseif m.role == RoleSystem && placement == _APPEND_ONLY && answered
+        elseif m.role == RoleSystem && placement == _APPEND_ONLY && !isnothing(reply)
             push!(held, m)
         elseif m.role == RoleSystem
             system = isnothing(system) ? m.content : string(system, "\n\n", something(m.content, ""))
@@ -301,14 +312,14 @@ function _anthropic_messages(messages; placement::_SystemPlacement=_IN_PLACE, mo
             isempty(held) || out[end][:role] != "user" || release!()
             isnothing(m.tool_calls) || foreach(tc -> push!(seen_tool_use_ids, tc.id), m.tool_calls)
             push!(out, Dict{Symbol,Any}(:role => "assistant", :content => _anthropic_assistant_content(m)))
-            answered = true
+            reply = m
         else  # RoleUser
             flush!()
             push!(out, Dict{Symbol,Any}(:role => "user", :content => something(m.content, "")))
         end
     end
     flush!()
-    isempty(held) || out[end][:role] == "user" || throw(_system_after_reply(model))
+    isempty(held) || out[end][:role] == "user" || throw(_system_after_reply(model, something(reply)))
     release!()
     (system, out)
 end

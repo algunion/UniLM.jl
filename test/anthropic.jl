@@ -1292,3 +1292,32 @@ end
     @test_throws TypeError UniLM._anthropic_messages([Message(Val(:user), "q")]; placement=:hoist)
     @test UniLM._system_placement(nothing) == UniLM._APPEND_ONLY
 end
+
+@testset "encode — a system message after the last reply is refused, naming the fix, whatever turns are left out" begin
+    s(x) = Message(Val(:system), x)
+    u(x) = Message(Val(:user), x)
+    a1 = Message(role=RoleAssistant, content="a1")
+    refusal = Message(role=RoleAssistant, refusal_message="Model refused to respond.", finish_reason=CONTENT_FILTER)
+    blank = Message(role=RoleAssistant, content="", finish_reason=STOP,
+                    provider_content=ProviderContent(:anthropic, Any[Dict{String,Any}("type" => "text", "text" => "")]))
+    call = Message(role=RoleAssistant, finish_reason=TOOL_CALLS,
+                   tool_calls=[ToolCall(id="toolu_1", func=GPTFunction("f", Dict{String,Any}()))])
+    result = Message(role=RoleTool, tool_call_id="toolu_1", content="ok")
+    # Prefill taken (Haiku 4.5) or refused (Sonnet 5, Opus 5), append-only (Opus 5.5, an id no row names).
+    for model in ("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-opus-5-5", "claude-opus-9")
+        # A turn the encoder leaves out after the system message neither makes the request a prefill
+        # nor the refusal one about a prefill.
+        for tail in (refusal, blank)
+            x = _anthropic_err(; model, messages=[s("s0"), u("u1"), a1, s("s2"), tail])
+            @test x isa ArgumentError && occursin(model, x.msg) && occursin("system message", x.msg) &&
+                  occursin("push a user message", x.msg) && !occursin("rejects messages that end", x.msg)
+        end
+        # After a tool call the next user turn is its results, which is the fix.
+        x = _anthropic_err(; model, messages=[s("s0"), u("u1"), call, s("s2")])
+        @test x isa ArgumentError && occursin(model, x.msg) && occursin("results of its tool calls", x.msg) &&
+              !occursin("push a user message", x.msg)
+        body = _anthropic_body(; model, messages=[s("s0"), u("u1"), call, s("s2"), result])
+        @test body["messages"][3]["content"] == [Dict("type" => "tool_result", "tool_use_id" => "toolu_1", "content" => "ok")]
+        @test body["messages"][end]["role"] != "assistant"
+    end
+end

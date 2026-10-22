@@ -277,8 +277,11 @@ document into an `input_file` part. [`OllamaEndpoint`](@ref) sends images and cl
 message's `images` list and refuses a document — a chat attachment, or an `input_file` part
 for its Responses API, which documents no file inputs — and an image's detail level. The
 native Anthropic encoder sends an image and a document as base64 `image` and `document` blocks
-before the text, and refuses a sound clip and an image's detail level; the native Gemini
-encoder does not map attachments yet. A System One request
+before the text, and refuses a sound clip and an image's detail level. Native Gemini sends
+every kind as an `inlineData` part ahead of the text, an image's detail level as its per-part
+media resolution (`"low"`, `"high"`; `"auto"` sends none; `"original"` is refused, as is any
+level on the Gemini 2.5 and Gemma 4 models), and Gemini Interactions sends each as an `image`,
+`audio` or `document` part of an [`InputMessage`](@ref)'s content. A System One request
 carries images without a detail level and no documents, and an embedding input an image or
 a clip without a level. Each refusal is an `ArgumentError` before any network I/O.
 """
@@ -1489,15 +1492,6 @@ function _audio_turn(m::Message)
     d = JSON.lower(m)
     d[:audio] = Dict(:id => audio.id)
     d
-end
-
-# An encoder that cannot map `Message.attachments` refuses the request: dropping the
-# media would ask the model about an image or a sound it never receives.
-function _reject_attachments(chat::Chat, encoder::AbstractString)::Nothing
-    any(m -> !isnothing(m.attachments), chat.messages) && throw(ArgumentError(
-        "the $encoder encoder does not map message attachments (images, audio and documents) yet; " *
-        "send them through an OpenAI-compatible endpoint, or images and audio through OllamaEndpoint"))
-    nothing
 end
 
 Base.length(chat::Chat) = length(chat.messages)

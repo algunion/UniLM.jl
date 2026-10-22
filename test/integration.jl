@@ -517,7 +517,7 @@ end
 # ── Cost Tracking ────────────────────────────────────────────────────────────
 
 @testset "cost tracking — token_usage from real API call" begin
-    chat = Chat(model="gpt-4.1-nano", temperature=0.0)
+    chat = Chat(model="gpt-6-luna", reasoning_effort="none", temperature=0.0)
     push!(chat, Message(Val(:system), "You are a calculator."))
     push!(chat, Message(Val(:user), "What is 1+1? Answer with just the number."))
 
@@ -531,7 +531,7 @@ end
 end
 
 @testset "cost tracking — estimated_cost with real usage" begin
-    chat = Chat(model="gpt-4.1-nano", temperature=0.0)
+    chat = Chat(model="gpt-6-luna", reasoning_effort="none", temperature=0.0)
     push!(chat, Message(Val(:system), "You are helpful."))
     push!(chat, Message(Val(:user), "Say 'hi'."))
 
@@ -543,7 +543,7 @@ end
 end
 
 @testset "cost tracking — cumulative_cost accumulates" begin
-    chat = Chat(model="gpt-4.1-nano", temperature=0.0)
+    chat = Chat(model="gpt-6-luna", reasoning_effort="none", temperature=0.0)
     push!(chat, Message(Val(:system), "You are a calculator."))
     push!(chat, Message(Val(:user), "What is 1+1? Answer with just the number."))
 

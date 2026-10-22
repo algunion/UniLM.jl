@@ -583,9 +583,13 @@ end
 # What Anthropic bills on top of a model's price row
 # (https://platform.claude.com/docs/en/about-claude/pricing.md): cache writes at the input
 # rate × 1.25 (5-minute) or × 2 (1-hour); fast mode at every rate × 2 (Opus 5.5 $8/$40 for
-# $4/$20, Opus 5 and Opus 4.8 $10/$50 for $5/$25); US-only inference at every rate × 1.1;
-# a prompt over a model's long-prompt threshold — every input token, cache reads and writes
-# included — at every rate × its multiplier. The multipliers stack.
+# $4/$20, Opus 5 and Opus 4.8 $10/$50 for $5/$25); US-only inference at every rate × 1.1 on
+# Claude 4.6 and later, the models whose row takes `inference_geo` ("Earlier models ... always
+# use standard pricing"; an id no row names is taken for a newer model); a prompt over a
+# model's long-prompt threshold — every input token, cache reads and writes included — at
+# every rate × its multiplier. The multipliers stack. A reply at Priority Tier is billed at
+# these rates too: Priority Tier draws down a contracted capacity commitment
+# (https://platform.claude.com/docs/en/api/service-tiers.md), which no rate here models.
 const _ANTHROPIC_CACHE_WRITE = 1.25
 const _ANTHROPIC_CACHE_WRITE_1H = 2.0
 const _ANTHROPIC_FAST = 2.0
@@ -608,7 +612,9 @@ end
 function _anthropic_rate_multiplier(model::String, u::TokenUsage)::Float64
     tier = _claude_row(_CLAUDE_LONG_PROMPT_TIERS, model)
     long = isnothing(tier) ? 1.0 : u.prompt_tokens > tier.threshold ? tier.multiplier : 1.0
-    (u.service_tier == "fast" ? _ANTHROPIC_FAST : 1.0) * (u.inference_geo == "us" ? _ANTHROPIC_US_INFERENCE : 1.0) * long
+    fam = _claude_family(model)
+    us = u.inference_geo == "us" && (isnothing(fam) || fam.inference_geo)
+    (u.service_tier == "fast" ? _ANTHROPIC_FAST : 1.0) * (us ? _ANTHROPIC_US_INFERENCE : 1.0) * long
 end
 
 function decode_response(::_AnthropicEndpoint, resp::HTTP.Response)

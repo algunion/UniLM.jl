@@ -812,9 +812,16 @@ instance adds options that every request through it carries
   can act on more than one.
 - `inference_geo`: `"global"` or `"us"`, the request's `inference_geo`, where inference
   runs ([data residency](https://platform.claude.com/docs/en/manage-claude/data-residency));
-  `nothing` leaves the workspace default. US-only inference bills every rate at 1.1×. The
-  Claude 4.5 models (Opus 4.5, Haiku 4.5) and earlier answer it with HTTP 400, so a request
-  for one of them throws `ArgumentError`.
+  `nothing` leaves the workspace default. The Claude 4.5 models (Opus 4.5, Haiku 4.5) and
+  earlier answer it with HTTP 400, so a request for one of them throws `ArgumentError`.
+
+[`estimated_cost`](@ref) bills US-only inference (a usage that reports `inference_geo` `"us"`)
+at 1.1× every rate on Claude 4.6 and later; an earlier model is billed at the standard rates,
+whatever region its usage reports
+([data residency pricing](https://platform.claude.com/docs/en/about-claude/pricing#data-residency-pricing)).
+A reply at Priority Tier (a usage that reports `service_tier` `"priority"`) is estimated at
+the list rates, as at the standard tier: Priority Tier draws down an organization's
+contracted capacity commitment ([service tiers](https://platform.claude.com/docs/en/api/service-tiers)).
 
 The constructor throws `ArgumentError` for a blank value, a value that holds a control
 character (CR, LF, …), a beta name that holds a comma, and an `inference_geo` other than

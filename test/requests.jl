@@ -790,6 +790,97 @@ end
     @test UniLM._is_retryable(Int16(200)) == false
 end
 
+# OpenAI's error codes (https://developers.openai.com/api/docs/guides/error-codes): "Retrying
+# billing, spend, or quota errors won't restore API access", while a rate limit clears with time.
+const _FINAL_429_CODES = ("credit_balance_exhausted", "organization_spend_limit_exceeded",
+                          "project_spend_limit_exceeded", "organization_usage_limit_exceeded")
+_error_body(type, code) = JSON.json(Dict("error" => Dict("message" => "m", "type" => type, "param" => nothing,
+                                                         "code" => code)))
+
+@testset "_is_retryable: a 429 for spent credit or a reached limit is final, a rate limit is not" begin
+    for code in _FINAL_429_CODES
+        body = _error_body("insufficient_quota", code)
+        @test UniLM._is_retryable(429, body) == false
+        @test UniLM._is_retryable(429, Vector{UInt8}(body)) == false
+        @test UniLM._is_retryable(HTTP.Response(429, [], Vector{UInt8}(body))) == false
+        @test UniLM._is_retryable(503, body) == true          # only a 429 reads its code
+    end
+    @test UniLM._is_retryable(429, _error_body("rate_limit_error", "slow_down")) == true
+    @test UniLM._is_retryable(429, _error_body("requests", nothing)) == true       # no code: a rate limit
+    for body in ("", "rate limited", "[1, 2]", "{\"error\": \"quota\"}", "{\"error\": {\"code\": 429}}")
+        @test UniLM._is_retryable(429, body) == true          # no error.code string to read
+    end
+    @test UniLM._is_retryable(HTTP.Response(429)) == true              # HTTP.jl's empty body: no code
+    # A stream driver's body buffer is read without being consumed.
+    buf = IOBuffer(); write(buf, _error_body("insufficient_quota", "credit_balance_exhausted"))
+    @test UniLM._is_retryable(429, buf) == false
+    @test takestring!(buf) == _error_body("insufficient_quota", "credit_balance_exhausted")
+    @test UniLM._is_retryable(400, _error_body("rate_limit_error", "slow_down")) == false
+    @test (@inferred UniLM._is_retryable(429, _error_body("rate_limit_error", "slow_down"))) === true
+end
+
+# A server on an OS-assigned port that answers every request with HTTP 429, `body` and a zero
+# Retry-After; `hits` counts the requests that reached it.
+function _status_429_server(body::String)
+    hits = Threads.Atomic{Int}(0)
+    server = HTTP.listen!("127.0.0.1", 0; verbose=false) do http::HTTP.Stream
+        read(http); Threads.atomic_add!(hits, 1)
+        HTTP.setstatus(http, 429)
+        HTTP.setheader(http, "Content-Type" => "application/json")
+        HTTP.setheader(http, "Retry-After" => "0")
+        HTTP.startwrite(http)
+        write(http, body)
+    end
+    (; server, url="http://127.0.0.1:$(HTTP.port(server))", hits)
+end
+
+@testset "a 429 no retry can lift is sent once; a rate limit is retried" begin
+    chat(url; kw...) = Chat(service=GenericOpenAIEndpoint(url, ""), model="m",
+                            messages=[Message(Val(:user), "hi")]; kw...)
+    for code in _FINAL_429_CODES
+        srv = _status_429_server(_error_body("insufficient_quota", code))
+        try
+            r = chatrequest!(chat(srv.url); config=RequestConfig(max_attempts=3))
+            @test r isa LLMFailure && r.status == 429 && occursin(code, r.response)
+            @test srv.hits[] == 1
+        finally
+            close(srv.server)
+        end
+    end
+    for body in (_error_body("rate_limit_error", "slow_down"), _error_body("requests", nothing))
+        srv = _status_429_server(body)
+        try
+            r = @test_logs (:warn, r"exhausting max_attempts") chatrequest!(chat(srv.url);
+                                                                         config=RequestConfig(max_attempts=2))
+            @test r isa LLMFailure && r.status == 429
+            @test srv.hits[] == 2
+        finally
+            close(srv.server)
+        end
+    end
+    # The Responses API and a streamed turn follow the same rule.
+    srv = _status_429_server(_error_body("insufficient_quota", "credit_balance_exhausted"))
+    try
+        r = respond(Respond(service=GenericOpenAIEndpoint(srv.url, ""), model="m", input="hi");
+                    config=RequestConfig(max_attempts=3))
+        @test r isa ResponseFailure && r.status == 429
+        @test srv.hits[] == 1
+        s = fetch(chatrequest!(chat(srv.url; stream=true); config=RequestConfig(max_attempts=3)))
+        @test s isa LLMFailure && s.status == 429
+        @test srv.hits[] == 2                                  # one request more: the stream was sent once
+    finally
+        close(srv.server)
+    end
+    srv = _status_429_server(_error_body("rate_limit_error", "slow_down"))
+    try
+        s = fetch(chatrequest!(chat(srv.url; stream=true); config=RequestConfig(max_attempts=2)))
+        @test s isa LLMFailure && s.status == 429
+        @test srv.hits[] == 2
+    finally
+        close(srv.server)
+    end
+end
+
 @testset "_retry_delay" begin
     @testset "delay within expected range" begin
         # At retry 0: computed = min(1.0 * 2.0^0, 60.0) = 1.0, delay ∈ [0, 1.0]
@@ -929,7 +1020,7 @@ end
     # The generic _accumulate_cost!(::Chat, ::LLMRequestResponse) stub in requests.jl. Only
     # success types are specialized in accounting.jl, so a failure result must land here:
     # return nothing AND leave cumulative cost untouched (falsifies accidental accumulation).
-    chat = Chat(model="gpt-4.1-nano")
+    chat = Chat(model="gpt-6-luna")
     chat._cumulative_cost[] = 0.25
     failure = LLMFailure(response="server exploded", status=500, self=chat)
     # Pin the resolved method by where it is defined, not by line: a leak to the accounting.jl

@@ -181,9 +181,9 @@ end
 # terminal (the stream_options.include_usage chunk trails it); `choices` may
 # be empty (usage-only chunks, Azure prompt-filter preambles) — iterate, never
 # index [1]; `usage` is captured from any chunk. OpenAI names the served `model` and
-# the billed `service_tier` on every chunk; the usage takes the tier the stream reported
-# last, so a usage chunk without one still carries it. `delta.audio` updates assemble an
-# audio reply (`_audio_delta!`). A `{"error": …}` payload is
+# the billed `service_tier` on every chunk; the usage takes the stream's tier
+# (`_chunk_tier!`: the latest one named), so a usage chunk without one still carries
+# it. `delta.audio` updates assemble an audio reply (`_audio_delta!`). A `{"error": …}` payload is
 # terminal (`:error`): vLLM and OpenAI-compatible proxies report a mid-stream
 # failure that way on the HTTP-200 stream, usually followed by `[DONE]`, so the
 # partial text must not finalize. An error object is recorded as is — its numeric
@@ -201,7 +201,7 @@ function handle_sse_event!(service::OpenAIWireEndpointSpec, event::AbstractStrin
     model = _wire_string(parsed, "model")
     isnothing(model) || (state.model = model)
     tier = _wire_string(parsed, "service_tier")
-    isnothing(tier) || (state.service_tier = tier)
+    isnothing(tier) || _chunk_tier!(service, state, tier)
     u = get(parsed, "usage", nothing)
     u isa AbstractDict && (state.usage = _token_usage_from(u; service_tier=state.service_tier))
     choices = get(parsed, "choices", nothing)
@@ -244,6 +244,10 @@ function handle_sse_event!(service::OpenAIWireEndpointSpec, event::AbstractStrin
     end
     :continue
 end
+
+# The tier a chunk names becomes the stream's, which the usage takes. An endpoint whose
+# response head names the tier first (`_stream_head!`) may keep that one.
+_chunk_tier!(_, state::StreamState, tier::String)::Nothing = (state.service_tier = tier; nothing)
 
 # One update of a streamed audio reply: "Audio chunks may carry an ID, base64 data, or
 # transcript text; the final audio update contains only its expiry timestamp" (Chat

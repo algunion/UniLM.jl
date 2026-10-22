@@ -83,13 +83,14 @@ _models_url(::Type{OPENAIServiceEndpoint})::String = _api_base_url(OPENAIService
 _models_url(::_AnthropicEndpoint)::String = ANTHROPIC_BASE_URL * "/v1/models"
 _models_url(::Type{GEMINIServiceEndpoint})::String = GEMINI_NATIVE_BASE * "/models"
 
-# The headers of every page: the endpoint's own, except that Anthropic's Models API reference
-# marks `anthropic-beta` deprecated on GET /v1/models
-# (https://platform.claude.com/docs/en/api/models/list, Headers), so an Anthropic listing sends
-# the key, the API version and the endpoint's user profile and workspace, never its betas.
+# The headers of every page: the endpoint's own, except on Anthropic, whose Models API
+# reference names `anthropic-version`, `anthropic-workspace-id` and `anthropic-beta`, deprecated
+# on GET /v1/models, and no user-profile header
+# (https://platform.claude.com/docs/en/api/models/list, Headers): an Anthropic listing sends the
+# key, the API version and the endpoint's workspace, never its user profile or its betas.
 _models_headers(service) = auth_header(service)
 _models_headers(service::_AnthropicEndpoint)::Vector{Pair{String,String}} =
-    _anthropic_base_headers(_anthropic_endpoint(service))
+    _anthropic_base_headers(_anthropic_endpoint(service); profile=false)
 
 # A page's entries, and the cursor of the page after it (`nothing` on the last page). OpenAI
 # lists every model on one page; Anthropic pages by the last id on the page (`has_more`,

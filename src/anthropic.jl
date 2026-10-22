@@ -17,9 +17,10 @@ get_url(::_AnthropicEndpoint, ::Chat)::String = ANTHROPIC_BASE_URL * ANTHROPIC_M
 
 # What every request through the endpoint sends: the key and the API version, then its user
 # profile and its workspace (https://platform.claude.com/docs/en/api/messages, Headers).
-function _anthropic_base_headers(e::ANTHROPICServiceEndpoint)::Vector{Pair{String,String}}
+# `profile=false` leaves the user profile out, for an API whose reference names no such header.
+function _anthropic_base_headers(e::ANTHROPICServiceEndpoint; profile::Bool=true)::Vector{Pair{String,String}}
     headers = ["x-api-key" => ENV[ANTHROPIC_API_KEY], "anthropic-version" => ANTHROPIC_VERSION]
-    isnothing(e.user_profile_id) || push!(headers, "anthropic-user-profile-id" => e.user_profile_id)
+    profile && !isnothing(e.user_profile_id) && push!(headers, "anthropic-user-profile-id" => e.user_profile_id)
     isnothing(e.workspace_id) || push!(headers, "anthropic-workspace-id" => e.workspace_id)
     headers
 end
@@ -128,7 +129,7 @@ const _CLAUDE_FAMILIES = Dict{String,_ClaudeFamily}(
 )
 
 # The row for `model` in a per-model table: the exact id, else the id without a dated
-# snapshot suffix (-YYYYMMDD: claude-haiku-4-5-20251001 → claude-haiku-4-5), else `nothing`.
+# snapshot suffix (-YYYYMMDD: claude-opus-4-5-20251101 → claude-opus-4-5), else `nothing`.
 # No id inherits another's row through a shared prefix (claude-sonnet-5-5 is not
 # claude-sonnet-5), and an id no row names — a newer model, a near miss — gets no
 # per-model rule: the API answers for it.
@@ -583,9 +584,13 @@ end
 # What Anthropic bills on top of a model's price row
 # (https://platform.claude.com/docs/en/about-claude/pricing.md): cache writes at the input
 # rate × 1.25 (5-minute) or × 2 (1-hour); fast mode at every rate × 2 (Opus 5.5 $8/$40 for
-# $4/$20, Opus 5 and Opus 4.8 $10/$50 for $5/$25); US-only inference at every rate × 1.1;
-# a prompt over a model's long-prompt threshold — every input token, cache reads and writes
-# included — at every rate × its multiplier. The multipliers stack.
+# $4/$20, Opus 5 and Opus 4.8 $10/$50 for $5/$25); US-only inference at every rate × 1.1 on
+# Claude 4.6 and later, the models whose row takes `inference_geo` ("Earlier models ... always
+# use standard pricing"; an id no row names is taken for a newer model); a prompt over a
+# model's long-prompt threshold — every input token, cache reads and writes included — at
+# every rate × its multiplier. The multipliers stack. A reply at Priority Tier is billed at
+# these rates too: Priority Tier draws down a contracted capacity commitment
+# (https://platform.claude.com/docs/en/api/service-tiers.md), which no rate here models.
 const _ANTHROPIC_CACHE_WRITE = 1.25
 const _ANTHROPIC_CACHE_WRITE_1H = 2.0
 const _ANTHROPIC_FAST = 2.0
@@ -608,7 +613,9 @@ end
 function _anthropic_rate_multiplier(model::String, u::TokenUsage)::Float64
     tier = _claude_row(_CLAUDE_LONG_PROMPT_TIERS, model)
     long = isnothing(tier) ? 1.0 : u.prompt_tokens > tier.threshold ? tier.multiplier : 1.0
-    (u.service_tier == "fast" ? _ANTHROPIC_FAST : 1.0) * (u.inference_geo == "us" ? _ANTHROPIC_US_INFERENCE : 1.0) * long
+    fam = _claude_family(model)
+    us = u.inference_geo == "us" && (isnothing(fam) || fam.inference_geo)
+    (u.service_tier == "fast" ? _ANTHROPIC_FAST : 1.0) * (us ? _ANTHROPIC_US_INFERENCE : 1.0) * long
 end
 
 function decode_response(::_AnthropicEndpoint, resp::HTTP.Response)

@@ -1,9 +1,20 @@
 # The provider drift checks: UniLM's model tables against a provider's model listing, as
 # functions of the listed models that return what the tables lack. The live suite
 # (integration_provider_drift.jl) runs them on today's listings, the keyless suite
-# (model_listing.jl) on the listings of 2026-10-22 and on broken facts. Definitions only.
+# (model_listing.jl) on the listings of 2026-10-22 and on broken facts. Definitions only, in a
+# module that each of those files loads once per session, so a run that includes both defines
+# every method once:
+#
+#     isdefined(@__MODULE__, :ProviderDriftChecks) || include("provider_drift_checks.jl")
+#     using .ProviderDriftChecks
+
+module ProviderDriftChecks
 
 using Dates
+using UniLM
+
+export _drift_provider, _drift_defaults, _drift_suite_ids, _drift_docs_ids, _drift_named_models,
+       _openai_drift, _anthropic_drift, _gemini_drift
 
 # The id prefixes of each provider's models. An id UniLM names is checked against the listing of
 # the provider whose prefix it carries; an id with none of them — a local Ollama model such as
@@ -17,6 +28,10 @@ _drift_provider(id::AbstractString)::Union{Symbol,Nothing} =
 
 # A model id as source quotes it: lower-case words joined by single dots or hyphens.
 const _DRIFT_QUOTED_ID = r"\"([a-z0-9]+(?:[.\-][a-z0-9]+)*)\""
+
+# The ids of a provider's models that `text` quotes.
+_drift_quoted_ids(text::AbstractString)::Vector{String} =
+    String[id for id in (something(m[1]) for m in eachmatch(_DRIFT_QUOTED_ID, text)) if !isnothing(_drift_provider(id))]
 
 # The models UniLM uses when a call names none: the default-model functions, the speech and
 # Decisions defaults, and the keyword defaults its source writes as `model::String="…"`.
@@ -40,39 +55,98 @@ end
 function _drift_suite_ids()::Vector{String}
     ids = String[]
     for f in readdir(@__DIR__; join=true)
-        isfile(f) && occursin(r"^integration_.*\.jl$", basename(f)) || continue
-        for m in eachmatch(_DRIFT_QUOTED_ID, read(f, String))
-            _drift_provider(m[1]) === nothing || push!(ids, m[1])
+        isfile(f) && occursin(r"^integration_.*\.jl$", basename(f)) && append!(ids, _drift_quoted_ids(read(f, String)))
+    end
+    unique!(ids)
+end
+
+# A fenced block of Julia code on a docs page — ```julia, ```@example and ```@repl, which a
+# reader runs or the docs build does — and its code. Prose, where migration notes name retired
+# models on purpose, and the other blocks (```@docs, ```@setup, ```bash, …) are not read.
+const _DRIFT_DOCS_CODE = r"^```(?:julia|@example|@repl)(?:[ \t][^\n]*)?\n(.*?)^```"ms
+
+# The model ids the Julia code blocks of the docs pages under `dir` quote.
+function _drift_docs_ids(dir::AbstractString=joinpath(pkgdir(UniLM), "docs", "src"))::Vector{String}
+    ids = String[]
+    for (root, _, files) in walkdir(dir), f in files
+        endswith(f, ".md") || continue
+        for block in eachmatch(_DRIFT_DOCS_CODE, read(joinpath(root, f), String))
+            append!(ids, _drift_quoted_ids(something(block[1])))
         end
     end
     unique!(ids)
 end
 
+# The listed models by the ids a request may name them by: each listed id, and the alias of a
+# dated snapshot (-YYYYMMDD) that the listing does not name itself — "for models before the 4.6
+# generation, the alias is a convenience pointer that resolves to the dated ID"
+# (https://platform.claude.com/docs/en/models/overview), as claude-haiku-4-5 resolves to the
+# listed claude-haiku-4-5-20251001 (of two snapshots, to the later). A snapshot id is listed
+# only as itself.
+function _drift_listed(models::Vector{ProviderModel})::Dict{String,ProviderModel}
+    listed = Dict{String,ProviderModel}()
+    for m in sort(models; by=m -> m.id)
+        alias = replace(m.id, r"-\d{8}$" => "")
+        alias == m.id || (listed[alias] = m)
+    end
+    for m in models
+        listed[m.id] = m
+    end
+    listed
+end
+
 # The models of `provider` among those UniLM names, the ones `models` does not list, and the
-# listed ones whose retirement date has come.
+# listed ones whose retirement date has come, the shutdown day included.
 function _drift_named_models(models::Vector{ProviderModel}, provider::Symbol;
-                             named::Vector{String}=[_drift_defaults(); _drift_suite_ids()])
-    listed = Dict(m.id => m for m in models)
+                             named::Vector{String}=[_drift_defaults(); _drift_suite_ids(); _drift_docs_ids()])
+    listed = _drift_listed(models)
     ids = unique!(filter(id -> _drift_provider(id) === provider, named))
     retired = [id => listed[id].retires for id in ids
                if haskey(listed, id) && !isnothing(listed[id].retires) && listed[id].retires <= today()]
     (; named=ids, unlisted=[id for id in ids if !haskey(listed, id)], retired)
 end
 
-# The ids among `ids` that the cost code's lookup prices at no row.
-_unpriced(ids) = [id for id in ids if isnothing(UniLM._price_row(DEFAULT_PRICING, id))]
+# Models whose provider publishes no price, so no price row can hold one, by exact id: Claude
+# Mythos Preview, a gated research preview ("Access is invitation-only",
+# https://platform.claude.com/docs/en/release-notes/overview) that the pricing page
+# (https://platform.claude.com/docs/en/about-claude/pricing.md) gives no rate.
+const _NO_PUBLISHED_PRICE = ("claude-mythos-preview",)
+
+# The ids among `ids` that the cost code's lookup prices at no row, those with no published
+# price aside.
+_unpriced(ids) = [id for id in ids if id ∉ _NO_PUBLISHED_PRICE && isnothing(UniLM._price_row(DEFAULT_PRICING, id))]
 
 # OpenAI: GPT-6 and GPT-5.6 have rule rows; they and GPT-5.4 mini (and its dated snapshots) have
 # price rows — the standard rates and the price terms.
 _openai_ruled(id::AbstractString) = occursin(r"^gpt-(6|5\.6)", id)
 _openai_priced(id::AbstractString) = _openai_ruled(id) || occursin(r"^gpt-5\.4-mini(-\d{4}-\d{2}-\d{2})?$", id)
 
+# The kinds of OpenAI model that are not text models, each a segment of their ids: image
+# generation (gpt-image-2, chatgpt-image-latest), audio (gpt-audio-1.5), the Realtime and Live
+# APIs' models (gpt-realtime-2.1, gpt-live-1), transcription (gpt-transcribe) and speech
+# (gpt-4o-mini-tts).
+const _OPENAI_NOT_TEXT = ("image", "audio", "realtime", "live", "transcribe", "tts")
+
+# An id of an older generation than the family: a GPT version before 5.6
+# (gpt-<major>[.<minor>]…, gpt-4o reading 4), or the o1, o3 and o4 series.
+function _openai_older(id::AbstractString)::Bool
+    occursin(r"^o[134](-|$)", id) && return true
+    v = match(r"^gpt-(\d+)(?:\.(\d+))?(?:o|-|$)", id)
+    !isnothing(v) && VersionNumber(parse(Int, something(v[1])), parse(Int, something(v[2], "0"))) < v"5.6"
+end
+
+# The chat model ids — gpt-…, chatgpt-…, o<n>… — that no family, older generation or other known
+# kind covers: a new generation or a name of a new form, logged by the live suite.
+_openai_unclassified(ids) = [id for id in ids if occursin(r"^(gpt-|chatgpt-|o\d)", id) && !_openai_priced(id) &&
+                             !_openai_older(id) && !any(in(_OPENAI_NOT_TEXT), split(id, '-'))]
+
 function _openai_drift(models::Vector{ProviderModel})
     ids = [m.id for m in models]
     family = filter(_openai_priced, ids)
     (; family, unpriced=_unpriced(family),
      no_terms=[id for id in family if isnothing(UniLM._openai_row(UniLM._OPENAI_PRICE_TERMS, id))],
-     unruled=[id for id in filter(_openai_ruled, ids) if isnothing(UniLM._openai_row(UniLM._OPENAI_MODEL_RULES, id))])
+     unruled=[id for id in filter(_openai_ruled, ids) if isnothing(UniLM._openai_row(UniLM._OPENAI_MODEL_RULES, id))],
+     unclassified=_openai_unclassified(ids))
 end
 
 # The generation a Claude id names: claude-<line>-<major>[-<minor>] or the older
@@ -126,25 +200,36 @@ function _anthropic_drift(models::Vector{ProviderModel})
 end
 
 # The kinds of Gemini model that are not text models, each a segment of their ids: speech
-# (gemini-3.8-flash-tts), transcription (gemini-3.5-transcribe), image generation (…-image) and the
-# Live API's models (gemini-3.8-live).
-const _GEMINI_NOT_TEXT = ("tts", "transcribe", "image", "live")
+# (gemini-3.8-flash-tts), transcription (gemini-3.5-transcribe), image generation (…-image, and
+# Nano Banana: gemini-nano-banana-2.1), video generation (Gemini Omni: gemini-omni-1.1-flash) and
+# the Live API's models (gemini-3.8-live).
+const _GEMINI_NOT_TEXT = ("tts", "transcribe", "image", "banana", "omni", "live")
 
-# Gemini 3.5 and later text models: a versioned id (gemini-<major>[.<minor>]-…) of no other kind
-# that serves generateContent. Each has a price row; the ones that think also a row of thinking
-# levels, which UniLM checks a reasoning effort against.
-function _gemini_text_model(m::ProviderModel)::Bool
-    v = match(r"^gemini-(\d+)(?:\.(\d+))?-", m.id)
-    isnothing(v) && return false
-    VersionNumber(parse(Int, something(v[1])), parse(Int, something(v[2], "0"))) >= v"3.5" &&
-        !any(in(_GEMINI_NOT_TEXT), split(m.id, '-')) &&
-        "generateContent" in something(get(m.capabilities, "supportedGenerationMethods", nothing), String[])
+# The generation a Gemini id names, gemini-<major>[.<minor>]-…; `nothing` for an id of another
+# form (gemini-flash-latest, gemini-robotics-er-2-preview).
+function _gemini_generation(id::AbstractString)::Union{VersionNumber,Nothing}
+    v = match(r"^gemini-(\d+)(?:\.(\d+))?-", id)
+    isnothing(v) ? nothing : VersionNumber(parse(Int, something(v[1])), parse(Int, something(v[2], "0")))
 end
 
+# A Gemini text model: a gemini-… id of no other kind that serves generateContent.
+_gemini_text_model(m::ProviderModel)::Bool =
+    startswith(m.id, "gemini-") && !any(in(_GEMINI_NOT_TEXT), split(m.id, '-')) &&
+    "generateContent" in something(get(m.capabilities, "supportedGenerationMethods", nothing), String[])
+
+# Gemini: the text models of 3.5 and later, by the generation the id names, and every text model
+# UniLM keeps thinking levels for, whatever its name says — but the -latest aliases, which are
+# priced at the model that served them. Each needs a price row, and the ones that think a row of
+# thinking levels too, which UniLM checks a reasoning effort against. A text model of neither
+# whose generation cannot be read is unclassified: a new name, logged by the live suite.
 function _gemini_drift(models::Vector{ProviderModel})
-    text = filter(_gemini_text_model, models)
-    family = [m.id for m in text]
-    thinking = [m.id for m in text if get(m.capabilities, "thinking", false) === true]
-    (; family, thinking, unpriced=_unpriced(family),
-     unruled=[id for id in thinking if isnothing(UniLM._gemini_thinking_levels(id))])
+    ruled(id) = !isnothing(UniLM._gemini_thinking_levels(id))
+    text = [m for m in models if _gemini_text_model(m) && !endswith(m.id, "-latest")]
+    members = [m for m in text if ruled(m.id) || something(_gemini_generation(m.id), v"0") >= v"3.5"]
+    family = [m.id for m in members]
+    thinking = [m.id for m in members if get(m.capabilities, "thinking", false) === true]
+    (; family, thinking, unpriced=_unpriced(family), unruled=[id for id in thinking if !ruled(id)],
+     unclassified=[m.id for m in text if !ruled(m.id) && isnothing(_gemini_generation(m.id))])
+end
+
 end

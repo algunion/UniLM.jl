@@ -111,8 +111,11 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "gemini-3.1-pro-preview" => _price(2.0, 0.20,  12.0),  # prompts up to 200K tokens; longer ones bill more
     "gemini-3.1-pro-preview-customtools" => _price(2.0, 0.20, 12.0),  # priced with 3.1 Pro Preview; up to 200K too
     "gemini-3.1-flash-lite" => _price(0.25, 0.025, 1.5),   # shuts down 2027-05-07
+    "gemini-3-flash-preview" => _price(0.50, 0.05, 3.0),
+    "gemini-2.5-pro"        => _price(1.25, 0.125, 10.0),  # prompts up to 200K tokens; longer ones bill more
     "gemini-2.5-flash"      => _price(0.3,  0.03,  2.5),
     "gemini-2.5-flash-lite" => _price(0.1,  0.01,  0.4),
+    "gemini-robotics-er-2-preview" => _price(1.0, 0.10, 5.0),  # doubles on 2027-01-01
     "gemini-embedding-2"    => _price(0.20, 0.20,  0.0),   # text input only
     # TypeSafe System One / Jev (docs.typesafe.ai models page, 2026-09-22):
     # $42 per Btok of input, and output tokens are currently free. The aliases

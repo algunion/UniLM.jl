@@ -6,7 +6,8 @@
 
 using Dates
 using Logging: with_logger, NullLogger
-include("provider_drift_checks.jl")
+isdefined(@__MODULE__, :ProviderDriftChecks) || include("provider_drift_checks.jl")
+using .ProviderDriftChecks
 
 _ml_fixture(name::AbstractString) = read(joinpath(@__DIR__, "fixtures", "models", name), String)
 _ml_page(name::AbstractString) = JSON.parse(_ml_fixture(name); dicttype=Dict{String,Any})
@@ -258,26 +259,28 @@ end
 # An Anthropic endpoint, the type or an instance, whose listing `_with_scripted` serves: its
 # requests carry the headers that endpoint sends, on its listing and on its other requests.
 struct _AnthropicListingAt <: UniLM.ServiceEndpoint
-    endpoint::Union{Type{ANTHROPICServiceEndpoint},ANTHROPICServiceEndpoint}
+    endpoint::UniLM._AnthropicEndpoint
 end
 UniLM._model_listing(::_AnthropicListingAt) = UniLM._AnthropicModels()
 UniLM._models_url(::_AnthropicListingAt) = _url_probe_base[] * "/v1/models"
 UniLM.auth_header(s::_AnthropicListingAt) = UniLM.auth_header(s.endpoint)
 UniLM._models_headers(s::_AnthropicListingAt) = UniLM._models_headers(s.endpoint)
 
-# https://platform.claude.com/docs/en/api/models/list (Headers): `anthropic-beta` is deprecated on
-# GET /v1/models. Refuted if: an Anthropic listing sends the endpoint's betas, or leaves out its key,
-# its API version, its user profile or its workspace — from the type or from an instance.
-@testset "an Anthropic listing sends the key, the version, the user profile and the workspace, never the betas" begin
+# https://platform.claude.com/docs/en/api/models/list (Headers) names `anthropic-version`,
+# `anthropic-workspace-id` and `anthropic-beta`, deprecated on GET /v1/models, and no user-profile
+# header. Refuted if: an Anthropic listing sends the endpoint's betas or its user profile, or
+# leaves out its key, its API version or its workspace — from the type or from an instance.
+@testset "an Anthropic listing sends the key, the version and the workspace, never the user profile or the betas" begin
     withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
         base = ["x-api-key" => "sk-ant-local-0000", "anthropic-version" => "2026-10-21"]
         every = ANTHROPICServiceEndpoint(betas=["fast-mode-2026-02-01", "compact-2026-09-04"],
                                          user_profile_id="uprof_011CZkZCu8hGbp5mYRQgUmz9",
                                          workspace_id="wrkspc_011CZkZaBF1tNoB5wlCeusgy", inference_geo="us")
-        options = ["anthropic-user-profile-id" => "uprof_011CZkZCu8hGbp5mYRQgUmz9",
-                   "anthropic-workspace-id" => "wrkspc_011CZkZaBF1tNoB5wlCeusgy"]
+        options = ["anthropic-workspace-id" => "wrkspc_011CZkZaBF1tNoB5wlCeusgy"]
+        profile = ANTHROPICServiceEndpoint(user_profile_id="uprof_011CZkZCu8hGbp5mYRQgUmz9")
         for (service, want) in ((ANTHROPICServiceEndpoint, base), (ANTHROPICServiceEndpoint(), base),
-                                (ANTHROPICServiceEndpoint(betas=["fast-mode-2026-02-01"]), base), (every, [base; options]))
+                                (ANTHROPICServiceEndpoint(betas=["fast-mode-2026-02-01"]), base), (profile, base),
+                                (every, [base; options]))
             @test (@inferred UniLM._models_headers(service)) == want
             # On the wire, beside the headers HTTP.jl adds (Host, User-Agent, …): exactly these x- and
             # anthropic- headers, and no Content-Type.
@@ -289,8 +292,9 @@ UniLM._models_headers(s::_AnthropicListingAt) = UniLM._models_headers(s.endpoint
             @test filter(((k, _),) -> startswith(k, "x-") || startswith(k, "anthropic-"), sent[]) == Dict(want)
             @test !haskey(sent[], "content-type")
         end
-        # The endpoint's other requests keep its betas.
+        # The endpoint's other requests keep its betas and its user profile.
         @test Dict(UniLM.auth_header(every))["anthropic-beta"] == "fast-mode-2026-02-01,compact-2026-09-04"
+        @test Dict(UniLM.auth_header(every))["anthropic-user-profile-id"] == "uprof_011CZkZCu8hGbp5mYRQgUmz9"
     end
 end
 
@@ -319,9 +323,14 @@ _ml_quiet(f::Function) = with_logger(f, NullLogger())
     @test a.family == [m.id for m in an]
     @test all(isempty, (a.unreadable, a.unpriced, a.unruled, a.disagreements))
     g = _gemini_drift(_ml_models("gemini", UniLM._GeminiModels()))
-    @test g.family == g.thinking == ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash",
-                                     "gemini-3.7-flash", "gemini-3.8-flash", "gemini-4-argon"]
-    @test all(isempty, (g.unpriced, g.unruled))
+    # Gemini 3.5 and later, and the older text models UniLM keeps thinking levels for — not the
+    # -latest aliases, nor gemini-3.1-flash-lite-image, an image model.
+    @test g.family == g.thinking == ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite",
+                                     "gemini-3-flash-preview", "gemini-3.1-pro-preview", "gemini-3.5-flash",
+                                     "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.8-flash",
+                                     "gemini-4-argon", "gemini-robotics-er-2-preview"]
+    @test g.unpriced == String[]
+    @test isempty(g.unruled)
 end
 
 # Refuted if: a broken fact goes unreported, or a sound one is reported — each check gets one.
@@ -357,8 +366,12 @@ end
             "disabled" => supported(false), "between_tools" => supported(false), "enabled" => supported(false))),
         "effort" => Dict{String,Any}("supported" => true, "low" => supported(true), "medium" => supported(true),
             "high" => supported(true), "xhigh" => supported(false), "max" => supported(true)))
-    d = _ml_quiet(() -> _anthropic_drift([an; _ml_model("claude-mythos-preview", preview)]))
-    @test "claude-mythos-preview" in d.family && all(isempty, (d.unreadable, d.unruled, d.disagreements))
+    # Claude Mythos Preview has no published price, and is exempt from the price check by its
+    # exact id: a dated snapshot of it, should one be listed, is not.
+    d = _anthropic_drift([an; _ml_model("claude-mythos-preview", preview)])
+    @test "claude-mythos-preview" in d.family && all(isempty, (d.unreadable, d.unpriced, d.unruled, d.disagreements))
+    d = _ml_quiet(() -> _anthropic_drift([an; _ml_model("claude-mythos-preview-20260609", preview)]))
+    @test d.unpriced == ["claude-mythos-preview-20260609"] && isempty(d.unruled)
 
     ge = _ml_models("gemini", UniLM._GeminiModels())
     serves = Dict{String,Any}("supportedGenerationMethods" => ["generateContent"])
@@ -369,6 +382,15 @@ end
     @test d.unpriced == ["gemini-3.9-flash", "gemini-3.9-pro"] && d.unruled == ["gemini-3.9-pro"]
     @test "gemini-3.9-flash" in d.family && "gemini-3.9-flash" ∉ d.thinking
     @test !any(in(d.family), ("gemini-3.9-flash-tts", "gemini-3.9-flash-image"))
+    # An older text model UniLM keeps thinking levels for needs a price row too.
+    row = pop!(DEFAULT_PRICING, "gemini-2.5-flash")
+    try
+        @test _ml_quiet(() -> _gemini_drift(ge).unpriced) == ["gemini-2.5-flash"]
+    finally
+        DEFAULT_PRICING["gemini-2.5-flash"] = row
+    end
+    # A -latest alias, priced at the model that served it, and an image model need none.
+    @test !any(in(_gemini_drift(ge).family), ("gemini-flash-latest", "gemini-pro-latest", "gemini-3.1-flash-lite-image"))
 
     # The models UniLM names, by provider prefix: a named model the listing lacks, one whose
     # retirement date has come, and ids of no checked provider.
@@ -380,6 +402,81 @@ end
     @test _drift_provider.(["gpt-6-sol", "o3", "omni-moderation-latest", "claude-haiku-5-5", "gemini-3.8-flash",
                             "gemma-4-31b-it", "gemma4:e4b", "jev-latest"]) ==
           [:openai, :openai, :openai, :anthropic, :gemini, :gemini, nothing, nothing]
-    @test !isempty(_drift_suite_ids()) && all(id -> _drift_provider(id) !== nothing, _drift_suite_ids())
-    @test UniLM.default_model(OPENAIServiceEndpoint) in _drift_defaults()
+    @test !isempty(_drift_suite_ids())
+    # Every default carries a provider's prefix, so the named-model check skips none of them.
+    @test all(!isnothing ∘ _drift_provider, _drift_defaults())
+end
+
+# Refuted if: an alias Anthropic serves for a dated snapshot reads as unlisted, or its snapshot's
+# retirement goes unseen, or a snapshot id the listing does not name reads as listed. "For models
+# before the 4.6 generation, the alias is a convenience pointer that resolves to the dated ID"
+# (https://platform.claude.com/docs/en/models/overview).
+@testset "drift checks: a named alias is listed under its dated snapshot, a snapshot only as itself" begin
+    an = _ml_models("anthropic", UniLM._AnthropicModels())
+    named = ["claude-haiku-4-5", "claude-opus-4-5-20251101", "claude-haiku-5-5-20261007", "claude-sonnet-4-5"]
+    n = _drift_named_models(an, :anthropic; named)
+    @test n.named == named && n.unlisted == ["claude-haiku-5-5-20261007", "claude-sonnet-4-5"] && isempty(n.retired)
+    due = [_ml_with(m; retires=m.id == "claude-haiku-4-5-20251001" ? today() : m.retires) for m in an]
+    @test _drift_named_models(due, :anthropic; named).retired == ["claude-haiku-4-5" => today()]
+end
+
+# Refuted if: a chat model of a new generation or of a new name passes unseen on OpenAI or Gemini,
+# or one of a documented family, an older generation or a known other kind is reported. The live
+# suite logs the list: a listing may add models before UniLM has tables for them.
+@testset "drift checks: OpenAI and Gemini models of no family, older generation or known kind are unclassified" begin
+    oa = _ml_models("openai", UniLM._OpenAIModels())
+    @test isempty(_openai_drift(oa).unclassified)
+    new = ["gpt-7-sol", "o5-mini", "chatgpt-6-latest", "gpt-oss-120b"]
+    known = ["gpt-4.5-preview", "o3-deep-research", "gpt-image-3", "gpt-realtime-3", "gpt-6.2-sol"]
+    @test _ml_quiet(() -> _openai_drift([oa; _ml_model.([new; known])]).unclassified) == new
+    ge = _ml_models("gemini", UniLM._GeminiModels())
+    @test isempty(_gemini_drift(ge).unclassified)
+    serves = Dict{String,Any}("supportedGenerationMethods" => ["generateContent"])
+    new = ["gemini-ultra", "gemini-robotics-er-3-preview"]
+    known = ["gemini-3.4-flash", "gemini-nano-banana-3", "gemini-omni-2-flash", "gemini-ultra-latest", "gemini-5-pro"]
+    embeds = _ml_model("gemini-embedding-3", Dict{String,Any}("supportedGenerationMethods" => ["embedContent"]))
+    d = _ml_quiet(() -> _gemini_drift([ge; [_ml_model(id, serves) for id in [new; known]]; embeds]))
+    @test d.unclassified == new
+end
+
+# Refuted if: a model id in a docs page's Julia code — a ```julia, ```@example or ```@repl block —
+# goes unchecked, or one in prose (migration notes name retired models on purpose) or in another
+# block is checked.
+@testset "drift checks: the models the docs' Julia code names are checked, not those of their prose" begin
+    mktempdir() do dir
+        mkpath(joinpath(dir, "guide"))
+        write(joinpath(dir, "guide", "page.md"), """
+            Prose names "gpt-4o", retired, on purpose.
+
+            ```julia
+            chat = Chat(model="gpt-6-sol")
+            ```
+
+            ```@example page
+            Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-5-5")
+            ```
+
+            ```@repl page
+            Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash"); Chat(model="gemma4:e4b")
+            ```
+
+            ```@setup page
+            Chat(model="gpt-5.5")
+            ```
+
+            ```bash
+            curl -d '{"model": "gpt-5.4"}'
+            ```
+
+            ```julia-repl
+            julia> Chat(model="gpt-5.2")
+            ```
+            """)
+        write(joinpath(dir, "notes.txt"), "```julia\nChat(model=\"gpt-5.6-sol\")\n```\n")
+        @test _drift_docs_ids(dir) == ["gpt-6-sol", "claude-haiku-5-5", "gemini-3.8-flash"]
+    end
+    docs = _drift_docs_ids()
+    @test !isempty(docs)
+    oa = _ml_models("openai", UniLM._OpenAIModels())
+    @test issubset(filter(id -> _drift_provider(id) === :openai, docs), _drift_named_models(oa, :openai).named)
 end

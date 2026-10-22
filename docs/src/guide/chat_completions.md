@@ -175,16 +175,22 @@ This checks:
 
 UniLM.jl works with any model name string. Common choices:
 
-| Model            | Usage                  |
-| :--------------- | :--------------------- |
-| `"gpt-5.6-sol"`  | Default; Chat tools require no reasoning; promotional price guaranteed through November 21, 2026 |
-| `"gpt-6-astra"`  | Most capable; Responses-only tools, no `none`/`minimal` effort, \$10/\$50 per M tokens |
-| `"gpt-6-sol"`    | Built for complex coding and agentic workflows, \$2/\$10 per M tokens |
-| `"gpt-6-luna"`   | Fast and cheap, \$0.10/\$0.50 |
-| `"gpt-5.6-luna"` | Fast and cheap         |
-| `"gpt-5.4-mini"` | Mini model; reasoning effort `"none"` by default |
-| `"gpt-4.1-mini"` | Balanced performance   |
-| `"o4-mini"`      | Fast reasoning; shuts down October 23, 2026 (replacement `gpt-5.6-terra`) |
+| Model             | Usage                  |
+| :---------------- | :--------------------- |
+| `"gpt-6-sol"`     | Default; built for complex coding and agentic workflows, \$2/\$10 per M tokens |
+| `"gpt-6.1-sol"`   | Near-Astra quality at \$2/\$10; reasoning effort `"low"` and up, no sampling controls, tools only through [`Respond`](@ref) |
+| `"gpt-6-astra"`   | Most capable, \$10/\$50; reasoning effort `"low"` and up, no sampling controls, tools only through `Respond` |
+| `"gpt-6-luna"`    | Fastest and cheapest, \$0.10/\$0.50 |
+| `"gpt-5.6-sol"`   | GPT-5.6 flagship; promotional \$4/\$20 at least through November 21, 2026 |
+| `"gpt-5.6-terra"` | GPT-5.6 model that balances intelligence and cost, \$2/\$12 |
+| `"gpt-5.6-luna"`  | GPT-5.6 model for cost-sensitive work, \$0.20/\$1.20 |
+| `"gpt-5.4-mini"`  | Mini model; reasoning effort `"none"` by default |
+
+GPT-6 Sol, GPT-6 Luna and the GPT-5.6 models take Chat tools only with
+`reasoning_effort="none"`, and GPT-6 Sol and Luna take sampling controls and log
+probabilities only at that effort; OpenAI's tool path is the Responses API
+([`Respond`](@ref)). These rules apply to `OPENAIServiceEndpoint`, to the exact model id
+or a dated snapshot of it (`gpt-6-sol-2026-09-14`), and are checked before any request.
 
 All eight are keys in [`DEFAULT_PRICING`](@ref), so cost accounting works out of
 the box. Any other model name is accepted — it is just a string on the wire — but
@@ -219,7 +225,7 @@ println(JSON.json(chat))
 
 ## Retry Behaviour
 
-`chatrequest!` automatically retries transient HTTP statuses (408, 429, 500, 502–504, 520–524, 529) with exponential backoff and jitter; a `Retry-After` header is a floor under the jittered wait, so concurrent callers that received the same header do not retry in lockstep. Attempts and total time are bounded by the resolved [`RequestConfig`](@ref) (`max_attempts`, default 3; `total_deadline`, default 900 s). Pass `config=RequestConfig(max_attempts=1)` to disable retries for a call, or set scoped/process-wide defaults with `with_request_config` / `set_default_config!`. Timeouts surface as `LLMCallError` with `status = nothing` and the `UniLMTimeout` (phase, elapsed, limit) in `.cause`; a cancelled call (see [Concurrency, Tasks and Cancellation](@ref concurrency_guide)) carries a `UniLMCancelled` there instead.
+`chatrequest!` automatically retries transient HTTP statuses (408, 429, 500, 502–504, 520–524, 529) with exponential backoff and jitter; a `Retry-After` header is a floor under the jittered wait, so concurrent callers that received the same header do not retry in lockstep. A 429 whose `error.code` reports spent credit or a reached limit — `credit_balance_exhausted`, `organization_spend_limit_exceeded`, `project_spend_limit_exceeded`, `organization_usage_limit_exceeded` — is returned at once: as [OpenAI's error codes](https://developers.openai.com/api/docs/guides/error-codes) say, retrying billing, spend or quota errors won't restore access. Attempts and total time are bounded by the resolved [`RequestConfig`](@ref) (`max_attempts`, default 3; `total_deadline`, default 900 s). Pass `config=RequestConfig(max_attempts=1)` to disable retries for a call, or set scoped/process-wide defaults with `with_request_config` / `set_default_config!`. Timeouts surface as `LLMCallError` with `status = nothing` and the `UniLMTimeout` (phase, elapsed, limit) in `.cause`; a cancelled call (see [Concurrency, Tasks and Cancellation](@ref concurrency_guide)) carries a `UniLMCancelled` there instead.
 
 Local validation is not a result: an option the provider or model cannot express, a service
 that does not declare `:chat`, or a conversation the reply could not be appended to throws
@@ -245,6 +251,12 @@ Out-of-range values throw `ArgumentError`. Additionally, `temperature` and `top_
 exclusive, and an empty `tools` vector is stored as `nothing`. Provider- and model-specific
 limits (for example GPT-5.6 Chat tools requiring `reasoning_effort="none"`, or Claude's
 temperature range) are checked when the request is encoded, before any network I/O.
+
+On `OPENAIServiceEndpoint` the encoder follows the current Chat Completions reference:
+`max_tokens` goes out as `max_completion_tokens` (setting both throws), `user` throws
+`ArgumentError` (OpenAI replaces it with `safety_identifier` and `prompt_cache_key`), and
+`service_tier` must be `"auto"`, `"default"`, `"flex"`, `"scale"`, `"priority"` or `"fast"` —
+`"ultrafast"` is a Responses tier. Other OpenAI-compatible endpoints send these fields as set.
 
 ## See Also
 

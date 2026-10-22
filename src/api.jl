@@ -276,7 +276,9 @@ server decides what to do with it. For the Responses API, [`input_file`](@ref) t
 document into an `input_file` part. [`OllamaEndpoint`](@ref) sends images and clips in the
 message's `images` list and refuses a document — a chat attachment, or an `input_file` part
 for its Responses API, which documents no file inputs — and an image's detail level. The
-native Anthropic and Gemini encoders do not map attachments yet. A System One request
+native Anthropic encoder sends an image and a document as base64 `image` and `document` blocks
+before the text, and refuses a sound clip and an image's detail level; the native Gemini
+encoder does not map attachments yet. A System One request
 carries images without a detail level and no documents, and an embedding input an image or
 a clip without a level. Each refusal is an `ArgumentError` before any network I/O.
 """
@@ -385,7 +387,8 @@ A PDF document for a user [`Message`](@ref), recognised from its leading bytes
 given for it: the file's own name (`basename(path)`) or, for bytes, the keyword.
 Endpoints on the OpenAI Chat Completions wire send it as a `file` part
 ([file inputs](https://developers.openai.com/api/docs/guides/file-inputs)); for the
-Responses API, [`input_file`](@ref) turns it into an `input_file` part. See
+Responses API, [`input_file`](@ref) turns it into an `input_file` part, and the native
+Anthropic encoder sends it as a base64 `document` block. See
 [`Attachment`](@ref) for the endpoints that refuse it. Throws `ArgumentError` for
 bytes that are not PDF, whatever the file is called, and for a blank `filename`.
 
@@ -1186,17 +1189,22 @@ const _PROMPT_CACHE_TTLS = ("5m", "1h", "30m", "12h")
 """
     PromptCacheOptions(; mode=nothing, ttl=nothing, prewarm=nothing, comparison_response_id=nothing)
 
-Prompt-cache controls (OpenAI: GPT-5.6 and later). `mode` is `"implicit"` or
-`"explicit"`; `ttl`, how long a cached prefix is kept, is one of `"5m"`, `"1h"`,
-`"30m"` or `"12h"` — any other value throws `ArgumentError`. Each endpoint accepts its
-own subset and throws `ArgumentError` naming it, before any request:
+Prompt-cache controls (OpenAI: GPT-5.6 and later; Anthropic). `mode` is `"implicit"` or
+`"explicit"`; `ttl`, how long a cached prefix is kept, is one of `"5m"` or `"1h"`
+(Anthropic's lifetimes), `"30m"` or `"12h"` (OpenAI's) — any other value throws
+`ArgumentError`. Each native endpoint takes its own subset and throws `ArgumentError`
+naming it, before any request:
 
 - `OPENAIServiceEndpoint`: Chat Completions takes `"30m"` (the API answers HTTP 400 for
-  any other ttl), the Responses API ([`Respond`](@ref)) `"30m"` and `"12h"`.
+  any other ttl); the Responses API ([`Respond`](@ref)) and OpenAI Decisions take `"30m"`
+  and `"12h"`.
+- `ANTHROPICServiceEndpoint`: a top-level `cache_control` (automatic caching) with ttl
+  `"5m"` or `"1h"` and mode `"implicit"` or unset; `"explicit"`, `prewarm=true` and
+  `comparison_response_id` throw.
+- Native Gemini (Chat and Interactions) and [`OllamaEndpoint`](@ref) refuse
+  `prompt_cache_options`.
 - Azure, the Gemini OpenAI-compatible endpoint, DeepSeek and other OpenAI-compatible
   endpoints send the object unchanged: the server's answer is the check.
-- Anthropic, native Gemini (Chat and Interactions) and [`OllamaEndpoint`](@ref) refuse
-  `prompt_cache_options`.
 
 Explicit mode caches only prefixes marked with `prompt_cache_breakpoint` in input content
 blocks (see [`input_text`](@ref) with `cache_breakpoint=true`).

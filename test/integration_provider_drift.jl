@@ -1,16 +1,21 @@
 # ─── Provider drift (live) ───────────────────────────────────────────────────
 # UniLM's model tables against the models OpenAI, Anthropic and Gemini list today: every listed
-# model of a family UniLM documents has a price row and, where UniLM keeps per-model rules for
-# the family, a rule row; every model UniLM names as a default or in its live suites is listed
-# and not past its retirement date; and the Claude rule rows agree with the thinking types and
-# effort levels the Models API reports for each model. Model listings bill no tokens. Requires
-# UNILM_LIVE=1 and each provider's key. The checks are in provider_drift_checks.jl, which the
-# keyless suite runs on the listings of 2026-10-22.
+# model of a family UniLM documents has a price row (unless its provider publishes none) and,
+# where UniLM keeps per-model rules for the family, a rule row; every model UniLM names as a
+# default, in its live suites or in the docs' Julia code is listed, and before its retirement
+# date where the listing gives one — the check fails from the shutdown day on, and Gemini's
+# listing carries no dates, so there it checks only that the model is listed; and the Claude
+# rule rows agree with the thinking types and effort levels the Models API reports for each
+# model. The OpenAI and Gemini models that no family, older generation or known kind covers — a
+# new generation — are logged, not failed. Model listings bill no tokens. Requires UNILM_LIVE=1
+# and each provider's key. The checks are in provider_drift_checks.jl, which the keyless suite
+# runs on the listings of 2026-10-22.
 
 isdefined(@__MODULE__, :ProviderDriftChecks) || include("provider_drift_checks.jl")
 using .ProviderDriftChecks
 
-# Every model of `provider` that UniLM names is listed and not past its retirement date.
+# Every model of `provider` that UniLM names is listed, and before its retirement date where the
+# listing gives one.
 function _test_named_models(models::Vector{ProviderModel}, provider::Symbol)
     n = _drift_named_models(models, provider)
     @info "models UniLM names" provider named = n.named

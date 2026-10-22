@@ -128,6 +128,23 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "GEMINI_API_KEY")
         @test result isa EmbeddingSuccess
     end
 
+    @testset "Gemini OpenAI-compatible stream reports its usage, and is priced" begin
+        # Google's compatibility page streams with stream_options={'include_usage': True}, which UniLM sends
+        # when stream_options is unset: without it the stream carries no usage and is costed at zero.
+        chat = Chat(service=GEMINIOpenAIServiceEndpoint, model="gemini-3.8-flash", stream=true,
+            reasoning_effort="low", max_completion_tokens=1024,
+            messages=[Message(role=UniLM.RoleUser, content="Reply with exactly: hello")])
+        r = fetch(chatrequest!(chat))
+        @test r isa LLMSuccess
+        u = r.usage
+        @info "Gemini compat stream usage" u cost = estimated_cost(r)
+        @test u isa TokenUsage && u.prompt_tokens > 0 && u.completion_tokens > 0
+        # gemini-3.8-flash at the standard tier, per 1M tokens: $0.75 input, $0.075 cache hit, $3.75 output.
+        @test estimated_cost(r) ≈ ((u.prompt_tokens - u.cached_tokens) * 0.75 + u.cached_tokens * 0.075 +
+                                   u.completion_tokens * 3.75) / 1_000_000
+        @test cumulative_cost(chat) == estimated_cost(r) > 0
+    end
+
     capital_schema = Dict("type" => "object",
         "properties" => Dict("city" => Dict("type" => "string"), "country" => Dict("type" => "string")),
         "required" => ["city", "country"], "additionalProperties" => false)

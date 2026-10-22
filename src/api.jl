@@ -1477,10 +1477,11 @@ function JSON.lower(chat::Chat)
         v = getfield(chat, f)
         !isnothing(v) && (d[f] = v)
     end
-    # OpenAI and DeepSeek report a stream's token usage when asked through
-    # `stream_options.include_usage` (both document it); ask for the caller who set
-    # no stream_options, so a streamed turn is costed like a non-streamed one. Not
-    # for other OpenAI-compatible servers, which may reject the field.
+    # OpenAI, DeepSeek and Gemini's OpenAI-compatible endpoint report a stream's token usage
+    # when asked through `stream_options.include_usage` (each documents it; Google's
+    # compatibility page streams with `stream_options={'include_usage': True}`); ask for the
+    # caller who set no stream_options, so a streamed turn is costed like a non-streamed one.
+    # Not for other OpenAI-compatible servers, which may reject the field.
     chat.stream === true && isnothing(chat.stream_options) && _asks_stream_usage(chat.service) &&
         (d[:stream_options] = Dict(:include_usage => true))
     return d
@@ -1488,6 +1489,7 @@ end
 
 _asks_stream_usage(::Type{OPENAIServiceEndpoint}) = true
 _asks_stream_usage(::DeepSeekEndpoint) = true
+_asks_stream_usage(::Type{GEMINIOpenAIServiceEndpoint}) = true
 _asks_stream_usage(_) = false
 
 # The conversation as an endpoint's Chat Completions wire carries it. OpenAI keeps the

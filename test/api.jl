@@ -1437,14 +1437,19 @@ struct _NoEmbeddingDefault <: UniLM.ServiceEndpoint end
     end
 end
 
-@testset "streamed usage is requested from OpenAI and DeepSeek" begin
-    # Both stream token usage only when asked (`stream_options.include_usage`), so an
-    # unasked stream was costed at zero.
+@testset "streamed usage is requested from OpenAI, DeepSeek and Gemini's compatible endpoint" begin
+    # Each streams token usage only when asked (`stream_options.include_usage`; Google's compatibility
+    # page streams with it), so an unasked stream was costed at zero.
     sys_user = [Message(Val(:system), "s"), Message(Val(:user), "u")]
     auto = Dict(:include_usage => true)
     @test JSON.lower(Chat(stream=true, messages=sys_user))[:stream_options] == auto
     @test JSON.lower(Chat(service=DeepSeekEndpoint(api_key="k"), stream=true,
                           messages=sys_user))[:stream_options] == auto
+    compat = Chat(service=GEMINIOpenAIServiceEndpoint, model="gemini-3.8-flash", stream=true, messages=sys_user)
+    @test JSON.parse(UniLM.encode_request(GEMINIOpenAIServiceEndpoint, compat))["stream_options"] ==
+          Dict("include_usage" => true)
+    @test !haskey(JSON.parse(UniLM.encode_request(GEMINIOpenAIServiceEndpoint,
+        Chat(service=GEMINIOpenAIServiceEndpoint, model="gemini-3.8-flash", messages=sys_user))), "stream_options")
     # The caller's own choice stands; nothing is asked of a non-stream or an unknown server.
     own = Dict("include_usage" => false)
     @test JSON.lower(Chat(stream=true, stream_options=own))[:stream_options] === own

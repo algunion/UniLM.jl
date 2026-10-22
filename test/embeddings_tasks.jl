@@ -265,3 +265,82 @@ end
         close(server)
     end
 end
+
+const _ET_G = GEMINIOpenAIServiceEndpoint
+
+@testset "Gemini Embedding 2 reads EmbeddingGemma's task prompts, and needs none" begin
+    # ai.google.dev/gemini-api/docs/embeddings#task-types-embeddings-2: for text, Google recommends
+    # the task instruction in the prompt, in the same form as EmbeddingGemma's.
+    @test Embeddings("q"; service=_ET_G).model == "gemini-embedding-2"          # the default
+    for (task, prefix) in pairs(_ET_PROMPTS)
+        @test _et_body(Embeddings("How long do refunds take?"; service=_ET_G, task))["input"] ==
+              prefix * "How long do refunds take?"
+    end
+    docs = Embeddings([EmbeddingInput("Refunds take 5 days."; title="Refund policy"), "Shipping is free."];
+                      service=_ET_G, model="gemini-embedding-2", task=:document)
+    @test _et_body(docs)["input"] == ["title: Refund policy | text: Refunds take 5 days.",
+                                      "title: none | text: Shipping is free."]
+    @test _et_body(Embeddings(["alpha", "beta"]; service=_ET_G))["input"] == ["alpha", "beta"]   # no task: as is
+    @test _et_body(Embeddings("alpha"; service=_ET_G, task=:none))["input"] == "alpha"
+    @test Embeddings("q"; service=_ET_G, dimensions=768).dimensions == 768                    # no EmbeddingGemma sizes
+    e = _et_err(() -> Embeddings(EmbeddingInput("t"; title="T"); service=_ET_G, task=:search_query))
+    @test e isa ArgumentError && occursin("gemini-embedding-2", e.msg) && occursin("task = :document", e.msg)
+    # Only that id: gemini-embedding-001 takes a task type of its own, not a prompt UniLM writes.
+    for model in ("gemini-embedding-001", "gemini-embedding-2-preview")
+        e = _et_err(() -> Embeddings("q"; service=_ET_G, model, task=:search_query))
+        @test e isa ArgumentError && occursin(repr(model), e.msg) && occursin("and gemini-embedding-2", e.msg)
+    end
+end
+
+@testset "an embeddings reply fills by index, or by position when no row carries one" begin
+    # Gemini's OpenAI-compatible endpoint answers rows without an `index`, in input order
+    # (observed 2026-10-22 for gemini-embedding-001 and gemini-embedding-2); OpenAI numbers them.
+    rows(vs...) = Any[Dict{String,Any}("embedding" => v) for v in vs]
+    numbered(ps...) = Any[Dict{String,Any}("index" => i, "embedding" => v) for (i, v) in ps]
+    emb() = Embeddings(["alpha", "beta"]; service=_ET_G)
+    e = emb(); UniLM.update!(e, rows([0.1, 0.2], [0.3, 0.4]))
+    @test e.embeddings == [[0.1, 0.2], [0.3, 0.4]]
+    e = emb(); UniLM.update!(e, numbered(1 => [0.3, 0.4], 0 => [0.1, 0.2]))           # any row order
+    @test e.embeddings == [[0.1, 0.2], [0.3, 0.4]]
+    # A reply numbering some rows and not others, or holding a row too few or too many, is refused,
+    # and the buffers keep their zeros.
+    mixed = Any[Dict{String,Any}("index" => 1, "embedding" => [0.3, 0.4]), Dict{String,Any}("embedding" => [0.1, 0.2])]
+    for (bad, says) in ((mixed, "numbers every row or none (1 of 2 rows carry an index)"),
+                        (rows([0.1, 0.2]), "1 rows for 2 inputs"),
+                        (rows([0.1, 0.2], [0.3, 0.4], [0.5, 0.6]), "3 rows for 2 inputs"))
+        e = emb()
+        err = _et_err(() -> UniLM.update!(e, bad))
+        @test err isa ArgumentError && occursin(says, err.msg)
+        @test e.embeddings == [zeros(1536), zeros(1536)]
+    end
+    # A refused positional row is named by its place in the reply (0-based, like an index).
+    err = _et_err(() -> UniLM.update!(emb(), rows([0.1, 0.2], [0.0, 0.0])))
+    @test err isa ArgumentError && occursin("row 1", err.msg) && occursin("all-zero", err.msg)
+end
+
+using Sockets
+
+@testset "driver: index-less rows fill by position; a mixed reply is an EmbeddingCallError carrying the refusal" begin
+    reply = Ref("")
+    tcp = Sockets.listen(Sockets.localhost, 0)
+    port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+    server = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        HTTP.Response(200, ["Content-Type" => "application/json"], reply[])
+    end
+    try
+        ep = GenericOpenAIEndpoint("http://127.0.0.1:$port", "")
+        send() = embeddingrequest!(Embeddings(["alpha", "beta"]; service=ep, model="gemini-embedding-2");
+                                   config=RequestConfig(max_attempts=1))
+        row(v) = Dict("object" => "embedding", "embedding" => v)
+        reply[] = JSON.json(Dict("object" => "list", "model" => "gemini-embedding-2",
+                                 "data" => [row([0.1, 0.2]), row([0.3, 0.4])]))
+        r = send()
+        @test r isa EmbeddingSuccess && embedding_vectors(r) == [[0.1, 0.2], [0.3, 0.4]]
+        reply[] = JSON.json(Dict("object" => "list", "model" => "gemini-embedding-2",
+                                 "data" => [merge(row([0.1, 0.2]), Dict("index" => 0)), row([0.3, 0.4])]))
+        r = send()
+        @test r isa EmbeddingCallError && r.cause isa ArgumentError && occursin("every row or none", r.error)
+    finally
+        close(server)
+    end
+end

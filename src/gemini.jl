@@ -2,7 +2,7 @@
 # Google Gemini native generateContent API
 # Plugs into the wire-translation seam (encode_request / decode_response /
 # handle_sse_event! from sse.jl) so all chat orchestration is shared.
-# https://ai.google.dev/gemini-api/docs/latest-model
+# https://ai.google.dev/api/generate-content
 # ============================================================================
 
 # ─── Routing & auth ──────────────────────────────────────────────────────────
@@ -34,37 +34,75 @@ provider_capabilities(::Type{GEMINIServiceEndpoint}) =
 
 default_model(::Type{GEMINIServiceEndpoint}) = "gemini-3.8-flash"
 
+# The models that honour temperature and top_p, by exact id. From Gemini 3.6 Flash and 3.5
+# Flash-Lite on, "the API ignores these parameters", for those models and all future releases
+# (https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.6#api-changes-and-parameter-updates;
+# gemini-4-argon and gemini-3.8-flash answered such requests with HTTP 200 on 2026-10-22), so
+# every other id is refused. These are the text models of the 2026-10-22 model listing released
+# before Gemini 3.6 Flash (2026-07-21) and still served; an alias is not one, since it moves to
+# newer models. The same models still continue a prefilled model turn.
+const _GEMINI_SAMPLING_MODELS = (
+    "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools",
+    "gemini-3.1-flash-lite",                                   # shuts down 2027-05-07
+    "gemini-3-flash-preview",
+    "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+    "gemma-4-31b-it", "gemma-4-26b-a4b-it")
+
 function _gemini_validate_sampling(model::String, temperature, top_p)
-    if _model_family(model, "gemini-3.8-flash") &&
-       (!isnothing(temperature) || !isnothing(top_p))
-        throw(ArgumentError("$model does not support temperature or top_p; use reasoning effort instead"))
-    end
+    set = _set_fields("temperature" => !isnothing(temperature), "top_p" => !isnothing(top_p))
+    isempty(set) || model in _GEMINI_SAMPLING_MODELS || throw(ArgumentError(
+        "Gemini ignores $(join(set, " and ")) on Gemini 3.6 Flash, 3.5 Flash-Lite and every later model " *
+        "(https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.6), so UniLM sends sampling parameters " *
+        "only to $(join(_GEMINI_SAMPLING_MODELS, ", ")): unset $(join(set, " and ")) for $model"))
     nothing
 end
 
-# Thinking levels per model family, transcribed from the "Controlling thinking" table
-# (https://ai.google.dev/gemini-api/docs/thinking, 2026-09-22).
-const _GEMINI_THINKING_LEVELS = (
-    ("gemini-3.8-flash",            ("low", "medium", "high")),
-    ("gemini-3.7-flash",            ("low", "medium", "high")),
-    ("gemini-3.6-flash",            ("minimal", "low", "medium", "high")),
-    ("gemini-3.5-flash-lite",       ("minimal", "low", "medium", "high")),
-    ("gemini-3.1-pro-preview",      ("low", "medium", "high")),
-    ("gemini-3.1-flash-lite-image", ("minimal", "high")),
-    ("gemini-3-flash-preview",      ("minimal", "low", "medium", "high")),
-    ("gemini-3-pro-preview",        ("low", "high")),
-    ("gemini-3.5-flash",            ("minimal", "low", "medium", "high")),
-    ("gemini-2.5-pro",              ("low", "medium", "high")),
-    ("gemini-2.5-flash",            ("low", "medium", "high")),
-    ("gemini-2.5-flash-lite",       ("low", "medium", "high")),
-)
-
-# A model resolves to its LONGEST matching family (gemini-3.5-flash-lite is also in
-# the gemini-3.5-flash family); `nothing` for an unlisted family.
-function _gemini_thinking_levels(model::AbstractString, table=_GEMINI_THINKING_LEVELS)
-    rows = filter(row -> _model_family(model, first(row)), table)
-    isempty(rows) ? nothing : last(argmax(row -> length(first(row)), rows))
+# From Gemini 3.6 Flash and 3.5 Flash-Lite on, a request whose last non-empty turn is the model's
+# is an HTTP 400 "Requests ending with a model turn are not supported."
+# (https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.6#api-changes-and-parameter-updates;
+# observed on gemini-3.8-flash, 2026-10-22). The earlier models continue a prefilled turn.
+function _gemini_validate_last_turn(model::String, contents::Vector{Dict{Symbol,Any}})::Nothing
+    isempty(contents) || last(contents)[:role] != "model" || model in _GEMINI_SAMPLING_MODELS ||
+        throw(ArgumentError("$model answers HTTP 400 to a request that ends with a model turn: Gemini " *
+            "3.6 Flash, 3.5 Flash-Lite and every later model do not continue a prefilled answer. End the " *
+            "conversation with a user message; to shape the answer, use a system message or response_format"))
+    nothing
 end
+
+# Gemini caches repeated prompt prefixes implicitly, with nothing to configure
+# (https://ai.google.dev/gemini-api/docs/caching), so a cache option has nowhere to go.
+_gemini_refuse_cache_options(::Nothing) = nothing
+_gemini_refuse_cache_options(::PromptCacheOptions) = throw(ArgumentError(
+    "Gemini takes no prompt_cache_options: it caches repeated prompt prefixes implicitly, with no mode " *
+    "or ttl to set (https://ai.google.dev/gemini-api/docs/caching); unset prompt_cache_options"))
+
+# Thinking levels per model, by exact id, transcribed from the "Controlling thinking" table
+# (https://ai.google.dev/gemini-api/docs/thinking, 2026-10-22). Google's ids carry no dated
+# snapshots, and distinct models share prefixes (gemini-3.8-flash-tts, gemini-3.8-live), so a
+# row never extends to a longer id: an unlisted id gets the generic check and the server's
+# answer. The -latest aliases carry the levels of the models that served them on 2026-10-22;
+# gemini-3.7-flash and gemini-3.5-flash, deprecated on 2026-10-08, those of the models Google
+# routes them to.
+const _GEMINI_THINKING_LEVELS = Dict{String,Vector{String}}(
+    "gemini-4-argon"               => ["low", "medium", "high"],
+    "gemini-3.8-flash"             => ["low", "medium", "high"],
+    "gemini-3.6-flash"             => ["minimal", "low", "medium", "high"],
+    "gemini-3.5-flash-lite"        => ["minimal", "low", "medium", "high"],
+    "gemini-3.1-pro-preview"       => ["low", "medium", "high"],
+    "gemini-3.1-flash-lite-image"  => ["minimal", "high"],
+    "gemini-3-flash-preview"       => ["minimal", "low", "medium", "high"],
+    "gemini-2.5-pro"               => ["low", "medium", "high"],
+    "gemini-2.5-flash"             => ["low", "medium", "high"],
+    "gemini-2.5-flash-lite"        => ["low", "medium", "high"],
+    "gemini-robotics-er-2-preview" => ["minimal", "low", "medium", "high"],
+    "gemini-pro-latest"            => ["low", "medium", "high"],               # served by gemini-3.1-pro-preview
+    "gemini-flash-latest"          => ["low", "medium", "high"],               # served by gemini-3.8-flash
+    "gemini-flash-lite-latest"     => ["minimal", "low", "medium", "high"],    # served by gemini-3.5-flash-lite
+    "gemini-3.7-flash"             => ["low", "medium", "high"],               # routed to gemini-3.8-flash
+    "gemini-3.5-flash"             => ["minimal", "low", "medium", "high"])    # routed to gemini-3.6-flash
+
+_gemini_thinking_levels(model::AbstractString)::Union{Vector{String},Nothing} =
+    get(_GEMINI_THINKING_LEVELS, model, nothing)
 
 function _gemini_thinking_level(model::String, effort::String; native::Bool=false)::String
     effort in ("minimal", "low", "medium", "high") || throw(ArgumentError(
@@ -88,6 +126,7 @@ const _GEMINI_CHAT_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Chat), _GEMINI_CHA
 function _gemini_validate_chat(chat::Chat)
     _gemini_validate_sampling(chat.model, chat.temperature, chat.top_p)
     isnothing(chat.n) || chat.n == 1 || throw(ArgumentError("Native Gemini Chat returns one candidate; n must be 1"))
+    _gemini_refuse_cache_options(chat.prompt_cache_options)
     fields = Symbol[f for f in _GEMINI_CHAT_UNMAPPED_FIELDS if !isnothing(getfield(chat, f))]
     isempty(fields) || throw(ArgumentError(
         "Native Gemini Chat does not support field(s) $(join(fields, ", ")); use a supported option or GEMINIOpenAIServiceEndpoint"))
@@ -115,6 +154,7 @@ function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
     _reject_attachments(chat, "Gemini generateContent")
     body = Dict{Symbol,Any}()
     sysinstr, contents = _gemini_contents(chat.messages)
+    _gemini_validate_last_turn(chat.model, contents)
     isnothing(sysinstr) || (body[:systemInstruction] = Dict(:parts => [Dict(:text => sysinstr)]))
     body[:contents] = contents
     isnothing(chat.tools) ||
@@ -286,14 +326,15 @@ _gemini_finish_reason(fr::AbstractString, has_calls::Bool)::String =
     fr == "MAX_TOKENS"           ? "length" :
     fr in _GEMINI_FILTER_REASONS ? CONTENT_FILTER : lowercase(fr)
 
-# Gemini usageMetadata → neutral TokenUsage. Assumptions (verify vs live docs):
-# promptTokenCount INCLUDES cachedContentTokenCount (cached is a subset), so we
-# do NOT add; candidatesTokenCount EXCLUDES thoughtsTokenCount, and thoughts bill
-# at the output rate → completion = candidates + thoughts.
+# Gemini usageMetadata → neutral TokenUsage (UsageMetadata, https://ai.google.dev/api/generate-content):
+# promptTokenCount already counts a cached prefix (cachedContentTokenCount is a subset of it), and
+# totalTokenCount is prompt + tool-use prompt + thoughts + candidates. The tool-use prompt
+# (toolUsePromptTokenCount) is input the model read, so it is billed as prompt; thoughts bill at
+# the output rate → completion = candidates + thoughts.
 function _gemini_usage(u)::Union{TokenUsage,Nothing}
     u isa AbstractDict || return nothing
     _i(x) = x isa Integer ? Int(x) : 0
-    prompt   = _i(get(u, "promptTokenCount", 0))
+    prompt   = _i(get(u, "promptTokenCount", 0)) + _i(get(u, "toolUsePromptTokenCount", 0))
     cand     = _i(get(u, "candidatesTokenCount", 0))
     thoughts = _i(get(u, "thoughtsTokenCount", 0))
     cached   = _i(get(u, "cachedContentTokenCount", 0))
@@ -302,6 +343,13 @@ function _gemini_usage(u)::Union{TokenUsage,Nothing}
         total_tokens = total, cached_tokens = cached, reasoning_tokens = thoughts)
 end
 
+# The refusal of a filtered candidate: its finishMessage, Google's own account of why generation
+# stopped, else the filter named.
+_gemini_refusal(cand)::String = something(cand isa AbstractDict ? _wire_string(cand, "finishMessage") : nothing,
+                                          "Model response blocked by safety filter.")
+
+# The reply names the model that served it in modelVersion: a deprecated id Google routes to its
+# successor answers as that successor, which is the model priced.
 function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
     data = JSON.parse(resp.body; dicttype=Dict{String,Any})
     cands = get(data, "candidates", [])
@@ -342,8 +390,7 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
         Message(role=RoleAssistant, content=(isempty(txt) ? nothing : txt),
                 tool_calls=tool_calls, finish_reason=finish, provider_content=pc)
     elseif finish == CONTENT_FILTER && isempty(txt)
-        Message(role=RoleAssistant, refusal_message="Model response blocked by safety filter.",
-                finish_reason=finish, provider_content=pc)
+        Message(role=RoleAssistant, refusal_message=_gemini_refusal(cand), finish_reason=finish, provider_content=pc)
     else
         # A well-formed candidate that yields no text is a real, legitimate turn:
         # thinking models routinely spend the whole completion budget on thought
@@ -352,7 +399,7 @@ function decode_response(::Type{GEMINIServiceEndpoint}, resp::HTTP.Response)
         # content nobody generated into the reply and into the next request.
         Message(role=RoleAssistant, content=txt, finish_reason=finish, provider_content=pc)
     end
-    (; message=msg, usage)
+    (; message=msg, usage, model=_wire_string(data, "modelVersion"))
 end
 
 # ─── Streaming event handler for the shared SSE machine (src/sse.jl) —
@@ -376,6 +423,9 @@ function handle_sse_event!(::Type{GEMINIServiceEndpoint}, event::AbstractString,
         state.error = Dict{String,Any}("message" => "Gemini prompt blocked", "promptFeedback" => feedback)
         return :error
     end
+    # Every chunk names the serving model, as the unstreamed reply does.
+    model = _wire_string(ev, "modelVersion")
+    isnothing(model) || (state.model = model)
     cands = get(ev, "candidates", nothing)
     if cands isa AbstractVector
         for cand in cands
@@ -414,11 +464,25 @@ function handle_sse_event!(::Type{GEMINIServiceEndpoint}, event::AbstractString,
             # after the filtered one (trailing usage, a repeated candidate) add nothing.
             if state.finish_reason == CONTENT_FILTER && position(state.content) == 0 &&
                position(state.refusal) == 0
-                print(state.refusal, "Model response blocked by safety filter.")
+                print(state.refusal, _gemini_refusal(cand))
             end
         end
     end
     u = get(ev, "usageMetadata", nothing)
     u isa AbstractDict && (state.usage = _gemini_usage(u))
     :continue
+end
+
+# ─── Cost ─────────────────────────────────────────────────────────────────────
+
+# What Gemini bills a call, on the native and the OpenAI-compatible endpoint alike
+# (https://ai.google.dev/gemini-api/docs/pricing): prompts are cached implicitly, so a cache hit
+# bills at the context-caching rate and every other prompt token, a tool-use prompt included, at
+# the input rate, with no premium for writing the cache; output, thinking included, bills at the
+# output rate.
+function _billed_cost(::Union{Type{GEMINIServiceEndpoint},GEMINIServiceEndpoint,
+                              Type{GEMINIOpenAIServiceEndpoint},GEMINIOpenAIServiceEndpoint},
+                      ::String, u::TokenUsage, rates::PriceRow)::Float64
+    cached = min(u.cached_tokens, u.prompt_tokens)
+    (u.prompt_tokens - cached) * rates.input + cached * rates.cached_input + u.completion_tokens * rates.output
 end

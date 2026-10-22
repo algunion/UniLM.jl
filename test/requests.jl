@@ -30,7 +30,7 @@
         # src/requests.jl:32 — Gemini embeddings route to GEMINI_OPENAI_BASE * "/embeddings".
         # Note: Gemini's OpenAI-compat base already embeds /v1beta/openai, so it does NOT use
         # the EMBEDDINGS_PATH ("/v1/embeddings") constant — assert the exact composed string.
-        emb = UniLM.Embeddings("test"; service=UniLM.GEMINIOpenAIServiceEndpoint, model="gemini-embedding-001")
+        emb = UniLM.Embeddings("test"; service=UniLM.GEMINIOpenAIServiceEndpoint, model="gemini-embedding-2")
         @test UniLM.get_url(UniLM.GEMINIOpenAIServiceEndpoint, emb) == UniLM.GEMINI_OPENAI_BASE * "/embeddings"
         @test UniLM.get_url(UniLM.GEMINIOpenAIServiceEndpoint, emb) == "https://generativelanguage.googleapis.com/v1beta/openai/embeddings"
     end

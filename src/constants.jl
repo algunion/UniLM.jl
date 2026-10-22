@@ -11,7 +11,7 @@ space is delivered as data instead of silently re-shaping the request target
 parameter). Only the interpolated value is encoded — the template's own
 separators stay literal.
 
-Typical identifiers (`file-abc123`, `gemini-2.0-flash`) draw from that safe set,
+Typical identifiers (`file-abc123`, `gemini-3.8-flash`) draw from that safe set,
 so encoding them is a byte-for-byte no-op. The set is one character narrower
 than RFC 3986's unreserved set (`~` is encoded too); that is over-encoding, not
 a change in meaning, since a server decodes `%7E` back to `~`.

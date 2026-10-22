@@ -82,16 +82,18 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "deepseek-v4-flash"            => _price(0.30, 0.006, 1.20),
     "deepseek-v4-flash-vision-exp" => _price(0.30, 0.006, 1.20),
     "deepseek-v4-pro"              => _price(1.32, 0.044, 3.96),
-    # Google Gemini (native + OpenAI-compat shim; live-verified 2026-07-07)
-    # Gemini 3.8/3.7/3.6 Flash: introductory rates through 2026-12-31, doubled
-    # on 2027-01-01 (Google pricing page, 2026-09-07; the 3.6 Flash, 3.5 Flash-Lite
-    # and Embedding 2 rows 2026-09-22); output includes thinking.
+    # Google Gemini, native and OpenAI-compatible (https://ai.google.dev/gemini-api/docs/pricing,
+    # 2026-10-22): standard tier, output includes thinking. Introductory rates double on
+    # 2026-12-01 for Gemini 4 Argon and on 2027-01-01 for Gemini 3.8 and 3.6 Flash. Google routes
+    # the deprecated gemini-3.7-flash to gemini-3.8-flash and gemini-3.5-flash to gemini-3.6-flash,
+    # so those ids carry the served model's rates.
+    "gemini-4-argon"        => _price(2.0,  0.10,  10.0),
     "gemini-3.8-flash"      => _price(0.75, 0.075, 3.75),
     "gemini-3.7-flash"      => _price(0.75, 0.075, 3.75),
     "gemini-3.6-flash"      => _price(0.75, 0.075, 3.75),
-    "gemini-3.5-flash"      => _price(1.5,  0.15,  9.0),
+    "gemini-3.5-flash"      => _price(0.75, 0.075, 3.75),
     "gemini-3.5-flash-lite" => _price(0.30, 0.03,  2.50),
-    "gemini-3.1-flash-lite" => _price(0.25, 0.025, 1.5),
+    "gemini-3.1-flash-lite" => _price(0.25, 0.025, 1.5),   # shuts down 2027-05-07
     "gemini-2.5-flash"      => _price(0.3,  0.03,  2.5),
     "gemini-2.5-flash-lite" => _price(0.1,  0.01,  0.4),
     "gemini-embedding-2"    => _price(0.20, 0.20,  0.0),   # text input only

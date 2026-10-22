@@ -144,7 +144,7 @@ end
 
     # default_embedding_model — Type dispatch for OPENAI/GEMINI (62/63), instance for DeepSeek (64→nothing)
     @test UniLM.default_embedding_model(OPENAIServiceEndpoint) == "text-embedding-3-small"
-    @test UniLM.default_embedding_model(GEMINIOpenAIServiceEndpoint) == "gemini-embedding-001"
+    @test UniLM.default_embedding_model(GEMINIOpenAIServiceEndpoint) == "gemini-embedding-2"
     @test UniLM.default_embedding_model(ds) === nothing
 
     # default_image_model — OPENAI Type method (line 69)

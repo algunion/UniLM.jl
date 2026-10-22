@@ -28,7 +28,8 @@ using Test, HTTP, JSON, UniLM
     # A response_format type with no generateContent counterpart still fails loud.
     @test_throws ArgumentError UniLM.encode_request(GEMINIServiceEndpoint,
         Chat(service=GEMINIServiceEndpoint, response_format=ResponseFormat(type="xml")))
-    legacy = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash", temperature=0.5)
+    # gemini-2.5-flash predates Gemini 3.6 Flash, from which Gemini ignores sampling parameters.
+    legacy = Chat(service=GEMINIServiceEndpoint, model="gemini-2.5-flash", temperature=0.5)
     @test JSON.parse(UniLM.encode_request(legacy.service, legacy))["generationConfig"]["temperature"] == 0.5
 end
 

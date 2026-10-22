@@ -27,8 +27,8 @@ Base.iterate(t::_PricingTable, (snapshot, i)=(@lock(t.rows, collect(t.rows[])), 
 # `collect` must not preallocate from it.
 Base.IteratorSize(::Type{_PricingTable}) = Base.SizeUnknown()
 
-"""Default per-token pricing; current OpenAI, Gemini, and TypeSafe rows verified on 2026-09-22,
-Anthropic and DeepSeek rows on 2026-09-24 (prices drift — re-verify before relying on them).
+"""Default per-token pricing; OpenAI, Anthropic and Gemini rows verified on 2026-10-22, TypeSafe
+rows on 2026-09-22, DeepSeek rows on 2026-09-24 (prices drift — re-verify before relying on them).
 Cached input is billed at the discounted `cached_input` rate; reasoning tokens are already
 counted within output tokens. The rows are standard short-context text rates. Where UniLM
 models a provider's surcharges — cache-write premiums, long-context tiers, service-tier,

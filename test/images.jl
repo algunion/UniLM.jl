@@ -227,21 +227,19 @@ end
     end
 end
 
-@testset "generate_image error handling" begin
-    @testset "generate_image(::ImageGeneration) with invalid API key" begin
-        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
-            ig = ImageGeneration(prompt="test")
-            result = generate_image(ig)
-            @test result isa ImageCallError || result isa ImageFailure
-        end
+@testset "generate_image: a rejected key is an ImageFailure, from either form" begin
+    rejected = "{\"error\":{\"message\":\"Incorrect API key provided.\",\"type\":\"invalid_request_error\"," *
+               "\"param\":null,\"code\":\"invalid_api_key\"}}"
+    one = UniLM.RequestConfig(max_attempts=1)
+    results, seen = _with_scripted((_, _) -> _json(401, rejected)) do
+        (generate_image(ImageGeneration(prompt="test", model="m", service=URLProbe); config=one),
+         generate_image("test prompt"; model="m", service=URLProbe, size="1024x1024", config=one))
     end
-
-    @testset "generate_image(prompt; kwargs...) convenience" begin
-        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
-            result = generate_image("test prompt", size="1024x1024")
-            @test result isa ImageCallError || result isa ImageFailure
-        end
-    end
+    @test all(r -> r isa ImageFailure && r.status == 401 && r.response == rejected, results)
+    @test [(s.method, s.target) for s in seen] == fill(("POST", "/v1/images/generations"), 2)
+    @test [JSON.parse(s.body; dicttype=Dict{String,Any}) for s in seen] ==
+          [Dict{String,Any}("model" => "m", "prompt" => "test"),
+           Dict{String,Any}("model" => "m", "prompt" => "test prompt", "size" => "1024x1024")]
 end
 
 @testset "Constants - images path" begin

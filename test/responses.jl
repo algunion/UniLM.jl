@@ -838,65 +838,46 @@ end
     end
 end
 
-@testset "respond() error handling" begin
-    @testset "respond(::Respond) with invalid API key" begin
-        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
-            r = Respond(input="Hello")
-            result = respond(r)
-            @test result isa ResponseCallError || result isa ResponseFailure
-        end
+@testset "every Responses verb returns a rejected key as a ResponseFailure" begin
+    # OpenAI's answer to a key it does not know, from a local server: each form returns its status and
+    # body, after one request to its own route.
+    rejected = "{\"error\":{\"message\":\"Incorrect API key provided.\",\"type\":\"invalid_request_error\"," *
+               "\"param\":null,\"code\":\"invalid_api_key\"}}"
+    seen = Tuple{String,String,String}[]
+    guard = ReentrantLock()
+    server = HTTP.serve!("127.0.0.1", 0; verbose=false) do req
+        body = applicable(copy, req.body) ? String(copy(req.body)) : ""
+        @lock guard push!(seen, (String(req.method), String(req.target), body))
+        HTTP.Response(401, ["Content-Type" => "application/json"], rejected)
     end
-
-    @testset "respond(input; kwargs...) convenience method" begin
-        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
-            result = respond("Hello", model="gpt-5.2")
-            @test result isa ResponseCallError || result isa ResponseFailure
-        end
-    end
-
-    @testset "respond(callback, input; kwargs...) do-block form" begin
-        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
-            result = respond("Hello") do chunk, close
-                # callback - won't be called because request fails
-            end
-            # With an invalid key, the streaming request will either
-            # return an error or a Task that fails
-            @test result isa ResponseCallError || result isa Task
-        end
-    end
-end
-
-@testset "get_response error handling" begin
-    @testset "with invalid API key" begin
-        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
-            result = get_response("resp_nonexistent")
-            @test result isa ResponseCallError || result isa ResponseFailure
-        end
-    end
-end
-
-@testset "delete_response error handling" begin
-    @testset "with invalid API key" begin
-        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
-            result = delete_response("resp_nonexistent")
-            @test result isa ResponseCallError || result isa ResponseFailure
-        end
-    end
-end
-
-@testset "list_input_items error handling" begin
-    @testset "with invalid API key" begin
-        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
-            result = list_input_items("resp_nonexistent")
-            @test result isa ResponseCallError || result isa ResponseFailure
-        end
-    end
-
-    @testset "with after parameter" begin
-        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
-            result = list_input_items("resp_nonexistent"; limit=10, order="asc", after="item_abc")
-            @test result isa ResponseCallError || result isa ResponseFailure
-        end
+    try
+        ep = GenericOpenAIEndpoint("http://127.0.0.1:$(HTTP.port(server))", "sk-invalid-test-key")
+        streamed = respond("Hello"; service=ep, model="m") do chunk, close end   # the do-block form streams
+        results = (fetch(streamed),
+                   respond(Respond(service=ep, model="m", input="Hello")),
+                   respond("Hello"; service=ep, model="gpt-5.2", background=true, service_tier="flex",
+                           include=["file_search_call.results"]),
+                   get_response("resp_nonexistent"; service=ep),
+                   delete_response("resp_nonexistent"; service=ep),
+                   list_input_items("resp_nonexistent"; service=ep, limit=10, order="asc", after="item_abc"),
+                   cancel_response("resp_nonexistent"; service=ep),
+                   compact_response(model="gpt-5.2", input="test", service=ep),
+                   count_input_tokens(model="gpt-5.2", input="test", instructions="Be helpful",
+                                      tools=[function_tool("fn")], service=ep))
+        @test all(r -> r isa ResponseFailure && r.status == 401 && r.response == rejected, results)
+        @test [(method, target) for (method, target, _) in seen] ==
+              [fill(("POST", "/v1/responses"), 3)..., ("GET", "/v1/responses/resp_nonexistent"),
+               ("DELETE", "/v1/responses/resp_nonexistent"),
+               ("GET", "/v1/responses/resp_nonexistent/input_items?limit=10&order=asc&after=item_abc"),
+               ("POST", "/v1/responses/resp_nonexistent/cancel"), ("POST", "/v1/responses/compact"),
+               ("POST", "/v1/responses/input_tokens")]
+        sent(i) = JSON.parse(seen[i][3]; dicttype=Dict{String,Any})
+        @test sent(3) == Dict{String,Any}("model" => "gpt-5.2", "input" => "Hello", "background" => true,
+                                          "service_tier" => "flex", "include" => ["file_search_call.results"])
+        @test sent(9) == Dict{String,Any}("model" => "gpt-5.2", "input" => "test", "instructions" => "Be helpful",
+                                          "tools" => JSON.parse(JSON.json([function_tool("fn")])))
+    finally
+        close(server)
     end
 end
 
@@ -1186,45 +1167,6 @@ end
     @testset "both generate_summary and summary" begin
         r = Reasoning(effort="low", generate_summary="auto", summary="concise")
         @test_throws ArgumentError JSON.lower(r)
-    end
-end
-
-@testset "cancel_response error handling" begin
-    @testset "with invalid API key" begin
-        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
-            result = cancel_response("resp_nonexistent")
-            @test result isa ResponseCallError || result isa ResponseFailure
-        end
-    end
-end
-
-@testset "compact_response error handling" begin
-    @testset "with invalid API key" begin
-        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
-            result = compact_response(model="gpt-5.2", input="test")
-            @test result isa ResponseCallError || result isa ResponseFailure
-        end
-    end
-end
-
-@testset "count_input_tokens error handling" begin
-    @testset "with invalid API key" begin
-        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
-            result = count_input_tokens(model="gpt-5.2", input="test")
-            @test result isa ResponseCallError || result isa ResponseFailure
-        end
-    end
-
-    @testset "with instructions and tools" begin
-        withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
-            result = count_input_tokens(
-                model="gpt-5.2",
-                input="test",
-                instructions="Be helpful",
-                tools=[function_tool("fn")]
-            )
-            @test result isa ResponseCallError || result isa ResponseFailure
-        end
     end
 end
 
@@ -1735,31 +1677,6 @@ end
     @test occursin("Ultrafast is served by `gpt-6-astra` and `gpt-6.1-sol` alone", doc) &&
           occursin("on every other model, an unknown one included", doc)
     @test !occursin("Ultrafast, `prompt_cache_retention`", doc)
-end
-
-@testset "Respond convenience with new kwargs" begin
-    withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
-        result = respond("Hello",
-            background=true,
-            service_tier="flex",
-            include=["file_search_call.results"]
-        )
-        @test result isa ResponseCallError || result isa ResponseFailure
-    end
-end
-
-@testset "compact_response with default model" begin
-    withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
-        result = compact_response(input="test")
-        @test result isa ResponseCallError || result isa ResponseFailure
-    end
-end
-
-@testset "count_input_tokens with default model" begin
-    withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
-        result = count_input_tokens(input="test")
-        @test result isa ResponseCallError || result isa ResponseFailure
-    end
 end
 
 @testset "compact_response and count_input_tokens send OpenAI's default model when none is named" begin

@@ -342,12 +342,13 @@
 - **Audio tokens are priced at an audio rate, or estimated at `0.0`.** `estimated_cost`
   bills counted audio tokens only at a rate stated for audio: OpenAI's audio-token rates
   for `gpt-audio-1.5`, and for Gemini audio input on native Chat (streamed and not) and
-  Interactions the rate Google's pricing page states, at the tier's multiple — the model's
-  own audio price on 3.1 Flash-Lite (\$0.50 per 1M), 3 Flash Preview and 2.5 Flash
-  (\$1.00) and 2.5 Flash-Lite (\$0.30), the row's input rate on 3.5 Flash-Lite and
-  Robotics-ER 2 Preview, whose one input price covers audio. Other counted audio — another
-  model or endpoint (Azure, DeepSeek, generic, custom), Gemini audio output, Gemini audio
-  in a call that also hit the cache — is estimated at `0.0`, with one warning per model and
+  Interactions the input price Google's pricing page states for audio, at the tier's and a
+  long prompt's multiples — the model's own audio price where the page lists one apart (3.1
+  Flash-Lite \$0.50 per 1M, 3 Flash Preview and 2.5 Flash \$1.00, 2.5 Flash-Lite \$0.30),
+  else its input price, which covers every modality when it names none or names audio among
+  them. Other counted audio — a model the page prices without audio or does not list,
+  another endpoint (Azure, DeepSeek, generic, custom), Gemini audio output, Gemini audio in
+  a call that also hit the cache — is estimated at `0.0`, with one warning per model and
   endpoint, like an unpriced model. `GEMINIOpenAIServiceEndpoint` counts no audio apart, so
   its audio input is priced at the text rate, a lower bound on the four models with an
   audio price of their own, for which a request carrying a sound clip warns once per

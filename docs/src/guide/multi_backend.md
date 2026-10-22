@@ -217,8 +217,10 @@ one for 3.1 Pro Preview, 3 Flash Preview and the 2.5 models, and \$0.02 (Flex) a
 price there, so it is estimated at the standard rates with a warning. A prompt over 200K tokens
 on 3.1 Pro Preview (and its `-customtools` endpoint) or 2.5 Pro bills at the page's long-context
 rates, the whole request: twice the input and cache-hit rates and 1.5 times the output rate, at
-the tier's multiple. Audio input bills at the audio rate the page states for the model, and is
-unpriced where it states none (see [Cost Tracking](@ref cost_estimate)). A Flex request can wait
+the tier's multiple. Audio input bills at the input price the page states for audio — the model's
+own audio price where the page lists one apart, else its input price, which covers every modality
+when it names none — and is unpriced where the page prices input without audio (see
+[Cost Tracking](@ref cost_estimate)). A Flex request can wait
 in a queue for minutes — Google advises client timeouts of 10 minutes or more
 ([Flex inference](https://ai.google.dev/gemini-api/docs/flex-inference)) — and a stream's
 wait for its headers counts against `stream_idle_timeout` (120 s by default), so give a Flex

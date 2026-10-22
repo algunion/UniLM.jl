@@ -107,12 +107,13 @@ _gemini_ask(prompt, attachment) = chatrequest!(Chat(service=GEMINIServiceEndpoin
     pdf = _gemini_ask("What is the secret word in this document? Answer with the word only.",
                       DocumentAttachment(joinpath(_GEMINI_LIVE_MEDIA, "documents", "secret_word.pdf")))
     @test pdf isa LLMSuccess && occursin("PELICAN", uppercase(pdf.message.content))
-    # gemini-3.8-flash's pricing table states no audio rate: the clip leaves the call unpriced.
-    wav = @test_logs (:warn, r"no audio-token rates") match_mode=:any _gemini_ask(
-        "What is the secret word in this recording? Answer with the word only.",
-        AudioAttachment(joinpath(_GEMINI_LIVE_MEDIA, "ollama", "secret_word.wav")))
+    # gemini-3.8-flash's one input price names no modality, so the clip bills at it, as the text does.
+    wav = _gemini_ask("What is the secret word in this recording? Answer with the word only.",
+                      AudioAttachment(joinpath(_GEMINI_LIVE_MEDIA, "ollama", "secret_word.wav")))
     @test wav isa LLMSuccess && occursin("banana", lowercase(wav.message.content))
-    @test wav.usage.prompt_audio_tokens > 0 && cumulative_cost(wav.self) == 0.0
+    @info "Gemini audio" usage = wav.usage cost = estimated_cost(wav)
+    @test wav.usage.prompt_audio_tokens > 0 && wav.usage.cached_tokens == 0
+    @test estimated_cost(wav) ≈ _gemini_cost(wav.usage, 0.75, 0.075, 3.75) && cumulative_cost(wav.self) == estimated_cost(wav)
     # detail="low" is the LOW media resolution: the image costs 256 prompt tokens, not ~1,089.
     low = _gemini_ask("What colour is the circle? Answer with one word.", ImageAttachment(circle; detail="low"))
     @info "Gemini media" image = img.usage low_detail = low.usage

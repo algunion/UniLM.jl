@@ -242,8 +242,11 @@ end
     tool = merge(usage, Dict("total_tool_use_tokens" => 20, "tool_use_tokens_by_modality" =>
         [Dict("modality" => "audio", "tokens" => 5), Dict("modality" => "text", "tokens" => 15)]))
     @test (token_usage(success(tool)).prompt_tokens, token_usage(success(tool)).prompt_audio_tokens) == (74, 43)
-    # A model whose table states no audio rate leaves the call unpriced.
-    @test (@test_logs (:warn, r"no audio-token rates") estimated_cost(success(usage; model="gemini-3.6-flash"))) === 0.0
+    # 3.6 Flash's one input price names no modality, so it is the audio's too: $0.75 in, $3.75 out per 1M.
+    @test (@test_logs estimated_cost(success(usage; model="gemini-3.6-flash"))) ≈ (54 * 0.75 + 1 * 3.75) / 1_000_000
+    # A cache hit beside the audio leaves the call unpriced: the usage does not say how many cached tokens are audio.
+    cached = merge(usage, Dict("total_cached_tokens" => 10))
+    @test (@test_logs (:warn, r"no audio-token rates") estimated_cost(success(cached; model="gemini-3.6-flash"))) === 0.0
 end
 
 @testset "Agentic lifecycle URL is service-dispatched (_agentic_url)" begin

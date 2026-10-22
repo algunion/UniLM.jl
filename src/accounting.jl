@@ -41,11 +41,12 @@ the provider's pricing page lists no price for — such as OpenAI's Scale tier, 
 A row has no audio-token rates. [`estimated_cost`](@ref) bills the audio tokens
 (`prompt_audio_tokens`, `completion_audio_tokens`) of an `OPENAIServiceEndpoint` result at the
 model's audio-token rates, which UniLM has for `gpt-audio-1.5`, and the audio input of a native
-Gemini or Interactions result at the audio rate Google's pricing page states for the model,
-scaled by the billed tier: its own audio price (`gemini-3.1-flash-lite`,
-`gemini-3-flash-preview`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`) or, where the page lists
-one input price for text, image, video and audio (`gemini-3.5-flash-lite`,
-`gemini-robotics-er-2-preview`), the row's input rate. Any other audio — on another model or
+Gemini or Interactions result at the input price Google's pricing page states for audio, scaled
+by the billed tier and a long prompt's multiples as text is: the model's own audio price where
+the page lists one apart (`gemini-3.1-flash-lite`, `gemini-3-flash-preview`, `gemini-2.5-flash`,
+`gemini-2.5-flash-lite`), else the row's input rate, since the page spells modalities out
+wherever their rates differ and an input price that names none is every modality's. Any other
+audio — on a model the page prices without audio (the image models) or does not list, on another
 endpoint, Gemini audio output, or Gemini audio in a call that also hit the cache (a usage does
 not say how many cached tokens are audio, whose cache price the page lists apart or not at all)
 — leaves the estimate at `0.0`, with one warning per model and endpoint.

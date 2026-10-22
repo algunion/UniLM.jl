@@ -85,16 +85,18 @@ with one warning per model and endpoint, as for a model without a row, rather th
 billed at text rates.
 
 Gemini bills the audio input of a call — an [`AudioAttachment`](@ref) on native Chat or
-[`respond`](@ref) — at the audio rate its
-[pricing page](https://ai.google.dev/gemini-api/docs/pricing) states for the model, scaled by the
-billed tier as the text rates are: per 1M tokens, \$0.50 on `gemini-3.1-flash-lite`, \$1.00 on
-`gemini-3-flash-preview` and `gemini-2.5-flash`, \$0.30 on `gemini-2.5-flash-lite`, and, on
-`gemini-3.5-flash-lite` and `gemini-robotics-er-2-preview`, whose page lists one input price for
-text, image, video and audio, the row's input rate. The other Gemini tables state no audio rate
-(Gemini 4 Argon, 3.8 and 3.6 Flash, 3.1 Pro Preview and 2.5 Pro list one input price that names no
-modality), so audio on those models is estimated at `0.0`, with one warning per model and
-endpoint, and so is a Gemini call that counts audio and cache hits: its usage does not say how
-many cached tokens are audio, whose cache price the page lists apart or not at all.
+[`respond`](@ref) — at the input price its
+[pricing page](https://ai.google.dev/gemini-api/docs/pricing) states for audio, scaled by the
+billed tier and a long prompt's multiples as the text rates are. The page spells input modalities
+out wherever their rates differ, so a model's own audio price applies where it lists one apart —
+per 1M tokens, \$0.50 on `gemini-3.1-flash-lite`, \$1.00 on `gemini-3-flash-preview` and
+`gemini-2.5-flash`, \$0.30 on `gemini-2.5-flash-lite` — and otherwise the row's input rate, since
+an input price that names no modality, or names audio among the others, is every modality's (Gemini
+4 Argon, 3.8 and 3.6 Flash, 3.5 Flash-Lite, 3.1 Pro Preview, 2.5 Pro, Robotics-ER 2 Preview). Audio
+on a model the page prices without audio (the image models) or does not list is estimated at `0.0`,
+with one warning per model and endpoint, and so is a Gemini call that counts audio and cache hits:
+its usage does not say how many cached tokens are audio, whose cache price the page lists apart or
+not at all.
 `GEMINIOpenAIServiceEndpoint` reports no audio count — a clip's tokens are in `prompt_tokens`
 alone — so its audio input is priced at the text rate: a lower bound on the four models with an
 audio price of their own, for which such a request warns once per model. Send audio through
@@ -178,8 +180,8 @@ println("cost USD = ", round(estimated_cost(unpriced; pricing), digits=6))
 A row cannot price audio: a `PriceRow` has no audio-token rates. Whatever `pricing=` holds, a
 result whose usage counts audio tokens stays at `0.0` unless UniLM has that model's audio-token
 rates (`gpt-audio-1.5` on `OPENAIServiceEndpoint`, and the Gemini models above, whose text
-tokens your row then prices; on the two Gemini models with one input price, your row's input
-rate prices their audio too).
+tokens your row then prices; on a Gemini model whose one input price covers audio, your row's
+input rate prices its audio too).
 
 ## Cumulative cost is Chat-only
 

@@ -1186,11 +1186,13 @@ end
     @test UniLM._gemini_usage(UniLM._gemini_usage_metadata(u)) == u
 end
 
-@testset "cost — audio bills at the audio rate the pricing page states for the model; anything else is unpriced" begin
+@testset "cost — audio bills at the input price the pricing page states for it; anything else is unpriced" begin
     # https://ai.google.dev/gemini-api/docs/pricing (2026-10-22), per 1M tokens: 3.1 Flash-Lite "$0.25
     # (text / image / video) $0.50 (audio)", 2.5 Flash $0.30 / $1.00, 2.5 Flash-Lite $0.10 / $0.30, 3 Flash
     # Preview $0.50 / $1.00; one price "(text / image / video / audio)": 3.5 Flash-Lite $0.30, Robotics-ER 2
-    # Preview $1.00. A prompt of 1,000 audio and 10 text tokens, and 1 output token:
+    # Preview $1.00; one price that names no modality, every modality's: Gemini 4 Argon $2.00, 3.8 and 3.6
+    # Flash $0.75, 3.1 Pro Preview $2.00, 2.5 Pro $1.25. A prompt of 1,000 audio and 10 text tokens, and 1
+    # output token:
     heard(; tier=nothing, cached=0, spoken=0) = TokenUsage(prompt_tokens=1_010, completion_tokens=1, total_tokens=1_011,
         cached_tokens=cached, service_tier=tier, prompt_audio_tokens=1_000, completion_audio_tokens=spoken)
     cost(model, u; service=GEMINIServiceEndpoint, pricing=DEFAULT_PRICING) = estimated_cost(LLMSuccess(
@@ -1223,21 +1225,30 @@ end
     @test cost("gemini-3.1-flash-lite", heard(); service=GEMINIOpenAIServiceEndpoint) ≈ bill(0.50, 0.25, 1.50)
     @test (@inferred UniLM._billed_cost(GEMINIServiceEndpoint, "gemini-3.1-flash-lite", heard(),
                                         DEFAULT_PRICING["gemini-3.1-flash-lite"])) ≈ bill(0.50, 0.25, 1.50)
-    # The page states no audio rate for Gemini 4 Argon, 3.8 and 3.6 Flash, 3.1 Pro Preview or 2.5 Pro
-    # (one input price that names no modality), nor any audio output rate; nor does a row a caller adds
-    # for a near-miss id. And a cache hit beside audio: the cached-audio rates the page lists differ from
-    # the cached-text ones, and the usage does not say how many cached tokens are audio. Each is
-    # unpriced, with one warning per model.
-    says = "no audio-token rates for this model on this endpoint; its estimated cost is 0.0"
-    for model in ("gemini-4-argon", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.1-pro-preview")
-        @test (@test_logs (:warn, says) cost(model, heard())) === 0.0
+    # An input price that names no modality is every modality's — the page spells modalities out wherever
+    # their rates differ, and where audio is excluded — so audio bills at the row's input rate, at the
+    # tier's and the long prompt's multiples as text does; the routed ids are priced as their targets.
+    for (model, input, output) in (("gemini-4-argon", 2.00, 10.00), ("gemini-3.8-flash", 0.75, 3.75),
+                                   ("gemini-3.7-flash", 0.75, 3.75), ("gemini-3.6-flash", 0.75, 3.75),
+                                   ("gemini-3.5-flash", 0.75, 3.75), ("gemini-3.1-pro-preview", 2.00, 12.00),
+                                   ("gemini-3.1-pro-preview-customtools", 2.00, 12.00), ("gemini-2.5-pro", 1.25, 10.00))
+        @test (@test_logs cost(model, heard())) ≈ bill(input, input, output)
     end
-    for model in ("gemini-2.5-pro", "gemini-3.1-flash-lite-preview")
-        @test (@test_logs (:warn, says) cost(model, heard(); pricing=Dict(model => UniLM._price(1.25, 0.125, 10.0)))) === 0.0
+    @test cost("gemini-4-argon", heard(tier="priority")) ≈ bill(3.60, 3.60, 18.00)
+    long = TokenUsage(prompt_tokens=250_000, completion_tokens=1_000, total_tokens=251_000, prompt_audio_tokens=200_000)
+    @test cost("gemini-3.1-pro-preview", long) ≈ (250_000 * 4.00 + 1_000 * 18.00) / 1_000_000   # "$4.00, prompts > 200k"
+    @test cost("gemini-3.8-flash", heard(); service=GEMINIOpenAIServiceEndpoint) ≈ bill(0.75, 0.75, 3.75)
+    # Unpriced, with one warning per model: an id the table has no entry for, whatever row a caller adds — a
+    # near-miss id, or an image model whose input price excludes audio ("$1.50 (text/image/video)") — any
+    # audio output, and a cache hit beside audio: the cached-audio rates the page lists differ from the
+    # cached-text ones, and the usage does not say how many cached tokens are audio.
+    says = "no audio-token rates for this model on this endpoint; its estimated cost is 0.0"
+    for model in ("gemini-3.1-flash-lite-preview", "gemini-nano-banana-2.1")
+        @test (@test_logs (:warn, says) cost(model, heard(); pricing=Dict(model => UniLM._price(1.50, 0.15, 10.0)))) === 0.0
     end
     @test (@test_logs (:warn, says) cost("gemini-3.1-flash-lite", heard(cached=500))) === 0.0
     @test (@test_logs (:warn, says) cost("gemini-3.1-flash-lite", heard(spoken=1))) === 0.0
-    @test (@test_logs (:warn, says) cost("gemini-3.8-flash", heard(); service=GEMINIOpenAIServiceEndpoint)) === 0.0
+    @test (@test_logs (:warn, says) cost("gemini-3.8-flash", heard(spoken=1))) === 0.0
     # Without audio, a cache hit bills as before.
     @test (@test_logs cost("gemini-3.1-flash-lite", TokenUsage(prompt_tokens=1_010, completion_tokens=1, cached_tokens=500))) ≈
           (510 * 0.25 + 500 * 0.025 + 1 * 1.50) / 1_000_000

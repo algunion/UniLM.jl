@@ -1300,12 +1300,14 @@ and `-latest` aliases bill at their targets' rates (`gemini-3.1-pro-preview` ser
 `gemini-pro-latest`), and a tool-use prompt counts as prompt tokens. A prompt over 200K tokens
 on `gemini-3.1-pro-preview` (and `-customtools`) or `gemini-2.5-pro` bills at the long-context
 rates, the whole request: 2× the input and cache-hit rates, 1.5× the output rate. Audio input
-bills at the audio rate the pricing page states for the model — `gemini-3.1-flash-lite` \$0.50,
-`gemini-3-flash-preview` and `gemini-2.5-flash` \$1.00, `gemini-2.5-flash-lite` \$0.30 per 1M,
-and, on `gemini-3.5-flash-lite` and `gemini-robotics-er-2-preview`, whose one input price covers
-audio, the row's input rate — at the tier's multiple; audio on another Gemini model (the page
-states no audio rate for it), Gemini audio output, and audio in a call that also hit the cache
-give `0.0` with one warning per model and endpoint. A Gemini result is billed at the tier it reports
+bills at the input price the pricing page states for audio, at the tier's and a long prompt's
+multiples as text: a model's own audio price where the page lists one apart —
+`gemini-3.1-flash-lite` \$0.50, `gemini-3-flash-preview` and `gemini-2.5-flash` \$1.00,
+`gemini-2.5-flash-lite` \$0.30 per 1M — else the row's input rate, since an input price that
+names no modality (or names audio among the others) is every modality's: Gemini 4 Argon, 3.8 and
+3.6 Flash, 3.5 Flash-Lite, 3.1 Pro Preview, 2.5 Pro, Robotics-ER 2 Preview. Audio on a model the
+page prices without audio (the image models) or does not list, Gemini audio output, and audio in a
+call that also hit the cache give `0.0` with one warning per model and endpoint. A Gemini result is billed at the tier it reports
 (`usage.service_tier`: the `x-gemini-service-tier` header, else `usageMetadata.serviceTier`,
 or an interaction's `service_tier`; `GEMINIOpenAIServiceEndpoint` replies name none, so a Chat
 result there records the requested tier — `"priority"` priced at Priority is an upper bound,

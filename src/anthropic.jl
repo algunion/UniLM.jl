@@ -15,24 +15,29 @@ _anthropic_endpoint(e::ANTHROPICServiceEndpoint)::ANTHROPICServiceEndpoint = e
 
 get_url(::_AnthropicEndpoint, ::Chat)::String = ANTHROPIC_BASE_URL * ANTHROPIC_MESSAGES_PATH
 
-# The key and the API version, then the endpoint's options: its beta names in one header,
-# comma-joined (https://platform.claude.com/docs/en/api/beta-headers), its user profile and
-# its workspace (https://platform.claude.com/docs/en/api/messages, Headers). The beta names
-# are checked again here, by the constructor's rule: `betas` is a vector, which can be
-# changed after the endpoint is built (the ids are strings, which cannot).
-function auth_header(service::_AnthropicEndpoint)::Vector{Pair{String,String}}
-    e = _anthropic_endpoint(service)
-    headers = ["x-api-key" => ENV[ANTHROPIC_API_KEY], "anthropic-version" => ANTHROPIC_VERSION,
-               "Content-Type" => "application/json"]
-    isempty(e.betas) || push!(headers, "anthropic-beta" => join(_anthropic_beta_names(e.betas), ","))
+# What every request through the endpoint sends: the key and the API version, then its user
+# profile and its workspace (https://platform.claude.com/docs/en/api/messages, Headers).
+function _anthropic_base_headers(e::ANTHROPICServiceEndpoint)::Vector{Pair{String,String}}
+    headers = ["x-api-key" => ENV[ANTHROPIC_API_KEY], "anthropic-version" => ANTHROPIC_VERSION]
     isnothing(e.user_profile_id) || push!(headers, "anthropic-user-profile-id" => e.user_profile_id)
     isnothing(e.workspace_id) || push!(headers, "anthropic-workspace-id" => e.workspace_id)
     headers
 end
 
+# The base headers, the body's type, and the endpoint's beta names in one header, comma-joined
+# (https://platform.claude.com/docs/en/api/beta-headers). The beta names are checked again here,
+# by the constructor's rule: `betas` is a vector, which can be changed after the endpoint is
+# built (the profile and workspace ids are strings, which cannot).
+function auth_header(service::_AnthropicEndpoint)::Vector{Pair{String,String}}
+    e = _anthropic_endpoint(service)
+    headers = push!(_anthropic_base_headers(e), "Content-Type" => "application/json")
+    isempty(e.betas) || push!(headers, "anthropic-beta" => join(_anthropic_beta_names(e.betas), ","))
+    headers
+end
+
 # ─── Capabilities & defaults ─────────────────────────────────────────────────
 
-provider_capabilities(::_AnthropicEndpoint) = Set([:chat, :tools, :json_output, :streaming])
+provider_capabilities(::_AnthropicEndpoint) = Set([:chat, :tools, :json_output, :streaming, :models])
 
 default_model(::_AnthropicEndpoint) = "claude-opus-5-5"
 

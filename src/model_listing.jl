@@ -75,13 +75,21 @@ struct _AnthropicModels <: _ModelListing end
 struct _GeminiModels <: _ModelListing end
 
 _model_listing(::Type{OPENAIServiceEndpoint}) = _OpenAIModels()
-_model_listing(::Union{Type{ANTHROPICServiceEndpoint},ANTHROPICServiceEndpoint}) = _AnthropicModels()
+_model_listing(::_AnthropicEndpoint) = _AnthropicModels()
 _model_listing(::Type{GEMINIServiceEndpoint}) = _GeminiModels()
 
 # The first page; a function so tests can route their own endpoint types to a local server.
 _models_url(::Type{OPENAIServiceEndpoint})::String = _api_base_url(OPENAIServiceEndpoint) * "/v1/models"
-_models_url(::Union{Type{ANTHROPICServiceEndpoint},ANTHROPICServiceEndpoint})::String = ANTHROPIC_BASE_URL * "/v1/models"
+_models_url(::_AnthropicEndpoint)::String = ANTHROPIC_BASE_URL * "/v1/models"
 _models_url(::Type{GEMINIServiceEndpoint})::String = GEMINI_NATIVE_BASE * "/models"
+
+# The headers of every page: the endpoint's own, except that Anthropic's Models API reference
+# marks `anthropic-beta` deprecated on GET /v1/models
+# (https://platform.claude.com/docs/en/api/models/list, Headers), so an Anthropic listing sends
+# the key, the API version and the endpoint's user profile and workspace, never its betas.
+_models_headers(service) = auth_header(service)
+_models_headers(service::_AnthropicEndpoint)::Vector{Pair{String,String}} =
+    _anthropic_base_headers(_anthropic_endpoint(service))
 
 # A page's entries, and the cursor of the page after it (`nothing` on the last page). OpenAI
 # lists every model on one page; Anthropic pages by the last id on the page (`has_more`,
@@ -226,7 +234,7 @@ function _list_models(listing::_ModelListing, service, config::Union{Nothing,Req
     cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
     try
         first_page = _models_url(service)
-        headers = auth_header(service)
+        headers = _models_headers(service)
         models = ProviderModel[]; pages = Dict{String,Any}[]; cursors = Set{String}()
         url = first_page
         while true

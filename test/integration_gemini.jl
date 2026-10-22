@@ -15,6 +15,7 @@ else
     @test result isa LLMSuccess
     @test !isempty(result.message.content)
     @test result.usage.completion_tokens > 0
+    @test result.model == "gemini-3.8-flash"            # modelVersion
     @test cumulative_cost(chat) > 0.0
 end
 
@@ -56,11 +57,37 @@ end
     @test result isa LLMSuccess
     @test !isempty(result.message.content)   # handle_sse_event! accumulated real SSE
     @test !isempty(payloads)                 # callback fired (deltas and/or final message)
+    @test result.model == "gemini-3.8-flash" # every chunk's modelVersion
     @test result.message.provider_content isa ProviderContent
     push!(chat, Message(Val(:user), "Reply with exactly: done"))
     follow = fetch(chatrequest!(chat))
     @test follow isa LLMSuccess
     @test occursin("done", lowercase(something(follow.message.content, "")))
+end
+
+# The cost of a reply priced by hand from its own usage, at the given per-1M-token rates.
+_gemini_cost(u, input, cached, output) =
+    ((u.prompt_tokens - u.cached_tokens) * input + u.cached_tokens * cached + u.completion_tokens * output) / 1e6
+
+@testset "Gemini 4 Argon — low effort; the reply names its model and is priced at its row" begin
+    # The pricier model, for its own rules: low is its lowest level (minimal is an HTTP 400).
+    r = chatrequest!(Chat(service=GEMINIServiceEndpoint, model="gemini-4-argon", reasoning_effort="low",
+        max_tokens=256, messages=[Message(role=UniLM.RoleUser, content="Reply with exactly: OK")]))
+    @test r isa LLMSuccess
+    @info "gemini-4-argon" usage = r.usage cost = estimated_cost(r)
+    @test r.model == "gemini-4-argon"
+    @test estimated_cost(r) > 0
+    @test estimated_cost(r) ≈ _gemini_cost(r.usage, 2.0, 0.10, 10.0)
+end
+
+@testset "Gemini routes gemini-3.7-flash to gemini-3.8-flash, and the call is priced as served" begin
+    r = chatrequest!(Chat(service=GEMINIServiceEndpoint, model="gemini-3.7-flash", reasoning_effort="low",
+        max_tokens=256, messages=[Message(role=UniLM.RoleUser, content="Reply with exactly: OK")]))
+    @test r isa LLMSuccess
+    @info "gemini-3.7-flash" served = r.model usage = r.usage cost = estimated_cost(r)
+    @test r.model == "gemini-3.8-flash"
+    @test estimated_cost(r) ≈ _gemini_cost(r.usage, 0.75, 0.075, 3.75)
+    @test estimated_cost(r) == estimated_cost(r; model="gemini-3.8-flash")
 end
 
 end  # if GEMINI_API_KEY

@@ -28,8 +28,36 @@ using Test, HTTP, JSON, UniLM
     # A response_format type with no generateContent counterpart still fails loud.
     @test_throws ArgumentError UniLM.encode_request(GEMINIServiceEndpoint,
         Chat(service=GEMINIServiceEndpoint, response_format=ResponseFormat(type="xml")))
-    legacy = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash", temperature=0.5)
+    # gemini-2.5-flash predates Gemini 3.6 Flash, from which Gemini ignores sampling parameters.
+    legacy = Chat(service=GEMINIServiceEndpoint, model="gemini-2.5-flash", temperature=0.5)
     @test JSON.parse(UniLM.encode_request(legacy.service, legacy))["generationConfig"]["temperature"] == 0.5
+end
+
+@testset "Gemini OpenAI-compatible endpoint refuses the sampling parameters Gemini ignores" begin
+    compat(; kw...) = Chat(; service=GEMINIOpenAIServiceEndpoint, messages=[Message(role=UniLM.RoleUser, content="hi")], kw...)
+    encode(chat) = UniLM.encode_request(GEMINIOpenAIServiceEndpoint, chat)
+    for (field, kw) in (("temperature", (temperature=0.5,)), ("top_p", (top_p=0.9,)))
+        # gemini-3.8-flash is the endpoint's default model.
+        for chat in (compat(; kw...), compat(; model="gemini-4-argon", kw...), compat(; model="gemini-5-x", kw...))
+            err = try encode(chat); nothing catch e; e end
+            @test err isa ArgumentError && occursin("Gemini ignores $field", err.msg) && occursin(chat.model, err.msg)
+        end
+        # The models that honour them get the OpenAI-wire body unchanged.
+        ok = compat(; model="gemini-2.5-flash", kw...)
+        @test encode(ok) == JSON.json(ok)
+        @test JSON.parse(encode(ok))[field] == only(values(kw))
+    end
+    # The server checks the rest: it answers HTTP 400 to prompt_cache_options and to a request ending
+    # with an assistant turn (observed on gemini-3.8-flash, 2026-10-22), so both go as given.
+    pco = compat(prompt_cache_options=PromptCacheOptions(ttl="30m"))
+    @test JSON.parse(encode(pco))["prompt_cache_options"] == Dict("ttl" => "30m")
+    prefill = Chat(service=GEMINIOpenAIServiceEndpoint, history=false, messages=[
+        Message(role=UniLM.RoleUser, content="Translate 'Hello world' to Spanish."),
+        Message(role=UniLM.RoleAssistant, content="Translation:")])
+    @test last(JSON.parse(encode(prefill))["messages"]) == Dict("role" => "assistant", "content" => "Translation:")
+    # Refused before any request: the encoder runs before any I/O, and the verb lets its refusal through.
+    err = try chatrequest!(compat(temperature=0.5)); nothing catch e; e end
+    @test err isa ArgumentError && occursin("Gemini ignores temperature", err.msg)
 end
 
 @testset "Gemini function declarations accept JSON Schema" begin

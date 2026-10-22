@@ -350,13 +350,40 @@ end
 end
 
 @testset "Gemini pricing rows" begin
-    @test haskey(UniLM.DEFAULT_PRICING, "gemini-3.5-flash")
-    @test haskey(UniLM.DEFAULT_PRICING, "gemini-3.1-flash-lite")
-    # 1000 prompt + 500 output on gemini-3.1-flash-lite = 1000*0.25/1e6 + 500*1.5/1e6
-    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.1-flash-lite")
-    usage = UniLM.TokenUsage(prompt_tokens=1000, completion_tokens=500, total_tokens=1500)
+    # https://ai.google.dev/gemini-api/docs/pricing (2026-10-22), standard tier, USD per 1M tokens:
+    # input, context-caching (cache read), output.
+    for (model, i, c, o) in (("gemini-4-argon", 2.0, 0.10, 10.0), ("gemini-3.8-flash", 0.75, 0.075, 3.75),
+                             ("gemini-3.6-flash", 0.75, 0.075, 3.75), ("gemini-3.5-flash-lite", 0.30, 0.03, 2.50),
+                             ("gemini-3.1-pro-preview", 2.0, 0.20, 12.0),   # prompts up to 200K tokens
+                             ("gemini-2.5-flash", 0.3, 0.03, 2.5), ("gemini-2.5-flash-lite", 0.1, 0.01, 0.4),
+                             ("gemini-embedding-2", 0.20, 0.20, 0.0))
+        @test DEFAULT_PRICING[model] == UniLM._price(i, c, o)
+    end
+    # Google serves gemini-3.7-flash as gemini-3.8-flash and gemini-3.5-flash as gemini-3.6-flash.
+    @test DEFAULT_PRICING["gemini-3.7-flash"] == DEFAULT_PRICING["gemini-3.8-flash"]
+    @test DEFAULT_PRICING["gemini-3.5-flash"] == DEFAULT_PRICING["gemini-3.6-flash"]
+    # 1000 prompt tokens (200 of them cache reads) + 500 output on gemini-3.5-flash-lite.
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash-lite")
+    usage = UniLM.TokenUsage(prompt_tokens=1000, cached_tokens=200, completion_tokens=500, total_tokens=1500)
     result = UniLM.LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=chat, usage=usage)
-    @test UniLM.estimated_cost(result) ≈ (1000 * 0.25 + 500 * 1.5) / 1_000_000
+    @test UniLM.estimated_cost(result) ≈ (800 * 0.30 + 200 * 0.03 + 500 * 2.50) / 1_000_000
+end
+
+@testset "Gemini billed cost — native and OpenAI-compatible endpoints" begin
+    # Gemini caches prompts implicitly: a cache hit bills at the context-caching rate, every other
+    # prompt token (a tool-use prompt included) at the input rate, and output, thinking included,
+    # at the output rate.
+    row = DEFAULT_PRICING["gemini-4-argon"]
+    u = TokenUsage(prompt_tokens=10_000, cached_tokens=6_000, completion_tokens=2_000, total_tokens=12_000)
+    want = (4_000 * 2.0 + 6_000 * 0.10 + 2_000 * 10.0) / 1_000_000
+    default = which(UniLM._billed_cost, Tuple{Nothing,String,TokenUsage,UniLM.PriceRow})
+    for service in (GEMINIServiceEndpoint, GEMINIOpenAIServiceEndpoint)
+        @test which(UniLM._billed_cost, Tuple{Type{service},String,TokenUsage,UniLM.PriceRow}) !== default
+        @test (@inferred UniLM._billed_cost(service, "gemini-4-argon", u, row)) ≈ want
+        r = LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=Chat(; service, model="gemini-4-argon"),
+                       usage=u)
+        @test estimated_cost(r) ≈ want
+    end
 end
 
 @testset "Anthropic and DeepSeek price rows" begin

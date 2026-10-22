@@ -10,14 +10,14 @@
 end
 
 @testset "Interactions encode (Respond → snake_case body)" begin
-    r = Respond(service=GEMINIServiceEndpoint, model="gemini-3.1-flash-lite",
+    r = Respond(service=GEMINIServiceEndpoint, model="gemini-2.5-flash",
                 input="Say hi", instructions="Be terse",
                 tools=[function_tool("get_weather", "Get weather",
                        parameters=Dict("type" => "object",
                                        "properties" => Dict("city" => Dict("type" => "string"))))],
                 temperature=0.2, previous_response_id="v1_prev", store=true, stream=true)
     b = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint, r); dicttype=Dict{String,Any})
-    @test b["model"] == "gemini-3.1-flash-lite"
+    @test b["model"] == "gemini-2.5-flash"
     @test b["input"] == "Say hi"
     @test b["system_instruction"] == "Be terse"
     @test b["tools"][1]["type"] == "function"
@@ -109,7 +109,7 @@ end
 
     # optional generation_config fields (top_p / max_output_tokens) + background pass through
     b2 = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
-        Respond(service=GEMINIServiceEndpoint, model="gemini-3.5-flash", input="x",
+        Respond(service=GEMINIServiceEndpoint, model="gemini-2.5-flash", input="x",
                 top_p=0.9, max_output_tokens=128, background=true)); dicttype=Dict{String,Any})
     @test b2["generation_config"]["top_p"] == 0.9
     @test b2["generation_config"]["max_output_tokens"] == 128
@@ -196,27 +196,34 @@ end
 end
 
 @testset "Interactions decode — usage normalized for cost accounting" begin
+    # Tool-use prompt tokens are input the model read, billed at the input rate as on
+    # generateContent; thoughts bill at the output rate.
     raw = Dict("total_input_tokens" => 12, "total_output_tokens" => 69, "total_thought_tokens" => 5,
-               "total_tool_use_tokens" => 3, "total_cached_tokens" => 4, "total_tokens" => 93)
+               "total_tool_use_tokens" => 3, "total_cached_tokens" => 4, "total_tokens" => 89)
     u = UniLM._interaction_usage(raw)
-    @test u["input_tokens"] == 12
-    @test u["output_tokens"] == 77                              # 69 + 5 thought + 3 tool_use (billable output)
+    @test u["input_tokens"] == 15                               # 12 + 3 tool-use prompt (billable input)
+    @test u["output_tokens"] == 74                              # 69 + 5 thought (billable output)
     @test u["input_tokens_details"]["cached_tokens"] == 4
     @test u["output_tokens_details"]["reasoning_tokens"] == 5
     @test isnothing(UniLM._interaction_usage(nothing))
+    # As a url_context interaction on gemini-3.8-flash reported it on 2026-10-22: the tool-use prompt
+    # lies outside total_input_tokens, and total_tokens counts it apart.
+    seen = UniLM._interaction_usage(Dict("total_input_tokens" => 30, "total_tool_use_tokens" => 61,
+        "total_output_tokens" => 64, "total_thought_tokens" => 0, "total_cached_tokens" => 0, "total_tokens" => 155))
+    @test (seen["input_tokens"], seen["output_tokens"]) == (91, 64)
+    @test seen["input_tokens"] + seen["output_tokens"] == seen["total_tokens"]
     # end-to-end: a decoded interaction yields correct token_usage + non-zero cost (cached=0 → clean rate identity)
     raw0 = Dict("total_input_tokens" => 12, "total_output_tokens" => 69, "total_thought_tokens" => 5,
                 "total_tool_use_tokens" => 3, "total_cached_tokens" => 0, "total_tokens" => 89)
     ro = UniLM._interaction_response_object(Dict("id" => "v1_u", "status" => "completed",
-        "model" => "gemini-3.1-flash-lite",
+        "model" => "gemini-3.5-flash-lite",
         "steps" => [Dict("type" => "model_output", "content" => [Dict("type" => "text", "text" => "hi")])],
         "usage" => raw0))
-    res = ResponseSuccess(response=ro)
-    @test token_usage(res).prompt_tokens == 12
-    @test token_usage(res).completion_tokens == 77
+    res = ResponseSuccess(response=ro, service=GEMINIServiceEndpoint)
+    @test token_usage(res).prompt_tokens == 15
+    @test token_usage(res).completion_tokens == 74
     @test token_usage(res).reasoning_tokens == 5
-    @test estimated_cost(res) ≈ 12 * 0.25/1_000_000 + 77 * 1.5/1_000_000   # gemini-3.1-flash-lite rates
-    @test estimated_cost(res) > 0
+    @test estimated_cost(res) ≈ (15 * 0.30 + 74 * 2.50) / 1_000_000   # gemini-3.5-flash-lite rates
 end
 
 @testset "Agentic lifecycle URL is service-dispatched (_agentic_url)" begin
@@ -345,7 +352,7 @@ end
     rd = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, sse, UniLM.AgenticStreamState()).data["response"]
     streamed = ResponseObject(id=rd["id"], status=rd["status"], model=rd["model"], output=rd["output"], raw=rd)
     @test streamed.output == ro.output
-    @test output_text(streamed) == output_text(ro) == "Part one.\nPart two."
+    @test output_text(streamed) == output_text(ro) == "Part one.Part two."   # one answer, joined as written
     @test function_calls(streamed) == function_calls(ro)
 end
 
@@ -434,7 +441,8 @@ end
 end
 
 @testset "Interactions decode — null step content is empty, not a crash" begin
-    # `content: null` is spec-legal: a model_output step that produced no parts.
+    # `content: null` is spec-legal: a model_output step that produced no parts. It adds no
+    # text to the answer the next step continues.
     body = Dict("id" => "v1_n", "status" => "completed", "model" => "gemini-3.1-flash-lite",
         "steps" => [Dict("type" => "model_output", "content" => nothing),
                     Dict("type" => "model_output",
@@ -442,7 +450,12 @@ end
     ro = UniLM.decode_agentic(GEMINIServiceEndpoint,
         HTTP.Response(200, [], Vector{UInt8}(JSON.json(body))))
     @test output_text(ro) == "ok"
-    @test ro.output[1]["content"] == Any[]
+    @test ro.output == [Dict("type" => "message", "role" => "assistant",
+                             "content" => [Dict("type" => "output_text", "text" => "ok")])]
+    # Alone, such a step is an answer with no text.
+    alone = UniLM._interaction_response_object(Dict("id" => "v1_n", "status" => "completed",
+        "steps" => [Dict("type" => "model_output", "content" => nothing)]))
+    @test alone.output[1]["content"] == Any[] && output_text(alone) == ""
 
     # streamed: a throw here is swallowed by the SSE drop policy (counted as a
     # dropped line), turning a clean interaction into a failure or an idle stall.
@@ -453,8 +466,7 @@ end
         UniLM.AgenticStreamState())
     @test UniLM._SSE_DROPPED_LINES[] == before
     @test st.terminal == :completed
-    @test st.data["response"]["output"][1]["content"] == Any[]
-    @test st.data["response"]["output"][2]["content"][1]["text"] == "ok"
+    @test st.data["response"]["output"] == ro.output
 end
 
 @testset "Interactions decode — a body without an id or a status is not an interaction" begin
@@ -610,12 +622,12 @@ end
     # Every field the Interactions body maps except `text` (its response_format has
     # its own golden), set at once: the encoding is byte-for-byte the one this wire
     # produced before the guard existed.
-    r = Respond(service=GEMINIServiceEndpoint, model="gemini-3.1-flash-lite", input="Say hi",
+    r = Respond(service=GEMINIServiceEndpoint, model="gemini-2.5-flash", input="Say hi",
                 instructions="Be terse", tools=[function_tool("get_weather", "Get weather")],
                 tool_choice="auto", temperature=0.2, max_output_tokens=64,
                 previous_response_id="v1_prev", store=true, background=false, stream=true)
     @test UniLM.encode_agentic(GEMINIServiceEndpoint, r) ==
-        """{"background":false,"generation_config":{"max_output_tokens":64,"temperature":0.2,"tool_choice":{"allowed_tools":{"mode":"auto"}}},"input":"Say hi","model":"gemini-3.1-flash-lite","previous_interaction_id":"v1_prev","store":true,"stream":true,"system_instruction":"Be terse","tools":[{"description":"Get weather","name":"get_weather","type":"function"}]}"""
+        """{"background":false,"generation_config":{"max_output_tokens":64,"temperature":0.2,"tool_choice":{"allowed_tools":{"mode":"auto"}}},"input":"Say hi","model":"gemini-2.5-flash","previous_interaction_id":"v1_prev","store":true,"stream":true,"system_instruction":"Be terse","tools":[{"description":"Get weather","name":"get_weather","type":"function"}]}"""
 
     # A field this wire has no mapping for must not vanish from the request.
     cases = (:metadata => Dict("k" => "v"), :truncation => "auto",
@@ -758,4 +770,140 @@ UniLM.default_model(::Type{_IxNonStreamMock}) = "mock-model"
     finally
         close(srv)
     end
+end
+
+@testset "Interactions decode — one answer across model_output steps, thoughts between them skipped" begin
+    # A model answering across several steps — the hops of a long decode, or text resumed after a
+    # thought — adds a model_output step each; Google's guides join their text with no separator
+    # (ai.google.dev/gemini-api/docs/long-decode), so the steps become one message.
+    thought(sig) = Dict("type" => "thought", "signature" => sig)
+    say(texts...) = Dict("type" => "model_output", "content" => [Dict("type" => "text", "text" => t) for t in texts])
+    decode(steps) = UniLM._interaction_response_object(Dict("id" => "v1_m", "status" => "completed",
+        "model" => "gemini-3.8-flash", "steps" => steps))
+    ro = decode([thought("a"), say("A"), thought("b"), say("B")])
+    @test output_text(ro) == "AB"
+    @test [o["type"] for o in ro.output] == ["thought", "message", "thought"]
+    @test ro.output[2]["content"] == [Dict("type" => "output_text", "text" => "AB")]
+    # The text parts of a step join the same way, and a step with none continues the answer.
+    @test output_text(decode([say("First part. ", "Second part. "), Dict("type" => "model_output"),
+                              say("Third part.")])) == "First part. Second part. Third part."
+    # Any other step ends the answer: a call and its result, a hosted tool.
+    call = Dict("type" => "function_call", "id" => "c1", "name" => "lookup", "arguments" => Dict("q" => "x"))
+    result = Dict("type" => "function_result", "call_id" => "c1", "name" => "lookup", "result" => "y")
+    ro = decode([say("Before. "), call, result, thought("a"), say("Final 1. "), thought("b"), say("Final 2.")])
+    @test [o["type"] for o in ro.output] ==
+          ["message", "function_call", "function_result", "thought", "message", "thought"]
+    @test [o["content"][1]["text"] for o in ro.output if o["type"] == "message"] == ["Before. ", "Final 1. Final 2."]
+    search = Dict("type" => "google_search_call", "id" => "s1")
+    @test count(o -> o["type"] == "message", decode([say("A"), search, say("B")]).output) == 2
+    # Streamed, the same steps assemble into the same output.
+    ev(name, data) = "event: $name\ndata: $(JSON.json(data))\n\n"
+    signature(index, sig) = ev("step.delta", Dict("index" => index,
+                                                  "delta" => Dict("type" => "thought_signature", "signature" => sig)))
+    text(index, t) = ev("step.delta", Dict("index" => index, "delta" => Dict("type" => "text", "text" => t)))
+    sse = ev("step.start", Dict("index" => 0, "step" => Dict("type" => "thought"))) * signature(0, "a") * text(1, "A") *
+          ev("step.start", Dict("index" => 2, "step" => Dict("type" => "thought"))) * signature(2, "b") * text(3, "B") *
+          ev("interaction.completed", Dict("interaction" => Dict("id" => "v1_m", "status" => "completed",
+                                                                 "model" => "gemini-3.8-flash")))
+    rd = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, sse, UniLM.AgenticStreamState()).data["response"]
+    @test rd["output"] == decode([thought("a"), say("A"), thought("b"), say("B")]).output
+end
+
+@testset "Interactions decode — the faults an interaction records reach ResponseObject.error" begin
+    # An Interaction reports its faults in `errors`, an array of {code, message}
+    # (ai.google.dev/api/interactions-api): the error surface holds the first, raw keeps them all.
+    faults = [Dict("code" => "https://example.com/errors/hop", "message" => "hop 2 failed"),
+              Dict("code" => "https://example.com/errors/retry", "message" => "retried")]
+    data = Dict("id" => "v1_e", "status" => "completed", "model" => "gemini-4-argon", "errors" => faults,
+                "steps" => [Dict("type" => "model_output", "content" => [Dict("type" => "text", "text" => "partial")])])
+    ro = UniLM.decode_agentic(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(data))))
+    @test ro.error == faults[1]
+    @test ro.raw["errors"] == faults
+    terminal = Dict("event_type" => "interaction.completed", "interaction" => delete!(copy(data), "steps"))
+    sse = "event: step.delta\ndata: {\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"partial\"}}\n\n" *
+          "event: interaction.completed\ndata: $(JSON.json(terminal))\n\n" * "event: done\ndata: [DONE]\n\n"
+    st = UniLM.decode_agentic_stream(GEMINIServiceEndpoint, sse, UniLM.AgenticStreamState())
+    @test st.terminal == :completed && st.data["response"]["error"] == faults[1]
+    # Through the stream driver, the result carries the same error surface as unstreamed.
+    server, url = _ix_sse_server(sse)
+    _IX_MOCK_URL[] = url
+    try
+        t = respond(Respond(service=_IxStreamMock, input="hi", stream=true);
+                    config=RequestConfig(request_timeout=5.0, total_deadline=20.0, stream_idle_timeout=5.0, max_attempts=1))
+        @test timedwait(() -> istaskdone(t), 25.0) == :ok
+        res = fetch(t)
+        @test res isa ResponseSuccess && res.response.error == faults[1] && output_text(res) == "partial"
+    finally
+        close(server)
+    end
+    # An `error` object is kept as given; an interaction without faults has none.
+    @test UniLM._interaction_response_object(Dict("id" => "v1_x", "status" => "failed", "error" => faults[2])).error == faults[2]
+    @test isnothing(UniLM._interaction_response_object(Dict("id" => "v1_y", "status" => "completed", "errors" => [])).error)
+    @test !haskey(UniLM._interaction_response_dict(Dict("id" => "v1_y", "status" => "completed")), "error")
+end
+
+@testset "Interactions encode — Gemini 4 Argon takes more than 65,536 output tokens only in the background" begin
+    # ai.google.dev/gemini-api/docs/long-decode: with background=false, a max_output_tokens above
+    # 65,536 is a 400 "max_output_tokens greater than 65536 is not yet supported with
+    # background=false. Please use background=true." (observed 2026-10-22).
+    argon(; kw...) = UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(; service=GEMINIServiceEndpoint, model="gemini-4-argon", input="x", kw...))
+    for kw in ((max_output_tokens=70_000,), (max_output_tokens=65_537, background=false))
+        err = try argon(; kw...); nothing catch e; e end
+        @test err isa ArgumentError && occursin("gemini-4-argon", err.msg) && occursin("background=true", err.msg)
+    end
+    b = JSON.parse(argon(max_output_tokens=70_000, background=true))
+    @test b["generation_config"] == Dict("max_output_tokens" => 70_000) && b["background"] == true
+    @test JSON.parse(argon(max_output_tokens=65_536))["generation_config"] == Dict("max_output_tokens" => 65_536)
+    # The limit is that model's: another model's cap goes as given, and the server's answer is the check.
+    @test JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint, Respond(service=GEMINIServiceEndpoint,
+        model="gemini-3.8-flash", input="x", max_output_tokens=70_000)))["generation_config"] ==
+          Dict("max_output_tokens" => 70_000)
+end
+
+@testset "Interactions — the model that answered prices the interaction" begin
+    # An interaction names the model that served it (observed 2026-10-22: a gemini-3.7-flash request
+    # answers as gemini-3.8-flash), so an alias is billed at the rates of the model behind it.
+    usage = Dict("total_input_tokens" => 1_000, "total_output_tokens" => 100, "total_thought_tokens" => 0,
+                 "total_tokens" => 1_100)
+    ro = UniLM._interaction_response_object(Dict("id" => "v1_r", "status" => "completed",
+        "model" => "gemini-3.5-flash-lite", "steps" => [], "usage" => usage))   # asked: gemini-flash-lite-latest
+    @test estimated_cost(ResponseSuccess(response=ro, service=GEMINIServiceEndpoint)) ≈ (1_000 * 0.30 + 100 * 2.50) / 1e6
+end
+
+@testset "Interactions — one interaction streamed and not reports the same usage and model" begin
+    # So the cost of a respond call does not depend on `stream`.
+    interaction = Dict("id" => "v1_p", "status" => "completed", "model" => "gemini-3.8-flash", "service_tier" => "standard",
+        "usage" => Dict("total_input_tokens" => 40, "total_tool_use_tokens" => 6, "total_cached_tokens" => 8,
+                        "total_output_tokens" => 9, "total_thought_tokens" => 20, "total_tokens" => 75),
+        "steps" => [Dict("type" => "thought", "signature" => "s"),
+                    Dict("type" => "model_output", "content" => [Dict("type" => "text", "text" => "OK")])])
+    terminal = Dict("event_type" => "interaction.completed", "interaction" => delete!(copy(interaction), "steps"))
+    sse = "event: step.start\ndata: {\"index\":0,\"step\":{\"type\":\"thought\",\"signature\":\"s\"}}\n\n" *
+          "event: step.delta\ndata: {\"index\":1,\"delta\":{\"type\":\"text\",\"text\":\"OK\"}}\n\n" *
+          "event: interaction.completed\ndata: $(JSON.json(terminal))\n\n" * "event: done\ndata: [DONE]\n\n"
+    cfg = RequestConfig(request_timeout=5.0, total_deadline=20.0, stream_idle_timeout=5.0, max_attempts=1)
+    server, url = _ix_sse_server(sse)
+    _IX_MOCK_URL[] = url
+    streamed = try
+        t = respond(Respond(service=_IxStreamMock, input="hi", stream=true); config=cfg)
+        @test timedwait(() -> istaskdone(t), 25.0) == :ok
+        fetch(t)
+    finally
+        close(server)
+    end
+    tcp = Sockets.listen(Sockets.localhost, 0)
+    port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
+    srv = HTTP.serve!("127.0.0.1", port; verbose=false) do req
+        HTTP.Response(200, ["Content-Type" => "application/json"], JSON.json(interaction))
+    end
+    _IX_NONSTREAM_URL[] = "http://127.0.0.1:$port/v1beta/interactions"
+    plain = try respond(Respond(service=_IxNonStreamMock, input="hi"); config=cfg) finally close(srv) end
+    @test streamed isa ResponseSuccess && plain isa ResponseSuccess
+    @test token_usage(streamed) == token_usage(plain) ==
+          TokenUsage(prompt_tokens=46, completion_tokens=29, total_tokens=75, cached_tokens=8, reasoning_tokens=20,
+                     service_tier="standard")
+    @test streamed.response.model == plain.response.model == "gemini-3.8-flash"
+    @test streamed.response.output == plain.response.output
+    @test estimated_cost(streamed) == estimated_cost(plain) > 0
 end

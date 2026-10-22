@@ -34,17 +34,35 @@ function _interactions_reject_unmapped(r::Respond)
         "unset them or send the request to an OpenAI Responses service"))
 end
 
+# The largest max_output_tokens an interaction takes without background execution, by exact
+# model id: Gemini 4 Argon answers more with HTTP 400 "max_output_tokens greater than 65536 is
+# not yet supported with background=false" (https://ai.google.dev/gemini-api/docs/long-decode;
+# observed 2026-10-22), and in the background decodes up to its 1M-token context.
+const _INTERACTIONS_SYNC_OUTPUT_LIMITS = Dict{String,Int}("gemini-4-argon" => 65_536)
+
+function _interactions_validate_output_limit(r::Respond)::Nothing
+    limit = get(_INTERACTIONS_SYNC_OUTPUT_LIMITS, r.model, nothing)
+    isnothing(limit) || isnothing(r.max_output_tokens) || r.max_output_tokens <= limit || r.background === true ||
+        throw(ArgumentError("$(r.model) takes max_output_tokens above $limit only in the background " *
+            "(long decode, https://ai.google.dev/gemini-api/docs/long-decode): set background=true, or " *
+            "lower max_output_tokens (got $(r.max_output_tokens))"))
+    nothing
+end
+
 function encode_agentic(::Type{GEMINIServiceEndpoint}, r::Respond)::String
+    _gemini_refuse_cache_options(r.prompt_cache_options)
     _interactions_reject_unmapped(r)
     _gemini_validate_sampling(r.model, r.temperature, r.top_p)
+    _interactions_validate_output_limit(r)
     body = Dict{Symbol,Any}(:model => r.model, :input => _interactions_input(r.input))
     isnothing(r.instructions) || (body[:system_instruction] = r.instructions)
     isnothing(r.tools) || (body[:tools] = [_interactions_tool(t) for t in r.tools])
     (fmt = _interactions_response_format(r.text)) === nothing || (body[:response_format] = fmt)
     gen = Dict{Symbol,Any}()
-    # The API reference's generation_config listing omits temperature/top_p, yet the
-    # live API accepted both on gemini-3.7-flash on 2026-09-22 while answering 400
-    # "Unknown parameter" to an unknown generation_config key — so they stay mapped.
+    # The API reference's generation_config listing omits temperature/top_p, yet the live
+    # API takes both (gemini-4-argon answered HTTP 200 on 2026-10-22, ignoring them) while
+    # it answers 400 "Unknown parameter" to an unknown generation_config key; they reach
+    # the wire only for the models that honour them (`_gemini_validate_sampling`).
     isnothing(r.temperature)       || (gen[:temperature] = r.temperature)
     isnothing(r.top_p)             || (gen[:top_p] = r.top_p)
     isnothing(r.max_output_tokens)  || (gen[:max_output_tokens] = r.max_output_tokens)
@@ -168,20 +186,29 @@ end
 # ─── Response decoding (Interactions steps[] → neutral ResponseObject) ────────
 # Normalize into OpenAI-Responses-shaped output[] so existing accessors work.
 
-# A text content part: each one becomes one output_text part of the step's message.
+# A text content part of a model_output step.
 _interaction_text_part(c) = c isa AbstractDict && get(c, "type", "") == "text"
 
+# A model answering across several steps (the hops of a long decode, text resumed after a
+# thought) adds one model_output step each, and Google's guides read the answer as the text of
+# those steps joined with no separator (https://ai.google.dev/gemini-api/docs/long-decode). So
+# a run of model_output steps, with only thoughts between them, is one message holding one
+# output_text part: the text parts of every step of the run, joined as written. Any other step
+# ends the run.
 function _interaction_output(steps)::Vector{Any}
     out = Any[]
+    answer = 0   # index in `out` of the message the next model_output step extends; 0 for none
     for s in (steps isa AbstractVector ? steps : ())
         s isa AbstractDict || continue
         t = get(s, "type", "")
         if t == "model_output"
-            # `content` is null on a model_output step that produced no parts.
-            parts = Any[Dict{String,Any}("type" => "output_text", "text" => get(c, "text", ""))
-                        for c in _as_iter(get(s, "content", ())) if _interaction_text_part(c)]
-            push!(out, Dict{String,Any}("type" => "message", "role" => "assistant", "content" => parts))
+            if answer == 0
+                push!(out, Dict{String,Any}("type" => "message", "role" => "assistant", "content" => Any[]))
+                answer = length(out)
+            end
+            _extend_answer!(out[answer], s)
         elseif t == "function_call"
+            answer = 0
             # Absent or null arguments: a call without arguments.
             args = something(get(s, "arguments", nothing), Dict{String,Any}())
             push!(out, Dict{String,Any}(
@@ -196,23 +223,50 @@ function _interaction_output(steps)::Vector{Any}
             # code_execution_*, url_context_*, …): surface them verbatim (native
             # type + fields, e.g. a thought step's signature) rather than
             # dropping. output_text still comes from model_output;
-            # function_calls() ignores them (no "function_call" type).
+            # function_calls() ignores them (no "function_call" type). A thought
+            # leaves the answer open; every other step ends it.
+            t == "thought" || (answer = 0)
             push!(out, Dict{String,Any}(s))
         end
     end
     out
 end
 
+# Append a model_output step's text to the answer message. `content` is null on a step that
+# produced no parts, which adds nothing.
+function _extend_answer!(message::Dict{String,Any}, step::AbstractDict)::Nothing
+    io = IOBuffer()
+    for c in _as_iter(get(step, "content", ()))
+        _interaction_text_part(c) || continue
+        t = get(c, "text", "")
+        t isa AbstractString && print(io, t)
+    end
+    text = takestring!(io)
+    isempty(text) && return nothing
+    content = message["content"]::Vector{Any}
+    if isempty(content)
+        push!(content, Dict{String,Any}("type" => "output_text", "text" => text))
+    else
+        part = only(content)
+        part["text"] = string(part["text"], text)
+    end
+    nothing
+end
+
 # Gemini Interactions usage → OpenAI-Responses-shaped usage so token_usage/estimated_cost
-# work unchanged. Gemini bills thought + tool-use at the output rate, so they fold into
-# billable output_tokens; reasoning_tokens breaks out the thought subset (OpenAI semantics).
+# work unchanged. The tool-use prompt (total_tool_use_tokens, e.g. a page url_context read) is
+# input the model read, billed at the input rate ("URL context: charged as input tokens",
+# https://ai.google.dev/gemini-api/docs/pricing), and it is not part of total_input_tokens: a
+# url_context interaction on gemini-3.8-flash reported input 30, tool use 61, output 64 and
+# total 155 on 2026-10-22. Thoughts bill at the output rate, so they fold into billable
+# output_tokens, and reasoning_tokens breaks out the thought subset (OpenAI semantics).
 # The raw usage is preserved on ResponseObject.raw. Per-call hosted-tool fees are NOT modeled.
 _interaction_usage(::Nothing) = nothing
 function _interaction_usage(u::AbstractDict)
     _n(k) = (v = get(u, k, 0); v isa Integer ? Int(v) : 0)
     Dict{String,Any}(
-        "input_tokens"  => _n("total_input_tokens"),
-        "output_tokens" => _n("total_output_tokens") + _n("total_thought_tokens") + _n("total_tool_use_tokens"),
+        "input_tokens"  => _n("total_input_tokens") + _n("total_tool_use_tokens"),
+        "output_tokens" => _n("total_output_tokens") + _n("total_thought_tokens"),
         "total_tokens"  => _n("total_tokens"),
         "input_tokens_details"  => Dict{String,Any}("cached_tokens" => _n("total_cached_tokens")),
         "output_tokens_details" => Dict{String,Any}("reasoning_tokens" => _n("total_thought_tokens")))
@@ -230,7 +284,22 @@ function _interaction_response_dict(data::AbstractDict)::Dict{String,Any}
     d["model"] = get(data, "model", "")
     d["output"] = _interaction_output(get(data, "steps", Any[]))
     d["usage"] = _interaction_usage(get(data, "usage", nothing))
+    err = _interaction_error(data)
+    isnothing(err) || (d["error"] = err)
     d
+end
+
+# An interaction records its faults in `errors`, an array of {code, message}
+# (https://ai.google.dev/api/interactions-api). The error surface takes one object, as an
+# OpenAI response's does, so it holds the first; `raw` keeps the array. An `error`, where a
+# reply carries one, is kept.
+function _interaction_error(data::AbstractDict)
+    err = get(data, "error", nothing)
+    if isnothing(err)
+        faults = get(data, "errors", nothing)
+        err = faults isa AbstractVector && !isempty(faults) ? first(faults) : nothing
+    end
+    err isa AbstractDict ? Dict{String,Any}(err) : err
 end
 
 # `id` and `status` are required on every Interaction (API reference): a 200 body
@@ -256,7 +325,7 @@ function _interaction_response_object(data::AbstractDict)::ResponseObject
         model = get(data, "model", ""),
         output = _interaction_output(get(data, "steps", Any[])),
         usage = _interaction_usage(get(data, "usage", nothing)),
-        error = get(data, "error", nothing),
+        error = _interaction_error(data),
         metadata = get(data, "metadata", nothing),
         raw = Dict{String,Any}(data))
 end

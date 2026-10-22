@@ -1735,8 +1735,8 @@ One item for [`Embeddings`](@ref), embedded as one vector: a text, an image, a s
 with an image or a sound clip — one of them per item on an [`OllamaEndpoint`](@ref), which refuses an
 item holding both before any request; a service that embeds text only refuses media. `title` names the
 document a text comes from; it is used by the `:document` task of models with task prompts
-(EmbeddingGemma) and refused with any other task or model. Images and audio go only to an
-`OllamaEndpoint` (Ollama's `/api/embed` takes them for models that see or hear, such as
+(EmbeddingGemma, `gemini-embedding-2`) and refused with any other task or model. Images and audio go
+only to an `OllamaEndpoint` (Ollama's `/api/embed` takes them for models that see or hear, such as
 `embeddinggemma-2:740m-q8_0`, which embedded a text with its picture or clip as one item on Ollama
 0.40.6). Ollama passes an item's image and clip to the model in a random order, which is why an item
 holding both is refused (on Ollama 0.40.6, ten requests of one such item to `embeddinggemma-2:740m-q8_0`
@@ -1801,18 +1801,22 @@ Base.:(==)(a::EmbeddingInput, b::EmbeddingInput) = all(f -> getfield(a, f) == ge
 Base.hash(x::EmbeddingInput, h::UInt) =
     foldl((h, f) -> hash(getfield(x, f), h), fieldnames(EmbeddingInput); init=hash(EmbeddingInput, h))
 
-# What a text is for, as the task prompts of a model that has them say it (EmbeddingGemma's model card).
+# What a text is for, as the task prompts of a model that has them say it (EmbeddingGemma's model card;
+# Gemini Embedding 2's guide gives the same prompts).
 const _EMBEDDING_TASKS = (:search_query, :question_answering, :fact_checking, :code_retrieval, :document,
                           :classification, :clustering, :sentence_similarity, :none)
-const _EMBEDDINGGEMMA_TASK_NAMES = Dict{Symbol,String}(:search_query => "search result",
+const _EMBEDDING_TASK_NAMES = Dict{Symbol,String}(:search_query => "search result",
     :question_answering => "question answering", :fact_checking => "fact checking",
     :code_retrieval => "code retrieval", :classification => "classification", :clustering => "clustering",
     :sentence_similarity => "sentence similarity")
 const _EMBEDDINGGEMMA_DIMENSIONS = (768, 512, 256, 128)
 
-# The task-prompt family of a model, from its name: EmbeddingGemma (v1 and v2, any tag or namespace).
+# The task-prompt family of a model, from its name: EmbeddingGemma (v1 and v2, any tag or namespace),
+# and gemini-embedding-2 by its exact id, whose guide recommends these prompts for text
+# (https://ai.google.dev/gemini-api/docs/embeddings#task-types-embeddings-2) but needs none.
 _embedding_prompt_family(model::AbstractString)::Union{Symbol,Nothing} =
-    occursin("embeddinggemma", lowercase(model)) ? :embeddinggemma : nothing
+    occursin("embeddinggemma", lowercase(model)) ? :embeddinggemma :
+    model == "gemini-embedding-2" ? :gemini_embedding_2 : nothing
 
 _embedding_titles(x::EmbeddingInput) = !isnothing(x.title)
 _embedding_titles(::String) = false
@@ -1833,17 +1837,19 @@ function _check_embeddings(model::String, task::Union{Symbol,Nothing}, dimension
         isnothing(dimensions) || dimensions in _EMBEDDINGGEMMA_DIMENSIONS || throw(ArgumentError(
             "$model returns $(join(_EMBEDDINGGEMMA_DIMENSIONS, ", ")) dimensions (its trained Matryoshka sizes); " *
             "got dimensions = $dimensions"))
-        task !== :document && _has_titles(input) && throw(ArgumentError(
-            "a title names the document a text comes from, which $model reads with task = :document only " *
-            "(got task = $(repr(task))): pass task = :document, or drop the title"))
-    else
+    end
+    if isnothing(family)
         # No task sends a title here, so its error comes first: it names the only fix.
         _has_titles(input) && throw(ArgumentError(
             "$(repr(model)) has no task prompts, so a title has nowhere to go: drop it " *
-            "(only EmbeddingGemma's task = :document writes titles)"))
+            "(only task = :document of EmbeddingGemma and gemini-embedding-2 writes titles)"))
         isnothing(task) || task === :none || throw(ArgumentError(
-            "UniLM knows the task prompts of EmbeddingGemma models only, so $(repr(model)) gets none: pass " *
-            "task = :none and write the model's own prefix into the text, if it has one"))
+            "UniLM knows the task prompts of EmbeddingGemma models and gemini-embedding-2 only, so " *
+            "$(repr(model)) gets none: pass task = :none and write the model's own prefix into the text, if it has one"))
+    else
+        task !== :document && _has_titles(input) && throw(ArgumentError(
+            "a title names the document a text comes from, which $model reads with task = :document only " *
+            "(got task = $(repr(task))): pass task = :document, or drop the title"))
     end
     isnothing(dimensions) || dimensions > 0 || throw(ArgumentError("dimensions must be positive (got $dimensions)"))
     nothing
@@ -1868,7 +1874,7 @@ end
 
 Create an embedding request for one or more texts. `model=""` resolves to the service's
 default embedding model — OpenAI's `text-embedding-3-small` (1536 dimensions),
-`gemini-embedding-001` for `GEMINIOpenAIServiceEndpoint` — and a service without one
+`gemini-embedding-2` for `GEMINIOpenAIServiceEndpoint` — and a service without one
 (generic endpoints, DeepSeek) needs an explicit `model` (`ArgumentError` otherwise). Works
 with any provider via the `service` parameter — Ollama, Gemini, Mistral, or any
 OpenAI-compatible server.
@@ -1896,14 +1902,17 @@ The result aliases this struct, so use one `Embeddings` per concurrent call.
   (e.g. `"base64"`) throws `ArgumentError`, since the result stores `Float64` vectors.
 - `task::Union{Symbol,Nothing}`: What the texts are for, as a task prompt (see below); `nothing` for none.
 
-# Task prompts (EmbeddingGemma)
-EmbeddingGemma models (`embeddinggemma`, `embeddinggemma-2`, on any service) read a short prompt that
-says what a text is for, and Ollama does not add it: pass `task` and UniLM writes the model card's
-prompt in front of each text — `:search_query`, `:question_answering`, `:fact_checking`,
-`:code_retrieval` (the query side), `:document` (the corpus side, with each item's `title`),
-`:classification`, `:clustering`, `:sentence_similarity` — or `task = :none` to send the text as is.
-Without a task an EmbeddingGemma request is an `ArgumentError`; any other model takes `task = :none`
-or none. EmbeddingGemma's `dimensions` are 768 (default), 512, 256 or 128. Through an
+# Task prompts (EmbeddingGemma, Gemini Embedding 2)
+EmbeddingGemma models (`embeddinggemma`, `embeddinggemma-2`, on any service) and `gemini-embedding-2`
+read a short prompt that says what a text is for, and neither Ollama nor the OpenAI-compatible request
+adds it: pass `task` and UniLM writes the model card's prompt in front of each text — `:search_query`,
+`:question_answering`, `:fact_checking`, `:code_retrieval` (the query side), `:document` (the corpus
+side, with each item's `title`), `:classification`, `:clustering`, `:sentence_similarity` — or
+`task = :none` to send the text as is. Without a task an EmbeddingGemma request is an `ArgumentError`;
+`gemini-embedding-2` takes none, its text then sent as is (Google's
+[embeddings guide](https://ai.google.dev/gemini-api/docs/embeddings#task-types-embeddings-2) recommends
+the prompts for text); any other model takes `task = :none` or none. EmbeddingGemma's `dimensions` are
+768 (default), 512, 256 or 128. Through an
 [`OllamaEndpoint`](@ref), an EmbeddingGemma 2 request carries the model's trained 8,192-token window
 (`num_ctx` and `num_batch`) unless the endpoint sets either (EmbeddingGemma v1 reads 2,048 tokens); with
 `truncate=false`, the default, a longer input is an [`EmbeddingFailure`](@ref), never a vector of part of it
@@ -1969,7 +1978,7 @@ _float_encoding(format::Union{String,Nothing}) =
 function _prompted(task::Union{Symbol,Nothing}, text::String, title::Union{String,Nothing})::String
     (isnothing(task) || task === :none) && return text
     task === :document && return string("title: ", something(title, "none"), " | text: ", text)
-    string("task: ", _EMBEDDINGGEMMA_TASK_NAMES[task], " | query: ", text)
+    string("task: ", _EMBEDDING_TASK_NAMES[task], " | query: ", text)
 end
 
 # The input on a text-only wire (the OpenAI Embeddings API and its compatibles): texts, prompted.
@@ -2017,31 +2026,47 @@ function _fill_embeddings!(dst::Vector{Vector{Float64}}, data::AbstractVector)
     n = length(dst)
     length(data) == n || throw(ArgumentError(
         "embeddings response carries $(length(data)) rows for $n inputs"))
-    seen = falses(n)
-    for item in data
-        i = _row_field(item, "index")
-        # A JSON true parses as a `Bool`, which is an `Integer` in Julia: it is no row index.
-        i isa Integer && !(i isa Bool) || throw(ArgumentError(
-            "embeddings response row index $(repr(i)) is not an integer"))
-        idx = i + 1  # API uses 0-based indexing
-        checkbounds(Bool, dst, idx) || throw(ArgumentError(
-            "embeddings response row index $i is out of range for $n inputs"))
-        seen[idx] && throw(ArgumentError(
-            "embeddings response repeats row index $i"))
-        seen[idx] = true
-        _checked_embedding(_row_field(item, "embedding"), i)
+    slots = _embedding_slots(data, n)
+    for (slot, item) in zip(slots, data)
+        _checked_embedding(_row_field(item, "embedding"), slot - 1)
     end
     # Every row is checked before any is stored, so a refused reply leaves the buffers as they were.
-    for item in data
-        _store_embedding!(dst[item["index"] + 1], item["embedding"])
+    for (slot, item) in zip(slots, data)
+        _store_embedding!(dst[slot], item["embedding"])
     end
     return dst
 end
 
+# The input each reply row fills, 1-based. The OpenAI Embeddings API numbers its rows with a
+# 0-based `index`, in any order. Gemini's OpenAI-compatible endpoint leaves the index out of its
+# first row — proto3 JSON omits a field at its default value, 0 — and numbers the others (observed
+# 2026-10-22 for gemini-embedding-2 and gemini-embedding-001: no index, then 1, 2), so a row
+# without an index beside numbered ones is row 0. A reply that numbers no row is read in order.
+# An index that is not an integer, out of range or repeated has no reading, so it is refused.
+function _embedding_slots(data::AbstractVector, n::Int)::Vector{Int}
+    indices = Any[_row_field(item, "index") for item in data]
+    all(isnothing, indices) && return collect(1:n)
+    seen = falses(n)
+    slots = Vector{Int}(undef, length(indices))
+    for (k, index) in enumerate(indices)
+        i = something(index, 0)
+        # A JSON true parses as a `Bool`, which is an `Integer` in Julia: it is no row index.
+        i isa Integer && !(i isa Bool) || throw(ArgumentError(
+            "embeddings response row index $(repr(i)) is not an integer"))
+        checkbounds(Bool, seen, i + 1) || throw(ArgumentError(
+            "embeddings response row index $i is out of range for $n inputs"))
+        seen[i + 1] && throw(ArgumentError("embeddings response repeats row index $i" *
+            (i == 0 && any(isnothing, indices) ? " (a row without an index is row 0)" : "")))
+        seen[i + 1] = true
+        slots[k] = i + 1
+    end
+    slots
+end
+
 # A vector that is empty, all zeros, or holds a value that is not a finite number is no embedding
 # (Ollama has answered all-zero vectors with HTTP 200; a JSON `true` parses as a `Bool`, which is a
-# `Real` in Julia): it is a malformed reply, refused with its row (the API's 0-based `index`), never
-# stored as a vector that still compares and indexes.
+# `Real` in Julia): it is a malformed reply, refused with its row (the 0-based index the row fills),
+# never stored as a vector that still compares and indexes.
 function _checked_embedding(src::AbstractVector, row)
     all(x -> x isa Real && !(x isa Bool) && isfinite(x), src) || throw(ArgumentError(
         "the embeddings reply's row $row holds a value that is not a finite number"))

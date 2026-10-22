@@ -7,10 +7,10 @@ using UniLM: encode_request, decode_response, StreamState,
 using Test, HTTP, JSON
 
 @testset "routing — model in URL, stream branches on method" begin
-    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash")
-    @test UniLM.get_url(chat) == "$(GEMINI_NATIVE_BASE)/models/gemini-3.5-flash:generateContent"
-    schat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash", stream=true)
-    @test UniLM.get_url(schat) == "$(GEMINI_NATIVE_BASE)/models/gemini-3.5-flash:streamGenerateContent?alt=sse"
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash")
+    @test UniLM.get_url(chat) == "$(GEMINI_NATIVE_BASE)/models/gemini-3.8-flash:generateContent"
+    schat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", stream=true)
+    @test UniLM.get_url(schat) == "$(GEMINI_NATIVE_BASE)/models/gemini-3.8-flash:streamGenerateContent?alt=sse"
 end
 
 @testset "routing — a separator-bearing model cannot re-shape the URL" begin
@@ -42,7 +42,7 @@ end
 end
 
 @testset "encode — system → systemInstruction, user turn" begin
-    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash")
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash")
     push!(chat, Message(Val(:system), "You are helpful."))
     push!(chat, Message(Val(:user), "Hi"))
     body = JSON.parse(encode_request(GEMINIServiceEndpoint, chat))
@@ -55,7 +55,8 @@ end
 end
 
 @testset "encode — generationConfig present only when set" begin
-    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash",
+    # gemini-2.5-flash honours temperature, which later models ignore (sampling testset below).
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-2.5-flash",
                 max_tokens=256, temperature=0.5, stop=["END"])
     push!(chat, Message(Val(:system), "s"))
     push!(chat, Message(Val(:user), "u"))
@@ -70,7 +71,7 @@ end
         parameters=Dict("type" => "object",
                         "properties" => Dict("location" => Dict("type" => "string")),
                         "required" => ["location"]))
-    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash",
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash",
                 tools=[Tool(func=sig)], tool_choice="auto")
     push!(chat, Message(Val(:system), "s"))
     push!(chat, Message(Val(:user), "weather?"))
@@ -83,7 +84,7 @@ end
 end
 
 @testset "encode — multi-turn: functionCall echo (+thoughtSignature) & functionResponse correlation" begin
-    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash")
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash")
     # push! requires the first-ever message on a fresh Chat to be system (api.jl:663-671)
     push!(chat, Message(Val(:system), "s"))
     push!(chat, Message(Val(:user), "weather?"))
@@ -107,12 +108,12 @@ end
 @testset "encode — orphan functionResponse fails loud" begin
     msgs = [Message(Val(:user), "hi"),
             Message(role=RoleTool, tool_call_id="ghost", content="x")]
-    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash", messages=msgs)
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", messages=msgs)
     @test_throws ArgumentError encode_request(GEMINIServiceEndpoint, chat)
 end
 
 @testset "encode — functionResponse passes a JSON-object tool result through unwrapped" begin
-    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash")
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash")
     push!(chat, Message(Val(:system), "s"))
     push!(chat, Message(Val(:user), "weather?"))
     tc = ToolCall(id="fc_1", func=GPTFunction("get_weather", Dict("location" => "Paris")))
@@ -136,7 +137,7 @@ Base.read(::_InterruptOnRead) = throw(InterruptException())
 end
 
 @testset "encode — consecutive tool results collapse into one user turn" begin
-    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash")
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash")
     push!(chat, Message(Val(:system), "s"))
     push!(chat, Message(Val(:user), "weather in Paris and London?"))
     tc1 = ToolCall(id="fc_1", func=GPTFunction("get_weather", Dict("location" => "Paris")))
@@ -415,7 +416,7 @@ end
     @test r.message.tool_calls[1].id == "fc_a" && r.message.tool_calls[1].func.name == "get_weather"
     @test r.message.tool_calls[2].id == "fc_b" && r.message.tool_calls[2].func.name == "get_time"
     # Round-trip: feed both results back in REVERSED order; correlation must be by id, not position.
-    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.5-flash")
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash")
     push!(chat, Message(Val(:system), "s"))
     push!(chat, Message(Val(:user), "weather and time?"))
     push!(chat, r.message)
@@ -630,57 +631,248 @@ end
     @test err isa ArgumentError && occursin("seed", err.msg)
 end
 
-@testset "thinking levels — one row per model family of the provider table" begin
-    # (family, accepted level, rejected level, error fragment), transcribed from the
-    # "Controlling thinking" table (ai.google.dev/gemini-api/docs/thinking, 2026-09-22).
+@testset "thinking levels — one row per model of the provider table" begin
+    # (model, accepted level, rejected level, error fragment), transcribed from the
+    # "Controlling thinking" table (ai.google.dev/gemini-api/docs/thinking, 2026-10-22). The
+    # -latest aliases take the levels of the model that served each on 2026-10-22, and
+    # gemini-3.7-flash and gemini-3.5-flash those of the models Google routes them to.
     # A row allowing all four levels can only reject a non-level.
     three, four = "supports low, medium, or high thinking effort", "must be minimal, low, medium, or high"
-    rows = (("gemini-3.8-flash",            "medium",  "minimal", three),
-            ("gemini-3.7-flash",            "high",    "minimal", three),
-            ("gemini-3.6-flash",            "minimal", "xhigh",   four),
-            ("gemini-3.5-flash-lite",       "minimal", "none",    four),
-            ("gemini-3.1-pro-preview",      "medium",  "minimal", three),
-            ("gemini-3.1-flash-lite-image", "minimal", "low",     "supports minimal or high thinking effort"),
-            ("gemini-3-flash-preview",      "minimal", "xhigh",   four),
-            ("gemini-3-pro-preview",        "high",    "medium",  "supports low or high thinking effort"),
-            ("gemini-3.5-flash",            "minimal", "xhigh",   four),
-            ("gemini-2.5-pro",              "low",     "minimal", three),
-            ("gemini-2.5-flash",            "medium",  "minimal", three),
-            ("gemini-2.5-flash-lite",       "high",    "minimal", three))
-    @test Set(first.(rows)) == Set(first.(UniLM._GEMINI_THINKING_LEVELS))   # every table row is covered
+    rows = (("gemini-4-argon",               "low",     "minimal", three),
+            ("gemini-3.8-flash",             "medium",  "minimal", three),
+            ("gemini-3.6-flash",             "minimal", "xhigh",   four),
+            ("gemini-3.5-flash-lite",        "minimal", "none",    four),
+            ("gemini-3.1-pro-preview",       "medium",  "minimal", three),
+            ("gemini-3.1-flash-lite-image",  "minimal", "low",     "supports minimal or high thinking effort"),
+            ("gemini-3-flash-preview",       "minimal", "xhigh",   four),
+            ("gemini-2.5-pro",               "low",     "minimal", three),
+            ("gemini-2.5-flash",             "medium",  "minimal", three),
+            ("gemini-2.5-flash-lite",        "high",    "minimal", three),
+            ("gemini-robotics-er-2-preview", "minimal", "xhigh",   four),
+            ("gemini-pro-latest",            "high",    "minimal", three),   # served by gemini-3.1-pro-preview
+            ("gemini-flash-latest",          "low",     "minimal", three),   # served by gemini-3.8-flash
+            ("gemini-flash-lite-latest",     "minimal", "xhigh",   four),    # served by gemini-3.5-flash-lite
+            ("gemini-3.7-flash",             "high",    "minimal", three),   # routed to gemini-3.8-flash
+            ("gemini-3.5-flash",             "minimal", "xhigh",   four))    # routed to gemini-3.6-flash
+    @test Set(first.(rows)) == Set(keys(UniLM._GEMINI_THINKING_LEVELS))   # every table row is covered
+    @test !haskey(UniLM._GEMINI_THINKING_LEVELS, "gemini-3-pro-preview")  # shut down on 2026-03-09
     level(model, effort) = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint, Respond(
         service=GEMINIServiceEndpoint, model=model, input="x", reasoning=Reasoning(effort=effort))))["generation_config"]["thinking_level"]
     native(model, effort) = JSON.parse(encode_request(GEMINIServiceEndpoint, Chat(
         service=GEMINIServiceEndpoint, model=model, reasoning_effort=effort)))["generationConfig"]["thinkingConfig"]["thinkingLevel"]
-    @testset "$family" for (family, ok, bad, fragment) in rows
-        @test level(family, ok) == ok
-        if startswith(family, "gemini-2.5-")   # generateContent on 2.5 takes a thinking budget, never a level
-            @test_throws ArgumentError native(family, ok)
+    @testset "$model" for (model, ok, bad, fragment) in rows
+        @test level(model, ok) == ok
+        if startswith(model, "gemini-2.5-")   # generateContent on 2.5 takes a thinking budget, never a level
+            @test_throws ArgumentError native(model, ok)
         else
-            @test native(family, ok) == uppercase(ok)
+            @test native(model, ok) == uppercase(ok)
         end
-        err = try level(family, bad); nothing catch e; e end
+        err = try level(model, bad); nothing catch e; e end
         @test err isa ArgumentError && occursin(fragment, err.msg)
-        @test_throws ArgumentError native(family, bad)
+        @test_throws ArgumentError native(model, bad)
+    end
+    # Gemini 4 Argon and the aliases answer MINIMAL with HTTP 400 "Thinking level MINIMAL is not
+    # supported for this model" (observed 2026-10-22): the request is refused before it is sent.
+    for model in ("gemini-4-argon", "gemini-pro-latest", "gemini-flash-latest")
+        for encode in (level, native)
+            err = try encode(model, "minimal"); nothing catch e; e end
+            @test err isa ArgumentError && occursin(model, err.msg) && occursin(three, err.msg)
+        end
     end
 end
 
-@testset "thinking levels — the longest matching family wins; unlisted families keep the generic check" begin
-    table = (("fam-a", ("low",)), ("fam-a-b", ("high",)))
-    @test UniLM._gemini_thinking_levels("fam-a-b-2", table) == ("high",)          # both match
-    @test UniLM._gemini_thinking_levels("fam-a-b-2", reverse(table)) == ("high",) # order-independent
-    @test UniLM._gemini_thinking_levels("fam-a-2", table) == ("low",)
-    @test isnothing(UniLM._gemini_thinking_levels("fam-c", table))
-    @test UniLM._gemini_thinking_levels("gemini-3.5-flash-lite-preview") == ("minimal", "low", "medium", "high")
-    @test isnothing(UniLM._gemini_thinking_levels("gemini-flash-latest"))
-    @test UniLM._gemini_thinking_level("gemini-flash-latest", "minimal") == "minimal"
-    @test_throws ArgumentError UniLM._gemini_thinking_level("gemini-flash-latest", "xhigh")
+@testset "thinking levels — a row matches its exact id; any other id gets the generic check" begin
+    # Distinct models share prefixes (TTS and Live models beside the chat model) and Google's ids
+    # carry no dated snapshots, so no row extends to a longer, suffixed or unknown id.
+    for id in ("gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts", "gemini-3.8-live", "gemini-4-argon-2",
+               "gemini-3.8-flash-2026-10-01", "gemini-3.5-flash-lite-preview", "gemini-5-x")
+        @test isnothing(UniLM._gemini_thinking_levels(id))
+        @test UniLM._gemini_thinking_level(id, "minimal") == "minimal"      # the server's answer is the check
+        @test_throws ArgumentError UniLM._gemini_thinking_level(id, "xhigh") # no Gemini level at all
+    end
+    @test UniLM._gemini_thinking_levels("gemini-4-argon") == ["low", "medium", "high"]
+    @test (@inferred UniLM._gemini_thinking_level("gemini-4-argon", "high")) == "high"
 end
 
-@testset "pricing — Gemini 3.6 Flash, 3.5 Flash-Lite, and Embedding 2 rows" begin
-    # Google pricing page, 2026-09-22: standard paid tier, USD per 1M tokens.
+@testset "sampling — refused on every model but the earlier ones documented to honour it" begin
+    # Gemini ignores temperature, top_p and top_k on Gemini 3.6 Flash, 3.5 Flash-Lite and every
+    # later model (ai.google.dev/gemini-api/docs/whats-new-gemini-3.6); gemini-4-argon and
+    # gemini-3.8-flash answered such requests with HTTP 200 on 2026-10-22. Refused, so a request
+    # never goes out quietly ignoring them.
+    native(model; kw...) = JSON.parse(encode_request(GEMINIServiceEndpoint,
+        Chat(; service=GEMINIServiceEndpoint, model, kw...)))
+    agentic(model; kw...) = JSON.parse(UniLM.encode_agentic(GEMINIServiceEndpoint,
+        Respond(; service=GEMINIServiceEndpoint, model, input="x", kw...)))
+    for model in ("gemini-4-argon", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-5-x",
+                  "gemini-3.7-flash", "gemini-3.5-flash",       # routed to 3.8 and 3.6 Flash
+                  "gemini-flash-latest", "gemini-pro-latest",   # an alias moves to newer models
+                  "gemini-2.5-flash-exp"),                      # a near miss of an allow-listed id
+        (field, kw) in (("temperature", (temperature=0.5,)), ("top_p", (top_p=0.9,)))
+        for encode in (native, agentic)
+            err = try encode(model; kw...); nothing catch e; e end
+            @test err isa ArgumentError && occursin("Gemini ignores $field", err.msg) && occursin(model, err.msg)
+        end
+    end
+    # The earlier text and image models, the 2.5 family among them, take them.
+    @test Set(["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.1-flash-lite-image",
+               "gemini-3-pro-image", "gemini-3.1-flash-image", "gemini-2.5-flash-image"]) ⊆ Set(UniLM._GEMINI_PRE_3_6_MODELS)
+    for model in UniLM._GEMINI_PRE_3_6_MODELS
+        @test native(model; temperature=0.5)["generationConfig"] == Dict("temperature" => 0.5)
+        @test native(model; top_p=0.9)["generationConfig"] == Dict("topP" => 0.9)
+        @test agentic(model; temperature=0.5)["generation_config"] == Dict("temperature" => 0.5)
+        @test agentic(model; top_p=0.9)["generation_config"] == Dict("top_p" => 0.9)
+    end
+    # Refused before any request: the encoder runs before any I/O, and the verb lets its sampling
+    # refusal through.
+    err = try chatrequest!(Chat(service=GEMINIServiceEndpoint, model="gemini-4-argon", temperature=0.5,
+                                messages=[Message(role=RoleUser, content="hi")])); nothing catch e; e end
+    @test err isa ArgumentError && occursin("Gemini ignores temperature", err.msg) && occursin("gemini-4-argon", err.msg)
+end
+
+@testset "a request ending with a model turn is refused where Gemini answers it with HTTP 400" begin
+    # From Gemini 3.6 Flash and 3.5 Flash-Lite on, a request whose last non-empty turn is the
+    # model's is a 400 "Requests ending with a model turn are not supported." (observed on
+    # gemini-3.8-flash, 2026-10-22; ai.google.dev/gemini-api/docs/whats-new-gemini-3.6).
+    user = Message(role=RoleUser, content="Translate 'Hello world' to Spanish.")
+    prefill = Message(role=RoleAssistant, content="Translation:")
+    contents(model, msgs) = JSON.parse(encode_request(GEMINIServiceEndpoint,
+        Chat(; service=GEMINIServiceEndpoint, model, messages=msgs)))["contents"]
+    for model in ("gemini-4-argon", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite",
+                  "gemini-3.7-flash", "gemini-flash-latest", "gemini-5-x")
+        err = try contents(model, [user, prefill]); nothing catch e; e end
+        @test err isa ArgumentError && occursin(model, err.msg) && occursin("ends with a model turn", err.msg)
+    end
+    # The earlier models still continue a prefilled turn.
+    for model in UniLM._GEMINI_PRE_3_6_MODELS
+        @test last(contents(model, [user, prefill])) == Dict("role" => "model", "parts" => [Dict("text" => "Translation:")])
+    end
+    # A model turn with nothing to send is left out, so that request still ends with the user's turn,
+    # and tool results answering the model's call are the user's turn too.
+    refused = Message(role=RoleAssistant, refusal_message="blocked", finish_reason=CONTENT_FILTER)
+    @test contents("gemini-3.8-flash", [user, refused]) == [Dict("role" => "user", "parts" => [Dict("text" => user.content)])]
+    call = ToolCall(id="fc_1", func=GPTFunction("lookup", Dict{String,Any}("q" => "x")))
+    turns = contents("gemini-3.8-flash", [user, Message(role=RoleAssistant, tool_calls=[call], finish_reason=TOOL_CALLS),
+                                          Message(role=RoleTool, tool_call_id="fc_1", content="42")])
+    @test [t["role"] for t in turns] == ["user", "model", "user"]
+end
+
+@testset "prompt_cache_options — Gemini caches prompts implicitly; its explicit caching is not wrapped" begin
+    # ai.google.dev/gemini-api/docs/caching: implicit caching is on for every Gemini 2.5 and newer
+    # model with nothing to configure; explicit caching (cached contents) is a generateContent API
+    # of its own on Gemini 3 and 2.5 models, which UniLM does not wrap.
+    for pco in (PromptCacheOptions(ttl="5m"), PromptCacheOptions(ttl="1h"), PromptCacheOptions(ttl="30m"),
+                PromptCacheOptions(ttl="12h"), PromptCacheOptions(mode="implicit"))
+        for f in (() -> encode_request(GEMINIServiceEndpoint, Chat(service=GEMINIServiceEndpoint, prompt_cache_options=pco)),
+                  () -> UniLM.encode_agentic(GEMINIServiceEndpoint,
+                                             Respond(service=GEMINIServiceEndpoint, input="x", prompt_cache_options=pco)))
+            err = try f(); nothing catch e; e end
+            @test err isa ArgumentError && occursin("prompt_cache_options", err.msg) && occursin("implicitly", err.msg) &&
+                  occursin("does not wrap its explicit caching", err.msg)
+        end
+    end
+end
+
+@testset "decode and stream keep the served model and Gemini's own refusal text" begin
+    decode(body) = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(body))))
+    # modelVersion names the model that answered; a routed id answers as its target (observed
+    # 2026-10-22: a gemini-3.7-flash request reports gemini-3.8-flash).
+    served = Dict("candidates" => [Dict("content" => Dict("role" => "model", "parts" => [Dict("text" => "OK")]),
+                                        "finishReason" => "STOP")],
+                  "usageMetadata" => Dict("promptTokenCount" => 8, "candidatesTokenCount" => 1, "totalTokenCount" => 9),
+                  "modelVersion" => "gemini-3.8-flash", "responseId" => "r_1")
+    @test decode(served).model == "gemini-3.8-flash"
+    @test isnothing(decode(delete!(copy(served), "modelVersion")).model)
+    state = StreamState()
+    UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", JSON.json(served), state)
+    @test state.model == "gemini-3.8-flash"
+    # A filtered turn's finishMessage, Google's account of the block, is its refusal, streamed or not.
+    why = "The response was blocked because it may contain prohibited content."
+    blocked = Dict("candidates" => [Dict("finishReason" => "PROHIBITED_CONTENT", "finishMessage" => why)],
+                   "modelVersion" => "gemini-3.8-flash")
+    m = decode(blocked).message
+    @test m.refusal_message == why && m.finish_reason == CONTENT_FILTER
+    state = StreamState()
+    UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", JSON.json(blocked), state)
+    @test _build_stream_message(state).refusal_message == why
+    # Without one, the refusal names the filter.
+    @test decode(Dict("candidates" => [Dict("finishReason" => "SAFETY")])).message.refusal_message ==
+          "Model response blocked by safety filter."
+end
+
+@testset "usage — tool-use prompt tokens are input, billed at the input rate" begin
+    # totalTokenCount is prompt + tool-use prompt + thoughts + candidates (UsageMetadata,
+    # ai.google.dev/api/generate-content): the tool-use prompt is input the model read.
+    u = UniLM._gemini_usage(Dict("promptTokenCount" => 100, "toolUsePromptTokenCount" => 40,
+        "cachedContentTokenCount" => 20, "candidatesTokenCount" => 10, "thoughtsTokenCount" => 5,
+        "totalTokenCount" => 155))
+    @test u == TokenUsage(prompt_tokens=140, completion_tokens=15, total_tokens=155, cached_tokens=20, reasoning_tokens=5)
+    r = LLMSuccess(message=Message(role=RoleAssistant, content="x"),
+                   self=Chat(service=GEMINIServiceEndpoint, model="gemini-3.8-flash"), usage=u)
+    @test estimated_cost(r) ≈ (120 * 0.75 + 20 * 0.075 + 15 * 3.75) / 1_000_000
+end
+
+@testset "the served model prices the call; a routed id carries its target's rates" begin
+    reply(model) = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(Dict(
+        "candidates" => [Dict("content" => Dict("role" => "model", "parts" => [Dict("text" => "OK")]),
+                              "finishReason" => "STOP")],
+        "usageMetadata" => Dict("promptTokenCount" => 1_000, "candidatesTokenCount" => 100, "totalTokenCount" => 1_100),
+        "modelVersion" => model)))))
+    result(asked, d) = LLMSuccess(message=d.message, self=Chat(service=GEMINIServiceEndpoint, model=asked),
+                                  usage=d.usage, model=d.model)
+    # An alias has no row of its own and is billed as the model that answered (observed
+    # 2026-10-22: gemini-flash-lite-latest is served by gemini-3.5-flash-lite).
+    lite = result("gemini-flash-lite-latest", reply("gemini-3.5-flash-lite"))
+    @test lite.model == "gemini-3.5-flash-lite"
+    @test estimated_cost(lite) ≈ (1_000 * 0.30 + 100 * 2.50) / 1_000_000
+    @test (@test_logs (:warn, r"no price row") estimated_cost(lite; model="gemini-flash-lite-latest")) == 0.0
+    # gemini-pro-latest was served by gemini-3.1-pro-preview on 2026-10-22: billed at that model's row.
+    pro = result("gemini-pro-latest", reply("gemini-3.1-pro-preview"))
+    @test estimated_cost(pro) ≈ (1_000 * 2.0 + 100 * 12.0) / 1_000_000
+    # gemini-3.7-flash and gemini-3.5-flash answer as gemini-3.8-flash and gemini-3.6-flash, and are
+    # billed at those rates whether or not the reply names the served model.
+    for (asked, target) in (("gemini-3.7-flash", "gemini-3.8-flash"), ("gemini-3.5-flash", "gemini-3.6-flash"))
+        d = reply(target)
+        @test estimated_cost(result(asked, d)) == estimated_cost(result(target, d)) ≈ (1_000 * 0.75 + 100 * 3.75) / 1e6
+        unreported = LLMSuccess(message=d.message, self=Chat(service=GEMINIServiceEndpoint, model=asked), usage=d.usage)
+        @test estimated_cost(unreported) == estimated_cost(result(target, d))
+    end
+end
+
+@testset "a reply streamed and not streamed reports the same usage and served model" begin
+    # So cumulative_cost does not depend on `stream`.
+    usage = Dict("promptTokenCount" => 120, "toolUsePromptTokenCount" => 30, "cachedContentTokenCount" => 64,
+                 "candidatesTokenCount" => 12, "thoughtsTokenCount" => 40, "totalTokenCount" => 202)
+    whole = Dict("candidates" => [Dict("content" => Dict("role" => "model", "parts" => [Dict("text" => "Hello world")]),
+                                       "finishReason" => "STOP")],
+                 "usageMetadata" => usage, "modelVersion" => "gemini-3.8-flash")
+    d = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(whole))))
+    # The same reply streamed: the text in two chunks, the finish reason and the final usage on the
+    # last, every chunk naming the model.
+    chunks = (Dict("candidates" => [Dict("content" => Dict("role" => "model", "parts" => [Dict("text" => "Hello")]))],
+                   "usageMetadata" => Dict("promptTokenCount" => 120, "totalTokenCount" => 120),
+                   "modelVersion" => "gemini-3.8-flash"),
+              Dict("candidates" => [Dict("content" => Dict("role" => "model", "parts" => [Dict("text" => " world")]),
+                                         "finishReason" => "STOP")],
+                   "usageMetadata" => usage, "modelVersion" => "gemini-3.8-flash"))
+    state = StreamState()
+    for c in chunks
+        UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", JSON.json(c), state)
+    end
+    streamed = _build_stream_message(state)
+    @test streamed.content == d.message.content == "Hello world"
+    @test state.usage == d.usage == TokenUsage(prompt_tokens=150, completion_tokens=52, total_tokens=202,
+                                               cached_tokens=64, reasoning_tokens=40)
+    @test state.model == d.model == "gemini-3.8-flash"
+    chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.7-flash")
+    cost(m, u, model) = estimated_cost(LLMSuccess(message=m, self=chat, usage=u, model=model))
+    @test cost(streamed, state.usage, state.model) == cost(d.message, d.usage, d.model) > 0
+end
+
+@testset "pricing — Gemini rows (Google pricing page, 2026-10-22)" begin
+    # Standard paid tier, USD per 1M tokens; output includes thinking.
     usage = TokenUsage(prompt_tokens=1000, completion_tokens=500, cached_tokens=200)
-    for (model, input, cached, output) in (("gemini-3.6-flash", 0.75, 0.075, 3.75),
+    for (model, input, cached, output) in (("gemini-4-argon", 2.0, 0.10, 10.0), ("gemini-3.8-flash", 0.75, 0.075, 3.75),
+                                           ("gemini-3.6-flash", 0.75, 0.075, 3.75),
                                            ("gemini-3.5-flash-lite", 0.30, 0.03, 2.50))
         r = LLMSuccess(message=Message(role=RoleAssistant, content="x"),
                        self=Chat(service=GEMINIServiceEndpoint, model=model), usage=usage)

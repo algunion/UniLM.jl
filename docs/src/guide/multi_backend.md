@@ -118,15 +118,41 @@ chat = Chat(service=GEMINIOpenAIServiceEndpoint, model="gemini-3.8-flash",
             reasoning_effort="low")
 ```
 
+Google calls `generateContent` legacy — still fully supported — and launches new models
+and features on the Interactions API, which [`respond`](@ref) speaks with the same
+`service=GEMINIServiceEndpoint` (see [Agentic Workflows](@ref agentic_guide) and Google's
+[Interactions overview](https://ai.google.dev/gemini-api/docs/interactions-overview)).
+
 ### Current model controls
 
-As of September 7, 2026, Gemini 3.8 Flash supports `reasoning_effort="low"`,
-`"medium"`, or `"high"`. Native Chat maps this to `thinkingConfig.thinkingLevel`.
-The completion cap includes thinking tokens, so a very small cap can produce
-an empty answer. Gemini 3.8 rejects `temperature`, `top_p`, and minimal thinking.
-On the Interactions API (`respond`), `temperature` and `top_p` stay mapped to
-`generation_config` for models that accept them (`gemini-3.7-flash` accepted both
-on September 22, 2026).
+`reasoning_effort` maps to `thinkingConfig.thinkingLevel` on native Chat (and a
+`Reasoning` effort to `generation_config.thinking_level` on `respond`), checked against
+the model's levels in Google's [thinking table](https://ai.google.dev/gemini-api/docs/thinking):
+Gemini 4 Argon and Gemini 3.8 Flash take `"low"`, `"medium"` or `"high"`, so `"minimal"`
+throws `ArgumentError` before any request (the API answers it with HTTP 400), as it does for
+`gemini-pro-latest` and `gemini-flash-latest`, which take the levels of the models behind
+them. A row matches its exact model id; an id the table does not list is left to the server.
+The completion cap includes thinking tokens, so a very small cap can produce an empty answer.
+
+Gemini ignores `temperature` and `top_p` on Gemini 3.6 Flash, 3.5 Flash-Lite and every later
+model ([what changed in Gemini 3.6](https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.6)),
+so native Chat, `respond` (Interactions) and `GEMINIOpenAIServiceEndpoint` throw `ArgumentError`
+for them on every model except the earlier ones that honour them, such as `gemini-2.5-flash`,
+`gemini-3-flash-preview` and `gemini-3.1-pro-preview`. From the same models on, a request may not
+end with a model turn: a prefilled answer (a `Chat` whose last message is the assistant's, sent with
+`history=false`) throws `ArgumentError` on native Chat, since the API answers it with HTTP 400, and
+`GEMINIOpenAIServiceEndpoint` returns that 400 as an `LLMFailure`. On `respond`, Gemini 4 Argon
+takes a `max_output_tokens` above 65,536 only with `background=true`
+([long decode](https://ai.google.dev/gemini-api/docs/long-decode)).
+`prompt_cache_options` throws on native Chat and `respond`: Gemini caches repeated prompt
+prefixes [implicitly](https://ai.google.dev/gemini-api/docs/caching), and UniLM does not wrap the
+explicit caching (cached contents) that `generateContent` also offers on Gemini 3 and 2.5 models;
+`GEMINIOpenAIServiceEndpoint` answers the field with HTTP 400.
+
+Google routes the deprecated `gemini-3.7-flash` to `gemini-3.8-flash` and `gemini-3.5-flash` to
+`gemini-3.6-flash`. Such a request takes the rules of the model that serves it, and the reply names
+that model — `result.model` from `modelVersion` on Chat, `response.model` on `respond` — which is
+the model [`estimated_cost`](@ref) prices: an alias or a routed id is billed at its target's rates.
 Native Gemini tool declarations use `parametersJsonSchema`, preserving standard
 JSON Schema constraints such as `additionalProperties`.
 
@@ -140,7 +166,8 @@ Native Chat returns one candidate and does not implement OpenAI-specific options
 such as `seed`, `metadata`, and `stream_options`; those options fail explicitly.
 Gemini determines parallel tool use; the inherited `parallel_tool_calls` setting
 does not constrain native Gemini.
-See [Google's migration guide](https://ai.google.dev/gemini-api/docs/latest-model).
+See Google's [Gemini 4 Argon guide](https://ai.google.dev/gemini-api/docs/latest-model) for the
+current model.
 
 Native Gemini reports `finishReason` truthfully on both the streamed and the
 non-streamed path: `STOP` is `"stop"` (`"tool_calls"` when the turn carries function
@@ -150,8 +177,11 @@ calls), `MAX_TOKENS` is `"length"`, the safety filters — `SAFETY`, `RECITATION
 other value passes through lowercased (for example `"malformed_function_call"` or
 `"no_image"`). A candidate without a `finishReason` reports `nothing`,
 and function calls under a reason other than `STOP` keep that reason, so a tool loop
-does not run them. A model turn with neither text nor function calls (a refusal, or a
-turn spent entirely on thinking) is left out of the next request.
+does not run them. A filtered turn's `refusal_message` is the reply's `finishMessage`,
+Google's account of the block, when it carries one. A model turn with neither text nor
+function calls (a refusal, or a turn spent entirely on thinking) is left out of the next
+request. Usage counts a tool-use prompt (`toolUsePromptTokenCount`) as prompt tokens, billed
+at the input rate.
 
 OpenAI defaults to `gpt-6-sol` for `Chat` and `Respond`. OpenAI's tool path is the
 Responses API: GPT-5.6, GPT-6 Sol, and GPT-6 Luna take Chat Completions tools only with an

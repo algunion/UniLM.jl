@@ -286,7 +286,7 @@ const _ET_G = GEMINIOpenAIServiceEndpoint
     e = _et_err(() -> Embeddings(EmbeddingInput("t"; title="T"); service=_ET_G, task=:search_query))
     @test e isa ArgumentError && occursin("gemini-embedding-2", e.msg) && occursin("task = :document", e.msg)
     # Only that id: a near miss gets no prompts.
-    for model in ("gemini-embedding-20", "gemini-embedding-2-preview")
+    for model in ("gemini-embedding-20", "gemini-embedding-2-unilm-variant")
         e = _et_err(() -> Embeddings("q"; service=_ET_G, model, task=:search_query))
         @test e isa ArgumentError && occursin(repr(model), e.msg) && occursin("and gemini-embedding-2", e.msg)
     end

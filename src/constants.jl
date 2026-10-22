@@ -77,10 +77,8 @@ const CONVERSATIONS_PATH::String = "/v1/conversations"
 """OpenAI Moderations API path."""
 const MODERATIONS_PATH::String = "/v1/moderations"
 
-"""OpenAI Audio API paths."""
-const AUDIO_SPEECH_PATH::String = "/v1/audio/speech"
+"""OpenAI Audio API transcription path."""
 const AUDIO_TRANSCRIPTIONS_PATH::String = "/v1/audio/transcriptions"
-const AUDIO_TRANSLATIONS_PATH::String = "/v1/audio/translations"
 
 """OpenAI Batch API path."""
 const BATCHES_PATH::String = "/v1/batches"

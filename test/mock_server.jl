@@ -510,22 +510,12 @@ try
     end
 
     @testset "Audio API (mock)" begin
-        # TTS: binary response with a real audio Content-Type (mock now honors it)
-        response_status[] = 200
-        response_headers[] = ["Content-Type" => "audio/mpeg"]
-        response_body[] = "AUDIOBYTES"
-        r = speak("hello"; voice="verse", service=MockServiceEndpoint)
-        @test r isa SpeechSuccess
-        @test r.content_type == "audio/mpeg"
-        let sent = JSON.parse(request_body[])          # speak sends JSON
-            @test sent["input"] == "hello" && sent["voice"] == "verse"
-        end
-        p = tempname() * ".mp3"
-        save_audio(r, p)                          # save BEFORE String(): String(::Vector{UInt8}) empties the buffer
-        @test read(p, String) == "AUDIOBYTES"
-        rm(p)
+        # Speech runs on a Realtime session or Gemini TTS: this HTTP endpoint has no Realtime
+        # WebSocket, so it is refused before any request.
+        @test_throws ArgumentError speak("hello"; voice="verse", service=MockServiceEndpoint)
 
         # Transcription: JSON-response branch + multipart request shape
+        response_status[] = 200
         response_headers[] = ["Content-Type" => "application/json"]
         response_body[] = JSON.json(Dict("text" => "hello world"))
         af = tempname() * ".wav"
@@ -534,15 +524,15 @@ try
         @test rt isa TranscriptionSuccess && transcript_text(rt) == "hello world"
         @test occursin("name=\"model\"", request_body[]) && occursin("name=\"file\"", request_body[])  # multipart wire shape
 
-        # Transcription: text/plain-response branch (non-JSON path) via translate()
+        # Transcription: text/plain-response branch (non-JSON path)
         response_headers[] = ["Content-Type" => "text/plain"]
         response_body[] = "plain transcript"
-        @test transcript_text(translate(af; service=MockServiceEndpoint)) == "plain transcript"
-        rm(af)
+        @test transcript_text(transcribe(af; service=MockServiceEndpoint)) == "plain transcript"
 
         response_headers[] = Pair{String,String}[]
         set_error!(401, "no")
-        @test speak("x"; service=MockServiceEndpoint) isa AudioFailure
+        @test transcribe(af; service=MockServiceEndpoint) isa AudioFailure
+        rm(af)
         set_error!(200, "")
     end
 
@@ -753,9 +743,9 @@ try
         @test delete_conversation_item("c", "i"; service=DeadEndpoint) isa ConversationCallError
         # Moderations / Audio / Image edits
         @test moderate("x"; service=DeadEndpoint) isa ModerationCallError
-        @test speak("hi"; service=DeadEndpoint) isa AudioCallError
+        @test_throws ArgumentError speak("hi"; service=DeadEndpoint)      # no Realtime WebSocket
         @test transcribe(tf; service=DeadEndpoint) isa AudioCallError
-        @test translate(tf; service=DeadEndpoint) isa AudioCallError
+        @test_throws ArgumentError translate(tf; service=DeadEndpoint)    # no Realtime WebSocket
         @test edit_image(png, "p"; model="gpt-image-2", service=DeadEndpoint) isa ImageCallError
         # Batch
         @test create_batch("f", "/v1/responses"; service=DeadEndpoint) isa BatchCallError
@@ -806,9 +796,9 @@ try
         @test list_conversation_items("c"; service=MockServiceEndpoint) isa ConversationFailure
         @test delete_conversation_item("c", "i"; service=MockServiceEndpoint) isa ConversationFailure
         @test moderate("x"; service=MockServiceEndpoint) isa ModerationFailure
-        @test speak("hi"; service=MockServiceEndpoint) isa AudioFailure
+        @test_throws ArgumentError speak("hi"; service=MockServiceEndpoint)       # no Realtime WebSocket
         @test transcribe(tf; service=MockServiceEndpoint) isa AudioFailure
-        @test translate(tf; service=MockServiceEndpoint) isa AudioFailure
+        @test_throws ArgumentError translate(tf; service=MockServiceEndpoint)     # no Realtime WebSocket
         @test edit_image(png, "p"; model="gpt-image-2", service=MockServiceEndpoint) isa ImageFailure
         @test create_batch("f", "/v1/responses"; service=MockServiceEndpoint) isa BatchFailure
         @test cancel_batch("b"; service=MockServiceEndpoint) isa BatchFailure

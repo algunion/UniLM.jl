@@ -1,8 +1,10 @@
 # ============================================================================
 # OpenAI Realtime API — low-latency speech/text over a WebSocket. This client
-# covers the WebSocket event transport + ephemeral client-secret minting. WebRTC
-# media capture and SIP telephony are OUT OF SCOPE (need a native media stack
-# Julia lacks); audio is exchanged as base64 PCM inside events.
+# covers the WebSocket event transport + ephemeral client-secret minting, and
+# drives whole sessions for `speak` (a voice session) and `translate` (a
+# translation session). WebRTC media capture and SIP telephony are OUT OF SCOPE
+# (need a native media stack Julia lacks); audio is exchanged as base64 PCM
+# inside events.
 # ============================================================================
 
 "Successful [`mint_realtime_secret`](@ref) result; `value` is the ephemeral client secret and `raw` the unparsed JSON response."
@@ -81,9 +83,9 @@ end
 # A function so tests can route their own endpoint types to a local server.
 _realtime_ws_url(::Type{OPENAIServiceEndpoint}) = REALTIME_WS_URL
 _realtime_ws_url(service) = throw(ArgumentError(
-    "realtime_connect supports only OPENAIServiceEndpoint (got " *
-    "$(service isa Type ? service : typeof(service))): the Realtime WebSocket is " *
-    "served by api.openai.com, and another endpoint's credentials must not be sent there"))
+    "the Realtime WebSocket (realtime_connect, speak, translate) supports only OPENAIServiceEndpoint " *
+    "(got $(service isa Type ? service : typeof(service))): it is served by api.openai.com, and " *
+    "another endpoint's credentials must not be sent there"))
 
 # Test seam: runs as the upgrade completes, before the handler is admitted.
 _realtime_upgraded(service) = nothing
@@ -116,8 +118,14 @@ _realtime_native_kwargs(cfg::RequestConfig) =
 _realtime_url(service, model::String)::String =
     _realtime_ws_url(service) * "?model=" * _uripart(model)
 
+# The translation endpoint sits under the Realtime WebSocket
+# (wss://api.openai.com/v1/realtime/translations), the model again a query value:
+# https://developers.openai.com/api/docs/guides/realtime-translation
+_realtime_translation_url(service, model::String)::String =
+    _realtime_ws_url(service) * "/translations?model=" * _uripart(model)
+
 """
-    realtime_connect(handler; model="gpt-realtime-2", service=OPENAIServiceEndpoint, config=nothing)
+    realtime_connect(handler; model="gpt-realtime-2.1", service=OPENAIServiceEndpoint, config=nothing)
 
 Open a Realtime WebSocket and run `handler(session::RealtimeSession)`. Inside the handler use
 [`realtime_send`](@ref) to send event dicts and [`realtime_receive`](@ref) to read server
@@ -138,12 +146,17 @@ Throws `ArgumentError` before any I/O for a `service` other than
 `OPENAIServiceEndpoint`: the Realtime WebSocket is served by api.openai.com, and
 another endpoint's credentials must not be sent there.
 """
-function realtime_connect(handler; model::String="gpt-realtime-2",
+function realtime_connect(handler; model::String="gpt-realtime-2.1",
                           service::ServiceEndpointSpec=OPENAIServiceEndpoint,
                           config::Union{Nothing,RequestConfig}=nothing)
     validate_capability(service, :realtime, "Realtime API")
     cfg = _resolve_config(config)
-    url = _realtime_url(service, model)
+    _realtime_open(handler, _realtime_url(service, model), model, service, cfg)
+end
+
+# The open phase every Realtime session shares: `handler(session)` runs once the upgrade of `url`
+# completes inside `cfg.connect_timeout`; returns what the handler returns.
+function _realtime_open(handler, url::String, model::String, service, cfg::RequestConfig)
     t0 = time_ns()
     gate = _RealtimeGate(:pending)
     ready = Base.Event()   # the handler was admitted, the open task ended, or the bound fired
@@ -212,6 +225,169 @@ function realtime_receive(s::RealtimeSession)
     # back is the echo of that close on a dead socket, never a server event.
     fired && throw(UniLMTimeout(:stream_idle, _elapsed_s(t0), limit))
     return JSON.parse(String(raw); dicttype=Dict{String,Any})
+end
+
+# ─── Sessions UniLM drives to their end: speak and translate ─────────────────
+# Unlike a `realtime_connect` session, these are one bounded call: every wait is bounded by
+# the call's RequestConfig, and every outcome is a typed result.
+
+# Opens a session for a verb that drives it: the open phase is bounded by connect_timeout and by
+# what is left of total_deadline. Returns what `driver(session)` returns.
+function _realtime_call(driver, url::String, model::String, service, cfg::RequestConfig, t0::UInt64)
+    left = _remaining_s(cfg, t0)
+    ispositive(left) || throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
+    capped = left < cfg.connect_timeout
+    try
+        _realtime_open(driver, url, model, service, capped ? RequestConfig(cfg; connect_timeout=left) : cfg)
+    catch e
+        capped && e isa UniLMTimeout && e.phase === :connect &&
+            throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
+        rethrow()
+    end
+end
+
+# The next server event of a driven session: the wait is bounded by stream_idle_timeout and by what
+# is left of total_deadline, and a breach closes the socket (the one way to unblock a parked read)
+# and throws the typed timeout. `nothing` when the peer closed the session.
+function _realtime_next(s::RealtimeSession, t0::UInt64)::Union{Dict{String,Any},Nothing}
+    cfg = s.config
+    left = _remaining_s(cfg, t0)
+    ispositive(left) || throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
+    deadline = left < cfg.stream_idle_timeout
+    limit = deadline ? left : cfg.stream_idle_timeout
+    r0 = time_ns()
+    raw, fired = try
+        _with_deadline_reported(() -> HTTP.WebSockets.receive(s.ws), () -> close(s.ws), limit,
+                                deadline ? :deadline : :stream_idle)
+    catch e
+        e isa HTTP.WebSockets.WebSocketError && return nothing
+        (e isa UniLMTimeout && e.phase === :deadline) || rethrow()
+        throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
+    end
+    # Our own close ended the read: what it handed back is not a server event.
+    fired && throw(deadline ? UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline) :
+                              UniLMTimeout(:stream_idle, _elapsed_s(r0), limit))
+    JSON.parse(String(raw); dicttype=Dict{String,Any})
+end
+
+# Sends one client event of a driven session, bounded by what is left of total_deadline: a peer
+# that stops reading cannot park the call on a full socket buffer. `false` when the peer closed.
+function _realtime_post(s::RealtimeSession, event::AbstractDict, t0::UInt64)::Bool
+    cfg = s.config
+    left = _remaining_s(cfg, t0)
+    ispositive(left) || throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
+    try
+        _with_deadline(() -> realtime_send(s, event), () -> close(s.ws), left, :deadline)
+    catch e
+        e isa HTTP.WebSockets.WebSocketError && return false
+        (e isa UniLMTimeout && e.phase === :deadline) || rethrow()
+        throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
+    end
+    true
+end
+
+# Reads events until one of `type`. An `error` event on the way is the provider's refusal; a close
+# is a session that ended early.
+function _realtime_await(s::RealtimeSession, t0::UInt64, type::String)::Union{Dict{String,Any},AudioFailure,AudioCallError}
+    while true
+        ev = _realtime_next(s, t0)
+        ev === nothing && return _realtime_closed(type)
+        kind = get(ev, "type", nothing)
+        kind == "error" && return _realtime_refusal(ev)
+        kind == type && return ev
+    end
+end
+
+# A failure the provider reported as an event: there is no HTTP status, and the event is the response.
+_realtime_refusal(ev::AbstractDict)::AudioFailure = AudioFailure(response=JSON.json(ev), status=nothing)
+_realtime_closed(awaited::String)::AudioCallError = AudioCallError(error="the Realtime session closed before $awaited")
+
+# A string field of a server event; anything else is a malformed event.
+function _event_string(ev::AbstractDict, key::String)::String
+    v = get(ev, key, nothing)
+    v isa AbstractString || error("Realtime $(get(ev, "type", "")) event without a string `$key`")
+    String(v)
+end
+
+# Realtime models are conversational, so a speech session's instructions tell the model to read the
+# text rather than answer it; the caller's `instructions` follow as delivery directions.
+const _REALTIME_READ_ALOUD = "Read the user's message aloud, word for word, exactly as written. " *
+                             "Do not answer it or comment on it, and do not add, drop or change words."
+
+# session.update for speech: audio output as 24 kHz PCM16, in the request's voice and speed.
+function _speech_session(req::SpeechRequest)::Dict{Symbol,Any}
+    output = Dict{Symbol,Any}(:format => Dict(:type => "audio/pcm", :rate => _SPEECH_RATE), :voice => req.voice)
+    isnothing(req.speed) || (output[:speed] = req.speed)
+    instructions = isnothing(req.instructions) ? _REALTIME_READ_ALOUD :
+                   string(_REALTIME_READ_ALOUD, " Delivery: ", req.instructions)
+    session_update(Dict{Symbol,Any}(:type => "realtime", :output_modalities => ["audio"],
+                                    :instructions => instructions, :audio => Dict(:output => output)))
+end
+
+_speech_item(req::SpeechRequest)::Dict{Symbol,Any} = realtime_event("conversation.item.create"; item=Dict(
+    :type => "message", :role => "user", :content => [Dict(:type => "input_text", :text => req.input)]))
+
+# One speech response (https://developers.openai.com/api/docs/guides/realtime-conversations): update
+# the session and wait until it took the update, add the text, ask for a response, and collect its
+# audio deltas until response.done.
+function _realtime_speak(s::RealtimeSession, req::SpeechRequest, t0::UInt64)::LLMRequestResponse
+    _realtime_post(s, _speech_session(req), t0) || return _realtime_closed("session.updated")
+    (ev = _realtime_await(s, t0, "session.updated")) isa AbstractDict || return ev
+    (_realtime_post(s, _speech_item(req), t0) && _realtime_post(s, response_create(), t0)) ||
+        return _realtime_closed("response.done")
+    pcm = IOBuffer()
+    while true
+        ev = _realtime_next(s, t0)
+        ev === nothing && return _realtime_closed("response.done")
+        kind = get(ev, "type", nothing)
+        if kind == "error"
+            return _realtime_refusal(ev)
+        elseif kind == "response.output_audio.delta"
+            write(pcm, base64decode(_event_string(ev, "delta")))
+        elseif kind == "response.done"
+            return _speech_done(req, ev, take!(pcm))
+        end
+    end
+end
+
+# Only a completed response is the whole speech: a cancelled, failed or incomplete one carries its
+# reason in `status_details` and is the provider's failure.
+function _speech_done(req::SpeechRequest, ev::AbstractDict, pcm::Vector{UInt8})::LLMRequestResponse
+    response = get(ev, "response", nothing)
+    status = response isa AbstractDict ? get(response, "status", nothing) : nothing
+    status == "completed" || return _realtime_refusal(ev)
+    isempty(pcm) && return AudioCallError(error="the Realtime response completed without audio")
+    _speech_success(req, pcm)
+end
+
+# A translation session consumes 200 ms engine frames; 200 ms of 24 kHz PCM16 mono is 9,600 bytes.
+const _TRANSLATION_FRAME_BYTES = 9_600
+
+# One translation (https://developers.openai.com/api/docs/guides/realtime-translation): set the
+# target language and wait until the session took it, stream the audio, close the session, and join
+# the translated transcript until session.closed. The translated audio deltas are not kept.
+function _realtime_translate(s::RealtimeSession, pcm::Vector{UInt8}, language::String, t0::UInt64)::LLMRequestResponse
+    update = session_update(Dict{Symbol,Any}(:audio => Dict(:output => Dict(:language => language))))
+    _realtime_post(s, update, t0) || return _realtime_closed("session.updated")
+    (ev = _realtime_await(s, t0, "session.updated")) isa AbstractDict || return ev
+    for frame in Iterators.partition(pcm, _TRANSLATION_FRAME_BYTES)
+        _realtime_post(s, realtime_event("session.input_audio_buffer.append"; audio=base64encode(frame)), t0) ||
+            return _realtime_closed("session.closed")
+    end
+    _realtime_post(s, realtime_event("session.close"), t0) || return _realtime_closed("session.closed")
+    text = IOBuffer()
+    while true
+        ev = _realtime_next(s, t0)
+        ev === nothing && return _realtime_closed("session.closed")
+        kind = get(ev, "type", nothing)
+        if kind == "error"
+            return _realtime_refusal(ev)
+        elseif kind == "session.output_transcript.delta"
+            print(text, _event_string(ev, "delta"))
+        elseif kind == "session.closed"
+            return TranscriptionSuccess(text=takestring!(text))
+        end
+    end
 end
 
 # A minted client secret is a live credential: the default field dump prints it

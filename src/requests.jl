@@ -1107,19 +1107,21 @@ end
 # Per-call streaming control, shared by every attempt of one call: the caller's
 # token (a stop from it reports source `:token`); the stop token every attempt's
 # request context is aborted on — cancelled by the caller's token and by the
-# callback's close flag (source `:callback`); whether user code has run (a retry
-# after that would replay output); and the first exception user code raised,
-# recorded before HTTP.jl can replace it with its rendering of the aborted exchange.
+# callback's close flag (source `:callback`); when the call started (a stop reports
+# the time since, whichever request of the call it surfaces in); whether user code
+# has run (a retry after that would replay output); and the first exception user code
+# raised, recorded before HTTP.jl can replace it with its rendering of the aborted exchange.
 mutable struct _StreamCtl
     const token::Union{Nothing,CancelToken}
     const stop::CancelToken
     const close::_CloseRef
+    const started::UInt64
     fired::Bool
     failure::Union{Nothing,_UserCallbackError}
 end
-function _StreamCtl(token::Union{Nothing,CancelToken})
+function _StreamCtl(token::Union{Nothing,CancelToken}, started::UInt64)
     stop = CancelToken()
-    _StreamCtl(token, stop, _CloseRef(stop), false, nothing)
+    _StreamCtl(token, stop, _CloseRef(stop), started, false, nothing)
 end
 
 # The typed stop a stopped call reports; the caller's token wins over the close flag.
@@ -1128,6 +1130,8 @@ function _stop_cause(ctl::_StreamCtl, t0::UInt64)::UniLMCancelled
     @debug "stream stopped" source = c.source elapsed = c.elapsed
     c
 end
+# The same, timed from the call's start: a stop can surface in a later request of the call.
+_stop_cause(ctl::_StreamCtl)::UniLMCancelled = _stop_cause(ctl, ctl.started)
 
 # Run user code from a stream driver. It is user-visible output from its first
 # instruction (no retry after it), its duration is not wire idle time, and what it
@@ -1401,7 +1405,7 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
             end
             # A stop ends the attempt here, before finalization and without draining
             # the body; the catch decides whether a completed turn still stands.
-            iscancelled(ctl.stop) && throw(_stop_cause(ctl, t0))
+            iscancelled(ctl.stop) && throw(_stop_cause(ctl))
             # Terminal contract: `:done` is the sentinel EOS
             # ([DONE] / message_stop). Gemini has NO sentinel — its handler
             # never returns :done; its stream ends at EOF with finishReason
@@ -1488,7 +1492,7 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
         end
         # Stopped before the turn completed: whatever surfaced (HTTP.jl's rendering
         # of the aborted exchange, a racing bound) is the stop's echo.
-        stopped && throw(_stop_cause(ctl, t0))
+        stopped && throw(_stop_cause(ctl))
         breach === nothing || throw(breach)
         # Recorded request-phase bound: the typed cause that initiated the
         # teardown takes precedence over whatever the library surfaced while
@@ -1526,7 +1530,7 @@ answered adds their cost to the chat's total, since they were billed; nothing is
 function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestConfig, t0::UInt64,
                        token::Union{Nothing,CancelToken})
     io_ref = Ref{Union{HTTP.Stream,Nothing}}(nothing)
-    ctl = _StreamCtl(token)
+    ctl = _StreamCtl(token, t0)
     link = _on_cancel(() -> cancel!(ctl.stop), token)   # the caller's token stops the call
     turn = _StreamTurn(body)
     request, start = body, t0
@@ -1536,10 +1540,12 @@ function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestCon
             result isa _StreamHop || return _settled(chat, turn, result)
             # The next request starts with the whole budget, a retry of it replays nothing
             # that an earlier reply delivered, and a failure of it names its own request id.
+            # A stop already set ends the call before that request is sent: it names the
+            # request of the reply it landed on.
             turn = _next_turn(turn, result.state)
             request, start = result.body, time_ns()
             ctl.fired = false
-            io_ref[] = nothing
+            iscancelled(ctl.stop) || (io_ref[] = nothing)
         end
     catch e
         _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
@@ -1592,7 +1598,7 @@ function _stream_hop(chat::Chat, body, callback, on_tool_call, cfg::RequestConfi
                 rethrow()
             end
             @debug "stream attempt failed; retrying" attempt exception = u
-            _cancel_sleep(ctl.stop, delay) && throw(_stop_cause(ctl, t0))
+            _cancel_sleep(ctl.stop, delay) && throw(_stop_cause(ctl))
             continue
         end
         result = outcome.result
@@ -1601,7 +1607,7 @@ function _stream_hop(chat::Chat, body, callback, on_tool_call, cfg::RequestConfi
             action, delay = _retry_pause(cfg, t0, attempt, outcome.resp)
             if action === :sleep
                 @debug "retryable streamed status; retrying" attempt status = result.status
-                _cancel_sleep(ctl.stop, delay) && throw(_stop_cause(ctl, t0))
+                _cancel_sleep(ctl.stop, delay) && throw(_stop_cause(ctl))
                 continue
             end
             # Budget cut: the last REAL outcome is the truthful answer — never a
@@ -1774,6 +1780,8 @@ function chatrequest!(chat::Chat; config::Union{Nothing,RequestConfig}=nothing,
         e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         e isa UniLMTimeout && return LLMCallError(error=sprint(showerror, e), self=chat,
                                                   status=nothing, cause=e)
+        # A stop is timed from the call's start, whichever of its requests it ended.
+        e isa UniLMCancelled && (e = UniLMCancelled(e.source, _elapsed_s(t0)))
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = isnothing(latest) ? _get_request_id(e) : _get_request_id(latest)
         return LLMCallError(error=_error_text(chat.service, e), self=chat, status=statuserror,

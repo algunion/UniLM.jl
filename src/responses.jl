@@ -1381,7 +1381,7 @@ end
 function _respond_stream(r::Respond, body::String, callback, cfg::RequestConfig, t0::UInt64,
                          token::Union{Nothing,CancelToken})
     Threads.@spawn begin
-        ctl = _StreamCtl(token)
+        ctl = _StreamCtl(token, t0)
         link = _on_cancel(() -> cancel!(ctl.stop), token)   # the caller's token stops the call
         try
             _respond_drive(r, body, callback, cfg, t0, ctl)

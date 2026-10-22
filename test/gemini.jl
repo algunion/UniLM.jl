@@ -930,7 +930,8 @@ end
     @test !haskey(part("auto"), "mediaResolution") && !haskey(part(nothing), "mediaResolution")
     e = _gemini_caught(() -> part("original"))
     @test e isa ArgumentError && occursin("\"original\"", e.msg) && occursin("\"high\"", e.msg)
-    # Gemini sets a per-part resolution on Gemini 3 models only: the earlier ones refuse a level.
+    # Google documents a per-part resolution for Gemini 4 and Gemini 3 models only: the earlier
+    # ones refuse a level.
     for model in ("gemini-2.5-flash", "gemini-2.5-pro", "gemma-4-31b-it")
         e = _gemini_caught(() -> part("low"; model))
         @test e isa ArgumentError && occursin(model, e.msg) && occursin("detail", e.msg)
@@ -1078,12 +1079,13 @@ UniLM._billed_cost(::Type{_GeminiHops}, m::String, u::TokenUsage, r::UniLM.Price
     UniLM._billed_cost(GEMINIServiceEndpoint, m, u, r)
 
 # Each reply: (status, GenerateContentResponse). A streamed request gets the response as one SSE
-# chunk, or the chunks listed under "chunks".
-function _with_hops(f, replies; tier="priority")
+# chunk, or the chunks listed under "chunks"; each response is sent `delay` seconds after its request.
+function _with_hops(f, replies; tier="priority", delay=0.0)
     seen = String[]
     lk = ReentrantLock()
     server = HTTP.serve!("127.0.0.1", 0; listenany=true, verbose=false) do req
         k = lock(() -> (push!(seen, String(copy(req.body))); length(seen)), lk)
+        delay > 0 && sleep(delay)
         status, reply = replies[min(k, length(replies))]
         streamed = endswith(String(req.target), "/stream") && status == 200
         payload = !streamed ? JSON.json(reply) :
@@ -1259,9 +1261,10 @@ end
 
 @testset "continuation — a stop on the reply that continues ends the call; that reply stays billed" begin
     # The caller stops on the text of hop 1's last chunk, the one that carries CONTINUATION and
-    # hop 1's whole usage: by the close flag or by a cancel of its token.
+    # hop 1's whole usage: by the close flag or by a cancel of its token. The call ends at the next
+    # request, which is never sent; the stop is reported as hop 1's, timed from the call's start.
     for by_token in (false, true)
-        _with_hops(_hops_two()) do seen
+        _with_hops(_hops_two(); delay=0.4) do seen
             chat = _hops_chat(stream=true)
             tok = CancelToken()
             got = Any[]
@@ -1270,6 +1273,8 @@ end
                                    callback=(c, close) -> (push!(got, c); c == "The proof begins. " && stop!(close))))
             @test r isa LLMCallError && r.cause isa UniLMCancelled
             @test r.cause.source === (by_token ? :token : :callback)
+            @test r.cause.elapsed >= 0.4                                         # hop 1's response took 0.4 s
+            @test r.request_id == "req-1"
             @test length(seen) == 1                                              # hop 2 never sent
             @test [m.role for m in chat.messages] == [RoleSystem, RoleUser]      # nothing committed
             @test !any(x -> x isa Message, got)                                  # no final message
@@ -1280,7 +1285,7 @@ end
 
 @testset "continuation — a cancel between hops ends the call before the next request; earlier hops stay billed" begin
     for stream in (false, true)
-        _with_hops(_hops_two()) do seen
+        _with_hops(_hops_two(); delay=0.4) do seen
             chat = _hops_chat(; stream)
             tok = CancelToken()
             _HOPS_BETWEEN[] = () -> cancel!(tok)          # once hop 1 is received, before hop 2 is sent
@@ -1288,8 +1293,11 @@ end
                 out = chatrequest!(chat; config=_HOPS_CFG, cancel=tok)
                 r = stream ? fetch(out) : out
                 @test r isa LLMCallError && r.cause isa UniLMCancelled && r.cause.source === :token
+                @test r.cause.elapsed >= 0.4               # timed from the call's start
                 @test length(seen) == 1
-                @test isnothing(r.request_id)              # not hop 1's id: no request of hop 2 was sent
+                # A stream's cancel lands while hop 1's response is still open; a plain call has read
+                # that response whole, and no request of hop 2 was sent.
+                @test r.request_id == (stream ? "req-1" : nothing)
                 @test [m.role for m in chat.messages] == [RoleSystem, RoleUser]
                 @test cumulative_cost(chat) ≈ _HOP1_COST
             finally

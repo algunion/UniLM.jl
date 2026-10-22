@@ -122,17 +122,20 @@ function _gemini_detail_level(detail)::Union{String,Nothing}
     String(detail)
 end
 
-# Both pages: setting it on an individual part or content item "is exclusive to Gemini 3
-# models", so the earlier models still served refuse a level, by exact id; any other id is left
-# to the server.
+# Which models take one: "Setting media_resolution on individual Part objects is supported on
+# Gemini 4 and Gemini 3 models." (generateContent page) and "Setting the resolution on individual
+# content items is supported on Gemini 4 and Gemini 3 models." (Interactions page), both pages
+# last updated 2026-10-13. That the earlier models still served — the Gemini 2.5 family and
+# Gemma 4 — take no per-part level is inferred from the pages naming only Gemini 4 and Gemini 3
+# (not probed on them): they refuse a level, by exact id, and any other id is left to the server.
 const _GEMINI_NO_PART_RESOLUTION = ("gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
                                     "gemini-2.5-flash-image", "gemma-4-31b-it", "gemma-4-26b-a4b-it")
 
 function _gemini_part_resolution(detail, model::String)::Union{String,Nothing}
     level = _gemini_detail_level(detail)
     isnothing(level) || !(model in _GEMINI_NO_PART_RESOLUTION) || throw(ArgumentError(
-        "$model takes no per-image media resolution: Gemini sets one per part on Gemini 3 and later " *
-        "models only; unset the image's detail"))
+        "$model takes no per-image media resolution: Google documents one per part for Gemini 4 and " *
+        "Gemini 3 models only; unset the image's detail"))
     level
 end
 

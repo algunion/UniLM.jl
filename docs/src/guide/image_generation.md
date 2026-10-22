@@ -1,7 +1,9 @@
 # [Image Generation](@id images_guide)
 
-UniLM.jl supports image generation via the OpenAI Images API using models like
-`gpt-image-2`.
+UniLM.jl generates and edits images with OpenAI's Images API (`gpt-image-2.5-sunburst`
+by default) and with Gemini's native image generation, Nano Banana
+(`gemini-nano-banana-2.1` by default). The request's `service` picks the provider; the
+verbs and result types are the same for both.
 
 ```@setup images
 using UniLM
@@ -38,7 +40,7 @@ For full control, construct an [`ImageGeneration`](@ref) object:
 ```@example images
 ig = ImageGeneration(
     prompt="A minimalist logo for a Julia programming package",
-    model="gpt-image-2",
+    model="gpt-image-2.5-sunburst",
     size="1024x1024",
     quality="high",
     background="transparent",
@@ -53,32 +55,82 @@ println(JSON.json(ig))
 
 ## Configuration Options
 
-| Parameter            | Values                                                | Default           |
-| :------------------- | :---------------------------------------------------- | :---------------- |
-| `model`              | `"gpt-image-2"`                                       | `""` (see below)  |
-| `size`               | `"1024x1024"`, `"1536x1024"`, `"1024x1536"`, `"auto"`; on `gpt-image-2` and later any `WIDTHxHEIGHT` with multiples of 16, up to `3840x2160` | API default       |
-| `quality`            | `"low"`, `"medium"`, `"high"`, `"auto"`; `"xhigh"`, `"max"` on `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` | API default       |
-| `background`         | `"transparent"`, `"opaque"`, `"auto"`                 | API default       |
-| `output_format`      | `"png"`, `"webp"`, `"jpeg"`                           | API default       |
-| `output_compression` | `0`–`100` (for webp/jpeg)                             | API default       |
-| `n`                  | `1`–`10`                                              | API default (1)   |
-| `moderation`         | `"auto"`, `"low"`                                     | API default       |
+| Parameter            | Provider | Values                                                | Default           |
+| :------------------- | :------- | :---------------------------------------------------- | :---------------- |
+| `model`              | both     | `"gpt-image-2.5-sunburst"`, `"gpt-image-2.5-flare"`, `"gpt-image-2"`; `"gemini-nano-banana-2.1"` | `""` (see below)  |
+| `n`                  | both     | `1`–`10`; Gemini: `1`                                 | API default (1)   |
+| `safety_identifier`  | both     | a stable id for your end user (see below)             | none              |
+| `size`               | OpenAI   | `"1024x1024"`, `"1536x1024"`, `"1024x1536"`, `"auto"`; on `gpt-image-2` and later any `WIDTHxHEIGHT` with multiples of 16, up to `3840x2160` | API default       |
+| `quality`            | OpenAI   | `"low"`, `"medium"`, `"high"`, `"auto"`; `"xhigh"`, `"max"` on `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` | API default       |
+| `background`         | OpenAI   | `"transparent"`, `"opaque"`, `"auto"`                 | API default       |
+| `output_format`      | OpenAI   | `"png"`, `"webp"`, `"jpeg"`                           | API default       |
+| `output_compression` | OpenAI   | `0`–`100` (for webp/jpeg)                             | API default       |
+| `moderation`         | OpenAI   | `"auto"`, `"low"`                                     | API default       |
+| `aspect_ratio`       | Gemini   | `"1:1"`, `"1:4"`, `"4:1"`, `"1:8"`, `"8:1"`, `"2:3"`, `"3:2"`, `"3:4"`, `"4:3"`, `"4:5"`, `"5:4"`, `"9:16"`, `"16:9"`, `"21:9"` | API default (square) |
+| `resolution`         | Gemini   | `"512"`, `"1K"`, `"2K"`, `"4K"`; `gemini-nano-banana-2.1` renders 1K, 2K or 4K | API default (1K)  |
 
 `input_fidelity` is an image-edit parameter and belongs on [`ImageEdit`](@ref);
-`ImageGeneration` does not accept it.
+`ImageGeneration` does not accept it. A field set for the provider that does not take
+it — `quality` on Gemini, `aspect_ratio` on OpenAI — throws `ArgumentError` naming the
+provider and the field, before any request.
 
 !!! note "The model field is a sentinel, not a resolved default"
     Unlike [`Chat`](@ref), `ImageGeneration` does not resolve its model at
     construction. The field holds `""` and resolves only when the request is
-    serialized — to `"gpt-image-2"` for OpenAI — so
-    `ImageGeneration(prompt="…").model` reads back as the empty string. Pass
-    `model=` explicitly if you need to read it, or inspect `JSON.json(ig)` to see
-    what will go on the wire. A service with no default image model throws
-    `ArgumentError` at serialization.
+    serialized — to `"gpt-image-2.5-sunburst"` for OpenAI, `"gemini-nano-banana-2.1"`
+    for Gemini — so `ImageGeneration(prompt="…").model` reads back as the empty
+    string. Pass `model=` explicitly if you need to read it, or inspect
+    `JSON.json(ig)` to see what will go on the wire. A service with no default image
+    model throws `ArgumentError` at serialization.
+
+## Safety Identifiers
+
+`safety_identifier` names the end user a request is made for, so the provider's abuse
+monitoring can tell your users apart; hash a username or email address rather than
+sending it. OpenAI takes 1 to 128 characters (its
+[safety guide](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers)),
+on generations and edits alike; Gemini sends it as the request label
+`safety_identifier`, at most 63 lowercase letters, digits, `_` or `-`. OpenAI
+deprecated the Images API's `user` field in its favour; the request types have no
+`user` field.
+
+```julia
+using SHA
+id = bytes2hex(sha256("alice@example.com"))[1:32]   # 32 hex characters fit both providers
+result = generate_image("A paper boat"; safety_identifier=id)
+```
+
+## Gemini (Nano Banana)
+
+With `service=GEMINIServiceEndpoint`, [`generate_image`](@ref) and [`edit_image`](@ref)
+call Gemini's `generateContent` with image output; `GEMINI_API_KEY` must be set. Size
+the image with `aspect_ratio` and `resolution` — Gemini has no `WIDTHxHEIGHT` size,
+quality, background or output format control — and expect one image per request.
+
+```julia
+result = generate_image(ImageGeneration(service=GEMINIServiceEndpoint,
+                                        prompt="A lighthouse at dusk, oil painting",
+                                        aspect_ratio="16:9", resolution="2K"))
+if result isa ImageSuccess
+    save_image(image_data(result)[1], "lighthouse.jpg")
+    token_usage(result)          # Gemini's usageMetadata, thinking counted as output
+end
+
+# Edit: the input image goes to Gemini inline, ahead of the prompt.
+edited = edit_image("lighthouse.jpg", "Make it a winter night"; service=GEMINIServiceEndpoint)
+```
+
+The model's image parts are the result's images, in order. Gemini sends them as JPEG
+(each part's `mimeType` in `result.response.raw` says so), so save them under a `.jpg`
+name. Text the model sends with an image is its `revised_prompt`; the interim images of
+the model's thinking are not results. A reply with no image — the image filter stopped
+it, say — is an [`ImageCallError`](@ref) naming Gemini's finish reason (`IMAGE_SAFETY`,
+`NO_IMAGE`, …). Gemini's reply has no creation time, so `result.response.created` is
+when it arrived.
 
 ## Multiple Images
 
-Generate multiple images in a single request:
+Generate multiple images in a single request (OpenAI):
 
 ```julia
 result = generate_image("A cute robot learning to program", n=3, size="1024x1024")
@@ -93,7 +145,7 @@ end
 
 ## Transparent Backgrounds
 
-Perfect for logos and icons:
+Perfect for logos and icons (OpenAI):
 
 ```julia
 result = generate_image(
@@ -170,8 +222,9 @@ end
 ## Editing Images
 
 [`edit_image`](@ref) edits an existing image from a text prompt, optionally masked to an
-inpainting region. The convenience form takes the source image (a file path, or a vector of
-paths) and the prompt; an optional `mask` path restricts edits to the mask's transparent area:
+inpainting region (OpenAI). The convenience form takes the source image (a file path, or a
+vector of paths) and the prompt; an optional `mask` path restricts edits to the mask's
+transparent area:
 
 ```julia
 # Inpaint: change only the masked region, described by the prompt
@@ -185,8 +238,9 @@ end
 ```
 
 For full control, build an [`ImageEdit`](@ref) and call `edit_image(e)`. The model defaults to
-`gpt-image-2`; image editing needs the `:image_edits` capability (OpenAI): an endpoint that
-declares its capabilities without it throws `ArgumentError` before any request.
+`gpt-image-2.5-sunburst` (`gemini-nano-banana-2.1` on Gemini, which takes no mask); image
+editing needs the `:image_edits` capability: an endpoint that declares its capabilities
+without it throws `ArgumentError` before any request.
 
 ## Retry Behaviour
 

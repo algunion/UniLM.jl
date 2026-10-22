@@ -119,7 +119,8 @@ default_embedding_model(::GenericOpenAIEndpoint)          = nothing
 default_embedding_model(_) = nothing
 
 """Default image generation model per provider."""
-default_image_model(::Type{OPENAIServiceEndpoint}) = "gpt-image-2"
+default_image_model(::Type{OPENAIServiceEndpoint}) = "gpt-image-2.5-sunburst"
+default_image_model(::Type{GEMINIServiceEndpoint}) = "gemini-nano-banana-2.1"
 default_image_model(_) = nothing
 
 """Default FIM model per provider. DeepSeek serves FIM (beta) on `deepseek-flash`."""

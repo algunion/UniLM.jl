@@ -1,8 +1,9 @@
 @testset "ImageGeneration" begin
     @testset "minimal creation" begin
         ig = ImageGeneration(prompt="A cute robot")
-        @test ig.model == ""  # resolved to "gpt-image-2" during serialization
-        @test JSON.parse(JSON.json(ig))["model"] == "gpt-image-2"
+        @test ig.model == ""  # resolved to "gpt-image-2.5-sunburst" during serialization
+        @test JSON.parse(JSON.json(ig))["model"] == "gpt-image-2.5-sunburst"
+        @test UniLM.default_image_model(OPENAIServiceEndpoint) == "gpt-image-2.5-sunburst"
         @test ig.prompt == "A cute robot"
         @test ig.service == UniLM.OPENAIServiceEndpoint
         @test isnothing(ig.n)
@@ -11,20 +12,22 @@
         @test isnothing(ig.background)
         @test isnothing(ig.output_format)
         @test isnothing(ig.output_compression)
-        @test isnothing(ig.user)
+        @test isnothing(ig.safety_identifier)
+        @test isnothing(ig.aspect_ratio)
+        @test isnothing(ig.resolution)
     end
 
     @testset "full creation" begin
         ig = ImageGeneration(
             prompt="A logo",
-            model="gpt-image-1.5",
+            model="gpt-image-2.5-flare",
             n=2,
             size="1024x1024",
             quality="high",
             background="transparent",
             output_format="png",
             output_compression=nothing,
-            user="user_123"
+            safety_identifier="user_123"
         )
         @test ig.prompt == "A logo"
         @test ig.n == 2
@@ -32,13 +35,13 @@
         @test ig.quality == "high"
         @test ig.background == "transparent"
         @test ig.output_format == "png"
-        @test ig.user == "user_123"
+        @test ig.safety_identifier == "user_123"
     end
 
     @testset "JSON serialization" begin
         ig = ImageGeneration(prompt="test", quality="high", size="1024x1024")
         lowered = JSON.lower(ig)
-        @test lowered[:model] == "gpt-image-2"
+        @test lowered[:model] == "gpt-image-2.5-sunburst"
         @test lowered[:prompt] == "test"
         @test lowered[:quality] == "high"
         @test lowered[:size] == "1024x1024"
@@ -48,6 +51,7 @@
         @test !haskey(lowered, :background)
         @test !haskey(lowered, :output_format)
         @test !haskey(lowered, :output_compression)
+        @test !haskey(lowered, :safety_identifier)
         @test !haskey(lowered, :user)
     end
 
@@ -55,7 +59,7 @@
         ig = ImageGeneration(prompt="A sunset", n=2, size="1536x1024", background="opaque")
         json_str = JSON.json(ig)
         parsed = JSON.parse(json_str)
-        @test parsed["model"] == "gpt-image-2"
+        @test parsed["model"] == "gpt-image-2.5-sunburst"
         @test parsed["prompt"] == "A sunset"
         @test parsed["n"] == 2
         @test parsed["size"] == "1536x1024"
@@ -503,5 +507,307 @@ using Base64
         @test read(path, String) == "new image bytes"
     finally
         rm(path; force=true)
+    end
+end
+
+# ── OpenAI: safety_identifier replaces the deprecated user field ────────────────
+
+_wire(x) = JSON.parse(JSON.json(x); dicttype=Dict{String,Any})
+_refusal(f) = try f(); nothing catch e; e end
+
+@testset "OpenAI images — safety_identifier replaces the deprecated user field" begin
+    @test _wire(ImageGeneration(prompt="p", safety_identifier="u1")) ==
+          Dict{String,Any}("model" => "gpt-image-2.5-sunburst", "prompt" => "p", "safety_identifier" => "u1")
+    @test !hasfield(ImageGeneration, :user) && !hasfield(ImageEdit, :user)
+    @test_throws MethodError ImageGeneration(prompt="p", user="u1")
+    # OpenAI's safety guide: at most 128 characters, counted as characters, not bytes.
+    @test _wire(ImageGeneration(prompt="p", safety_identifier="é"^128))["safety_identifier"] == "é"^128
+    # Longer is refused; so is "", which the API reads as no identifier at all.
+    for bad in ("a"^129, "é"^129, "")
+        err = _refusal(() -> JSON.json(ImageGeneration(prompt="p", safety_identifier=bad)))
+        @test err isa ArgumentError
+        @test occursin("OpenAI", err.msg) && occursin("safety_identifier", err.msg) && occursin("128", err.msg)
+    end
+end
+
+@testset "OpenAI images — Gemini's sizing fields are refused, naming OpenAI and the field" begin
+    for (field, value) in (:aspect_ratio => "16:9", :resolution => "2K")
+        err = _refusal(() -> JSON.json(ImageGeneration(; prompt="p", field => value)))
+        @test err isa ArgumentError
+        @test occursin("OpenAI", err.msg) && occursin(String(field), err.msg) && occursin("size", err.msg)
+        e = ImageEdit(; image="never-read.png", prompt="p", field => value)
+        err = _refusal(() -> UniLM._check_image_request(OPENAIServiceEndpoint, e))
+        @test err isa ArgumentError && occursin("OpenAI", err.msg) && occursin(String(field), err.msg)
+    end
+end
+
+@testset "OpenAI images — a refused request sends nothing" begin
+    path = tempname() * ".png"
+    write(path, UInt8[0x89, 0x50, 0x4e, 0x47])
+    long = "a"^129
+    try
+        calls = (() -> generate_image(ImageGeneration(prompt="p", model="m", service=URLProbe, safety_identifier=long)),
+                 () -> generate_image("p"; model="m", service=URLProbe, aspect_ratio="16:9"),
+                 () -> edit_image(ImageEdit(image=path, prompt="p", model="m", service=URLProbe, safety_identifier=long)),
+                 () -> edit_image(path, "p"; model="m", service=URLProbe, resolution="2K"))
+        thrown, seen = _with_scripted((_, _) -> _json(200, "{}")) do
+            map(_refusal, calls)
+        end
+        @test all(e -> e isa ArgumentError, thrown)
+        @test isempty(seen)
+    finally
+        rm(path; force=true)
+    end
+end
+
+@testset "OpenAI image edits — safety_identifier is a form field; the default model is gpt-image-2.5-sunburst" begin
+    path = tempname() * ".png"
+    write(path, UInt8[0x89, 0x50, 0x4e, 0x47])
+    ok = JSON.json(Dict("created" => 1, "data" => [Dict("b64_json" => "aGVsbG8=")]))
+    try
+        r, seen = _with_scripted((_, _) -> _json(200, ok)) do
+            edit_image(path, "p"; model="m", service=URLProbe, safety_identifier="u1",
+                       config=UniLM.RequestConfig(max_attempts=1))
+        end
+        @test r isa ImageSuccess
+        @test occursin("name=\"safety_identifier\"\r\n\r\nu1\r\n", only(seen).body)
+        @test !occursin("name=\"user\"", only(seen).body)
+        url, _, body = withenv(() -> UniLM._image_request(OPENAIServiceEndpoint, ImageEdit(image=path, prompt="p")),
+                               "OPENAI_API_KEY" => "sk-test")
+        @test url == "https://api.openai.com/v1/images/edits"
+        @test occursin("name=\"model\"\r\n\r\ngpt-image-2.5-sunburst\r\n", String(read(body.build())))
+    finally
+        rm(path; force=true)
+    end
+end
+
+# ── Gemini (Nano Banana) through generateContent ────────────────────────────────
+
+const _PNG_SIGNATURE = UInt8[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+
+_gemini_wire(r) = withenv(() -> UniLM._image_request(GEMINIServiceEndpoint, r), "GEMINI_API_KEY" => "test-key")
+
+# The body of a text-to-image request for `prompt` with no image controls set.
+_gemini_plain(prompt) = Dict{String,Any}(
+    "contents" => Any[Dict{String,Any}("role" => "user", "parts" => Any[Dict{String,Any}("text" => prompt)])],
+    "generationConfig" => Dict{String,Any}("responseModalities" => Any["IMAGE"]))
+
+@testset "Gemini images — generateContent on gemini-nano-banana-2.1, image output requested" begin
+    @test UniLM.default_image_model(GEMINIServiceEndpoint) == "gemini-nano-banana-2.1"
+    ig = ImageGeneration(service=GEMINIServiceEndpoint, prompt="p")
+    @test ig.model == ""
+    url, headers, body = _gemini_wire(ig)
+    @test url == "$(UniLM.GEMINI_NATIVE_BASE)/models/gemini-nano-banana-2.1:generateContent"
+    @test Dict(headers) == Dict("x-goog-api-key" => "test-key", "Content-Type" => "application/json")
+    @test JSON.parse(body; dicttype=Dict{String,Any}) == _gemini_plain("p")
+    @test _wire(ig) == _gemini_plain("p")             # JSON.json shows the body that is sent
+    # Gemini's image controls, and the end-user id under Google's documented request label.
+    sized = ImageGeneration(service=GEMINIServiceEndpoint, prompt="p", n=1, aspect_ratio="16:9",
+                            resolution="2K", safety_identifier="user_42")
+    @test _wire(sized) == Dict{String,Any}(
+        "contents" => _gemini_plain("p")["contents"],
+        "generationConfig" => Dict{String,Any}("responseModalities" => Any["IMAGE"],
+            "imageConfig" => Dict{String,Any}("aspectRatio" => "16:9", "imageSize" => "2K")),
+        "labels" => Dict{String,Any}("safety_identifier" => "user_42"))
+    # Gemini's label rule, not OpenAI's 128 characters: 63 lowercase letters, digits, _ or -.
+    for bad in ("User_42", "a"^64)
+        err = _refusal(() -> JSON.json(ImageGeneration(service=GEMINIServiceEndpoint, prompt="p", safety_identifier=bad)))
+        @test err isa ArgumentError && occursin("Gemini", err.msg) && occursin("63", err.msg)
+    end
+    # The model is one path segment: separators in it cannot re-shape the URL.
+    hostile = ImageGeneration(service=GEMINIServiceEndpoint, model=_HOSTILE_ID, prompt="p")
+    @test first(_gemini_wire(hostile)) == "$(UniLM.GEMINI_NATIVE_BASE)/models/$(_HOSTILE_ENC):generateContent"
+end
+
+@testset "Gemini images — OpenAI-only fields are refused, naming Gemini and the field" begin
+    for (field, value) in (:size => "1024x1024", :quality => "high", :background => "opaque",
+                           :output_format => "png", :output_compression => 50, :moderation => "low")
+        err = _refusal(() -> JSON.json(ImageGeneration(; service=GEMINIServiceEndpoint, prompt="p", field => value)))
+        @test err isa ArgumentError && occursin("Gemini", err.msg) && occursin(String(field), err.msg)
+    end
+    err = _refusal(() -> JSON.json(ImageGeneration(service=GEMINIServiceEndpoint, prompt="p", size="1024x1024")))
+    @test occursin("aspect_ratio", err.msg) && occursin("resolution", err.msg)   # the fix: Gemini's own controls
+    for (field, value) in (:mask => "mask.png", :input_fidelity => "high", :size => "1024x1024",
+                           :quality => "high", :background => "opaque", :output_format => "png")
+        e = ImageEdit(; service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", field => value)
+        err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
+        @test err isa ArgumentError && occursin("Gemini", err.msg) && occursin(String(field), err.msg)
+    end
+    # Gemini returns one image per request: n=1 is that image, any other count has no Gemini form.
+    for n in (0, 2, 10)
+        err = _refusal(() -> JSON.json(ImageGeneration(service=GEMINIServiceEndpoint, prompt="p", n=n)))
+        @test err isa ArgumentError && occursin("Gemini", err.msg) && occursin("n must be 1", err.msg)
+    end
+end
+
+@testset "Gemini images — aspect_ratio and resolution take Gemini's documented values" begin
+    config(; kw...) = _wire(ImageGeneration(; service=GEMINIServiceEndpoint, prompt="p", kw...))["generationConfig"]["imageConfig"]
+    for ratio in ("1:1", "1:4", "4:1", "1:8", "8:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9")
+        @test config(aspect_ratio=ratio) == Dict{String,Any}("aspectRatio" => ratio)
+    end
+    for size in ("1K", "2K", "4K")
+        @test config(resolution=size) == Dict{String,Any}("imageSize" => size)
+    end
+    for kw in ((aspect_ratio="16x9",), (aspect_ratio="16:10",), (aspect_ratio="",),
+               (resolution="8K",), (resolution="1k",), (resolution="1024x1024",))
+        err = _refusal(() -> config(; kw...))
+        @test err isa ArgumentError && occursin("Gemini", err.msg) && occursin(String(only(keys(kw))), err.msg)
+    end
+    # Nano Banana 2.1 renders at 1K, 2K or 4K; Gemini documents 512 for an earlier model.
+    err = _refusal(() -> config(resolution="512"))
+    @test err isa ArgumentError && occursin("gemini-nano-banana-2.1", err.msg) && occursin("512", err.msg)
+    @test err == _refusal(() -> config(model="gemini-nano-banana-2.1", resolution="512"))
+    # A model without its own row (a near-miss name, a later model) takes every size Gemini
+    # documents: the server's answer is the check.
+    for model in ("gemini-nano-banana-2.1-preview", "gemini-nano-banana-3")
+        @test config(model=model, resolution="512") == Dict{String,Any}("imageSize" => "512")
+    end
+end
+
+@testset "Gemini images — an inlineData image part is an ImageObject; thought parts are not" begin
+    png = base64encode(_PNG_SIGNATURE)
+    reply = Dict(
+        "candidates" => [Dict("content" => Dict("role" => "model", "parts" => [
+                Dict("text" => "Sketching a circle.", "thought" => true),
+                Dict("inlineData" => Dict("mimeType" => "image/png", "data" => base64encode(UInt8[1, 2, 3])),
+                     "thought" => true),
+                Dict("text" => "A red circle "),
+                Dict("text" => "on white."),
+                Dict("inlineData" => Dict("mimeType" => "image/png", "data" => png))]),
+            "finishReason" => "STOP")],
+        "usageMetadata" => Dict("promptTokenCount" => 9, "candidatesTokenCount" => 1120,
+                                "thoughtsTokenCount" => 40, "totalTokenCount" => 1169),
+        "modelVersion" => "gemini-nano-banana-2.1")
+    ir = UniLM._image_reply(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(reply))))
+    @test ir.data == [ImageObject(b64_json=png, revised_prompt="A red circle on white.")]
+    @test ir.raw == _wire(reply)
+    @test abs(ir.created - time()) < 60          # Gemini reports no creation time: when it arrived
+    s = ImageSuccess(response=ir)
+    @test base64decode(only(image_data(s))) == _PNG_SIGNATURE
+    # usageMetadata as the image result's usage: thoughts are output, as on Gemini Chat.
+    @test token_usage(s) == TokenUsage(prompt_tokens=9, completion_tokens=1160, total_tokens=1169, reasoning_tokens=40)
+    @test token_usage(s) == UniLM._gemini_usage(reply["usageMetadata"])
+    # No text: no revised prompt. Two images: two objects, in order. No usage: none reported.
+    two = Dict("candidates" => [Dict("finishReason" => "STOP", "content" => Dict("parts" => [
+        Dict("inlineData" => Dict("mimeType" => "image/png", "data" => png)),
+        Dict("inlineData" => Dict("mimeType" => "image/jpeg", "data" => "/9j/"))]))])
+    ir2 = UniLM._image_reply(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(two))))
+    @test ir2.data == [ImageObject(b64_json=png), ImageObject(b64_json="/9j/")]
+    @test isnothing(ir2.usage) && token_usage(ImageSuccess(response=ir2)) == TokenUsage()
+end
+
+@testset "Gemini images — a reply without an image is an error naming why" begin
+    why(d) = sprint(showerror, _refusal(() ->
+        UniLM._image_reply(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(d))))))
+    filtered = Dict("candidates" => [Dict("content" => Dict("parts" => [Dict("text" => "I can't draw that.")]),
+        "finishReason" => "IMAGE_SAFETY", "finishMessage" => "The image was blocked.")])
+    m = why(filtered)
+    @test occursin("no image", m) && occursin("IMAGE_SAFETY", m) && occursin("The image was blocked.", m) &&
+          occursin("I can't draw that.", m)
+    @test occursin("NO_IMAGE", why(Dict("candidates" => [Dict("finishReason" => "NO_IMAGE")])))
+    # Only a thought image: the final image never came.
+    thought_only = Dict("candidates" => [Dict("finishReason" => "MAX_TOKENS", "content" => Dict("parts" => [
+        Dict("inlineData" => Dict("mimeType" => "image/png", "data" => "AA=="), "thought" => true)]))])
+    @test occursin("MAX_TOKENS", why(thought_only))
+    # No candidate: the prompt was blocked, and Gemini's feedback says why.
+    @test occursin("PROHIBITED_CONTENT", why(Dict("promptFeedback" => Dict("blockReason" => "PROHIBITED_CONTENT"))))
+end
+
+@testset "Gemini image edits — each input image is an inline part ahead of the prompt" begin
+    paths = [tempname() * ".png", tempname() * ".jpg"]
+    jpeg = UInt8[0xff, 0xd8, 0xff, 0xe0]
+    write(paths[1], _PNG_SIGNATURE)
+    write(paths[2], jpeg)
+    try
+        e = ImageEdit(service=GEMINIServiceEndpoint, image=paths, prompt="make the circle blue", aspect_ratio="1:1")
+        url, headers, body = _gemini_wire(e)
+        @test url == "$(UniLM.GEMINI_NATIVE_BASE)/models/gemini-nano-banana-2.1:generateContent"
+        @test Dict(headers) == Dict("x-goog-api-key" => "test-key", "Content-Type" => "application/json")
+        @test JSON.parse(body; dicttype=Dict{String,Any}) == Dict{String,Any}(
+            "contents" => Any[Dict{String,Any}("role" => "user", "parts" => Any[
+                Dict{String,Any}("inlineData" => Dict{String,Any}("mimeType" => "image/png", "data" => base64encode(_PNG_SIGNATURE))),
+                Dict{String,Any}("inlineData" => Dict{String,Any}("mimeType" => "image/jpeg", "data" => base64encode(jpeg))),
+                Dict{String,Any}("text" => "make the circle blue")])],
+            "generationConfig" => Dict{String,Any}("responseModalities" => Any["IMAGE"],
+                "imageConfig" => Dict{String,Any}("aspectRatio" => "1:1")))
+        # The format is read from the file's bytes, never from its name.
+        write(paths[2], "not an image")
+        err = _refusal(() -> _gemini_wire(e))
+        @test err isa ArgumentError && occursin("not PNG, JPEG, GIF or WebP", err.msg)
+    finally
+        rm.(paths; force=true)
+    end
+end
+
+# Gemini's image wire against a local server: GEMINIServiceEndpoint's own checks, request
+# and decoder, with only the host replaced — the redirect recorded_answers.jl uses for chat.
+struct GeminiImagesHere <: UniLM.ServiceEndpoint end
+UniLM._check_image_request(::Type{GeminiImagesHere}, r::Union{ImageGeneration,ImageEdit}) =
+    UniLM._check_image_request(GEMINIServiceEndpoint, r)
+for T in (ImageGeneration, ImageEdit)
+    @eval function UniLM._image_request(::Type{GeminiImagesHere}, r::$T)
+        url, headers, body = UniLM._image_request(GEMINIServiceEndpoint, r)
+        (replace(url, r"^https://[^/]+" => _url_probe_base[]), headers, body)
+    end
+end
+UniLM._image_reply(::Type{GeminiImagesHere}, resp::HTTP.Response) = UniLM._image_reply(GEMINIServiceEndpoint, resp)
+
+@testset "Gemini images — generate_image and edit_image over the wire" begin
+    png = base64encode(_PNG_SIGNATURE)
+    ok = JSON.json(Dict("candidates" => [Dict("finishReason" => "STOP", "content" => Dict("parts" => [
+        Dict("inlineData" => Dict("mimeType" => "image/png", "data" => png))]))]))
+    one = UniLM.RequestConfig(max_attempts=1)
+    path = tempname() * ".png"
+    write(path, _PNG_SIGNATURE)
+    try
+        withenv("GEMINI_API_KEY" => "test-key") do
+            (g, e), seen = _with_scripted((_, _) -> _json(200, ok)) do
+                (generate_image("a red circle"; service=GeminiImagesHere, config=one),
+                 edit_image(path, "make the circle blue"; service=GeminiImagesHere, config=one))
+            end
+            @test g isa ImageSuccess && image_data(g) == [png]
+            @test e isa ImageSuccess && image_data(e) == [png]
+            @test [s.target for s in seen] == fill("/v1beta/models/gemini-nano-banana-2.1:generateContent", 2)
+            @test JSON.parse(seen[1].body; dicttype=Dict{String,Any}) == _gemini_plain("a red circle")
+            @test JSON.parse(seen[2].body; dicttype=Dict{String,Any})["contents"] == Any[Dict{String,Any}(
+                "role" => "user", "parts" => Any[
+                    Dict{String,Any}("inlineData" => Dict{String,Any}("mimeType" => "image/png", "data" => png)),
+                    Dict{String,Any}("text" => "make the circle blue")])]
+            # A 200 without an image is a call error naming the finish reason.
+            blocked = JSON.json(Dict("candidates" => [Dict("finishReason" => "IMAGE_SAFETY")]))
+            r, _ = _with_scripted((_, _) -> _json(200, blocked)) do
+                generate_image("a red circle"; service=GeminiImagesHere, config=one)
+            end
+            @test r isa ImageCallError && occursin("IMAGE_SAFETY", r.error) && isnothing(r.status)
+            # A missing input image is the call's error, as on OpenAI, and nothing is sent.
+            missing_input, none = _with_scripted((_, _) -> _json(200, ok)) do
+                edit_image("/no/such/image.png", "p"; service=GeminiImagesHere, config=one)
+            end
+            @test missing_input isa ImageCallError && occursin("image not found", missing_input.error) && isempty(none)
+            # Refused before any request: OpenAI-only fields, a size Nano Banana 2.1 does not render.
+            thrown, none = _with_scripted((_, _) -> _json(200, ok)) do
+                map(_refusal, (() -> generate_image("p"; service=GeminiImagesHere, quality="high"),
+                               () -> generate_image("p"; service=GeminiImagesHere, resolution="512"),
+                               () -> edit_image(path, "p"; service=GeminiImagesHere, mask=path),
+                               () -> edit_image(path, "p"; service=GeminiImagesHere, input_fidelity="high")))
+            end
+            @test all(x -> x isa ArgumentError, thrown) && isempty(none)
+        end
+    finally
+        rm(path; force=true)
+    end
+end
+
+@testset "an image edit with no input image is refused before any request, on both wires" begin
+    # Sent anyway, Gemini would read the prompt alone as a text-to-image request.
+    for service in (URLProbe, GeminiImagesHere)
+        thrown, seen = withenv("GEMINI_API_KEY" => "test-key") do
+            _with_scripted((_, _) -> _json(200, "{}")) do
+                map(_refusal, (() -> edit_image(ImageEdit(service=service, image=String[], prompt="make it blue")),
+                               () -> edit_image(String[], "make it blue"; service=service, model="m")))
+            end
+        end
+        @test all(e -> e isa ArgumentError && occursin("at least one input image", e.msg), thrown)
+        @test isempty(seen)
     end
 end

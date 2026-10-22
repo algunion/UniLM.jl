@@ -224,6 +224,26 @@ end
     @test token_usage(res).completion_tokens == 74
     @test token_usage(res).reasoning_tokens == 5
     @test estimated_cost(res) ≈ (15 * 0.30 + 74 * 2.50) / 1_000_000   # gemini-3.5-flash-lite rates
+    @test !haskey(u["input_tokens_details"], "audio_tokens")           # no audio: the shape is unchanged
+end
+
+@testset "Interactions decode — the audio of the input is its audio tokens by modality, priced as on generateContent" begin
+    # gemini-3.1-flash-lite read a 1.5 s WAV clip as input_tokens_by_modality text 16, audio 38 (observed
+    # 2026-10-22); the audio of a tool-use prompt is in tool_use_tokens_by_modality.
+    usage = Dict("total_tokens" => 55, "total_input_tokens" => 54, "total_output_tokens" => 1, "total_thought_tokens" => 0,
+                 "total_cached_tokens" => 0, "total_tool_use_tokens" => 0,
+                 "input_tokens_by_modality" => [Dict("modality" => "text", "tokens" => 16), Dict("modality" => "audio", "tokens" => 38)])
+    success(u; model="gemini-3.1-flash-lite") = ResponseSuccess(service=GEMINIServiceEndpoint,
+        response=UniLM._interaction_response_object(Dict("id" => "v1_a", "status" => "completed", "model" => model,
+            "steps" => [Dict("type" => "model_output", "content" => [Dict("type" => "text", "text" => "banana")])], "usage" => u)))
+    @test token_usage(success(usage)) == TokenUsage(prompt_tokens=54, completion_tokens=1, total_tokens=55, prompt_audio_tokens=38)
+    # 3.1 Flash-Lite: audio $0.50, text $0.25, output $1.50 per 1M tokens (ai.google.dev/gemini-api/docs/pricing).
+    @test estimated_cost(success(usage)) ≈ (38 * 0.50 + 16 * 0.25 + 1 * 1.50) / 1_000_000
+    tool = merge(usage, Dict("total_tool_use_tokens" => 20, "tool_use_tokens_by_modality" =>
+        [Dict("modality" => "audio", "tokens" => 5), Dict("modality" => "text", "tokens" => 15)]))
+    @test (token_usage(success(tool)).prompt_tokens, token_usage(success(tool)).prompt_audio_tokens) == (74, 43)
+    # A model whose table states no audio rate leaves the call unpriced.
+    @test (@test_logs (:warn, r"no audio-token rates") estimated_cost(success(usage; model="gemini-3.6-flash"))) === 0.0
 end
 
 @testset "Agentic lifecycle URL is service-dispatched (_agentic_url)" begin
@@ -772,10 +792,11 @@ UniLM.default_model(::Type{_IxNonStreamMock}) = "mock-model"
     end
 end
 
-@testset "Interactions decode — one answer across model_output steps, thoughts between them skipped" begin
-    # A model answering across several steps — the hops of a long decode, or text resumed after a
-    # thought — adds a model_output step each; Google's guides join their text with no separator
-    # (ai.google.dev/gemini-api/docs/long-decode), so the steps become one message.
+@testset "Interactions decode — one answer across model_output steps, whatever steps come between" begin
+    # A model answering across several steps — the hops of a long decode, text resumed after a thought
+    # or a tool — adds a model_output step each; Google's guides and SDK read the answer as the text of
+    # every model_output step joined with no separator (ai.google.dev/gemini-api/docs/long-decode), so
+    # the steps become one message, where the first of them is.
     thought(sig) = Dict("type" => "thought", "signature" => sig)
     say(texts...) = Dict("type" => "model_output", "content" => [Dict("type" => "text", "text" => t) for t in texts])
     decode(steps) = UniLM._interaction_response_object(Dict("id" => "v1_m", "status" => "completed",
@@ -787,15 +808,19 @@ end
     # The text parts of a step join the same way, and a step with none continues the answer.
     @test output_text(decode([say("First part. ", "Second part. "), Dict("type" => "model_output"),
                               say("Third part.")])) == "First part. Second part. Third part."
-    # Any other step ends the answer: a call and its result, a hosted tool.
+    # A call and its result, or a hosted tool, between the steps: the steps keep their order around one answer.
     call = Dict("type" => "function_call", "id" => "c1", "name" => "lookup", "arguments" => Dict("q" => "x"))
     result = Dict("type" => "function_result", "call_id" => "c1", "name" => "lookup", "result" => "y")
     ro = decode([say("Before. "), call, result, thought("a"), say("Final 1. "), thought("b"), say("Final 2.")])
-    @test [o["type"] for o in ro.output] ==
-          ["message", "function_call", "function_result", "thought", "message", "thought"]
-    @test [o["content"][1]["text"] for o in ro.output if o["type"] == "message"] == ["Before. ", "Final 1. Final 2."]
+    @test [o["type"] for o in ro.output] == ["message", "function_call", "function_result", "thought", "thought"]
+    @test output_text(ro) == "Before. Final 1. Final 2."
     search = Dict("type" => "google_search_call", "id" => "s1")
-    @test count(o -> o["type"] == "message", decode([say("A"), search, say("B")]).output) == 2
+    @test output_text(decode([say("A"), search, say("B")])) == "AB"
+    @test count(o -> o["type"] == "message", decode([say("A"), search, say("B")]).output) == 1
+    # An input step the interaction lists is not the model's answer: a user_input step starts a new one.
+    asked = Dict("type" => "user_input", "content" => [Dict("type" => "text", "text" => "Q")])
+    @test [o["content"][1]["text"] for o in decode([say("Earlier."), asked, say("Now.")]).output if o["type"] == "message"] ==
+          ["Earlier.", "Now."]
     # Streamed, the same steps assemble into the same output.
     ev(name, data) = "event: $name\ndata: $(JSON.json(data))\n\n"
     signature(index, sig) = ev("step.delta", Dict("index" => index,

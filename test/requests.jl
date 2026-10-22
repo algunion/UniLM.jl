@@ -590,12 +590,20 @@ end
         end
     end
 
-    @testset "an audio object without its id, data, expiry or transcript is no reply" begin
+    @testset "an audio object without its id, data or transcript, or with an expiry that is no integer, is no reply" begin
         for broken in (delete!(copy(wire_audio), "id"), merge(wire_audio, Dict("id" => 7)), delete!(copy(wire_audio), "data"),
                        merge(wire_audio, Dict("expires_at" => "soon")), merge(wire_audio, Dict("expires_at" => true)),
-                       delete!(copy(wire_audio), "transcript"), "audio")
+                       merge(wire_audio, Dict("expires_at" => 1.7926e9)), delete!(copy(wire_audio), "transcript"), "audio")
             @test_throws ArgumentError UniLM.extract_message(reply(Dict("role" => "assistant", "content" => nothing,
                                                                         "audio" => broken)))
+        end
+    end
+
+    @testset "an audio reply without its expiry is kept, its expiry unknown, as a stream keeps it" begin
+        for unexpiring in (delete!(copy(wire_audio), "expires_at"), merge(wire_audio, Dict("expires_at" => nothing)))
+            m = UniLM.extract_message(reply(Dict("role" => "assistant", "content" => nothing, "audio" => unexpiring))).message
+            @test m.audio_output == AudioOutput(id="audio_abc123", data=wav, expires_at=nothing, transcript="Hi there!")
+            @test m.content == "Hi there!"
         end
     end
 
@@ -921,6 +929,14 @@ _error_body(type, code) = JSON.json(Dict("error" => Dict("message" => "m", "type
     @test takestring!(buf) == _error_body("insufficient_quota", "credit_balance_exhausted")
     @test UniLM._is_retryable(400, _error_body("rate_limit_error", "slow_down")) == false
     @test (@inferred UniLM._is_retryable(429, _error_body("rate_limit_error", "slow_down"))) === true
+    # "The broader error.type can still be insufficient_quota", whatever the code, and older replies
+    # name it as the code: final too.
+    for body in (_error_body("insufficient_quota", nothing), _error_body("insufficient_quota", "a_new_billing_code"),
+                 _error_body(nothing, "insufficient_quota"), _error_body("insufficient_quota", "insufficient_quota"))
+        @test UniLM._is_retryable(429, body) == false
+    end
+    @test UniLM._is_retryable(429, _error_body("tokens", "rate_limit_exceeded")) == true
+    @test UniLM._is_retryable(503, _error_body("insufficient_quota", nothing)) == true
 end
 
 # A server on an OS-assigned port that answers every request with HTTP 429, `body` and a zero
@@ -947,6 +963,15 @@ end
             r = chatrequest!(chat(srv.url); config=RequestConfig(max_attempts=3))
             @test r isa LLMFailure && r.status == 429 && occursin(code, r.response)
             @test srv.hits[] == 1
+        finally
+            close(srv.server)
+        end
+    end
+    for body in (_error_body("insufficient_quota", nothing), _error_body(nothing, "insufficient_quota"))
+        srv = _status_429_server(body)
+        try
+            r = chatrequest!(chat(srv.url); config=RequestConfig(max_attempts=3))
+            @test r isa LLMFailure && r.status == 429 && srv.hits[] == 1
         finally
             close(srv.server)
         end
@@ -1544,6 +1569,23 @@ function _sse_reply_server(body::String)
         write(http, body)
     end
     (; server, url="http://127.0.0.1:$(HTTP.port(server))")
+end
+
+@testset "_add_usage: the usage of a turn in several replies sums every count, and keeps the latest tier and region" begin
+    a = TokenUsage(prompt_tokens=1, completion_tokens=2, total_tokens=3, cached_tokens=4, reasoning_tokens=5,
+                   cache_write_tokens=6, cache_write_extended_tokens=7, service_tier="flex", inference_geo="us",
+                   prompt_audio_tokens=8, completion_audio_tokens=9)
+    b = TokenUsage(prompt_tokens=10, completion_tokens=20, total_tokens=30, cached_tokens=40, reasoning_tokens=50,
+                   cache_write_tokens=60, cache_write_extended_tokens=70, inference_geo="global",
+                   prompt_audio_tokens=80, completion_audio_tokens=90)
+    @test UniLM._add_usage(a, b) == TokenUsage(prompt_tokens=11, completion_tokens=22, total_tokens=33, cached_tokens=44,
+        reasoning_tokens=55, cache_write_tokens=66, cache_write_extended_tokens=77, service_tier="flex",
+        inference_geo="global", prompt_audio_tokens=88, completion_audio_tokens=99)
+    # Every field, by name: each count of a usage added to itself doubles, each label stays.
+    twice = UniLM._add_usage(a, a)
+    @test all(getfield(twice, f) == (getfield(a, f) isa Int ? 2 * getfield(a, f) : getfield(a, f)) for f in fieldnames(TokenUsage))
+    @test UniLM._add_usage(nothing, b) === b && UniLM._add_usage(a, nothing) === a && isnothing(UniLM._add_usage(nothing, nothing))
+    @test (@inferred UniLM._add_usage(a, b)) isa TokenUsage
 end
 
 @testset "OpenAI Chat usage: cache writes, tier, served model" begin

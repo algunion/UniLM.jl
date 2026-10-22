@@ -92,7 +92,9 @@ contract.
 
 An exception thrown by `callback` or `on_tool_call` ends the call: `fetch` returns an
 `LLMCallError` (or `ResponseCallError`) whose `cause` is that exception. The call is
-never retried, nothing is appended to the chat, and no callback runs after it. A user
+never retried, nothing is appended to the chat, and no callback runs after it. On a Chat,
+a reply whose finish reason had arrived when the exception was thrown was answered and
+billed: its cost is added to `cumulative_cost`. A user
 `InterruptException` is the exception to that rule: it propagates, so `fetch` throws
 a `TaskFailedException` wrapping it.
 

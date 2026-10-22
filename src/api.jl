@@ -464,8 +464,9 @@ that speaks, such as `gpt-audio-1.5`
 - `expires_at::Union{Int,Nothing}`: the Unix time, in seconds, until which OpenAI keeps the
   audio for later turns; after it, OpenAI answers a turn that sends the id back with HTTP
   400 `audio_not_found`, the answer observed for an id it never issued. `nothing` when it
-  is unknown: a streamed reply's expiry comes alone in its last update, after the turn's
-  finish, and a connection that closes between the two leaves the turn whole without it.
+  is unknown: the reply names none, or a streamed reply's expiry, which comes alone in its
+  last update after the turn's finish, was lost to a connection that closed between the
+  two; the turn is kept either way.
 - `transcript::String`: what the audio says; the turn's `content` too, unless the turn
   holds other text.
 
@@ -1538,15 +1539,20 @@ retention (OpenAI `"12h"`, Anthropic `"1h"`). `reasoning_tokens` is the part of
 `completion_tokens` spent on hidden reasoning. `prompt_audio_tokens` is the part of
 `prompt_tokens` that is audio input and `completion_audio_tokens` the part of
 `completion_tokens` that is audio output, as OpenAI Chat Completions reports them for a
-model that hears or speaks. The counts are 0 when the provider omits them. `service_tier`
-is the tier the provider reports billing the call at (OpenAI's `service_tier`, for example)
-and `inference_geo` the inference region it reports; each is `nothing` when the provider
-reports none.
+model that hears or speaks; `prompt_audio_tokens` also counts Gemini's audio input. The
+counts are 0 when the provider omits them. `service_tier` is the tier the provider reports
+billing the call at (OpenAI's `service_tier`, for example) and `inference_geo` the inference
+region it reports; each is `nothing` when the provider reports none. One exception: on
+`GEMINIOpenAIServiceEndpoint`, whose replies name no billed tier, a Chat result's
+`service_tier` is the tier the request asked for, so `"flex"` is priced at the Flex rates and
+`"priority"` at the Priority rates — an upper bound, since Google bills a downgraded Priority
+request at Standard and this endpoint does not report the downgrade.
 
 [`estimated_cost`](@ref) bills `cached_tokens` at the discounted cached-input rate and the
 rest at the standard rates, unless the provider's own pricing applies (see
-[`DEFAULT_PRICING`](@ref)): OpenAI bills the audio tokens at the model's audio-token rates;
-audio tokens without such rates leave the estimate at `0.0`.
+[`DEFAULT_PRICING`](@ref)): OpenAI bills the audio tokens at the model's audio-token rates and
+Gemini audio input at the rate its pricing page states for the model; any other audio leaves
+the estimate at `0.0`.
 Positionally the fields go in the order listed, the five counts first; the fields left out
 take their defaults.
 """

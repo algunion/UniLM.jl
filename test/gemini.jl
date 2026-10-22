@@ -968,7 +968,7 @@ end
         messages=[Message(Val(:user), "hi")])))["store"] == true
 end
 
-@testset "decode — the billed tier: usageMetadata.serviceTier, else the x-gemini-service-tier header" begin
+@testset "decode — the billed tier: the x-gemini-service-tier header, else usageMetadata.serviceTier" begin
     reply(usage; headers=Pair{String,String}[]) = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, headers,
         Vector{UInt8}(JSON.json(Dict("candidates" => [Dict("content" => Dict("role" => "model",
             "parts" => [Dict("text" => "OK")]), "finishReason" => "STOP")], "usageMetadata" => usage)))))
@@ -977,10 +977,13 @@ end
           TokenUsage(prompt_tokens=8, completion_tokens=1, total_tokens=9, service_tier="priority")
     # Gemini 4 Argon names its tier in the header only (observed 2026-10-22).
     @test reply(u; headers=["x-gemini-service-tier" => "flex"]).usage.service_tier == "flex"
-    @test reply(merge(u, Dict("serviceTier" => "priority")); headers=["x-gemini-service-tier" => "standard"]).usage.service_tier == "priority"
+    # Google names the header as the sign of a downgrade, and a downgraded Priority request bills at
+    # the standard rate (ai.google.dev/gemini-api/docs/priority-inference): the header wins.
+    @test reply(merge(u, Dict("serviceTier" => "priority")); headers=["x-gemini-service-tier" => "standard"]).usage.service_tier == "standard"
     @test isnothing(reply(u).usage.service_tier)
     # A stream reads the header before its first chunk, so the streamed usage carries the same tier.
     for (head, body, want) in ((["x-gemini-service-tier" => "flex"], u, "flex"),
+                               (["x-gemini-service-tier" => "standard"], merge(u, Dict("serviceTier" => "priority")), "standard"),
                                (Pair{String,String}[], merge(u, Dict("serviceTier" => "priority")), "priority"),
                                (Pair{String,String}[], u, nothing))
         state = StreamState()
@@ -995,6 +998,126 @@ end
     state = StreamState()
     UniLM._stream_head!(OPENAIServiceEndpoint, state, HTTP.Response(200, ["x-gemini-service-tier" => "flex"]))
     @test isnothing(state.service_tier)
+end
+
+@testset "compat — service_tier takes the values Google's compatibility page names; any other throws before a request" begin
+    # https://ai.google.dev/gemini-api/docs/openai#flex-and-priority-inference: service_tier="priority"
+    # or "flex", and "When not explicitly assigned, service_tier defaults to standard".
+    chat(tier) = Chat(service=GEMINIOpenAIServiceEndpoint, model="gemini-3.8-flash", service_tier=tier,
+                      messages=[Message(Val(:user), "hi")])
+    body(tier) = JSON.parse(encode_request(GEMINIOpenAIServiceEndpoint, chat(tier)))
+    for tier in ("standard", "flex", "priority")
+        @test body(tier)["service_tier"] == tier
+    end
+    @test !haskey(body(nothing), "service_tier")
+    for bad in ("auto", "default", "scale", "fast", "ultrafast", "deferred", "Priority")
+        e = _gemini_caught(() -> body(bad))
+        @test e isa ArgumentError && occursin("\"standard\", \"flex\" or \"priority\"", e.msg) && occursin(repr(bad), e.msg)
+        # The call throws as its body is built, before any request is sent.
+        @test _gemini_caught(() -> chatrequest!(chat(bad))) isa ArgumentError
+    end
+end
+
+@testset "compat — the billed tier: the x-gemini-service-tier header, else the reply's service_tier, streamed or not" begin
+    usage = Dict("prompt_tokens" => 8, "completion_tokens" => 1, "total_tokens" => 9)
+    with_tier(d, tier) = isnothing(tier) ? d : merge(d, Dict("service_tier" => tier))
+    reply(tier; headers=Pair{String,String}[]) = HTTP.Response(200, headers, Vector{UInt8}(JSON.json(with_tier(Dict(
+        "model" => "gemini-3.8-flash", "usage" => usage, "choices" => [Dict("index" => 0, "finish_reason" => "stop",
+        "message" => Dict("role" => "assistant", "content" => "OK"))]), tier))))
+    decoded(tier; headers=Pair{String,String}[]) = decode_response(GEMINIOpenAIServiceEndpoint, reply(tier; headers))
+    flex, standard = ["x-gemini-service-tier" => "flex"], ["x-gemini-service-tier" => "standard"]
+    # Neither the body nor the head of a flex or a priority reply named a tier on 2026-10-22.
+    for (tier, head, want) in ((nothing, flex, "flex"), ("priority", standard, "standard"), ("priority", Pair{String,String}[], "priority"),
+                               (nothing, Pair{String,String}[], nothing))
+        d = decoded(tier; headers=head)
+        @test d.usage == TokenUsage(prompt_tokens=8, completion_tokens=1, total_tokens=9, service_tier=want)
+        @test d.message.content == "OK" && d.model == "gemini-3.8-flash"
+        # Streamed: the head is read before the first chunk, and outranks a tier a chunk names.
+        state = StreamState()
+        UniLM._stream_head!(GEMINIOpenAIServiceEndpoint, state, HTTP.Response(200, head))
+        for chunk in (Dict("model" => "gemini-3.8-flash", "choices" => [Dict("index" => 0, "delta" => Dict("content" => "OK"),
+                                                                              "finish_reason" => "stop")]),
+                      Dict("model" => "gemini-3.8-flash", "choices" => [], "usage" => usage))
+            UniLM.handle_sse_event!(GEMINIOpenAIServiceEndpoint, "", JSON.json(with_tier(chunk, tier)), state)
+        end
+        @test state.usage == d.usage
+    end
+    # The reported tier prices the call: Flex at half the standard rates.
+    r = LLMSuccess(message=Message(role=RoleAssistant, content="OK"), self=Chat(service=GEMINIOpenAIServiceEndpoint,
+                   model="gemini-3.8-flash"), usage=decoded(nothing; headers=flex).usage)
+    @test estimated_cost(r) ≈ (8 * 0.375 + 1 * 1.875) / 1_000_000
+end
+
+# The compatible wire to a local server, with that endpoint's own encoding, decoding, tiers and prices.
+const _COMPAT_URL = Ref("")
+struct _CompatHere <: UniLM.OpenAIWireEndpoint end
+UniLM.get_url(::Type{_CompatHere}, ::Chat) = _COMPAT_URL[]
+UniLM.auth_header(::Type{_CompatHere}) = ["Content-Type" => "application/json"]
+UniLM.encode_request(::Type{_CompatHere}, c::Chat) = encode_request(GEMINIOpenAIServiceEndpoint, c)
+UniLM.decode_response(::Type{_CompatHere}, r::HTTP.Response) = decode_response(GEMINIOpenAIServiceEndpoint, r)
+UniLM.handle_sse_event!(::Type{_CompatHere}, e::AbstractString, p::AbstractString, s::StreamState) =
+    UniLM.handle_sse_event!(GEMINIOpenAIServiceEndpoint, e, p, s)
+UniLM._stream_head!(::Type{_CompatHere}, s::StreamState, h::HTTP.Response) = UniLM._stream_head!(GEMINIOpenAIServiceEndpoint, s, h)
+UniLM._result_usage(::Type{_CompatHere}, c::Chat, u::TokenUsage) = UniLM._result_usage(GEMINIOpenAIServiceEndpoint, c, u)
+UniLM._billed_cost(::Type{_CompatHere}, m::String, u::TokenUsage, r::UniLM.PriceRow) =
+    UniLM._billed_cost(GEMINIOpenAIServiceEndpoint, m, u, r)
+
+# Replies as Google's compatible endpoint sent them on 2026-10-22: no tier in the head or the body.
+function _with_compat(f)
+    usage = Dict("prompt_tokens" => 1_000, "completion_tokens" => 500, "total_tokens" => 1_500)
+    server = HTTP.serve!("127.0.0.1", 0; listenany=true, verbose=false) do req
+        if get(JSON.parse(String(copy(req.body))), "stream", false) === true
+            chunks = [Dict("model" => "gemini-3.8-flash", "choices" => [Dict("index" => 0, "delta" => Dict("content" => "OK"),
+                                                                           "finish_reason" => "stop")]),
+                      Dict("model" => "gemini-3.8-flash", "choices" => [], "usage" => usage)]
+            HTTP.Response(200, ["Content-Type" => "text/event-stream"],
+                          Vector{UInt8}(join("data: " * JSON.json(c) * "\n\n" for c in chunks) * "data: [DONE]\n\n"))
+        else
+            HTTP.Response(200, ["Content-Type" => "application/json"], Vector{UInt8}(JSON.json(Dict("model" => "gemini-3.8-flash",
+                "usage" => usage, "choices" => [Dict("index" => 0, "finish_reason" => "stop",
+                                                     "message" => Dict("role" => "assistant", "content" => "OK"))]))))
+        end
+    end
+    _COMPAT_URL[] = "http://127.0.0.1:$(HTTP.port(server))"
+    try
+        f()
+    finally
+        close(server)
+    end
+end
+
+@testset "compat — a result records the tier its request asked for, which the reply does not name" begin
+    # gemini-3.8-flash, 1,000 input and 500 output tokens: Flex $0.375 / $1.875, Priority $1.35 / $6.75
+    # (an upper bound: Google bills a downgraded Priority request at Standard, which this endpoint does not
+    # report), Standard $0.75 / $3.75 per 1M tokens.
+    bill(input, output) = (1_000 * input + 500 * output) / 1_000_000
+    chat(tier, stream) = Chat(service=_CompatHere, model="gemini-3.8-flash", service_tier=tier, messages=[Message(Val(:user), "hi")],
+                              stream=(stream ? true : nothing), stream_options=(stream ? Dict("include_usage" => true) : nothing))
+    cfg = RequestConfig(max_attempts=1, request_timeout=10.0, stream_idle_timeout=10.0, total_deadline=20.0)
+    _with_compat() do
+        for stream in (false, true), (tier, want) in (("flex", bill(0.375, 1.875)), ("priority", bill(1.35, 6.75)),
+                                                      ("standard", bill(0.75, 3.75)), (nothing, bill(0.75, 3.75)))
+            c = chat(tier, stream)
+            out = chatrequest!(c; config=cfg)
+            r = stream ? fetch(out) : out
+            @test r isa LLMSuccess && r.usage.service_tier == tier && token_usage(r).prompt_tokens == 1_000
+            @test estimated_cost(r) ≈ want && cumulative_cost(c) ≈ want
+        end
+        # A streamed reply a callback throws on after its finish is billed at the requested tier too.
+        c = chat("priority", true)
+        r = fetch(chatrequest!(c; config=cfg, callback=(x, _) -> x isa Message && error("callback failed")))
+        @test r isa LLMCallError && cumulative_cost(c) ≈ bill(1.35, 6.75)
+    end
+    # A tier the reply names is kept; with no usage there is nothing to record.
+    named = TokenUsage(prompt_tokens=1, service_tier="standard")
+    compat = Chat(service=GEMINIOpenAIServiceEndpoint, service_tier="priority")
+    @test UniLM._result_usage(GEMINIOpenAIServiceEndpoint, compat, named) === named
+    @test isnothing(UniLM._result_usage(GEMINIOpenAIServiceEndpoint, compat, nothing))
+    # Every other endpoint records the tier its reply reports, here none.
+    u = TokenUsage(prompt_tokens=1)
+    for service in (OPENAIServiceEndpoint, GEMINIServiceEndpoint, GenericOpenAIEndpoint("http://localhost:9", ""))
+        @test UniLM._result_usage(service, Chat(; service, model="m", service_tier="flex"), u) === u
+    end
 end
 
 @testset "cost — Flex bills half the standard rates and Priority 1.8 times (pricing page, 2026-10-22)" begin
@@ -1039,6 +1162,114 @@ end
     @test estimated_cost(compat) ≈ bill(0.375, 0.0375, 1.875)
 end
 
+@testset "decode — the audio of a prompt is its AUDIO token count, streamed or not" begin
+    # gemini-3.1-flash-lite read a 1.5 s WAV clip as promptTokensDetails TEXT 16, AUDIO 38 (observed
+    # 2026-10-22); the audio of a tool-use prompt is in toolUsePromptTokensDetails.
+    meta = Dict{String,Any}("promptTokenCount" => 54, "candidatesTokenCount" => 1, "totalTokenCount" => 55,
+        "promptTokensDetails" => [Dict("modality" => "TEXT", "tokenCount" => 16), Dict("modality" => "AUDIO", "tokenCount" => 38)])
+    reply(m) = Dict("candidates" => [Dict("content" => Dict("role" => "model", "parts" => [Dict("text" => "banana")]),
+                    "finishReason" => "STOP")], "usageMetadata" => m, "modelVersion" => "gemini-3.1-flash-lite")
+    usage(m) = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(reply(m))))).usage
+    @test usage(meta) == TokenUsage(prompt_tokens=54, completion_tokens=1, total_tokens=55, prompt_audio_tokens=38)
+    state = StreamState()
+    UniLM.handle_sse_event!(GEMINIServiceEndpoint, "", JSON.json(reply(meta)), state)
+    @test state.usage == usage(meta)
+    tool = merge(meta, Dict("toolUsePromptTokenCount" => 20, "toolUsePromptTokensDetails" =>
+        [Dict("modality" => "AUDIO", "tokenCount" => 5), Dict("modality" => "TEXT", "tokenCount" => 15)]))
+    @test usage(tool).prompt_tokens == 74 && usage(tool).prompt_audio_tokens == 43
+    # A prompt of text and images counts no audio; an entry without a count counts none.
+    @test usage(merge(meta, Dict("promptTokensDetails" => [Dict("modality" => "IMAGE", "tokenCount" => 38),
+                                                           Dict("modality" => "AUDIO")]))).prompt_audio_tokens == 0
+    # A usage written back as usageMetadata (how the hops of a turn are joined) reads back whole.
+    u = TokenUsage(prompt_tokens=1_010, completion_tokens=40, total_tokens=1_050, cached_tokens=6, reasoning_tokens=30,
+                   service_tier="priority", prompt_audio_tokens=1_000)
+    @test UniLM._gemini_usage(UniLM._gemini_usage_metadata(u)) == u
+end
+
+@testset "cost — audio bills at the audio rate the pricing page states for the model; anything else is unpriced" begin
+    # https://ai.google.dev/gemini-api/docs/pricing (2026-10-22), per 1M tokens: 3.1 Flash-Lite "$0.25
+    # (text / image / video) $0.50 (audio)", 2.5 Flash $0.30 / $1.00, 2.5 Flash-Lite $0.10 / $0.30, 3 Flash
+    # Preview $0.50 / $1.00; one price "(text / image / video / audio)": 3.5 Flash-Lite $0.30, Robotics-ER 2
+    # Preview $1.00. A prompt of 1,000 audio and 10 text tokens, and 1 output token:
+    heard(; tier=nothing, cached=0, spoken=0) = TokenUsage(prompt_tokens=1_010, completion_tokens=1, total_tokens=1_011,
+        cached_tokens=cached, service_tier=tier, prompt_audio_tokens=1_000, completion_audio_tokens=spoken)
+    cost(model, u; service=GEMINIServiceEndpoint, pricing=DEFAULT_PRICING) = estimated_cost(LLMSuccess(
+        message=Message(role=RoleAssistant, content="x"), self=Chat(; service, model), usage=u); pricing)
+    bill(audio, text, output) = (1_000 * audio + 10 * text + 1 * output) / 1_000_000
+    @test cost("gemini-3.1-flash-lite", heard()) ≈ bill(0.50, 0.25, 1.50)          # $0.000504
+    @test cost("gemini-2.5-flash", heard()) ≈ bill(1.00, 0.30, 2.50)
+    @test cost("gemini-2.5-flash-lite", heard()) ≈ bill(0.30, 0.10, 0.40)
+    @test cost("gemini-3.5-flash-lite", heard()) ≈ bill(0.30, 0.30, 2.50)
+    rows = Dict("gemini-3-flash-preview" => UniLM._price(0.50, 0.05, 3.00),
+                "gemini-robotics-er-2-preview" => UniLM._price(1.00, 0.10, 5.00))
+    @test cost("gemini-3-flash-preview", heard(); pricing=rows) ≈ bill(1.00, 0.50, 3.00)
+    @test cost("gemini-robotics-er-2-preview", heard(); pricing=rows) ≈ bill(1.00, 1.00, 5.00)
+    # A billed tier scales the audio rate as it scales the text ones: 3.1 Flash-Lite lists audio at
+    # $0.25 on Flex and $0.90 on Priority, 2.5 Flash at $1.80 on Priority.
+    @test cost("gemini-3.1-flash-lite", heard(tier="flex")) ≈ bill(0.25, 0.125, 0.75)
+    @test cost("gemini-3.1-flash-lite", heard(tier="priority")) ≈ bill(0.90, 0.45, 2.70)
+    @test cost("gemini-2.5-flash", heard(tier="priority")) ≈ bill(1.80, 0.54, 4.50)
+    # The OpenAI-compatible endpoint bills the same.
+    @test cost("gemini-3.1-flash-lite", heard(); service=GEMINIOpenAIServiceEndpoint) ≈ bill(0.50, 0.25, 1.50)
+    @test (@inferred UniLM._billed_cost(GEMINIServiceEndpoint, "gemini-3.1-flash-lite", heard(),
+                                        DEFAULT_PRICING["gemini-3.1-flash-lite"])) ≈ bill(0.50, 0.25, 1.50)
+    # The page states no audio rate for Gemini 4 Argon, 3.8 and 3.6 Flash, 3.1 Pro Preview or 2.5 Pro
+    # (one input price that names no modality), nor any audio output rate; nor does a row a caller adds
+    # for a near-miss id. And a cache hit beside audio: the cached-audio rates the page lists differ from
+    # the cached-text ones, and the usage does not say how many cached tokens are audio. Each is
+    # unpriced, with one warning per model.
+    says = "no audio-token rates for this model on this endpoint; its estimated cost is 0.0"
+    for model in ("gemini-4-argon", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.1-pro-preview")
+        @test (@test_logs (:warn, says) cost(model, heard())) === 0.0
+    end
+    for model in ("gemini-2.5-pro", "gemini-3.1-flash-lite-preview")
+        @test (@test_logs (:warn, says) cost(model, heard(); pricing=Dict(model => UniLM._price(1.25, 0.125, 10.0)))) === 0.0
+    end
+    @test (@test_logs (:warn, says) cost("gemini-3.1-flash-lite", heard(cached=500))) === 0.0
+    @test (@test_logs (:warn, says) cost("gemini-3.1-flash-lite", heard(spoken=1))) === 0.0
+    @test (@test_logs (:warn, says) cost("gemini-3.8-flash", heard(); service=GEMINIOpenAIServiceEndpoint)) === 0.0
+    # Without audio, a cache hit bills as before.
+    @test (@test_logs cost("gemini-3.1-flash-lite", TokenUsage(prompt_tokens=1_010, completion_tokens=1, cached_tokens=500))) ≈
+          (510 * 0.25 + 500 * 0.025 + 1 * 1.50) / 1_000_000
+end
+
+@testset "cost — 3.1 Pro Preview and 2.5 Pro bill a prompt over 200K tokens at their long-context rates" begin
+    # The pricing page (2026-10-22), per 1M tokens: input "$2.00, prompts <= 200k tokens $4.00, prompts >
+    # 200k tokens", output $12.00 / $18.00, cache hits $0.20 / $0.40; Priority $3.60 / $7.20, $21.60 /
+    # $32.40, $0.36 / $0.72; Flex $1.00 / $2.00, $6.00 / $9.00, its cache "Same as Standard".
+    use(prompt; cached=0, tier=nothing) = TokenUsage(prompt_tokens=prompt, completion_tokens=2_000, cached_tokens=cached,
+                                                     service_tier=tier)
+    cost(model, u; pricing=DEFAULT_PRICING) = estimated_cost(LLMSuccess(message=Message(role=RoleAssistant, content="x"),
+                                               self=Chat(service=GEMINIServiceEndpoint, model=model), usage=u); pricing)
+    bill(prompt, cached, input, cache, output) = ((prompt - cached) * input + cached * cache + 2_000 * output) / 1_000_000
+    # 2.5 Pro (its row as the page lists it): $1.25 / $2.50, $10.00 / $15.00, $0.125 / $0.25; Priority $4.50 /
+    # $27.00 / $0.45 above 200K; Flex $1.25 / $7.50 and its cache $0.25, as Standard's.
+    pro25 = Dict("gemini-2.5-pro" => UniLM._price(1.25, 0.125, 10.0))
+    @test cost("gemini-2.5-pro", use(300_000; cached=100_000); pricing=pro25) ≈ bill(300_000, 100_000, 2.50, 0.25, 15.0)
+    @test cost("gemini-2.5-pro", use(300_000; cached=100_000, tier="priority"); pricing=pro25) ≈ bill(300_000, 100_000, 4.50, 0.45, 27.0)
+    @test cost("gemini-2.5-pro", use(300_000; cached=100_000, tier="flex"); pricing=pro25) ≈ bill(300_000, 100_000, 1.25, 0.25, 7.50)
+    @test cost("gemini-2.5-pro", use(200_000); pricing=pro25) ≈ bill(200_000, 0, 1.25, 0.125, 10.0)
+    for model in ("gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools")
+        @test cost(model, use(300_000)) ≈ bill(300_000, 0, 4.0, 0.40, 18.0)          # $1.236
+        @test cost(model, use(300_000; cached=100_000)) ≈ bill(300_000, 100_000, 4.0, 0.40, 18.0)
+        @test cost(model, use(300_000; tier="priority")) ≈ bill(300_000, 0, 7.20, 0.72, 32.40)
+        @test cost(model, use(300_000; cached=100_000, tier="flex")) ≈ bill(300_000, 100_000, 2.0, 0.40, 9.0)
+        # A prompt of 200K tokens exactly is one of at most 200K.
+        @test cost(model, use(200_000)) ≈ bill(200_000, 0, 2.0, 0.20, 12.0)
+        @test cost(model, use(200_001)) ≈ bill(200_001, 0, 4.0, 0.40, 18.0)
+    end
+    # gemini-pro-latest is priced as the model that served it.
+    d = decode_response(GEMINIServiceEndpoint, HTTP.Response(200, [], Vector{UInt8}(JSON.json(Dict(
+        "candidates" => [Dict("content" => Dict("role" => "model", "parts" => [Dict("text" => "OK")]), "finishReason" => "STOP")],
+        "usageMetadata" => Dict("promptTokenCount" => 300_000, "candidatesTokenCount" => 2_000, "totalTokenCount" => 302_000),
+        "modelVersion" => "gemini-3.1-pro-preview")))))
+    latest = LLMSuccess(message=d.message, self=Chat(service=GEMINIServiceEndpoint, model="gemini-pro-latest"),
+                        usage=d.usage, model=d.model)
+    @test estimated_cost(latest) ≈ bill(300_000, 0, 4.0, 0.40, 18.0)
+    # A model whose table lists one price for every prompt length bills a long prompt at it.
+    @test cost("gemini-3.8-flash", use(300_000)) ≈ bill(300_000, 0, 0.75, 0.075, 3.75)
+end
+
 # ─── Long generations sent in hops (Gemini long decode) ──────────────────────
 
 @testset "continuation — the next request is the same body plus the latest token" begin
@@ -1074,6 +1305,7 @@ const _HOPS_BETWEEN = Ref{Function}(() -> nothing)
 UniLM._continuation_body(::Type{_GeminiHops}, b::AbstractString, f, t) =
     (_HOPS_BETWEEN[](); UniLM._continuation_body(GEMINIServiceEndpoint, b, f, t))
 UniLM._join_hops(::Type{_GeminiHops}, a::HTTP.Response, b::HTTP.Response) = UniLM._join_hops(GEMINIServiceEndpoint, a, b)
+UniLM._request_output_cap(::Type{_GeminiHops}, stream::Bool) = UniLM._request_output_cap(GEMINIServiceEndpoint, stream)
 UniLM._stream_head!(::Type{_GeminiHops}, s::StreamState, h::HTTP.Response) = UniLM._stream_head!(GEMINIServiceEndpoint, s, h)
 UniLM._billed_cost(::Type{_GeminiHops}, m::String, u::TokenUsage, r::UniLM.PriceRow) =
     UniLM._billed_cost(GEMINIServiceEndpoint, m, u, r)
@@ -1198,21 +1430,139 @@ end
     @test [tc.id for tc in fired] == ["unilm_call_1", "unilm_call_2"]
 end
 
-@testset "continuation — at most 8 requests; then the turn so far, finish_reason \"continuation\"" begin
+@testset "continuation — the requests the output budget needs, at least 8; then the turn so far, finish_reason \"continuation\"" begin
+    # Google: "One hop returns up to 65,536 output tokens. Non-streaming REST requests return up to
+    # 32,768." A turn takes cld(max_output_tokens, that cap) + 1 requests, and at least 8.
     u = Dict("promptTokenCount" => 10, "candidatesTokenCount" => 1, "totalTokenCount" => 11)
-    replies = [(200, _hop([Dict("text" => "part $k. ")], "CONTINUATION"; token="token-$k", usage=u)) for k in 1:9]
-    for stream in (false, true)
+    replies = [(200, _hop([Dict("text" => "part $k. ")], "CONTINUATION"; token="token-$k", usage=u)) for k in 1:20]
+    for (stream, max_tokens, n) in ((false, 262_144, 9), (true, 262_144, 8), (false, nothing, 8), (true, 1_048_576, 17))
+        _with_hops(replies) do seen
+            chat = _hops_chat(; stream, max_tokens)
+            out = chatrequest!(chat; config=_HOPS_CFG)
+            r = stream ? fetch(out) : out
+            @test length(seen) == n
+            @test [get(JSON.parse(b), "continuationToken", nothing) for b in seen] == [nothing; ["token-$k" for k in 1:n-1]]
+            @test r.message.finish_reason == "continuation"
+            @test r.message.content == join(["part $k. " for k in 1:n])
+            @test r.usage == TokenUsage(prompt_tokens=10n, completion_tokens=n, total_tokens=11n, service_tier="priority")
+            @test chat.messages[end] === r.message
+        end
+    end
+    cap(; kw...) = UniLM._request_cap(_hops_chat(; kw...))
+    @test cap(max_tokens=1_048_576) == 33 && cap(max_tokens=32_768 * 7) == 8 && cap(max_tokens=32_768 * 7 + 1) == 9
+    @test cap(max_tokens=nothing, max_completion_tokens=1_048_576) == 33        # the field the encoder sends first
+    @test UniLM._request_cap(Chat(service=GEMINIServiceEndpoint, max_tokens=1_048_576, stream=true)) == 17
+    @test UniLM._request_cap(Chat(max_tokens=1_048_576)) == 8                    # an endpoint that does not continue
+    @test (@inferred UniLM._request_cap(_hops_chat())) == 9
+end
+
+@testset "continuation — a CONTINUATION reply that produced no output token ends the turn" begin
+    some = Dict("promptTokenCount" => 10, "candidatesTokenCount" => 1, "totalTokenCount" => 11)
+    none = Dict("promptTokenCount" => 10, "totalTokenCount" => 10)
+    # "A hop spent entirely on thinking returns empty text with finishReason: CONTINUATION. Treat this as
+    # normal progress" (Google's long-decode guide): thinking tokens are output.
+    thought = Dict("promptTokenCount" => 10, "thoughtsTokenCount" => 32_768, "totalTokenCount" => 32_778)
+    ok = (200, _hop([Dict("text" => "Done.")], "STOP"; usage=some))
+    for stream in (false, true), (replies, n, finish) in (
+            ([(200, _hop(Any[], "CONTINUATION"; token="t1", usage=none)), ok], 1, "continuation"),
+            ([(200, _hop([Dict("text" => "a")], "CONTINUATION"; token="t1", usage=some)),
+              (200, _hop(Any[], "CONTINUATION"; token="t2", usage=none)), ok], 2, "continuation"),
+            ([(200, _hop(Any[], "CONTINUATION"; token="t1", usage=thought)), ok], 2, STOP))
         _with_hops(replies) do seen
             chat = _hops_chat(; stream)
             out = chatrequest!(chat; config=_HOPS_CFG)
             r = stream ? fetch(out) : out
-            @test length(seen) == 8
-            @test [get(JSON.parse(b), "continuationToken", nothing) for b in seen] == [nothing; ["token-$k" for k in 1:7]]
-            @test r.message.finish_reason == "continuation"
-            @test r.message.content == join(["part $k. " for k in 1:8])
-            @test r.usage == TokenUsage(prompt_tokens=80, completion_tokens=8, total_tokens=88, service_tier="priority")
-            @test chat.messages[end] === r.message
+            @test length(seen) == n
+            @test r isa LLMSuccess && r.message.finish_reason == finish && chat.messages[end] === r.message
         end
+    end
+end
+
+@testset "continuation — the audio counts of every hop are summed, on both paths" begin
+    audio(n) = Dict("promptTokenCount" => n + 10, "candidatesTokenCount" => 4, "totalTokenCount" => n + 14,
+                    "promptTokensDetails" => [Dict("modality" => "AUDIO", "tokenCount" => n), Dict("modality" => "TEXT", "tokenCount" => 10)])
+    lite(reply) = merge(reply, Dict("modelVersion" => "gemini-3.1-flash-lite"))
+    replies = [(200, lite(_hop([Dict("text" => "a")], "CONTINUATION"; token="t1", usage=audio(1_000)))),
+               (200, lite(_hop([Dict("text" => "b")], "STOP"; usage=audio(1_004))))]
+    for stream in (false, true)
+        _with_hops(replies) do seen
+            chat = _hops_chat(; stream, model="gemini-3.1-flash-lite")
+            out = chatrequest!(chat; config=_HOPS_CFG)
+            r = stream ? fetch(out) : out
+            @test length(seen) == 2
+            @test r.usage == TokenUsage(prompt_tokens=2_024, completion_tokens=8, total_tokens=2_032,
+                                        service_tier="priority", prompt_audio_tokens=2_004)
+            # 3.1 Flash-Lite at Priority: audio $0.90, text $0.45, output $2.70 per 1M tokens.
+            @test cumulative_cost(chat) ≈ (2_004 * 0.90 + 20 * 0.45 + 8 * 2.70) / 1_000_000
+        end
+    end
+end
+
+# A server streaming each GenerateContentResponse of `chunks` in a write of its own, `gap` seconds
+# apart, so a client reads them one at a time.
+function _with_paced_chunks(f, chunks; gap=0.3)
+    server = HTTP.listen!("127.0.0.1", 0; verbose=false) do http::HTTP.Stream
+        read(http)
+        HTTP.setstatus(http, 200)
+        HTTP.setheader(http, "Content-Type" => "text/event-stream")
+        HTTP.setheader(http, "x-gemini-service-tier" => "priority")
+        HTTP.startwrite(http)
+        for c in chunks
+            write(http, "data: " * JSON.json(c) * "\r\n\r\n")
+            flush(http)
+            sleep(gap)
+        end
+    end
+    _HOPS_URL[] = "http://127.0.0.1:$(HTTP.port(server))"
+    try
+        f()
+    finally
+        close(server)
+    end
+end
+
+@testset "continuation — user code that throws after a reply completed ends the call; that reply stays billed" begin
+    # A callback or on_tool_call that throws on the chunk with the reply's finish reason and usage ends
+    # the call with that exception and commits nothing, but the reply was answered: it is billed, on a
+    # continuing hop as on a single-request stream.
+    boom = ErrorException("user code failed")
+    ends_call(r) = r isa LLMCallError && r.cause === boom
+    _with_hops(_hops_two()) do seen
+        chat = _hops_chat(stream=true)
+        r = fetch(chatrequest!(chat; config=_HOPS_CFG, callback=(c, _) -> c == "The proof begins. " && throw(boom)))
+        @test ends_call(r) && length(seen) == 1
+        @test [m.role for m in chat.messages] == [RoleSystem, RoleUser]
+        @test cumulative_cost(chat) ≈ _HOP1_COST
+    end
+    call(q) = Dict("functionCall" => Dict("name" => "lookup", "args" => Dict("q" => q)))
+    u = Dict("promptTokenCount" => 10, "candidatesTokenCount" => 2, "totalTokenCount" => 12)
+    one_cost = 1.8 * (10 * 2.0 + 2 * 10.0) / 1_000_000                          # Gemini 4 Argon at Priority
+    tool = Tool(func=FunctionSignature(name="lookup", parameters=Dict("type" => "object")))
+    _with_hops([(200, _hop([call("a")], "CONTINUATION"; token="token-a", usage=u)), (200, _hop([call("b")], "STOP"; usage=u))]) do seen
+        chat = _hops_chat(tools=[tool], stream=true)
+        r = fetch(chatrequest!(chat; config=_HOPS_CFG, on_tool_call=_ -> throw(boom)))
+        @test ends_call(r) && length(seen) == 1
+        @test cumulative_cost(chat) ≈ one_cost
+    end
+    # One request: a throw on the text of its last chunk, or on the final message.
+    for fails in (c -> c == "Done.", c -> c isa Message)
+        _with_hops([(200, _hop([Dict("text" => "Done.")], "STOP"; usage=u))]) do seen
+            chat = _hops_chat(stream=true)
+            r = fetch(chatrequest!(chat; config=_HOPS_CFG, callback=(c, _) -> fails(c) && throw(boom)))
+            @test ends_call(r) && length(seen) == 1
+            @test [m.role for m in chat.messages] == [RoleSystem, RoleUser]
+            @test cumulative_cost(chat) ≈ one_cost
+        end
+    end
+    # A throw before the reply's finish reason arrived: the reply was not answered, and nothing is billed.
+    chunks = [Dict("candidates" => [Dict("content" => Dict("role" => "model", "parts" => [Dict("text" => "Partial ")]))],
+                   "modelVersion" => "gemini-4-argon"),
+              _hop([Dict("text" => "answer.")], "STOP"; usage=u)]
+    _with_paced_chunks(chunks) do
+        chat = _hops_chat(stream=true)
+        r = fetch(chatrequest!(chat; config=_HOPS_CFG, callback=(c, _) -> c == "Partial " && throw(boom)))
+        @test ends_call(r)
+        @test cumulative_cost(chat) == 0.0
     end
 end
 

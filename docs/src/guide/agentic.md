@@ -185,10 +185,10 @@ Streamed Gemini Interactions assemble each step from the wire's incremental even
 and rebuild the output exactly as the non-streamed decode does: a streamed
 `respond(...; tools=…, stream=true)` finishes with status `requires_action` and its
 [`function_calls`](@ref) populated, like the non-streamed form. Thought steps carry
-their signature and their `summary` (from the streamed thought summaries); consecutive
-`model_output` steps — the hops of a long answer, with only thoughts between them — make
-one message whose text is their text parts joined with no separator, as Google's guides
-read it, while a function call or another step starts a new message; and
+their signature and their `summary` (from the streamed thought summaries); the
+`model_output` steps — the hops of a long answer, text resumed after a thought or a tool —
+make one message, where the first of them is, whose text is their text parts joined with no
+separator, as Google's guides and SDK read it (a `user_input` step starts a new one); and
 a function call whose `arguments` are `null` reads as `"{}"`. Initial text in
 `step.start` and subsequent deltas are both included, in step order. Thought summaries
 stay separate from answer text ([`reasoning_summaries`](@ref) reads them), while

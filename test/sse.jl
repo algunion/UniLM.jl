@@ -248,6 +248,18 @@ end
         st = StreamState()
         print(st.content, "plain")
         @test isnothing(_build_stream_message(st).audio_output)              # no audio: none
+        # An expiry that is no integer is a malformed update, as it is unstreamed: the handler
+        # throws, so the dispatcher drops the chunk and counts it, and the expiry stays unknown.
+        for bad in ("soon", true, 1.7926e9)
+            st = StreamState()
+            feed!(st, Dict("audio" => Dict("id" => "audio_abc123", "data" => b64, "transcript" => "Hi there!")))
+            @test_throws ArgumentError feed!(st, Dict("audio" => Dict("expires_at" => bad)))
+            payload = JSON.json(Dict("choices" => [Dict("index" => 0, "delta" => Dict("audio" => Dict("expires_at" => bad)))]))
+            UniLM._sse_dispatch!(S, IOBuffer(), Ref(""), "data: $payload\n\n", st)
+            @test st.sse_dropped == 1
+            st.finish_reason = "stop"
+            @test _build_stream_message(st).audio_output.expires_at === nothing
+        end
     end
 
     @testset "driver: the callback hears the transcript; the result holds the audio" begin

@@ -101,8 +101,8 @@ end
 _gemini_service_tier(::Nothing, ::Tuple, ::String)::Nothing = nothing
 function _gemini_service_tier(tier::String, tiers::Tuple, api::String)::String
     tier in tiers || throw(ArgumentError("$api takes service_tier $(join(repr.(tiers), ", ", " or ")) " *
-        "(got $(repr(tier)))" *
-        (tier == "deferred" ? ": \"deferred\" is a Gemini Interactions tier, so send the request with respond" : "")))
+        "(got $(repr(tier)))" * (tier == "deferred" ?
+        ": \"deferred\" is a Gemini Interactions tier, so send the request with respond on GEMINIServiceEndpoint" : "")))
     tier
 end
 
@@ -222,10 +222,14 @@ function _gemini_validate_chat(chat::Chat)
     isempty(fields) || throw(ArgumentError(
         "Native Gemini Chat does not support field(s) $(join(fields, ", ")); use a supported option or GEMINIOpenAIServiceEndpoint"))
     for m in chat.messages, a in something(m.attachments, Attachment[])
-        a isa ImageAttachment && _gemini_part_resolution(a.detail, chat.model)
+        _gemini_check_part(a, chat.model)
     end
     nothing
 end
+
+# An image's detail level is one the model takes (`_gemini_part_resolution`); other media carry none.
+_gemini_check_part(::Attachment, ::String)::Nothing = nothing
+_gemini_check_part(a::ImageAttachment, model::String)::Nothing = (_gemini_part_resolution(a.detail, model); nothing)
 
 # Request label values (GenerateContentRequest.labels in the Gemini API discovery
 # document): at most 63 characters (Unicode code points), only lowercase letters,
@@ -283,12 +287,16 @@ end
 # GEMINIOpenAIServiceEndpoint serves the same models on the OpenAI wire, so the same models take
 # the sampling parameters: Google's page on Gemini 3.6 says the models ignore them, without
 # naming an endpoint, and that they are ignored on this wire too is inferred from that page,
-# not measured on it. Its other refusals are the server's: it answers HTTP 400 to
+# not measured on it. It takes the service tiers Google's compatibility page names —
+# `service_tier="priority"` or `"flex"`, and `"standard"`, which `service_tier` "defaults to"
+# (https://ai.google.dev/gemini-api/docs/openai#flex-and-priority-inference) — and no other
+# OpenAI tier. Its other refusals are the server's: it answers HTTP 400 to
 # `prompt_cache_options` ("Unknown name") and to a request ending with an assistant turn
 # ("Requests ending with a model turn are not supported."), observed on gemini-3.8-flash on
 # 2026-10-22.
 function encode_request(::Type{GEMINIOpenAIServiceEndpoint}, chat::Chat)::String
     _gemini_validate_sampling(chat.model, chat.temperature, chat.top_p)
+    _gemini_service_tier(chat.service_tier, _GEMINI_SERVICE_TIERS, "Gemini's OpenAI-compatible endpoint")
     invoke(encode_request, Tuple{OpenAIWireEndpointSpec,Chat}, GEMINIOpenAIServiceEndpoint, chat)
 end
 
@@ -439,9 +447,12 @@ _gemini_finish_reason(fr::AbstractString, has_calls::Bool)::String =
 # promptTokenCount already counts a cached prefix (cachedContentTokenCount is a subset of it), and
 # totalTokenCount is prompt + tool-use prompt + thoughts + candidates. The tool-use prompt
 # (toolUsePromptTokenCount) is input the model read, so it is billed as prompt; thoughts bill at
-# the output rate → completion = candidates + thoughts. The billed tier is usageMetadata's
-# serviceTier, else the reply's x-gemini-service-tier header (`header_tier`), the only place
-# Gemini 4 Argon names it (observed 2026-10-22).
+# the output rate → completion = candidates + thoughts. The prompt's audio is the AUDIO count of
+# promptTokensDetails and toolUsePromptTokensDetails. The billed tier is the reply's
+# x-gemini-service-tier header (`header_tier`), the only place Gemini 4 Argon names it (observed
+# 2026-10-22), else usageMetadata's serviceTier: Google names the header as the sign of a
+# downgraded Priority request, and "Downgraded requests are billed at the standard rate"
+# (https://ai.google.dev/gemini-api/docs/priority-inference).
 function _gemini_usage(u, header_tier::Union{String,Nothing}=nothing)::Union{TokenUsage,Nothing}
     u isa AbstractDict || return nothing
     _i(x) = x isa Integer ? Int(x) : 0
@@ -450,9 +461,24 @@ function _gemini_usage(u, header_tier::Union{String,Nothing}=nothing)::Union{Tok
     thoughts = _i(get(u, "thoughtsTokenCount", 0))
     cached   = _i(get(u, "cachedContentTokenCount", 0))
     total    = _i(get(u, "totalTokenCount", prompt + cand + thoughts))
+    audio    = _modality_tokens(get(u, "promptTokensDetails", nothing), "AUDIO", "tokenCount") +
+               _modality_tokens(get(u, "toolUsePromptTokensDetails", nothing), "AUDIO", "tokenCount")
     TokenUsage(prompt_tokens = prompt, completion_tokens = cand + thoughts,
-        total_tokens = total, cached_tokens = cached, reasoning_tokens = thoughts,
-        service_tier = something(_wire_string(u, "serviceTier"), header_tier, Some(nothing)))
+        total_tokens = total, cached_tokens = cached, reasoning_tokens = thoughts, prompt_audio_tokens = audio,
+        service_tier = something(header_tier, _wire_string(u, "serviceTier"), Some(nothing)))
+end
+
+# The tokens a list of per-modality counts gives `modality`: generateContent's ModalityTokenCount
+# entries ({"modality": "AUDIO", "tokenCount": n}) or the Interactions API's ModalityTokens
+# ({"modality": "audio", "tokens": n}).
+function _modality_tokens(counts, modality::String, key::String)::Int
+    n = 0
+    for c in (counts isa AbstractVector ? counts : ())
+        c isa AbstractDict && get(c, "modality", nothing) == modality || continue
+        k = get(c, key, 0)
+        k isa Integer && (n += Int(k))
+    end
+    n
 end
 
 # The tier a reply's head names (https://ai.google.dev/gemini-api/docs/priority-inference: "monitor
@@ -462,11 +488,13 @@ function _gemini_header_tier(resp::HTTP.Response)::Union{String,Nothing}
     isempty(v) ? nothing : String(v)
 end
 
-# A usage written back as the usageMetadata `_gemini_usage` reads it as.
+# A usage written back as the usageMetadata `_gemini_usage` reads it as, its audio count included.
 function _gemini_usage_metadata(u::TokenUsage)::Dict{String,Any}
     d = Dict{String,Any}("promptTokenCount" => u.prompt_tokens, "cachedContentTokenCount" => u.cached_tokens,
                          "candidatesTokenCount" => u.completion_tokens - u.reasoning_tokens,
-                         "thoughtsTokenCount" => u.reasoning_tokens, "totalTokenCount" => u.total_tokens)
+                         "thoughtsTokenCount" => u.reasoning_tokens, "totalTokenCount" => u.total_tokens,
+                         "promptTokensDetails" => Any[Dict{String,Any}("modality" => "AUDIO",
+                                                                       "tokenCount" => u.prompt_audio_tokens)])
     isnothing(u.service_tier) || (d["serviceTier"] = u.service_tier)
     d
 end
@@ -608,8 +636,28 @@ end
 
 # A stream's tier is also in its response head, read before the first chunk (`state.service_tier`),
 # so the streamed usage names the tier the reply not streamed names.
-_stream_head!(::Type{GEMINIServiceEndpoint}, state::StreamState, head::HTTP.Response)::Nothing =
-    (state.service_tier = _gemini_header_tier(head); nothing)
+_stream_head!(::Union{Type{GEMINIServiceEndpoint},Type{GEMINIOpenAIServiceEndpoint}}, state::StreamState,
+              head::HTTP.Response)::Nothing = (state.service_tier = _gemini_header_tier(head); nothing)
+
+# The compatible endpoint's reply reads as the OpenAI wire's, its billed tier header first, as on
+# the native wire: the response head's x-gemini-service-tier, else the reply's service_tier — a
+# stream's head outranks every chunk's (`_chunk_tier!`). Neither named a tier in replies to flex
+# and priority requests on 2026-10-22, streamed or not, so such a reply reports none.
+function decode_response(::Type{GEMINIOpenAIServiceEndpoint}, resp::HTTP.Response)
+    d = extract_message(resp)
+    tier = _gemini_header_tier(resp)
+    usage = isnothing(tier) || isnothing(d.usage) ? d.usage : TokenUsage(; _usage_fields(d.usage)..., service_tier=tier)
+    (; d.message, usage, d.model)
+end
+_chunk_tier!(::Type{GEMINIOpenAIServiceEndpoint}, state::StreamState, tier::String)::Nothing =
+    (isnothing(state.service_tier) && (state.service_tier = tier); nothing)
+
+# A reply that names no tier was billed at the one its request asked for, so the result records
+# that one: "flex" prices at the Flex rates, and "priority" at the Priority rates — an upper bound,
+# since Google bills a downgraded Priority request at Standard and this endpoint does not report
+# the downgrade. A tier the reply names is kept.
+_result_usage(::Type{GEMINIOpenAIServiceEndpoint}, chat::Chat, u::TokenUsage)::TokenUsage =
+    isnothing(u.service_tier) ? TokenUsage(; _usage_fields(u)..., service_tier=chat.service_tier) : u
 
 # ─── Long decode: one turn in several requests ───────────────────────────────
 # Gemini 4 Argon generates past one request's output cap in hops: a reply that reaches the cap
@@ -618,7 +666,11 @@ _stream_head!(::Type{GEMINIServiceEndpoint}, state::StreamState, head::HTTP.Resp
 # generation config, with no partial output added — sending "only the latest token"
 # (https://ai.google.dev/gemini-api/docs/generate-content/long-decode). A reply that stops at
 # MAX_TOKENS carries a token too, but continuing it needs a larger max_output_tokens: that turn
-# ends. Continuation is exercised against a local mock; a live CONTINUATION reply was not observed.
+# ends. "One hop returns up to 65,536 output tokens. Non-streaming REST requests return up to
+# 32,768." (the same page), which sizes the requests a turn may take (`_request_cap`).
+# Continuation is exercised against a local mock; a live CONTINUATION reply was not observed.
+_request_output_cap(::Type{GEMINIServiceEndpoint}, stream::Bool)::Int = stream ? 65_536 : 32_768
+
 function _continuation_body(::Type{GEMINIServiceEndpoint}, body::AbstractString,
                             finish::Union{String,Nothing}, token::Union{String,Nothing})::Union{String,Nothing}
     (finish == "continuation" && !isnothing(token)) || return nothing
@@ -712,16 +764,59 @@ function _gemini_tier_multiples(model::String, tier::Union{String,Nothing})::NTu
     (prices.multiple, get(prices.cache, model, prices.multiple))
 end
 
+# The audio input rates, USD per token at the standard tier, of the models whose table on
+# https://ai.google.dev/gemini-api/docs/pricing (2026-10-22) states one for audio: a price of its
+# own ("$0.25 (text / image / video) $0.50 (audio)" on 3.1 Flash-Lite), or one input price for
+# "text / image / video / audio". Each such table scales it on Flex and Priority as it scales the
+# text rates. The other tables state no audio rate — Gemini 4 Argon's, 3.8 and 3.6 Flash's, 3.1
+# Pro Preview's and 2.5 Pro's input price names no modality — so audio on those models leaves the
+# call unpriced, as a model without a price row is.
+const _GEMINI_AUDIO_INPUT_RATES = Dict{String,Float64}(
+    "gemini-3.5-flash-lite"        => 0.30 / 1_000_000,   # its one input price
+    "gemini-3.1-flash-lite"        => 0.50 / 1_000_000,   # shuts down 2027-05-07
+    "gemini-3-flash-preview"       => 1.00 / 1_000_000,
+    "gemini-2.5-flash"             => 1.00 / 1_000_000,
+    "gemini-2.5-flash-lite"        => 0.30 / 1_000_000,
+    "gemini-robotics-er-2-preview" => 1.00 / 1_000_000)   # its one input price; $2.00 from 2027-01-01
+
+# The audio rate a usage's audio input bills at, or `nothing` where the page states none for it:
+# the model has no rate above; the reply also counts audio output, which no table here prices; or
+# the call also read the cache, since the cached-audio prices the page lists differ from the
+# cached-text ones (or it lists none) and a usage does not say how many cached tokens are audio.
+_gemini_audio_rate(model::String, u::TokenUsage)::Union{Float64,Nothing} =
+    u.completion_audio_tokens > 0 || u.cached_tokens > 0 ? nothing : get(_GEMINI_AUDIO_INPUT_RATES, model, nothing)
+
+# The models whose table bills a prompt over 200K tokens at long-context rates, the whole request:
+# twice the input and cache-hit rates and 1.5 times the output rate, on every tier (pricing page,
+# 2026-10-22). 3.1 Pro Preview lists input "$2.00, prompts <= 200k tokens $4.00, prompts > 200k
+# tokens", output $12.00 / $18.00, cache hits $0.20 / $0.40, and Priority $7.20 / $32.40 / $0.72;
+# its custom-tools endpoint is priced "Same as Gemini 3.1 Pro Preview"; 2.5 Pro lists $1.25 /
+# $2.50, $10.00 / $15.00, $0.125 / $0.25. A -latest alias is priced as the model that served it.
+const _GEMINI_LONG_CONTEXT_MODELS = ("gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-2.5-pro")
+const _GEMINI_SHORT_CONTEXT = 200_000
+
+# The multiples of the input and cache-hit rates, and of the output rate, that a prompt of
+# `prompt_tokens` costs on `model`.
+_gemini_context_multiples(model::String, prompt_tokens::Int)::NTuple{2,Float64} =
+    prompt_tokens > _GEMINI_SHORT_CONTEXT && model in _GEMINI_LONG_CONTEXT_MODELS ? (2.0, 1.5) : (1.0, 1.0)
+
 # What Gemini bills a call, on the native and the OpenAI-compatible endpoint alike
 # (https://ai.google.dev/gemini-api/docs/pricing): prompts are cached implicitly, so a cache hit
 # bills at the context-caching rate and every other prompt token, a tool-use prompt included, at
-# the input rate, with no premium for writing the cache; output, thinking included, bills at the
-# output rate; and each rate at the billed tier's multiple of it (`_gemini_tier_multiples`).
+# the input rate — an audio one at the model's audio rate (`_gemini_audio_rate`), the call
+# unpriced where the page states none — with no premium for writing the cache; output, thinking
+# included, bills at the output rate; a long prompt at its long-context multiples
+# (`_gemini_context_multiples`); and each rate at the billed tier's multiple of it
+# (`_gemini_tier_multiples`).
 function _billed_cost(::Union{Type{GEMINIServiceEndpoint},GEMINIServiceEndpoint,
                               Type{GEMINIOpenAIServiceEndpoint},GEMINIOpenAIServiceEndpoint},
                       model::String, u::TokenUsage, rates::PriceRow)::Float64
+    audio_rate = _gemini_audio_rate(model, u)
+    _counts_audio(u) && isnothing(audio_rate) && return _unpriced_audio(model)
+    audio = min(u.prompt_audio_tokens, u.prompt_tokens)
     cached = min(u.cached_tokens, u.prompt_tokens)
     rate, cache = _gemini_tier_multiples(model, u.service_tier)
-    rate * ((u.prompt_tokens - cached) * rates.input + u.completion_tokens * rates.output) +
-        cache * cached * rates.cached_input
+    input, output = _gemini_context_multiples(model, u.prompt_tokens)
+    rate * (input * ((u.prompt_tokens - cached - audio) * rates.input + audio * something(audio_rate, 0.0)) +
+            output * u.completion_tokens * rates.output) + cache * input * cached * rates.cached_input
 end

@@ -166,6 +166,9 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "GEMINI_API_KEY")
 
     @testset "Gemini embeddings: two inputs, two vectors, on the default model and on gemini-embedding-001" begin
         # The OpenAI-compatible endpoint leaves the index out of its first reply row (a zero).
+        # gemini-embedding-001 shuts down on 2028-05-14 (ai.google.dev/gemini-api/docs/deprecations). It
+        # stays because it is served until then, and this call backs the Embeddings guide's note on
+        # moving from it to gemini-embedding-2 (how its replies name the model and number their rows).
         for (model, want) in (("", "gemini-embedding-2"), ("gemini-embedding-001", "gemini-embedding-001"))
             emb = Embeddings(["alpha", "beta"]; service=GEMINIOpenAIServiceEndpoint, model)
             @test emb.model == want

@@ -33,13 +33,23 @@ Cached input is billed at the discounted `cached_input` rate; reasoning tokens a
 counted within output tokens. The rows are standard short-context text rates. Where UniLM
 models a provider's surcharges — cache-write premiums, long-context tiers, service-tier,
 speed or region multipliers — [`estimated_cost`](@ref) applies them to these rates for that
-provider's results; every other result is billed at the standard rates.
-[`estimated_cost`](@ref) bills the audio tokens (`prompt_audio_tokens`,
-`completion_audio_tokens`) of an `OPENAIServiceEndpoint` result at the model's audio-token
-rates, which UniLM has for `gpt-audio-1.5`. A row has no audio-token rates, so the audio tokens
-of any other `OPENAIServiceEndpoint` model, and of every result billed at the standard rates,
-leave the estimate at `0.0`, with one warning per model. Off-peak discounts, other multimodal
-rates and hosted-tool fees are not included.
+provider's results; every other result is billed at the standard rates. A billed service tier
+the provider's pricing page lists no price for — such as OpenAI's Scale tier, Fast on
+`gpt-5.4-pro` or on a `gpt-5.5` prompt over 272K tokens, or the Gemini Interactions
+`"deferred"` tier — is estimated at the standard rates, with one warning per model and tier.
+
+A row has no audio-token rates. [`estimated_cost`](@ref) bills the audio tokens
+(`prompt_audio_tokens`, `completion_audio_tokens`) of an `OPENAIServiceEndpoint` result at the
+model's audio-token rates, which UniLM has for `gpt-audio-1.5`, and the audio input of a Gemini
+result — native, OpenAI-compatible or Interactions — at the audio rate Google's pricing page
+states for the model, scaled by the billed tier: its own audio price (`gemini-3.1-flash-lite`,
+`gemini-3-flash-preview`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`) or its one input price
+for text, image, video and audio (`gemini-3.5-flash-lite`, `gemini-robotics-er-2-preview`).
+Any other audio — on another model or endpoint, Gemini audio output, or Gemini audio in a call
+that also hit the cache (a usage does not say how many cached tokens are audio, whose cache
+price the page lists apart or not at all) — leaves the estimate at `0.0`, with one warning per
+model.
+Off-peak discounts, other multimodal rates and hosted-tool fees are not included.
 
 A lock-guarded `AbstractDict{String,PriceRow}`: add or replace rows with
 `DEFAULT_PRICING[model] = row` from any task while requests are running."""
@@ -176,16 +186,18 @@ Responses or FIM result; else the one requested — `result.self.model` for Chat
 `result.embeddings.model` for Embeddings.
 
 Returns `0.0` for failures, which carry no billable usage, for an unpriced model, and for audio
-tokens without audio-token rates (see [`DEFAULT_PRICING`](@ref)); the last two also log one
-warning per model id. Throws `ArgumentError` for result types
+tokens UniLM has no rate for (see [`DEFAULT_PRICING`](@ref) for the audio it prices); the last
+two also log one warning per model id. A billed service tier the provider's pricing page lists
+no price for is estimated at the standard rates, with one warning per model and tier. Throws
+`ArgumentError` for result types
 outside the token-billed APIs — see [`token_usage`](@ref) — and, unless `model` is given,
 for an [`ImageSuccess`](@ref): the Images API bills image tokens at rates a price row does
 not model, and a price this function cannot compute is not a zero it can report.
 `pricing` is any `AbstractDict{String,PriceRow}`.
 
 Model lookup: the exact id first, then the id without a dated snapshot suffix
-(`gpt-5.4-mini-2026-03-17` → `gpt-5.4-mini`, `claude-haiku-4-5-20251001` →
-`claude-haiku-4-5`). A versioned Jev id with no row of its
+(`gpt-5.4-mini-2026-03-17` → `gpt-5.4-mini`, `claude-opus-4-5-20251101` →
+`claude-opus-4-5`). A versioned Jev id with no row of its
 own (`jev-X.Y.Z`, e.g. a release newer than this table) is priced at the `jev-latest`
 row. That is an assumption: TypeSafe lists one price, for Jev 1.13; a later version is
 assumed to keep it until the pricing page says otherwise. The same lookup prices

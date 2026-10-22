@@ -55,6 +55,34 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "OPENAI_API_KEY")
         @test result isa ResponseSuccess
     end
 
+    @testset "OpenAI GPT-6.1 Sol: served as asked, priced, and Ultrafast at six times the standard rates" begin
+        r = respond("Reply with the single word OK."; model="gpt-6.1-sol", reasoning=Reasoning(effort="low"),
+                    max_output_tokens=16)
+        @test r isa ResponseSuccess
+        @info "gpt-6.1-sol standard" r.response.model token_usage(r) cost = estimated_cost(r)
+        @test startswith(r.response.model, "gpt-6.1-sol")
+        @test estimated_cost(r) > 0
+        fast = respond("Reply with the single word OK."; model="gpt-6.1-sol", reasoning=Reasoning(effort="low"),
+                       max_output_tokens=16, service_tier="ultrafast")
+        @test fast isa ResponseSuccess
+        u = token_usage(fast)
+        @info "gpt-6.1-sol ultrafast" u.prompt_tokens u.completion_tokens u.cached_tokens u.service_tier cost = estimated_cost(fast)
+        @test u.service_tier == "ultrafast"
+        # A prompt this short is under the 1,024-token cache minimum, so nothing is written.
+        @test u.cache_write_tokens == 0
+        rates = DEFAULT_PRICING["gpt-6.1-sol"]
+        standard = (u.prompt_tokens - u.cached_tokens) * rates.input + u.cached_tokens * rates.cached_input +
+                   u.completion_tokens * rates.output
+        @test estimated_cost(fast) ≈ 6 * standard
+    end
+
+    @testset "OpenAI default model: a respond that names none is served by gpt-6-sol" begin
+        r = respond("Reply OK"; max_output_tokens=16)
+        @test r isa ResponseSuccess
+        @info "default model" r.response.model r.response.status token_usage(r) cost = estimated_cost(r)
+        @test startswith(r.response.model, "gpt-6-sol")
+    end
+
     @testset "OpenAI Chat reads an image attachment (image_url content part)" begin
         # First run (2026-09-29): gpt-5.4-mini answered "red" for about $0.00004.
         chat = Chat(model="gpt-5.4-mini")

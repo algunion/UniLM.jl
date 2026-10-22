@@ -39,25 +39,27 @@ multimodal rates and hosted-tool fees are not included.
 A lock-guarded `AbstractDict{String,PriceRow}`: add or replace rows with
 `DEFAULT_PRICING[model] = row` from any task while requests are running."""
 const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
-    "gpt-6-astra"   => _price(10.0, 1.0, 50.0),
+    # OpenAI (https://developers.openai.com/api/docs/pricing, 2026-10-22): the standard rates
+    # for prompts of at most 272K input tokens. Cache writes, longer prompts and the billed
+    # service tier are priced from these rows by the OpenAI endpoint's `_billed_cost`.
+    "gpt-6-astra"   => _price(10.0, 1.0,  50.0),
+    "gpt-6.1-sol"   => _price(2.0,  0.10, 10.0),
     "gpt-6-sol"     => _price(2.0,  0.20, 10.0),
     "gpt-6-luna"    => _price(0.10, 0.01, 0.50),
-    "gpt-5.6-sol"   => _price(4.0,  0.40, 20.0),
+    "gpt-5.6-sol"   => _price(4.0,  0.40, 20.0),   # promotional, at least through 2026-11-21
     "gpt-5.6-terra" => _price(2.0,  0.20, 12.0),
     "gpt-5.6-luna"  => _price(0.20, 0.02, 1.20),
-    "gpt-5.4-nano"  => _price(0.20, 0.02, 1.25),
-    # GPT-5.x  (live-verified 2026-06-21)
-    "gpt-5.5"       => _price(5.0,  0.50,  30.0),
-    "gpt-5.4"       => _price(2.5,  0.25,  15.0),
+    "gpt-5.5"       => _price(5.0,  0.50, 30.0),
+    "gpt-5.5-pro"   => _price(30.0, 30.0, 180.0),  # no cached-input rate: a cache read bills as input
+    "gpt-5.4"       => _price(2.5,  0.25, 15.0),
+    "gpt-5.4-pro"   => _price(30.0, 30.0, 180.0),  # no cached-input rate
     "gpt-5.4-mini"  => _price(0.75, 0.075, 4.5),
+    "gpt-5.4-nano"  => _price(0.20, 0.02, 1.25),   # shuts down 2027-04-01
     "gpt-5.2"       => _price(1.75, 0.175, 14.0),
-    # GPT-4.1 family
-    "gpt-4.1"       => _price(2.0,  0.50,  8.0),
-    "gpt-4.1-mini"  => _price(0.4,  0.10,  1.6),
-    "gpt-4.1-nano"  => _price(0.1,  0.025, 0.4),
-    # O-series
-    "o3"            => _price(2.0,  0.50,  8.0),
-    "o4-mini"       => _price(1.1,  0.275, 4.4),
+    "chat-latest"   => _price(5.0,  0.50, 30.0),
+    "gpt-4.1"       => _price(2.0,  0.50, 8.0),    # shuts down 2027-01-14
+    "gpt-4.1-mini"  => _price(0.4,  0.10, 1.6),    # shuts down 2027-01-14
+    "o3"            => _price(2.0,  0.50, 8.0),    # its snapshot o3-2025-04-16 shuts down 2026-12-11
     # Anthropic Claude (https://platform.claude.com/docs/en/about-claude/pricing.md,
     # 2026-09-24). Cache reads are 0.1x input, except 0.025x on Fable 5.1 and Mythos 5.1
     # and 0.05x on Opus 5.5. Dated snapshot ids (-YYYYMMDD) resolve to these rows.
@@ -101,9 +103,10 @@ const DEFAULT_PRICING = _PricingTable(Dict{String, PriceRow}(
     "jev-1.13.0"    => _price(0.042, 0.042, 0.0),
     "jev-latest"    => _price(0.042, 0.042, 0.0),
     "jev-preview"   => _price(0.042, 0.042, 0.0),
-    # Embeddings (billed on input tokens only)
+    # OpenAI embeddings (billed on input tokens only)
     "text-embedding-3-small" => _price(0.02, 0.02, 0.0),
     "text-embedding-3-large" => _price(0.13, 0.13, 0.0),
+    "text-embedding-ada-002" => _price(0.10, 0.10, 0.0),
 ))
 
 """

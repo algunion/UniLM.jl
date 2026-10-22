@@ -2,7 +2,8 @@
 
 The Responses API is OpenAI's newer, more flexible alternative to Chat Completions.
 Key advantages include built-in tools (web search, file search), stateless multi-turn
-via `previous_response_id`, and reasoning support for O-series models.
+via `previous_response_id`, and reasoning with tools — OpenAI's tool path for its current
+models.
 
 !!! tip
     For the cross-provider view — the same `respond` verb against **Gemini
@@ -103,6 +104,13 @@ println("Number of input messages: ", length(r.input))
 | [`input_text`](@ref)  | Text content part             |
 | [`input_image`](@ref) | Image URL content part        |
 | [`input_file`](@ref)  | File (URL or ID) content part |
+
+When you replay the model's own messages instead of chaining with `previous_response_id`,
+give each assistant message the `phase` it came with — `"commentary"` for an intermediate
+update such as a preamble before a tool call, `"final_answer"` for the answer — as in
+`InputMessage(role="assistant", content=text, phase="commentary")`: OpenAI asks callers to
+"preserve and resend phase on all assistant messages". A phase on any other role throws
+`ArgumentError`.
 
 ## Multi-Turn Conversations
 
@@ -210,9 +218,15 @@ r = Respond(input="Explain Julia multiple dispatch", model="gpt-5.6-luna",
 println(JSON.json(r))
 ```
 
-GPT-5.6 and later use `prompt_cache_options` instead of `prompt_cache_retention`.
+GPT-5.6 and later take their cache lifetime from `prompt_cache_options`: `ttl="30m"` (the
+default) or `"12h"`, whose writes OpenAI bills at 1.25× and 2.5× the input rate. OpenAI
+deprecates `prompt_cache_retention`: on `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`,
+`gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots) it
+throws `ArgumentError`; another model gets it as sent, and it may be set beside
+`prompt_cache_options`, as the two are independent.
 Explicit cache mode requires breakpoints in input content blocks; mark one with
-`input_text(text; cache_breakpoint=true)`. `PromptCacheOptions(prewarm=true)` prepares
+`input_text(text; cache_breakpoint=true)`, and give that breakpoint its own lifetime with
+`cache_ttl="12h"` or `"30m"`. `PromptCacheOptions(prewarm=true)` prepares
 the cache without generating output (the response has an empty `output`), and
 `comparison_response_id` requests cache diagnostics, returned in
 `result.response.raw["prompt_cache_diagnostics"]`. On GPT-6 models, a
@@ -281,7 +295,7 @@ result = respond("Hello!")
 if result isa ResponseSuccess
     r = result.response
 
-    output_text(result)      # full text output (throws LLMResultError on a failed result)
+    output_text(result)      # the answer's text, without "commentary" messages (throws LLMResultError on a failed result)
     function_calls(result)   # Vector of function call Dicts (empty if none, or on a failure)
 
     r.id                     # "resp_00e791c8..."
@@ -344,7 +358,13 @@ end
 
 ## Service Tier
 
-Control the processing tier for your request (`"auto"`, `"default"`, `"flex"`, `"scale"`, `"priority"`/`"fast"`, `"ultrafast"`):
+Control the processing tier for your request: `"auto"`, `"default"`, `"flex"`, `"scale"`,
+`"fast"` (`"priority"`, its former name, still works) or `"ultrafast"`, which OpenAI serves for
+`gpt-6-astra` and `gpt-6.1-sol` only — another model with it throws `ArgumentError` before the
+request. The response reports the tier that served it (`token_usage(result).service_tier`), and
+[`estimated_cost`](@ref) bills that tier's multiple of the standard rates — Flex half, Fast twice
+on GPT-6 and GPT-5.6, Ultrafast six times; a tier the pricing page gives no price for is
+estimated at the standard rates, with a warning:
 
 ```@example responses
 result = respond("Say 'tier test' and nothing else.", service_tier="auto", model="gpt-5.4-mini")
@@ -433,7 +453,7 @@ end
 
 | Parameter                | Type           | Default      | Description                                               |
 | :----------------------- | :------------- | :----------- | :-------------------------------------------------------- |
-| `model`                  | String         | `"gpt-5.6-sol"`  | Model to use                                              |
+| `model`                  | String         | `"gpt-6-sol"` | Model to use                                              |
 | `input`                  | `Union{String, Vector}` | *(required)* | String or `Vector{InputMessage}`                   |
 | `instructions`           | String         | —            | System-level instructions                                 |
 | `tools`                  | Vector         | —            | Available tools (function, web search, file search)       |
@@ -449,16 +469,15 @@ end
 | `store`                  | Bool           | —            | Store response for later retrieval                        |
 | `metadata`               | Dict           | —            | Arbitrary key-value metadata                              |
 | `previous_response_id`   | String         | —            | Chain to a previous response for multi-turn               |
-| `user`                   | String         | —            | End-user identifier                                       |
+| `user`                   | String         | —            | End-user identifier for other OpenAI-compatible servers; native OpenAI refuses it (use `safety_identifier`, `prompt_cache_key`) |
 | `background`             | Bool           | —            | Run in background (cancellable)                           |
 | `include`                | Vector{String} | —            | Extra data to include (e.g. `"file_search_call.results"`) |
 | `max_tool_calls`         | Int64          | —            | Max number of tool calls per turn                         |
-| `service_tier`           | String         | —            | `"auto"`, `"default"`, `"flex"`, `"scale"`, `"fast"` (`"priority"` alias), `"ultrafast"` |
+| `service_tier`           | String         | —            | `"auto"`, `"default"`, `"flex"`, `"scale"`, `"fast"` (`"priority"` alias); `"ultrafast"` on `gpt-6-astra` and `gpt-6.1-sol` |
 | `top_logprobs`           | Int64          | —            | 0–20, top log probabilities                               |
-| `prompt`                 | Dict           | —            | Prompt template reference; the reusable prompts API (`v1/prompts`) shuts down on November 30, 2026 |
 | `prompt_cache_key`       | String         | —            | Cache key for prompt caching                              |
-| `prompt_cache_options`   | PromptCacheOptions | —        | Cache mode, TTL, prewarm, and diagnostics for GPT-5.6 and later |
-| `prompt_cache_retention` | String         | —            | `"in_memory"` or `"24h"`, depending on the older model     |
+| `prompt_cache_options`   | PromptCacheOptions | —        | Cache mode, TTL (`"30m"`, `"12h"`), prewarm, and diagnostics for GPT-5.6 and later |
+| `prompt_cache_retention` | String         | —            | `"in_memory"` or `"24h"`, depending on the older model; deprecated, refused on `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna` and the `gpt-5.6` models |
 | `safety_identifier`      | String         | —            | Stable end-user identifier; replaces the deprecated `user` |
 | `conversation`           | Any            | —            | Conversation context (String or Dict)                     |
 | `context_management`     | Vector         | —            | Context management strategies                             |
@@ -467,7 +486,7 @@ end
 
 ## Retry Behaviour
 
-`respond` automatically retries transient HTTP statuses (408, 429, 500, 502–504, 520–524, 529) with full-jitter exponential backoff; a `Retry-After` header is a floor under the jittered wait. Attempts and total time are bounded by the resolved [`RequestConfig`](@ref) (`max_attempts`, default 3; `total_deadline`, default 900 s), and a retry whose wait would exceed the remaining deadline is not attempted — the call fails immediately with the last real response rather than sleeping past it. Pass `config=RequestConfig(max_attempts=1)` to disable retries for a call, or set scoped/process-wide defaults with `with_request_config` / `set_default_config!`. Timeouts surface as `ResponseCallError` with `status = nothing` and the `UniLMTimeout` (phase, elapsed, limit) in `.cause`; every other exception that ends the call is in `.cause` too — a [`UniLMCancelled`](@ref) for a call cancelled through its `cancel` token (see [Concurrency, Tasks and Cancellation](@ref concurrency_guide)). Local validation — an option the provider or model cannot express, or a service that supports neither `:responses` nor `:agentic` — throws `ArgumentError` before any request.
+`respond` automatically retries transient HTTP statuses (408, 429, 500, 502–504, 520–524, 529) with full-jitter exponential backoff; a `Retry-After` header is a floor under the jittered wait. A 429 whose `error.code` reports spent credit or a reached spend or usage limit (`credit_balance_exhausted`, `organization_spend_limit_exceeded`, `project_spend_limit_exceeded`, `organization_usage_limit_exceeded`) is returned at once, since no retry restores access. Attempts and total time are bounded by the resolved [`RequestConfig`](@ref) (`max_attempts`, default 3; `total_deadline`, default 900 s), and a retry whose wait would exceed the remaining deadline is not attempted — the call fails immediately with the last real response rather than sleeping past it. Pass `config=RequestConfig(max_attempts=1)` to disable retries for a call, or set scoped/process-wide defaults with `with_request_config` / `set_default_config!`. Timeouts surface as `ResponseCallError` with `status = nothing` and the `UniLMTimeout` (phase, elapsed, limit) in `.cause`; every other exception that ends the call is in `.cause` too — a [`UniLMCancelled`](@ref) for a call cancelled through its `cancel` token (see [Concurrency, Tasks and Cancellation](@ref concurrency_guide)). Local validation — an option the provider or model cannot express, or a service that supports neither `:responses` nor `:agentic` — throws `ArgumentError` before any request.
 
 This applies to `respond` only. The Responses **lifecycle** operations — [`get_response`](@ref), [`delete_response`](@ref), [`cancel_response`](@ref), [`list_input_items`](@ref), [`compact_response`](@ref), [`count_input_tokens`](@ref) — make a single bounded attempt; `max_attempts` has no effect on them. See [Timeouts & Retries](@ref timeouts_guide).
 
@@ -485,10 +504,18 @@ The `Respond` constructor validates parameter ranges at construction time:
 
 Out-of-range values throw `ArgumentError`. Additionally, `temperature` and `top_p` are
 mutually exclusive, `conversation` cannot be combined with `previous_response_id` (each
-already supplies the prior turns), `background=true` requires a stored response
-(`store=false` throws), and `prompt_cache_retention` cannot be combined with
-`prompt_cache_options`. A Chat [`Tool`](@ref) in `tools` is converted to the equivalent
+already supplies the prior turns), and `background=true` requires a stored response
+(`store=false` throws). A Chat [`Tool`](@ref) in `tools` is converted to the equivalent
 [`FunctionTool`](@ref).
+
+Per-model rules on `OPENAIServiceEndpoint` are checked when the request is encoded, before any
+request, for `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and
+`gpt-5.6-sol`/`-terra`/`-luna`, by exact id or a dated snapshot: GPT-6 Astra and GPT-6.1 Sol take
+reasoning effort `"low"` to `"max"` and no sampling controls or log probabilities; GPT-6 Sol and
+Luna take sampling controls and log probabilities only at effort `"none"`; GPT-6 Sol, GPT-6 Luna
+and the GPT-5.6 models take `"none"` to `"max"` and refuse `"minimal"` (use `"low"`). Other
+models are checked by the server. `user` throws `ArgumentError` there: OpenAI replaces it with
+`safety_identifier` and `prompt_cache_key`.
 
 ## See Also
 

@@ -17,6 +17,31 @@ const _RETRY_MAX_DELAY = 60.0
 _is_retryable(status::Integer)::Bool =
     status in (408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 529)
 
+# A 429 also answers what no retry can serve: OpenAI names spent prepaid credit and a reached
+# spend or usage limit in `error.code` ("Retrying billing, spend, or quota errors won't
+# restore API access", https://developers.openai.com/api/docs/guides/error-codes), while a
+# rate limit — code `slow_down`, or none — clears with time.
+const _FINAL_429_CODES = ("credit_balance_exhausted", "organization_spend_limit_exceeded",
+                          "project_spend_limit_exceeded", "organization_usage_limit_exceeded")
+
+# Whether a failed exchange is worth another attempt: its status and, for a 429, its body.
+_is_retryable(status::Integer, body)::Bool =
+    _is_retryable(status) && !(status == 429 && _error_code(body) in _FINAL_429_CODES)
+_is_retryable(resp::HTTP.Response)::Bool = _is_retryable(resp.status, resp.body)
+
+# The `error.code` string of a JSON error body (`{"error": {"code": …}}`), else `nothing`:
+# a body of another kind (HTTP.jl's empty body) names no code. A stream driver's body
+# buffer is read without consuming it.
+_error_code(_)::Nothing = nothing
+_error_code(body::IOBuffer)::Union{String,Nothing} = _error_code(take!(copy(body)))
+function _error_code(body::Union{AbstractString,AbstractVector{UInt8}})::Union{String,Nothing}
+    JSON.isvalidjson(body) || return nothing
+    parsed = JSON.parse(body)
+    err = parsed isa AbstractDict ? get(parsed, "error", nothing) : nothing
+    code = err isa AbstractDict ? get(err, "code", nothing) : nothing
+    code isa AbstractString ? String(code) : nothing
+end
+
 # RFC 7231 IMF-fixdate, the one HTTP-date form every sender must emit. Always GMT.
 const _IMF_FIXDATE = r"^[A-Za-z]{3}, (\d{2}) ([A-Za-z]{3}) (\d{4}) (\d{2}):(\d{2}):(\d{2}) GMT$"
 const _IMF_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -529,7 +554,7 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
             continue
         end
         isnothing(observe) || observe(attempt, resp)
-        if _is_retryable(resp.status) && !final
+        if _is_retryable(resp) && !final
             action, delay = _retry_pause(cfg, t0, attempt, resp)
             if action === :budget
                 @warn "status is retryable but the backoff (Retry-After/jitter) exceeds the remaining total_deadline budget; returning the last response" status = resp.status attempt delay
@@ -539,7 +564,7 @@ function _http_with_retries(cfg::RequestConfig, t0::UInt64,
             _cancel_sleep(cancel, delay) && throw(cancelled())
             continue
         end
-        _is_retryable(resp.status) &&
+        _is_retryable(resp) &&
             @warn "request failed with a retryable status after exhausting max_attempts" status = resp.status attempts = cfg.max_attempts
         return resp
     end
@@ -1427,7 +1452,7 @@ function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestCon
                 continue
             end
             result = outcome.result
-            if result isa LLMFailure && _is_retryable(result.status) &&
+            if result isa LLMFailure && _is_retryable(result.status, result.response) &&
                !ctl.fired && attempt < cfg.max_attempts
                 action, delay = _retry_pause(cfg, t0, attempt, outcome.resp)
                 if action === :sleep

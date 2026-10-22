@@ -17,29 +17,44 @@
 # ─── Input Types ──────────────────────────────────────────────────────────────
 
 """
-    InputMessage(; role, content)
+    InputMessage(; role, content, phase=nothing)
 
 A structured input message for the Responses API.
 
 # Fields
 - `role::String`: `"user"`, `"assistant"`, `"system"`, or `"developer"`
 - `content::Any`: String or a vector of content parts (see `input_text`, `input_image`, `input_file`)
+- `phase::Union{String,Nothing}`: on an assistant message you replay, the phase the model
+  gave it in `r.response.output`: `"commentary"` for an intermediate update (such as a
+  preamble before a tool call) or `"final_answer"`. OpenAI asks callers to "preserve and
+  resend phase on all assistant messages"; dropping it "can degrade performance". Any other
+  value, or a phase on another role (which the API does not read), throws `ArgumentError`.
 
 # Examples
 ```julia
 InputMessage(role="user", content="What is 2+2?")
 InputMessage(role="user", content=[input_text("Describe this:"), input_image("https://example.com/img.png")])
+InputMessage(role="assistant", content="I'll check the logs first.", phase="commentary")
 ```
 """
 @kwdef struct InputMessage
     role::String
     content::Any
+    phase::Union{String,Nothing} = nothing
+    function InputMessage(role, content, phase=nothing)
+        isnothing(phase) || phase in ("commentary", "final_answer") || throw(ArgumentError(
+            "InputMessage phase must be \"commentary\" or \"final_answer\" (got $(repr(phase)))"))
+        isnothing(phase) || role == "assistant" || throw(ArgumentError(
+            "InputMessage phase labels an assistant message; OpenAI does not read it on a $(repr(role)) message"))
+        new(role, content, phase)
+    end
 end
 
-JSON.lower(m::InputMessage) = Dict{Symbol,Any}(:role => m.role, :content => m.content)
+JSON.lower(m::InputMessage) = isnothing(m.phase) ? Dict{Symbol,Any}(:role => m.role, :content => m.content) :
+    Dict{Symbol,Any}(:role => m.role, :content => m.content, :phase => m.phase)
 
 """
-    input_text(text::String; cache_breakpoint=false)
+    input_text(text::String; cache_breakpoint=false, cache_ttl=nothing)
 
 Create an `input_text` content part for multimodal input messages.
 
@@ -49,11 +64,27 @@ OpenAI's prompt-caching guide: "mark each desired breakpoint by adding
 `prompt_cache_breakpoint: { "mode": "explicit" }` to a supported content block inside
 an input message." Pair it with [`PromptCacheOptions`](@ref)`(mode="explicit")` to
 cache only the prefixes you mark.
+
+`cache_ttl` gives this breakpoint its own cache lifetime, `"30m"` or `"12h"` (the Responses
+API's), in place of the request's `prompt_cache_options` ttl: "Set
+`prompt_cache_breakpoint.ttl` to override it for an individual explicit breakpoint." It
+needs `cache_breakpoint=true`; another value, or a ttl without a breakpoint, throws
+`ArgumentError`. See [OpenAI prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching).
 """
-input_text(text::String; cache_breakpoint::Bool=false) = cache_breakpoint ?
-    Dict{Symbol,Any}(:type => "input_text", :text => text,
-                     :prompt_cache_breakpoint => Dict{Symbol,Any}(:mode => "explicit")) :
-    Dict{Symbol,Any}(:type => "input_text", :text => text)
+function input_text(text::String; cache_breakpoint::Bool=false, cache_ttl::Union{String,Nothing}=nothing)
+    ttls = _OPENAI_CACHE_TTLS.responses.ttls
+    isnothing(cache_ttl) || cache_ttl in ttls || throw(ArgumentError("input_text cache_ttl must be " *
+        "$(join(repr.(ttls), " or ")), the Responses API's cache lifetimes (got $(repr(cache_ttl)))"))
+    isnothing(cache_ttl) || cache_breakpoint || throw(ArgumentError(
+        "input_text cache_ttl applies to a cache breakpoint: set cache_breakpoint=true"))
+    part = Dict{Symbol,Any}(:type => "input_text", :text => text)
+    if cache_breakpoint
+        breakpoint = Dict{Symbol,Any}(:mode => "explicit")
+        isnothing(cache_ttl) || (breakpoint[:ttl] = cache_ttl)
+        part[:prompt_cache_breakpoint] = breakpoint
+    end
+    part
+end
 
 """
     input_image(url=nothing; detail=nothing, file_id=nothing)
@@ -726,10 +757,13 @@ Reasoning configuration for OpenAI and Gemini Interactions models.
 
 - `effort`: OpenAI accepts `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`,
   `"xhigh"`, and `"max"` — any other value throws `ArgumentError` at construction;
-  each model supports a subset (GPT-6 Astra has no `"none"`
-  or `"minimal"`; gpt-5.4-mini and gpt-5.4-nano stop at `"xhigh"`). GPT-6 Sol and
-  Luna refuse `"minimal"` on the native OpenAI endpoint; use `"low"`. Gemini 3.8
-  supports `"low"`, `"medium"`, and `"high"`.
+  each model supports a subset (gpt-5.4-mini stops at `"xhigh"`). For `gpt-6-astra`,
+  `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna`
+  (and their dated snapshots) the native OpenAI endpoint checks the effort before the
+  request: the Responses API takes `"low"` to `"max"` on GPT-6 Astra and GPT-6.1 Sol and
+  `"none"` to `"max"` on the others, so `"minimal"` (and `"none"` on Astra and 6.1 Sol)
+  throws `ArgumentError` pointing to `"low"`. Other models are checked by the server.
+  Gemini 3.8 supports `"low"`, `"medium"`, and `"high"`.
 - `summary`: `"auto"`, `"concise"`, or `"detailed"` — request a reasoning summary in the output.
 - `generate_summary`: deprecated alias serialized as `summary`; prefer `summary`.
   Gemini Interactions accepts `summary="auto"` for thought summaries.
@@ -795,7 +829,7 @@ Configuration struct for an OpenAI Responses API request.
 
 # Key Fields
 - `model::String`: Model to use; `""` (the default) resolves to the service's default
-  model at construction (`"gpt-5.6-sol"` for OpenAI)
+  model at construction (`"gpt-6-sol"` for OpenAI)
 - `input::Any`: A `String` or `Vector{InputMessage}` — the prompt input
 - `instructions::String`: System-level instructions
 - `tools::Vector`: Available tools (`FunctionTool`, `WebSearchTool`, `FileSearchTool`, …);
@@ -804,7 +838,7 @@ Configuration struct for an OpenAI Responses API request.
   be combined with `conversation`
 - `background::Bool`: Run in the background; requires a stored response (`store=false`
   throws `ArgumentError`)
-- `reasoning::Reasoning`: Reasoning config for O-series models
+- `reasoning::Reasoning`: Reasoning effort, summary, persisted context and mode ([`Reasoning`](@ref))
 - `text::TextConfig`: Output format (text, json, json_schema)
 - `temperature::Float64`: Sampling temperature (0.0–2.0), mutually exclusive with `top_p`
 - `top_p::Float64`: Nucleus sampling (0.0–1.0), mutually exclusive with `temperature`
@@ -813,10 +847,25 @@ Configuration struct for an OpenAI Responses API request.
 - `truncation::String`: `"auto"` or `"disabled"`
 - `store::Bool`: Whether to store the response for later retrieval
 - `metadata::AbstractDict`: Arbitrary metadata to attach
-- `user::String`: End-user identifier
-- `prompt::AbstractDict`: Reusable prompt template reference; the reusable prompts API
-  (`v1/prompts`) shuts down on November 30, 2026
+- `user::String`: End-user identifier for other OpenAI-compatible servers; native OpenAI
+  replaces it with `safety_identifier` and `prompt_cache_key`, so there it throws
+  `ArgumentError`
+- `service_tier::String`: `"auto"`, `"default"`, `"flex"`, `"scale"`, `"fast"` (or its
+  former name `"priority"`), or `"ultrafast"`, which OpenAI serves for `gpt-6-astra` and
+  `gpt-6.1-sol` only; another value, or `"ultrafast"` on another OpenAI model, throws
+  `ArgumentError`. [`token_usage`](@ref) reports the tier that billed the call
+- `prompt_cache_retention::String`: `"in_memory"` or `"24h"` for models before GPT-5.6.
+  OpenAI deprecates it: on `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`,
+  `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots), whose cache
+  lifetime `prompt_cache_options` sets, the native endpoint throws `ArgumentError` for it
 - `moderation::ModerationConfig`: Moderated completions — see [`ModerationConfig`](@ref)
+
+On `OPENAIServiceEndpoint` the encoder also applies OpenAI's per-model rules (reasoning
+efforts, sampling controls, Ultrafast, `prompt_cache_retention`) to those models, by exact
+id or a dated snapshot, before any request; other models are checked by the server. See
+[OpenAI's GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model).
+Build a `Respond` with keywords: the positional form takes all 31 fields in declaration
+order.
 
 # Examples
 ```julia
@@ -863,22 +912,23 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
     max_tool_calls::Union{Int64,Nothing} = nothing
     service_tier::Union{String,Nothing} = nothing      # "auto", "default", "flex", "scale", "priority", "fast", "ultrafast"
     top_logprobs::Union{Int64,Nothing} = nothing       # 0-20
-    prompt::Union{AbstractDict,Nothing} = nothing      # v1/prompts shuts down on November 30, 2026
     prompt_cache_key::Union{String,Nothing} = nothing
-    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory", "24h" (older models)
+    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory", "24h" (models before GPT-5.6)
     safety_identifier::Union{String,Nothing} = nothing
     conversation::Union{Any,Nothing} = nothing         # String or Dict
     context_management::Union{Vector,Nothing} = nothing
     stream_options::Union{AbstractDict,Nothing} = nothing
     prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing
     moderation::Union{ModerationConfig,Nothing} = nothing
+    # The positional form takes all 31 fields in declaration order; keyword construction,
+    # which names each field, is the supported way to build a Respond.
     function Respond(service, model, input, instructions, tools, tool_choice,
         parallel_tool_calls, temperature, top_p, max_output_tokens,
         stream, text, reasoning, truncation, store, metadata,
         previous_response_id, user, background, include, max_tool_calls,
-        service_tier, top_logprobs, prompt, prompt_cache_key,
+        service_tier, top_logprobs, prompt_cache_key,
         prompt_cache_retention, safety_identifier, conversation,
-        context_management, stream_options, prompt_cache_options=nothing, moderation=nothing)
+        context_management, stream_options, prompt_cache_options, moderation)
         model = _resolve_model(service, model)
         tools = _respond_tools(tools)
         !isnothing(temperature) && !isnothing(top_p) && throw(ArgumentError("temperature and top_p are mutually exclusive"))
@@ -886,8 +936,6 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
         !isnothing(top_p) && !(0.0 <= top_p <= 1.0) && throw(ArgumentError("top_p must be in [0.0, 1.0]"))
         !isnothing(max_output_tokens) && max_output_tokens < 1 && throw(ArgumentError("max_output_tokens must be >= 1"))
         !isnothing(top_logprobs) && !(0 <= top_logprobs <= 20) && throw(ArgumentError("top_logprobs must be in [0, 20]"))
-        isnothing(prompt_cache_retention) || isnothing(prompt_cache_options) || throw(ArgumentError(
-            "prompt_cache_retention and prompt_cache_options cannot be combined"))
         isnothing(conversation) || isnothing(previous_response_id) || throw(ArgumentError(
             "conversation and previous_response_id cannot be combined: each already supplies the prior turns"))
         background === true && store === false && throw(ArgumentError(
@@ -896,7 +944,7 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
             parallel_tool_calls, temperature, top_p, max_output_tokens,
             stream, text, reasoning, truncation, store, metadata,
             previous_response_id, user, background, include, max_tool_calls,
-            service_tier, top_logprobs, prompt, prompt_cache_key,
+            service_tier, top_logprobs, prompt_cache_key,
             prompt_cache_retention, safety_identifier, conversation,
             context_management, stream_options, prompt_cache_options, moderation)
     end
@@ -908,7 +956,7 @@ function JSON.lower(r::Respond)
         :temperature, :top_p, :max_output_tokens, :stream, :text,
         :reasoning, :truncation, :store, :metadata, :previous_response_id,
         :user, :background, :include, :max_tool_calls, :service_tier,
-        :top_logprobs, :prompt, :prompt_cache_key, :prompt_cache_retention,
+        :top_logprobs, :prompt_cache_key, :prompt_cache_retention,
         :safety_identifier, :conversation, :context_management, :stream_options, :prompt_cache_options,
         :moderation)
         v = getfield(r, f)
@@ -1006,9 +1054,13 @@ Base.show(io::IO, r::ResponseCallError) =
     output_text(r::ResponseObject)::String
     output_text(r::ResponseSuccess)::String
 
-Extract the concatenated text output from a response. On a [`ResponseFailure`](@ref)
-or [`ResponseCallError`](@ref) it throws an [`LLMResultError`](@ref) — there is no
-model output to return; guard with [`issuccess`](@ref).
+Extract the text of the response's answer: the `output_text` parts of its messages, joined
+by `"\n"`. A message the model labels `phase: "commentary"` — an intermediate update, such
+as a preamble before a tool call — is not part of the answer and is left out, so a turn that
+stops at its commentary has no text yet; a message without a phase counts. On a
+[`ResponseFailure`](@ref) or [`ResponseCallError`](@ref) it throws an
+[`LLMResultError`](@ref) — there is no model output to return; guard with
+[`issuccess`](@ref).
 
 # Examples
 ```julia
@@ -1019,7 +1071,7 @@ output_text(result)  # => "Hi there! How can I help?"
 function output_text(r::ResponseObject)::String
     texts = String[]
     for item in r.output
-        if item isa Dict && get(item, "type", "") == "message"
+        if item isa Dict && get(item, "type", "") == "message" && get(item, "phase", nothing) != "commentary"
             for content in _as_iter(get(item, "content", ()))
                 if content isa Dict && get(content, "type", "") == "output_text"
                     push!(texts, get(content, "text", ""))
@@ -1962,8 +2014,9 @@ that can be passed as input to subsequent requests, reducing token usage in long
 
 # Fields
 - `model::Union{String,Nothing}`: Model to use for compaction; `nothing` (the default) is
-  `"gpt-5.6-sol"` on every service but an [`OllamaEndpoint`](@ref), which has no default model
-  and needs one named: a call to it without one throws `ArgumentError` before any request
+  OpenAI's default model, `"gpt-6-sol"`, on every service but an [`OllamaEndpoint`](@ref),
+  which has no default model and needs one named: a call to it without one throws
+  `ArgumentError` before any request
 - `input::Any`: The conversation items to compact (typically the full conversation history)
 
 Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys.
@@ -2002,8 +2055,8 @@ function compact_response(; model::Union{String,Nothing}=nothing,
 end
 
 
-# The model a compaction that names none is sent with.
-_compaction_model(_)::String = "gpt-5.6-sol"
+# The model a compaction that names none is sent with: OpenAI's default.
+_compaction_model(_)::String = default_model(OPENAIServiceEndpoint)
 
 
 """
@@ -2011,6 +2064,7 @@ _compaction_model(_)::String = "gpt-5.6-sol"
 
 Count the number of input tokens a request would use without actually generating a response.
 Useful for estimating costs or checking whether input fits within the context window.
+`model` defaults to OpenAI's default model, `"gpt-6-sol"`.
 
 Returns a Dict with `"object"` (`"response.input_tokens"`) and `"input_tokens"` keys.
 
@@ -2020,7 +2074,7 @@ result = count_input_tokens(model="gpt-5.6-sol", input="Tell me a joke")
 println("Input tokens: ", result["input_tokens"])
 ```
 """
-function count_input_tokens(; model::String="gpt-5.6-sol",
+function count_input_tokens(; model::String=default_model(OPENAIServiceEndpoint),
     input::Any,
     instructions::Union{String,Nothing}=nothing,
     tools::Union{Vector,Nothing}=nothing,

@@ -104,7 +104,7 @@ explicitly; `Chat` then throws an `ArgumentError` when it is not). A backend add
 
 Public extension API (not exported); see the Custom Backends guide.
 """
-default_model(::Type{OPENAIServiceEndpoint})  = "gpt-5.6-sol"
+default_model(::Type{OPENAIServiceEndpoint})  = "gpt-6-sol"
 default_model(::Type{AZUREServiceEndpoint})   = "gpt-5.2"
 default_model(::Type{GEMINIOpenAIServiceEndpoint})  = "gemini-3.8-flash"
 default_model(::DeepSeekEndpoint)              = "deepseek-flash"
@@ -143,40 +143,165 @@ _model_hint(_) = ""
 _model_family(model::AbstractString, family::AbstractString) =
     model == family || startswith(model, family * "-")
 
+# ─── OpenAI model rules ───────────────────────────────────────────────────────
 # Model-specific restrictions belong to the native endpoint. A compatible
 # server or Azure deployment may use the same name with a different contract.
+
+# What one OpenAI model accepts on the native endpoint, from its model page and OpenAI's
+# GPT-6 guide (https://developers.openai.com/api/docs/guides/latest-model). `efforts` are
+# the reasoning efforts the Responses API takes for it, `chat_efforts` those Chat
+# Completions takes; the other `*_efforts` fields list the efforts at which the model takes
+# a feature — `nothing` for any effort, empty for none — and a request that sets no effort
+# runs at `default_effort`.
+@kwdef struct _OpenAIModelRules
+    efforts::Union{Nothing,Vector{String}} = nothing            # reasoning efforts on Responses
+    chat_efforts::Union{Nothing,Vector{String}} = nothing       # reasoning efforts on Chat Completions
+    sampling_efforts::Union{Nothing,Vector{String}} = nothing   # temperature, top_p, log probabilities
+    chat_tool_efforts::Union{Nothing,Vector{String}} = nothing  # function tools on Chat Completions
+    ultrafast::Bool = false                                     # service_tier "ultrafast" on Responses
+    prompt_cache_retention::Bool = true                         # the deprecated prompt_cache_retention
+    default_effort::String = "medium"
+end
+
+# One row per model; `_openai_row` finds a model's row. The effort lists are the API's answers:
+# on 2026-10-22 Chat Completions refused "max" on every model below with HTTP 400 ("Supported
+# values are: 'none', 'low', 'medium', 'high', and 'xhigh'"; without 'none' on Astra and 6.1
+# Sol), though its reference lists "max"; the Responses API took "max" and refused "minimal".
+const _OPENAI_MODEL_RULES = let
+    # GPT-6 Astra and GPT-6.1 Sol reason at "low" or more, so they take no sampling control or
+    # log probability, and tools only through the Responses API; both serve Ultrafast.
+    top = _OpenAIModelRules(efforts=["low", "medium", "high", "xhigh", "max"],
+                            chat_efforts=["low", "medium", "high", "xhigh"], sampling_efforts=String[],
+                            chat_tool_efforts=String[], ultrafast=true, prompt_cache_retention=false)
+    # GPT-6 Sol and Luna take sampling controls, log probabilities and Chat tools only at "none".
+    sol_luna = _OpenAIModelRules(efforts=["none", "low", "medium", "high", "xhigh", "max"],
+                                 chat_efforts=["none", "low", "medium", "high", "xhigh"],
+                                 sampling_efforts=["none"], chat_tool_efforts=["none"],
+                                 prompt_cache_retention=false)
+    # GPT-5.6 takes Chat Completions tools only at "none". The `gpt-5.6` alias "routes requests
+    # to GPT-5.6 Sol" (its model page), so it takes Sol's rules.
+    gpt56 = _OpenAIModelRules(efforts=["none", "low", "medium", "high", "xhigh", "max"],
+                              chat_efforts=["none", "low", "medium", "high", "xhigh"],
+                              chat_tool_efforts=["none"], prompt_cache_retention=false)
+    Dict{String,_OpenAIModelRules}("gpt-6-astra" => top, "gpt-6.1-sol" => top,
+                                   "gpt-6-sol" => sol_luna, "gpt-6-luna" => sol_luna,
+                                   "gpt-5.6-sol" => gpt56, "gpt-5.6-terra" => gpt56, "gpt-5.6-luna" => gpt56,
+                                   "gpt-5.6" => gpt56)
+end
+
+# A model's row in one of OpenAI's per-model tables: its exact id, else the id without a
+# dated snapshot suffix (OpenAI names snapshots `gpt-6-sol-2026-09-14`), else none. A row
+# never passes to another generation (`gpt-6.1-sol` has its own), and a model without one
+# gets no per-model rule: the server's answer is the check.
+function _openai_row(table::Dict{String,T}, model::AbstractString)::Union{T,Nothing} where {T}
+    row = get(table, model, nothing)
+    isnothing(row) || return row
+    undated = replace(model, r"-\d{4}-\d{2}-\d{2}$" => "")
+    undated == model ? nothing : get(table, undated, nothing)
+end
+
 # `sampling`: the names of the sampling-control and log-probability fields a request
 # sets (`logprobs=false` requests none), so the error names them.
 _set_fields(fields::Pair{String,Bool}...) = String[name for (name, set) in fields if set]
 
-function _validate_astra(model::String, sampling::Vector{String}, effort)
-    _model_family(model, "gpt-6-astra") || return nothing
-    isempty(sampling) || throw(ArgumentError(
-        "$model does not support sampling controls or log probabilities ($(join(sampling, ", ")))"))
-    effort in ("none", "minimal") && throw(ArgumentError("$model requires at least low reasoning effort"))
+# The two native OpenAI APIs a request reaches: the service tiers each accepts (Chat
+# Completions and Responses references; "priority" is Fast mode's former name, still
+# accepted), which effort list of a model's row each reads, and where an effort it refuses
+# can go instead.
+const _OPENAI_APIS = (
+    chat=(name="Chat Completions", tiers=("auto", "default", "flex", "scale", "priority", "fast"),
+          efforts=(rules::_OpenAIModelRules) -> rules.chat_efforts,
+          elsewhere=(rules::_OpenAIModelRules) -> rules.efforts),
+    responses=(name="Responses", tiers=("auto", "default", "flex", "scale", "priority", "fast", "ultrafast"),
+               efforts=(rules::_OpenAIModelRules) -> rules.efforts,
+               elsewhere=(::_OpenAIModelRules) -> nothing))
+
+# A model without a row gets none of the per-model checks below.
+_check_openai_effort(::String, ::Nothing, ::Union{String,Nothing}, ::NamedTuple) = nothing
+_check_openai_sampling(::String, ::Nothing, ::Union{String,Nothing}, ::Vector{String}, ::Function) = nothing
+_check_openai_chat_tools(::String, ::Nothing, ::Union{String,Nothing}, ::Bool) = nothing
+_check_openai_retention(::String, ::Nothing, ::Union{String,Nothing}) = nothing
+
+# An effort the model does not list on this API is refused, naming the next one up that it
+# accepts — OpenAI's GPT-6 guide moves a "none" (Astra, 6.1 Sol) or "minimal" request to
+# "low" — or, where none is left, Respond when the Responses API takes it ("max").
+function _check_openai_effort(model::String, rules::_OpenAIModelRules, effort::Union{String,Nothing},
+                              api::NamedTuple)::Nothing
+    accepted = api.efforts(rules)
+    (isnothing(accepted) || isnothing(effort) || effort in accepted) && return nothing
+    rank = something(findfirst(==(effort), _OPENAI_REASONING_EFFORTS), 0)
+    up = findfirst(in(accepted), _OPENAI_REASONING_EFFORTS[rank+1:end])
+    elsewhere = api.elsewhere(rules)
+    hint = !isnothing(up) ? "; use $(repr(_OPENAI_REASONING_EFFORTS[rank+up]))" :
+           !isnothing(elsewhere) && effort in elsewhere ? "; the Responses API takes it: send the request with Respond" : ""
+    throw(ArgumentError("$model on OpenAI $(api.name) does not take reasoning effort $(repr(effort)) " *
+                        "(it takes $(join(repr.(accepted), ", ")))$hint"))
+end
+
+# GPT-6 guide: "When reasoning effort is not none, remove temperature, top_p, and
+# top_logprobs", and the log probabilities. `setting(effort)` is how the request asks for
+# an effort.
+function _check_openai_sampling(model::String, rules::_OpenAIModelRules, effort::Union{String,Nothing},
+                                set::Vector{String}, setting::Function)::Nothing
+    allowed = rules.sampling_efforts
+    (isnothing(allowed) || isempty(set) || something(effort, rules.default_effort) in allowed) && return nothing
+    fields = join(set, ", ")
+    isempty(allowed) && throw(ArgumentError("$model does not support sampling controls or log probabilities ($fields)"))
+    shown = isnothing(effort) ? "\"$(rules.default_effort) (default)\"" : repr(effort)
+    throw(ArgumentError("$model with reasoning effort $shown does not support sampling controls or log " *
+                        "probabilities ($fields); set $(setting(first(allowed))) or remove them"))
+end
+
+# GPT-6 guide: "Use the Responses API for tool calling"; GPT-6 Sol and Luna (and GPT-5.6)
+# take Chat Completions function calling "only with reasoning_effort: none".
+function _check_openai_chat_tools(model::String, rules::_OpenAIModelRules, effort::Union{String,Nothing},
+                                  tools::Bool)::Nothing
+    allowed = rules.chat_tool_efforts
+    (isnothing(allowed) || !tools || something(effort, rules.default_effort) in allowed) && return nothing
+    isempty(allowed) && throw(ArgumentError("$model takes function tools only through the Responses API: " *
+        "send them with Respond (Chat Completions serves $model without tools)"))
+    throw(ArgumentError("$model Chat tools require reasoning_effort=$(repr(first(allowed))); " *
+                        "use Respond for reasoning with tools"))
+end
+
+# The Responses reference marks prompt_cache_retention "Deprecated. Use
+# prompt_cache_options.ttl instead." The API still answered it with HTTP 200 on gpt-6-luna
+# (2026-10-22), so this refusal is UniLM's, on the models whose lifetime is set there.
+function _check_openai_retention(model::String, rules::_OpenAIModelRules,
+                                 retention::Union{String,Nothing})::Nothing
+    (isnothing(retention) || rules.prompt_cache_retention) && return nothing
+    throw(ArgumentError("$model takes its cache lifetime from prompt_cache_options, and OpenAI deprecates " *
+        "prompt_cache_retention (\"Use prompt_cache_options.ttl instead\"): set " *
+        "prompt_cache_options=PromptCacheOptions(ttl=\"30m\") or PromptCacheOptions(ttl=\"12h\")"))
+end
+
+# Ultrafast is a Responses tier of the models whose row serves it
+# (https://developers.openai.com/api/docs/guides/ultrafast-mode); the API answered HTTP 400
+# "Invalid service_tier argument" for gpt-5.6-sol and gpt-6-luna (2026-10-22).
+const _OPENAI_ULTRAFAST_MODELS = sort!([model for (model, rules) in _OPENAI_MODEL_RULES if rules.ultrafast])
+_serves_ultrafast(::Nothing) = false
+_serves_ultrafast(rules::_OpenAIModelRules) = rules.ultrafast
+
+function _check_openai_service_tier(tier::Union{String,Nothing}, api::NamedTuple, model::String,
+                                    rules::Union{_OpenAIModelRules,Nothing})::Nothing
+    isnothing(tier) && return nothing
+    tier in api.tiers || throw(ArgumentError("OpenAI $(api.name) accepts service_tier " *
+        "$(join(repr.(api.tiers), ", ")) (got $(repr(tier)))" * (tier == "ultrafast" ?
+        "; \"ultrafast\" is a Responses tier: send it with Respond on $(join(_OPENAI_ULTRAFAST_MODELS, " or "))" : "")))
+    tier == "ultrafast" && !_serves_ultrafast(rules) && throw(ArgumentError("$model has no ultrafast tier: " *
+        "OpenAI serves service_tier=\"ultrafast\" for $(join(_OPENAI_ULTRAFAST_MODELS, " and ")) " *
+        "(other models answer HTTP 400 \"Invalid service_tier argument\")"))
     nothing
 end
 
-# GPT-6 Sol and Luna accept sampling controls and log probabilities only at
-# reasoning effort "none". An omitted effort is the provider default, "medium".
-function _validate_gpt6_sampling(model::String, effort, sampling::Vector{String}, fix::String)
-    !isempty(sampling) && effort != "none" && any(f -> _model_family(model, f), ("gpt-6-sol", "gpt-6-luna")) ||
-        return nothing
-    shown = isnothing(effort) ? "\"medium (default)\"" : repr(effort)
-    throw(ArgumentError("$model with reasoning effort $shown does not support sampling controls " *
-        "or log probabilities ($(join(sampling, ", "))); set $fix or remove them"))
-end
-
-# GPT-6 Sol and Luna list reasoning efforts none, low, medium, high, xhigh and max;
-# for a request that used "minimal", OpenAI's migration guide says to start with "low".
-function _validate_gpt6_effort(model::String, effort)
-    effort == "minimal" && any(f -> _model_family(model, f), ("gpt-6-sol", "gpt-6-luna")) &&
-        throw(ArgumentError("$model does not support minimal reasoning effort; use \"low\""))
+# Chat Completions and Responses: `user` "is being replaced by safety_identifier and
+# prompt_cache_key".
+function _check_openai_user(user::Union{String,Nothing})::Nothing
+    isnothing(user) || throw(ArgumentError("OpenAI replaces the deprecated user field with safety_identifier " *
+        "(a stable id of the end user, at most 128 characters) and prompt_cache_key (cache routing): " *
+        "set those instead of user"))
     nothing
 end
-
-# Chat Completions function calling on these families requires reasoning effort "none".
-const _NO_REASONING_CHAT_TOOLS = ("gpt-5.6" => "GPT-5.6", "gpt-6-sol" => "GPT-6 Sol", "gpt-6-luna" => "GPT-6 Luna")
 
 # The prompt-cache retentions each OpenAI API accepts
 # (https://developers.openai.com/api/docs/guides/prompt-caching): Chat Completions answers
@@ -193,43 +318,132 @@ function _check_openai_cache_ttl(options::Union{PromptCacheOptions,Nothing}, api
     nothing
 end
 
+# Chat Completions deprecates `max_tokens` "in favor of max_completion_tokens", which
+# reasoning models require: the native endpoint gets the cap under its current name. A body
+# without it is the Chat's own JSON, byte for byte.
+function _openai_chat_json(chat::Chat)::String
+    isnothing(chat.max_tokens) && return JSON.json(chat)
+    isnothing(chat.max_completion_tokens) || throw(ArgumentError(
+        "OpenAI sends max_tokens as max_completion_tokens, its current name; set one of them, not both"))
+    body = JSON.lower(chat)
+    body[:max_completion_tokens] = pop!(body, :max_tokens)
+    JSON.json(body)
+end
+
 function encode_request(::Type{OPENAIServiceEndpoint}, chat::Chat)::String
-    sampling = _set_fields("temperature" => !isnothing(chat.temperature), "top_p" => !isnothing(chat.top_p),
-                           "logprobs" => chat.logprobs === true, "top_logprobs" => !isnothing(chat.top_logprobs))
-    _validate_astra(chat.model, sampling, chat.reasoning_effort)
-    _validate_gpt6_effort(chat.model, chat.reasoning_effort)
-    _validate_gpt6_sampling(chat.model, chat.reasoning_effort, sampling, "reasoning_effort=\"none\"")
-    if _model_family(chat.model, "gpt-6-astra") && !isnothing(chat.tools) && !isempty(chat.tools)
-        throw(ArgumentError("GPT-6 Astra tool calling requires Respond and the Responses API"))
-    end
-    family = findfirst(p -> _model_family(chat.model, p.first), _NO_REASONING_CHAT_TOOLS)
-    if !isnothing(family) && !isnothing(chat.tools) && !isempty(chat.tools) && chat.reasoning_effort != "none"
-        throw(ArgumentError("$(_NO_REASONING_CHAT_TOOLS[family].second) Chat tools require reasoning_effort=\"none\"; use Respond for reasoning with tools"))
-    end
+    rules = _openai_row(_OPENAI_MODEL_RULES, chat.model)
+    effort = chat.reasoning_effort
+    _check_openai_effort(chat.model, rules, effort, _OPENAI_APIS.chat)
+    _check_openai_sampling(chat.model, rules, effort,
+        _set_fields("temperature" => !isnothing(chat.temperature), "top_p" => !isnothing(chat.top_p),
+                    "logprobs" => chat.logprobs === true, "top_logprobs" => !isnothing(chat.top_logprobs)),
+        e -> "reasoning_effort=$(repr(e))")
+    _check_openai_chat_tools(chat.model, rules, effort, !isnothing(chat.tools))
+    _check_openai_service_tier(chat.service_tier, _OPENAI_APIS.chat, chat.model, rules)
+    _check_openai_user(chat.user)
     # The Chat Completions prompt_cache_options object has only mode and ttl.
     pco = chat.prompt_cache_options
     if !isnothing(pco) && (!isnothing(pco.prewarm) || !isnothing(pco.comparison_response_id))
         throw(ArgumentError("Chat Completions prompt_cache_options accepts only mode and ttl; prewarm and comparison_response_id are Responses-only"))
     end
     _check_openai_cache_ttl(pco, _OPENAI_CACHE_TTLS.chat)
-    JSON.json(chat)
+    _openai_chat_json(chat)
 end
 
 function encode_agentic(::Type{OPENAIServiceEndpoint}, r::Respond)::String
+    rules = _openai_row(_OPENAI_MODEL_RULES, r.model)
     effort = isnothing(r.reasoning) ? nothing : r.reasoning.effort
-    logprobs_included = !isnothing(r.include) && "message.output_text.logprobs" in r.include
-    sampling = _set_fields("temperature" => !isnothing(r.temperature), "top_p" => !isnothing(r.top_p),
-                           "top_logprobs" => !isnothing(r.top_logprobs))
-    _validate_astra(r.model, sampling, effort)
-    _validate_gpt6_effort(r.model, effort)
-    _validate_gpt6_sampling(r.model, effort, [sampling; logprobs_included ? ["include"] : String[]],
-        "reasoning=Reasoning(effort=\"none\")")
-    if (_model_family(r.model, "gpt-5.6") || _model_family(r.model, "gpt-6")) && !isnothing(r.prompt_cache_retention)
-        throw(ArgumentError("$(r.model) uses prompt_cache_options=PromptCacheOptions(ttl=\"30m\"), not prompt_cache_retention"))
-    end
-    if _model_family(r.model, "gpt-6-astra") && !isnothing(r.include) && "message.output_text.logprobs" in r.include
-        throw(ArgumentError("GPT-6 Astra does not support log probabilities"))
-    end
+    logprobs = !isnothing(r.include) && "message.output_text.logprobs" in r.include
+    _check_openai_effort(r.model, rules, effort, _OPENAI_APIS.responses)
+    _check_openai_sampling(r.model, rules, effort,
+        _set_fields("temperature" => !isnothing(r.temperature), "top_p" => !isnothing(r.top_p),
+                    "top_logprobs" => !isnothing(r.top_logprobs), "include" => logprobs),
+        e -> "reasoning=Reasoning(effort=$(repr(e)))")
+    _check_openai_service_tier(r.service_tier, _OPENAI_APIS.responses, r.model, rules)
+    _check_openai_retention(r.model, rules, r.prompt_cache_retention)
+    _check_openai_user(r.user)
     _check_openai_cache_ttl(r.prompt_cache_options, _OPENAI_CACHE_TTLS.responses)
     JSON.json(r)
+end
+
+# ─── OpenAI pricing ───────────────────────────────────────────────────────────
+
+# How OpenAI bills a model beyond its standard row in DEFAULT_PRICING
+# (https://developers.openai.com/api/docs/pricing, 2026-10-22). `tiers` maps a billed service
+# tier to the multiple of every standard rate the page lists for prompts of at most 272K
+# input tokens, `long_tiers` the same for longer prompts; a tier missing from them has no
+# price there.
+@kwdef struct _OpenAIPriceTerms
+    cache_writes::Bool = false     # 30-minute writes cost 1.25× input, 12-hour writes 2.5×
+    long_context::Bool = false     # over 272K input tokens: input and cache rates 2×, output 1.5×
+    tiers::Dict{String,Float64} = Dict{String,Float64}()
+    long_tiers::Dict{String,Float64} = Dict{String,Float64}()
+end
+
+const _OPENAI_PRICE_TERMS = let
+    # GPT-6 and GPT-5.6 list cache-write and long-context rates, Flex at half and Fast at twice
+    # the standard rates for prompts of every length, and Ultrafast at six times on GPT-6
+    # Astra and GPT-6.1 Sol.
+    current(more::Pair{String,Float64}...) = (t = Dict{String,Float64}("flex" => 0.5, "fast" => 2.0, more...);
+        _OpenAIPriceTerms(cache_writes=true, long_context=true, tiers=t, long_tiers=t))
+    Dict{String,_OpenAIPriceTerms}(
+        "gpt-6-astra" => current("ultrafast" => 6.0), "gpt-6.1-sol" => current("ultrafast" => 6.0),
+        "gpt-6-sol" => current(), "gpt-6-luna" => current(),
+        "gpt-5.6-sol" => current(), "gpt-5.6-terra" => current(), "gpt-5.6-luna" => current(),
+        # Earlier models bill no cache-write premium; Fast has no long-context price on the page.
+        "gpt-5.5" => _OpenAIPriceTerms(long_context=true, tiers=Dict("flex" => 0.5, "fast" => 2.5),
+                                       long_tiers=Dict("flex" => 0.5)),
+        "gpt-5.5-pro" => _OpenAIPriceTerms(long_context=true, tiers=Dict("flex" => 0.5)),
+        "gpt-5.4" => _OpenAIPriceTerms(long_context=true, tiers=Dict("flex" => 0.5, "fast" => 2.0),
+                                       long_tiers=Dict("flex" => 0.5)),
+        "gpt-5.4-pro" => _OpenAIPriceTerms(long_context=true, tiers=Dict("flex" => 0.5),
+                                           long_tiers=Dict("flex" => 0.5)),
+        "gpt-5.4-mini" => _OpenAIPriceTerms(tiers=Dict("flex" => 0.5, "fast" => 2.0)),
+        "gpt-5.4-nano" => _OpenAIPriceTerms(tiers=Dict("flex" => 0.5)),           # shuts down 2027-04-01
+        "gpt-5.2" => _OpenAIPriceTerms(tiers=Dict("flex" => 0.5, "fast" => 2.0)),
+        "gpt-4.1" => _OpenAIPriceTerms(tiers=Dict("fast" => 1.75)),               # shuts down 2027-01-14
+        "gpt-4.1-mini" => _OpenAIPriceTerms(tiers=Dict("fast" => 1.75)),          # shuts down 2027-01-14
+        "o3" => _OpenAIPriceTerms(tiers=Dict("flex" => 0.5, "fast" => 1.75)))     # o3-2025-04-16: 2026-12-11
+end
+
+# Prompts of at most this many input tokens bill at the short-context rates.
+const _OPENAI_SHORT_CONTEXT = 272_000
+
+_long_context(::Nothing, ::Int) = false
+_long_context(terms::_OpenAIPriceTerms, prompt_tokens::Int) =
+    terms.long_context && prompt_tokens > _OPENAI_SHORT_CONTEXT
+_cache_write_multiples(::Nothing) = (1.0, 1.0)
+_cache_write_multiples(terms::_OpenAIPriceTerms) = terms.cache_writes ? (1.25, 2.5) : (1.0, 1.0)
+
+# The multiple of the standard rates the billed tier costs. GPT-5.6 and earlier report Fast
+# mode as "priority", its former name. A tier the pricing page gives no number for is
+# estimated at the standard rates, and says so once per model and tier.
+function _openai_tier_multiple(terms::Union{_OpenAIPriceTerms,Nothing}, model::String,
+                               reported::Union{String,Nothing}, long::Bool)::Float64
+    (isnothing(reported) || reported == "default") && return 1.0
+    tier = reported == "priority" ? "fast" : reported
+    multiple = isnothing(terms) ? nothing : get(long ? terms.long_tiers : terms.tiers, tier, nothing)
+    isnothing(multiple) || return multiple
+    @warn "OpenAI's pricing page lists no $(long ? "long-context " : "")price for this service tier of this " *
+          "model; its cost is estimated at the standard rates" model tier = reported _id = Symbol(
+          "unilm_unpriced_tier_", model, "_", reported, long ? "_long" : "") maxlog = 1
+    1.0
+end
+
+# OpenAI's bill for `u`: the row's rates with the model's price terms — cache writes at
+# 1.25× input for the 30-minute lifetime and 2.5× for 12 hours
+# (https://developers.openai.com/api/docs/guides/prompt-caching), a prompt over 272K input
+# tokens at twice the input and cache rates and 1.5× the output rate for the whole request,
+# and every rate times the billed tier's multiple.
+function _billed_cost(::Type{OPENAIServiceEndpoint}, model::String, u::TokenUsage, rates::PriceRow)::Float64
+    terms = _openai_row(_OPENAI_PRICE_TERMS, model)
+    long = _long_context(terms, u.prompt_tokens)
+    tier = _openai_tier_multiple(terms, model, u.service_tier, long)
+    input, output = tier * (long ? 2.0 : 1.0), tier * (long ? 1.5 : 1.0)
+    w30, w12 = _cache_write_multiples(terms)
+    cached = min(u.cached_tokens, u.prompt_tokens)
+    extended = u.cache_write_extended_tokens
+    fresh = u.prompt_tokens - cached - u.cache_write_tokens
+    input * (rates.input * (fresh + w30 * (u.cache_write_tokens - extended) + w12 * extended) +
+             rates.cached_input * cached) + output * rates.output * u.completion_tokens
 end

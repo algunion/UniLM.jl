@@ -115,9 +115,9 @@ end
     @test cost ≈ 15.75
 
     @testset "explicit model override" begin
-        cost2 = estimated_cost(s; model="gpt-4.1-mini")
-        # gpt-4.1-mini: input=0.4/1M, output=1.6/1M => 0.4 + 1.6 = 2.0
-        @test cost2 ≈ 2.0
+        cost2 = estimated_cost(s; model="gpt-5.4-mini")
+        # gpt-5.4-mini: input=0.75/1M, output=4.5/1M => 0.75 + 4.5 = 5.25
+        @test cost2 ≈ 5.25
     end
 
     @testset "unknown model returns 0" begin
@@ -166,7 +166,7 @@ end
 end
 
 @testset "_accumulate_cost! across requests" begin
-    chat = Chat(model="gpt-4.1-nano")
+    chat = Chat(model="gpt-6-luna")
     m = Message(role=UniLM.RoleAssistant, content="hi")
 
     u1 = TokenUsage(prompt_tokens=1_000_000, completion_tokens=500_000, total_tokens=1_500_000)
@@ -184,7 +184,7 @@ end
 end
 
 @testset "fork cost independence" begin
-    chat = Chat(model="gpt-4.1-nano")
+    chat = Chat(model="gpt-6-luna")
     chat._cumulative_cost[] = 1.5
     forked = fork(chat)
     @test cumulative_cost(forked) ≈ 1.5
@@ -196,24 +196,23 @@ end
 
 @testset "estimated_cost — ResponseSuccess" begin
     ro = UniLM.ResponseObject(
-        id="resp_1", status="completed", model="gpt-4.1-nano",
+        id="resp_1", status="completed", model="gpt-5.4-mini",
         output=Any[],
         usage=Dict{String,Any}("input_tokens" => 1_000_000, "output_tokens" => 1_000_000, "total_tokens" => 2_000_000),
         raw=Dict{String,Any}()
     )
     rs = UniLM.ResponseSuccess(response=ro)
     cost = estimated_cost(rs)
-    # gpt-4.1-nano: input=0.1/1M, output=0.4/1M => 0.1 + 0.4 = 0.5
-    @test cost ≈ 0.5
+    # gpt-5.4-mini: input=0.75/1M, output=4.5/1M => 0.75 + 4.5 = 5.25
+    @test cost ≈ 5.25
 end
 
 @testset "DEFAULT_PRICING" begin
     @test haskey(DEFAULT_PRICING, "gpt-5.2")
-    @test haskey(DEFAULT_PRICING, "gpt-4.1")
-    @test haskey(DEFAULT_PRICING, "gpt-4.1-mini")
-    @test haskey(DEFAULT_PRICING, "gpt-4.1-nano")
-    @test haskey(DEFAULT_PRICING, "o3")
-    @test haskey(DEFAULT_PRICING, "o4-mini")
+    @test haskey(DEFAULT_PRICING, "gpt-6.1-sol")
+    # Models OpenAI shut down on 2026-10-23 have no row.
+    @test !haskey(DEFAULT_PRICING, "gpt-4.1-nano")
+    @test !haskey(DEFAULT_PRICING, "o4-mini")
 
     # Verify structure + pin the live-verified gpt-5.2 rates (2026-06-21) so a revert is caught
     p = DEFAULT_PRICING["gpt-5.2"]
@@ -221,22 +220,22 @@ end
     @test p.cached_input ≈ 0.175 / 1_000_000
     @test p.output ≈ 14.0 / 1_000_000
 
-    # OpenAI pricing page, 2026-09-22 (USD per 1M tokens): 1M fresh input + 1M output,
-    # then 1M input served entirely from the cache.
+    # OpenAI pricing page, 2026-10-22 (USD per 1M tokens): 100K fresh input + 100K output, then
+    # 100K input served entirely from the cache — short prompts, at most 272K input tokens.
     m = Message(role=UniLM.RoleAssistant, content="hi")
-    fresh = TokenUsage(prompt_tokens=1_000_000, completion_tokens=1_000_000, total_tokens=2_000_000)
-    cached = TokenUsage(prompt_tokens=1_000_000, cached_tokens=1_000_000, total_tokens=1_000_000)
+    fresh = TokenUsage(prompt_tokens=100_000, completion_tokens=100_000, total_tokens=200_000)
+    cached = TokenUsage(prompt_tokens=100_000, cached_tokens=100_000, total_tokens=100_000)
     for (model, input_and_output, cached_input) in (("gpt-6-sol", 2.0 + 10.0, 0.20),
-            ("gpt-6-luna", 0.10 + 0.50, 0.01), ("gpt-5.4-nano", 0.20 + 1.25, 0.02))
-        @test estimated_cost(LLMSuccess(message=m, self=Chat(; model), usage=fresh)) ≈ input_and_output
-        @test estimated_cost(LLMSuccess(message=m, self=Chat(; model), usage=cached)) ≈ cached_input
+            ("gpt-6-luna", 0.10 + 0.50, 0.01), ("gpt-6.1-sol", 2.0 + 10.0, 0.10))
+        @test estimated_cost(LLMSuccess(message=m, self=Chat(; model), usage=fresh)) ≈ input_and_output / 10
+        @test estimated_cost(LLMSuccess(message=m, self=Chat(; model), usage=cached)) ≈ cached_input / 10
     end
 end
 
 @testset "estimated_cost — cached input + new rows" begin
-    chat = Chat(model="gpt-5.4")
+    chat = Chat(model="gpt-5.4-mini")
     m = Message(role=UniLM.RoleAssistant, content="hi")
-    rates = DEFAULT_PRICING["gpt-5.4"]
+    rates = DEFAULT_PRICING["gpt-5.4-mini"]
     # cache-heavy: 900k of 1M input cached → billed at the cheaper cached rate
     u = TokenUsage(prompt_tokens=1_000_000, cached_tokens=900_000, completion_tokens=0)
     cost = estimated_cost(LLMSuccess(message=m, self=chat, usage=u))
@@ -316,7 +315,7 @@ end
     @test_throws ArgumentError token_usage(speech)
     @test_throws ArgumentError estimated_cost(speech)
     # An explicit model does not conjure usage out of a result that has none.
-    @test_throws ArgumentError estimated_cost(speech; model="gpt-4.1")
+    @test_throws ArgumentError estimated_cost(speech; model="gpt-6-luna")
     err = try; estimated_cost(speech); catch e; e; end
     @test contains(sprint(showerror, err), "SpeechSuccess")   # names the offending type
 
@@ -330,7 +329,7 @@ end
     # Types that DO carry usage keep their exact behaviour: the fallback is only
     # reached when no more specific method exists.
     fallback = which(token_usage, Tuple{UniLM.LLMRequestResponse})
-    chat = Chat(model="gpt-4.1")
+    chat = Chat(model="gpt-5.4-mini")
     covered = (LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=chat,
                    usage=TokenUsage(prompt_tokens=1000, completion_tokens=500)),
                LLMFailure(response="e", status=500, self=chat),
@@ -346,7 +345,7 @@ end
         @test token_usage(r) isa TokenUsage
     end
     @test token_usage(covered[1]) == TokenUsage(prompt_tokens=1000, completion_tokens=500)
-    @test estimated_cost(covered[1]) ≈ (1000 * 2.0 + 500 * 8.0) / 1_000_000
+    @test estimated_cost(covered[1]) ≈ (1000 * 0.75 + 500 * 4.5) / 1_000_000
     @test estimated_cost(covered[2]) == 0.0     # a failure is still a priced zero
 end
 
@@ -576,4 +575,110 @@ end
                     SystemOneFailure(response="{}", status=500), SystemOneCallError(error="e"))
         @test estimated_cost(failure) == 0.0
     end
+end
+
+@testset "OpenAI price rows" begin
+    # https://developers.openai.com/api/docs/pricing (2026-10-22), USD per 1M tokens: input,
+    # cached input, output. The pro models list no cached-input rate: a cache read bills as input.
+    for (model, i, c, o) in (("gpt-6-astra", 10.0, 1.0, 50.0), ("gpt-6.1-sol", 2.0, 0.10, 10.0),
+            ("gpt-6-sol", 2.0, 0.20, 10.0), ("gpt-6-luna", 0.10, 0.01, 0.50),
+            ("gpt-5.6-sol", 4.0, 0.40, 20.0), ("gpt-5.6-terra", 2.0, 0.20, 12.0), ("gpt-5.6-luna", 0.20, 0.02, 1.20),
+            ("gpt-5.5", 5.0, 0.50, 30.0), ("gpt-5.5-pro", 30.0, 30.0, 180.0), ("gpt-5.4", 2.5, 0.25, 15.0),
+            ("gpt-5.4-pro", 30.0, 30.0, 180.0), ("gpt-5.4-mini", 0.75, 0.075, 4.5), ("gpt-5.2", 1.75, 0.175, 14.0),
+            ("chat-latest", 5.0, 0.50, 30.0), ("text-embedding-3-small", 0.02, 0.02, 0.0),
+            ("text-embedding-3-large", 0.13, 0.13, 0.0), ("text-embedding-ada-002", 0.10, 0.10, 0.0))
+        @test DEFAULT_PRICING[model] == UniLM._price(i, c, o)
+    end
+    # Shut down on 2026-10-23.
+    @test !haskey(DEFAULT_PRICING, "o4-mini") && !haskey(DEFAULT_PRICING, "gpt-4.1-nano")
+end
+
+# An OpenAI Chat result of `model` with usage `u`, billed by the OpenAI endpoint's own pricing.
+_oa_result(model, u) = LLMSuccess(message=Message(role=RoleAssistant, content="x"), self=Chat(; model), usage=u)
+_oa_tiered(prompt, completion, tier) = TokenUsage(prompt, completion, prompt + completion, 0, 0, 0, 0, tier, nothing)
+
+@testset "OpenAI cost: cache writes by lifetime" begin
+    # The prompt-caching guide's worked example: 12,000 input tokens, of which 4,000 cache reads,
+    # 3,000 30-minute and 4,000 12-hour writes, at $1 input and $0.10 cached per 1M tokens:
+    # "(1000 + 4000 × 0.1 + 3000 × 1.25 + 4000 × 2.5) / 1000000 = $0.01515".
+    usage = JSON.parse("""{"input_tokens":12000,"output_tokens":0,"input_tokens_details":{"cached_tokens":4000,
+        "cache_write_tokens":7000,"cache_write_tokens_details":{"ttl_30m_tokens":3000,"ttl_12h_tokens":4000}}}""";
+        dicttype=Dict{String,Any})
+    response(model) = ResponseSuccess(response=UniLM.ResponseObject(id="r", status="completed", model=model,
+        output=Any[], usage=usage, raw=Dict{String,Any}("service_tier" => "default")), service=OPENAIServiceEndpoint)
+    row = UniLM._price(1.0, 0.1, 4.0)
+    @test isapprox(estimated_cost(response("gpt-6-luna"); pricing=Dict("gpt-6-luna" => row)), 0.01515; rtol=1e-12)
+    # Models before GPT-5.6 have "No additional cache-write charge": writes bill as input.
+    @test isapprox(estimated_cost(response("gpt-5.5"); pricing=Dict("gpt-5.5" => row)),
+                   (1000 + 4000 * 0.1 + 7000) / 1e6; rtol=1e-12)
+    # Chat Completions writes at the 30-minute lifetime only.
+    u = TokenUsage(prompt_tokens=10_000, cached_tokens=1_000, cache_write_tokens=4_000, completion_tokens=100,
+                   total_tokens=10_100)
+    @test isapprox(estimated_cost(_oa_result("gpt-6-luna", u)), (5_000 * 0.10 + 1_000 * 0.01 + 4_000 * 0.125 +
+                   100 * 0.50) / 1e6; rtol=1e-12)
+    @test (@inferred UniLM._billed_cost(OPENAIServiceEndpoint, "gpt-6-luna", u, DEFAULT_PRICING["gpt-6-luna"])) isa Float64
+end
+
+@testset "OpenAI cost: the billed tier's multiple of the standard rates" begin
+    # Ultrafast 6x Standard on GPT-6 Astra and GPT-6.1 Sol; Flex half; Fast twice on GPT-6 and
+    # GPT-5.6, 2.5x on gpt-5.5. GPT-5.6 and earlier report Fast mode as "priority".
+    cost(model, tier) = estimated_cost(_oa_result(model, _oa_tiered(1_000, 100, tier)))
+    @test cost("gpt-6.1-sol", nothing) ≈ (1_000 * 2.0 + 100 * 10.0) / 1e6
+    @test cost("gpt-6.1-sol", "default") == cost("gpt-6.1-sol", nothing)
+    @test cost("gpt-6.1-sol", "ultrafast") ≈ 6 * (1_000 * 2.0 + 100 * 10.0) / 1e6
+    @test cost("gpt-6-astra", "ultrafast") ≈ 6 * (1_000 * 10.0 + 100 * 50.0) / 1e6
+    @test cost("gpt-6-luna", "flex") ≈ 0.5 * (1_000 * 0.10 + 100 * 0.50) / 1e6
+    for tier in ("priority", "fast")
+        @test cost("gpt-6-sol", tier) ≈ 2 * (1_000 * 2.0 + 100 * 10.0) / 1e6
+        @test cost("gpt-5.6-terra", tier) ≈ 2 * (1_000 * 2.0 + 100 * 12.0) / 1e6
+        @test cost("gpt-5.5", tier) ≈ 2.5 * (1_000 * 5.0 + 100 * 30.0) / 1e6
+        @test cost("gpt-5.2", tier) ≈ 2 * (1_000 * 1.75 + 100 * 14.0) / 1e6
+    end
+    # A tier scales every rate of the request, cache reads and writes included.
+    u = TokenUsage(10_000, 100, 10_100, 1_000, 0, 4_000, 0, "flex", nothing)
+    @test isapprox(estimated_cost(_oa_result("gpt-6-luna", u)),
+                   0.5 * (5_000 * 0.10 + 1_000 * 0.01 + 4_000 * 0.125 + 100 * 0.50) / 1e6; rtol=1e-12)
+    # A tier the page gives no number for — Scale Tier, or Fast on gpt-5.4-pro — is estimated at
+    # the standard rates, with one warning per model and tier.
+    logs, total = Test.collect_test_logs() do
+        cost("gpt-6-luna", "scale") + cost("gpt-6-luna", "scale") + cost("gpt-5.4-pro", "priority")
+    end
+    @test total ≈ 2 * (1_000 * 0.10 + 100 * 0.50) / 1e6 + (1_000 * 30.0 + 100 * 180.0) / 1e6
+    warned = [l for l in logs if l.level == Base.CoreLogging.Warn]
+    @test [(l.kwargs[:model], l.kwargs[:tier]) for l in warned] == [("gpt-6-luna", "scale"), ("gpt-5.4-pro", "priority")]
+    @test all(l -> occursin("service tier", l.message), warned)
+end
+
+@testset "OpenAI cost: prompts over 272K input tokens" begin
+    # "Prompts with more than 272K input tokens are priced at 2x input and cache rates and 1.5x
+    # output for the full request" — on the families the pricing page gives long-context rates.
+    u = TokenUsage(prompt_tokens=300_000, cached_tokens=100_000, cache_write_tokens=50_000, completion_tokens=1_000,
+                   total_tokens=301_000)
+    long_sol = 2 * (150_000 * 2.0 + 100_000 * 0.20 + 50_000 * 1.25 * 2.0) / 1e6 + 1.5 * 1_000 * 10.0 / 1e6
+    @test isapprox(estimated_cost(_oa_result("gpt-6-sol", u)), long_sol; rtol=1e-12)
+    @test estimated_cost(_oa_result("gpt-6-sol-2026-09-14", u)) == estimated_cost(_oa_result("gpt-6-sol", u))
+    edge(n) = estimated_cost(_oa_result("gpt-6-sol", TokenUsage(prompt_tokens=n, completion_tokens=1_000)))
+    @test edge(272_000) ≈ (272_000 * 2.0 + 1_000 * 10.0) / 1e6           # short context: at most 272K
+    @test edge(272_001) ≈ (2 * 272_001 * 2.0 + 1.5 * 1_000 * 10.0) / 1e6
+    # gpt-5.2 lists one rate for every prompt length.
+    @test estimated_cost(_oa_result("gpt-5.2", u)) ≈ (150_000 * 1.75 + 100_000 * 0.175 + 50_000 * 1.75 + 1_000 * 14.0) / 1e6
+    # A tier's long-context rates are its multiple of the long-context standard rates.
+    @test estimated_cost(_oa_result("gpt-6-astra", _oa_tiered(300_000, 1_000, "ultrafast"))) ≈
+          6 * (2 * 300_000 * 10.0 + 1.5 * 1_000 * 50.0) / 1e6
+    @test estimated_cost(_oa_result("gpt-5.5", _oa_tiered(300_000, 1_000, "flex"))) ≈
+          0.5 * (2 * 300_000 * 5.0 + 1.5 * 1_000 * 30.0) / 1e6
+    # gpt-5.5 lists Fast for short prompts only: a long one is estimated at the standard long-context rates.
+    long_fast = @test_logs (:warn, r"long-context") estimated_cost(_oa_result("gpt-5.5", _oa_tiered(300_000, 1_000, "priority")))
+    @test long_fast ≈ (2 * 300_000 * 5.0 + 1.5 * 1_000 * 30.0) / 1e6
+end
+
+@testset "OpenAI cost: a model without OpenAI price terms is billed at its row's standard rates" begin
+    # No per-model term passes to an unlisted id: a caller's own row for a newer model prices it
+    # without cache-write premiums or a long-context tier, and an unknown tier warns.
+    pricing = Dict("gpt-7-x" => UniLM._price(1.0, 0.1, 4.0))
+    u = TokenUsage(prompt_tokens=300_000, cache_write_tokens=100_000, completion_tokens=1_000, total_tokens=301_000)
+    @test isapprox(estimated_cost(_oa_result("gpt-7-x", u); pricing), (300_000 * 1.0 + 1_000 * 4.0) / 1e6; rtol=1e-12)
+    flex = TokenUsage(1_000, 100, 1_100, 0, 0, 0, 0, "flex", nothing)
+    @test (@test_logs (:warn, r"service tier") estimated_cost(_oa_result("gpt-7-x", flex); pricing)) ≈
+          (1_000 * 1.0 + 100 * 4.0) / 1e6
 end

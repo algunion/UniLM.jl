@@ -153,19 +153,27 @@ and function calls under a reason other than `STOP` keep that reason, so a tool 
 does not run them. A model turn with neither text nor function calls (a refusal, or a
 turn spent entirely on thinking) is left out of the next request.
 
-OpenAI defaults to `gpt-5.6-sol`. GPT-5.6, GPT-6 Sol, and GPT-6 Luna Chat
-Completions tool calling requires an explicit `reasoning_effort="none"`; use
-Responses for reasoning with tools. GPT-6 Sol and Luna also reject `temperature`,
-`top_p`, and log probabilities unless reasoning effort is `"none"` (an omitted
-effort is the provider default, `"medium"`).
-On the native OpenAI endpoint, GPT-6 Sol and Luna also refuse `"minimal"`
-reasoning effort; use `"low"` instead.
-For inexpensive testing, use `gpt-5.6-luna` and low or no reasoning.
-Use `Respond(model="gpt-6-astra", ...)` for Astra tool workflows: Astra tools require
-Responses, and Astra rejects sampling controls, log probabilities, and reasoning effort
-below `"low"` (`"none"`, `"minimal"`).
-The existing `service_tier` field accepts `"fast"`; OpenAI still accepts `"priority"`
-as an alias. See [OpenAI's migration guide](https://developers.openai.com/api/docs/guides/latest-model).
+OpenAI defaults to `gpt-6-sol` for `Chat` and `Respond`. OpenAI's tool path is the
+Responses API: GPT-5.6, GPT-6 Sol, and GPT-6 Luna take Chat Completions tools only with an
+explicit `reasoning_effort="none"`, and GPT-6 Astra and GPT-6.1 Sol take tools only through
+`Respond`. GPT-6 Sol and Luna also reject `temperature`, `top_p`, and log probabilities
+unless reasoning effort is `"none"` (an omitted effort is the provider default,
+`"medium"`). GPT-6 Sol, GPT-6 Luna and the GPT-5.6 models refuse `"minimal"` reasoning effort;
+use `"low"` instead. GPT-6 Astra and GPT-6.1 Sol reason at `"low"` or more, so they reject
+sampling controls and log probabilities at every effort. Chat Completions takes effort up to
+`"xhigh"` on all of them — it answered `"max"` with HTTP 400 (2026-10-22), though its reference
+lists it — while Responses takes `"max"`. These rules hold on the native OpenAI endpoint for
+`gpt-6-sol`, `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-luna`, `gpt-5.6` and
+`gpt-5.6-sol`/`-terra`/`-luna`, by exact id or a dated snapshot (`gpt-6-sol-2026-09-14`), and are
+checked before any request.
+For inexpensive testing, use `gpt-6-luna` with `reasoning_effort="none"`.
+`service_tier` takes `"fast"` (OpenAI still accepts `"priority"` as an alias), `"flex"`,
+`"scale"`, `"default"` and `"auto"`; `"ultrafast"` is a Responses tier of `gpt-6-astra` and
+`gpt-6.1-sol`. [`estimated_cost`](@ref) bills OpenAI's cache writes (1.25× input for 30
+minutes, 2.5× for 12 hours), prompts over 272K input tokens and the billed tier at the
+pricing page's rates. On `OPENAIServiceEndpoint`, `max_tokens` goes out as
+`max_completion_tokens` and `user` throws `ArgumentError` (use `safety_identifier` and
+`prompt_cache_key`). See [OpenAI's migration guide](https://developers.openai.com/api/docs/guides/latest-model).
 
 ## Anthropic (native Messages API)
 

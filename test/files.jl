@@ -10,6 +10,26 @@
         rm(path)
     end
 
+    @testset "the Files purposes; evals is refused, naming the Evals shutdown" begin
+        path = tempname() * ".jsonl"
+        write(path, "{}")
+        try
+            @test UniLM._FILE_PURPOSES == ("assistants", "batch", "fine-tune", "vision", "user_data")
+            for p in UniLM._FILE_PURPOSES
+                @test UniLM.FileUpload(file=path, purpose=p).purpose == p
+            end
+            e = try UniLM.FileUpload(file=path, purpose="evals"); nothing catch err; err end
+            @test e isa ArgumentError && e.msg ==
+                "purpose \"evals\" is for OpenAI's Evals API, which is read-only from 2026-10-31 and shuts down on " *
+                "2026-11-30 (https://developers.openai.com/api/docs/deprecations); the Files API takes " *
+                "\"assistants\", \"batch\", \"fine-tune\", \"vision\" or \"user_data\""
+            # Refused before any request: the seam probe would answer one with a timeout.
+            @test_throws ArgumentError upload_file(path, "evals"; service=SeamProbe, config=_TINY_DEADLINE)
+        finally
+            rm(path; force=true)
+        end
+    end
+
     @testset "parse FileObject" begin
         f = UniLM._parse_file_object(Dict{String,Any}(
             "id" => "file-1", "bytes" => 10, "created_at" => 1,

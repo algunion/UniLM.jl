@@ -17,12 +17,14 @@ get_url(::_AnthropicEndpoint, ::Chat)::String = ANTHROPIC_BASE_URL * ANTHROPIC_M
 
 # The key and the API version, then the endpoint's options: its beta names in one header,
 # comma-joined (https://platform.claude.com/docs/en/api/beta-headers), its user profile and
-# its workspace (https://platform.claude.com/docs/en/api/messages, Headers).
+# its workspace (https://platform.claude.com/docs/en/api/messages, Headers). The beta names
+# are checked again here, by the constructor's rule: `betas` is a vector, which can be
+# changed after the endpoint is built (the ids are strings, which cannot).
 function auth_header(service::_AnthropicEndpoint)::Vector{Pair{String,String}}
     e = _anthropic_endpoint(service)
     headers = ["x-api-key" => ENV[ANTHROPIC_API_KEY], "anthropic-version" => ANTHROPIC_VERSION,
                "Content-Type" => "application/json"]
-    isempty(e.betas) || push!(headers, "anthropic-beta" => join(e.betas, ","))
+    isempty(e.betas) || push!(headers, "anthropic-beta" => join(_anthropic_beta_names(e.betas), ","))
     isnothing(e.user_profile_id) || push!(headers, "anthropic-user-profile-id" => e.user_profile_id)
     isnothing(e.workspace_id) || push!(headers, "anthropic-workspace-id" => e.workspace_id)
     headers
@@ -204,15 +206,16 @@ end
 # sets the breakpoint on the last cacheable block, for 5 minutes unless ttl is "1h"
 # (https://platform.claude.com/docs/en/build-with-claude/prompt-caching.md#automatic-caching).
 # A prompt shorter than the model's minimum (512 tokens on the 5.5 models) is not cached and
-# the API says nothing: the usage reports no cache write.
+# the API says nothing: the usage reports no cache write. prewarm=false asks for what an unset
+# prewarm sends.
 const _ANTHROPIC_CACHE_TTLS = ("5m", "1h")
 _anthropic_cache_control(::Nothing) = nothing
 function _anthropic_cache_control(o::PromptCacheOptions)::Dict{Symbol,String}
     refuse(why) = throw(ArgumentError("Anthropic prompt caching takes prompt_cache_options mode=\"implicit\" " *
         "(or unset) and ttl=$(join(repr.(_ANTHROPIC_CACHE_TTLS), " or ")) (or unset, 5 minutes): $why"))
     o.mode == "explicit" && refuse("mode=\"explicit\" caches only the breakpoints a request marks, and a Chat marks none")
-    isnothing(o.prewarm) || refuse("prewarm is not sent; the Messages API pre-warms a cache with max_tokens 0, " *
-                                   "which a Chat does not take")
+    o.prewarm === true && refuse("prewarm=true is not sent; the Messages API pre-warms a cache with max_tokens 0, " *
+                                 "which a Chat does not take")
     isnothing(o.comparison_response_id) || refuse("comparison_response_id is not sent; Anthropic's cache " *
                                                   "diagnostics are not mapped")
     isnothing(o.ttl) || o.ttl in _ANTHROPIC_CACHE_TTLS || refuse("got ttl=$(repr(o.ttl))")

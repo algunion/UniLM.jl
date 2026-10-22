@@ -171,11 +171,15 @@ end
 
 @testset "Anthropic Chat — automatic caching writes a 5-minute prefix, then reads it, at Anthropic's rates" begin
     # Claude Haiku 5.5 caches prompts of 512 tokens or more; this system prompt is longer than
-    # 1,200, and the nonce in front makes it a prefix no earlier request wrote.
+    # 1,200, and the nonce in front makes it a prefix no earlier request wrote. The region is
+    # pinned, so the rates checked are the 1x global ones whatever the workspace default.
     filler = join(("The quick brown fox number $i jumps over the lazy dog near the river bank." for i in 1:100), " ")
     system = "Request $(time_ns())-$(rand(UInt32)).\n$filler\nReply with the single word OK."
-    call() = _billed(chatrequest!(_live_claude("Ready?"; system, max_tokens=16, reasoning_effort="none",
-                                               prompt_cache_options=PromptCacheOptions(ttl="5m"))))
+    chat() = _live_claude("Ready?"; system, service=ANTHROPICServiceEndpoint(inference_geo="global"), max_tokens=16,
+                          reasoning_effort="none", prompt_cache_options=PromptCacheOptions(ttl="5m"))
+    probe = chat()
+    @test JSON.parse(UniLM.encode_request(probe.service, probe))["inference_geo"] == "global"
+    call() = _billed(chatrequest!(chat()))
     first = call()
     second = call()
     @test first isa LLMSuccess && second isa LLMSuccess
@@ -203,10 +207,11 @@ end
 end
 
 @testset "Anthropic Chat — fast mode on claude-opus-5-5 is reported and billed at twice the rates" begin
-    chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-opus-5-5", max_tokens=16, service_tier="fast",
-                messages=[Message(Val(:user), "Reply with exactly: hello")])
-    body = JSON.parse(UniLM.encode_request(ANTHROPICServiceEndpoint, chat))
-    @test body["speed"] == "fast" && !haskey(body, "service_tier")
+    # The region is pinned, so the rates checked are the 1x global ones whatever the workspace default.
+    chat = Chat(service=ANTHROPICServiceEndpoint(inference_geo="global"), model="claude-opus-5-5", max_tokens=16,
+                service_tier="fast", messages=[Message(Val(:user), "Reply with exactly: hello")])
+    body = JSON.parse(UniLM.encode_request(chat.service, chat))
+    @test body["speed"] == "fast" && !haskey(body, "service_tier") && body["inference_geo"] == "global"
     r = _billed(chatrequest!(chat))
     @test r isa LLMSuccess
     u = r.usage

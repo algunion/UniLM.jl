@@ -192,7 +192,10 @@ them to every request made through it: `betas` comma-joined in the `anthropic-be
 (`"global"` or `"us"`) in the request body. A blank value, a control character, a comma in
 a beta name or another region throws `ArgumentError`. UniLM sends a beta's name only: the
 request fields and response blocks of beta features are not modelled. Either form goes
-wherever a `service` goes, and instances with the same options are equal.
+wherever a `service` goes, and instances with the same options are equal. The options are
+read-only: to change one, build a new endpoint (beta names changed in place are checked
+again when the header is built, and one that breaks the rules is refused before anything is
+sent).
 
 ```julia
 claude = ANTHROPICServiceEndpoint(user_profile_id="uprof_011CZkZCu8hGbp5mYRQgUmz9", inference_geo="us")
@@ -213,7 +216,7 @@ How a neutral `Chat` maps onto the Messages API:
 | `parallel_tool_calls = false` (the `Chat` default when `tools` is set) | `tool_choice.disable_parallel_tool_use = true` — so a tool request allows one tool call per turn unless you set `parallel_tool_calls = true` |
 | `response_format` JSON Schema | `output_config.format = {type: "json_schema", schema}` (structured outputs; the schema `name`, `description` and `strict` have no counterpart); `json_object` throws — there is no schema-less JSON mode |
 | `reasoning_effort` | `output_config.effort` plus adaptive `thinking` with `display: "summarized"`, per model (below) |
-| `prompt_cache_options` | a top-level `cache_control` — [automatic caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#automatic-caching), the breakpoint on the last cacheable block: `{type: "ephemeral"}`, with its `ttl` when set to `"5m"` or `"1h"`; `mode` may be `"implicit"` or unset. `mode="explicit"` (a `Chat` marks no breakpoints), `prewarm`, `comparison_response_id` and the OpenAI ttls `"30m"` and `"12h"` throw `ArgumentError`. A prompt shorter than the model's minimum (512 tokens on the 5.5 models) is not cached and the API raises no error: the usage reports no cache write |
+| `prompt_cache_options` | a top-level `cache_control` — [automatic caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#automatic-caching), the breakpoint on the last cacheable block: `{type: "ephemeral"}`, with its `ttl` when set to `"5m"` or `"1h"`; `mode` may be `"implicit"` or unset. `mode="explicit"` (a `Chat` marks no breakpoints), `prewarm=true`, `comparison_response_id` and the OpenAI ttls `"30m"` and `"12h"` throw `ArgumentError`. A prompt shorter than the model's minimum (512 tokens on the 5.5 models) is not cached and the API raises no error: the usage reports no cache write |
 | `safety_identifier`, `user`, `metadata["user_id"]` | `metadata.user_id` — set one, or set them equal; `metadata` may carry only `user_id` |
 | `service_tier` | `"auto"` or `"standard_only"`; `"fast"` is [fast mode](https://platform.claude.com/docs/en/build-with-claude/fast-mode), `speed: "fast"` and no `service_tier`, on Claude Opus 5.5 — and on Opus 5 and Opus 4.8, in research preview, only through an endpoint whose `betas` hold `"fast-mode-2026-02-01"`; it throws on other models |
 | `stop`, `stream` | `stop_sequences`, `stream` |

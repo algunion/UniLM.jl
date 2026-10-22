@@ -1368,11 +1368,14 @@ end
     @test cc(PromptCacheOptions()) == Dict("type" => "ephemeral")
     @test cc(PromptCacheOptions(mode="implicit")) == Dict("type" => "ephemeral")
     @test cc(PromptCacheOptions(mode="implicit", ttl="1h")) == Dict("type" => "ephemeral", "ttl" => "1h")
+    # prewarm=false asks for what leaving prewarm out sends.
+    @test cc(PromptCacheOptions(prewarm=false)) == Dict("type" => "ephemeral")
+    @test cc(PromptCacheOptions(prewarm=false, ttl="1h")) == Dict("type" => "ephemeral", "ttl" => "1h")
     @test isnothing(cc(nothing))
     # What automatic caching cannot carry is refused, naming the options Anthropic takes.
     for (o, cause) in ((PromptCacheOptions(ttl="30m"), "\"30m\""), (PromptCacheOptions(ttl="12h"), "\"12h\""),
                        (PromptCacheOptions(mode="explicit"), "explicit"), (PromptCacheOptions(mode="explicit", ttl="5m"), "explicit"),
-                       (PromptCacheOptions(prewarm=true), "prewarm"), (PromptCacheOptions(prewarm=false), "prewarm"),
+                       (PromptCacheOptions(prewarm=true), "prewarm=true"), (PromptCacheOptions(prewarm=true, ttl="5m"), "prewarm=true"),
                        (PromptCacheOptions(comparison_response_id="resp_1"), "comparison_response_id"))
         e = _anthropic_err(model="claude-haiku-5-5", prompt_cache_options=o)
         @test e isa ArgumentError && occursin("Anthropic", e.msg) && occursin("\"implicit\"", e.msg) &&
@@ -1488,6 +1491,40 @@ end
     @test sub == ANTHROPICServiceEndpoint(betas=["x-a"], user_profile_id="uprof_1", workspace_id="wrkspc_1", inference_geo="us")
     d = ANTHROPICServiceEndpoint()
     @test d.betas == String[] && isnothing(d.user_profile_id) && isnothing(d.workspace_id) && isnothing(d.inference_geo)
+end
+
+@testset "a beta name changed in place is refused where the header is built, by the constructor's rule, before any request" begin
+    caught(f) = try f(); nothing catch e; e end
+    injected = "a\r\nx-injected: y"
+    # (change made in place, the name the constructor refuses with the same message)
+    changes = ((betas -> push!(betas, injected), injected), (betas -> (betas[1] = "a,b"), "a,b"),
+               (betas -> (betas[1] = "  "), "  "))
+    for (change!, name) in changes
+        ep = ANTHROPICServiceEndpoint(betas=["thinking-binding-controls-2026-08-01"])
+        change!(ep.betas)
+        e = withenv(() -> caught(() -> UniLM.auth_header(ep)), "ANTHROPIC_API_KEY" => "sk-ant-local-0000")
+        @test e isa ArgumentError && e.msg == caught(() -> ANTHROPICServiceEndpoint(betas=[name])).msg
+    end
+    usage = merge(_ANTHROPIC_USAGE, Dict("speed" => "standard"))
+    srv = _anthropic_capture_server(_ -> JSON.json(_anthropic_message("claude-haiku-5-5", usage)),
+                                    _ -> _anthropic_sse("claude-haiku-5-5", usage))
+    rule = caught(() -> ANTHROPICServiceEndpoint(betas=[injected])).msg
+    try
+        withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
+            for stream in (false, true)
+                ep = ANTHROPICServiceEndpoint(betas=["thinking-binding-controls-2026-08-01"])
+                push!(ep.betas, injected)
+                chat = Chat(service=_AnthropicCapture(srv.url, ep), model="claude-haiku-5-5", stream=stream,
+                            messages=[Message(Val(:system), "s"), Message(Val(:user), "q")])
+                cfg = RequestConfig(max_attempts=3, total_deadline=30.0)
+                r = stream ? fetch(chatrequest!(chat; config=cfg)) : chatrequest!(chat; config=cfg)
+                @test r isa LLMCallError && r.cause isa ArgumentError && r.cause.msg == rule && length(chat) == 2
+            end
+        end
+        @test isempty(srv.seen)
+    finally
+        close(srv.server)
+    end
 end
 
 @testset "ANTHROPICServiceEndpoint instances: equality, hash and show" begin

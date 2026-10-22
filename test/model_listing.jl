@@ -439,9 +439,9 @@ end
     @test d.unclassified == new
 end
 
-# Refuted if: a model id in a docs page's Julia code — a ```julia, ```@example or ```@repl block —
-# goes unchecked, or one in prose (migration notes name retired models on purpose) or in another
-# block is checked.
+# Refuted if: a model id in a docs page's Julia code — a ```julia, ```@example or ```@repl block, at
+# any indentation — goes unchecked, or one in prose (migration notes name retired models on purpose)
+# or in another block is checked.
 @testset "drift checks: the models the docs' Julia code names are checked, not those of their prose" begin
     mktempdir() do dir
         mkpath(joinpath(dir, "guide"))
@@ -471,9 +471,18 @@ end
             ```julia-repl
             julia> Chat(model="gpt-5.2")
             ```
+
+            !!! note "An admonition indents its blocks"
+                ```julia
+                Chat(model="gpt-6-luna")
+                ```
+
+                ```@setup page
+                Chat(model="gpt-5.4-mini")
+                ```
             """)
         write(joinpath(dir, "notes.txt"), "```julia\nChat(model=\"gpt-5.6-sol\")\n```\n")
-        @test _drift_docs_ids(dir) == ["gpt-6-sol", "claude-haiku-5-5", "gemini-3.8-flash"]
+        @test _drift_docs_ids(dir) == ["gpt-6-sol", "claude-haiku-5-5", "gemini-3.8-flash", "gpt-6-luna"]
     end
     docs = _drift_docs_ids()
     @test !isempty(docs)

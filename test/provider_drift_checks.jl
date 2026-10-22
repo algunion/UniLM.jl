@@ -106,8 +106,15 @@ function _drift_named_models(models::Vector{ProviderModel}, provider::Symbol;
     (; named=ids, unlisted=[id for id in ids if !haskey(listed, id)], retired)
 end
 
-# The ids among `ids` that the cost code's lookup prices at no row.
-_unpriced(ids) = [id for id in ids if isnothing(UniLM._price_row(DEFAULT_PRICING, id))]
+# Models whose provider publishes no price, so no price row can hold one, by exact id: Claude
+# Mythos Preview, a gated research preview ("Access is invitation-only",
+# https://platform.claude.com/docs/en/release-notes/overview) that the pricing page
+# (https://platform.claude.com/docs/en/about-claude/pricing.md) gives no rate.
+const _NO_PUBLISHED_PRICE = ("claude-mythos-preview",)
+
+# The ids among `ids` that the cost code's lookup prices at no row, those with no published
+# price aside.
+_unpriced(ids) = [id for id in ids if id ∉ _NO_PUBLISHED_PRICE && isnothing(UniLM._price_row(DEFAULT_PRICING, id))]
 
 # OpenAI: GPT-6 and GPT-5.6 have rule rows; they and GPT-5.4 mini (and its dated snapshots) have
 # price rows — the standard rates and the price terms.

@@ -7,22 +7,32 @@
 
 # ─── Routing & auth ──────────────────────────────────────────────────────────
 
-get_url(::Type{ANTHROPICServiceEndpoint}, ::Chat)::String = ANTHROPIC_BASE_URL * ANTHROPIC_MESSAGES_PATH
+# The bare type and an instance are one endpoint: every Anthropic method takes either, and
+# reads the options through `_anthropic_endpoint` (the type is the endpoint with none set).
+const _AnthropicEndpoint = Union{Type{ANTHROPICServiceEndpoint},ANTHROPICServiceEndpoint}
+_anthropic_endpoint(::Type{ANTHROPICServiceEndpoint})::ANTHROPICServiceEndpoint = ANTHROPICServiceEndpoint()
+_anthropic_endpoint(e::ANTHROPICServiceEndpoint)::ANTHROPICServiceEndpoint = e
 
-function auth_header(::Type{ANTHROPICServiceEndpoint})::Vector{Pair{String,String}}
-    [
-        "x-api-key" => ENV[ANTHROPIC_API_KEY],
-        "anthropic-version" => ANTHROPIC_VERSION,
-        "Content-Type" => "application/json",
-    ]
+get_url(::_AnthropicEndpoint, ::Chat)::String = ANTHROPIC_BASE_URL * ANTHROPIC_MESSAGES_PATH
+
+# The key and the API version, then the endpoint's options: its beta names in one header,
+# comma-joined (https://platform.claude.com/docs/en/api/beta-headers), its user profile and
+# its workspace (https://platform.claude.com/docs/en/api/messages, Headers).
+function auth_header(service::_AnthropicEndpoint)::Vector{Pair{String,String}}
+    e = _anthropic_endpoint(service)
+    headers = ["x-api-key" => ENV[ANTHROPIC_API_KEY], "anthropic-version" => ANTHROPIC_VERSION,
+               "Content-Type" => "application/json"]
+    isempty(e.betas) || push!(headers, "anthropic-beta" => join(e.betas, ","))
+    isnothing(e.user_profile_id) || push!(headers, "anthropic-user-profile-id" => e.user_profile_id)
+    isnothing(e.workspace_id) || push!(headers, "anthropic-workspace-id" => e.workspace_id)
+    headers
 end
 
 # ─── Capabilities & defaults ─────────────────────────────────────────────────
 
-provider_capabilities(::Type{ANTHROPICServiceEndpoint}) =
-    Set([:chat, :tools, :json_output, :streaming])
+provider_capabilities(::_AnthropicEndpoint) = Set([:chat, :tools, :json_output, :streaming])
 
-default_model(::Type{ANTHROPICServiceEndpoint}) = "claude-opus-5-5"
+default_model(::_AnthropicEndpoint) = "claude-opus-5-5"
 
 """
     default_max_tokens(service, model::AbstractString) -> Int
@@ -31,7 +41,7 @@ default_model(::Type{ANTHROPICServiceEndpoint}) = "claude-opus-5-5"
 field; OpenAI does not. Returns a moderate, overridable default (see
 `_ANTHROPIC_DEFAULT_MAX_TOKENS`), not the model ceiling.
 """
-default_max_tokens(::Type{ANTHROPICServiceEndpoint}, ::AbstractString) = _ANTHROPIC_DEFAULT_MAX_TOKENS
+default_max_tokens(::_AnthropicEndpoint, ::AbstractString) = _ANTHROPIC_DEFAULT_MAX_TOKENS
 
 # ─── Claude models ───────────────────────────────────────────────────────────
 # Request contract per model, transcribed on 2026-10-22 from
@@ -42,6 +52,8 @@ default_max_tokens(::Type{ANTHROPICServiceEndpoint}, ::AbstractString) = _ANTHRO
 #                                        https://platform.claude.com/docs/en/models/haiku-5-5/migration-guide.md
 #   mid-conversation system messages:    https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages.md
 #   the thinking-block prefix check:     https://platform.claude.com/docs/en/build-with-claude/preserved-thinking.md
+#   fast mode:                           https://platform.claude.com/docs/en/build-with-claude/fast-mode.md
+#   inference_geo:                       https://platform.claude.com/docs/en/manage-claude/data-residency.md
 # `thinking`: :always = adaptive, cannot be disabled; :on = adaptive by default, "disabled"
 # turns it off; :between = adaptive by default and cannot be disabled, "between_tools" turns
 # up-front thinking off; :off = adaptive on request; :manual = extended thinking
@@ -52,9 +64,14 @@ default_max_tokens(::Type{ANTHROPICServiceEndpoint}, ::AbstractString) = _ANTHRO
 # `prefix_checked`: a thinking block is valid only while the top-level system prompt, the
 # tools and the messages before it are unchanged (see `_anthropic_messages`); such a model
 # accepts mid-conversation system messages, which is how its instructions change.
+# `fast`: speed "fast" (fast mode) — :ga served; :beta served in research preview, only with
+# the `_ANTHROPIC_FAST_BETA` header (HTTP 400 without it); :none not served (an error, except
+# on Opus 4.6, which runs the request at standard speed).
+# `inference_geo`: the request's inference_geo accepted (HTTP 400 on the 4.5 models and earlier).
 const _CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 const _CLAUDE_EFFORTS_NO_XHIGH = ["low", "medium", "high", "max"]
 const _CLAUDE_THINKING = (:always, :on, :between, :off, :manual)
+const _CLAUDE_FAST = (:ga, :beta, :none)
 
 @kwdef struct _ClaudeFamily
     thinking::Symbol
@@ -63,16 +80,20 @@ const _CLAUDE_THINKING = (:always, :on, :between, :off, :manual)
     prefill::Bool = false
     system::Bool = false
     prefix_checked::Bool = false
-    function _ClaudeFamily(thinking, efforts, forced, prefill, system, prefix_checked)
+    fast::Symbol = :none
+    inference_geo::Bool = true
+    function _ClaudeFamily(thinking, efforts, forced, prefill, system, prefix_checked, fast, inference_geo)
         thinking in _CLAUDE_THINKING || throw(ArgumentError(
             "Claude thinking mode must be one of $(join(_CLAUDE_THINKING, ", ")) (got $(repr(thinking)))"))
         !prefix_checked || system || throw(ArgumentError(
             "a prefix-checked Claude model must accept mid-conversation system messages (system=true)"))
-        new(thinking, efforts, forced, prefill, system, prefix_checked)
+        fast in _CLAUDE_FAST || throw(ArgumentError(
+            "Claude fast mode must be one of $(join(_CLAUDE_FAST, ", ")) (got $(repr(fast)))"))
+        new(thinking, efforts, forced, prefill, system, prefix_checked, fast, inference_geo)
     end
 end
 
-const _CLAUDE_LEGACY = _ClaudeFamily(thinking=:manual, efforts=String[], prefill=true)
+const _CLAUDE_LEGACY = _ClaudeFamily(thinking=:manual, efforts=String[], prefill=true, inference_geo=false)
 
 # Dates: https://platform.claude.com/docs/en/about-claude/model-deprecations.md
 const _CLAUDE_FAMILIES = Dict{String,_ClaudeFamily}(
@@ -80,17 +101,18 @@ const _CLAUDE_FAMILIES = Dict{String,_ClaudeFamily}(
     "claude-mythos-5-1"     => _ClaudeFamily(thinking=:always, forced=false, system=true),
     "claude-fable-5"        => _ClaudeFamily(thinking=:always, system=true),
     "claude-mythos-5"       => _ClaudeFamily(thinking=:always, system=true),
-    "claude-opus-5-5"       => _ClaudeFamily(thinking=:always, forced=false, system=true, prefix_checked=true),
+    "claude-opus-5-5"       => _ClaudeFamily(thinking=:always, forced=false, system=true, prefix_checked=true, fast=:ga),
     "claude-sonnet-5-5"     => _ClaudeFamily(thinking=:between, forced=false, system=true, prefix_checked=true),
     "claude-haiku-5-5"      => _ClaudeFamily(thinking=:on, system=true, prefix_checked=true),
-    "claude-opus-5"         => _ClaudeFamily(thinking=:on, system=true),
+    "claude-opus-5"         => _ClaudeFamily(thinking=:on, system=true, fast=:beta),
     "claude-sonnet-5"       => _ClaudeFamily(thinking=:on),
-    "claude-opus-4-8"       => _ClaudeFamily(thinking=:off, system=true),
+    "claude-opus-4-8"       => _ClaudeFamily(thinking=:off, system=true, fast=:beta),
     "claude-opus-4-7"       => _ClaudeFamily(thinking=:off),
     "claude-opus-4-6"       => _ClaudeFamily(thinking=:off, efforts=_CLAUDE_EFFORTS_NO_XHIGH),
     "claude-sonnet-4-6"     => _ClaudeFamily(thinking=:off, efforts=_CLAUDE_EFFORTS_NO_XHIGH),
     # Retire not sooner than 2026-11-24 (Opus 4.5) and 2026-10-15 (Haiku 4.5).
-    "claude-opus-4-5"       => _ClaudeFamily(thinking=:manual, efforts=["low", "medium", "high"], prefill=true),
+    "claude-opus-4-5"       => _ClaudeFamily(thinking=:manual, efforts=["low", "medium", "high"], prefill=true,
+                                             inference_geo=false),
     "claude-haiku-4-5"      => _CLAUDE_LEGACY,
     # Deprecated 2026-06-09, retirement to be announced.
     "claude-mythos-preview" => _ClaudeFamily(thinking=:always, efforts=_CLAUDE_EFFORTS_NO_XHIGH),
@@ -110,7 +132,10 @@ _claude_family(model::AbstractString)::Union{_ClaudeFamily,Nothing} = _claude_ro
 
 # reasoning_effort → (thinking, output_config.effort). A level also turns adaptive
 # thinking on where the model has it, so an explicit request reasons on the models that
-# run without thinking by default; "none" turns thinking off and sends no effort.
+# run without thinking by default, and asks for its summary: most current models return
+# thinking blocks with the text omitted unless display is "summarized"
+# (https://platform.claude.com/docs/en/build-with-claude/thinking.md#controlling-thinking-display).
+# "none" turns thinking off and sends no effort.
 function _anthropic_reasoning(model::String, effort::Union{String,Nothing},
                               fam::Union{_ClaudeFamily,Nothing})
     isnothing(effort) && return (nothing, nothing)
@@ -126,7 +151,7 @@ function _anthropic_reasoning(model::String, effort::Union{String,Nothing},
             "$model supports reasoning_effort $(join(fam.efforts, ", ")) (got $(repr(effort)))"))
     end
     effort == "none" && return (_anthropic_thinking_off(fam), nothing)
-    ((isnothing(fam) || fam.thinking !== :manual) ? Dict(:type => "adaptive") : nothing, effort)
+    ((isnothing(fam) || fam.thinking !== :manual) ? Dict(:type => "adaptive", :display => "summarized") : nothing, effort)
 end
 
 # The thinking value for reasoning_effort "none": "disabled" where thinking is on by
@@ -145,14 +170,17 @@ _anthropic_thinking_off(fam::_ClaudeFamily) =
 const _ANTHROPIC_CHAT_MAPPED_FIELDS = (:service, :model, :messages, :history, :tools,
     :tool_choice, :parallel_tool_calls, :n, :stream, :stop,
     :max_tokens, :max_completion_tokens, :response_format, :user, :reasoning_effort,
-    :metadata, :service_tier, :safety_identifier, :_cumulative_cost)
+    :metadata, :service_tier, :safety_identifier, :prompt_cache_options, :_cumulative_cost)
 const _ANTHROPIC_CHAT_UNMAPPED_FIELDS = Tuple(setdiff(fieldnames(Chat), _ANTHROPIC_CHAT_MAPPED_FIELDS))
 
+# service_tier: the Messages API's own "auto" and "standard_only"
+# (https://platform.claude.com/docs/en/api/messages.md), and "fast", which is not a tier there
+# but fast mode, the request's speed (see `_ClaudeFamily`).
+const _ANTHROPIC_SERVICE_TIERS = ("auto", "standard_only", "fast")
+
 function _anthropic_validate_fields(chat::Chat)
-    for f in (:moderation, :prompt_cache_options)
-        isnothing(getfield(chat, f)) || throw(ArgumentError(
-            "Anthropic Messages does not support $f; it is an OpenAI-only option"))
-    end
+    isnothing(chat.moderation) || throw(ArgumentError(
+        "Anthropic Messages does not support moderation; it is an OpenAI-only option"))
     # API version 2026-10-21 removed the sampling parameters: the API answers HTTP 400 for
     # one on every model, even at its default value ("Sampling parameters are removed",
     # https://platform.claude.com/docs/en/api/migration-2026-10-21#sampling-parameters).
@@ -166,10 +194,31 @@ function _anthropic_validate_fields(chat::Chat)
     fields = Symbol[f for f in _ANTHROPIC_CHAT_UNMAPPED_FIELDS if !isnothing(getfield(chat, f))]
     isempty(fields) || throw(ArgumentError(
         "Anthropic Messages does not support field(s) $(join(fields, ", "))"))
-    # Messages API service_tier values: https://platform.claude.com/docs/en/api/messages.md
-    isnothing(chat.service_tier) || chat.service_tier in ("auto", "standard_only") || throw(ArgumentError(
-        "Anthropic service_tier must be \"auto\" or \"standard_only\" (got $(repr(chat.service_tier)))"))
+    isnothing(chat.service_tier) || chat.service_tier in _ANTHROPIC_SERVICE_TIERS || throw(ArgumentError(
+        "Anthropic service_tier must be $(join(repr.(_ANTHROPIC_SERVICE_TIERS), ", ", " or ")) " *
+        "(got $(repr(chat.service_tier)))"))
     nothing
+end
+
+# prompt_cache_options → a top-level cache_control, Anthropic's automatic caching: the API
+# sets the breakpoint on the last cacheable block, for 5 minutes unless ttl is "1h"
+# (https://platform.claude.com/docs/en/build-with-claude/prompt-caching.md#automatic-caching).
+# A prompt shorter than the model's minimum (512 tokens on the 5.5 models) is not cached and
+# the API says nothing: the usage reports no cache write.
+const _ANTHROPIC_CACHE_TTLS = ("5m", "1h")
+_anthropic_cache_control(::Nothing) = nothing
+function _anthropic_cache_control(o::PromptCacheOptions)::Dict{Symbol,String}
+    refuse(why) = throw(ArgumentError("Anthropic prompt caching takes prompt_cache_options mode=\"implicit\" " *
+        "(or unset) and ttl=$(join(repr.(_ANTHROPIC_CACHE_TTLS), " or ")) (or unset, 5 minutes): $why"))
+    o.mode == "explicit" && refuse("mode=\"explicit\" caches only the breakpoints a request marks, and a Chat marks none")
+    isnothing(o.prewarm) || refuse("prewarm is not sent; the Messages API pre-warms a cache with max_tokens 0, " *
+                                   "which a Chat does not take")
+    isnothing(o.comparison_response_id) || refuse("comparison_response_id is not sent; Anthropic's cache " *
+                                                  "diagnostics are not mapped")
+    isnothing(o.ttl) || o.ttl in _ANTHROPIC_CACHE_TTLS || refuse("got ttl=$(repr(o.ttl))")
+    cc = Dict{Symbol,String}(:type => "ephemeral")
+    isnothing(o.ttl) || (cc[:ttl] = o.ttl)
+    cc
 end
 
 # safety_identifier, user and metadata user_id all name the end user; the Messages
@@ -192,12 +241,33 @@ function _anthropic_user_id(chat::Chat)::Union{String,Nothing}
     isempty(ids) ? nothing : last(first(ids))
 end
 
-# Requests a Claude model answers with HTTP 400, rejected before the round trip (the
-# per-model limits are in the table above).
-function _anthropic_validate_model(chat::Chat, fam::Union{_ClaudeFamily,Nothing})
-    isnothing(fam) || fam.forced || !(chat.tool_choice isa GPTToolChoice || chat.tool_choice == "required") ||
+# Requests a Claude model answers with HTTP 400 (or runs other than asked), rejected before
+# the round trip (the per-model limits are in the table above). An id no row names gets none
+# of these checks: the API answers for it.
+_anthropic_validate_model(::Chat, ::Nothing, ::ANTHROPICServiceEndpoint) = nothing
+function _anthropic_validate_model(chat::Chat, fam::_ClaudeFamily, e::ANTHROPICServiceEndpoint)
+    fam.forced || !(chat.tool_choice isa GPTToolChoice || chat.tool_choice == "required") ||
         throw(ArgumentError("$(chat.model) rejects forced tool_choice; use tool_choice=\"auto\" with strict " *
                             "tools (FunctionSignature(strict=true)) or a json_schema response_format"))
+    chat.service_tier == "fast" && _check_claude_fast(chat.model, fam, e)
+    isnothing(e.inference_geo) || fam.inference_geo || throw(ArgumentError(
+        "$(chat.model) takes no inference_geo: the API answers HTTP 400 for it on Claude Opus 4.5, Sonnet 4.5, " *
+        "Haiku 4.5 and earlier models; send the request through an ANTHROPICServiceEndpoint without inference_geo"))
+    nothing
+end
+
+const _ANTHROPIC_FAST_BETA = "fast-mode-2026-02-01"
+const _CLAUDE_FAST_MODELS = sort!([m for (m, row) in _CLAUDE_FAMILIES if row.fast === :ga])
+const _CLAUDE_FAST_PREVIEW_MODELS = sort!([m for (m, row) in _CLAUDE_FAMILIES if row.fast === :beta])
+
+function _check_claude_fast(model::String, fam::_ClaudeFamily, e::ANTHROPICServiceEndpoint)::Nothing
+    fam.fast === :none && throw(ArgumentError("$model has no fast mode (service_tier=\"fast\"): Anthropic " *
+        "serves it on $(join(_CLAUDE_FAST_MODELS, ", ")), and in research preview on " *
+        "$(join(_CLAUDE_FAST_PREVIEW_MODELS, " and ")) with the $_ANTHROPIC_FAST_BETA beta header"))
+    fam.fast === :beta && !(_ANTHROPIC_FAST_BETA in e.betas) && throw(ArgumentError(
+        "$model serves fast mode (service_tier=\"fast\") in research preview, only with the " *
+        "$_ANTHROPIC_FAST_BETA beta header (the API answers HTTP 400 without it): send the request through " *
+        "ANTHROPICServiceEndpoint(betas=[\"$_ANTHROPIC_FAST_BETA\"])"))
     nothing
 end
 
@@ -237,15 +307,14 @@ function _anthropic_check_prefill(chat::Chat, fam::Union{_ClaudeFamily,Nothing})
     nothing
 end
 
-function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
+function encode_request(service::_AnthropicEndpoint, chat::Chat)
     _anthropic_validate_fields(chat)
-    _reject_attachments(chat, "Anthropic Messages")
+    endpoint = _anthropic_endpoint(service)
     fam = _claude_family(chat.model)
-    _anthropic_validate_model(chat, fam)
+    _anthropic_validate_model(chat, fam, endpoint)
     body = Dict{Symbol,Any}(:model => chat.model)
     # max_tokens is REQUIRED by Anthropic; fall back to the moderate default.
-    body[:max_tokens] = something(chat.max_completion_tokens, chat.max_tokens,
-                                  default_max_tokens(ANTHROPICServiceEndpoint, chat.model))
+    body[:max_tokens] = something(chat.max_completion_tokens, chat.max_tokens, default_max_tokens(service, chat.model))
     system, msgs = _anthropic_messages(chat.messages; placement=_system_placement(fam), model=chat.model)
     !isempty(msgs) && msgs[end][:role] == "assistant" && _anthropic_check_prefill(chat, fam)
     isnothing(system) || (body[:system] = system)
@@ -256,7 +325,13 @@ function encode_request(::Type{ANTHROPICServiceEndpoint}, chat::Chat)
         (body[:tool_choice] = _anthropic_tool_choice(something(chat.tool_choice, "auto"), disable_parallel))
     isnothing(chat.stop)        || (body[:stop_sequences] = chat.stop isa String ? [chat.stop] : chat.stop)
     (uid = _anthropic_user_id(chat)) === nothing || (body[:metadata] = Dict(:user_id => uid))
-    isnothing(chat.service_tier) || (body[:service_tier] = chat.service_tier)
+    if chat.service_tier == "fast"
+        body[:speed] = "fast"          # fast mode is the request's speed, not a service tier
+    elseif !isnothing(chat.service_tier)
+        body[:service_tier] = chat.service_tier
+    end
+    isnothing(endpoint.inference_geo) || (body[:inference_geo] = endpoint.inference_geo)
+    (cache = _anthropic_cache_control(chat.prompt_cache_options)) === nothing || (body[:cache_control] = cache)
     thinking, effort = _anthropic_reasoning(chat.model, chat.reasoning_effort, fam)
     isnothing(thinking) || (body[:thinking] = thinking)
     output_config = Dict{Symbol,Any}()
@@ -280,6 +355,7 @@ end
 #   preceding assistant emitted → loud ArgumentError
 # - an assistant turn with nothing to send — no text, tool call or Anthropic block (a
 #   refusal, an empty reply) — is skipped: the API rejects empty assistant content.
+# - a user turn's attachments → image and document blocks (`_anthropic_user_content`)
 function _anthropic_messages(messages; placement::_SystemPlacement=_IN_PLACE, model::AbstractString="")
     system = nothing
     out = Vector{Dict{Symbol,Any}}()
@@ -315,7 +391,7 @@ function _anthropic_messages(messages; placement::_SystemPlacement=_IN_PLACE, mo
             reply = m
         else  # RoleUser
             flush!()
-            push!(out, Dict{Symbol,Any}(:role => "user", :content => something(m.content, "")))
+            push!(out, Dict{Symbol,Any}(:role => "user", :content => _anthropic_user_content(m)))
         end
     end
     flush!()
@@ -323,6 +399,32 @@ function _anthropic_messages(messages; placement::_SystemPlacement=_IN_PLACE, mo
     release!()
     (system, out)
 end
+
+# A user turn's content: its text, or with attachments their blocks and then the text — the
+# order Anthropic's vision and PDF guides recommend (media before the question,
+# https://platform.claude.com/docs/en/build-with-claude/vision.md,
+# https://platform.claude.com/docs/en/build-with-claude/pdf-support.md). Empty text is left
+# out: the API refuses an empty text block.
+function _anthropic_user_content(m::Message)
+    isnothing(m.attachments) && return something(m.content, "")
+    blocks = Dict{Symbol,Any}[_anthropic_block(a) for a in m.attachments]
+    isempty(something(m.content, "")) || push!(blocks, Dict{Symbol,Any}(:type => "text", :text => m.content))
+    blocks
+end
+
+# The base64 image (JPEG, PNG, GIF, WebP — the formats an ImageAttachment holds) and PDF
+# document blocks (https://platform.claude.com/docs/en/api/messages.md). The image block has
+# no detail level and the Messages API no audio input: either is refused rather than dropped.
+_anthropic_source(a::Union{ImageAttachment,DocumentAttachment}) =
+    Dict{Symbol,Any}(:type => "base64", :media_type => a.mime, :data => base64encode(a.data))
+function _anthropic_block(a::ImageAttachment)::Dict{Symbol,Any}
+    isnothing(a.detail) || throw(ArgumentError("an Anthropic image block has no detail level: build the " *
+        "ImageAttachment without `detail` (got $(repr(a.detail)))"))
+    Dict{Symbol,Any}(:type => "image", :source => _anthropic_source(a))
+end
+_anthropic_block(a::DocumentAttachment) = Dict{Symbol,Any}(:type => "document", :source => _anthropic_source(a))
+_anthropic_block(a::AudioAttachment) = throw(ArgumentError("Anthropic Messages takes images and PDF documents, " *
+    "not audio ($(a)): send the clip through an OpenAI-compatible endpoint, or its transcript in the message"))
 
 _skipped_turn(m::Message)::Bool = m.role == RoleAssistant &&
     isempty(something(m.content, "")) && (isnothing(m.tool_calls) || isempty(m.tool_calls)) &&
@@ -484,7 +586,7 @@ const _CLAUDE_LONG_PROMPT_TIERS = Dict{String,@NamedTuple{threshold::Int, multip
     "claude-haiku-5-5" => (threshold=100_000, multiplier=5.0),
 )
 
-function _billed_cost(::Type{ANTHROPICServiceEndpoint}, model::String, u::TokenUsage, rates::PriceRow)::Float64
+function _billed_cost(::_AnthropicEndpoint, model::String, u::TokenUsage, rates::PriceRow)::Float64
     cached = min(u.cached_tokens, u.prompt_tokens)        # cache reads, at the discounted rate
     fresh = u.prompt_tokens - cached - u.cache_write_tokens
     writes = (u.cache_write_tokens - u.cache_write_extended_tokens) * _ANTHROPIC_CACHE_WRITE +
@@ -501,7 +603,7 @@ function _anthropic_rate_multiplier(model::String, u::TokenUsage)::Float64
     (u.service_tier == "fast" ? _ANTHROPIC_FAST : 1.0) * (u.inference_geo == "us" ? _ANTHROPIC_US_INFERENCE : 1.0) * long
 end
 
-function decode_response(::Type{ANTHROPICServiceEndpoint}, resp::HTTP.Response)
+function decode_response(::_AnthropicEndpoint, resp::HTTP.Response)
     data = JSON.parse(resp.body; dicttype=Dict{String,Any})
     # A 200 that is not a Message has no turn to report: fail loud, and the verb turns
     # the throw into its typed call error instead of an empty success.
@@ -596,7 +698,7 @@ function _anthropic_stream_refusal!(state::StreamState, stop_details)
     nothing
 end
 
-function handle_sse_event!(::Type{ANTHROPICServiceEndpoint}, event::AbstractString,
+function handle_sse_event!(::_AnthropicEndpoint, event::AbstractString,
                            payload::AbstractString, state::StreamState)::Symbol
     ev = JSON.parse(payload; dicttype=Dict{String,Any})
     ev isa AbstractDict || return :continue

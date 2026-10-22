@@ -231,7 +231,8 @@ reaches the callback as text. OpenAI bills audio tokens at their own rates — f
 \$2.50 and \$10 for text. The result's [`TokenUsage`](@ref) counts them in
 `prompt_audio_tokens` and `completion_audio_tokens`, and [`estimated_cost`](@ref) bills them
 at those rates and the rest of the call at the text rates (see
-[How the estimate is computed](@ref cost_estimate)).
+[How the estimate is computed](@ref cost_estimate)). A turn that sends an audio reply back
+by its id pays for that audio again, as audio input.
 
 ## Models
 

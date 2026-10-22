@@ -12,8 +12,8 @@ Two accessors do the work: [`token_usage`](@ref) (raw counts) and [`estimated_co
     [`estimated_cost`](@ref) returns `0.0` — with no error, only a warning logged once per
     model id — for any model that is not a key in [`DEFAULT_PRICING`](@ref) and has no
     fallback row (a dated snapshot uses its base model's row; a versioned `jev-X.Y.Z` id
-    uses the `jev-latest` row). The tutorial model `gpt-4o-mini` is **not** priced, so
-    cost tracking on it reports `\$0.00` until you supply your own pricing. See
+    uses the `jev-latest` row). A current OpenAI model such as `gpt-5.2-pro` is **not**
+    priced, so cost tracking on it reports `\$0.00` until you supply your own pricing. See
     [Unpriced models cost \$0](@ref unpriced-zero) below.
 
 ## Reading usage and cost
@@ -100,8 +100,8 @@ on their own task — so it is safe to read and write from any task: add or repl
 a plain `Dict`.
 
 A model id is looked up exactly first, then without a dated snapshot suffix
-(`gpt-5.4-mini-2026-03-17` → `gpt-5.4-mini`, `claude-haiku-4-5-20251001` →
-`claude-haiku-4-5`), and a versioned Jev id with no row of its own (`jev-X.Y.Z`) falls back
+(`gpt-5.4-mini-2026-03-17` → `gpt-5.4-mini`, `claude-opus-4-5-20251101` →
+`claude-opus-4-5`), and a versioned Jev id with no row of its own (`jev-X.Y.Z`) falls back
 to the `jev-latest` row. Only those date suffixes are stripped, so custom names stay
 unpriced rather than matching a row by accident.
 
@@ -116,14 +116,14 @@ println("gpt-5.2 row: ", DEFAULT_PRICING["gpt-5.2"])
 If the model key is absent from the pricing table, `estimated_cost` returns `0.0` — it does
 **not** raise; it logs one warning per model id. (Two fallbacks apply first: a dated snapshot
 uses its base model's row, and a versioned `jev-X.Y.Z` id uses the `jev-latest` row.) This
-bites the tutorial model `gpt-4o-mini`:
+bites `gpt-5.2-pro`, a current OpenAI model the table does not list:
 
 ```@example cost
-println("gpt-4o-mini priced? ", haskey(DEFAULT_PRICING, "gpt-4o-mini"))
+println("gpt-5.2-pro priced? ", haskey(DEFAULT_PRICING, "gpt-5.2-pro"))
 
 unpriced = LLMSuccess(
     message = Message(Val(:user), "…"),
-    self    = Chat(model="gpt-4o-mini"),
+    self    = Chat(model="gpt-5.2-pro"),
     usage   = TokenUsage(prompt_tokens=100_000, completion_tokens=50_000),
 )
 println("estimated_cost with default pricing = \$", estimated_cost(unpriced))
@@ -140,13 +140,14 @@ defaults — `merge` returns a new `Dict` and leaves [`DEFAULT_PRICING`](@ref) u
 
 ```@example cost
 # Fill in the provider's *current* list price (per 1M tokens); divide by 1_000_000.
+# gpt-5.2-pro lists no cached-input rate, so a cache read is billed as input.
 pricing = merge(DEFAULT_PRICING, Dict(
-    "gpt-4o-mini" => (input        = 0.15 / 1_000_000,
-                      cached_input  = 0.075 / 1_000_000,
-                      output        = 0.60 / 1_000_000),
+    "gpt-5.2-pro" => (input        = 21.00 / 1_000_000,
+                      cached_input  = 21.00 / 1_000_000,
+                      output        = 168.00 / 1_000_000),
 ))
 
-println("now priced? ", haskey(pricing, "gpt-4o-mini"))
+println("now priced? ", haskey(pricing, "gpt-5.2-pro"))
 println("cost USD = ", round(estimated_cost(unpriced; pricing), digits=6))
 ```
 
@@ -174,9 +175,9 @@ cumulative_cost(chat)                  # e.g. 0.00231  (USD, summed over both ca
 
 !!! warning "Auto-accumulation always uses the default pricing table"
     `chatrequest!` prices each call with [`DEFAULT_PRICING`](@ref); there is no `pricing=`
-    for the running total. So a `Chat` on an **unpriced** model (e.g. `gpt-4o-mini`) reports
+    for the running total. So a `Chat` on an **unpriced** model (e.g. `gpt-5.2-pro`) reports
     `cumulative_cost == 0.0` even after successful calls — unless you add its row to the
-    table (`DEFAULT_PRICING["gpt-4o-mini"] = row`, safe while requests run), after which
+    table (`DEFAULT_PRICING["gpt-5.2-pro"] = row`, safe while requests run), after which
     later calls accrue. Alternatively, ignore the running total and sum
     [`estimated_cost`](@ref)`(result; pricing=…)` yourself.
 
@@ -202,8 +203,8 @@ res = embeddingrequest!(emb)
 embeddings_cost = estimated_cost(res)                       # USD for this batch
 ```
 
-Note that embedding models missing from the default table (e.g. `gemini-embedding-001`)
-hit the same `0.0` behavior — supply `pricing=` for them too. Chat, embeddings,
+Note that embedding models missing from the default table (a Mistral model, or one on your
+own server, for example) hit the same `0.0` behavior — supply `pricing=` for them too. Chat, embeddings,
 `respond` and FIM results from a local model on an [`OllamaEndpoint`](@ref) cost
 `0.0` without a warning; pass `model=` to price one as if it had run elsewhere. A
 cloud model reached through Ollama — a tag of `cloud`, or one ending in `-cloud`,

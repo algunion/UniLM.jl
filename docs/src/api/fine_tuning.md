@@ -38,9 +38,11 @@ list_fine_tuning_checkpoints
 ## Usage
 
 ```julia
-# Upload training data (purpose="fine-tune"), then create a job
+# Upload training data (purpose="fine-tune"), then create a job on a base model your
+# organization may still fine-tune: OpenAI's GPT-6 and GPT-5.6 models take no fine-tuning
+base_model = "…"
 train = upload_file("train.jsonl", "fine-tune")
-job = create_fine_tuning_job(model="gpt-4o-mini", training_file="file-abc123")
+job = create_fine_tuning_job(model=base_model, training_file="file-abc123")
 job isa FineTuningSuccess && println("Job: ", job.response.id)
 
 # Retrieve status, list events / checkpoints, list all jobs, cancel

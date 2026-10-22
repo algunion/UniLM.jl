@@ -176,8 +176,8 @@ This checks:
 A user message carries media besides its text: an [`ImageAttachment`](@ref) (PNG, JPEG,
 GIF or WebP), an [`AudioAttachment`](@ref) (WAV or MP3) or a [`DocumentAttachment`](@ref)
 (PDF), each read from a file or from bytes and recognised by its leading bytes, never by
-its name. An image may set the `detail` level an OpenAI model reads it at: `"auto"`,
-`"low"`, `"high"` or `"original"`.
+its name. An image may set the `detail` level a model reads it at: `"auto"`, `"low"`,
+`"high"` or `"original"` (OpenAI's levels; native Gemini takes the first three).
 
 ```julia
 chat = Chat(model="gpt-6-luna")
@@ -191,14 +191,17 @@ result = chatrequest!(chat)
 | Endpoint | Image | Sound clip | Document |
 | :------- | :---- | :--------- | :------- |
 | OpenAI, Azure, the Gemini OpenAI-compatible endpoint, DeepSeek, generic endpoints | `image_url` part (`detail` when set) | `input_audio` part | `file` part (its `filename` and a data URL) |
+| [`ANTHROPICServiceEndpoint`](@ref) | base64 `image` block before the text; a detail level is refused | refused: the Messages API has no audio input | base64 `document` block before the text |
+| [`GEMINIServiceEndpoint`](@ref) | `inlineData` part before the text; `detail` as its media resolution (`"low"`, `"high"`; `"auto"` sends none; `"original"`, and any level on the Gemini 2.5 and Gemma 4 models, refused) | `inlineData` part | `inlineData` part (`application/pdf`; no file name) |
 | [`OllamaEndpoint`](@ref) | `images` entry; a detail level is refused | `images` entry | refused |
 
 On the OpenAI Chat Completions wire (the first row), UniLM sends every kind as a content
-part, and the server decides what to do with it. The native Anthropic and Gemini encoders
-do not send attachments yet. For the Responses API,
+part, and the server decides what to do with it. For the Responses API,
 `input_file(DocumentAttachment("report.pdf"))` is the document's `input_file` part;
-[`OllamaEndpoint`](@ref)'s Responses API, which documents no file inputs, refuses it. A
-refusal is an `ArgumentError` before any request.
+[`OllamaEndpoint`](@ref)'s Responses API, which documents no file inputs, refuses it, and
+[`respond`](@ref) on Gemini Interactions takes the attachments themselves in an
+[`InputMessage`](@ref)'s content (see [Agentic Workflows](@ref agentic_guide)). A refusal is
+an `ArgumentError` before any request.
 
 ## [Audio replies](@id chat_audio_output)
 
@@ -252,10 +255,11 @@ UniLM.jl works with any model name string. Common choices:
 GPT-6 Sol, GPT-6 Luna and the GPT-5.6 models take Chat tools only with
 `reasoning_effort="none"`, and GPT-6 Sol and Luna take sampling controls and log
 probabilities only at that effort; OpenAI's tool path is the Responses API
-([`Respond`](@ref)). On Chat Completions these models take reasoning effort up to `"xhigh"`:
-the API answered `"max"` with HTTP 400 on every one of them (2026-10-22), though its reference
-lists it, so `"max"` goes through `Respond`. None of them takes `"minimal"` (use `"low"`), and
-GPT-6 Astra and GPT-6.1 Sol start at `"low"`. These rules apply to `OPENAIServiceEndpoint`, to
+([`Respond`](@ref)). On Chat Completions every GPT-6 and GPT-5.6 model — GPT-6 Astra and
+GPT-6.1 Sol too — takes reasoning effort up to `"xhigh"`, and `"max"` throws `ArgumentError`
+before any request: the API answered `"max"` with HTTP 400 on each of them (2026-10-22),
+though its reference lists it, so `"max"` goes through `Respond`. None of them takes
+`"minimal"` (use `"low"`), and GPT-6 Astra and GPT-6.1 Sol start at `"low"`. These rules apply to `OPENAIServiceEndpoint`, to
 `gpt-6-sol`, `gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-luna`, `gpt-5.6` and
 `gpt-5.6-sol`/`-terra`/`-luna` by exact id or a dated snapshot (`gpt-6-sol-2026-09-14`), and
 are checked before any request; other models are checked by the server.

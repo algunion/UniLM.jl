@@ -9,7 +9,8 @@ is priced by the requested name), and any other model (Mistral, custom) is estim
 one-time warning unless you supply `pricing=`. The agentic [`respond`](@ref) verb is neutral the same way
 across OpenAI (Responses) and Gemini (Interactions); see [Agentic Workflows](@ref agentic_guide).
 Native OpenAI, Anthropic, and Gemini are first-class backends with their own wire formats (each
-exercised by live integration tests), not OpenAI-compatible shims.
+exercised by live integration tests that the release gate runs against the real APIs before every
+release), not OpenAI-compatible shims.
 
 Select the backend with `service`. Model names and supported generation controls
 remain provider-specific. A request option the chosen provider (or model) cannot
@@ -60,8 +61,8 @@ result = chatrequest!(chat)
 Azure routes each request to a *deployment*. For every model the deployment is read
 **at call time** from `AZURE_OPENAI_DEPLOY_NAME_<MODEL>`, where `<MODEL>` is the model
 id upper-cased with every character other than `A-Z` and `0-9` mapped to `_`
-(`gpt-5.2` → `AZURE_OPENAI_DEPLOY_NAME_GPT_5_2`, `gpt-4o-mini` →
-`AZURE_OPENAI_DEPLOY_NAME_GPT_4O_MINI`), unless a deployment was registered with
+(`gpt-5.2` → `AZURE_OPENAI_DEPLOY_NAME_GPT_5_2`, `gpt-6-luna` →
+`AZURE_OPENAI_DEPLOY_NAME_GPT_6_LUNA`), unless a deployment was registered with
 [`add_azure_deploy_name!`](@ref), which wins. A model with neither makes the call
 return an `LLMCallError` whose `cause` is an `ArgumentError` naming the variable to
 set. `AZUREServiceEndpoint` declares `:chat`, `:tools`, `:streaming` and
@@ -275,14 +276,15 @@ pricing page's rates. On `OPENAIServiceEndpoint`, `max_tokens` goes out as
 `max_tokens` is required on the wire and defaults to 16000 when you omit it (it caps
 thinking plus text, and current Claude models think by default — raise it for long
 generations or `xhigh`/`max` effort). The endpoint declares `:chat`, `:tools`,
-`:streaming` and `:json_output`.
+`:streaming`, `:json_output` and `:models` ([`list_models`](@ref)).
 
 The bare type is the endpoint with no options. An instance,
 `ANTHROPICServiceEndpoint(; betas, user_profile_id, workspace_id, inference_geo)`, adds
-them to every request made through it: `betas` comma-joined in the `anthropic-beta` header,
-`user_profile_id` (the `uprof_` id of the end customer the requests are for) in
-`anthropic-user-profile-id`, `workspace_id` in `anthropic-workspace-id`, and `inference_geo`
-(`"global"` or `"us"`) in the request body. A blank value, a control character, a comma in
+them to every request made through it: `betas` comma-joined in the `anthropic-beta` header
+(except on [`list_models`](@ref): Anthropic's Models API reference marks it deprecated on
+`GET /v1/models`), `user_profile_id` (the `uprof_` id of the end customer the requests are
+for) in `anthropic-user-profile-id`, `workspace_id` in `anthropic-workspace-id`, and
+`inference_geo` (`"global"` or `"us"`) in the request body. A blank value, a control character, a comma in
 a beta name or another region throws `ArgumentError`. UniLM sends a beta's name only: the
 request fields and response blocks of beta features are not modelled. Either form goes
 wherever a `service` goes, and instances with the same options are equal. The options are
@@ -318,7 +320,7 @@ How a neutral `Chat` maps onto the Messages API:
 | `moderation` (OpenAI-only), `seed`, `logprobs`, `top_logprobs`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `verbosity`, `store`, `prompt_cache_key`, `stream_options`, `prediction`, `modalities`, `audio`, `web_search_options` | no counterpart: setting any of them throws `ArgumentError` naming the fields |
 
 `reasoning_effort` per model — the model id decides, or the id with a dated snapshot
-suffix (`claude-haiku-4-5-20251001` takes the Haiku 4.5 row); no model takes another's
+suffix (`claude-opus-4-5-20251101` takes the Opus 4.5 row); no model takes another's
 row by a shared prefix (`claude-sonnet-5-5` is not `claude-sonnet-5`):
 
 | Models | `"low"` … `"max"` | `"none"` |

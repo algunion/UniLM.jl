@@ -65,13 +65,13 @@ has_capability
 | `:vector_stores` | Vector Stores API |
 | `:conversations` | Conversations API |
 | `:moderation` | Moderations API |
-| `:audio` | Audio (TTS / transcription / translation) |
+| `:audio` | OpenAI Audio API transcription (implies `:transcription`) |
 | `:transcription` | Transcription alone ([`transcribe`](@ref)): OpenAI and Ollama; implied by `:audio` |
 | `:batch` | Batch API |
 | `:fine_tuning` | Fine-tuning API |
 | `:containers` | Containers API |
 | `:uploads` | Resumable Uploads API |
-| `:realtime` | Realtime API |
+| `:realtime` | Realtime API: [`realtime_connect`](@ref), [`speak`](@ref) on OpenAI, [`translate`](@ref) |
 | `:system_one` | System One evaluation ([`ask`](@ref)): TypeSafe, OpenAI (its Decisions API) and Ollama |
 | `:models` | Model listing ([`list_models`](@ref)): TypeSafe, OpenAI, Anthropic, Gemini and Ollama |
 

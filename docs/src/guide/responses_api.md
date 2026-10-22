@@ -514,8 +514,8 @@ request, for `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` 
 reasoning effort `"low"` to `"max"` and no sampling controls or log probabilities; GPT-6 Sol and
 Luna take sampling controls and log probabilities only at effort `"none"`; GPT-6 Sol, GPT-6 Luna
 and the GPT-5.6 models take `"none"` to `"max"` and refuse `"minimal"` (use `"low"`). Other
-models are checked by the server. `user` throws `ArgumentError` there: OpenAI replaces it with
-`safety_identifier` and `prompt_cache_key`.
+models are checked by the server. On `OPENAIServiceEndpoint`, `user` throws `ArgumentError` for
+every model: OpenAI replaces it with `safety_identifier` and `prompt_cache_key`.
 
 ## See Also
 

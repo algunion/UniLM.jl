@@ -1575,29 +1575,41 @@ end
 """
     list_models(; service=nothing, config=nothing, cancel=nothing)
 
-List the models and aliases the authenticated account may name in
-[`SystemOneRequest`](@ref)`.model` — on TypeSafe (`GET /v1/models`) a
-[`TypeSafeModelsSuccess`](@ref), a [`SystemOneFailure`](@ref), or a
-[`SystemOneCallError`](@ref). The backend is `service` when given, else the one
-of the enclosing [`with_system_one`](@ref) scope, else
-[`TYPESAFEServiceEndpoint`](@ref); a backend whose System One protocol has no
-listing is an `ArgumentError`. Inside a [`with_recorded_answers`](@ref) scope that
-cannot replay the listing it throws [`ReplayMissError`](@ref) instead, as
-[`ask`](@ref) does.
+List the models a service offers. The service is `service` when given, else the backend
+of the enclosing [`with_system_one`](@ref) scope, else [`TYPESAFEServiceEndpoint`](@ref).
 
-Pass `config::Union{Nothing,RequestConfig}` to override the timeout and retry
-budget; like [`ask`](@ref), this rides the shared retry seam, so `max_attempts`
-applies to the retryable statuses. `cancel::Union{Nothing,CancelToken}` makes the
-call cancellable as for [`ask`](@ref): a cancelled call returns a
-`SystemOneCallError` whose `cause` is a [`UniLMCancelled`](@ref).
+- On TypeSafe (`GET /v1/models`): the models and aliases the authenticated account may
+  name in [`SystemOneRequest`](@ref)`.model` — a [`TypeSafeModelsSuccess`](@ref), a
+  [`SystemOneFailure`](@ref), or a [`SystemOneCallError`](@ref). Inside a
+  [`with_recorded_answers`](@ref) scope that cannot replay the listing it throws
+  [`ReplayMissError`](@ref) instead, as [`ask`](@ref) does.
+- On [`OPENAIServiceEndpoint`](@ref), [`ANTHROPICServiceEndpoint`](@ref) and
+  [`GEMINIServiceEndpoint`](@ref): every model the provider serves the key, with its token
+  limits, capabilities and lifecycle dates (`GET /v1/models` on OpenAI and Anthropic,
+  `GET /v1beta/models` on Gemini, every page of a paged listing) — a
+  [`ModelListSuccess`](@ref) holding a `Vector{`[`ProviderModel`](@ref)`}`, a
+  [`ModelListFailure`](@ref) for an error status on any page, or a
+  [`ModelListCallError`](@ref), which is also what a missing key gives: it names the
+  variable to set.
+- On an [`OllamaEndpoint`](@ref) (`GET /api/tags`): the models installed on that server —
+  an [`OllamaSuccess`](@ref) holding a `Vector{`[`OllamaModel`](@ref)`}`, an
+  [`OllamaFailure`](@ref), or an [`OllamaCallError`](@ref).
 
-With an [`OllamaEndpoint`](@ref) as `service`, it lists the models installed on that
-Ollama server instead (`GET /api/tags`) and returns an [`OllamaSuccess`](@ref) holding a
-`Vector{`[`OllamaModel`](@ref)`}`, an [`OllamaFailure`](@ref), or an
-[`OllamaCallError`](@ref); `config` and `cancel` apply as above, and the listing is not
-recorded by [`with_recorded_answers`](@ref).
+Any other backend with no listing is an `ArgumentError`. Only TypeSafe's listing is
+recorded by [`with_recorded_answers`](@ref): the others go to their service inside a scope
+as outside one.
+
+Pass `config::Union{Nothing,RequestConfig}` to override the timeout and retry budget;
+like [`ask`](@ref), this rides the shared retry seam, so `max_attempts` applies to the
+retryable statuses, and `total_deadline` bounds a paged listing as a whole.
+`cancel::Union{Nothing,CancelToken}` makes the call cancellable as for [`ask`](@ref): a
+cancelled call returns its service's call error (a `SystemOneCallError` on TypeSafe)
+whose `cause` is a [`UniLMCancelled`](@ref).
 
 ```julia
+r = list_models(service=ANTHROPICServiceEndpoint)
+issuccess(r) && [(m.id, m.retires) for m in r.models]   # [("claude-haiku-5-5", nothing), …]
+
 r = list_models(service=OllamaEndpoint())
 issuccess(r) && [m.name for m in r.response]   # ["gemma4:e4b", …]
 ```
@@ -1607,10 +1619,13 @@ list_models(; service::Union{Nothing,ServiceEndpointSpec}=nothing,
             cancel::Union{Nothing,CancelToken}=nothing) =
     _list_models(first(_system_one_target(service, nothing)), config, cancel)
 
-# The listing of the service that serves one: its System One protocol's here, Ollama's
-# own in ollama_models.jl.
+# The listing of a service: its provider's own (`_model_listing`, model_listing.jl), else its
+# System One protocol's. Ollama's is a method of its own in ollama_models.jl.
 _list_models(service::ServiceEndpointSpec, config::Union{Nothing,RequestConfig}, cancel::Union{Nothing,CancelToken}) =
-    _system_one_models(system_one_protocol(service)::SystemOneProtocol, service, config, cancel)
+    _list_models(_model_listing(service), service, config, cancel)
+_model_listing(service) = system_one_protocol(service)::SystemOneProtocol
+_list_models(p::SystemOneProtocol, service, config::Union{Nothing,RequestConfig}, cancel::Union{Nothing,CancelToken}) =
+    _system_one_models(p, service, config, cancel)
 
 # ─── Accessors ───────────────────────────────────────────────────────────────
 

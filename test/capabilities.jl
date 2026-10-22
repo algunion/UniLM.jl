@@ -137,7 +137,10 @@ end
     # default_model — Type dispatch for OPENAI/AZURE/GEMINI (capabilities.jl 55-57),
     # instance dispatch for DeepSeek (line 58). Each distinct return value uniquely
     # identifies (and covers) its specific method, and falsifies a wrong model string.
-    @test UniLM.default_model(OPENAIServiceEndpoint) == "gpt-5.6-sol"
+    @test UniLM.default_model(OPENAIServiceEndpoint) == "gpt-6-sol"
+    # One OpenAI default for both APIs, and it is priced: default-model spend is never a silent 0.0.
+    @test Chat().model == Respond(input="hi").model == "gpt-6-sol"
+    @test haskey(UniLM.DEFAULT_PRICING, UniLM.default_model(OPENAIServiceEndpoint))
     @test UniLM.default_model(AZUREServiceEndpoint) == "gpt-5.2"
     @test UniLM.default_model(GEMINIOpenAIServiceEndpoint) == "gemini-3.8-flash"
     @test UniLM.default_model(ds) == "deepseek-flash"

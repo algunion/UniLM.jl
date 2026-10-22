@@ -20,6 +20,30 @@
         @test lowered[:role] == "user"
         @test lowered[:content] == "hi"
     end
+
+    @testset "phase labels an assistant message as commentary or the final answer" begin
+        # Responses reference: "preserve and resend phase on all assistant messages ... Not used
+        # for user messages".
+        m = InputMessage(role="assistant", content="Checking the logs.", phase="commentary")
+        @test JSON.parse(JSON.json(m)) == Dict("role" => "assistant", "content" => "Checking the logs.",
+                                               "phase" => "commentary")
+        @test JSON.parse(JSON.json(InputMessage(role="assistant", content="Done.", phase="final_answer"))) ==
+              Dict("role" => "assistant", "content" => "Done.", "phase" => "final_answer")
+        @test JSON.parse(JSON.json(InputMessage(role="user", content="hi"))) == Dict("role" => "user", "content" => "hi")
+        two = InputMessage("user", "hi")                       # the positional form without a phase
+        @test (two.role, two.content, two.phase) == ("user", "hi", nothing)
+        err = try InputMessage(role="assistant", content="x", phase="draft"); nothing catch e; e end
+        @test err isa ArgumentError &&
+              err.msg == "InputMessage phase must be \"commentary\" or \"final_answer\" (got \"draft\")"
+        err = try InputMessage(role="user", content="x", phase="commentary"); nothing catch e; e end
+        @test err isa ArgumentError && err.msg == "InputMessage phase labels an assistant message; " *
+              "OpenAI does not read it on a \"user\" message"
+        r = Respond(model="gpt-6-luna", input=[InputMessage(role="assistant", content="Checking.", phase="commentary"),
+                                               InputMessage(role="assistant", content="Done.", phase="final_answer"),
+                                               InputMessage(role="user", content="Go on.")])
+        sent = JSON.parse(UniLM.encode_agentic(r.service, r))["input"]
+        @test [get(m, "phase", nothing) for m in sent] == ["commentary", "final_answer", nothing]
+    end
 end
 
 @testset "Content part helpers" begin
@@ -386,7 +410,7 @@ end
 @testset "Respond" begin
     @testset "minimal creation" begin
         r = Respond(input="Tell me a joke")
-        @test r.model == "gpt-5.6-sol"
+        @test r.model == "gpt-6-sol"
         @test r.input == "Tell me a joke"
         @test r.service == UniLM.OPENAIServiceEndpoint
         @test isnothing(r.instructions)
@@ -418,20 +442,25 @@ end
         @test r.truncation == "auto"
     end
 
-    @testset "positional constructor back-compat" begin
-        # 30 or 31 positional arguments through v0.18; moderation extends the full
-        # form to 32. Omitted trailing fields are nothing.
-        ref = Respond(model="gpt-5.4-mini", input="hi", instructions="be brief",
+    @testset "positional constructor takes every field" begin
+        ref = Respond(model="gpt-5.4-mini", input="hi", instructions="be brief", safety_identifier="u1",
                       prompt_cache_options=PromptCacheOptions(mode="implicit"),
                       moderation=ModerationConfig(model="omni-moderation-latest"))
         vals = Any[getfield(ref, f) for f in fieldnames(Respond)]
-        @test length(vals) == 32
-        r30 = Respond(vals[1:30]...)
-        @test (r30.model, r30.input, r30.instructions) == ("gpt-5.4-mini", "hi", "be brief")
-        @test isnothing(r30.prompt_cache_options) && isnothing(r30.moderation)
-        r31 = Respond(vals[1:31]...)
-        @test r31.prompt_cache_options == ref.prompt_cache_options && isnothing(r31.moderation)
-        @test Respond(vals...).moderation == ref.moderation
+        @test length(vals) == 31
+        r = Respond(vals...)
+        @test (r.model, r.input, r.instructions, r.safety_identifier) == ("gpt-5.4-mini", "hi", "be brief", "u1")
+        @test r.prompt_cache_options == ref.prompt_cache_options && r.moderation == ref.moderation
+        # A shorter call is refused: it would bind every value after the gap to the field before it.
+        @test_throws MethodError Respond(vals[1:30]...)
+        @test_throws MethodError Respond(vals[1:29]...)
+    end
+
+    @testset "no prompt field: OpenAI shuts reusable prompts down on 2026-11-30" begin
+        @test !hasfield(Respond, :prompt)
+        @test_throws MethodError Respond(input="x", prompt=Dict("id" => "p1"))
+        @test_throws MethodError respond("x"; prompt=Dict("id" => "p1"))     # before any request
+        @test !haskey(JSON.lower(Respond(input="x")), :prompt)
     end
 
     @testset "temperature and top_p mutual exclusion" begin
@@ -456,14 +485,14 @@ end
     end
 
     @testset "with reasoning" begin
-        r = Respond(input="Solve", model="o3-mini", reasoning=Reasoning(effort="high"))
+        r = Respond(input="Solve", model="gpt-6.1-sol", reasoning=Reasoning(effort="high"))
         @test r.reasoning.effort == "high"
     end
 
     @testset "JSON serialization" begin
         r = Respond(input="Hello", instructions="Be nice", temperature=0.7)
         lowered = JSON.lower(r)
-        @test lowered[:model] == "gpt-5.6-sol"
+        @test lowered[:model] == "gpt-6-sol"
         @test lowered[:input] == "Hello"
         @test lowered[:instructions] == "Be nice"
         @test lowered[:temperature] == 0.7
@@ -487,7 +516,7 @@ end
         json_str = JSON.json(r)
         parsed = JSON.parse(json_str)
 
-        @test parsed["model"] == "gpt-5.6-sol"
+        @test parsed["model"] == "gpt-6-sol"
         @test parsed["input"] isa Vector
         @test parsed["input"][1]["role"] == "user"
         @test parsed["tools"] isa Vector
@@ -576,6 +605,29 @@ end
         raw=Dict{String,Any}()
     )
     @test output_text(ro) == "Line 1\nLine 2"
+end
+
+@testset "output_text returns the final answer, not the commentary" begin
+    # A model labels its intermediate updates `phase: "commentary"` (a preamble before a tool
+    # call) and its answer `phase: "final_answer"` (Responses reference, ResponseOutputMessage.phase).
+    msg(phase, text) = Dict{String,Any}("type" => "message", "role" => "assistant", "phase" => phase,
+        "content" => Any[Dict{String,Any}("type" => "output_text", "text" => text)])
+    call = Dict{String,Any}("type" => "function_call", "name" => "weather", "arguments" => "{}", "call_id" => "c1")
+    ro = ResponseObject(id="r", status="completed", model="gpt-6-sol", raw=Dict{String,Any}(),
+        output=Any[msg("commentary", "Let me check the weather."), call, msg("final_answer", "It is 15 °C.")])
+    @test output_text(ro) == "It is 15 °C."
+    @test output_text(ResponseSuccess(response=ro)) == "It is 15 °C."
+    # A turn that stops at its commentary, before its tool result, has no answer yet.
+    preamble = ResponseObject(id="r", status="completed", model="gpt-6-sol", raw=Dict{String,Any}(),
+        output=Any[msg("commentary", "Checking."), call])
+    @test output_text(preamble) == ""
+    # Messages without a phase (or with a null one) read as before: every message's text.
+    plain(phase) = Dict{String,Any}("type" => "message", "phase" => phase,
+        "content" => Any[Dict{String,Any}("type" => "output_text", "text" => "B")])
+    unlabelled = ResponseObject(id="r", status="completed", model="gpt-5.4-mini", raw=Dict{String,Any}(),
+        output=Any[Dict{String,Any}("type" => "message", "content" => Any[Dict{String,Any}("type" => "output_text", "text" => "A")]),
+                   plain(nothing), msg("final_answer", "C")])
+    @test output_text(unlabelled) == "A\nB\nC"
 end
 
 @testset "output_text empty output" begin
@@ -1048,14 +1100,6 @@ end
         @test lowered[:top_logprobs] == 5
     end
 
-    @testset "prompt field" begin
-        p = Dict("id" => "prompt_abc", "version" => "1")
-        r = Respond(input="test", prompt=p)
-        @test r.prompt == p
-        lowered = JSON.lower(r)
-        @test lowered[:prompt] == p
-    end
-
     @testset "prompt_cache_key field" begin
         r = Respond(input="test", prompt_cache_key="cache_key_123")
         @test r.prompt_cache_key == "cache_key_123"
@@ -1108,7 +1152,6 @@ end
             max_tool_calls=Int64(5),
             service_tier="auto",
             top_logprobs=Int64(3),
-            prompt=Dict("id" => "p1"),
             prompt_cache_key="key",
             prompt_cache_retention="in-memory",
             safety_identifier="safe_123",
@@ -1124,7 +1167,7 @@ end
         @test parsed["max_tool_calls"] == 5
         @test parsed["service_tier"] == "auto"
         @test parsed["top_logprobs"] == 3
-        @test parsed["prompt"]["id"] == "p1"
+        @test !haskey(parsed, "prompt")
         @test parsed["prompt_cache_key"] == "key"
         @test parsed["prompt_cache_retention"] == "in-memory"
         @test parsed["safety_identifier"] == "safe_123"
@@ -1276,7 +1319,6 @@ end
         max_tool_calls=Int64(10),
         service_tier="flex",
         top_logprobs=Int64(5),
-        prompt=Dict("id" => "prompt_1"),
         prompt_cache_key="cache_1",
         prompt_cache_retention="24h",
         safety_identifier="safe_1",
@@ -1305,7 +1347,6 @@ end
     @test lowered[:max_tool_calls] == 10
     @test lowered[:service_tier] == "flex"
     @test lowered[:top_logprobs] == 5
-    @test lowered[:prompt] == Dict("id" => "prompt_1")
     @test lowered[:prompt_cache_key] == "cache_1"
     @test lowered[:prompt_cache_retention] == "24h"
     @test lowered[:safety_identifier] == "safe_1"
@@ -1690,10 +1731,10 @@ end
 # ─── Expanded coverage: Respond with explicit model override ─────────────────
 
 @testset "Respond with explicit model override" begin
-    r = Respond(input="test", model="o3-mini")
-    @test r.model == "o3-mini"
+    r = Respond(input="test", model="gpt-6.1-sol")
+    @test r.model == "gpt-6.1-sol"
     lowered = JSON.lower(r)
-    @test lowered[:model] == "o3-mini"
+    @test lowered[:model] == "gpt-6.1-sol"
 end
 
 @testset "Respond convenience with new kwargs" begin

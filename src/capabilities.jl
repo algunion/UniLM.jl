@@ -425,10 +425,10 @@ _audio_bill(::Nothing, ::Int, ::Int, ::Float64, ::Float64) = 0.0
 _audio_bill(r::_OpenAIAudioRates, audio_in::Int, audio_out::Int, input::Float64, output::Float64) =
     input * r.input * audio_in + output * r.output * audio_out
 
-# Audio tokens without audio-token rates (a price row has none; `_OPENAI_AUDIO_RATES` holds
-# OpenAI's) leave the call unpriced, as a model without a price row is, rather than billed at
-# text rates: gpt-audio-1.5 bills audio input at 12.8 times and audio output at 6.4 times its
-# text rates.
+# Audio tokens that no audio-token rate covers leave the call unpriced, as a model without a price
+# row is. On OpenAI's endpoint, whose audio-token rates `_OPENAI_AUDIO_RATES` holds (a price row has
+# none), they are never billed at text rates: gpt-audio-1.5 bills audio input at 12.8 times and audio
+# output at 6.4 times its text rates.
 function _unpriced_audio(model::String)::Float64
     @warn "no audio-token rates for this model on this endpoint; its estimated cost is 0.0" model _id = Symbol(
         "unilm_unpriced_audio_", model) maxlog = 1

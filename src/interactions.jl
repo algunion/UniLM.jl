@@ -254,9 +254,12 @@ function _extend_answer!(message::Dict{String,Any}, step::AbstractDict)::Nothing
 end
 
 # Gemini Interactions usage → OpenAI-Responses-shaped usage so token_usage/estimated_cost
-# work unchanged. The tool-use prompt (total_tool_use_tokens) is input the model read, billed
-# at the input rate as on generateContent; thoughts bill at the output rate, so they fold into
-# billable output_tokens, and reasoning_tokens breaks out the thought subset (OpenAI semantics).
+# work unchanged. The tool-use prompt (total_tool_use_tokens, e.g. a page url_context read) is
+# input the model read, billed at the input rate ("URL context: charged as input tokens",
+# https://ai.google.dev/gemini-api/docs/pricing), and it is not part of total_input_tokens: a
+# url_context interaction on gemini-3.8-flash reported input 30, tool use 61, output 64 and
+# total 155 on 2026-10-22. Thoughts bill at the output rate, so they fold into billable
+# output_tokens, and reasoning_tokens breaks out the thought subset (OpenAI semantics).
 # The raw usage is preserved on ResponseObject.raw. Per-call hosted-tool fees are NOT modeled.
 _interaction_usage(::Nothing) = nothing
 function _interaction_usage(u::AbstractDict)

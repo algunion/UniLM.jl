@@ -713,16 +713,20 @@ end
             @test err isa ArgumentError && occursin("Gemini ignores $field", err.msg) && occursin(model, err.msg)
         end
     end
-    @test Set(["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]) ⊆ Set(UniLM._GEMINI_SAMPLING_MODELS)
-    for model in UniLM._GEMINI_SAMPLING_MODELS
+    # The earlier text and image models, the 2.5 family among them, take them.
+    @test Set(["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.1-flash-lite-image",
+               "gemini-3-pro-image", "gemini-3.1-flash-image", "gemini-2.5-flash-image"]) ⊆ Set(UniLM._GEMINI_PRE_3_6_MODELS)
+    for model in UniLM._GEMINI_PRE_3_6_MODELS
         @test native(model; temperature=0.5)["generationConfig"] == Dict("temperature" => 0.5)
         @test native(model; top_p=0.9)["generationConfig"] == Dict("topP" => 0.9)
         @test agentic(model; temperature=0.5)["generation_config"] == Dict("temperature" => 0.5)
         @test agentic(model; top_p=0.9)["generation_config"] == Dict("top_p" => 0.9)
     end
-    # Refused before any request: the encoder's ArgumentError propagates out of the verb.
-    @test_throws ArgumentError chatrequest!(Chat(service=GEMINIServiceEndpoint, model="gemini-4-argon",
-        temperature=0.5, messages=[Message(role=RoleUser, content="hi")]))
+    # Refused before any request: the encoder runs before any I/O, and the verb lets its sampling
+    # refusal through.
+    err = try chatrequest!(Chat(service=GEMINIServiceEndpoint, model="gemini-4-argon", temperature=0.5,
+                                messages=[Message(role=RoleUser, content="hi")])); nothing catch e; e end
+    @test err isa ArgumentError && occursin("Gemini ignores temperature", err.msg) && occursin("gemini-4-argon", err.msg)
 end
 
 @testset "a request ending with a model turn is refused where Gemini answers it with HTTP 400" begin
@@ -739,7 +743,7 @@ end
         @test err isa ArgumentError && occursin(model, err.msg) && occursin("ends with a model turn", err.msg)
     end
     # The earlier models still continue a prefilled turn.
-    for model in UniLM._GEMINI_SAMPLING_MODELS
+    for model in UniLM._GEMINI_PRE_3_6_MODELS
         @test last(contents(model, [user, prefill])) == Dict("role" => "model", "parts" => [Dict("text" => "Translation:")])
     end
     # A model turn with nothing to send is left out, so that request still ends with the user's turn,
@@ -752,16 +756,18 @@ end
     @test [t["role"] for t in turns] == ["user", "model", "user"]
 end
 
-@testset "prompt_cache_options — Gemini caches prompts implicitly, so there is nothing to set" begin
+@testset "prompt_cache_options — Gemini caches prompts implicitly; its explicit caching is not wrapped" begin
     # ai.google.dev/gemini-api/docs/caching: implicit caching is on for every Gemini 2.5 and newer
-    # model with nothing to configure; Interactions and Gemini 4 Argon have no other kind.
+    # model with nothing to configure; explicit caching (cached contents) is a generateContent API
+    # of its own on Gemini 3 and 2.5 models, which UniLM does not wrap.
     for pco in (PromptCacheOptions(ttl="5m"), PromptCacheOptions(ttl="1h"), PromptCacheOptions(ttl="30m"),
                 PromptCacheOptions(ttl="12h"), PromptCacheOptions(mode="implicit"))
         for f in (() -> encode_request(GEMINIServiceEndpoint, Chat(service=GEMINIServiceEndpoint, prompt_cache_options=pco)),
                   () -> UniLM.encode_agentic(GEMINIServiceEndpoint,
                                              Respond(service=GEMINIServiceEndpoint, input="x", prompt_cache_options=pco)))
             err = try f(); nothing catch e; e end
-            @test err isa ArgumentError && occursin("prompt_cache_options", err.msg) && occursin("implicitly", err.msg)
+            @test err isa ArgumentError && occursin("prompt_cache_options", err.msg) && occursin("implicitly", err.msg) &&
+                  occursin("does not wrap its explicit caching", err.msg)
         end
     end
 end
@@ -819,6 +825,9 @@ end
     @test lite.model == "gemini-3.5-flash-lite"
     @test estimated_cost(lite) ≈ (1_000 * 0.30 + 100 * 2.50) / 1_000_000
     @test (@test_logs (:warn, r"no price row") estimated_cost(lite; model="gemini-flash-lite-latest")) == 0.0
+    # gemini-pro-latest was served by gemini-3.1-pro-preview on 2026-10-22: billed at that model's row.
+    pro = result("gemini-pro-latest", reply("gemini-3.1-pro-preview"))
+    @test estimated_cost(pro) ≈ (1_000 * 2.0 + 100 * 12.0) / 1_000_000
     # gemini-3.7-flash and gemini-3.5-flash answer as gemini-3.8-flash and gemini-3.6-flash, and are
     # billed at those rates whether or not the reply names the served model.
     for (asked, target) in (("gemini-3.7-flash", "gemini-3.8-flash"), ("gemini-3.5-flash", "gemini-3.6-flash"))

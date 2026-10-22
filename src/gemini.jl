@@ -34,26 +34,29 @@ provider_capabilities(::Type{GEMINIServiceEndpoint}) =
 
 default_model(::Type{GEMINIServiceEndpoint}) = "gemini-3.8-flash"
 
-# The models that honour temperature and top_p, by exact id. From Gemini 3.6 Flash and 3.5
-# Flash-Lite on, "the API ignores these parameters", for those models and all future releases
+# The models released before Gemini 3.6 Flash (2026-07-21) and still served, by exact id: the text
+# and image models of the 2026-10-22 model listing. From Gemini 3.6 Flash and 3.5 Flash-Lite on, for
+# those models and all future releases, "the API ignores" temperature, top_p and top_k, and a
+# request ending with a model turn is an HTTP 400
 # (https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.6#api-changes-and-parameter-updates;
-# gemini-4-argon and gemini-3.8-flash answered such requests with HTTP 200 on 2026-10-22), so
-# every other id is refused. These are the text models of the 2026-10-22 model listing released
-# before Gemini 3.6 Flash (2026-07-21) and still served; an alias is not one, since it moves to
-# newer models. The same models still continue a prefilled model turn.
-const _GEMINI_SAMPLING_MODELS = (
+# gemini-4-argon and gemini-3.8-flash answered sampled requests with HTTP 200 on 2026-10-22), so
+# both rules refuse every other id. An alias is not one of these models: it moves to newer ones.
+const _GEMINI_PRE_3_6_MODELS = (
     "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools",
     "gemini-3.1-flash-lite",                                   # shuts down 2027-05-07
     "gemini-3-flash-preview",
     "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite",
-    "gemma-4-31b-it", "gemma-4-26b-a4b-it")
+    "gemma-4-31b-it", "gemma-4-26b-a4b-it",
+    "gemini-3.1-flash-lite-image", "gemini-3-pro-image",
+    "gemini-3.1-flash-image",                                  # deprecated, no shutdown date announced
+    "gemini-2.5-flash-image")                                  # shuts down 2027-03-15
 
 function _gemini_validate_sampling(model::String, temperature, top_p)
     set = _set_fields("temperature" => !isnothing(temperature), "top_p" => !isnothing(top_p))
-    isempty(set) || model in _GEMINI_SAMPLING_MODELS || throw(ArgumentError(
+    isempty(set) || model in _GEMINI_PRE_3_6_MODELS || throw(ArgumentError(
         "Gemini ignores $(join(set, " and ")) on Gemini 3.6 Flash, 3.5 Flash-Lite and every later model " *
         "(https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.6), so UniLM sends sampling parameters " *
-        "only to $(join(_GEMINI_SAMPLING_MODELS, ", ")): unset $(join(set, " and ")) for $model"))
+        "only to $(join(_GEMINI_PRE_3_6_MODELS, ", ")): unset $(join(set, " and ")) for $model"))
     nothing
 end
 
@@ -62,19 +65,22 @@ end
 # (https://ai.google.dev/gemini-api/docs/whats-new-gemini-3.6#api-changes-and-parameter-updates;
 # observed on gemini-3.8-flash, 2026-10-22). The earlier models continue a prefilled turn.
 function _gemini_validate_last_turn(model::String, contents::Vector{Dict{Symbol,Any}})::Nothing
-    isempty(contents) || last(contents)[:role] != "model" || model in _GEMINI_SAMPLING_MODELS ||
+    isempty(contents) || last(contents)[:role] != "model" || model in _GEMINI_PRE_3_6_MODELS ||
         throw(ArgumentError("$model answers HTTP 400 to a request that ends with a model turn: Gemini " *
             "3.6 Flash, 3.5 Flash-Lite and every later model do not continue a prefilled answer. End the " *
             "conversation with a user message; to shape the answer, use a system message or response_format"))
     nothing
 end
 
-# Gemini caches repeated prompt prefixes implicitly, with nothing to configure
-# (https://ai.google.dev/gemini-api/docs/caching), so a cache option has nowhere to go.
+# Gemini caches repeated prompt prefixes implicitly, with no option to set
+# (https://ai.google.dev/gemini-api/docs/caching). Its explicit caching — cached contents, which
+# generateContent offers on Gemini 3 and 2.5 models — is an API of its own that UniLM does not
+# wrap, so a cache option has nowhere to go.
 _gemini_refuse_cache_options(::Nothing) = nothing
 _gemini_refuse_cache_options(::PromptCacheOptions) = throw(ArgumentError(
-    "Gemini takes no prompt_cache_options: it caches repeated prompt prefixes implicitly, with no mode " *
-    "or ttl to set (https://ai.google.dev/gemini-api/docs/caching); unset prompt_cache_options"))
+    "Gemini takes no prompt_cache_options: it caches repeated prompt prefixes implicitly, with no option " *
+    "to set, and UniLM does not wrap its explicit caching (cached contents) " *
+    "(https://ai.google.dev/gemini-api/docs/caching); unset prompt_cache_options"))
 
 # Thinking levels per model, by exact id, transcribed from the "Controlling thinking" table
 # (https://ai.google.dev/gemini-api/docs/thinking, 2026-10-22). Google's ids carry no dated
@@ -180,6 +186,16 @@ function encode_request(::Type{GEMINIServiceEndpoint}, chat::Chat)
         (body[:labels] = Dict(:safety_identifier => _gemini_safety_label(chat.safety_identifier)))
     # NB: `stream` is expressed in the URL method (get_url), never in the body.
     JSON.json(body)
+end
+
+# GEMINIOpenAIServiceEndpoint serves the same models on the OpenAI wire, and they ignore the
+# sampling parameters there too, so the same models take them. Its other refusals are the
+# server's: it answers HTTP 400 to `prompt_cache_options` ("Unknown name") and to a request
+# ending with an assistant turn ("Requests ending with a model turn are not supported."),
+# observed on gemini-3.8-flash on 2026-10-22.
+function encode_request(::Type{GEMINIOpenAIServiceEndpoint}, chat::Chat)::String
+    _gemini_validate_sampling(chat.model, chat.temperature, chat.top_p)
+    invoke(encode_request, Tuple{OpenAIWireEndpointSpec,Chat}, GEMINIOpenAIServiceEndpoint, chat)
 end
 
 # Neutral response_format → generationConfig.responseFormat = {text: TextResponseFormat}.

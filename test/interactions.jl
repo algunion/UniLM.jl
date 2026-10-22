@@ -206,6 +206,12 @@ end
     @test u["input_tokens_details"]["cached_tokens"] == 4
     @test u["output_tokens_details"]["reasoning_tokens"] == 5
     @test isnothing(UniLM._interaction_usage(nothing))
+    # As a url_context interaction on gemini-3.8-flash reported it on 2026-10-22: the tool-use prompt
+    # lies outside total_input_tokens, and total_tokens counts it apart.
+    seen = UniLM._interaction_usage(Dict("total_input_tokens" => 30, "total_tool_use_tokens" => 61,
+        "total_output_tokens" => 64, "total_thought_tokens" => 0, "total_cached_tokens" => 0, "total_tokens" => 155))
+    @test (seen["input_tokens"], seen["output_tokens"]) == (91, 64)
+    @test seen["input_tokens"] + seen["output_tokens"] == seen["total_tokens"]
     # end-to-end: a decoded interaction yields correct token_usage + non-zero cost (cached=0 → clean rate identity)
     raw0 = Dict("total_input_tokens" => 12, "total_output_tokens" => 69, "total_thought_tokens" => 5,
                 "total_tool_use_tokens" => 3, "total_cached_tokens" => 0, "total_tokens" => 89)

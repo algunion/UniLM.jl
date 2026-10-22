@@ -355,6 +355,7 @@ end
     # input, context-caching (cache read), output.
     for (model, i, c, o) in (("gemini-4-argon", 2.0, 0.10, 10.0), ("gemini-3.8-flash", 0.75, 0.075, 3.75),
                              ("gemini-3.6-flash", 0.75, 0.075, 3.75), ("gemini-3.5-flash-lite", 0.30, 0.03, 2.50),
+                             ("gemini-3.1-pro-preview", 2.0, 0.20, 12.0),   # prompts up to 200K tokens
                              ("gemini-2.5-flash", 0.3, 0.03, 2.5), ("gemini-2.5-flash-lite", 0.1, 0.01, 0.4),
                              ("gemini-embedding-2", 0.20, 0.20, 0.0))
         @test DEFAULT_PRICING[model] == UniLM._price(i, c, o)

@@ -57,6 +57,11 @@ _lchat(; ep=_OLLAMA_EP, system="You are concise.", kw...) =
     (c = Chat(; service=ep, model=_OLLAMA_MODEL, kw...); push!(c, Message(Val(:system), system)); c)
 _ask(c::Chat, q; kw...) = (push!(c, Message(Val(:user), q)); chatrequest!(c; kw...))
 
+# Structured-output requests take a token cap and one short attempt: a format bounds which tokens the model
+# may emit, not how many, so a reply can run on without closing the object (see the structured-output testset).
+const _FORMAT_CAP = 256
+const _FORMAT_CFG = RequestConfig(request_timeout=60.0, max_attempts=1)
+
 const _WEATHER_TOOL = UniLM.CallableTool(
     Tool(func=FunctionSignature(name="get_weather", description="Current weather in a city",
         parameters=Dict("type" => "object", "properties" => Dict("city" => Dict("type" => "string")),
@@ -141,18 +146,29 @@ end
     schema = Dict("type" => "object", "additionalProperties" => false, "required" => ["name", "year", "city"],
                   "properties" => Dict("name" => Dict("type" => "string"), "year" => Dict("type" => "integer"),
                                        "city" => Dict("type" => "string")))
-    # Refuted by: any reply that is not the schema's JSON — the default (thinking-on) request
-    # failed 10 of 10 on gemma4:e4b before the format turned thinking off. Default sampling.
+    # Refuted by: a complete reply that is not the schema's JSON — the default (thinking-on) request
+    # failed 10 of 10 on gemma4:e4b before the format turned thinking off — or by more than one of the
+    # eight replies running to the token cap. Default sampling. Uncapped, the first of these requests
+    # twice generated for the whole 600 s default request timeout on Ollama 0.40.6 before the default
+    # retry answered in under a second, so the retry hid the miss. Capped, a runaway ends in seconds as
+    # a "length" stop and is counted here instead.
+    capped(r) = r isa LLMSuccess && r.message.finish_reason == "length"
+    ask(format, q) = _ask(_lchat(max_tokens=_FORMAT_CAP, response_format=format), q; config=_FORMAT_CFG)
+    runaways = 0
     for _ in 1:5
-        r = _ask(_lchat(response_format=UniLM.json_schema("person", "A person", schema)),
-                 "Extract the person: Ada Lovelace, born 1815 in London.")
-        d = JSON.parse(text(r))
-        @test d["name"] == "Ada Lovelace" && d["year"] == 1815 && d["city"] == "London"
+        r = ask(UniLM.json_schema("person", "A person", schema), "Extract the person: Ada Lovelace, born 1815 in London.")
+        runaways += capped(r)
+        @test capped(r) || let d = JSON.parse(text(r))
+            d["name"] == "Ada Lovelace" && d["year"] == 1815 && d["city"] == "London"
+        end
     end
     for _ in 1:3
-        r = _ask(_lchat(response_format=UniLM.json_object()), "Give a JSON object with keys a and b set to 1 and 2.")
-        @test JSON.parse(text(r)) isa AbstractDict
+        r = ask(UniLM.json_object(), "Give a JSON object with keys a and b set to 1 and 2.")
+        runaways += capped(r)
+        @test capped(r) || JSON.parse(text(r)) isa AbstractDict
     end
+    runaways > 0 && @warn "structured output: $runaways of 8 replies ran to the $_FORMAT_CAP-token cap"
+    @test runaways <= 1
 end
 
 @testset "vision and audio attachments" begin
@@ -243,14 +259,24 @@ end
                          input=[InputMessage(role="user", content=[input_text("What colour is the shape? One word."),
                                                                   input_image("data:image/png;base64," * png)])]))
     @test ri isa ResponseSuccess && occursin("red", lowercase(output_text(ri)))
-    # Refuted by: a schema request answered with plain text (the format turns thinking off here too).
+    # Refuted by: a schema request answered with plain text (the format turns thinking off here too), or by
+    # more than one of the three replies running to the token cap. Capped like the chat requests; this route
+    # reports a reply cut at max_output_tokens as "completed", so a reply that used every allowed token is
+    # the runaway.
     schema = Dict("type" => "object", "additionalProperties" => false, "required" => ["name", "year"],
                   "properties" => Dict("name" => Dict("type" => "string"), "year" => Dict("type" => "integer")))
+    runaways = 0
     for _ in 1:3
         rj = respond(Respond(service=_OLLAMA_EP, model=_OLLAMA_MODEL, input="Extract: Ada Lovelace, born 1815.",
-                             text=TextConfig(format=TextFormatSpec(type="json_schema", name="p", schema=schema))))
-        @test JSON.parse(output_text(rj))["year"] == 1815
+                             max_output_tokens=_FORMAT_CAP,
+                             text=TextConfig(format=TextFormatSpec(type="json_schema", name="p", schema=schema)));
+                     config=_FORMAT_CFG)
+        capped = rj isa ResponseSuccess && token_usage(rj).completion_tokens >= _FORMAT_CAP
+        runaways += capped
+        @test capped || JSON.parse(output_text(rj))["year"] == 1815
     end
+    runaways > 0 && @warn "respond structured output: $runaways of 3 replies ran to the $_FORMAT_CAP-token cap"
+    @test runaways <= 1
 end
 
 @testset "fill-in-the-middle with a code model" begin

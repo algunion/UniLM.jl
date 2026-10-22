@@ -281,11 +281,12 @@ end
 _interaction_text_part(c) = c isa AbstractDict && get(c, "type", "") == "text"
 
 # A model answering across several steps (the hops of a long decode, text resumed after a
-# thought) adds one model_output step each, and Google's guides read the answer as the text of
-# those steps joined with no separator (https://ai.google.dev/gemini-api/docs/long-decode). So
-# a run of model_output steps, with only thoughts between them, is one message holding one
-# output_text part: the text parts of every step of the run, joined as written. Any other step
-# ends the run.
+# thought or a tool) adds one model_output step each, and Google's guides and SDK read the answer
+# as the text of every model_output step joined with no separator, whatever steps come between
+# (https://ai.google.dev/gemini-api/docs/long-decode). So the model_output steps are one message,
+# where the first of them is, holding one output_text part: the text parts of every step, joined
+# as written; the other steps keep their order around it. A user_input step, the interaction's
+# own input, is no part of the answer: the model_output steps after it are a message of their own.
 function _interaction_output(steps)::Vector{Any}
     out = Any[]
     answer = 0   # index in `out` of the message the next model_output step extends; 0 for none
@@ -299,7 +300,6 @@ function _interaction_output(steps)::Vector{Any}
             end
             _extend_answer!(out[answer], s)
         elseif t == "function_call"
-            answer = 0
             # Absent or null arguments: a call without arguments.
             args = something(get(s, "arguments", nothing), Dict{String,Any}())
             push!(out, Dict{String,Any}(
@@ -314,9 +314,9 @@ function _interaction_output(steps)::Vector{Any}
             # code_execution_*, url_context_*, …): surface them verbatim (native
             # type + fields, e.g. a thought step's signature) rather than
             # dropping. output_text still comes from model_output;
-            # function_calls() ignores them (no "function_call" type). A thought
-            # leaves the answer open; every other step ends it.
-            t == "thought" || (answer = 0)
+            # function_calls() ignores them (no "function_call" type). Only an
+            # input step ends the answer.
+            t == "user_input" && (answer = 0)
             push!(out, Dict{String,Any}(s))
         end
     end
@@ -350,16 +350,23 @@ end
 # https://ai.google.dev/gemini-api/docs/pricing), and it is not part of total_input_tokens: a
 # url_context interaction on gemini-3.8-flash reported input 30, tool use 61, output 64 and
 # total 155 on 2026-10-22. Thoughts bill at the output rate, so they fold into billable
-# output_tokens, and reasoning_tokens breaks out the thought subset (OpenAI semantics).
+# output_tokens, and reasoning_tokens breaks out the thought subset (OpenAI semantics). The audio
+# of the input (the "audio" entries of input_tokens_by_modality and tool_use_tokens_by_modality)
+# is input_tokens_details.audio_tokens, which a usage that counts audio carries and token_usage
+# reads as prompt_audio_tokens.
 # The raw usage is preserved on ResponseObject.raw. Per-call hosted-tool fees are NOT modeled.
 _interaction_usage(::Nothing) = nothing
 function _interaction_usage(u::AbstractDict)
     _n(k) = (v = get(u, k, 0); v isa Integer ? Int(v) : 0)
+    input = Dict{String,Any}("cached_tokens" => _n("total_cached_tokens"))
+    audio = _modality_tokens(get(u, "input_tokens_by_modality", nothing), "audio", "tokens") +
+            _modality_tokens(get(u, "tool_use_tokens_by_modality", nothing), "audio", "tokens")
+    audio > 0 && (input["audio_tokens"] = audio)
     Dict{String,Any}(
         "input_tokens"  => _n("total_input_tokens") + _n("total_tool_use_tokens"),
         "output_tokens" => _n("total_output_tokens") + _n("total_thought_tokens"),
         "total_tokens"  => _n("total_tokens"),
-        "input_tokens_details"  => Dict{String,Any}("cached_tokens" => _n("total_cached_tokens")),
+        "input_tokens_details"  => input,
         "output_tokens_details" => Dict{String,Any}("reasoning_tokens" => _n("total_thought_tokens")))
 end
 

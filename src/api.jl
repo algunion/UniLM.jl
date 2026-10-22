@@ -2038,7 +2038,7 @@ function _embedding_slots(data::AbstractVector, n::Int)::Vector{Int}
         checkbounds(Bool, seen, i + 1) || throw(ArgumentError(
             "embeddings response row index $i is out of range for $n inputs"))
         seen[i + 1] && throw(ArgumentError("embeddings response repeats row index $i" *
-            (any(isnothing, indices) ? " (a row without an index is row 0)" : "")))
+            (i == 0 && any(isnothing, indices) ? " (a row without an index is row 0)" : "")))
         seen[i + 1] = true
         slots[k] = i + 1
     end

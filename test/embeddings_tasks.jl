@@ -285,8 +285,8 @@ const _ET_G = GEMINIOpenAIServiceEndpoint
     @test Embeddings("q"; service=_ET_G, dimensions=768).dimensions == 768                    # no EmbeddingGemma sizes
     e = _et_err(() -> Embeddings(EmbeddingInput("t"; title="T"); service=_ET_G, task=:search_query))
     @test e isa ArgumentError && occursin("gemini-embedding-2", e.msg) && occursin("task = :document", e.msg)
-    # Only that id: gemini-embedding-001 takes a task type of its own, not a prompt UniLM writes.
-    for model in ("gemini-embedding-001", "gemini-embedding-2-preview")
+    # Only that id: a near miss gets no prompts.
+    for model in ("gemini-embedding-20", "gemini-embedding-2-preview")
         e = _et_err(() -> Embeddings("q"; service=_ET_G, model, task=:search_query))
         @test e isa ArgumentError && occursin(repr(model), e.msg) && occursin("and gemini-embedding-2", e.msg)
     end
@@ -320,6 +320,9 @@ end
         @test err isa ArgumentError && occursin(says, err.msg)
         @test e.embeddings == [zeros(1536), zeros(1536), zeros(1536)]
     end
+    # A repeat of another index says only that: the note on rows without one is about row 0.
+    err = _et_err(() -> UniLM.update!(emb(), Any[rows([0.1, 0.2])..., numbered(1 => [0.3, 0.4], 1 => [0.5, 0.6])...]))
+    @test err isa ArgumentError && err.msg == "embeddings response repeats row index 1"
     # A refused row is named by the 0-based index it fills.
     err = _et_err(() -> UniLM.update!(emb(), rows([0.1, 0.2], [0.0, 0.0], [0.5, 0.6])))
     @test err isa ArgumentError && occursin("row 1", err.msg) && occursin("all-zero", err.msg)

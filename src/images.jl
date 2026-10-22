@@ -130,7 +130,8 @@ end
 A single generated image from the API response.
 
 # Fields
-- `b64_json::Union{String,Nothing}`: Base64-encoded image data
+- `b64_json::Union{String,Nothing}`: Base64-encoded image data; Gemini sends JPEG (the
+  `mimeType` of each image part in the response's `raw` says so)
 - `revised_prompt::Union{String,Nothing}`: The prompt as revised by the model; on Gemini,
   the text the model sent with the image (`nothing` when it sent none)
 - `url::Union{String,Nothing}`: Where to download the image, when the service

@@ -562,7 +562,9 @@ The audio goes to an OpenAI Realtime translation session
 [Realtime translation](https://developers.openai.com/api/docs/guides/realtime-translation)): UniLM
 sets the target language (the session's `audio.output.language`, such as `"fr"` or `"es"`; English
 unless named), streams the audio in 200 ms frames, closes the session and joins the translated
-transcript. The session also returns translated speech, which `translate` does not keep.
+transcript. The session also returns translated speech, which `translate` does not keep. Speech
+already in the target language can come back as empty text: an English clip translated into English
+did.
 
 `path` must be a 16-bit PCM WAV file, at any sample rate and channel count: a translation session
 takes 24 kHz mono PCM16 only, so UniLM mixes the channels down and resamples by linear interpolation

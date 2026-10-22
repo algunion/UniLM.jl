@@ -111,16 +111,17 @@ translation session (`wss://api.openai.com/v1/realtime/translations`), sets the
 target language (`audio.output.language`), streams the audio in 200 ms frames, closes
 the session and joins the translated transcript into the text of a
 [`TranscriptionSuccess`](@ref). The session also returns translated speech, which
-`translate` does not keep. A translation session takes 24 kHz mono 16-bit PCM only,
-so `path` must be a 16-bit PCM WAV file, at any sample rate and channel count: UniLM
-mixes the channels down and resamples by linear interpolation, which suits speech
-(there is no anti-aliasing filter). Any other file throws `ArgumentError` before any
-I/O, naming the conversion; convert it first, for example with
-`ffmpeg -i in.m4a -c:a pcm_s16le out.wav`. A language the session does not translate
-into is an [`AudioFailure`](@ref) carrying the provider's `error` event; the bounds and
-the cancellation are those of speech on OpenAI. Translation
-replaces OpenAI's file-upload translation endpoint, which shuts down on February 26,
-2027 ([Realtime translation](https://developers.openai.com/api/docs/guides/realtime-translation)).
+`translate` does not keep. Speech already in the target language can come back as empty
+text: an English clip translated into English did. A translation session takes 24 kHz
+mono 16-bit PCM only, so `path` must be a 16-bit PCM WAV file, at any sample rate and
+channel count: UniLM mixes the channels down and resamples by linear interpolation,
+which suits speech (there is no anti-aliasing filter). Any other file throws
+`ArgumentError` before any I/O, naming the conversion; convert it first, for example
+with `ffmpeg -i in.m4a -c:a pcm_s16le out.wav`. A language the session does not
+translate into is an [`AudioFailure`](@ref) carrying the provider's `error` event; the
+bounds and the cancellation are those of speech on OpenAI. Translation replaces
+OpenAI's file-upload translation endpoint, which shuts down on February 26, 2027
+([Realtime translation](https://developers.openai.com/api/docs/guides/realtime-translation)).
 
 ## Transcription
 

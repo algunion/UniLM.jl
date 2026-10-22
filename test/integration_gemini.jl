@@ -107,9 +107,12 @@ _gemini_ask(prompt, attachment) = chatrequest!(Chat(service=GEMINIServiceEndpoin
     pdf = _gemini_ask("What is the secret word in this document? Answer with the word only.",
                       DocumentAttachment(joinpath(_GEMINI_LIVE_MEDIA, "documents", "secret_word.pdf")))
     @test pdf isa LLMSuccess && occursin("PELICAN", uppercase(pdf.message.content))
-    wav = _gemini_ask("What is the secret word in this recording? Answer with the word only.",
-                      AudioAttachment(joinpath(_GEMINI_LIVE_MEDIA, "ollama", "secret_word.wav")))
+    # gemini-3.8-flash's pricing table states no audio rate: the clip leaves the call unpriced.
+    wav = @test_logs (:warn, r"no audio-token rates") match_mode=:any _gemini_ask(
+        "What is the secret word in this recording? Answer with the word only.",
+        AudioAttachment(joinpath(_GEMINI_LIVE_MEDIA, "ollama", "secret_word.wav")))
     @test wav isa LLMSuccess && occursin("banana", lowercase(wav.message.content))
+    @test wav.usage.prompt_audio_tokens > 0 && cumulative_cost(wav.self) == 0.0
     # detail="low" is the LOW media resolution: the image costs 256 prompt tokens, not ~1,089.
     low = _gemini_ask("What colour is the circle? Answer with one word.", ImageAttachment(circle; detail="low"))
     @info "Gemini media" image = img.usage low_detail = low.usage
@@ -126,6 +129,57 @@ end
         @info "Gemini priority" stream usage = r.usage cost = estimated_cost(r)
         @test r.usage.service_tier == "priority"
         @test estimated_cost(r) ≈ 1.8 * _gemini_cost(r.usage, 0.75, 0.075, 3.75)
+    end
+end
+
+@testset "Gemini Chat — a sound clip on 3.1 Flash-Lite bills at the page's audio rate, streamed or not" begin
+    # gemini-3.1-flash-lite, per 1M tokens: $0.25 text, $0.50 audio input, $1.50 output (pricing page,
+    # 2026-10-22). Refuted by: no audio tokens reported, or an estimate other than that bill of the usage.
+    for stream in (false, true)
+        chat = Chat(service=GEMINIServiceEndpoint, model="gemini-3.1-flash-lite", max_tokens=64, stream=stream,
+            messages=[Message(Val(:user), "What is the secret word in this recording? Answer with the word only.",
+                              AudioAttachment(joinpath(_GEMINI_LIVE_MEDIA, "ollama", "secret_word.wav")))])
+        out = chatrequest!(chat)
+        r = stream ? fetch(out) : out
+        @test r isa LLMSuccess
+        u = r.usage
+        @info "Gemini audio input" stream usage = u cost = estimated_cost(r) answer = r.message.content
+        @test r.model == "gemini-3.1-flash-lite"
+        @test u.prompt_audio_tokens > 0 && u.cached_tokens == 0 && u.completion_audio_tokens == 0
+        bill = (u.prompt_audio_tokens * 0.50 + (u.prompt_tokens - u.prompt_audio_tokens) * 0.25 + u.completion_tokens * 1.50) / 1e6
+        @test isapprox(estimated_cost(r), bill; rtol=1e-12)
+        @test cumulative_cost(chat) == estimated_cost(r)
+    end
+end
+
+@testset "Gemini OpenAI-compatible endpoint — a priority reply names no billed tier, so it is priced at standard" begin
+    # Observed 2026-10-22: replies to flex and priority requests on this endpoint name their tier in
+    # neither the body (service_tier) nor the head (x-gemini-service-tier), streamed or not. Refuted by
+    # a reply that names one, which then prices the call.
+    svc = GEMINIOpenAIServiceEndpoint
+    for stream in (false, true)
+        chat = Chat(service=svc, model="gemini-3.8-flash", reasoning_effort="low", max_completion_tokens=64,
+                    stream=(stream ? true : nothing), stream_options=(stream ? Dict("include_usage" => true) : nothing),
+                    service_tier="priority", messages=[Message(Val(:user), "Reply with the single word OK.")])
+        resp = UniLM._http("POST", UniLM.get_url(chat), UniLM.auth_header(svc), UniLM.encode_request(svc, chat))
+        @test resp.status == 200
+        text = String(copy(resp.body))
+        payloads = stream ? [strip(l[6:end]) for l in split(text, '\n') if startswith(l, "data:") && !occursin("[DONE]", l)] : [text]
+        replies = [JSON.parse(p) for p in payloads]
+        head = HTTP.header(resp, "x-gemini-service-tier", "")
+        @info "Gemini compat priority" stream header = head body_tiers = [get(d, "service_tier", nothing) for d in replies]
+        @test isempty(head) && !any(d -> haskey(d, "service_tier"), replies)
+        usage = if stream
+            state = UniLM.StreamState()
+            UniLM._stream_head!(svc, state, resp)
+            foreach(p -> UniLM.handle_sse_event!(svc, "", p, state), payloads)
+            state.usage
+        else
+            UniLM.decode_response(svc, resp).usage
+        end
+        @test usage.prompt_tokens > 0 && isnothing(usage.service_tier)
+        r = LLMSuccess(message=Message(role=UniLM.RoleAssistant, content="OK"), self=chat, usage=usage)
+        @test isapprox(estimated_cost(r), _gemini_cost(usage, 0.75, 0.075, 3.75); rtol=1e-12)
     end
 end
 

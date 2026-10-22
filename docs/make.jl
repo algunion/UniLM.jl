@@ -99,6 +99,7 @@ build_docs() = makedocs(;
             "MCP Client & Server" => "api/mcp.md",
             "FIM Types" => "api/completions.md",
             "Provider Capabilities" => "api/capabilities.md",
+            "Model Listings" => "api/models.md",
             "System One (Jev, OpenAI Decisions, Ollama)" => "api/system_one.md",
             "Natural-Language Dispatch" => "api/nl_dispatch.md",
             "Files" => "api/files.md",

@@ -34,7 +34,8 @@ end
 
 @testset "capabilities & default" begin
     # :json_output — response_format maps to generationConfig.responseFormat (golden below)
-    @test UniLM.provider_capabilities(GEMINIServiceEndpoint) == Set([:chat, :tools, :streaming, :agentic, :json_output])
+    @test UniLM.provider_capabilities(GEMINIServiceEndpoint) ==
+          Set([:chat, :tools, :streaming, :agentic, :json_output, :images, :image_edits])
     @test has_capability(GEMINIServiceEndpoint, :json_output)
     @test UniLM.default_model(GEMINIServiceEndpoint) == "gemini-3.8-flash"
     @test_throws ArgumentError UniLM._api_base_url(GEMINIServiceEndpoint)

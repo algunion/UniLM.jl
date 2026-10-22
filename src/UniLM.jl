@@ -10,7 +10,8 @@ UniLM.jl provides:
   (web search, file search), multi-turn chaining via `previous_response_id`, reasoning support,
   and a cross-provider `respond` that also drives Google's Gemini Interactions.
 - **Image Generation** via [`ImageGeneration`](@ref) and [`generate_image`](@ref) — create
-  images from text prompts using `gpt-image-2`.
+  and edit images with OpenAI's `gpt-image-2.5-sunburst` or Gemini's Nano Banana
+  (`gemini-nano-banana-2.1`).
 - **Embeddings** via [`Embeddings`](@ref) and [`embeddingrequest!`](@ref).
 - **TypeSafe System One** via [`ask`](@ref) with [`choice`](@ref)/[`score`](@ref)/[`noul`](@ref) — the
   Jev model family returns typed judgments and probabilities instead of text.

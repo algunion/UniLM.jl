@@ -92,8 +92,8 @@ end
     # the catch-all → nothing. Unknown services must have NO default embedding model.
     @test UniLM.default_embedding_model(UniLM.AZUREServiceEndpoint) === nothing
 
-    # src/capabilities.jl:70 — default_image_model has only an OPENAI method (line 69) and the
-    # catch-all `_` (line 70); any instance other than the OPENAI type hits line 70 → nothing.
+    # default_image_model has methods for the OpenAI and native Gemini types and a catch-all
+    # `_`; any other endpoint instance falls through to the catch-all → nothing.
     @test UniLM.default_image_model(ds) === nothing
     @test UniLM.default_image_model(gen) === nothing
 

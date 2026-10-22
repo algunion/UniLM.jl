@@ -24,7 +24,7 @@ It also has one **System One** surface, which answers enumerated questions about
 
 - 🗣️ **Chat Completions** — stateful conversations with automatic history management
 - 🔮 **Responses API & Agentic Verb** — OpenAI's Responses API plus a cross-provider `respond` verb that also drives Google's Gemini Interactions
-- 🖼️ **Image Generation & Edits** — create and edit images with `gpt-image-2`
+- 🖼️ **Image Generation & Edits** — create and edit images with OpenAI's `gpt-image-2.5-sunburst` or Gemini's Nano Banana (`gemini-nano-banana-2.1`)
 - 🔧 **Tool/Function Calling** — first-class function tools in both APIs, with an automated `tool_loop`
 - 🔌 **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool-loop integration
 - ⚖️ **Decisions (System One)** — decisions about a text instead of generated text, from one surface over TypeSafe's Jev, OpenAI's Decisions API (beta) and local decision models through Ollama ([Backends](@ref system_one_backends)): `nl_classify` returns one of your own keys, `ask` answers `choice` / `score` / `noul` questions with calibrated probabilities, many questions in one request — about images too (Jev, OpenAI and local vision models), and `box` locates what you name in one (Jev) — and `ask_each` asks the same questions about many texts at once

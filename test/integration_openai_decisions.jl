@@ -1,6 +1,6 @@
 # ─── OpenAI Decisions API Integration Tests ──────────────────────────────────
 # Requires UNILM_LIVE=1 and OPENAI_API_KEY (both, or the suite skips). Spend is capped
-# at exactly eight calls of a few hundred input tokens each, at $0.10 per 1M input
+# at exactly nine calls of a few hundred input tokens each, at $0.10 per 1M input
 # tokens: a fraction of a cent. Every state is unambiguous, so a correct client is the
 # only thing standing between the input and the asserted answer.
 
@@ -94,6 +94,19 @@ end
     else
         @info "Decisions call did not succeed" mixed
     end
+end
+
+@testset "OpenAI Decisions — prompt_cache_options are sent and accepted" begin
+    r = ask("The package arrived with a cracked screen.", "damaged" => noul("Is the product damaged?");
+            service=OPENAIServiceEndpoint, config=_DECISIONS_LIVE_CFG,
+            prompt_cache_options=PromptCacheOptions(mode="implicit", ttl="12h"))
+    @test r isa SystemOneSuccess
+    @test r["damaged"] isa NoulAnswer && r["damaged"].noul > 0.5
+    u = token_usage(r)
+    # Below the 1,024-token caching minimum: nothing is read or written.
+    @test u.prompt_tokens > 0 && u.cached_tokens == 0 && u.cache_write_tokens == 0
+    @test estimated_cost(r) ≈ u.prompt_tokens * 0.10 / 1_000_000
+    @info "Decisions live prompt_cache_options" request_id = r.response.request_id input = u.prompt_tokens cost = estimated_cost(r)
 end
 
 @testset "OpenAI Decisions — the natural-language verbs on OPENAIServiceEndpoint" begin

@@ -35,14 +35,19 @@ The request:
   to 10 levels, each level its `label`; a [`RawQuestion`](@ref) verbatim, with
   its name added as `"name"` when it has none. At most 200 questions.
 - provider options are keywords of [`ask`](@ref): `prompt_cache_key`, a `String`
-  of at most 64 characters, and `safety_identifier`, at most 128.
+  of at most 64 characters; `safety_identifier`, at most 128; and
+  `prompt_cache_options`, a [`PromptCacheOptions`](@ref) of `mode` and `ttl`, `"30m"` or
+  `"12h"` (OpenAI's prompt-caching guide names `"12h"` for the Responses API; the
+  Decisions API answered it with HTTP 200). With `mode="explicit"` the request marks no
+  cache breakpoint, so OpenAI caches none of it.
 
 What the wire has no form for is an `ArgumentError` before any I/O, naming
 OpenAI's rule and the fix: a question without string `instructions`; a Noul's
 `yes`/`no` criteria; a description or level that is not a string; a
 [`BoxQuestion`](@ref); an image outside the state; a [`DocumentAttachment`](@ref)
 (the API takes no files) or an image's detail level anywhere, as on every
-System One backend; any other option.
+System One backend; a `prompt_cache_options` with another `ttl`, `prewarm` or
+`comparison_response_id`; any other option.
 
 The reply: answers are matched to the questions by name and must come in the
 order asked. A `predicate` reads as a [`NoulAnswer`](@ref), a `choice` as a
@@ -50,15 +55,17 @@ order asked. A `predicate` reads as a [`NoulAnswer`](@ref), a `choice` as a
 each level to its label, and a `refusal` — the API may decline any question — as
 a [`RefusalAnswer`](@ref). Probabilities and confidences arrive rounded to two
 decimals, so a distribution over `n` outcomes may sum to 1 within `0.005n`.
-`usage` counts input, cached and output tokens; `request_id` is the
+`usage` counts input, cached, cache-write — the 12-hour ones apart, as on the
+Responses API — and output tokens, and holds the service tier when the reply names
+one; `request_id` is the
 `x-request-id` header; a reply with a status other than 200 is a
 [`SystemOneFailure`](@ref) whose `error_type` is the error's `code`, else its
 `type`. Recordings are filed under `/openai-decisions/v1/decisions`, keyed
-without the two options, which change how a request is served but never what it
+without the three options, which change how a request is served but never what it
 is answered, and with each image as the SHA-256 of its base64 text, never its
 bytes. [`estimated_cost`](@ref) bills what OpenAI
-bills: every input token, cached ones included, at the model's input rate, twice
-that for a request of more than 272K input tokens, and no output.
+bills: every input token, cached and cache-written ones included, at the model's
+input rate, twice that for a request of more than 272K input tokens, and no output.
 
 Public extension API (not exported).
 """
@@ -97,8 +104,13 @@ const _DECISIONS_CHOICES = 2:255
 const _DECISIONS_LEVELS = 2:10
 const _DECISIONS_MAX_IMAGES = 128
 const _DECISIONS_MAX_INPUT = 10_485_760
-# The provider options, each a string of at most this many characters.
+# The string options, each of at most this many characters; `prompt_cache_options` follows them.
 const _DECISIONS_OPTIONS = (prompt_cache_key = 64, safety_identifier = 128)
+const _DECISIONS_ACCEPTED = join(("$k (a String of at most $n characters)" for (k, n) in pairs(_DECISIONS_OPTIONS)), ", ") *
+    " and prompt_cache_options (a PromptCacheOptions of mode and ttl \"30m\" or \"12h\")"
+# The prompt-cache retentions: OpenAI's prompt-caching guide gives "12h" to the Responses
+# API, and the Decisions API answered a "12h" request with HTTP 200 (2026-10-22).
+const _DECISIONS_CACHE_TTLS = (name="Decisions API", ttls=("30m", "12h"), fix="")
 
 _decisions_refuse(name::String, why::String) = throw(ArgumentError(
     "OpenAI's Decisions API cannot carry the question $(repr(name)): $why"))
@@ -248,16 +260,34 @@ end
 
 # The options as the body writes them: in one order whatever the caller's, so the same
 # request always has the same bytes, and the same recording key.
-function _decisions_options(options::NamedTuple)::Vector{Pair{String,String}}
-    accepted() = join(("$k (a String of at most $n characters)" for (k, n) in pairs(_DECISIONS_OPTIONS)), " and ")
+function _decisions_options(options::NamedTuple)::Vector{Pair{String,Any}}
     for (k, v) in pairs(options)
+        k === :prompt_cache_options && continue
         haskey(_DECISIONS_OPTIONS, k) || throw(ArgumentError(
-            "OpenAI's Decisions API accepts the options $(accepted()); got `$k`"))
+            "OpenAI's Decisions API accepts the options $(_DECISIONS_ACCEPTED); got `$k`"))
         v isa AbstractString && length(v) <= _DECISIONS_OPTIONS[k] || throw(ArgumentError(
             "OpenAI's Decisions API takes `$k` as a String of at most $(_DECISIONS_OPTIONS[k]) characters; got " *
             (v isa AbstractString ? "$(length(v)) characters" : "a $(typeof(v))")))
     end
-    Pair{String,String}[String(k) => String(options[k]) for k in keys(_DECISIONS_OPTIONS) if haskey(options, k)]
+    written = Pair{String,Any}[String(k) => String(options[k]) for k in keys(_DECISIONS_OPTIONS) if haskey(options, k)]
+    haskey(options, :prompt_cache_options) &&
+        push!(written, "prompt_cache_options" => _decisions_cache_options(options.prompt_cache_options))
+    written
+end
+
+# The prompt-cache options as the body writes them, `mode` then `ttl`: the Decisions API's
+# `prompt_cache_options` object has these two fields only.
+function _decisions_cache_options(o)::JSON.Object{String,Any}
+    o isa PromptCacheOptions || throw(ArgumentError(
+        "OpenAI's Decisions API takes `prompt_cache_options` as a PromptCacheOptions; got a $(typeof(o))"))
+    isnothing(o.prewarm) && isnothing(o.comparison_response_id) || throw(ArgumentError(
+        "OpenAI's Decisions API takes prompt_cache_options mode and ttl only; prewarm and comparison_response_id " *
+        "are fields of the Responses API (Respond)"))
+    _check_openai_cache_ttl(o, _DECISIONS_CACHE_TTLS)
+    written = JSON.Object{String,Any}()
+    isnothing(o.mode) || (written["mode"] = o.mode)
+    isnothing(o.ttl) || (written["ttl"] = o.ttl)
+    written
 end
 
 function encode_system_one(p::OpenAIDecisionsProtocol, service, request::SystemOneRequest)::SystemOneWire
@@ -274,9 +304,9 @@ function encode_system_one(p::OpenAIDecisionsProtocol, service, request::SystemO
     body["questions"] = questions
     url, keyed = _api_base_url(service) * _DECISIONS_PATH, _system_one_body(body)
     isempty(options) && return SystemOneWire("POST", url, _DECISIONS_PATH, keyed)
-    # The options choose a prompt cache and an identity for abuse monitoring: they change
-    # how a request is served, never what it is answered, so they are sent as fields of the
-    # body and left out of what a recording is keyed on.
+    # The options choose a prompt cache, how long it keeps the prompt, and an identity for
+    # abuse monitoring: they change how a request is served, never what it is answered, so
+    # they are sent as fields of the body and left out of what a recording is keyed on.
     for (k, v) in options
         body[k] = v
     end
@@ -361,17 +391,24 @@ end
 
 # Usage is accounting: a count that is missing reads as 0, one that is present but no
 # token count reads as 0 with one warning, and neither discards answers that were paid for.
+# Cache writes are read as on the Responses API (`input_tokens_details.cache_write_tokens`,
+# the 12-hour ones in `cache_write_tokens_details.ttl_12h_tokens`), and the billed tier
+# from beside the usage, where a reply names one.
 function _decisions_usage(d::AbstractDict)::TokenUsage
-    haskey(d, "usage") || return TokenUsage()
+    tier = _wire_string(d, "service_tier")
+    haskey(d, "usage") || return TokenUsage(service_tier=tier)
     u = d["usage"]
     counts = (_decisions_count(u, ("input_tokens",)), _decisions_count(u, ("output_tokens",)),
               _decisions_count(u, ("input_tokens_details", "cached_tokens")),
-              _decisions_count(u, ("output_tokens_details", "reasoning_tokens")))
+              _decisions_count(u, ("output_tokens_details", "reasoning_tokens")),
+              _decisions_count(u, ("input_tokens_details", "cache_write_tokens")),
+              _decisions_count(u, ("input_tokens_details", "cache_write_tokens_details", "ttl_12h_tokens")))
     any(isnothing, counts) &&
         @warn "System One usage holds a value that is not a non-negative whole token count; it reads as 0" usage = u
-    i, o, cached, reasoning = map(c -> something(c, 0), counts)
+    i, o, cached, reasoning, writes, extended = map(c -> something(c, 0), counts)
     TokenUsage(prompt_tokens=i, completion_tokens=o, total_tokens=i + o, cached_tokens=cached,
-               reasoning_tokens=reasoning)
+               reasoning_tokens=reasoning, cache_write_tokens=writes, cache_write_extended_tokens=extended,
+               service_tier=tier)
 end
 
 # The count at `path` in a usage object: 0 when a step is missing, `nothing` when a step is
@@ -441,16 +478,20 @@ end
 # ─── Cost ────────────────────────────────────────────────────────────────────
 
 # A Decisions call is billed for its input tokens only — the guide's "Pricing and
-# availability": "no cache-read, cache-write, or output-token charges" — so a cached
-# token costs the input rate, and a request of more than 272K input tokens costs twice
-# that rate for all of them (gpt-6-luna's long-context pricing). A regional-processing
-# premium is not visible in a response, and is not added.
+# availability": "no cache-read, cache-write, or output-token charges" — so OpenAI's
+# billing (`_billed_cost`) is given every input token, cached or written, as fresh input,
+# and no output; a request of more than 272K input tokens costs twice that rate for all
+# of them (gpt-6-luna's long-context pricing). A regional-processing premium is not
+# visible in a response, and is not added.
 const _DECISIONS_LONG_CONTEXT = 272_000
 
 function _system_one_cost(::OpenAIDecisionsProtocol, result::SystemOneSuccess, model::Union{Nothing,String},
                           pricing::AbstractDict{String,PriceRow})::Float64
-    rates = _price_row(pricing, something(model, result.response.model))
+    priced = something(model, result.response.model)
+    rates = _price_row(pricing, priced)
     isnothing(rates) && return 0.0
-    n = token_usage(result).prompt_tokens
-    n * rates.input * (n > _DECISIONS_LONG_CONTEXT ? 2 : 1)
+    u = token_usage(result)
+    n = u.prompt_tokens
+    billed = TokenUsage(prompt_tokens=n, total_tokens=n, service_tier=u.service_tier, inference_geo=u.inference_geo)
+    _billed_cost(OPENAIServiceEndpoint, priced, billed, rates) * (n > _DECISIONS_LONG_CONTEXT ? 2 : 1)
 end

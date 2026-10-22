@@ -320,12 +320,62 @@ end
          _od_caught(() -> ask("s", q; service=_ODMock, confg = _OD_CFG))]
     end
     @test isempty(seen) && all(e -> e isa ArgumentError, refused)
-    @test contains(refused[1].msg, "prompt_cache_key (a String of at most 64 characters) and safety_identifier " *
-                                   "(a String of at most 128 characters); got `temperature`")
+    @test contains(refused[1].msg, "prompt_cache_key (a String of at most 64 characters), safety_identifier " *
+                                   "(a String of at most 128 characters) and prompt_cache_options (a PromptCacheOptions " *
+                                   "of mode and ttl \"30m\" or \"12h\"); got `temperature`")
     @test contains(refused[2].msg, "`prompt_cache_key` as a String of at most 64 characters; got 65 characters")
     @test contains(refused[3].msg, "at most 128 characters; got 129")
     @test contains(refused[4].msg, "got a Int64")
     @test contains(refused[5].msg, "`confg`")
+end
+
+@testset "OpenAI Decisions — prompt_cache_options: mode and ttl, sent and left out of the recording" begin
+    q = "q" => noul("Is it?")
+    plain = UniLM.encode_system_one(_OD, _ODMock, SystemOneRequest("s", q))
+    pco = PromptCacheOptions(mode="implicit", ttl="12h")
+    wire = UniLM.encode_system_one(_OD, _ODMock, SystemOneRequest("s", q; options=(prompt_cache_options=pco,)))
+    @test wire.body == chop(plain.body) * ""","prompt_cache_options":{"mode":"implicit","ttl":"12h"}}"""
+    @test wire.record_body == plain.body && wire.key_extra == ""          # keyed and recorded without it
+    # After the other options, in one order whatever the caller's.
+    every = UniLM.encode_system_one(_OD, _ODMock, SystemOneRequest("s", q; options=(
+        prompt_cache_options=PromptCacheOptions(ttl="30m"), safety_identifier="u", prompt_cache_key="k")))
+    @test every.body == chop(plain.body) *
+        ""","prompt_cache_key":"k","safety_identifier":"u","prompt_cache_options":{"ttl":"30m"}}"""
+    @test every.record_body == plain.body
+    # Explicit mode is sent as asked: the request marks no breakpoint, so OpenAI caches none of it.
+    @test UniLM.encode_system_one(_OD, _ODMock, SystemOneRequest("s", q;
+        options=(prompt_cache_options=PromptCacheOptions(mode="explicit"),))).body ==
+        chop(plain.body) * ""","prompt_cache_options":{"mode":"explicit"}}"""
+    # Through ask, the keyword is the option, and the service receives it.
+    r, seen = _od_serve(_od_valid) do
+        ask("s", q; service=_ODMock, config=_OD_CFG, prompt_cache_options=pco)
+    end
+    @test r isa SystemOneSuccess && _od_body(only(seen))["prompt_cache_options"] == Dict("mode" => "implicit", "ttl" => "12h")
+    # The same question with it replays the recording made without it, sending nothing.
+    dir = mktempdir()
+    _, recorded = _od_serve(_od_valid) do
+        with_recorded_answers(() -> ask("s", q; service=_ODMock, config=_OD_CFG), dir; mode=:record)
+    end
+    replayed, unsent = _od_serve(_od_valid) do
+        with_recorded_answers(() -> ask("s", q; service=_ODMock, prompt_cache_options=pco), dir)
+    end
+    @test length(recorded) == 1 && isempty(unsent) && replayed isa SystemOneSuccess
+    # Refused before any request: another API's ttl, the Responses-only fields, another type.
+    refused, seen = _od_serve(_od_valid) do
+        [_od_caught(() -> ask("s", q; service=_ODMock, prompt_cache_options=PromptCacheOptions(ttl="1h"))),
+         _od_caught(() -> ask("s", q; service=_ODMock, prompt_cache_options=PromptCacheOptions(ttl="5m"))),
+         _od_caught(() -> ask("s", q; service=_ODMock, prompt_cache_options=PromptCacheOptions(prewarm=true))),
+         _od_caught(() -> ask("s", q; service=_ODMock,
+                              prompt_cache_options=PromptCacheOptions(comparison_response_id="resp_1"))),
+         _od_caught(() -> ask("s", q; service=_ODMock, prompt_cache_options=Dict("ttl" => "12h")))]
+    end
+    @test isempty(seen) && all(e -> e isa ArgumentError, refused)
+    @test refused[1].msg == "OpenAI Decisions API accepts prompt_cache_options ttl \"30m\" or \"12h\" (got \"1h\")"
+    @test refused[2].msg == "OpenAI Decisions API accepts prompt_cache_options ttl \"30m\" or \"12h\" (got \"5m\")"
+    @test refused[3].msg == refused[4].msg == "OpenAI's Decisions API takes prompt_cache_options mode and ttl only; " *
+                                              "prewarm and comparison_response_id are fields of the Responses API (Respond)"
+    @test refused[5].msg == "OpenAI's Decisions API takes `prompt_cache_options` as a PromptCacheOptions; " *
+                            "got a Dict{String, String}"
 end
 
 # ─── Decoding ────────────────────────────────────────────────────────────────
@@ -396,6 +446,21 @@ end
     @test r isa SystemOneSuccess && token_usage(r) == TokenUsage()
     r = @test_logs min_level=Logging.Warn first(_od_ask_with(_od_d02(b -> b["usage"] = Dict("input_tokens" => 7))))
     @test token_usage(r) == TokenUsage(prompt_tokens=7, total_tokens=7)
+    # Cache writes are read as on the Responses API, the 12-hour ones apart, with the tier the
+    # reply reports beside its usage.
+    written = _od_d02() do body
+        body["usage"] = Dict("input_tokens" => 3000, "output_tokens" => 0, "total_tokens" => 3000,
+            "input_tokens_details" => Dict("cached_tokens" => 1000, "cache_write_tokens" => 1500,
+                "cache_write_tokens_details" => Dict("ttl_30m_tokens" => 300, "ttl_12h_tokens" => 1200)),
+            "output_tokens_details" => Dict("reasoning_tokens" => 0))
+        body["service_tier"] = "default"
+    end
+    @test token_usage(first(_od_ask_with(written))) ==
+          TokenUsage(prompt_tokens=3000, total_tokens=3000, cached_tokens=1000, cache_write_tokens=1500,
+                     cache_write_extended_tokens=1200, service_tier="default")
+    odd = _od_d02(body -> body["usage"]["input_tokens_details"]["cache_write_tokens_details"] = 7)
+    r = @test_logs (:warn, r"System One usage") min_level=Logging.Warn first(_od_ask_with(odd))
+    @test token_usage(r) == TokenUsage(prompt_tokens=589, total_tokens=589)
 
     # A boolean choice value — which the API types apart from the string — reads as text.
     d03 = _od_fixture("D03")
@@ -734,6 +799,11 @@ end
     @test estimated_cost(plain) ≈ 1000 * rate
     @test estimated_cost(cached) ≈ 1000 * rate                       # no cache discount, no output charge
     @test UniLM._system_one_cost(_OD, cached, nothing, DEFAULT_PRICING) ≈ 1000 * rate
+    # Cache writes, at either lifetime, are input tokens like the rest: no write premium.
+    written = result(TokenUsage(prompt_tokens=1000, cached_tokens=200, cache_write_tokens=500,
+                                cache_write_extended_tokens=400, completion_tokens=3, total_tokens=1003))
+    @test estimated_cost(written) ≈ 1000 * rate
+    @test @inferred(UniLM._system_one_cost(_OD, written, nothing, DEFAULT_PRICING)) ≈ 1000 * rate
     @test estimated_cost(result(TokenUsage(prompt_tokens=272_000))) ≈ 272_000 * rate
     @test estimated_cost(result(TokenUsage(prompt_tokens=272_001))) ≈ 2 * 272_001 * rate   # long context: twice
     # `model` and `pricing` keep their meaning.

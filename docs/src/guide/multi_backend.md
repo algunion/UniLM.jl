@@ -600,10 +600,16 @@ priced(id) = haskey(DEFAULT_PRICING, id) ||
 UniLM's release gate runs the same listings against its tables
 (`test/integration_provider_drift.jl`): every listed model of the families UniLM documents —
 GPT-6, GPT-5.6 and GPT-5.4 mini; Claude 4.5 and later, and every Claude model UniLM has rules
-for; Gemini 3.5 and later text models — must have a price row, and a rule row too unless it is
-GPT-5.4 mini or a Gemini model that does not think; every model UniLM uses by default or in its
-live tests must be listed and not past its retirement date; and each Claude rule row must agree
-with the thinking types and effort levels Anthropic lists for the model.
+for; Gemini 3.5 and later text models, and every Gemini text model UniLM has thinking levels
+for but the `-latest` aliases, priced at the model that serves them — must have a price row,
+unless its provider publishes no price (Claude Mythos Preview), and a rule row too unless it is
+GPT-5.4 mini or a Gemini model that does not think; every model UniLM uses by default, in its
+live tests or in the Julia code of these pages must be listed — an alias such as
+`claude-haiku-4-5` as its dated snapshot — and the gate must run before its shutdown date,
+where the listing gives one (Gemini's gives none); and each Claude rule row must agree with the
+thinking types and effort levels Anthropic lists for the model. The gate logs the OpenAI and
+Gemini models that no family, older generation or other known kind covers, such as a new
+generation.
 
 ## See Also
 

@@ -375,6 +375,7 @@ end
 # waits for an `mcp_approval_response`. A `shell_call` is the client's only when the
 # platform did not run it: a hosted shell (a container environment) answers its own
 # call with a `shell_call_output` in the same output, a local one does not.
+# `local_shell_call` stays because the Responses reference still lists the item type.
 const _CLIENT_CALL_TYPES = ("custom_tool_call", "apply_patch_call", "local_shell_call", "computer_call",
                             "shell_call", "mcp_approval_request")
 
@@ -425,7 +426,7 @@ Function calls run only on a `completed` or `requires_action` turn. Any other st
 (e.g. `incomplete`, whose calls may be partial) stops the loop with `completed=false`
 and an `llm_error` naming the status and the `incomplete_details` reason. A turn that
 requests a client-side call this loop cannot execute (`custom_tool_call`,
-`apply_patch_call`, `local_shell_call`, `computer_call`, a `shell_call` the platform
+`apply_patch_call`, `computer_call`, a `shell_call` the platform
 did not run itself, or an `mcp_approval_request`) stops it the same way, with the
 pending call type in `llm_error`; none of that turn's calls run.
 

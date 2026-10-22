@@ -16,7 +16,7 @@ function _check_file_purpose(purpose)::Nothing
     purpose == "evals" && throw(ArgumentError(
         "purpose \"evals\" is for OpenAI's Evals API, which is read-only from 2026-10-31 and shuts down on " *
         "2026-11-30 (https://developers.openai.com/api/docs/deprecations); the Files API takes $accepted"))
-    purpose in _FILE_PURPOSES || throw(ArgumentError("invalid purpose '$purpose'; expected one of $(_FILE_PURPOSES)"))
+    purpose in _FILE_PURPOSES || throw(ArgumentError("the Files API takes $accepted (got $(repr(purpose)))"))
     nothing
 end
 

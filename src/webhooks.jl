@@ -9,8 +9,8 @@ The event types of OpenAI's webhooks
 ([reference](https://developers.openai.com/api/reference/resources/webhooks)): background
 responses, batches and fine-tuning jobs that end, incoming SIP calls for the Realtime and
 Live APIs, safety warnings and deactivations for a safety identifier, and safety alerts.
-`live.call.incoming` is deprecated in favour of `live.transport.incoming`; OpenAI still
-sends it to the subscriptions made before.
+`live.call.incoming` is deprecated in favour of `live.transport.incoming` and retained for
+existing subscriptions.
 """
 const WEBHOOK_EVENTS = (
     "response.completed", "response.cancelled", "response.failed", "response.incomplete",

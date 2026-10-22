@@ -25,6 +25,10 @@
                 "\"assistants\", \"batch\", \"fine-tune\", \"vision\" or \"user_data\""
             # Refused before any request: the seam probe would answer one with a timeout.
             @test_throws ArgumentError upload_file(path, "evals"; service=SeamProbe, config=_TINY_DEADLINE)
+            # Any other purpose names the same list.
+            e = try UniLM.FileUpload(file=path, purpose="bogus"); nothing catch err; err end
+            @test e isa ArgumentError && e.msg ==
+                "the Files API takes \"assistants\", \"batch\", \"fine-tune\", \"vision\" or \"user_data\" (got \"bogus\")"
         finally
             rm(path; force=true)
         end

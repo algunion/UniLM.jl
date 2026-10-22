@@ -88,7 +88,7 @@ end
         "fine_tuning.job.succeeded", "fine_tuning.job.failed", "fine_tuning.job.cancelled",
         "realtime.call.incoming", "live.call.incoming", "live.transport.incoming",
         "safety.warning_issued", "safety.deactivation_issued", "safety.alert.created", "safety.org_alert.created")
-    # The Evals API shuts down on 2026-11-30: its run events are no longer listed.
+    # The Evals API shuts down on 2026-11-30, and its run events are not listed.
     @test !any(e -> startswith(e, "eval."), WEBHOOK_EVENTS)
     @test WEBHOOK_EVENTS isa NTuple{18,String}
 end

@@ -459,6 +459,37 @@ println("DeepSeek FIM: ", has_capability(DeepSeekEndpoint("k"), :fim))
 println("OpenAI FIM: ", has_capability(OPENAIServiceEndpoint, :fim))
 ```
 
+## [Keep up with provider models](@id backends_provider_models)
+
+Providers add models, deprecate them and shut them down on their own schedules.
+[`list_models`](@ref) shows what OpenAI, Anthropic and Gemini serve your key today, with each
+model's token limits, capabilities and lifecycle dates ([Model Listings](@ref models_api)):
+
+```julia
+using Dates
+
+r = list_models(service=ANTHROPICServiceEndpoint)
+r isa ModelListSuccess || error("the listing failed: $r")
+for m in r.models
+    !isnothing(m.retires) && m.retires <= today() + Day(90) && println(m.id, " retires on ", m.retires)
+end
+```
+
+UniLM checks a request against its rules for the model it names and prices the result at the
+model's [`DEFAULT_PRICING`](@ref) row. A model with no rule row is sent as asked, the provider's
+answer being the check, and a model with no price row costs \$0 ([Unpriced models cost
+\$0](@ref unpriced-zero)): before you adopt a newly listed model, look for its row
+(`haskey(DEFAULT_PRICING, m.id)`; a dated snapshot such as `gpt-5.4-mini-2026-03-17` is priced
+at the row of `gpt-5.4-mini`), or add one.
+
+UniLM's release gate runs the same listings against its tables
+(`test/integration_provider_drift.jl`): every listed model of the families UniLM documents —
+GPT-6, GPT-5.6 and GPT-5.4 mini; Claude 4.5 and later; Gemini 3.5 and later text models —
+must have a price row and, except GPT-5.4 mini, a rule row; every model UniLM uses
+by default or in its live tests must be listed and not past its retirement date; and each
+Claude rule row must agree with the thinking types and effort levels Anthropic lists for
+the model.
+
 ## See Also
 
 - [`ServiceEndpoint`](@ref), [`GenericOpenAIEndpoint`](@ref) — endpoint types

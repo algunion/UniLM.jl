@@ -22,7 +22,7 @@ HTTP.close_idle_connections!()
 
 @testset "OpenAI Chat audio — a spoken reply is captured, and the next turn sends it back by id" begin
     chat = _audio_live_chat(modalities=["text", "audio"], audio=Dict("voice" => "alloy", "format" => "wav"))
-    # UniLM prices text tokens only: an audio model has no price row, which each billed call says.
+    # Audio-token rates are not priced yet: an audio model is unpriced, and each billed call says so.
     r = @test_logs (:warn, r"no price row") min_level=Logging.Warn chatrequest!(chat; config=_AUDIO_LIVE_CFG)
     @test r isa LLMSuccess
     a = r.message.audio_output

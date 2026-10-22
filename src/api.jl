@@ -455,34 +455,39 @@ that speaks, such as `gpt-audio-1.5`
 - `format::Union{String,Nothing}`: that format as the bytes' file signature shows it —
   `"wav"`, `"mp3"`, `"flac"`, `"opus"` (Ogg Opus) or `"aac"` (ADTS) — or `nothing` for
   bytes that begin with none, such as `"pcm16"`'s raw samples.
-- `expires_at::Int`: the Unix time, in seconds, until which OpenAI keeps the audio for
-  later turns.
-- `transcript::String`: what the audio says; the turn's `content` too.
+- `expires_at::Union{Int,Nothing}`: the Unix time, in seconds, until which OpenAI keeps the
+  audio for later turns; after it, OpenAI answers a turn that sends the id back with HTTP
+  400 `audio_not_found`, the answer observed for an id it never issued. `nothing` when it
+  is unknown: a streamed reply's expiry comes alone in its last update, after the turn's
+  finish, and a connection that closes between the two leaves the turn whole without it.
+- `transcript::String`: what the audio says; the turn's `content` too, unless the turn
+  holds other text.
 
 The OpenAI-wire decoders read it from a reply's `message.audio`; a streamed reply
 assembles it from its `delta.audio` chunks, and the transcript reaches the streaming
 callback as text. When the conversation goes on, the OpenAI Chat encoder
 (`OPENAIServiceEndpoint`) sends the turn back as
-`{"role": "assistant", "content": transcript, "audio": {"id": id}}`. Every other encoder —
-Azure, the Gemini OpenAI-compatible endpoint, DeepSeek, generic endpoints,
-[`OllamaEndpoint`](@ref), native Anthropic and Gemini — sends the transcript as the turn's
-text, the neutral form it also sends for another provider's [`ProviderContent`](@ref).
-Throws `ArgumentError` for an empty `id`.
+`{"role": "assistant", "content": content, "audio": {"id": id}}`, the turn's content
+beside the id. Every other encoder — Azure, the Gemini OpenAI-compatible endpoint,
+DeepSeek, generic endpoints, [`OllamaEndpoint`](@ref), native Anthropic and Gemini — sends
+the turn's content alone, the neutral form it also sends for another provider's
+[`ProviderContent`](@ref). Throws `ArgumentError` for an empty `id`.
 """
 struct AudioOutput
     id::String
     data::Vector{UInt8}
     format::Union{String,Nothing}
-    expires_at::Int
+    expires_at::Union{Int,Nothing}
     transcript::String
-    function AudioOutput(id::AbstractString, data::AbstractVector{UInt8}, expires_at::Integer,
+    function AudioOutput(id::AbstractString, data::AbstractVector{UInt8}, expires_at::Union{Integer,Nothing},
                          transcript::AbstractString)
         isempty(id) && throw(ArgumentError("an audio reply's id names it to OpenAI in later turns and cannot be empty"))
-        new(String(id), Vector{UInt8}(data), _audio_output_format(data), Int(expires_at), String(transcript))
+        new(String(id), Vector{UInt8}(data), _audio_output_format(data),
+            isnothing(expires_at) ? nothing : Int(expires_at), String(transcript))
     end
 end
-AudioOutput(; id::AbstractString, data::AbstractVector{UInt8}, expires_at::Integer, transcript::AbstractString) =
-    AudioOutput(id, data, expires_at, transcript)
+AudioOutput(; id::AbstractString, data::AbstractVector{UInt8}, expires_at::Union{Integer,Nothing},
+            transcript::AbstractString) = AudioOutput(id, data, expires_at, transcript)
 
 Base.show(io::IO, a::AudioOutput) = print(io, "AudioOutput(", repr(a.id), ", ", something(a.format, "no file signature"),
     ", ", length(a.data), " bytes, expires_at=", a.expires_at, ", transcript=", repr(a.transcript), ")")
@@ -514,7 +519,7 @@ Represents a single message in a Chat Completions conversation.
 - At least one of `content`, `tool_calls`, `refusal_message`, `attachments` or `audio_output` must be given.
 - `tool_call_id` is required when `role == "tool"`.
 - `attachments` are accepted on user messages only; an empty vector is stored as `nothing`.
-- `audio_output` is accepted on assistant messages only; without `content`, the turn's content is its transcript.
+- `audio_output` is accepted on assistant messages only; with `content` unset or empty, the turn's content is its transcript.
 
 # Convenience Constructors
 ```julia
@@ -541,8 +546,9 @@ Message(Val(:user), "What colour is the shape?",
             "message role must be one of $(join(_MESSAGE_ROLES, ", ")) (got $(repr(role)))"))
         isnothing(audio_output) || role == RoleAssistant || throw(ArgumentError(
             "audio_output is accepted on assistant messages only (got a :$role message)"))
-        # An audio reply's text is its transcript, so the turn reads the same on every wire.
-        isnothing(audio_output) || !isnothing(content) || (content = audio_output.transcript)
+        # An audio reply's text is its transcript, so the turn reads the same on every wire:
+        # no content and empty content are the same no text, as the decoders read them.
+        !isnothing(audio_output) && (isnothing(content) || isempty(content)) && (content = audio_output.transcript)
         isnothing(content) && isnothing(tool_calls) && isnothing(refusal_message) &&
             (isnothing(attachments) || isempty(attachments)) && throw(ArgumentError(
                 "`content`, `tool_calls`, `refusal_message`, `attachments` and `audio_output` cannot all be empty"))
@@ -1359,8 +1365,8 @@ _asks_stream_usage(_) = false
 # The conversation as an endpoint's Chat Completions wire carries it. OpenAI keeps the
 # audio of an audio reply and takes it back by id, `"audio": {"id": …}` beside the turn's
 # content (the assistant message of the Chat Completions reference); every other endpoint
-# gets the transcript, which is the turn's content. A conversation without an audio reply
-# goes out as it is.
+# gets the content alone, the transcript unless the turn holds other text. A conversation
+# without an audio reply goes out as it is.
 _wire_messages(_, messages::Conversation) = messages
 _wire_messages(::Type{OPENAIServiceEndpoint}, messages::Conversation) =
     any(m -> !isnothing(m.audio_output), messages) ? Any[_audio_turn(m) for m in messages] : messages

@@ -619,7 +619,13 @@ end
     @testset "Message: audio on assistant turns only; an audio-only turn reads as its transcript" begin
         m = Message(role=RoleAssistant, audio_output=spoken)
         @test m.content == "Hi there!" && m.audio_output === spoken
+        # Empty content is no text, as the decoders read it: the transcript stands in.
+        @test Message(role=RoleAssistant, content="", audio_output=spoken).content == "Hi there!"
         @test Message(role=RoleAssistant, content="Hello.", audio_output=spoken).content == "Hello."
+        # A turn of unknown expiry, as a stream cut before its last update leaves it, is a turn.
+        unknown = AudioOutput(id="audio_abc123", data=wav, expires_at=nothing, transcript="Hi there!")
+        @test unknown.expires_at === nothing && Message(role=RoleAssistant, audio_output=unknown).content == "Hi there!"
+        @test sprint(show, unknown) == "AudioOutput(\"audio_abc123\", wav, 48 bytes, expires_at=nothing, transcript=\"Hi there!\")"
         @test_throws ArgumentError Message(role=RoleUser, content="x", audio_output=spoken)
         @test_throws ArgumentError Message(role=RoleSystem, content="x", audio_output=spoken)
         @test_throws ArgumentError Message(role="tool", content="x", tool_call_id="call_1", audio_output=spoken)
@@ -647,12 +653,22 @@ end
             body = JSON.parse(UniLM.encode_request(service, Chat(service=service, model="m", messages=conversation())))
             @test body["messages"][3] == Dict("role" => "assistant", "content" => "Hi there!")
         end
-        # So do the native encoders.
-        for (service, model) in ((ANTHROPICServiceEndpoint, "claude-haiku-5-5"), (GEMINIServiceEndpoint, "gemini-3.8-flash"),
-                                 (OllamaEndpoint(), "gemma4:e4b"))
-            body = UniLM.encode_request(service, Chat(service=service, model=model, messages=conversation()))
-            @test contains(body, "\"Hi there!\"") && !contains(body, "audio_abc123") && !contains(body, "\"audio\"")
-        end
+        # So do the native encoders, each in its own turn shape.
+        native(service, model) = JSON.parse(UniLM.encode_request(service, Chat(service=service, model=model,
+                                                                                messages=conversation())))
+        anthropic = native(ANTHROPICServiceEndpoint, "claude-haiku-5-5")
+        @test anthropic["messages"] == [Dict("role" => "user", "content" => "Say hi."),
+            Dict("role" => "assistant", "content" => "Hi there!"), Dict("role" => "user", "content" => "Again, in French.")]
+        gemini = native(GEMINIServiceEndpoint, "gemini-3.8-flash")
+        @test gemini["contents"][2] == Dict("role" => "model", "parts" => [Dict("text" => "Hi there!")])
+        @test length(gemini["contents"]) == 3
+        ollama = native(OllamaEndpoint(), "gemma4:e4b")
+        @test ollama["messages"][3] == Dict("role" => "assistant", "content" => "Hi there!")
+        @test length(ollama["messages"]) == 4
+        # An audio turn given empty content is sent with its transcript, never as an empty turn.
+        emptied = [conversation()[1:2]; Message(role=RoleAssistant, content="", audio_output=spoken); conversation()[4]]
+        @test JSON.parse(UniLM.encode_request(ANTHROPICServiceEndpoint, Chat(service=ANTHROPICServiceEndpoint,
+            model="claude-haiku-5-5", messages=emptied)))["messages"][2] == Dict("role" => "assistant", "content" => "Hi there!")
     end
 end
 

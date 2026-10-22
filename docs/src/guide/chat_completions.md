@@ -223,12 +223,12 @@ push!(chat, Message(Val(:user), "Now say it in French."))
 chatrequest!(chat)                      # the earlier reply goes back by its id
 ```
 
-The next request sends the audio turn back to OpenAI as its transcript and
-`"audio": {"id": …}`; every other endpoint receives the transcript as the turn's text. A
+The next request sends the audio turn back to OpenAI as its content — the transcript —
+and `"audio": {"id": …}`; every other endpoint receives the content alone. A
 streamed reply assembles the same `audio_output` from its chunks, and its transcript
-reaches the callback as text. UniLM prices text tokens only: an audio model has no
-[`DEFAULT_PRICING`](@ref) row, so `estimated_cost` returns `0.0` for its calls and warns
-once.
+reaches the callback as text. Audio-token rates are not priced yet: `estimated_cost`
+counts an audio model as unpriced, `0.0` with a one-time warning (see
+[Unpriced models cost \$0](@ref unpriced-zero)).
 
 ## Models
 

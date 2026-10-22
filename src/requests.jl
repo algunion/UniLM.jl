@@ -870,7 +870,7 @@ end
 # A streamed audio reply as its updates arrive (the chunk's `delta.audio` in the Chat
 # Completions reference): its id, its base64 text — the chunks joined, decoded once at the
 # end, so a chunk may end inside a 4-character group — its transcript, and its expiry,
-# which the last update carries alone.
+# which the last update carries alone (`nothing` until it arrives).
 @kwdef mutable struct _StreamedAudio
     id::Union{String,Nothing} = nothing
     base64::IOBuffer = IOBuffer()
@@ -888,8 +888,9 @@ callback), refusal text to `refusal`, and records `finish_reason`, `usage`
 (a [`TokenUsage`](@ref)), the `model` the provider reports having served (the result's
 `model`; `nothing` when it reports none) and, for an in-band error, the decoded payload
 in `error`. `service_tier` holds the billed tier a chunk reported, for a handler whose
-provider reports it apart from the usage. `audio` gathers a streamed audio reply (its id,
-base64 data, transcript and expiry), from which the message's [`AudioOutput`](@ref) is built.
+provider reports it apart from the usage. `audio` is filled by the OpenAI-wire handler
+only, from a streamed audio reply's `delta.audio` updates, and becomes the message's
+[`AudioOutput`](@ref); a handler of another wire leaves it `nothing`.
 Tool calls live in `tool_calls` by index as
 `Dict("id" => …, "type" => "function", "function" => Dict("name" => …, "arguments" => …))`;
 `"complete" => true` on an entry tells the driver the call has finished streaming.
@@ -936,16 +937,18 @@ Public extension API (not exported); see the Custom Backends guide.
     # The served model and the billed tier, as the stream's chunks report them.
     model::Union{String,Nothing} = nothing
     service_tier::Union{String,Nothing} = nothing
+    # A streamed audio reply as it arrives; the OpenAI-wire handler alone fills it.
     audio::Union{_StreamedAudio,Nothing} = nothing
 end
 
-# The audio reply a stream assembled: a reply without its id, or one that ended before
-# the update carrying its expiry, is incomplete, and not an `AudioOutput`.
+# The audio reply a stream assembled. Its id comes with its first update, so a reply
+# without one is no audio reply; its expiry comes alone in the last update, after the
+# turn's finish, so a connection that closes between the two leaves the turn whole and
+# its expiry unknown (`nothing`).
 function _audio_output(s::_StreamedAudio)::AudioOutput
-    id, expires_at = s.id, s.expires_at
+    id = s.id
     isnothing(id) && throw(ArgumentError("the streamed audio reply carried no id"))
-    isnothing(expires_at) && throw(ArgumentError("the streamed audio reply ended before its expires_at"))
-    AudioOutput(id, base64decode(takestring!(s.base64)), expires_at, takestring!(s.transcript))
+    AudioOutput(id, base64decode(takestring!(s.base64)), s.expires_at, takestring!(s.transcript))
 end
 
 # The (name, arguments) fragment buffers of streamed tool call `idx`.

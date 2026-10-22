@@ -77,11 +77,29 @@ function _drift_docs_ids(dir::AbstractString=joinpath(pkgdir(UniLM), "docs", "sr
     unique!(ids)
 end
 
+# The listed models by the ids a request may name them by: each listed id, and the alias of a
+# dated snapshot (-YYYYMMDD) that the listing does not name itself — "for models before the 4.6
+# generation, the alias is a convenience pointer that resolves to the dated ID"
+# (https://platform.claude.com/docs/en/models/overview), as claude-haiku-4-5 resolves to the
+# listed claude-haiku-4-5-20251001 (of two snapshots, to the later). A snapshot id is listed
+# only as itself.
+function _drift_listed(models::Vector{ProviderModel})::Dict{String,ProviderModel}
+    listed = Dict{String,ProviderModel}()
+    for m in sort(models; by=m -> m.id)
+        alias = replace(m.id, r"-\d{8}$" => "")
+        alias == m.id || (listed[alias] = m)
+    end
+    for m in models
+        listed[m.id] = m
+    end
+    listed
+end
+
 # The models of `provider` among those UniLM names, the ones `models` does not list, and the
-# listed ones whose retirement date has come.
+# listed ones whose retirement date has come, the shutdown day included.
 function _drift_named_models(models::Vector{ProviderModel}, provider::Symbol;
                              named::Vector{String}=[_drift_defaults(); _drift_suite_ids(); _drift_docs_ids()])
-    listed = Dict(m.id => m for m in models)
+    listed = _drift_listed(models)
     ids = unique!(filter(id -> _drift_provider(id) === provider, named))
     retired = [id => listed[id].retires for id in ids
                if haskey(listed, id) && !isnothing(listed[id].retires) && listed[id].retires <= today()]

@@ -1,0 +1,2 @@
+# A PDF's cross-reference table holds byte offsets: a line-ending conversion would corrupt it.
+*.pdf binary

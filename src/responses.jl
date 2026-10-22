@@ -127,9 +127,8 @@ end
 
 Abstract supertype for Responses API tools. Subtypes: [`FunctionTool`](@ref),
 [`WebSearchTool`](@ref), [`FileSearchTool`](@ref), [`MCPTool`](@ref),
-[`ComputerUseTool`](@ref), [`ComputerTool`](@ref), [`ImageGenerationTool`](@ref),
-[`CodeInterpreterTool`](@ref), [`LocalShellTool`](@ref), [`ShellTool`](@ref),
-[`ApplyPatchTool`](@ref) and [`CustomTool`](@ref).
+[`ComputerTool`](@ref), [`ImageGenerationTool`](@ref), [`CodeInterpreterTool`](@ref),
+[`ShellTool`](@ref), [`ApplyPatchTool`](@ref) and [`CustomTool`](@ref).
 """
 abstract type ResponseTool end
 
@@ -276,24 +275,6 @@ function JSON.lower(t::MCPTool)
 end
 
 """
-    ComputerUseTool(; display_width=1024, display_height=768, environment=nothing)
-
-A computer use tool for the Responses API. Allows the model to interact with a
-virtual display via screenshots, mouse, and keyboard.
-"""
-@kwdef struct ComputerUseTool <: ResponseTool
-    display_width::Int = 1024
-    display_height::Int = 768
-    environment::Union{String, Nothing} = nothing
-end
-
-function JSON.lower(t::ComputerUseTool)
-    d = Dict{Symbol,Any}(:type => "computer_use_preview", :display_width => t.display_width, :display_height => t.display_height)
-    !isnothing(t.environment) && (d[:environment] = t.environment)
-    return d
-end
-
-"""
     ImageGenerationTool(; background=nothing, output_format=nothing, output_compression=nothing,
                         quality=nothing, size=nothing, model=nothing, action=nothing,
                         moderation=nothing, partial_images=nothing, input_fidelity=nothing,
@@ -371,13 +352,13 @@ function JSON.lower(t::CodeInterpreterTool)
     return d
 end
 
-# ─── Newer hosted tools (GA computer, shell, local_shell, apply_patch, custom) ──
+# ─── Newer hosted tools (GA computer, shell, apply_patch, custom) ──
 
 """
     ComputerTool(; environment=nothing)
 
-GA computer-use tool (`type:"computer"`) for newer models. Unlike [`ComputerUseTool`](@ref)
-(`computer_use_preview`) it carries no `display_width`/`display_height`.
+Computer-use tool (`type:"computer"`); the `computer_call` items the model returns are
+actions for your application to perform.
 """
 @kwdef struct ComputerTool <: ResponseTool
     environment::Union{String, Nothing} = nothing
@@ -387,15 +368,6 @@ function JSON.lower(t::ComputerTool)
     !isnothing(t.environment) && (d[:environment] = t.environment)
     return d
 end
-
-"""
-    LocalShellTool()
-
-Local shell tool (`type:"local_shell"`): the model emits shell commands you run on your
-own runtime (codex-style models).
-"""
-struct LocalShellTool <: ResponseTool end
-JSON.lower(::LocalShellTool) = Dict{Symbol,Any}(:type => "local_shell")
 
 """
     ShellTool(; environment=nothing)
@@ -437,10 +409,8 @@ function JSON.lower(t::CustomTool)
     return d
 end
 
-"Construct a [`ComputerTool`](@ref) (GA `computer` tool); for the preview variant with display dimensions use [`computer_use`](@ref)."
+"Construct a [`ComputerTool`](@ref) (`computer` tool)."
 computer_tool(; environment::Union{String,Nothing}=nothing) = ComputerTool(environment=environment)
-"Construct a [`LocalShellTool`](@ref) (`local_shell`): the model emits commands you run on your own runtime."
-local_shell() = LocalShellTool()
 "Construct a [`ShellTool`](@ref) (hosted `shell` tool)."
 shell(; environment::Union{AbstractDict,Nothing}=nothing) = ShellTool(environment=environment)
 "Construct an [`ApplyPatchTool`](@ref) (structured `apply_patch` file-edit tool)."
@@ -481,15 +451,6 @@ function mcp_approval_response(approval_request_id::String, approve::Bool; reaso
     !isnothing(reason) && (d[:reason] = reason)
     return d
 end
-
-"""
-    computer_use(; display_width=1024, display_height=768, environment=nothing)
-
-Shorthand constructor for [`ComputerUseTool`](@ref).
-"""
-computer_use(; display_width::Int=1024, display_height::Int=768,
-    environment::Union{String, Nothing}=nothing) =
-    ComputerUseTool(display_width=display_width, display_height=display_height, environment=environment)
 
 """
     image_generation_tool(; kwargs...)

@@ -110,12 +110,10 @@ FunctionTool
 WebSearchTool
 FileSearchTool
 MCPTool
-ComputerUseTool
 ImageGenerationTool
 CodeInterpreterTool
 ComputerTool
 CustomTool
-LocalShellTool
 ShellTool
 ApplyPatchTool
 ```
@@ -127,12 +125,10 @@ function_tool
 web_search
 file_search
 mcp_tool
-computer_use
 image_generation_tool
 code_interpreter
 computer_tool
 custom_tool
-local_shell
 shell
 apply_patch_tool
 mcp_approval_response

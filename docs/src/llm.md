@@ -855,7 +855,7 @@ respond(callback::Function, input; kwargs...) -> Task
 
 ```julia
 output_text(result::ResponseSuccess)::String                # the answer: message text without phase "commentary" ("\n" between parts);
-                                                            #   a Gemini answer's consecutive model_output steps are one part, joined with no separator
+                                                            #   a Gemini answer's model_output steps, tool steps between them or not, are one part, joined with no separator
 output_text(result::ResponseFailure)                        # throws LLMResultError
 output_text(result::ResponseCallError)                      # throws LLMResultError
 
@@ -1206,7 +1206,8 @@ cached-input rate. OpenAI (Chat streamed and not, Responses, Decisions) and Anth
 cache writes, and the extended-retention share of them (OpenAI's 12-hour, Anthropic's 1-hour); `service_tier` comes from OpenAI's
 `service_tier`, Anthropic's (`"fast"` for a request served in fast mode) and Gemini's
 (the `x-gemini-service-tier` header, else `usageMetadata.serviceTier`, or an interaction's
-`service_tier`); `inference_geo` from Anthropic. The audio counts come from OpenAI Chat
+`service_tier`; on `GEMINIOpenAIServiceEndpoint`, whose replies name none, the tier the
+request asked for); `inference_geo` from Anthropic. The audio counts come from OpenAI Chat
 Completions' `prompt_tokens_details.audio_tokens` / `completion_tokens_details.audio_tokens`,
 and `prompt_audio_tokens` also from Gemini's AUDIO counts (`promptTokensDetails` and
 `toolUsePromptTokensDetails`; an interaction's `input_tokens_by_modality` and
@@ -1297,9 +1298,10 @@ tier's multiple; audio on another Gemini model (the page states no audio rate fo
 audio output, and audio in a call that also hit the cache give `0.0` with one warning per
 model. A Gemini result is billed at the tier it reports
 (`usage.service_tier`: the `x-gemini-service-tier` header, else `usageMetadata.serviceTier`,
-or an interaction's `service_tier`; `GEMINIOpenAIServiceEndpoint` replies to flex and priority
-requests named none on 2026-10-22, so they are estimated at the standard rates) — input and
-output at half the standard rates on Flex
+or an interaction's `service_tier`; `GEMINIOpenAIServiceEndpoint` replies name none, so a Chat
+result there records the requested tier — `"priority"` priced at Priority is an upper bound,
+since Google bills a downgraded Priority request at Standard and this endpoint does not report
+the downgrade) — input and output at half the standard rates on Flex
 and 1.8 times on Priority, a cache hit at the same multiple except where a model's table
 lists another cache-hit price (Flex's standard rate on 3.1 Pro Preview, 3 Flash Preview and
 the 2.5 models; \$0.02 on Flex and \$0.05 on Priority for 3.5 Flash-Lite's \$0.03),

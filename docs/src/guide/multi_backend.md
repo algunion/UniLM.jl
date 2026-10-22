@@ -205,8 +205,10 @@ and throws for any other. The tier that billed the call is `usage.service_tier` 
 Gemini 4 Argon names the tier), else its `usageMetadata.serviceTier`, and an interaction's
 `service_tier` — so a Priority request Google downgrades reports and is priced as standard. A
 `GEMINIOpenAIServiceEndpoint` reply is read header first too, but replies to flex and priority
-requests there named their tier in neither the head nor the body (observed 2026-10-22), so such a
-call reports no tier and is estimated at the standard rates. [`estimated_cost`](@ref)
+requests there named their tier in neither the head nor the body (observed 2026-10-22), so a
+Chat result there records the tier the request asked for: `"flex"` is priced at the Flex rates
+and `"priority"` at the Priority rates — an upper bound, since Google bills a downgraded
+Priority request at Standard and this endpoint does not report the downgrade. [`estimated_cost`](@ref)
 bills input and output at half the standard rates on Flex and at 1.8 times on Priority, as the
 [pricing page](https://ai.google.dev/gemini-api/docs/pricing) lists them, and a cache hit at the
 same multiple except where a model's table lists another cache-hit price: on Flex the standard

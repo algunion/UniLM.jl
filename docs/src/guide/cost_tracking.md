@@ -66,7 +66,11 @@ subsets of it. These are the standard rates. Where UniLM models a provider's sur
 premium on cache writes (`cache_write_extended_tokens` counts the writes at the longer
 retention), a long-context tier, a multiplier for the `service_tier` or `inference_geo` the
 provider reports in [`TokenUsage`](@ref) — they apply to that provider's results; every
-other result is billed at the standard rates.
+other result is billed at the standard rates. `GEMINIOpenAIServiceEndpoint`'s replies name no
+billed tier, so a Chat result there records the tier the request asked for: `"flex"` is
+priced at the Flex rates and `"priority"` at the Priority rates — an upper bound, since
+Google bills a downgraded Priority request at Standard and this endpoint does not report the
+downgrade.
 
 OpenAI bills every audio token of a Chat call — an [`AudioAttachment`](@ref) clip, an audio
 reply ([Audio replies](@ref chat_audio_output)), a reply sent back by its id — at the model's

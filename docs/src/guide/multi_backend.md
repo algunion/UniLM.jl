@@ -181,7 +181,7 @@ How a neutral `Chat` maps onto the Messages API:
 | `Chat` field | Messages API |
 |---|---|
 | leading system messages | the top-level `system` prompt (joined with blank lines) |
-| later system messages | kept in place as `role: "system"` on models that accept mid-conversation system messages, where the placement is valid (after a user turn, and last or followed by an assistant turn); otherwise joined into the top-level `system` prompt — except on Claude Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 after an assistant turn (below) |
+| later system messages | kept in place as `role: "system"` on models that accept mid-conversation system messages, where the placement is valid (after a user turn, and last or followed by an assistant turn); otherwise joined into the top-level `system` prompt — except after an assistant turn on Claude Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5 and any id no row names (below) |
 | `tool` messages / assistant `tool_calls` | `tool_result` blocks (consecutive results in one user turn) / `tool_use` blocks; an assistant turn with no text, no tool calls and no Claude content blocks is left out |
 | `max_completion_tokens`, else `max_tokens` | `max_tokens` (default 16000) |
 | `tools` (`FunctionSignature.strict`) | `tools` with `input_schema` (and a top-level `strict`) |
@@ -216,18 +216,20 @@ every model; a forced `tool_choice` (`"required"` or a named function) on Opus 5
 Sonnet 5.5, Fable 5.1 and Mythos 5.1 (use `"auto"` with strict tools, or a JSON Schema
 `response_format`); and a conversation that ends with an assistant turn (response
 prefill) from the 4.6 generation on, Sonnet 5.5 and Haiku 5.5 included. An id no row
-names gets only the rules that hold for every model.
+names gets only the rules that hold for every model, and append-only system placement.
 
 Claude Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 accept a thinking block only while
 everything before it — the top-level `system` prompt, the `tools` and the earlier
 messages — is unchanged
 ([preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking)).
-On these models UniLM never edits the top-level `system` prompt once an assistant turn
-is in the conversation: a system message pushed after a reply that cannot stay in place
-is sent right after the next user turn, so each request extends the one before it, and
-until a user message follows it the request throws `ArgumentError`. Push your own
-messages and send the replies back as they came; editing earlier turns in
-`chat.messages` breaks the same check.
+On these models, and on a Claude model UniLM has no row for (Anthropic asks every
+integration to be append-only), UniLM never edits the top-level `system` prompt once an
+assistant turn is in the conversation: a system message pushed after a reply that cannot
+stay in place is sent right after the next user turn, so each request extends the one
+before it. On every model, a system message pushed after a reply needs a user message
+after it: until one follows, the request throws `ArgumentError` (sent as it stands, it
+would be a response prefill). Push your own messages and send the replies back as they
+came; editing earlier turns in `chat.messages` breaks the same check.
 
 ```julia
 chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-5-5")

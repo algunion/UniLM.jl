@@ -397,7 +397,7 @@ and 1.1× for US-only inference (`inference_geo == "us"`), and every rate 5× fo
 Claude Haiku 5.5 prompt over 100,000 tokens (cache reads and writes included); the
 multipliers stack.
 
-```julia
+```@example backends
 claude_chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-5-5")  # native Messages API
 push!(claude_chat, Message(Val(:system), "You are a helpful assistant."))
 push!(claude_chat, Message(Val(:user), "Say hello in one short sentence."))

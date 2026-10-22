@@ -1,0 +1,56 @@
+{
+  "request": {
+    "method": "POST",
+    "path": "/v1/messages",
+    "body": {
+      "max_tokens": 16000,
+      "messages": [
+        {
+          "content": "Say hello in one short sentence.",
+          "role": "user"
+        }
+      ],
+      "model": "claude-haiku-5-5",
+      "system": "You are a helpful assistant."
+    }
+  },
+  "response": {
+    "status": 200,
+    "request_id": "req_011CgHx5yWuJ2uw5n8QhFcji",
+    "request_id_header": "request-id",
+    "body": {
+      "model": "claude-haiku-5-5",
+      "id": "msg_011CgHx5zhbezDmgZjjNVaGq",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "Hello, nice to meet you!"
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 30,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 13,
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        },
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard"
+      },
+      "diagnostics": null
+    }
+  },
+  "recorded_at": "2026-10-22T21:01:46Z"
+}

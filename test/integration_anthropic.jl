@@ -26,7 +26,10 @@ _block_types(m::Message) = [b["type"] for b in m.provider_content.blocks]
 _billed(r) = (r isa LLMSuccess && @info "billed" r.model r.usage.prompt_tokens r.usage.completion_tokens cost = estimated_cost(r); r)
 
 @testset "Anthropic Chat — a basic call reports its served model and is priced at its row" begin
-    chat = _live_claude("Reply with exactly: hello"; max_tokens=64, reasoning_effort="none")
+    # The region is pinned, so the usage reports "global" and the 1x rates whatever the workspace default.
+    chat = _live_claude("Reply with exactly: hello"; service=ANTHROPICServiceEndpoint(inference_geo="global"),
+                        max_tokens=64, reasoning_effort="none")
+    @test JSON.parse(UniLM.encode_request(chat.service, chat))["inference_geo"] == "global"
     r = _billed(chatrequest!(chat))
     @test r isa LLMSuccess
     @test startswith(something(r.model, ""), _LIVE_CLAUDE)
@@ -90,7 +93,9 @@ end
     r = _billed(chatrequest!(chat))
     @test r isa LLMSuccess
     m = r.message
-    @test m.finish_reason == UniLM.TOOL_CALLS && _block_types(m) == ["thinking", "tool_use"]
+    # Thinking first, then the tool call; the model may add text or further blocks between them.
+    types = _block_types(m)
+    @test m.finish_reason == UniLM.TOOL_CALLS && first(types) == "thinking" && "tool_use" in types[2:end]
     @test !isempty(m.provider_content.blocks[1]["signature"])
     push!(chat, Message(role=UniLM.RoleTool, tool_call_id=m.tool_calls[1].id, content="9C, light rain"))
     body = JSON.parse(UniLM.encode_request(ANTHROPICServiceEndpoint, chat))

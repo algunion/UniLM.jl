@@ -939,6 +939,23 @@ _error_body(type, code) = JSON.json(Dict("error" => Dict("message" => "m", "type
     @test UniLM._is_retryable(503, _error_body("insufficient_quota", nothing)) == true
 end
 
+# Google's API errors page (https://ai.google.dev/gemini-api/docs/api-errors): an Interactions 429
+# `quota_exceeded` is "You have exceeded your daily quota" — "Wait until the quota resets or request a
+# quota increase" — while `rate_limit_exceeded` and `too_many_requests` say "Wait and retry with
+# exponential backoff", as the troubleshooting page says of generateContent's 429 RESOURCE_EXHAUSTED.
+@testset "_is_retryable: Gemini's daily quota is final, its rate limits are retried" begin
+    interactions(code) = JSON.json(Dict("error" => Dict("code" => code, "message" => "m")))
+    @test UniLM._is_retryable(429, interactions("quota_exceeded")) == false
+    @test UniLM._is_retryable(503, interactions("quota_exceeded")) == true
+    for code in ("rate_limit_exceeded", "too_many_requests")
+        @test UniLM._is_retryable(429, interactions(code)) == true
+    end
+    exhausted = Dict("error" => Dict("code" => 429, "message" => "Resource has been exhausted (e.g. check quota).",
+                                     "status" => "RESOURCE_EXHAUSTED"))
+    @test UniLM._is_retryable(429, JSON.json(exhausted)) == true
+    @test UniLM._is_retryable(429, JSON.json([exhausted])) == true        # the compatible endpoint's array body
+end
+
 # A server on an OS-assigned port that answers every request with HTTP 429, `body` and a zero
 # Retry-After; `hits` counts the requests that reached it.
 function _status_429_server(body::String)
@@ -967,7 +984,8 @@ end
             close(srv.server)
         end
     end
-    for body in (_error_body("insufficient_quota", nothing), _error_body(nothing, "insufficient_quota"))
+    for body in (_error_body("insufficient_quota", nothing), _error_body(nothing, "insufficient_quota"),
+                 JSON.json(Dict("error" => Dict("code" => "quota_exceeded", "message" => "daily quota"))))
         srv = _status_429_server(body)
         try
             r = chatrequest!(chat(srv.url); config=RequestConfig(max_attempts=3))

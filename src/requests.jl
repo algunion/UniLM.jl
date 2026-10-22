@@ -20,11 +20,15 @@ _is_retryable(status::Integer)::Bool =
 # A 429 also answers what no retry can serve: OpenAI names spent prepaid credit and a reached
 # spend or usage limit in `error.code`, and "The broader `error.type` can still be
 # `insufficient_quota`", the code older replies give too ("Retrying billing, spend, or quota
-# errors won't restore API access", https://developers.openai.com/api/docs/guides/error-codes),
-# while a rate limit — code `slow_down`, or none — clears with time.
+# errors won't restore API access", https://developers.openai.com/api/docs/guides/error-codes);
+# Gemini Interactions names its daily quota `quota_exceeded`, "You have exceeded your daily
+# quota", to "Wait until the quota resets or request a quota increase"
+# (https://ai.google.dev/gemini-api/docs/api-errors). A rate limit — OpenAI's code `slow_down`,
+# or none; Gemini's `rate_limit_exceeded`, or generateContent's RESOURCE_EXHAUSTED, which Google
+# says to retry with backoff — clears with time.
 const _FINAL_429_CODES = ("credit_balance_exhausted", "organization_spend_limit_exceeded",
                           "project_spend_limit_exceeded", "organization_usage_limit_exceeded",
-                          "insufficient_quota")
+                          "insufficient_quota", "quota_exceeded")
 
 # Whether a failed exchange is worth another attempt: its status and, for a 429, its body.
 _is_retryable(status::Integer, body)::Bool =

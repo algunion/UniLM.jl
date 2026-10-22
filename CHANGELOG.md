@@ -1,6 +1,327 @@
 # Changelog
 
-## Unreleased
+## v0.26.0 (2026-10-2x)
+
+### Breaking
+- **Current default models.** `Chat` and `Respond` on `OPENAIServiceEndpoint` default to
+  `gpt-6-sol` (was `gpt-5.6-sol`), and so do `compact_response` and `count_input_tokens`;
+  image generation and edits default to `gpt-image-2.5-sunburst` (was `gpt-image-2`, at the
+  same token prices); `realtime_connect` opens `gpt-realtime-2.1` (was `gpt-realtime-2`);
+  and `Embeddings` on `GEMINIOpenAIServiceEndpoint` default to `gemini-embedding-2` (was
+  `gemini-embedding-001`, which shuts down on 2028-05-14). Upgrading: pass `model=` to keep
+  the model you used; the two Gemini embedding models' vectors are not comparable, so embed
+  a corpus again before comparing it with `gemini-embedding-2` vectors.
+- **`Respond` loses `prompt` and gains `seed`, and old positional calls shift.** OpenAI
+  shuts down reusable prompts (`v1/prompts`) on 2026-11-30, so the `prompt` field is gone;
+  `seed` (see Added) is appended as the 32nd field. `Respond` still has 32 fields, and its
+  positional constructor takes exactly those 32 in declaration order, so a 30- or
+  31-argument call is a `MethodError` — but a 32-argument positional call written for 0.25
+  still compiles and puts each value from the 24th argument on into the next field: the
+  old `prompt` slot into `prompt_cache_key`, `prompt_cache_key`'s value into
+  `prompt_cache_retention`, `prompt_cache_retention`'s into `safety_identifier`,
+  `safety_identifier`'s into `conversation`, and so on, `moderation`'s into `seed`. Where a
+  value cannot convert to its new field's type the call fails loudly; where it can — a
+  `nothing`, or a string landing in another string field — it is silently misassigned.
+  Upgrading: build every `Respond` with keywords, and move a reusable prompt's content into
+  `instructions` and `input`.
+- **Native OpenAI follows OpenAI's field deprecations.** On `OPENAIServiceEndpoint`, `user`
+  throws `ArgumentError` on `Chat` and `Respond` (OpenAI replaces it with
+  `safety_identifier` and `prompt_cache_key`), and a `Chat`'s `max_tokens` goes out as
+  `max_completion_tokens`, its current name (setting both throws). Upgrading: set
+  `safety_identifier` (a stable end-user id, at most 128 characters) or `prompt_cache_key`
+  instead of `user`, and one token cap.
+- **One OpenAI rule table, by exact model id.** The native endpoint checks `gpt-6-astra`,
+  `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna`, each
+  by its exact id or a dated snapshot (`gpt-6-sol-2026-09-14`), before any request; no
+  prefix carries one generation's rules to another, and any other model is left to the
+  server. GPT-6 Astra and GPT-6.1 Sol take reasoning effort `"low"` to `"max"` on Responses
+  and `"low"` to `"xhigh"` on Chat Completions, no sampling controls or log probabilities,
+  and tools only through `Respond`; GPT-6 Sol, GPT-6 Luna and GPT-5.6 take `"none"` to
+  `"max"` on Responses and `"none"` to `"xhigh"` on Chat Completions (which answered `"max"`
+  with HTTP 400 on every one of these models on 2026-10-22, though its reference lists it),
+  and Chat tools only at `"none"` — GPT-6 Sol and Luna also sampling controls and log
+  probabilities only at `"none"`; none takes `"minimal"`, and the `gpt-5.6` alias takes
+  GPT-5.6 Sol's rules. A refusal names the model, the efforts it takes and the next one up,
+  or `Respond` for `"max"`. `service_tier` is checked per API: Chat Completions takes `"auto"`, `"default"`,
+  `"flex"`, `"scale"`, `"priority"` and `"fast"`, Responses also `"ultrafast"` on GPT-6
+  Astra and GPT-6.1 Sol. Upgrading: use `"low"` for `"minimal"`; send `"max"` and the
+  Astra and 6.1 Sol tools through `Respond`; set `reasoning_effort="none"` for Chat tools,
+  and on GPT-6 Sol and Luna for sampling controls.
+- **`output_text` returns the answer only.** A Responses message the model labels
+  `phase: "commentary"` — an intermediate update, such as a preamble before a tool call —
+  is left out, so a turn that stops at its commentary has no text yet; a message without a
+  phase still counts. Upgrading: read the commentary from `r.response.output` where you
+  need it.
+- **Costs are priced at the model that served the call.** `estimated_cost` and
+  `cumulative_cost` price a Chat result at the model the provider reports having served
+  (`LLMSuccess.model`, see Added) before `self.model`, so a routed id or an alias bills at
+  its target's rates; `estimated_cost` of an `ImageSuccess` throws `ArgumentError` unless
+  `model=` names a row, instead of returning `0.0`, since UniLM does not model image-token
+  rates. `LLMSuccess` has a fifth field, so its 4-argument positional constructor is gone.
+  Upgrading: pass `model=` (with a `pricing=` row of your own for images) to price at
+  another row; build `LLMSuccess` by keyword.
+- **Retired OpenAI surfaces are gone.** `LocalShellTool` (`local_shell`) and
+  `ComputerUseTool` (`computer_use`) are removed — OpenAI no longer supports the legacy
+  local shell tool, and `computer-use-preview` shut down on 2026-07-23; the `"evals"` file
+  purpose throws `ArgumentError` naming the shutdown in `FileUpload`, `upload_file` and
+  `create_upload` (OpenAI's Evals API is read-only from 2026-10-31 and shuts down on
+  2026-11-30), and `WEBHOOK_EVENTS` no longer lists `eval.run.succeeded`,
+  `eval.run.failed` and `eval.run.canceled`; the `o4-mini` and `gpt-4.1-nano` price rows
+  are gone (both shut down on 2026-10-23); and the unexported `UniLM.GPTImageContent`
+  (text with image URLs as one content value) is removed. Upgrading: use `ShellTool`
+  (`shell`) and `ComputerTool` (`computer_tool`); attach images as `ImageAttachment`s, or
+  pass an image URL with `input_image` on the Responses API.
+- **Image requests take `safety_identifier`, not `user`.** OpenAI deprecates the Images
+  API's `user`: `ImageGeneration` has no `user` field, and `ImageGeneration` and `ImageEdit`
+  take `safety_identifier` — 1 to 128 characters on OpenAI (an empty or longer one throws
+  `ArgumentError` before the request), the request label `safety_identifier` on Gemini.
+  Upgrading: rename `user=` to `safety_identifier=`.
+- **OpenAI speech runs on a Realtime session.** OpenAI shuts down `tts-1`, `tts-1-hd` and
+  `gpt-4o-mini-tts` on 2027-01-06, with no replacement on `/v1/audio/speech`, so `speak`
+  on `OPENAIServiceEndpoint` opens a Realtime API session on `gpt-realtime-2.1-mini` and
+  returns its 24 kHz 16-bit mono audio as a WAV file (`response_format = "wav"`, the
+  default) or as raw PCM (`"pcm"`): `"mp3"`, `"opus"`, `"aac"` and `"flac"` throw, the
+  default voice is `marin`, `fable`, `nova` and `onyx` are not Realtime voices and throw,
+  and `speed` takes 0.25 to 1.5. It needs `:realtime`, so an endpoint that declares
+  `:audio` alone no longer speaks. It still observes the ambient `CancelToken`. Upgrading:
+  ask for `"wav"` or `"pcm"` and convert other formats yourself; pick a Realtime voice
+  (`alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar`).
+- **`translate` runs on a Realtime translation session.** OpenAI shuts
+  `/v1/audio/translations` down on 2027-02-26, so `translate(path; language="en")` streams
+  a 16-bit PCM WAV file (any rate and channel count, mixed down and resampled to 24 kHz
+  mono) through a `v1/realtime/translations` session on `gpt-realtime-translate` into
+  `language` and returns the translated text; any other file throws `ArgumentError` naming
+  the conversion, the `translate(::TranscriptionRequest)` method is gone, and the call needs
+  `:realtime`. Speech already in the target language can come back as empty text. It
+  observes the ambient `CancelToken`. Upgrading: call `translate(path; language)` with a
+  WAV file.
+- **`AudioFailure.status` may be `nothing`**: a failure a Realtime session reports as an
+  event carries no HTTP status (its `response` is the event's JSON). Upgrading: handle
+  `status === nothing` where you read it.
+- **Native Anthropic speaks API version `2026-10-21`, which removed sampling.** Requests
+  send `anthropic-version: 2026-10-21`, and `temperature` or `top_p` on a Claude request
+  throws `ArgumentError`: the API answers either with HTTP 400 on every model, even at its
+  default value. Upgrading: remove `temperature` and `top_p` from Claude requests.
+- **Claude rules match the exact model id.** A row applies to its id, or the id with a
+  `-YYYYMMDD` snapshot suffix, only: `claude-sonnet-5-5` no longer inherits
+  `claude-sonnet-5`'s rules (it has its own, see Added), and an id no row names gets only
+  the rules every Claude model shares. The rows of the retired Claude Opus 4.1, Opus 4,
+  Sonnet 4 and Claude 3 models are gone. Upgrading: nothing for current models; a request
+  to a retired one goes to the API, which refuses it.
+- **A system message after a Claude reply keeps the prompt append-only.** On Claude Fable
+  5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5 and any Claude id without a rule row, a system
+  message after an assistant turn that cannot stay in place goes right after the next user
+  turn instead of joining the top-level `system` prompt: these models refuse an earlier
+  turn's thinking blocks once that prompt changes. On every Claude model, a conversation in
+  which no user turn follows such a system message — counting a refusal or an empty reply,
+  which are left out of the request, as no turn — throws `ArgumentError` naming what to push;
+  it was sent as a response prefill on the models that take one. Upgrading: push a user
+  message, or the tool results, after a mid-conversation system message before sending.
+- **`ANTHROPICServiceEndpoint` is a struct with options** (`betas`, `user_profile_id`,
+  `workspace_id`, `inference_geo`; see Added). The bare type keeps working everywhere it
+  worked, as the endpoint with no options. Upgrading: a method of your own defined on
+  `::Type{ANTHROPICServiceEndpoint}` covers the bare type only; define it on
+  `::ANTHROPICServiceEndpoint` too for endpoints built with options.
+- **Claude requests that set a `reasoning_effort` level ask for summarized thinking**
+  (`thinking.display = "summarized"`; see Added), so their request bodies change.
+  Upgrading: a recording of such a request made by 0.25 does not replay
+  (`ReplayMissError`); record it again (`mode = :record_missing`).
+- **Gemini refuses the sampling it ignores.** Google ignores `temperature` and `top_p` on
+  Gemini 3.6 Flash, 3.5 Flash-Lite and every later model, so native Chat, `respond`
+  (Interactions) and `GEMINIOpenAIServiceEndpoint` throw `ArgumentError` for them on every
+  model but the earlier ones that honour them (`gemini-2.5-*`, `gemini-3-flash-preview`,
+  `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite`, Gemma 4 and the earlier image models),
+  unknown ids and the `-latest` aliases included. Upgrading: drop `temperature` and `top_p`
+  on current Gemini models.
+- **Gemini rules match exact model ids.** Thinking levels come from rows by exact id: new
+  rows for Gemini 4 Argon (`"low"`, `"medium"`, `"high"`), `gemini-robotics-er-2-preview`
+  and the `-latest` aliases, which take their targets' levels (so `"minimal"` throws on
+  `gemini-pro-latest` and `gemini-flash-latest`); the `gemini-3-pro-preview` row is gone,
+  and an id no row names is left to the server. From Gemini 3.6 Flash and 3.5 Flash-Lite
+  on, a native Chat that ends with an assistant turn (a prefilled answer) throws, since the
+  API answers it with HTTP 400. Upgrading: use `"low"` where `"minimal"` is refused, and end
+  a Gemini conversation with a user message.
+- **Gemini Interactions joins an answer's steps with no separator.** The `model_output`
+  steps of one answer, and the text parts inside a step, are one part, joined as Google's
+  SDK joins them, so `output_text` reads `"…42 lines long"` where it read
+  `"…4\n2 lines long"`. Upgrading: none, unless you split `output_text` on its newlines.
+- **Ollama's Responses API refuses every `input_file` part**: Ollama's OpenAI-compatibility
+  page lists no file inputs for `/v1/responses`, so `respond` on an `OllamaEndpoint` throws
+  `ArgumentError` before any request for an `input_file` part in any form —
+  `input_file(document)` and `input_file(; url, id, file_data)` alike — which 0.25 sent
+  unchecked. Upgrading: put the document's text in an `input_text` part, or send the file
+  to `OPENAIServiceEndpoint`.
+
+### Added
+- **PDF documents and an image's detail level in user messages.**
+  `DocumentAttachment("report.pdf")` (or bytes with `filename=`; recognised by its `%PDF-`
+  header) attaches a PDF, and `ImageAttachment(…; detail=…)` sets the level of detail an
+  image is read at (`"auto"`, `"low"`, `"high"`, `"original"`); an image without one is sent
+  exactly as before. The OpenAI Chat Completions wire (OpenAI, Azure, the Gemini
+  OpenAI-compatible endpoint, DeepSeek, generic endpoints) sends a document as a `file`
+  part and the level as `image_url.detail`, and `input_file(document)` makes the document a
+  Responses `input_file` part. `OllamaEndpoint`, System One requests and embeddings refuse
+  both before any request.
+- **Native Anthropic and Gemini send attachments.** Native Anthropic sends an
+  `ImageAttachment` and a `DocumentAttachment` as base64 `image` and `document` blocks
+  before the message's text, and refuses a sound clip and an image's detail level, which
+  the Messages API has no field for. Native Gemini sends images, sound clips and PDF
+  documents as `inlineData` parts ahead of the text, and an image's detail as its per-part
+  media resolution (`"low"`, `"high"`; `"auto"` sends none; `"original"`, or any level on
+  the Gemini 2.5 and Gemma 4 models, throws); `respond` on `GEMINIServiceEndpoint` takes the
+  same attachments in an `InputMessage`'s content, sent as Interactions `image`, `audio`
+  and `document` parts, as are `input_file(document)` and a data-URL `input_image`.
+- **OpenAI Chat audio replies, kept and priced.** A `Chat` with
+  `modalities=["text", "audio"]` and an `audio` voice and format (for example on
+  `gpt-audio-1.5`) gets the reply's audio on the new `Message.audio_output`, an
+  `AudioOutput` — its bytes, the format their signature shows, OpenAI's `id`, `expires_at`
+  (`nothing` when a stream closed after the turn's finish, before its last update) and the
+  `transcript` — streamed or not; the reply's `content` is the transcript, which a stream
+  also passes to the callback as text. The next request sends the turn back to OpenAI as
+  its content and `"audio": {"id": …}`; every other endpoint receives the content alone.
+  `TokenUsage` gains `prompt_audio_tokens` and `completion_audio_tokens` (OpenAI's
+  `audio_tokens` details, streamed and not), and `estimated_cost` and `cumulative_cost`
+  bill `gpt-audio-1.5` audio at \$32 / \$64 per 1M tokens and its text at \$2.50 / \$10.
+- **Usage reports cache writes, the billed tier, the region and the served model.**
+  `TokenUsage` gains `cache_write_tokens`, `cache_write_extended_tokens` (the writes at the
+  extended retention: OpenAI `"12h"`, Anthropic `"1h"`), `service_tier` and
+  `inference_geo`, filled by OpenAI (Chat streamed and not, Responses, Decisions),
+  Anthropic (cache writes and 1-hour writes, the tier — `"fast"` in fast mode — and the
+  region, streamed too) and Gemini (the tier); the 5-count positional form still builds.
+  `LLMSuccess.model` is the model the provider reports having served: the OpenAI wire's and
+  DeepSeek's `model`, Anthropic's, and Gemini's `modelVersion`. For custom backends,
+  `decode_response` may return a `model`, and a stream handler may set `state.model`.
+- **OpenAI prompt caching for 12 hours, per breakpoint, and on Decisions.**
+  `PromptCacheOptions` takes a `ttl` of `"5m"` or `"1h"` (Anthropic's) or `"30m"` or `"12h"`
+  (OpenAI's), and each endpoint refuses the ones it does not take: OpenAI's Responses API
+  and Decisions API keep a prefix 12 hours, Chat Completions 30 minutes only.
+  `input_text(text; cache_breakpoint=true, cache_ttl="12h")` gives one breakpoint its own
+  lifetime. `ask` on OpenAI's Decisions API takes `prompt_cache_options` (`mode`, `ttl`),
+  left out of recordings as `prompt_cache_key` is; another ttl, `prewarm` or
+  `comparison_response_id` throws before the request.
+- **`InputMessage(…; phase)`** labels a replayed assistant message `"commentary"` or
+  `"final_answer"`, as OpenAI asks callers to resend it; another value, or a phase on
+  another role, throws, and Gemini Interactions and `OllamaEndpoint` refuse it.
+- **OpenAI price rows** for `gpt-6.1-sol` (\$2 / \$0.10 cached / \$10), `chat-latest`
+  (\$5 / \$0.50 / \$30), `gpt-5.5-pro` and `gpt-5.4-pro` (\$30 / \$180, no cached rate),
+  `text-embedding-ada-002` (\$0.10) and `gpt-audio-1.5` (text \$2.50 / \$10); the OpenAI,
+  Anthropic and Gemini rows were verified on 2026-10-22.
+- **Claude Sonnet 5.5 and Haiku 5.5.** Sonnet 5.5 sends `reasoning_effort="none"` as
+  `thinking = {type: "between_tools"}`, refuses a forced `tool_choice` and a prefill, and is
+  priced at \$2 / \$0.10 cached / \$10; Haiku 5.5 sends `"none"` as thinking disabled, takes
+  a forced `tool_choice`, refuses a prefill, and is priced at \$0.10 / \$0.01 / \$0.50, every
+  rate 5× for a prompt over 100,000 tokens. `push!` accepts a system message later in a
+  conversation (see Breaking for where native Anthropic places it).
+- **Anthropic prompt caching, summarized thinking, fast mode and endpoint options.** On
+  `ANTHROPICServiceEndpoint`, `prompt_cache_options` becomes a top-level `cache_control`
+  (automatic caching) with `ttl` `"5m"` or `"1h"` and `mode` `"implicit"` or unset —
+  `"explicit"`, `prewarm=true`, `comparison_response_id` and the OpenAI ttls throw; a
+  `reasoning_effort` level turns adaptive thinking on with `display: "summarized"`, so
+  `reasoning_text` holds the summarized thinking on the current models; and
+  `service_tier="fast"` sends `speed: "fast"` on Claude Opus 5.5 (on Opus 5 and Opus 4.8
+  only through an endpoint whose `betas` hold `"fast-mode-2026-02-01"`; refused on other
+  models). `ANTHROPICServiceEndpoint(; betas, user_profile_id, workspace_id,
+  inference_geo)` sends the betas comma-joined in `anthropic-beta`, the ids in
+  `anthropic-user-profile-id` and `anthropic-workspace-id`, and `inference_geo` (`"global"`
+  or `"us"`, refused on the Claude 4.5 models) in the body; a blank value, a control
+  character or a comma in a beta name throws. `estimated_cost` bills Anthropic's cache
+  writes at 1.25× (5-minute) or 2× (1-hour) input, every rate 2× in fast mode and 1.1× for
+  US-only inference.
+- **Gemini image generation and editing (Nano Banana).** `generate_image` and `edit_image`
+  with `service=GEMINIServiceEndpoint` call `generateContent` on `gemini-nano-banana-2.1`
+  with image output (`GEMINIServiceEndpoint` declares `:images` and `:image_edits`); the new
+  `aspect_ratio` and `resolution` fields size the image, and the other provider's fields
+  throw before the request. The image parts come back as the result's images (JPEG), a
+  reply with no image as an `ImageCallError` naming the finish reason, and `token_usage`
+  reads `usageMetadata`; image cost is not modelled.
+- **Gemini speech.** `speak(text; service=GEMINIServiceEndpoint)` reads text with Gemini 3.8
+  Flash TTS (`gemini-3.8-flash-tts`, one of its 30 prebuilt voices, `instructions` as the
+  speech style) and returns 24 kHz WAV or PCM, as on OpenAI; a candidate that did not
+  finish is an `AudioFailure`.
+- **Gemini service tiers, in the request and in the cost.** `service_tier` `"standard"`,
+  `"flex"` or `"priority"` is sent as `serviceTier` on native Chat and as `service_tier`
+  on `respond`, which also takes `"deferred"`; any other value is an `ArgumentError`. The
+  tier that billed the call is `usage.service_tier` (`usageMetadata.serviceTier`, else the
+  `x-gemini-service-tier` header — Gemini 4 Argon names it nowhere else — or an
+  interaction's `service_tier`), and `estimated_cost` bills input and output at half the
+  standard rates on Flex and 1.8 times on Priority, and a cache hit at the same multiple
+  except where the pricing page lists another price (Flex's standard rate on 3.1 Pro
+  Preview, 3 Flash Preview and the 2.5 models; \$0.02 on Flex and \$0.05 on Priority for
+  3.5 Flash-Lite); `"deferred"`, unpriced, is estimated at the standard rates with a
+  warning. A Flex request can queue for minutes: give it a `RequestConfig` with longer
+  bounds.
+- **Gemini `seed`, `store` and safety labels.** Native Chat sends `seed` as
+  `generationConfig.seed` and `store` as the request's `store` (they were refused);
+  `respond` sends `Respond.seed` as `generation_config.seed` and `safety_identifier` as the
+  request label `safety_identifier`. A seed outside the int32 range is an `ArgumentError`
+  on both. OpenAI's Responses API has no seed, so the OpenAI-wire Responses endpoints and
+  `OllamaEndpoint` refuse `Respond.seed` before any request.
+- **Long Gemini generations continue inside the call.** A Gemini 4 Argon reply that stops
+  at its per-request cap with `CONTINUATION` and a `continuationToken` is continued by
+  `chatrequest!` — the same request again with the latest token, up to 8 requests — and
+  the result is one assistant turn whose usage is the requests' summed, priced at the last
+  reply's tier; a streamed turn streams every reply into the same callback. A request
+  that fails, or a stop or cancel before the turn's last reply, ends the call with
+  nothing committed, and the replies already received are added to `cumulative_cost`.
+  Proven against a local mock; a live CONTINUATION reply was not observed. Custom backends
+  read the token from `StreamState.continuation_token`.
+- **Gemini 4 calls wait longer by default.** `chatrequest!` and `respond` to a
+  `gemini-4-…` model use 1200 s for `request_timeout`, `stream_idle_timeout` and
+  `total_deadline` while no `RequestConfig` is set in any channel: Google ends a
+  non-streamed Argon call after 10 minutes and a stream after 20, and advises a 20-minute
+  read timeout.
+- **Gemini 4 Argon and current Gemini rows.** Price rows for `gemini-4-argon` (\$2 / \$0.10
+  cached / \$10, doubling on 2026-12-01), `gemini-3.1-pro-preview` and
+  `gemini-3.1-pro-preview-customtools` (\$2 / \$0.20 / \$12, prompts up to 200K tokens);
+  `respond` on Argon takes a `max_output_tokens` above 65,536 only with `background=true`
+  (the API answers HTTP 400 otherwise). A Gemini result's `model` is the reply's
+  `modelVersion`; an interaction's `errors` reach `response.error` (the first; all in
+  `raw`); a filtered turn's `refusal_message` is Google's `finishMessage`; and
+  `gemini-embedding-2` takes the same task prompts as EmbeddingGemma (`task`, optional).
+- **Provider model listings.** `list_models` on `OPENAIServiceEndpoint`,
+  `ANTHROPICServiceEndpoint` and `GEMINIServiceEndpoint` lists the models the provider
+  serves the key, every page included, as `ProviderModel`s: id, display name, creation
+  time, token limits, the provider's capabilities (Anthropic's thinking types and effort
+  levels; Gemini's generation methods and thinking) and lifecycle dates (OpenAI's
+  `shutdown_date`; Anthropic's `deprecated_at` and `retires_at`). The results are
+  `ModelListSuccess` / `ModelListFailure` / `ModelListCallError`, and the three endpoints
+  declare `:models`. An Anthropic listing sends the endpoint's user-profile and workspace
+  headers but not its betas (Anthropic marks `anthropic-beta` deprecated on
+  `GET /v1/models`).
+- **`WEBHOOK_EVENTS` lists the current events**: `live.transport.incoming`,
+  `live.call.incoming` (deprecated by OpenAI in its favour, still sent to existing
+  subscriptions), `safety.warning_issued`, `safety.deactivation_issued`,
+  `safety.alert.created` and `safety.org_alert.created`.
+
+### Changed
+- **OpenAI estimates include OpenAI's surcharges.** `estimated_cost` bills cache writes at
+  1.25× input (`"30m"`) or 2.5× (`"12h"`) on GPT-6 and GPT-5.6, a prompt over 272K input
+  tokens at 2× the input and cache rates and 1.5× the output rate, and the billed tier at
+  the pricing page's multiple for the model (for example Flex 0.5×, Fast 2× on GPT-6 and
+  GPT-5.6, Ultrafast 6× on Astra and 6.1 Sol); a tier with no listed price is estimated at
+  the standard rates, with one warning per model and tier.
+- **Gemini results are priced as served.** A routed id or a `-latest` alias bills at the
+  rates of the model that served it (`gemini-3.5-flash`, routed to `gemini-3.6-flash`, at
+  \$0.75 / \$3.75 per 1M where 0.25 billed \$1.50 / \$9.00), and a tool-use prompt counts
+  as prompt tokens, at the input rate, on native Chat and Interactions alike — native Chat
+  left it out, and Interactions billed it at the output rate.
+- **Audio tokens are never billed at text rates.** A result whose usage counts audio
+  tokens UniLM has no audio-token rates for — any model but `gpt-audio-1.5` on
+  `OPENAIServiceEndpoint`, and every model on Azure, DeepSeek, generic and custom
+  endpoints — is estimated at `0.0`, with one warning per model, like an unpriced model.
+- **Spend and quota 429s are not retried.** A 429 whose `error.code` is
+  `credit_balance_exhausted`, `organization_spend_limit_exceeded`,
+  `project_spend_limit_exceeded` or `organization_usage_limit_exceeded` is returned at once,
+  streamed or not, and ends a `poll_batch` or `poll_file_batch` poll: no retry restores
+  spent credit or a reached limit.
+- **`prompt_cache_retention` and `prompt_cache_options` may be combined** on the OpenAI
+  models before GPT-5.6, as the Responses reference allows; on the GPT-6 and GPT-5.6 rule
+  models `prompt_cache_retention` throws, GPT-6.1 Sol now included.
+- **Decisions usage reports cache writes and the tier.** `token_usage` of an OpenAI
+  Decisions answer counts `cache_write_tokens` (the 12-hour ones in
+  `cache_write_extended_tokens`) and keeps a reported `service_tier`; the price is
+  unchanged — every input token at the input rate, twice it above 272K tokens.
+- **UniLM depends on the `Dates` standard library.**
 
 ### Fixed
 - **A request no longer goes out on a connection its server has closed.** HTTP.jl
@@ -11,6 +332,37 @@
   default three attempts the call spent one of them; with `max_attempts = 1` it
   failed. UniLM now requires HTTP.jl 2.11.2, which checks an idle connection before
   reusing it.
+- **A tool call cut off inside an escape is dropped, not a failed turn.** UniLM requires
+  JSON.jl 1.12, whose `isvalidjson` agrees with `parse` on an invalid escape (`\x`): a turn
+  cut at the token limit inside such an escape kept a call whose arguments could not be
+  parsed, and failed as a whole instead of losing only the partial call.
+- **Claude turns go back as they came.** A thinking-only assistant turn (such as one cut
+  at `max_tokens` before any text) is sent back instead of dropped, and an empty text block
+  (a streamed block that got no delta) is never sent back — a turn holding nothing else is
+  left out.
+- **Multi-input Gemini embeddings work.** `GEMINIOpenAIServiceEndpoint` leaves the index out
+  of its first reply row, and every request with more than one input failed with "row
+  index nothing is not an integer"; that row is read as row 0.
+- **Gemini Interactions takes `InputMessage`s.** `respond` sent an `InputMessage` as a
+  `{role, content}` turn, which the Interactions API answers with HTTP 400 ("use
+  step_list input format instead of turn_list"); a user message is now a `user_input`
+  step and an assistant message a `model_output` step, their content Interactions parts. A
+  system or developer message (use `instructions`), a message `phase`, a media part given
+  by web URL or OpenAI file id, and a cache breakpoint are `ArgumentError`s before any
+  request.
+
+### CI
+- **The release gate runs the hosted live suites.** A `hosted-providers` job, on
+  `release/**` pushes and manual dispatch, after the JET gate and the keyless test suite
+  pass, runs every OpenAI, Anthropic and Gemini live suite (`test/live_hosted.jl`) against
+  the real APIs with the repository's keys, and fails when a key or flag is missing, a
+  suite is missing, or a suite ran no test. Among them, a drift check reads the providers'
+  free model listings and fails when a listed current model of a family UniLM documents has
+  no price row or rule row, a model UniLM names is not listed or is retired, or a Claude
+  rule disagrees with the listed thinking types and effort levels. Routine CI and the
+  gate's other jobs stay keyless.
+- **The local-models job runs Ollama 0.40.8**, pinned by the SHA-256 Ollama publishes for
+  its Linux build.
 
 ## 0.25.0
 

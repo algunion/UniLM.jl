@@ -203,7 +203,7 @@ The Realtime WebSocket surface takes the same `config=` keyword and resolves it
 the same four ways. Two phases are bounded, and one deliberately is not:
 
 ```julia
-realtime_connect(model = "gpt-realtime-2",
+realtime_connect(model = "gpt-realtime-2.1",
                  config = RequestConfig(connect_timeout = 5.0,
                                         stream_idle_timeout = 30.0)) do session
     realtime_send(session, response_create())

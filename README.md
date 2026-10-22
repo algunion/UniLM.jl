@@ -23,7 +23,8 @@ UniLM speaks each provider's own wire API, not just the OpenAI-compatible protoc
 
 - **Chat Completions** — stateful conversations with automatic history management
 - **Responses API & Agentic Verb** — OpenAI's Responses API with built-in tools, multi-turn chaining, and reasoning; the unified `respond` verb also drives Google's Gemini Interactions
-- **Image Generation & Edits** — create and edit images with `gpt-image-2`
+- **Image Generation & Edits** — create and edit images with OpenAI's `gpt-image-2.5-sunburst` or Gemini's Nano Banana (`gemini-nano-banana-2.1`)
+- **Images, audio and PDF documents** — attach them to a user `Message`: the OpenAI-compatible wire, native Anthropic (images and PDFs) and native Gemini send them, and an endpoint that cannot carry one refuses it before any request
 - **Tool/Function Calling** — first-class support for function tools in both APIs, with automated `tool_loop`
 - **MCP (Model Context Protocol)** — connect to MCP servers or build your own, with seamless tool loop integration
 - **Decisions (System One)** — decisions about a text instead of generated text, from one surface over TypeSafe's Jev, OpenAI's Decisions API (beta) and local decision models through Ollama: `nl_classify` returns one of your own keys, `ask` answers `choice` / `score` / `noul` questions with calibrated probabilities, many questions in one request — about images too (Jev, OpenAI and local vision models), and `box` locates what you name in one (Jev) — and `ask_each` asks the same questions about many texts at once
@@ -31,13 +32,14 @@ UniLM speaks each provider's own wire API, not just the OpenAI-compatible protoc
 - **Decisions with LLMs** — route a message before an LLM call and check the draft after it; `with_recorded_answers` records Jev's answers and the non-streaming LLM calls once and replays them, so tests run without keys
 - **Embeddings** — text embedding generation with `text-embedding-3-small`
 - **Files, Vector Stores & Conversations** — upload files, build vector stores for `file_search`, and manage server-side conversation state
-- **Audio, Batch & Moderations** — TTS/transcription, async 50%-off bulk jobs, and free safety classification
+- **Audio, Batch & Moderations** — speech (OpenAI Realtime, Gemini TTS), transcription and Realtime translation, async 50%-off bulk jobs, and free safety classification
 - **Realtime, Fine-tuning, Webhooks, Containers & Uploads** — WebSocket realtime, custom models, signed-webhook verification, and more. See provider availability limits for [fine-tuning](docs/src/api/fine_tuning.md).
 - **Not wrapped in this release: OpenAI Agents API** — public beta since September 10, 2026; UniLM has no wrapper for it yet.
 - **Not wrapped in this release: GPT-Live sessions** — `v1/live/sessions` (GPT-Live 1); the Realtime wrappers do not cover it.
 - **Streaming** — real-time token streaming with `do`-block syntax
 - **Structured Output** — JSON Schema–constrained generation
 - **Multi-Backend** — OpenAI, Azure, Gemini, Anthropic, DeepSeek, Mistral, vLLM, LM Studio, and any OpenAI-compatible provider
+- **Provider model listings** — `list_models` shows the models OpenAI, Anthropic and Gemini serve your key, with token limits, capabilities and lifecycle dates; a live drift check in the release gate holds UniLM's model rules and prices to them
 - **Local models** — Ollama's native API: Gemma 4's thinking, tools, structured output, images, audio and transcription; EmbeddingGemma 2 embeddings of text, images and audio, with its task prompts; local decision models, pictures included; a context window of your choosing and a runner pinned per model; model management — at no cost
 - **Type Safety** — invalid states are unrepresentable; tested with [JET.jl](https://github.com/aviatesk/JET.jl) and [Aqua.jl](https://github.com/JuliaTesting/Aqua.jl)
 
@@ -83,7 +85,7 @@ julia> output_text(result)
 "Julia's multiple dispatch means a function can have many method definitions, and Julia chooses which one to run based on the types of *all* arguments in a call (not just the first). This makes it easy to write generic code while still getting specialized, high-performance behavior for specific type combinations."
 
 julia> result.response.model
-"gpt-5.6-sol"
+"gpt-6-sol"
 ```
 
 ### Chat Completions
@@ -267,7 +269,7 @@ julia> output_text(r2)
 
 ## Multi-Backend Support
 
-UniLM.jl is built around **neutral verbs**: the same `Chat` + `chatrequest!` (tools, streaming, and cost accounting included — cost needs a price row, so models outside the built-in table estimate at \$0 with a warning) run unchanged across OpenAI, Anthropic, Gemini, DeepSeek, and any OpenAI-compatible provider — you only change `service`. The agentic `respond` verb is neutral the same way across OpenAI (Responses) and Gemini (Interactions). Native OpenAI/Anthropic/Gemini are first-class backends with their own wire formats (each exercised by live integration tests), not OpenAI-compatible shims. Switch via the `service` parameter:
+UniLM.jl is built around **neutral verbs**: the same `Chat` + `chatrequest!` (tools, streaming, and cost accounting included — cost needs a price row, so models outside the built-in table estimate at \$0 with a warning) run unchanged across OpenAI, Anthropic, Gemini, DeepSeek, and any OpenAI-compatible provider — you only change `service`. The agentic `respond` verb is neutral the same way across OpenAI (Responses) and Gemini (Interactions). Native OpenAI/Anthropic/Gemini are first-class backends with their own wire formats (each exercised by live integration tests that the release gate runs against the real APIs before every release), not OpenAI-compatible shims. Switch via the `service` parameter:
 
 | Backend          | Type                             | Env Variables                                                               |
 | :--------------- | :------------------------------- | :-------------------------------------------------------------------------- |
@@ -408,6 +410,8 @@ UniLM speaks each provider's own API (see [Multi-Backend Support](#multi-backend
 | Automated tool loop    |       `tool_loop!`           |          `tool_loop`                |
 | MCP integration        |    `mcp_tools` bridge        |   `MCPTool` / `mcp_tool`            |
 
+On OpenAI's current models tools go through Responses: GPT-6 Astra and GPT-6.1 Sol take no Chat tools, and GPT-6 Sol, GPT-6 Luna and GPT-5.6 take them only at `reasoning_effort="none"`.
+
 ## Documentation
 
 Full documentation with guides and API reference: **[https://algunion.github.io/UniLM.jl/dev/](https://algunion.github.io/UniLM.jl/dev/)**
@@ -461,8 +465,8 @@ applies to the inference verbs (`chatrequest!`, `embeddingrequest!`, `respond`,
 bounded attempt. A `Retry-After` header is a floor under the jittered backoff, so a
 rate-limited batch does not retry in lockstep.
 
-Any HTTP call can be cancelled cooperatively from another task (the Realtime WebSocket
-and MCP stdio exchanges ignore the token):
+Any HTTP call can be cancelled cooperatively from another task (a `realtime_connect`
+session and MCP stdio exchanges ignore the token):
 
 ```julia
 tok = CancelToken()

@@ -277,8 +277,11 @@ document into an `input_file` part. [`OllamaEndpoint`](@ref) sends images and cl
 message's `images` list and refuses a document — a chat attachment, or an `input_file` part
 for its Responses API, which documents no file inputs — and an image's detail level. The
 native Anthropic encoder sends an image and a document as base64 `image` and `document` blocks
-before the text, and refuses a sound clip and an image's detail level; the native Gemini
-encoder does not map attachments yet. A System One request
+before the text, and refuses a sound clip and an image's detail level. Native Gemini sends
+every kind as an `inlineData` part ahead of the text, an image's detail level as its per-part
+media resolution (`"low"`, `"high"`; `"auto"` sends none; `"original"` is refused, as is any
+level on the Gemini 2.5 and Gemma 4 models), and Gemini Interactions sends each as an `image`,
+`audio` or `document` part of an [`InputMessage`](@ref)'s content. A System One request
 carries images without a detail level and no documents, and an embedding input an image or
 a clip without a level. Each refusal is an `ArgumentError` before any network I/O.
 """
@@ -800,6 +803,8 @@ instance adds options that every request through it carries
   ([beta headers](https://platform.claude.com/docs/en/api/beta-headers)). UniLM sends the
   names and models no beta's request fields or response blocks; the one it reads is
   `"fast-mode-2026-02-01"`, which `service_tier="fast"` needs on Claude Opus 5 and Opus 4.8.
+  [`list_models`](@ref) sends no `anthropic-beta` header: Anthropic's Models API reference
+  marks it deprecated on `GET /v1/models`.
 - `user_profile_id`: the `anthropic-user-profile-id` header, the `uprof_` id of the end
   customer the requests are made for
   ([user profiles](https://platform.claude.com/docs/en/manage-claude/user-profiles)).
@@ -1491,15 +1496,6 @@ function _audio_turn(m::Message)
     d
 end
 
-# An encoder that cannot map `Message.attachments` refuses the request: dropping the
-# media would ask the model about an image or a sound it never receives.
-function _reject_attachments(chat::Chat, encoder::AbstractString)::Nothing
-    any(m -> !isnothing(m.attachments), chat.messages) && throw(ArgumentError(
-        "the $encoder encoder does not map message attachments (images, audio and documents) yet; " *
-        "send them through an OpenAI-compatible endpoint, or images and audio through OllamaEndpoint"))
-    nothing
-end
-
 Base.length(chat::Chat) = length(chat.messages)
 Base.isempty(chat::Chat) = isempty(chat.messages)
 
@@ -1539,7 +1535,8 @@ reports none.
 
 [`estimated_cost`](@ref) bills `cached_tokens` at the discounted cached-input rate and the
 rest at the standard rates, unless the provider's own pricing applies (see
-[`DEFAULT_PRICING`](@ref)): OpenAI bills the audio tokens at the model's audio-token rates.
+[`DEFAULT_PRICING`](@ref)): OpenAI bills the audio tokens at the model's audio-token rates;
+audio tokens without such rates leave the estimate at `0.0`.
 Positionally the fields go in the order listed, the five counts first; the fields left out
 take their defaults.
 """
@@ -1582,7 +1579,9 @@ result came from: a marker type such as `OPENAIServiceEndpoint`, an endpoint ins
 
 The default method bills the row's standard rates: `(prompt_tokens - cached_tokens -
 cache_write_tokens) * input + cached_tokens * cached_input + cache_write_tokens * input +
-completion_tokens * output`. A provider whose bill differs adds a method for its endpoint
+completion_tokens * output`. It leaves a usage that counts audio tokens (`prompt_audio_tokens`,
+`completion_audio_tokens`) unpriced — `0.0`, with one warning per model — since a row has no
+audio-token rates. A provider whose bill differs adds a method for its endpoint
 type in its own file, beside the pricing page it follows: a premium on cache writes
 (`cache_write_tokens`, `cache_write_extended_tokens`), a multiplier for the reported
 `service_tier` or `inference_geo`, a long-context tier. Such a method returns the whole

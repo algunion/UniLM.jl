@@ -407,6 +407,31 @@ const _OPENAI_PRICE_TERMS = let
         "o3" => _OpenAIPriceTerms(tiers=Dict("flex" => 0.5, "fast" => 1.75)))     # o3-2025-04-16: 2026-12-11
 end
 
+# The audio-token rates, USD per token, of the models that hear and speak on Chat Completions
+# (https://developers.openai.com/api/docs/pricing, 2026-10-22, "Realtime and audio generation
+# models"): `input` bills `prompt_audio_tokens`, `output` bills `completion_audio_tokens`, and
+# the rest of the call bills at the model's text row in DEFAULT_PRICING. The page lists no
+# cached-input rate for these models, so a cache read bills as input.
+const _OpenAIAudioRates = @NamedTuple{input::Float64, output::Float64}
+const _OPENAI_AUDIO_RATES = Dict{String,_OpenAIAudioRates}(
+    "gpt-audio-1.5" => (input = 32.0 / 1_000_000, output = 64.0 / 1_000_000))
+
+_counts_audio(u::TokenUsage)::Bool = u.prompt_audio_tokens > 0 || u.completion_audio_tokens > 0
+# `audio_in` input and `audio_out` output audio tokens at the audio rates, each side scaled as
+# the text rates on that side are.
+_audio_bill(::Nothing, ::Int, ::Int, ::Float64, ::Float64) = 0.0
+_audio_bill(r::_OpenAIAudioRates, audio_in::Int, audio_out::Int, input::Float64, output::Float64) =
+    input * r.input * audio_in + output * r.output * audio_out
+
+# Audio tokens of a model without audio-token rates leave the call unpriced, as a model
+# without a price row is, rather than billed at its text rates: gpt-audio-1.5 bills audio
+# input at 12.8 times and audio output at 6.4 times its text rates.
+function _unpriced_audio(model::String)::Float64
+    @warn "no audio-token rates for this model; its estimated cost is 0.0" model _id = Symbol(
+        "unilm_unpriced_audio_", model) maxlog = 1
+    0.0
+end
+
 # Prompts of at most this many input tokens bill at the short-context rates.
 const _OPENAI_SHORT_CONTEXT = 272_000
 
@@ -435,16 +460,23 @@ end
 # 1.25× input for the 30-minute lifetime and 2.5× for 12 hours
 # (https://developers.openai.com/api/docs/guides/prompt-caching), a prompt over 272K input
 # tokens at twice the input and cache rates and 1.5× the output rate for the whole request,
-# and every rate times the billed tier's multiple.
+# and every rate times the billed tier's multiple. The row's rates bill the text tokens; the
+# audio tokens bill at the model's audio-token rates.
 function _billed_cost(::Type{OPENAIServiceEndpoint}, model::String, u::TokenUsage, rates::PriceRow)::Float64
+    audio_rates = _openai_row(_OPENAI_AUDIO_RATES, model)
+    _counts_audio(u) && isnothing(audio_rates) && return _unpriced_audio(model)
     terms = _openai_row(_OPENAI_PRICE_TERMS, model)
     long = _long_context(terms, u.prompt_tokens)
     tier = _openai_tier_multiple(terms, model, u.service_tier, long)
     input, output = tier * (long ? 2.0 : 1.0), tier * (long ? 1.5 : 1.0)
     w30, w12 = _cache_write_multiples(terms)
-    cached = min(u.cached_tokens, u.prompt_tokens)
+    audio_in = min(u.prompt_audio_tokens, u.prompt_tokens)
+    audio_out = min(u.completion_audio_tokens, u.completion_tokens)
+    text_in = u.prompt_tokens - audio_in
+    cached = min(u.cached_tokens, text_in)
     extended = u.cache_write_extended_tokens
-    fresh = u.prompt_tokens - cached - u.cache_write_tokens
+    fresh = text_in - cached - u.cache_write_tokens
     input * (rates.input * (fresh + w30 * (u.cache_write_tokens - extended) + w12 * extended) +
-             rates.cached_input * cached) + output * rates.output * u.completion_tokens
+             rates.cached_input * cached) + output * rates.output * (u.completion_tokens - audio_out) +
+        _audio_bill(audio_rates, audio_in, audio_out, input, output)
 end

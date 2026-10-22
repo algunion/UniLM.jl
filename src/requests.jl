@@ -753,11 +753,12 @@ _accumulate_cost!(::Chat, ::LLMRequestResponse) = nothing
                       service_tier=nothing)
 
 Build a [`TokenUsage`](@ref) from a raw `usage` dict, pulling the cached/reasoning
-subtotals and the cache writes from the detail objects when present. Chat Completions and
-the Responses API name these differently (`prompt_tokens`/`input_tokens`,
-`prompt_tokens_details`/`input_tokens_details`, …), so the keys are parameterized. The
-writes at the 12-hour retention are `cache_write_tokens_details.ttl_12h_tokens`, which only
-the Responses API reports
+subtotals, the cache writes and the audio subtotals (each detail object's `audio_tokens`,
+which Chat Completions reports for a model that hears or speaks) from the detail objects
+when present. Chat Completions and the Responses API name these differently
+(`prompt_tokens`/`input_tokens`, `prompt_tokens_details`/`input_tokens_details`, …), so the
+keys are parameterized. The writes at the 12-hour retention are
+`cache_write_tokens_details.ttl_12h_tokens`, which only the Responses API reports
 ([prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)). The billed
 `service_tier` is reported beside the usage, not in it, so the caller passes it.
 """
@@ -779,6 +780,8 @@ function _token_usage_from(u::AbstractDict;
         cache_write_tokens=_n(pd, "cache_write_tokens"),
         cache_write_extended_tokens=_n(wd, "ttl_12h_tokens"),
         service_tier=service_tier,
+        prompt_audio_tokens=_n(pd, "audio_tokens"),
+        completion_audio_tokens=_n(cd, "audio_tokens"),
     )
 end
 

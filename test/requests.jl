@@ -1596,6 +1596,67 @@ end
     @test state.usage == want && state.model == "gpt-6-sol-2026-09-14"
 end
 
+# The OpenAI wire to a local server, billed as OpenAI bills (OpenAI's own base URL is a constant).
+struct _OpenAIBilledWire <: UniLM.OpenAIWireEndpoint
+    url::String
+end
+UniLM.get_url(s::_OpenAIBilledWire, ::Chat) = s.url
+UniLM.auth_header(::_OpenAIBilledWire) = ["Content-Type" => "application/json"]
+UniLM._billed_cost(::_OpenAIBilledWire, model::String, u::TokenUsage, rates::UniLM.PriceRow) =
+    UniLM._billed_cost(OPENAIServiceEndpoint, model, u, rates)
+
+@testset "OpenAI Chat usage: a spoken reply's audio tokens, streamed and not, cost the same" begin
+    # Chat Completions counts the audio part of each side in prompt_tokens_details.audio_tokens and
+    # completion_tokens_details.audio_tokens, beside the text part (text_tokens).
+    usage = Dict("prompt_tokens" => 59, "completion_tokens" => 23, "total_tokens" => 82,
+        "prompt_tokens_details" => Dict("cached_tokens" => 0, "audio_tokens" => 12, "text_tokens" => 47, "image_tokens" => 0),
+        "completion_tokens_details" => Dict("reasoning_tokens" => 0, "audio_tokens" => 17, "text_tokens" => 6,
+                                            "accepted_prediction_tokens" => 0, "rejected_prediction_tokens" => 0))
+    b64 = UniLM.base64encode(UniLM._wav_bytes(UInt8[0x00, 0x00, 0x10, 0x00]))
+    top = Dict{String,Any}("id" => "chatcmpl-1", "model" => "gpt-audio-1.5", "service_tier" => "default")
+    body = JSON.json(merge(top, Dict("object" => "chat.completion", "usage" => usage, "choices" => [Dict("index" => 0,
+        "finish_reason" => "stop", "message" => Dict("role" => "assistant", "content" => nothing, "audio" => Dict(
+            "id" => "audio_abc123", "data" => b64, "expires_at" => 1792669190, "transcript" => "Hi there!")))])))
+    chunk(choices, extra=Dict{String,Any}()) =
+        "data: " * JSON.json(merge(top, Dict("object" => "chat.completion.chunk", "choices" => choices), extra)) * "\n\n"
+    delta(d, finish=nothing) = [Dict("index" => 0, "delta" => d, "finish_reason" => finish)]
+    stream = chunk(delta(Dict("role" => "assistant", "audio" => Dict("id" => "audio_abc123", "data" => b64,
+                                                                    "transcript" => "Hi there!")))) *
+             chunk(delta(Dict(), "stop")) * chunk(delta(Dict("audio" => Dict("expires_at" => 1792669190)))) *
+             chunk([], Dict{String,Any}("usage" => usage)) * "data: [DONE]\n\n"
+    want = TokenUsage(prompt_tokens=59, completion_tokens=23, total_tokens=82, service_tier="default",
+                      prompt_audio_tokens=12, completion_audio_tokens=17)
+    # gpt-audio-1.5 per 1M tokens (https://developers.openai.com/api/docs/pricing): text $2.50 input
+    # and $10 output, audio $32 input and $64 output.
+    billed = (47 * 2.5 + 12 * 32.0 + 6 * 10.0 + 17 * 64.0) / 1e6
+    plain, sse = _json_reply_server(body), _sse_reply_server(stream)
+    try
+        mk(url; kw...) = Chat(service=_OpenAIBilledWire(url), model="gpt-audio-1.5", modalities=["text", "audio"],
+                              audio=Dict("voice" => "alloy", "format" => "wav"),
+                              messages=[Message(Val(:system), "s"), Message(Val(:user), "Say hi.")]; kw...)
+        cfg = RequestConfig(max_attempts=1)
+        chat = mk(plain.url)
+        r = chatrequest!(chat; config=cfg)
+        @test r isa LLMSuccess && r.message.audio_output.transcript == "Hi there!"
+        @test r.usage == want
+        @test isapprox(cumulative_cost(chat), billed; rtol=1e-12)
+        streamed = mk(sse.url; stream=true)
+        rs = fetch(chatrequest!(streamed; config=cfg))
+        @test rs isa LLMSuccess && rs.message.audio_output == r.message.audio_output
+        @test rs.usage == r.usage
+        @test cumulative_cost(streamed) == cumulative_cost(chat)
+    finally
+        close(plain.server); close(sse.server)
+    end
+    # A detail that is absent, null or not a count reads as no audio.
+    for details in ("{}", """{"prompt_tokens_details":null,"completion_tokens_details":null}""",
+                    """{"prompt_tokens_details":{"audio_tokens":null},"completion_tokens_details":{"audio_tokens":"17"}}""")
+        u = UniLM._token_usage_from(merge(Dict{String,Any}("prompt_tokens" => 5, "completion_tokens" => 2),
+                                          JSON.parse(details; dicttype=Dict{String,Any})))
+        @test (u.prompt_audio_tokens, u.completion_audio_tokens) == (0, 0)
+    end
+end
+
 # An OpenAI-wire endpoint whose encoder refuses every request.
 struct _RefusingEncoder <: UniLM.OpenAIWireEndpoint
     url::String

@@ -226,9 +226,12 @@ chatrequest!(chat)                      # the earlier reply goes back by its id
 The next request sends the audio turn back to OpenAI as its content — the transcript —
 and `"audio": {"id": …}`; every other endpoint receives the content alone. A
 streamed reply assembles the same `audio_output` from its chunks, and its transcript
-reaches the callback as text. Audio-token rates are not priced yet: `estimated_cost`
-counts an audio model as unpriced, `0.0` with a one-time warning (see
-[Unpriced models cost \$0](@ref unpriced-zero)).
+reaches the callback as text. OpenAI bills audio tokens at their own rates — for
+`gpt-audio-1.5`, \$32 per 1M audio input and \$64 per 1M audio output tokens, beside
+\$2.50 and \$10 for text. The result's [`TokenUsage`](@ref) counts them in
+`prompt_audio_tokens` and `completion_audio_tokens`, and [`estimated_cost`](@ref) bills them
+at those rates and the rest of the call at the text rates (see
+[How the estimate is computed](@ref cost_estimate)).
 
 ## Models
 

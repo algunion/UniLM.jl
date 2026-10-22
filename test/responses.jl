@@ -451,7 +451,7 @@ end
         r = Respond(vals...)
         @test (r.model, r.input, r.instructions, r.safety_identifier) == ("gpt-5.4-mini", "hi", "be brief", "u1")
         @test r.prompt_cache_options == ref.prompt_cache_options && r.moderation == ref.moderation
-        # A shorter call is refused: it would bind every value after the gap to the field before it.
+        # The positional form takes exactly the 31 fields; fewer is a MethodError.
         @test_throws MethodError Respond(vals[1:30]...)
         @test_throws MethodError Respond(vals[1:29]...)
     end
@@ -1759,6 +1759,27 @@ end
     withenv("OPENAI_API_KEY" => "sk-invalid-test-key") do
         result = count_input_tokens(input="test")
         @test result isa ResponseCallError || result isa ResponseFailure
+    end
+end
+
+@testset "compact_response and count_input_tokens send OpenAI's default model when none is named" begin
+    # Both answered gpt-6-sol live on 2026-10-22 (a compaction and a token count).
+    bodies = String[]
+    server = HTTP.listen!("127.0.0.1", 0; verbose=false) do http::HTTP.Stream
+        push!(bodies, String(read(http)))
+        HTTP.setstatus(http, 200)
+        HTTP.setheader(http, "Content-Type" => "application/json")
+        HTTP.startwrite(http)
+        write(http, "{\"object\":\"response.input_tokens\",\"input_tokens\":1}")
+    end
+    try
+        service = GenericOpenAIEndpoint("http://127.0.0.1:$(HTTP.port(server))", "")
+        @test compact_response(input="hi"; service) isa AbstractDict
+        @test count_input_tokens(input="hi"; service)["input_tokens"] == 1
+        @test [JSON.parse(b)["model"] for b in bodies] == fill(UniLM.default_model(OPENAIServiceEndpoint), 2)
+        @test UniLM.default_model(OPENAIServiceEndpoint) == "gpt-6-sol"
+    finally
+        close(server)
     end
 end
 

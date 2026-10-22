@@ -745,11 +745,13 @@ Reasoning configuration for OpenAI and Gemini Interactions models.
 
 - `effort`: OpenAI accepts `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`,
   `"xhigh"`, and `"max"` — any other value throws `ArgumentError` at construction;
-  each model supports a subset (GPT-6 Astra and GPT-6.1 Sol start at `"low"`;
-  gpt-5.4-mini stops at `"xhigh"`). On the native OpenAI endpoint an effort the model
-  does not list throws `ArgumentError` naming the next one up: GPT-6 Astra and GPT-6.1 Sol
-  refuse `"none"` and `"minimal"`, GPT-6 Sol and Luna `"minimal"`; use `"low"`. Gemini 3.8
-  supports `"low"`, `"medium"`, and `"high"`.
+  each model supports a subset (gpt-5.4-mini stops at `"xhigh"`). For `gpt-6-astra`,
+  `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna`
+  (and their dated snapshots) the native OpenAI endpoint checks the effort before the
+  request: the Responses API takes `"low"` to `"max"` on GPT-6 Astra and GPT-6.1 Sol and
+  `"none"` to `"max"` on the others, so `"minimal"` (and `"none"` on Astra and 6.1 Sol)
+  throws `ArgumentError` pointing to `"low"`. Other models are checked by the server.
+  Gemini 3.8 supports `"low"`, `"medium"`, and `"high"`.
 - `summary`: `"auto"`, `"concise"`, or `"detailed"` — request a reasoning summary in the output.
 - `generate_summary`: deprecated alias serialized as `summary`; prefer `summary`.
   Gemini Interactions accepts `summary="auto"` for thought summaries.
@@ -840,15 +842,18 @@ Configuration struct for an OpenAI Responses API request.
   former name `"priority"`), or `"ultrafast"`, which OpenAI serves for `gpt-6-astra` and
   `gpt-6.1-sol` only; another value, or `"ultrafast"` on another OpenAI model, throws
   `ArgumentError`. [`token_usage`](@ref) reports the tier that billed the call
-- `prompt_cache_retention::String`: `"in_memory"` or `"24h"` for models before GPT-5.6;
-  OpenAI deprecates it, and on GPT-5.6 and later it throws `ArgumentError` — set the
-  lifetime with `prompt_cache_options`
+- `prompt_cache_retention::String`: `"in_memory"` or `"24h"` for models before GPT-5.6.
+  OpenAI deprecates it: on `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`,
+  `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots), whose cache
+  lifetime `prompt_cache_options` sets, the native endpoint throws `ArgumentError` for it
 - `moderation::ModerationConfig`: Moderated completions — see [`ModerationConfig`](@ref)
 
-On `OPENAIServiceEndpoint` the encoder also applies the model's own rules (reasoning
-efforts, sampling controls, Ultrafast) for its exact id or a dated snapshot of it, before
-any request; see [OpenAI's GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model).
-The positional constructor takes every field, in order.
+On `OPENAIServiceEndpoint` the encoder also applies OpenAI's per-model rules (reasoning
+efforts, sampling controls, Ultrafast, `prompt_cache_retention`) to those models, by exact
+id or a dated snapshot, before any request; other models are checked by the server. See
+[OpenAI's GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model).
+Build a `Respond` with keywords: the positional form takes all 31 fields in declaration
+order.
 
 # Examples
 ```julia
@@ -903,8 +908,8 @@ Respond(input="Solve this math problem...", model="gpt-5.4-mini", reasoning=Reas
     stream_options::Union{AbstractDict,Nothing} = nothing
     prompt_cache_options::Union{PromptCacheOptions,Nothing} = nothing
     moderation::Union{ModerationConfig,Nothing} = nothing
-    # Every field is required: a positional call that leaves one out would bind each later
-    # value to the field before it.
+    # The positional form takes all 31 fields in declaration order; keyword construction,
+    # which names each field, is the supported way to build a Respond.
     function Respond(service, model, input, instructions, tools, tool_choice,
         parallel_tool_calls, temperature, top_p, max_output_tokens,
         stream, text, reasoning, truncation, store, metadata,
@@ -1997,8 +2002,9 @@ that can be passed as input to subsequent requests, reducing token usage in long
 
 # Fields
 - `model::Union{String,Nothing}`: Model to use for compaction; `nothing` (the default) is
-  `"gpt-5.6-sol"` on every service but an [`OllamaEndpoint`](@ref), which has no default model
-  and needs one named: a call to it without one throws `ArgumentError` before any request
+  OpenAI's default model, `"gpt-6-sol"`, on every service but an [`OllamaEndpoint`](@ref),
+  which has no default model and needs one named: a call to it without one throws
+  `ArgumentError` before any request
 - `input::Any`: The conversation items to compact (typically the full conversation history)
 
 Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys.
@@ -2037,8 +2043,8 @@ function compact_response(; model::Union{String,Nothing}=nothing,
 end
 
 
-# The model a compaction that names none is sent with.
-_compaction_model(_)::String = "gpt-5.6-sol"
+# The model a compaction that names none is sent with: OpenAI's default.
+_compaction_model(_)::String = default_model(OPENAIServiceEndpoint)
 
 
 """
@@ -2046,6 +2052,7 @@ _compaction_model(_)::String = "gpt-5.6-sol"
 
 Count the number of input tokens a request would use without actually generating a response.
 Useful for estimating costs or checking whether input fits within the context window.
+`model` defaults to OpenAI's default model, `"gpt-6-sol"`.
 
 Returns a Dict with `"object"` (`"response.input_tokens"`) and `"input_tokens"` keys.
 
@@ -2055,7 +2062,7 @@ result = count_input_tokens(model="gpt-5.6-sol", input="Tell me a joke")
 println("Input tokens: ", result["input_tokens"])
 ```
 """
-function count_input_tokens(; model::String="gpt-5.6-sol",
+function count_input_tokens(; model::String=default_model(OPENAIServiceEndpoint),
     input::Any,
     instructions::Union{String,Nothing}=nothing,
     tools::Union{Vector,Nothing}=nothing,

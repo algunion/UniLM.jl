@@ -220,8 +220,10 @@ println(JSON.json(r))
 
 GPT-5.6 and later take their cache lifetime from `prompt_cache_options`: `ttl="30m"` (the
 default) or `"12h"`, whose writes OpenAI bills at 1.25× and 2.5× the input rate. OpenAI
-deprecates `prompt_cache_retention`, so on these models it throws `ArgumentError`; on an
-earlier model it may be set beside `prompt_cache_options`, as the two are independent.
+deprecates `prompt_cache_retention`: on `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`,
+`gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots) it
+throws `ArgumentError`; another model gets it as sent, and it may be set beside
+`prompt_cache_options`, as the two are independent.
 Explicit cache mode requires breakpoints in input content blocks; mark one with
 `input_text(text; cache_breakpoint=true)`, and give that breakpoint its own lifetime with
 `cache_ttl="12h"` or `"30m"`. `PromptCacheOptions(prewarm=true)` prepares
@@ -475,7 +477,7 @@ end
 | `top_logprobs`           | Int64          | —            | 0–20, top log probabilities                               |
 | `prompt_cache_key`       | String         | —            | Cache key for prompt caching                              |
 | `prompt_cache_options`   | PromptCacheOptions | —        | Cache mode, TTL (`"30m"`, `"12h"`), prewarm, and diagnostics for GPT-5.6 and later |
-| `prompt_cache_retention` | String         | —            | `"in_memory"` or `"24h"`, depending on the older model; deprecated, refused on GPT-5.6 and later |
+| `prompt_cache_retention` | String         | —            | `"in_memory"` or `"24h"`, depending on the older model; deprecated, refused on `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna` and the `gpt-5.6` models |
 | `safety_identifier`      | String         | —            | Stable end-user identifier; replaces the deprecated `user` |
 | `conversation`           | Any            | —            | Conversation context (String or Dict)                     |
 | `context_management`     | Vector         | —            | Context management strategies                             |
@@ -507,10 +509,12 @@ already supplies the prior turns), and `background=true` requires a stored respo
 [`FunctionTool`](@ref).
 
 Per-model rules on `OPENAIServiceEndpoint` are checked when the request is encoded, before any
-request, for the exact model id or a dated snapshot of it: GPT-6 Astra and GPT-6.1 Sol take
-reasoning effort `"low"` and up and no sampling controls or log probabilities; GPT-6 Sol and Luna
-take sampling controls and log probabilities only at effort `"none"` and refuse `"minimal"`
-(use `"low"`). `user` throws `ArgumentError` there: OpenAI replaces it with
+request, for `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and
+`gpt-5.6-sol`/`-terra`/`-luna`, by exact id or a dated snapshot: GPT-6 Astra and GPT-6.1 Sol take
+reasoning effort `"low"` to `"max"` and no sampling controls or log probabilities; GPT-6 Sol and
+Luna take sampling controls and log probabilities only at effort `"none"`; GPT-6 Sol, GPT-6 Luna
+and the GPT-5.6 models take `"none"` to `"max"` and refuse `"minimal"` (use `"low"`). Other
+models are checked by the server. `user` throws `ArgumentError` there: OpenAI replaces it with
 `safety_identifier` and `prompt_cache_key`.
 
 ## See Also

@@ -56,6 +56,18 @@ end
     @testset "input_file requires url or id" begin
         @test_throws ArgumentError input_file()
     end
+
+    @testset "input_file of a DocumentAttachment; input_image takes the original detail" begin
+        pdf = read(joinpath(@__DIR__, "fixtures", "documents", "secret_word.pdf"))
+        doc = DocumentAttachment(pdf; filename="secret_word.pdf")
+        data = "data:application/pdf;base64," * UniLM.Base64.base64encode(pdf)
+        @test input_file(doc) == input_file(; file_data=data, filename="secret_word.pdf")
+        @test input_file(doc) == Dict(:type => "input_file", :file_data => data, :filename => "secret_word.pdf")
+        @test input_image("https://example.com/img.png"; detail="original")[:detail] == "original"
+        r = Respond(model="gpt-6-luna", input=[InputMessage(role="user", content=[input_text("Read it."), input_file(doc)])])
+        part = JSON.parse(UniLM.encode_agentic(OPENAIServiceEndpoint, r))["input"][1]["content"][2]
+        @test part == Dict("type" => "input_file", "file_data" => data, "filename" => "secret_word.pdf")
+    end
 end
 
 @testset "ResponseTool hierarchy" begin

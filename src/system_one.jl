@@ -24,7 +24,9 @@ option description, a Score level, a Noul criterion): a string, a JSON object,
 a JSON array, or an [`ImageAttachment`](@ref) — an image is carried only by a
 backend whose wrapper sends images, and refused before any request by the
 others. Numbers and booleans are not entries: the model reads words, and a bare
-number carries none.
+number carries none. No backend sends an image's detail level or a
+[`DocumentAttachment`](@ref): either, anywhere in a request, is an
+`ArgumentError` before any request.
 """
 const SystemOneEntry = Union{AbstractString, AbstractDict, AbstractVector, NamedTuple, ImageAttachment}
 
@@ -419,8 +421,11 @@ JSON.lower(q::RawQuestion) = q.fields
 What `state` may be: a string, a JSON object, a JSON array (a `Tuple` and a
 `NamedTuple` serialize as those), or an [`ImageAttachment`](@ref) — images,
 here or nested anywhere in the content, are carried only by a backend whose
-wrapper sends them. `nothing` is deliberately absent: a request about nothing is
-a type error here instead of a wasted round trip.
+wrapper sends them, and never with a detail level. A [`DocumentAttachment`](@ref)
+is no state, and one nested in the content is an `ArgumentError` before any
+request, as is an image with a detail level: no backend sends either. `nothing`
+is deliberately absent: a request about nothing is a type error here instead of
+a wasted round trip.
 """
 const SystemOneState = Union{AbstractString, AbstractDict, AbstractVector, Tuple, NamedTuple, ImageAttachment}
 
@@ -588,18 +593,17 @@ function _system_one_images(r::SystemOneRequest)::Vector{ImageAttachment}
     out
 end
 
-_question_images!(out::Vector{ImageAttachment}, q::ChoiceQuestion) =
-    (_collect_images!(out, q.instructions); _collect_images!(out, q.criteria))
-_question_images!(out::Vector{ImageAttachment}, q::ScoreQuestion) =
-    (_collect_images!(out, q.instructions); _collect_images!(out, q.criteria))
-function _question_images!(out::Vector{ImageAttachment}, q::NoulQuestion)
-    _collect_images!(out, q.instructions)
-    isnothing(q.criteria) || (_collect_images!(out, q.criteria.yes); _collect_images!(out, q.criteria.no))
-    out
-end
-_question_images!(out::Vector{ImageAttachment}, q::BoxQuestion) = _collect_images!(out, q.instructions)
-_question_images!(out::Vector{ImageAttachment}, q::RawQuestion) = _collect_images!(out, q.fields)
-_question_images!(out::Vector{ImageAttachment}, ::SystemOneQuestion) = out
+# Where a question holds content, in the order the System One JSON form writes it: its
+# instructions, then its criteria (a Choice's options, a Score's levels, a Noul's two sides),
+# or a raw question's fields.
+_question_content(q::Union{ChoiceQuestion,ScoreQuestion}) = (q.instructions, q.criteria)
+_question_content(q::NoulQuestion) =
+    (c = q.criteria; (q.instructions, isnothing(c) ? nothing : c.yes, isnothing(c) ? nothing : c.no))
+_question_content(q::BoxQuestion) = (q.instructions,)
+_question_content(q::RawQuestion) = (q.fields,)
+_question_content(::SystemOneQuestion) = ()
+
+_question_images!(out::Vector{ImageAttachment}, q::SystemOneQuestion) = _collect_images!(out, _question_content(q))
 
 _collect_images!(out::Vector{ImageAttachment}, x::ImageAttachment) = push!(out, x)
 function _collect_images!(out::Vector{ImageAttachment}, x::AbstractDict)
@@ -615,6 +619,25 @@ function _collect_images!(out::Vector{ImageAttachment}, x::Union{AbstractVector,
     out
 end
 _collect_images!(out::Vector{ImageAttachment}, _) = out
+
+# Each attachment of any kind in `x`, through the containers `_collect_images!` walks. A mutable
+# container is entered once, so a value that holds itself ends this walk instead of recursing
+# forever; what the wrapper does with it is unchanged (TypeSafe's nesting rule refuses it).
+_each_attachment(f, a::Attachment, ::Base.IdSet{Any}) = (f(a); nothing)
+function _each_attachment(f, x::AbstractDict, seen::Base.IdSet{Any})
+    _first_visit!(seen, x) || return nothing
+    for (_, v) in _dict_pairs(x)
+        _each_attachment(f, v, seen)
+    end
+end
+function _each_attachment(f, x::Union{AbstractVector,Tuple,NamedTuple}, seen::Base.IdSet{Any})
+    _first_visit!(seen, x) || return nothing
+    for v in x
+        _each_attachment(f, v, seen)
+    end
+end
+_each_attachment(_, _, ::Base.IdSet{Any}) = nothing
+_first_visit!(seen::Base.IdSet{Any}, x)::Bool = !ismutable(x) || (x ∉ seen && (push!(seen, x); true))
 
 # ─── Answers ─────────────────────────────────────────────────────────────────
 
@@ -1087,8 +1110,32 @@ function _check_request(p::SystemOneProtocol, service, r::SystemOneRequest)::Not
             "raw questions are not supported by $(_service_name(service)): $(repr(name)) is a RawQuestion " *
             "of type $(repr(q.fields["type"]))"))
     end
+    _check_media(service, r)
+end
+
+# No System One wire carries a document or an image's detail level: TypeSafe's assets, the
+# Decisions API's `input_image` parts and Ollama's `images` list take an image's bytes alone,
+# and none of them a file. Either is refused, naming where it stands, before anything is sent.
+function _check_media(service, r::SystemOneRequest)::Nothing
+    seen = Base.IdSet{Any}()
+    _each_attachment(a -> _check_medium(service, a, "the state"), r.state, seen)
+    for (name, q) in r.questions
+        _each_attachment(a -> _check_medium(service, a, "the question $(repr(name))"), _question_content(q), seen)
+    end
     nothing
 end
+
+_check_medium(service, a::DocumentAttachment, place::String) = throw(ArgumentError(
+    "$(_service_name(service)) cannot send $(a), which $(place) holds: a System One request carries text and " *
+    "images, not documents. Put the document's text in the request, or ask about the document in a Chat on " *
+    "an OpenAI-compatible endpoint"))
+function _check_medium(service, a::ImageAttachment, place::String)::Nothing
+    isnothing(a.detail) || throw(ArgumentError(
+        "$(_service_name(service)) sends a System One request's images without a detail level, so $(a) in " *
+        "$(place) cannot be sent as asked: build the ImageAttachment without `detail`"))
+    nothing
+end
+_check_medium(_, ::Attachment, ::String) = nothing
 
 # A Box question locates something in an image. Asked about a request that carries none, a
 # backend can still answer — TypeSafe returns a box at near-zero confidence — but nothing it

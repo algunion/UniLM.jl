@@ -40,7 +40,9 @@ The request:
 What the wire has no form for is an `ArgumentError` before any I/O, naming
 OpenAI's rule and the fix: a question without string `instructions`; a Noul's
 `yes`/`no` criteria; a description or level that is not a string; a
-[`BoxQuestion`](@ref); an image outside the state; any other option.
+[`BoxQuestion`](@ref); an image outside the state; a [`DocumentAttachment`](@ref)
+(the API takes no files) or an image's detail level anywhere, as on every
+System One backend; any other option.
 
 The reply: answers are matched to the questions by name and must come in the
 order asked. A `predicate` reads as a [`NoulAnswer`](@ref), a `choice` as a

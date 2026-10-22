@@ -18,13 +18,15 @@ reasoning_text
 
 ### Attachments
 
-Images and sound clips sent with a user message; see
-[Images and audio](@ref ollama_media) for a worked example.
+Images, sound clips and PDF documents sent with a user message; see
+[Images, audio and documents](@ref chat_attachments) for how each endpoint sends them,
+and [Images and audio](@ref ollama_media) for a worked example on Ollama.
 
 ```@docs
 Attachment
 ImageAttachment
 AudioAttachment
+DocumentAttachment
 ```
 
 ### Convenience Constructors

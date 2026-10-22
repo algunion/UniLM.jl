@@ -132,6 +132,7 @@ export
     Attachment,
     ImageAttachment,
     AudioAttachment,
+    DocumentAttachment,
     RoleSystem,
     RoleUser,
     RoleAssistant,

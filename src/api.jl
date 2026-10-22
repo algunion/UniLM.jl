@@ -283,14 +283,20 @@ end
     Attachment
 
 Abstract supertype of the media a user [`Message`](@ref) carries besides its text:
-[`ImageAttachment`](@ref) and [`AudioAttachment`](@ref). An attachment holds the
-media's bytes and the format read from their leading bytes (the file signature),
-never from a file name, so its declared format always matches its content.
+[`ImageAttachment`](@ref), [`AudioAttachment`](@ref) and [`DocumentAttachment`](@ref).
+An attachment holds the media's bytes and the format read from their leading bytes (the
+file signature), never from a file name, so its declared format always matches its content.
 
-Endpoints on the OpenAI Chat Completions wire send attachments as `image_url` and
-`input_audio` content parts (base64); [`OllamaEndpoint`](@ref) sends them in the
-message's `images` list. The native Anthropic and Gemini encoders do not map
-attachments yet and throw `ArgumentError` before any network I/O.
+Endpoints on the OpenAI Chat Completions wire (OpenAI, Azure, the Gemini OpenAI-compatible
+endpoint, DeepSeek, generic endpoints) send an image as an `image_url` part, with its
+`detail` level when it sets one, a sound clip as an `input_audio` part and a document as a
+`file` part, all base64; a compatible server that does not read a kind answers with its own
+error. For the Responses API, [`input_file`](@ref) turns a document into an `input_file`
+part. [`OllamaEndpoint`](@ref) sends images and clips in the message's `images` list and
+refuses a document or an image's detail level. The native Anthropic and Gemini encoders do
+not map attachments yet. A System One request carries images without a detail level and no
+documents, and an embedding input an image or a clip without a level. Each refusal is an
+`ArgumentError` before any network I/O.
 """
 abstract type Attachment end
 
@@ -314,30 +320,54 @@ function _sniff_audio_format(data::AbstractVector{UInt8})::Union{String,Nothing}
     nothing
 end
 
+# A PDF file begins with its header: `%PDF-`, then the version (ISO 32000-2, 7.5.2).
+_sniff_document_mime(data::AbstractVector{UInt8})::Union{String,Nothing} =
+    length(data) >= 5 && view(data, 1:5) == b"%PDF-" ? "application/pdf" : nothing
+
+# The detail levels of an OpenAI image input, the Chat Completions `image_url.detail`
+# (https://developers.openai.com/api/reference/resources/chat).
+const _IMAGE_DETAILS = ("auto", "low", "high", "original")
+_image_detail(::Nothing)::Nothing = nothing
+function _image_detail(level)::String
+    level isa AbstractString && level in _IMAGE_DETAILS || throw(ArgumentError(
+        "an image's detail level is one of $(join(repr.(_IMAGE_DETAILS), ", ")), or nothing for none " *
+        "(got $(repr(level)))"))
+    String(level)
+end
+
 """
-    ImageAttachment(path::AbstractString)
-    ImageAttachment(data::AbstractVector{UInt8})
+    ImageAttachment(path::AbstractString; detail=nothing)
+    ImageAttachment(data::AbstractVector{UInt8}; detail=nothing)
 
 An image for a user [`Message`](@ref): PNG, JPEG, GIF or WebP, recognised from its
-leading bytes. `mime` holds the media type (`"image/png"`, …). Throws `ArgumentError`
-for empty data or bytes in any other format.
+leading bytes. `mime` holds the media type (`"image/png"`, …). `detail` is the
+level of detail an OpenAI model receives the image at — `"auto"`, `"low"`, `"high"`
+or `"original"`, its own dimensions on models that take them
+([image inputs](https://developers.openai.com/api/docs/guides/images-vision)) — or
+`nothing`, which sends none and leaves the model's default. The OpenAI Chat
+Completions wire sends it as the part's `detail`; an endpoint without an equivalent
+refuses an image that sets one. Throws `ArgumentError` for empty data, bytes in any
+other format, or any other `detail`.
 
 ```julia
 msg = Message(Val(:user), "What colour is the shape?",
               ImageAttachment("shape.png"))
+msg = Message(Val(:user), "Read the small print.",
+              ImageAttachment("label.png"; detail="original"))
 ```
 """
 struct ImageAttachment <: Attachment
     data::Vector{UInt8}
     mime::String
-    function ImageAttachment(data::AbstractVector{UInt8})
+    detail::Union{String,Nothing}
+    function ImageAttachment(data::AbstractVector{UInt8}; detail=nothing)
         mime = _sniff_image_mime(data)
         isnothing(mime) && throw(ArgumentError(
             "image data is not PNG, JPEG, GIF or WebP (checked by file signature; $(length(data)) bytes)"))
-        new(Vector{UInt8}(data), mime)
+        new(Vector{UInt8}(data), mime, _image_detail(detail))
     end
 end
-ImageAttachment(path::AbstractString) = ImageAttachment(read(_attachment_file(path)))
+ImageAttachment(path::AbstractString; detail=nothing) = ImageAttachment(read(_attachment_file(path)); detail)
 
 """
     AudioAttachment(path::AbstractString)
@@ -364,6 +394,39 @@ struct AudioAttachment <: Attachment
 end
 AudioAttachment(path::AbstractString) = AudioAttachment(read(_attachment_file(path)))
 
+"""
+    DocumentAttachment(path::AbstractString)
+    DocumentAttachment(data::AbstractVector{UInt8}; filename="document.pdf")
+
+A PDF document for a user [`Message`](@ref), recognised from its leading bytes
+(`%PDF-`). `mime` is `"application/pdf"`; `filename` is the name the provider is
+given for it: the file's own name (`basename(path)`) or, for bytes, the keyword.
+Endpoints on the OpenAI Chat Completions wire send it as a `file` part
+([file inputs](https://developers.openai.com/api/docs/guides/file-inputs)); for the
+Responses API, [`input_file`](@ref) turns it into an `input_file` part. See
+[`Attachment`](@ref) for the endpoints that refuse it. Throws `ArgumentError` for
+bytes that are not PDF, whatever the file is called, and for a blank `filename`.
+
+```julia
+msg = Message(Val(:user), "What does the report conclude?",
+              DocumentAttachment("report.pdf"))
+```
+"""
+struct DocumentAttachment <: Attachment
+    data::Vector{UInt8}
+    mime::String
+    filename::String
+    function DocumentAttachment(data::AbstractVector{UInt8}; filename::AbstractString="document.pdf")
+        mime = _sniff_document_mime(data)
+        isnothing(mime) && throw(ArgumentError(
+            "document data is not PDF (checked by file signature; $(length(data)) bytes)"))
+        isempty(strip(filename)) && throw(ArgumentError(
+            "a document's filename names it to the provider and must not be blank (got $(repr(String(filename))))"))
+        new(Vector{UInt8}(data), mime, String(filename))
+    end
+end
+DocumentAttachment(path::AbstractString) = DocumentAttachment(read(_attachment_file(path)); filename=basename(path))
+
 # Attachments hold bytes, and not every provider fetches URLs (Ollama does not): a URL
 # given where a file path is expected is named as such instead of failing as a missing file.
 _attachment_file(path::AbstractString) = occursin(r"^[A-Za-z][A-Za-z0-9+.-]*://", path) ? throw(ArgumentError(
@@ -371,8 +434,11 @@ _attachment_file(path::AbstractString) = occursin(r"^[A-Za-z][A-Za-z0-9+.-]*://"
     "first (e.g. with Downloads.download) and pass the file or its bytes")) : path
 
 # The bytes stay reachable through the fields; printing them would flood the REPL.
-Base.show(io::IO, a::ImageAttachment) = print(io, "ImageAttachment(", a.mime, ", ", length(a.data), " bytes)")
+Base.show(io::IO, a::ImageAttachment) = print(io, "ImageAttachment(", a.mime, ", ", length(a.data), " bytes",
+    isnothing(a.detail) ? "" : string(", detail=", repr(a.detail)), ")")
 Base.show(io::IO, a::AudioAttachment) = print(io, "AudioAttachment(", a.format, ", ", length(a.data), " bytes)")
+Base.show(io::IO, a::DocumentAttachment) =
+    print(io, "DocumentAttachment(", a.mime, ", ", a.filename, ", ", length(a.data), " bytes)")
 Base.:(==)(a::A, b::A) where {A<:Attachment} = all(f -> getfield(a, f) == getfield(b, f), fieldnames(A))
 Base.hash(a::Attachment, h::UInt) = foldl((h, f) -> hash(getfield(a, f), h), fieldnames(typeof(a)); init=hash(typeof(a), h))
 
@@ -393,7 +459,7 @@ Represents a single message in a Chat Completions conversation.
 - `tool_calls::Union{Nothing,Vector{ToolCall}}`: Tool calls requested by the assistant.
 - `tool_call_id::Union{String,Nothing}`: Required when `role` is `"tool"` — the ID of the tool call being responded to.
 - `provider_content::Union{Nothing,ProviderContent}`: Provider-native content blocks captured for verbatim round-trip (see [`ProviderContent`](@ref)); set by the Anthropic, Gemini, DeepSeek and Ollama decoders (tags `:anthropic`, `:gemini`, `:deepseek`, `:ollama`), `nothing` otherwise. Never serialized on the OpenAI wire.
-- `attachments::Union{Nothing,Vector{Attachment}}`: Images and sound clips sent with a user message ([`ImageAttachment`](@ref), [`AudioAttachment`](@ref)); `nothing` for none. See [`Attachment`](@ref) for how each endpoint sends them.
+- `attachments::Union{Nothing,Vector{Attachment}}`: Images, sound clips and PDF documents sent with a user message ([`ImageAttachment`](@ref), [`AudioAttachment`](@ref), [`DocumentAttachment`](@ref)); `nothing` for none. See [`Attachment`](@ref) for how each endpoint sends or refuses them.
 
 # Validation
 - `role` must be one of `"system"`, `"user"`, `"assistant"`, `"tool"`.
@@ -450,7 +516,7 @@ JSON.omit_null(::Type{Message}) = true
 # its wire name, `refusal`; an assistant message needs `content` unless it carries
 # tool calls, so a refusal turn sends it as null — the shape the API returns it in.
 # Attachments turn `content` into an array of parts: the text (when there is any),
-# then each attachment as an `image_url` data URL or an `input_audio` part.
+# then each attachment as the part its kind takes (`_wire_part`).
 # Conditional insertion mirrors omit-null.
 function JSON.lower(m::Message)
     d = Dict{Symbol,Any}(:role => m.role)
@@ -463,13 +529,24 @@ function JSON.lower(m::Message)
     d
 end
 
-_wire_part(a::ImageAttachment) = Dict{Symbol,Any}(:type => "image_url",
-    :image_url => Dict(:url => string("data:", a.mime, ";base64,", base64encode(a.data))))
+# The OpenAI Chat Completions content part of each kind
+# (https://developers.openai.com/api/reference/resources/chat): an image is an `image_url`
+# data URL, with its `detail` level only when it sets one; a clip is `input_audio`; a
+# document is a `file` part holding its name and a data URL, the form OpenAI's file-inputs
+# guide gives for base64 PDFs.
+_data_url(a::Union{ImageAttachment,DocumentAttachment})::String = string("data:", a.mime, ";base64,", base64encode(a.data))
+function _wire_part(a::ImageAttachment)::Dict{Symbol,Any}
+    image_url = Dict{Symbol,Any}(:url => _data_url(a))
+    isnothing(a.detail) || (image_url[:detail] = a.detail)
+    Dict{Symbol,Any}(:type => "image_url", :image_url => image_url)
+end
 _wire_part(a::AudioAttachment) = Dict{Symbol,Any}(:type => "input_audio",
     :input_audio => Dict(:data => base64encode(a.data), :format => a.format))
+_wire_part(a::DocumentAttachment) = Dict{Symbol,Any}(:type => "file",
+    :file => Dict(:filename => a.filename, :file_data => _data_url(a)))
 
-# An attachment goes out only in the shape its wire gives it — an `image_url` or
-# `input_audio` part, an Ollama `images` entry, a System One asset — and every path that
+# An attachment goes out only in the shape its wire gives it — an `image_url`, `input_audio`
+# or `file` part, an Ollama `images` entry, a System One asset — and every path that
 # carries one maps it explicitly. Written by JSON.jl's struct lowering, its bytes would go
 # out as an array of numbers that no service reads as media; reaching this method means
 # the attachment sits where nothing maps it, such as inside a struct of the caller's own.
@@ -477,6 +554,11 @@ JSON.lower(a::Attachment) = throw(ArgumentError(
     "an $(nameof(typeof(a))) cannot be written as JSON: put it where the request carries media — a message's " *
     "`attachments`, or a System One request's state, instructions or criteria (directly, or inside a Dict, " *
     "vector, tuple or NamedTuple; not inside a struct of your own)"))
+# A document travels in a user message's attachments or a Responses `input_file` part only:
+# no System One wire carries one.
+JSON.lower(a::DocumentAttachment) = throw(ArgumentError(
+    "a DocumentAttachment cannot be written as JSON: send it in a user message's `attachments`, or as " *
+    "`input_file(document)` in a Responses input; a System One request carries no documents"))
 
 function _content_parts(content::Union{String,Nothing}, attachments::Vector{Attachment})::Vector{Dict{Symbol,Any}}
     parts = Dict{Symbol,Any}[_wire_part(a) for a in attachments]
@@ -1209,8 +1291,8 @@ _asks_stream_usage(_) = false
 # media would ask the model about an image or a sound it never receives.
 function _reject_attachments(chat::Chat, encoder::AbstractString)::Nothing
     any(m -> !isnothing(m.attachments), chat.messages) && throw(ArgumentError(
-        "the $encoder encoder does not map message attachments (images, audio) yet; " *
-        "send them through an OpenAI-compatible endpoint or OllamaEndpoint"))
+        "the $encoder encoder does not map message attachments (images, audio and documents) yet; " *
+        "send them through an OpenAI-compatible endpoint, or images and audio through OllamaEndpoint"))
     nothing
 end
 
@@ -1599,7 +1681,10 @@ whitespace-only title is no title (`title === nothing`): with `task = :document`
 `"title: none | text: …"`, the model card's prompt for a document without one.
 
 Throws `ArgumentError` for an item with nothing to embed (no image or clip, and no text or an empty
-one), a `title` without a non-empty text, more than one image or clip, or an attachment of any other kind.
+one), a `title` without a non-empty text, more than one image or clip, an image with a detail level,
+or an attachment of any other kind, such as a [`DocumentAttachment`](@ref): no embedding endpoint UniLM
+sends to takes a level or a document (OpenAI's and its compatibles take text, Ollama's `/api/embed` an
+image's or a clip's bytes alone).
 
 ```julia
 EmbeddingInput("Refunds take 5 days."; title = "Refund policy")
@@ -1621,6 +1706,9 @@ struct EmbeddingInput
             "an EmbeddingInput needs a non-empty text, an image or a sound clip to embed"))
         isnothing(h) || !isnothing(t) || throw(ArgumentError(
             "an EmbeddingInput's title names the document its text comes from: give it a non-empty text too"))
+        isnothing(image) || isnothing(image.detail) || throw(ArgumentError(
+            "an embedding reads an image's bytes alone, and no embedding endpoint takes a detail level: build " *
+            "the ImageAttachment without `detail` (got $(repr(image.detail)))"))
         new(t, h, image, audio)
     end
 end
@@ -1721,9 +1809,10 @@ OpenAI-compatible server.
 
 An input is a text, an [`EmbeddingInput`](@ref), or an [`ImageAttachment`](@ref) or
 [`AudioAttachment`](@ref) on its own; a vector of them embeds each item as a vector of its own.
-A vector of strings is copied into a `Vector{String}` and sent as is, an empty string included. In a
-vector holding any other item, every item becomes an `EmbeddingInput`, so an empty string there is
-refused (`ArgumentError`: an item needs a non-empty text, an image or a sound clip).
+A [`DocumentAttachment`](@ref), or an image with a detail level, is an `ArgumentError`, as in an
+`EmbeddingInput`. A vector of strings is copied into a `Vector{String}` and sent as is, an empty
+string included. In a vector holding any other item, every item becomes an `EmbeddingInput`, so an
+empty string there is refused (`ArgumentError`: an item needs a non-empty text, an image or a sound clip).
 
 The `embeddings` field is **pre-allocated** (`something(dimensions, 1536)` zeros per input),
 filled in place by [`embeddingrequest!`](@ref), and resized to the length the model returns.

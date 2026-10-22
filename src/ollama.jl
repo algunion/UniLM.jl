@@ -150,13 +150,27 @@ function _ollama_wire_call(tc::ToolCall)::Dict{String,Any}
     d
 end
 
+# A message's `images` entry: the raw base64 of an image or a sound clip
+# (https://docs.ollama.com/api/chat). The list has no field for an image's detail level and
+# none for a document, so either is refused rather than dropped.
+_ollama_media(a::AudioAttachment)::String = base64encode(a.data)
+function _ollama_media(a::ImageAttachment)::String
+    isnothing(a.detail) || throw(ArgumentError(
+        "Ollama's /api/chat takes an image's bytes alone and no detail level: build the ImageAttachment " *
+        "without `detail` (got $(repr(a.detail)))"))
+    base64encode(a.data)
+end
+_ollama_media(a::DocumentAttachment) = throw(ArgumentError(
+    "Ollama's /api/chat takes images and sound clips, not documents ($(a)): send the document through an " *
+    "OpenAI-compatible endpoint, or its text in the message"))
+
 function _ollama_messages(msgs::Vector{Message})::Vector{Dict{String,Any}}
     names = Dict{String,String}()          # tool-call id → function name, for the results
     out = Dict{String,Any}[]
     for (i, m) in pairs(msgs)
         isnothing(m.name) || throw(ArgumentError("Ollama messages have no name field (message $i sets one)"))
         d = Dict{String,Any}("role" => m.role, "content" => something(m.content, m.refusal_message, ""))
-        isnothing(m.attachments) || (d["images"] = [base64encode(a.data) for a in m.attachments])
+        isnothing(m.attachments) || (d["images"] = String[_ollama_media(a) for a in m.attachments])
         if m.role == RoleAssistant
             thinking = _ollama_thinking(m)
             isnothing(thinking) || (d["thinking"] = thinking)

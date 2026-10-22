@@ -1809,8 +1809,8 @@ all. The result is one assistant turn — the replies' parts joined, their usage
 field by field, since every reply is billed, and priced at the tier the last reply
 reported. Each request has the whole `config` budget, timeouts and retries alike; a retry
 sends its request again from the start: a stream that drops after one of its checkpoint
-tokens is not resumed from it, and what Google bills for the dropped stream (up to that
-checkpoint) is not added to [`cumulative_cost`](@ref). A turn still unfinished after the
+tokens is not resumed from it, and what Google bills for the attempt that dropped (up to
+that checkpoint) is not added to [`cumulative_cost`](@ref). A turn still unfinished after the
 last of those requests, or whose reply continues without having produced an output token
 (thinking included), is returned as it stands, with `finish_reason == "continuation"`. A
 request that fails ends the call with its failure and commits nothing, and the replies

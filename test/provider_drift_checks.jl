@@ -78,12 +78,32 @@ _unpriced(ids) = [id for id in ids if isnothing(UniLM._price_row(DEFAULT_PRICING
 _openai_ruled(id::AbstractString) = occursin(r"^gpt-(6|5\.6)", id)
 _openai_priced(id::AbstractString) = _openai_ruled(id) || occursin(r"^gpt-5\.4-mini(-\d{4}-\d{2}-\d{2})?$", id)
 
+# The kinds of OpenAI model that are not text models, each a segment of their ids: image
+# generation (gpt-image-2, chatgpt-image-latest), audio (gpt-audio-1.5), the Realtime and Live
+# APIs' models (gpt-realtime-2.1, gpt-live-1), transcription (gpt-transcribe) and speech
+# (gpt-4o-mini-tts).
+const _OPENAI_NOT_TEXT = ("image", "audio", "realtime", "live", "transcribe", "tts")
+
+# An id of an older generation than the family: a GPT version before 5.6
+# (gpt-<major>[.<minor>]…, gpt-4o reading 4), or the o1, o3 and o4 series.
+function _openai_older(id::AbstractString)::Bool
+    occursin(r"^o[134](-|$)", id) && return true
+    v = match(r"^gpt-(\d+)(?:\.(\d+))?(?:o|-|$)", id)
+    !isnothing(v) && VersionNumber(parse(Int, something(v[1])), parse(Int, something(v[2], "0"))) < v"5.6"
+end
+
+# The chat model ids — gpt-…, chatgpt-…, o<n>… — that no family, older generation or other known
+# kind covers: a new generation or a name of a new form, logged by the live suite.
+_openai_unclassified(ids) = [id for id in ids if occursin(r"^(gpt-|chatgpt-|o\d)", id) && !_openai_priced(id) &&
+                             !_openai_older(id) && !any(in(_OPENAI_NOT_TEXT), split(id, '-'))]
+
 function _openai_drift(models::Vector{ProviderModel})
     ids = [m.id for m in models]
     family = filter(_openai_priced, ids)
     (; family, unpriced=_unpriced(family),
      no_terms=[id for id in family if isnothing(UniLM._openai_row(UniLM._OPENAI_PRICE_TERMS, id))],
-     unruled=[id for id in filter(_openai_ruled, ids) if isnothing(UniLM._openai_row(UniLM._OPENAI_MODEL_RULES, id))])
+     unruled=[id for id in filter(_openai_ruled, ids) if isnothing(UniLM._openai_row(UniLM._OPENAI_MODEL_RULES, id))],
+     unclassified=_openai_unclassified(ids))
 end
 
 # The generation a Claude id names: claude-<line>-<major>[-<minor>] or the older
@@ -137,9 +157,10 @@ function _anthropic_drift(models::Vector{ProviderModel})
 end
 
 # The kinds of Gemini model that are not text models, each a segment of their ids: speech
-# (gemini-3.8-flash-tts), transcription (gemini-3.5-transcribe), image generation (…-image) and the
-# Live API's models (gemini-3.8-live).
-const _GEMINI_NOT_TEXT = ("tts", "transcribe", "image", "live")
+# (gemini-3.8-flash-tts), transcription (gemini-3.5-transcribe), image generation (…-image, and
+# Nano Banana: gemini-nano-banana-2.1), video generation (Gemini Omni: gemini-omni-1.1-flash) and
+# the Live API's models (gemini-3.8-live).
+const _GEMINI_NOT_TEXT = ("tts", "transcribe", "image", "banana", "omni", "live")
 
 # The generation a Gemini id names, gemini-<major>[.<minor>]-…; `nothing` for an id of another
 # form (gemini-flash-latest, gemini-robotics-er-2-preview).
@@ -156,14 +177,16 @@ _gemini_text_model(m::ProviderModel)::Bool =
 # Gemini: the text models of 3.5 and later, by the generation the id names, and every text model
 # UniLM keeps thinking levels for, whatever its name says — but the -latest aliases, which are
 # priced at the model that served them. Each needs a price row, and the ones that think a row of
-# thinking levels too, which UniLM checks a reasoning effort against.
+# thinking levels too, which UniLM checks a reasoning effort against. A text model of neither
+# whose generation cannot be read is unclassified: a new name, logged by the live suite.
 function _gemini_drift(models::Vector{ProviderModel})
     ruled(id) = !isnothing(UniLM._gemini_thinking_levels(id))
     text = [m for m in models if _gemini_text_model(m) && !endswith(m.id, "-latest")]
     members = [m for m in text if ruled(m.id) || something(_gemini_generation(m.id), v"0") >= v"3.5"]
     family = [m.id for m in members]
     thinking = [m.id for m in members if get(m.capabilities, "thinking", false) === true]
-    (; family, thinking, unpriced=_unpriced(family), unruled=[id for id in thinking if !ruled(id)])
+    (; family, thinking, unpriced=_unpriced(family), unruled=[id for id in thinking if !ruled(id)],
+     unclassified=[m.id for m in text if !ruled(m.id) && isnothing(_gemini_generation(m.id))])
 end
 
 end

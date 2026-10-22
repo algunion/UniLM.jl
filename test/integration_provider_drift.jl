@@ -28,7 +28,7 @@ if haskey(ENV, "OPENAI_API_KEY")
         r = list_models(; service=OPENAIServiceEndpoint)
         @test r isa ModelListSuccess
         d = _openai_drift(r.models)
-        @info "OpenAI listing" models = length(r.models) pages = length(r.raw) family = d.family
+        @info "OpenAI listing" models = length(r.models) pages = length(r.raw) family = d.family unclassified = d.unclassified
         @test UniLM.default_model(OPENAIServiceEndpoint) in d.family
         @test isempty(d.unpriced)
         @test isempty(d.no_terms)
@@ -61,7 +61,7 @@ if haskey(ENV, "GEMINI_API_KEY")
         r = list_models(; service=GEMINIServiceEndpoint)
         @test r isa ModelListSuccess
         d = _gemini_drift(r.models)
-        @info "Gemini listing" models = length(r.models) pages = length(r.raw) family = d.family thinking = d.thinking
+        @info "Gemini listing" models = length(r.models) pages = length(r.raw) family = d.family thinking = d.thinking unclassified = d.unclassified
         @test UniLM.default_model(GEMINIServiceEndpoint) in d.thinking
         @test isempty(d.unpriced)
         @test isempty(d.unruled)

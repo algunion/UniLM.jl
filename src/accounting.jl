@@ -273,6 +273,15 @@ _accumulate_cost!(chat::Chat, result::LLMSuccess) = (chat._cumulative_cost[] += 
 """
     cumulative_cost(chat::Chat) -> Float64
 
-Return the cumulative estimated cost accumulated by `chatrequest!` calls on this `Chat`.
+Return the estimated cost, in USD, that [`chatrequest!`](@ref) calls on this `Chat` have
+accrued, priced with [`DEFAULT_PRICING`](@ref) as [`estimated_cost`](@ref) prices a result.
+A committed turn adds its result's cost. A call that ends without committing one adds what
+its provider reported billing it, a lower bound: the replies of a continued Gemini turn
+received before the failure or stop, and the usage a stream had reported when it was stopped,
+cancelled, timed out, cut off or ended by an exception from its `callback` or `on_tool_call`
+— Anthropic reports a request's input when its stream starts and Gemini the usage so far on
+every chunk, while OpenAI reports it after the finish reason. A request stopped before any
+usage arrived adds nothing, though the provider bills it, as do an attempt that was retried
+and a stream the provider ended with an error event.
 """
 cumulative_cost(chat::Chat)::Float64 = chat._cumulative_cost[]

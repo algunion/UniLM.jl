@@ -1498,16 +1498,18 @@ end
     end
 end
 
-# A server streaming each GenerateContentResponse of `chunks` in a write of its own, `gap` seconds
-# apart, so a client reads them one at a time.
-function _with_paced_chunks(f, chunks; gap=0.3)
+# A server streaming each GenerateContentResponse of `hops[k]` to request k (the last for any later
+# one) in a write of its own, `gap` seconds apart, so a client reads them one at a time.
+function _with_paced_hops(f, hops; gap=0.3)
+    n = Threads.Atomic{Int}(0)
     server = HTTP.listen!("127.0.0.1", 0; verbose=false) do http::HTTP.Stream
         read(http)
+        k = Threads.atomic_add!(n, 1) + 1
         HTTP.setstatus(http, 200)
         HTTP.setheader(http, "Content-Type" => "text/event-stream")
         HTTP.setheader(http, "x-gemini-service-tier" => "priority")
         HTTP.startwrite(http)
-        for c in chunks
+        for c in hops[min(k, length(hops))]
             write(http, "data: " * JSON.json(c) * "\r\n\r\n")
             flush(http)
             sleep(gap)
@@ -1520,6 +1522,7 @@ function _with_paced_chunks(f, chunks; gap=0.3)
         close(server)
     end
 end
+_with_paced_chunks(f, chunks; gap=0.3) = _with_paced_hops(f, [chunks]; gap)
 
 @testset "continuation — user code that throws after a reply completed ends the call; that reply stays billed" begin
     # A callback or on_tool_call that throws on the chunk with the reply's finish reason and usage ends
@@ -1544,17 +1547,19 @@ end
         @test ends_call(r) && length(seen) == 1
         @test cumulative_cost(chat) ≈ one_cost
     end
-    # One request: a throw on the text of its last chunk, or on the final message.
-    for fails in (c -> c == "Done.", c -> c isa Message)
+    # One request: a throw on the text of its last chunk, or on the final message — also when a stop
+    # set on that text came first, so the final message is built on the stop's path.
+    stop_then_throw = (c, close) -> c isa Message ? throw(boom) : (c == "Done." && (close[] = true))
+    for cb in ((c, _) -> c == "Done." && throw(boom), (c, _) -> c isa Message && throw(boom), stop_then_throw)
         _with_hops([(200, _hop([Dict("text" => "Done.")], "STOP"; usage=u))]) do seen
             chat = _hops_chat(stream=true)
-            r = fetch(chatrequest!(chat; config=_HOPS_CFG, callback=(c, _) -> fails(c) && throw(boom)))
+            r = fetch(chatrequest!(chat; config=_HOPS_CFG, callback=cb))
             @test ends_call(r) && length(seen) == 1
             @test [m.role for m in chat.messages] == [RoleSystem, RoleUser]
             @test cumulative_cost(chat) ≈ one_cost
         end
     end
-    # A throw before the reply's finish reason arrived: the reply was not answered, and nothing is billed.
+    # A throw before the reply's finish reason and before any usage arrived: nothing is added.
     chunks = [Dict("candidates" => [Dict("content" => Dict("role" => "model", "parts" => [Dict("text" => "Partial ")]))],
                    "modelVersion" => "gemini-4-argon"),
               _hop([Dict("text" => "answer.")], "STOP"; usage=u)]
@@ -1563,6 +1568,48 @@ end
         r = fetch(chatrequest!(chat; config=_HOPS_CFG, callback=(c, _) -> c == "Partial " && throw(boom)))
         @test ends_call(r)
         @test cumulative_cost(chat) == 0.0
+    end
+end
+
+@testset "a stream that ends uncommitted adds the usage Gemini reported, once, on one request and on a continued turn" begin
+    # Gemini sends the usage so far on every chunk ("usage_metadata is cumulative within each stream",
+    # https://ai.google.dev/gemini-api/docs/generate-content/long-decode), so a stream that ends on a
+    # stop, a cancel or a throwing callback after a chunk was billed at least that usage: it is added,
+    # once. Gemini 4 Argon at Priority: every rate 1.8 times $2.00 / $10.00 per 1M tokens.
+    partial(text, prompt) = Dict("candidates" => [Dict("content" => Dict("role" => "model", "parts" => [Dict("text" => text)]))],
+                                 "usageMetadata" => Dict("promptTokenCount" => prompt, "totalTokenCount" => prompt),
+                                 "modelVersion" => "gemini-4-argon")
+    u = Dict("promptTokenCount" => 10, "candidatesTokenCount" => 2, "totalTokenCount" => 12)
+    rest = _hop([Dict("text" => "answer.")], "STOP"; usage=u)
+    boom = ErrorException("user code failed")
+    for how in (:close, :token, :throw)
+        tok = CancelToken()
+        act(close) = how === :close ? (close[] = true) : how === :token ? cancel!(tok) : throw(boom)
+        stop_on(word) = (c, close) -> c == word && act(close)
+        # One request, ended after its first chunk.
+        _with_paced_chunks([partial("Partial ", 142), rest]) do
+            chat = _hops_chat(stream=true)
+            r = fetch(chatrequest!(chat; config=_HOPS_CFG, cancel=tok, callback=stop_on("Partial ")))
+            @test r isa LLMCallError && [m.role for m in chat.messages] == [RoleSystem, RoleUser]
+            @test cumulative_cost(chat) ≈ 1.8 * 142 * 2.0 / 1_000_000
+        end
+        # A continued turn, ended in its second request after that request's first chunk: hop 1 and
+        # what hop 2 reported, each once.
+        tok = CancelToken()
+        hop1 = first(_hops_two())[2]["chunks"]
+        _with_paced_hops([hop1, [partial("It ", 32_910), rest]]) do
+            chat = _hops_chat(stream=true)
+            r = fetch(chatrequest!(chat; config=_HOPS_CFG, cancel=tok, callback=stop_on("It ")))
+            @test r isa LLMCallError && [m.role for m in chat.messages] == [RoleSystem, RoleUser]
+            @test cumulative_cost(chat) ≈ _HOP1_COST + 1.8 * 32_910 * 2.0 / 1_000_000
+        end
+    end
+    # Run to its end, the turn is billed its reply's own usage once, not the partial usage beside it.
+    _with_paced_chunks([partial("Partial ", 142), rest]) do
+        chat = _hops_chat(stream=true)
+        r = fetch(chatrequest!(chat; config=_HOPS_CFG))
+        @test r isa LLMSuccess && r.message.content == "Partial answer."
+        @test cumulative_cost(chat) ≈ estimated_cost(r) ≈ 1.8 * (10 * 2.0 + 2 * 10.0) / 1_000_000
     end
 end
 

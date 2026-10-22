@@ -4,7 +4,7 @@
 # The Realtime session drivers live in realtime.jl.
 # ============================================================================
 
-"Audio error result: the HTTP `status` (`nothing` when a Realtime session reported the failure as an event, which carries no HTTP status), the raw `response` (the reply body, or the Realtime event's JSON) and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
+"Audio error result: the HTTP `status` (`nothing` when a Realtime session reported the failure as an event, which carries no HTTP status), the raw `response` (the reply body, the Realtime event's JSON, or for a refused WebSocket upgrade HTTP.jl's report of its status) and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
 @kwdef struct AudioFailure <: LLMRequestResponse; response::String; status::Union{Int,Nothing}; request_id::Union{String,Nothing} = nothing; end
 "Audio call that produced no usable reply (transport failure, timeout, a session that closed before its result, or a reply that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout."
 @kwdef struct AudioCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
@@ -141,16 +141,21 @@ Gemini TTS (`generateContent` on `gemini-3.8-flash-tts` unless `model` names ano
 verbatim.
 
 Returns [`SpeechSuccess`](@ref): a WAV file (`response_format = "wav"`) or the raw samples (`"pcm"`).
-A failure the provider reports is an [`AudioFailure`](@ref): an HTTP error, or on a Realtime session
+A failure the provider reports is an [`AudioFailure`](@ref): an HTTP error status, a WebSocket upgrade
+the server refuses included (a bad key is a 401; `response` is then HTTP.jl's report of the status,
+since it does not keep the reply); a Gemini reply whose candidate did not finish (a `finishReason`
+other than `STOP`, such as `MAX_TOKENS` or `SAFETY`; `response` is the reply); or on a Realtime session
 the `error` event or a `response.done` that did not complete (`status` is then `nothing` and
-`response` the event's JSON). A session that closes before its response is done, a timeout, and a
-reply without usable audio are an [`AudioCallError`](@ref). Audio received before a failure is never
-returned.
+`response` the event's JSON). A session that closes before its response is done, a timeout, a cancel
+and a reply without usable audio are an [`AudioCallError`](@ref). Audio received before a failure is
+never returned.
 
 Pass `config::Union{Nothing,RequestConfig}` to bound the call (a single attempt; `max_attempts` does
-not apply). On OpenAI, `connect_timeout` bounds the WebSocket open, `stream_idle_timeout` every wait
-for the next event and `total_deadline` the whole call; the session does not observe a
-[`CancelToken`](@ref). On Gemini it bounds the one HTTP request. Speech is not priced:
+not apply). On OpenAI, `total_deadline` bounds the whole call whatever the socket does,
+`connect_timeout` the WebSocket open, and `stream_idle_timeout` every send and every wait for the
+next event; on Gemini it bounds the one HTTP request. Both observe the ambient [`CancelToken`](@ref)
+([`with_cancel`](@ref)): a token already cancelled sends nothing, and a cancel ends the call at once,
+with an `AudioCallError` whose `cause` is a [`UniLMCancelled`](@ref). Speech is not priced:
 [`token_usage`](@ref) and [`estimated_cost`](@ref) throw for a `SpeechSuccess`.
 """
 function speak(s::SpeechRequest; config::Union{Nothing,RequestConfig}=nothing)
@@ -178,14 +183,16 @@ end
 _speech_target(::_GeminiSpeechWire, s::SpeechRequest)::String = _gemini_speech_url(s.service, s.model)
 
 function _speak(::_RealtimeSpeechWire, s::SpeechRequest, url::String, cfg::RequestConfig, t0::UInt64)
-    r = _realtime_call(session -> _realtime_speak(session, s, t0), url, s.model, s.service, cfg, t0)
+    r = _realtime_call(session -> _realtime_speak(session, s), url, s.model, s.service, cfg, t0)
     r isa LLMRequestResponse ? r : _realtime_closed("response.done")
 end
 
 function _speak(::_GeminiSpeechWire, s::SpeechRequest, url::String, cfg::RequestConfig, t0::UInt64)
     resp = _http("POST", url, auth_header(s.service), _gemini_speech_body(s); cfg, remaining=_remaining_s(cfg, t0))
     resp.status == 200 || return _failure(AudioFailure, resp)
-    _speech_success(s, _gemini_speech_pcm(JSON.parse(resp.body; dicttype=Dict{String,Any})))
+    cand = _gemini_finished_candidate(JSON.parse(resp.body; dicttype=Dict{String,Any}))
+    cand === nothing && return _failure(AudioFailure, resp)
+    _speech_success(s, _gemini_speech_pcm(cand))
 end
 
 # Speech in the requested format: a canonical WAV file around the samples, or the samples.
@@ -225,15 +232,20 @@ function _gemini_speech_body(s::SpeechRequest)::String
             :responseFormat => Dict(:audio => Dict(:mimeType => "AUDIO_L16", :sampleRate => _SPEECH_RATE)))))
 end
 
-# The 16-bit PCM of a Gemini TTS reply: its candidate's inline audio parts, in order. A reply that
-# holds no audio (no candidate, a blocked prompt, a text answer) throws.
-function _gemini_speech_pcm(data)::Vector{UInt8}
+# The reply's candidate if it finished (finishReason STOP), else `nothing`: a candidate cut at
+# MAX_TOKENS or stopped by a filter (SAFETY, OTHER, …), or a reply without one (a blocked prompt),
+# holds no whole speech (https://ai.google.dev/api/generate-content#FinishReason).
+function _gemini_finished_candidate(data)::Union{Dict{String,Any},Nothing}
     cands = data isa AbstractDict ? get(data, "candidates", nothing) : nothing
-    feedback = data isa AbstractDict ? get(data, "promptFeedback", nothing) : nothing
-    cands isa AbstractVector && !isempty(cands) ||
-        error("Gemini TTS reply has no candidates (promptFeedback: ", JSON.json(feedback), ")")
+    (cands isa AbstractVector && !isempty(cands)) || return nothing
     cand = first(cands)
-    content = cand isa AbstractDict ? get(cand, "content", nothing) : nothing
+    (cand isa Dict{String,Any} && get(cand, "finishReason", nothing) == "STOP") ? cand : nothing
+end
+
+# The 16-bit PCM of a finished Gemini TTS candidate: its inline audio parts, in order. A candidate
+# without audio (a text answer) throws.
+function _gemini_speech_pcm(cand::Dict{String,Any})::Vector{UInt8}
+    content = get(cand, "content", nothing)
     parts = content isa AbstractDict ? get(content, "parts", nothing) : nothing
     pcm = UInt8[]
     for part in (parts isa AbstractVector ? parts : Any[])
@@ -241,8 +253,7 @@ function _gemini_speech_pcm(data)::Vector{UInt8}
         blob isa AbstractDict || continue
         append!(pcm, _gemini_audio_pcm(string(get(blob, "mimeType", "")), base64decode(string(get(blob, "data", "")))))
     end
-    isempty(pcm) && error("Gemini TTS reply carried no audio (finishReason: ",
-                          repr(cand isa AbstractDict ? get(cand, "finishReason", nothing) : nothing), ")")
+    isempty(pcm) && error("Gemini TTS reply carried no audio")
     pcm
 end
 
@@ -559,12 +570,15 @@ takes 24 kHz mono PCM16 only, so UniLM mixes the channels down and resamples by 
 I/O, naming the conversion; so do an empty file, a blank `language` and a service without OpenAI's
 Realtime API.
 
-A failure the provider reports (a Realtime `error` event, for example for a language it does not
-translate into) is an [`AudioFailure`](@ref) with `status = nothing` and the event's JSON as
-`response`. A session that closes before `session.closed`, and a timeout, are an
-[`AudioCallError`](@ref). `config::Union{Nothing,RequestConfig}` bounds the call as for
-[`speak`](@ref): `connect_timeout` the open, `stream_idle_timeout` every wait for the next event,
-`total_deadline` the whole call; a single attempt, and no [`CancelToken`](@ref) is observed.
+A failure the provider reports is an [`AudioFailure`](@ref): a Realtime `error` event, for example
+for a language it does not translate into (`status = nothing`, the event's JSON as `response`), or a
+WebSocket upgrade the server refuses (a bad key is a 401). A session that closes before
+`session.closed`, a timeout and a cancel are an [`AudioCallError`](@ref).
+`config::Union{Nothing,RequestConfig}` bounds the call as for [`speak`](@ref): `total_deadline` the
+whole call whatever the socket does, `connect_timeout` the open, `stream_idle_timeout` every send and
+every wait for the next event; a single attempt. The ambient [`CancelToken`](@ref)
+([`with_cancel`](@ref)) is observed: a token already cancelled sends nothing, and a cancel ends the
+call at once, with an `AudioCallError` whose `cause` is a [`UniLMCancelled`](@ref).
 """
 function translate(path::AbstractString; language::AbstractString="en",
                    model::AbstractString="gpt-realtime-translate",
@@ -577,7 +591,7 @@ function translate(path::AbstractString; language::AbstractString="en",
     pcm = _translation_pcm(path)
     cfg = _resolve_config(config); t0 = time_ns()
     try
-        r = _realtime_call(session -> _realtime_translate(session, pcm, lang, t0), url, m, service, cfg, t0)
+        r = _realtime_call(session -> _realtime_translate(session, pcm, lang), url, m, service, cfg, t0)
         r isa LLMRequestResponse ? r : _realtime_closed("session.closed")
     catch e
         e isa InterruptException && rethrow()

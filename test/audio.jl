@@ -52,10 +52,12 @@ end
 """
 Run `f()` against a local Realtime WebSocket that sends `opening` on connect and answers each
 client event `ev` with `reply(ev)` (events to send, `:close` closing the socket). Returns
-`(f(), seen)`: the handshake targets and Authorization headers, and every client event parsed.
+`(f(), seen)`: the handshake targets and Authorization headers, every client event parsed, and how
+many connections have ended; `_sp_seen[]` is `seen` while `f` runs.
 """
+const _sp_seen = Ref{Any}(nothing)
 function _sp_with_realtime(f::Function, reply::Function; opening=Any[_sp_event("session.created")])
-    seen = (targets=String[], auth=String[], events=Dict{String,Any}[])
+    seen = (targets=String[], auth=String[], events=Dict{String,Any}[], ended=Threads.Atomic{Int}(0))
     guard = ReentrantLock()
     srv = HTTP.WebSockets.listen!("127.0.0.1", 0) do ws
         req = ws.handshake_request
@@ -72,13 +74,46 @@ function _sp_with_realtime(f::Function, reply::Function; opening=Any[_sp_event("
             end
         catch e
             e isa HTTP.WebSockets.WebSocketError || e isa Base.IOError || rethrow()
+        finally
+            Threads.atomic_add!(seen.ended, 1)
         end
     end
     _sp_ws_base[] = "ws://" * HTTP.WebSockets.server_addr(srv)
+    _sp_seen[] = seen
     try
         return f(), seen
     finally
         close(srv)
+    end
+end
+
+# Run `f()` against a peer that completes the WebSocket upgrade, sends session.created and
+# session.updated, and never reads again: the client's sends back up once the socket buffers fill.
+function _sp_with_stall_peer(f::Function)
+    server = Sockets.listen(Sockets.localhost, 0)
+    socks = Sockets.TCPSocket[]
+    accepting = Threads.@spawn try
+        while true
+            sock = Sockets.accept(server)
+            push!(socks, sock)
+            key = match(r"(?i)sec-websocket-key:\s*(\S+)", readuntil(sock, "\r\n\r\n"))[1]
+            accept = base64encode(UniLM.SHA.sha1(string(key, "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")))
+            write(sock, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n",
+                        "Sec-WebSocket-Accept: ", accept, "\r\n\r\n")
+            for p in ("{\"type\":\"session.created\"}", "{\"type\":\"session.updated\"}")
+                write(sock, UInt8[0x81, ncodeunits(p)], p)   # an unmasked text frame
+            end
+        end
+    catch e
+        e isa Base.IOError || rethrow()
+    end
+    _sp_ws_base[] = "ws://127.0.0.1:$(Int(Sockets.getsockname(server)[2]))"
+    try
+        return f()
+    finally
+        close(server)
+        foreach(close, socks)
+        wait(accepting)
     end
 end
 
@@ -525,6 +560,59 @@ end
     @test e6 isa ArgumentError && occursin("supports only OPENAIServiceEndpoint", e6.msg)
 end
 
+@testset "speak and translate on OpenAI: an upgrade refused with 401 is an AudioFailure with that status" begin
+    srv = HTTP.serve!(_ -> HTTP.Response(401, ["Content-Type" => "application/json"],
+                                         "{\"error\":{\"message\":\"Incorrect API key provided.\"}}"),
+                      "127.0.0.1", 0; verbose=false)
+    _sp_ws_base[] = "ws://127.0.0.1:$(HTTP.port(srv))"
+    try
+        for r in (speak("Hi."; service=SpeechWSProbe), translate(_SP_WAV; service=SpeechWSProbe))
+            @test r isa UniLM.AudioFailure && r.status == 401 && occursin("401", r.response)
+        end
+    finally
+        close(srv)
+    end
+end
+
+@testset "speak and translate on OpenAI: a token already cancelled sends nothing" begin
+    tok = cancel!(CancelToken())
+    (r1, r2), seen = _sp_with_realtime(_sp_speech_reply([UInt8[0x01, 0x00]])) do
+        with_cancel(tok) do
+            (speak("Hi."; service=SpeechWSProbe), translate(_SP_WAV; service=SpeechWSProbe))
+        end
+    end
+    @test all(r -> r isa UniLM.AudioCallError && r.cause isa UniLMCancelled && r.cause.source === :token, (r1, r2))
+    @test isempty(seen.targets)
+    r3, requests = _with_scripted((_, _) -> _json(200, "{}")) do
+        with_cancel(() -> speak("Hi."; service=GeminiSpeechProbe), tok)
+    end
+    @test r3 isa UniLM.AudioCallError && r3.cause isa UniLMCancelled && isempty(requests)
+end
+
+@testset "speak and translate on OpenAI: a cancel ends a silent session at once and frees its socket" begin
+    unbounded = RequestConfig(connect_timeout=10.0, stream_idle_timeout=Inf, total_deadline=Inf)
+    for (call, last_event) in ((() -> speak("Hi."; service=SpeechWSProbe, config=unbounded), "response.create"),
+                               (() -> translate(_SP_WAV; service=SpeechWSProbe, config=unbounded), "session.close"))
+        waiting = Threads.Atomic{Bool}(false)
+        # The update is acknowledged; after the call's last client event the peer goes silent.
+        reply = ev -> (ev["type"] == last_event && (waiting[] = true);
+                       ev["type"] == "session.update" ? Any[_sp_event("session.updated"; session=ev["session"])] : Any[])
+        tok = CancelToken()
+        (r, elapsed, freed), _ = _sp_with_realtime(reply) do
+            t = Threads.@spawn with_cancel(call, tok)
+            @test timedwait(() -> waiting[], 20.0) === :ok
+            t0 = time()
+            cancel!(tok)
+            done = timedwait(() -> istaskdone(t), 10.0) === :ok
+            elapsed = time() - t0
+            freed = timedwait(() -> _sp_seen[].ended[] == 1, 10.0)   # the peer saw the connection end
+            (done ? fetch(t) : nothing, elapsed, freed)
+        end
+        @test r isa UniLM.AudioCallError && r.cause isa UniLMCancelled && r.cause.source === :token
+        @test elapsed < 2.0 && freed === :ok
+    end
+end
+
 # ─── Speech on Gemini TTS ────────────────────────────────────────────────────
 
 @testset "speak on Gemini: generateContent with the voice, its 24 kHz L16 reply wrapped as WAV" begin
@@ -567,9 +655,7 @@ end
                                         _sp_le(UInt32(4)), Vector{UInt8}("INFO")))), _sp_inline("audio/L16;rate=24000", pcm2)))
     @test r isa SpeechSuccess && r.audio == _sp_wav(vcat(pcm1, pcm2))
     for (reply, fragment) in (
-            (_sp_gemini_reply(; finish="SAFETY"), "no audio"),
             (_sp_gemini_reply(Dict("text" => "I can't read that.")), "no audio"),
-            (JSON.json(Dict("promptFeedback" => Dict("blockReason" => "SAFETY"))), "no candidates"),
             (_sp_gemini_reply(_sp_inline("audio/L16;codec=pcm;rate=16000", pcm1)), "16000 Hz"),
             (_sp_gemini_reply(_sp_inline("audio/wav", _sp_wav(pcm1; rate=48000))), "48000 Hz"),
             (_sp_gemini_reply(_sp_inline("audio/mpeg", UInt8[0xff, 0xfb])), "audio/mpeg"),
@@ -580,6 +666,29 @@ end
     end
     f = run("{\"error\":{\"code\":400,\"message\":\"Voice not found\",\"status\":\"INVALID_ARGUMENT\"}}"; status=400)
     @test f isa UniLM.AudioFailure && f.status == 400 && occursin("Voice not found", f.response)
+end
+
+@testset "speak on Gemini: audio from a candidate that did not finish is a failure, never a success" begin
+    pcm = _sp_pcm(Int16[1, 2, 3, 4])
+    run(reply) = first(_with_scripted((_, _) -> _json(200, reply)) do
+        speak("Hi."; service=GeminiSpeechProbe)
+    end)
+    # Cut at the output cap, stopped by a filter, or stopped for another reason mid-way: each still
+    # carries the audio generated so far.
+    for finish in ("MAX_TOKENS", "SAFETY", "OTHER")
+        reply = _sp_gemini_reply(_sp_inline("audio/L16;codec=pcm;rate=24000", pcm); finish)
+        r = run(reply)
+        @test r isa UniLM.AudioFailure && r.status == 200 && r.response == reply
+        @test JSON.parse(r.response)["candidates"][1]["finishReason"] == finish
+    end
+    noreason = JSON.json(Dict("candidates" => [Dict("content" => Dict("role" => "model",
+        "parts" => [_sp_inline("audio/L16;codec=pcm;rate=24000", pcm)]))]))
+    @test run(noreason) isa UniLM.AudioFailure
+    # A blocked prompt (no candidate) and a filtered candidate without audio are failures too.
+    blocked = JSON.json(Dict("promptFeedback" => Dict("blockReason" => "SAFETY")))
+    @test (b = run(blocked)) isa UniLM.AudioFailure && b.response == blocked
+    @test run(_sp_gemini_reply(; finish="SAFETY")) isa UniLM.AudioFailure
+    @test run(_sp_gemini_reply(_sp_inline("audio/L16;codec=pcm;rate=24000", pcm))) isa SpeechSuccess   # STOP
 end
 
 # ─── Translation on OpenAI Realtime ──────────────────────────────────────────
@@ -629,4 +738,24 @@ end
     refusal(f) = try f(); nothing catch x; x end
     e = refusal(() -> translate(_SP_WAV; service=GEMINIServiceEndpoint))
     @test e isa ArgumentError && occursin("translate (OpenAI Realtime API) is not supported by GEMINIServiceEndpoint", e.msg)
+end
+
+@testset "translate: a peer that stops reading ends the call at its deadline, or at the idle bound" begin
+    # 300 s of audio is about 19 MB of append events: more than the socket buffers hold, so the
+    # sends park once the peer stops reading.
+    mktempdir() do dir
+        long = joinpath(dir, "long.wav")
+        write(long, _sp_wav(zeros(UInt8, 2 * 24_000 * 300)))
+        # Observed under a watchdog: a call that never returns fails the test instead of hanging the suite.
+        bounded(cfg, limit) = (task = Threads.@spawn translate(long; service=SpeechWSProbe, config=cfg);
+                               timedwait(() -> istaskdone(task), limit + 4.0) === :ok ? fetch(task) : nothing)
+        _sp_with_stall_peer() do
+            r = bounded(RequestConfig(connect_timeout=10.0, stream_idle_timeout=Inf, total_deadline=3.0), 3.0)
+            @test r isa UniLM.AudioCallError && r.cause isa UniLMTimeout && r.cause.phase === :deadline &&
+                  r.cause.limit == 3.0
+            r2 = bounded(RequestConfig(connect_timeout=10.0, stream_idle_timeout=2.0, total_deadline=Inf), 2.0)
+            @test r2 isa UniLM.AudioCallError && r2.cause isa UniLMTimeout && r2.cause.phase === :stream_idle &&
+                  r2.cause.limit == 2.0
+        end
+    end
 end

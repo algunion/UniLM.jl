@@ -228,69 +228,109 @@ function realtime_receive(s::RealtimeSession)
 end
 
 # ─── Sessions UniLM drives to their end: speak and translate ─────────────────
-# Unlike a `realtime_connect` session, these are one bounded call: every wait is bounded by
-# the call's RequestConfig, and every outcome is a typed result.
+# Unlike a `realtime_connect` session, these are one bounded call: the caller's wait ends at
+# total_deadline, or at once on a cancel, whatever the socket does; every send and read of the
+# session waits at most stream_idle_timeout; and every outcome is a typed result.
 
-# Opens a session for a verb that drives it: the open phase is bounded by connect_timeout and by
-# what is left of total_deadline. Returns what `driver(session)` returns.
+# Ends a session's connection. HTTP.jl's close(ws) first takes the send lock, which a send parked on
+# a full socket buffer holds, so only closing the connection itself unblocks that send (HTTP.jl
+# 2.11.2 has no public call for it).
+_realtime_drop!(ws) = ws.close_transport!()
+
+# What the caller of a driven session shares with the task that runs it: the session's socket once
+# it is open, and whether the caller stopped waiting.
+mutable struct _RealtimeCall
+    @atomic ws::Any
+    @atomic abandoned::Bool
+end
+
+function _realtime_abandon!(call::_RealtimeCall)::Nothing
+    @atomic call.abandoned = true
+    ws = @atomic call.ws
+    ws === nothing || _realtime_drop!(ws)
+    nothing
+end
+
+# HTTP.jl reports an upgrade the server answered with another status only as this close reason, and
+# does not keep the response: the provider's refusal (a bad key is a 401), with that status.
+function _realtime_refused_upgrade(e)::Union{AudioFailure,Nothing}
+    (e isa HTTP.WebSockets.WebSocketError && e.message.code == 1002) || return nothing
+    m = match(r"^websocket handshake failed: status (\d{3})$", e.message.reason)
+    m === nothing && return nothing
+    AudioFailure(response=e.message.reason, status=parse(Int, something(m[1])))
+end
+
+# Runs `driver(session)` on a session it opens, on a worker task (the task-mode guard of
+# deadline.jl), so the caller's wait ends at total_deadline, or at once on a cancel of the ambient
+# token; then the session's connection is dropped so the abandoned task ends too. A token already
+# cancelled sends nothing. The open phase is bounded by connect_timeout and by what is left of
+# total_deadline. Returns what the driver returns.
 function _realtime_call(driver, url::String, model::String, service, cfg::RequestConfig, t0::UInt64)
+    tok = _current_cancel()
+    iscancelled(tok) && throw(UniLMCancelled(:token, _elapsed_s(t0)))
     left = _remaining_s(cfg, t0)
     ispositive(left) || throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
     capped = left < cfg.connect_timeout
+    open_cfg = capped ? RequestConfig(cfg; connect_timeout=left) : cfg
+    call = _RealtimeCall(nothing, false)
+    admitted = session -> begin
+        @atomic call.ws = session.ws
+        # A caller that gave up before the socket was recorded could not drop it: it closes unused.
+        (@atomic call.abandoned) ? nothing : driver(session)
+    end
     try
-        _realtime_open(driver, url, model, service, capped ? RequestConfig(cfg; connect_timeout=left) : cfg)
+        # Finite even without a deadline, so the wait always runs on a worker and a cancel ends it.
+        _with_deadline_task(min(left, _MAX_FINITE_TIMEOUT), :deadline; cancel=tok,
+                            on_cancel=() -> _realtime_abandon!(call)) do
+            _realtime_open(admitted, url, model, service, open_cfg)
+        end
     catch e
-        capped && e isa UniLMTimeout && e.phase === :connect &&
+        _realtime_abandon!(call)
+        e isa InterruptException && rethrow()
+        refused = _realtime_refused_upgrade(e)
+        refused === nothing || return refused
+        (e isa UniLMTimeout && (e.phase === :deadline || (capped && e.phase === :connect))) &&
             throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
         rethrow()
     end
 end
 
-# The next server event of a driven session: the wait is bounded by stream_idle_timeout and by what
-# is left of total_deadline, and a breach closes the socket (the one way to unblock a parked read)
-# and throws the typed timeout. `nothing` when the peer closed the session.
-function _realtime_next(s::RealtimeSession, t0::UInt64)::Union{Dict{String,Any},Nothing}
-    cfg = s.config
-    left = _remaining_s(cfg, t0)
-    ispositive(left) || throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
-    deadline = left < cfg.stream_idle_timeout
-    limit = deadline ? left : cfg.stream_idle_timeout
+# The next server event of a driven session, waiting at most stream_idle_timeout: a breach drops the
+# connection, which unblocks the read, and throws the typed timeout. `nothing` when the peer closed.
+function _realtime_next(s::RealtimeSession)::Union{Dict{String,Any},Nothing}
+    limit = s.config.stream_idle_timeout
     r0 = time_ns()
     raw, fired = try
-        _with_deadline_reported(() -> HTTP.WebSockets.receive(s.ws), () -> close(s.ws), limit,
-                                deadline ? :deadline : :stream_idle)
+        _with_deadline_reported(() -> HTTP.WebSockets.receive(s.ws), () -> _realtime_drop!(s.ws), limit, :stream_idle)
     catch e
         e isa HTTP.WebSockets.WebSocketError && return nothing
-        (e isa UniLMTimeout && e.phase === :deadline) || rethrow()
-        throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
+        rethrow()
     end
-    # Our own close ended the read: what it handed back is not a server event.
-    fired && throw(deadline ? UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline) :
-                              UniLMTimeout(:stream_idle, _elapsed_s(r0), limit))
+    # Our own drop ended the read: what it handed back is not a server event.
+    fired && throw(UniLMTimeout(:stream_idle, _elapsed_s(r0), limit))
     JSON.parse(String(raw); dicttype=Dict{String,Any})
 end
 
-# Sends one client event of a driven session, bounded by what is left of total_deadline: a peer
-# that stops reading cannot park the call on a full socket buffer. `false` when the peer closed.
-function _realtime_post(s::RealtimeSession, event::AbstractDict, t0::UInt64)::Bool
-    cfg = s.config
-    left = _remaining_s(cfg, t0)
-    ispositive(left) || throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
-    try
-        _with_deadline(() -> realtime_send(s, event), () -> close(s.ws), left, :deadline)
+# Sends one client event of a driven session, waiting at most stream_idle_timeout: a peer that stops
+# reading cannot park the session on a full socket buffer. `false` when the peer closed the session.
+function _realtime_post(s::RealtimeSession, event::AbstractDict)::Bool
+    limit = s.config.stream_idle_timeout
+    r0 = time_ns()
+    fired = try
+        last(_with_deadline_reported(() -> realtime_send(s, event), () -> _realtime_drop!(s.ws), limit, :stream_idle))
     catch e
         e isa HTTP.WebSockets.WebSocketError && return false
-        (e isa UniLMTimeout && e.phase === :deadline) || rethrow()
-        throw(UniLMTimeout(:deadline, _elapsed_s(t0), cfg.total_deadline))
+        rethrow()
     end
+    fired && throw(UniLMTimeout(:stream_idle, _elapsed_s(r0), limit))
     true
 end
 
 # Reads events until one of `type`. An `error` event on the way is the provider's refusal; a close
 # is a session that ended early.
-function _realtime_await(s::RealtimeSession, t0::UInt64, type::String)::Union{Dict{String,Any},AudioFailure,AudioCallError}
+function _realtime_await(s::RealtimeSession, type::String)::Union{Dict{String,Any},AudioFailure,AudioCallError}
     while true
-        ev = _realtime_next(s, t0)
+        ev = _realtime_next(s)
         ev === nothing && return _realtime_closed(type)
         kind = get(ev, "type", nothing)
         kind == "error" && return _realtime_refusal(ev)
@@ -330,14 +370,14 @@ _speech_item(req::SpeechRequest)::Dict{Symbol,Any} = realtime_event("conversatio
 # One speech response (https://developers.openai.com/api/docs/guides/realtime-conversations): update
 # the session and wait until it took the update, add the text, ask for a response, and collect its
 # audio deltas until response.done.
-function _realtime_speak(s::RealtimeSession, req::SpeechRequest, t0::UInt64)::LLMRequestResponse
-    _realtime_post(s, _speech_session(req), t0) || return _realtime_closed("session.updated")
-    (ev = _realtime_await(s, t0, "session.updated")) isa AbstractDict || return ev
-    (_realtime_post(s, _speech_item(req), t0) && _realtime_post(s, response_create(), t0)) ||
+function _realtime_speak(s::RealtimeSession, req::SpeechRequest)::LLMRequestResponse
+    _realtime_post(s, _speech_session(req)) || return _realtime_closed("session.updated")
+    (ev = _realtime_await(s, "session.updated")) isa AbstractDict || return ev
+    (_realtime_post(s, _speech_item(req)) && _realtime_post(s, response_create())) ||
         return _realtime_closed("response.done")
     pcm = IOBuffer()
     while true
-        ev = _realtime_next(s, t0)
+        ev = _realtime_next(s)
         ev === nothing && return _realtime_closed("response.done")
         kind = get(ev, "type", nothing)
         if kind == "error"
@@ -366,18 +406,18 @@ const _TRANSLATION_FRAME_BYTES = 9_600
 # One translation (https://developers.openai.com/api/docs/guides/realtime-translation): set the
 # target language and wait until the session took it, stream the audio, close the session, and join
 # the translated transcript until session.closed. The translated audio deltas are not kept.
-function _realtime_translate(s::RealtimeSession, pcm::Vector{UInt8}, language::String, t0::UInt64)::LLMRequestResponse
+function _realtime_translate(s::RealtimeSession, pcm::Vector{UInt8}, language::String)::LLMRequestResponse
     update = session_update(Dict{Symbol,Any}(:audio => Dict(:output => Dict(:language => language))))
-    _realtime_post(s, update, t0) || return _realtime_closed("session.updated")
-    (ev = _realtime_await(s, t0, "session.updated")) isa AbstractDict || return ev
+    _realtime_post(s, update) || return _realtime_closed("session.updated")
+    (ev = _realtime_await(s, "session.updated")) isa AbstractDict || return ev
     for frame in Iterators.partition(pcm, _TRANSLATION_FRAME_BYTES)
-        _realtime_post(s, realtime_event("session.input_audio_buffer.append"; audio=base64encode(frame)), t0) ||
+        _realtime_post(s, realtime_event("session.input_audio_buffer.append"; audio=base64encode(frame))) ||
             return _realtime_closed("session.closed")
     end
-    _realtime_post(s, realtime_event("session.close"), t0) || return _realtime_closed("session.closed")
+    _realtime_post(s, realtime_event("session.close")) || return _realtime_closed("session.closed")
     text = IOBuffer()
     while true
-        ev = _realtime_next(s, t0)
+        ev = _realtime_next(s)
         ev === nothing && return _realtime_closed("session.closed")
         kind = get(ev, "type", nothing)
         if kind == "error"

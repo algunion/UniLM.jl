@@ -170,9 +170,10 @@ jobs:
     name: Hosted providers (real OpenAI, Anthropic and Gemini APIs)
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # Spend bounds: the job starts only once the keyless test suite has passed, and a newer
-    # push to the same branch cancels a run still in progress.
-    needs: release-tests
+    # Spend bounds: the job starts only once the JET gate and the keyless test suite have
+    # passed (a release that fails either cannot ship, so its live calls would be wasted), and
+    # a newer push to the same branch cancels a run still in progress.
+    needs: [release-gate, release-tests]
     concurrency:
       group: hosted-providers-${{ github.ref }}
       cancel-in-progress: true

@@ -37,7 +37,7 @@ provider takes it.
   128 characters
   ([safety identifiers](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers));
   Gemini sends it as the request label `safety_identifier`, which allows at most 63
-  lowercase letters, digits, underscores and dashes.
+  lowercase letters, numerals, underscores and dashes, international ones included.
 
 # Fields — OpenAI only
 - `size::Union{String,Nothing}`: Size (`"1024x1024"`, `"1536x1024"`, `"1024x1536"`, `"auto"`).
@@ -392,10 +392,12 @@ An image-edit request for [`edit_image`](@ref): the image(s) at `image` (a path,
 vector of paths) changed as `prompt` asks. OpenAI is sent multipart/form-data at
 `/v1/images/edits`; `GEMINIServiceEndpoint` is sent `generateContent` with each image
 as an inline part ahead of the prompt, its format read from the file's bytes (PNG,
-JPEG, GIF or WebP). `model` resolves as on [`ImageGeneration`](@ref).
+JPEG, GIF or WebP). `model` left `""` is the service's default image model
+(`"gpt-image-2.5-sunburst"` on OpenAI, `"gemini-nano-banana-2.1"` on Gemini), resolved
+when the edit is sent.
 
 # Fields — both providers
-`service`, `model`, `image`, `prompt`, `n` and `safety_identifier`, as on
+`image` and `model` (above); `service`, `prompt`, `n` and `safety_identifier`, as on
 [`ImageGeneration`](@ref): Gemini takes `n=1` only.
 
 # Fields — OpenAI only
@@ -408,10 +410,10 @@ JPEG, GIF or WebP). `model` resolves as on [`ImageGeneration`](@ref).
 `aspect_ratio` and `resolution`, as on [`ImageGeneration`](@ref); unset, the edited
 image follows the input's aspect ratio.
 
-`image` names at least one file: an empty vector throws `ArgumentError`. So do a field
-the request's provider does not take, `n` other than 1 on Gemini, a Gemini
-`aspect_ratio` or `resolution` outside its list, and a `safety_identifier` outside its
-provider's rule, each naming the provider and the field, before any request. Other
+`image` names at least one file: [`edit_image`](@ref) throws `ArgumentError` for an empty
+vector before any request, as it does, naming the provider and the field, for a field the
+request's provider does not take, `n` other than 1 on Gemini, a Gemini `aspect_ratio` or
+`resolution` outside its list, and a `safety_identifier` outside its provider's rule. Other
 OpenAI values are sent as given, for OpenAI to judge.
 """
 @kwdef struct ImageEdit
@@ -455,7 +457,8 @@ call, and `cancel::Union{Nothing,CancelToken}` to make it cancellable exactly as
 function edit_image(e::ImageEdit; config::Union{Nothing,RequestConfig}=nothing,
                     cancel::Union{Nothing,CancelToken}=nothing)
     _validate_declared_capability(e.service, :image_edits, "Image Edits API")
-    # Without an input image the request would be a text-to-image generation, not an edit.
+    # An edit needs an input image: sent without one, Gemini would read the prompt alone as a
+    # text-to-image request.
     e.image isa Vector && isempty(e.image) && throw(ArgumentError(
         "an image edit needs at least one input image, and `image` is an empty vector: pass a path or a vector of paths"))
     _check_image_request(e.service, e)
@@ -577,10 +580,13 @@ function _gemini_model_resolutions(model::String)
     isnothing(row) ? nothing : last(_GEMINI_MODEL_RESOLUTIONS[row])
 end
 
-# The OpenAI Images API fields generateContent has no counterpart for.
+# The OpenAI Images API fields generateContent has no counterpart for, and how a refusal names
+# the request.
 _openai_only_image_fields(::ImageGeneration) =
     (:size, :quality, :background, :output_format, :output_compression, :moderation)
 _openai_only_image_fields(::ImageEdit) = (:mask, :size, :quality, :input_fidelity, :background, :output_format)
+_image_verb(::ImageGeneration) = "image generation"
+_image_verb(::ImageEdit) = "image editing"
 
 _gemini_image_model(r::_ImageRequest)::String =
     isempty(r.model) ? default_image_model(GEMINIServiceEndpoint)::String : r.model
@@ -588,7 +594,7 @@ _gemini_image_model(r::_ImageRequest)::String =
 function _check_image_request(::Type{GEMINIServiceEndpoint}, r::_ImageRequest)
     openai = _set_image_fields(r, _openai_only_image_fields(r))
     isempty(openai) || throw(ArgumentError(
-        "Gemini image generation does not take $(join(openai, ", ")), which only the OpenAI Images API takes" *
+        "Gemini $(_image_verb(r)) does not take $(join(openai, ", ")), which only the OpenAI Images API takes" *
         ("size" in openai ? "; size a Gemini image with aspect_ratio and resolution" : "")))
     isnothing(r.n) || r.n == 1 || throw(ArgumentError(
         "Gemini returns one image per request; n must be 1 (got $(r.n))"))

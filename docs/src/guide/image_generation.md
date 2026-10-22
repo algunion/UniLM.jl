@@ -90,7 +90,8 @@ monitoring can tell your users apart; hash a username or email address rather th
 sending it. OpenAI takes 1 to 128 characters (its
 [safety guide](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers)),
 on generations and edits alike; Gemini sends it as the request label
-`safety_identifier`, at most 63 lowercase letters, digits, `_` or `-`. OpenAI
+`safety_identifier`, at most 63 lowercase letters, numerals, `_` or `-`, international
+ones included. OpenAI
 deprecated the Images API's `user` field in its favour; the request types have no
 `user` field.
 

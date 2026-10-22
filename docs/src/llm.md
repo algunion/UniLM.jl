@@ -1004,7 +1004,7 @@ println(tokens["input_tokens"])
     background::Union{String,Nothing} = nothing             # OpenAI: "transparent","opaque","auto"
     output_format::Union{String,Nothing} = nothing          # OpenAI: "png","webp","jpeg"
     output_compression::Union{Int,Nothing} = nothing        # OpenAI: 0–100 (webp/jpeg only)
-    safety_identifier::Union{String,Nothing} = nothing      # both: OpenAI 1–128 chars; Gemini the request label (≤ 63 of a-z 0-9 _ -)
+    safety_identifier::Union{String,Nothing} = nothing      # both: OpenAI 1–128 chars; Gemini the request label (≤ 63 lowercase letters, numerals, _ or -, any script)
     moderation::Union{String,Nothing} = nothing             # OpenAI: "auto","low"
     aspect_ratio::Union{String,Nothing} = nothing           # Gemini: "1:1","1:4","4:1","1:8","8:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9"
     resolution::Union{String,Nothing} = nothing             # Gemini: "512","1K","2K","4K"; gemini-nano-banana-2.1 renders 1K, 2K or 4K
@@ -1015,7 +1015,7 @@ end
     image::Union{String,Vector{String}}                     # input file path(s); an empty vector throws in edit_image
     prompt::String
     mask::Union{String,Nothing} = nothing                   # OpenAI: transparent area = what to edit
-    model::String = ""                                      # sentinel, as on ImageGeneration
+    model::String = ""                                      # "" → the service's default image model, resolved when sent
     n::Union{Int,Nothing} = nothing
     size::Union{String,Nothing} = nothing                   # OpenAI
     quality::Union{String,Nothing} = nothing                # OpenAI

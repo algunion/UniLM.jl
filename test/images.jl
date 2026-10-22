@@ -609,7 +609,10 @@ _gemini_plain(prompt) = Dict{String,Any}(
         "generationConfig" => Dict{String,Any}("responseModalities" => Any["IMAGE"],
             "imageConfig" => Dict{String,Any}("aspectRatio" => "16:9", "imageSize" => "2K")),
         "labels" => Dict{String,Any}("safety_identifier" => "user_42"))
-    # Gemini's label rule, not OpenAI's 128 characters: 63 lowercase letters, digits, _ or -.
+    # Gemini's label rule, not OpenAI's 128 characters: 63 lowercase letters, numerals, _ or -,
+    # international ones included.
+    intl = ImageGeneration(service=GEMINIServiceEndpoint, prompt="p", safety_identifier="usuário_日本-٤٢")
+    @test _image_json(intl)["labels"] == Dict{String,Any}("safety_identifier" => "usuário_日本-٤٢")
     for bad in ("User_42", "a"^64)
         err = _refusal(() -> JSON.json(ImageGeneration(service=GEMINIServiceEndpoint, prompt="p", safety_identifier=bad)))
         @test err isa ArgumentError && occursin("Gemini", err.msg) && occursin("63", err.msg)
@@ -623,7 +626,7 @@ end
     for (field, value) in (:size => "1024x1024", :quality => "high", :background => "opaque",
                            :output_format => "png", :output_compression => 50, :moderation => "low")
         err = _refusal(() -> JSON.json(ImageGeneration(; service=GEMINIServiceEndpoint, prompt="p", field => value)))
-        @test err isa ArgumentError && occursin("Gemini", err.msg) && occursin(String(field), err.msg)
+        @test err isa ArgumentError && startswith(err.msg, "Gemini image generation does not take $field,")
     end
     err = _refusal(() -> JSON.json(ImageGeneration(service=GEMINIServiceEndpoint, prompt="p", size="1024x1024")))
     @test occursin("aspect_ratio", err.msg) && occursin("resolution", err.msg)   # the fix: Gemini's own controls
@@ -631,7 +634,7 @@ end
                            :quality => "high", :background => "opaque", :output_format => "png")
         e = ImageEdit(; service=GEMINIServiceEndpoint, image="never-read.png", prompt="p", field => value)
         err = _refusal(() -> UniLM._check_image_request(GEMINIServiceEndpoint, e))
-        @test err isa ArgumentError && occursin("Gemini", err.msg) && occursin(String(field), err.msg)
+        @test err isa ArgumentError && startswith(err.msg, "Gemini image editing does not take $field,")
     end
     # Gemini returns one image per request: n=1 is that image, any other count has no Gemini form.
     for n in (0, 2, 10)

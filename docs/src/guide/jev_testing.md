@@ -168,7 +168,8 @@ through a directory of recordings:
   answers one backend with another's answer ([Backends](@ref
   backends_recordings)). TypeSafe's `long_context = true` is part of the key too.
   The options that change how a request is served but never what it is answered
-  — OpenAI's `prompt_cache_key` and `safety_identifier`, Ollama's `keep_alive` —
+  — OpenAI's `prompt_cache_key`, `safety_identifier` and `prompt_cache_options`,
+  Ollama's `keep_alive` —
   are sent and left out of the key and the file, so the same question replays
   whatever they are.
 - **Media by digest.** A TypeSafe request with images is keyed on its JSON part

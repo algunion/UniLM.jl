@@ -518,7 +518,7 @@ per question.
 - `options::NamedTuple`: provider options, checked by the backend's wrapper when
   the request is sent; keyword arguments of [`ask`](@ref) become these.
   TypeSafe accepts one, `long_context::Bool`; OpenAI's Decisions API
-  `prompt_cache_key` and `safety_identifier`; Ollama `keep_alive`.
+  `prompt_cache_key`, `safety_identifier` and `prompt_cache_options`; Ollama `keep_alive`.
 
 `questions` accepts `name => question` pairs (vector, tuple, `NamedTuple`, or
 `AbstractDict`), or bare questions in a vector or tuple, which are auto-named
@@ -956,7 +956,7 @@ no key.
 - `record_body::String`: the body as a recording is keyed on and writes it —
   `body` itself unless the protocol leaves out fields that change how a request
   is served but never what it is answered (Ollama's `keep_alive`; OpenAI's
-  `prompt_cache_key` and `safety_identifier`), so requests that differ only
+  `prompt_cache_key`, `safety_identifier` and `prompt_cache_options`), so requests that differ only
   there replay one recording. What is sent is `body`.
 
 Public extension API (not exported).
@@ -1505,7 +1505,8 @@ pairs, a `NamedTuple` or `AbstractDict` of them, or bare questions auto-named
 request's `options`, which the backend's wrapper checks before anything is sent:
 TypeSafe accepts `long_context::Bool` (`true` raises its context limits to 262k
 tokens), OpenAI's Decisions API `prompt_cache_key` and `safety_identifier`
-(strings), Ollama `keep_alive` (the seconds the model stays loaded), so any other
+(strings) and `prompt_cache_options` (a [`PromptCacheOptions`](@ref)), Ollama
+`keep_alive` (the seconds the model stays loaded), so any other
 keyword — a misspelt one included — is an `ArgumentError` that lists the options
 the backend accepts.
 

@@ -143,7 +143,7 @@ it: a model belongs to its backend, and `tev1:0.8b` means nothing to TypeSafe.
 | Refusals | none | per question, a [`RefusalAnswer`](@ref) | none |
 | `confidence` | TypeSafe's, as sent | OpenAI's, as sent, to two decimals | computed by UniLM; Ollama's own value in `raw` |
 | Request id | `x-typesafe-request-id` | `x-request-id` | none |
-| Options | `long_context` | `prompt_cache_key`, `safety_identifier` | `keep_alive` |
+| Options | `long_context` | `prompt_cache_key`, `safety_identifier`, `prompt_cache_options` | `keep_alive` |
 | Price | input tokens only ([Models](https://docs.typesafe.ai/models)) | input tokens only, \$0.10 per million, cached ones included ([Decisions guide](https://developers.openai.com/api/docs/guides/decisions)) | nothing: your machine (a cloud model — a tag of `cloud`, or one ending in `-cloud` — is priced by the requested name) |
 | Default timeouts | 60 s per attempt, 150 s in all | 60 s per attempt, 150 s in all | the package's: 600 s per attempt, 900 s in all |
 | [`ask_each`](@ref) in flight | 16 | 16 | 1 |
@@ -487,7 +487,7 @@ the first example came from it.
 - **Refused before sending.** A Box question; a Noul's `yes`/`no` criteria, which
   a predicate has no place for (write them into its instructions); a description
   or level that is not a string; an image anywhere but the state; any option but
-  `prompt_cache_key` and `safety_identifier`.
+  `prompt_cache_key`, `safety_identifier` and `prompt_cache_options`.
 - **Refusals.** The API may decline any question. That answer is a
   [`RefusalAnswer`](@ref), and [`nl_classify`](@ref), [`nl_dispatch`](@ref) and
   [`@branch`](@ref) take it as a decline whatever the policy: `fallback` runs,
@@ -497,12 +497,13 @@ the first example came from it.
   a distribution over `n` outcomes is accepted when it sums to 1 within
   `0.005n`.
 - **Options.** Keywords of [`ask`](@ref): `safety_identifier`, an opaque id of
-  your end user of at most 128 characters, and `prompt_cache_key`, at most 64,
+  your end user of at most 128 characters; `prompt_cache_key`, at most 64,
   which partitions OpenAI's prompt cache ([API
-  reference](https://developers.openai.com/api/reference/resources/decisions/methods/create)).
-  Neither changes an answer, so neither is part of a recording's key.
+  reference](https://developers.openai.com/api/reference/resources/decisions/methods/create));
+  and `prompt_cache_options`, a [`PromptCacheOptions`](@ref) of `mode` and a `ttl`
+  of `"30m"` or `"12h"`. None changes an answer, so none is part of a recording's key.
 - **Results.** `request_id` is the `x-request-id` header, and `usage` counts
-  cached input tokens.
+  cached input tokens and cache writes.
 - **Price.** Input tokens only, \$0.10 per million on `gpt-6-luna`, cached ones
   at the same rate, and twice that rate for a request of more than 272K input
   tokens: [`estimated_cost`](@ref) charges it that way. A regional-processing
@@ -523,8 +524,8 @@ every backend, and files each backend's apart: TypeSafe's under
 `/openai-decisions/v1/decisions`. The same question asked of two backends is two
 recordings, and a replay never answers one backend with another's answer. The
 options that change how a request is served but never what it is answered —
-OpenAI's `prompt_cache_key` and `safety_identifier`, Ollama's `keep_alive` — are
-left out of the key and the file; TypeSafe's `long_context` and the runner an
+OpenAI's `prompt_cache_key`, `safety_identifier` and `prompt_cache_options`, Ollama's
+`keep_alive` — are left out of the key and the file; TypeSafe's `long_context` and the runner an
 `OllamaEndpoint` names are part of the key. An image is recorded by its SHA-256,
 never its bytes: TypeSafe's as a digest of each image part, OpenAI's and Ollama's
 as `data:<mime>;sha256,<hex>` in place of its base64.

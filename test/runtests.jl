@@ -289,6 +289,10 @@ end
         include("integration_openai_decisions.jl")
     end
 
+    @testset "integration — openai audio" begin
+        include("integration_openai_audio.jl")
+    end
+
     @testset "integration — semantic" begin
         include("integration_semantic.jl")
     end

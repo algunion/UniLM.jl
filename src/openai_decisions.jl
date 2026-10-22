@@ -478,10 +478,9 @@ end
 # availability": "no cache-read, cache-write, or output-token charges", and "These rates
 # apply to /v1/decisions" rather than the processing-tier prices of other gpt-6-luna
 # requests — so OpenAI's billing (`_billed_cost`) is given every input token, cached or
-# written, as fresh input, with no output and no tier; a request of more than 272K input
-# tokens costs twice that rate for all of them (gpt-6-luna's long-context pricing). A
+# written, as fresh input, with no output and no tier; OpenAI's cost method applies
+# gpt-6-luna's long-context rate (twice the input rate above 272K input tokens). A
 # regional-processing premium is not visible in a response, and is not added.
-const _DECISIONS_LONG_CONTEXT = 272_000
 
 function _system_one_cost(::OpenAIDecisionsProtocol, result::SystemOneSuccess, model::Union{Nothing,String},
                           pricing::AbstractDict{String,PriceRow})::Float64
@@ -490,5 +489,5 @@ function _system_one_cost(::OpenAIDecisionsProtocol, result::SystemOneSuccess, m
     isnothing(rates) && return 0.0
     n = token_usage(result).prompt_tokens
     billed = TokenUsage(prompt_tokens=n, total_tokens=n)
-    _billed_cost(OPENAIServiceEndpoint, priced, billed, rates) * (n > _DECISIONS_LONG_CONTEXT ? 2 : 1)
+    _billed_cost(OPENAIServiceEndpoint, priced, billed, rates)
 end

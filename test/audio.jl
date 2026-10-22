@@ -589,9 +589,16 @@ end
          refusal(() -> speak("Hi."; service=SpeechWSProbe, voice="Kore")))
     end
     @test all(e -> e isa ArgumentError, (e1, e2, e3, e4)) && isempty(seen.targets)
+    # Google's OpenAI-compatible endpoint has no speech route: its refusals name the endpoint that
+    # speaks Gemini, for a Gemini voice too.
+    for f in (() -> speak("Hi."; service=GEMINIOpenAIServiceEndpoint),
+              () -> SpeechRequest(input="Hi.", service=GEMINIOpenAIServiceEndpoint, voice="Kore"))
+        e5 = refusal(f)
+        @test e5 isa ArgumentError && e5.msg == "GEMINIOpenAIServiceEndpoint has no speech route (Google's " *
+              "OpenAI-compatible API documents none): Gemini TTS is on the native Gemini API, so pass " *
+              "service=GEMINIServiceEndpoint (https://ai.google.dev/gemini-api/docs/speech-generation)"
+    end
     # Endpoints without a Realtime WebSocket: never sent another endpoint's credentials.
-    e5 = refusal(() -> speak("Hi."; service=GEMINIOpenAIServiceEndpoint))
-    @test e5 isa ArgumentError && occursin("speak (OpenAI Realtime API) is not supported by GEMINIOpenAIServiceEndpoint", e5.msg)
     e6 = refusal(() -> speak("Hi."; service=SeamProbe))
     @test e6 isa ArgumentError && occursin("supports only OPENAIServiceEndpoint", e6.msg)
 end

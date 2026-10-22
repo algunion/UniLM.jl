@@ -16,13 +16,19 @@
 const _SPEECH_RATE = 24_000
 const _SPEECH_FORMATS = ("wav", "pcm")
 
-# How a service speaks: an OpenAI Realtime session (every service but Gemini; `_realtime_ws_url`
+# How a service speaks: an OpenAI Realtime session (every service but Gemini's; `_realtime_ws_url`
 # refuses all but OPENAIServiceEndpoint) or Gemini TTS through generateContent.
 abstract type _SpeechWire end
 struct _RealtimeSpeechWire <: _SpeechWire end
 struct _GeminiSpeechWire <: _SpeechWire end
 _speech_wire(_) = _RealtimeSpeechWire()
 _speech_wire(::Type{GEMINIServiceEndpoint}) = _GeminiSpeechWire()
+# Google's OpenAI-compatible API documents no speech route (https://ai.google.dev/gemini-api/docs/openai):
+# Gemini speaks through its native API only.
+_speech_wire(::Type{GEMINIOpenAIServiceEndpoint}) = throw(ArgumentError(
+    "GEMINIOpenAIServiceEndpoint has no speech route (Google's OpenAI-compatible API documents none): " *
+    "Gemini TTS is on the native Gemini API, so pass service=GEMINIServiceEndpoint " *
+    "(https://ai.google.dev/gemini-api/docs/speech-generation)"))
 
 # What a speech wire accepts, from its provider's docs: the default model and voice, the voices,
 # and the speed range (`nothing`: no speed control).
@@ -82,7 +88,8 @@ style (`speechMetadata.style`). Gemini TTS has no speed parameter: describe the 
 `instructions` (`"speaking slowly"`).
 
 Throws `ArgumentError`, before any request, for an empty `input`, a voice the service does not have,
-a `response_format` other than `"wav"` or `"pcm"`, a `speed` out of range, and any `speed` on Gemini.
+a `response_format` other than `"wav"` or `"pcm"`, a `speed` out of range, and any `speed` on Gemini;
+and for `GEMINIOpenAIServiceEndpoint`, which has no speech route, naming `GEMINIServiceEndpoint`.
 Voices: [OpenAI Realtime](https://developers.openai.com/api/reference/resources/realtime/client-events),
 [Gemini TTS](https://ai.google.dev/gemini-api/docs/speech-generation#voices).
 """

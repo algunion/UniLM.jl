@@ -72,7 +72,9 @@ Both services produce 16-bit mono PCM at 24 kHz: `response_format = "wav"` (the
 default) wraps it in a 44-byte WAV header, `"pcm"` returns the samples
 (`content_type` `"audio/pcm"`). Any other format, a voice the service does not have
 (`nova`, `onyx` and `fable` are not Realtime voices), a speed out of range, any
-`speed` on Gemini, and an empty `input` throw `ArgumentError` before any request.
+`speed` on Gemini, and an empty `input` throw `ArgumentError` before any request, as does
+`GEMINIOpenAIServiceEndpoint`: Google's OpenAI-compatible API has no speech route, so the
+error points to `GEMINIServiceEndpoint`.
 
 On OpenAI, `speak` opens a Realtime WebSocket session, sets the voice, PCM output and
 instructions to read the text word for word, adds the text as a user message and

@@ -2403,7 +2403,8 @@ models are conversational; OpenAI notes instructions are not guaranteed to be fo
 prebuilt voices, `instructions` as the speech style), which reads the text verbatim. An empty
 `input`, a voice the service lacks, a `response_format` other than `"wav"`/`"pcm"` (mp3, opus, aac and
 flac are refused), a `speed` out of range and any `speed` on Gemini throw `ArgumentError` before any
-request. **`translate`** streams a 16-bit PCM WAV file (any rate and channel count: mixed down to mono
+request, as does `GEMINIOpenAIServiceEndpoint` (no speech route there: the error points to
+`GEMINIServiceEndpoint`). **`translate`** streams a 16-bit PCM WAV file (any rate and channel count: mixed down to mono
 and resampled to 24 kHz) through an OpenAI Realtime translation session
 (`wss://api.openai.com/v1/realtime/translations`; OpenAI shuts `/v1/audio/translations` down on
 2027-02-26) into `language` (English unless named) and returns the translated text as a

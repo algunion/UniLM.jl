@@ -2020,24 +2020,25 @@ function _fill_embeddings!(dst::Vector{Vector{Float64}}, data::AbstractVector)
 end
 
 # The input each reply row fills, 1-based. The OpenAI Embeddings API numbers its rows with a
-# 0-based `index`, in any order; Gemini's OpenAI-compatible endpoint numbers none and sends them in
-# input order (observed 2026-10-22 for gemini-embedding-001 and gemini-embedding-2). A reply that
-# numbers some rows and not others has no single reading, so it is refused, as is an index that is
-# not an integer, out of range or repeated.
+# 0-based `index`, in any order. Gemini's OpenAI-compatible endpoint leaves the index out of its
+# first row — proto3 JSON omits a field at its default value, 0 — and numbers the others (observed
+# 2026-10-22 for gemini-embedding-2 and gemini-embedding-001: no index, then 1, 2), so a row
+# without an index beside numbered ones is row 0. A reply that numbers no row is read in order.
+# An index that is not an integer, out of range or repeated has no reading, so it is refused.
 function _embedding_slots(data::AbstractVector, n::Int)::Vector{Int}
     indices = Any[_row_field(item, "index") for item in data]
     all(isnothing, indices) && return collect(1:n)
     seen = falses(n)
     slots = Vector{Int}(undef, length(indices))
-    for (k, i) in enumerate(indices)
+    for (k, index) in enumerate(indices)
+        i = something(index, 0)
         # A JSON true parses as a `Bool`, which is an `Integer` in Julia: it is no row index.
         i isa Integer && !(i isa Bool) || throw(ArgumentError(
-            "embeddings response row index $(repr(i)) is not an integer" * (isnothing(i) ?
-            ": a reply numbers every row or none ($(count(!isnothing, indices)) of $(length(indices)) rows " *
-            "carry an index)" : "")))
+            "embeddings response row index $(repr(i)) is not an integer"))
         checkbounds(Bool, seen, i + 1) || throw(ArgumentError(
             "embeddings response row index $i is out of range for $n inputs"))
-        seen[i + 1] && throw(ArgumentError("embeddings response repeats row index $i"))
+        seen[i + 1] && throw(ArgumentError("embeddings response repeats row index $i" *
+            (any(isnothing, indices) ? " (a row without an index is row 0)" : "")))
         seen[i + 1] = true
         slots[k] = i + 1
     end
@@ -2046,8 +2047,8 @@ end
 
 # A vector that is empty, all zeros, or holds a value that is not a finite number is no embedding
 # (Ollama has answered all-zero vectors with HTTP 200; a JSON `true` parses as a `Bool`, which is a
-# `Real` in Julia): it is a malformed reply, refused with its row (the API's 0-based `index`, or its
-# place in a reply that numbers none), never stored as a vector that still compares and indexes.
+# `Real` in Julia): it is a malformed reply, refused with its row (the 0-based index the row fills),
+# never stored as a vector that still compares and indexes.
 function _checked_embedding(src::AbstractVector, row)
     all(x -> x isa Real && !(x isa Bool) && isfinite(x), src) || throw(ArgumentError(
         "the embeddings reply's row $row holds a value that is not a finite number"))

@@ -987,10 +987,11 @@ end
             err = refusal(() -> update!(two, [row(0, [1.0, 2.0]), row(1, bad)]))
             @test err isa ArgumentError && occursin("row 1", err.msg) && occursin("not a vector", err.msg)
         end
-        # A row that is not a JSON object, or lacks its index or its vector, gets the same messages.
+        # A row that is not a JSON object, or lacks its index, beside numbered ones reads as row 0
+        # (Gemini's compatible endpoint leaves a zero index out), here a second row 0.
         for bad in ("a row", [3.0, 4.0], nothing, Dict{String,Any}("embedding" => [3.0, 4.0]))
             err = refusal(() -> update!(two, [row(0, [1.0, 2.0]), bad]))
-            @test err isa ArgumentError && occursin("row index nothing is not an integer", err.msg)
+            @test err isa ArgumentError && occursin("repeats row index 0 (a row without an index is row 0)", err.msg)
         end
         err = refusal(() -> update!(two, [row(0, [1.0, 2.0]), Dict{String,Any}("index" => 1)]))
         @test err isa ArgumentError && occursin("row 1", err.msg) && occursin("not a vector", err.msg)

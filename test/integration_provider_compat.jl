@@ -137,7 +137,7 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "GEMINI_API_KEY")
     end
 
     @testset "Gemini embeddings: two inputs, two vectors, on the default model and on gemini-embedding-001" begin
-        # The OpenAI-compatible endpoint numbers no reply rows; each fills the input at its place.
+        # The OpenAI-compatible endpoint leaves the index out of its first reply row (a zero).
         for (model, want) in (("", "gemini-embedding-2"), ("gemini-embedding-001", "gemini-embedding-001"))
             emb = Embeddings(["alpha", "beta"]; service=GEMINIOpenAIServiceEndpoint, model)
             @test emb.model == want

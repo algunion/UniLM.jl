@@ -203,9 +203,9 @@ embeddingrequest!(emb)
     `gemini-embedding-2` is the default for `GEMINIOpenAIServiceEndpoint`. Its predecessor
     `gemini-embedding-001` shuts down on May 14, 2028; until then it answers with
     `model="gemini-embedding-001"`, and Google names `gemini-embedding-2` as its replacement
-    (the two models' vectors are not comparable). The OpenAI-compatible endpoint numbers no
-    reply rows, so each vector fills the input at its place in the reply. It returns no
-    `usage` either, so [`estimated_cost`](@ref) on its results is `0.0`; the
+    (the two models' vectors are not comparable). The OpenAI-compatible endpoint leaves the
+    index out of its first reply row, as its JSON omits a zero, and UniLM reads that row as
+    row 0. It returns no `usage`, so [`estimated_cost`](@ref) on its results is `0.0`; the
     `gemini-embedding-2` price row applies only to results that carry usage.
 
 ## In-Place Design

@@ -292,35 +292,42 @@ const _ET_G = GEMINIOpenAIServiceEndpoint
     end
 end
 
-@testset "an embeddings reply fills by index, or by position when no row carries one" begin
-    # Gemini's OpenAI-compatible endpoint answers rows without an `index`, in input order
-    # (observed 2026-10-22 for gemini-embedding-001 and gemini-embedding-2); OpenAI numbers them.
+@testset "an embeddings reply fills by index; a row without one is row 0, and a reply numbering none is in order" begin
+    # Gemini's OpenAI-compatible endpoint leaves the index out of its first row (proto3 JSON omits
+    # a zero) and numbers the others: rows with no index, then 1, 2 (observed 2026-10-22 for
+    # gemini-embedding-2 and gemini-embedding-001). OpenAI numbers every row, in any order.
     rows(vs...) = Any[Dict{String,Any}("embedding" => v) for v in vs]
     numbered(ps...) = Any[Dict{String,Any}("index" => i, "embedding" => v) for (i, v) in ps]
-    emb() = Embeddings(["alpha", "beta"]; service=_ET_G)
-    e = emb(); UniLM.update!(e, rows([0.1, 0.2], [0.3, 0.4]))
-    @test e.embeddings == [[0.1, 0.2], [0.3, 0.4]]
-    e = emb(); UniLM.update!(e, numbered(1 => [0.3, 0.4], 0 => [0.1, 0.2]))           # any row order
-    @test e.embeddings == [[0.1, 0.2], [0.3, 0.4]]
-    # A reply numbering some rows and not others, or holding a row too few or too many, is refused,
-    # and the buffers keep their zeros.
-    mixed = Any[Dict{String,Any}("index" => 1, "embedding" => [0.3, 0.4]), Dict{String,Any}("embedding" => [0.1, 0.2])]
-    for (bad, says) in ((mixed, "numbers every row or none (1 of 2 rows carry an index)"),
-                        (rows([0.1, 0.2]), "1 rows for 2 inputs"),
-                        (rows([0.1, 0.2], [0.3, 0.4], [0.5, 0.6]), "3 rows for 2 inputs"))
+    emb() = Embeddings(["alpha", "beta", "gamma"]; service=_ET_G)
+    want = [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]]
+    gemini = Any[Dict{String,Any}("embedding" => [0.1, 0.2]), numbered(1 => [0.3, 0.4], 2 => [0.5, 0.6])...]
+    for reply in (gemini, reverse(gemini),                                       # as Gemini writes it, and shuffled
+                  numbered(2 => [0.5, 0.6], 0 => [0.1, 0.2], 1 => [0.3, 0.4]),   # every row numbered
+                  rows([0.1, 0.2], [0.3, 0.4], [0.5, 0.6]))                     # none numbered: in order
+        e = emb(); UniLM.update!(e, reply)
+        @test e.embeddings == want
+    end
+    # A second row 0, or a row too few or too many, has no reading: refused, and the buffers keep
+    # their zeros.
+    for (bad, says) in ((Any[numbered(0 => [0.1, 0.2])..., rows([0.3, 0.4])..., numbered(2 => [0.5, 0.6])...],
+                         "repeats row index 0 (a row without an index is row 0)"),
+                        (Any[rows([0.1, 0.2], [0.3, 0.4])..., numbered(2 => [0.5, 0.6])...],
+                         "repeats row index 0 (a row without an index is row 0)"),
+                        (rows([0.1, 0.2], [0.3, 0.4]), "2 rows for 3 inputs"),
+                        (rows([0.1, 0.2], [0.3, 0.4], [0.5, 0.6], [0.7, 0.8]), "4 rows for 3 inputs"))
         e = emb()
         err = _et_err(() -> UniLM.update!(e, bad))
         @test err isa ArgumentError && occursin(says, err.msg)
-        @test e.embeddings == [zeros(1536), zeros(1536)]
+        @test e.embeddings == [zeros(1536), zeros(1536), zeros(1536)]
     end
-    # A refused positional row is named by its place in the reply (0-based, like an index).
-    err = _et_err(() -> UniLM.update!(emb(), rows([0.1, 0.2], [0.0, 0.0])))
+    # A refused row is named by the 0-based index it fills.
+    err = _et_err(() -> UniLM.update!(emb(), rows([0.1, 0.2], [0.0, 0.0], [0.5, 0.6])))
     @test err isa ArgumentError && occursin("row 1", err.msg) && occursin("all-zero", err.msg)
 end
 
 using Sockets
 
-@testset "driver: index-less rows fill by position; a mixed reply is an EmbeddingCallError carrying the refusal" begin
+@testset "driver: a Gemini-numbered reply fills its inputs; a second row 0 is an EmbeddingCallError carrying the refusal" begin
     reply = Ref("")
     tcp = Sockets.listen(Sockets.localhost, 0)
     port = Int(Sockets.getsockname(tcp)[2]); close(tcp)
@@ -332,14 +339,15 @@ using Sockets
         send() = embeddingrequest!(Embeddings(["alpha", "beta"]; service=ep, model="gemini-embedding-2");
                                    config=RequestConfig(max_attempts=1))
         row(v) = Dict("object" => "embedding", "embedding" => v)
+        # Gemini's own shape: the first row without an index, the second numbered 1.
         reply[] = JSON.json(Dict("object" => "list", "model" => "gemini-embedding-2",
-                                 "data" => [row([0.1, 0.2]), row([0.3, 0.4])]))
+                                 "data" => [row([0.1, 0.2]), merge(row([0.3, 0.4]), Dict("index" => 1))]))
         r = send()
         @test r isa EmbeddingSuccess && embedding_vectors(r) == [[0.1, 0.2], [0.3, 0.4]]
         reply[] = JSON.json(Dict("object" => "list", "model" => "gemini-embedding-2",
                                  "data" => [merge(row([0.1, 0.2]), Dict("index" => 0)), row([0.3, 0.4])]))
         r = send()
-        @test r isa EmbeddingCallError && r.cause isa ArgumentError && occursin("every row or none", r.error)
+        @test r isa EmbeddingCallError && r.cause isa ArgumentError && occursin("repeats row index 0", r.error)
     finally
         close(server)
     end

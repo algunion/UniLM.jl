@@ -251,8 +251,8 @@ function _anthropic_validate_model(chat::Chat, fam::_ClaudeFamily, e::ANTHROPICS
                             "tools (FunctionSignature(strict=true)) or a json_schema response_format"))
     chat.service_tier == "fast" && _check_claude_fast(chat.model, fam, e)
     isnothing(e.inference_geo) || fam.inference_geo || throw(ArgumentError(
-        "$(chat.model) takes no inference_geo: the API answers HTTP 400 for it on Claude Opus 4.5, Sonnet 4.5, " *
-        "Haiku 4.5 and earlier models; send the request through an ANTHROPICServiceEndpoint without inference_geo"))
+        "$(chat.model) takes no inference_geo: the API answers HTTP 400 for it on the Claude 4.5 models and " *
+        "earlier; send the request through an ANTHROPICServiceEndpoint without inference_geo"))
     nothing
 end
 

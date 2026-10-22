@@ -1433,7 +1433,7 @@ end
 
 # https://platform.claude.com/docs/en/api/messages.md (Headers; inference_geo) and
 # https://platform.claude.com/docs/en/manage-claude/data-residency.md (inference_geo values; HTTP 400
-# on Claude Opus 4.5, Sonnet 4.5, Haiku 4.5 and earlier models).
+# on the Claude 4.5 models and earlier).
 @testset "ANTHROPICServiceEndpoint sends its betas, user profile and workspace as headers, its region in the body" begin
     withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
         hdr(s) = Dict(UniLM.auth_header(s))
@@ -1457,7 +1457,7 @@ end
     for service in (ANTHROPICServiceEndpoint, ANTHROPICServiceEndpoint(), ANTHROPICServiceEndpoint(betas=["a"], user_profile_id="uprof_1"))
         @test !haskey(_ant_body(service), "inference_geo")
     end
-    for model in ("claude-opus-4-5", "claude-opus-4-5-20251101", "claude-haiku-4-5", "claude-haiku-4-5-20251001", "claude-sonnet-4-5")
+    for model in ("claude-opus-4-5", "claude-opus-4-5-20251101", "claude-haiku-4-5", "claude-haiku-4-5-20251001")
         e = _ant_err(ANTHROPICServiceEndpoint(inference_geo="us"); model)
         @test e isa ArgumentError && occursin(model, e.msg) && occursin("inference_geo", e.msg)
         @test !haskey(_ant_body(ANTHROPICServiceEndpoint(); model), "inference_geo")

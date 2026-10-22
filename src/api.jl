@@ -715,9 +715,9 @@ instance adds options that every request through it carries
   can act on more than one.
 - `inference_geo`: `"global"` or `"us"`, the request's `inference_geo`, where inference
   runs ([data residency](https://platform.claude.com/docs/en/manage-claude/data-residency));
-  `nothing` leaves the workspace default. US-only inference bills every rate at 1.1×. Claude
-  Opus 4.5, Sonnet 4.5 and Haiku 4.5 answer it with HTTP 400, so a request for one of them
-  throws `ArgumentError`.
+  `nothing` leaves the workspace default. US-only inference bills every rate at 1.1×. The
+  Claude 4.5 models (Opus 4.5, Haiku 4.5) and earlier answer it with HTTP 400, so a request
+  for one of them throws `ArgumentError`.
 
 `betas` is copied. The constructor throws `ArgumentError` for a blank value, a value that
 holds a control character (CR, LF, …), a beta name that holds a comma, and an

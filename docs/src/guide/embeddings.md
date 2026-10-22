@@ -70,8 +70,9 @@ println("Cosine similarity (Julia vs Fortran): ", round(sim, digits=4))
 
 Some embedding models read a short prompt that says what a text is for: a query to
 search with, or a document to be found. EmbeddingGemma does — v1 and v2, on any
-service. Ollama does not add the prompt, and the OpenAI-compatible request has no
-field for it, so `task` writes it:
+service — and so does `gemini-embedding-2`, whose guide gives the same prompts. Ollama
+does not add the prompt, and the OpenAI-compatible request has no field for it, so
+`task` writes it:
 
 ```julia
 gemma = "embeddinggemma-2:740m-q8_0"    # the tag the Ollama guide's setup pulls
@@ -89,10 +90,13 @@ when a text has one (an empty or whitespace-only title is none, sent as the mode
 card's `title: none`); and a text compared with others of its kind `:classification`,
 `:clustering` or `:sentence_similarity`. An EmbeddingGemma request without a task is
 an `ArgumentError` before anything is sent; `task = :none` sends the text as it is,
-for a server that writes the prompts itself. Any other model takes `task = :none`
-or no task: UniLM knows EmbeddingGemma's prompts only, so write another model's own
-prefix into the text. [Local Models with Ollama](@ref ollama_embeddings) lists the
-prompt each task writes, and measures what the prompts are worth.
+for a server that writes the prompts itself. `gemini-embedding-2` takes a task or none:
+without one its text goes as it is, though Google's
+[embeddings guide](https://ai.google.dev/gemini-api/docs/embeddings#task-types-embeddings-2)
+recommends the prompts for text. Any other model takes `task = :none` or no task: UniLM
+knows only these models' prompts, so write another model's own prefix into the text.
+[Local Models with Ollama](@ref ollama_embeddings) lists the prompt each task writes, and
+measures what the prompts are worth.
 
 ## Local retrieval
 
@@ -168,6 +172,7 @@ found by words.
 | `text-embedding-3-large` | 3072       | Higher quality, more dimensions |
 | `embeddinggemma-2:740m-q8_0` (Ollama) | 768, 512, 256 or 128 | Local; 8,192 tokens; text, images and sound; needs a `task` |
 | `embeddinggemma` (Ollama) | 768, 512, 256 or 128 | Local; 2,048 tokens; text; needs a `task` |
+| `gemini-embedding-2` (Gemini) | 3072 (default), 128 to 3072 | Default for `GEMINIOpenAIServiceEndpoint`; 8,192 tokens; a `task` is optional |
 
 !!! note
     The buffers start at `something(dimensions, 1536)` zeros per input and are resized to
@@ -184,7 +189,8 @@ emb = Embeddings("test"; service=OllamaEndpoint(), model="embeddinggemma-2:740m-
 embeddingrequest!(emb)
 
 # Gemini (OpenAI-compatible endpoint; the native generateContent API has no embeddings)
-emb = Embeddings("test"; service=GEMINIOpenAIServiceEndpoint, model="gemini-embedding-001")
+emb = Embeddings(["How long do refunds take?", "Is shipping free?"];
+                 service=GEMINIOpenAIServiceEndpoint, task=:search_query)   # gemini-embedding-2
 embeddingrequest!(emb)
 ```
 
@@ -194,13 +200,13 @@ embeddingrequest!(emb)
     the provider returns.
 
 !!! note "Gemini embedding models"
-    `gemini-embedding-001`, the default for `GEMINIOpenAIServiceEndpoint`, shuts down on
-    May 14, 2028. Its successor `gemini-embedding-2` is generally available and works
-    through the same OpenAI-compatible endpoint:
-    `Embeddings("test"; service=GEMINIOpenAIServiceEndpoint, model="gemini-embedding-2")`.
-    The OpenAI-compatible Gemini embeddings endpoint returns no `usage`, so
-    [`estimated_cost`](@ref) on its results is `0.0`; the `gemini-embedding-2` price row
-    applies only to results that carry usage.
+    `gemini-embedding-2` is the default for `GEMINIOpenAIServiceEndpoint`. Its predecessor
+    `gemini-embedding-001` shuts down on May 14, 2028; until then it answers with
+    `model="gemini-embedding-001"`, and Google names `gemini-embedding-2` as its replacement
+    (the two models' vectors are not comparable). The OpenAI-compatible endpoint numbers no
+    reply rows, so each vector fills the input at its place in the reply. It returns no
+    `usage` either, so [`estimated_cost`](@ref) on its results is `0.0`; the
+    `gemini-embedding-2` price row applies only to results that carry usage.
 
 ## In-Place Design
 

@@ -44,9 +44,14 @@ r = Respond(service=GEMINIServiceEndpoint, model="gemini-3.8-flash", input="Expl
 ```
 
 This maps to Interactions `generation_config.thinking_level` and
-`thinking_summaries`. Gemini 3.8 supports low, medium, and high effort and rejects
-`temperature` and `top_p`. Continue with `previous_response_id` to preserve server
-state and signatures. [Google thinking documentation](https://ai.google.dev/gemini-api/docs/thinking).
+`thinking_summaries`. Gemini 4 Argon and Gemini 3.8 Flash support low, medium, and high
+effort. Gemini ignores `temperature` and `top_p` on Gemini 3.6 Flash, 3.5 Flash-Lite and
+every later model, so `respond` throws `ArgumentError` for them there, and Gemini 4 Argon
+takes a `max_output_tokens` above 65,536 only with `background=true`
+([long decode](https://ai.google.dev/gemini-api/docs/long-decode)); see
+[Multi-Backend Support](@ref backend_guide) for every rule. Continue with
+`previous_response_id` to preserve server state and signatures.
+[Google thinking documentation](https://ai.google.dev/gemini-api/docs/thinking).
 
 Gemini Interactions exposes server-side hosted tools via
 [`gemini_google_search`](@ref), [`gemini_code_execution`](@ref), and
@@ -130,9 +135,11 @@ poll loop to handle.
 ## Usage & cost (cross-provider)
 
 [`token_usage`](@ref) and [`estimated_cost`](@ref) work for Gemini too — the
-Interactions decoder normalizes usage into the shared shape and
-[`DEFAULT_PRICING`](@ref) includes `gemini-3.8-flash` (hosted-tool per-call fees
-are not modeled).
+Interactions decoder normalizes usage into the shared shape, counting tool-use prompt
+tokens as input, and [`DEFAULT_PRICING`](@ref) includes `gemini-4-argon` and
+`gemini-3.8-flash` (hosted-tool per-call fees are not modeled). An interaction is priced
+as the model that served it, `response.model`, so an alias or a routed id is billed at
+its target's rates.
 
 ```@example agentic
 r = respond("What is 2+2?"; service=GEMINIServiceEndpoint, model="gemini-3.8-flash")
@@ -150,8 +157,10 @@ Streamed Gemini Interactions assemble each step from the wire's incremental even
 and rebuild the output exactly as the non-streamed decode does: a streamed
 `respond(...; tools=…, stream=true)` finishes with status `requires_action` and its
 [`function_calls`](@ref) populated, like the non-streamed form. Thought steps carry
-their signature and their `summary` (from the streamed thought summaries), the text
-parts of one step stay separate parts (so `output_text` joins them with a newline), and
+their signature and their `summary` (from the streamed thought summaries); consecutive
+`model_output` steps — the hops of a long answer, with only thoughts between them — make
+one message whose text is their text parts joined with no separator, as Google's guides
+read it, while a function call or another step starts a new message; and
 a function call whose `arguments` are `null` reads as `"{}"`. Initial text in
 `step.start` and subsequent deltas are both included, in step order. Thought summaries
 stay separate from answer text ([`reasoning_summaries`](@ref) reads them), while
@@ -159,7 +168,9 @@ signatures remain available in the provider's raw steps.
 
 An interaction body — streamed or not — without a non-empty `id` or `status` is not an
 interaction: `respond`, `get_response` and `cancel_response` return a
-`ResponseCallError` for it instead of an empty success.
+`ResponseCallError` for it instead of an empty success. The faults an interaction records
+in its `errors` array reach `response.error`, the first of them; `response.raw["errors"]`
+holds them all.
 
 ## See Also
 

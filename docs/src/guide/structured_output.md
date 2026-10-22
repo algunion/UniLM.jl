@@ -156,6 +156,10 @@ Native Gemini takes the same options: a `Chat`'s `response_format` becomes
 `generationConfig.responseFormat` on `generateContent`, and the `text` format of a
 [`respond`](@ref) call becomes the Interactions `response_format`. Only the schema
 is sent — Gemini has no counterpart for the schema `name`, `description`, or `strict`.
+Gemini does not enforce `minLength`, `maxLength`, `minProperties`, `maxProperties`,
+`uniqueItems`, `contains`, `minContains` or `maxContains`: the API strips them from the
+schema without an error ([structured output](https://ai.google.dev/gemini-api/docs/structured-output)),
+so check those constraints on the parsed answer. `minItems` and `maxItems` are enforced.
 
 ```@example structured
 capital = ResponseFormat(UniLM.JsonSchemaAPI(

@@ -197,16 +197,26 @@ does not constrain native Gemini.
 `service_tier` is Gemini's ([optimization](https://ai.google.dev/gemini-api/docs/optimization)):
 `"standard"`, `"flex"` (half the standard rates, answers in minutes) or `"priority"` (1.8 times
 the rates) on native Chat, sent as `serviceTier`, and on `respond` also `"deferred"`, sent as
-`service_tier`; any other value throws `ArgumentError`. The tier that billed the call is
-`usage.service_tier` — the reply's `usageMetadata.serviceTier`, else its `x-gemini-service-tier`
-header (the only place Gemini 4 Argon names it), and an interaction's `service_tier` — so a
-Priority request Google downgrades reports and is priced as standard. [`estimated_cost`](@ref)
+`service_tier`; any other value throws `ArgumentError`. `GEMINIOpenAIServiceEndpoint` takes
+`"standard"`, `"flex"` and `"priority"`, the values Google's
+[compatibility page](https://ai.google.dev/gemini-api/docs/openai#flex-and-priority-inference) names,
+and throws for any other. The tier that billed the call is `usage.service_tier` — the reply's
+`x-gemini-service-tier` header, which Google names as the sign of a downgrade (and the only place
+Gemini 4 Argon names the tier), else its `usageMetadata.serviceTier`, and an interaction's
+`service_tier` — so a Priority request Google downgrades reports and is priced as standard. A
+`GEMINIOpenAIServiceEndpoint` reply is read header first too, but replies to flex and priority
+requests there named their tier in neither the head nor the body (observed 2026-10-22), so such a
+call reports no tier and is estimated at the standard rates. [`estimated_cost`](@ref)
 bills input and output at half the standard rates on Flex and at 1.8 times on Priority, as the
 [pricing page](https://ai.google.dev/gemini-api/docs/pricing) lists them, and a cache hit at the
 same multiple except where a model's table lists another cache-hit price: on Flex the standard
 one for 3.1 Pro Preview, 3 Flash Preview and the 2.5 models, and \$0.02 (Flex) and \$0.05
 (Priority) per 1M tokens for 3.5 Flash-Lite, whose standard rate is \$0.03; `"deferred"` has no
-price there, so it is estimated at the standard rates with a warning. A Flex request can wait
+price there, so it is estimated at the standard rates with a warning. A prompt over 200K tokens
+on 3.1 Pro Preview (and its `-customtools` endpoint) or 2.5 Pro bills at the page's long-context
+rates, the whole request: twice the input and cache-hit rates and 1.5 times the output rate, at
+the tier's multiple. Audio input bills at the audio rate the page states for the model, and is
+unpriced where it states none (see [Cost Tracking](@ref cost_estimate)). A Flex request can wait
 in a queue for minutes — Google advises client timeouts of 10 minutes or more
 ([Flex inference](https://ai.google.dev/gemini-api/docs/flex-inference)) — and a stream's
 wait for its headers counts against `stream_idle_timeout` (120 s by default), so give a Flex
@@ -215,16 +225,19 @@ call a longer bound, such as `config=RequestConfig(request_timeout=900, stream_i
 Gemini 4 Argon writes past one request's output cap — 32,768 tokens on a non-streamed call and
 65,536 on a stream, Google documents — in hops ([long decode](https://ai.google.dev/gemini-api/docs/generate-content/long-decode)):
 a reply that ends with `CONTINUATION` is continued inside [`chatrequest!`](@ref) — the same request
-again with the latest `continuationToken`, up to 8 requests — and the result is one assistant
-turn, its usage the hops' summed (Google bills every hop; each hop's prompt includes the output
-so far, most of it as cache hits) and priced at the tier the last hop reported. Each request has
-the whole `RequestConfig` budget. A turn still unfinished after 8 requests returns with
-`finish_reason == "continuation"`; a hop that fails ends the call with nothing committed, as does
-a stop or cancel before the last hop's finish reason (a `CONTINUATION` is not the turn's
-completion marker), and the hops already answered — one whose `CONTINUATION` chunk a stop landed
-on included — are added to `cumulative_cost`. A streamed turn streams every hop into the same
-callback. Continuation is exercised against a local mock; a live CONTINUATION reply was not
-observed.
+again with the latest `continuationToken`, in as many requests as the output budget
+(`max_completion_tokens`, else `max_tokens`) needs at that cap, plus one, and at least 8 — and the
+result is one assistant turn, its usage the hops' summed (Google bills every hop; each hop's prompt
+includes the output so far, most of it as cache hits) and priced at the tier the last hop
+reported. Each request has the whole `RequestConfig` budget; a retry sends its request again from
+the start, since a stream that drops after a checkpoint token is not resumed from it. A turn still
+unfinished after the last of those requests, or whose hop continues without having produced an
+output token (thinking included), returns with `finish_reason == "continuation"`; a hop that fails
+ends the call with nothing committed, as does a stop or cancel before the last hop's finish reason
+(a `CONTINUATION` is not the turn's completion marker), and the hops already answered — one whose
+`CONTINUATION` chunk a stop or a throwing callback landed on included — are added to
+`cumulative_cost`. A streamed turn streams every hop into the same callback. Continuation is
+exercised against a local mock; a live CONTINUATION reply was not observed.
 `GEMINIOpenAIServiceEndpoint` has no long decode.
 A Gemini 4 call (a `gemini-4-…` model) with no `RequestConfig` of yours in any channel waits up to
 20 minutes per attempt, between stream bytes and in all, since Google ends such a call after 10

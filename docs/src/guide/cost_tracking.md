@@ -78,6 +78,18 @@ other model on `OPENAIServiceEndpoint`, nor for any model on an endpoint billed 
 rates (Azure, DeepSeek, generic endpoints, your own): such a result costs `0.0`, with one
 warning per model, as for a model without a row, rather than its audio billed at text rates.
 
+Gemini bills the audio input of a call — an [`AudioAttachment`](@ref) on native Chat,
+[`respond`](@ref) or `GEMINIOpenAIServiceEndpoint` — at the audio rate its
+[pricing page](https://ai.google.dev/gemini-api/docs/pricing) states for the model, scaled by the
+billed tier as the text rates are: per 1M tokens, \$0.50 on `gemini-3.1-flash-lite`, \$1.00 on
+`gemini-3-flash-preview` and `gemini-2.5-flash`, \$0.30 on `gemini-2.5-flash-lite`, and the one
+input price the page lists for text, image, video and audio on `gemini-3.5-flash-lite` and
+`gemini-robotics-er-2-preview`. The other Gemini tables state no audio rate (Gemini 4 Argon, 3.8
+and 3.6 Flash, 3.1 Pro Preview and 2.5 Pro list one input price that names no modality), so audio
+on those models costs `0.0`, with one warning per model, and so does a Gemini call that counts
+audio and cache hits: its usage does not say how many cached tokens are audio, whose cache price
+the page lists apart or not at all.
+
 Reasoning tokens are already counted inside `completion_tokens`, so they carry no separate
 charge. Failures and call errors report zero usage and `0.0` cost. Image results report the
 usage the Images API returned, but that API bills image tokens at rates a price row does not
@@ -153,7 +165,8 @@ println("cost USD = ", round(estimated_cost(unpriced; pricing), digits=6))
 
 A row cannot price audio: a `PriceRow` has no audio-token rates. Whatever `pricing=` holds, a
 result whose usage counts audio tokens stays at `0.0` unless UniLM has that model's audio-token
-rates (`gpt-audio-1.5` on `OPENAIServiceEndpoint`, whose text tokens your row then prices).
+rates (`gpt-audio-1.5` on `OPENAIServiceEndpoint`, and the Gemini models above, whose text
+tokens your row then prices).
 
 ## Cumulative cost is Chat-only
 

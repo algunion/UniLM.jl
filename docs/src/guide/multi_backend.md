@@ -214,25 +214,45 @@ thinking plus text, and current Claude models think by default — raise it for 
 generations or `xhigh`/`max` effort). The endpoint declares `:chat`, `:tools`,
 `:streaming` and `:json_output`.
 
+The bare type is the endpoint with no options. An instance,
+`ANTHROPICServiceEndpoint(; betas, user_profile_id, workspace_id, inference_geo)`, adds
+them to every request made through it: `betas` comma-joined in the `anthropic-beta` header,
+`user_profile_id` (the `uprof_` id of the end customer the requests are for) in
+`anthropic-user-profile-id`, `workspace_id` in `anthropic-workspace-id`, and `inference_geo`
+(`"global"` or `"us"`) in the request body. A blank value, a control character, a comma in
+a beta name or another region throws `ArgumentError`. UniLM sends a beta's name only: the
+request fields and response blocks of beta features are not modelled. Either form goes
+wherever a `service` goes, and instances with the same options are equal. The options are
+read-only: to change one, build a new endpoint (beta names changed in place are checked
+again when the header is built, and one that breaks the rules is refused before anything is
+sent).
+
+```julia
+claude = ANTHROPICServiceEndpoint(user_profile_id="uprof_011CZkZCu8hGbp5mYRQgUmz9", inference_geo="us")
+chat = Chat(service=claude, model="claude-haiku-5-5")
+```
+
 How a neutral `Chat` maps onto the Messages API:
 
 | `Chat` field | Messages API |
 |---|---|
 | leading system messages | the top-level `system` prompt (joined with blank lines) |
 | later system messages | kept in place as `role: "system"` on models that accept mid-conversation system messages, where the placement is valid (after a user turn, and last or followed by an assistant turn); otherwise joined into the top-level `system` prompt — except after an assistant turn on Claude Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5 and any id no row names (below) |
-| `tool` messages / assistant `tool_calls` | `tool_result` blocks (consecutive results in one user turn) / `tool_use` blocks; an assistant turn with no text, no tool calls and no Claude content blocks is left out |
+| user message attachments | an [`ImageAttachment`](@ref) becomes a base64 `image` block and a [`DocumentAttachment`](@ref) a base64 `document` block (`application/pdf`), placed before the message's text, as Anthropic's vision and PDF guides recommend; empty text is left out. An [`AudioAttachment`](@ref) or an image `detail` level throws `ArgumentError`: the Messages API has no audio input and no detail level |
+| `tool` messages / assistant `tool_calls` | `tool_result` blocks (consecutive results in one user turn) / `tool_use` blocks; an assistant turn with no text, no tool calls and no Claude content blocks is left out. A captured Claude turn goes back without its empty text blocks (the API refuses empty text), and a turn holding nothing else is left out |
 | `max_completion_tokens`, else `max_tokens` | `max_tokens` (default 16000) |
 | `tools` (`FunctionSignature.strict`) | `tools` with `input_schema` (and a top-level `strict`) |
 | `tool_choice` | `"auto"` → `auto`, `"none"` → `none`, `"required"` → `any`, a `GPTToolChoice` → `tool`; any other string throws |
 | `parallel_tool_calls = false` (the `Chat` default when `tools` is set) | `tool_choice.disable_parallel_tool_use = true` — so a tool request allows one tool call per turn unless you set `parallel_tool_calls = true` |
 | `response_format` JSON Schema | `output_config.format = {type: "json_schema", schema}` (structured outputs; the schema `name`, `description` and `strict` have no counterpart); `json_object` throws — there is no schema-less JSON mode |
-| `reasoning_effort` | `output_config.effort` plus adaptive `thinking`, per model (below) |
+| `reasoning_effort` | `output_config.effort` plus adaptive `thinking` with `display: "summarized"`, per model (below) |
+| `prompt_cache_options` | a top-level `cache_control` — [automatic caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#automatic-caching), the breakpoint on the last cacheable block: `{type: "ephemeral"}`, with its `ttl` when set to `"5m"` or `"1h"`; `mode` may be `"implicit"` or unset. `mode="explicit"` (a `Chat` marks no breakpoints), `prewarm=true`, `comparison_response_id` and the OpenAI ttls `"30m"` and `"12h"` throw `ArgumentError`. A prompt shorter than the model's minimum (512 tokens on the 5.5 models) is not cached and the API raises no error: the usage reports no cache write |
 | `safety_identifier`, `user`, `metadata["user_id"]` | `metadata.user_id` — set one, or set them equal; `metadata` may carry only `user_id` |
-| `service_tier` | `"auto"` or `"standard_only"` |
+| `service_tier` | `"auto"` or `"standard_only"`; `"fast"` is [fast mode](https://platform.claude.com/docs/en/build-with-claude/fast-mode), `speed: "fast"` and no `service_tier`, on Claude Opus 5.5 — and on Opus 5 and Opus 4.8, in research preview, only through an endpoint whose `betas` hold `"fast-mode-2026-02-01"`; it throws on other models |
 | `stop`, `stream` | `stop_sequences`, `stream` |
 | `n` | must be `1` |
 | `temperature`, `top_p` | none: API version `2026-10-21` removed them, and answers HTTP 400 for either on every model, even at its default value — setting one throws `ArgumentError` |
-| `moderation`, `prompt_cache_options` (OpenAI-only), `seed`, `logprobs`, `top_logprobs`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `verbosity`, `store`, `prompt_cache_key`, `stream_options`, `prediction`, `modalities`, `audio`, `web_search_options` | no counterpart: setting any of them throws `ArgumentError` naming the fields |
+| `moderation` (OpenAI-only), `seed`, `logprobs`, `top_logprobs`, `presence_penalty`, `frequency_penalty`, `logit_bias`, `verbosity`, `store`, `prompt_cache_key`, `stream_options`, `prediction`, `modalities`, `audio`, `web_search_options` | no counterpart: setting any of them throws `ArgumentError` naming the fields |
 
 `reasoning_effort` per model — the model id decides, or the id with a dated snapshot
 suffix (`claude-haiku-4-5-20251001` takes the Haiku 4.5 row); no model takes another's
@@ -248,13 +268,23 @@ row by a shared prefix (`claude-sonnet-5-5` is not `claude-sonnet-5`):
 | Haiku 4.5 | throws: no effort parameter | throws |
 | an id no row names (a newer model) | effort + adaptive thinking, unvalidated | `thinking = {type: "disabled"}` |
 
+Adaptive thinking goes out with `display: "summarized"`: the current Claude models return
+their thinking blocks with the text omitted unless asked
+([thinking display](https://platform.claude.com/docs/en/build-with-claude/thinking#controlling-thinking-display)),
+so [`reasoning_text`](@ref) holds the summarized thinking of a request that sets
+`reasoning_effort`; without it the thinking text comes back omitted, or the model does not
+think, and `reasoning_text` is `nothing`.
+
 `"minimal"` throws on every Claude model (use `"low"`). Other requests Claude answers
 with HTTP 400 are refused locally, before the round trip: `temperature` or `top_p` on
 every model; a forced `tool_choice` (`"required"` or a named function) on Opus 5.5,
 Sonnet 5.5, Fable 5.1 and Mythos 5.1 (use `"auto"` with strict tools, or a JSON Schema
-`response_format`); and a conversation that ends with an assistant turn (response
-prefill) from the 4.6 generation on, Sonnet 5.5 and Haiku 5.5 included. An id no row
-names gets only the rules that hold for every model, and append-only system placement.
+`response_format`); a conversation that ends with an assistant turn (response
+prefill) from the 4.6 generation on, Sonnet 5.5 and Haiku 5.5 included; `service_tier="fast"`
+on a model without fast mode (Opus 4.6, which would run the request at standard speed,
+included), or on Opus 5 and Opus 4.8 without the `fast-mode-2026-02-01` beta; and an
+endpoint's `inference_geo` on the Claude 4.5 models (Opus 4.5, Haiku 4.5). An id no row names gets
+only the rules that hold for every model, and append-only system placement.
 
 Claude Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 accept a thinking block only while
 everything before it — the top-level `system` prompt, the `tools` and the earlier
@@ -264,9 +294,11 @@ On these models, and on a Claude model UniLM has no row for (Anthropic asks ever
 integration to be append-only), UniLM never edits the top-level `system` prompt once an
 assistant turn is in the conversation: a system message pushed after a reply that cannot
 stay in place is sent right after the next user turn, so each request extends the one
-before it. On every model, a system message pushed after a reply needs a user message
-after it: until one follows, the request throws `ArgumentError` (sent as it stands, it
-would be a response prefill). Push your own messages and send the replies back as they
+before it. On every model, a system message pushed after a reply needs a user turn
+after it — a user message, or, after a reply that calls tools, the tool results: until one
+follows, the request throws `ArgumentError` naming which (sent as it stands, it would be a
+response prefill), also when a turn left out of the request (a refusal, an empty reply)
+comes after the system message. Push your own messages and send the replies back as they
 came; editing earlier turns in `chat.messages` breaks the same check.
 
 ```julia
@@ -310,6 +342,17 @@ if result isa LLMSuccess
 else
     println("Request failed — see result for details")
 end
+```
+
+A PDF, a prompt cached for an hour, and the summarized thinking:
+
+```julia
+chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-5-5", reasoning_effort="low",
+            prompt_cache_options=PromptCacheOptions(ttl="1h"))
+push!(chat, Message(Val(:user), "What does the report conclude?", DocumentAttachment("report.pdf")))
+result = chatrequest!(chat)
+reasoning_text(result)                       # the thinking, summarized
+result.usage.cache_write_extended_tokens     # tokens written to the 1-hour cache
 ```
 
 !!! note "Thinking models round-trip automatically"

@@ -756,9 +756,108 @@ struct GEMINIOpenAIServiceEndpoint <: OpenAIWireEndpoint end
 """Native Google Gemini `generateContent` API (`x-goog-api-key`; model in URL). Requires `GEMINI_API_KEY`."""
 struct GEMINIServiceEndpoint <: ServiceEndpoint end
 
-"""Anthropic (Claude) native Messages API endpoint. Requires the `ANTHROPIC_API_KEY` env variable.
-Native wire format (content blocks, top-level `system`, `user`/`assistant` roles) — NOT OpenAI-compatible."""
-struct ANTHROPICServiceEndpoint <: ServiceEndpoint end
+# The inference regions of a Messages API request
+# (https://platform.claude.com/docs/en/manage-claude/data-residency).
+const _ANTHROPIC_INFERENCE_GEOS = ("global", "us")
+
+# A header value goes out as given: a blank one, or one holding a control character (CR and
+# LF end a header line), is refused rather than sent.
+function _anthropic_header_value(what::String, v)::String
+    v isa AbstractString || throw(ArgumentError("an Anthropic $what is a string (got $(repr(v)))"))
+    isempty(strip(v)) && throw(ArgumentError("an Anthropic $what must not be blank (got $(repr(v)))"))
+    any(iscntrl, v) && throw(ArgumentError(
+        "an Anthropic $what must not hold a control character such as CR or LF (got $(repr(v)))"))
+    String(v)
+end
+_anthropic_optional_header(what::String, v)::Union{String,Nothing} = isnothing(v) ? nothing : _anthropic_header_value(what, v)
+
+# The names an anthropic-beta header carries, comma-joined: each a header value, and none
+# holding the comma that would split it in two.
+function _anthropic_beta_names(betas::AbstractVector)::Vector{String}
+    names = String[_anthropic_header_value("beta name", b) for b in betas]
+    comma = findfirst(contains(','), names)
+    isnothing(comma) || throw(ArgumentError("an Anthropic beta name cannot hold a comma, which separates " *
+        "the names in the anthropic-beta header (got $(repr(names[comma])))"))
+    names
+end
+
+"""
+    ANTHROPICServiceEndpoint
+    ANTHROPICServiceEndpoint(; betas=String[], user_profile_id=nothing, workspace_id=nothing,
+                             inference_geo=nothing)
+
+Anthropic (Claude) native Messages API endpoint. Requires the `ANTHROPIC_API_KEY` env variable.
+Native wire format (content blocks, top-level `system`, `user`/`assistant` roles) — NOT OpenAI-compatible.
+
+The type itself (`service=ANTHROPICServiceEndpoint`) is the endpoint with no options set. An
+instance adds options that every request through it carries
+([Messages API](https://platform.claude.com/docs/en/api/messages)):
+
+- `betas`: beta feature names, sent comma-joined in the `anthropic-beta` header
+  ([beta headers](https://platform.claude.com/docs/en/api/beta-headers)). UniLM sends the
+  names and models no beta's request fields or response blocks; the one it reads is
+  `"fast-mode-2026-02-01"`, which `service_tier="fast"` needs on Claude Opus 5 and Opus 4.8.
+- `user_profile_id`: the `anthropic-user-profile-id` header, the `uprof_` id of the end
+  customer the requests are made for
+  ([user profiles](https://platform.claude.com/docs/en/manage-claude/user-profiles)).
+- `workspace_id`: the `anthropic-workspace-id` header, the workspace of a credential that
+  can act on more than one.
+- `inference_geo`: `"global"` or `"us"`, the request's `inference_geo`, where inference
+  runs ([data residency](https://platform.claude.com/docs/en/manage-claude/data-residency));
+  `nothing` leaves the workspace default. US-only inference bills every rate at 1.1×. The
+  Claude 4.5 models (Opus 4.5, Haiku 4.5) and earlier answer it with HTTP 400, so a request
+  for one of them throws `ArgumentError`.
+
+The constructor throws `ArgumentError` for a blank value, a value that holds a control
+character (CR, LF, …), a beta name that holds a comma, and an `inference_geo` other than
+`"global"` or `"us"`. Instances with the same options are equal (`==`, `hash`).
+
+The fields are read-only: to change an option, build a new endpoint. `betas` is copied at
+construction but is a `Vector`, so it can still be changed in place; that changes the
+endpoint's `hash` (a `Dict` or `Set` holding it no longer finds it), and the beta names
+are checked again by the same rule when the header is built, so a name changed in place
+that breaks it is refused before anything is sent (the verb returns the `ArgumentError`
+as the `cause` of its call-error result).
+
+```julia
+claude = ANTHROPICServiceEndpoint(user_profile_id="uprof_011CZkZCu8hGbp5mYRQgUmz9", inference_geo="us")
+chat = Chat(service=claude, model="claude-haiku-5-5")
+```
+"""
+struct ANTHROPICServiceEndpoint <: ServiceEndpoint
+    betas::Vector{String}
+    user_profile_id::Union{String,Nothing}
+    workspace_id::Union{String,Nothing}
+    inference_geo::Union{String,Nothing}
+    function ANTHROPICServiceEndpoint(betas::AbstractVector, user_profile_id, workspace_id, inference_geo)
+        names = _anthropic_beta_names(betas)
+        isnothing(inference_geo) || inference_geo in _ANTHROPIC_INFERENCE_GEOS || throw(ArgumentError(
+            "Anthropic inference_geo is one of $(join(repr.(_ANTHROPIC_INFERENCE_GEOS), ", ")), or nothing for " *
+            "the workspace default (got $(repr(inference_geo)))"))
+        new(names, _anthropic_optional_header("user_profile_id", user_profile_id),
+            _anthropic_optional_header("workspace_id", workspace_id),
+            isnothing(inference_geo) ? nothing : String(inference_geo))
+    end
+end
+ANTHROPICServiceEndpoint(; betas::AbstractVector=String[], user_profile_id=nothing, workspace_id=nothing,
+                         inference_geo=nothing) =
+    ANTHROPICServiceEndpoint(betas, user_profile_id, workspace_id, inference_geo)
+
+Base.:(==)(a::ANTHROPICServiceEndpoint, b::ANTHROPICServiceEndpoint) =
+    all(f -> getfield(a, f) == getfield(b, f), fieldnames(ANTHROPICServiceEndpoint))
+Base.hash(e::ANTHROPICServiceEndpoint, h::UInt) =
+    foldl((h, f) -> hash(getfield(e, f), h), fieldnames(ANTHROPICServiceEndpoint); init=hash(ANTHROPICServiceEndpoint, h))
+
+# The keyword call that builds the endpoint, its unset options left out. It holds no
+# credential (the key is read from the environment when a request is sent).
+function Base.show(io::IO, e::ANTHROPICServiceEndpoint)
+    set = isempty(e.betas) ? String[] : ["betas=" * repr(e.betas)]
+    for f in (:user_profile_id, :workspace_id, :inference_geo)
+        v = getfield(e, f)
+        isnothing(v) || push!(set, string(f, "=", repr(v)))
+    end
+    print(io, "ANTHROPICServiceEndpoint(", join(set, ", "), ")")
+end
 
 """
     GenericOpenAIEndpoint <: OpenAIWireEndpoint

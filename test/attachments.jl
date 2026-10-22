@@ -97,7 +97,19 @@ end
 end
 
 @testset "encoders that cannot send attachments refuse them before any I/O" begin
-    for (ep, model) in ((ANTHROPICServiceEndpoint, "claude-opus-5-5"), (GEMINIServiceEndpoint, "gemini-3.8-flash"))
+    # Anthropic sends images and documents as content blocks, and refuses what it has no block for.
+    claude(att) = (c = Chat(service=ANTHROPICServiceEndpoint, model="claude-opus-5-5");
+                   push!(c, Message(Val(:system), "sys")); push!(c, Message(Val(:user), "Read this.", att)); c)
+    for (att, word) in ((AudioAttachment(_WAV), "audio"), (ImageAttachment(_PNG; detail="high"), "detail"))
+        e = _att_caught(() -> UniLM.encode_request(ANTHROPICServiceEndpoint, claude(att)))
+        @test e isa ArgumentError && occursin("Anthropic", e.msg) && occursin(word, e.msg)
+        @test_throws ArgumentError chatrequest!(claude(att))
+    end
+    for (att, block) in ((ImageAttachment(_PNG), "image"), (DocumentAttachment(_PDF_PATH), "document"))
+        wire = JSON.parse(UniLM.encode_request(ANTHROPICServiceEndpoint, claude(att)))
+        @test [b["type"] for b in wire["messages"][1]["content"]] == [block, "text"]
+    end
+    for (ep, model) in ((GEMINIServiceEndpoint, "gemini-3.8-flash"),)
         err = try
             UniLM.encode_request(ep, _att_chat(ep; model))
             nothing

@@ -76,15 +76,11 @@ end
     @test_throws ArgumentError encode_request(ANTHROPICServiceEndpoint, chat)
 end
 
-@testset "encode — OpenAI-only moderation and prompt_cache_options fail loud" begin
-    for (field, kw) in ((:moderation, (moderation=ModerationConfig(model="omni-moderation-latest", input_mode="block"),)),
-                        (:prompt_cache_options, (prompt_cache_options=PromptCacheOptions(mode="implicit", ttl="30m"),)))
-        chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-opus-4-8",
-                    messages=[Message(Val(:user), "q")]; kw...)
-        err = try encode_request(ANTHROPICServiceEndpoint, chat); nothing catch e; e end
-        @test err isa ArgumentError &&
-              err.msg == "Anthropic Messages does not support $field; it is an OpenAI-only option"
-    end
+@testset "encode — OpenAI-only moderation fails loud" begin
+    chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-opus-4-8", messages=[Message(Val(:user), "q")],
+                moderation=ModerationConfig(model="omni-moderation-latest", input_mode="block"))
+    err = try encode_request(ANTHROPICServiceEndpoint, chat); nothing catch e; e end
+    @test err isa ArgumentError && err.msg == "Anthropic Messages does not support moderation; it is an OpenAI-only option"
 end
 
 @testset "decode — plain text" begin
@@ -454,9 +450,10 @@ end
                              ("claude-opus-4-6", no_xhigh), ("claude-sonnet-4-6", no_xhigh))
         for effort in efforts
             body = enc(model, effort)
-            # An explicit effort also turns adaptive thinking on where it is off by default (4.6–4.8).
+            # An explicit effort also turns adaptive thinking on where it is off by default (4.6–4.8),
+            # and asks for the thinking summarized, which most current models omit unless asked.
             @test body["output_config"] == Dict("effort" => effort) &&
-                  body["thinking"] == Dict("type" => "adaptive")
+                  body["thinking"] == Dict("type" => "adaptive", "display" => "summarized")
         end
     end
     for model in ("claude-opus-4-6", "claude-sonnet-4-6")
@@ -501,7 +498,8 @@ end
     # retired models, whose rows are gone (the API answers for them).
     for model in ("claude-opus-9", "claude-opus-4-1", "claude-opus-4-20250514", "claude-3-7-sonnet-20250219")
         body = enc(model, "xhigh")
-        @test body["output_config"] == Dict("effort" => "xhigh") && body["thinking"] == Dict("type" => "adaptive")
+        @test body["output_config"] == Dict("effort" => "xhigh") &&
+              body["thinking"] == Dict("type" => "adaptive", "display" => "summarized")
         @test enc(model, "none")["thinking"] == Dict("type" => "disabled")
     end
     # Unset effort sends neither field; effort and a structured format share output_config.
@@ -910,19 +908,22 @@ end
     @test isnothing(_anthropic_decode(Dict("stop_reason" => "end_turn", "content" => Any[])).model)
 end
 
-# The real Anthropic headers, encoder, decoder, stream handler and pricing against a local
-# server that records each request (the production endpoint's base URL is a constant).
+# The real Anthropic headers, encoder, decoder, stream handler and pricing — of the bare type or
+# of an endpoint instance — against a local server that records each request (the production
+# endpoint's base URL is a constant).
 struct _AnthropicCapture <: UniLM.ServiceEndpoint
     url::String
+    real::Union{Type{ANTHROPICServiceEndpoint},ANTHROPICServiceEndpoint}
 end
+_AnthropicCapture(url::String) = _AnthropicCapture(url, ANTHROPICServiceEndpoint)
 UniLM.get_url(s::_AnthropicCapture, ::Chat) = s.url
-UniLM.auth_header(::_AnthropicCapture) = UniLM.auth_header(ANTHROPICServiceEndpoint)
-UniLM.encode_request(::_AnthropicCapture, chat::Chat) = encode_request(ANTHROPICServiceEndpoint, chat)
-UniLM.decode_response(::_AnthropicCapture, resp::HTTP.Response) = decode_response(ANTHROPICServiceEndpoint, resp)
-UniLM.handle_sse_event!(::_AnthropicCapture, event::AbstractString, payload::AbstractString, state::StreamState) =
-    UniLM.handle_sse_event!(ANTHROPICServiceEndpoint, event, payload, state)
-UniLM._billed_cost(::_AnthropicCapture, model::String, u::TokenUsage, rates::UniLM.PriceRow) =
-    UniLM._billed_cost(ANTHROPICServiceEndpoint, model, u, rates)
+UniLM.auth_header(s::_AnthropicCapture) = UniLM.auth_header(s.real)
+UniLM.encode_request(s::_AnthropicCapture, chat::Chat) = encode_request(s.real, chat)
+UniLM.decode_response(s::_AnthropicCapture, resp::HTTP.Response) = decode_response(s.real, resp)
+UniLM.handle_sse_event!(s::_AnthropicCapture, event::AbstractString, payload::AbstractString, state::StreamState) =
+    UniLM.handle_sse_event!(s.real, event, payload, state)
+UniLM._billed_cost(s::_AnthropicCapture, model::String, u::TokenUsage, rates::UniLM.PriceRow) =
+    UniLM._billed_cost(s.real, model, u, rates)
 
 # Answers a streamed request with `sse(n)` and any other with `json(n)` (n = the request's number);
 # `seen` holds each request's lowercased headers and parsed body.
@@ -1286,9 +1287,390 @@ end
 @testset "a Claude rule row and a placement are valid by construction" begin
     @test_throws ArgumentError UniLM._ClaudeFamily(thinking=:sometimes)
     @test_throws ArgumentError UniLM._ClaudeFamily(thinking=:on, prefix_checked=true)     # needs system=true
+    @test_throws ArgumentError UniLM._ClaudeFamily(thinking=:on, fast=:sometimes)
     @test UniLM._ClaudeFamily(thinking=:between, system=true, prefix_checked=true).prefix_checked
-    @test all(row -> row.thinking in UniLM._CLAUDE_THINKING && (!row.prefix_checked || row.system),
-              values(UniLM._CLAUDE_FAMILIES))
+    @test all(row -> row.thinking in UniLM._CLAUDE_THINKING && (!row.prefix_checked || row.system) &&
+                     row.fast in UniLM._CLAUDE_FAST, values(UniLM._CLAUDE_FAMILIES))
     @test_throws TypeError UniLM._anthropic_messages([Message(Val(:user), "q")]; placement=:hoist)
     @test UniLM._system_placement(nothing) == UniLM._APPEND_ONLY
+end
+
+# ─── Media, prompt caching, thinking display, fast mode and the configurable endpoint ───
+
+const _ANT_FIXTURES = joinpath(@__DIR__, "fixtures")
+const _ANT_PNG = read(joinpath(_ANT_FIXTURES, "ollama", "red_circle.png"))
+const _ANT_PDF_PATH = joinpath(_ANT_FIXTURES, "documents", "secret_word.pdf")
+const _ANT_PDF = read(_ANT_PDF_PATH)
+const _ANT_WAV = Vector{UInt8}(b"RIFF\x24\x00\x00\x00WAVEfmt ")
+_ant_source(mime, data) = Dict("type" => "base64", "media_type" => mime, "data" => UniLM.Base64.base64encode(data))
+_ant_body(service; kw...) = JSON.parse(encode_request(service,
+    Chat(; service, model="claude-opus-5-5", messages=[Message(Val(:user), "q")], kw...)))
+_ant_err(service; kw...) = try _ant_body(service; kw...); nothing catch e; e end
+_ant_user(attachments...; text="What is shown?") = [Message(role=RoleUser, content=text, attachments=Attachment[attachments...])]
+
+# https://platform.claude.com/docs/en/build-with-claude/vision.md and .../pdf-support.md: base64 image
+# (JPEG, PNG, GIF, WebP) and PDF document blocks; both guides place the media before the text.
+@testset "encode — images and PDF documents become image and document blocks, before the text" begin
+    jpeg, gif = UInt8[0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10], Vector{UInt8}(b"GIF89a\x01\x00")
+    webp = Vector{UInt8}(b"RIFF\x24\x00\x00\x00WEBPVP8 ")
+    image(mime, data) = Dict("type" => "image", "source" => _ant_source(mime, data))
+    document = Dict("type" => "document", "source" => _ant_source("application/pdf", _ANT_PDF))
+    doc = DocumentAttachment(_ANT_PDF_PATH)
+    msgs = _ant_user(ImageAttachment(_ANT_PNG), ImageAttachment(jpeg), ImageAttachment(gif), ImageAttachment(webp), doc)
+    body = _anthropic_body(model="claude-haiku-5-5", messages=msgs)
+    @test body["messages"] == [_wire("user", [image("image/png", _ANT_PNG), image("image/jpeg", jpeg),
+        image("image/gif", gif), image("image/webp", webp), document, Dict("type" => "text", "text" => "What is shown?")])]
+    # No text, or empty text: the media alone (the API refuses an empty text block).
+    for text in (nothing, "")
+        @test _anthropic_body(model="claude-haiku-5-5", messages=_ant_user(doc; text))["messages"] ==
+              [_wire("user", [document])]
+    end
+    # Later requests send an earlier turn's media again; a turn without any keeps its string.
+    convo = [_ant_user(ImageAttachment(_ANT_PNG); text="And this?"); Message(role=RoleAssistant, content="A red circle.");
+             Message(Val(:user), "Thanks.")]
+    @test _anthropic_body(model="claude-haiku-5-5", messages=convo)["messages"] ==
+          [_wire("user", [image("image/png", _ANT_PNG), Dict("type" => "text", "text" => "And this?")]),
+           _wire("assistant", "A red circle."), _wire("user", "Thanks.")]
+    # The bare type and an endpoint instance send the same blocks, byte for byte.
+    chat(service) = Chat(; service, model="claude-haiku-5-5", messages=msgs)
+    @test encode_request(ANTHROPICServiceEndpoint(), chat(ANTHROPICServiceEndpoint())) ==
+          encode_request(ANTHROPICServiceEndpoint, chat(ANTHROPICServiceEndpoint))
+end
+
+@testset "encode — a sound clip and an image's detail level are refused before any request" begin
+    cases = ((AudioAttachment(_ANT_WAV), "audio"), (ImageAttachment(_ANT_PNG; detail="high"), "detail"),
+             (ImageAttachment(_ANT_PNG; detail="original"), "detail"))
+    for (att, word) in cases
+        e = _anthropic_err(model="claude-haiku-5-5", messages=_ant_user(ImageAttachment(_ANT_PNG), att))
+        @test e isa ArgumentError && occursin("Anthropic", e.msg) && occursin(word, e.msg)
+    end
+    srv = _anthropic_capture_server(_ -> JSON.json(_anthropic_message("claude-haiku-5-5",
+                                                   Dict("input_tokens" => 3, "output_tokens" => 1))), _ -> "")
+    try
+        withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
+            for (att, _) in cases, real in (ANTHROPICServiceEndpoint, ANTHROPICServiceEndpoint())
+                chat = Chat(service=_AnthropicCapture(srv.url, real), model="claude-haiku-5-5", messages=_ant_user(att))
+                @test_throws ArgumentError chatrequest!(chat; config=RequestConfig(max_attempts=1, total_deadline=10.0))
+            end
+        end
+        @test isempty(srv.seen)
+    finally
+        close(srv.server)
+    end
+end
+
+# https://platform.claude.com/docs/en/build-with-claude/prompt-caching.md#automatic-caching: one
+# top-level cache_control, {type: "ephemeral"} with an optional ttl "5m" or "1h".
+@testset "encode — prompt_cache_options → a top-level cache_control (automatic caching)" begin
+    cc(o) = get(_anthropic_body(model="claude-haiku-5-5", prompt_cache_options=o), "cache_control", nothing)
+    @test cc(PromptCacheOptions(ttl="1h")) == Dict("type" => "ephemeral", "ttl" => "1h")
+    @test cc(PromptCacheOptions(ttl="5m")) == Dict("type" => "ephemeral", "ttl" => "5m")
+    @test cc(PromptCacheOptions()) == Dict("type" => "ephemeral")
+    @test cc(PromptCacheOptions(mode="implicit")) == Dict("type" => "ephemeral")
+    @test cc(PromptCacheOptions(mode="implicit", ttl="1h")) == Dict("type" => "ephemeral", "ttl" => "1h")
+    # prewarm=false asks for what leaving prewarm out sends.
+    @test cc(PromptCacheOptions(prewarm=false)) == Dict("type" => "ephemeral")
+    @test cc(PromptCacheOptions(prewarm=false, ttl="1h")) == Dict("type" => "ephemeral", "ttl" => "1h")
+    @test isnothing(cc(nothing))
+    # What automatic caching cannot carry is refused, naming the options Anthropic takes.
+    for (o, cause) in ((PromptCacheOptions(ttl="30m"), "\"30m\""), (PromptCacheOptions(ttl="12h"), "\"12h\""),
+                       (PromptCacheOptions(mode="explicit"), "explicit"), (PromptCacheOptions(mode="explicit", ttl="5m"), "explicit"),
+                       (PromptCacheOptions(prewarm=true), "prewarm=true"), (PromptCacheOptions(prewarm=true, ttl="5m"), "prewarm=true"),
+                       (PromptCacheOptions(comparison_response_id="resp_1"), "comparison_response_id"))
+        e = _anthropic_err(model="claude-haiku-5-5", prompt_cache_options=o)
+        @test e isa ArgumentError && occursin("Anthropic", e.msg) && occursin("\"implicit\"", e.msg) &&
+              occursin("\"5m\"", e.msg) && occursin("\"1h\"", e.msg) && occursin(cause, e.msg)
+    end
+    @test _ant_body(ANTHROPICServiceEndpoint(); model="claude-haiku-5-5", prompt_cache_options=PromptCacheOptions(ttl="1h"))["cache_control"] ==
+          Dict("type" => "ephemeral", "ttl" => "1h")
+end
+
+# https://platform.claude.com/docs/en/build-with-claude/thinking.md#controlling-thinking-display:
+# display "summarized" returns the thinking text, which most current models omit by default; it is
+# invalid with thinking "disabled" and "between_tools".
+@testset "encode — an explicit reasoning_effort asks for summarized thinking" begin
+    for model in ("claude-opus-5-5", "claude-haiku-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-opus-4-8",
+                  "claude-sonnet-4-6", "claude-opus-9"), service in (ANTHROPICServiceEndpoint, ANTHROPICServiceEndpoint())
+        @test _ant_body(service; model, reasoning_effort="low")["thinking"] == Dict("type" => "adaptive", "display" => "summarized")
+        @test !haskey(_ant_body(service; model), "thinking")
+    end
+    @test _anthropic_body(model="claude-haiku-5-5", reasoning_effort="none")["thinking"] == Dict("type" => "disabled")
+    @test _anthropic_body(model="claude-sonnet-5-5", reasoning_effort="none")["thinking"] == Dict("type" => "between_tools")
+    @test !haskey(_anthropic_body(model="claude-opus-4-5", reasoning_effort="low"), "thinking")
+end
+
+# https://platform.claude.com/docs/en/build-with-claude/fast-mode.md: speed "fast" on Claude Opus 5.5;
+# in research preview on Opus 5 and Opus 4.8, only with the fast-mode-2026-02-01 beta header (HTTP 400
+# without it); an error on other models, except Opus 4.6, which runs the request at standard speed.
+@testset "encode — service_tier \"fast\" is fast mode, speed \"fast\", only where the model serves it" begin
+    for model in ("claude-opus-5-5", "claude-opus-5-5-20261101", "claude-opus-9"), service in (ANTHROPICServiceEndpoint, ANTHROPICServiceEndpoint())
+        body = _ant_body(service; model, service_tier="fast")
+        @test body["speed"] == "fast" && !haskey(body, "service_tier")
+    end
+    for model in ("claude-haiku-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-mythos-5-1", "claude-sonnet-5",
+                  "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-haiku-4-5-20251001")
+        e = _anthropic_err(; model, service_tier="fast")
+        @test e isa ArgumentError && occursin(model, e.msg) && occursin("fast", e.msg) && occursin("claude-opus-5-5", e.msg)
+    end
+    beta = ANTHROPICServiceEndpoint(betas=["fast-mode-2026-02-01"])
+    for model in ("claude-opus-5", "claude-opus-4-8")
+        e = _anthropic_err(; model, service_tier="fast")
+        @test e isa ArgumentError && occursin(model, e.msg) && occursin("fast-mode-2026-02-01", e.msg)
+        e = _ant_err(ANTHROPICServiceEndpoint(betas=["thinking-binding-controls-2026-08-01"]); model, service_tier="fast")
+        @test e isa ArgumentError && occursin("fast-mode-2026-02-01", e.msg)
+        body = _ant_body(beta; model, service_tier="fast")
+        @test body["speed"] == "fast" && !haskey(body, "service_tier")
+    end
+    @test _ant_err(beta; model="claude-haiku-5-5", service_tier="fast") isa ArgumentError    # the header adds no model
+    # The Messages API's own tiers go as service_tier, never with a speed.
+    for tier in ("auto", "standard_only"), model in ("claude-opus-5-5", "claude-haiku-5-5")
+        body = _anthropic_body(; model, service_tier=tier)
+        @test body["service_tier"] == tier && !haskey(body, "speed")
+    end
+    @test !haskey(_anthropic_body(), "speed") && !haskey(_anthropic_body(), "service_tier")
+    for tier in ("priority", "flex", "standard", "default")
+        e = _anthropic_err(service_tier=tier)
+        @test e isa ArgumentError && all(t -> occursin(repr(t), e.msg), ("auto", "standard_only", "fast"))
+    end
+end
+
+# https://platform.claude.com/docs/en/api/messages.md (Headers; inference_geo) and
+# https://platform.claude.com/docs/en/manage-claude/data-residency.md (inference_geo values; HTTP 400
+# on the Claude 4.5 models and earlier).
+@testset "ANTHROPICServiceEndpoint sends its betas, user profile and workspace as headers, its region in the body" begin
+    withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
+        hdr(s) = Dict(UniLM.auth_header(s))
+        base = Dict("x-api-key" => "sk-ant-local-0000", "anthropic-version" => "2026-10-21", "Content-Type" => "application/json")
+        @test hdr(ANTHROPICServiceEndpoint) == hdr(ANTHROPICServiceEndpoint()) == base
+        @test hdr(ANTHROPICServiceEndpoint(betas=["a", "b"])) == merge(base, Dict("anthropic-beta" => "a,b"))
+        @test hdr(ANTHROPICServiceEndpoint(betas=["compact-2026-09-04"])) == merge(base, Dict("anthropic-beta" => "compact-2026-09-04"))
+        @test hdr(ANTHROPICServiceEndpoint(user_profile_id="uprof_011CZkZCu8hGbp5mYRQgUmz9")) ==
+              merge(base, Dict("anthropic-user-profile-id" => "uprof_011CZkZCu8hGbp5mYRQgUmz9"))
+        @test hdr(ANTHROPICServiceEndpoint(workspace_id="wrkspc_011CZkZaBF1tNoB5wlCeusgy")) ==
+              merge(base, Dict("anthropic-workspace-id" => "wrkspc_011CZkZaBF1tNoB5wlCeusgy"))
+        @test hdr(ANTHROPICServiceEndpoint(inference_geo="us")) == base
+        every = ANTHROPICServiceEndpoint(betas=["a", "b"], user_profile_id="uprof_1", workspace_id="wrkspc_1", inference_geo="us")
+        @test hdr(every) == merge(base, Dict("anthropic-beta" => "a,b", "anthropic-user-profile-id" => "uprof_1",
+                                             "anthropic-workspace-id" => "wrkspc_1"))
+        @test (@inferred UniLM.auth_header(every)) isa Vector{Pair{String,String}}
+    end
+    for geo in ("us", "global"), model in ("claude-haiku-5-5", "claude-opus-4-6", "claude-sonnet-4-6", "claude-opus-9")
+        @test _ant_body(ANTHROPICServiceEndpoint(inference_geo=geo); model)["inference_geo"] == geo
+    end
+    for service in (ANTHROPICServiceEndpoint, ANTHROPICServiceEndpoint(), ANTHROPICServiceEndpoint(betas=["a"], user_profile_id="uprof_1"))
+        @test !haskey(_ant_body(service), "inference_geo")
+    end
+    for model in ("claude-opus-4-5", "claude-opus-4-5-20251101", "claude-haiku-4-5", "claude-haiku-4-5-20251001")
+        e = _ant_err(ANTHROPICServiceEndpoint(inference_geo="us"); model)
+        @test e isa ArgumentError && occursin(model, e.msg) && occursin("inference_geo", e.msg)
+        @test !haskey(_ant_body(ANTHROPICServiceEndpoint(); model), "inference_geo")
+    end
+end
+
+@testset "ANTHROPICServiceEndpoint refuses a header value it cannot send and copies its betas" begin
+    caught(f) = try f(); nothing catch e; e end
+    for kw in ((betas=[""],), (betas=["  "],), (betas=["a\nb"],), (betas=["a\r\nx-api-key: k"],), (betas=["a,b"],),
+               (betas=["a", "b,"],), (betas=Any["a", 1],), (betas=Any[nothing],), (betas=["a\tb"],),
+               (user_profile_id="",), (user_profile_id="uprof_1\n",), (user_profile_id="uprof\r1",),
+               (workspace_id=" ",), (workspace_id="wrkspc_1\r\n",),
+               (inference_geo="eu",), (inference_geo="US",), (inference_geo="",))
+        e = caught(() -> ANTHROPICServiceEndpoint(; kw...))
+        @test e isa ArgumentError && occursin(string(only(keys(kw)) === :betas ? "beta" : only(keys(kw))), e.msg)
+    end
+    e = caught(() -> ANTHROPICServiceEndpoint(inference_geo="eu"))
+    @test occursin("\"global\"", e.msg) && occursin("\"us\"", e.msg)
+    @test occursin("comma", caught(() -> ANTHROPICServiceEndpoint(betas=["a,b"])).msg)
+    names = ["a"]
+    ep = ANTHROPICServiceEndpoint(betas=names)
+    push!(names, "b"); names[1] = "z"
+    @test ep.betas == ["a"]
+    sub = ANTHROPICServiceEndpoint(betas=[SubString("x-a", 1)], user_profile_id=SubString(" uprof_1", 2),
+                                   workspace_id=SubString("wrkspc_1", 1), inference_geo=SubString("us", 1))
+    @test sub.betas isa Vector{String} && sub.user_profile_id isa String && sub.workspace_id isa String &&
+          sub.inference_geo isa String
+    @test sub == ANTHROPICServiceEndpoint(betas=["x-a"], user_profile_id="uprof_1", workspace_id="wrkspc_1", inference_geo="us")
+    d = ANTHROPICServiceEndpoint()
+    @test d.betas == String[] && isnothing(d.user_profile_id) && isnothing(d.workspace_id) && isnothing(d.inference_geo)
+end
+
+@testset "a beta name changed in place is refused where the header is built, by the constructor's rule, before any request" begin
+    caught(f) = try f(); nothing catch e; e end
+    injected = "a\r\nx-injected: y"
+    # (change made in place, the name the constructor refuses with the same message)
+    changes = ((betas -> push!(betas, injected), injected), (betas -> (betas[1] = "a,b"), "a,b"),
+               (betas -> (betas[1] = "  "), "  "))
+    for (change!, name) in changes
+        ep = ANTHROPICServiceEndpoint(betas=["thinking-binding-controls-2026-08-01"])
+        change!(ep.betas)
+        e = withenv(() -> caught(() -> UniLM.auth_header(ep)), "ANTHROPIC_API_KEY" => "sk-ant-local-0000")
+        @test e isa ArgumentError && e.msg == caught(() -> ANTHROPICServiceEndpoint(betas=[name])).msg
+    end
+    usage = merge(_ANTHROPIC_USAGE, Dict("speed" => "standard"))
+    srv = _anthropic_capture_server(_ -> JSON.json(_anthropic_message("claude-haiku-5-5", usage)),
+                                    _ -> _anthropic_sse("claude-haiku-5-5", usage))
+    rule = caught(() -> ANTHROPICServiceEndpoint(betas=[injected])).msg
+    try
+        withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
+            for stream in (false, true)
+                ep = ANTHROPICServiceEndpoint(betas=["thinking-binding-controls-2026-08-01"])
+                push!(ep.betas, injected)
+                chat = Chat(service=_AnthropicCapture(srv.url, ep), model="claude-haiku-5-5", stream=stream,
+                            messages=[Message(Val(:system), "s"), Message(Val(:user), "q")])
+                cfg = RequestConfig(max_attempts=3, total_deadline=30.0)
+                r = stream ? fetch(chatrequest!(chat; config=cfg)) : chatrequest!(chat; config=cfg)
+                @test r isa LLMCallError && r.cause isa ArgumentError && r.cause.msg == rule && length(chat) == 2
+            end
+        end
+        @test isempty(srv.seen)
+    finally
+        close(srv.server)
+    end
+end
+
+@testset "ANTHROPICServiceEndpoint instances: equality, hash and show" begin
+    kw = (betas=["x", "y"], user_profile_id="uprof_1", workspace_id="wrkspc_1", inference_geo="us")
+    a, b = ANTHROPICServiceEndpoint(; kw...), ANTHROPICServiceEndpoint(; kw...)
+    @test a == b && isequal(a, b) && hash(a) == hash(b)
+    @test ANTHROPICServiceEndpoint() == ANTHROPICServiceEndpoint() && hash(ANTHROPICServiceEndpoint()) == hash(ANTHROPICServiceEndpoint())
+    for other in (merge(kw, (betas=["y", "x"],)), merge(kw, (betas=["x"],)), merge(kw, (user_profile_id="uprof_2",)),
+                  merge(kw, (workspace_id=nothing,)), merge(kw, (inference_geo="global",)))
+        @test a != ANTHROPICServiceEndpoint(; other...)
+    end
+    @test length(Set([a, b, ANTHROPICServiceEndpoint(), ANTHROPICServiceEndpoint()])) == 2
+    @test ANTHROPICServiceEndpoint() != ANTHROPICServiceEndpoint      # an instance, not the type
+    @test sprint(show, ANTHROPICServiceEndpoint()) == "ANTHROPICServiceEndpoint()"
+    @test sprint(show, a) ==
+          "ANTHROPICServiceEndpoint(betas=[\"x\", \"y\"], user_profile_id=\"uprof_1\", workspace_id=\"wrkspc_1\", inference_geo=\"us\")"
+    @test sprint(show, ANTHROPICServiceEndpoint(inference_geo="global")) == "ANTHROPICServiceEndpoint(inference_geo=\"global\")"
+    @test eval(Meta.parse(sprint(show, a))) == a                       # the printed form builds the same endpoint
+    # It holds no credential: the key is read from the environment when a request is sent.
+    withenv("ANTHROPIC_API_KEY" => "sk-ant-secret-4242") do
+        @test !occursin("sk-ant", sprint(show, a)) && !occursin("sk-ant", repr(Chat(service=a, model="claude-haiku-5-5")))
+    end
+end
+
+@testset "the bare type and an instance answer every Anthropic method alike" begin
+    msgs() = [Message(Val(:system), "s"), Message(Val(:user), "q")]
+    plain = Chat(service=ANTHROPICServiceEndpoint, messages=msgs())
+    usage = merge(_ANTHROPIC_USAGE, Dict("speed" => "fast"))                # fast mode, US inference
+    reply = HTTP.Response(200, [], Vector{UInt8}(JSON.json(_anthropic_message("claude-opus-5-5", usage))))
+    rates = DEFAULT_PRICING["claude-opus-5-5"]
+    u = decode_response(ANTHROPICServiceEndpoint, reply).usage
+    standard = (1000 * 4.0 + 50 * 0.20 + 200 * 4.0 * 1.25 + 100 * 4.0 * 2.0 + 20 * 20.0) / 1e6
+    key(chat) = UniLM._answer_key("POST", UniLM._request_path(UniLM.get_url(chat)),
+                                  UniLM._redacted(encode_request(chat.service, chat)))
+    for service in (ANTHROPICServiceEndpoint, ANTHROPICServiceEndpoint())
+        chat = Chat(; service, messages=msgs())
+        @test chat.model == "claude-opus-5-5" == UniLM.default_model(service)       # Chat default and model resolution
+        @test UniLM.default_max_tokens(service, "claude-haiku-5-5") == 16000
+        @test UniLM.get_url(chat) == UniLM.get_url(service, chat) == "https://api.anthropic.com/v1/messages"
+        @test provider_capabilities(service) == Set([:chat, :tools, :json_output, :streaming])
+        @test has_capability(service, :chat) && !has_capability(service, :embeddings)
+        @test_throws ArgumentError UniLM.validate_capability(service, :embeddings, "Embeddings API")
+        @test UniLM._service_name(service) === :ANTHROPICServiceEndpoint
+        @test withenv(() -> UniLM.auth_header(service), "ANTHROPIC_API_KEY" => "k") ==
+              ["x-api-key" => "k", "anthropic-version" => "2026-10-21", "Content-Type" => "application/json"]
+        @test encode_request(service, chat) == encode_request(ANTHROPICServiceEndpoint, plain)
+        dec = decode_response(service, reply)
+        @test dec.usage == u && dec.model == "claude-opus-5-5" && dec.message.content == "hello"
+        st = StreamState()
+        @test UniLM._sse_dispatch!(service, IOBuffer(), Ref(""), _anthropic_sse("claude-opus-5-5", usage), st) === :done
+        @test st.usage == u && _build_stream_message(st).content == "hello"
+        # Fast mode bills every rate at 2x and US inference at 1.1x, on top of the cache writes.
+        @test isapprox((@inferred UniLM._billed_cost(service, "claude-opus-5-5", u, rates)), standard * 2.0 * 1.1; rtol=1e-12)
+        r = LLMSuccess(message=dec.message, self=chat, usage=u, model=dec.model)
+        @test UniLM._result_service(r) === service && estimated_cost(r) == UniLM._billed_cost(ANTHROPICServiceEndpoint, "claude-opus-5-5", u, rates)
+        f = fork(chat)
+        @test f.service === chat.service && encode_request(f.service, f) == encode_request(service, chat)
+        @test key(chat) == key(plain)                                               # one recording for both forms
+    end
+end
+
+@testset "a recorded answer replays for the bare type and an instance; a region is another request" begin
+    msgs() = [Message(Val(:system), "s"), Message(Val(:user), "q")]
+    plain = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-5-5", messages=msgs())
+    body = UniLM._redacted(encode_request(ANTHROPICServiceEndpoint, plain))
+    mktempdir() do dir
+        write(joinpath(dir, UniLM._answer_key("POST", "/v1/messages", body) * ".json"), JSON.json(Dict(
+            "request" => Dict("method" => "POST", "path" => "/v1/messages", "body" => JSON.parse(body)),
+            "response" => Dict("status" => 200, "request_id" => "req_1", "request_id_header" => "request-id",
+                               "body" => _anthropic_message("claude-haiku-5-5", Dict("input_tokens" => 3, "output_tokens" => 1))),
+            "recorded_at" => "2026-10-22T00:00:00Z")))
+        withenv("ANTHROPIC_API_KEY" => nothing) do
+            for service in (ANTHROPICServiceEndpoint, ANTHROPICServiceEndpoint(), ANTHROPICServiceEndpoint(betas=["a"]))
+                r = with_recorded_answers(() -> chatrequest!(Chat(; service, model="claude-haiku-5-5", messages=msgs())), dir)
+                @test r isa LLMSuccess && r.message.content == "hello" && r.model == "claude-haiku-5-5"
+            end
+            geo = Chat(service=ANTHROPICServiceEndpoint(inference_geo="us"), model="claude-haiku-5-5", messages=msgs())
+            @test_throws ReplayMissError with_recorded_answers(() -> chatrequest!(geo), dir)
+        end
+    end
+end
+
+@testset "an endpoint's headers and region reach the server, streamed or not; a request it refuses sends nothing" begin
+    usage = merge(_ANTHROPIC_USAGE, Dict("speed" => "standard"))
+    srv = _anthropic_capture_server(_ -> JSON.json(_anthropic_message("claude-haiku-5-5", usage)),
+                                    _ -> _anthropic_sse("claude-haiku-5-5", usage))
+    ep = ANTHROPICServiceEndpoint(betas=["thinking-binding-controls-2026-08-01", "inline-tools-2026-09-15"],
+                                  user_profile_id="uprof_011CZkZCu8hGbp5mYRQgUmz9",
+                                  workspace_id="wrkspc_011CZkZaBF1tNoB5wlCeusgy", inference_geo="us")
+    cfg = RequestConfig(max_attempts=1, total_deadline=30.0)
+    conversation() = [Message(Val(:system), "s"), Message(Val(:user), "q")]
+    try
+        withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
+            for stream in (false, true)
+                chat = Chat(service=_AnthropicCapture(srv.url, ep), model="claude-haiku-5-5", stream=stream,
+                            messages=conversation())
+                r = stream ? fetch(chatrequest!(chat; config=cfg)) : chatrequest!(chat; config=cfg)
+                @test r isa LLMSuccess && r.usage.inference_geo == "us"
+            end
+            @test length(srv.seen) == 2
+            for (headers, body) in srv.seen
+                @test headers["anthropic-beta"] == "thinking-binding-controls-2026-08-01,inline-tools-2026-09-15"
+                @test headers["anthropic-user-profile-id"] == "uprof_011CZkZCu8hGbp5mYRQgUmz9"
+                @test headers["anthropic-workspace-id"] == "wrkspc_011CZkZaBF1tNoB5wlCeusgy"
+                @test headers["x-api-key"] == "sk-ant-local-0000" && headers["anthropic-version"] == "2026-10-21"
+                @test body["inference_geo"] == "us"
+            end
+            # Refused before the round trip: a region on Haiku 4.5, fast mode on Haiku 5.5, a cache ttl
+            # meant for OpenAI.
+            for (model, kw) in (("claude-haiku-4-5", (;)), ("claude-haiku-5-5", (service_tier="fast",)),
+                                ("claude-haiku-5-5", (prompt_cache_options=PromptCacheOptions(ttl="30m"),)))
+                chat = Chat(; service=_AnthropicCapture(srv.url, ep), model, messages=conversation(), kw...)
+                @test_throws ArgumentError chatrequest!(chat; config=cfg)
+            end
+            @test length(srv.seen) == 2
+        end
+    finally
+        close(srv.server)
+    end
+end
+
+@testset "encode — a system message after the last reply is refused, naming the fix, whatever turns are left out" begin
+    s(x) = Message(Val(:system), x)
+    u(x) = Message(Val(:user), x)
+    a1 = Message(role=RoleAssistant, content="a1")
+    refusal = Message(role=RoleAssistant, refusal_message="Model refused to respond.", finish_reason=CONTENT_FILTER)
+    blank = Message(role=RoleAssistant, content="", finish_reason=STOP,
+                    provider_content=ProviderContent(:anthropic, Any[Dict{String,Any}("type" => "text", "text" => "")]))
+    call = Message(role=RoleAssistant, finish_reason=TOOL_CALLS,
+                   tool_calls=[ToolCall(id="toolu_1", func=GPTFunction("f", Dict{String,Any}()))])
+    result = Message(role=RoleTool, tool_call_id="toolu_1", content="ok")
+    # Prefill taken (Haiku 4.5) or refused (Sonnet 5, Opus 5), append-only (Opus 5.5, an id no row names).
+    for model in ("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-opus-5-5", "claude-opus-9")
+        # A turn the encoder leaves out after the system message neither makes the request a prefill
+        # nor the refusal one about a prefill.
+        for tail in (refusal, blank)
+            x = _anthropic_err(; model, messages=[s("s0"), u("u1"), a1, s("s2"), tail])
+            @test x isa ArgumentError && occursin(model, x.msg) && occursin("system message", x.msg) &&
+                  occursin("push a user message", x.msg) && !occursin("rejects messages that end", x.msg)
+        end
+        # After a tool call the next user turn is its results, which is the fix.
+        x = _anthropic_err(; model, messages=[s("s0"), u("u1"), call, s("s2")])
+        @test x isa ArgumentError && occursin(model, x.msg) && occursin("results of its tool calls", x.msg) &&
+              !occursin("push a user message", x.msg)
+        body = _anthropic_body(; model, messages=[s("s0"), u("u1"), call, s("s2"), result])
+        @test body["messages"][3]["content"] == [Dict("type" => "tool_result", "tool_use_id" => "toolu_1", "content" => "ok")]
+        @test body["messages"][end]["role"] != "assistant"
+    end
 end

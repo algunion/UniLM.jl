@@ -1,9 +1,12 @@
 # Provider model listings (`list_models` on OpenAI, Anthropic and Gemini): each listing decodes
 # into ProviderModels — ids, names, token limits, capabilities, lifecycle dates — with every
 # page fetched, against a local server replaying the listings each provider returned for the
-# repository's keys on 2026-10-22 (test/fixtures/models/). Offline.
+# repository's keys on 2026-10-22 (test/fixtures/models/); and the provider drift checks of the
+# live drift suite, on those listings and on broken facts. Offline.
 
 using Dates
+using Logging: with_logger, NullLogger
+include("provider_drift_checks.jl")
 
 _ml_fixture(name::AbstractString) = read(joinpath(@__DIR__, "fixtures", "models", name), String)
 _ml_page(name::AbstractString) = JSON.parse(_ml_fixture(name); dicttype=Dict{String,Any})
@@ -249,4 +252,94 @@ end
     @test r isa ModelListCallError && r.cause isa UniLMCancelled && isempty(seen)
     r, seen = _ml_list(_ML_GEMINI, _ml_serving("{}"); config=_TINY_DEADLINE)
     @test _seam_timeout(r, ModelListCallError) && isempty(seen)
+end
+
+# ─── The drift checks (provider_drift_checks.jl) ─────────────────────────────
+
+_ml_models(name::AbstractString, wire) = UniLM._page_models(wire, _ml_page(name * ".json"))
+_ml_model(id::AbstractString, capabilities::Dict{String,Any}=Dict{String,Any}()) =
+    ProviderModel(id, nothing, nothing, nothing, nothing, capabilities, nothing, nothing, Dict{String,Any}())
+# `m` with other capabilities or another retirement date.
+_ml_with(m::ProviderModel; capabilities=m.capabilities, retires=m.retires) =
+    ProviderModel(m.id, m.display_name, m.created, m.input_token_limit, m.output_token_limit, capabilities,
+                  m.deprecated, retires, m.raw)
+# The cost code warns once per process about each id it has no price row for, so whether a
+# warning shows depends on which tests ran first; these tests assert the finding instead.
+_ml_quiet(f::Function) = with_logger(f, NullLogger())
+
+# Refuted if: the checks report a gap on the listings of 2026-10-22, which UniLM's tables cover,
+# or read a family other than the one UniLM documents.
+@testset "drift checks: the 2026-10-22 listings leave nothing to report" begin
+    o = _openai_drift(_ml_models("openai", UniLM._OpenAIModels()))
+    @test o.family == ["gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.4-mini-2026-03-17", "gpt-5.6-terra", "gpt-5.6-sol",
+                       "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6-astra"]
+    @test all(isempty, (o.unpriced, o.no_terms, o.unruled))
+    an = _ml_models("anthropic", UniLM._AnthropicModels())
+    a = _anthropic_drift(an)
+    @test a.family == [m.id for m in an]
+    @test all(isempty, (a.unreadable, a.unpriced, a.unruled, a.disagreements))
+    g = _gemini_drift(_ml_models("gemini", UniLM._GeminiModels()))
+    @test g.family == g.thinking == ["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash",
+                                     "gemini-3.7-flash", "gemini-3.8-flash", "gemini-4-argon"]
+    @test all(isempty, (g.unpriced, g.unruled))
+end
+
+# Refuted if: a broken fact goes unreported, or a sound one is reported — each check gets one.
+@testset "drift checks: each reports the broken fact it guards" begin
+    oa = _ml_models("openai", UniLM._OpenAIModels())
+    # A price row removed.
+    row = pop!(DEFAULT_PRICING, "gpt-6-luna")
+    try
+        @test _ml_quiet(() -> _openai_drift(oa).unpriced) == ["gpt-6-luna"]
+    finally
+        DEFAULT_PRICING["gpt-6-luna"] = row
+    end
+    @test isempty(_openai_drift(oa).unpriced)
+    # A newer GPT-6 model with no rows.
+    d = _ml_quiet(() -> _openai_drift([oa; _ml_model("gpt-6.2-sol")]))
+    @test (d.unpriced, d.no_terms, d.unruled) == (["gpt-6.2-sol"], ["gpt-6.2-sol"], ["gpt-6.2-sol"])
+
+    an = _ml_models("anthropic", UniLM._AnthropicModels())
+    # A listed capability flipped against its row.
+    caps = deepcopy(an[1].capabilities)
+    caps["thinking"]["types"]["disabled"]["supported"] = false
+    caps["effort"]["xhigh"]["supported"] = false
+    @test _anthropic_drift([_ml_with(an[1]; capabilities=caps); an[2:end]]).disagreements ==
+          ["claude-haiku-5-5" => "thinking :on takes disabled, listed false",
+           "claude-haiku-5-5" => "efforts [\"low\", \"medium\", \"high\", \"xhigh\", \"max\"], listed [\"high\", \"low\", \"max\", \"medium\"]"]
+    # An id whose generation cannot be read and that no rule row names.
+    d = _anthropic_drift([an; _ml_model("claude-nova")])
+    @test d.unreadable == ["claude-nova"] && "claude-nova" ∉ d.family
+    # An id a rule row names is in the family whatever its name says, its row checked.
+    supported(b) = Dict{String,Any}("supported" => b)
+    preview = Dict{String,Any}(
+        "thinking" => Dict{String,Any}("supported" => true, "types" => Dict{String,Any}("adaptive" => supported(true),
+            "disabled" => supported(false), "between_tools" => supported(false), "enabled" => supported(false))),
+        "effort" => Dict{String,Any}("supported" => true, "low" => supported(true), "medium" => supported(true),
+            "high" => supported(true), "xhigh" => supported(false), "max" => supported(true)))
+    d = _ml_quiet(() -> _anthropic_drift([an; _ml_model("claude-mythos-preview", preview)]))
+    @test "claude-mythos-preview" in d.family && all(isempty, (d.unreadable, d.unruled, d.disagreements))
+
+    ge = _ml_models("gemini", UniLM._GeminiModels())
+    serves = Dict{String,Any}("supportedGenerationMethods" => ["generateContent"])
+    thinks = merge(serves, Dict{String,Any}("thinking" => true))
+    d = _ml_quiet(() -> _gemini_drift([ge; _ml_model("gemini-3.9-flash", serves); _ml_model("gemini-3.9-pro", thinks);
+                                       _ml_model("gemini-3.9-flash-tts", serves); _ml_model("gemini-3.9-flash-image", thinks)]))
+    # A text model that does not say it thinks still needs a price row; one that thinks, its levels too.
+    @test d.unpriced == ["gemini-3.9-flash", "gemini-3.9-pro"] && d.unruled == ["gemini-3.9-pro"]
+    @test "gemini-3.9-flash" in d.family && "gemini-3.9-flash" ∉ d.thinking
+    @test !any(in(d.family), ("gemini-3.9-flash-tts", "gemini-3.9-flash-image"))
+
+    # The models UniLM names, by provider prefix: a named model the listing lacks, one whose
+    # retirement date has come, and ids of no checked provider.
+    n = _drift_named_models(oa, :openai; named=["gpt-6-sol", "gemma4:e4b", "jev-latest", "claude-haiku-5-5"])
+    @test n.named == ["gpt-6-sol"] && isempty(n.unlisted) && isempty(n.retired)
+    @test _drift_named_models(filter(m -> m.id != "gpt-6-sol", oa), :openai; named=["gpt-6-sol"]).unlisted == ["gpt-6-sol"]
+    due = [_ml_with(m; retires=m.id == "gpt-6-sol" ? today() : m.retires) for m in oa]
+    @test _drift_named_models(due, :openai; named=["gpt-6-sol"]).retired == ["gpt-6-sol" => today()]
+    @test _drift_provider.(["gpt-6-sol", "o3", "omni-moderation-latest", "claude-haiku-5-5", "gemini-3.8-flash",
+                            "gemma-4-31b-it", "gemma4:e4b", "jev-latest"]) ==
+          [:openai, :openai, :openai, :anthropic, :gemini, :gemini, nothing, nothing]
+    @test !isempty(_drift_suite_ids()) && all(id -> _drift_provider(id) !== nothing, _drift_suite_ids())
+    @test UniLM.default_model(OPENAIServiceEndpoint) in _drift_defaults()
 end

@@ -327,3 +327,31 @@ end
     @test UniLM._realtime_url(OPENAIServiceEndpoint, "gpt-realtime-2") ==
           UniLM.REALTIME_WS_URL * "?model=gpt-realtime-2"
 end
+
+@testset "realtime translation URL — the dedicated endpoint, the model a query value" begin
+    # https://developers.openai.com/api/docs/guides/realtime-translation
+    @test UniLM._realtime_translation_url(OPENAIServiceEndpoint, "gpt-realtime-translate") ==
+          "wss://api.openai.com/v1/realtime/translations?model=gpt-realtime-translate"
+    _rt_live_url[] = "ws://127.0.0.1:1/v1/realtime"
+    @test UniLM._realtime_translation_url(RTLiveEndpoint, "a b/../c?x=1#f") ==
+          "ws://127.0.0.1:1/v1/realtime/translations?model=a%20b%2F..%2Fc%3Fx%3D1%23f"
+    @test_throws ArgumentError UniLM._realtime_translation_url(SeamProbe, "gpt-realtime-translate")
+end
+
+@testset "realtime_connect opens gpt-realtime-2.1 when no model is named" begin
+    targets = String[]
+    srv = HTTP.WebSockets.listen!("127.0.0.1", 0) do ws
+        push!(targets, String(ws.handshake_request.target))
+        for _ in ws      # ends when the client closes
+        end
+    end
+    _rt_live_url[] = "ws://" * HTTP.WebSockets.server_addr(srv) * "/v1/realtime"
+    try
+        model = realtime_connect(sess -> sess.model; service=RTLiveEndpoint,
+                                 config=RequestConfig(connect_timeout=10.0, total_deadline=Inf))
+        @test model == "gpt-realtime-2.1"
+        @test only(targets) == "/v1/realtime?model=gpt-realtime-2.1"
+    finally
+        close(srv)
+    end
+end

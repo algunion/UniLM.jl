@@ -3,7 +3,9 @@
 Low-latency speech and text over a WebSocket. This client covers the WebSocket
 event transport and ephemeral client-secret minting; audio is exchanged as
 base64 PCM inside events. WebRTC media capture and SIP telephony are out of
-scope. OpenAI only.
+scope. OpenAI only. [`speak`](@ref) (on `OPENAIServiceEndpoint`) and
+[`translate`](@ref) drive a whole Realtime session for you — a voice session and a
+translation session — and return typed results; see the [Audio API](@ref audio_api).
 
 ## Bounds
 
@@ -74,12 +76,17 @@ mint_realtime_secret
 secret = mint_realtime_secret()
 secret isa RealtimeSecretSuccess && println("client secret: ", secret.value)
 
-# Open a WebSocket session, configure it, stream audio, and read events
-realtime_connect(model="gpt-realtime-2") do session
-    realtime_send(session, session_update(Dict("modalities" => ["text", "audio"])))
-    realtime_send(session, input_audio_append(audio_b64))   # audio_b64 :: base64 PCM
+# Open a WebSocket session (gpt-realtime-2.1 unless `model` names another),
+# configure it, stream audio, and read events
+realtime_connect() do session
+    realtime_send(session, session_update(Dict("type" => "realtime", "output_modalities" => ["audio"])))
+    realtime_send(session, input_audio_append(audio_b64))   # audio_b64 :: base64 24 kHz PCM16
     realtime_send(session, response_create())
     event = realtime_receive(session)                        # blocks for the next server event
     println(event["type"])
 end
 ```
+
+The session shape follows OpenAI's
+[Realtime client events](https://developers.openai.com/api/reference/resources/realtime/client-events)
+(`session.type`, `output_modalities`, output audio under `session.audio.output`).

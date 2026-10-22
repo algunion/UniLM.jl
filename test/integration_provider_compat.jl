@@ -136,11 +136,17 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "GEMINI_API_KEY")
         @test result isa LLMSuccess
     end
 
-    @testset "Gemini embedding-2 through the OpenAI-compatible endpoint" begin
-        result = embeddingrequest!(Embeddings("hello"; service=GEMINIOpenAIServiceEndpoint,
-            model="gemini-embedding-2"))
-        @info "gemini-embedding-2 via GEMINIOpenAIServiceEndpoint" result_type = typeof(result)
-        @test result isa EmbeddingSuccess
+    @testset "Gemini embeddings: two inputs, two vectors, on the default model and on gemini-embedding-001" begin
+        # The OpenAI-compatible endpoint numbers no reply rows; each fills the input at its place.
+        for (model, want) in (("", "gemini-embedding-2"), ("gemini-embedding-001", "gemini-embedding-001"))
+            emb = Embeddings(["alpha", "beta"]; service=GEMINIOpenAIServiceEndpoint, model)
+            @test emb.model == want
+            result = embeddingrequest!(emb)
+            @test result isa EmbeddingSuccess
+            vecs = embedding_vectors(result)
+            @info "Gemini compat embeddings" model = want dims = length.(vecs) usage = result.usage
+            @test length(vecs) == 2 && length(vecs[1]) == length(vecs[2]) > 0 && vecs[1] != vecs[2]
+        end
     end
 
     @testset "Gemini OpenAI-compatible chat reads an image attachment" begin

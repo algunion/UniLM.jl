@@ -198,22 +198,28 @@ the rates) on native Chat, sent as `serviceTier`, and on `respond` also `"deferr
 `usage.service_tier` — the reply's `usageMetadata.serviceTier`, else its `x-gemini-service-tier`
 header (the only place Gemini 4 Argon names it), and an interaction's `service_tier` — so a
 Priority request Google downgrades reports and is priced as standard. [`estimated_cost`](@ref)
-bills Flex at half every standard rate and Priority at 1.8 times, as the
-[pricing page](https://ai.google.dev/gemini-api/docs/pricing) lists them, except that a cache hit
-on Flex costs the standard rate for the models whose Flex table says so (3.1 Pro Preview, 3 Flash
-Preview, the 2.5 models); `"deferred"` has no price there, so it is estimated at the standard
-rates with a warning.
+bills input and output at half the standard rates on Flex and at 1.8 times on Priority, as the
+[pricing page](https://ai.google.dev/gemini-api/docs/pricing) lists them, and a cache hit at the
+same multiple except where a model's table lists another cache-hit price: on Flex the standard
+one for 3.1 Pro Preview, 3 Flash Preview and the 2.5 models, and \$0.02 (Flex) and \$0.05
+(Priority) per 1M tokens for 3.5 Flash-Lite, whose standard rate is \$0.03; `"deferred"` has no
+price there, so it is estimated at the standard rates with a warning. A Flex request can wait
+in a queue for minutes — Google advises client timeouts of 10 minutes or more — and a stream's
+wait for its headers counts against `stream_idle_timeout` (120 s by default), so give a Flex
+call a longer bound, such as `config=RequestConfig(request_timeout=900, stream_idle_timeout=900)`.
 
 Gemini 4 Argon writes past one request's output cap — 32,768 tokens on a non-streamed call and
 65,536 on a stream, Google documents — in hops ([long decode](https://ai.google.dev/gemini-api/docs/generate-content/long-decode)):
 a reply that ends with `CONTINUATION` is continued inside [`chatrequest!`](@ref) — the same request
 again with the latest `continuationToken`, up to 8 requests — and the result is one assistant
 turn, its usage the hops' summed (Google bills every hop; each hop's prompt includes the output
-so far, most of it as cache hits). Each request has the whole `RequestConfig` budget. A turn still
-unfinished after 8 requests returns with `finish_reason == "continuation"`; a hop that fails ends
-the call with its failure, and the hops already answered are added to `cumulative_cost`. A
-streamed turn streams every hop into the same callback. Continuation is exercised against a local
-mock; a live CONTINUATION reply was not observed. `GEMINIOpenAIServiceEndpoint` has no long decode.
+so far, most of it as cache hits) and priced at the tier the last hop reported. Each request has
+the whole `RequestConfig` budget. A turn still unfinished after 8 requests returns with
+`finish_reason == "continuation"`; a hop that fails, or a stop or cancel before the last hop,
+ends the call with nothing committed, and the hops already answered are added to
+`cumulative_cost`. A streamed turn streams every hop into the same callback. Continuation is
+exercised against a local mock; a live CONTINUATION reply was not observed.
+`GEMINIOpenAIServiceEndpoint` has no long decode.
 A Gemini 4 call (a `gemini-4-…` model) with no `RequestConfig` of yours in any channel waits up to
 20 minutes per attempt, between stream bytes and in all, since Google ends such a call after 10
 minutes, a stream after 20, and advises a 20-minute read timeout (see

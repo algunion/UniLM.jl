@@ -850,10 +850,13 @@ Configuration struct for an OpenAI Responses API request.
 - `user::String`: End-user identifier for other OpenAI-compatible servers; native OpenAI
   replaces it with `safety_identifier` and `prompt_cache_key`, so there it throws
   `ArgumentError`
-- `service_tier::String`: `"auto"`, `"default"`, `"flex"`, `"scale"`, `"fast"` (or its
-  former name `"priority"`), or `"ultrafast"`, which OpenAI serves for `gpt-6-astra` and
-  `gpt-6.1-sol` only; another value, or `"ultrafast"` on another OpenAI model, throws
-  `ArgumentError`. [`token_usage`](@ref) reports the tier that billed the call
+- `service_tier::String`: on `OPENAIServiceEndpoint`, `"auto"`, `"default"`, `"flex"`,
+  `"scale"`, `"fast"` (or its former name `"priority"`), or `"ultrafast"`, which OpenAI serves
+  for `gpt-6-astra` and `gpt-6.1-sol` only; another value, or `"ultrafast"` on another OpenAI
+  model, throws `ArgumentError`. On Gemini Interactions (`GEMINIServiceEndpoint`),
+  `"standard"`, `"flex"`, `"priority"` or `"deferred"` (`"deferred"` is an Interactions tier
+  only: native Gemini Chat takes the other three); another value throws `ArgumentError`.
+  [`token_usage`](@ref) reports the tier that billed the call
 - `prompt_cache_retention::String`: `"in_memory"` or `"24h"` for models before GPT-5.6.
   OpenAI deprecates it: on `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`,
   `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated snapshots), whose cache

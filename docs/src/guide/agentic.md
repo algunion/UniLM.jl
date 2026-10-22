@@ -166,8 +166,8 @@ tokens as input, and [`DEFAULT_PRICING`](@ref) includes `gemini-4-argon` and
 `gemini-3.8-flash` (hosted-tool per-call fees are not modeled). An interaction is priced
 as the model that served it, `response.model`, so an alias or a routed id is billed at
 its target's rates, and at the tier it reports in `service_tier` (`token_usage(r).service_tier`):
-Flex at half the standard rates, Priority at 1.8 times (see
-[Multi-Backend Support](@ref backend_guide)).
+input and output at half the standard rates on Flex and at 1.8 times on Priority, a cache hit at
+the price the model's table lists (see [Multi-Backend Support](@ref backend_guide)).
 
 ```@example agentic
 r = respond("What is 2+2?"; service=GEMINIServiceEndpoint, model="gemini-3.8-flash")

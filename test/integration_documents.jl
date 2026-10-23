@@ -32,7 +32,7 @@ if get(ENV, "UNILM_LIVE", "") == "1" && haskey(ENV, "OPENAI_API_KEY")
         result = chatrequest!(chat)
         @info "OpenAI Chat image detail witness" result_type = typeof(result) usage = token_usage(result) cost = estimated_cost(result)
         @test result isa LLMSuccess
-        @test occursin("red", lowercase(something(text(result), "")))
+        @test occursin(r"\bred\b", lowercase(something(text(result), "")))     # the word, not "colored"
     end
 else
     @info "Skipping the OpenAI document and image detail witnesses (set UNILM_LIVE=1 and OPENAI_API_KEY)"

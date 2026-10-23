@@ -60,10 +60,11 @@ function _drift_suite_ids()::Vector{String}
     unique!(ids)
 end
 
-# A fenced block of Julia code on a docs page — ```julia, ```@example and ```@repl, which a
-# reader runs or the docs build does — and its code. Prose, where migration notes name retired
-# models on purpose, and the other blocks (```@docs, ```@setup, ```bash, …) are not read.
-const _DRIFT_DOCS_CODE = r"^```(?:julia|@example|@repl)(?:[ \t][^\n]*)?\n(.*?)^```"ms
+# A block a docs page fences as ```julia, ```@example or ```@repl, at any indentation (the blocks
+# of an admonition are indented), and its code. Nothing else is read: not prose, where migration
+# notes name retired models on purpose, and no other fence (```@setup, ```julia-repl, ```jldoctest,
+# ```@docs, ```bash, …).
+const _DRIFT_DOCS_CODE = r"^[ \t]*```(?:julia|@example|@repl)(?:[ \t][^\n]*)?\n(.*?)^[ \t]*```"ms
 
 # The model ids the Julia code blocks of the docs pages under `dir` quote.
 function _drift_docs_ids(dir::AbstractString=joinpath(pkgdir(UniLM), "docs", "src"))::Vector{String}
@@ -158,10 +159,12 @@ function _claude_generation(id::AbstractString)::Union{VersionNumber,Nothing}
     VersionNumber(parse(Int, something(m[1], m[3])), parse(Int, something(m[2], m[4], "0")))
 end
 
-# What each Claude thinking mode (`_ClaudeFamily.thinking`, src/anthropic.jl) says the Messages API
-# accepts: "adaptive", which UniLM sends with a reasoning effort on every mode but :manual (budget
-# thinking only); "disabled", a 400 where thinking cannot be turned off (:always, :between) and
-# accepted where thinking is off by default; "between_tools", the off setting of :between.
+# The thinking types the Messages API accepts on each Claude thinking mode (`_ClaudeFamily.thinking`,
+# src/anthropic.jl), as a listing's `capabilities.thinking.types` shows them: "adaptive", which UniLM
+# sends with a reasoning effort, on every mode but :manual (extended thinking only); "disabled" on
+# every mode whose thinking can be turned off (:on, :off, :manual), a 400 on :always and :between;
+# "between_tools", the off setting of :between, on :between alone. :on and :off accept the same
+# types: they differ in whether thinking is on by default, which the listing does not show.
 const _CLAUDE_THINKING_TYPES = Dict(
     :always  => (adaptive=true,  disabled=false, between_tools=false),
     :on      => (adaptive=true,  disabled=true,  between_tools=false),

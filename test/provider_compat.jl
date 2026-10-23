@@ -294,7 +294,8 @@ end
     @test_throws ArgumentError Reasoning(context="typo")
     @test_throws ArgumentError Reasoning(mode="typo")
     @test_throws ArgumentError PromptCacheOptions(mode="typo")
-    @test_throws ArgumentError PromptCacheOptions(ttl="24h")
+    @test_throws ArgumentError("prompt cache ttl must be one of \"5m\", \"1h\", \"30m\", \"12h\" (got \"24h\")") (
+        PromptCacheOptions(ttl="24h"))
     @test_throws ArgumentError UniLM.encode_agentic(OPENAIServiceEndpoint,
         Respond(input="hi", model="gpt-5.6-luna", prompt_cache_retention="24h"))
     for reasoning in (Reasoning(context="auto"), Reasoning(mode="standard"))
@@ -330,9 +331,10 @@ end
         @test err isa ArgumentError && occursin("OpenAI", err.msg) &&
               occursin("\"30m\"", err.msg) && occursin("\"12h\"", err.msg) && occursin(repr(ttl), err.msg)
     end
-    # Refused before any request is sent.
-    @test_throws ArgumentError chatrequest!(Chat(model="gpt-6-luna", messages=[Message(Val(:user), "hi")],
-        prompt_cache_options=PromptCacheOptions(ttl="12h")))
+    # Refused before any request is sent, by the ttl rule.
+    @test_throws ArgumentError("OpenAI Chat Completions accepts prompt_cache_options ttl \"30m\" (got \"12h\"); " *
+                               "the Responses API (Respond) also takes \"12h\"") chatrequest!(Chat(model="gpt-6-luna",
+        messages=[Message(Val(:user), "hi")], prompt_cache_options=PromptCacheOptions(ttl="12h")))
     # A compatible server keeps its own contract: the object goes out unchanged.
     generic = Chat(service=GenericOpenAIEndpoint("http://localhost:9999", ""), model="gpt-6-luna",
                    prompt_cache_options=PromptCacheOptions(ttl="12h"))

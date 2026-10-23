@@ -16,7 +16,7 @@
   `seed` (see Added) is appended as the 32nd field. `Respond` still has 32 fields, and its
   positional constructor takes exactly those 32 in declaration order, so a 30- or
   31-argument call is a `MethodError` — but a 32-argument positional call written for 0.25
-  still compiles and puts each value from the 24th argument on into the next field: the
+  still builds and puts each value from the 24th argument on into the next field: the
   old `prompt` slot into `prompt_cache_key`, `prompt_cache_key`'s value into
   `prompt_cache_retention`, `prompt_cache_retention`'s into `safety_identifier`,
   `safety_identifier`'s into `conversation`, and so on, `moderation`'s into `seed`. Where a
@@ -56,17 +56,21 @@
   `cumulative_cost` price a Chat result at the model the provider reports having served
   (`LLMSuccess.model`, see Added) before `self.model`, so a routed id or an alias bills at
   its target's rates; `estimated_cost` of an `ImageSuccess` throws `ArgumentError` unless
-  `model=` names a row, instead of returning `0.0`, since UniLM does not model image-token
-  rates. `LLMSuccess` has a fifth field, so its 4-argument positional constructor is gone.
+  `model=` is given, instead of returning `0.0`, since UniLM does not model image-token
+  rates (a `model=` with no row is estimated at `0.0`, with the no-row warning).
+  `LLMSuccess` has a fifth field, so its 4-argument positional constructor is gone.
   Upgrading: pass `model=` (with a `pricing=` row of your own for images) to price at
-  another row; build `LLMSuccess` by keyword.
+  another row, or add your row under the served name (`result.model`), which
+  `cumulative_cost` prices too — an Azure deployment or a vLLM or LM Studio alias may report
+  a name other than the one requested; build `LLMSuccess` by keyword.
 - **Retired OpenAI surfaces are gone.** `LocalShellTool` (`local_shell`) and
   `ComputerUseTool` (`computer_use`) are removed — OpenAI no longer supports the legacy
   local shell tool, and `computer-use-preview` shut down on 2026-07-23; the `"evals"` file
   purpose throws `ArgumentError` naming the shutdown in `FileUpload`, `upload_file` and
   `create_upload` (OpenAI's Evals API is read-only from 2026-10-31 and shuts down on
   2026-11-30), and `WEBHOOK_EVENTS` no longer lists `eval.run.succeeded`,
-  `eval.run.failed` and `eval.run.canceled`; the `o4-mini` and `gpt-4.1-nano` price rows
+  `eval.run.failed` and `eval.run.canceled`, which OpenAI sends until then (match
+  `event.type` yourself to keep them); the `o4-mini` and `gpt-4.1-nano` price rows
   are gone (both shut down on 2026-10-23); and the unexported `UniLM.GPTImageContent`
   (text with image URLs as one content value) is removed. Upgrading: use `ShellTool`
   (`shell`) and `ComputerTool` (`computer_tool`); attach images as `ImageAttachment`s, or
@@ -96,8 +100,11 @@
   observes the ambient `CancelToken`. Upgrading: call `translate(path; language)` with a
   WAV file.
 - **`AudioFailure.status` may be `nothing`**: a failure a Realtime session reports as an
-  event carries no HTTP status (its `response` is the event's JSON). Upgrading: handle
-  `status === nothing` where you read it.
+  event carries no HTTP status (its `response` is the event's JSON), an `error` event the
+  provider sent just before closing the session included. A session that closes before its
+  result is an `AudioCallError` whose `error` names the close's status and reason, with the
+  `HTTP.WebSockets.WebSocketError` in `cause`. Upgrading: handle `status === nothing` where
+  you read it.
 - **Native Anthropic speaks API version `2026-10-21`, which removed sampling.** Requests
   send `anthropic-version: 2026-10-21`, and `temperature` or `top_p` on a Claude request
   throws `ArgumentError`: the API answers either with HTTP 400 on every model, even at its
@@ -141,10 +148,18 @@
   on, a native Chat that ends with an assistant turn (a prefilled answer) throws, since the
   API answers it with HTTP 400. Upgrading: use `"low"` where `"minimal"` is refused, and end
   a Gemini conversation with a user message.
-- **Gemini Interactions joins an answer's steps with no separator.** The `model_output`
-  steps of one answer, and the text parts inside a step, are one part, joined as Google's
+- **`GEMINIOpenAIServiceEndpoint` takes only Google's service tiers.** Its `service_tier`
+  must be `"standard"`, `"flex"` or `"priority"`, the values Google's compatibility page
+  names; any other value throws `ArgumentError` before the request, where 0.25 sent it
+  unchecked. Upgrading: use one of the three on that endpoint in place of an OpenAI tier
+  such as `"auto"` or `"default"`.
+- **Gemini Interactions joins an answer's consecutive steps with no separator.** The
+  consecutive `model_output` steps of one answer — the hops of a long decode, thoughts
+  between them or not — and the text parts inside a step are one part, joined as Google's
   SDK joins them, so `output_text` reads `"…42 lines long"` where it read
-  `"…4\n2 lines long"`. Upgrading: none, unless you split `output_text` on its newlines.
+  `"…4\n2 lines long"`; a function call or result step, a hosted tool's step or a
+  `user_input` step still starts a new message. Upgrading: none, unless you split
+  `output_text` on its newlines.
 - **Ollama's Responses API refuses every `input_file` part**: Ollama's OpenAI-compatibility
   page lists no file inputs for `/v1/responses`, so `respond` on an `OllamaEndpoint` throws
   `ArgumentError` before any request for an `input_file` part in any form —
@@ -175,13 +190,17 @@
   `modalities=["text", "audio"]` and an `audio` voice and format (for example on
   `gpt-audio-1.5`) gets the reply's audio on the new `Message.audio_output`, an
   `AudioOutput` — its bytes, the format their signature shows, OpenAI's `id`, `expires_at`
-  (`nothing` when a stream closed after the turn's finish, before its last update) and the
-  `transcript` — streamed or not; the reply's `content` is the transcript, which a stream
-  also passes to the callback as text. The next request sends the turn back to OpenAI as
-  its content and `"audio": {"id": …}`; every other endpoint receives the content alone.
-  `TokenUsage` gains `prompt_audio_tokens` and `completion_audio_tokens` (OpenAI's
-  `audio_tokens` details, streamed and not), and `estimated_cost` and `cumulative_cost`
-  bill `gpt-audio-1.5` audio at \$32 / \$64 per 1M tokens and its text at \$2.50 / \$10.
+  (`nothing` when the reply names none, or when a stream closed after the turn's finish,
+  before the update that carries it) and the `transcript` — streamed or not; an
+  `expires_at` that is not an integer fails a call that is not streamed, while a stream
+  drops that update (counted in `sse_dropped`, with one warning) and keeps the turn. The
+  reply's `content` is the transcript, which a stream also passes to the callback as text.
+  The next request sends the turn back to OpenAI as its content and `"audio": {"id": …}`;
+  every other endpoint receives the content alone. `TokenUsage` gains
+  `prompt_audio_tokens` and `completion_audio_tokens` (OpenAI's `audio_tokens` details,
+  streamed and not; `prompt_audio_tokens` also counts native Gemini's and Interactions'
+  audio input), and `estimated_cost` and `cumulative_cost` bill `gpt-audio-1.5` audio at
+  \$32 / \$64 per 1M tokens and its text at \$2.50 / \$10.
 - **Usage reports cache writes, the billed tier, the region and the served model.**
   `TokenUsage` gains `cache_write_tokens`, `cache_write_extended_tokens` (the writes at the
   extended retention: OpenAI `"12h"`, Anthropic `"1h"`), `service_tier` and
@@ -226,7 +245,9 @@
   or `"us"`, refused on the Claude 4.5 models) in the body; a blank value, a control
   character or a comma in a beta name throws. `estimated_cost` bills Anthropic's cache
   writes at 1.25× (5-minute) or 2× (1-hour) input, every rate 2× in fast mode and 1.1× for
-  US-only inference.
+  US-only inference on Claude 4.6 and later (the 4.5 models take no `inference_geo` and
+  bill the standard rates), and a reply at Anthropic's Priority Tier at the list rates
+  (Priority Tier draws down a contracted capacity commitment).
 - **Gemini image generation and editing (Nano Banana).** `generate_image` and `edit_image`
   with `service=GEMINIServiceEndpoint` call `generateContent` on `gemini-nano-banana-2.1`
   with image output (`GEMINIServiceEndpoint` declares `:images` and `:image_edits`); the new
@@ -237,19 +258,24 @@
 - **Gemini speech.** `speak(text; service=GEMINIServiceEndpoint)` reads text with Gemini 3.8
   Flash TTS (`gemini-3.8-flash-tts`, one of its 30 prebuilt voices, `instructions` as the
   speech style) and returns 24 kHz WAV or PCM, as on OpenAI; a candidate that did not
-  finish is an `AudioFailure`.
+  finish is an `AudioFailure`. `GEMINIOpenAIServiceEndpoint` has no speech route: `speak`
+  and `SpeechRequest` there throw `ArgumentError` naming `GEMINIServiceEndpoint`.
 - **Gemini service tiers, in the request and in the cost.** `service_tier` `"standard"`,
-  `"flex"` or `"priority"` is sent as `serviceTier` on native Chat and as `service_tier`
-  on `respond`, which also takes `"deferred"`; any other value is an `ArgumentError`. The
-  tier that billed the call is `usage.service_tier` (`usageMetadata.serviceTier`, else the
-  `x-gemini-service-tier` header — Gemini 4 Argon names it nowhere else — or an
-  interaction's `service_tier`), and `estimated_cost` bills input and output at half the
-  standard rates on Flex and 1.8 times on Priority, and a cache hit at the same multiple
-  except where the pricing page lists another price (Flex's standard rate on 3.1 Pro
-  Preview, 3 Flash Preview and the 2.5 models; \$0.02 on Flex and \$0.05 on Priority for
-  3.5 Flash-Lite); `"deferred"`, unpriced, is estimated at the standard rates with a
-  warning. A Flex request can queue for minutes: give it a `RequestConfig` with longer
-  bounds.
+  `"flex"` or `"priority"` is sent as `serviceTier` on native Chat, as `service_tier` on
+  `GEMINIOpenAIServiceEndpoint` (see Breaking) and on `respond`, which also takes
+  `"deferred"`; any other value is an `ArgumentError`. The tier that billed the call is
+  `usage.service_tier`: the `x-gemini-service-tier` header first — Google names it as the
+  sign of a downgrade, and Gemini 4 Argon names the tier nowhere else — else
+  `usageMetadata.serviceTier`, or an interaction's `service_tier`. The compatible endpoint's
+  replies name no tier, so a Chat result there records the tier its request asked for:
+  `"flex"` priced at Flex, `"priority"` at Priority, an upper bound, since Google bills a
+  downgraded Priority request at Standard and that endpoint does not report it.
+  `estimated_cost` bills input and output at half the standard rates on Flex and 1.8 times
+  on Priority, and a cache hit at the same multiple except where the pricing page lists
+  another price (Flex's standard rate on 3.1 Pro Preview, 3 Flash Preview and the 2.5
+  models; \$0.02 on Flex and \$0.05 on Priority for 3.5 Flash-Lite); `"deferred"`,
+  unpriced, is estimated at the standard rates with a warning. A Flex request can queue for
+  minutes: give it a `RequestConfig` with longer bounds.
 - **Gemini `seed`, `store` and safety labels.** Native Chat sends `seed` as
   `generationConfig.seed` and `store` as the request's `store` (they were refused);
   `respond` sends `Respond.seed` as `generation_config.seed` and `safety_identifier` as the
@@ -258,11 +284,14 @@
   `OllamaEndpoint` refuse `Respond.seed` before any request.
 - **Long Gemini generations continue inside the call.** A Gemini 4 Argon reply that stops
   at its per-request cap with `CONTINUATION` and a `continuationToken` is continued by
-  `chatrequest!` — the same request again with the latest token, up to 8 requests — and
-  the result is one assistant turn whose usage is the requests' summed, priced at the last
-  reply's tier; a streamed turn streams every reply into the same callback. A request
-  that fails, or a stop or cancel before the turn's last reply, ends the call with
-  nothing committed, and the replies already received are added to `cumulative_cost`.
+  `chatrequest!` — the same request again with the latest token, in as many requests as
+  the output budget (`max_completion_tokens`, else `max_tokens`) needs at Google's
+  per-request cap (32,768 output tokens, 65,536 on a stream), plus one, and at least 8; a
+  `CONTINUATION` reply that produced no output token ends the turn — and the result is one
+  assistant turn whose usage is the requests' summed, priced at the last reply's tier; a
+  streamed turn streams every reply into the same callback. A request that fails, or a
+  stop or cancel before the turn's last reply, ends the call with nothing committed, and
+  the replies already received are added to `cumulative_cost`.
   Proven against a local mock; a live CONTINUATION reply was not observed. Custom backends
   read the token from `StreamState.continuation_token`.
 - **Gemini 4 calls wait longer by default.** `chatrequest!` and `respond` to a
@@ -272,9 +301,13 @@
   read timeout.
 - **Gemini 4 Argon and current Gemini rows.** Price rows for `gemini-4-argon` (\$2 / \$0.10
   cached / \$10, doubling on 2026-12-01), `gemini-3.1-pro-preview` and
-  `gemini-3.1-pro-preview-customtools` (\$2 / \$0.20 / \$12, prompts up to 200K tokens);
-  `respond` on Argon takes a `max_output_tokens` above 65,536 only with `background=true`
-  (the API answers HTTP 400 otherwise). A Gemini result's `model` is the reply's
+  `gemini-3.1-pro-preview-customtools` (\$2 / \$0.20 / \$12), `gemini-2.5-pro` (\$1.25 /
+  \$0.125 / \$10), `gemini-3-flash-preview` (\$0.50 / \$0.05 / \$3.00) and
+  `gemini-robotics-er-2-preview` (\$1.00 / \$0.10 / \$5.00, doubling on 2027-01-01); a
+  prompt over 200K tokens on 3.1 Pro Preview, its custom-tools endpoint and 2.5 Pro bills
+  at the page's long-context rates, the whole request (twice the input and cache-hit
+  rates, 1.5 times the output rate); `respond` on Argon takes a `max_output_tokens` above
+  65,536 only with `background=true` (the API answers HTTP 400 otherwise). A Gemini result's `model` is the reply's
   `modelVersion`; an interaction's `errors` reach `response.error` (the first; all in
   `raw`); a filtered turn's `refusal_message` is Google's `finishMessage`; and
   `gemini-embedding-2` takes the same task prompts as EmbeddingGemma (`task`, optional).
@@ -285,9 +318,10 @@
   levels; Gemini's generation methods and thinking) and lifecycle dates (OpenAI's
   `shutdown_date`; Anthropic's `deprecated_at` and `retires_at`). The results are
   `ModelListSuccess` / `ModelListFailure` / `ModelListCallError`, and the three endpoints
-  declare `:models`. An Anthropic listing sends the endpoint's user-profile and workspace
-  headers but not its betas (Anthropic marks `anthropic-beta` deprecated on
-  `GET /v1/models`).
+  declare `:models`. An Anthropic listing sends the key, `anthropic-version` and the
+  endpoint's `anthropic-workspace-id`, the headers Anthropic's List Models reference names
+  — not the endpoint's user profile, nor its betas (Anthropic marks `anthropic-beta`
+  deprecated on `GET /v1/models`).
 - **`WEBHOOK_EVENTS` lists the current events**: `live.transport.incoming`,
   `live.call.incoming` (deprecated by OpenAI in its favour, still sent to existing
   subscriptions), `safety.warning_issued`, `safety.deactivation_issued`,
@@ -305,18 +339,37 @@
   \$0.75 / \$3.75 per 1M where 0.25 billed \$1.50 / \$9.00), and a tool-use prompt counts
   as prompt tokens, at the input rate, on native Chat and Interactions alike — native Chat
   left it out, and Interactions billed it at the output rate.
-- **Audio tokens are never billed at text rates.** A result whose usage counts audio
-  tokens UniLM has no audio-token rates for — any model but `gpt-audio-1.5` on
-  `OPENAIServiceEndpoint`, and every model on Azure, DeepSeek, generic and custom
-  endpoints — is estimated at `0.0`, with one warning per model, like an unpriced model.
+- **Audio tokens are priced at an audio rate, or estimated at `0.0`.** `estimated_cost`
+  bills counted audio tokens only at a rate stated for audio: OpenAI's audio-token rates
+  for `gpt-audio-1.5`, and for Gemini audio input on native Chat (streamed and not) and
+  Interactions the input price Google's pricing page states for audio, at the tier's and a
+  long prompt's multiples — the model's own audio price where the page lists one apart (3.1
+  Flash-Lite \$0.50 per 1M, 3 Flash Preview and 2.5 Flash \$1.00, 2.5 Flash-Lite \$0.30),
+  else its input price, which covers every modality when it names none or names audio among
+  them. Other counted audio — a model the page prices without audio or does not list,
+  another endpoint (Azure, DeepSeek, generic, custom), Gemini audio output, Gemini audio in
+  a call that also hit the cache — is estimated at `0.0`, with one warning per model and
+  endpoint, like an unpriced model. `GEMINIOpenAIServiceEndpoint` counts no audio apart, so
+  its audio input is priced at the text rate, a lower bound on the four models with an
+  audio price of their own, for which a request carrying a sound clip warns once per
+  model; send audio through `GEMINIServiceEndpoint` for an exact estimate.
+- **An embeddings reply without usage says its estimate is `0.0`.** `estimated_cost` of an
+  embeddings result whose reply reported no usage — `GEMINIOpenAIServiceEndpoint`'s never
+  does — warns once per model, as for a model without a price row.
 - **Spend and quota 429s are not retried.** A 429 whose `error.code` is
   `credit_balance_exhausted`, `organization_spend_limit_exceeded`,
-  `project_spend_limit_exceeded` or `organization_usage_limit_exceeded` is returned at once,
-  streamed or not, and ends a `poll_batch` or `poll_file_batch` poll: no retry restores
-  spent credit or a reached limit.
-- **`prompt_cache_retention` and `prompt_cache_options` may be combined** on the OpenAI
-  models before GPT-5.6, as the Responses reference allows; on the GPT-6 and GPT-5.6 rule
-  models `prompt_cache_retention` throws, GPT-6.1 Sol now included.
+  `project_spend_limit_exceeded` or `organization_usage_limit_exceeded`, or whose
+  `error.type` (or, in older replies, `error.code`) is `insufficient_quota`, is returned at
+  once, streamed or not, and ends a `poll_batch` or `poll_file_batch` poll: no retry
+  restores spent credit or a reached limit. So is a Gemini Interactions 429 whose
+  `error.code` is `quota_exceeded`, its daily quota; Gemini's rate limits
+  (`rate_limit_exceeded`, generateContent's `RESOURCE_EXHAUSTED`) are still retried.
+- **`prompt_cache_retention` and `prompt_cache_options` are no longer refused together.**
+  The Responses reference lists the two fields independently and documents
+  `prompt_cache_options` for gpt-5.6 and later. The GPT-6 and GPT-5.6 rule models, GPT-6.1
+  Sol now included, refuse `prompt_cache_retention`, since `prompt_cache_options` sets their
+  cache lifetime; on older models UniLM sends both unchecked and the server checks them
+  (the reference takes only `"24h"` retention on gpt-5.5 and gpt-5.5-pro).
 - **Decisions usage reports cache writes and the tier.** `token_usage` of an OpenAI
   Decisions answer counts `cache_write_tokens` (the 12-hour ones in
   `cache_write_extended_tokens`) and keeps a reported `service_tier`; the price is
@@ -350,6 +403,27 @@
   system or developer message (use `instructions`), a message `phase`, a media part given
   by web URL or OpenAI file id, and a cache breakpoint are `ArgumentError`s before any
   request.
+- **`cumulative_cost` counts what an unfinished stream was billed.** A streamed Chat turn
+  that ends without committing — stopped, cancelled, timed out, cut off, or ended by an
+  exception from its `callback` or `on_tool_call` — adds the usage its provider had
+  reported by then, a lower bound of the bill: Anthropic reports a request's input when
+  its stream starts, Gemini the usage so far on every chunk, and a reply whose finish had
+  arrived counts whole. A request stopped before any usage arrived adds nothing, though the
+  provider bills it (OpenAI reports usage after the finish reason), nor does an attempt
+  that was retried or a stream the provider ended with an error event. 0.25 added nothing
+  for such a turn.
+- **Streamed `GEMINIOpenAIServiceEndpoint` turns are costed.** A stream with no
+  `stream_options` asks for `include_usage`, as Google's compatibility page does, so its
+  usage arrives and is priced; without it the turn reported no usage and accrued `\$0`.
+- **`realtime_receive` keeps its idle bound while a send is parked.** Its guard closed the
+  WebSocket, which waits for the send lock that a `realtime_send` parked on a peer that
+  stopped reading holds, so the read could outlast `stream_idle_timeout`; it now ends the
+  read and the connection without that lock, and the parked send throws too.
+- **Attachment refusals say what to do.** An attachment built from a `data:` URL is
+  refused as a URL, saying to pass the bytes it holds, where 0.25 tried to open it as a
+  file (`SystemError`); and an `EmbeddingInput` given another kind of attachment (a
+  document, or a clip as its image) throws `ArgumentError` naming the kinds it holds, where
+  it was a `MethodError`.
 
 ### CI
 - **The release gate runs the hosted live suites.** A `hosted-providers` job, on
@@ -357,10 +431,15 @@
   pass, runs every OpenAI, Anthropic and Gemini live suite (`test/live_hosted.jl`) against
   the real APIs with the repository's keys, and fails when a key or flag is missing, a
   suite is missing, or a suite ran no test. Among them, a drift check reads the providers'
-  free model listings and fails when a listed current model of a family UniLM documents has
-  no price row or rule row, a model UniLM names is not listed or is retired, or a Claude
-  rule disagrees with the listed thinking types and effort levels. Routine CI and the
-  gate's other jobs stay keyless.
+  free model listings and fails when a listed current model of a family UniLM documents —
+  on Gemini, every listed text model UniLM has thinking levels for — has no price row or
+  rule row (a model whose provider publishes no price, such as `claude-mythos-preview`, is
+  exempt by name); when a model UniLM names in its defaults, its live suites or the Julia
+  code blocks of its docs is not listed (an Anthropic alias counts as its dated snapshot)
+  or is retired, from its shutdown day on; or when a Claude rule disagrees with the listed
+  thinking types and effort levels. It logs the listed ids no family and no known kind
+  covers, so a new generation shows in the gate's log. Routine CI and the gate's other
+  jobs stay keyless.
 - **The local-models job runs Ollama 0.40.8**, pinned by the SHA-256 Ollama publishes for
   its Linux build.
 

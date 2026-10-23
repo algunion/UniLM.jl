@@ -20,7 +20,14 @@ HTTP.close_idle_connections!()
     @info "12-hour cache write" u.prompt_tokens u.completion_tokens u.cached_tokens u.cache_write_tokens u.cache_write_extended_tokens u.service_tier cost = estimated_cost(r)
     @test u.cache_write_tokens > 0
     @test u.cache_write_tokens == u.cache_write_extended_tokens
-    @test estimated_cost(r) > 0
+    @test u.service_tier == "default"
+    # The exact bill: GPT-6 writes a 12-hour cache at 2.5 times the input rate (OpenAI's prompt-caching
+    # guide), a 30-minute one at 1.25 times; the rest at gpt-6-luna's standard rates.
+    rates = DEFAULT_PRICING["gpt-6-luna"]
+    fresh = u.prompt_tokens - u.cached_tokens - u.cache_write_tokens
+    bill = rates.input * (fresh + 2.5 * u.cache_write_extended_tokens + 1.25 * (u.cache_write_tokens - u.cache_write_extended_tokens)) +
+           rates.cached_input * u.cached_tokens + rates.output * u.completion_tokens
+    @test estimated_cost(r) ≈ bill
 end
 
 @testset "Chat: the served model and the billed tier" begin

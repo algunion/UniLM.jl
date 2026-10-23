@@ -260,6 +260,38 @@ end
     end
 end
 
+@testset "realtime_receive: the idle bound holds on a WebSocket over the caller's own stream" begin
+    # HTTP.WebSockets.open(io) leaves `io` to its caller, so UniLM cannot end that connection: the
+    # breach must end the read itself. The silent peer completes the upgrade and never sends.
+    srv = HTTP.WebSockets.listen!("127.0.0.1", 0) do ws
+        try
+            for _ in ws
+            end
+        catch
+        end
+    end
+    addr = HTTP.WebSockets.server_addr(srv)
+    host, port = split(addr, ":")
+    sock = Sockets.connect(String(host), parse(Int, port))
+    try
+        ws = HTTP.WebSockets.open(sock; target="/", host=addr)
+        s = RealtimeSession(ws, "m", RequestConfig(connect_timeout=10.0, stream_idle_timeout=1.0, total_deadline=Inf))
+        t0 = time()
+        task = Threads.@spawn try realtime_receive(s) catch e; e end
+        done = timedwait(() -> istaskdone(task), 8.0) === :ok
+        @test done
+        done || close(sock)                     # else the read would wait for ever
+        e = fetch(task)
+        @test e isa UniLMTimeout && e.phase === :stream_idle && e.limit == 1.0
+        @test time() - t0 < 4.0
+        # The session is closed after it: the next read throws at once.
+        @test_throws HTTP.WebSockets.WebSocketError realtime_receive(s)
+    finally
+        close(sock)
+        close(srv)
+    end
+end
+
 @testset "realtime session survives past the connect budget" begin
     # Falsifies the obvious way to get the bound wrong: arming a handshake timer
     # that outlives the upgrade would kill a healthy, deliberately quiet session.

@@ -644,7 +644,7 @@ end
     # Only input tokens are billed; the output rate is 0.0.
     @test estimated_cost(ok) == 445 * 0.042 / 1e6
     @test estimated_cost(ok; model="jev-latest") == estimated_cost(ok)
-    @test estimated_cost(ok; model="not-priced") == 0.0
+    @test (@test_logs (:warn, "no price row for this model; its estimated cost is 0.0") estimated_cost(ok; model="not-priced")) == 0.0
     @test token_usage(SystemOneFailure(response="{}", status=500)) == TokenUsage()
     @test estimated_cost(SystemOneFailure(response="{}", status=500)) == 0.0
     @test token_usage(SystemOneCallError(error="boom")) == TokenUsage()

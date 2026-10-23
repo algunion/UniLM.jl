@@ -597,8 +597,9 @@ end
 # instructions, then its criteria (a Choice's options, a Score's levels, a Noul's two sides),
 # or a raw question's fields.
 _question_content(q::Union{ChoiceQuestion,ScoreQuestion}) = (q.instructions, q.criteria)
-_question_content(q::NoulQuestion) =
-    (c = q.criteria; (q.instructions, isnothing(c) ? nothing : c.yes, isnothing(c) ? nothing : c.no))
+_question_content(q::NoulQuestion) = (q.instructions, _noul_sides(q.criteria)...)
+_noul_sides(::Nothing) = ()
+_noul_sides(c::NoulCriteria) = (c.yes, c.no)
 _question_content(q::BoxQuestion) = (q.instructions,)
 _question_content(q::RawQuestion) = (q.fields,)
 _question_content(::SystemOneQuestion) = ()

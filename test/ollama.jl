@@ -440,7 +440,18 @@ end
         err = try enc(; f => v); nothing catch x; x end
         @test err isa ArgumentError && occursin(String(f), err.msg)
     end
-    @test occursin("whole conversation", try enc(previous_response_id="r"); "" catch x; x.msg end)
+    # A field that asks the server to keep a response, or to read one it kept, is refused because
+    # Ollama keeps none; any other because Ollama reads no such field.
+    said(; kw...) = try enc(; kw...); "" catch x; x.msg end
+    @test said(store=true) == "Ollama's Responses API ignores store: it keeps no state between calls"
+    @test said(previous_response_id="r", background=true) == "Ollama's Responses API ignores previous_response_id, " *
+        "background: it keeps no state between calls; send the whole conversation in `input`, or use a Chat"
+    @test said(service_tier="auto") == "Ollama's Responses API reads no service_tier (its OpenAI-compatibility " *
+        "page does not list it for /v1/responses), so it would be dropped: unset it"
+    @test said(top_logprobs=2, include=["reasoning.encrypted_content"]) == "Ollama's Responses API reads none of " *
+        "include, top_logprobs (its OpenAI-compatibility page does not list them for /v1/responses), so they would " *
+        "be dropped: unset them"
+    @test said(store=true, service_tier="auto") == said(store=true)      # the state field is named first
     @test_throws ArgumentError enc(tool_choice="required")
     @test haskey(enc(tool_choice="auto"), "model")
     @test_throws ArgumentError enc(reasoning=Reasoning(effort="xhigh"))

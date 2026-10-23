@@ -242,8 +242,11 @@ end
     tool = merge(usage, Dict("total_tool_use_tokens" => 20, "tool_use_tokens_by_modality" =>
         [Dict("modality" => "audio", "tokens" => 5), Dict("modality" => "text", "tokens" => 15)]))
     @test (token_usage(success(tool)).prompt_tokens, token_usage(success(tool)).prompt_audio_tokens) == (74, 43)
-    # A model whose table states no audio rate leaves the call unpriced.
-    @test (@test_logs (:warn, r"no audio-token rates") estimated_cost(success(usage; model="gemini-3.6-flash"))) === 0.0
+    # 3.6 Flash's one input price names no modality, so it is the audio's too: $0.75 in, $3.75 out per 1M.
+    @test (@test_logs estimated_cost(success(usage; model="gemini-3.6-flash"))) ≈ (54 * 0.75 + 1 * 3.75) / 1_000_000
+    # A cache hit beside the audio leaves the call unpriced: the usage does not say how many cached tokens are audio.
+    cached = merge(usage, Dict("total_cached_tokens" => 10))
+    @test (@test_logs (:warn, r"no audio-token rates") estimated_cost(success(cached; model="gemini-3.6-flash"))) === 0.0
 end
 
 @testset "Agentic lifecycle URL is service-dispatched (_agentic_url)" begin
@@ -792,11 +795,11 @@ UniLM.default_model(::Type{_IxNonStreamMock}) = "mock-model"
     end
 end
 
-@testset "Interactions decode — one answer across model_output steps, whatever steps come between" begin
-    # A model answering across several steps — the hops of a long decode, text resumed after a thought
-    # or a tool — adds a model_output step each; Google's guides and SDK read the answer as the text of
-    # every model_output step joined with no separator (ai.google.dev/gemini-api/docs/long-decode), so
-    # the steps become one message, where the first of them is.
+@testset "Interactions decode — consecutive model_output steps are one answer; a tool or input step ends it" begin
+    # A model answering across several steps — the hops of a long decode, thoughts between them —
+    # adds a model_output step each, read as one text joined with no separator: Google's SDK
+    # (python-genai 180c3453) continues "across `thought` steps and empty `model_output` steps …
+    # while still stopping at `user_input` and tool call/result boundaries".
     thought(sig) = Dict("type" => "thought", "signature" => sig)
     say(texts...) = Dict("type" => "model_output", "content" => [Dict("type" => "text", "text" => t) for t in texts])
     decode(steps) = UniLM._interaction_response_object(Dict("id" => "v1_m", "status" => "completed",
@@ -808,15 +811,17 @@ end
     # The text parts of a step join the same way, and a step with none continues the answer.
     @test output_text(decode([say("First part. ", "Second part. "), Dict("type" => "model_output"),
                               say("Third part.")])) == "First part. Second part. Third part."
-    # A call and its result, or a hosted tool, between the steps: the steps keep their order around one answer.
+    # A call and its result, or a hosted tool's step, end the answer: the text after one is a message of
+    # its own (the SDK's tool_boundary case), and output_text joins the messages with a newline.
     call = Dict("type" => "function_call", "id" => "c1", "name" => "lookup", "arguments" => Dict("q" => "x"))
     result = Dict("type" => "function_result", "call_id" => "c1", "name" => "lookup", "result" => "y")
     ro = decode([say("Before. "), call, result, thought("a"), say("Final 1. "), thought("b"), say("Final 2.")])
-    @test [o["type"] for o in ro.output] == ["message", "function_call", "function_result", "thought", "thought"]
-    @test output_text(ro) == "Before. Final 1. Final 2."
+    @test [o["type"] for o in ro.output] == ["message", "function_call", "function_result", "thought", "message", "thought"]
+    @test [only(o["content"])["text"] for o in ro.output if o["type"] == "message"] == ["Before. ", "Final 1. Final 2."]
+    @test output_text(ro) == "Before. \nFinal 1. Final 2."
     search = Dict("type" => "google_search_call", "id" => "s1")
-    @test output_text(decode([say("A"), search, say("B")])) == "AB"
-    @test count(o -> o["type"] == "message", decode([say("A"), search, say("B")]).output) == 1
+    @test output_text(decode([say("A"), search, say("B")])) == "A\nB"
+    @test count(o -> o["type"] == "message", decode([say("A"), search, say("B")]).output) == 2
     # An input step the interaction lists is not the model's answer: a user_input step starts a new one.
     asked = Dict("type" => "user_input", "content" => [Dict("type" => "text", "text" => "Q")])
     @test [o["content"][1]["text"] for o in decode([say("Earlier."), asked, say("Now.")]).output if o["type"] == "message"] ==

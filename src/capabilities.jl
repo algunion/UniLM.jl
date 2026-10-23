@@ -417,23 +417,12 @@ const _OpenAIAudioRates = @NamedTuple{input::Float64, output::Float64}
 const _OPENAI_AUDIO_RATES = Dict{String,_OpenAIAudioRates}(
     "gpt-audio-1.5" => (input = 32.0 / 1_000_000, output = 64.0 / 1_000_000))
 
-_counts_audio(u::TokenUsage)::Bool = u.prompt_audio_tokens > 0 || u.completion_audio_tokens > 0
 # `audio_in` input and `audio_out` output audio tokens at the audio rates, each side scaled as
 # the text rates on that side are. Assumes the billed tier and a long prompt scale the audio
 # rates as they scale the text rates; re-check when an audio model gains price terms.
 _audio_bill(::Nothing, ::Int, ::Int, ::Float64, ::Float64) = 0.0
 _audio_bill(r::_OpenAIAudioRates, audio_in::Int, audio_out::Int, input::Float64, output::Float64) =
     input * r.input * audio_in + output * r.output * audio_out
-
-# Audio tokens that no audio-token rate covers leave the call unpriced, as a model without a price
-# row is. On OpenAI's endpoint, whose audio-token rates `_OPENAI_AUDIO_RATES` holds (a price row has
-# none), they are never billed at text rates: gpt-audio-1.5 bills audio input at 12.8 times and audio
-# output at 6.4 times its text rates.
-function _unpriced_audio(model::String)::Float64
-    @warn "no audio-token rates for this model on this endpoint; its estimated cost is 0.0" model _id = Symbol(
-        "unilm_unpriced_audio_", model) maxlog = 1
-    0.0
-end
 
 # Prompts of at most this many input tokens bill at the short-context rates.
 const _OPENAI_SHORT_CONTEXT = 272_000
@@ -464,10 +453,12 @@ end
 # (https://developers.openai.com/api/docs/guides/prompt-caching), a prompt over 272K input
 # tokens at twice the input and cache rates and 1.5× the output rate for the whole request,
 # and every rate times the billed tier's multiple. The row's rates bill the text tokens; the
-# audio tokens bill at the model's audio-token rates.
-function _billed_cost(::Type{OPENAIServiceEndpoint}, model::String, u::TokenUsage, rates::PriceRow)::Float64
+# audio tokens bill at the model's audio-token rates, and are never billed at text rates
+# (gpt-audio-1.5 bills audio input at 12.8 times and audio output at 6.4 times its text rates):
+# a model without audio-token rates leaves a call that counts audio unpriced.
+function _billed_cost(service::Type{OPENAIServiceEndpoint}, model::String, u::TokenUsage, rates::PriceRow)::Float64
     audio_rates = _openai_row(_OPENAI_AUDIO_RATES, model)
-    _counts_audio(u) && isnothing(audio_rates) && return _unpriced_audio(model)
+    _counts_audio(u) && isnothing(audio_rates) && return _unpriced_audio(service, model)
     terms = _openai_row(_OPENAI_PRICE_TERMS, model)
     long = _long_context(terms, u.prompt_tokens)
     tier = _openai_tier_multiple(terms, model, u.service_tier, long)

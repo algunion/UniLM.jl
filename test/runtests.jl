@@ -43,6 +43,10 @@ end
         end
     end
 
+    # The shared seam fixtures, after JET (they add methods to UniLM's seams) and before every
+    # suite whose mock servers they price.
+    include("platform_seam_fixtures.jl")
+
     @testset "api.jl" begin
         include("api.jl")
     end
@@ -106,8 +110,6 @@ end
     @testset "responses.jl" begin
         include("responses.jl")
     end
-
-    include("platform_seam_fixtures.jl")
 
     @testset "images.jl" begin
         include("images.jl")

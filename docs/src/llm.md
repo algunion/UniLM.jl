@@ -89,8 +89,8 @@ DeepSeekEndpoint(; api_key=ENV["DEEPSEEK_API_KEY"])   # DeepSeek
 ANTHROPICServiceEndpoint(; betas=String[], user_profile_id=nothing, workspace_id=nothing, inference_geo=nothing)
     # the bare type (service=ANTHROPICServiceEndpoint) is the endpoint with no options; a blank value, a
     # control character, a comma in a beta name or another inference_geo → ArgumentError; == and hash by
-    # value; list_models sends the profile and workspace headers but no betas (Anthropic marks anthropic-beta
-    # deprecated on GET /v1/models)
+    # value; list_models sends only the workspace of these (the List Models reference names anthropic-version
+    # and anthropic-workspace-id, and marks anthropic-beta deprecated on GET /v1/models)
 
 # Type alias for service fields — accepts both marker types and instances:
 const ServiceEndpointSpec = Union{Type{<:ServiceEndpoint}, ServiceEndpoint}
@@ -246,8 +246,9 @@ end
 end
 ```
 
-The Anthropic listing sends the endpoint's user-profile and workspace headers but no `anthropic-beta`
-(Anthropic's Models API reference marks that header deprecated on `GET /v1/models`). OpenAI keeps listing
+The Anthropic listing sends the key, `anthropic-version` and the endpoint's `anthropic-workspace-id`, the
+headers Anthropic's Models API reference names for `GET /v1/models` — not the endpoint's user profile, nor its
+betas (the reference marks `anthropic-beta` deprecated there). OpenAI keeps listing
 a model after its `shutdown_date`, so a listed model is not always one that still answers: compare
 `retires` with today's date. Anthropic lists active and deprecated models, not retired ones, and may
 revise a `retires_at` it lists. A listing is the provider's view for the key that asks.
@@ -281,7 +282,7 @@ revise a `retires_at` it lists. A listing is the provider's view for the key tha
     user::Union{String,Nothing} = nothing                # refused on native OpenAI (safety_identifier, prompt_cache_key)
     seed::Union{Int64,Nothing} = nothing
     reasoning_effort::Union{String,Nothing} = nothing    # none|minimal|low|medium|high|xhigh|max (per-model subset; native OpenAI GPT-6/GPT-5.6 Chat stops at xhigh)
-    stream_options::Union{AbstractDict,Nothing} = nothing # unset: OpenAI/DeepSeek streams send {"include_usage": true}
+    stream_options::Union{AbstractDict,Nothing} = nothing # unset: OpenAI, DeepSeek and Gemini-compat streams send {"include_usage": true}
     verbosity::Union{String,Nothing} = nothing           # low|medium|high
     store::Union{Bool,Nothing} = nothing
     metadata::Union{AbstractDict,Nothing} = nothing
@@ -310,7 +311,7 @@ through that accessor, never directly.
 - **Parameter validation**: the constructor validates at construction time — `temperature` ∈ [0.0, 2.0], `top_p` ∈ [0.0, 1.0], `n` must be `1` (a result carries a single choice), `max_tokens` / `max_completion_tokens` ≥ 1, `presence_penalty` ∈ [-2.0, 2.0], `frequency_penalty` ∈ [-2.0, 2.0], `top_logprobs` ∈ [0, 20], every `logit_bias` value ∈ [-100, 100], `reasoning_effort` ∈ {`"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`}. Violations throw `ArgumentError`. An empty `tools` vector is stored as `nothing`; a `Vector{<:CallableTool}` is accepted and stored as its `Tool`s.
 - **Provider/model limits** (GPT-5.6/GPT-6 tool and sampling rules, the Anthropic and native-Gemini field mappings and the Gemini sampling rule, on both Gemini endpoints) are checked by the provider's encoder: `chatrequest!` throws their `ArgumentError` before any network I/O.
 - **OpenAI per-model rules** (native endpoint; `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6`, `gpt-5.6-sol`/`-terra`/`-luna`, by exact id or a `-YYYY-MM-DD` snapshot; other models are checked by the server): Responses efforts `"low"`..`"max"` on Astra and 6.1 Sol, `"none"`..`"max"` on the rest; Chat Completions the same without `"max"` (HTTP 400 on 2026-10-22, though its reference lists it; the refusal points `"max"` to `Respond`); `"minimal"` refused on all (use `"low"`); sampling controls and log probabilities only at `"none"` on `gpt-6-sol`/`gpt-6-luna`, never on Astra or 6.1 Sol; Chat tools only at `"none"` on `gpt-6-sol`/`gpt-6-luna` and GPT-5.6, never on Astra or 6.1 Sol; the `gpt-5.6` alias takes GPT-5.6 Sol's rules. On every model the native endpoint sends `max_tokens` as `max_completion_tokens` (setting both throws), refuses `user` (use `safety_identifier` and `prompt_cache_key`), and takes `service_tier` `"auto"`, `"default"`, `"flex"`, `"scale"`, `"priority"` or `"fast"` (Responses adds `"ultrafast"` on Astra and 6.1 Sol); anything else throws.
-- `prompt_cache_options` (each endpoint's rule: `PromptCacheOptions`, below): on OpenAI it is supported for gpt-5.6 and later (gpt-5.4-mini answered HTTP 400 "prompt_cache_options is not supported on this model" on 2026-09-22); Chat Completions takes only its `mode` and `ttl`, and native OpenAI only `ttl="30m"` — `chatrequest!` on a native OpenAI `Chat` with `prewarm` or `comparison_response_id` set throws `ArgumentError` before any request. `Message` content is a plain string, so Chat messages cannot carry cache breakpoints, and the Chat Completions reference says an explicit-mode request without breakpoints "does not use prompt caching": `mode="explicit"` on a `Chat` turns prompt caching off. `moderation` takes a [`ModerationConfig`](@ref).
+- `prompt_cache_options` (each endpoint's rule: `PromptCacheOptions`, below): on OpenAI it is supported for gpt-5.6 and later (gpt-5.4-mini answered HTTP 400 "prompt_cache_options is not supported on this model" on 2026-09-22); Chat Completions takes only its `mode` and `ttl`, and native OpenAI only `ttl="30m"` — `chatrequest!` on a native OpenAI `Chat` with `prewarm` or `comparison_response_id` set throws `ArgumentError` before any request. a `Chat` sets no cache breakpoints (its `Message` content is a plain string; the API's `prompt_cache_breakpoint` sits on a content part), and the Chat Completions reference says an explicit-mode request without breakpoints "does not use prompt caching": `mode="explicit"` on a `Chat` turns prompt caching off. `moderation` takes a [`ModerationConfig`](@ref).
 
 ### Message
 
@@ -331,7 +332,7 @@ end
 
 **Validation**: `role` must be one of the four roles; at least one of `content`, `tool_calls`, `refusal_message`, `attachments` or `audio_output` must be non-`nothing`; `tool_call_id` is required when `role == "tool"`; `attachments` only on user messages (an empty vector is stored as `nothing`); `audio_output` only on assistant messages, and with `content` unset or empty the content is its transcript.
 
-**Audio replies**: `AudioOutput(; id, data, expires_at, transcript)` — fields `id::String`, `data::Vector{UInt8}` (decoded from base64), `format::Union{String,Nothing}` (`"wav"`, `"mp3"`, `"flac"`, `"opus"`, `"aac"` by file signature; `nothing` for raw `pcm16`), `expires_at::Union{Int,Nothing}` (Unix seconds — after it OpenAI answers the id with HTTP 400 `audio_not_found`, as observed for an id it never issued; `nothing` when the reply names none, or when a stream closed after the turn's finish, before the update that alone carries it — the turn is kept either way; an expiry that is no integer is a malformed reply, streamed or not), `transcript::String`; an empty `id` throws `ArgumentError`. A Chat with `modalities=["text", "audio"]` and `audio=Dict("voice" => …, "format" => …)` (e.g. `gpt-audio-1.5`) gets it on the reply's `audio_output`, streamed (assembled from `delta.audio`; the transcript is forwarded to the callback as text) or not, with `content` = the transcript (also when the turn's `content` is unset or empty). Sent back on `OPENAIServiceEndpoint` as `{"role":"assistant","content":content,"audio":{"id":id}}`; every other encoder sends the content alone. On `OPENAIServiceEndpoint`, `estimated_cost` bills its audio tokens at the model's audio-token rates (`gpt-audio-1.5`; see `TokenUsage`).
+**Audio replies**: `AudioOutput(; id, data, expires_at, transcript)` — fields `id::String`, `data::Vector{UInt8}` (decoded from base64), `format::Union{String,Nothing}` (`"wav"`, `"mp3"`, `"flac"`, `"opus"`, `"aac"` by file signature; `nothing` for raw `pcm16`), `expires_at::Union{Int,Nothing}` (Unix seconds — after it OpenAI answers the id with HTTP 400 `audio_not_found`, as observed for an id it never issued; `nothing` when the reply names none, or when a stream closed after the turn's finish, before the update that alone carries it — the turn is kept either way; an `expires_at` that is not an integer fails a call that is not streamed, while a stream drops that update — counted in `sse_dropped`, with one warning — and keeps the turn with `expires_at = nothing`), `transcript::String`; an empty `id` throws `ArgumentError`. A Chat with `modalities=["text", "audio"]` and `audio=Dict("voice" => …, "format" => …)` (e.g. `gpt-audio-1.5`) gets it on the reply's `audio_output`, streamed (assembled from `delta.audio`; the transcript is forwarded to the callback as text) or not, with `content` = the transcript (also when the turn's `content` is unset or empty). Sent back on `OPENAIServiceEndpoint` as `{"role":"assistant","content":content,"audio":{"id":id}}`; every other encoder sends the content alone. On `OPENAIServiceEndpoint`, `estimated_cost` bills its audio tokens at the model's audio-token rates (`gpt-audio-1.5`; see `TokenUsage`).
 
 **Attachments**: `ImageAttachment(path_or_bytes; detail=nothing)` (PNG, JPEG, GIF or WebP; `detail` ∈ `"auto"`, `"low"`, `"high"`, `"original"`), `AudioAttachment(path_or_bytes)` (WAV or MP3) and `DocumentAttachment(path)` / `DocumentAttachment(bytes; filename="document.pdf")` (PDF: `%PDF-` only, else `ArgumentError("document data is not PDF (checked by file signature; N bytes)")`; a blank `filename` throws), all `<: Attachment`, recognised by their leading bytes (a URL in place of a path throws). OpenAI-wire endpoints send them as `image_url` (data URL; `detail` only when set) / `input_audio` / `file` (`{"filename", "file_data": "data:application/pdf;base64,…"}`) content parts after the text part; `OllamaEndpoint` sends images and clips in the message's `images` and refuses a document and a detail level; native Anthropic sends an image and a document as base64 `image` / `document` blocks before the text and throws for a sound clip or an image `detail`; native Gemini sends every kind as an `inlineData` part ahead of the text, an image's `detail` as its per-part media resolution (`"low"`/`"high"`; `"auto"` sends none; `"original"`, or any level on the Gemini 2.5 and Gemma 4 models, throws), and on `respond` (Interactions) as `image`/`audio`/`document` parts of an `InputMessage`'s content; a System One request and an embeddings input refuse documents and detail levels. Each refusal is an `ArgumentError` before any request.
 
@@ -368,13 +369,14 @@ chatrequest!(; systemprompt, userprompt, config=nothing, cancel=nothing, chat_kw
 - Streaming tool calls: pass `on_tool_call(tc::ToolCall)` to be notified at most once per completed streamed tool call, as calls finish (a call whose arguments do not parse is skipped with a warning; see the [Streaming guide](@ref streaming_guide)).
 - Local validation throws before any network I/O, streaming or not: `ArgumentError` when `callback` or `on_tool_call` is passed without `stream=true` ("callback and on_tool_call require stream=true"), the service declares capabilities without `:chat`, or the provider's encoder rejects the request; `InvalidConversationError` when `history=true` and the conversation ends with an assistant message (the reply could not be appended).
 - The keyword form takes EITHER `messages` (copied, never mutated) OR both `systemprompt` and `userprompt` (a `String` or a `Message` each); anything else throws `ArgumentError`. Every other keyword is a `Chat` field; `history` controls whether the reply is appended, not what is sent.
-- Retries transient statuses (408/429/500/502–504/520–524/529) with exponential backoff and jitter under the resolved [`RequestConfig`](@ref) — `max_attempts` (default 3) and `total_deadline` bound the attempts. `Retry-After` is a floor under the jitter (at most half the budget left after the floor is spread above it), so a rate-limited fan-out does not retry in lockstep; a retry whose wait would exceed the remaining `total_deadline` is not attempted — the call returns the last real response rather than sleeping past the deadline. A 429 whose `error.code` is `credit_balance_exhausted`, `organization_spend_limit_exceeded`, `project_spend_limit_exceeded` or `organization_usage_limit_exceeded`, or whose `error.type` (or older `error.code`) is `insufficient_quota`, is returned at once (no retry restores spent credit or a reached limit). Timeouts surface as `LLMCallError` with `status=nothing` and the `UniLMTimeout` in `.cause`.
+- Retries transient statuses (408/429/500/502–504/520–524/529) with exponential backoff and jitter under the resolved [`RequestConfig`](@ref) — `max_attempts` (default 3) and `total_deadline` bound the attempts. `Retry-After` is a floor under the jitter (at most half the budget left after the floor is spread above it), so a rate-limited fan-out does not retry in lockstep; a retry whose wait would exceed the remaining `total_deadline` is not attempted — the call returns the last real response rather than sleeping past the deadline. A 429 whose `error.code` is `credit_balance_exhausted`, `organization_spend_limit_exceeded`, `project_spend_limit_exceeded` or `organization_usage_limit_exceeded`, or whose `error.type` (or older `error.code`) is `insufficient_quota`, is returned at once (no retry restores spent credit or a reached limit), as is a Gemini Interactions 429 `quota_exceeded`, its daily quota (`RESOURCE_EXHAUSTED`, a rate limit, is retried). Timeouts surface as `LLMCallError` with `status=nothing` and the `UniLMTimeout` in `.cause`.
 - `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token): a cancel before connecting, during the header wait, mid-stream or during a backoff ends the call with `LLMCallError(status=nothing, cause=UniLMCancelled(:token, …))` — never retried, nothing appended, no terminal callback — unless the provider's completion marker already arrived: then the turn is committed, the final-message callback runs, and usage may be missing (on the OpenAI wire the marker is the chunk carrying `finish_reason`, which precedes the usage chunk and `[DONE]`). A pre-cancelled token sends nothing. A TCP connect / TLS handshake in progress finishes (or reaches `connect_timeout`) first.
 - Streaming stop: `close[] = true` (in the callback or from any task) ends the stream at once with `LLMCallError(status=nothing, cause=UniLMCancelled(:callback, …))`, unless the provider's completion marker already arrived — then the turn is committed, the final-message callback runs, and usage may be missing. An exception thrown by `callback`/`on_tool_call` ends the call with that exception in `.cause` (never retried, nothing appended). Time inside callbacks is not counted by `stream_idle_timeout`.
 - A stream is final at its sentinel (`[DONE]`, Anthropic `message_stop`): the final `Message` callback runs at once, and the result follows when the HTTP body ends, at most 0.5 s later (a body held open longer has its connection closed, not reused).
-- Streaming retry boundary: transient failures (including the in-band `overloaded_error`, the documented 529 equivalent) are retried inside the task only until the first `callback`/`on_tool_call` invocation; afterwards failures surface typed. An exception thrown by `callback` or `on_tool_call` ends the call with it in `cause`, nothing committed; a reply whose finish reason had arrived by then was answered and billed, and its cost is added to `cumulative_cost`. A user `InterruptException` propagates — `fetch` throws a `TaskFailedException` instead of returning a result value.
-- Streams use HTTP/1.1 (one connection per stream); OpenAI and DeepSeek streams request `include_usage` when `stream_options` is unset, so streamed turns are costed.
-- Long generations (Gemini 4 Argon's long decode on `GEMINIServiceEndpoint`): a reply ending with `CONTINUATION` and a `continuationToken` is continued inside the call — the same request again with the latest token, in `max(8, cld(budget, cap) + 1)` requests at most, the budget being `max_completion_tokens`, else `max_tokens` (8 when neither is set), and the cap Google's per-request output cap (32,768 tokens; 65,536 on a stream), each request with the whole `RequestConfig` budget — and the result is one assistant turn, the replies' parts joined and their usage summed field by field, priced at the tier the last reply reported. Still unfinished after the last of them, or after a `CONTINUATION` reply that produced no output token (thinking included), the turn is returned with `finish_reason == "continuation"`. A retried request is sent again from its start: a stream that drops after a checkpoint token is not resumed from it, and Google's charge for the dropped stream is not in `cumulative_cost`. A request that fails ends the call with nothing committed, as does a stop or cancel before the last reply's finish reason (a `CONTINUATION` is not the turn's completion marker); the replies already answered — one whose `CONTINUATION` chunk a stop or a throwing callback landed on included — are added to `cumulative_cost`. A streamed turn streams every reply into the same callback (one final `Message`). Proven against a local mock; a live CONTINUATION reply was not observed.
+- Streaming retry boundary: transient failures (including the in-band `overloaded_error`, the documented 529 equivalent) are retried inside the task only until the first `callback`/`on_tool_call` invocation; afterwards failures surface typed. An exception thrown by `callback` or `on_tool_call` ends the call with it in `cause`, nothing committed. A user `InterruptException` propagates — `fetch` throws a `TaskFailedException` instead of returning a result value.
+- Streams use HTTP/1.1 (one connection per stream); OpenAI, DeepSeek and `GEMINIOpenAIServiceEndpoint` streams request `include_usage` when `stream_options` is unset, so streamed turns are costed.
+- A stream that ends uncommitted — stopped, cancelled, timed out, cut off, or ended by an exception from `callback`/`on_tool_call` — adds the usage its provider had reported to `cumulative_cost`, as a lower bound (Anthropic reports a request's input in `message_start`, Gemini the usage so far on every chunk); a request stopped before any usage arrived adds nothing though the provider bills it, nor does an attempt that was retried or a stream the provider ended with an error event.
+- Long generations (Gemini 4 Argon's long decode on `GEMINIServiceEndpoint`): a reply ending with `CONTINUATION` and a `continuationToken` is continued inside the call — the same request again with the latest token, in `max(8, cld(budget, cap) + 1)` requests at most, the budget being `max_completion_tokens`, else `max_tokens` (8 when neither is set), and the cap Google's per-request output cap (32,768 tokens; 65,536 on a stream), each request with the whole `RequestConfig` budget — and the result is one assistant turn, the replies' parts joined and their usage summed field by field, priced at the tier the last reply reported. Still unfinished after the last of them, or after a `CONTINUATION` reply that produced no output token (thinking included), the turn is returned with `finish_reason == "continuation"`. A retried request is sent again from its start: a stream that drops after a checkpoint token is not resumed from it, and Google's charge for the attempt that dropped is not in `cumulative_cost`. A request that fails ends the call with nothing committed, as does a stop or cancel before the last reply's finish reason (a `CONTINUATION` is not the turn's completion marker); the replies already answered — one whose `CONTINUATION` chunk a stop or a throwing callback landed on included — are added to `cumulative_cost`, with the usage the reply in flight had reported. A streamed turn streams every reply into the same callback (one final `Message`). Proven against a local mock; a live CONTINUATION reply was not observed.
 
 ### Conversation Management
 
@@ -578,7 +580,7 @@ result = fetch(task)  # LLMSuccess when complete, else a typed failure
     service_tier::Union{String,Nothing} = nothing           # OpenAI "auto","default","flex","scale","priority","fast"; "ultrafast" on gpt-6-astra/gpt-6.1-sol
     top_logprobs::Union{Int64,Nothing} = nothing            # 0–20
     prompt_cache_key::Union{String,Nothing} = nothing
-    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory","24h" ("24h" only on gpt-5.5/gpt-5.5-pro, server-checked; refused on the gpt-6*/gpt-5.6* rule models)
+    prompt_cache_retention::Union{String,Nothing} = nothing  # "in_memory","24h" (the reference: "24h" only on gpt-5.5/gpt-5.5-pro, sent unchecked; refused on the gpt-6*/gpt-5.6* rule models)
     safety_identifier::Union{String,Nothing} = nothing
     conversation::Union{Any,Nothing} = nothing              # String or Dict (not with previous_response_id); the declared type collapses to Any
     context_management::Union{Vector,Nothing} = nothing
@@ -799,12 +801,12 @@ endpoints send the object unchanged, the server's answer being the check.
 
 On OpenAI, `prompt_cache_retention` throws `ArgumentError` for `gpt-6-astra`, `gpt-6.1-sol`,
 `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6` and `gpt-5.6-sol`/`-terra`/`-luna` (and their dated
-snapshots), whose cache lifetime `prompt_cache_options` sets; on other models it is sent and
-may be combined with `prompt_cache_options`; on `gpt-5.5` and `gpt-5.5-pro` it takes only
-`"24h"` (OpenAI's reference; the server checks it). Explicit mode requires cache breakpoints in input
+snapshots), whose cache lifetime `prompt_cache_options` sets; on other models UniLM sends it
+unchecked, beside `prompt_cache_options` when that is set too (the Responses reference lists the
+two fields independently, and documents `prompt_cache_options` for gpt-5.6 and later), and the
+server checks both — the reference takes only `"24h"` on `gpt-5.5` and `gpt-5.5-pro`. Explicit mode requires cache breakpoints in input
 content to create cache writes — mark them with `input_text(text; cache_breakpoint=true)`, a
-Responses input part; `Chat` messages cannot carry one, so explicit mode on a `Chat` means no
-prompt caching. Chat Completions takes only `mode` and `ttl` (a native OpenAI `Chat` with
+Responses input part; a `Chat` sets none, so explicit mode on a `Chat` means no prompt caching. Chat Completions takes only `mode` and `ttl` (a native OpenAI `Chat` with
 `prewarm` or `comparison_response_id` set throws `ArgumentError`). Diagnostics requested with
 `comparison_response_id` come back in `r.response.raw["prompt_cache_diagnostics"]`.
 Unset fields are omitted.
@@ -849,14 +851,15 @@ respond(callback::Function, input; kwargs...) -> Task
 
 - Streaming callback signature: `callback(chunk::Union{String, ResponseObject}, close::Ref{Bool})`; `close[] = true` (or a `cancel!` on the call's token) stops the stream with `ResponseCallError(status=nothing, cause=UniLMCancelled(...))`, unless the provider's completion marker — the terminal event — already arrived: then the outcome it recorded stands (a response with its usage, whose final callback has run; or the reported failure). A callback exception ends the call with it in `.cause`.
 - Local validation throws `ArgumentError` before any network I/O: a `callback` passed without `stream=true` ("callback requires stream=true"), a service that declares capabilities with neither `:responses` nor `:agentic`, or an encoder rejection (a field the wire or model cannot express).
-- Retries retryable statuses (408/429/500/502–504/520–524/529) up to `config.max_attempts` (default 3) with full-jitter backoff bounded by `config.total_deadline`; `Retry-After` is a floor under the jitter, and a retry whose wait would exceed the remaining deadline is not attempted — it returns the last real response instead of sleeping past it; a 429 whose `error.code` reports spent credit or a reached spend or usage limit (the four codes under `chatrequest!`) is returned at once, streamed or not. Every attempt is time-bounded — a silent peer fails with a typed timeout inside `ResponseCallError` (`status = nothing`, `cause::UniLMTimeout`), never a hang. Every exception that ends a call (including a cancellation, `cause::UniLMCancelled`) is in `.cause`.
+- Retries retryable statuses (408/429/500/502–504/520–524/529) up to `config.max_attempts` (default 3) with full-jitter backoff bounded by `config.total_deadline`; `Retry-After` is a floor under the jitter, and a retry whose wait would exceed the remaining deadline is not attempted — it returns the last real response instead of sleeping past it; a 429 that no retry can serve — spent credit, a reached spend or usage limit, `insufficient_quota`, Gemini Interactions' daily `quota_exceeded` (the codes under `chatrequest!`) — is returned at once, streamed or not. Every attempt is time-bounded — a silent peer fails with a typed timeout inside `ResponseCallError` (`status = nothing`, `cause::UniLMTimeout`), never a hang. Every exception that ends a call (including a cancellation, `cause::UniLMCancelled`) is in `.cause`.
 - **Parameter validation**: `temperature` ∈ [0.0, 2.0], `top_p` ∈ [0.0, 1.0], `max_output_tokens` ≥ 1, `top_logprobs` ∈ [0, 20]; `conversation` cannot be combined with `previous_response_id`, and `background=true` requires `store` not `false`; `Reasoning(effort=…)` must be one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Violations throw `ArgumentError`.
 
 ### Response Accessors
 
 ```julia
 output_text(result::ResponseSuccess)::String                # the answer: message text without phase "commentary" ("\n" between parts);
-                                                            #   a Gemini answer's model_output steps, tool steps between them or not, are one part, joined with no separator
+                                                            #   a Gemini answer's consecutive model_output steps (thoughts between them or not) are one part, joined
+                                                            #   with no separator; a tool's step or a user_input step ends it
 output_text(result::ResponseFailure)                        # throws LLMResultError
 output_text(result::ResponseCallError)                      # throws LLMResultError
 
@@ -1056,7 +1059,7 @@ edit_image(image, prompt; mask=nothing, service=OPENAIServiceEndpoint, config=no
 
 Retries transient statuses (408/429/500/502–504/520–524/529) inside the request budget (`RequestConfig.max_attempts`, default 3; `Retry-After` is a floor under the jitter) — a retry whose wait would exceed the remaining `total_deadline` is not attempted, so the call returns the last real response rather than sleeping past it. Bound per call with `config=RequestConfig(...)`; a cancelled call returns `ImageCallError` with `cause::UniLMCancelled`.
 
-**Gemini (Nano Banana)**: with `service=GEMINIServiceEndpoint` both verbs call `generateContent` (`GEMINI_API_KEY`) with `responseModalities: ["IMAGE"]` and an `imageConfig` from `aspect_ratio` / `resolution`, a `safety_identifier` as the request label `safety_identifier`; an edit sends its input image(s) inline ahead of the prompt (no mask). The model's image parts are the result's images, in order — JPEG as observed (each part's `mimeType` is in `raw`); text it sends with an image is the `revised_prompt`, interim thinking images are not results; a reply with no image is an `ImageCallError` naming Gemini's finish reason (`IMAGE_SAFETY`, `NO_IMAGE`, …); `created` is the reply's arrival time (Gemini sends none); `usage` is the reply's `usageMetadata`, read by `token_usage` (thinking counted as output). `estimated_cost` of an image result throws `ArgumentError` unless `model=` names a row in `pricing`.
+**Gemini (Nano Banana)**: with `service=GEMINIServiceEndpoint` both verbs call `generateContent` (`GEMINI_API_KEY`) with `responseModalities: ["IMAGE"]` and an `imageConfig` from `aspect_ratio` / `resolution`, a `safety_identifier` as the request label `safety_identifier`; an edit sends its input image(s) inline ahead of the prompt (no mask). The model's image parts are the result's images, in order — JPEG as observed (each part's `mimeType` is in `raw`); text it sends with an image is the `revised_prompt`, interim thinking images are not results; a reply with no image is an `ImageCallError` naming Gemini's finish reason (`IMAGE_SAFETY`, `NO_IMAGE`, …); `created` is the reply's arrival time (Gemini sends none); `usage` is the reply's `usageMetadata`, read by `token_usage` (thinking counted as output). `estimated_cost` of an image result throws `ArgumentError` unless `model=` is given (a `model=` with no row in `pricing` is estimated at `0.0`, with the no-row warning).
 
 ### Response Types
 
@@ -1210,12 +1213,15 @@ cache writes, and the extended-retention share of them (OpenAI's 12-hour, Anthro
 `service_tier`; on `GEMINIOpenAIServiceEndpoint`, whose replies name none, the tier the
 request asked for); `inference_geo` from Anthropic. The audio counts come from OpenAI Chat
 Completions' `prompt_tokens_details.audio_tokens` / `completion_tokens_details.audio_tokens`,
-and `prompt_audio_tokens` also from Gemini's AUDIO counts (`promptTokensDetails` and
-`toolUsePromptTokensDetails`; an interaction's `input_tokens_by_modality` and
-`tool_use_tokens_by_modality`), streamed and not: `estimated_cost` bills them at the model's
-audio-token rates on `OPENAIServiceEndpoint` (`gpt-audio-1.5`: \$32 / \$64 per 1M) and at the
-audio input rate Gemini's pricing page states (below); any other audio tokens — another model
-or endpoint (Azure, DeepSeek, generic, custom) — give `0.0` with one warning per model.
+and `prompt_audio_tokens` also from Gemini's AUDIO counts on the native endpoint
+(`promptTokensDetails` and `toolUsePromptTokensDetails`) and in Interactions
+(`input_tokens_by_modality` and `tool_use_tokens_by_modality`), streamed and not:
+`estimated_cost` bills them at the model's audio-token rates on `OPENAIServiceEndpoint`
+(`gpt-audio-1.5`: \$32 / \$64 per 1M) and at the audio input rate Gemini's pricing page states
+(below); any other audio tokens — another model or endpoint (Azure, DeepSeek, generic, custom) —
+give `0.0` with one warning per model and endpoint. `GEMINIOpenAIServiceEndpoint` reports no
+audio count: its audio is in `prompt_tokens`, priced at the text rate — a lower bound on a model
+with an audio price of its own, for which such a request warns once per model.
 
 ### Functions
 
@@ -1239,8 +1245,9 @@ DEFAULT_PRICING   # lock-guarded AbstractDict{String, PriceRow} (not a Dict)
   served (`LLMSuccess.model`; `response.model` for Responses, FIM and System One); else the
   one requested (`self.model` for Chat, `embeddings.model` for Embeddings) — so a routed id
   or an alias bills at the rates of the model that served it. An image result reports its
-  usage, but `estimated_cost` throws `ArgumentError` for it unless `model=` names a row in
-  `pricing`: UniLM does not model image-token rates, and a zero would read as a free call.
+  usage, but `estimated_cost` throws `ArgumentError` for it unless `model=` is given (with no
+  row in `pricing` for it, the estimate is `0.0`, with the no-row warning): UniLM does not model
+  image-token rates, and a zero would read as a free call.
 - **`DEFAULT_PRICING` is safe to share across tasks**: add or replace a row with
   `DEFAULT_PRICING[model] = row` while requests run; `get`, `haskey`, `delete!`,
   `pop!`, `empty!`, `keys` and `length` work as on a `Dict`, iteration walks a
@@ -1284,20 +1291,23 @@ for is estimated at the standard rates with one warning per model and tier. Anth
 `prompt_tokens` include cache reads and writes (`cached_tokens` the reads,
 `cache_write_tokens` the writes and `cache_write_extended_tokens` the 1-hour ones), and its
 results bill cache writes at 1.25× (5-minute) or 2× (1-hour) input, every rate 2× in fast
-mode (`service_tier == "fast"`), 1.1× for `inference_geo == "us"` and 5× for a Claude Haiku
-5.5 prompt over 100,000 tokens, the multipliers stacking. DeepSeek cache hits
+mode (`service_tier == "fast"`), 1.1× for `inference_geo == "us"` on Claude 4.6 and later (the
+4.5 models bill the standard rates) and 5× for a Claude Haiku 5.5 prompt over 100,000 tokens, the
+multipliers stacking; a reply at Anthropic's Priority Tier is estimated at the list rates. DeepSeek cache hits
 (`prompt_cache_hit_tokens`) are billed at the cached rate. A Gemini result is priced as the
 model that served it (`result.model` from `modelVersion`, `response.model`), so routed ids
 and `-latest` aliases bill at their targets' rates (`gemini-3.1-pro-preview` serves
 `gemini-pro-latest`), and a tool-use prompt counts as prompt tokens. A prompt over 200K tokens
 on `gemini-3.1-pro-preview` (and `-customtools`) or `gemini-2.5-pro` bills at the long-context
 rates, the whole request: 2× the input and cache-hit rates, 1.5× the output rate. Audio input
-bills at the audio rate the pricing page states for the model — `gemini-3.1-flash-lite` \$0.50,
-`gemini-3-flash-preview` and `gemini-2.5-flash` \$1.00, `gemini-2.5-flash-lite` \$0.30 per 1M,
-and the one input price of `gemini-3.5-flash-lite` and `gemini-robotics-er-2-preview` — at the
-tier's multiple; audio on another Gemini model (the page states no audio rate for it), Gemini
-audio output, and audio in a call that also hit the cache give `0.0` with one warning per
-model. A Gemini result is billed at the tier it reports
+bills at the input price the pricing page states for audio, at the tier's and a long prompt's
+multiples as text: a model's own audio price where the page lists one apart —
+`gemini-3.1-flash-lite` \$0.50, `gemini-3-flash-preview` and `gemini-2.5-flash` \$1.00,
+`gemini-2.5-flash-lite` \$0.30 per 1M — else the row's input rate, since an input price that
+names no modality (or names audio among the others) is every modality's: Gemini 4 Argon, 3.8 and
+3.6 Flash, 3.5 Flash-Lite, 3.1 Pro Preview, 2.5 Pro, Robotics-ER 2 Preview. Audio on a model the
+page prices without audio (the image models) or does not list, Gemini audio output, and audio in a
+call that also hit the cache give `0.0` with one warning per model and endpoint. A Gemini result is billed at the tier it reports
 (`usage.service_tier`: the `x-gemini-service-tier` header, else `usageMetadata.serviceTier`,
 or an interaction's `service_tier`; `GEMINIOpenAIServiceEndpoint` replies name none, so a Chat
 result there records the requested tier — `"priority"` priced at Priority is an upper bound,
@@ -1308,9 +1318,9 @@ lists another cache-hit price (Flex's standard rate on 3.1 Pro Preview, 3 Flash 
 the 2.5 models; \$0.02 on Flex and \$0.05 on Priority for 3.5 Flash-Lite's \$0.03),
 `"deferred"` at the standard rates with a warning; a long generation Gemini sends in several
 requests is one turn whose usage is the requests' summed, priced at the last reply's tier. A
-streamed Chat turn accrues cost when its stream reports usage: OpenAI and DeepSeek streams
-request it automatically, native Anthropic and Gemini report it, and other OpenAI-compatible
-servers need `stream_options=Dict("include_usage" => true)`.
+streamed Chat turn accrues cost when its stream reports usage: OpenAI, DeepSeek and
+`GEMINIOpenAIServiceEndpoint` streams request it automatically, native Anthropic and Gemini report
+it, and other OpenAI-compatible servers need `stream_options=Dict("include_usage" => true)`.
 Gemini 4 Argon's introductory rates hold through November 30, 2026 and Gemini 3.8 and 3.6
 Flash's through December 31, 2026; refresh pricing before estimating later calls.
 
@@ -2549,8 +2559,9 @@ set_default_config!(total_deadline=120.0)   # process-wide default
 — batch, container, conversation, file (`upload_file` included: a create is never
 retried), fine-tuning, moderation, upload, vector-store, audio, realtime, and the
 Responses lifecycle operations — make a **single bounded attempt**, and
-`max_attempts` has no effect on them. A 429 whose `error.code` reports spent credit or a
-reached spend or usage limit (the four codes under `chatrequest!`) is never retried. `poll_batch` /
+`max_attempts` has no effect on them. A 429 that no retry can serve — spent credit, a
+reached spend or usage limit, `insufficient_quota`, Gemini Interactions' daily `quota_exceeded`
+(the codes under `chatrequest!`) — is never retried. `poll_batch` /
 `poll_file_batch` poll through retryable statuses (such a 429 ends the poll with its failure) and
 per-attempt timeouts until their own wall-clock `timeout`
 (`interval` and `timeout` must be > 0); a poll that times out returns the family's
@@ -2606,9 +2617,12 @@ the Concurrency, Tasks and Cancellation guide.
   `ArgumentError` before any I/O; it opens `gpt-realtime-2.1` unless `model` names another) bounds the open phase with `connect_timeout`, surfaces
   an open that failed for another reason as that error, and closes an upgrade that
   completes after the timeout without running the handler; `realtime_receive` bounds
-  the read with `stream_idle_timeout` and surfaces a breach just after the limit: it ends
-  the connection without the send lock, so a `realtime_send` parked on a peer that stopped
-  reading cannot hold it open (that send throws too).
+  the read with `stream_idle_timeout` and surfaces a breach just after the limit on `ws://`
+  (on `wss://` up to about 5 s later, the time the TLS close may wait to send its close
+  notice): it ends the read and the connection without the send lock, so a `realtime_send`
+  parked on a peer that stopped reading cannot hold it open (that send throws too). On a
+  WebSocket opened over the caller's own stream (`HTTP.WebSockets.open(io)`) it ends the read
+  alone, since that stream is the caller's to close.
   An open session's lifetime is deliberately unbounded. `mint_realtime_secret` returns
   `RealtimeCallError` for a 200 without a non-empty secret.
 

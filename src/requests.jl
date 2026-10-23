@@ -20,11 +20,15 @@ _is_retryable(status::Integer)::Bool =
 # A 429 also answers what no retry can serve: OpenAI names spent prepaid credit and a reached
 # spend or usage limit in `error.code`, and "The broader `error.type` can still be
 # `insufficient_quota`", the code older replies give too ("Retrying billing, spend, or quota
-# errors won't restore API access", https://developers.openai.com/api/docs/guides/error-codes),
-# while a rate limit — code `slow_down`, or none — clears with time.
+# errors won't restore API access", https://developers.openai.com/api/docs/guides/error-codes);
+# Gemini Interactions names its daily quota `quota_exceeded`, "You have exceeded your daily
+# quota", to "Wait until the quota resets or request a quota increase"
+# (https://ai.google.dev/gemini-api/docs/api-errors). A rate limit — OpenAI's code `slow_down`,
+# or none; Gemini's `rate_limit_exceeded`, or generateContent's RESOURCE_EXHAUSTED, which Google
+# says to retry with backoff — clears with time.
 const _FINAL_429_CODES = ("credit_balance_exhausted", "organization_spend_limit_exceeded",
                           "project_spend_limit_exceeded", "organization_usage_limit_exceeded",
-                          "insufficient_quota")
+                          "insufficient_quota", "quota_exceeded")
 
 # Whether a failed exchange is worth another attempt: its status and, for a 429, its body.
 _is_retryable(status::Integer, body)::Bool =
@@ -1192,8 +1196,8 @@ end
 # the time since, whichever request of the call it surfaces in); whether user code
 # has run (a retry after that would replay output); the first exception user code
 # raised, recorded before HTTP.jl can replace it with its rendering of the aborted exchange;
-# and the reply that exception landed on once its finish reason had arrived — answered and
-# billed, so the call's failure bills it.
+# and the state of the latest attempt, whose usage, as far as its provider reported it, a
+# call that ends uncommitted bills (`_settled`).
 mutable struct _StreamCtl
     const token::Union{Nothing,CancelToken}
     const stop::CancelToken
@@ -1201,7 +1205,7 @@ mutable struct _StreamCtl
     const started::UInt64
     fired::Bool
     failure::Union{Nothing,_UserCallbackError}
-    answered::Union{Nothing,StreamState}
+    live::Union{Nothing,StreamState}
 end
 function _StreamCtl(token::Union{Nothing,CancelToken}, started::UInt64)
     stop = CancelToken()
@@ -1394,14 +1398,26 @@ _resumed_state(s::StreamState) = StreamState(content=copy(s.content), refusal=co
 _next_hop(chat::Chat, turn::_StreamTurn, state::StreamState) =
     _next_request(chat, turn.hop, turn.body, state.finish_reason, state.continuation_token, state.usage)
 
-# A streamed turn's result. One that failed after earlier requests were answered adds their cost
-# to the chat's total, since they were billed; nothing is committed.
-_settled(::Chat, ::_StreamTurn, r::LLMSuccess) = r
-function _settled(chat::Chat, turn::_StreamTurn, r::LLMRequestResponse)
-    s = turn.state
-    isnothing(s) || _accrue_hops!(chat, turn.usage, s.model)
+# A streamed turn's result. One that ends uncommitted adds what its requests were billed to the
+# chat's total, as far as the providers reported it: the turn's earlier replies, and the usage the
+# latest attempt reported before a stop, cancel, timeout, dropped connection or user code ended it.
+# A provider bills a request its client stopped reading (of a cancelled interaction, Google says
+# "Read `usage` to see the billed tokens", https://ai.google.dev/gemini-api/docs/long-decode), so
+# this is a lower bound: a request stopped before its usage arrived adds nothing. A reply the
+# provider ended with an error event adds nothing either: the provider answered it with its own
+# failure. Nothing is committed.
+_settled(::Chat, ::_StreamTurn, ::Union{Nothing,StreamState}, r::LLMSuccess) = r
+function _settled(chat::Chat, turn::_StreamTurn, live::Union{Nothing,StreamState}, r::LLMRequestResponse)
+    billed = _billed_turn(turn, live)
+    s, u = billed.state, billed.usage
+    isnothing(s) || isnothing(u) || _accrue_hops!(chat, u, s.model)
     r
 end
+# The turn with the latest attempt's reply added, unless the turn holds it already (a reply that
+# continued the turn) or the provider ended that reply with an error.
+_billed_turn(turn::_StreamTurn, ::Nothing) = turn
+_billed_turn(turn::_StreamTurn, live::StreamState) =
+    live === turn.state || !isnothing(live.error) ? turn : _next_turn(turn, live)
 
 """
     _stream_attempt(chat, body, callback, on_tool_call, cfg, t0, io_ref, ctl, turn) -> (; result, resp)
@@ -1425,7 +1441,7 @@ state.
 """
 function _stream_attempt(chat::Chat, body, callback, on_tool_call,
                          cfg::RequestConfig, t0::UInt64, io_ref, ctl::_StreamCtl, turn::_StreamTurn)
-    state = _resumed_state(turn.state)
+    state = ctl.live = _resumed_state(turn.state)   # what it reports is billed if the call ends uncommitted
     m = Ref{Union{Message,Nothing}}(nothing)
     next = Ref{Union{String,Nothing}}(nothing)   # the next request's body, when this reply continues the turn
     raw_buffer = IOBuffer()  # wire bytes for non-200/truncation reporting (a streamed resp.body is empty)
@@ -1545,13 +1561,10 @@ function _stream_attempt(chat::Chat, body, callback, on_tool_call,
         # that would have carried the sentinel). Its generation is billed.
         answered = isnothing(state.error) && (!isnothing(m[]) || !isnothing(state.finish_reason))
         # User code failed: its exception is the outcome — never teardown noise and
-        # never retried, whatever HTTP.jl surfaced while the exchange unwound. An answered
-        # reply is handed to the call's failure, which bills it.
+        # never retried, whatever HTTP.jl surfaced while the exchange unwound. The call's
+        # failure bills what the reply reported (`ctl.live`).
         failure = ctl.failure
-        if !isnothing(failure)
-            answered && (ctl.answered = state)
-            throw(failure)
-        end
+        isnothing(failure) || throw(failure)
         # Byte-gap idle breach: classified by `_classify_stream_timeout` from the
         # seam's armed-timer set (our guard's close echo, or the native read-idle
         # timer — which can fire before the first byte too, while the
@@ -1610,9 +1623,9 @@ Streaming request loop over the requests of one turn: one request, or one per ho
 generation the provider continues (`_continuation_body`), each a request of its own with the
 whole `cfg` budget, its attempts made by `_stream_hop`. A stop (`token`, or the callback's
 close flag) ends the call with `UniLMCancelled` in `cause`, never retried; an exception from
-user code ends it with that exception in `cause`. A turn that fails after earlier requests were
-answered adds their cost to the chat's total, since they were billed, and so does an exception
-from user code after the reply it landed on was answered (`_StreamCtl`); nothing is committed.
+user code ends it with that exception in `cause`. A turn that ends uncommitted adds what its
+requests were billed to the chat's total, as far as their providers reported it (`_settled`):
+the earlier replies of the turn and the latest attempt's reported usage; nothing is committed.
 `InterruptException` always rethrows; every other failure becomes a typed result value.
 """
 function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestConfig, t0::UInt64,
@@ -1625,7 +1638,7 @@ function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestCon
     try
         while true
             result = _stream_hop(chat, request, callback, on_tool_call, cfg, start, io_ref, ctl, turn)
-            result isa _StreamHop || return _settled(chat, turn, result)
+            result isa _StreamHop || return _settled(chat, turn, ctl.live, result)
             # The next request starts with the whole budget, a retry of it replays nothing
             # that an earlier reply delivered, and a failure of it names its own request id.
             # A stop already set ends the call before that request is sent: it names the
@@ -1639,8 +1652,6 @@ function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestCon
         _find_exception(x -> x isa InterruptException, e) !== nothing && rethrow()
         u = _unwrap_exception(e)
         req_id = !isnothing(io_ref[]) ? _get_request_id(io_ref[]) : _get_request_id(e)
-        answered = ctl.answered
-        isnothing(answered) || (turn = _next_turn(turn, answered))
         failure = if u isa _UserCallbackError
             LLMCallError(error=_error_text(u.thrown), self=chat, status=nothing,
                          request_id=req_id, cause=u.thrown isa Exception ? u.thrown : nothing)
@@ -1651,7 +1662,7 @@ function _stream_drive(chat::Chat, body, callback, on_tool_call, cfg::RequestCon
                          status=(hasproperty(u, :status) ? u.status : nothing),
                          request_id=req_id, cause=u isa Exception ? u : nothing)
         end
-        return _settled(chat, turn, failure)
+        return _settled(chat, turn, ctl.live, failure)
     finally
         _off_cancel(token, link)
     end
@@ -1769,12 +1780,19 @@ carries the finish reason; on the OpenAI wire it precedes the usage chunk and
 the HTTP body ends, at most 0.5 s later (a body still open then has its connection
 closed rather than reused). An exception thrown by `callback` or `on_tool_call` ends
 the call with that exception in `cause`: never retried, nothing committed, and no
-callback runs after it; a reply whose finish reason had arrived when it was thrown was
-answered and billed, so its cost is added to [`cumulative_cost`](@ref). Time spent in
-these callbacks does not count toward `stream_idle_timeout`, which bounds only the gap
-between bytes off the socket. A user `InterruptException` is never converted into a
-result value: it propagates, so `fetch` on the streaming task throws a
-`TaskFailedException` whose `task.exception` is the `InterruptException`.
+callback runs after it. Time spent in these callbacks does not count toward
+`stream_idle_timeout`, which bounds only the gap between bytes off the socket. A user
+`InterruptException` is never converted into a result value: it propagates, so `fetch`
+on the streaming task throws a `TaskFailedException` whose `task.exception` is the
+`InterruptException`.
+
+A stream that ends without committing a turn — stopped, cancelled, timed out, cut off,
+or ended by an exception from `callback` or `on_tool_call` — adds the usage its provider
+had reported to [`cumulative_cost`](@ref), as a lower bound of what was billed: Anthropic
+reports a request's input when its stream starts, Gemini the usage so far on every chunk,
+and OpenAI only after the finish reason, so a stopped OpenAI stream adds nothing. A
+request stopped before any usage arrived adds nothing, though the provider bills it; so
+does an attempt that was retried, and a stream the provider ended with an error event.
 
 `config::Union{Nothing,RequestConfig}`: per-call timeout/retry budget; `nothing`
 resolves the ambient configuration (`with_request_config` scope, else the process
@@ -1791,8 +1809,8 @@ all. The result is one assistant turn — the replies' parts joined, their usage
 field by field, since every reply is billed, and priced at the tier the last reply
 reported. Each request has the whole `config` budget, timeouts and retries alike; a retry
 sends its request again from the start: a stream that drops after one of its checkpoint
-tokens is not resumed from it, and what Google bills for the dropped stream (up to that
-checkpoint) is not added to [`cumulative_cost`](@ref). A turn still unfinished after the
+tokens is not resumed from it, and what Google bills for the attempt that dropped (up to
+that checkpoint) is not added to [`cumulative_cost`](@ref). A turn still unfinished after the
 last of those requests, or whose reply continues without having produced an output token
 (thinking included), is returned as it stands, with `finish_reason == "continuation"`. A
 request that fails ends the call with its failure and commits nothing, and the replies
@@ -1801,8 +1819,8 @@ the same `callback`, which receives one final message. The turn's completion mar
 last reply's finish reason, not a reply's `CONTINUATION`: a stop or cancel before it ends
 the call with `UniLMCancelled` in `cause` and nothing committed, and the replies already
 answered — one whose `CONTINUATION` chunk the stop, or a throwing callback, landed on
-included — are added to `cumulative_cost` too. Continuation is exercised against a local
-mock; a live CONTINUATION reply was not observed.
+included — are added to `cumulative_cost` too, with what the reply in flight had reported.
+Continuation is exercised against a local mock; a live CONTINUATION reply was not observed.
 
 `cancel::Union{Nothing,CancelToken}`: a [`CancelToken`](@ref); `nothing` resolves the
 ambient token of [`with_cancel`](@ref), at call entry. A cancel at any point — before

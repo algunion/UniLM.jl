@@ -40,15 +40,18 @@ the provider's pricing page lists no price for — such as OpenAI's Scale tier, 
 
 A row has no audio-token rates. [`estimated_cost`](@ref) bills the audio tokens
 (`prompt_audio_tokens`, `completion_audio_tokens`) of an `OPENAIServiceEndpoint` result at the
-model's audio-token rates, which UniLM has for `gpt-audio-1.5`, and the audio input of a Gemini
-result — native, OpenAI-compatible or Interactions — at the audio rate Google's pricing page
-states for the model, scaled by the billed tier: its own audio price (`gemini-3.1-flash-lite`,
-`gemini-3-flash-preview`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`) or its one input price
-for text, image, video and audio (`gemini-3.5-flash-lite`, `gemini-robotics-er-2-preview`).
-Any other audio — on another model or endpoint, Gemini audio output, or Gemini audio in a call
-that also hit the cache (a usage does not say how many cached tokens are audio, whose cache
-price the page lists apart or not at all) — leaves the estimate at `0.0`, with one warning per
-model.
+model's audio-token rates, which UniLM has for `gpt-audio-1.5`, and the audio input of a native
+Gemini or Interactions result at the input price Google's pricing page states for audio, scaled
+by the billed tier and a long prompt's multiples as text is: the model's own audio price where
+the page lists one apart (`gemini-3.1-flash-lite`, `gemini-3-flash-preview`, `gemini-2.5-flash`,
+`gemini-2.5-flash-lite`), else the row's input rate, since the page spells modalities out
+wherever their rates differ and an input price that names none is every modality's. Any other
+audio — on a model the page prices without audio (the image models) or does not list, on another
+endpoint, Gemini audio output, or Gemini audio in a call that also hit the cache (a usage does
+not say how many cached tokens are audio, whose cache price the page lists apart or not at all)
+— leaves the estimate at `0.0`, with one warning per model and endpoint.
+`GEMINIOpenAIServiceEndpoint` reports no audio count, so its audio input is priced at the text
+rate, a lower bound where the model's audio price is its own; such a request warns once per model.
 Off-peak discounts, other multimodal rates and hosted-tool fees are not included.
 
 A lock-guarded `AbstractDict{String,PriceRow}`: add or replace rows with
@@ -185,10 +188,12 @@ The model priced is `model` when given; else the one the provider reports having
 Responses or FIM result; else the one requested — `result.self.model` for Chat,
 `result.embeddings.model` for Embeddings.
 
-Returns `0.0` for failures, which carry no billable usage, for an unpriced model, and for audio
-tokens UniLM has no rate for (see [`DEFAULT_PRICING`](@ref) for the audio it prices); the last
-two also log one warning per model id. A billed service tier the provider's pricing page lists
-no price for is estimated at the standard rates, with one warning per model and tier. Throws
+Returns `0.0` for failures, which carry no billable usage, for an unpriced model, for audio
+tokens UniLM has no rate for (see [`DEFAULT_PRICING`](@ref) for the audio it prices) and for an
+embeddings reply that reported no usage (Gemini's OpenAI-compatible endpoint reports none);
+the last three also log a warning, once per model id (for audio, per model and endpoint). A
+billed service tier the provider's pricing page lists no price for is estimated at the standard
+rates, with one warning per model and tier. Throws
 `ArgumentError` for result types
 outside the token-billed APIs — see [`token_usage`](@ref) — and, unless `model` is given,
 for an [`ImageSuccess`](@ref): the Images API bills image tokens at rates a price row does
@@ -216,9 +221,20 @@ function estimated_cost(result::LLMRequestResponse;
     isnothing(mdl) && return 0.0                   # a failure: nothing was billed
     service = _result_service(result)
     isnothing(model) && _is_local(service, mdl) && return 0.0
+    _unreported_usage(result, mdl)
     rates = _price_row(pricing, mdl)
     isnothing(rates) && return 0.0
     _billed_cost(service, mdl, u, rates)
+end
+
+# A reply that reported no usage leaves nothing to price, and a silent 0.0 would read as a free
+# call, so an embeddings reply without usage says so once per model (Gemini's OpenAI-compatible
+# endpoint returns embeddings without `usage`).
+_unreported_usage(::LLMRequestResponse, ::String)::Nothing = nothing
+function _unreported_usage(r::EmbeddingSuccess, model::String)::Nothing
+    isnothing(r.usage) && @warn "the embeddings reply reported no token usage; its estimated cost is 0.0" model _id = Symbol(
+        "unilm_unreported_usage_", model) maxlog = 1
+    nothing
 end
 
 # The model a result is priced at when the caller names none: the one the provider reports
@@ -235,12 +251,24 @@ _priced_model(r::LLMRequestResponse)::Nothing = issuccess(r) ? throw(ArgumentErr
 
 # The standard rates, billed for every provider without a `_billed_cost` method of its own. A
 # price row has no audio-token rates, so audio tokens leave the call unpriced.
-function _billed_cost(_, model::String, u::TokenUsage, rates::PriceRow)::Float64
-    _counts_audio(u) && return _unpriced_audio(model)
+function _billed_cost(service, model::String, u::TokenUsage, rates::PriceRow)::Float64
+    _counts_audio(u) && return _unpriced_audio(service, model)
     cached = min(u.cached_tokens, u.prompt_tokens)        # cache reads, at the discounted rate
     fresh = u.prompt_tokens - cached - u.cache_write_tokens
     fresh * rates.input + cached * rates.cached_input + u.cache_write_tokens * rates.input +
         u.completion_tokens * rates.output
+end
+
+_counts_audio(u::TokenUsage)::Bool = u.prompt_audio_tokens > 0 || u.completion_audio_tokens > 0
+
+# Audio tokens that no audio-token rate covers leave the call unpriced, as a model without a price
+# row is: `0.0`, and a warning that names the model and the endpoint, once for each pair, so the
+# warning of one endpoint does not hide another's.
+function _unpriced_audio(service, model::String)::Float64
+    endpoint = _service_name(service)
+    @warn "no audio-token rates for this model on this endpoint; its estimated cost is 0.0" model endpoint _id = Symbol(
+        "unilm_unpriced_audio_", endpoint, "_", model) maxlog = 1
+    0.0
 end
 
 # Exact id, then the dated-snapshot alias (OpenAI answers an alias with a
@@ -273,6 +301,15 @@ _accumulate_cost!(chat::Chat, result::LLMSuccess) = (chat._cumulative_cost[] += 
 """
     cumulative_cost(chat::Chat) -> Float64
 
-Return the cumulative estimated cost accumulated by `chatrequest!` calls on this `Chat`.
+Return the estimated cost, in USD, that [`chatrequest!`](@ref) calls on this `Chat` have
+accrued, priced with [`DEFAULT_PRICING`](@ref) as [`estimated_cost`](@ref) prices a result.
+A committed turn adds its result's cost. A call that ends without committing one adds what
+its provider reported billing it, a lower bound: the replies of a continued Gemini turn
+received before the failure or stop, and the usage a stream had reported when it was stopped,
+cancelled, timed out, cut off or ended by an exception from its `callback` or `on_tool_call`
+— Anthropic reports a request's input when its stream starts and Gemini the usage so far on
+every chunk, while OpenAI reports it after the finish reason. A request stopped before any
+usage arrived adds nothing, though the provider bills it, as do an attempt that was retried
+and a stream the provider ended with an error event.
 """
 cumulative_cost(chat::Chat)::Float64 = chat._cumulative_cost[]

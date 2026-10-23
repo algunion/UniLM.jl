@@ -120,10 +120,10 @@ end
         @test cost2 ≈ 5.25
     end
 
-    @testset "unknown model returns 0" begin
+    @testset "unknown model returns 0, with a warning" begin
         chat2 = Chat(model="unknown-model")
         s2 = LLMSuccess(message=m, self=chat2, usage=u)
-        @test estimated_cost(s2) == 0.0
+        @test (@test_logs (:warn, "no price row for this model; its estimated cost is 0.0") estimated_cost(s2)) == 0.0
     end
 
     @testset "failure returns 0" begin
@@ -142,11 +142,12 @@ end
         @test estimated_cost(s1("jev-1.14.0")) == estimated_cost(s1("jev-latest")) == estimated_cost(s1("jev-1.13.0"))
         @test estimated_cost(s1("jev-latest"); model="jev-2.0.10") ≈ 0.042
         @test estimated_cost(LLMSuccess(message=m, self=Chat(model="jev-2.0.10"), usage=ju)) ≈ 0.042
+        unpriced = (:warn, "no price row for this model; its estimated cost is 0.0")
         for other in ("jev-9", "jev-1.14", "jev-1.14.0-rc1", "xjev-1.14.0")
-            @test estimated_cost(s1(other)) == 0.0
+            @test (@test_logs unpriced estimated_cost(s1(other))) == 0.0
         end
         # A caller-supplied table without a jev-latest row has no family rate to fall back to.
-        @test estimated_cost(s1("jev-1.14.0"); pricing=Dict("gpt-5.4" => DEFAULT_PRICING["gpt-5.4"])) == 0.0
+        @test (@test_logs unpriced estimated_cost(s1("jev-1.14.0"); pricing=Dict("gpt-5.4" => DEFAULT_PRICING["gpt-5.4"]))) == 0.0
         # A dated snapshot suffix is stripped before the lookup: the base version's row applies.
         @test estimated_cost(s1("jev-1.13.0-2026-09-22")) == estimated_cost(s1("jev-1.13.0")) > 0
     end
@@ -276,10 +277,10 @@ end
     es_lg = EmbeddingSuccess(embeddings=emb_lg, usage=u, raw=Dict{String,Any}())
     @test estimated_cost(es_lg) ≈ 500_000 * DEFAULT_PRICING["text-embedding-3-large"].input
 
-    # An unpriced embedding model (resolved from embeddings.model, not in DEFAULT_PRICING) → 0.
+    # An unpriced embedding model (resolved from embeddings.model, not in DEFAULT_PRICING) → 0, with a warning.
     emb_unk = Embeddings("hello"; model="text-embedding-unknown")
     es_unk = EmbeddingSuccess(embeddings=emb_unk, usage=u, raw=Dict{String,Any}())
-    @test estimated_cost(es_unk) == 0.0
+    @test (@test_logs (:warn, "no price row for this model; its estimated cost is 0.0") estimated_cost(es_unk)) == 0.0
 end
 
 @testset "_price per-token conversion" begin
@@ -623,22 +624,25 @@ end
     heard = TokenUsage(prompt_tokens=1000, completion_tokens=50, total_tokens=1050, prompt_audio_tokens=600)
     spoken = TokenUsage(prompt_tokens=1000, completion_tokens=50, total_tokens=1050, completion_audio_tokens=40)
     says = "no audio-token rates for this model on this endpoint; its estimated cost is 0.0"
-    warned(logs) = [(l.level, l.message, l.kwargs[:model]) for l in logs]
-    # Audio input or audio output: unpriced, with one warning per model.
+    warned(logs) = [(l.level, l.message, l.kwargs[:model], l.kwargs[:endpoint]) for l in logs]
+    # Audio input or audio output: unpriced, with one warning per model and endpoint.
     logs, total = Test.collect_test_logs() do
         estimated_cost(result(generic, "m-hears", heard); pricing) +
             estimated_cost(result(generic, "m-hears", spoken); pricing) +
             estimated_cost(result(generic, "m-speaks", spoken); pricing)
     end
     @test total == 0.0
-    @test warned(logs) == [(Base.CoreLogging.Warn, says, "m-hears"), (Base.CoreLogging.Warn, says, "m-speaks")]
-    # gpt-audio-1.5's audio-token rates are OpenAI's: on Azure and DeepSeek its text row prices no audio.
+    @test warned(logs) == [(Base.CoreLogging.Warn, says, "m-hears", :GenericOpenAIEndpoint),
+                           (Base.CoreLogging.Warn, says, "m-speaks", :GenericOpenAIEndpoint)]
+    # gpt-audio-1.5's audio-token rates are OpenAI's: on Azure and DeepSeek its text row prices no audio,
+    # and the warning of the one endpoint does not hide the other's.
     logs, total = Test.collect_test_logs() do
         estimated_cost(result(AZUREServiceEndpoint, "gpt-audio-1.5", spoken)) +
             estimated_cost(result(DeepSeekEndpoint("k"), "gpt-audio-1.5", heard))
     end
     @test total == 0.0
-    @test warned(logs) == [(Base.CoreLogging.Warn, says, "gpt-audio-1.5")]
+    @test warned(logs) == [(Base.CoreLogging.Warn, says, "gpt-audio-1.5", :AZUREServiceEndpoint),
+                           (Base.CoreLogging.Warn, says, "gpt-audio-1.5", :DeepSeekEndpoint)]
     @test isapprox((@test_logs estimated_cost(result(OPENAIServiceEndpoint, "gpt-audio-1.5", spoken))),
                    (1000 * 2.5 + 10 * 10.0 + 40 * 64.0) / 1e6; rtol=1e-12)
     # Without audio tokens the same result bills the standard rates, silently.

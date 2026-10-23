@@ -328,6 +328,25 @@ end
     @test err isa ArgumentError && occursin("row 1", err.msg) && occursin("all-zero", err.msg)
 end
 
+@testset "an embeddings reply that reports no usage is estimated at 0.0, and says so once per model" begin
+    # Gemini's OpenAI-compatible endpoint returns embeddings without `usage` (observed 2026-10-22): the
+    # estimate has no tokens to price, and a silent 0.0 would read as a free call.
+    reply(usage; model="gemini-embedding-2") =
+        EmbeddingSuccess(embeddings=Embeddings("alpha"; service=_ET_G, model), usage=usage, raw=Dict{String,Any}())
+    says = "the embeddings reply reported no token usage; its estimated cost is 0.0"
+    pricing = merge(DEFAULT_PRICING, Dict("gemini-embedding-001" => UniLM._price(0.15, 0.15, 0.0)))
+    logs, total = Test.collect_test_logs() do
+        estimated_cost(reply(nothing); pricing) + estimated_cost(reply(nothing); pricing) +
+            estimated_cost(reply(nothing; model="gemini-embedding-001"); pricing)
+    end
+    @test total == 0.0
+    @test [(l.level, l.message, l.kwargs[:model]) for l in logs] ==
+          [(Base.CoreLogging.Warn, says, "gemini-embedding-2"), (Base.CoreLogging.Warn, says, "gemini-embedding-001")]
+    # A reply that counts its tokens is priced at the model's row, silently: $0.20 per 1M input tokens.
+    @test isapprox((@test_logs estimated_cost(reply(TokenUsage(prompt_tokens=1_000, total_tokens=1_000)))),
+                   1_000 * 0.20 / 1_000_000; rtol=1e-12)
+end
+
 using Sockets
 
 @testset "driver: a Gemini-numbered reply fills its inputs; a second row 0 is an EmbeddingCallError carrying the refusal" begin

@@ -6,7 +6,7 @@
 
 "Audio error result: the HTTP `status` (`nothing` when a Realtime session reported the failure as an event, which carries no HTTP status), the raw `response` (the reply body, the Realtime event's JSON, or for a refused WebSocket upgrade HTTP.jl's report of its status) and the `request_id` the service sent (`x-request-id`/`request-id` header), if any."
 @kwdef struct AudioFailure <: LLMRequestResponse; response::String; status::Union{Int,Nothing}; request_id::Union{String,Nothing} = nothing; end
-"Audio call that produced no usable reply (transport failure, timeout, cancel, a session that closed before its result, or a reply that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout, a [`UniLMCancelled`](@ref) for a cancel, and for a Realtime session the server closed the `HTTP.WebSockets.WebSocketError` carrying the close's status and reason, which `error` names too."
+"Audio call that produced no usable reply (transport failure, timeout, cancel, a session that closed before its result, or a reply that could not be decoded); `cause` is the underlying exception — a [`UniLMTimeout`](@ref) for a timeout, a [`UniLMCancelled`](@ref) for a cancel, and, when the server closed a Realtime session, the `HTTP.WebSockets.WebSocketError` that carries its status and reason, which `error` names too."
 @kwdef struct AudioCallError <: LLMRequestResponse; error::String; status::Union{Int,Nothing} = nothing; cause::Union{Nothing,Exception} = nothing; end
 
 # ─── Speech ──────────────────────────────────────────────────────────────────

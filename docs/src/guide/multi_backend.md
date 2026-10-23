@@ -217,8 +217,10 @@ one for 3.1 Pro Preview, 3 Flash Preview and the 2.5 models, and \$0.02 (Flex) a
 price there, so it is estimated at the standard rates with a warning. A prompt over 200K tokens
 on 3.1 Pro Preview (and its `-customtools` endpoint) or 2.5 Pro bills at the page's long-context
 rates, the whole request: twice the input and cache-hit rates and 1.5 times the output rate, at
-the tier's multiple. Audio input bills at the audio rate the page states for the model, and is
-unpriced where it states none (see [Cost Tracking](@ref cost_estimate)). A Flex request can wait
+the tier's multiple. Audio input bills at the input price the page states for audio — the model's
+own audio price where the page lists one apart, else its input price, which covers every modality
+when it names none — and is unpriced where the page prices input without audio (see
+[Cost Tracking](@ref cost_estimate)). A Flex request can wait
 in a queue for minutes — Google advises client timeouts of 10 minutes or more
 ([Flex inference](https://ai.google.dev/gemini-api/docs/flex-inference)) — and a stream's
 wait for its headers counts against `stream_idle_timeout` (120 s by default), so give a Flex
@@ -238,7 +240,8 @@ output token (thinking included), returns with `finish_reason == "continuation"`
 ends the call with nothing committed, as does a stop or cancel before the last hop's finish reason
 (a `CONTINUATION` is not the turn's completion marker), and the hops already answered — one whose
 `CONTINUATION` chunk a stop or a throwing callback landed on included — are added to
-`cumulative_cost`. A streamed turn streams every hop into the same callback. Continuation is
+`cumulative_cost`, with the usage the hop in flight had reported. A streamed turn streams every
+hop into the same callback. Continuation is
 exercised against a local mock; a live CONTINUATION reply was not observed.
 `GEMINIOpenAIServiceEndpoint` has no long decode.
 A Gemini 4 call (a `gemini-4-…` model) with no `RequestConfig` of yours in any channel waits up to
@@ -295,11 +298,12 @@ generations or `xhigh`/`max` effort). The endpoint declares `:chat`, `:tools`,
 
 The bare type is the endpoint with no options. An instance,
 `ANTHROPICServiceEndpoint(; betas, user_profile_id, workspace_id, inference_geo)`, adds
-them to every request made through it: `betas` comma-joined in the `anthropic-beta` header
-(except on [`list_models`](@ref): Anthropic's Models API reference marks it deprecated on
-`GET /v1/models`), `user_profile_id` (the `uprof_` id of the end customer the requests are
-for) in `anthropic-user-profile-id`, `workspace_id` in `anthropic-workspace-id`, and
-`inference_geo` (`"global"` or `"us"`) in the request body. A blank value, a control character, a comma in
+them to every request made through it: `betas` comma-joined in the `anthropic-beta` header,
+`user_profile_id` (the `uprof_` id of the end customer the requests are for) in
+`anthropic-user-profile-id`, `workspace_id` in `anthropic-workspace-id`, and `inference_geo`
+(`"global"` or `"us"`) in the request body. [`list_models`](@ref) sends only the workspace
+of these, the one header besides `anthropic-version` that Anthropic's Models API reference
+names (it marks `anthropic-beta` deprecated on `GET /v1/models`). A blank value, a control character, a comma in
 a beta name or another region throws `ArgumentError`. UniLM sends a beta's name only: the
 request fields and response blocks of beta features are not modelled. Either form goes
 wherever a `service` goes, and instances with the same options are equal. The options are
@@ -363,8 +367,8 @@ Sonnet 5.5, Fable 5.1 and Mythos 5.1 (use `"auto"` with strict tools, or a JSON 
 prefill) from the 4.6 generation on, Sonnet 5.5 and Haiku 5.5 included; `service_tier="fast"`
 on a model without fast mode (Opus 4.6, which would run the request at standard speed,
 included), or on Opus 5 and Opus 4.8 without the `fast-mode-2026-02-01` beta; and an
-endpoint's `inference_geo` on the Claude 4.5 models (Opus 4.5, Haiku 4.5). An id no row names gets
-only the rules that hold for every model, and append-only system placement.
+endpoint's `inference_geo` on the Claude 4.5 models (Opus 4.5, Sonnet 4.5, Haiku 4.5). An id no
+row names gets only the rules that hold for every model, and append-only system placement.
 
 Claude Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 accept a thinking block only while
 everything before it — the top-level `system` prompt, the `tools` and the earlier
@@ -408,8 +412,9 @@ header.
 
 [`estimated_cost`](@ref) bills Anthropic's surcharges on the model's price row: cache
 writes at 1.25× the input rate (5-minute) or 2× (1-hour), every rate 2× in fast mode
-and 1.1× for US-only inference (`inference_geo == "us"`), and every rate 5× for a
-Claude Haiku 5.5 prompt over 100,000 tokens (cache reads and writes included); the
+and 1.1× for US-only inference (`inference_geo == "us"`) on Claude 4.6 and later models
+(the 4.5 models take no `inference_geo` and bill at the standard rates), and every rate 5×
+for a Claude Haiku 5.5 prompt over 100,000 tokens (cache reads and writes included); the
 multipliers stack.
 
 ```@example backends
@@ -429,6 +434,7 @@ A PDF, a prompt cached for an hour, and the summarized thinking:
 ```julia
 chat = Chat(service=ANTHROPICServiceEndpoint, model="claude-haiku-5-5", reasoning_effort="low",
             prompt_cache_options=PromptCacheOptions(ttl="1h"))
+push!(chat, Message(Val(:system), "You summarize reports."))
 push!(chat, Message(Val(:user), "What does the report conclude?", DocumentAttachment("report.pdf")))
 result = chatrequest!(chat)
 reasoning_text(result)                       # the thinking, summarized

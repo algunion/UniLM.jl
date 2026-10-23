@@ -1025,6 +1025,57 @@ end
     end
 end
 
+@testset "a stream that ends uncommitted adds the usage message_start reported, once" begin
+    # Anthropic reports a request's input, cache reads and writes in message_start, before any text
+    # (https://platform.claude.com/docs/en/build-with-claude/streaming.md): a stream stopped,
+    # cancelled or ended by its callback after it was billed at least that usage, added once. Haiku
+    # 5.5: $0.10 input, $0.01 cache hit, $0.50 output per 1M tokens; writes 1.25x (5 min), 2x (1 h).
+    start = Dict("input_tokens" => 1000, "cache_creation_input_tokens" => 300, "cache_read_input_tokens" => 50,
+                 "cache_creation" => Dict("ephemeral_5m_input_tokens" => 200, "ephemeral_1h_input_tokens" => 100),
+                 "output_tokens" => 1, "service_tier" => "standard", "inference_geo" => "global")
+    ev(d) = "event: " * d["type"] * "\ndata: " * JSON.json(d) * "\n\n"
+    delta(s) = ev(Dict("type" => "content_block_delta", "index" => 0, "delta" => Dict("type" => "text_delta", "text" => s)))
+    head = ev(Dict("type" => "message_start", "message" => merge(_anthropic_message("claude-haiku-5-5", start),
+                                                                 Dict("content" => Any[], "stop_reason" => nothing)))) *
+           ev(Dict("type" => "content_block_start", "index" => 0, "content_block" => Dict("type" => "text", "text" => ""))) *
+           delta("hel")
+    tail = delta("lo") * ev(Dict("type" => "content_block_stop", "index" => 0)) *
+           ev(Dict("type" => "message_delta", "delta" => Dict("stop_reason" => "end_turn"), "usage" => Dict("output_tokens" => 20))) *
+           ev(Dict("type" => "message_stop"))
+    server = HTTP.listen!("127.0.0.1", 0; verbose=false) do http::HTTP.Stream
+        read(http)
+        HTTP.setstatus(http, 200)
+        HTTP.setheader(http, "Content-Type" => "text/event-stream")
+        HTTP.startwrite(http)
+        write(http, head); flush(http)
+        sleep(0.5)
+        write(http, tail)
+    end
+    cfg = RequestConfig(max_attempts=1, total_deadline=30.0)
+    haiku() = Chat(service=_AnthropicCapture("http://127.0.0.1:$(HTTP.port(server))/v1/messages"), model="claude-haiku-5-5",
+                   stream=true, messages=[Message(Val(:system), "s"), Message(Val(:user), "q")])
+    input = 1000 * 0.10 + 50 * 0.01 + 200 * 0.10 * 1.25 + 100 * 0.10 * 2.0
+    boom = ErrorException("user code failed")
+    try
+        withenv("ANTHROPIC_API_KEY" => "sk-ant-local-0000") do
+            for how in (:close, :token, :throw)
+                chat, tok = haiku(), CancelToken()
+                act(close) = how === :close ? (close[] = true) : how === :token ? cancel!(tok) : throw(boom)
+                r = fetch(chatrequest!(chat; config=cfg, cancel=tok, callback=(c, close) -> c == "hel" && act(close)))
+                @test r isa LLMCallError && length(chat.messages) == 2
+                @test isapprox(cumulative_cost(chat), (input + 1 * 0.50) / 1e6; rtol=1e-12)
+            end
+            # Run to its end: the reply's usage, its 20 output tokens included, once.
+            chat = haiku()
+            r = fetch(chatrequest!(chat; config=cfg))
+            @test r isa LLMSuccess && r.message.content == "hello" && r.usage.completion_tokens == 20
+            @test isapprox(cumulative_cost(chat), (input + 20 * 0.50) / 1e6; rtol=1e-12)
+        end
+    finally
+        close(server)
+    end
+end
+
 @testset "encode — assistant turns with no content and no tool calls are skipped" begin
     msgs = [Message(Val(:user), "a"), Message(role=RoleAssistant, content=""), Message(Val(:user), "b"),
             Message(role=RoleAssistant, refusal_message="Model refused to respond.", finish_reason=CONTENT_FILTER),
@@ -1483,11 +1534,14 @@ end
     for service in (ANTHROPICServiceEndpoint, ANTHROPICServiceEndpoint(), ANTHROPICServiceEndpoint(betas=["a"], user_profile_id="uprof_1"))
         @test !haskey(_ant_body(service), "inference_geo")
     end
-    for model in ("claude-opus-4-5", "claude-opus-4-5-20251101", "claude-haiku-4-5", "claude-haiku-4-5-20251001")
+    for model in ("claude-opus-4-5", "claude-opus-4-5-20251101", "claude-haiku-4-5", "claude-haiku-4-5-20251001",
+                  "claude-sonnet-4-5")
         e = _ant_err(ANTHROPICServiceEndpoint(inference_geo="us"); model)
         @test e isa ArgumentError && occursin(model, e.msg) && occursin("inference_geo", e.msg)
         @test !haskey(_ant_body(ANTHROPICServiceEndpoint(); model), "inference_geo")
     end
+    # The endpoint's docstring names the three 4.5 models the encoder refuses it for.
+    @test occursin("(Opus 4.5, Sonnet 4.5, Haiku 4.5)", string(@doc ANTHROPICServiceEndpoint))
 end
 
 @testset "ANTHROPICServiceEndpoint refuses a header value it cannot send and copies its betas" begin

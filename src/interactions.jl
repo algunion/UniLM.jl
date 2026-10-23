@@ -280,13 +280,15 @@ end
 # A text content part of a model_output step.
 _interaction_text_part(c) = c isa AbstractDict && get(c, "type", "") == "text"
 
-# A model answering across several steps (the hops of a long decode, text resumed after a
-# thought or a tool) adds one model_output step each, and Google's guides and SDK read the answer
-# as the text of every model_output step joined with no separator, whatever steps come between
-# (https://ai.google.dev/gemini-api/docs/long-decode). So the model_output steps are one message,
-# where the first of them is, holding one output_text part: the text parts of every step, joined
-# as written; the other steps keep their order around it. A user_input step, the interaction's
-# own input, is no part of the answer: the model_output steps after it are a message of their own.
+# A model answering across several steps in a row (the hops of a long decode, thoughts between
+# them) adds one model_output step each, and Google's SDK reads them as one text: it continues
+# "across `thought` steps and empty `model_output` steps … while still stopping at `user_input`
+# and tool call/result boundaries" (python-genai 180c3453,
+# https://github.com/googleapis/python-genai/commit/180c3453f91e4734b828534950fa7f8526934b59).
+# So consecutive model_output steps are one message, holding one output_text part: the text
+# parts of every step, joined as written. A thought keeps the answer open; any other step — a
+# function call or result, a hosted tool's step, a user_input step — ends it, and the
+# model_output steps after it are a message of their own.
 function _interaction_output(steps)::Vector{Any}
     out = Any[]
     answer = 0   # index in `out` of the message the next model_output step extends; 0 for none
@@ -300,6 +302,7 @@ function _interaction_output(steps)::Vector{Any}
             end
             _extend_answer!(out[answer], s)
         elseif t == "function_call"
+            answer = 0
             # Absent or null arguments: a call without arguments.
             args = something(get(s, "arguments", nothing), Dict{String,Any}())
             push!(out, Dict{String,Any}(
@@ -314,9 +317,9 @@ function _interaction_output(steps)::Vector{Any}
             # code_execution_*, url_context_*, …): surface them verbatim (native
             # type + fields, e.g. a thought step's signature) rather than
             # dropping. output_text still comes from model_output;
-            # function_calls() ignores them (no "function_call" type). Only an
-            # input step ends the answer.
-            t == "user_input" && (answer = 0)
+            # function_calls() ignores them (no "function_call" type). A thought
+            # leaves the answer open; every other step ends it.
+            t == "thought" || (answer = 0)
             push!(out, Dict{String,Any}(s))
         end
     end

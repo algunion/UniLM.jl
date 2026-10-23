@@ -31,9 +31,6 @@ else
 end
 ```
 
-Google shuts down `gemini-3.1-flash-lite` on May 7, 2027 and names
-`gemini-3.5-flash-lite` as its replacement.
-
 ## Messages, images, audio and documents (Gemini)
 
 The Interactions API takes its input as a list of steps, so `respond` sends each
@@ -185,11 +182,13 @@ Streamed Gemini Interactions assemble each step from the wire's incremental even
 and rebuild the output exactly as the non-streamed decode does: a streamed
 `respond(...; tools=…, stream=true)` finishes with status `requires_action` and its
 [`function_calls`](@ref) populated, like the non-streamed form. Thought steps carry
-their signature and their `summary` (from the streamed thought summaries); the
-`model_output` steps — the hops of a long answer, text resumed after a thought or a tool —
-make one message, where the first of them is, whose text is their text parts joined with no
-separator, as Google's guides and SDK read it (a `user_input` step starts a new one); and
-a function call whose `arguments` are `null` reads as `"{}"`. Initial text in
+their signature and their `summary` (from the streamed thought summaries); consecutive
+`model_output` steps — the hops of a long answer, thoughts between them or not — make one
+message, whose text is their text parts joined with no separator, as Google's SDK reads it,
+while a tool's step (a function call or result, a hosted tool's call or result) or a
+`user_input` step ends it, and the `model_output` steps after one make a message of their own
+([`output_text`](@ref) joins the messages with a newline); and a function call whose
+`arguments` are `null` reads as `"{}"`. Initial text in
 `step.start` and subsequent deltas are both included, in step order. Thought summaries
 stay separate from answer text ([`reasoning_summaries`](@ref) reads them), while
 signatures remain available in the provider's raw steps.

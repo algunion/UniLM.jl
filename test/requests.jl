@@ -807,40 +807,51 @@ end
     delete!(UniLM._MODEL_ENDPOINTS_AZURE_OPENAI, "gpt-4o-test")
 end
 
+# A local server answering every request as OpenAI answers a key it does not know (HTTP 401); `seen`
+# holds each request's method, target and body.
+function _rejected_key_server()
+    body = "{\"error\":{\"message\":\"Incorrect API key provided.\",\"type\":\"invalid_request_error\"," *
+           "\"param\":null,\"code\":\"invalid_api_key\"}}"
+    seen = Tuple{String,String,String}[]
+    guard = ReentrantLock()
+    server = HTTP.serve!("127.0.0.1", 0; verbose=false) do req
+        @lock guard push!(seen, (String(req.method), String(req.target), String(copy(req.body))))
+        HTTP.Response(401, ["Content-Type" => "application/json"], body)
+    end
+    (; server, url="http://127.0.0.1:$(HTTP.port(server))", seen, body)
+end
+
 @testset "chatrequest! kwargs with prompts" begin
-    @testset "string prompts build correct Chat" begin
-        # This will fail at HTTP level but we test the LLMCallError path
-        withenv("OPENAI_API_KEY" => "test-key") do
-            result = chatrequest!(
-                systemprompt="You are helpful.",
-                userprompt="Hello!",
-                model="gpt-4o"
-            )
-            # Without a real API key, we expect a call error
-            @test result isa LLMCallError || result isa LLMFailure
+    # Each form builds its Chat, sends it once and returns the rejected key's 401 as an LLMFailure.
+    srv = _rejected_key_server()
+    ep = GenericOpenAIEndpoint(srv.url, "sk-invalid-test-key")
+    cfg = RequestConfig(max_attempts=1)
+    sent(i) = JSON.parse(srv.seen[i][3])["messages"]
+    rejected(r) = r isa LLMFailure && r.status == 401 && r.response == srv.body
+    try
+        @testset "string prompts build correct Chat" begin
+            r = chatrequest!(systemprompt="You are helpful.", userprompt="Hello!", service=ep, model="m", config=cfg)
+            @test rejected(r) && length(r.self.messages) == 2
+            @test sent(1) == [Dict("role" => "system", "content" => "You are helpful."),
+                              Dict("role" => "user", "content" => "Hello!")]
         end
-    end
 
-    @testset "Message object prompts build correct Chat" begin
-        withenv("OPENAI_API_KEY" => "test-key") do
-            result = chatrequest!(
-                systemprompt=Message(role=UniLM.RoleSystem, content="System"),
-                userprompt=Message(role=UniLM.RoleUser, content="User"),
-                model="gpt-4o"
-            )
-            @test result isa LLMCallError || result isa LLMFailure
+        @testset "Message object prompts build correct Chat" begin
+            r = chatrequest!(systemprompt=Message(role=UniLM.RoleSystem, content="System"),
+                             userprompt=Message(role=UniLM.RoleUser, content="User"), service=ep, model="m", config=cfg)
+            @test rejected(r)
+            @test sent(2) == [Dict("role" => "system", "content" => "System"), Dict("role" => "user", "content" => "User")]
         end
-    end
 
-    @testset "messages keyword builds correct Chat" begin
-        withenv("OPENAI_API_KEY" => "test-key") do
-            msgs = [
-                Message(role=UniLM.RoleSystem, content="sys"),
-                Message(role=UniLM.RoleUser, content="usr")
-            ]
-            result = chatrequest!(; messages=msgs, model="gpt-4o")
-            @test result isa LLMCallError || result isa LLMFailure || result isa LLMSuccess
+        @testset "messages keyword builds correct Chat" begin
+            msgs = [Message(role=UniLM.RoleSystem, content="sys"), Message(role=UniLM.RoleUser, content="usr")]
+            r = chatrequest!(; messages=msgs, service=ep, model="m", config=cfg)
+            @test rejected(r) && r.self.messages !== msgs
+            @test sent(3) == [Dict("role" => "system", "content" => "sys"), Dict("role" => "user", "content" => "usr")]
         end
+        @test [(m, t) for (m, t, _) in srv.seen] == fill(("POST", "/v1/chat/completions"), 3)
+    finally
+        close(srv.server)
     end
 
     @testset "prompts beside messages are refused, not silently preferred" begin
@@ -858,26 +869,23 @@ end
     end
 end
 
-@testset "chatrequest! HTTP error handling" begin
-    @testset "non-stream request with invalid API key" begin
-        withenv("OPENAI_API_KEY" => "sk-invalid-key-for-testing") do
-            chat = Chat(model="gpt-4o")
-            push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
-            push!(chat, Message(role=UniLM.RoleUser, content="hi"))
-            result = chatrequest!(chat)
-            @test result isa LLMCallError || result isa LLMFailure
-        end
-    end
-end
-
-@testset "embeddingrequest! error handling" begin
-    @testset "with invalid API key" begin
-        withenv("OPENAI_API_KEY" => "sk-invalid-key-for-testing") do
-            emb = UniLM.Embeddings("test")
-            result = embeddingrequest!(emb)
-            @test result isa EmbeddingFailure
-            @test result.status == 401
-        end
+@testset "a rejected key is a failure carrying the server's 401, for Chat and Embeddings" begin
+    srv = _rejected_key_server()
+    ep = GenericOpenAIEndpoint(srv.url, "sk-invalid-test-key")
+    try
+        chat = Chat(service=ep, model="m")
+        push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
+        push!(chat, Message(role=UniLM.RoleUser, content="hi"))
+        result = chatrequest!(chat; config=RequestConfig(max_attempts=1))
+        @test result isa LLMFailure && result.status == 401 && result.response == srv.body
+        @test length(chat.messages) == 2                              # nothing committed
+        emb = UniLM.Embeddings("test"; service=ep, model="text-embedding-3-small")
+        result = embeddingrequest!(emb; config=RequestConfig(max_attempts=1))
+        @test result isa EmbeddingFailure && result.status == 401 && result.response == srv.body
+        @test [(m, t) for (m, t, _) in srv.seen] == [("POST", "/v1/chat/completions"), ("POST", "/v1/embeddings")]
+        @test JSON.parse(srv.seen[2][3]) == Dict("model" => "text-embedding-3-small", "input" => "test")
+    finally
+        close(srv.server)
     end
 end
 
@@ -939,6 +947,23 @@ _error_body(type, code) = JSON.json(Dict("error" => Dict("message" => "m", "type
     @test UniLM._is_retryable(503, _error_body("insufficient_quota", nothing)) == true
 end
 
+# Google's API errors page (https://ai.google.dev/gemini-api/docs/api-errors): an Interactions 429
+# `quota_exceeded` is "You have exceeded your daily quota" — "Wait until the quota resets or request a
+# quota increase" — while `rate_limit_exceeded` and `too_many_requests` say "Wait and retry with
+# exponential backoff", as the troubleshooting page says of generateContent's 429 RESOURCE_EXHAUSTED.
+@testset "_is_retryable: Gemini's daily quota is final, its rate limits are retried" begin
+    interactions(code) = JSON.json(Dict("error" => Dict("code" => code, "message" => "m")))
+    @test UniLM._is_retryable(429, interactions("quota_exceeded")) == false
+    @test UniLM._is_retryable(503, interactions("quota_exceeded")) == true
+    for code in ("rate_limit_exceeded", "too_many_requests")
+        @test UniLM._is_retryable(429, interactions(code)) == true
+    end
+    exhausted = Dict("error" => Dict("code" => 429, "message" => "Resource has been exhausted (e.g. check quota).",
+                                     "status" => "RESOURCE_EXHAUSTED"))
+    @test UniLM._is_retryable(429, JSON.json(exhausted)) == true
+    @test UniLM._is_retryable(429, JSON.json([exhausted])) == true        # the compatible endpoint's array body
+end
+
 # A server on an OS-assigned port that answers every request with HTTP 429, `body` and a zero
 # Retry-After; `hits` counts the requests that reached it.
 function _status_429_server(body::String)
@@ -967,7 +992,8 @@ end
             close(srv.server)
         end
     end
-    for body in (_error_body("insufficient_quota", nothing), _error_body(nothing, "insufficient_quota"))
+    for body in (_error_body("insufficient_quota", nothing), _error_body(nothing, "insufficient_quota"),
+                 JSON.json(Dict("error" => Dict("code" => "quota_exceeded", "message" => "daily quota"))))
         srv = _status_429_server(body)
         try
             r = chatrequest!(chat(srv.url); config=RequestConfig(max_attempts=3))
@@ -1711,7 +1737,7 @@ UniLM.encode_request(::_RefusingEncoder, ::Chat) = throw(ArgumentError("option n
     srv = _json_reply_server(_REPLY)
     try
         msgs = [Message(Val(:system), "s"), Message(Val(:user), "u")]
-        r = chatrequest!(; messages=msgs, service=GenericOpenAIEndpoint(srv.url, ""), model="m")
+        r = chatrequest!(; messages=msgs, service=GenericOpenAIEndpoint(srv.url, ""), model="gpt-6-luna")   # a priced id
         @test r isa LLMSuccess && length(r.self.messages) == 3   # the reply went to the result's chat
         @test length(msgs) == 2
     finally
@@ -1787,7 +1813,7 @@ end
         end
         @test srv.hits[] == 0
         # History off: nothing is appended, so a trailing assistant turn (a prefill) is sent.
-        prefill = Chat(service=GenericOpenAIEndpoint(srv.url, ""), model="m", history=false,
+        prefill = Chat(service=GenericOpenAIEndpoint(srv.url, ""), model="gpt-6-luna", history=false,   # a priced id
                        messages=[sys_user(); Message(role=UniLM.RoleAssistant, content="a")])
         @test chatrequest!(prefill) isa LLMSuccess
         @test srv.hits[] == 1

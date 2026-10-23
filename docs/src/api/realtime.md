@@ -21,10 +21,14 @@ resolves it the usual four ways, and captures it on the session's `config` field
   endpoint's credentials are never sent to `api.openai.com`.
 - **[`realtime_receive`](@ref)** is bounded by the session's
   `stream_idle_timeout` and throws `UniLMTimeout(:stream_idle, …)` on a breach.
-  Unblocking a parked read means ending the connection, without a close handshake
-  and without the send lock, so the breach surfaces just after the limit, even while a
-  [`realtime_send`](@ref) on another task is parked on a peer that stopped reading
-  (that send then throws too); the session is closed afterwards.
+  Unblocking a parked read means ending the read and the connection, without a close
+  handshake and without the send lock, so the breach surfaces just after the limit on
+  `ws://` — on `wss://` up to about 5 s later, the time the TLS close may wait to send its
+  close notice — even while a [`realtime_send`](@ref) on another task is parked on a peer
+  that stopped reading (that send then throws too); the session is closed afterwards. A
+  session built on a WebSocket opened over your own stream (`HTTP.WebSockets.open(io)`)
+  leaves that stream to you: the breach ends the read, and a send parked on the stream
+  waits until you close it.
 - **The session's lifetime is deliberately unbounded.** Once your handler runs,
   how long it stays connected is your decision — a Realtime session is meant to
   sit idle waiting for input.

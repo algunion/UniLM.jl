@@ -282,8 +282,9 @@ every kind as an `inlineData` part ahead of the text, an image's detail level as
 media resolution (`"low"`, `"high"`; `"auto"` sends none; `"original"` is refused, as is any
 level on the Gemini 2.5 and Gemma 4 models), and Gemini Interactions sends each as an `image`,
 `audio` or `document` part of an [`InputMessage`](@ref)'s content. A System One request
-carries images without a detail level and no documents, and an embedding input an image or
-a clip without a level. Each refusal is an `ArgumentError` before any network I/O.
+carries images without a detail level, and refuses a document and a sound clip; an embedding
+input carries an image or a clip without a level. Each refusal is an `ArgumentError` before
+any network I/O.
 """
 abstract type Attachment end
 
@@ -315,12 +316,10 @@ _sniff_document_mime(data::AbstractVector{UInt8})::Union{String,Nothing} =
 # (https://developers.openai.com/api/reference/resources/chat).
 const _IMAGE_DETAILS = ("auto", "low", "high", "original")
 _image_detail(::Nothing)::Nothing = nothing
-function _image_detail(level)::String
-    level isa AbstractString && level in _IMAGE_DETAILS || throw(ArgumentError(
-        "an image's detail level is one of $(join(repr.(_IMAGE_DETAILS), ", ")), or nothing for none " *
-        "(got $(repr(level)))"))
-    String(level)
-end
+_image_detail(level::AbstractString)::String = level in _IMAGE_DETAILS ? String(level) : _no_image_detail(level)
+_image_detail(level) = _no_image_detail(level)
+_no_image_detail(level) = throw(ArgumentError(
+    "an image's detail level is one of $(join(repr.(_IMAGE_DETAILS), ", ")), or nothing for none (got $(repr(level)))"))
 
 """
     ImageAttachment(path::AbstractString; detail=nothing)
@@ -329,7 +328,8 @@ end
 An image for a user [`Message`](@ref): PNG, JPEG, GIF or WebP, recognised from its
 leading bytes. `mime` holds the media type (`"image/png"`, …). `detail` is the
 level of detail an OpenAI model receives the image at — `"auto"`, `"low"`, `"high"`
-or `"original"`, its own dimensions on models that take them
+or `"original"`, the image at its original dimensions, on the models that accept that
+level, such as GPT-5.6
 ([image inputs](https://developers.openai.com/api/docs/guides/images-vision)) — or
 `nothing`, which sends none and leaves the model's default. The OpenAI Chat
 Completions wire sends it as the part's `detail`; an endpoint without an equivalent
@@ -417,9 +417,18 @@ DocumentAttachment(path::AbstractString) = DocumentAttachment(read(_attachment_f
 
 # Attachments hold bytes, and not every provider fetches URLs (Ollama does not): a URL
 # given where a file path is expected is named as such instead of failing as a missing file.
-_attachment_file(path::AbstractString) = occursin(r"^[A-Za-z][A-Za-z0-9+.-]*://", path) ? throw(ArgumentError(
-    "attachments are read from a file or from bytes, not a URL ($(repr(String(path)))); download it " *
-    "first (e.g. with Downloads.download) and pass the file or its bytes")) : path
+# A data URL (RFC 2397; URL schemes are case-insensitive) holds the bytes themselves, so it is
+# named by its media type, not its payload.
+function _attachment_file(path::AbstractString)
+    data = match(r"^data:[^,]*"i, path)
+    isnothing(data) || throw(ArgumentError(
+        "attachments are read from a file or from bytes, not a data URL ($(repr(data.match * ",…"))): pass the " *
+        "bytes it holds (for a `;base64` URL, `base64decode` of the text after its comma)"))
+    occursin(r"^[A-Za-z][A-Za-z0-9+.-]*://", path) && throw(ArgumentError(
+        "attachments are read from a file or from bytes, not a URL ($(repr(String(path)))); download it " *
+        "first (e.g. with Downloads.download) and pass the file or its bytes"))
+    path
+end
 
 # The bytes stay reachable through the fields; printing them would flood the REPL.
 Base.show(io::IO, a::ImageAttachment) = print(io, "ImageAttachment(", a.mime, ", ", length(a.data), " bytes",
@@ -614,17 +623,22 @@ _wire_part(a::DocumentAttachment) = Dict{Symbol,Any}(:type => "file",
     :file => Dict(:filename => a.filename, :file_data => _data_url(a)))
 
 # An attachment goes out only in the shape its wire gives it — an `image_url`, `input_audio`
-# or `file` part, an Ollama `images` entry, a System One asset — and every path that
-# carries one maps it explicitly. Written by JSON.jl's struct lowering, its bytes would go
-# out as an array of numbers that no service reads as media; reaching this method means
-# the attachment sits where nothing maps it, such as inside a struct of the caller's own.
-JSON.lower(a::Attachment) = throw(ArgumentError(
-    "an $(nameof(typeof(a))) cannot be written as JSON: put it where the request carries media — a message's " *
-    "`attachments`, or a System One request's state, instructions or criteria (directly, or inside a Dict, " *
-    "vector, tuple or NamedTuple; not inside a struct of your own)"))
-# A document travels in a user message's attachments or a Responses `input_file` part only:
-# no System One wire carries one.
-JSON.lower(a::DocumentAttachment) = throw(ArgumentError(
+# or `file` part, an Ollama `images` entry, a Gemini part, a System One asset — and every path
+# that carries one maps it explicitly. Written by JSON.jl's struct lowering, its bytes would go
+# out as an array of numbers that no service reads as media; reaching these methods means
+# the attachment sits where nothing maps it — an OpenAI Responses input, a System One request
+# that cannot carry its kind, a struct of the caller's own — so each names where its kind goes.
+JSON.lower(a::ImageAttachment) = throw(ArgumentError(
+    "an ImageAttachment cannot be written as JSON: send it in a user message's `attachments`, in an " *
+    "`InputMessage`'s content on Gemini Interactions (`respond` on `GEMINIServiceEndpoint`), or in a System One " *
+    "request's state, instructions or criteria (directly, or inside a Dict, vector, tuple or NamedTuple; not " *
+    "inside a struct of your own). An OpenAI Responses input takes an image as " *
+    "`input_image(\"data:$(a.mime);base64,…\")`, its bytes as a base64 data URL"))
+JSON.lower(::AudioAttachment) = throw(ArgumentError(
+    "an AudioAttachment cannot be written as JSON: send it in a user message's `attachments`, or in an " *
+    "`InputMessage`'s content on Gemini Interactions (`respond` on `GEMINIServiceEndpoint`); a System One " *
+    "request carries no audio"))
+JSON.lower(::DocumentAttachment) = throw(ArgumentError(
     "a DocumentAttachment cannot be written as JSON: send it in a user message's `attachments`, or as " *
     "`input_file(document)` in a Responses input; a System One request carries no documents"))
 
@@ -815,8 +829,9 @@ instance adds options that every request through it carries
   can act on more than one.
 - `inference_geo`: `"global"` or `"us"`, the request's `inference_geo`, where inference
   runs ([data residency](https://platform.claude.com/docs/en/manage-claude/data-residency));
-  `nothing` leaves the workspace default. The Claude 4.5 models (Opus 4.5, Haiku 4.5) and
-  earlier answer it with HTTP 400, so a request for one of them throws `ArgumentError`.
+  `nothing` leaves the workspace default. The Claude 4.5 models
+  (Opus 4.5, Sonnet 4.5, Haiku 4.5) and earlier answer it with HTTP 400, so a request for one
+  of them throws `ArgumentError`.
 
 [`estimated_cost`](@ref) bills US-only inference (a usage that reports `inference_geo` `"us"`)
 at 1.1× every rate on Claude 4.6 and later; an earlier model is billed at the standard rates,
@@ -1308,7 +1323,10 @@ Creates a new `Chat` object with default settings:
 On the native OpenAI endpoint, `max_tokens` is sent as `max_completion_tokens` (setting
 both throws `ArgumentError`), `user` throws (use `safety_identifier` or
 `prompt_cache_key`), and `service_tier` must be one of `"auto"`, `"default"`, `"flex"`,
-`"scale"`, `"priority"` or `"fast"`.
+`"scale"`, `"priority"` or `"fast"`. Native Gemini and `GEMINIOpenAIServiceEndpoint` take
+`service_tier` `"standard"`, `"flex"` or `"priority"`, and native Gemini sends `seed` (an
+int32) and `store`; `ANTHROPICServiceEndpoint` takes `"auto"`, `"standard_only"` or
+`"fast"` (fast mode). Each refuses another value with `ArgumentError` before any request.
 
 OpenAI options, omitted from the request when unset:
 - `prompt_cache_options::Union{PromptCacheOptions,Nothing}`: prompt-cache `mode` and
@@ -1343,7 +1361,7 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
     stream::Union{Bool,Nothing} = nothing
     stop::Union{Vector{String},String,Nothing} = nothing # max 4 sequences
     max_tokens::Union{Int64,Nothing} = nothing
-    max_completion_tokens::Union{Int64,Nothing} = nothing # preferred over max_tokens; reasoning models reject max_tokens
+    max_completion_tokens::Union{Int64,Nothing} = nothing # OpenAI's current name for max_tokens; other wires' encoders take it over max_tokens
     presence_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
     response_format::Union{ResponseFormat,Nothing} = nothing
     frequency_penalty::Union{Float64,Nothing} = nothing # -2.0 - 2.0
@@ -1355,7 +1373,7 @@ must be in [0, 20], every `logit_bias` value (any `Real`) in [-100, 100], and
     verbosity::Union{String,Nothing} = nothing             # low|medium|high
     store::Union{Bool,Nothing} = nothing
     metadata::Union{AbstractDict,Nothing} = nothing
-    service_tier::Union{String,Nothing} = nothing          # auto|default|flex|scale|priority|fast
+    service_tier::Union{String,Nothing} = nothing          # per provider: see the docstring
     logprobs::Union{Bool,Nothing} = nothing
     top_logprobs::Union{Int64,Nothing} = nothing
     prediction::Union{AbstractDict,Nothing} = nothing
@@ -1477,10 +1495,11 @@ function JSON.lower(chat::Chat)
         v = getfield(chat, f)
         !isnothing(v) && (d[f] = v)
     end
-    # OpenAI and DeepSeek report a stream's token usage when asked through
-    # `stream_options.include_usage` (both document it); ask for the caller who set
-    # no stream_options, so a streamed turn is costed like a non-streamed one. Not
-    # for other OpenAI-compatible servers, which may reject the field.
+    # OpenAI, DeepSeek and Gemini's OpenAI-compatible endpoint report a stream's token usage
+    # when asked through `stream_options.include_usage` (each documents it; Google's
+    # compatibility page streams with `stream_options={'include_usage': True}`); ask for the
+    # caller who set no stream_options, so a streamed turn is costed like a non-streamed one.
+    # Not for other OpenAI-compatible servers, which may reject the field.
     chat.stream === true && isnothing(chat.stream_options) && _asks_stream_usage(chat.service) &&
         (d[:stream_options] = Dict(:include_usage => true))
     return d
@@ -1488,6 +1507,7 @@ end
 
 _asks_stream_usage(::Type{OPENAIServiceEndpoint}) = true
 _asks_stream_usage(::DeepSeekEndpoint) = true
+_asks_stream_usage(::Type{GEMINIOpenAIServiceEndpoint}) = true
 _asks_stream_usage(_) = false
 
 # The conversation as an endpoint's Chat Completions wire carries it. OpenAI keeps the
@@ -1539,8 +1559,10 @@ retention (OpenAI `"12h"`, Anthropic `"1h"`). `reasoning_tokens` is the part of
 `completion_tokens` spent on hidden reasoning. `prompt_audio_tokens` is the part of
 `prompt_tokens` that is audio input and `completion_audio_tokens` the part of
 `completion_tokens` that is audio output, as OpenAI Chat Completions reports them for a
-model that hears or speaks; `prompt_audio_tokens` also counts Gemini's audio input. The
-counts are 0 when the provider omits them. `service_tier` is the tier the provider reports
+model that hears or speaks; `prompt_audio_tokens` also counts Gemini's audio input on the
+native endpoint and Gemini Interactions. The counts are 0 when the provider omits them, as
+`GEMINIOpenAIServiceEndpoint` does: its audio input is in `prompt_tokens` alone.
+`service_tier` is the tier the provider reports
 billing the call at (OpenAI's `service_tier`, for example) and `inference_geo` the inference
 region it reports; each is `nothing` when the provider reports none. One exception: on
 `GEMINIOpenAIServiceEndpoint`, whose replies name no billed tier, a Chat result's
@@ -1552,7 +1574,8 @@ request at Standard and this endpoint does not report the downgrade.
 rest at the standard rates, unless the provider's own pricing applies (see
 [`DEFAULT_PRICING`](@ref)): OpenAI bills the audio tokens at the model's audio-token rates and
 Gemini audio input at the rate its pricing page states for the model; any other audio leaves
-the estimate at `0.0`.
+the estimate at `0.0`. Audio a provider does not count apart (`GEMINIOpenAIServiceEndpoint`'s)
+is priced with the text in `prompt_tokens`.
 Positionally the fields go in the order listed, the five counts first; the fields left out
 take their defaults.
 """
@@ -1596,8 +1619,8 @@ result came from: a marker type such as `OPENAIServiceEndpoint`, an endpoint ins
 The default method bills the row's standard rates: `(prompt_tokens - cached_tokens -
 cache_write_tokens) * input + cached_tokens * cached_input + cache_write_tokens * input +
 completion_tokens * output`. It leaves a usage that counts audio tokens (`prompt_audio_tokens`,
-`completion_audio_tokens`) unpriced — `0.0`, with one warning per model — since a row has no
-audio-token rates. A provider whose bill differs adds a method for its endpoint
+`completion_audio_tokens`) unpriced — `0.0`, with one warning per model and endpoint — since a
+row has no audio-token rates. A provider whose bill differs adds a method for its endpoint
 type in its own file, beside the pricing page it follows: a premium on cache writes
 (`cache_write_tokens`, `cache_write_extended_tokens`), a multiplier for the reported
 `service_tier` or `inference_geo`, a long-context tier. Such a method returns the whole
@@ -1619,7 +1642,9 @@ Successful Chat Completions API response.
   Non-zero means the turn was built from an incomplete wire.
 - `model::Union{String,Nothing}`: The model id the provider reports having served the turn
   (the reply's `model`; it differs from `self.model` when the provider routes the request to
-  another model); `nothing` where the endpoint does not report it, and from an
+  another model, or names the dated snapshot behind an alias, such as an id ending
+  `-YYYY-MM-DD`, which is priced at the alias's row); `nothing` where the endpoint does not
+  report it, and from an
   [`OllamaEndpoint`](@ref), whose cloud models are priced by the name requested.
   [`estimated_cost`](@ref) prices the call at this model when it is set, else at `self.model`.
 """
@@ -2008,6 +2033,12 @@ EmbeddingInput(; text=nothing, title=nothing, image=nothing, audio=nothing) = Em
 EmbeddingInput(text::AbstractString; title=nothing) = EmbeddingInput(text, title, nothing, nothing)
 EmbeddingInput(image::ImageAttachment) = EmbeddingInput(nothing, nothing, image, nothing)
 EmbeddingInput(audio::AudioAttachment) = EmbeddingInput(nothing, nothing, nothing, audio)
+EmbeddingInput(a::Attachment) = EmbeddingInput("", a)   # another kind: refused by name below
+# Any other value in a slot — a document as the image, a clip as the image — is refused by kind.
+EmbeddingInput(text::Union{AbstractString,Nothing}, title::Union{AbstractString,Nothing}, image, audio) =
+    throw(ArgumentError("an EmbeddingInput holds a text and a title (strings), an image (an ImageAttachment) and " *
+        "a sound clip (an AudioAttachment), each optional; got text::$(typeof(text)), title::$(typeof(title)), " *
+        "image::$(typeof(image)), audio::$(typeof(audio))"))
 function EmbeddingInput(text::AbstractString, media::Attachment...)
     other = unique(typeof(m) for m in media if !(m isa Union{ImageAttachment,AudioAttachment}))
     isempty(other) || throw(ArgumentError(

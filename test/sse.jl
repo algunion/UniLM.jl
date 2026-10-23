@@ -556,7 +556,7 @@ end
         ]
         server, base = fragmented_sse_server(chunks)
         try
-            chat = Chat(service=AnthropicWireEndpoint(base), model="claude-mock", stream=true)
+            chat = Chat(service=AnthropicWireEndpoint(base), model="claude-haiku-5-5", stream=true)
             push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
             res = fetch(chatrequest!(chat))
             @test res isa LLMFailure
@@ -571,7 +571,7 @@ end
         chunks = ["event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"bad\"}}\n\n"]
         server, base = fragmented_sse_server(chunks)
         try
-            chat = Chat(service=AnthropicWireEndpoint(base), model="claude-mock", stream=true)
+            chat = Chat(service=AnthropicWireEndpoint(base), model="claude-haiku-5-5", stream=true)
             push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
             res = fetch(chatrequest!(chat))
             @test res isa LLMCallError
@@ -613,7 +613,7 @@ end
         ]
         server, base = fragmented_sse_server(chunks)
         try
-            chat = Chat(service=AnthropicWireEndpoint(base), model="claude-mock", stream=true)
+            chat = Chat(service=AnthropicWireEndpoint(base), model="claude-haiku-5-5", stream=true)
             push!(chat, Message(Val(:system), "s")); push!(chat, Message(Val(:user), "u"))
             res = fetch(chatrequest!(chat))
             @test res isa LLMSuccess && res.message.content == "hello"
@@ -908,6 +908,61 @@ end
     end
 end
 
+@testset "driver — a stream that ends uncommitted adds the usage its provider reported, once" begin
+    # A server may report usage before the text (an OpenAI-compatible one on every chunk): the request
+    # was billed at least that much, so a call that ends uncommitted after it adds it to cumulative_cost,
+    # once — whether stopped, cancelled, timed out, cut off or ended by user code. 100,000 prompt tokens
+    # on gpt-6-luna, at $0.10 per 1M, are $0.01.
+    usage = Dict("prompt_tokens" => 100_000, "completion_tokens" => 0, "total_tokens" => 100_000)
+    chunk(d) = "data: " * JSON.json(merge(Dict{String,Any}("id" => "c", "model" => "gpt-6-luna"), d)) * "\n\n"
+    billed = chunk(Dict("choices" => Any[], "usage" => usage))
+    text(s; finish=nothing) =
+        chunk(Dict("choices" => [Dict("index" => 0, "delta" => Dict("content" => s), "finish_reason" => finish)]))
+    luna(url) = Chat(service=GenericOpenAIEndpoint(url, ""), model="gpt-6-luna", stream=true,
+                     messages=[Message(Val(:system), "s"), Message(Val(:user), "u")])
+    cost = 100_000 * 0.10 / 1_000_000
+    cfg = RequestConfig(request_timeout=10.0, stream_idle_timeout=1.0, total_deadline=30.0, max_attempts=1)
+    boom = ErrorException("user code failed")
+    for how in (:close, :token, :throw, :idle, :eof)
+        srv = paced_sse_server([billed, text("hel")]; hold=how === :eof ? 0.0 : 5.0)
+        try
+            chat, tok = luna(srv.url), CancelToken()
+            act(close) = how === :close ? (close[] = true) : how === :token ? cancel!(tok) :
+                         how === :throw ? throw(boom) : nothing
+            r = fetch(chatrequest!(chat; config=cfg, cancel=tok, callback=(c, close) -> c == "hel" && act(close)))
+            @test how === :eof ? r isa LLMFailure && r.status == 200 : r isa LLMCallError
+            how === :idle && @test r.cause isa UniLMTimeout && r.cause.phase === :stream_idle
+            how in (:close, :token) && @test r.cause isa UniLMCancelled
+            how === :throw && @test r.cause === boom
+            @test length(chat.messages) == 2                         # nothing committed
+            @test cumulative_cost(chat) ≈ cost
+        finally
+            HTTP.forceclose(srv.server)
+        end
+    end
+    # Run to its end: the turn is committed and its usage added once.
+    srv = paced_sse_server([billed, text("hel"), text("lo"; finish="stop"), "data: [DONE]\n\n"])
+    stopped = paced_sse_server([text("hel"), billed, text("lo"; finish="stop"), "data: [DONE]\n\n"]; gap=1.0)
+    failed = paced_sse_server([billed, text("hel"), chunk(Dict("error" => Dict("message" => "backend died",
+                                                                              "code" => 500))) * "data: [DONE]\n\n"])
+    try
+        chat = luna(srv.url)
+        r = fetch(chatrequest!(chat; config=cfg))
+        @test r isa LLMSuccess && r.usage.prompt_tokens == 100_000 && length(chat.messages) == 3
+        @test cumulative_cost(chat) ≈ cost
+        # Stopped before any usage arrived: nothing is added, though the provider bills the request.
+        chat = luna(stopped.url)
+        r = fetch(chatrequest!(chat; config=cfg, callback=(c, close) -> c == "hel" && (close[] = true)))
+        @test r isa LLMCallError && r.cause isa UniLMCancelled && cumulative_cost(chat) == 0.0
+        # A stream the provider ended with an error event adds nothing: the reply is the provider's failure.
+        chat = luna(failed.url)
+        r = fetch(chatrequest!(chat; config=cfg))
+        @test r isa LLMFailure && r.status == 500 && cumulative_cost(chat) == 0.0
+    finally
+        foreach(s -> HTTP.forceclose(s.server), (srv, stopped, failed))
+    end
+end
+
 @testset "driver — time in user code is not wire idle time" begin
     @testset "a callback 3 s per delta under stream_idle_timeout=1 still succeeds" begin
         srv = paced_sse_server([sse_text("a"), sse_text("b"), sse_text("c"; finish="stop"),
@@ -1043,6 +1098,11 @@ end
 
 @testset "driver — a Chat stream ends at [DONE], not at the end of its HTTP body" begin
     chunks = [sse_text("hi"), sse_text(""; finish="stop") * "data: [DONE]\n\n"]
+    # Both tests read pooling off the peers, so they start from an empty pool. The client these
+    # calls share keeps at most 64 idle connections in all and drops a dead one only when its own
+    # host is asked for again, so the closed servers of earlier tests can fill it; a full pool
+    # closes every finished connection rather than keeping it.
+    HTTP.close_idle_connections!()
 
     @testset "a body held open after [DONE] holds neither the final callback nor the result" begin
         srv = peer_sse_server(chunks; hold=20.0)

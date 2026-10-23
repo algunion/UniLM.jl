@@ -48,11 +48,14 @@ end
     @test length(concept_code_violations(page)) == 2
 end
 @testset "metrics — the ledger: each expected atom once, its witness inside its destination section" begin
-    docsrc = fixture_docsrc("x.md" => "# [X](@id x_start)\n\n## [S](@id x_s)\n\nthe witness\ntext\n")
-    ok = fixture_tsv(["anthropic:1\told.md:1\tx.md#x_s\tthe witness text", "anthropic:2\told.md:9\tdeleted\tduplicate of anthropic:1"])
-    @test check_ledger(ok, docsrc, ["anthropic:1", "anthropic:2"]) == String[]
-    bad = fixture_tsv(["anthropic:1\told.md:1\tx.md#x_s\tmissing words", "anthropic:1\told.md:2\tx.md#x_s\tthe witness text"])
-    @test length(check_ledger(bad, docsrc, ["anthropic:1", "anthropic:2"])) == 3   # absent witness, twice, one missing
+    docsrc = fixture_docsrc("x.md" => "# [X](@id x_start)\n\n## [S](@id x_s)\n\nthe witness\ntext that proves the placement\n")
+    expected = ["anthropic:1" => "old.md:1", "anthropic:2" => "old.md:9"]
+    ok = fixture_tsv(["anthropic:1\told.md:1\tx.md#x_s\tthe witness text that proves the placement",
+                      "anthropic:2\told.md:9\tdeleted\tduplicate of anthropic:1"])
+    @test check_ledger(ok, docsrc, expected) == String[]
+    bad = fixture_tsv(["anthropic:1\told.md:1\tx.md#x_s\tmissing words that are nowhere here",
+                       "anthropic:1\told.md:1\tx.md#x_s\tthe witness text that proves the placement"])
+    @test length(check_ledger(bad, docsrc, expected)) == 3   # absent witness, twice, one missing
 end
 @testset "metrics — tokens match case-sensitively at identifier boundaries, longest first, each span once" begin
     @test provider_tokens("Azure OpenAI deploys gpt-5.2.") == [(Set([:azure]), "Azure OpenAI"), (Set([:openai, :azure]), "gpt-")]
@@ -81,6 +84,20 @@ end
     @test provider_tokens("OpenAIDecisionsProtocol, OllamaSystemOneProtocol and GenericOpenAIEndpoint; GPT-5.4 mini") ==
           [(Set([:openai]), "OpenAI"), (Set([:ollama]), "Ollama"), (Set([:openai, :azure]), "GPT-")]
 end
+@testset "metrics — an entry's key variables are tokens of its provider" begin
+    @test all(e -> all(v -> provider_tokens("Set $v.") == [(Set([e.provider]), v)], e.key_vars), REGISTRY)
+    @test provider_tokens("Set AZURE_OPENAI_API_KEY, not OPENAI_API_KEY.") ==
+          [(Set([:azure]), "AZURE_OPENAI_API_KEY"), (Set([:openai]), "OPENAI_API_KEY")]
+    @test share([fixture_page("Set `OPENAI_API_KEY` before running.")], nothing) == 1          # the review's probe
+    @test share([fixture_page("Point OLLAMA_HOST at the server.\nNeutral line.\n")], :openai) ≈ 1 / 2
+    @test share([fixture_page("Point OLLAMA_HOST at the server.\nNeutral line.\n")], :ollama_decisions) == 0
+end
+@testset "metrics — an Evidence box is provenance, not prose; every other admonition is prose" begin
+    box = "!!! details \"Evidence\"\n    Measured on Jev, jev-1.13.0.\n\n    Jev again, in a second paragraph.\n"
+    @test share([fixture_page("Neutral prose.\n\n" * box * "\nNeutral again.\n")], nothing) == 0
+    @test share([fixture_page(box * "Claude, after the box.\n")], nothing) ≈ 1 / 2              # a dedented line ends it
+    @test share([fixture_page(box * "\n!!! note \"Measured\"\n    Measured on Jev.\n")], nothing) ≈ 1 / 3
+end
 @testset "metrics — fenced code, nested fences and table rows are never prose; an unclosed fence is refused" begin
     page = fixture_page("Neutral prose.\n\n````markdown\n```julia\nClaude\n```\nGemini\n````\n\n| Claude | yes |\n|---|---|\n\n" *
                         "!!! note\n    ```julia\n    Chat(service=ANTHROPICServiceEndpoint)\n    ```\n")
@@ -89,9 +106,10 @@ end
     @test err isa PageError && (err.file, err.line) == ("p.md", 3) && startswith(sprint(showerror, err), "PageError: p.md:3: ")
 end
 @testset "metrics — a binding block may bind several names; code outside it names no endpoint and no model" begin
-    page = fixture_page("```julia\nservice, model = OPENAIServiceEndpoint, \"gpt-5.4-mini\"\n" *
-                        "decider, decision_model = TYPESAFEServiceEndpoint, \"jev-latest\"\n```\n\nText.\n\n" *
-                        "```julia\nask(TYPESAFEServiceEndpoint, \"Is it late?\")\n```\n")
+    page = joinpath(fixture_docsrc("guide/system_one.md" =>                 # a Decisions concept page binds two endpoints
+        "```julia\nservice, model = OPENAIServiceEndpoint, \"gpt-5.4-mini\"\n" *
+        "decider, decision_model = TYPESAFEServiceEndpoint, \"jev-latest\"\n```\n\nText.\n\n" *
+        "```julia\nask(TYPESAFEServiceEndpoint, \"Is it late?\")\n```\n"), "guide/system_one.md")
     @test concept_code_violations(page) == ["$page:9: TYPESAFEServiceEndpoint"]
     before = fixture_page("```@setup page\nusing UniLM; Chat(service=GEMINIServiceEndpoint)\n```\n\n" *
                           "```julia\nservice, model = OPENAIServiceEndpoint, \"gpt-5.4-mini\"\n```\n")
@@ -101,6 +119,20 @@ end
                            "respond(\"hi\"; model=\"o3\"); println(\"gpt-5.2 row: \")\n```\n")   # a label is no model id
     @test concept_code_violations(unbound) ==                    # no binding block: all code counts, prose never
           ["$unbound:4: MistralEndpoint", "$unbound:4: \"mistral-small\"", "$unbound:5: \"o3\""]
+end
+@testset "metrics — a binding block exempts only its binding lines, within its chapter's endpoints and their models" begin
+    code(page, text) = (dir = fixture_docsrc(page => text); (joinpath(dir, page), concept_code_violations(joinpath(dir, page))))
+    bind(lines...) = "```julia\n" * join(lines, '\n') * "\n```\n"
+    openai, gemini = "service, model = OPENAIServiceEndpoint, \"gpt-5.4-mini\"", "gemini, gemini_model = GEMINIServiceEndpoint, \"gemini-3.8-flash\""
+    probe = bind(openai, gemini) * "\n" * bind("respond(\"again\"; service=gemini, model=gemini_model)")   # the review's probe
+    page, found = code("guide/agentic.md", probe)                               # a language-model page binds one endpoint
+    @test length(found) == 1 && startswith(only(found), "$page:3: GEMINIServiceEndpoint")
+    @test last(code("guide/system_one.md", probe)) == String[]                 # a Decisions page binds two
+    @test length(last(code("guide/system_one.md", bind(openai, gemini, "local_model = OllamaEndpoint(), \"qwen3:4b\"")))) == 1
+    @test length(last(code("guide/agentic.md", bind("service, model = OPENAIServiceEndpoint, \"claude-haiku-5-5\"")))) == 1
+    @test last(code("guide/system_one.md", bind("service, model = TYPESAFEServiceEndpoint, \"jev-latest\"", "pinned = \"jev-1.13.0\""))) ==
+          String[]                                                              # a model of the bound provider
+    @test length(last(code("guide/agentic.md", bind(openai, "chat = Chat(service=MistralEndpoint(), model=\"mistral-small\")")))) == 2
 end
 @testset "metrics — a reader's path: the entry's pages, then the concept pages they link" begin
     docsrc = fixture_docsrc(
@@ -141,31 +173,46 @@ end
     deepseek(n) = "providers/deepseek.md" => "# Title\n" * "Neutral prose.\n"^(99 - n) * "Claude answers.\n"^n
     @test passes(clean..., deepseek(1)) && !passes(clean..., deepseek(2))          # 1 of 100 lines passes, 2 do not
     @test !passes(clean..., "guide/streaming.md" => "# Title\n\n```julia\nChat(service=MistralEndpoint())\n```\n")
-    x = "x.md" => "# [X](@id x_s)\n\nthe witness text\n"
-    atoms = fixture_dir("anthropic.json" => """{"atoms": [{"topic": "a"}, {"topic": "b"}]}""", "ia.json" => """{"verdict": "v"}""")
+    x = "x.md" => "# [X](@id x_s)\n\nthe witness text of this placement\n"
+    atoms = fixture_dir("anthropic.json" => """{"atoms": [{"location": "index.md:16"}, {"location": "index.md:20"}]}""",
+                        "ia.json" => """{"verdict": "v"}""")
     ledgers = fixture_dir("anthropic.tsv" => join([LEDGER_HEADER, "anthropic:1\tindex.md:16\tdeleted\tmerged into anthropic:2",
-                                                   "anthropic:2\tindex.md:20\tx.md#x_s\tthe witness text"], '\n') * "\n")
+                                                   "anthropic:2\tindex.md:20\tx.md#x_s\tthe witness text of this placement"], '\n') * "\n")
     @test passes(clean..., x; ledgers, atoms)
     @test !passes(clean..., x; ledgers=fixture_dir(), atoms)                        # the unit's ledger is missing
     @test !passes(clean..., x; ledgers, atoms=fixture_dir("ia.json" => """{"verdict": "v"}"""))   # no atoms at all
     @test caught(() -> report(IOBuffer(); docsrc=fixture_docsrc(clean...), ledgers)) isa ArgumentError
 end
 @testset "metrics — a ledger row's section holds its witness; an empty witness proves nothing" begin
+    W, V = "the witness of this section, long enough", "another passage, long enough to prove"
     docsrc = fixture_docsrc("x.md" => "# [X](@id x_start)\n\n## [S](@id x_s)\n\n```julia\n# a comment, not a heading\n```\n\n" *
-                                      "the witness\n\n## [T](@id x_t)\n\nanother passage\n")
-    problems(rows::String...) = check_ledger(fixture_tsv(collect(rows)), docsrc, ["openai:1"])
-    @test problems("openai:1\ts\tx.md#x_s\tthe witness") == String[]                 # past a comment in code
-    @test length(problems("openai:1\ts\tx.md#x_s\tanother passage")) == 1           # the next section's text
-    @test problems("openai:1\ts\tx.md#x_start\tanother passage") == String[]        # a title's section is the page
+                                      "$W\n\n## [T](@id x_t)\n\n$V\n")
+    problems(rows::String...) = check_ledger(fixture_tsv(collect(rows)), docsrc, ["openai:1" => "s"])
+    @test problems("openai:1\ts\tx.md#x_s\t$W") == String[]                         # past a comment in code
+    @test length(problems("openai:1\ts\tx.md#x_s\t$V")) == 1                        # the next section's text
+    @test problems("openai:1\ts\tx.md#x_start\t$V") == String[]                     # a title's section is the page
     @test length(problems("openai:1\ts\tx.md#x_s\t ")) == 1                         # no witness
     @test length(problems("openai:1\ts\tdeleted\t")) == 1                           # deleted without a reason
-    @test length(problems("openai:1\ts\ty.md#x_s\tthe witness")) == 1               # no such page
-    @test length(problems("openai:1\ts\tx.md#x_u\tthe witness")) == 1               # no such section
-    @test length(problems("openai:1\ts\tx.md\tthe witness")) == 1                   # not page.md#id
+    @test length(problems("openai:1\ts\ty.md#x_s\t$W")) == 1                        # no such page
+    @test length(problems("openai:1\ts\tx.md#x_u\t$W")) == 1                        # no such section
+    @test length(problems("openai:1\ts\tx.md\t$W")) == 1                            # not page.md#id
     @test length(problems("openai:1\ts\tx.md#x_s")) == 2                            # three columns, so openai:1 has no row
     @test length(problems("openai:1\ts\tdeleted\tgone", "openai:7\ts\tdeleted\tgone")) == 1   # no atom of this ledger
     @test length(check_ledger(fixture_page("openai:1\ts\tdeleted\tgone\nopenai:1\ts\tdeleted\tgone\n"), docsrc,
-                              ["openai:1"])) == 1                         # no header: no row is read
+                              ["openai:1" => "s"])) == 1                  # no header: no row is read
+end
+@testset "metrics — a ledger row keeps its atom's source; a witness has 24 characters and stands below the heading" begin
+    docsrc = fixture_docsrc("x.md" => "# [X](@id x_start)\n\n## [Prompt caching on every provider](@id x_cache)\n\n" *
+                                      "A cached prefix is billed at its cached rate.\n")
+    body, deleted = "A cached prefix is billed at its cached rate.", "u:2\tdocs/src/index.md:20\tdeleted\tsaid again in u:1"
+    ledger(rows::String...) = check_ledger(fixture_tsv(collect(rows)), docsrc, ["u:1" => "docs/src/index.md:16", "u:2" => "docs/src/index.md:20"])
+    @test ledger("u:1\tdocs/src/index.md:16\tx.md#x_cache\t$body", deleted) == String[]
+    @test length(ledger("u:1\tdocs/src/index.md:20\tx.md#x_cache\t$body", "u:2\tdocs/src/index.md:16\tdeleted\tsaid again in u:1")) == 2
+    @test length(ledger("u:1\tdocs/src/index.md:16\tx.md#x_cache\tPrompt caching on every provider", deleted)) == 1   # the heading
+    @test length(ledger("u:1\tdocs/src/index.md:16\tx.md#x_cache\t$(body[1:23])", deleted)) == 1                     # 23 characters
+    @test ledger("u:1\tdocs/src/index.md:16\tx.md#x_cache\t$(body[1:24])", deleted) == String[]                      # 24
+    @test length(ledger("u:1\tdocs/src/index.md:20\tx.md#x_cache\tPrompt caching",                                     # the review's probe
+                        "u:2\tdocs/src/index.md:16\tx.md#x_cache\tcaching")) == 4
 end
 @testset "metrics — the command line takes --ledgers and --atoms together or not at all" begin
     dir = mktempdir()

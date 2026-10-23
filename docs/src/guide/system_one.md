@@ -223,7 +223,7 @@ question vaguer. The state may be a `NamedTuple`, `Dict`, `Vector`, `Tuple`,
 ([State](https://docs.typesafe.ai/concepts/state)), and its key order is read
 too, so prefer the ordered forms.
 
-## Reading answers
+## [Reading answers](@id Reading-answers)
 
 Any call that reaches the service returns one of three result types. A
 malformed request — a wrong `service`, duplicate or blank question names,
@@ -557,7 +557,7 @@ applied to every answer.
   our labelled tickets the same 0.8 sent twice as many to a person on OpenAI's
   Decisions API as on Jev ([Backends](@ref backends_confidence)).
 - Confidence is rescaled for the number of options, so adding a team moves the
-  bar ([Reading answers](@ref)); rewording the options moves it too
+  bar ([Reading answers](@ref Reading-answers)); rewording the options moves it too
   ([Fill a struct in one request](@ref jev_fill_struct)).
 - `nl_classify` packages this pattern — the sentences as options, the key back,
   a `min_confidence` gate or a `decide` policy — in one call ([Dispatch on

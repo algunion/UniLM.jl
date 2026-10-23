@@ -1,4 +1,4 @@
-# Image Generation API
+# [Image Generation API](@id images_api)
 
 Types and functions for generating and editing images: OpenAI's Images API
 (`/v1/images/generations`, `/v1/images/edits`) and Gemini's native image generation

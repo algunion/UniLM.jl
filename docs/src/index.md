@@ -13,7 +13,7 @@
 
 | I want to… | Use | Start with |
 | :--- | :--- | :--- |
-| generate text, call tools, run agents | an LLM: OpenAI, Anthropic, Gemini or any OpenAI-compatible provider | [Getting Started](@ref) |
+| generate text, call tools, run agents | an LLM: OpenAI, Anthropic, Gemini or any OpenAI-compatible provider | [Getting Started](@ref getting_started) |
 | decide about a text: route it, check it, classify it | a System One model: TypeSafe's Jev, OpenAI's Decisions API (beta) or a local decision model | [Start Here: Decisions in Five Minutes](@ref jev_start) |
 | both: decide before an LLM call, check its output after | Jev and an LLM together | [Decisions with LLMs](@ref jev_llm_guide) |
 
@@ -154,7 +154,7 @@ end
 
 ## Next Steps
 
-- [Getting Started](@ref) — setup and first requests
+- [Getting Started](@ref getting_started) — setup and first requests
 - [Chat Completions Guide](@ref chat_guide) — deep dive into `Chat` and `chatrequest!`
 - [Responses API Guide](@ref responses_guide) — the newer Responses API
 - [Image Generation Guide](@ref images_guide) — create images from text prompts
@@ -174,7 +174,7 @@ end
 
 Beyond chat and generation, UniLM wraps most of the OpenAI platform surface (OpenAI-only, except Audio: OpenAI and Ollama) — each has an API-reference page:
 
-- **Storage & retrieval** — [Files](api/files.md), [Vector Stores](api/vector_stores.md), [Conversations](api/conversations.md), [Uploads](api/uploads.md), [Containers](api/containers.md)
-- **Generation & media** — [Audio](api/audio.md), [Images](api/images.md)
-- **Jobs & ops** — [Batch](api/batch.md), [Fine-tuning](api/fine_tuning.md), [Moderations](api/moderations.md), [Webhooks](api/webhooks.md), [Realtime](api/realtime.md)
-- **Cross-cutting** — [Cost Tracking](@ref cost_guide), [Provider Capabilities](api/capabilities.md), [Retrieval & File Search](@ref retrieval_guide)
+- **Storage & retrieval** — [Files](@ref files_api), [Vector Stores](@ref vector_stores_api), [Conversations](@ref conversations_api), [Uploads](@ref uploads_api), [Containers](@ref containers_api)
+- **Generation & media** — [Audio](@ref audio_api), [Images](@ref images_api)
+- **Jobs & ops** — [Batch](@ref batch_api), [Fine-tuning](@ref fine_tuning_api), [Moderations](@ref moderations_api), [Webhooks](@ref webhooks_api), [Realtime](@ref realtime_api)
+- **Cross-cutting** — [Cost Tracking](@ref cost_guide), [Provider Capabilities](@ref capabilities_api), [Retrieval & File Search](@ref retrieval_guide)

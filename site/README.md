@@ -14,8 +14,8 @@ into this directory, and the site renders it.
    julia --project=docs docs/make.jl
    ```
 
-   This writes `src/app/**/page.md`, `src/navigation.json` and
-   `public/assets/`, all gitignored.
+   This writes `src/app/**/page.md`, `src/navigation.json`, `public/assets/`
+   and `public/anchors.json`, all gitignored.
 
 2. Build the static site:
 

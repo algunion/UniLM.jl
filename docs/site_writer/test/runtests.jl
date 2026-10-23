@@ -42,20 +42,18 @@ build(root::String, site::String; pages = [], modules = [WriterFixture]) =
              remotes = nothing, doctest = false, checkdocs = :none, modules, pages,
              warnonly = [:missing_docs, :cross_references])
 
-"The error a manual of `files` (path under `src/` => Markdown) stops with (`nothing` if it builds)."
-function build_error(files::Dict{String,String}; modules = [WriterFixture])
+"Builds a manual of `files` (path under `src/` => Markdown); returns the site directory it wrote."
+function build_site(files::Dict{String,String}; pages = [], modules = [WriterFixture])
     root = mktempdir()
     for (path, markdown) in files
         mkpath(dirname(joinpath(root, "src", path)))
         write(joinpath(root, "src", path), markdown)
     end
-    try
-        build(root, joinpath(root, "site"); modules)
-        nothing
-    catch err
-        err
-    end
+    build(root, joinpath(root, "site"); pages, modules)
+    joinpath(root, "site")
 end
+"The error a manual of `files` (path under `src/` => Markdown) stops with (`nothing` if it builds)."
+build_error(files::Dict{String,String}; modules = [WriterFixture]) = try build_site(files; modules); nothing catch err; err end
 build_error(markdown::String; modules = [WriterFixture]) = build_error(Dict("index.md" => markdown); modules)
 fixture_error(pages) = try build(joinpath(@__DIR__, "fixture"), mktempdir(); pages); nothing catch err; err end
 
@@ -220,10 +218,25 @@ paragraph(s) = W.Paragraph(W.Inline[W.Text(s)])
         end
     end
 
+    @testset "@eval — the Markdown it returns is written, its @ref links resolved" begin
+        page = read(joinpath(SITE, "src", "app", "guide", "page.md"), String)
+        @test occursin("| Fixture | [`WriterFixture.greet`](/api/#Main.WriterFixture.greet) |", page)
+    end
+    @testset "anchors.json — every anchor, page titles included, maps to the routes that define it" begin
+        anchors = JSON.parsefile(joinpath(SITE, "public", "anchors.json"))
+        @test anchors["fixture_home"] == ["/"] && anchors["Everything"] == ["/guide/"]
+        @test anchors["Main.WriterFixture.greet"] == ["/api/"]
+        @test all(rs -> !isempty(rs) && issorted(rs) && all(r -> startswith(r, "/") && endswith(r, "/"), rs), values(anchors))
+    end
+    @testset "anchors.json — a heading slug on two pages lists both routes" begin
+        site = build_site(Dict("index.md" => "# Home\n\n## Usage\n\nx\n", "a.md" => "# A\n\n## Usage\n\ny\n"); pages = ["index.md", "a.md"])
+        @test JSON.parsefile(joinpath(site, "public", "anchors.json"))["Usage"] == ["/", "/a/"]
+    end
+
     @testset "what the site cannot show stops the build, naming the page and the node" begin
         @testset "$named" for (markdown, named) in [
             "```@raw html\n<b>x</b>\n```" => "Documenter.RawNode",
-            "```@eval\nimport Markdown\nMarkdown.parse(\"evaluated\")\n```" => "Documenter.EvalNode",
+            "```@eval\nimport Markdown\nMarkdown.parse(\"## H\")\n```" => "a level-2 heading nested inside a block",
             "```@repl\n1 + 1\n```" => "Documenter.MultiCodeBlock",
             "```@index\n```" => "Documenter.IndexNode",
             "```@contents\n```" => "Documenter.ContentsNode",

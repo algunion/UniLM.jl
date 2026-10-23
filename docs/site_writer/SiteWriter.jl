@@ -41,7 +41,9 @@ manual into the site directory `site`:
 - `src/navigation.json`: the sidebar, the top-level pages first as the group
   "Introduction", then per section of `pages` a group of its pages or a family
   whose groups are its sections;
-- `public/assets/`: a copy of the manual's `assets/` directory.
+- `public/assets/`: a copy of the manual's `assets/` directory;
+- `public/anchors.json`: every anchor id — page titles, headings and docstrings —
+  mapped to the sorted routes of the pages that define it.
 
 Nothing is written unless every page converts.
 """
@@ -158,6 +160,13 @@ block(w::Walk, e::MarkdownAST.Heading, n) =
 block(w::Walk, e::MarkdownAST.CodeBlock, n) = [CodeBlock(language(w, e.info), e.code)]
 block(w::Walk, ::Documenter.MultiOutput, n) = Block[example_part(w, c.element) for c in n.children]
 block(w::Walk, ::Documenter.SetupNode, n) = Block[]
+# An @eval block's result is a field of its node, not a child, so Documenter's
+# cross-reference pass never reaches its @ref links: they are resolved here.
+function block(w::Walk, e::Documenter.EvalNode, n)
+    e.result === nothing && return Block[]
+    Documenter.crossref(w.doc, w.doc.blueprint.pages[w.key], e.result)
+    blocks(w, e.result.children)
+end
 block(w::Walk, ::Documenter.DocsNodesBlock, n) = blocks(w, n.children)
 function block(w::Walk, e::Documenter.DocsNode, n)
     push!(w.ids, e.anchor.id)
@@ -357,6 +366,12 @@ function Documenter.render(doc::Documenter.Document, w::SiteMarkdoc)
         mkpath(dirname(public))
         cp(assets, public)
     end
+    anchors = Dict{String,Vector{String}}()
+    for p in pages, id in [Documenter.anchor_label(title_node(doc.blueprint.pages[p.key]).element.anchor); p.ids]
+        push!(get!(anchors, id, String[]), p.route)
+    end
+    foreach(r -> unique!(sort!(r)), values(anchors))
+    write(joinpath(mkpath(joinpath(w.site, "public")), "anchors.json"), JSON.json(anchors; pretty = true) * "\n")
     @info "SiteWriter: wrote $(length(files)) pages, the navigation and the assets."
     nothing
 end

@@ -16,6 +16,7 @@
 /src/app/**/page.md
 /src/navigation.json
 /public/assets/
+/public/anchors.json
 
 # production
 /build

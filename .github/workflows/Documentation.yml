@@ -52,6 +52,16 @@ jobs:
             using Pkg
             Pkg.develop(PackageSpec(path=pwd()))
             Pkg.instantiate()'
+      # docs/test_redirects.jl runs the redirect stubs' script in this Node.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Test the docs tooling
+        run: |
+          julia --startup-file=no --project=docs/ docs/site_writer/test/runtests.jl
+          for test in docs/test_*.jl; do julia --startup-file=no --project=docs/ "$test"; done
       # The gh-pages folder the site is built for: the release being redeployed (refused
       # here, before anything is built, unless the run is on main, its tag exists and src/
       # and Project.toml equal the tag's), the version tag being built, else dev.
@@ -77,11 +87,6 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
         run: julia --project=docs/ docs/make.jl
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: site/package-lock.json
       - name: Install the site's dependencies
         working-directory: site
         # No install scripts: the site needs none.
@@ -92,6 +97,13 @@ jobs:
           DOCS_BASE_PATH: ${{ steps.site.outputs.base_path }}
           NEXT_PUBLIC_DOCS_VERSION: ${{ steps.site.outputs.version }}
         run: npm run build
+      # Stubs at the routes earlier versions served, then the links into the export and its
+      # examples' outputs, checked for the export that is deployed: a live build never is.
+      - name: Redirect stubs and site checks
+        if: github.event_name != 'workflow_dispatch' || !inputs.live_examples
+        run: |
+          julia --startup-file=no --project=docs/ docs/redirects.jl site/out "${{ steps.site.outputs.base_path }}"
+          julia --startup-file=no --project=docs/ docs/site_checks.jl site/out site/src/app
       # The export, with the plan it was built for beside it, is all the deploy job receives.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

@@ -12,6 +12,9 @@ exported_names(mod::Module)::Set{String} =
 # run of 3+ backticks or tildes opens or closes it, and the rest is the info string.
 const _FENCE = r"^( *)(`{3,}|~{3,})(.*)$"
 
+# The info string of a block that repeats docstrings a canonical block documents.
+const _NONCANONICAL = r";\s*canonical\s*=\s*false\b"
+
 """
 Symbol names listed in the top-level `@docs` / `@autodocs` blocks of `text`.
 
@@ -20,6 +23,8 @@ most 3 spaces — Documenter does not expand `@docs` nested in an admonition, li
 quote) whose info string starts with `@docs` or `@autodocs`, of any fence length. Text
 inside an HTML comment block or inside any other fenced block (a ````markdown
 example, a ~~~ block) is not parsed, so an `@docs` fence shown there is not counted.
+Nor is a block whose info string says `canonical = false`: Documenter resolves an
+`@ref` to the canonical docstring only, so a name listed only there is undocumented.
 """
 function _documented_in(text::AbstractString)::Set{String}
     documented = Set{String}()
@@ -40,7 +45,8 @@ function _documented_in(text::AbstractString)::Set{String}
         elseif (m = match(_FENCE, line)) !== nothing
             info = strip(m[3])
             top = length(m[1]) <= 3
-            fence = (first(m[2]), length(m[2]), top && (startswith(info, "@docs") || startswith(info, "@autodocs")))
+            docs = startswith(info, "@docs") || startswith(info, "@autodocs")
+            fence = (first(m[2]), length(m[2]), top && docs && !occursin(_NONCANONICAL, info))
         elseif startswith(s, "<!--") && length(line) - length(lstrip(line)) <= 3
             comment = !occursin("-->", s[5:end])
         end

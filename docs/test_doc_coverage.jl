@@ -73,6 +73,12 @@ using Test
     @test !("InAdmonition" in got)
     @test !("InQuote" in got) && !("> InQuote" in got)
     @test "FourBackticks" in got   # a longer fence is still a top-level @docs block
-    @test "InfoSuffix" in got      # the info string only has to start with @docs
+    @test !("InfoSuffix" in got)   # a canonical=false block documents nothing
     @test "AfterComments" in got   # comments and literal fences close; later blocks count
+end
+
+@testset "coverage — a name only in a canonical=false block is still missing" begin
+    @test isempty(_documented_in("```@docs; canonical=false\nChat\n```\n"))
+    @test isempty(_documented_in("```@docs; canonical = false\nChat\n```\n"))
+    @test _documented_in("```@docs\nChat\n```\n") == Set(["Chat"])
 end

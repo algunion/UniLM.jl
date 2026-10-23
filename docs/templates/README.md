@@ -27,6 +27,7 @@ prefix instead, and `grep -rn '^> Template:' docs/src` must print nothing. Every
 | `<chapter>`, `<Chapter>` | `llm` or `decisions`, as `ProviderFacts.Chapter` names them; the chapter's title |
 | `<stem>`, `<Title>` | the page file's name without `.md`; the page's title |
 | `<Endpoint>`, `<model>` | an endpoint as code names it (`OPENAIServiceEndpoint`, `DeepSeekEndpoint()`); a model id |
+| `<names>`, `<values>` | further names a binding block binds (`decider, decision_model`); their values |
 | `<section>`, `<Section>` | a section's id part (`options` in `ollama_options`); its title |
 | `<id>` | an id that exists elsewhere today, written `<id>__next` (Ids) |
 | `<task>`, `<call>`, `<result>`, `<failure>`, `<cause>`, `<fix>` | the cells of a table row; the table takes one row per item |
@@ -109,11 +110,20 @@ and fails on an executed call to any other verb that reaches a service.
 
 ## The `service, model` binding
 
-A concept page's first visible block binds `service, model = <Endpoint>, "<model>"`: the endpoint and model that
-serve the page's mechanism, preferring the ones its existing examples already call —
-`OPENAIServiceEndpoint, "gpt-5.4-mini"` on the chat-based Language models pages, Jev on the Decisions pages
-(`TYPESAFEServiceEndpoint, "jev-latest"`), and for a mechanism `gpt-5.4-mini` cannot serve (embeddings, image
-generation, FIM and prefix completion) the endpoint and model its examples use today. Every example passes
-`service` and `model`; an example of another provider moves to that provider's entry. After the binding the page
-names no endpoint and no model id (`docs/metrics.jl` reports each one). An example whose request bytes change is
-recorded again in the same commit, and a change in a stored-id chain deletes the chain's first recording.
+A concept page's binding block, its first visible code block, binds `service, model = <Endpoint>, "<model>"` and
+every further name its mechanism needs; every later example uses only those names.
+
+- `service, model` are the endpoint and model that serve the page's mechanism, preferring the ones its existing
+  examples already call: `OPENAIServiceEndpoint, "gpt-5.4-mini"` on the chat-based Language models pages, Jev on
+  the Decisions pages (`TYPESAFEServiceEndpoint, "jev-latest"`), and for a mechanism `gpt-5.4-mini` cannot serve
+  (embeddings, image generation, FIM and prefix completion) the endpoint and model its examples use today. When
+  several pairs serve the mechanism, the page binds, among those that record, the one most of its examples call
+  (embeddings: `OllamaEndpoint()` with `"embeddinggemma-2:740m-q8_0"`).
+- Further names: a page that combines a decision provider with an LLM binds both pairs, the LLM's as
+  `service, model` (`service, model = OPENAIServiceEndpoint, "gpt-5.4-mini"` and
+  `decider, decision_model = TYPESAFEServiceEndpoint, "jev-latest"`); a page that chooses between models binds
+  each model name (`strong_model, cheap_model = "gpt-5.6-sol", "gpt-5.4-mini"`).
+- An example of another provider moves to that provider's entry. After the binding block the page names no
+  endpoint and no model id (`docs/metrics.jl` counts each one).
+- An example whose request bytes change is recorded again in the same commit, and a change in a stored-id chain
+  deletes the chain's first recording.

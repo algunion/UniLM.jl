@@ -10,17 +10,18 @@ using UniLM
 
 ```@example <stem>
 service, model = <Endpoint>, "<model>"
+<names> = <values>
 nothing # hide
 ```
 
-The examples pass `service` and `model`, bound above: bind your own provider's endpoint and model to run
-them there. The table [at the end](@ref <stem>_providers) links each provider's rules.
+The examples use the names bound above: bind your own provider's endpoint and model to run them there. The
+table [at the end](@ref <stem>_providers) links each provider's rules.
 
-> Template: `<Endpoint>`, `"<model>"`: the endpoint and model that serve the mechanism (README, The `service, model` binding). After the binding, no example names an endpoint or a model id.
+> Template: The binding block (README, The `service, model` binding): `<Endpoint>`, `"<model>"` are the endpoint and model that serve the mechanism; `<names> = <values>` binds a further name it needs, one line each (a second pair, the models a choice is between), or is deleted. After the block, no example names an endpoint or a model id.
 
 ## [<Section>](@id <stem>_<section>)
 
-> Template: One H2 per part of the mechanism; each example passes `service` and `model` (executed or quoted as the README says).
+> Template: One H2 per part of the mechanism; each example uses only the binding block's names (executed or quoted as the README says).
 
 ## [On your provider](@id <stem>_providers)
 

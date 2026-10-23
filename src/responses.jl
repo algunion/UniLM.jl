@@ -1848,6 +1848,17 @@ function respond(callback::Function, input; kwargs...)
     respond(input; stream=true, callback=callback, kwargs...)
 end
 
+# The one request of a lifecycle operation (a single attempt, never retried) passes through
+# the recordings of an active `with_recorded_answers` scope, as `respond`'s does: the API key
+# is read only for a request that is sent, so a replay needs none, and a request without a
+# body is keyed on the empty one.
+function _lifecycle_request(service, method::String, url::String, cfg::RequestConfig, t0::UInt64;
+                            body::String="", key_extra::String="")::HTTP.Response
+    tok = _current_cancel()
+    _recorded_exchange(method, url, body, t0, tok; key_extra) do
+        _http(method, url, auth_header(service), body; cfg, remaining=_remaining_s(cfg, t0), cancel=tok)
+    end
+end
 
 """
     get_response(response_id::String; service=OPENAIServiceEndpoint)
@@ -1870,14 +1881,14 @@ function get_response(response_id::String; service::ServiceEndpointSpec=OPENAISe
     local resp
     try
         url = _agentic_url(service) * "/" * _uripart(response_id)
-        resp = _http("GET", url, auth_header(service); cfg=cfg, remaining=_remaining_s(cfg, t0))
+        resp = _lifecycle_request(service, "GET", url, cfg, t0)
         if resp.status == 200
             return ResponseSuccess(response=decode_agentic(service, resp), service=service)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
-        e isa InterruptException && rethrow()
+        e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
@@ -1902,14 +1913,14 @@ function delete_response(response_id::String; service::ServiceEndpointSpec=OPENA
     local resp
     try
         url = _agentic_url(service) * "/" * _uripart(response_id)
-        resp = _http("DELETE", url, auth_header(service); cfg=cfg, remaining=_remaining_s(cfg, t0))
+        resp = _lifecycle_request(service, "DELETE", url, cfg, t0)
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
-        e isa InterruptException && rethrow()
+        e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
@@ -1948,14 +1959,15 @@ function list_input_items(response_id::String;
         !isnothing(after) && push!(params, "after=$(_uripart(after))")
         url *= "?" * join(params, "&")
 
-        resp = _http("GET", url, auth_header(service); cfg=cfg, remaining=_remaining_s(cfg, t0))
+        # A recording key names the path alone, so the page's parameters are keyed beside it.
+        resp = _lifecycle_request(service, "GET", url, cfg, t0; key_extra=_options_key((; limit, order, after)))
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
-        e isa InterruptException && rethrow()
+        e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
@@ -1986,14 +1998,14 @@ function cancel_response(response_id::String; service::ServiceEndpointSpec=OPENA
     local resp
     try
         url = _agentic_url(service) * "/" * _uripart(response_id) * "/cancel"
-        resp = _http("POST", url, auth_header(service); cfg=cfg, remaining=_remaining_s(cfg, t0))
+        resp = _lifecycle_request(service, "POST", url, cfg, t0)
         if resp.status == 200
             return ResponseSuccess(response=decode_agentic(service, resp), service=service)
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
-        e isa InterruptException && rethrow()
+        e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
@@ -2035,14 +2047,14 @@ function compact_response(; model::Union{String,Nothing}=nothing,
     try
         url = _api_base_url(service) * RESPONSES_PATH * "/compact"
         body = JSON.json(Dict{Symbol,Any}(:model => model, :input => input))
-        resp = _http("POST", url, auth_header(service), body; cfg=cfg, remaining=_remaining_s(cfg, t0))
+        resp = _lifecycle_request(service, "POST", url, cfg, t0; body)
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
-        e isa InterruptException && rethrow()
+        e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end
@@ -2082,14 +2094,14 @@ function count_input_tokens(; model::String=default_model(OPENAIServiceEndpoint)
         !isnothing(instructions) && (d[:instructions] = instructions)
         !isnothing(tools) && (d[:tools] = tools)
         body = JSON.json(d)
-        resp = _http("POST", url, auth_header(service), body; cfg=cfg, remaining=_remaining_s(cfg, t0))
+        resp = _lifecycle_request(service, "POST", url, cfg, t0; body)
         if resp.status == 200
             return JSON.parse(resp.body; dicttype=Dict{String,Any})
         else
             return ResponseFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
-        e isa InterruptException && rethrow()
+        e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         return _response_call_error(e, @isdefined(resp) ? resp : nothing)
     end
 end

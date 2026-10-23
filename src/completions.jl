@@ -226,7 +226,9 @@ function fim_complete(fim::FIMCompletion; config::Union{Nothing,RequestConfig}=n
     cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
     local resp
     try
-        resp = _http_with_retries(cfg, t0, "POST", url, auth_header(fim.service), body; cancel=tok)
+        resp = _recorded_exchange("POST", url, body, t0, tok) do
+            _http_with_retries(cfg, t0, "POST", url, auth_header(fim.service), body; cancel=tok)
+        end
         if resp.status == 200
             return FIMSuccess(response=_billed_response(fim.service, fim.model, _parse_fim_response(resp)),
                               service=fim.service)
@@ -237,7 +239,7 @@ function fim_complete(fim::FIMCompletion; config::Union{Nothing,RequestConfig}=n
             return FIMFailure(response=String(resp.body), status=resp.status, request_id=_get_request_id(resp))
         end
     catch e
-        e isa InterruptException && rethrow()
+        e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         e isa UniLMTimeout && return FIMCallError(error=sprint(showerror, e), status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)
@@ -309,7 +311,9 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
     cfg = _resolve_config(config); tok = _resolve_cancel(cancel); t0 = time_ns()
     local resp
     try
-        resp = _http_with_retries(cfg, t0, "POST", url, auth_header(chat.service), body; cancel=tok)
+        resp = _recorded_exchange("POST", url, body, t0, tok) do
+            _http_with_retries(cfg, t0, "POST", url, auth_header(chat.service), body; cancel=tok)
+        end
 
         if resp.status == 200
             extracted = extract_message(resp)
@@ -324,7 +328,7 @@ function prefix_complete(chat::Chat; config::Union{Nothing,RequestConfig}=nothin
             return LLMFailure(status=resp.status, response=String(resp.body), self=chat, request_id=_get_request_id(resp))
         end
     catch e
-        e isa InterruptException && rethrow()
+        e isa Union{InterruptException,ReplayMissError,RecordingWriteError} && rethrow()
         e isa UniLMTimeout && return LLMCallError(error=sprint(showerror, e), self=chat, status=nothing, cause=e)
         statuserror = hasproperty(e, :status) ? e.status : nothing
         req_id = @isdefined(resp) ? _get_request_id(resp) : _get_request_id(e)

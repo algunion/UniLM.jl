@@ -443,8 +443,9 @@ end
 # ─── The LLM verbs ───────────────────────────────────────────────────────────
 #
 # A second mock plays the language-model providers — OpenAI Chat Completions and
-# Responses, Anthropic Messages, Gemini generateContent, embeddings — each with its
-# own request-id header (Gemini sends none), beside headers no recording may keep.
+# Responses (and its lifecycle routes), Anthropic Messages, Gemini generateContent,
+# embeddings, FIM completions — each with its own request-id header (Gemini sends
+# none), beside headers no recording may keep.
 # `_RLHere` runs a provider's own `auth_header`, encoder and decoder against it and
 # moves only the origin of the provider's URL, so the path and any query reach the
 # mock as they would reach the provider. Each key variable holds a sentinel while
@@ -508,12 +509,33 @@ function _rl_embeddings_reply(b, n, raw)
          "usage" => Dict("prompt_tokens" => 3 + n, "total_tokens" => 3 + n))
 end
 
+# The Responses lifecycle routes: /v1/responses/{id}[/route], and the two without an id.
+function _rl_lifecycle_reply(method, path, n)
+    segments = split(path, '/')                     # "", "v1", "responses", the id or a route, [a route]
+    id, route = segments[4], last(segments)
+    usage = Dict("input_tokens" => 100 + n, "output_tokens" => 10 + n, "total_tokens" => 110 + 2n)
+    route == "input_tokens" && return Dict("object" => "response.input_tokens", "input_tokens" => 100 + n)
+    route == "compact" && return Dict("id" => "resp_$n", "object" => "response.compaction", "usage" => usage,
+        "output" => [Dict("id" => "cmp_$n", "type" => "compaction", "encrypted_content" => "enc_$n")])
+    route == "input_items" && return Dict("object" => "list", "first_id" => "msg_$n", "last_id" => "msg_$n",
+        "has_more" => false, "data" => [Dict("id" => "msg_$n", "type" => "message", "role" => "user",
+                                             "content" => [Dict("type" => "input_text", "text" => "hi")])])
+    method == "DELETE" && return Dict("id" => id, "object" => "response", "deleted" => true)
+    Dict("id" => id, "object" => "response", "status" => route == "cancel" ? "cancelled" : "completed",
+         "model" => "gpt-5.4-mini", "output" => [], "usage" => usage)
+end
+
+# FIM on the completions route answers in the completions shape: a choice's `text`.
+_rl_fim_reply(b, n) = Dict("id" => "cmpl-$n", "object" => "text_completion", "model" => b["model"],
+    "choices" => [Dict("index" => 0, "text" => "fill $n", "finish_reason" => "stop")],
+    "usage" => Dict("prompt_tokens" => 100 + n, "completion_tokens" => 10 + n, "total_tokens" => 110 + 2n))
+
 function _rl_serve(http::HTTP.Stream)
     req = http.message
     raw = String(read(http))
     n = Threads.atomic_add!(_RL_HITS, 1) + 1
     @lock _RL_LOCK push!(_RL_SEEN, join([String(req.target); [string(k, ": ", v) for (k, v) in req.headers]; raw], "\n"))
-    b = JSON.parse(raw; dicttype=Dict{String,Any})
+    b = isempty(raw) ? Dict{String,Any}() : JSON.parse(raw; dicttype=Dict{String,Any})   # a GET, DELETE or cancel sends none
     path = String(HTTP.URI(String(req.target)).path)
     HTTP.setstatus(http, 200)
     HTTP.setheader(http, "set-cookie" => "session=cookie-sentinel")      # never recorded
@@ -530,8 +552,10 @@ function _rl_serve(http::HTTP.Stream)
     id, reply = endswith(path, "/messages") ? ("request-id" => "req_$n", _rl_anthropic_reply(b, n, raw)) :
                 occursin(":generateContent", path) ? (nothing, _rl_gemini_reply(b, n, raw)) :
                 endswith(path, "/responses") ? ("x-request-id" => "req_$n", _rl_responses_reply(b, n, raw)) :
+                startswith(path, "/v1/responses/") ? ("x-request-id" => "req_$n", _rl_lifecycle_reply(req.method, path, n)) :
                 endswith(path, "/embeddings") ? ("x-request-id" => "req_$n", _rl_embeddings_reply(b, n, raw)) :
-                ("x-request-id" => "req_$n", _rl_chat_reply(b, n, raw))
+                endswith(path, "/v1/completions") ? ("x-request-id" => "req_$n", _rl_fim_reply(b, n)) :
+                ("x-request-id" => "req_$n", _rl_chat_reply(b, n, raw))     # a prefix completion too
     isnothing(id) || HTTP.setheader(http, id)
     HTTP.setheader(http, "Content-Type" => "application/json")
     HTTP.startwrite(http)
@@ -555,6 +579,11 @@ UniLM.encode_request(s::_RLHere, chat::Chat) = UniLM.encode_request(s.real, chat
 UniLM.decode_response(s::_RLHere, resp::HTTP.Response) = UniLM.decode_response(s.real, resp)
 UniLM.encode_agentic(s::_RLHere, r::Respond) = UniLM.encode_agentic(s.real, r)
 UniLM.decode_agentic(s::_RLHere, resp::HTTP.Response) = UniLM.decode_agentic(s.real, resp)
+UniLM._agentic_url(s::_RLHere) = _rl_here(UniLM._agentic_url(s.real))
+UniLM._resolve_base_url(s::_RLHere) = _rl_here(UniLM._resolve_base_url(s.real))
+UniLM.provider_capabilities(s::_RLHere) = UniLM.provider_capabilities(s.real)
+UniLM.get_url(s::_RLHere, fim::FIMCompletion) = _rl_here(UniLM.get_url(s.real, fim))
+UniLM._prefix_complete_url(s::_RLHere) = _rl_here(UniLM._prefix_complete_url(s.real))
 
 # A backend that authenticates in the query string, as Google's `?key=` form does.
 struct _RLQueryKey <: UniLM.OpenAIWireEndpoint end
@@ -765,6 +794,52 @@ end
     miss = _rl_offline(() -> with_recorded_answers(() -> _ra_caught(() -> pic(blue)), dir))
     @test miss isa ReplayMissError && !contains(miss.body, "base64,") &&
           contains(miss.body, "data:image/png;sha256," * bytes2hex(UniLM.SHA.sha256(base64encode(blue.data))))
+end
+
+const _RL_DEEPSEEK = _RLHere(DeepSeekEndpoint(_RL_DEEPSEEK_KEY))
+_rl_prefix_chat() = push!(_rl_chat(_RL_DEEPSEEK; model="deepseek-flash", prompt="Write f."),
+                          Message(role=UniLM.RoleAssistant, content="def f("))
+# Every result these verbs return for a failed call.
+const _RL_FAILURES = Union{ResponseCallError,ResponseFailure,LLMCallError,LLMFailure,FIMCallError,FIMFailure}
+# The Responses lifecycle verbs on OpenAI, FIM and prefix completion on DeepSeek: one request each.
+const _RL_LIFECYCLE = (
+    get_response = () -> get_response("resp_rl"; service=_RL_OPENAI),
+    list_input_items = () -> list_input_items("resp_rl"; limit=2, service=_RL_OPENAI),
+    count_input_tokens = () -> count_input_tokens(; input="hi", service=_RL_OPENAI),
+    compact_response = () -> compact_response(; input="hi", service=_RL_OPENAI),
+    cancel_response = () -> cancel_response("resp_rl"; service=_RL_OPENAI),
+    delete_response = () -> delete_response("resp_rl"; service=_RL_OPENAI),
+    fim_complete = () -> fim_complete("def f("; suffix="): pass", service=_RL_DEEPSEEK, model="deepseek-flash"),
+    prefix_complete = () -> prefix_complete(_rl_prefix_chat()))
+
+@testset "recorded answers — the Responses lifecycle and FIM verbs record once and replay offline" begin
+    dir = _ra_dir("llm-lifecycle")
+    calls() = map(call -> call(), _RL_LIFECYCLE)
+    live = _rl_online(() -> with_recorded_answers(calls, dir; mode=:record))
+    hits = _RL_HITS[]
+    replayed = _rl_offline(() -> with_recorded_answers(calls, dir))
+    @test _RL_HITS[] == hits                                   # nothing reached the server
+    @test length(readdir(dir)) == 8
+    @test map(typeof, replayed) == map(typeof, live)
+    @test !any(r -> r isa _RL_FAILURES, replayed)
+    miss = _rl_offline(() -> with_recorded_answers(
+        () -> _ra_caught(() -> list_input_items("resp_rl"; limit=3, service=_RL_OPENAI)), dir))
+    @test miss isa ReplayMissError                             # the query is part of the key
+end
+
+@testset "recorded answers — a lifecycle or FIM verb throws its miss and its lost write, never returns them" begin
+    empty, dir = mkpath(_ra_dir("llm-lifecycle-empty")), _ra_dir("llm-lifecycle-unwritable")
+    @testset "$name" for (name, call) in pairs(_RL_LIFECYCLE)
+        @test _rl_offline(() -> with_recorded_answers(() -> _ra_caught(call), empty)) isa ReplayMissError
+        before = _RL_HITS[]
+        e = _rl_online(() -> with_recorded_answers(dir; mode=:record) do
+            rm(dir; force=true, recursive=true)
+            write(dir, "")   # the checked directory is a file by the time the reply arrives
+            _ra_caught(call)
+        end)
+        @test e isa RecordingWriteError && _RL_HITS[] == before + 1   # sent once, and the paid reply's loss is thrown
+        rm(dir)
+    end
 end
 
 @testset "recorded LLM answers — a two-turn tool loop records two files and replays them offline" begin

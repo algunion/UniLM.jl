@@ -82,7 +82,7 @@ try
     @testset "chatrequest! with 500 (single attempt)" begin
         set_error!(500, "Internal Server Error")
 
-        chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
+        chat = Chat(service=MockServiceEndpoint, model="mock-model")
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
@@ -94,7 +94,7 @@ try
     @testset "chatrequest! with 503 (single attempt)" begin
         set_error!(503, "Service Unavailable")
 
-        chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
+        chat = Chat(service=MockServiceEndpoint, model="mock-model")
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
@@ -106,7 +106,7 @@ try
     @testset "chatrequest! with 400 (non-retryable error)" begin
         set_error!(400, "Bad Request")
 
-        chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
+        chat = Chat(service=MockServiceEndpoint, model="mock-model")
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
@@ -124,7 +124,7 @@ try
         UniLM.get_url(::Type{DeadServiceEndpoint}, ::Chat) = "http://127.0.0.1:1/v1/chat/completions"
         UniLM.auth_header(::Type{DeadServiceEndpoint}) = ["Content-Type" => "application/json"]
 
-        chat = Chat(service=DeadServiceEndpoint, model="gpt-4o", stream=true)
+        chat = Chat(service=DeadServiceEndpoint, model="mock-model", stream=true)
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
@@ -146,7 +146,7 @@ try
     @testset "_chatrequeststream non-200 → LLMFailure with status + body" begin
         set_error!(400, "Bad Request")
 
-        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true)
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", stream=true)
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
@@ -327,7 +327,7 @@ try
     @testset "chatrequest! with 429 (single attempt)" begin
         set_error!(429, "Rate limited"; headers=["Retry-After" => "2"])
 
-        chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
+        chat = Chat(service=MockServiceEndpoint, model="mock-model")
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
@@ -849,7 +849,7 @@ try
         UniLM.get_url(::Type{ChatDeadEndpoint}, ::Chat) = "http://127.0.0.1:1/v1/chat/completions"
         UniLM.auth_header(::Type{ChatDeadEndpoint}) = ["Content-Type" => "application/json"]
 
-        chat = Chat(service=ChatDeadEndpoint, model="gpt-4o")
+        chat = Chat(service=ChatDeadEndpoint, model="mock-model")
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
@@ -984,7 +984,7 @@ try
                 "properties"=>Dict("a"=>Dict("type"=>"number"),"b"=>Dict("type"=>"number")),
                 "required"=>["a","b"])))
 
-        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", tools=[tool])
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", tools=[tool])
         push!(chat, Message(role=UniLM.RoleSystem, content="You are a calculator"))
         push!(chat, Message(role=UniLM.RoleUser, content="What is 3+5?"))
 
@@ -1038,7 +1038,7 @@ try
         ))
 
         tool = Tool(func=FunctionSignature(name="noop"))
-        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", tools=[tool])
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", tools=[tool])
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="go"))
 
@@ -1071,7 +1071,7 @@ try
         ))
 
         tool = Tool(func=FunctionSignature(name="add"))
-        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", tools=[tool])
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", tools=[tool])
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="calc"))
 
@@ -1105,7 +1105,7 @@ try
         response_body[] = JSON.json(Dict(
             "id" => "resp_001",
             "status" => "completed",
-            "model" => "gpt-4o",
+            "model" => "mock-model",
             "output" => [Dict(
                 "type" => "function_call",
                 "id" => "fc_001",
@@ -1127,7 +1127,7 @@ try
             response_body[] = JSON.json(Dict(
                 "id" => "resp_002",
                 "status" => "completed",
-                "model" => "gpt-4o",
+                "model" => "mock-model",
                 "output" => [Dict(
                     "type" => "message",
                     "role" => "assistant",
@@ -1158,7 +1158,7 @@ try
         response_body[] = JSON.json(Dict(
             "id" => "resp_loop",
             "status" => "completed",
-            "model" => "gpt-4o",
+            "model" => "mock-model",
             "output" => [Dict(
                 "type" => "function_call",
                 "id" => "fc_loop",
@@ -1195,13 +1195,13 @@ try
         response_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] =
-            """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}\n\n""" *
-            """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"mock-model","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}\n\n""" *
+            """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"mock-model","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":null}]}\n\n""" *
             """data: {"id":"chatcmpl-1","choices":[],"usage":{"prompt_tokens":7,"completion_tokens":2,"total_tokens":9}}\n\n""" *
-            """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n""" *
+            """data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":1,"model":"mock-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n""" *
             """data: [DONE]"""
 
-        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true)
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", stream=true)
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
@@ -1237,7 +1237,7 @@ try
             """data: {"id":"c","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n""" *
             """data: [DONE]"""
 
-        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true)
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", stream=true)
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
@@ -1270,7 +1270,7 @@ try
 
         tool = Tool(func=FunctionSignature(name="get_weather", description="Weather",
             parameters=Dict("type"=>"object", "properties"=>Dict("location"=>Dict("type"=>"string")))))
-        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true, tools=[tool])
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", stream=true, tools=[tool])
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="weather in NYC?"))
 
@@ -1304,7 +1304,7 @@ try
             "usage" => Dict("prompt_tokens" => 4, "completion_tokens" => 3, "total_tokens" => 7)))
         response_queue[] = [(503, ""), (200, success_body)]
 
-        chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
+        chat = Chat(service=MockServiceEndpoint, model="mock-model")
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="usr"))
 
@@ -1581,7 +1581,7 @@ try
         response_body[] =
             "event: response.created\ndata: {\"type\":\"response.created\"}\n\n" *
             "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":" *
-            "{\"id\":\"resp_1\",\"status\":\"completed\",\"model\":\"gpt-4o\"," *
+            "{\"id\":\"resp_1\",\"status\":\"completed\",\"model\":\"mock-model\"," *
             "\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":" *
             "[{\"type\":\"output_text\",\"text\":\"hello stream\"}]}]," *
             "\"usage\":{\"input_tokens\":5,\"output_tokens\":2,\"total_tokens\":7}}}\n\n"
@@ -1592,7 +1592,7 @@ try
         @test obj isa ResponseObject
         @test obj.id == "resp_1"
         @test obj.status == "completed"
-        @test obj.model == "gpt-4o"
+        @test obj.model == "mock-model"
         @test obj.usage["total_tokens"] == 7
         @test output_text(obj) == "hello stream"   # parsed output[] survived intact
         set_error!(200, "")
@@ -1605,7 +1605,7 @@ try
         response_headers[] = Pair{String,String}[]
         response_body[] =
             "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":" *
-            "{\"id\":\"resp_cb\",\"status\":\"completed\",\"model\":\"gpt-4o\",\"output\":[]," *
+            "{\"id\":\"resp_cb\",\"status\":\"completed\",\"model\":\"mock-model\",\"output\":[]," *
             "\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"
 
         seen = Ref{Any}(nothing)
@@ -1627,7 +1627,7 @@ try
         response_headers[] = Pair{String,String}[]
         response_body[] =
             "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":" *
-            "{\"id\":\"resp_inc\",\"status\":\"incomplete\",\"model\":\"gpt-4o\"," *
+            "{\"id\":\"resp_inc\",\"status\":\"incomplete\",\"model\":\"mock-model\"," *
             "\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":" *
             "[{\"type\":\"output_text\",\"text\":\"half an\"}]}]," *
             "\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n"
@@ -1662,7 +1662,7 @@ try
         success_body = JSON.json(Dict(
             "id" => "resp_retry",
             "status" => "completed",
-            "model" => "gpt-4o",
+            "model" => "mock-model",
             "output" => [Dict("type" => "message", "role" => "assistant",
                 "content" => [Dict("type" => "output_text", "text" => "recovered")])],
             "usage" => Dict("input_tokens" => 3, "output_tokens" => 1, "total_tokens" => 4)))
@@ -1672,7 +1672,7 @@ try
         @test result isa ResponseSuccess
         @test result.response.id == "resp_retry"
         @test result.response.status == "completed"
-        @test result.response.model == "gpt-4o"
+        @test result.response.model == "mock-model"
         @test output_text(result) == "recovered"
         @test isempty(response_queue[])            # both queued responses consumed → it really retried once
         set_error!(200, "")
@@ -1684,7 +1684,7 @@ try
         response_body[] = JSON.json(Dict(
             "id" => "resp_get",
             "status" => "completed",
-            "model" => "gpt-4o",
+            "model" => "mock-model",
             "output" => [Dict("type" => "message", "role" => "assistant",
                 "content" => [Dict("type" => "output_text", "text" => "fetched")])],
             "usage" => Dict("input_tokens" => 2, "output_tokens" => 1, "total_tokens" => 3)))
@@ -1693,7 +1693,7 @@ try
         @test result isa ResponseSuccess
         @test result.response.id == "resp_get"
         @test result.response.status == "completed"
-        @test result.response.model == "gpt-4o"
+        @test result.response.model == "mock-model"
         @test output_text(result) == "fetched"
         @test occursin("/responses/resp_get", request_target[])   # id is in the GET path
         set_error!(200, "")
@@ -1739,7 +1739,7 @@ try
         response_status[] = 200
         response_headers[] = Pair{String,String}[]
         response_body[] = JSON.json(Dict(
-            "id" => "resp_cancel", "status" => "cancelled", "model" => "gpt-4o",
+            "id" => "resp_cancel", "status" => "cancelled", "model" => "mock-model",
             "output" => Any[],
             "usage" => Dict("input_tokens" => 1, "output_tokens" => 0, "total_tokens" => 1)))
 
@@ -1919,7 +1919,7 @@ try
         # The endpoint forces a 400 regardless of the request body, so the
         # conversation content is irrelevant: an empty chat still issues the
         # request whose 400 must surface as an LLMFailure in `.result`.
-        chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
+        chat = Chat(service=MockServiceEndpoint, model="mock-model")
 
         result = tool_loop!(chat, (name, args) -> "x")
 
@@ -1941,7 +1941,7 @@ try
         # wired to LLMCallError.error.
         # The connection fails regardless of body; an empty chat still triggers
         # the request attempt whose LLMCallError must surface in `.result`.
-        chat = Chat(service=ChatDeadEndpoint, model="gpt-4o")
+        chat = Chat(service=ChatDeadEndpoint, model="mock-model")
 
         result = tool_loop!(chat, (name, args) -> "x")
 
@@ -2019,7 +2019,7 @@ try
 
         tool = Tool(func=FunctionSignature(name="get_weather", description="Weather",
             parameters=Dict("type"=>"object", "properties"=>Dict("location"=>Dict("type"=>"string")))))
-        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true, tools=[tool])
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", stream=true, tools=[tool])
         push!(chat, Message(role=UniLM.RoleSystem, content="sys"))
         push!(chat, Message(role=UniLM.RoleUser, content="weather in NYC?"))
 
@@ -2072,7 +2072,7 @@ try
 
         # Chat.tools is typed Vector{Tool}: it carries the wire schema (inner Tool);
         # the executable CallableTool is supplied via the tool_loop! `tools=` kwarg.
-        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", tools=[add_tool])
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", tools=[add_tool])
         push!(chat, Message(role=UniLM.RoleSystem, content="You are a calculator"))
         push!(chat, Message(role=UniLM.RoleUser, content="What is 3+7?"))
 
@@ -2118,7 +2118,7 @@ try
         add_tool = Tool(func=FunctionSignature(name="add", description="Add"))
         ct = CallableTool(add_tool, (name, args) -> (add_called[] += 1; "should-not-run"))
 
-        chat = Chat(service=MockServiceEndpoint, model="gpt-4o", tools=[add_tool])
+        chat = Chat(service=MockServiceEndpoint, model="mock-model", tools=[add_tool])
         push!(chat, Message(role=UniLM.RoleSystem, content="You can only add."))
         push!(chat, Message(role=UniLM.RoleUser, content="subtract 9 - 2"))
 
@@ -2162,11 +2162,11 @@ try
         response_status[] = 200
         response_headers[] = Pair{String,String}[]
         turn1 = JSON.json(Dict(
-            "id" => "resp_q1", "status" => "completed", "model" => "gpt-4o",
+            "id" => "resp_q1", "status" => "completed", "model" => "mock-model",
             "output" => [Dict("type" => "function_call", "id" => "fc_q1", "call_id" => "call_mul",
                 "name" => "mul", "arguments" => """{"a": 3, "b": 5}""", "status" => "completed")]))
         turn2 = JSON.json(Dict(
-            "id" => "resp_q2", "status" => "completed", "model" => "gpt-4o",
+            "id" => "resp_q2", "status" => "completed", "model" => "mock-model",
             "output" => [Dict("type" => "message", "role" => "assistant", "status" => "completed",
                 "content" => [Dict("type" => "output_text", "text" => "3 times 5 is 15.")])]))
         response_queue[] = [(200, turn1), (200, turn2)]
@@ -2259,7 +2259,7 @@ try
         response_body[] =
             "event: response.output_text.delta\ndata: {\"delta\":\"final text\"}\n\n" *
             "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":" *
-            "{\"id\":\"resp_final\",\"status\":\"completed\",\"model\":\"gpt-4o\",\"output\":[]}}\n\n"
+            "{\"id\":\"resp_final\",\"status\":\"completed\",\"model\":\"mock-model\",\"output\":[]}}\n\n"
 
         seen_deltas = String[]
         cb = (chunk, close) -> begin
@@ -2297,7 +2297,7 @@ try
         response_body[] = "Unauthorized"
         # Empty conversation: the mock forces a 401 regardless of the body, and
         # the request_id propagation is what this exercises.
-        chat = Chat(service=MockServiceEndpoint, model="gpt-4o")
+        chat = Chat(service=MockServiceEndpoint, model="mock-model")
         res_llm_fail = chatrequest!(chat)
         @test res_llm_fail isa LLMFailure
         @test res_llm_fail.status == 401
@@ -2308,7 +2308,7 @@ try
         response_headers[] = ["x-request-id" => "mock-llm-fail-stream-id-123"]
         response_body[] = "Unauthorized stream"
         # Empty conversation: the mock forces a 401 regardless of the body.
-        chat_stream = Chat(service=MockServiceEndpoint, model="gpt-4o", stream=true)
+        chat_stream = Chat(service=MockServiceEndpoint, model="mock-model", stream=true)
         res_llm_fail_stream = fetch(chatrequest!(chat_stream))
         @test res_llm_fail_stream isa LLMFailure
         @test res_llm_fail_stream.status == 401

@@ -111,19 +111,24 @@ and fails on an executed call to any other verb that reaches a service.
 ## The `service, model` binding
 
 A concept page's binding block, its first visible code block, binds `service, model = <Endpoint>, "<model>"` and
-every further name its mechanism needs; every later example uses only those names. `service, model` is the pair
-the page is about, the one a reader rebinds to run the examples on their own provider: an LLM's on a Language
-models page, a decision provider's on a Decisions page.
+every further name its examples need; every other example uses only those names. `service` and `model` are the
+provider and model the examples run on (on a Decisions page, the decision provider); a reader binds their own there.
 
-- The pair serves the page's mechanism without provider-specific arguments, since a concept page carries no
-  provider caveat: among such pairs, the one most of the page's examples call (counting blocks), preferring pairs
-  that record, and where none records (image generation), among all. So the chat-based Language models pages
-  bind `OPENAIServiceEndpoint, "gpt-5.4-mini"`, the embeddings page `OPENAIServiceEndpoint, "text-embedding-3-small"`
-  and the Decisions pages Jev, `TYPESAFEServiceEndpoint, "jev-latest"`.
-- Further names: an LLM pair a Decisions page also needs, `llm, llm_model = OPENAIServiceEndpoint, "gpt-5.4-mini"`;
-  the models a page chooses between (`strong_model, cheap_model = "gpt-5.6-sol", "gpt-5.4-mini"`).
-- An example of another provider moves to that provider's entry. After the binding block no code names an
-  endpoint or a model id (`docs/metrics.jl` counts each one); prose about a model (`jev-latest` is an alias, the
-  model a measurement ran on) may, and counts toward the page's 2% share of provider lines.
+- The pair is the chapter's: `OPENAIServiceEndpoint, "gpt-5.4-mini"` on a Language models page,
+  `TYPESAFEServiceEndpoint, "jev-latest"` on a Decisions page.
+- Only where the chapter's pair cannot serve the page's mechanism without provider-specific arguments (a concept
+  page carries no provider caveat) does counting choose the pair: among the pairs that serve it without them, the
+  one most of the page's examples call (counting blocks), preferring pairs that record, and where none records,
+  among all. Today: embeddings `OPENAIServiceEndpoint, "text-embedding-3-small"`; image generation
+  `OPENAIServiceEndpoint` with OpenAI's default image model; FIM and prefix completion
+  `DeepSeekEndpoint(), "deepseek-flash"`.
+- Further names: an LLM pair a Decisions page also needs (`llm, llm_model = OPENAIServiceEndpoint, "gpt-5.4-mini"`),
+  the models a page chooses between (`strong_model, cheap_model = "gpt-5.6-sol", "gpt-5.4-mini"`) and a pinned
+  version a page contrasts with the default (`pinned = "jev-1.13.0"`).
+- An example of another provider moves to that provider's entry (the Gemini calls of `guide/agentic.md` go to the
+  Gemini entry). No code outside the binding block names an endpoint or a model id (`docs/metrics.jl` counts each
+  one). Prose may refer to the bound names; a fact about one provider goes to that provider's entry (Placement);
+  the model a measurement ran on appears only as a bound name or in an Evidence note, which counts toward the
+  page's 2% share of provider lines.
 - An example whose request bytes change is recorded again in the same commit, and a change in a stored-id chain
   deletes the chain's first recording.

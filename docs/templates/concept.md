@@ -14,10 +14,11 @@ service, model = <Endpoint>, "<model>"
 nothing # hide
 ```
 
-The examples use the names bound above: bind your own provider's endpoint and model to run them there. The
-table [at the end](@ref <stem>_providers) links each provider's rules.
+The examples use only the names bound above; `service` and `model` are the provider and model this page is
+about: bind your own provider's there to run the examples on it. The table [at the end](@ref <stem>_providers)
+links each provider's rules.
 
-> Template: The binding block (README, The `service, model` binding): `<Endpoint>`, `"<model>"` are the endpoint and model that serve the mechanism; `<names> = <values>` binds a further name it needs, one line each (a second pair, the models a choice is between), or is deleted. After the block, no example names an endpoint or a model id.
+> Template: The binding block (README, The `service, model` binding): `<Endpoint>`, `"<model>"` are the pair the page is about (on a Language models page an LLM's, on a Decisions page a decision provider's), one that serves the mechanism without provider-specific arguments; `<names> = <values>` binds a further name it needs, one line each (`llm, llm_model` for an LLM a Decisions page also needs, the models a choice is between), or is deleted. After the block no code names an endpoint or a model id; prose about a model may, within the page's 2% share of provider lines.
 
 ## [<Section>](@id <stem>_<section>)
 

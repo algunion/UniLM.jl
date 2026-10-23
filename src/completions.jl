@@ -211,7 +211,10 @@ peer fails with a typed timeout inside the [`FIMCallError`](@ref) result
 (`cause::UniLMTimeout`). Local validation (capability, model resolution, routing)
 throws an `ArgumentError` before any request; every later failure — transport, a
 200 body that is not a completions response — is a `FIMCallError` whose `cause`
-holds the exception.
+holds the exception. Inside a [`with_recorded_answers`](@ref) scope the request passes
+through the recordings: one the scope cannot replay throws [`ReplayMissError`](@ref),
+and an answer whose recording cannot be written throws [`RecordingWriteError`](@ref),
+instead of returning a `FIMCallError`.
 
 `cancel::Union{Nothing,CancelToken}` (default: the ambient [`with_cancel`](@ref) token)
 makes the call cancellable: once the token is cancelled it returns a `FIMCallError`
@@ -282,6 +285,10 @@ Per-call `config::RequestConfig` overrides timeouts and the retry budget; a sile
 peer fails with a typed timeout inside the [`LLMCallError`](@ref) result
 (`cause::UniLMTimeout`). Local validation throws an `ArgumentError` before any
 request; every later failure is an `LLMCallError` whose `cause` holds the exception.
+Inside a [`with_recorded_answers`](@ref) scope the request passes through the
+recordings: one the scope cannot replay throws [`ReplayMissError`](@ref), and an answer
+whose recording cannot be written throws [`RecordingWriteError`](@ref), instead of
+returning an `LLMCallError`.
 `cancel::Union{Nothing,CancelToken}` makes the call cancellable as for
 [`fim_complete`](@ref): a cancelled call returns an `LLMCallError` whose `cause` is a
 [`UniLMCancelled`](@ref), and `chat` is left untouched.

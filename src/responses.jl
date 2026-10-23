@@ -1864,7 +1864,10 @@ end
     get_response(response_id::String; service=OPENAIServiceEndpoint)
 
 Retrieve an existing response by its ID. An endpoint whose Responses API stores no
-responses ([`OllamaEndpoint`](@ref)) throws `ArgumentError` before any request.
+responses ([`OllamaEndpoint`](@ref)) throws `ArgumentError` before any request. Inside a
+[`with_recorded_answers`](@ref) scope the request passes through the recordings: one the
+scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording cannot
+be written throws [`RecordingWriteError`](@ref), instead of returning a `ResponseCallError`.
 
 # Examples
 ```julia
@@ -1898,7 +1901,10 @@ end
 
 Delete a stored response by its ID. Returns a Dict with `"id"`, `"object"`, `"deleted"` keys.
 An endpoint whose Responses API stores no responses ([`OllamaEndpoint`](@ref)) throws
-`ArgumentError` before any request.
+`ArgumentError` before any request. Inside a [`with_recorded_answers`](@ref) scope the
+request passes through the recordings: one the scope cannot replay throws
+[`ReplayMissError`](@ref), and an answer whose recording cannot be written throws
+[`RecordingWriteError`](@ref), instead of returning a `ResponseCallError`.
 
 # Examples
 ```julia
@@ -1930,7 +1936,10 @@ end
 
 List input items for a stored response. Returns a Dict with `"data"`, `"first_id"`, `"last_id"`, `"has_more"`.
 An endpoint whose Responses API stores no responses ([`OllamaEndpoint`](@ref)) throws
-`ArgumentError` before any request.
+`ArgumentError` before any request. Inside a [`with_recorded_answers`](@ref) scope the
+request passes through the recordings, keyed with its `limit`, `order` and `after`: one the
+scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording cannot
+be written throws [`RecordingWriteError`](@ref), instead of returning a `ResponseCallError`.
 
 # Examples
 ```julia
@@ -1978,7 +1987,10 @@ end
 
 Cancel an in-progress response by its ID. Returns `ResponseSuccess` on success. An endpoint
 whose Responses API stores no responses ([`OllamaEndpoint`](@ref)) throws `ArgumentError`
-before any request.
+before any request. Inside a [`with_recorded_answers`](@ref) scope the request passes
+through the recordings: one the scope cannot replay throws [`ReplayMissError`](@ref), and
+an answer whose recording cannot be written throws [`RecordingWriteError`](@ref), instead
+of returning a `ResponseCallError`.
 
 # Examples
 ```julia
@@ -2024,7 +2036,10 @@ that can be passed as input to subsequent requests, reducing token usage in long
   `ArgumentError` before any request
 - `input::Any`: The conversation items to compact (typically the full conversation history)
 
-Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys.
+Returns a Dict with `"id"`, `"object"`, `"output"`, and `"usage"` keys. Inside a
+[`with_recorded_answers`](@ref) scope the request passes through the recordings: one the
+scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording cannot
+be written throws [`RecordingWriteError`](@ref), instead of returning a `ResponseCallError`.
 
 # Examples
 ```julia
@@ -2072,6 +2087,10 @@ Useful for estimating costs or checking whether input fits within the context wi
 `model` defaults to OpenAI's default model, `"gpt-6-sol"`.
 
 Returns a Dict with `"object"` (`"response.input_tokens"`) and `"input_tokens"` keys.
+Inside a [`with_recorded_answers`](@ref) scope the request passes through the recordings:
+one the scope cannot replay throws [`ReplayMissError`](@ref), and an answer whose recording
+cannot be written throws [`RecordingWriteError`](@ref), instead of returning a
+`ResponseCallError`.
 
 # Examples
 ```julia

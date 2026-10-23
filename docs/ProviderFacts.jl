@@ -204,7 +204,7 @@ const REGISTRY = _validated([
         start_id="openai_start",
         features=_features(:openai, (:setup, :first_call, :conversations, :streaming, :tools, :structured_output,
             :reasoning, :media, :embeddings, :images, :audio, :caching, :cost, :limits, :failures, :models)),
-        tokens=["OpenAI", "ChatGPT", "OPENAIServiceEndpoint", _MODEL_PREFIXES.openai...]),
+        tokens=["OpenAI", "ChatGPT", "OPENAIServiceEndpoint", "GPT-", _MODEL_PREFIXES.openai...]),
     ProviderEntry(key=:anthropic, chapter=llm, provider=:anthropic, name="Anthropic",
         endpoints=[ANTHROPICServiceEndpoint], usage="ANTHROPICServiceEndpoint", key_vars=[UniLM.ANTHROPIC_API_KEY],
         default_model=UniLM.default_model(ANTHROPICServiceEndpoint),

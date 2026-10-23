@@ -7,7 +7,7 @@ The acceptance numbers of the manual's provider entries, measured on the pages u
 - Other-provider share (`share`): of an entry's pages, of a reader's path (`reader_path`: the
   entry's pages and the concept pages they link to) and of each concept page, the fraction of
   prose lines (`prose_lines`) that hold a token of another provider (`provider_tokens`).
-- Concept-page code (`concept_code_violations`): the endpoints and model ids named in code after
+- Concept-page code (`concept_code_violations`): the endpoints and model ids named in code outside
   the page's binding block.
 - Placement ledgers (`check_ledger`): every passage of an audit placed exactly once — in a section
   that holds its witness, or deleted with a reason.
@@ -97,11 +97,15 @@ prose_lines(text::String; file::String="string")::Vector{Tuple{Int,String}} =
 # Nothing of an identifier before a token.
 const _BEFORE = "(?<![A-Za-z0-9_])"
 
-# A token as one group of a pattern: none of `[A-Za-z0-9_]` may follow it — unless it ends in
-# `-` or `_`, a prefix such as `gpt-`, which then runs on over the rest of the identifier.
-_alternative(token::String)::String =
-    string("(", replace(token, r"[\\^$.|?*+()\[\]{}]" => s"\\\0"), ")",
-           endswith(token, '-') || endswith(token, '_') ? "[A-Za-z0-9_]*" : "(?![A-Za-z0-9_])")
+# A token as one group of a pattern, and what may follow it: after a prefix — a token ending in
+# `-` or `_`, such as `gpt-` — the rest of the identifier; after a token ending in a letter, an
+# uppercase letter and the rest of a CamelCase identifier (`OllamaOptions`), or no part of an
+# identifier (so `Jevons` holds no `Jev`); after any other token, no part of an identifier.
+function _alternative(token::String)::String
+    after = endswith(token, '-') || endswith(token, '_') ? "[A-Za-z0-9_]*" :
+            isletter(last(token)) ? "(?:[A-Z][A-Za-z0-9_]*|(?![A-Za-z0-9_]))" : "(?![A-Za-z0-9_])"
+    string("(", replace(token, r"[\\^$.|?*+()\[\]{}]" => s"\\\0"), ")", after)
+end
 
 # `tokens` longest first, and the alternation of their groups in that order, so the longest
 # token wins where several start; group k matches the k-th token.
@@ -131,11 +135,14 @@ const _DESTINATION = r"\]\([^)]*\)"
 The provider tokens of `line`, in order, each with the providers of the `registry` entries that
 list it (more than one where entries of several providers list it: `gpt-` is OpenAI's and
 Azure's). Link destinations — `](…)` — are dropped first, then the `NEUTRAL_TOKENS`, matched like
-any token. A token matches case-sensitively where no letter, digit or `_` precedes it and none
-follows it; a token ending in `-` or `_` is a prefix and takes in the rest of the identifier it
-starts (`gpt-` in `gpt-5.4-mini`). Where several tokens start, the longest wins, and no span of
-the line is counted twice: `Azure OpenAI` is one Azure token, and `OPENAIServiceEndpoint` keeps
-its `ServiceEndpoint`.
+any token. A token matches case-sensitively where no letter, digit or `_` precedes it. A token
+ending in `-` or `_` is a prefix and takes in the rest of the identifier it starts (`gpt-` in
+`gpt-5.4-mini`, `GPT-` in `GPT-6`); one ending in a letter takes in a CamelCase identifier it
+starts (`Ollama` in `OllamaOptions`, `TypeSafe` in `TypeSafeProtocol`) and matches nowhere a
+lowercase letter, digit or `_` follows it (`Jevons`); any other token matches only where none of
+those follows it. Where several tokens start, the longest wins, and no span of the line is
+counted twice: `Azure OpenAI` is one Azure token, and `OPENAIServiceEndpoint` keeps its
+`ServiceEndpoint`.
 """
 function provider_tokens(line::String; registry::Vector{ProviderEntry}=REGISTRY)::Vector{Tuple{Set{Symbol},String}}
     m = registry === REGISTRY ? _REGISTRY : _Matcher(registry)
@@ -264,19 +271,19 @@ const _BINDING = r"^\s*service, model ="
 """
     concept_code_violations(page::String) -> Vector{String}
 
-The provider code of the concept page at the path `page`, as `page:line: match`: in the code
-after its binding block — the first fenced block with a line starting `service, model =`, which
-may bind more names —, each endpoint named (`OPENAIServiceEndpoint`, `MistralEndpoint`, …, with
-or without a call) and each quoted model id with a registry model-id prefix (`"claude-haiku-5-5"`;
-a string such as `"gpt-5.2 row: "` is no model id). A page without a binding block has all of its
-code checked. Prose is not checked here: its provider tokens count in the page's share.
+The provider code of the concept page at the path `page`, as `page:line: match`: in every fenced
+block but its binding block — the first one with a line starting `service, model =`, which may
+bind more names; blocks before it and `@setup` blocks count like any other —, each endpoint
+named (`OPENAIServiceEndpoint`, `MistralEndpoint`, …, with or without a call) and each quoted
+model id with a registry model-id prefix (`"claude-haiku-5-5"`; a string such as
+`"gpt-5.2 row: "` is no model id). Prose is not checked here: its provider tokens count in the
+page's share.
 """
 function concept_code_violations(page::String)::Vector{String}
     lines = split(read(page, String), '\n')
     blocks = _blocks(lines, page)
     binding = findfirst(b -> any(n -> occursin(_BINDING, lines[n]), b), blocks)
-    after = isnothing(binding) ? blocks : blocks[(binding + 1):end]
-    ["$page:$n: $(x.match)" for b in after for n in b for x in eachmatch(_PROVIDER_CODE, lines[n])]
+    ["$page:$n: $(x.match)" for (i, b) in pairs(blocks) if i !== binding for n in b for x in eachmatch(_PROVIDER_CODE, lines[n])]
 end
 
 # ── Placement ledgers ────────────────────────────────────────────────────────
@@ -424,7 +431,7 @@ Prints to `io` the acceptance numbers of the pages under `docsrc`: a line per en
 most 1% of its prose lines name another provider), per reader's path (`PATH`: 5%) and per concept
 page (`CONCEPT`: 2%, every provider counting), each with its share and threshold — an entry or a
 page that does not exist yet shows "no pages" and fails —; then each endpoint and model id a
-concept page names in code after its binding block; then the problems of the ledgers in the
+concept page names in code outside its binding block; then the problems of the ledgers in the
 directory `ledgers` against the audit units in the directory `atoms` (both or neither; without
 them, "ledgers: not checked"). Returns whether every share holds, no concept page names provider
 code and no ledger has a problem; with `baseline = true` it prints the same and returns `true`.
@@ -442,7 +449,7 @@ function report(io::IO; docsrc::String, ledgers::Union{String,Nothing}=nothing, 
     problems = isnothing(ledgers) ? nothing : _ledger_problems(ledgers, atoms, docsrc)
     println(io, "Other-provider share of prose lines (non-blank lines outside fenced blocks and table rows)")
     foreach(m -> println(io, _row(m)), measurements)
-    println(io, "Concept-page code after the binding block: ", length(code), " endpoints and model ids named")
+    println(io, "Concept-page code outside the binding block: ", length(code), " endpoints and model ids named")
     foreach(v -> println(io, "  ", v), code)
     println(io, "ledgers: ", isnothing(problems) ? "not checked" : "$(length(problems)) problems")
     foreach(p -> println(io, "  ", p), something(problems, String[]))

@@ -68,6 +68,17 @@ end
     @test share([fixture_page("OpenAI answers.\n")], nothing) == 1
     @test caught(() -> share([fixture_page("```julia\nx\n```\n")], :openai)) isa ArgumentError    # no prose line, no share
 end
+@testset "metrics — GPT- names and CamelCase identifiers count for their provider; a lowercase run never does" begin
+    page(line) = fixture_page(line * "\nNeutral line.\n")
+    @test share([page("GPT-6 Sol answers.")], :anthropic) ≈ 1 / 2
+    @test share([page("OllamaOptions sets num_ctx.")], :ollama) == 0
+    @test share([page("OllamaOptions sets num_ctx.")], :openai) ≈ 1 / 2
+    @test share([page("TypeSafeProtocol is the wire.")], :jev) == 0
+    @test share([page("TypeSafeProtocol is the wire.")], :openai) ≈ 1 / 2
+    @test all(r -> share([page("The Jevons paradox: cheaper calls, more calls.")], r) == 0, [nothing; [e.key for e in REGISTRY]])
+    @test provider_tokens("OpenAIDecisionsProtocol, OllamaSystemOneProtocol and GenericOpenAIEndpoint; GPT-5.4 mini") ==
+          [(Set([:openai]), "OpenAI"), (Set([:ollama]), "Ollama"), (Set([:openai]), "GPT-")]
+end
 @testset "metrics — fenced code, nested fences and table rows are never prose; an unclosed fence is refused" begin
     page = fixture_page("Neutral prose.\n\n````markdown\n```julia\nClaude\n```\nGemini\n````\n\n| Claude | yes |\n|---|---|\n\n" *
                         "!!! note\n    ```julia\n    Chat(service=ANTHROPICServiceEndpoint)\n    ```\n")
@@ -75,11 +86,14 @@ end
     err = caught(() -> prose_lines("a\n\n```julia\nx\n"; file="p.md"))
     @test err isa PageError && (err.file, err.line) == ("p.md", 3) && startswith(sprint(showerror, err), "PageError: p.md:3: ")
 end
-@testset "metrics — a binding block may bind several names; code after it names no endpoint and no model" begin
+@testset "metrics — a binding block may bind several names; code outside it names no endpoint and no model" begin
     page = fixture_page("```julia\nservice, model = OPENAIServiceEndpoint, \"gpt-5.4-mini\"\n" *
                         "decider, decision_model = TYPESAFEServiceEndpoint, \"jev-latest\"\n```\n\nText.\n\n" *
                         "```julia\nask(TYPESAFEServiceEndpoint, \"Is it late?\")\n```\n")
     @test concept_code_violations(page) == ["$page:9: TYPESAFEServiceEndpoint"]
+    before = fixture_page("```@setup page\nusing UniLM; Chat(service=GEMINIServiceEndpoint)\n```\n\n" *
+                          "```julia\nservice, model = OPENAIServiceEndpoint, \"gpt-5.4-mini\"\n```\n")
+    @test concept_code_violations(before) == ["$before:2: GEMINIServiceEndpoint"]   # a block before it, @setup too
     unbound = fixture_page("Pass `OPENAIServiceEndpoint` as `service`.\n\n```julia\n" *
                            "Chat(service=MistralEndpoint(), model=\"mistral-small\")\n" *
                            "respond(\"hi\"; model=\"o3\"); println(\"gpt-5.2 row: \")\n```\n")   # a label is no model id

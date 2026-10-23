@@ -58,7 +58,7 @@ end
 
 ## Responses API Results
 
-See also the [Responses API reference](responses.md).
+See also the [Responses API reference](@ref responses_api).
 
 - [`ResponseSuccess`](@ref)
 - [`ResponseFailure`](@ref)
@@ -81,7 +81,7 @@ end
 
 ## Image Generation Results
 
-See also the [Images API reference](images.md).
+See also the [Images API reference](@ref images_api).
 
 - [`ImageSuccess`](@ref)
 - [`ImageFailure`](@ref)

@@ -75,7 +75,7 @@ works, below, shows it), so the model was asked the same question.
 **Tune it**
 
 - Write each sentence as a description of the case, not a one-word label
-  ([Designing meanings](@ref "Designing meanings")).
+  ([Designing meanings](@ref Designing-meanings)).
 - Keep an "anything else" option, so a message that fits no team has somewhere
   to go.
 - Hand unclear messages to a person with `min_confidence` and `fallback`
@@ -780,7 +780,7 @@ interface: the arms are real methods that can be tested and called directly,
 other modules can add cases, the other arguments keep dispatching on their types,
 and [`meanings`](@ref) gives you the option list as data.
 
-## Designing meanings
+## [Designing meanings](@id Designing-meanings)
 
 The advice holds for both pathways. "The sentence" is the text the model reads:
 the table entry, or the `nl"…"` in the signature.

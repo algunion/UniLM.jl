@@ -1,4 +1,4 @@
-# Responses API
+# [Responses API](@id responses_api)
 
 Types and functions for the **Responses API** — the newer, more flexible alternative
 to Chat Completions.

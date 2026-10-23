@@ -9,6 +9,10 @@ Install: `using Pkg; Pkg.add("UniLM")` (registered in Julia's General registry; 
 
 - [Single-file LLM reference](https://algunion.github.io/UniLM.jl/dev/llm/): the whole API — types, signatures, defaults, and the complete exports list — on one page. Read this first.
 
+<!-- generated:providers -->
+
+<!-- /generated:providers -->
+
 ## Guides
 
 - [Getting Started](https://algunion.github.io/UniLM.jl/dev/getting_started/): install, API keys, first request

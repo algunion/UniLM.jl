@@ -109,7 +109,7 @@ with the same environment you replay with ([Test and Develop](@ref
 jev_testing_guide)).
 
 [`TYPESAFEServiceEndpoint`](@ref UniLM.TYPESAFEServiceEndpoint) ([Service
-Endpoints](endpoints.md)) is not a chat backend: it declares only `:system_one`
+Endpoints](@ref endpoints_api)) is not a chat backend: it declares only `:system_one`
 and `:models`, so [`chatrequest!`](@ref), [`respond`](@ref),
 [`embeddingrequest!`](@ref) and the other platform verbs refuse it with an
 `ArgumentError` before sending anything. A `Chat` or `Embeddings` naming it can

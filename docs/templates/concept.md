@@ -9,14 +9,14 @@ using UniLM
 > Template: One paragraph: what the mechanism does and when a reader needs it.
 
 ```@example <stem>
-service, model = OPENAIServiceEndpoint, "gpt-5.4-mini"
+service, model = <Endpoint>, "<model>"
 nothing # hide
 ```
 
 The examples pass `service` and `model`, bound above: bind your own provider's endpoint and model to run
 them there. The table [at the end](@ref <stem>_providers) links each provider's rules.
 
-> Template: A Decisions concept page binds `service, model = TYPESAFEServiceEndpoint, "jev-latest"` instead. After the binding, no example names an endpoint or a model id.
+> Template: `<Endpoint>`, `"<model>"`: the endpoint and model that serve the mechanism (README, The `service, model` binding). After the binding, no example names an endpoint or a model id.
 
 ## [<Section>](@id <stem>_<section>)
 

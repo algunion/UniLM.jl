@@ -6,7 +6,7 @@
 using UniLM
 ```
 
-> Template: Identity line: one sentence on what <Provider> is and which of its APIs the endpoint speaks.
+> Template: Identity line: one sentence on what <Provider> is and which of its APIs the endpoint speaks; an entry that does not record also says that its examples are not run (README, Executed or quoted).
 
 ```@eval
 Main.ProviderFacts.at_a_glance(:<entry>)
@@ -26,7 +26,7 @@ Main.ProviderFacts.at_a_glance(:<entry>)
 
 ## [First call](@id <entry>_first_call)
 
-> Template: The smallest complete call on the default model, executed (`@example <entry>`), then its usage and cost.
+> Template: The smallest complete call, on the default model or, where the entry has none, a model it names; executed (`@example <entry>`) when the entry records; then its usage and cost.
 
 ## [Conversations](@id <entry>_conversations)
 
@@ -98,6 +98,6 @@ Main.ProviderFacts.price_table(:<entry>)
 
 > Template: The models to name, how to list them, the rules of each. A generated model table (`openai_model_rules()`, `claude_family_table()`, `gemini_thinking_table()`) goes in an `@eval` block in the section whose rules it shows.
 
-> Template: Provenance: one line naming the model, the date and the versions (UniLM; the provider's API or server) the page's recordings were made with.
+> Template: Provenance: one line naming the model, the date and the versions (UniLM; the provider's API or server) the page's recordings were made with, or, on an entry that does not record, the versions its code was checked against.
 
 > Template: See also: one line linking the API reference of the entry's types and the entry's counterpart in the Decisions chapter.

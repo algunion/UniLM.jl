@@ -26,6 +26,7 @@ prefix instead, and `grep -rn '^> Template:' docs/src` must print nothing. Every
 | `<feature>` | a feature key (`streaming`, `first_decision`, …) |
 | `<chapter>`, `<Chapter>` | `llm` or `decisions`, as `ProviderFacts.Chapter` names them; the chapter's title |
 | `<stem>`, `<Title>` | the page file's name without `.md`; the page's title |
+| `<Endpoint>`, `<model>` | an endpoint as code names it (`OPENAIServiceEndpoint`, `DeepSeekEndpoint()`); a model id |
 | `<section>`, `<Section>` | a section's id part (`options` in `ollama_options`); its title |
 | `<id>` | an id that exists elsewhere today, written `<id>__next` (Ids) |
 | `<task>`, `<call>`, `<result>`, `<failure>`, `<cause>`, `<fix>` | the cells of a table row; the table takes one row per item |
@@ -97,6 +98,9 @@ and fails on an executed call to any other verb that reaches a service.
   listings, model pulls, realtime) is a `julia` block whose output is quoted from a live run, as a comment
   naming its date and versions; never an `output` block, a language the site keeps for executed output.
 - No executed polling loop: execute `background=true` and `cancel_response`, and quote the poll.
+- An entry without a key to record with (Azure, the OpenAI-compatible services, local servers when no local
+  model runs) shows its calls as `julia` blocks without output and says so in its identity line; its provenance
+  line names the versions its code was checked against.
 - The keyless build replays every executed call and fails on one without a recording; `UNILM_DOCS_RECORD=1`
   records the missing ones (the top of `docs/make.jl`). A recording is never edited: delete it and record again.
 - A chain that passes a stored id on (a `store=true` response read back by `get_response`, …): changing any of
@@ -105,8 +109,11 @@ and fails on an executed call to any other verb that reaches a service.
 
 ## The `service, model` binding
 
-A concept page's first visible block binds `service, model = OPENAIServiceEndpoint, "gpt-5.4-mini"`, a Decisions
-concept page's `service, model = TYPESAFEServiceEndpoint, "jev-latest"`, and every example passes `service` and
-`model`. These are the endpoint and model the existing examples call, so their requests, and the recordings they
-replay, stay unchanged. After the binding the page names no endpoint and no model id (`docs/metrics.jl` reports
-each one); a provider's rule goes to its entry.
+A concept page's first visible block binds `service, model = <Endpoint>, "<model>"`: the endpoint and model that
+serve the page's mechanism, preferring the ones its existing examples already call —
+`OPENAIServiceEndpoint, "gpt-5.4-mini"` on the chat-based Language models pages, Jev on the Decisions pages
+(`TYPESAFEServiceEndpoint, "jev-latest"`), and for a mechanism `gpt-5.4-mini` cannot serve (embeddings, image
+generation, FIM and prefix completion) the endpoint and model its examples use today. Every example passes
+`service` and `model`; an example of another provider moves to that provider's entry. After the binding the page
+names no endpoint and no model id (`docs/metrics.jl` reports each one). An example whose request bytes change is
+recorded again in the same commit, and a change in a stored-id chain deletes the chain's first recording.
